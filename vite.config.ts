@@ -9,7 +9,15 @@ export default defineConfig({
     wasm(),
     topLevelAwait()
   ],
+  worker: {
+    format: 'es',
+  },
+  resolve: {
+    alias: {
+      '@': '/src',
+    },
+  },
   optimizeDeps: {
-    exclude: ['@manifold/manifold']
+    exclude: ['@manifold/manifold','@monaco-editor/react']
   }
 })
