@@ -18,6 +18,6 @@ export default defineConfig({
     },
   },
   optimizeDeps: {
-    exclude: ['@manifold/manifold','@monaco-editor/react']
+    exclude: ['@manifold/manifold', '@monaco-editor/react']
   }
-})
+});
