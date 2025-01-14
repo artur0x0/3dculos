@@ -1,3 +1,6 @@
+# Server config
+nginx/*
+
 # Environment variables 
 .env*
 
@@ -28,3 +31,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Build
+dist/*
