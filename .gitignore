@@ -34,3 +34,9 @@ dist-ssr
 
 # Build
 dist/*
+
+# Scripts
+*.sh
+
+#Package lock file
+package-lock.json*
