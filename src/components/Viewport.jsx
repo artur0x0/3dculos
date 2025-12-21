@@ -8,12 +8,14 @@ import {
   Mesh as ThreeMesh,
   MeshLambertMaterial,
   MeshNormalMaterial,
+  MeshBasicMaterial,
   BufferGeometry,
   BufferAttribute
 } from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import Module from '../../built/manifold';
-import Toolbar from './Toolbar';
+import ScriptToolbar from './ScriptToolbar';
+import { saveAs } from 'file-saver';
 
 const Viewport = ({
   width = 600,
@@ -28,6 +30,7 @@ const Viewport = ({
   const resultRef = useRef(null);
   const [materials, setMaterials] = useState([]);
   const [isExecuting, setIsExecuting] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
 
   // Debug: Log props changes
   useEffect(() => {
@@ -124,7 +127,7 @@ const Viewport = ({
       // Load Manifold WASM library
       const wasm = await Module();
       wasm.setup();
-      const { Manifold } = wasm;
+      const { Manifold, CrossSection } = wasm;
 
       // Set up Manifold IDs
       const firstID = Manifold.reserveIDs(materials.length);
@@ -137,26 +140,26 @@ const Viewport = ({
         const geometry = new BufferGeometry();
         geometry.setAttribute('position', new BufferAttribute(mesh.vertProperties, 3));
         geometry.setIndex(new BufferAttribute(mesh.triVerts, 1));
-    
-        let id = mesh.runOriginalID[0];
+
         let start = mesh.runIndex[0];
         for (let run = 0; run < mesh.numRun; ++run) {
-          const nextID = mesh.runOriginalID[run + 1];
-          if (nextID !== id) {
-            const end = mesh.runIndex[run + 1];
-            geometry.addGroup(start, end - start, id2matIndex.get(id));
-            id = nextID;
-            start = end;
+          const end = mesh.runIndex[run + 1];
+          const id = mesh.runOriginalID[run];
+          let matIndex = id2matIndex.get(id);
+          if (matIndex === undefined) {
+            matIndex = 0; // Fallback to first material
           }
+          geometry.addGroup(start, end - start, matIndex);
+          start = end;
         }
         return geometry;
       }
 
       // Execute user script
       console.log('[Viewport] Executing script:', currentScript);
-      const scriptFn = new Function('Manifold', currentScript);
-      console.log('[Viewport] Created function, executing with Manifold');
-      const result = scriptFn(Manifold);
+      const scriptFn = new Function('Manifold', 'CrossSection', currentScript);
+      console.log('[Viewport] Created function, executing with Manifold and CrossSection');
+      const result = scriptFn(Manifold, CrossSection);
       console.log('[Viewport] Script execution result:', result);
       
       // Check if result is a valid Manifold object
@@ -205,6 +208,51 @@ const Viewport = ({
     }
   }, [currentScript, materials]);
 
+  const handleDownloadModel = useCallback(async () => {
+    if (!currentScript || !sceneRef.current || !resultRef.current?.geometry) return;
+
+    setIsDownloading(true);
+
+try {
+    // Load Manifold WASM library
+    const wasm = await Module();
+    wasm.setup();
+    const { Manifold, CrossSection } = wasm;
+
+    // Re-execute to get fresh Manifold result
+    const scriptFn = new Function('Manifold', 'CrossSection', currentScript);
+    const result = scriptFn(Manifold, CrossSection);
+
+    if (!result || typeof result.getMesh !== 'function') {
+      console.error('Invalid manifold result for export');
+      return;
+    }
+
+    const manifoldMesh = result.getMesh();
+
+    // Convert to Three.js BufferGeometry (same as used for rendering)
+    const geometry = new BufferGeometry();
+    geometry.setAttribute('position', new BufferAttribute(manifoldMesh.vertProperties, 3));
+    geometry.setIndex(new BufferAttribute(manifoldMesh.triVerts, 1));
+
+    // Create a Three.js Mesh (material doesn't matter for geometry export)
+    const mesh = new ThreeMesh(geometry, new MeshBasicMaterial());
+
+    // Import the exporter
+    const { exportTo3MF } = await import('three-3mf-exporter');
+
+    // Export directly to Blob
+    const blob = await exportTo3MF(mesh);
+
+    saveAs(blob, 'model.3mf');
+    console.log('3MF exported successfully using three-3mf-exporter');
+  } catch (error) {
+    console.error('Error exporting 3MF:', error);
+  } finally {
+          setIsDownloading(false);
+        }
+      }, [currentScript]);
+
   const handleAddFeature = useCallback((featureType) => {
     console.log('[Viewport] Adding feature:', featureType);
     // To be implemented
@@ -212,9 +260,11 @@ const Viewport = ({
 
   return (
     <div className="relative w-full h-full bg-gray-900">
-      <Toolbar
+      <ScriptToolbar
         onExecute={executeScript}
         isExecuting={isExecuting}
+        isDownloading={isDownloading}
+        onDownloadModel={handleDownloadModel}
         onAddFeature={handleAddFeature}
       />
       <canvas
