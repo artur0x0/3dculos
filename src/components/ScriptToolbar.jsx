@@ -4,7 +4,7 @@ import { Play, Square, Download } from 'lucide-react';
 
 const ScriptToolbar = ({ onExecute, isExecuting, onDownloadModel, isDownloading = false }) => {
   return (
-    <div className="absolute bottom-4 right-4 md:top-4 md:left-4 md:bottom-auto md:right-auto flex gap-2 bg-white/90 backdrop-blur-sm p-2 rounded-lg shadow-lg z-10">
+    <div className="absolute top-4 right-4 lg:top-4 lg:left-4 lg:right-auto flex gap-2 bg-white/90 backdrop-blur-sm p-2 rounded-lg shadow-lg z-10">
       <button
         onClick={onExecute}
         disabled={isExecuting || isDownloading}

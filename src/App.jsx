@@ -38,47 +38,39 @@ const App = () => {
     }
   };
 
-  // Mobile: Viewport on top, Editor on bottom
-  if (isMobile) {
-    return (
-      <div className="flex flex-col h-screen bg-gray-900">
-        {/* Viewport: ~60% height */}
-        <div className="h-3/5">
-          <Viewport
-            width={window.innerWidth}
-            height={(window.innerHeight * 3) / 5}
-            currentScript={currentScript}
-          />
-        </div>
-        {/* Editor: ~40% height + toolbar space */}
-        <div className="h-2/5 border-t border-gray-700">
-          <CodeEditor
-            onExecute={handleExecute}
-            isExecuting={isExecuting}
-          />
-        </div>
-      </div>
-    );
-  }
-
-  // Desktop: Side-by-side
+// Mobile: Viewport on top, Editor on bottom
+if (isMobile) {
   return (
-    <div className="flex h-screen bg-gray-900">
-      <div className="w-1/2 border-r border-gray-700">
+    <div className="flex flex-col h-screen bg-gray-900 overflow-hidden">
+      {/* Editor: ~40% height + toolbar space */}
+      <div className="h-[40vh] border-b border-gray-700">
         <CodeEditor
           onExecute={handleExecute}
           isExecuting={isExecuting}
         />
       </div>
-      <div className="w-1/2">
-        <Viewport
-          width={window.innerWidth / 2}
-          height={window.innerHeight}
-          currentScript={currentScript}
-        />
+      {/* Viewport: ~60% height */}
+      <div className="h-[60vh] bg-gray-900">
+        <Viewport currentScript={currentScript} />
       </div>
     </div>
   );
+}
+
+// Desktop: Side-by-side
+return (
+  <div className="flex h-screen bg-gray-900">
+    <div className="w-1/2 border-r border-gray-700">
+      <CodeEditor
+        onExecute={handleExecute}
+        isExecuting={isExecuting}
+      />
+    </div>
+    <div className="w-1/2">
+      <Viewport currentScript={currentScript} />
+    </div>
+  </div>
+);
 };
 
 export default App;

@@ -18,11 +18,13 @@ import ScriptToolbar from './ScriptToolbar';
 import { saveAs } from 'file-saver';
 
 const Viewport = ({
-  width = 600,
-  height = 600,
-  currentScript
+  isMobile = false,
+  currentScript,
+  width,
+  height
 }) => {
   const canvasRef = useRef(null);
+  const containerRef = useRef(null);
   const rendererRef = useRef(null);
   const sceneRef = useRef(null);
   const cameraRef = useRef(null);
@@ -37,65 +39,114 @@ const Viewport = ({
     console.log('[Viewport] Props updated:', { width, height, currentScript });
   }, [width, height, currentScript]);
 
-  // Initialize Three.js scene
-  useEffect(() => {
-    console.log('[Viewport] Initializing Three.js scene');
-    const init = async () => {
-      if (!canvasRef.current) return;
+// Initialize Three.js scene
+useEffect(() => {
+  console.log('[Viewport] Initializing Three.js scene');
+  if (!canvasRef.current || !containerRef.current) return;
 
-      // Scene setup
-      const scene = new Scene();
-      const camera = new PerspectiveCamera(45, width / height, 0.1, 2000);
-      camera.position.set(300, 300, 300);
-      camera.lookAt(0, 0, 0);
-      const light = new PointLight(0xffffff, 1);
-      camera.add(light);
-      scene.add(camera);
+  const container = containerRef.current;
+  let initialized = false;
+  
+  // Get actual container dimensions
+  const getContainerSize = () => ({
+    width: container.clientWidth,
+    height: container.clientHeight
+  });
 
-      sceneRef.current = scene;
-      cameraRef.current = camera;
+  const initScene = () => {
+    if (initialized) return;
+    
+    let { width, height } = getContainerSize();
+    
+    // Don't initialize if container has no size yet
+    if (width === 0 || height === 0) {
+      console.log('[Viewport] Container not ready, waiting...');
+      return;
+    }
+    
+    console.log('[Viewport] Container ready:', { width, height });
+    initialized = true;
 
-      // Renderer setup
-      const renderer = new WebGLRenderer({
-        canvas: canvasRef.current,
-        antialias: true
-      });
+    // Scene setup
+    const scene = new Scene();
+    const camera = new PerspectiveCamera(45, width / height, 0.1, 2000);
+    camera.position.set(300, 300, 300);
+    camera.lookAt(0, 0, 0);
+    const light = new PointLight(0xffffff, 1);
+    camera.add(light);
+    scene.add(camera);
 
-      const maxSize = Math.sqrt(268435456); // Max allowed size
-      const scale = Math.min(1, maxSize / Math.max(width, height));
-      const finalWidth = Math.floor(width * scale);
-      const finalHeight = Math.floor(height * scale);
+    sceneRef.current = scene;
+    cameraRef.current = camera;
 
-      renderer.setSize(finalWidth, finalHeight, false);  // false preserves CSS size
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-      rendererRef.current = renderer;
+    // Renderer setup
+    const renderer = new WebGLRenderer({
+      canvas: canvasRef.current,
+      antialias: true
+    });
 
-      // Controls setup
-      const controls = new OrbitControls(camera, renderer.domElement);
-      controls.enableDamping = true;
-      controlsRef.current = controls;
+    renderer.setSize(width, height);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    rendererRef.current = renderer;
 
-      // Animation loop
-      const animate = () => {
-        requestAnimationFrame(animate);
-        if (controlsRef.current) {
-          controlsRef.current.update();
-        }
-        renderer.render(scene, camera);
-      };
-      animate();
-    };
-    init();
+    // Controls setup
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controlsRef.current = controls;
 
-    return () => {
-      if (rendererRef.current) {
-        rendererRef.current.dispose();
+    // Animation loop
+    const animate = () => {
+      requestAnimationFrame(animate);
+      if (controlsRef.current) {
+        controlsRef.current.update();
       }
-      if (resultRef.current?.geometry) {
-        resultRef.current.geometry.dispose();
-      }
+      renderer.render(scene, camera);
     };
-  }, [width, height]);
+    animate();
+  };
+
+  // Handle resize
+  const handleResize = () => {
+    if (!initialized) return;
+    
+    const { width, height } = getContainerSize();
+    
+    if (cameraRef.current) {
+      cameraRef.current.aspect = width / height;
+      cameraRef.current.updateProjectionMatrix();
+    }
+    
+    if (rendererRef.current) {
+      rendererRef.current.setSize(width, height);
+    }
+  };
+
+  // Use ResizeObserver to detect when container gets dimensions
+  const resizeObserver = new ResizeObserver((entries) => {
+    if (!initialized) {
+      initScene();
+    } else {
+      handleResize();
+    }
+  });
+
+  resizeObserver.observe(container);
+  window.addEventListener('resize', handleResize);
+
+  // Try immediate init in case container already has size
+  initScene();
+
+  return () => {
+    resizeObserver.disconnect();
+    window.removeEventListener('resize', handleResize);
+    if (rendererRef.current) {
+      rendererRef.current.dispose();
+    }
+    if (resultRef.current?.geometry) {
+      resultRef.current.geometry.dispose();
+    }
+  };
+}, []);
 
   // Initialize materials
   useEffect(() => {
@@ -259,7 +310,7 @@ try {
   }, []);
 
   return (
-    <div className="relative w-full h-full bg-gray-900">
+    <div ref={containerRef} className="relative w-full h-full bg-gray-900 overflow-hidden">
       <ScriptToolbar
         onExecute={executeScript}
         isExecuting={isExecuting}
@@ -267,9 +318,8 @@ try {
         onDownloadModel={handleDownloadModel}
         onAddFeature={handleAddFeature}
       />
-      <canvas
+      <canvas 
         ref={canvasRef}
-        className="h-full"
       />
     </div>
   );

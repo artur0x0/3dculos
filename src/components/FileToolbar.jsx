@@ -88,7 +88,7 @@ const FileToolbar = ({ onLoadFile, getEditorContent }) => {
   };
 
   return (
-    <div className="absolute top-4 right-4 flex gap-2 bg-white/90 backdrop-blur-sm p-2 rounded-lg shadow-lg z-50">
+    <div className="absolute bottom-4 right-4 lg:top-4 lg:bottom-auto flex gap-2 bg-white/90 backdrop-blur-sm p-2 rounded-lg shadow-lg z-50">
       <input
         type="file"
         ref={fileInputRef}
