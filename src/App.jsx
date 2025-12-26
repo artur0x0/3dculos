@@ -128,7 +128,7 @@ const App = () => {
   if (isMobile) {
     return (
       <div className="flex flex-col h-screen bg-gray-900">
-        <div className="h-[40vh] border-b border-gray-700">
+        <div className="h-[50vh] border-b border-gray-700">
           <CodeEditor 
             onExecute={handleExecute}
             onCodeChange={handleCodeChange}
@@ -141,7 +141,7 @@ const App = () => {
             isMobile={isMobile}
           />
         </div>
-        <div className="h-[60vh]">
+        <div className="h-[50vh]">
           <Viewport 
             ref={viewportRef} 
             currentScript={currentScript} 

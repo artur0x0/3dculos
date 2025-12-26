@@ -61,7 +61,7 @@ const CodeEditor = ({ onExecute, onCodeChange, onUndo, onRedo, canUndo, canRedo,
   const editorDidMount = (editor) => {
     editorRef.current = editor;
     editor.focus();
-    onExecute(DEFAULT_SCRIPT);
+    onExecute(DEFAULT_SCRIPT, true); 
     onCodeChange?.(DEFAULT_SCRIPT, 'Initial script');
   };
 

@@ -2,9 +2,9 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Center Monaco editor keyboard button on mobile */
+/* Left-align Monaco editor keyboard button on mobile */
 .monaco-editor .iPadShowKeyboard {
-  left: 50% !important;
+  left: 16px !important;
   right: auto !important;
-  transform: translateX(-50%);
+  transform: none !important;
 }

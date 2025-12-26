@@ -211,8 +211,8 @@ You can choose to modify the existing code or create something completely new ba
             onKeyDown={handleKeyDown}
             placeholder={
               selectedFace 
-                ? "Describe what to do on the selected face..." 
-                : "Describe a shape to create or modify..."
+                ? "[AI] Describe what to do on the selected face..." 
+                : "[AI] Describe a shape to create or modify..."
             }
             rows={1}
             className="flex-1 bg-[#1e1e1e] text-gray-200 rounded px-3 py-2 text-base border border-gray-600 opacity-50 focus:outline-none focus:ring-1 focus:ring-white focus:border-transparent focus:opacity-100 placeholder-gray-500 resize-none overflow-hidden"
