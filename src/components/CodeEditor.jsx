@@ -1,26 +1,55 @@
-// components/CodeEditor.jsx
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect, forwardRef, useImperativeHandle } from 'react';
 import Editor from '@monaco-editor/react';
-import FileToolbar from './FileToolbar';
 import PromptInput from './PromptInput';
 
-const DEFAULT_SCRIPT = `// CAD Script
+const DEFAULT_SCRIPT = `// Modify CAD script directly or use the AI assistant to code for you
+// It's helpful to use the assistant to get started and edit from there
+// Assistant is good at iterating on an object, similar to how you would use a CAD program
+// You can click on faces to guide the assistant
+// When coding directly, use javascript syntax and return a single manifold object
+
 const {cube, sphere} = Manifold;
 const box = cube([100, 100, 100], true);
 const ball = sphere(60, 100);
 const result = box.subtract(ball);
 return result;`;
 
-const CodeEditor = ({ onExecute, onCodeChange, onUndo, onRedo, canUndo, canRedo, selectedFace, onClearFaceSelection, isMobile=false }) => {
+const CodeEditor = forwardRef(({ 
+  onExecute, 
+  onCodeChange, 
+  onUndo, 
+  onRedo, 
+  canUndo, 
+  canRedo, 
+  selectedFace, 
+  onClearFaceSelection, 
+  isMobile 
+}, ref) => {
   const [editorValue, setEditorValue] = useState(DEFAULT_SCRIPT);
   const editorRef = useRef();
   const historyTimeoutRef = useRef(null);
+
+  // Expose methods to parent via ref
+  useImperativeHandle(ref, () => ({
+    getContent: () => editorValue,
+    loadContent: (content, message = 'File loaded', skipHistory = false) => {
+      if (historyTimeoutRef.current) {
+        clearTimeout(historyTimeoutRef.current);
+      }
+      setEditorValue(content);
+      onExecute(content, true);
+      
+      // Only save to history if not using undo/redo buttons
+      if (!skipHistory) {
+        onCodeChange?.(content, message);
+      }
+    }
+  }));
 
   const handleEditorChange = (newValue) => {
     setEditorValue(newValue);
     onExecute(newValue);
     
-    // Debounce history saving - only save after 1 second of no typing
     if (historyTimeoutRef.current) {
       clearTimeout(historyTimeoutRef.current);
     }
@@ -28,6 +57,16 @@ const CodeEditor = ({ onExecute, onCodeChange, onUndo, onRedo, canUndo, canRedo,
     historyTimeoutRef.current = setTimeout(() => {
       onCodeChange?.(newValue, 'Manual edit');
     }, 1000);
+  };
+
+  const handleCodeGenerated = (code, promptMessage) => {
+    if (historyTimeoutRef.current) {
+      clearTimeout(historyTimeoutRef.current);
+    }
+    
+    setEditorValue(code);
+    onExecute(code, true);
+    onCodeChange?.(code, promptMessage);
   };
 
   const handleUndo = () => {
@@ -44,48 +83,35 @@ const CodeEditor = ({ onExecute, onCodeChange, onUndo, onRedo, canUndo, canRedo,
     }
   };
 
-  const handleCodeGenerated = (code, promptMessage) => {
-    setEditorValue(code);
-    onExecute(code, true);
-    onCodeChange?.(code, promptMessage);
-  };
-
-  const handleLoadFile = (content) => {
-    setEditorValue(content);
-    onExecute(content);
-    onCodeChange?.(content, 'File loaded');
-  };
-
-  const getEditorContent = () => editorValue;
-
   const editorDidMount = (editor) => {
     editorRef.current = editor;
     editor.focus();
-    onExecute(DEFAULT_SCRIPT, true); 
+    onExecute(DEFAULT_SCRIPT, true);
     onCodeChange?.(DEFAULT_SCRIPT, 'Initial script');
   };
+
+  useEffect(() => {
+    return () => {
+      if (historyTimeoutRef.current) {
+        clearTimeout(historyTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const options = {
     automaticLayout: true,
     minimap: { enabled: false },
-    lineNumbers: 'on',
+    lineNumbers: 'off',
     scrollBeyondLastLine: false,
     fontSize: 14,
     renderLineHighlight: 'all',
     formatOnPaste: true,
     contextmenu: true,
+    wordWrap: 'on',
   };
 
   return (
     <div className="relative flex flex-col h-full bg-gray-900">
-      <FileToolbar
-        onLoadFile={handleLoadFile}
-        getEditorContent={getEditorContent}
-        onUndo={handleUndo}
-        onRedo={handleRedo}
-        canUndo={canUndo}
-        canRedo={canRedo}
-      />
       <div className="flex-1 min-h-0">
         <Editor
           width="100%"
@@ -107,6 +133,6 @@ const CodeEditor = ({ onExecute, onCodeChange, onUndo, onRedo, canUndo, canRedo,
       />
     </div>
   );
-};
+});
 
 export default CodeEditor;

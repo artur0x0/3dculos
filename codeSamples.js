@@ -1,4 +1,4 @@
-// MANIFOLD CODE SAMLES
+// ADVANCED CODE EXAMPLES
 
 // TORUS KNOT
 // The number of times the thread passes through the donut hole.
@@ -17,8 +17,6 @@ const circularSegments = -1;
 // Number of segments along the length of the knot. Default makes roughly
 // square facets.
 const linearSegments = -1;
-// These default values recreate Matlab Knot by Emmett Lalish:
-// https://www.thingiverse.com/thing:7080
 
 function gcd(a, b) {
     return b == 0 ? a : gcd(b, a % b);
@@ -73,7 +71,7 @@ const func = (v) => {
     const step = (r) => {
         const r2 = r * r;
         const r4 = r2 * r2;
-        // Taubin's function: https://mathworld.wolfram.com/HeartSurface.html
+        // Taubin's function
         const f = a3 * r4 * r2 - b * r4 * r - 3 * a2 * r4 + 3 * a * r2 - 1;
         // Derivative
         const df =
@@ -102,11 +100,6 @@ const scale = 100 / (box.max[0] - box.min[0]);
 return heart;
 
 // GYROID MODULE
-// Recreates Modular Gyroid Puzzle by Emmett Lalish:
-// https://www.thingiverse.com/thing:25477. This sample demonstrates the
-// use of a Signed Distance Function (SDF) to create smooth, complex
-// manifolds.
-
 // number of modules along pyramid edge (use 1 for print orientation)
 const m = 4;
 // module size
@@ -223,7 +216,6 @@ const tet = Manifold.tetrahedron().intersect(
     Manifold.tetrahedron().rotate([0, 0, 90]).scale(2.5));
 
 return tet;
-
 
 // MENGER SPONGE
 // This example demonstrates how symbolic perturbation correctly creates

@@ -21,11 +21,21 @@ import {
 } from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import Module from '../../built/manifold';
-import ScriptToolbar from './ScriptToolbar';
+import Toolbar from './Toolbar';
 import { X } from 'lucide-react';
 import { saveAs } from 'file-saver';
 
-const Viewport = forwardRef(({currentScript, onFaceSelected}, ref) => {
+const Viewport = forwardRef(({ 
+  currentScript, 
+  onFaceSelected, 
+  onOpen,
+  onSave,
+  onUndo,
+  onRedo,
+  canUndo,
+  canRedo,
+  currentFilename
+}, ref) => {
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
   const rendererRef = useRef(null);
@@ -691,11 +701,18 @@ const handleDownloadModel = useCallback(async () => {
 
   return (
     <div ref={containerRef} className="relative w-full h-full bg-gray-900 overflow-hidden">
-      <ScriptToolbar
-        onExecute={executeScript}
+      <Toolbar
+        onOpen={onOpen}
+        onSave={onSave}
+        onRun={executeScript}
+        onDownload={handleDownloadModel}
+        onUndo={onUndo}
+        onRedo={onRedo}
+        canUndo={canUndo}
+        canRedo={canRedo}
         isExecuting={isExecuting}
         isDownloading={isDownloading}
-        onDownloadModel={handleDownloadModel}
+        currentFilename={currentFilename}
       />
       {executionError && (
         <div className="absolute top-16 right-4 bg-red-900/90 text-white p-3 rounded text-xs max-w-md z-10">
