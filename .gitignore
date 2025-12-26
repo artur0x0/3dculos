@@ -38,5 +38,11 @@ dist/*
 # Scripts
 *.sh
 
-#Package lock file
+# Package lock file
 package-lock.json*
+
+# Linux services
+*.service
+
+# System Prompt
+systemPrompt.js

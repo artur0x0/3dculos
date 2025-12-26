@@ -1,8 +1,8 @@
 // components/FileToolbar.js
 import React, { useRef, useState } from 'react';
-import { FolderOpen, Save } from 'lucide-react';
+import { FolderOpen, Save, Undo, Redo } from 'lucide-react';
 
-const FileToolbar = ({ onLoadFile, getEditorContent }) => {
+const FileToolbar = ({ onLoadFile, getEditorContent, onUndo, onRedo, canUndo, canRedo }) => {
   const fileInputRef = useRef(null);
   const [currentFilename, setCurrentFilename] = useState(null);
 
@@ -88,7 +88,7 @@ const FileToolbar = ({ onLoadFile, getEditorContent }) => {
   };
 
   return (
-    <div className="absolute bottom-4 right-4 lg:top-4 lg:bottom-auto flex gap-2 bg-white/90 backdrop-blur-sm p-2 rounded-lg shadow-lg z-50">
+    <div className="absolute bottom-16 right-4 lg:top-4 lg:bottom-auto flex gap-2 bg-white/90 backdrop-blur-sm p-2 rounded-lg shadow-lg z-50">
       <input
         type="file"
         ref={fileInputRef}
@@ -96,6 +96,22 @@ const FileToolbar = ({ onLoadFile, getEditorContent }) => {
         className="hidden"
         accept=".js,.txt"
       />
+      <button
+        onClick={onUndo}
+        disabled={!canUndo}
+        className="p-2 flex items-center gap-2 text-blue-600 hover:bg-gray-100 rounded disabled:opacity-30"
+        title="Undo"
+      >
+        <Undo size={20} />
+      </button>
+      <button
+        onClick={onRedo}
+        disabled={!canRedo}
+        className="p-2 flex items-center gap-2 text-blue-600 hover:bg-gray-100 rounded disabled:opacity-30"
+        title="Redo"
+      >
+        <Redo size={20} />
+      </button>
       <button
         onClick={() => fileInputRef.current?.click()}
         className="p-2 flex items-center gap-2 text-blue-600 hover:bg-gray-100 rounded"
