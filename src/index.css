@@ -1,3 +1,19 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+body { 
+  background: #1e1e1e;
+}
+
+/* Hide all Monaco UI overlays */
+.monaco-editor .overlayWidgets {
+  display: none !important;
+}
+
+/* Prevent hover states from sticking on touch devices */
+@media (hover: none) and (pointer: coarse) {
+  .hover\:bg-gray-100:hover {
+    background-color: transparent !important;
+  }
+}

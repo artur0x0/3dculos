@@ -1,6 +1,5 @@
 import React, { useState, useRef, useEffect, forwardRef, useImperativeHandle } from 'react';
 import Editor from '@monaco-editor/react';
-import PromptInput from './PromptInput';
 
 const DEFAULT_SCRIPT = `// Modify CAD script directly or use the AI assistant to code for you
 // It's helpful to use the assistant to get started and edit from there
@@ -20,10 +19,8 @@ const CodeEditor = forwardRef(({
   onUndo, 
   onRedo, 
   canUndo, 
-  canRedo, 
-  selectedFace, 
-  onClearFaceSelection, 
-  isMobile 
+  canRedo,
+  isMobile
 }, ref) => {
   const [editorValue, setEditorValue] = useState(DEFAULT_SCRIPT);
   const editorRef = useRef();
@@ -57,16 +54,6 @@ const CodeEditor = forwardRef(({
     historyTimeoutRef.current = setTimeout(() => {
       onCodeChange?.(newValue, 'Manual edit');
     }, 1000);
-  };
-
-  const handleCodeGenerated = (code, promptMessage) => {
-    if (historyTimeoutRef.current) {
-      clearTimeout(historyTimeoutRef.current);
-    }
-    
-    setEditorValue(code);
-    onExecute(code, true);
-    onCodeChange?.(code, promptMessage);
   };
 
   const handleUndo = () => {
@@ -103,11 +90,14 @@ const CodeEditor = forwardRef(({
     minimap: { enabled: false },
     lineNumbers: 'off',
     scrollBeyondLastLine: false,
-    fontSize: 14,
+    fontSize: isMobile ? 16 : 12,
     renderLineHighlight: 'all',
     formatOnPaste: true,
     contextmenu: true,
     wordWrap: 'on',
+    quickSuggestions: false,
+    domReadOnly: false,
+    readOnly: false,
   };
 
   return (
@@ -124,13 +114,6 @@ const CodeEditor = forwardRef(({
           onMount={editorDidMount}
         />
       </div>
-      <PromptInput 
-        onCodeGenerated={handleCodeGenerated}
-        currentCode={editorValue}
-        selectedFace={selectedFace}
-        onClearFaceSelection={onClearFaceSelection}
-        isMobile={isMobile}
-      />
     </div>
   );
 });

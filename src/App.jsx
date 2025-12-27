@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import CodeEditor from './components/CodeEditor';
 import Viewport from './components/Viewport';
+import PromptInput from './components/PromptInput';
 import { saveAs } from 'file-saver';
 
 const App = () => {
@@ -24,6 +25,7 @@ const App = () => {
   useEffect(() => {
     const checkMobile = () => setIsMobile(window.innerWidth < 1024);
     checkMobile();
+    
     window.addEventListener('resize', checkMobile);
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
@@ -60,7 +62,11 @@ const App = () => {
     });
   };
 
-const handleUndo = () => {
+  const handleCodeGenerated = (code, promptMessage) => {
+    codeEditorRef.current?.loadContent(code, promptMessage);
+  };
+
+  const handleUndo = () => {
     const branch = history.branches[history.currentBranch];
     if (branch.head > 0) {
       const newHead = branch.head - 1;
@@ -177,8 +183,8 @@ const handleUndo = () => {
 
   if (isMobile) {
     return (
-      <div className="flex flex-col h-screen bg-gray-900">
-        <div className="h-[50vh] border-b border-gray-700">
+      <div className="flex flex-col h-dvh bg-gray-900 overflow-hidden">
+        <div className="h-[42vh] border-b border-gray-700 flex-shrink-0">
           <CodeEditor 
             ref={codeEditorRef}
             onExecute={handleExecute}
@@ -187,12 +193,10 @@ const handleUndo = () => {
             onRedo={handleRedo}
             canUndo={canUndo()}
             canRedo={canRedo()}
-            selectedFace={selectedFace}
-            onClearFaceSelection={handleClearFaceSelection}
             isMobile={isMobile}
           />
         </div>
-        <div className="h-[50vh]">
+        <div className="flex-1 min-h-0 border-b border-gray-700 overflow-hidden">
           <Viewport 
             ref={viewportRef} 
             currentScript={currentScript}
@@ -203,7 +207,15 @@ const handleUndo = () => {
             onRedo={handleRedo}
             canUndo={canUndo()}
             canRedo={canRedo()}
-            currentFilename={currentFilename}
+          />
+        </div>
+        <div className="flex-shrink-0">
+          <PromptInput 
+            onCodeGenerated={handleCodeGenerated}
+            currentCode={codeEditorRef.current?.getContent() || ''}
+            selectedFace={selectedFace}
+            onClearFaceSelection={handleClearFaceSelection}
+            isMobile={isMobile}
           />
         </div>
       </div>
@@ -212,18 +224,28 @@ const handleUndo = () => {
 
   return (
     <div className="flex h-screen bg-gray-900">
-      <div className="w-1/2 border-r border-gray-700">
-        <CodeEditor 
-          ref={codeEditorRef}
-          onExecute={handleExecute}
-          onCodeChange={handleCodeChange}
-          onUndo={handleUndo}
-          onRedo={handleRedo}
-          canUndo={canUndo()}
-          canRedo={canRedo()}
-          selectedFace={selectedFace}
-          onClearFaceSelection={handleClearFaceSelection}
-        />
+      <div className="w-1/2 border-r border-gray-700 flex flex-col">
+        <div className="flex-1 min-h-0">
+          <CodeEditor 
+            ref={codeEditorRef}
+            onExecute={handleExecute}
+            onCodeChange={handleCodeChange}
+            onUndo={handleUndo}
+            onRedo={handleRedo}
+            canUndo={canUndo()}
+            canRedo={canRedo()}
+            isMobile={isMobile}
+          />
+        </div>
+        <div className="flex-shrink-0">
+          <PromptInput 
+            onCodeGenerated={handleCodeGenerated}
+            currentCode={codeEditorRef.current?.getContent() || ''}
+            selectedFace={selectedFace}
+            onClearFaceSelection={handleClearFaceSelection}
+            isMobile={false}
+          />
+        </div>
       </div>
       <div className="w-1/2">
         <Viewport 

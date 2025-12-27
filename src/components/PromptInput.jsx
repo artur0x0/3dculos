@@ -177,7 +177,10 @@ You can choose to modify the existing code or create something completely new ba
   };
 
   return (
-    <div className="border-t border-gray-700/50 bg-[#1e1e1e] p-3">
+    <div className="border-t border-gray-700/50 bg-[#1e1e1e] p-3"
+         style={isMobile ? { paddingBottom: 'max(12px, env(safe-area-inset-bottom))' } : {}}>
+
+      <form onSubmit={handleSubmit} className="flex flex-col gap-2"></form>
       <form onSubmit={handleSubmit} className="flex flex-col gap-2">
         {error && (
           <div className="text-xs text-red-400 px-2">
@@ -196,11 +199,6 @@ You can choose to modify the existing code or create something completely new ba
             <span className="text-xs text-yellow-200">
               Face selected - try "add a hole" or "add a boss"
             </span>
-          </div>
-        )}
-        {conversationHistory.length > 0 && (
-          <div className="text-xs text-gray-200 px-2">
-            {conversationHistory.filter(m => m.role === 'user').length} messages
           </div>
         )}
         <div className="flex gap-2 items-center">

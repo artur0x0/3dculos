@@ -262,7 +262,7 @@ const Viewport = forwardRef(({
     
     const canvas = canvasRef.current;
     const rect = canvas.getBoundingClientRect();
-    
+
     // Calculate mouse position in normalized device coordinates
     mouseRef.current.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
     mouseRef.current.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
@@ -378,10 +378,14 @@ const Viewport = forwardRef(({
     let initialized = false;
     
     // Get actual container dimensions
-    const getContainerSize = () => ({
-      width: container.clientWidth,
-      height: container.clientHeight
-    });
+    const getContainerSize = () => {
+      const size = {
+        width: container.clientWidth,
+        height: container.clientHeight
+      };
+      console.log('[Viewport] getContainerSize called:', size);
+      return size;
+    };
 
     const initScene = () => {
       if (initialized) return;
@@ -416,6 +420,7 @@ const Viewport = forwardRef(({
       });
 
       renderer.setSize(width, height);
+      console.log('[Viewport] Renderer initialized with size:', { width, height });
       renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
       rendererRef.current = renderer;
 
@@ -447,10 +452,31 @@ const Viewport = forwardRef(({
       if (cameraRef.current) {
         cameraRef.current.aspect = width / height;
         cameraRef.current.updateProjectionMatrix();
+        console.log("[Viewport] Camera aspect changed to ", cameraRef.current.aspect );
       }
       
       if (rendererRef.current) {
         rendererRef.current.setSize(width, height);
+        console.log('[Viewport] Renderer re-rendered with size:', { width, height });
+        
+        // Debug canvas dimensions
+        if (canvasRef.current) {
+          console.log('[Viewport] Canvas internal:', canvasRef.current.width, 'x', canvasRef.current.height);
+          console.log('[Viewport] Canvas CSS:', canvasRef.current.style.width, canvasRef.current.style.height);
+          console.log('[Viewport] Canvas client:', canvasRef.current.clientWidth, 'x', canvasRef.current.clientHeight);
+        }
+        
+        // Update controls
+        if (controlsRef.current) {
+          controlsRef.current.update();
+          console.log('[Viewport] Controls updated');
+        }
+        
+        // Force an immediate render
+        if (sceneRef.current && cameraRef.current) {
+          rendererRef.current.render(sceneRef.current, cameraRef.current);
+          console.log('[Viewport] Forced immediate render after resize');
+        }
       }
     };
 
@@ -536,17 +562,8 @@ const Viewport = forwardRef(({
 
         // Preserve faceID if available
         if (mesh.faceID && mesh.faceID.length > 0) {
-          console.log('[Viewport] Adding faceID attribute, length:', mesh.faceID.length);
           geometry.setAttribute('faceID', new BufferAttribute(mesh.faceID, 1));
         }
-
-        // DEBUG: Log Three.js geometry structure
-        console.log('=== THREE.JS GEOMETRY ===');
-        console.log('Geometry:', geometry);
-        console.log('Attributes:', geometry.attributes);
-        console.log('Index:', geometry.index);
-        console.log('Groups (before adding):', geometry.groups);
-        console.log('=========================');
 
         let start = mesh.runIndex[0];
         for (let run = 0; run < mesh.numRun; ++run) {
@@ -557,33 +574,22 @@ const Viewport = forwardRef(({
             matIndex = 0; // Fallback to first material
           }
 
-          // DEBUG: Log each run/group
-          console.log(`Run ${run}: start=${start}, end=${end}, triangles=${(end-start)/3}, originalID=${id}, matIndex=${matIndex}`);
-        
           geometry.addGroup(start, end - start, matIndex);
           start = end;
         }
 
         // Important: compute normals for face detection
         geometry.computeVertexNormals();
-
-        // DEBUG: Log final geometry state
-        console.log('=== FINAL GEOMETRY ===');
-        console.log('Groups after adding:', geometry.groups);
-        console.log('Normals:', geometry.attributes.normal);
-        console.log('======================');
       
         return geometry;
       }
 
       // Execute user script with all wasm exports available
-      console.log('[Viewport] Executing script:', currentScript);
+      console.log('[Viewport] Executing script');
       const wasmKeys = Object.keys(wasm);
       const wasmValues = Object.values(wasm);
       const scriptFn = new Function(...wasmKeys, currentScript);
-      console.log('[Viewport] Created function with wasm exports:', wasmKeys);
       const result = scriptFn(...wasmValues);
-      console.log('[Viewport] Script execution result:', result);
       
       // Check if result is a valid Manifold object
       if (!result || typeof result.getMesh !== 'function') {
@@ -598,26 +604,12 @@ const Viewport = forwardRef(({
           resultRef.current.geometry?.dispose();
 
           const manifoldMesh = result.getMesh();
-
-          // DEBUG: Log Manifold mesh structure
-          console.log('=== MANIFOLD MESH DATA ===');
-          console.log('Manifold mesh:', manifoldMesh);
-          console.log('numRun:', manifoldMesh.numRun);
-          console.log('runIndex:', manifoldMesh.runIndex);
-          console.log('runOriginalID:', manifoldMesh.runOriginalID);
-          console.log('runTransform:', manifoldMesh.runTransform);
-          console.log('triVerts (indices):', manifoldMesh.triVerts);
-          console.log('vertProperties (positions):', manifoldMesh.vertProperties);
-          console.log('=========================');
-
           const newGeometry = mesh2geometry(manifoldMesh);
 
-          console.log('[Viewport] Created new geometry:', newGeometry);
           resultRef.current.geometry = newGeometry;
         } else {
           console.log('[Viewport] Creating new mesh');
           const geometry = mesh2geometry(result.getMesh());
-          console.log('[Viewport] Created new geometry:', geometry);
           const material = new MeshLambertMaterial({
             color: 0x156289,
             emissive: 0x072534,
@@ -625,7 +617,6 @@ const Viewport = forwardRef(({
             flatShading: true
           });
           const mesh = new ThreeMesh(geometry, material);
-          console.log('[Viewport] Created new mesh:', mesh);
           sceneRef.current.add(mesh);
           resultRef.current = mesh;
         }

@@ -1,5 +1,5 @@
-import React, { useRef } from 'react';
-import { FolderOpen, Save, Play, Square, Download, Undo, Redo } from 'lucide-react';
+import React, { useRef, useState } from 'react';
+import { FolderOpen, Save, Play, Square, Download, Undo, Redo, ChevronLeft, ChevronRight } from 'lucide-react';
 
 const Toolbar = ({ 
   onOpen, 
@@ -15,6 +15,7 @@ const Toolbar = ({
   currentFilename 
 }) => {
   const fileInputRef = useRef(null);
+  const [isCollapsed, setIsCollapsed] = useState(false);
 
   const handleFileSelect = async (event) => {
     const file = event.target.files?.[0];
@@ -32,8 +33,22 @@ const Toolbar = ({
     }
   };
 
+  if (isCollapsed) {
+    return (
+      <div className="absolute top-4 right-4 flex gap-2 bg-white/70 backdrop-blur-sm p-2 rounded-lg shadow-lg z-10">
+        <button
+          onClick={() => setIsCollapsed(false)}
+          className="p-2 rounded hover:bg-gray-100 text-gray-600"
+          title="Show Toolbar"
+        >
+          <ChevronLeft size={20} />
+        </button>
+      </div>
+    );
+  }
+
 return (
-    <div className="absolute top-4 left-1/2 -translate-x-1/2 lg:left-4 lg:translate-x-0 flex gap-2 bg-white/90 backdrop-blur-sm p-2 rounded-lg shadow-lg z-10">
+    <div className="absolute top-4 left-1/2 -translate-x-1/2 lg:left-auto lg:right-4 lg:translate-x-0 flex gap-2 bg-white/70 backdrop-blur-sm p-2 rounded-lg shadow-lg z-10">
       {/* Run/Stop */}
       <button
         onClick={onRun}
@@ -106,6 +121,17 @@ return (
         ) : (
           <Download size={20} />
         )}
+      </button>
+
+      <div className="w-px bg-gray-300 mx-1"></div>
+
+      {/* Collapse */}
+      <button
+        onClick={() => setIsCollapsed(true)}
+        className="p-2 rounded hover:bg-gray-100 text-gray-600"
+        title="Hide Toolbar"
+      >
+        <ChevronRight size={20} />
       </button>
     </div>
   );
