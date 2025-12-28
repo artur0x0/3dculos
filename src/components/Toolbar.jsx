@@ -1,11 +1,12 @@
 import React, { useRef, useState } from 'react';
-import { FolderOpen, Save, Play, Square, Download, Undo, Redo, ChevronLeft, ChevronRight } from 'lucide-react';
+import { FolderOpen, Save, Play, Square, Download, Undo, Redo, ChevronLeft, ChevronRight, Truck } from 'lucide-react';
 
 const Toolbar = ({ 
   onOpen, 
   onSave, 
   onRun, 
   onDownload,
+  onQuote,
   onUndo,
   onRedo,
   canUndo,
@@ -48,7 +49,7 @@ const Toolbar = ({
   }
 
 return (
-    <div className="absolute top-4 left-1/2 -translate-x-1/2 lg:left-auto lg:right-4 lg:translate-x-0 flex gap-2 bg-white/70 backdrop-blur-sm p-2 rounded-lg shadow-lg z-10">
+    <div className="absolute top-4 left-1/2 -translate-x-1/2 lg:left-auto lg:right-4 lg:translate-x-0 flex gap-2 bg-white/60 backdrop-blur-sm p-2 rounded-lg shadow-lg z-10">
       {/* Run/Stop */}
       <button
         onClick={onRun}
@@ -124,6 +125,15 @@ return (
       </button>
 
       <div className="w-px bg-gray-300 mx-1"></div>
+
+      {/* Quote */}
+      <button
+        onClick={onQuote}
+        className="p-2 rounded hover:bg-gray-100 text-green-600"
+        title="Get Quote"
+      >
+        <Truck size={20} />
+      </button>
 
       {/* Collapse */}
       <button

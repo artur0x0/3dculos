@@ -118,7 +118,7 @@ You can choose to modify the existing code or create something completely new ba
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+          model: 'meta-llama/llama-4-maverick-17b-128e-instruct',
           messages: messages,
           temperature: 0.7,
           max_tokens: 2048,

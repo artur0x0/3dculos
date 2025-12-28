@@ -3,12 +3,15 @@ import CodeEditor from './components/CodeEditor';
 import Viewport from './components/Viewport';
 import PromptInput from './components/PromptInput';
 import { saveAs } from 'file-saver';
+import QuoteModal from './components/QuoteModal';
 
 const App = () => {
   const [currentScript, setCurrentScript] = useState('');
   const [isMobile, setIsMobile] = useState(false);
   const [selectedFace, setSelectedFace] = useState(null);
   const [currentFilename, setCurrentFilename] = useState(null);
+  const [showQuoteModal, setShowQuoteModal] = useState(false);
+
   const viewportRef = useRef(null);
   const codeEditorRef = useRef(null);
   
@@ -181,6 +184,23 @@ const App = () => {
     }
   };
 
+  const handleQuote = () => {
+    setShowQuoteModal(true);
+  };
+
+  const handleQuoteClose = () => {
+    setShowQuoteModal(false);
+  };
+
+  const handleGetQuote = async (options) => {
+    // Get volume and properties from the current Manifold object
+    const quoteData = await viewportRef.current?.calculateQuote(options);
+    if (!quoteData) {
+      throw new Error('Failed to calculate quote');
+    }
+    return quoteData;
+  };
+
   if (isMobile) {
     return (
       <div className="flex flex-col h-dvh bg-gray-900 overflow-hidden">
@@ -203,6 +223,7 @@ const App = () => {
             onFaceSelected={handleFaceSelected}
             onOpen={handleOpen}
             onSave={handleSave}
+            onQuote={handleQuote}
             onUndo={handleUndo}
             onRedo={handleRedo}
             canUndo={canUndo()}
@@ -218,6 +239,12 @@ const App = () => {
             isMobile={isMobile}
           />
         </div>
+        {showQuoteModal && (
+          <QuoteModal
+            onClose={handleQuoteClose}
+            onGetQuote={handleGetQuote}
+          />
+        )}
       </div>
     );
   }
@@ -254,6 +281,7 @@ const App = () => {
           onFaceSelected={handleFaceSelected}
           onOpen={handleOpen}
           onSave={handleSave}
+          onQuote={handleQuote}
           onUndo={handleUndo}
           onRedo={handleRedo}
           canUndo={canUndo()}
@@ -261,6 +289,12 @@ const App = () => {
           currentFilename={currentFilename}
         />
       </div>
+      {showQuoteModal && (
+          <QuoteModal
+            onClose={handleQuoteClose}
+            onGetQuote={handleGetQuote}
+          />
+      )}
     </div>
   );
 };
