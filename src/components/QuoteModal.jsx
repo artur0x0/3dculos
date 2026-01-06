@@ -1,31 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { X, Loader2, DollarSign, Clock, Package, ShoppingCart } from 'lucide-react';
-
-const PROCESSES = {
-  FDM: {
-    name: 'FDM (Fused Deposition Modeling)',
-    maxSize: { x: 256, y: 256, z: 256 }, // mm
-    materials: ['PLA', 'PETG', 'ABS', 'TPU', 'Nylon']
-  },
-  SLA: {
-    name: 'SLA (Stereolithography)',
-    maxSize: { x: 145, y: 145, z: 175 },
-    materials: ['Standard Resin', 'Tough Resin', 'Flexible Resin'],
-    disabled: true
-  },
-  SLS: {
-    name: 'SLS (Selective Laser Sintering)',
-    maxSize: { x: 300, y: 300, z: 300 },
-    materials: ['Nylon PA12', 'Nylon PA11', 'TPU'],
-    disabled: true
-  },
-  MP: {
-    name: 'Metal Printing',
-    maxSize: { x: 250, y: 250, z: 250 },
-    materials: ['Stainless Steel 316L', 'Aluminum AlSi10Mg', 'Titanium Ti6Al4V'],
-    disabled: true
-  }
-};
+import { PROCESSES } from '../utils/quoting';
 
 const QuoteModal = ({ onClose, onGetQuote }) => {
   const [selectedProcess, setSelectedProcess] = useState('FDM');
