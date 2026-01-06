@@ -31,11 +31,13 @@ const Viewport = forwardRef(({
   onOpen,
   onSave,
   onQuote,
+  onUpload,
   onUndo,
   onRedo,
   canUndo,
   canRedo,
-  currentFilename
+  currentFilename,
+  isUploading
 }, ref) => {
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
@@ -887,12 +889,14 @@ const Viewport = forwardRef(({
         onRun={executeScript}
         onDownload={handleDownloadModel}
         onQuote={onQuote}
+        onUpload={onUpload}
         onUndo={onUndo}
         onRedo={onRedo}
         canUndo={canUndo}
         canRedo={canRedo}
         isExecuting={isExecuting}
         isDownloading={isDownloading}
+        isUploading={isUploading}
         currentFilename={currentFilename}
       />
       {executionError && (

@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { FolderOpen, Save, Play, Square, Download, Undo, Redo, ChevronLeft, ChevronRight, Truck } from 'lucide-react';
+import { FolderOpen, Save, Play, Square, Download, Undo, Redo, ChevronLeft, ChevronRight, Truck, Upload } from 'lucide-react';
 
 const Toolbar = ({ 
   onOpen, 
@@ -7,15 +7,18 @@ const Toolbar = ({
   onRun, 
   onDownload,
   onQuote,
+  onUpload,
   onUndo,
   onRedo,
   canUndo,
   canRedo,
   isExecuting,
   isDownloading,
+  isUploading,
   currentFilename 
 }) => {
   const fileInputRef = useRef(null);
+  const stepInputRef = useRef(null);
   const [isCollapsed, setIsCollapsed] = useState(false);
 
   const handleFileSelect = async (event) => {
@@ -31,6 +34,21 @@ const Toolbar = ({
     
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
+    }
+  };
+
+  const handleStepUpload = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    try {
+      await onUpload(file);
+    } catch (err) {
+      console.error('Error uploading STEP file:', err);
+    }
+    
+    if (stepInputRef.current) {
+      stepInputRef.current.value = '';
     }
   };
 
@@ -67,6 +85,14 @@ return (
         className="hidden"
         accept=".js,.txt"
       />
+
+      <input
+        type="file"
+        ref={stepInputRef}
+        onChange={handleStepUpload}
+        className="hidden"
+        accept=".step,.stp"
+      />
       
       {/* Open */}
       <button
@@ -75,6 +101,20 @@ return (
         title="Open File"
       >
         <FolderOpen size={20} />
+      </button>
+
+      {/* Upload STEP */}
+      <button
+        onClick={() => stepInputRef.current?.click()}
+        disabled={isUploading || isExecuting}
+        className="p-2 flex items-center gap-2 text-blue-600 hover:bg-gray-100 rounded disabled:opacity-50"
+        title="Upload STEP File"
+      >
+        {isUploading ? (
+          <div className="w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+        ) : (
+          <Upload size={20} />
+        )}
       </button>
 
       <div className="w-px bg-gray-300 mx-1"></div>

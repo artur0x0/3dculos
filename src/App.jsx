@@ -4,6 +4,8 @@ import Viewport from './components/Viewport';
 import PromptInput from './components/PromptInput';
 import { saveAs } from 'file-saver';
 import QuoteModal from './components/QuoteModal';
+import { importStepFile } from './utils/stepImport';
+import Module from '../built/manifold';
 
 const App = () => {
   const [currentScript, setCurrentScript] = useState('');
@@ -11,6 +13,8 @@ const App = () => {
   const [selectedFace, setSelectedFace] = useState(null);
   const [currentFilename, setCurrentFilename] = useState(null);
   const [showQuoteModal, setShowQuoteModal] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadError, setUploadError] = useState(null);
 
   const viewportRef = useRef(null);
   const codeEditorRef = useRef(null);
@@ -201,6 +205,31 @@ const App = () => {
     return quoteData;
   };
 
+  const handleStepUpload = async (file) => {
+    setIsUploading(true);
+    setUploadError(null);
+    
+    try {
+      console.log(`[App] Starting upload of ${file.name}...`);
+      
+      // Import the STEP file (converts to 3MF, caches, imports to Manifold)
+      const { script, manifold, filename } = await importStepFile(file, Module, 0.1);
+      
+      // Load the generated script into the editor
+      codeEditorRef.current?.loadContent(script, `Imported ${filename}`);
+      
+      // Set the filename
+      setCurrentFilename(filename);
+      
+      console.log(`[App] Successfully imported ${filename}`);
+    } catch (error) {
+      console.error('[App] Upload error:', error);
+      setUploadError(error.message || 'Failed to import STEP file');
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
   if (isMobile) {
     return (
       <div className="flex flex-col h-dvh bg-gray-900 overflow-hidden">
@@ -224,10 +253,12 @@ const App = () => {
             onOpen={handleOpen}
             onSave={handleSave}
             onQuote={handleQuote}
+            onUpload={handleStepUpload}
             onUndo={handleUndo}
             onRedo={handleRedo}
             canUndo={canUndo()}
             canRedo={canRedo()}
+            isUploading={isUploading}
           />
         </div>
         <div className="flex-shrink-0">
@@ -244,6 +275,19 @@ const App = () => {
             onClose={handleQuoteClose}
             onGetQuote={handleGetQuote}
           />
+        )}
+        {uploadError && (
+          <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-red-900/90 text-white px-4 py-2 rounded shadow-lg z-50 max-w-md">
+            <div className="flex items-center gap-2">
+              <span>Upload Error: {uploadError}</span>
+              <button 
+                onClick={() => setUploadError(null)}
+                className="ml-2 text-white hover:text-gray-200"
+              >
+                ×
+              </button>
+            </div>
+          </div>
         )}
       </div>
     );
@@ -282,11 +326,13 @@ const App = () => {
           onOpen={handleOpen}
           onSave={handleSave}
           onQuote={handleQuote}
+          onUpload={handleStepUpload}
           onUndo={handleUndo}
           onRedo={handleRedo}
           canUndo={canUndo()}
           canRedo={canRedo()}
           currentFilename={currentFilename}
+          isUploading={isUploading}
         />
       </div>
       {showQuoteModal && (
@@ -294,6 +340,19 @@ const App = () => {
             onClose={handleQuoteClose}
             onGetQuote={handleGetQuote}
           />
+      )}
+      {uploadError && (
+        <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-red-900/90 text-white px-4 py-2 rounded shadow-lg z-50 max-w-md">
+          <div className="flex items-center gap-2">
+            <span>Upload Error: {uploadError}</span>
+            <button 
+              onClick={() => setUploadError(null)}
+              className="ml-2 text-white hover:text-gray-200"
+            >
+              ×
+            </button>
+          </div>
+        </div>
       )}
     </div>
   );

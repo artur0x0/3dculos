@@ -1,7 +1,6 @@
 // components/PromptInput.jsx
 import React, { useState, useRef } from 'react';
 import { Send, Loader2, X } from 'lucide-react';
-import { SYSTEM_PROMPT } from '../systemPrompt';
 
 const MAX_HISTORY = 10; // Keep last 10 messages for context
 
@@ -41,14 +40,12 @@ You can use the face center for positioning new geometry and the normal for orie
   };
 
   const buildMessages = (userMessage) => {
-    const messages = [
-      { role: 'system', content: SYSTEM_PROMPT }
-    ];
-
+    const messages = [];
+    
     // Add conversation history (last MAX_HISTORY messages)
     const recentHistory = conversationHistory.slice(-MAX_HISTORY);
     messages.push(...recentHistory);
-
+    
     // Add context about current code if it exists
     let contextualMessage = userMessage;
     if (currentCode && currentCode.trim().length > 0) {
@@ -61,14 +58,14 @@ User request: ${userMessage}
 
 You can choose to modify the existing code or create something completely new based on what makes the most sense for this request. Always return a complete, executable script that returns a single Manifold object.`;
     }
-
+    
     // Add face selection context if available
     if (selectedFace) {
       contextualMessage = formatFaceContext(selectedFace) + '\n\n' + contextualMessage;
     }
-
+    
     messages.push({ role: 'user', content: contextualMessage });
-
+    
     return messages;
   };
 
@@ -103,25 +100,25 @@ You can choose to modify the existing code or create something completely new ba
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    
     if (!input.trim() || isLoading) return;
-
+    
     setError(null);
     setIsLoading(true);
+    
     const userMessage = input.trim();
-
+    
     try {
       const messages = buildMessages(userMessage);
-
+      
+      // Now we only send messages - backend handles everything else
       const response = await fetch('/api/generate', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          model: 'meta-llama/llama-4-maverick-17b-128e-instruct',
-          messages: messages,
-          temperature: 0.7,
-          max_tokens: 2048,
+          messages: messages
         })
       });
 
@@ -158,7 +155,7 @@ You can choose to modify the existing code or create something completely new ba
     } catch (err) {
       console.error('Error generating code:', err);
       if (err.message.includes('401')) {
-        setError('Invalid API key. Please check your VITE_GROQ_API_KEY');
+        setError('Invalid API key. Please check your GROQ_API_KEY');
       } else if (err.message.includes('429')) {
         setError('Rate limit exceeded. Please wait a moment and try again.');
       } else {
