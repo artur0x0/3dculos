@@ -20,7 +20,6 @@ import {
   LineBasicMaterial
 } from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import Module from '../../built/manifold';
 import Toolbar from './Toolbar';
 import { X } from 'lucide-react';
 import { saveAs } from 'file-saver';
@@ -549,9 +548,12 @@ const Viewport = forwardRef(({
     onFaceSelected?.(null);
 
     try {
-      // Load Manifold WASM library
-      const wasm = await Module();
-      wasm.setup();
+      // Use global Manifold instance
+      if (!window.Manifold) {
+        throw new Error('Manifold WASM not loaded');
+      }
+      
+      const wasm = window.Manifold;
 
       // Set up Manifold IDs
       const { Manifold } = wasm;
@@ -656,9 +658,12 @@ const Viewport = forwardRef(({
       throw new Error('No model to export');
     }
 
-    // Load Manifold WASM library
-    const wasm = await Module();
-    wasm.setup();
+    // Use global Manifold instance
+    if (!window.Manifold) {
+      throw new Error('Manifold WASM not loaded');
+    }
+    
+    const wasm = window.Manifold;
 
     // Re-execute to get fresh Manifold result
     const wasmKeys = Object.keys(wasm);
@@ -694,9 +699,12 @@ const Viewport = forwardRef(({
     setIsDownloading(true);
 
     try {
-      // Load Manifold WASM library
-      const wasm = await Module();
-      wasm.setup();
+      // Use global Manifold instance
+      if (!window.Manifold) {
+        throw new Error('Manifold WASM not loaded');
+      }
+      
+      const wasm = window.Manifold;
 
       // Re-execute to get fresh Manifold result
       const wasmKeys = Object.keys(wasm);
@@ -763,9 +771,12 @@ const Viewport = forwardRef(({
     }
 
     try {
-      // Load Manifold WASM library and execute script to get the result
-      const wasm = await Module();
-      wasm.setup();
+      // Use global Manifold instance
+      if (!window.Manifold) {
+        throw new Error('Manifold WASM not loaded');
+      }
+      
+      const wasm = window.Manifold;
 
       const wasmKeys = Object.keys(wasm);
       const wasmValues = Object.values(wasm);

@@ -15,6 +15,7 @@ const App = () => {
   const [showQuoteModal, setShowQuoteModal] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState(null);
+  const [manifoldReady, setManifoldReady] = useState(false);
 
   const viewportRef = useRef(null);
   const codeEditorRef = useRef(null);
@@ -28,6 +29,27 @@ const App = () => {
     },
     currentBranch: 'main'
   });
+
+  // Initialize Manifold globally
+  useEffect(() => {
+    const initManifold = async () => {
+      try {
+        console.log('[App] Initializing Manifold WASM...');
+        const wasm = await Module();
+        wasm.setup();
+        
+        // Expose Manifold globally for both code editor and imports
+        window.Manifold = wasm;
+        
+        console.log('[App] Manifold WASM ready');
+        setManifoldReady(true);
+      } catch (error) {
+        console.error('[App] Failed to initialize Manifold:', error);
+      }
+    };
+    
+    initManifold();
+  }, []);
 
   useEffect(() => {
     const checkMobile = () => setIsMobile(window.innerWidth < 1024);
@@ -90,7 +112,6 @@ const App = () => {
         }
       }));
       
-      // Update editor without creating new history
       codeEditorRef.current?.loadContent(commit.code, 'Undo', true);
       handleExecute(commit.code, true);
       return commit.code;
@@ -115,7 +136,6 @@ const App = () => {
         }
       }));
       
-      // Update editor without creating new history
       codeEditorRef.current?.loadContent(commit.code, 'Redo', true);
       handleExecute(commit.code, true);
       return commit.code;
@@ -197,7 +217,6 @@ const App = () => {
   };
 
   const handleGetQuote = async (options) => {
-    // Get volume and properties from the current Manifold object
     const quoteData = await viewportRef.current?.calculateQuote(options);
     if (!quoteData) {
       throw new Error('Failed to calculate quote');
@@ -206,14 +225,19 @@ const App = () => {
   };
 
   const handleStepUpload = async (file) => {
+    if (!manifoldReady) {
+      setUploadError('Manifold WASM not ready. Please wait...');
+      return;
+    }
+    
     setIsUploading(true);
     setUploadError(null);
     
     try {
       console.log(`[App] Starting upload of ${file.name}...`);
       
-      // Import the STEP file (converts to 3MF, caches, imports to Manifold)
-      const { script, manifold, filename } = await importStepFile(file, Module, 0.1);
+      // Import the STEP file (no longer needs Module parameter)
+      const { script, manifold, filename } = await importStepFile(file, 0.1);
       
       // Load the generated script into the editor
       codeEditorRef.current?.loadContent(script, `Imported ${filename}`);
@@ -229,6 +253,18 @@ const App = () => {
       setIsUploading(false);
     }
   };
+
+  // Show loading state while Manifold initializes
+  if (!manifoldReady) {
+    return (
+      <div className="flex items-center justify-center h-screen bg-gray-900 text-white">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white mx-auto mb-4"></div>
+          <p>Loading Manifold WASM...</p>
+        </div>
+      </div>
+    );
+  }
 
   if (isMobile) {
     return (

@@ -99,48 +99,44 @@ export const convertStepToManifold = async (file, deflection = null) => {
 /**
  * Reconstruct Manifold from serialized mesh data
  */
-export const reconstructManifold = (manifoldData, Module) => {
-  return new Promise(async (resolve, reject) => {
-    try {
-      console.log('[Import] Loading Manifold WASM...');
-      const wasm = await Module();
-      wasm.setup();
-      
-      console.log('[Import] Reconstructing Manifold from server data...');
-      
-      // Convert arrays back to typed arrays
-      const vertProperties = new Float32Array(manifoldData.vertProperties);
-      const triVerts = new Uint32Array(manifoldData.triVerts);
-      
-      const mesh = {
-        numProp: manifoldData.numProp || 3,
-        vertProperties: vertProperties,
-        triVerts: triVerts
-      };
-      
-      console.log('[Import] Mesh stats:', {
-        vertices: vertProperties.length / 3,
-        triangles: triVerts.length / 3,
-        numProp: mesh.numProp
-      });
-      
-      // Create Manifold from the mesh
-      const manifold = new wasm.Manifold(mesh);
-      
-      const volume = manifold.volume();
-      console.log(`[Import] ✓ Manifold reconstructed (volume: ${volume} mm³)`);
-      
-      if (Math.abs(volume - manifoldData.volume) > 0.01) {
-        console.warn(`[Import] Volume mismatch: server=${manifoldData.volume}, client=${volume}`);
-      }
-      
-      resolve(manifold);
-      
-    } catch (error) {
-      console.error('[Import] Error reconstructing Manifold:', error);
-      reject(error);
-    }
+export const reconstructManifold = (manifoldData) => {
+  console.log('[Import] Reconstructing Manifold from server data...');
+  
+  // Use the global Manifold that's already loaded in the app
+  // This ensures compatibility with user code
+  if (!window.Manifold) {
+    throw new Error('Manifold WASM not loaded. Please wait for initialization.');
+  }
+  
+  const { Manifold } = window.Manifold;
+  
+  // Convert arrays back to typed arrays
+  const vertProperties = new Float32Array(manifoldData.vertProperties);
+  const triVerts = new Uint32Array(manifoldData.triVerts);
+  
+  const mesh = {
+    numProp: manifoldData.numProp || 3,
+    vertProperties: vertProperties,
+    triVerts: triVerts
+  };
+  
+  console.log('[Import] Mesh stats:', {
+    vertices: vertProperties.length / 3,
+    triangles: triVerts.length / 3,
+    numProp: mesh.numProp
   });
+  
+  // Create Manifold from the mesh using global instance
+  const manifold = new Manifold(mesh);
+  
+  const volume = manifold.volume();
+  console.log(`[Import] ✓ Manifold reconstructed (volume: ${volume} mm³)`);
+  
+  if (Math.abs(volume - manifoldData.volume) > 0.01) {
+    console.warn(`[Import] Volume mismatch: server=${manifoldData.volume}, client=${volume}`);
+  }
+  
+  return manifold;
 };
 
 /**
