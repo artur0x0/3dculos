@@ -1,5 +1,4 @@
 // components/Viewport.jsx
-
 import React, { useEffect, useRef, useState, useCallback, forwardRef, useImperativeHandle } from 'react';
 import {
   WebGLRenderer,
@@ -22,10 +21,13 @@ import {
 } from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import Toolbar from './Toolbar';
+import CrossSectionPanel from './CrossSectionPanel';
 import { X } from 'lucide-react';
 import { downloadModel, export3MFBase64 } from '../utils/downloads';
 import { calculateQuote } from '../utils/quoting';
 import { selectFaceByID } from '../utils/selectFace';
+import { getManifoldBounds } from '../utils/crossSection';
+import { createCuttingPlaneWidget, updateCuttingPlaneWidget } from '../utils/cuttingPlaneWidget';
 
 const Viewport = forwardRef(({ 
   currentScript, 
@@ -51,11 +53,23 @@ const Viewport = forwardRef(({
   const raycasterRef = useRef(new Raycaster());
   const mouseRef = useRef(new Vector2());
   const highlightMeshRef = useRef(null);
+  const cuttingPlaneWidgetRef = useRef(null);
+  
   const [selectedFace, setSelectedFace] = useState(null);
   const [materials, setMaterials] = useState([]);
   const [isExecuting, setIsExecuting] = useState(false);
   const [executionError, setExecutionError] = useState(null);
   const [isDownloading, setIsDownloading] = useState(false);
+  
+  // Cross-section state
+  const [crossSectionEnabled, setCrossSectionEnabled] = useState(false);
+  const [crossSectionPlane, setCrossSectionPlane] = useState({
+    normal: [0, 0, 1],
+    originOffset: 0,
+    showPlane: true
+  });
+  const [modelBounds, setModelBounds] = useState(null);
+  const [cachedManifold, setCachedManifold] = useState(null);
 
   useImperativeHandle(ref, () => ({
     executeScript,
@@ -67,7 +81,8 @@ const Viewport = forwardRef(({
     export3MF: () => export3MFBase64(currentScript),
     calculateQuote: async (options) => {
       return await calculateQuote(currentScript, options);
-    }
+    },
+    zoomToFit: handleZoomToFit 
   }));
 
   // Clear face highlight
@@ -80,6 +95,83 @@ const Viewport = forwardRef(({
     }
   };
 
+  // Clear cutting plane widget
+  const clearCuttingPlane = () => {
+    if (cuttingPlaneWidgetRef.current && sceneRef.current) {
+      sceneRef.current.remove(cuttingPlaneWidgetRef.current);
+      cuttingPlaneWidgetRef.current.children.forEach(child => {
+        child.geometry?.dispose();
+        child.material?.dispose();
+      });
+      cuttingPlaneWidgetRef.current = null;
+    }
+  };
+
+  // Handle cross-section toggle
+  const handleCrossSectionToggle = async (enabled) => {
+    if (enabled) {
+      try {
+        if (!window.Manifold || !currentScript) return;
+        setCrossSectionEnabled(true);
+        console.log('[CrossSection] Cached manifold for preview');
+      } catch (error) {
+        console.error('[CrossSection] Failed to cache manifold:', error);
+      }
+    } else {
+      // Disable and restore original
+      setCrossSectionEnabled(false);
+      clearCuttingPlane();
+    }
+  };
+
+  // Handle plane changes - use cached manifold for preview
+  const handlePlaneChange = async (plane) => {
+    console.log("[VIEWPORT] Handling plane change to ", plane)
+    setCrossSectionPlane(plane);
+    
+    if (!crossSectionEnabled || !cachedManifold) return;
+    
+    try {
+      // Apply trimByPlane to cached manifold
+      const normal = new Vector3(...plane.normal).normalize();
+      const normalArray = [normal.x, normal.y, normal.z];
+      
+      const trimmed = cachedManifold.trimByPlane(normalArray, plane.originOffset);
+      
+      // Render the trimmed preview
+      renderManifold(trimmed);
+      
+      // Update cutting plane widget visibility
+      if (plane.showPlane) {
+        if (cuttingPlaneWidgetRef.current) {
+          updateCuttingPlaneWidget(cuttingPlaneWidgetRef.current, plane);
+        } else {
+          const widget = createCuttingPlaneWidget({
+            normal: plane.normal,
+            originOffset: plane.originOffset,
+            size: Math.max(...(modelBounds?.size || [200, 200, 200]))
+          });
+          sceneRef.current.add(widget);
+          cuttingPlaneWidgetRef.current = widget;
+        }
+      } else {
+        clearCuttingPlane();
+      }
+      
+    } catch (error) {
+      console.error('[CrossSection] Error applying plane:', error);
+      setExecutionError(error.message);
+    }
+  };
+
+  useEffect(() => {
+    if (crossSectionEnabled && cachedManifold) {
+      handlePlaneChange(crossSectionPlane);
+    } else {
+      executeScript(currentScript);
+    }
+  }, [crossSectionEnabled]);
+
   // Handle face click
   const handleCanvasClick = useCallback((event) => {
     if (!canvasRef.current || !cameraRef.current || !resultRef.current) return;
@@ -87,7 +179,6 @@ const Viewport = forwardRef(({
     const canvas = canvasRef.current;
     const rect = canvas.getBoundingClientRect();
 
-    // Calculate mouse position in normalized device coordinates
     mouseRef.current.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
     mouseRef.current.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
     
@@ -100,14 +191,12 @@ const Viewport = forwardRef(({
       const seedFaceIndex = intersection.faceIndex;
       const geometry = resultRef.current.geometry;
       
-      // Calculate face data from all selected triangles
       const positions = geometry.attributes.position;
       const index = geometry.index.array;
       let centerSum = new Vector3();
       let totalArea = 0;
       const allVertices = [];
 
-      // Select all triangles with same faceID and coplanar adjacent faceIDs
       const faceIndices = selectFaceByID(geometry, seedFaceIndex, {
         normal: [clickedFace.normal.x, clickedFace.normal.y, clickedFace.normal.z]
       });
@@ -132,8 +221,6 @@ const Viewport = forwardRef(({
       });
       
       const center = centerSum.divideScalar(totalArea);
-      
-      // Get normal from the clicked triangle
       const normal = clickedFace.normal.clone();
       
       const faceData = {
@@ -148,7 +235,6 @@ const Viewport = forwardRef(({
       onFaceSelected?.(faceData);
       clearHighlight();
       
-      // Create highlight geometry from all selected triangles
       const highlightPositions = [];
       faceIndices.forEach(faceIdx => {
         const i0 = index[faceIdx * 3];
@@ -201,7 +287,6 @@ const Viewport = forwardRef(({
     const container = containerRef.current;
     let initialized = false;
     
-    // Get actual container dimensions
     const getContainerSize = () => {
       const size = {
         width: container.clientWidth,
@@ -216,7 +301,6 @@ const Viewport = forwardRef(({
       
       let { width, height } = getContainerSize();
       
-      // Don't initialize if container has no size yet
       if (width === 0 || height === 0) {
         console.log('[Viewport] Container not ready, waiting...');
         return;
@@ -225,7 +309,6 @@ const Viewport = forwardRef(({
       console.log('[Viewport] Container ready:', { width, height });
       initialized = true;
 
-      // Scene setup
       const scene = new Scene();
       const camera = new PerspectiveCamera(45, width / height, 0.1, 2000);
       camera.position.set(300, 300, 300);
@@ -237,7 +320,6 @@ const Viewport = forwardRef(({
       sceneRef.current = scene;
       cameraRef.current = camera;
 
-      // Renderer setup
       const renderer = new WebGLRenderer({
         canvas: canvasRef.current,
         antialias: true
@@ -248,12 +330,14 @@ const Viewport = forwardRef(({
       renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
       rendererRef.current = renderer;
 
-      // Controls setup
       const controls = new OrbitControls(camera, renderer.domElement);
       controls.enableDamping = true;
+      // Enable full 360° rotation
+      controls.minPolarAngle = 0; // Remove lower limit
+      controls.maxPolarAngle = Math.PI; // Remove upper limit (allow going upside down)
+      controls.enableRotate = true;
       controlsRef.current = controls;
 
-      // Animation loop
       const animate = () => {
         requestAnimationFrame(animate);
         if (controlsRef.current) {
@@ -264,7 +348,6 @@ const Viewport = forwardRef(({
       animate();
     };
 
-    // Handle resize
     const handleResize = () => {
       if (!initialized) return;
       
@@ -285,7 +368,6 @@ const Viewport = forwardRef(({
           console.log('[Viewport] Controls updated');
         }
         
-        // Force an immediate render
         if (sceneRef.current && cameraRef.current) {
           rendererRef.current.render(sceneRef.current, cameraRef.current);
           console.log('[Viewport] Forced immediate render after resize');
@@ -293,7 +375,6 @@ const Viewport = forwardRef(({
       }
     };
 
-    // Use ResizeObserver to detect when container gets dimensions
     const resizeObserver = new ResizeObserver((entries) => {
       if (!initialized) {
         initScene();
@@ -305,7 +386,6 @@ const Viewport = forwardRef(({
     resizeObserver.observe(container);
     window.addEventListener('resize', handleResize);
 
-    // Try immediate init in case container already has size
     initScene();
 
     return () => {
@@ -318,10 +398,49 @@ const Viewport = forwardRef(({
         resultRef.current.geometry.dispose();
       }
       clearHighlight();
+      clearCuttingPlane();
     };
   }, []);
 
-  // Separate effect for click handler to avoid scene reinitialization
+  // Zoom camera to fit the model
+  const handleZoomToFit = useCallback(() => {
+    if (!resultRef.current?.geometry || !cameraRef.current || !controlsRef.current) return;
+    
+    const geometry = resultRef.current.geometry;
+    geometry.computeBoundingBox();
+    const boundingBox = geometry.boundingBox;
+    
+    if (!boundingBox) return;
+    
+    // Calculate bounding sphere
+    const center = new Vector3();
+    boundingBox.getCenter(center);
+    
+    const size = new Vector3();
+    boundingBox.getSize(size);
+    const maxDim = Math.max(size.x, size.y, size.z);
+    const fov = cameraRef.current.fov * (Math.PI / 180);
+    let cameraZ = Math.abs(maxDim / 2 / Math.tan(fov / 2));
+    
+    // Add some padding
+    cameraZ *= 1.5;
+    
+    // Position camera
+    const camera = cameraRef.current;
+    const controls = controlsRef.current;
+    
+    camera.position.set(center.x + cameraZ, center.y + cameraZ, center.z + cameraZ);
+    camera.lookAt(center);
+    camera.updateProjectionMatrix();
+    
+    // Update controls target
+    controls.target.copy(center);
+    controls.update();
+    
+    console.log('[Viewport] Zoomed to fit');
+  }, []);
+
+  // Separate effect for click handler
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -353,112 +472,95 @@ const Viewport = forwardRef(({
     defineMaterials();
   }, []);
 
-  // Handle script execution and mesh updates
+  // Helper to render a manifold object
+  const renderManifold = useCallback((manifold) => {
+    if (!manifold || !resultRef.current) return;
+
+    const wasm = window.Manifold;
+    const { Manifold } = wasm;
+    const firstID = Manifold.reserveIDs(materials.length);
+    const ids = Array.from({ length: materials.length }, (_, idx) => firstID + idx);
+    const id2matIndex = new Map();
+    ids.forEach((id, idx) => id2matIndex.set(id, idx));
+
+    function mesh2geometry(mesh) {
+      const geometry = new BufferGeometry();
+      geometry.setAttribute('position', new BufferAttribute(mesh.vertProperties, 3));
+      geometry.setIndex(new BufferAttribute(mesh.triVerts, 1));
+
+      if (mesh.faceID && mesh.faceID.length > 0) {
+        geometry.setAttribute('faceID', new BufferAttribute(mesh.faceID, 1));
+      }
+
+      let start = mesh.runIndex[0];
+      for (let run = 0; run < mesh.numRun; ++run) {
+        const end = mesh.runIndex[run + 1];
+        const id = mesh.runOriginalID[run];
+        let matIndex = id2matIndex.get(id);
+        if (matIndex === undefined) {
+          matIndex = 0;
+        }
+
+        geometry.addGroup(start, end - start, matIndex);
+        start = end;
+      }
+
+      geometry.computeVertexNormals();
+      return geometry;
+    }
+
+    resultRef.current.geometry?.dispose();
+    const manifoldMesh = manifold.getMesh();
+    const newGeometry = mesh2geometry(manifoldMesh);
+    resultRef.current.geometry = newGeometry;
+
+    const renderer = rendererRef.current;
+    const scene = sceneRef.current;
+    const camera = cameraRef.current;
+    if (renderer && scene && camera) {
+      renderer.render(scene, camera);
+    }
+  }, [materials]);
+
+  // Handle script execution
   const executeScript = useCallback(async () => {
     if (!currentScript || !sceneRef.current) return;
     setIsExecuting(true);
 
-    // Clear face selection when executing new script
     clearHighlight();
     setSelectedFace(null);
     onFaceSelected?.(null);
 
     try {
-      // Use global Manifold instance
       if (!window.Manifold) {
         throw new Error('Manifold WASM not loaded');
       }
       
       const wasm = window.Manifold;
-
-      // Set up Manifold IDs
-      const { Manifold } = wasm;
-      const firstID = Manifold.reserveIDs(materials.length);
-      const ids = Array.from({ length: materials.length }, (_, idx) => firstID + idx);
-      const id2matIndex = new Map();
-      ids.forEach((id, idx) => id2matIndex.set(id, idx));
-
-      // Helper function to convert Manifold mesh to Three.js geometry
-      function mesh2geometry(mesh) {
-        const geometry = new BufferGeometry();
-        geometry.setAttribute('position', new BufferAttribute(mesh.vertProperties, 3));
-        geometry.setIndex(new BufferAttribute(mesh.triVerts, 1));
-
-        // Preserve faceID if available
-        if (mesh.faceID && mesh.faceID.length > 0) {
-          geometry.setAttribute('faceID', new BufferAttribute(mesh.faceID, 1));
-        }
-
-        let start = mesh.runIndex[0];
-        for (let run = 0; run < mesh.numRun; ++run) {
-          const end = mesh.runIndex[run + 1];
-          const id = mesh.runOriginalID[run];
-          let matIndex = id2matIndex.get(id);
-          if (matIndex === undefined) {
-            matIndex = 0; // Fallback to first material
-          }
-
-          geometry.addGroup(start, end - start, matIndex);
-          start = end;
-        }
-
-        // Important: compute normals for face detection
-        geometry.computeVertexNormals();
-      
-        return geometry;
-      }
-
-      // Execute user script with all wasm exports available
-      console.log('[Viewport] Executing script');
       const wasmKeys = Object.keys(wasm);
       const wasmValues = Object.values(wasm);
       const scriptFn = new Function(...wasmKeys, currentScript);
       const result = scriptFn(...wasmValues);
       
-      // Check if result is a valid Manifold object
       if (!result || typeof result.getMesh !== 'function') {
         console.error('[Viewport] Invalid result - not a Manifold object:', result);
         return;
       }
 
-      if (result) {
-        // Update the mesh
-        if (resultRef.current) {
-          console.log('[Viewport] Updating existing mesh');
-          resultRef.current.geometry?.dispose();
+      // Get and store bounds
+      const bounds = getManifoldBounds(currentScript);
+      setModelBounds(bounds);
 
-          const manifoldMesh = result.getMesh();
-          const newGeometry = mesh2geometry(manifoldMesh);
+      // Cache manifold
+      setCachedManifold(result);
 
-          resultRef.current.geometry = newGeometry;
-        } else {
-          console.log('[Viewport] Creating new mesh');
-          const geometry = mesh2geometry(result.getMesh());
-          const material = new MeshLambertMaterial({
-            color: 0x156289,
-            emissive: 0x072534,
-            side: 2,
-            flatShading: true
-          });
-          const mesh = new ThreeMesh(geometry, material);
-          sceneRef.current.add(mesh);
-          resultRef.current = mesh;
-        }
+      // Always render full model on execution
+      renderManifold(result);
 
-        // Render the scene
-        const renderer = rendererRef.current;
-        const scene = sceneRef.current;
-        const camera = cameraRef.current;
-        if (renderer && scene && camera) {
-          console.log('[Viewport] Rendering scene');
-          renderer.render(scene, camera);
-        }
-      }
     } catch (error) {
       console.error('Error executing script:', error);
       setExecutionError(error.message || 'Script execution failed');
 
-      // Clear geometry on error
       if (resultRef.current) {
         resultRef.current.geometry?.dispose();
         resultRef.current.geometry = new BufferGeometry();
@@ -466,9 +568,8 @@ const Viewport = forwardRef(({
     } finally {
       setIsExecuting(false);
     }
-  }, [currentScript, materials, onFaceSelected]);
+  }, [currentScript, materials, onFaceSelected, renderManifold]);
 
-  // Download 3MF file to users machine
   const handleDownloadModel = useCallback(async () => {
     if (!currentScript || !sceneRef.current || !resultRef.current?.geometry) return;
 
@@ -501,6 +602,16 @@ const Viewport = forwardRef(({
         isUploading={isUploading}
         currentFilename={currentFilename}
       />
+      
+      {/* Cross-Section Panel */}
+      <CrossSectionPanel
+        enabled={crossSectionEnabled}
+        onToggle={handleCrossSectionToggle}
+        onPlaneChange={handlePlaneChange}
+        onZoomToFit={handleZoomToFit}
+        bounds={modelBounds}
+      />
+      
       {executionError && (
         <div className="absolute top-16 right-4 bg-red-900/90 text-white p-3 rounded text-xs max-w-md z-10">
           <div className="flex items-start justify-between gap-2">
@@ -517,6 +628,7 @@ const Viewport = forwardRef(({
           </div>
         </div>
       )}
+      
       {selectedFace && (
         <div className="absolute bottom-4 left-4 bg-black/80 text-white p-3 rounded text-xs font-mono z-10">
           <div className="font-bold mb-1">Selected Face</div>
@@ -525,9 +637,8 @@ const Viewport = forwardRef(({
           <div>Area: {selectedFace.area.toFixed(1)} mm²</div>
         </div>
       )}
-      <canvas 
-        ref={canvasRef}
-      />
+      
+      <canvas ref={canvasRef} />
     </div>
   );
 });

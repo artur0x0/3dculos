@@ -269,7 +269,7 @@ const App = () => {
   if (isMobile) {
     return (
       <div className="flex flex-col h-dvh bg-gray-900 overflow-hidden">
-        <div className="h-[42vh] border-b border-gray-700 flex-shrink-0">
+        <div className="h-[33vh] border-b border-gray-700 flex-shrink-0">
           <CodeEditor 
             ref={codeEditorRef}
             onExecute={handleExecute}
