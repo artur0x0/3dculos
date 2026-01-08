@@ -1,6 +1,6 @@
 // components/CrossSectionPanel.jsx
 import React, { useState, useEffect } from 'react';
-import { FlipHorizontal, ChevronDown, ChevronUp, Maximize2 } from 'lucide-react';
+import { FlipHorizontal, ChevronDown, ChevronUp, Maximize2, Ruler, Move3d } from 'lucide-react';
 import { PLANE_PRESETS } from '../utils/crossSection';
 
 const CrossSectionPanel = ({ 
@@ -8,7 +8,11 @@ const CrossSectionPanel = ({
   onToggle,
   onPlaneChange,
   onZoomToFit,
-  bounds 
+  bounds,
+  measurementEnabled,
+  onMeasurementToggle,
+  axisHelperEnabled,
+  onAxisHelperToggle
 }) => {
   const [isCollapsed, setIsCollapsed] = useState(true);
   const [planeType, setPlaneType] = useState('XY');
@@ -153,13 +157,27 @@ const handleButtonClick = () => {
 
   if (isCollapsed || !enabled) {
     return (
-      <div className="absolute bottom-4 right-4 flex gap-2 bg-white/60 backdrop-blur-sm p-2 rounded-lg shadow-lg z-10">
+      <div className="absolute bottom-4 right-2 lg:right-4 flex gap-2 bg-white/60 backdrop-blur-sm p-2 rounded-lg shadow-lg z-10">
+        <button
+          onClick={onAxisHelperToggle}
+          className={`p-2 rounded ${axisHelperEnabled ? 'text-green-600 bg-green-100' : 'text-blue-600'} hover:bg-gray-100`}
+          title={axisHelperEnabled ? 'Hide Axis Helper' : 'Show Axis Helper'}
+        >
+          <Move3d size={20} />
+        </button>
         <button
           onClick={onZoomToFit}
           className="p-2 rounded text-blue-600 hover:bg-blue-100"
           title="Zoom to Fit"
         >
           <Maximize2 size={20} />
+        </button>
+        <button
+          onClick={onMeasurementToggle}
+          className={`p-2 rounded ${measurementEnabled ? 'text-green-600 bg-green-100' : 'text-blue-600'} hover:bg-gray-100`}
+          title={measurementEnabled ? 'Disable Measurement' : 'Enable Measurement'}
+        >
+          <Ruler size={20} />
         </button>
         <button
           onClick={handleButtonClick}
@@ -182,15 +200,29 @@ const handleButtonClick = () => {
   }
 
   return (
-    <div className="absolute bottom-4 right-4 bg-white/60 backdrop-blur-sm rounded-lg shadow-lg p-3 z-10 w-72">
+    <div className="absolute bottom-4 right-2 lg:right-4 bg-white/50 backdrop-blur-sm rounded-lg shadow-lg p-3 z-10 w-72">
       {/* Header */}
       <div className="flex items-center justify-between mb-3">
+        <button
+          onClick={onAxisHelperToggle}
+          className={`p-2 rounded ${axisHelperEnabled ? 'text-green-600 bg-green-100' : 'text-blue-600'} hover:bg-gray-100`}
+          title={axisHelperEnabled ? 'Hide Axis Helper' : 'Show Axis Helper'}
+        >
+          <Move3d size={20} />
+        </button>
         <button
           onClick={onZoomToFit}
           className="p-2 rounded text-blue-600 hover:bg-blue-100"
           title="Zoom to Fit"
         >
           <Maximize2 size={20} />
+        </button>
+        <button
+          onClick={onMeasurementToggle}
+          className={`p-2 rounded ${measurementEnabled ? 'text-green-600 bg-green-100' : 'text-blue-600'} hover:bg-gray-100`}
+          title={measurementEnabled ? 'Disable Measurement' : 'Enable Measurement'}
+        >
+          <Ruler size={20} />
         </button>
         <button
           onClick={handleButtonClick}

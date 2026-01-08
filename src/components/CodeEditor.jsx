@@ -10,8 +10,8 @@ const DEFAULT_SCRIPT = `// Modify CAD script directly or use the AI assistant to
 const {cube, cylinder, union, subtract} = Manifold;
 
 // Control the roundness of circular features
-// 256 makes flat faces on round features indistinguishable
-const n = 256;
+// Higher smoother but slows down execution and makes round feature selection harder
+const n = 64;
 
 // Create a flat plate 90 mm x 35 mm x 5 mm thick
 const plateThickness = 5;

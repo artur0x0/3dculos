@@ -28,6 +28,8 @@ import { calculateQuote } from '../utils/quoting';
 import { selectFaceByID } from '../utils/selectFace';
 import { getManifoldBounds } from '../utils/crossSection';
 import { createCuttingPlaneWidget, updateCuttingPlaneWidget } from '../utils/cuttingPlaneWidget';
+import { AxesHelper } from 'three';
+import { calculateMeasurements } from '../utils/measurementTool';
 
 const Viewport = forwardRef(({ 
   currentScript, 
@@ -54,6 +56,7 @@ const Viewport = forwardRef(({
   const mouseRef = useRef(new Vector2());
   const highlightMeshRef = useRef(null);
   const cuttingPlaneWidgetRef = useRef(null);
+  const axisHelperRef = useRef(null);
   
   const [selectedFace, setSelectedFace] = useState(null);
   const [materials, setMaterials] = useState([]);
@@ -70,6 +73,11 @@ const Viewport = forwardRef(({
   });
   const [modelBounds, setModelBounds] = useState(null);
   const [cachedManifold, setCachedManifold] = useState(null);
+  
+  // Measurement tool and axis helper state
+  const [measurementEnabled, setMeasurementEnabled] = useState(false);
+  const [measurementFaces, setMeasurementFaces] = useState({ first: null, second: null });
+  const [axisHelperEnabled, setAxisHelperEnabled] = useState(false);
 
   useImperativeHandle(ref, () => ({
     executeScript,
@@ -86,14 +94,23 @@ const Viewport = forwardRef(({
   }));
 
   // Clear face highlight
-  const clearHighlight = () => {
-    if (highlightMeshRef.current && sceneRef.current) {
-      sceneRef.current.remove(highlightMeshRef.current);
-      highlightMeshRef.current.geometry?.dispose();
-      highlightMeshRef.current.material?.dispose();
-      highlightMeshRef.current = null;
+  const clearHighlight = useCallback(() => {
+    if (highlightMeshRef.current) {
+      if (Array.isArray(highlightMeshRef.current)) {
+        highlightMeshRef.current.forEach(mesh => {
+          sceneRef.current.remove(mesh);
+          mesh.geometry?.dispose();
+          mesh.material?.dispose();
+        });
+        highlightMeshRef.current = [];
+      } else {
+        sceneRef.current.remove(highlightMeshRef.current);
+        highlightMeshRef.current.geometry?.dispose();
+        highlightMeshRef.current.material?.dispose();
+        highlightMeshRef.current = null;
+      }
     }
-  };
+  }, []);
 
   // Clear cutting plane widget
   const clearCuttingPlane = () => {
@@ -175,13 +192,10 @@ const Viewport = forwardRef(({
   // Handle face click
   const handleCanvasClick = useCallback((event) => {
     if (!canvasRef.current || !cameraRef.current || !resultRef.current) return;
-    
     const canvas = canvasRef.current;
     const rect = canvas.getBoundingClientRect();
-
     mouseRef.current.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
     mouseRef.current.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-    
     raycasterRef.current.setFromCamera(mouseRef.current, cameraRef.current);
     const intersects = raycasterRef.current.intersectObject(resultRef.current);
     
@@ -190,13 +204,11 @@ const Viewport = forwardRef(({
       const clickedFace = intersection.face;
       const seedFaceIndex = intersection.faceIndex;
       const geometry = resultRef.current.geometry;
-      
       const positions = geometry.attributes.position;
       const index = geometry.index.array;
       let centerSum = new Vector3();
       let totalArea = 0;
       const allVertices = [];
-
       const faceIndices = selectFaceByID(geometry, seedFaceIndex, {
         normal: [clickedFace.normal.x, clickedFace.normal.y, clickedFace.normal.z]
       });
@@ -205,24 +217,19 @@ const Viewport = forwardRef(({
         const i0 = index[faceIdx * 3];
         const i1 = index[faceIdx * 3 + 1];
         const i2 = index[faceIdx * 3 + 2];
-        
         const v1 = new Vector3().fromBufferAttribute(positions, i0);
         const v2 = new Vector3().fromBufferAttribute(positions, i1);
         const v3 = new Vector3().fromBufferAttribute(positions, i2);
-        
         const triangle = new Triangle(v1, v2, v3);
         const area = triangle.getArea();
         const triCenter = new Vector3().add(v1).add(v2).add(v3).divideScalar(3);
-        
         centerSum.add(triCenter.multiplyScalar(area));
         totalArea += area;
-        
         allVertices.push([v1.x, v1.y, v1.z], [v2.x, v2.y, v2.z], [v3.x, v3.y, v3.z]);
       });
       
       const center = centerSum.divideScalar(totalArea);
       const normal = clickedFace.normal.clone();
-      
       const faceData = {
         center: [center.x, center.y, center.z],
         normal: [normal.x, normal.y, normal.z],
@@ -230,54 +237,92 @@ const Viewport = forwardRef(({
         vertices: allVertices,
         triangleCount: faceIndices.length
       };
-      
-      setSelectedFace(faceData);
-      onFaceSelected?.(faceData);
-      clearHighlight();
-      
-      const highlightPositions = [];
-      faceIndices.forEach(faceIdx => {
-        const i0 = index[faceIdx * 3];
-        const i1 = index[faceIdx * 3 + 1];
-        const i2 = index[faceIdx * 3 + 2];
-        
-        const v1 = new Vector3().fromBufferAttribute(positions, i0);
-        const v2 = new Vector3().fromBufferAttribute(positions, i1);
-        const v3 = new Vector3().fromBufferAttribute(positions, i2);
-        
-        highlightPositions.push(
-          v1.x, v1.y, v1.z,
-          v2.x, v2.y, v2.z,
-          v3.x, v3.y, v3.z
-        );
-      });
-      
-      const highlightGeometry = new BufferGeometry();
-      highlightGeometry.setAttribute('position', new BufferAttribute(new Float32Array(highlightPositions), 3));
-      const indices = [];
-      for (let i = 0; i < faceIndices.length * 3; i++) {
-        indices.push(i);
+
+      // Handle measurement mode
+      if (measurementEnabled) {
+        if (!measurementFaces.first) {
+          // First face selected
+          setMeasurementFaces({ first: faceData, second: null });
+          
+          // Highlight first face
+          clearHighlight();
+          highlightFace(faceIndices, geometry, positions, index, 0xffff00, 'first');
+          
+          console.log('[Measurement] First face selected');
+        } else if (!measurementFaces.second) {
+          // Second face selected - highlight and calculate
+          setMeasurementFaces(prev => ({ ...prev, second: faceData }));
+          highlightFace(faceIndices, geometry, positions, index, 0xffff00, 'second');
+          
+          console.log('[Measurement] Second face selected');
+        } else {
+          // Third face - restart with this as first
+          setMeasurementFaces({ first: faceData, second: null });
+          
+          clearHighlight();
+          highlightFace(faceIndices, geometry, positions, index, 0x00ff00);
+          
+          console.log('[Measurement] Restarted with new first face');
+        }
+      } else {
+        // Normal face selection mode
+        setSelectedFace(faceData);
+        onFaceSelected?.(faceData);
+        clearHighlight();
+        highlightFace(faceIndices, geometry, positions, index, 0xffff00);
       }
-      highlightGeometry.setIndex(indices);
-      
-      const edges = new EdgesGeometry(highlightGeometry);
-      const edgesLine = new LineSegments(edges, new LineBasicMaterial({ 
-        color: 0xffff00, linewidth: 3, depthTest: false 
-      }));
-      
-      const highlightMesh = new ThreeMesh(highlightGeometry, new MeshBasicMaterial({
-        color: 0xffff00, transparent: true, opacity: 0.3, depthTest: false, side: 2
-      }));
-      highlightMesh.add(edgesLine);
-      
-      sceneRef.current.add(highlightMesh);
-      highlightMeshRef.current = highlightMesh;
     } else {
-      clearHighlight();
-      setSelectedFace(null);
-      onFaceSelected?.(null);
+      // Clicked empty space
+      if (measurementEnabled) {
+        console.log("[Measurement] Keeping face selected for measurement")
+      } else {
+        clearHighlight();
+        setSelectedFace(null);
+        onFaceSelected?.(null);
+      }
     }
-  }, [onFaceSelected]);
+  }, [onFaceSelected, measurementEnabled, measurementFaces]);
+
+  // Helper function to highlight a face
+  const highlightFace = useCallback((faceIndices, geometry, positions, index, color = 0xffff00, name = 'highlight') => {
+    const highlightPositions = [];
+    faceIndices.forEach(faceIdx => {
+      const i0 = index[faceIdx * 3];
+      const i1 = index[faceIdx * 3 + 1];
+      const i2 = index[faceIdx * 3 + 2];
+      const v1 = new Vector3().fromBufferAttribute(positions, i0);
+      const v2 = new Vector3().fromBufferAttribute(positions, i1);
+      const v3 = new Vector3().fromBufferAttribute(positions, i2);
+      highlightPositions.push(
+        v1.x, v1.y, v1.z,
+        v2.x, v2.y, v2.z,
+        v3.x, v3.y, v3.z
+      );
+    });
+    
+    const highlightGeometry = new BufferGeometry();
+    highlightGeometry.setAttribute('position', new BufferAttribute(new Float32Array(highlightPositions), 3));
+    const indices = [];
+    for (let i = 0; i < faceIndices.length * 3; i++) {
+      indices.push(i);
+    }
+    highlightGeometry.setIndex(indices);
+    const edges = new EdgesGeometry(highlightGeometry);
+    const edgesLine = new LineSegments(edges, new LineBasicMaterial({ 
+      color, linewidth: 3, depthTest: true
+    }));
+    const highlightMesh = new ThreeMesh(highlightGeometry, new MeshBasicMaterial({
+      color, transparent: true, opacity: 0.3, depthTest: true, side: 2
+    }));
+    highlightMesh.add(edgesLine);
+    highlightMesh.name = name;
+    sceneRef.current.add(highlightMesh);
+    
+    if (!highlightMeshRef.current) {
+      highlightMeshRef.current = [];
+    }
+    highlightMeshRef.current.push(highlightMesh);
+  }, []);
 
   // Initialize Three.js scene
   useEffect(() => {
@@ -338,12 +383,38 @@ const Viewport = forwardRef(({
       controls.enableRotate = true;
       controlsRef.current = controls;
 
+      // Add axis helper
+      const axisHelper = new AxesHelper(50);
+      sceneRef.current.add(axisHelper);
+      axisHelperRef.current = axisHelper;
+
       const animate = () => {
         requestAnimationFrame(animate);
+        
         if (controlsRef.current) {
           controlsRef.current.update();
         }
-        renderer.render(scene, camera);
+        
+        if (rendererRef.current && sceneRef.current && cameraRef.current) {
+          try {
+            rendererRef.current.render(sceneRef.current, cameraRef.current);
+          } catch (error) {
+            // Log debug info only on error
+            const meshCount = sceneRef.current.children.filter(c => c.type === 'Mesh').length;
+            const hasMaterials = resultRef.current?.material && Array.isArray(resultRef.current.material);
+            const hasGeometry = resultRef.current?.geometry?.attributes?.position;
+            
+            console.error('[Animate] Render error:', error.message);
+            console.error('[Animate] Scene state:', {
+              meshCount,
+              hasMaterials,
+              hasGeometry,
+              resultMaterial: resultRef.current?.material?.length || 'none',
+              sceneChildren: sceneRef.current.children.length,
+              highlightMeshes: Array.isArray(highlightMeshRef.current) ? highlightMeshRef.current.length : (highlightMeshRef.current ? 1 : 0)
+            });
+          }
+        }
       };
       animate();
     };
@@ -439,6 +510,33 @@ const Viewport = forwardRef(({
     
     console.log('[Viewport] Zoomed to fit');
   }, []);
+
+  const handleMeasurementToggle = () => {
+    if (!measurementEnabled && selectedFace) {
+      // Turning on measurement mode with a face already selected
+      setMeasurementFaces({ first: selectedFace, second: null });
+      // Keep the existing face highlighted - don't clear
+    } else {
+      // Turning off measurement mode or no face selected when turning on
+      setMeasurementFaces({ first: null, second: null });
+      if (measurementEnabled) {
+        // Clear highlights when turning off measurement mode
+        clearHighlight();
+      }
+    }
+    
+    setMeasurementEnabled(!measurementEnabled);
+  };
+
+  const handleAxisHelperToggle = () => {
+    setAxisHelperEnabled(prev => {
+      const newValue = !prev;
+      if (axisHelperRef.current) {
+        axisHelperRef.current.visible = newValue;
+      }
+      return newValue;
+    });
+  };
 
   // Separate effect for click handler
   useEffect(() => {
@@ -604,13 +702,17 @@ const Viewport = forwardRef(({
       />
       
       {/* Cross-Section Panel */}
-      <CrossSectionPanel
-        enabled={crossSectionEnabled}
-        onToggle={handleCrossSectionToggle}
-        onPlaneChange={handlePlaneChange}
-        onZoomToFit={handleZoomToFit}
-        bounds={modelBounds}
-      />
+        <CrossSectionPanel
+          enabled={crossSectionEnabled}
+          onToggle={handleCrossSectionToggle}
+          onPlaneChange={handlePlaneChange}
+          onZoomToFit={handleZoomToFit}
+          bounds={modelBounds}
+          measurementEnabled={measurementEnabled}
+          onMeasurementToggle={handleMeasurementToggle}
+          axisHelperEnabled={axisHelperEnabled}
+          onAxisHelperToggle={handleAxisHelperToggle}
+        />
       
       {executionError && (
         <div className="absolute top-16 right-4 bg-red-900/90 text-white p-3 rounded text-xs max-w-md z-10">
@@ -629,12 +731,36 @@ const Viewport = forwardRef(({
         </div>
       )}
       
-      {selectedFace && (
-        <div className="absolute bottom-4 left-4 bg-black/80 text-white p-3 rounded text-xs font-mono z-10">
+      {/* Face Info Display */}
+      {selectedFace && !measurementEnabled && (
+        <div className="absolute bottom-4 left-2 bg-black/50 text-white rounded-lg text-xs font-mono z-10">
           <div className="font-bold mb-1">Selected Face</div>
           <div>Center: [{selectedFace.center.map(v => v.toFixed(1)).join(', ')}]</div>
           <div>Normal: [{selectedFace.normal.map(v => v.toFixed(2)).join(', ')}]</div>
           <div>Area: {selectedFace.area.toFixed(1)} mm²</div>
+        </div>
+      )}
+
+      {/* Measurement Info Display */}
+      {measurementEnabled && measurementFaces.first && (
+        <div className="absolute bottom-4 left-2 bg-black/50 backdrop-blur-sm text-white p-3 rounded-lg text-xs font-mono z-10 space-y-1">
+          {measurementFaces.second ? (
+            <>
+                {(() => {
+                  const measurements = calculateMeasurements(measurementFaces.first, measurementFaces.second);
+                  return (
+                    <>
+                      <div className="text-gray-300">Normal: {measurements.normal.toFixed(2)} mm</div>
+                      <div className="text-red-300">X: {measurements.x.toFixed(2)} mm</div>
+                      <div className="text-green-300">Y: {measurements.y.toFixed(2)} mm</div>
+                      <div className="text-blue-300">Z: {measurements.z.toFixed(2)} mm</div>
+                    </>
+                  );
+                })()}
+            </>
+          ) : (
+            <div className="text-gray-400">Select second face...</div>
+          )}
         </div>
       )}
       
