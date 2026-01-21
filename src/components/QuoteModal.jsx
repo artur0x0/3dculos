@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { X, Loader2, DollarSign, Clock, Package, ShoppingCart } from 'lucide-react';
+import { X, DollarSign, Clock, Package, ShoppingCart } from 'lucide-react';
 import { PROCESSES } from '../utils/quoting';
+import { generate3MFBlob } from '../utils/downloads';
 
-const QuoteModal = ({ onClose, onGetQuote }) => {
+const QuoteModal = ({ onClose, onGetQuote, onOrder, currentScript, currentFilename }) => {
   const [selectedProcess, setSelectedProcess] = useState('FDM');
   const [selectedMaterial, setSelectedMaterial] = useState('PLA');
   const [infill, setInfill] = useState(20);
@@ -40,8 +41,52 @@ const QuoteModal = ({ onClose, onGetQuote }) => {
     setSelectedMaterial(PROCESSES[process].materials[0]);
   };
 
+  // Handle order button click
+  const handleOrder = async () => {
+    if (!quoteResult || !onOrder) return;
+
+    let name;
+    if (currentFilename) {
+      name = currentFilename.split('.')[0] + '.3mf'
+    } else {
+      name = "model.3mf"
+    }
+
+    const blob = await generate3MFBlob(currentScript);
+    const arrayBuffer = await blob.arrayBuffer();
+    const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+
+    const quoteData = {
+      process: selectedProcess,
+      material: selectedMaterial,
+      infill: infill,
+      volume: quoteResult.volume,
+      surfaceArea: quoteResult.surfaceArea,
+      materialCost: quoteResult.costs.material,
+      machineCost: quoteResult.costs.machine,
+      subtotal: quoteResult.costs.total,
+      materialGrams: quoteResult.materialUsage.grams,
+    };
+
+    const modelData = {
+      boundingBox: quoteResult.boundingBox || {
+        width: quoteResult.bounds?.size?.[0] || 100,
+        height: quoteResult.bounds?.size?.[1] || 100,
+        depth: quoteResult.bounds?.size?.[2] || 50,
+      },
+      modelFile: {
+        contentType: 'application/vnd.ms-package.3dmanufacturing-3dmodel+xml',
+        sizeBytes: blob.size,
+        filename: name,
+        data: base64
+      }
+    };
+
+    onOrder(quoteData, modelData);
+  };
+
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
       <div className="bg-[#1e1e1e] rounded-lg shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-hidden flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-gray-700">
@@ -216,11 +261,11 @@ const QuoteModal = ({ onClose, onGetQuote }) => {
                 {/* Order Button */}
                 <div className="pt-4">
                   <button
-                    disabled
-                    className="w-full px-6 py-4 bg-gray-700 text-gray-400 rounded-lg cursor-not-allowed flex items-center justify-center gap-2 text-lg font-semibold"
+                    onClick={handleOrder}
+                    className="w-full px-6 py-4 bg-green-600 hover:bg-green-700 text-white rounded-lg flex items-center justify-center gap-2 text-lg font-semibold transition-colors"
                   >
                     <ShoppingCart size={24} />
-                    Order - Coming Soon
+                    Order
                   </button>
                 </div>
               </div>

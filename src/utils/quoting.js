@@ -112,20 +112,48 @@ export async function calculateQuote(currentScript, options) {
   const totalCost = materialCost + machineCost;
   
   return {
+    // Material usage
     materialUsage: {
       grams: parseFloat(materialGrams.toFixed(1)),
       meters: 0
     },
+    materialGrams: parseFloat(materialGrams.toFixed(1)), // Also at top level for easy access
+    
+    // Print time
     printTime: parseFloat(printTimeHours.toFixed(1)),
+    
+    // Costs - both nested and flat for convenience
     costs: {
       material: parseFloat(materialCost.toFixed(2)),
       machine: parseFloat(machineCost.toFixed(2)),
       total: parseFloat(totalCost.toFixed(2))
     },
+    material: parseFloat(materialCost.toFixed(2)),  // Flat access
+    machine: parseFloat(machineCost.toFixed(2)),    // Flat access
+    subtotal: parseFloat(totalCost.toFixed(2)),     // Flat access
+    
+    // Settings used
     infill,
-    material,
+    materialName: material,
+    process,
+    
+    // Model info
     volume: parseFloat(volume.toFixed(1)),
-    surfaceArea: parseFloat(surfaceArea.toFixed(1))
+    surfaceArea: parseFloat(surfaceArea.toFixed(1)),
+    
+    // NEW: Bounding box for shipping calculations
+    boundingBox: {
+      width: parseFloat(width.toFixed(1)),   // mm
+      height: parseFloat(height.toFixed(1)), // mm
+      depth: parseFloat(depth.toFixed(1)),   // mm
+    },
+    
+    // Also include raw bbox for compatibility
+    bounds: {
+      min: bbox.min,
+      max: bbox.max,
+      size: [width, height, depth],
+    },
   };
 }
 

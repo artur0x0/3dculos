@@ -1,8 +1,10 @@
 // components/PromptInput.jsx
-import React, { useState, useRef } from 'react';
-import { Send, Loader2, X } from 'lucide-react';
+// Fixed version - proper event handling + removed duplicate form
 
-const MAX_HISTORY = 10; // Keep last 10 messages for context
+import React, { useState, useRef } from 'react';
+import { Send, Loader2, X, Play } from 'lucide-react';
+
+const MAX_HISTORY = 42;
 
 const PromptInput = ({ onCodeGenerated, currentCode, selectedFace, onClearFaceSelection, isMobile }) => {
   const [input, setInput] = useState('');
@@ -41,12 +43,9 @@ You can use the face center for positioning new geometry and the normal for orie
 
   const buildMessages = (userMessage) => {
     const messages = [];
-    
-    // Add conversation history (last MAX_HISTORY messages)
     const recentHistory = conversationHistory.slice(-MAX_HISTORY);
     messages.push(...recentHistory);
     
-    // Add context about current code if it exists
     let contextualMessage = userMessage;
     if (currentCode && currentCode.trim().length > 0) {
       contextualMessage = `Current code in editor:
@@ -59,7 +58,6 @@ User request: ${userMessage}
 You can choose to modify the existing code or create something completely new based on what makes the most sense for this request. Always return a complete, executable script that returns a single Manifold object.`;
     }
     
-    // Add face selection context if available
     if (selectedFace) {
       contextualMessage = formatFaceContext(selectedFace) + '\n\n' + contextualMessage;
     }
@@ -70,36 +68,31 @@ You can choose to modify the existing code or create something completely new ba
   };
 
   const extractCode = (response) => {
-    // Extract code from markdown code block
     const match = response.match(/```(?:javascript|js)?\n([\s\S]*?)```/);
     if (!match) {
-      // If no code block found, check if the entire response looks like code
       if (response.includes('Manifold') || response.includes('return')) {
         return response.trim();
       }
       return null;
     }
-    
     return match[1].trim();
   };
 
   const validateCode = (code) => {
-    // Basic validation to ensure the code returns something
     if (!code.includes('return')) {
       throw new Error('Generated code must include a return statement');
     }
-    
-    // Check if it uses Manifold
     if (!code.includes('Manifold') && !code.includes('cube') && 
         !code.includes('sphere') && !code.includes('cylinder')) {
       throw new Error('Code must use Manifold library functions');
     }
-
     return true;
   };
 
   const handleSubmit = async (e) => {
-    e.preventDefault();
+    if (e) {
+      e.preventDefault();
+    }
     
     if (!input.trim() || isLoading) return;
     
@@ -111,15 +104,12 @@ You can choose to modify the existing code or create something completely new ba
     try {
       const messages = buildMessages(userMessage);
       
-      // Now we only send messages - backend handles everything else
       const response = await fetch('/api/generate', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({
-          messages: messages
-        })
+        body: JSON.stringify({ messages })
       });
 
       if (!response.ok) {
@@ -131,7 +121,6 @@ You can choose to modify the existing code or create something completely new ba
       const code = extractCode(assistantResponse);
 
       if (code && validateCode(code)) {
-        // Update conversation history
         setConversationHistory(prev => [
           ...prev,
           { role: 'user', content: userMessage },
@@ -140,7 +129,6 @@ You can choose to modify the existing code or create something completely new ba
 
         onCodeGenerated(code, userMessage);
 
-        // Clear face selection after using it
         if (selectedFace) {
           onClearFaceSelection?.();
         }
@@ -173,17 +161,23 @@ You can choose to modify the existing code or create something completely new ba
     }
   };
 
+  const handleReExecute = () => {
+    if (currentCode) {
+      onCodeGenerated(currentCode, "");
+    }
+  };
+
   return (
     <div className="border-t border-gray-700/50 bg-[#1e1e1e] p-3"
          style={isMobile ? { paddingBottom: 'max(12px, env(safe-area-inset-bottom))' } : {}}>
 
-      <form onSubmit={handleSubmit} className="flex flex-col gap-2"></form>
       <form onSubmit={handleSubmit} className="flex flex-col gap-2">
         {error && (
           <div className="text-xs text-red-400 px-2">
             {error}
           </div>
         )}
+
         {selectedFace && (
           <div className="flex items-center justify-left bg-yellow-500/10 border border-yellow-500/30 rounded py-2">
             <button
@@ -198,6 +192,7 @@ You can choose to modify the existing code or create something completely new ba
             </span>
           </div>
         )}
+
         <div className="flex gap-2 items-center">
           <textarea
             ref={textareaRef}
@@ -213,15 +208,27 @@ You can choose to modify the existing code or create something completely new ba
             className="flex-1 bg-[#1e1e1e] text-gray-200 rounded px-3 py-2 text-base border border-gray-600 opacity-50 focus:outline-none focus:ring-1 focus:ring-white focus:border-transparent focus:opacity-100 placeholder-gray-500 resize-none overflow-hidden"
             disabled={isLoading}
           />
-          {!isMobile && (
-            <button
-              type="submit"
-              disabled={isLoading || !input.trim()}
-              className="h-[38px] px-3 bg-[#1e1e1e] text-white rounded border border-gray-600 enabled:hover:ring-1 enabled:hover:ring-white enabled:hover:border-transparent disabled:opacity-50 transition-colors"
-            >
-              {isLoading ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
-            </button>
-          )}
+
+          <button
+            type="button"
+            onClick={() => {
+              if (input.trim()) {
+                handleSubmit();
+              } else {
+                handleReExecute();
+              }
+            }}
+            disabled={isLoading}
+            className="h-[38px] px-3 bg-[#1e1e1e] text-white rounded border border-gray-600 enabled:hover:ring-1 enabled:hover:ring-white enabled:hover:border-transparent disabled:opacity-50 transition-colors"
+          >
+            {isLoading ? (
+              <Loader2 size={16} className="animate-spin" />
+            ) : input.trim() ? (
+              <Send size={16} />
+            ) : (
+              <Play size={16} className="text-green-600" />
+            )}
+          </button>
         </div>
       </form>
     </div>

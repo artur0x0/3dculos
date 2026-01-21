@@ -30,8 +30,17 @@ import { getManifoldBounds } from '../utils/crossSection';
 import { createCuttingPlaneWidget, updateCuttingPlaneWidget } from '../utils/cuttingPlaneWidget';
 import { AxesHelper } from 'three';
 import { calculateMeasurements } from '../utils/measurementTool';
+import { parseImportedModels, loadCachedModel } from '../utils/stepImport';
+import { validateScript, formatValidationErrors, wrapInStrictMode } from '../utils/scriptValidator';
+
+// Execution limits
+const EXECUTION_LIMITS = {
+  timeoutMs: 15000,      // 15 seconds max execution time
+  memoryLimitMB: 512,    // 512 MB memory limit
+};
 
 const Viewport = forwardRef(({ 
+  onAccount,
   currentScript, 
   onFaceSelected, 
   onOpen,
@@ -57,6 +66,7 @@ const Viewport = forwardRef(({
   const highlightMeshRef = useRef(null);
   const cuttingPlaneWidgetRef = useRef(null);
   const axisHelperRef = useRef(null);
+  const executionAbortRef = useRef(null);
   
   const [selectedFace, setSelectedFace] = useState(null);
   const [materials, setMaterials] = useState([]);
@@ -90,7 +100,8 @@ const Viewport = forwardRef(({
     calculateQuote: async (options) => {
       return await calculateQuote(currentScript, options);
     },
-    zoomToFit: handleZoomToFit 
+    zoomToFit: handleZoomToFit,
+    getCurrentManifold: () => cachedManifold
   }));
 
   // Clear face highlight
@@ -130,7 +141,6 @@ const Viewport = forwardRef(({
       try {
         if (!window.Manifold || !currentScript) return;
         setCrossSectionEnabled(true);
-        console.log('[CrossSection] Cached manifold for preview');
       } catch (error) {
         console.error('[CrossSection] Failed to cache manifold:', error);
       }
@@ -143,7 +153,6 @@ const Viewport = forwardRef(({
 
   // Handle plane changes - use cached manifold for preview
   const handlePlaneChange = async (plane) => {
-    console.log("[VIEWPORT] Handling plane change to ", plane)
     setCrossSectionPlane(plane);
     
     if (!crossSectionEnabled || !cachedManifold) return;
@@ -283,6 +292,17 @@ const Viewport = forwardRef(({
     }
   }, [onFaceSelected, measurementEnabled, measurementFaces]);
 
+  // Effect for click handler
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    
+    canvas.addEventListener('mousedown', handleCanvasClick);
+    return () => {
+      canvas.removeEventListener('mousedown', handleCanvasClick);
+    };
+  }, [handleCanvasClick]);
+
   // Helper function to highlight a face
   const highlightFace = useCallback((faceIndices, geometry, positions, index, color = 0xffff00, name = 'highlight') => {
     const highlightPositions = [];
@@ -337,7 +357,6 @@ const Viewport = forwardRef(({
         width: container.clientWidth,
         height: container.clientHeight
       };
-      console.log('[Viewport] getContainerSize called:', size);
       return size;
     };
 
@@ -347,11 +366,9 @@ const Viewport = forwardRef(({
       let { width, height } = getContainerSize();
       
       if (width === 0 || height === 0) {
-        console.log('[Viewport] Container not ready, waiting...');
         return;
       }
       
-      console.log('[Viewport] Container ready:', { width, height });
       initialized = true;
 
       const scene = new Scene();
@@ -371,7 +388,6 @@ const Viewport = forwardRef(({
       });
 
       renderer.setSize(width, height);
-      console.log('[Viewport] Renderer initialized with size:', { width, height });
       renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
       rendererRef.current = renderer;
 
@@ -387,6 +403,7 @@ const Viewport = forwardRef(({
       const axisHelper = new AxesHelper(50);
       sceneRef.current.add(axisHelper);
       axisHelperRef.current = axisHelper;
+      axisHelperRef.current.visible = axisHelperEnabled;
 
       const animate = () => {
         requestAnimationFrame(animate);
@@ -427,21 +444,17 @@ const Viewport = forwardRef(({
       if (cameraRef.current) {
         cameraRef.current.aspect = width / height;
         cameraRef.current.updateProjectionMatrix();
-        console.log("[Viewport] Camera aspect changed to", cameraRef.current.aspect);
       }
       
       if (rendererRef.current) {
         rendererRef.current.setSize(width, height);
-        console.log('[Viewport] Renderer re-rendered with size:', { width, height });
         
         if (controlsRef.current) {
           controlsRef.current.update();
-          console.log('[Viewport] Controls updated');
         }
         
         if (sceneRef.current && cameraRef.current) {
           rendererRef.current.render(sceneRef.current, cameraRef.current);
-          console.log('[Viewport] Forced immediate render after resize');
         }
       }
     };
@@ -471,6 +484,27 @@ const Viewport = forwardRef(({
       clearHighlight();
       clearCuttingPlane();
     };
+  }, []);
+
+  // Initialize materials
+  useEffect(() => {
+    const defineMaterials = () => {
+      const matls = [
+        new MeshNormalMaterial({ flatShading: true }),
+        new MeshLambertMaterial({ color: 'red', flatShading: true }),
+        new MeshLambertMaterial({ color: 'blue', flatShading: true })
+      ];
+      setMaterials(matls);
+
+      const result = new ThreeMesh(undefined, matls);
+      
+      const scene = sceneRef.current;
+      if (!scene) return;
+
+      scene.add(result);
+      resultRef.current = result;
+    };
+    defineMaterials();
   }, []);
 
   // Zoom camera to fit the model
@@ -538,38 +572,6 @@ const Viewport = forwardRef(({
     });
   };
 
-  // Separate effect for click handler
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    
-    canvas.addEventListener('mousedown', handleCanvasClick);
-    return () => {
-      canvas.removeEventListener('mousedown', handleCanvasClick);
-    };
-  }, [handleCanvasClick]);
-
-  // Initialize materials
-  useEffect(() => {
-    const defineMaterials = () => {
-      const matls = [
-        new MeshNormalMaterial({ flatShading: true }),
-        new MeshLambertMaterial({ color: 'red', flatShading: true }),
-        new MeshLambertMaterial({ color: 'blue', flatShading: true })
-      ];
-      setMaterials(matls);
-
-      const result = new ThreeMesh(undefined, matls);
-      
-      const scene = sceneRef.current;
-      if (!scene) return;
-
-      scene.add(result);
-      resultRef.current = result;
-    };
-    defineMaterials();
-  }, []);
-
   // Helper to render a manifold object
   const renderManifold = useCallback((manifold) => {
     if (!manifold || !resultRef.current) return;
@@ -620,10 +622,23 @@ const Viewport = forwardRef(({
     }
   }, [materials]);
 
-  // Handle script execution
-  const executeScript = useCallback(async () => {
-    if (!currentScript || !sceneRef.current) return;
+  /**
+   * Execute script with validation, timeout, and memory monitoring
+   */
+  const executeScript = useCallback(async (scriptOverride) => {
+    const script = scriptOverride ?? currentScript;
+    
+    if (!script || !sceneRef.current) return;
+    
+    // Cancel any pending execution
+    if (executionAbortRef.current) {
+      executionAbortRef.current.aborted = true;
+    }
+    const abortController = { aborted: false };
+    executionAbortRef.current = abortController;
+    
     setIsExecuting(true);
+    setExecutionError(null);
 
     clearHighlight();
     setSelectedFace(null);
@@ -634,26 +649,48 @@ const Viewport = forwardRef(({
         throw new Error('Manifold WASM not loaded');
       }
       
-      const wasm = window.Manifold;
-      const wasmKeys = Object.keys(wasm);
-      const wasmValues = Object.values(wasm);
-      const scriptFn = new Function(...wasmKeys, currentScript);
-      const result = scriptFn(...wasmValues);
+      // Step 1: Validate script for dangerous patterns
+      console.log('[Viewport] Validating script...');
+      const validation = validateScript(script);
+      if (!validation.valid) {
+        throw new Error(formatValidationErrors(validation.errors));
+      }
       
-      if (!result || typeof result.getMesh !== 'function') {
-        console.error('[Viewport] Invalid result - not a Manifold object:', result);
+      if (abortController.aborted) {
+        console.log('[Viewport] Execution aborted during preload');
         return;
       }
 
+      // Step 2: Load cached models into window for access by script executor function
+      const importedModels = parseImportedModels(script);
+      for (let i = 0; i < importedModels.length; i++) {
+        await loadCachedModel(importedModels[i]);
+      }
+      
+      // Step 3: Execute script with timeout and strict mode
+      const result = await executeWithTimeout(script, EXECUTION_LIMITS.timeoutMs);
+      
+      if (abortController.aborted) {
+        console.log('[Viewport] Execution aborted');
+        return;
+      }
+      
+      if (!result || typeof result.getMesh !== 'function') {
+        console.error('[Viewport] Invalid result - not a Manifold object:', result);
+        throw new Error('Script must return a Manifold object');
+      }
+
       // Get and store bounds
-      const bounds = getManifoldBounds(currentScript);
+      const bounds = getManifoldBounds(script);
       setModelBounds(bounds);
 
       // Cache manifold
       setCachedManifold(result);
 
-      // Always render full model on execution
+      // Render the result
       renderManifold(result);
+      
+      console.log('[Viewport] Script executed successfully');
 
     } catch (error) {
       console.error('Error executing script:', error);
@@ -665,8 +702,68 @@ const Viewport = forwardRef(({
       }
     } finally {
       setIsExecuting(false);
+      if (executionAbortRef.current === abortController) {
+        executionAbortRef.current = null;
+      }
     }
-  }, [currentScript, materials, onFaceSelected, renderManifold]);
+  }, [currentScript, materials, onFaceSelected, renderManifold, clearHighlight]);
+
+  /**
+   * Execute script with timeout, strict mode, and injected safe functions
+   */
+  const executeWithTimeout = (script, timeoutMs) => {
+    return new Promise((resolve, reject) => {
+      const timeoutId = setTimeout(() => {
+        reject(new Error(`Script execution timed out after ${timeoutMs / 1000}s`));
+      }, timeoutMs);
+      
+      try {
+        // Check memory before execution (Chrome only)
+        if (performance.memory) {
+          const usedMB = performance.memory.usedJSHeapSize / (1024 * 1024);
+          
+          if (usedMB > EXECUTION_LIMITS.memoryLimitMB) {
+            clearTimeout(timeoutId);
+            reject(new Error(`Memory limit exceeded: ${usedMB.toFixed(1)}MB > ${EXECUTION_LIMITS.memoryLimitMB}MB`));
+            return;
+          }
+        }
+        
+        // Build execution scope
+        const wasm = window.Manifold;
+        const scopeEntries = [...Object.entries(wasm)];
+        const scopeKeys = scopeEntries.map(([k]) => k);
+        const scopeValues = scopeEntries.map(([, v]) => v);
+
+        // Wrap in strict mode (your existing function, assuming it adds "use strict")
+        const wrappedScript = wrapInStrictMode(script);
+
+        // Create function with exactly these parameter names
+        const fn = new Function(...scopeKeys, wrappedScript);
+
+        // Execute script
+        const result = fn(...scopeValues);
+        
+        // Check memory after execution
+        if (performance.memory) {
+          const usedMB = performance.memory.usedJSHeapSize / (1024 * 1024);
+          console.log(`[Viewport] Memory after execution: ${usedMB.toFixed(1)}MB`);
+          
+          if (usedMB > EXECUTION_LIMITS.memoryLimitMB) {
+            clearTimeout(timeoutId);
+            reject(new Error(`Memory limit exceeded after execution: ${usedMB.toFixed(1)}MB`));
+            return;
+          }
+        }
+        
+        clearTimeout(timeoutId);
+        resolve(result);
+      } catch (error) {
+        clearTimeout(timeoutId);
+        reject(error);
+      }
+    });
+  };
 
   const handleDownloadModel = useCallback(async () => {
     if (!currentScript || !sceneRef.current || !resultRef.current?.geometry) return;
@@ -687,7 +784,7 @@ const Viewport = forwardRef(({
       <Toolbar
         onOpen={onOpen}
         onSave={onSave}
-        onRun={executeScript}
+        onAccount={onAccount}
         onDownload={handleDownloadModel}
         onQuote={onQuote}
         onUpload={onUpload}
@@ -733,7 +830,7 @@ const Viewport = forwardRef(({
       
       {/* Face Info Display */}
       {selectedFace && !measurementEnabled && (
-        <div className="absolute bottom-4 left-2 bg-black/50 text-white rounded-lg text-xs font-mono z-10">
+        <div className="absolute bottom-4 left-2 lg:left-4 bg-black/50 text-white rounded-lg text-xs font-mono z-10">
           <div className="font-bold mb-1">Selected Face</div>
           <div>Center: [{selectedFace.center.map(v => v.toFixed(1)).join(', ')}]</div>
           <div>Normal: [{selectedFace.normal.map(v => v.toFixed(2)).join(', ')}]</div>
@@ -743,7 +840,7 @@ const Viewport = forwardRef(({
 
       {/* Measurement Info Display */}
       {measurementEnabled && measurementFaces.first && (
-        <div className="absolute bottom-4 left-2 bg-black/50 backdrop-blur-sm text-white p-3 rounded-lg text-xs font-mono z-10 space-y-1">
+        <div className="absolute bottom-4 left-2 lg:left-4 bg-black/50 backdrop-blur-sm text-white p-3 rounded-lg text-xs font-mono z-10 space-y-1">
           {measurementFaces.second ? (
             <>
                 {(() => {

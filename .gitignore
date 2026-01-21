@@ -39,10 +39,16 @@ dist/*
 *.sh
 
 # Package lock file
-package-lock.json*
+package-lock.json
 
 # Linux services
 *.service
 
 # System Prompt
 systemPrompt.js
+
+# Keys
+*.p8
+
+# Logo
+logo.*

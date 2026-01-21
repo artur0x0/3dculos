@@ -1,10 +1,11 @@
 import React, { useRef, useState } from 'react';
-import { FolderOpen, Save, Play, Square, Download, Undo, Redo, ChevronLeft, ChevronRight, Truck, Upload } from 'lucide-react';
+import { FolderOpen, Save, Download, Undo, Redo, ChevronLeft, ChevronRight, Truck, Upload, User } from 'lucide-react';
+import { useAuth } from '../hooks/useAuth';
 
 const Toolbar = ({ 
+  onAccount,
   onOpen, 
   onSave, 
-  onRun, 
   onDownload,
   onQuote,
   onUpload,
@@ -15,11 +16,13 @@ const Toolbar = ({
   isExecuting,
   isDownloading,
   isUploading,
-  currentFilename 
+  currentFilename
 }) => {
   const fileInputRef = useRef(null);
   const stepInputRef = useRef(null);
   const [isCollapsed, setIsCollapsed] = useState(false);
+
+  const { isAuthenticated } = useAuth();
 
   const handleFileSelect = async (event) => {
     const file = event.target.files?.[0];
@@ -68,14 +71,13 @@ const Toolbar = ({
 
 return (
     <div className="absolute top-4 left-1/2 -translate-x-1/2 lg:left-auto lg:right-4 lg:translate-x-0 flex gap-1 lg:gap-2 bg-white/60 backdrop-blur-sm p-2 rounded-lg shadow-lg z-10">
-      {/* Run/Stop */}
+      {/* Account */}
       <button
-        onClick={onRun}
-        disabled={isExecuting || isDownloading}
-        className={`p-2 rounded hover:bg-gray-100 ${isExecuting ? 'text-red-600' : 'text-green-600'}`}
-        title={isExecuting ? 'Stop' : 'Run'}
+        onClick={onAccount}
+        className={`p-2 rounded hover:bg-gray-100 ${isAuthenticated ? 'text-green-600' : 'text-blue-600'}`}
+        title="Account"
       >
-        {isExecuting ? <Square size={20} /> : <Play size={20} />}
+        <User size={20} />
       </button>
 
       <input

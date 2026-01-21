@@ -4,6 +4,140 @@ const DB_VERSION = 1;
 const STORE_NAME = 'models';
 
 /**
+ * Cache limits
+ */
+const CACHE_LIMITS = {
+  maxCount: 128,              // Max number of models in memory
+  maxMemoryMB: 1024,          // Max estimated memory usage
+  bytesPerVertex: 12,        // 3 floats × 4 bytes
+  bytesPerTriangle: 12,      // 3 uint32 indices × 4 bytes
+};
+
+/**
+ * LRU Cache for imported manifolds with memory estimation
+ */
+class ManifoldCache {
+  constructor(maxCount = CACHE_LIMITS.maxCount, maxMemoryMB = CACHE_LIMITS.maxMemoryMB) {
+    this.maxCount = maxCount;
+    this.maxMemoryBytes = maxMemoryMB * 1024 * 1024;
+    this.cache = new Map(); // filename -> { manifold, accessTime, estimatedBytes }
+    this.totalBytes = 0;
+  }
+  
+  /**
+   * Estimate memory usage of a manifold based on mesh data
+   */
+  estimateBytes(manifold) {
+    try {
+      const mesh = manifold.getMesh();
+      const vertexBytes = mesh.vertProperties.length * 4; // Float32
+      const indexBytes = mesh.triVerts.length * 4;        // Uint32
+      const overhead = 1024; // Object overhead estimate
+      return vertexBytes + indexBytes + overhead;
+    } catch {
+      return 50 * 1024; // Default 50KB if we can't measure
+    }
+  }
+  
+  /**
+   * Get a model from cache, updating access time
+   */
+  get(filename) {
+    const entry = this.cache.get(filename);
+    if (entry) {
+      entry.accessTime = Date.now();
+      return entry.manifold;
+    }
+    return undefined;
+  }
+  
+  /**
+   * Check if model exists in cache
+   */
+  has(filename) {
+    return this.cache.has(filename);
+  }
+  
+  /**
+   * Add a model to cache, evicting LRU items if needed
+   */
+  set(filename, manifold) {
+    // If already exists, update it
+    if (this.cache.has(filename)) {
+      const existing = this.cache.get(filename);
+      this.totalBytes -= existing.estimatedBytes;
+    }
+    
+    const estimatedBytes = this.estimateBytes(manifold);
+    
+    // Evict until we have room (by count)
+    while (this.cache.size >= this.maxCount) {
+      this.evictLRU();
+    }
+    
+    // Evict until we have room (by memory)
+    while (this.totalBytes + estimatedBytes > this.maxMemoryBytes && this.cache.size > 0) {
+      this.evictLRU();
+    }
+    
+    // Add to cache
+    this.cache.set(filename, {
+      manifold,
+      accessTime: Date.now(),
+      estimatedBytes
+    });
+    this.totalBytes += estimatedBytes;
+    
+    console.log(`[Cache] Added ${filename} (${(estimatedBytes / 1024).toFixed(1)}KB). ` +
+                `Total: ${this.cache.size} models, ${(this.totalBytes / 1024 / 1024).toFixed(2)}MB`);
+  }
+  
+  /**
+   * Evict the least recently used item
+   */
+  evictLRU() {
+    let oldestKey = null;
+    let oldestTime = Infinity;
+    
+    for (const [key, entry] of this.cache) {
+      if (entry.accessTime < oldestTime) {
+        oldestTime = entry.accessTime;
+        oldestKey = key;
+      }
+    }
+    
+    if (oldestKey) {
+      const entry = this.cache.get(oldestKey);
+      this.totalBytes -= entry.estimatedBytes;
+      this.cache.delete(oldestKey);
+      console.log(`[Cache] Evicted LRU: ${oldestKey} (${(entry.estimatedBytes / 1024).toFixed(1)}KB)`);
+    }
+  }
+  
+  /**
+   * Clear entire cache
+   */
+  clear() {
+    this.cache.clear();
+    this.totalBytes = 0;
+    console.log('[Cache] Cleared all cached models');
+  }
+  
+  /**
+   * Get cache statistics
+   */
+  getStats() {
+    return {
+      count: this.cache.size,
+      maxCount: this.maxCount,
+      memoryMB: this.totalBytes / 1024 / 1024,
+      maxMemoryMB: this.maxMemoryBytes / 1024 / 1024,
+      filenames: [...this.cache.keys()]
+    };
+  }
+}
+
+/**
  * Initialize IndexedDB for caching manifold data
  */
 const initDB = () => {
@@ -31,10 +165,14 @@ export const cacheManifoldData = async (filename, data) => {
     const transaction = db.transaction([STORE_NAME], 'readwrite');
     const store = transaction.objectStore(STORE_NAME);
     
-    await store.put({
-      filename,
-      data,
-      timestamp: Date.now()
+    await new Promise((resolve, reject) => {
+      const request = store.put({
+        filename,
+        data,
+        timestamp: Date.now()
+      });
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error);
     });
     
     console.log(`[Cache] Stored ${filename} in IndexedDB`);
@@ -73,7 +211,6 @@ export const getCachedManifoldData = async (filename) => {
 
 /**
  * Convert STEP file to Manifold via backend
- * Server handles: STEP → 3MF → Manifold conversion
  */
 export const convertStepToManifold = async (file, deflection = null) => {
   const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
@@ -83,7 +220,7 @@ export const convertStepToManifold = async (file, deflection = null) => {
   formData.append('file', file);
   formData.append('deflection', actualDeflection.toString());
   
-  const response = await fetch(`${API_URL}/api/convert-manifold`, {
+  const response = await fetch(`${API_URL}/api/convert/step`, {
     method: 'POST',
     body: formData
   });
@@ -99,25 +236,23 @@ export const convertStepToManifold = async (file, deflection = null) => {
 /**
  * Reconstruct Manifold from serialized mesh data
  */
-export const reconstructManifold = (manifoldData) => {
+export const reconstructManifold = (manifoldData, wasm = null) => {
   console.log('[Import] Reconstructing Manifold from server data...');
   
-  // Use the global Manifold that's already loaded in the app
-  // This ensures compatibility with user code
-  if (!window.Manifold) {
+  const manifoldWasm = wasm || window.Manifold;
+  if (!manifoldWasm) {
     throw new Error('Manifold WASM not loaded. Please wait for initialization.');
   }
   
-  const { Manifold } = window.Manifold;
+  const { Manifold } = manifoldWasm;
   
-  // Convert arrays back to typed arrays
   const vertProperties = new Float32Array(manifoldData.vertProperties);
   const triVerts = new Uint32Array(manifoldData.triVerts);
   
   const mesh = {
     numProp: manifoldData.numProp || 3,
-    vertProperties: vertProperties,
-    triVerts: triVerts
+    vertProperties,
+    triVerts
   };
   
   console.log('[Import] Mesh stats:', {
@@ -126,13 +261,12 @@ export const reconstructManifold = (manifoldData) => {
     numProp: mesh.numProp
   });
   
-  // Create Manifold from the mesh using global instance
   const manifold = new Manifold(mesh);
   
   const volume = manifold.volume();
   console.log(`[Import] ✓ Manifold reconstructed (volume: ${volume} mm³)`);
   
-  if (Math.abs(volume - manifoldData.volume) > 0.01) {
+  if (manifoldData.volume && Math.abs(volume - manifoldData.volume) > 0.01) {
     console.warn(`[Import] Volume mismatch: server=${manifoldData.volume}, client=${volume}`);
   }
   
@@ -140,30 +274,56 @@ export const reconstructManifold = (manifoldData) => {
 };
 
 /**
- * Generate JavaScript code that returns the cached Manifold
+ * Store a manifold in the in-memory cache
  */
-export const generateImportScript = (filename, cacheKey, volume) => {
+export const storeImportedModel = (filename, manifold) => {
+  if (!window.__importedManifolds) {
+    window.__importedManifolds = {};
+  }
+  window.__importedManifolds[filename] = manifold
+};
+
+/**
+ * Check if a model is in memory
+ */
+export const hasImportedModel = (filename) => {
+  if (window.__importedManifolds[filename]) return true;
+  else return false;
+};
+
+/**
+ * Parse a script to find imported model filenames.
+ * Looks for: window.__importedManifolds['${filename}']
+ */
+export const parseImportedModels = (script) => {
+  const pattern = /window\.__importedManifolds\s*\[\s*['"]([^'"]+)['"]\s*\]/g;
+  const filenames = [];
+  let match;
+  while ((match = pattern.exec(script)) !== null) {
+    filenames.push(match[1]);
+  }
+  return [...new Set(filenames)];
+};
+
+/**
+ * Generate JavaScript code that retrieves the imported Manifold.
+ */
+export const generateImportScript = (filename, volume) => {
   return `// Imported from STEP file: ${filename}
-// Converted via OpenCASCADE: STEP → 3MF → Manifold
 // Volume: ${volume.toFixed(2)} mm³
 // 
 // This model was imported and converted to a Manifold object.
 // You can now use all Manifold operations on this object.
 
-// Retrieve the imported Manifold from global scope
-const result = window.__importedManifolds?.['${cacheKey}'];
+const importedModel = window.__importedManifolds['${filename}'];
 
-if (!result) {
-  throw new Error('Imported model not found. Please re-upload the STEP file.');
-}
-
-return result;`;
+return importedModel;`;
 };
 
 /**
  * Full import workflow: Upload STEP → Server converts → Reconstruct Manifold
  */
-export const importStepFile = async (file, Module, deflection = null) => {
+export const importStepFile = async (file, deflection = null) => {
   const startTime = Date.now();
   console.log(`[Import] Starting import of ${file.name}...`);
   
@@ -178,23 +338,20 @@ export const importStepFile = async (file, Module, deflection = null) => {
     
     console.log(`[Import] Server conversion complete`);
     
-    // 2. Cache the manifold data
+    // 2. Cache the manifold data in IndexedDB
     console.log('[Import] Caching manifold data...');
     await cacheManifoldData(file.name, response.data);
     
     // 3. Reconstruct Manifold from data
     console.log('[Import] Reconstructing Manifold...');
-    const manifold = await reconstructManifold(response.data, Module);
+    const manifold = reconstructManifold(response.data);
     
-    // 4. Store in global scope for script access
-    if (!window.__importedManifolds) {
-      window.__importedManifolds = {};
-    }
-    const cacheKey = file.name;
-    window.__importedManifolds[cacheKey] = manifold;
+    // 4. Store in memory cache
+    const filename = file.name;
+    storeImportedModel(filename, manifold);
     
     // 5. Generate script
-    const script = generateImportScript(file.name, cacheKey, response.data.volume);
+    const script = generateImportScript(filename, response.data.volume);
     
     const duration = ((Date.now() - startTime) / 1000).toFixed(1);
     console.log(`[Import] ✓ Import complete in ${duration}s`);
@@ -202,8 +359,7 @@ export const importStepFile = async (file, Module, deflection = null) => {
     return {
       script,
       manifold,
-      filename: file.name,
-      cacheKey,
+      filename,
       volume: response.data.volume
     };
   } catch (error) {
@@ -213,27 +369,32 @@ export const importStepFile = async (file, Module, deflection = null) => {
 };
 
 /**
- * Load a cached model (if available)
+ * Load a cached model from IndexedDB
  */
-export const loadCachedModel = async (filename, Module) => {
+export const loadCachedModel = async (filename) => {
+  console.log(`[stepImport] Loading cached model: ${filename}`);
   try {
     const data = await getCachedManifoldData(filename);
     if (!data) {
+      console.warn(`[stepImport] No cached data found for: ${filename}`);
+      return null;
+    }
+
+    if (!window.Manifold) {
+      console.error("[stepImport] WASM not available during cached STEP file retrieval");
       return null;
     }
     
-    const manifold = await reconstructManifold(data, Module);
+    console.log("[stepImport] Cached model data found, reconstructing...");
+    const manifold = reconstructManifold(data);
     
-    if (!window.__importedManifolds) {
-      window.__importedManifolds = {};
-    }
-    window.__importedManifolds[filename] = manifold;
+    // Store in memory for future access
+    storeImportedModel(filename, manifold);
     
     return {
-      script: generateImportScript(filename, filename, data.volume),
+      script: generateImportScript(filename, data.volume),
       manifold,
       filename,
-      cacheKey: filename,
       volume: data.volume
     };
   } catch (error) {

@@ -1,0 +1,174 @@
+// hooks/useAuth.js - Authentication hook
+import { useState, useEffect, useCallback, createContext, useContext } from 'react';
+
+const AuthContext = createContext(null);
+
+export const AuthProvider = ({ children }) => {
+  const [user, setUser] = useState(null);
+  const [guest, setGuest] = useState(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+
+  // Check auth status on mount
+  useEffect(() => {
+    checkAuth();
+  }, []);
+
+  const checkAuth = useCallback(async () => {
+    try {
+      const response = await fetch('/api/auth/me', {
+        credentials: 'include',
+      });
+      
+      const data = await response.json();
+      
+      if (data.authenticated) {
+        setUser(data.user);
+        setIsAuthenticated(true);
+        setGuest(null);
+      } else if (data.guest) {
+        setGuest(data.guest);
+        setIsAuthenticated(false);
+        setUser(null);
+      } else {
+        setUser(null);
+        setGuest(null);
+        setIsAuthenticated(false);
+      }
+    } catch (error) {
+      console.error('Auth check failed:', error);
+      setUser(null);
+      setGuest(null);
+      setIsAuthenticated(false);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  const login = useCallback(async (email, password) => {
+    const response = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ email, password }),
+    });
+    
+    const data = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(data.error || 'Login failed');
+    }
+    
+    setUser(data.user);
+    setIsAuthenticated(true);
+    setGuest(null);
+    
+    return data.user;
+  }, []);
+
+  const register = useCallback(async (email, password, name) => {
+    const response = await fetch('/api/auth/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ email, password, name }),
+    });
+    
+    const data = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(data.error || 'Registration failed');
+    }
+    
+    setUser(data.user);
+    setIsAuthenticated(true);
+    setGuest(null);
+    
+    return data.user;
+  }, []);
+
+  const logout = useCallback(async () => {
+    try {
+      await fetch('/api/auth/logout', {
+        method: 'POST',
+        credentials: 'include',
+      });
+    } catch (error) {
+      console.error('Logout error:', error);
+    }
+    
+    setUser(null);
+    setGuest(null);
+    setIsAuthenticated(false);
+  }, []);
+
+  const startGuestSession = useCallback(async (email) => {
+    const response = await fetch('/api/auth/guest', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ email }),
+    });
+    
+    const data = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(data.error || 'Failed to start guest session');
+    }
+    
+    setGuest(data.guest);
+    return data.guest;
+  }, []);
+
+  const convertGuestToUser = useCallback(async (password) => {
+    const response = await fetch('/api/auth/guest/convert', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ password }),
+    });
+    
+    const data = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(data.error || 'Failed to create account');
+    }
+    
+    setUser(data.user);
+    setIsAuthenticated(true);
+    setGuest(null);
+    
+    return data.user;
+  }, []);
+
+  const value = {
+    user,
+    guest,
+    isLoading,
+    isAuthenticated,
+    isGuest: !!guest,
+    email: user?.email || guest?.email,
+    checkAuth,
+    login,
+    register,
+    logout,
+    startGuestSession,
+    convertGuestToUser,
+  };
+
+  return (
+    <AuthContext.Provider value={value}>
+      {children}
+    </AuthContext.Provider>
+  );
+};
+
+export const useAuth = () => {
+  const context = useContext(AuthContext);
+  if (!context) {
+    throw new Error('useAuth must be used within an AuthProvider');
+  }
+  return context;
+};
+
+export default useAuth;
