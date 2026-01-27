@@ -218,7 +218,7 @@ router.post('/:orderId/confirm', requireGuestOrAuth, async (req, res) => {
     // Send confirmation emails (async, don't wait)
     const userEmail = req.user?.email || order['guest-email'];
     email.sendOrderConfirmation(order, userEmail).catch(console.error);
-    email.sendAdminNotification(order, userEmail).catch(console.error);
+    email.sendAdminOrderNotification(order, userEmail).catch(console.error);
     
     return res.json({
       success: true,

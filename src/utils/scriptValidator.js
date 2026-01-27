@@ -61,6 +61,7 @@ const BLOCKED_PATTERNS = [
   { pattern: /\bclipboard\b/, reason: 'Clipboard access' },
   { pattern: /\bgeolocation\b/, reason: 'Geolocation' },
   { pattern: /\bmediaDevices\b/, reason: 'Media devices' },
+  { pattern: /\bconsole\b/, reason: 'Console access' },
   
   // ============================================
   // GLOBAL OBJECT ACCESS - BLOCK ALL

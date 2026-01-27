@@ -23,19 +23,19 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import Toolbar from './Toolbar';
 import CrossSectionPanel from './CrossSectionPanel';
 import { X } from 'lucide-react';
-import { downloadModel, export3MFBase64 } from '../utils/downloads';
+import { downloadModelFromMesh, get3MFBase64FromMesh } from '../utils/exportModel';
+import { parseImportedModels, loadCachedModel } from '../utils/importModel';
 import { calculateQuote } from '../utils/quoting';
 import { selectFaceByID } from '../utils/selectFace';
-import { getManifoldBounds } from '../utils/crossSection';
 import { createCuttingPlaneWidget, updateCuttingPlaneWidget } from '../utils/cuttingPlaneWidget';
 import { AxesHelper } from 'three';
 import { calculateMeasurements } from '../utils/measurementTool';
-import { parseImportedModels, loadCachedModel } from '../utils/stepImport';
-import { validateScript, formatValidationErrors, wrapInStrictMode } from '../utils/scriptValidator';
+import { validateScript, formatValidationErrors } from '../utils/scriptValidator';
+import manifoldContext from '../utils/ManifoldWorker';
 
 // Execution limits
 const EXECUTION_LIMITS = {
-  timeoutMs: 15000,      // 15 seconds max execution time
+  timeoutMs: 30000,      // 30 seconds max execution time
   memoryLimitMB: 512,    // 512 MB memory limit
 };
 
@@ -72,6 +72,7 @@ const Viewport = forwardRef(({
   const [materials, setMaterials] = useState([]);
   const [isExecuting, setIsExecuting] = useState(false);
   const [executionError, setExecutionError] = useState(null);
+  const [downloadFormat, setDownloadFormat] = useState('3mf');
   const [isDownloading, setIsDownloading] = useState(false);
   
   // Cross-section state
@@ -82,7 +83,7 @@ const Viewport = forwardRef(({
     showPlane: true
   });
   const [modelBounds, setModelBounds] = useState(null);
-  const [cachedManifold, setCachedManifold] = useState(null);
+  const [cachedMeshData, setCachedMeshData] = useState(null);
   
   // Measurement tool and axis helper state
   const [measurementEnabled, setMeasurementEnabled] = useState(false);
@@ -96,12 +97,18 @@ const Viewport = forwardRef(({
       setSelectedFace(null);
       onFaceSelected?.(null);
     },
-    export3MF: () => export3MFBase64(currentScript),
+    // Updated to use cached mesh when available
+    export3MF: async () => {
+      if (cachedMeshData?.vertProperties) {
+        return get3MFBase64FromMesh(cachedMeshData);
+      }
+      throw new Error('No model available to export');
+    },
     calculateQuote: async (options) => {
       return await calculateQuote(currentScript, options);
     },
     zoomToFit: handleZoomToFit,
-    getCurrentManifold: () => cachedManifold
+    getCurrentMeshData: () => cachedMeshData
   }));
 
   // Clear face highlight
@@ -139,10 +146,10 @@ const Viewport = forwardRef(({
   const handleCrossSectionToggle = async (enabled) => {
     if (enabled) {
       try {
-        if (!window.Manifold || !currentScript) return;
+        if (!manifoldContext.isReady || !currentScript) return;
         setCrossSectionEnabled(true);
       } catch (error) {
-        console.error('[CrossSection] Failed to cache manifold:', error);
+        console.error('[CrossSection] Failed to enable:', error);
       }
     } else {
       // Disable and restore original
@@ -151,21 +158,24 @@ const Viewport = forwardRef(({
     }
   };
 
-  // Handle plane changes - use cached manifold for preview
+  // Handle plane changes for cross-section preview
   const handlePlaneChange = async (plane) => {
     setCrossSectionPlane(plane);
     
-    if (!crossSectionEnabled || !cachedManifold) return;
+    if (!crossSectionEnabled || !cachedMeshData) return;
     
     try {
-      // Apply trimByPlane to cached manifold
       const normal = new Vector3(...plane.normal).normalize();
       const normalArray = [normal.x, normal.y, normal.z];
       
-      const trimmed = cachedManifold.trimByPlane(normalArray, plane.originOffset);
+      // Call worker to trim the cached manifold
+      const { mesh: trimmedMesh } = await manifoldContext.trimByPlane(
+        normalArray, 
+        plane.originOffset
+      );
       
-      // Render the trimmed preview
-      renderManifold(trimmed);
+      // Render the trimmed result
+      renderMeshData(trimmedMesh);
       
       // Update cutting plane widget visibility
       if (plane.showPlane) {
@@ -191,10 +201,12 @@ const Viewport = forwardRef(({
   };
 
   useEffect(() => {
-    if (crossSectionEnabled && cachedManifold) {
+    if (crossSectionEnabled && cachedMeshData) {
       handlePlaneChange(crossSectionPlane);
-    } else {
-      executeScript(currentScript);
+    } else if (!crossSectionEnabled && cachedMeshData) {
+      // Restore original mesh when cross-section is disabled
+      renderMeshData(cachedMeshData);
+      clearCuttingPlane();
     }
   }, [crossSectionEnabled]);
 
@@ -572,47 +584,42 @@ const Viewport = forwardRef(({
     });
   };
 
-  // Helper to render a manifold object
-  const renderManifold = useCallback((manifold) => {
-    if (!manifold || !resultRef.current) return;
+  // Helper to render mesh data from the worker
+  const renderMeshData = useCallback((meshData) => {
+    if (!meshData || !resultRef.current) return;
 
-    const wasm = window.Manifold;
-    const { Manifold } = wasm;
-    const firstID = Manifold.reserveIDs(materials.length);
-    const ids = Array.from({ length: materials.length }, (_, idx) => firstID + idx);
-    const id2matIndex = new Map();
-    ids.forEach((id, idx) => id2matIndex.set(id, idx));
+    const geometry = new BufferGeometry();
+    
+    // Convert arrays to typed arrays
+    const vertProperties = new Float32Array(meshData.vertProperties);
+    const triVerts = new Uint32Array(meshData.triVerts);
+    
+    geometry.setAttribute('position', new BufferAttribute(vertProperties, 3));
+    geometry.setIndex(new BufferAttribute(triVerts, 1));
 
-    function mesh2geometry(mesh) {
-      const geometry = new BufferGeometry();
-      geometry.setAttribute('position', new BufferAttribute(mesh.vertProperties, 3));
-      geometry.setIndex(new BufferAttribute(mesh.triVerts, 1));
+    if (meshData.faceID && meshData.faceID.length > 0) {
+      geometry.setAttribute('faceID', new BufferAttribute(new Float32Array(meshData.faceID), 1));
+    }
 
-      if (mesh.faceID && mesh.faceID.length > 0) {
-        geometry.setAttribute('faceID', new BufferAttribute(mesh.faceID, 1));
-      }
-
-      let start = mesh.runIndex[0];
-      for (let run = 0; run < mesh.numRun; ++run) {
-        const end = mesh.runIndex[run + 1];
-        const id = mesh.runOriginalID[run];
-        let matIndex = id2matIndex.get(id);
-        if (matIndex === undefined) {
-          matIndex = 0;
-        }
-
+    // Set up material groups
+    if (meshData.runIndex && meshData.runOriginalID) {
+      const runIndex = meshData.runIndex;
+      const runOriginalID = meshData.runOriginalID;
+      
+      let start = runIndex[0];
+      for (let run = 0; run < meshData.numRun; ++run) {
+        const end = runIndex[run + 1];
+        // Map original ID to material index (simplified - use 0 for unknown)
+        const matIndex = 0;
         geometry.addGroup(start, end - start, matIndex);
         start = end;
       }
-
-      geometry.computeVertexNormals();
-      return geometry;
     }
 
+    geometry.computeVertexNormals();
+    
     resultRef.current.geometry?.dispose();
-    const manifoldMesh = manifold.getMesh();
-    const newGeometry = mesh2geometry(manifoldMesh);
-    resultRef.current.geometry = newGeometry;
+    resultRef.current.geometry = geometry;
 
     const renderer = rendererRef.current;
     const scene = sceneRef.current;
@@ -620,10 +627,33 @@ const Viewport = forwardRef(({
     if (renderer && scene && camera) {
       renderer.render(scene, camera);
     }
-  }, [materials]);
+  }, []);
+
+  // Calculate model bounds from mesh data
+  const calculateBoundsFromMesh = (meshData) => {
+    const vertProperties = meshData.vertProperties;
+    const min = [Infinity, Infinity, Infinity];
+    const max = [-Infinity, -Infinity, -Infinity];
+    
+    for (let i = 0; i < vertProperties.length; i += 3) {
+      min[0] = Math.min(min[0], vertProperties[i]);
+      min[1] = Math.min(min[1], vertProperties[i + 1]);
+      min[2] = Math.min(min[2], vertProperties[i + 2]);
+      max[0] = Math.max(max[0], vertProperties[i]);
+      max[1] = Math.max(max[1], vertProperties[i + 1]);
+      max[2] = Math.max(max[2], vertProperties[i + 2]);
+    }
+    
+    return {
+      min,
+      max,
+      size: [max[0] - min[0], max[1] - min[1], max[2] - min[2]],
+      center: [(min[0] + max[0]) / 2, (min[1] + max[1]) / 2, (min[2] + max[2]) / 2]
+    };
+  };
 
   /**
-   * Execute script with validation, timeout, and memory monitoring
+   * Execute script using the sandbox worker
    */
   const executeScript = useCallback(async (scriptOverride) => {
     const script = scriptOverride ?? currentScript;
@@ -645,11 +675,11 @@ const Viewport = forwardRef(({
     onFaceSelected?.(null);
 
     try {
-      if (!window.Manifold) {
-        throw new Error('Manifold WASM not loaded');
+      if (!manifoldContext.isReady) {
+        throw new Error('Manifold Sandbox not initialized');
       }
       
-      // Step 1: Validate script for dangerous patterns
+      // Step 1: Validate script for dangerous patterns (client-side pre-check)
       console.log('[Viewport] Validating script...');
       const validation = validateScript(script);
       if (!validation.valid) {
@@ -657,38 +687,50 @@ const Viewport = forwardRef(({
       }
       
       if (abortController.aborted) {
-        console.log('[Viewport] Execution aborted during preload');
+        console.log('[Viewport] Execution aborted during validation');
         return;
       }
 
-      // Step 2: Load cached models into window for access by script executor function
+      // Step 2: Load cached models into ManifoldContext
       const importedModels = parseImportedModels(script);
       for (let i = 0; i < importedModels.length; i++) {
-        await loadCachedModel(importedModels[i]);
+        const modelData = await loadCachedModel(importedModels[i]);
+        if (modelData) {
+          manifoldContext.cacheImportedModel(importedModels[i], modelData);
+        }
       }
       
-      // Step 3: Execute script with timeout and strict mode
-      const result = await executeWithTimeout(script, EXECUTION_LIMITS.timeoutMs);
+      // Step 3: Execute script in sandbox worker
+      console.log('[Viewport] Executing script in sandbox worker...');
+      const result = await manifoldContext.executeScript(script, {
+        timeoutMs: EXECUTION_LIMITS.timeoutMs,
+        memoryLimitMB: EXECUTION_LIMITS.memoryLimitMB
+      });
       
       if (abortController.aborted) {
-        console.log('[Viewport] Execution aborted');
+        console.log('[Viewport] Execution aborted after worker returned');
         return;
       }
       
-      if (!result || typeof result.getMesh !== 'function') {
-        console.error('[Viewport] Invalid result - not a Manifold object:', result);
+      const { mesh: meshData, memoryUsedMB } = result;
+      
+      if (!meshData || !meshData.vertProperties) {
         throw new Error('Script must return a Manifold object');
       }
 
-      // Get and store bounds
-      const bounds = getManifoldBounds(script);
+      // Calculate bounds from mesh
+      const bounds = calculateBoundsFromMesh(meshData);
       setModelBounds(bounds);
 
-      // Cache manifold
-      setCachedManifold(result);
+      // Cache mesh data for cross-section operations
+      setCachedMeshData(meshData);
 
       // Render the result
-      renderManifold(result);
+      renderMeshData(meshData);
+      
+      if (memoryUsedMB) {
+        console.log(`[Viewport] Memory after execution: ${memoryUsedMB.toFixed(1)}MB`);
+      }
       
       console.log('[Viewport] Script executed successfully');
 
@@ -706,78 +748,30 @@ const Viewport = forwardRef(({
         executionAbortRef.current = null;
       }
     }
-  }, [currentScript, materials, onFaceSelected, renderManifold, clearHighlight]);
+  }, [currentScript, materials, onFaceSelected, renderMeshData, clearHighlight]);
 
   /**
-   * Execute script with timeout, strict mode, and injected safe functions
+   * Download the current model as 3mf
+   * Uses cached mesh data when available to avoid re-execution
    */
-  const executeWithTimeout = (script, timeoutMs) => {
-    return new Promise((resolve, reject) => {
-      const timeoutId = setTimeout(() => {
-        reject(new Error(`Script execution timed out after ${timeoutMs / 1000}s`));
-      }, timeoutMs);
-      
-      try {
-        // Check memory before execution (Chrome only)
-        if (performance.memory) {
-          const usedMB = performance.memory.usedJSHeapSize / (1024 * 1024);
-          
-          if (usedMB > EXECUTION_LIMITS.memoryLimitMB) {
-            clearTimeout(timeoutId);
-            reject(new Error(`Memory limit exceeded: ${usedMB.toFixed(1)}MB > ${EXECUTION_LIMITS.memoryLimitMB}MB`));
-            return;
-          }
-        }
-        
-        // Build execution scope
-        const wasm = window.Manifold;
-        const scopeEntries = [...Object.entries(wasm)];
-        const scopeKeys = scopeEntries.map(([k]) => k);
-        const scopeValues = scopeEntries.map(([, v]) => v);
-
-        // Wrap in strict mode (your existing function, assuming it adds "use strict")
-        const wrappedScript = wrapInStrictMode(script);
-
-        // Create function with exactly these parameter names
-        const fn = new Function(...scopeKeys, wrappedScript);
-
-        // Execute script
-        const result = fn(...scopeValues);
-        
-        // Check memory after execution
-        if (performance.memory) {
-          const usedMB = performance.memory.usedJSHeapSize / (1024 * 1024);
-          console.log(`[Viewport] Memory after execution: ${usedMB.toFixed(1)}MB`);
-          
-          if (usedMB > EXECUTION_LIMITS.memoryLimitMB) {
-            clearTimeout(timeoutId);
-            reject(new Error(`Memory limit exceeded after execution: ${usedMB.toFixed(1)}MB`));
-            return;
-          }
-        }
-        
-        clearTimeout(timeoutId);
-        resolve(result);
-      } catch (error) {
-        clearTimeout(timeoutId);
-        reject(error);
-      }
-    });
-  };
-
   const handleDownloadModel = useCallback(async () => {
-    if (!currentScript || !sceneRef.current || !resultRef.current?.geometry) return;
+    if (!cachedMeshData?.vertProperties) {
+      setExecutionError('No model to export');
+      return;
+    }
 
     setIsDownloading(true);
 
     try {
-      await downloadModel(currentScript);
+      const filename = currentFilename || 'model';
+      await downloadModelFromMesh(cachedMeshData, filename);
     } catch (error) {
-      console.error('Error exporting 3MF:', error);
+      console.error('[Viewport] Export error:', error);
+      setExecutionError(`Export failed: ${error.message}`);
     } finally {
       setIsDownloading(false);
     }
-  }, [currentScript]);
+  }, [cachedMeshData, currentFilename]);
 
   return (
     <div ref={containerRef} className="relative w-full h-full bg-gray-900 overflow-hidden">

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, DollarSign, Clock, Package, ShoppingCart } from 'lucide-react';
 import { PROCESSES } from '../utils/quoting';
-import { generate3MFBlob } from '../utils/downloads';
+import { generate3MFBlob } from '../utils/exportModel';
 
 const QuoteModal = ({ onClose, onGetQuote, onOrder, currentScript, currentFilename }) => {
   const [selectedProcess, setSelectedProcess] = useState('FDM');

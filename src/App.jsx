@@ -8,7 +8,11 @@ import OrderModal from './components/OrderModal';
 import LoginModal from './components/LoginModal';
 import AccountModal from './components/AccountModal';
 import { useAuth } from './hooks/useAuth';
-import { importStepFile } from './utils/stepImport';
+import { 
+  importFile,
+  isFrontendFormat, 
+  isBackendFormat 
+} from './utils/importModel';
 import { 
   hasCheckoutReturnFlag, 
   hasPendingCheckout,
@@ -21,7 +25,7 @@ import {
   restoreEditorState, 
   clearEditorState 
 } from './utils/editorStorage';
-import Module from '../built/manifold';
+import manifoldContext from './utils/ManifoldWorker';
 import DEFAULT_SCRIPT from './utils/defaultScript';
 
 const App = () => {
@@ -39,6 +43,7 @@ const App = () => {
   const [showAccountModal, setShowAccountModal] = useState(false);
   const [accountModalTab, setAccountModalTab] = useState('info');
   const [editorInitialScript, setEditorInitialScript] = useState(null);
+  const [initError, setInitError] = useState(null);
 
   const { user, isAuthenticated, checkAuth } = useAuth();
 
@@ -55,24 +60,36 @@ const App = () => {
     currentBranch: 'main'
   });
 
-  // Initialize Manifold and handle script restoration
+  // Initialize ManifoldWorker (sandbox) and handle script restoration
   useEffect(() => {
     const initManifold = async () => {
       try {
-        console.log('[App] Initializing Manifold WASM...');
-        const wasm = await Module();
-        wasm.setup();
+        console.log('[App] Initializing Manifold Sandbox Worker...');
         
-        // Expose Manifold globally for both code editor and imports
-        window.Manifold = wasm;
-  
+        // Initialize the custom Manifold worker
+        await manifoldContext.init();
+        
+        // Expose context globally
+        window.ManifoldContext = manifoldContext;
+        
+        // Log available helper functions
+        const helpers = await manifoldContext.getHelperFunctions();
+        console.log('[App] Available helper functions:', helpers);
+        
         setManifoldReady(true);
+        console.log('[App] Manifold Sandbox Worker ready');
       } catch (error) {
-        console.error('[App] Failed to initialize Manifold:', error);
+        console.error('[App] Failed to initialize Manifold Sandbox:', error);
+        setInitError(error.message);
       }
     };
     
     initManifold();
+    
+    // Cleanup on unmount
+    return () => {
+      manifoldContext.terminate();
+    };
   }, []);
 
   // Single initialization effect - runs once when manifold is ready
@@ -248,11 +265,10 @@ const App = () => {
           }
         }
       }));
-      
-      codeEditorRef.current?.loadContent(commit.code, 'Undo', false);
-      return commit.code;
+
+      // Load the code from the commit
+      codeEditorRef.current?.loadContent(commit.code, null, false);
     }
-    return null;
   };
 
   const handleRedo = () => {
@@ -278,11 +294,10 @@ const App = () => {
           }
         }
       }));
-      
-      codeEditorRef.current?.loadContent(commit.code, 'Redo', false);
-      return commit.code;
+
+      // Load the code from the commit
+      codeEditorRef.current?.loadContent(commit.code, null, false);
     }
-    return null;
   };
 
   const canUndo = () => {
@@ -300,96 +315,74 @@ const App = () => {
   };
 
   const handleClearFaceSelection = () => {
-    setSelectedFace(null);
     viewportRef.current?.clearFaceSelection();
+    setSelectedFace(null);
   };
 
-  const handleOpen = (content, filename) => {
-    codeEditorRef.current?.loadContent(content, `Loaded ${filename}`);
-    setCurrentFilename(filename);
-  };
-
-  const handleSave = async () => {
-    const content = codeEditorRef.current?.getContent();
-    if (!content) return;
-
-    if (window.showSaveFilePicker && typeof window.showSaveFilePicker === 'function') {
-      try {
-        const options = {
-          suggestedName: currentFilename || 'script.js',
-          types: [
-            {
-              description: 'JavaScript files',
-              accept: { 'text/javascript': ['.js'] }
-            },
-            {
-              description: 'Text files',
-              accept: { 'text/plain': ['.txt'] }
-            }
-          ]
-        };
-
-        const handle = await window.showSaveFilePicker(options);
-        const writable = await handle.createWritable();
-        await writable.write(content);
-        await writable.close();
-        
-        setCurrentFilename(handle.name);
-      } catch (err) {
-        if (err instanceof Error && err.name !== 'AbortError') {
-          console.log('Falling back to download method');
-          const blob = new Blob([content], { type: 'text/plain' });
-          saveAs(blob, currentFilename || 'script.js');
-        }
-      }
-    } else {
-      console.log('File System Access API not supported, using download method');
-      const blob = new Blob([content], { type: 'text/plain' });
-      saveAs(blob, currentFilename || 'script.js');
+  const handleOpen = async (text, filename) => {
+    try {
+      console.log('[APP] Handling opening script file');
+      codeEditorRef.current?.loadContent(text, `Opened ${filename}`);
+      setCurrentFilename(filename);
+    } catch (error) {
+      console.error('[App] Open error:', error);
     }
   };
 
-  const handleOpenAccount = (tab = 'info') => {
-    setAccountModalTab(tab);
-    setShowAccountModal(true);
+  const handleSave = () => {
+    try {
+      const code = codeEditorRef.current?.getContent();
+      if (!code) return;
+      
+      const filename = currentFilename || 'model';
+      const blob = new Blob([code], { type: 'text/javascript' });
+      saveAs(blob, `${filename}.js`);
+    } catch (error) {
+      console.error('[App] Save error:', error);
+    }
   };
 
+  // Handle account button click
   const handleAccount = () => {
     if (isAuthenticated) {
-      handleOpenAccount();
+      setAccountModalTab('info');
+      setShowAccountModal(true);
     } else {
       setShowLoginModal(true);
     }
   };
 
-  const handleLoginComplete = async (authData) => {
+  // Handle account modal from order flow
+  const handleOpenAccount = (tab = 'info') => {
+    setAccountModalTab(tab);
+    setShowAccountModal(true);
+  };
+
+  // Handle login modal completion
+  const handleLoginComplete = async () => {
     setShowLoginModal(false);
     await checkAuth();
   };
 
+  // Handle quote button click
   const handleQuote = () => {
     setShowQuoteModal(true);
   };
 
+  // Handle quote modal close
   const handleQuoteClose = () => {
     setShowQuoteModal(false);
   };
 
+  // Handle get quote button
   const handleGetQuote = async (options) => {
-    const quoteData = await viewportRef.current?.calculateQuote(options);
-    if (!quoteData) {
-      throw new Error('Failed to calculate quote');
-    }
-    return quoteData;
+    return await viewportRef.current?.calculateQuote(options);
   };
 
-  // Handle order initiation from QuoteModal
-  const handleStartOrder = async (quoteData, modelData) => {
-    setOrderData({
-      quoteData,
-      modelData
-    });
+  // Handle start order
+  const handleStartOrder = (quoteData, modelData) => {
     setShowQuoteModal(false);
+    setOrderData({ quoteData, modelData });
     setShowOrderModal(true);
   };
 
@@ -399,31 +392,57 @@ const App = () => {
     setOrderData(null);
   };
 
-  const handleStepUpload = async (file) => {
+  // Model import handler function
+  const handleImport = async (file) => {
     if (!manifoldReady) {
-      setUploadError('Manifold WASM not ready. Please wait...');
+      setUploadError('Manifold not ready. Please wait...');
       return;
     }
     
     setIsUploading(true);
     setUploadError(null);
     
+    const filename = file.name;
+    const ext = filename.toLowerCase().slice(filename.lastIndexOf('.'));
+    
     try {
-      // Import the STEP file (no longer needs Module parameter)
-      const { script, filename } = await importStepFile(file, 0.1);
+      console.log(`[App] Importing ${ext} file...`);
+      
+      // Unified import handles routing to frontend (STL/OBJ/3MF) or backend (STEP)
+      const result = await importFile(file);
       
       // Load the generated script into the editor
-      codeEditorRef.current?.loadContent(script, `Imported ${filename}`);
+      codeEditorRef.current?.loadContent(result.script, `Imported ${result.filename}`);
       
-      // Set the filename
-      setCurrentFilename(filename);
+      // Set filename (without extension for display)
+      setCurrentFilename(result.filename.replace(/\.[^/.]+$/, ''));
+      
     } catch (error) {
-      console.error('[App] Upload error:', error);
-      setUploadError(error.message || 'Failed to import STEP file');
+      console.error('[App] Import error:', error);
+      setUploadError(error.message || 'Failed to import file');
     } finally {
       setIsUploading(false);
     }
   };
+
+  // Show error state if initialization failed
+  if (initError) {
+    return (
+      <div className="flex items-center justify-center h-screen bg-gray-900 text-white">
+        <div className="text-center max-w-md p-6">
+          <div className="text-red-500 text-6xl mb-4">⚠️</div>
+          <h1 className="text-xl font-bold mb-2">Initialization Failed</h1>
+          <p className="text-gray-400 mb-4">{initError}</p>
+          <button 
+            onClick={() => window.location.reload()}
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded"
+          >
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   // Show loading state while Manifold initializes
   if (!manifoldReady || editorInitialScript === null) {
@@ -431,7 +450,7 @@ const App = () => {
       <div className="flex items-center justify-center h-screen bg-gray-900 text-white">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white mx-auto mb-4"></div>
-          <p>Loading...</p>
+          <p>Loading Manifold Sandbox...</p>
         </div>
       </div>
     );
@@ -458,7 +477,7 @@ const App = () => {
               onOpen={handleOpen}
               onSave={handleSave}
               onQuote={handleQuote}
-              onUpload={handleStepUpload}
+              onUpload={handleImport}
               onUndo={handleUndo}
               onRedo={handleRedo}
               canUndo={canUndo()}
@@ -569,7 +588,7 @@ const App = () => {
             onOpen={handleOpen}
             onSave={handleSave}
             onQuote={handleQuote}
-            onUpload={handleStepUpload}
+            onUpload={handleImport}
             onUndo={handleUndo}
             onRedo={handleRedo}
             canUndo={canUndo()}

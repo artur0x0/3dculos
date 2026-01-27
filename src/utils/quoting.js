@@ -1,3 +1,6 @@
+// utils/quoting.js
+import manifoldContext from './ManifoldWorker';
+
 /**
  * Calculate manufacturing quote for a Manifold model
  * @param {string} currentScript - The Manifold script to execute
@@ -14,30 +17,23 @@ export async function calculateQuote(currentScript, options) {
     throw new Error('No model to quote');
   }
 
-  // Use global Manifold instance
-  if (!window.Manifold) {
-    throw new Error('Manifold WASM not loaded');
+  if (!manifoldContext.isReady) {
+    throw new Error('Manifold worker not initialized');
   }
+
+  // Execute script to get fresh result with volume and bounding box
+  const result = await manifoldContext.executeScript(currentScript);
   
-  const wasm = window.Manifold;
-
-  const wasmKeys = Object.keys(wasm);
-  const wasmValues = Object.values(wasm);
-  const scriptFn = new Function(...wasmKeys, currentScript);
-  const result = scriptFn(...wasmValues);
-
-  if (!result || typeof result.volume !== 'function') {
+  const { volume, boundingBox } = result;
+  
+  if (volume === undefined || !boundingBox) {
     throw new Error('Invalid manifold result');
   }
 
-  // Get volume directly from Manifold
-  const volume = result.volume(); // mm³
-  
-  // Get bounding box for surface area estimation
-  const bbox = result.boundingBox();
-  const width = bbox.max[0] - bbox.min[0];
-  const height = bbox.max[1] - bbox.min[1];
-  const depth = bbox.max[2] - bbox.min[2];
+  // Get bounding box dimensions
+  const width = boundingBox.max[0] - boundingBox.min[0];
+  const height = boundingBox.max[1] - boundingBox.min[1];
+  const depth = boundingBox.max[2] - boundingBox.min[2];
 
   // Define max build volumes for each process
   const processLimits = {
@@ -67,7 +63,7 @@ export async function calculateQuote(currentScript, options) {
 
   // Material properties
   const materialData = {
-    'PLA': { density: 1.24, costPerKg: 20, printSpeed: 60 }, // mm/s
+    'PLA': { density: 1.24, costPerKg: 20, printSpeed: 60 },
     'PETG': { density: 1.27, costPerKg: 25, printSpeed: 45 },
     'ABS': { density: 1.04, costPerKg: 22, printSpeed: 45 },
     'TPU': { density: 1.21, costPerKg: 40, printSpeed: 25 },
@@ -86,72 +82,52 @@ export async function calculateQuote(currentScript, options) {
   const totalSolidVolume = Math.min(shellVolume + infillVolume, volume);
   
   // Convert to grams
-  const volumeCm3 = totalSolidVolume / 1000; // mm³ to cm³
+  const volumeCm3 = totalSolidVolume / 1000;
   const materialGrams = volumeCm3 * matData.density;
   
-  // Estimate print time - factor in infill
-  const printSpeed = matData.printSpeed; // mm/s average
-  const layerHeight = 0.2; // mm
+  // Estimate print time
+  const printSpeed = matData.printSpeed;
+  const layerHeight = 0.2;
   const numLayers = height / layerHeight;
 
-  // Break down print time by component
-  const perimeterLength = surfaceArea * 2; // Outer walls (constant regardless of infill)
-
-  // Estimate infill path length based on volume and infill percentage
+  const perimeterLength = surfaceArea * 2;
   const infillPathLength = (volume / layerHeight) * infillRatio * 0.5;
-
-  // Total extrusion path
   const totalPathLength = perimeterLength + infillPathLength;
-
-  // Calculate time (path time + layer change overhead)
   const printTimeHours = (totalPathLength / printSpeed / 3600) + (numLayers * 5 / 3600);
   
   // Calculate costs
   const materialCost = (materialGrams / 1000) * matData.costPerKg;
-  const machineCost = printTimeHours * 5; // $5/hour
+  const machineCost = printTimeHours * 5;
   const totalCost = materialCost + machineCost;
   
   return {
-    // Material usage
     materialUsage: {
       grams: parseFloat(materialGrams.toFixed(1)),
       meters: 0
     },
-    materialGrams: parseFloat(materialGrams.toFixed(1)), // Also at top level for easy access
-    
-    // Print time
+    materialGrams: parseFloat(materialGrams.toFixed(1)),
     printTime: parseFloat(printTimeHours.toFixed(1)),
-    
-    // Costs - both nested and flat for convenience
     costs: {
       material: parseFloat(materialCost.toFixed(2)),
       machine: parseFloat(machineCost.toFixed(2)),
       total: parseFloat(totalCost.toFixed(2))
     },
-    material: parseFloat(materialCost.toFixed(2)),  // Flat access
-    machine: parseFloat(machineCost.toFixed(2)),    // Flat access
-    subtotal: parseFloat(totalCost.toFixed(2)),     // Flat access
-    
-    // Settings used
+    material: parseFloat(materialCost.toFixed(2)),
+    machine: parseFloat(machineCost.toFixed(2)),
+    subtotal: parseFloat(totalCost.toFixed(2)),
     infill,
     materialName: material,
     process,
-    
-    // Model info
     volume: parseFloat(volume.toFixed(1)),
     surfaceArea: parseFloat(surfaceArea.toFixed(1)),
-    
-    // NEW: Bounding box for shipping calculations
     boundingBox: {
-      width: parseFloat(width.toFixed(1)),   // mm
-      height: parseFloat(height.toFixed(1)), // mm
-      depth: parseFloat(depth.toFixed(1)),   // mm
+      width: parseFloat(width.toFixed(1)),
+      height: parseFloat(height.toFixed(1)),
+      depth: parseFloat(depth.toFixed(1)),
     },
-    
-    // Also include raw bbox for compatibility
     bounds: {
-      min: bbox.min,
-      max: bbox.max,
+      min: boundingBox.min,
+      max: boundingBox.max,
       size: [width, height, depth],
     },
   };
@@ -163,7 +139,7 @@ export async function calculateQuote(currentScript, options) {
 export const PROCESSES = {
   FDM: {
     name: 'FDM (Fused Deposition Modeling)',
-    maxSize: { x: 256, y: 256, z: 256 }, // mm
+    maxSize: { x: 256, y: 256, z: 256 },
     materials: ['PLA', 'PETG', 'ABS', 'TPU', 'Nylon']
   },
   SLA: {

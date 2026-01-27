@@ -19,7 +19,7 @@ const Toolbar = ({
   currentFilename
 }) => {
   const fileInputRef = useRef(null);
-  const stepInputRef = useRef(null);
+  const uploadModelRef = useRef(null);
   const [isCollapsed, setIsCollapsed] = useState(false);
 
   const { isAuthenticated } = useAuth();
@@ -40,7 +40,7 @@ const Toolbar = ({
     }
   };
 
-  const handleStepUpload = async (event) => {
+  const handleModelUpload = async (event) => {
     const file = event.target.files?.[0];
     if (!file) return;
 
@@ -50,8 +50,8 @@ const Toolbar = ({
       console.error('Error uploading STEP file:', err);
     }
     
-    if (stepInputRef.current) {
-      stepInputRef.current.value = '';
+    if (uploadModelRef.current) {
+      uploadModelRef.current.value = '';
     }
   };
 
@@ -90,10 +90,10 @@ return (
 
       <input
         type="file"
-        ref={stepInputRef}
-        onChange={handleStepUpload}
+        ref={uploadModelRef}
+        onChange={handleModelUpload}
         className="hidden"
-        accept=".step,.stp"
+        accept=".stl,.obj,.3mf,.step,.stp"
       />
       
       {/* Open */}
@@ -105,9 +105,9 @@ return (
         <FolderOpen size={20} />
       </button>
 
-      {/* Upload STEP */}
+      {/* Upload */}
       <button
-        onClick={() => stepInputRef.current?.click()}
+        onClick={() => uploadModelRef.current?.click()}
         disabled={isUploading || isExecuting}
         className="p-2 flex items-center gap-2 text-blue-600 hover:bg-gray-100 rounded disabled:opacity-50"
         title="Upload STEP File"

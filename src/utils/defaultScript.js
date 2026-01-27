@@ -1,6 +1,90 @@
 // utils/defaultScript.js - Default CAD script for new users
 
-const DEFAULT_SCRIPT = `// Modify CAD script directly or use the AI assistant to code for you
+export const DEFAULT_SCRIPT = `// ============================================================================
+// Solo Cup
+// Demonstrates: loft, shell, addDraft, sweep, getDimensions (sketch relations)
+// ============================================================================
+
+const topRadius = 46;       // Round top
+const baseSize = 57;        // Square base
+const cupHeight = 125;      // Cup height
+const wallThickness = 2;    // Shell wall thickness
+const draftAngle = 5;       // Draft angle in degrees
+const beadRadius = 2;       // Rim bead radius
+const segments = 128;       // Resolution
+
+// Make cross sections for the loft 
+const topFace = CrossSection.circle(topRadius, segments);
+const bottomFace = CrossSection.square([baseSize, baseSize], true);
+
+let cup = loft({
+  topCS: bottomFace,
+  bottomCS: topFace, 
+  height: cupHeight,
+  twistDeg: 0,
+  topScale: 1.0,
+  align: true,
+  resolution: segments
+});
+
+// Shell it
+const innerTool = shell(cup, wallThickness, 'z');
+cup = cup.subtract(innerTool);
+
+// Add draft angle
+cup = addDraft(cup, draftAngle, 'z');
+
+// Sweep a bead around the rim
+// Get cup dimensions after all transformations
+const dims = getDimensions(cup);
+const rimZ = dims.max[2];
+
+// Calculate rim radius
+const rimOuterRadius = Math.max(dims.max[0], dims.max[1]) - wallThickness / 2;
+
+// Create rim ross-section
+const beadProfile = CrossSection.circle(beadRadius, 24);
+
+// Circular path for the rim - positioned at outer edge
+const rimPath = {
+  position: (t) => {
+    const angle = t * 2 * Math.PI;
+    return [
+      rimOuterRadius * Math.cos(angle),
+      rimOuterRadius * Math.sin(angle),
+      rimZ - beadRadius * 0.3  // Slightly embed in the cup
+    ];
+  },
+  derivative: (t) => {
+    const angle = t * 2 * Math.PI;
+    const twoPi = 2 * Math.PI;
+    return [
+      -rimOuterRadius * twoPi * Math.sin(angle),
+      rimOuterRadius * twoPi * Math.cos(angle),
+      0
+    ];
+  },
+  tMin: 0,
+  tMax: 0.9999  // Tiny gap to prevent self-intersection on closed loop
+};
+
+const rim = sweep(beadProfile, rimPath, {
+  arcSamples: 500,
+  extrudeSegments: 128,
+  initialNormal: [0, 0, 1]  // Start with upward-facing normal
+}).translate([0, 0, - cupHeight]);
+
+// Combine rim and cup
+cup = cup.add(rim);
+
+const { sphere, union } = Manifold;
+const ball = sphere(20, segments);
+const result = union([ball, cup]);
+
+// Return the final result
+return result;`;
+
+export const DEFAULT_SCRIPT_2 = `// Modify CAD script directly or use the AI assistant to code for you
 // It's helpful to use the assistant to get started and edit from there
 // Assistant is good at iterating on an object, similar to how you would use a CAD program
 // You can click on faces to guide the assistant
@@ -102,3 +186,4 @@ result = result.subtract(cbore2);
 return result;`;
 
 export default DEFAULT_SCRIPT;
+ 
