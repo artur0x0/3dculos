@@ -10,8 +10,6 @@ import AccountModal from './components/AccountModal';
 import { useAuth } from './hooks/useAuth';
 import { 
   importFile,
-  isFrontendFormat, 
-  isBackendFormat 
 } from './utils/importModel';
 import { 
   hasCheckoutReturnFlag, 
@@ -60,7 +58,7 @@ const App = () => {
     currentBranch: 'main'
   });
 
-  // Initialize ManifoldWorker (sandbox) and handle script restoration
+  // Initialize ManifoldWorkerand handle script restoration
   useEffect(() => {
     const initManifold = async () => {
       try {
@@ -450,7 +448,7 @@ const App = () => {
       <div className="flex items-center justify-center h-screen bg-gray-900 text-white">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white mx-auto mb-4"></div>
-          <p>Loading Manifold Sandbox...</p>
+          <p>Loading...</p>
         </div>
       </div>
     );

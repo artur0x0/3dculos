@@ -26,10 +26,10 @@ import { X } from 'lucide-react';
 import { downloadModelFromMesh, get3MFBase64FromMesh } from '../utils/exportModel';
 import { parseImportedModels, loadCachedModel } from '../utils/importModel';
 import { calculateQuote } from '../utils/quoting';
-import { selectFaceByID } from '../utils/selectFace';
+import { selectFaceByID, selectFaceWithTolerance, selectAllConnected } from '../utils/selectFace';
 import { createCuttingPlaneWidget, updateCuttingPlaneWidget } from '../utils/cuttingPlaneWidget';
 import { AxesHelper } from 'three';
-import { calculateMeasurements } from '../utils/measurementTool';
+import { calculateMeasurements, createMeasurementLines, disposeMeasurementLines } from '../utils/measurementTool';
 import { validateScript, formatValidationErrors } from '../utils/scriptValidator';
 import manifoldContext from '../utils/ManifoldWorker';
 
@@ -67,12 +67,24 @@ const Viewport = forwardRef(({
   const cuttingPlaneWidgetRef = useRef(null);
   const axisHelperRef = useRef(null);
   const executionAbortRef = useRef(null);
+
+  const clickCountRef = useRef(0);
+  const clickTimerRef = useRef(null);
+  const lastClickTimeRef = useRef(0);
+  const pendingClickDataRef = useRef(null);
+  const mouseDownPosRef = useRef({ x: 0, y: 0 });
+  const isDraggingRef = useRef(false);
+  const measurementLinesRef = useRef(null); 
+
+  // Configuration for click detection
+  const MULTI_CLICK_DELAY = 300; // ms to wait for additional clicks
+  const ANGLE_TOLERANCE_DEGREES = 3; // Angular tolerance for double-click selection
+  const DRAG_THRESHOLD = 3; // pixels - movement beyond this is considered a drag
   
   const [selectedFace, setSelectedFace] = useState(null);
   const [materials, setMaterials] = useState([]);
   const [isExecuting, setIsExecuting] = useState(false);
   const [executionError, setExecutionError] = useState(null);
-  const [downloadFormat, setDownloadFormat] = useState('3mf');
   const [isDownloading, setIsDownloading] = useState(false);
   
   // Cross-section state
@@ -210,111 +222,6 @@ const Viewport = forwardRef(({
     }
   }, [crossSectionEnabled]);
 
-  // Handle face click
-  const handleCanvasClick = useCallback((event) => {
-    if (!canvasRef.current || !cameraRef.current || !resultRef.current) return;
-    const canvas = canvasRef.current;
-    const rect = canvas.getBoundingClientRect();
-    mouseRef.current.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-    mouseRef.current.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-    raycasterRef.current.setFromCamera(mouseRef.current, cameraRef.current);
-    const intersects = raycasterRef.current.intersectObject(resultRef.current);
-    
-    if (intersects.length > 0) {
-      const intersection = intersects[0];
-      const clickedFace = intersection.face;
-      const seedFaceIndex = intersection.faceIndex;
-      const geometry = resultRef.current.geometry;
-      const positions = geometry.attributes.position;
-      const index = geometry.index.array;
-      let centerSum = new Vector3();
-      let totalArea = 0;
-      const allVertices = [];
-      const faceIndices = selectFaceByID(geometry, seedFaceIndex, {
-        normal: [clickedFace.normal.x, clickedFace.normal.y, clickedFace.normal.z]
-      });
-      
-      faceIndices.forEach(faceIdx => {
-        const i0 = index[faceIdx * 3];
-        const i1 = index[faceIdx * 3 + 1];
-        const i2 = index[faceIdx * 3 + 2];
-        const v1 = new Vector3().fromBufferAttribute(positions, i0);
-        const v2 = new Vector3().fromBufferAttribute(positions, i1);
-        const v3 = new Vector3().fromBufferAttribute(positions, i2);
-        const triangle = new Triangle(v1, v2, v3);
-        const area = triangle.getArea();
-        const triCenter = new Vector3().add(v1).add(v2).add(v3).divideScalar(3);
-        centerSum.add(triCenter.multiplyScalar(area));
-        totalArea += area;
-        allVertices.push([v1.x, v1.y, v1.z], [v2.x, v2.y, v2.z], [v3.x, v3.y, v3.z]);
-      });
-      
-      const center = centerSum.divideScalar(totalArea);
-      const normal = clickedFace.normal.clone();
-      const faceData = {
-        center: [center.x, center.y, center.z],
-        normal: [normal.x, normal.y, normal.z],
-        area: totalArea,
-        vertices: allVertices,
-        triangleCount: faceIndices.length
-      };
-
-      // Handle measurement mode
-      if (measurementEnabled) {
-        if (!measurementFaces.first) {
-          // First face selected
-          setMeasurementFaces({ first: faceData, second: null });
-          
-          // Highlight first face
-          clearHighlight();
-          highlightFace(faceIndices, geometry, positions, index, 0xffff00, 'first');
-          
-          console.log('[Measurement] First face selected');
-        } else if (!measurementFaces.second) {
-          // Second face selected - highlight and calculate
-          setMeasurementFaces(prev => ({ ...prev, second: faceData }));
-          highlightFace(faceIndices, geometry, positions, index, 0xffff00, 'second');
-          
-          console.log('[Measurement] Second face selected');
-        } else {
-          // Third face - restart with this as first
-          setMeasurementFaces({ first: faceData, second: null });
-          
-          clearHighlight();
-          highlightFace(faceIndices, geometry, positions, index, 0x00ff00);
-          
-          console.log('[Measurement] Restarted with new first face');
-        }
-      } else {
-        // Normal face selection mode
-        setSelectedFace(faceData);
-        onFaceSelected?.(faceData);
-        clearHighlight();
-        highlightFace(faceIndices, geometry, positions, index, 0xffff00);
-      }
-    } else {
-      // Clicked empty space
-      if (measurementEnabled) {
-        console.log("[Measurement] Keeping face selected for measurement")
-      } else {
-        clearHighlight();
-        setSelectedFace(null);
-        onFaceSelected?.(null);
-      }
-    }
-  }, [onFaceSelected, measurementEnabled, measurementFaces]);
-
-  // Effect for click handler
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    
-    canvas.addEventListener('mousedown', handleCanvasClick);
-    return () => {
-      canvas.removeEventListener('mousedown', handleCanvasClick);
-    };
-  }, [handleCanvasClick]);
-
   // Helper function to highlight a face
   const highlightFace = useCallback((faceIndices, geometry, positions, index, color = 0xffff00, name = 'highlight') => {
     const highlightPositions = [];
@@ -355,6 +262,277 @@ const Viewport = forwardRef(({
     }
     highlightMeshRef.current.push(highlightMesh);
   }, []);
+
+  const clearMeasurementLines = useCallback(() => {
+    if (measurementLinesRef.current && sceneRef.current) {
+      sceneRef.current.remove(measurementLinesRef.current);
+      disposeMeasurementLines(measurementLinesRef.current);
+      measurementLinesRef.current = null;
+    }
+  }, []);
+
+  const updateMeasurementVisualization = useCallback((face1, face2) => {
+    // Clear existing measurement lines
+    clearMeasurementLines();
+    
+    if (face1 && face2 && sceneRef.current) {
+      // Create new measurement lines
+      const lines = createMeasurementLines(face1, face2);
+      sceneRef.current.add(lines);
+      measurementLinesRef.current = lines;
+    }
+  }, [clearMeasurementLines]);
+
+  /**
+   * Handle mouse down - record position for drag detection
+   */
+  const handleMouseDown = useCallback((event) => {
+    mouseDownPosRef.current = { x: event.clientX, y: event.clientY };
+    isDraggingRef.current = false;
+  }, []);
+
+  /**
+   * Handle mouse move - detect if dragging
+   */
+  const handleMouseMove = useCallback((event) => {
+    if (mouseDownPosRef.current) {
+      const dx = event.clientX - mouseDownPosRef.current.x;
+      const dy = event.clientY - mouseDownPosRef.current.y;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      
+      if (distance > DRAG_THRESHOLD) {
+        isDraggingRef.current = true;
+      }
+    }
+  }, []);
+
+  /**
+   * Handle mouse up - process click only if not dragging
+   */
+  const handleMouseUp = useCallback((event) => {
+    // If user was dragging, don't process as a click
+    if (isDraggingRef.current) {
+      isDraggingRef.current = false;
+      return;
+    }
+    
+    if (!canvasRef.current || !cameraRef.current || !resultRef.current) return;
+    
+    // Calculate mouse position and perform raycast
+    const canvas = canvasRef.current;
+    const rect = canvas.getBoundingClientRect();
+    mouseRef.current.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    mouseRef.current.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+    raycasterRef.current.setFromCamera(mouseRef.current, cameraRef.current);
+    const intersects = raycasterRef.current.intersectObject(resultRef.current);
+    
+    // Handle click on empty space (only if not dragging)
+    if (intersects.length === 0) {
+      if (clickTimerRef.current) {
+        clearTimeout(clickTimerRef.current);
+        clickTimerRef.current = null;
+      }
+      clickCountRef.current = 0;
+      pendingClickDataRef.current = null;
+      
+      if (measurementEnabled) {
+        console.log("[Measurement] Keeping face selected for measurement");
+      } else {
+        clearHighlight();
+        setSelectedFace(null);
+        onFaceSelected?.(null);
+      }
+      return;
+    }
+    
+    // Capture intersection data
+    const intersection = intersects[0];
+    const clickedFace = intersection.face;
+    const seedFaceIndex = intersection.faceIndex;
+    const geometry = resultRef.current.geometry;
+    const positions = geometry.attributes.position;
+    const index = geometry.index.array;
+    
+    const clickData = {
+      clickedFace,
+      seedFaceIndex,
+      geometry,
+      positions,
+      index,
+      faceNormal: [clickedFace.normal.x, clickedFace.normal.y, clickedFace.normal.z]
+    };
+    
+    // Multi-click detection
+    const now = Date.now();
+    if (now - lastClickTimeRef.current > MULTI_CLICK_DELAY) {
+      clickCountRef.current = 0;
+    }
+    
+    clickCountRef.current++;
+    lastClickTimeRef.current = now;
+    pendingClickDataRef.current = clickData;
+    
+    if (clickTimerRef.current) {
+      clearTimeout(clickTimerRef.current);
+    }
+    
+    // Process click after delay
+    clickTimerRef.current = setTimeout(() => {
+      processClick();
+    }, MULTI_CLICK_DELAY);
+    
+  }, [onFaceSelected, measurementEnabled, measurementFaces, clearHighlight]);
+
+  /**
+   * Process the pending click based on click count
+   * This is called after the multi-click delay has passed
+   */
+  const processClick = useCallback(() => {
+    const clickData = pendingClickDataRef.current;
+    if (!clickData) return;
+    
+    const { clickedFace, seedFaceIndex, geometry, positions, index, faceNormal } = clickData;
+    const clickCount = clickCountRef.current;
+    
+    // Reset click tracking
+    clickCountRef.current = 0;
+    clickTimerRef.current = null;
+    pendingClickDataRef.current = null;
+    
+    // Determine which selection function to use based on click count
+    let faceIndices;
+    let selectionMode;
+    
+    if (clickCount >= 3) {
+      // Triple click: select all connected triangles
+      faceIndices = selectAllConnected(geometry, seedFaceIndex);
+      selectionMode = 'all-connected';
+      console.log(`[Face Selection] Triple-click: selecting all ${faceIndices.length} connected triangles`);
+    } else if (clickCount === 2) {
+      // Double click: select faces within angular tolerance
+      faceIndices = selectFaceWithTolerance(geometry, seedFaceIndex, { normal: faceNormal }, ANGLE_TOLERANCE_DEGREES);
+      selectionMode = 'angular-tolerance';
+      console.log(`[Face Selection] Double-click: selecting ${faceIndices.length} triangles within ${ANGLE_TOLERANCE_DEGREES}° tolerance`);
+    } else {
+      // Single click: select exact coplanar faces
+      faceIndices = selectFaceByID(geometry, seedFaceIndex, { normal: faceNormal });
+      selectionMode = 'coplanar';
+      console.log(`[Face Selection] Single-click: selecting ${faceIndices.length} coplanar triangles`);
+    }
+    
+    // Calculate face data (center, area, vertices) from selected triangles
+    let centerSum = new Vector3();
+    let totalArea = 0;
+    const allVertices = [];
+    
+    faceIndices.forEach(faceIdx => {
+      const i0 = index[faceIdx * 3];
+      const i1 = index[faceIdx * 3 + 1];
+      const i2 = index[faceIdx * 3 + 2];
+      const v1 = new Vector3().fromBufferAttribute(positions, i0);
+      const v2 = new Vector3().fromBufferAttribute(positions, i1);
+      const v3 = new Vector3().fromBufferAttribute(positions, i2);
+      const triangle = new Triangle(v1, v2, v3);
+      const area = triangle.getArea();
+      const triCenter = new Vector3().add(v1).add(v2).add(v3).divideScalar(3);
+      centerSum.add(triCenter.multiplyScalar(area));
+      totalArea += area;
+      allVertices.push([v1.x, v1.y, v1.z], [v2.x, v2.y, v2.z], [v3.x, v3.y, v3.z]);
+    });
+    
+    const center = centerSum.divideScalar(totalArea);
+    const normal = clickedFace.normal.clone();
+    const faceData = {
+      center: [center.x, center.y, center.z],
+      normal: [normal.x, normal.y, normal.z],
+      area: totalArea,
+      vertices: allVertices,
+      triangleCount: faceIndices.length,
+      selectionMode // Include selection mode in face data for UI display
+    };
+    
+    // Handle measurement mode
+    if (measurementEnabled) {
+      handleMeasurementClick(faceData, faceIndices, geometry, positions, index);
+    } else {
+      // Normal face selection mode
+      setSelectedFace(faceData);
+      onFaceSelected?.(faceData);
+      clearHighlight();
+      highlightFace(faceIndices, geometry, positions, index, 0xffff00);
+    }
+    
+  }, [measurementEnabled, measurementFaces, onFaceSelected, clearHighlight, highlightFace]);
+
+  /**
+   * Handle face selection in measurement mode
+   */
+  const handleMeasurementClick = useCallback((faceData, faceIndices, geometry, positions, index) => {
+    if (!measurementFaces.first) {
+      // First face selected - clear any existing measurement lines
+      clearMeasurementLines();
+      setMeasurementFaces({ first: faceData, second: null });
+      
+      // Highlight first face in green
+      clearHighlight();
+      highlightFace(faceIndices, geometry, positions, index, 0x00ff00, 'first');
+      
+      console.log('[Measurement] First face selected');
+    } else if (!measurementFaces.second) {
+      // Second face selected - highlight and create measurement visualization
+      setMeasurementFaces(prev => {
+        // Create measurement lines with both faces
+        updateMeasurementVisualization(prev.first, faceData);
+        return { ...prev, second: faceData };
+      });
+      highlightFace(faceIndices, geometry, positions, index, 0xffff00, 'second');
+      
+      console.log('[Measurement] Second face selected');
+    } else {
+      // Third click - restart with this as first face
+      clearMeasurementLines();
+      setMeasurementFaces({ first: faceData, second: null });
+      
+      clearHighlight();
+      highlightFace(faceIndices, geometry, positions, index, 0x00ff00, 'first');
+      
+      console.log('[Measurement] Restarted with new first face');
+    }
+  }, [measurementFaces, clearHighlight, highlightFace, clearMeasurementLines, updateMeasurementVisualization]);
+
+  // --- Event listener setup ---
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    
+    canvas.addEventListener('mousedown', handleMouseDown);
+    canvas.addEventListener('mousemove', handleMouseMove);
+    canvas.addEventListener('mouseup', handleMouseUp);
+    
+    return () => {
+      canvas.removeEventListener('mousedown', handleMouseDown);
+      canvas.removeEventListener('mousemove', handleMouseMove);
+      canvas.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [handleMouseDown, handleMouseMove, handleMouseUp]);
+
+  // Click cleanup effect
+  useEffect(() => {
+    return () => {
+      // Cleanup click timer on unmount
+      if (clickTimerRef.current) {
+        clearTimeout(clickTimerRef.current);
+      }
+      // Cleanup measurement lines on unmount
+      clearMeasurementLines();
+    };
+  }, [clearMeasurementLines]);
+
+  useEffect(() => {
+    if (!measurementEnabled) {
+      clearMeasurementLines();
+    }
+  }, [measurementEnabled, clearMeasurementLines]);
 
   // Initialize Three.js scene
   useEffect(() => {
