@@ -1,12 +1,7 @@
 // server.js
 import express from 'express';
 import cors from 'cors';
-import multer from 'multer';
 import helmet from 'helmet';
-import { exec } from 'child_process';
-import { promisify } from 'util';
-import path from 'path';
-import { fileURLToPath } from 'url';
 
 // Config and DB
 import config from './config/index.js';

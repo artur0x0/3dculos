@@ -16,10 +16,9 @@ import {
   Vector3,
   Triangle,
   LineSegments,
-  EdgesGeometry,
   LineBasicMaterial
 } from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { TrackballControls } from 'three/addons/controls/TrackballControls.js';
 import Toolbar from './Toolbar';
 import CrossSectionPanel from './CrossSectionPanel';
 import { X } from 'lucide-react';
@@ -614,11 +613,8 @@ const Viewport = forwardRef(({
       renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
       rendererRef.current = renderer;
 
-      const controls = new OrbitControls(camera, renderer.domElement);
+      const controls = new TrackballControls(camera, renderer.domElement);
       controls.enableDamping = true;
-      // Enable full 360° rotation
-      controls.minPolarAngle = 0; // Remove lower limit
-      controls.maxPolarAngle = Math.PI; // Remove upper limit (allow going upside down)
       controls.enableRotate = true;
       controlsRef.current = controls;
 
