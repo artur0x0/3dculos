@@ -222,9 +222,11 @@ const Viewport = forwardRef(({
     }
   }, [crossSectionEnabled]);
 
-  // Helper function to highlight a face
+  // Helper function to highlight a face - with boundary edges only
   const highlightFace = useCallback((faceIndices, geometry, positions, index, color = 0xffff00, name = 'highlight') => {
     const highlightPositions = [];
+    const edgeCount = new Map(); // Track how many times each edge appears
+    
     faceIndices.forEach(faceIdx => {
       const i0 = index[faceIdx * 3];
       const i1 = index[faceIdx * 3 + 1];
@@ -237,8 +239,32 @@ const Viewport = forwardRef(({
         v2.x, v2.y, v2.z,
         v3.x, v3.y, v3.z
       );
+      
+      // Track edges (use sorted vertex indices as key)
+      const edges = [
+        [Math.min(i0, i1), Math.max(i0, i1)],
+        [Math.min(i1, i2), Math.max(i1, i2)],
+        [Math.min(i2, i0), Math.max(i2, i0)]
+      ];
+      
+      edges.forEach(([a, b]) => {
+        const key = `${a}-${b}`;
+        edgeCount.set(key, (edgeCount.get(key) || 0) + 1);
+      });
     });
     
+    // Build boundary edges (edges that appear only once)
+    const boundaryEdgePositions = [];
+    edgeCount.forEach((count, key) => {
+      if (count === 1) {
+        const [a, b] = key.split('-').map(Number);
+        const v1 = new Vector3().fromBufferAttribute(positions, a);
+        const v2 = new Vector3().fromBufferAttribute(positions, b);
+        boundaryEdgePositions.push(v1.x, v1.y, v1.z, v2.x, v2.y, v2.z);
+      }
+    });
+    
+    // Create highlight mesh
     const highlightGeometry = new BufferGeometry();
     highlightGeometry.setAttribute('position', new BufferAttribute(new Float32Array(highlightPositions), 3));
     const indices = [];
@@ -246,15 +272,22 @@ const Viewport = forwardRef(({
       indices.push(i);
     }
     highlightGeometry.setIndex(indices);
-    const edges = new EdgesGeometry(highlightGeometry);
-    const edgesLine = new LineSegments(edges, new LineBasicMaterial({ 
-      color, linewidth: 3, depthTest: true
-    }));
+    
     const highlightMesh = new ThreeMesh(highlightGeometry, new MeshBasicMaterial({
       color, transparent: true, opacity: 0.3, depthTest: true, side: 2
     }));
-    highlightMesh.add(edgesLine);
     highlightMesh.name = name;
+    
+    // Create boundary edge lines only
+    if (boundaryEdgePositions.length > 0) {
+      const edgeGeometry = new BufferGeometry();
+      edgeGeometry.setAttribute('position', new BufferAttribute(new Float32Array(boundaryEdgePositions), 3));
+      const edgesLine = new LineSegments(edgeGeometry, new LineBasicMaterial({ 
+        color, linewidth: 3, depthTest: true
+      }));
+      highlightMesh.add(edgesLine);
+    }
+    
     sceneRef.current.add(highlightMesh);
     
     if (!highlightMeshRef.current) {
