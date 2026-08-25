@@ -342,6 +342,150 @@ Helper function used by `shell()`. Computes the uniform scale ratio needed to cr
 
 ---
 
+## Selection & Feature Helpers (C4)
+
+These helpers add a geometric **selector layer** (Manifold has no native
+face/edge API) plus parametric **features** (holes, counterbores,
+countersinks, chamfers). They read a manifold's mesh via `getMesh()` and
+operate in local 2D face frames, so a script can reason about "the top
+face", "vertical edges", or "a hole pattern on this wall" the way a CAD
+user does.
+
+All of them take and return standard `Manifold` objects and validate the
+result (`status() === 'NoError'`), throwing on failure.
+
+### Face & edge selection
+
+`c4MeshData` is the internal indexer (grouping triangles into BRep faces
+via `faceID`, welding edges). The public selectors:
+
+### facesByNormal(m, dir, tolDeg = 1)
+
+**Parameters:**
+- `m` - The input manifold
+- `dir` - Target normal as `[x,y,z]` (e.g. `[0,0,1]` for `>Z`, `[0,0,-1]` for `<Z`)
+- `tolDeg` - Angular tolerance in degrees (default 1)
+
+**Returns:** Array of face objects `{ id, tris, normal, center, verts }`.
+
+```javascript
+const topFaces = facesByNormal(part, [0, 0, 1]);      // all upward faces
+const wall     = facesByNormal(part, [1, 0, 0])[0];   // a +X face
+```
+
+### planarFaceAt(m, axis, value, tol = 1e-3)
+
+The single planar face lying in the plane `axis == value` (axis `'x'|'y'|'z'`).
+Returns `null` if none, throws if more than one.
+
+```javascript
+const top = planarFaceAt(part, 'z', 30);   // the face at z=30
+```
+
+### edgesByOrientation(m, axis, dir = null, tolDeg = 5)
+
+Edges parallel to `axis` (`'x'|'y'|'z'`). `dir` of `1` / `-1` / `null`
+selects one direction or both.
+
+```javascript
+const vEdges = edgesByOrientation(part, 'z');      // all vertical edges
+```
+
+### workplaneFromFace(m, face)
+
+Builds a deterministic, axis-aligned local frame on a face (or a face index
+into `m`). Returns `{ center, normal, x, y }` where `normal` is the outward
+face normal and `(x, y)` are the in-plane axes. Axes are aligned to world
+axes so `(u, v)` map to predictable world directions:
+
+- `+Z` face → `u→+X, v→+Y`   - `-Z` face → `u→+X, v→-Y`
+- `+X` face → `u→+Y, v→+Z`   - `-X` face → `u→+Y, v→-Z`
+- `+Y` face → `u→+X, v→-Z`   - `-Y` face → `u→+X, v→+Z`
+
+```javascript
+const fr = workplaneFromFace(part, facesByNormal(part, [0,0,1])[0]);
+// fr.center, fr.normal, fr.x, fr.y
+```
+
+### placeOnFace(part, frame, builder)
+
+Runs `builder` in the face's local frame. The builder receives
+`{ Manifold, frame, put }` where `put(m, [u,v,w])` transforms a built
+Manifold so its origin lands at `center + u·x + v·y + w·normal` (w is along
+the outward normal; negative w goes into the solid). Lets scripts write
+axis-aligned geometry for arbitrary face normals. Returns the builder's
+Manifold.
+
+```javascript
+const fr = workplaneFromFace(part, facesByNormal(part, [0,0,1])[0]);
+const rib = placeOnFace(part, fr, ({ put, Manifold }) =>
+  put(Manifold.cube([40, 4, 6], true), [0, 0, -3]));
+return Manifold.union(part, rib);
+```
+
+### Features
+
+### hole(part, frame, u, v, dia, span)
+
+Cut a round through-hole on `frame` at local `(u, v)` (mm), diameter `dia`,
+cut length `span` along the outward normal. Use `holeSpan()` for full
+thickness.
+
+```javascript
+const fr = workplaneFromFace(part, facesByNormal(part, [0,0,1])[0]);
+part = hole(part, fr, 10, 5, 6, holeSpan(part, fr));
+```
+
+### holeSpan(part, frame)
+
+Full extent of the part along the frame normal (both directions) + 2 mm
+overshoot — a safe full-through cut length from that face.
+
+### cboreHole(part, frame, u, v, diaThru, diaCbore, cboreDepth, span)
+
+Through hole `diaThru` plus a larger counterbore `diaCbore` to `cboreDepth`
+from the face. (CadQuery `cboreHole`.)
+
+### cskHole(part, frame, u, v, diaThru, diaCsk, cskDepth, span)
+
+Through hole `diaThru` plus a cone countersink spanning `diaThru`→`diaCsk`
+over `cskDepth`. (CadQuery `cskHole`.)
+
+### chamferEdges(part, edges, c)
+
+Equal-leg 45° chamfer of length `c` on a **set** of straight convex edges.
+`edges` come from `convexEdges()` / `c4MeshData()`, or a plain
+`[{va, vb, n0, n1}]` array. All cutters are unioned and subtracted once, so
+adjacent-edge corner interactions are handled by the boolean.
+
+```javascript
+part = chamferEdges(part, convexEdges(part), 2);
+```
+
+### convexEdges(m, minAngleDeg = 2)
+
+Genuine straight convex edges: dihedral angle > `minAngleDeg` (filters
+curved-face tessellation seams) and a ball-probe confirms the corner is
+convex (not concave). Returns edge objects with `va`, `vb`, `tangent`, and
+`n0`/`n1` (adjacent face normals) attached — ready for `chamferEdges`.
+
+```javascript
+const vConvex = convexEdges(part).filter(e => Math.abs(e.tangent[2]) > 0.99);
+part = chamferEdges(part, vConvex, 0.5);   // chamfer only the vertical corners
+```
+
+### holePattern(part, frame, { n, m, spacingU, spacingV, dia, span, u0=0, v0=0 })
+
+Linear grid of `n`×`m` through-holes (CadQuery `rarray`), centered on the
+face center plus an optional `(u0, v0)` offset.
+
+```javascript
+const fr = workplaneFromFace(part, facesByNormal(part, [0,0,1])[0]);
+part = holePattern(part, fr, { n: 3, m: 2, spacingU: 12, spacingV: 10, dia: 4 });
+```
+
+---
+
 ## Example: Complex Part
 
 ```javascript
@@ -354,8 +498,8 @@ const mainTube = tube(15, 12, 40, 64);
 const flange = Manifold.cylinder(5, 25, 25, 64);
 
 // Mounting holes in flange
-const hole = Manifold.cylinder(10, 3, 3, 32);
-const holes = polarArray(hole, 4, 20, 'z');
+const bore = Manifold.cylinder(10, 3, 3, 32);
+const holes = polarArray(bore, 4, 20, 'z');
 
 // Combine
 let part = mainTube.add(flange);

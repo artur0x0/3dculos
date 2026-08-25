@@ -1105,6 +1105,397 @@ function getDimensions(manifold) {
   };
 }
 
+// ============================================================================
+// C4 — Selection + Feature helpers for Manifold JS (3dculos sandbox)
+// Ported from cadgen-workspace/harness/c4_helpers.mjs (all 21 harness tests
+// green; verified against real dataset STEP ground truth).
+//
+// Mesh facts (verified against manifold-3d):
+//   getMesh() -> { numProp, vertProperties(Float32), triVerts(Uint32, 3/tri),
+//                  faceID(Uint32, per-tri), ... }
+//   faceID = true BRep face grouping (stable across booleans; 6 on a box,
+//   14 on a 12-seg cylinder, 36 on a holed box). Triangle winding is outward.
+//   runIndex = per-component (NOT per edge) — edges are derived from the
+//   welded triangle map instead.
+//   .transform(m) = flat-16 matrix, axes packed as ROWS (row-vector
+//   convention, empirically verified; see frameToMatrix). Last row = translation.
+//   No face/edge API exists — this module IS the selector layer.
+// ============================================================================
+
+// ---------------------------------------------------------------- local math
+function _c4Cross(a, b) { return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]]; }
+function _c4Dot(a, b) { return a[0]*b[0]+a[1]*b[1]+a[2]*b[2]; }
+function _c4Len(v) { return Math.hypot(v[0], v[1], v[2]); }
+function _c4Norm(v) { const l = _c4Len(v) || 1; return [v[0]/l, v[1]/l, v[2]/l]; }
+function _c4Sub(a, b) { return [a[0]-b[0], a[1]-b[1], a[2]-b[2]]; }
+function _c4Add(a, b) { return [a[0]+b[0], a[1]+b[1], a[2]+b[2]]; }
+function _c4Mul(s, v) { return [s*v[0], s*v[1], s*v[2]]; }
+
+// ---------------------------------------------------------------- mesh data
+// c4MeshData(m) -> { V:[[x,y,z]...], faces:[{id, tris, normal, center, verts}],
+//                    edges:[{a, b, va, vb, tris, tangent, faces:[faceIdx,faceIdx]}] }
+function c4MeshData(m) {
+  const mesh = m.getMesh();
+  const np = mesh.numProp;
+  const V = [];
+  for (let i = 0; i < mesh.triVerts.length / 3; i++)
+    V.push([mesh.vertProperties[i*np], mesh.vertProperties[i*np+1], mesh.vertProperties[i*np+2]]);
+
+  const faceMap = new Map();
+  const triFace = [];
+  for (let i = 0; i < mesh.numTri; i++) {
+    const fid = mesh.faceID[i];
+    triFace.push(fid);
+    if (!faceMap.has(fid)) faceMap.set(fid, []);
+    faceMap.get(fid).push(i);
+  }
+  const faces = [];
+  for (const [fid, tris] of faceMap) {
+    const n = [0, 0, 0];
+    for (const t of tris) {
+      const v0 = V[mesh.triVerts[t*3]], v1 = V[mesh.triVerts[t*3+1]], v2 = V[mesh.triVerts[t*3+2]];
+      const tn = _c4Norm(_c4Cross(_c4Sub(v1, v0), _c4Sub(v2, v0))); // outward (winding)
+      n[0] += tn[0]; n[1] += tn[1]; n[2] += tn[2];
+    }
+    const c = [0, 0, 0]; const all = [];
+    for (const t of tris) for (const k of [0, 1, 2]) {
+      const v = V[mesh.triVerts[t*3 + k]];
+      c[0] += v[0]; c[1] += v[1]; c[2] += v[2];
+      if (!all.includes(v)) all.push(v);
+    }
+    const cnt = tris.length * 3;
+    faces.push({ id: fid, tris, normal: _c4Norm(n), center: _c4Mul(1/cnt, c), verts: all });
+  }
+  faces.sort((a, b) => a.id - b.id);
+  const faceIdxById = new Map(faces.map((f, i) => [f.id, i]));
+
+  // edges: weld key = sorted vertex pair
+  const edgeMap = new Map();
+  for (let t = 0; t < mesh.numTri; t++) {
+    const vs = [mesh.triVerts[t*3], mesh.triVerts[t*3+1], mesh.triVerts[t*3+2]];
+    for (let k = 0; k < 3; k++) {
+      const u = vs[k], w = vs[(k+1) % 3];
+      const key = u < w ? u * 1e9 + w : w * 1e9 + u;
+      if (!edgeMap.has(key)) edgeMap.set(key, { a: u, b: w, tris: [] });
+      edgeMap.get(key).tris.push(t);
+    }
+  }
+  const edges = [];
+  for (const e of edgeMap.values()) {
+    if (e.tris.length !== 2) continue; // interior/defect: not a real boundary edge
+    const f0 = faceIdxById.get(triFace[e.tris[0]]);
+    const f1 = faceIdxById.get(triFace[e.tris[1]]);
+    // canonical direction: lower-ordered vertex first (stable, undirected)
+    const [a, b] = e.a < e.b ? [e.a, e.b] : [e.b, e.a];
+    let tangent = _c4Sub(V[b], V[a]);
+    if (_c4Len(tangent) < 1e-9) {
+      tangent = _c4Norm(_c4Cross(faces[f0].normal, faces[f1].normal));
+    }
+    tangent = _c4Norm(tangent);
+    edges.push({ a, b, va: V[a], vb: V[b], tris: e.tris, tangent, faces: [f0, f1] });
+  }
+  return { V, faces, edges, faceIdxById };
+}
+
+// ---------------------------------------------------------------- selectors
+/**
+ * facesByNormal(m, dir, tolDeg=1) — faces whose normal is within tolDeg of dir.
+ * dir e.g. [0,0,1] (>Z) or [0,0,-1] (<Z).
+ */
+function facesByNormal(m, dir, tolDeg = 1) {
+  const d = _c4Norm(dir);
+  const cosT = Math.cos((tolDeg * Math.PI) / 180);
+  return c4MeshData(m).faces.filter(f => _c4Dot(f.normal, d) >= cosT);
+}
+
+/**
+ * planarFaceAt(m, axis, value, tol=1e-3) — the face lying in plane axis==value
+ * (axis 'x'|'y'|'z'). Returns null if absent, throws if ambiguous.
+ */
+function planarFaceAt(m, axis, value, tol = 1e-3) {
+  const i = { x: 0, y: 1, z: 2 }[axis.toLowerCase()];
+  if (i === undefined) throw new Error(`planarFaceAt: bad axis '${axis}'`);
+  const n = [0, 0, 0]; n[i] = 1;
+  const cands = c4MeshData(m).faces.filter(f =>
+    Math.abs(Math.abs(_c4Dot(f.normal, n)) - 1) < 0.01 &&
+    f.verts.every(v => Math.abs(v[i] - value) < tol));
+  if (cands.length === 0) return null;
+  if (cands.length > 1) throw new Error(`planarFaceAt: ${cands.length} faces at ${axis}=${value}`);
+  return cands[0];
+}
+
+/**
+ * edgesByOrientation(m, axis, dir, tolDeg=5)
+ *  axis 'x'|'y'|'z'  -> edges parallel to that axis
+ *  dir 1 | -1 | null -> one-sided / both
+ */
+function edgesByOrientation(m, axis, dir = null, tolDeg = 5) {
+  const i = { x: 0, y: 1, z: 2 }[axis.toLowerCase()];
+  if (i === undefined) throw new Error(`edgesByOrientation: bad axis '${axis}'`);
+  const ax = [0, 0, 0]; ax[i] = 1;
+  const cosT = Math.cos((tolDeg * Math.PI) / 180);
+  return c4MeshData(m).edges.filter(e => {
+    const s = _c4Dot(e.tangent, ax); // in [-1, 1]
+    if (dir === 1 && s < cosT) return false;
+    if (dir === -1 && s > -cosT) return false;
+    return Math.abs(s) >= cosT;
+  });
+}
+
+/**
+ * workplaneFromFace(m, face) -> { center, normal, x, y }
+ * Local 2D frame on the face. center = face centroid, normal = outward face
+ * normal, and the in-plane axes x,y are DETERMINISTIC + AXIS-ALIGNED so
+ * (u,v) map to predictable world directions (a transpiler/LLM can reason
+ * about them):
+ *   x = the world axis most in-plane with the face (smallest |n·axis|),
+ *       ties broken by axis index (X > Y > Z); y = normal × x.
+ * So: +Z face -> u→+X, v→+Y ; -Z -> u→+X, v→-Y ; +X -> u→+Y, v→+Z ;
+ *     -X -> u→+Y, v→-Z ; +Y -> u→+X, v→-Z ; -Y -> u→+X, v→+Z.
+ * (Non-axis-aligned faces, e.g. a 45° chamfer, fall back to the
+ * first-vertex direction.)
+ * (pass a face object from facesByNormal/planarFaceAt, or a face index into m)
+ */
+function workplaneFromFace(m, face) {
+  if (typeof face === 'number') face = c4MeshData(m).faces[face];
+  const normal = _c4Norm(face.normal);
+  const worldAxes = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
+  let x = null, best = Infinity;
+  for (const a of worldAxes) {
+    const s = Math.abs(_c4Dot(normal, a));
+    if (s < best - 1e-9) { best = s; x = a; }
+  }
+  if (best > 0.9) { // face normal is diagonal — no world axis is in-plane
+    const w = face.verts.find(v => _c4Len(_c4Sub(v, face.center)) > 1e-9) || face.verts[0];
+    x = _c4Sub(w, face.center);
+    x = _c4Sub(x, _c4Mul(_c4Dot(x, normal), normal)); // project onto plane
+    if (_c4Len(x) < 1e-9) x = Math.abs(normal[2]) < 0.9 ? [1, 0, 0] : [0, 1, 0];
+  }
+  x = _c4Norm(x);
+  const y = _c4Norm(_c4Cross(normal, x));
+  return { center: face.center, normal, x, y };
+}
+
+// ---------------------------------------------------------------- frames
+// frameToMatrix(frame) -> flat 16 for Manifold .transform(m).
+// CONVENTION (empirically verified): Manifold applies world = localRow · M
+// (row-vector), so the frame axes must be packed as ROWS:
+//   row0 = frame.x, row1 = frame.y, row2 = frame.normal, row3 = center.
+// (Packing them as columns silently transposes the rotation — invisible
+// for axis-aligned faces, wrong for arbitrary face normals.)
+function frameToMatrix(frame) {
+  const z = frame.normal, x = frame.x, y = frame.y, c = frame.center;
+  return [
+    x[0], x[1], x[2], 0,
+    y[0], y[1], y[2], 0,
+    z[0], z[1], z[2], 0,
+    c[0], c[1], c[2], 1,
+  ];
+}
+
+/**
+ * placeOnFace(part, frame, builder) — run builder in the face's local frame.
+ * builder receives { Manifold: statics, frame, put } where put(m, [u,v,w])
+ * returns m transformed so its local origin lands at
+ * center + u·x + v·y + w·normal (w is along the outward normal), with its
+ * local axes aligned to (x, y, normal). Lets scripts write axis-aligned
+ * geometry for arbitrary face normals.
+ */
+function placeOnFace(part, frame, builder) {
+  const M = manifoldModule.Manifold;
+  const built = builder({ Manifold: M, frame, put: (mm, [u, v, w]) => {
+    const x = frame.x, y = frame.y, n = frame.normal, c = frame.center;
+    const t = frameToMatrix({ center: [
+      c[0] + u*x[0] + v*y[0] + w*n[0],
+      c[1] + u*x[1] + v*y[1] + w*n[1],
+      c[2] + u*x[2] + v*y[2] + w*n[2],
+    ], x, y, normal: n });
+    return mm.transform(t);
+  }});
+  if (!built || typeof built.status !== 'function')
+    throw new Error('placeOnFace: builder must return a Manifold');
+  return built;
+}
+
+// ---------------------------------------------------------------- features
+/**
+ * hole(part, frame, u, v, dia, span) — cut a round hole through `part`.
+ * frame from workplaneFromFace; (u,v) local coords (mm), span = cut length
+ * along the outward normal from the face (use holeSpan() for full thickness).
+ * Returns the cut part.
+ */
+function hole(part, frame, u, v, dia, span) {
+  const M = manifoldModule.Manifold;
+  const cut = _c4PutCyl(M, frame, u, v, dia, span);
+  const out = M.difference(part, cut);
+  if (out.status() !== 'NoError') throw new Error(`hole: bad result (${out.status()})`);
+  return out;
+}
+// _c4PutCyl: centered cylinder anchored so it spans w ∈ [1, 1-len] in frame
+// space (1mm outside the face, len-1mm INTO the solid).
+function _c4PutCyl(M, frame, u, v, dia, len) {
+  const n = frame.normal;
+  const c = _c4Add(_c4Add(frame.center, _c4Mul(u, frame.x)), _c4Mul(v, frame.y));
+  const w0 = 1 - len / 2; // centered body covers w0 ± len/2 = [1-len, 1]
+  const t = frameToMatrix({ center: [
+    c[0] + n[0] * w0, c[1] + n[1] * w0, c[2] + n[2] * w0,
+  ], x: frame.x, y: frame.y, normal: n });
+  return M.cylinder(len, dia/2, dia/2, 48, true).transform(t);
+}
+
+/**
+ * holeSpan(part, frame) — full extent of the part measured along the frame
+ * normal (both directions from the face plane) + 2mm overshoot. A safe
+ * full-through cut length from that face.
+ */
+function holeSpan(part, frame) {
+  const bb = part.boundingBox();
+  const corners = [
+    [bb.min[0], bb.min[1], bb.min[2]], [bb.max[0], bb.min[1], bb.min[2]],
+    [bb.min[0], bb.max[1], bb.min[2]], [bb.max[0], bb.max[1], bb.min[2]],
+    [bb.min[0], bb.min[1], bb.max[2]], [bb.max[0], bb.min[1], bb.max[2]],
+    [bb.min[0], bb.max[1], bb.max[2]], [bb.max[0], bb.max[1], bb.max[2]],
+  ];
+  let minW = Infinity, maxW = -Infinity;
+  for (const p of corners) {
+    const w = _c4Dot(_c4Sub(p, frame.center), frame.normal);
+    minW = Math.min(minW, w);
+    maxW = Math.max(maxW, w);
+  }
+  return (maxW - minW) + 2; // +2mm overshoot
+}
+
+/**
+ * cboreHole(part, frame, u, v, diaThru, diaCbore, cboreDepth, span)
+ * — through hole + larger counterbore from the face. (CadQuery cboreHole)
+ */
+function cboreHole(part, frame, u, v, diaThru, diaCbore, cboreDepth, span) {
+  const M = manifoldModule.Manifold;
+  const thru = _c4PutCyl(M, frame, u, v, diaThru, span);
+  const cbore = _c4PutCyl(M, frame, u, v, diaCbore, cboreDepth + 1); // [−depth, +1]
+  const out = M.difference(M.difference(part, thru), cbore);
+  if (out.status() !== 'NoError') throw new Error(`cboreHole: bad result (${out.status()})`);
+  return out;
+}
+
+/**
+ * cskHole(part, frame, u, v, diaThru, diaCsk, cskDepth, span)
+ * — through hole + cone countersink: the cone spans diaThru→diaCsk over
+ * cskDepth (118° style for cskDepth ≈ 1.17·(diaCsk−diaThru)/2).
+ * (CadQuery cskHole)
+ */
+function cskHole(part, frame, u, v, diaThru, diaCsk, cskDepth, span) {
+  const M = manifoldModule.Manifold;
+  const thru = _c4PutCyl(M, frame, u, v, diaThru, span);
+  // Exact csk frustum: small end (diaThru) at depth cskDepth below the face,
+  // big end (diaCsk) flush at the face. Cylinder rLow sits at local z0
+  // (bottom), rHigh at the top; frame row-packing maps local +z to the
+  // OUTWARD normal. Length = cskDepth, centered at w0 = -cskDepth/2 so the
+  // body spans w ∈ [-cskDepth, 0] (0 = face plane, - = into the solid).
+  const n = frame.normal;
+  const c = _c4Add(_c4Add(frame.center, _c4Mul(u, frame.x)), _c4Mul(v, frame.y));
+  const cone = M.cylinder(cskDepth, diaThru/2, diaCsk/2, 48, true); // rLow small
+  const w0 = -cskDepth / 2;
+  const t = frameToMatrix({ center: [
+    c[0] + n[0] * w0, c[1] + n[1] * w0, c[2] + n[2] * w0,
+  ], x: frame.x, y: frame.y, normal: n });
+  const out = M.difference(M.difference(part, thru), cone.transform(t));
+  if (out.status() !== 'NoError') throw new Error(`cskHole: bad result (${out.status()})`);
+  return out;
+}
+
+/**
+ * chamferEdges(part, edges, c) — equal-leg 45° chamfer c on a SET of straight
+ * convex edges. Edges = objects from c4MeshData/convexEdges, or a plain
+ * [{va, vb, n0, n1}] array (n0/n1 = outward normals of the two adjacent faces
+ * at that edge — REQUIRED: after any boolean they can't be derived from the
+ * current mesh).
+ *
+ * Construction (verified, C2 pilot + C4): per edge, cutter = hull of the two
+ * edge endpoints plus four corner points pulled c into each adjacent face
+ * interior. All cutters are unioned and subtracted ONCE (batched), so corner
+ * interactions between adjacent edges are handled by the boolean, not by
+ * repeated re-selection. Result must be a valid manifold.
+ */
+function chamferEdges(part, edges, c) {
+  const M = manifoldModule.Manifold;
+  if (!edges.length) return part;
+  const cutters = [];
+  for (const e of edges) {
+    const p0 = e.va, p1 = e.vb;
+    const len = _c4Len(_c4Sub(p1, p0));
+    if (len < 1e-9) continue;
+    const d = _c4Mul(1/len, _c4Sub(p1, p0));
+    // offset c INTO each adjacent face: (-n) projected perpendicular to the
+    // edge direction. This is a unit direction lying IN the face plane,
+    // pointing toward the face interior (negated normal = into the solid).
+    const off = (n) => {
+      const t = _c4Dot(_c4Mul(-1, n), d);
+      return _c4Mul(c, _c4Norm(_c4Sub(_c4Mul(-1, n), _c4Mul(t, d))));
+    };
+    const a0 = off(e.n0), a1 = off(e.n1);
+    cutters.push(M.hull([
+      p0, p1,
+      _c4Add(p0, a0), _c4Add(p0, a1),
+      _c4Add(p1, a0), _c4Add(p1, a1),
+    ]));
+  }
+  let tool = cutters[0];
+  for (let i = 1; i < cutters.length; i++) tool = M.union([tool, cutters[i]]);
+  const out = M.difference(part, tool);
+  if (out.status() !== 'NoError') throw new Error(`chamferEdges: bad result (${out.status()})`);
+  return out;
+}
+
+/**
+ * convexEdges(m, minAngleDeg=2) — genuine straight convex edges.
+ * "Genuine" = dihedral angle between the adjacent faces > minAngleDeg
+ * (filters tessellation seams on curved faces, which are not real edges).
+ * Convexity = ball probe centered ON the edge midpoint: for a convex 90°
+ * edge the ball is ~25% inside the solid, for a concave (270°) edge ~75%,
+ * for a smooth surface ~50%. Kept: f < 0.45.
+ * Returns edges with n0/n1 (adjacent face normals) attached, ready for
+ * chamferEdges / the C6 fillet helper.
+ */
+function convexEdges(m, minAngleDeg = 2) {
+  const data = c4MeshData(m);
+  const M = manifoldModule.Manifold;
+  const cosMin = Math.cos((minAngleDeg * Math.PI) / 180);
+  const out = [];
+  for (const e of data.edges) {
+    const n0 = data.faces[e.faces[0]].normal;
+    const n1 = data.faces[e.faces[1]].normal;
+    if (_c4Dot(n0, n1) > cosMin) continue; // coplanar / tessellation seam
+    const mid = _c4Mul(0.5, _c4Add(e.va, e.vb));
+    const r = Math.min(0.05, _c4Len(_c4Sub(e.vb, e.va)) * 0.25);
+    const sp = M.sphere(r, 12, 6).transform([1,0,0,0, 0,1,0,0, 0,0,1,0, mid[0],mid[1],mid[2],1]);
+    const f = M.intersection(m, sp).volume() / sp.volume();
+    if (f >= 0.45) continue; // concave (>0.55) or smooth/ambiguous (~0.5)
+    out.push({ ...e, n0, n1 });
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------- hole patterns
+/**
+ * holePattern(part, frame, { n, m, spacingU, spacingV, dia, span, u0=0, v0=0 })
+ * — linear grid of through holes (CadQuery rarray idiom).
+ * Grid centered on the face center + (u0, v0) offset.
+ */
+function holePattern(part, frame, opts) {
+  const { n = 1, m = 1, spacingU = 10, spacingV = 10, dia = 2, span, u0 = 0, v0 = 0 } = opts;
+  const sp = span ?? holeSpan(part, frame);
+  let out = part;
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j < m; j++) {
+      const u = u0 + (i - (n-1)/2) * spacingU;
+      const v = v0 + (j - (m-1)/2) * spacingV;
+      out = hole(out, frame, u, v, dia, sp);
+    }
+  }
+  return out;
+}
+
 // Collection of all helper functions to inject
 const HELPER_FUNCTIONS = {
   shell,
@@ -1133,6 +1524,19 @@ const HELPER_FUNCTIONS = {
   vecCross,
   vecNorm,
   vecNormalize,
+  // C4 selection + feature helpers (see block above)
+  facesByNormal,
+  planarFaceAt,
+  edgesByOrientation,
+  workplaneFromFace,
+  placeOnFace,
+  hole,
+  holeSpan,
+  cboreHole,
+  cskHole,
+  chamferEdges,
+  convexEdges,
+  holePattern,
 };
 
 // ============================================================================
