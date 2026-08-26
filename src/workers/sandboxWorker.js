@@ -1496,6 +1496,239 @@ function holePattern(part, frame, opts) {
   return out;
 }
 
+// ============================================================================
+// C6 — Fillet helper (Manifold JS has no native fillet; this is the v1
+// geometric construction). Ported from cadgen-workspace/harness/c6_fillet.mjs
+// (8 harness tests green, 08-25).
+//
+// Per edge (both adjacent faces planar, edge convex):
+//   Cross-section perpendicular to the edge: the two faces meet at interior
+//   angle θ (material side). A fillet arc of radius r is tangent to both
+//   faces at distance t = r/tan(θ/2) from the corner, centered on the
+//   INTERIOR angle bisector at distance r/sin(θ/2). Removed cross-section
+//   (sliver between corner and arc) = r·t − ½·r²·(π − θ)  (90°: r²(1−π/4)).
+//   Boundary rays f0/f1 (in-face, from the corner into the material) are
+//   derived from the ADJACENT TRIANGLES' third vertices — NOT face normals
+//   (valid at 90° only) and NOT faceID groups (Manifold can merge faces
+//   from different planes, or both edge triangles, into one faceID —
+//   verified on a box cut by a slanted prism, 08-25).
+//   Cutter = parallelepiped(t·f0, t·f1, edge) − cylinder(r, on bisector
+//   line); exact for every θ. Cutters for a SET of edges are unioned and
+//   subtracted once (same batching as chamferEdges) — shared-corner
+//   overlaps are counted once, matching analytic inclusion-exclusion.
+//
+// Constraints (v1): planar faces at the edge (checked: all same-face
+// neighbor triangles coplanar within 1e-3; curved-face fillets throw);
+// convex edges only (ball probe, same criterion as convexEdges — concave
+// rounding is material ADD and out of scope); radius = number (all edges)
+// or number[] parallel to the edge list (per-edge radii); r must satisfy
+// t < 0.45·edge length (larger r runs off the face — the boolean clips it,
+// documented lower fidelity). Arc tessellated at 96 segments: results sit
+// ≤ L·(π−(n/2)sin(2π/n))·r² ABOVE the circle-exact volume per edge.
+// ============================================================================
+function _c6Norm(v) { const l = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0]/l, v[1]/l, v[2]/l]; }
+function _c6Cross(a, b) { return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]]; }
+
+/**
+ * filletEdges(part, edges, radius) — circular fillet of radius r on a SET of
+ * straight convex edges.
+ *   edges  = objects from convexEdges() (required: they carry the mesh
+ *            indices this helper needs; edges from OTHER selections can
+ *            still be filleted if the edge object has {a, b, va, vb}
+ *            vertex data).
+ *   radius = number (same r for all edges) OR number[] parallel to the
+ *            edge list (per-edge radii).
+ * Returns the filleted part.
+ */
+function filletEdges(part, edgesIn, radiusIn) {
+  const M = manifoldModule.Manifold;
+  const SEGMENTS = 96;
+
+  let edges = edgesIn;
+  let radiusArr = radiusIn;
+  // [{edge, radius}] form: auto-detect on the first entry
+  if (Array.isArray(edgesIn) && edgesIn.length && edgesIn[0] && edgesIn[0].edge) {
+    radiusArr = null;
+    edges = edgesIn.map(x => x.edge);
+    const perEdge = new Map();
+    for (const x of edgesIn) perEdge.set(x.edge, x.radius);
+    radiusArr = edges.map(e => perEdge.get(e));
+  }
+  if (!edges.length) return part;
+
+  const radii = new Map(); // edge object -> r
+  if (Array.isArray(radiusArr)) {
+    if (radiusArr.length !== edges.length)
+      throw new Error(`filletEdges: radius array length ${radiusArr.length} != edge count ${edges.length}`);
+    edges.forEach((e, i) => {
+      const rr = radiusArr[i];
+      if (!(rr > 0)) throw new Error(`filletEdges: r must be > 0 (edge ${i}, got ${rr})`);
+      radii.set(e, rr);
+    });
+  } else {
+    const rr = radiusArr;
+    if (!(rr > 0)) throw new Error(`filletEdges: r must be > 0 (got ${rr})`);
+    for (const e of edges) radii.set(e, rr);
+  }
+
+  const mesh = _c6BuildMeshInfo(part);
+  for (const e of edges) _c6AssertPlanarAtEdge(mesh, e);
+
+  const cutters = [];
+  for (const e of edges) {
+    const r = radii.get(e);
+    const P0 = e.va, P1 = e.vb;
+    const L = Math.hypot(P1[0]-P0[0], P1[1]-P0[1], P1[2]-P0[2]);
+    if (L < 1e-9) continue;
+    const d = [(P1[0]-P0[0])/L, (P1[1]-P0[1])/L, (P1[2]-P0[2])/L];
+
+    // in-face boundary rays from the corner: each of the two triangles on
+    // the edge has a third vertex X inside its face, so (X − P0) projected
+    // perpendicular to the edge is the in-face direction.
+    const eKey = e.a < e.b ? e.a * 1e9 + e.b : e.b * 1e9 + e.a;
+    const ti = mesh.pairMap.get(eKey);
+    if (!ti || ti.length !== 2)
+      throw new Error('filletEdges: edge not found in mesh (stale selection?)');
+    const thirdVertex = (tri) => {
+      for (let k = 0; k < 3; k++) if (tri.vs[k] !== e.a && tri.vs[k] !== e.b) return tri.v[k];
+      throw new Error('filletEdges: degenerate edge triangle');
+    };
+    const f0 = _c6InFaceDir(thirdVertex(mesh.tris[ti[0]]), P0, d);
+    const f1 = _c6InFaceDir(thirdVertex(mesh.tris[ti[1]]), P0, d);
+
+    // convexity guard: ball probe at the midpoint (same criterion as
+    // convexEdges — a dot-product test cannot distinguish a 90° concave
+    // corner from a 90° convex one).
+    const mid = [(P0[0]+P1[0])/2, (P0[1]+P1[1])/2, (P0[2]+P1[2])/2];
+    const rProbe = Math.min(0.05, L * 0.25);
+    const sp = M.sphere(rProbe, 12, 6).transform(
+      [1,0,0,0, 0,1,0,0, 0,0,1,0, mid[0],mid[1],mid[2], 1]);
+    const fIn = M.intersection(part, sp).volume() / sp.volume();
+    if (fIn >= 0.45)
+      throw new Error('filletEdges: edge is concave (pass convexEdges() output)');
+
+    // interior (material-side) angle between the boundary rays
+    const cTheta = Math.max(-1, Math.min(1, f0[0]*f1[0] + f0[1]*f1[1] + f0[2]*f1[2]));
+    const theta = Math.acos(cTheta);
+    if (theta < 0.05 || theta > Math.PI - 0.05)
+      throw new Error(`filletEdges: degenerate face angle ${theta} rad`);
+    const t = r / Math.tan(theta / 2);
+    if (t > 0.45 * L)
+      throw new Error(`filletEdges: r=${r} too large for edge length ${L} (t=${t.toFixed(3)})`);
+
+    // arc center line: interior bisector, distance r/sin(θ/2) from the edge
+    const sLen = Math.hypot(f0[0]+f1[0], f0[1]+f1[1], f0[2]+f1[2]) || 1;
+    const bis = [(f0[0]+f1[0])/sLen, (f0[1]+f1[1])/sLen, (f0[2]+f1[2])/sLen];
+    const dC = r / Math.sin(theta / 2);
+    const O0 = [P0[0] + dC*bis[0], P0[1] + dC*bis[1], P0[2] + dC*bis[2]];
+
+    // parallelepiped spanned by t·f0 and t·f1, extruded along the edge
+    const B = [];
+    for (const s of [0, L]) {
+      const P = [P0[0]+s*d[0], P0[1]+s*d[1], P0[2]+s*d[2]];
+      B.push(
+        P,
+        [P[0]+t*f0[0], P[1]+t*f0[1], P[2]+t*f0[2]],
+        [P[0]+t*f1[0], P[1]+t*f1[1], P[2]+t*f1[2]],
+        [P[0]+t*(f0[0]+f1[0]), P[1]+t*(f0[1]+f1[1]), P[2]+t*(f0[2]+f1[2])],
+      );
+    }
+    const box = M.hull(B);
+
+    // cylinder: radius r, axis along the edge, centered on the bisector
+    // line (1mm overshoot each end). Rows = local x,y,z axes (row-vector
+    // convention, see frameToMatrix): x = f1, z = d, y = x̂z.
+    const cyU = _c6Norm(_c6Cross(d, f1));
+    const C = [O0[0] + (L/2)*d[0], O0[1] + (L/2)*d[1], O0[2] + (L/2)*d[2]];
+    const mat = [
+      f1[0], f1[1], f1[2], 0,
+      cyU[0], cyU[1], cyU[2], 0,
+      d[0],  d[1],  d[2],   0,
+      C[0], C[1], C[2], 1,
+    ];
+    const cyl = M.cylinder(L + 2, r, r, SEGMENTS, true).transform(mat);
+    const cutter = M.difference(box, cyl);
+    if (cutter.status() !== 'NoError')
+      throw new Error(`filletEdges: bad cutter (${cutter.status()})`);
+    cutters.push(cutter);
+  }
+  // Union cutters, subtract once: shared-corner overlaps counted once
+  // (matches analytic inclusion-exclusion — see block header).
+  let tool = cutters[0];
+  for (let i = 1; i < cutters.length; i++) tool = M.union([tool, cutters[i]]);
+  const out = M.difference(part, tool);
+  if (out.status() !== 'NoError') throw new Error(`filletEdges: bad result (${out.status()})`);
+  return out;
+}
+
+// (X − P0) projected perpendicular to the edge direction, normalized.
+function _c6InFaceDir(X, P0, d) {
+  let v = [X[0]-P0[0], X[1]-P0[1], X[2]-P0[2]];
+  const s = v[0]*d[0] + v[1]*d[1] + v[2]*d[2];
+  v = [v[0]-s*d[0], v[1]-s*d[1], v[2]-s*d[2]];
+  return _c6Norm(v);
+}
+
+// Per-triangle {vs, v, n, p0} + (vertex-pair) → triangle list map.
+function _c6BuildMeshInfo(part) {
+  const mesh = part.getMesh();
+  const np = mesh.numProp;
+  const V = [];
+  for (let i = 0; i < mesh.triVerts.length / 3; i++)
+    V.push([mesh.vertProperties[i*np], mesh.vertProperties[i*np+1], mesh.vertProperties[i*np+2]]);
+  const tris = [];
+  const pairMap = new Map();
+  for (let i = 0; i < mesh.numTri; i++) {
+    const vs = [mesh.triVerts[i*3], mesh.triVerts[i*3+1], mesh.triVerts[i*3+2]];
+    const v0 = V[vs[0]], v1 = V[vs[1]], v2 = V[vs[2]];
+    let n = _c6Cross([v1[0]-v0[0], v1[1]-v0[1], v1[2]-v0[2]], [v2[0]-v0[0], v2[1]-v0[1], v2[2]-v0[2]]);
+    if (Math.hypot(n[0], n[1], n[2]) < 1e-12) n = [0, 0, 1]; // degenerate tri
+    tris.push({ vs, v: [v0, v1, v2], n: _c6Norm(n), p0: v0 });
+    for (let k = 0; k < 3; k++) {
+      const a = vs[k], b = vs[(k+1) % 3];
+      const key = a < b ? a * 1e9 + b : b * 1e9 + a;
+      if (!pairMap.has(key)) pairMap.set(key, []);
+      pairMap.get(key).push(i);
+    }
+  }
+  return { tris, pairMap };
+}
+
+// Local planarity on each side of the edge: the edge triangle's plane must
+// also hold for all same-face neighbor triangles (shared edge + normal
+// within 3° of the edge triangle's). Deliberately local, NOT per faceID
+// group (Manifold can merge faces from different planes into one group).
+const _C6_COS3DEG = Math.cos(3 * Math.PI / 180);
+function _c6AssertPlanarAtEdge(mesh, e) {
+  const { tris, pairMap } = mesh;
+  const key = e.a < e.b ? e.a * 1e9 + e.b : e.b * 1e9 + e.a;
+  const ti = pairMap.get(key);
+  if (!ti || ti.length !== 2)
+    throw new Error('filletEdges: edge not found in mesh (stale selection?)');
+  for (const idx of [0, 1]) {
+    const A = tris[ti[idx]];
+    const refN = A.n, refP0 = A.p0;
+    for (let k = 0; k < 3; k++) {
+      const a = A.vs[k], b = A.vs[(k+1) % 3];
+      const nk = a < b ? a * 1e9 + b : b * 1e9 + a;
+      if (nk === key) continue; // the fillet edge itself
+      const nti = pairMap.get(nk);
+      if (!nti) continue;
+      for (const tidx of nti) {
+        if (tidx === ti[idx] || tidx === ti[1 - idx]) continue;
+        const T = tris[tidx];
+        const dot = T.n[0]*refN[0] + T.n[1]*refN[1] + T.n[2]*refN[2];
+        if (dot <= _C6_COS3DEG) continue; // different face (3rd face at a corner)
+        for (const v of T.v) {
+          const dev = (v[0]-refP0[0])*refN[0] + (v[1]-refP0[1])*refN[1] + (v[2]-refP0[2])*refN[2];
+          if (Math.abs(dev) > 1e-3)
+            throw new Error('filletEdges: adjacent face is not planar at this edge (curved-face fillet not supported)');
+        }
+      }
+    }
+  }
+}
+
 // Collection of all helper functions to inject
 const HELPER_FUNCTIONS = {
   shell,
@@ -1537,6 +1770,8 @@ const HELPER_FUNCTIONS = {
   chamferEdges,
   convexEdges,
   holePattern,
+  // C6 fillet (see block above)
+  filletEdges,
 };
 
 // ============================================================================

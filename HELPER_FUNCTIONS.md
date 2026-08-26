@@ -486,6 +486,62 @@ part = holePattern(part, fr, { n: 3, m: 2, spacingU: 12, spacingV: 10, dia: 4 })
 
 ---
 
+## Fillet Helper (C6)
+
+### filletEdges(part, edges, radius)
+
+Circular fillet of radius `r` on a **set** of straight convex edges
+(Manifold has no native fillet; this is a geometric construction).
+`edges` must come from `convexEdges()` (it needs the per-edge vertex
+indices to recover the in-face directions — and the in-face geometry, not
+just the normals, is what makes non-90° corners work). `radius` is a
+number (same `r` for all edges) or a `number[]` parallel to `edges`
+(per-edge radii).
+
+```javascript
+// round all 12 box corners at r=3
+part = filletEdges(part, convexEdges(part), 3);
+
+// fillet only the 4 vertical corners, mixed radii per edge
+const vert = convexEdges(part).filter(e => Math.abs(e.tangent[2]) > 0.99);
+part = filletEdges(part, vert, [3, 3, 5, 5]);
+```
+
+**How it works (per edge).** In the cross-section perpendicular to the
+edge, the two faces meet at interior angle θ. The fillet arc of radius `r`
+is tangent to both faces at distance `t = r/tan(θ/2)` from the corner,
+centered on the interior angle bisector at `r/sin(θ/2)`. The removed
+cross-section is the sliver `r·t − ½·r²·(π−θ)` (= `r²(1−π/4)` at 90°).
+The cutter is exactly `parallelepiped(t·f0, t·f1, edge) − cylinder(r)` —
+both are exact primitives, so the result is geometrically exact for any
+θ. The in-face boundary directions `f0`/`f1` come from the adjacent
+triangles' third vertices (robust to Manifold's `faceID` grouping, which
+can merge faces from different planes into one). All cutters for the set
+are unioned and subtracted once, so shared-corner interactions resolve
+through the boolean — matching analytic inclusion-exclusion for adjacent
+edges (two cutters at a corner, three at a box corner).
+
+**Constraints (v1).**
+- **Planar faces only** — each adjacent face must be planar at the edge
+  (checked: all same-face neighbor triangles coplanar within 1e-3). A
+  fillet touching a curved face (cylinder, cone, torus) **throws**.
+- **Convex edges only** — concave corners (rounding = adding material)
+  throw. `convexEdges()` already filters these out; passing them directly
+  also throws via the ball probe.
+- **Size guard** — `r` must satisfy `t < 0.45·L` where `L` is the edge
+  length; larger throws. A fillet whose tangent point would run off the
+  face is clipped by the boolean (documented lower fidelity vs CAD).
+- **Arc tessellation** — the fillet arc is an inscribed 96-gon (smaller
+  than the true circle, so each cutter is slightly LARGER than ideal):
+  the result volume sits at most `L·(π−(n/2)·sin(2π/n))·r²` BELOW the
+  circle-exact value per edge (≤ ~0.3 mm³ for L=20, r=5; measured).
+
+**Verified** against analytic volumes: single edge, 4 top edges, all 12
+box edges (pair + triple corner overlaps), an obtuse wedge (90°/116°/153°
+corners), and mixed per-edge radii — see `cadgen-workspace/reports/c6-report.md`.
+
+---
+
 ## Example: Complex Part
 
 ```javascript
