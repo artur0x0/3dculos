@@ -488,7 +488,7 @@ part = holePattern(part, fr, { n: 3, m: 2, spacingU: 12, spacingV: 10, dia: 4 })
 
 ## Fillet Helper (C6)
 
-### filletEdges(part, edges, radius)
+### filletEdges(part, edges, radius, opts)
 
 Circular fillet of radius `r` on a **set** of straight convex edges
 (Manifold has no native fillet; this is a geometric construction).
@@ -496,7 +496,8 @@ Circular fillet of radius `r` on a **set** of straight convex edges
 indices to recover the in-face directions — and the in-face geometry, not
 just the normals, is what makes non-90° corners work). `radius` is a
 number (same `r` for all edges) or a `number[]` parallel to `edges`
-(per-edge radii).
+(per-edge radii). `opts` (optional): `{ sphericalCorners: true }`
+(see below).
 
 ```javascript
 // round all 12 box corners at r=3
@@ -505,6 +506,9 @@ part = filletEdges(part, convexEdges(part), 3);
 // fillet only the 4 vertical corners, mixed radii per edge
 const vert = convexEdges(part).filter(e => Math.abs(e.tangent[2]) > 0.99);
 part = filletEdges(part, vert, [3, 3, 5, 5]);
+
+// fully-rounded box corners: r=5 fillets + spherical corner patches
+part = filletEdges(part, convexEdges(part), 5, { sphericalCorners: true });
 ```
 
 **How it works (per edge).** In the cross-section perpendicular to the
@@ -535,6 +539,19 @@ edges (two cutters at a corner, three at a box corner).
   than the true circle, so each cutter is slightly LARGER than ideal):
   the result volume sits at most `L·(π−(n/2)·sin(2π/n))·r²` BELOW the
   circle-exact value per edge (≤ ~0.3 mm³ for L=20, r=5; measured).
+
+**Spherical corner caps** (`opts.sphericalCorners: true`). Three fillets
+meeting at a box corner converge to a sharp cusp point — the plain
+result is a valid but pointy corner. With this option the cusp pocket is
+cut away by a ball of radius `r` centered on the trihedral incenter
+(equidistant `r` from all three faces and lying ON all three fillet
+cylinder axes), leaving a spherical corner patch that is tangent to each
+fillet sail along a circle (C1 junction) and to each face at one point —
+i.e. the true CAD r/r/r rounded corner. v1 scope: applies only at
+vertices where exactly THREE filleted edges meet at ~90° with EQUAL
+radii; other corners keep the cusp, and non-triple corners are
+unaffected (the option is a no-op on an edge set whose corners have
+fewer than three fillets).
 
 **Verified** against analytic volumes: single edge, 4 top edges, all 12
 box edges (pair + triple corner overlaps), an obtuse wedge (90°/116°/153°

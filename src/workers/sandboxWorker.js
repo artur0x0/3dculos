@@ -1525,24 +1525,39 @@ function holePattern(part, frame, opts) {
 // t < 0.45·edge length (larger r runs off the face — the boolean clips it,
 // documented lower fidelity). Arc tessellated at 96 segments: results sit
 // ≤ L·(π−(n/2)sin(2π/n))·r² ABOVE the circle-exact volume per edge.
+//
+// opts.sphericalCorners: at every vertex where THREE filleted edges meet
+// (~90° corners, equal radii only — v1 scope), the three fillet sails
+// converge to a sharp cusp. The option cuts that cusp pocket with a ball
+// of radius r centered on the trihedral incenter (equidistant r from all
+// three faces and ON all three sail axes) — the result is a spherical
+// corner patch tangent to each sail along a circle (C1) and to each face
+// at one point, i.e. the true CAD corner for an r/r/r box corner.
 // ============================================================================
 function _c6Norm(v) { const l = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0]/l, v[1]/l, v[2]/l]; }
 function _c6Cross(a, b) { return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]]; }
+function _c6Sub(a, b) { return [a[0]-b[0], a[1]-b[1], a[2]-b[2]]; }
+function _c6Len(v) { return Math.hypot(v[0], v[1], v[2]); }
 
 /**
- * filletEdges(part, edges, radius) — circular fillet of radius r on a SET of
- * straight convex edges.
+ * filletEdges(part, edges, radius, opts) — circular fillet of radius r on
+ * a SET of straight convex edges.
  *   edges  = objects from convexEdges() (required: they carry the mesh
  *            indices this helper needs; edges from OTHER selections can
  *            still be filleted if the edge object has {a, b, va, vb}
  *            vertex data).
  *   radius = number (same r for all edges) OR number[] parallel to the
  *            edge list (per-edge radii).
+ *   opts   = { sphericalCorners: true } — additionally rounds box-like
+ *            (~90°, equal-radius) corners where THREE filleted edges meet,
+ *            replacing the cusp with a spherical patch tangent to all three
+ *            fillet sails (C1 junction) and to all three faces.
  * Returns the filleted part.
  */
-function filletEdges(part, edgesIn, radiusIn) {
+function filletEdges(part, edgesIn, radiusIn, opts = {}) {
   const M = manifoldModule.Manifold;
   const SEGMENTS = 96;
+  const sphericalCorners = !!opts.sphericalCorners;
 
   let edges = edgesIn;
   let radiusArr = radiusIn;
@@ -1575,6 +1590,7 @@ function filletEdges(part, edgesIn, radiusIn) {
   for (const e of edges) _c6AssertPlanarAtEdge(mesh, e);
 
   const cutters = [];
+  const edgeGeom = []; // per edge: { kA, kB, V0, V1, r, theta, cyl }
   for (const e of edges) {
     const r = radii.get(e);
     const P0 = e.va, P1 = e.vb;
@@ -1651,13 +1667,117 @@ function filletEdges(part, edgesIn, radiusIn) {
     if (cutter.status() !== 'NoError')
       throw new Error(`filletEdges: bad cutter (${cutter.status()})`);
     cutters.push(cutter);
+    edgeGeom.push({ kA: e.a, kB: e.b, V0: P0, V1: P1, r, theta, cyl });
   }
   // Union cutters, subtract once: shared-corner overlaps counted once
   // (matches analytic inclusion-exclusion — see block header).
   let tool = cutters[0];
   for (let i = 1; i < cutters.length; i++) tool = M.union([tool, cutters[i]]);
-  const out = M.difference(part, tool);
+  let out = M.difference(part, tool);
   if (out.status() !== 'NoError') throw new Error(`filletEdges: bad result (${out.status()})`);
+
+  // ------------------------------------------------------------------
+  // Optional: spherical corner caps. When THREE filleted edges meet at
+  // one vertex, the three fillet "sails" converge to a sharp cusp point.
+  // Cutting the corner hexahedron with a ball of radius r centered at
+  // the trihedral incenter replaces the cusp with a spherical patch:
+  //   - the incenter is equidistant r from all three faces → the patch
+  //     is tangent to all three faces;
+  //   - the incenter lies ON each fillet cylinder's axis at the same
+  //     radius → the patch is tangent to each fillet sail ALONG A
+  //     CIRCLE (C1-smooth junction).
+  // Only applied to box-like (~90°) triple-vertex corners with equal
+  // radii; other corners keep the cusp (v1 scope).
+  if (sphericalCorners) {
+    // group edges by endpoint vertex index
+    const byVertex = new Map(); // vertexIndex -> [edgeGeom entries]
+    for (const g of edgeGeom) {
+      for (const k of [g.kA, g.kB]) {
+        if (!byVertex.has(k)) byVertex.set(k, []);
+        byVertex.get(k).push(g);
+      }
+    }
+    const caps = [];
+    for (const [vk, eg] of byVertex) {
+      if (eg.length !== 3) continue;
+      const [g1, g2, g3] = eg;
+      if (Math.abs(g1.r - g2.r) > 1e-6 || Math.abs(g1.r - g3.r) > 1e-6) continue;
+      // v1: only ~90° corners (all three face angles)
+      if (!eg.every(g => Math.abs(g.theta - Math.PI/2) < 0.02)) continue;
+
+      // P = the shared vertex point; d_i = unit direction from P INTO edge i
+      const P = g1.kA === vk ? g1.V0 : g1.V1;
+      const dOf = (g) => {
+        const other = g.kA === vk ? g.V1 : g.V0; // endpoint that is NOT P
+        return _c6Norm(_c6Sub(other, P));
+      };
+      const d1 = dOf(g1), d2 = dOf(g2), d3 = dOf(g3);
+      if (_c6Len(_c6Cross(d1, d2)) < 0.5 || _c6Len(_c6Cross(d2, d3)) < 0.5 ||
+          _c6Len(_c6Cross(d3, d1)) < 0.5) continue; // two edges nearly parallel
+
+      // inward face normals: face(d1,d2) ⊥ d3, so its inward normal is
+      // ±(d1×d2) with the sign pointing toward the solid — i.e. positive
+      // dot with the THIRD edge direction (which lies in the solid's
+      // trihedral cone for a convex corner). For a convex trihedral corner
+      // the three inward normals are mutually orthogonal, and the corner
+      // box basis is {m12, m23, m31}.
+      const inwardOf = (a, b, third) => {
+        const n = _c6Norm(_c6Cross(a, b));
+        const dot = n[0]*third[0] + n[1]*third[1] + n[2]*third[2];
+        return dot < 0 ? [-n[0], -n[1], -n[2]] : n;
+      };
+      const m12 = inwardOf(d1, d2, d3); // normal of the face containing d1,d2
+      const m23 = inwardOf(d2, d3, d1);
+      const m31 = inwardOf(d3, d1, d2);
+      const r0 = g1.r;
+      // incenter: equidistant r0 from all three faces
+      const O = [
+        P[0] + r0*(m12[0]+m23[0]+m31[0]),
+        P[1] + r0*(m12[1]+m23[1]+m31[1]),
+        P[2] + r0*(m12[2]+m23[2]+m31[2]),
+      ];
+      // sanity: for orthogonal faces |O−P| = r0·√3
+      const dist = _c6Len(_c6Sub(O, P));
+      const dev = Math.abs(dist - r0*Math.sqrt(3));
+      if (dev > 1e-3 * r0 + 1e-6)
+        throw new Error(`filletEdges: corner-cap incenter sanity failed (|O−P|=${dist}, want ${r0*Math.sqrt(3)})`);
+      const ball = M.sphere(r0, 256).transform(
+        [1,0,0,0, 0,1,0,0, 0,0,1,0, O[0],O[1],O[2], 1]);
+      // cap = (cornerBox ∩ cyl1 ∩ cyl2 ∩ cyl3) \ (ball ∩ cornerBox):
+      //   cornerBox ∩ all three sails = material T left in the corner
+      //     box by the three fillets; ball ∩ cornerBox = the IDEAL
+      //     rounded corner (every octant point is inside all three sail
+      //     cylinders, so the sphere IS the true CAD corner patch).
+      //   T \ octant = the cusp pocket the plain fillets leave.
+      const mkPt = (a, b, c) => [
+        P[0] + r0*(a*m12[0] + b*m23[0] + c*m31[0]),
+        P[1] + r0*(a*m12[1] + b*m23[1] + c*m31[1]),
+        P[2] + r0*(a*m12[2] + b*m23[2] + c*m31[2]),
+      ];
+      const cornerBox = M.hull([
+        mkPt(0,0,0), mkPt(1,0,0), mkPt(0,1,0), mkPt(0,0,1),
+        mkPt(1,1,0), mkPt(1,0,1), mkPt(0,1,1), mkPt(1,1,1),
+      ]);
+      let cap = cornerBox;
+      for (const g of eg) cap = M.intersection(cap, g.cyl);
+      if (cap.status() !== 'NoError' || cap.volume() < 1e-9)
+        throw new Error(`filletEdges: bad corner material (${cap.status()}, vol ${cap.volume()})`);
+      const octant = M.intersection(ball, cornerBox);
+      if (octant.status() !== 'NoError' || octant.volume() < 1e-9)
+        throw new Error(`filletEdges: bad corner octant (${octant.status()})`);
+      cap = M.difference(cap, octant);
+      if (cap.status() !== 'NoError' || cap.volume() < 1e-9)
+        throw new Error(`filletEdges: bad corner cap (${cap.status()}, vol ${cap.volume()})`);
+      caps.push(cap);
+    }
+    if (caps.length) {
+      let capTool = caps[0];
+      for (let i = 1; i < caps.length; i++) capTool = M.union([capTool, caps[i]]);
+      out = M.difference(out, capTool);
+      if (out.status() !== 'NoError')
+        throw new Error(`filletEdges: bad corner-cap result (${out.status()})`);
+    }
+  }
   return out;
 }
 
