@@ -1150,6 +1150,7 @@ function c4MeshData(m) {
     faceMap.get(fid).push(i);
   }
   const faces = [];
+  const triToFace = new Int32Array(mesh.numTri).fill(-1);
   for (const [fid, tris] of faceMap) {
     const n = [0, 0, 0];
     for (const t of tris) {
@@ -1157,16 +1158,92 @@ function c4MeshData(m) {
       const tn = _c4Norm(_c4Cross(_c4Sub(v1, v0), _c4Sub(v2, v0))); // outward (winding)
       n[0] += tn[0]; n[1] += tn[1]; n[2] += tn[2];
     }
-    const c = [0, 0, 0]; const all = [];
-    for (const t of tris) for (const k of [0, 1, 2]) {
-      const v = V[mesh.triVerts[t*3 + k]];
-      c[0] += v[0]; c[1] += v[1]; c[2] += v[2];
-      if (!all.includes(v)) all.push(v);
+    const nrm = _c4Norm(n);
+    // Manifold may merge coplanar-but-DISCONNECTED regions into one faceID
+    // (e.g. a base top ring at z=5 and a raised step top at z=15 both have
+    // normal +Z), which breaks face `center` (mean of both planes) and
+    // misplaces any feature cut from it. Split the group into CONNECTED
+    // components (triangles sharing an edge). NOTE: must NOT use a
+    // coplanarity condition — tessellated curved faces (fillets) have
+    // non-coplanar adjacent facets, and shredding them re-creates the
+    // per-seam face pairings that force expensive convexEdges ball probes
+    // and break chamfer/fillet edge data.
+    const parent = tris.map((_, i) => i);
+    const find = (i) => { while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i]; } return i; };
+    const union = (a, b) => { a = find(a); b = find(b); if (a !== b) parent[b] = a; };
+    const edgeTris = new Map();
+    tris.forEach((t, gi) => {
+      const vs = [mesh.triVerts[t*3], mesh.triVerts[t*3+1], mesh.triVerts[t*3+2]];
+      for (let k = 0; k < 3; k++) {
+        const u = vs[k], w = vs[(k+1) % 3];
+        const key = u < w ? u * 1e9 + w : w * 1e9 + u;
+        if (!edgeTris.has(key)) edgeTris.set(key, []);
+        edgeTris.get(key).push(gi);
+      }
+    });
+    for (const list of edgeTris.values())
+      for (let i = 1; i < list.length; i++) union(list[0], list[i]);
+    const byRoot = new Map();
+    tris.forEach((t, gi) => {
+      const r = find(gi);
+      if (!byRoot.has(r)) byRoot.set(r, []);
+      byRoot.get(r).push(gi);
+    });
+    // Components that lie in the SAME plane (e.g. an annulus split into two
+    // regions by a groove, both at z=10) are re-merged into one face so that
+    // queries see the original Manifold face (center on the plane, on the
+    // part's symmetry axis when regions are symmetric). Curved faces never
+    // re-merge: their connected components each span one plane offset, and a
+    // curved group is a single connected component anyway.
+    const offs = tris.map((t) => {
+      const v0 = V[mesh.triVerts[t*3]];
+      return nrm[0]*v0[0] + nrm[1]*v0[1] + nrm[2]*v0[2];
+    });
+    const planeGroups = new Map(); // offsetKey -> [gi...]
+    for (const gis of byRoot.values()) {
+      const key = Math.round(offs[gis[0]] * 1e3);
+      if (!planeGroups.has(key)) planeGroups.set(key, []);
+      planeGroups.get(key).push(...gis);
     }
-    const cnt = tris.length * 3;
-    faces.push({ id: fid, tris, normal: _c4Norm(n), center: _c4Mul(1/cnt, c), verts: all });
+    for (const gis of planeGroups.values()) {
+      const cn = [0, 0, 0];
+      const c = [0, 0, 0];
+      const all = [];
+      const trisSub = gis.map(gi => tris[gi]);
+      for (const t of trisSub) {
+        const v0 = V[mesh.triVerts[t*3]], v1 = V[mesh.triVerts[t*3+1]], v2 = V[mesh.triVerts[t*3+2]];
+        const tn = _c4Norm(_c4Cross(_c4Sub(v1, v0), _c4Sub(v2, v0)));
+        cn[0] += tn[0]; cn[1] += tn[1]; cn[2] += tn[2];
+        for (const v of [v0, v1, v2]) {
+          c[0] += v[0]; c[1] += v[1]; c[2] += v[2];
+          if (!all.includes(v)) all.push(v);
+        }
+      }
+      const cnt = gis.length * 3;
+      faces.push({ id: fid, tris: trisSub, normal: _c4Norm(cn), center: _c4Mul(1/cnt, c), verts: all });
+    }
   }
   faces.sort((a, b) => a.id - b.id);
+  // Within each faceID group, order sub-faces OUTERMOST-FIRST in the face's
+  // normal direction (desc by n·center): for a merged group of parallel
+  // planes (e.g. two +Z planes at z=5 and z=15), facesByNormal(+Z)[0] is the
+  // topmost plane — what a "top face" query almost always means.
+  {
+    const byId = new Map();
+    for (const f of faces) { if (!byId.has(f.id)) byId.set(f.id, []); byId.get(f.id).push(f); }
+    for (const list of byId.values())
+      list.sort((a, b) => {
+        const oa = a.center[0]*a.normal[0] + a.center[1]*a.normal[1] + a.center[2]*a.normal[2];
+        const ob = b.center[0]*b.normal[0] + b.center[1]*b.normal[1] + b.center[2]*b.normal[2];
+        return ob - oa;
+      });
+  }
+  // Build triToFace AFTER all sorts — indices assigned at push-time would be
+  // stale once faces is re-ordered. This map is what edges/convexEdges use to
+  // reach each triangle's true (sub-)face.
+  triToFace.fill(-1);
+  for (let fi = 0; fi < faces.length; fi++)
+    for (const t of faces[fi].tris) triToFace[t] = fi;
   const faceIdxById = new Map(faces.map((f, i) => [f.id, i]));
 
   // edges: weld key = sorted vertex pair
@@ -1183,8 +1260,11 @@ function c4MeshData(m) {
   const edges = [];
   for (const e of edgeMap.values()) {
     if (e.tris.length !== 2) continue; // interior/defect: not a real boundary edge
-    const f0 = faceIdxById.get(triFace[e.tris[0]]);
-    const f1 = faceIdxById.get(triFace[e.tris[1]]);
+    // triToFace: each triangle -> its (sub-)face index. After the coplanar
+    // connected-component split, a faceID may own several faces, so the
+    // triangle's face MUST come from triToFace, not faceIdxById.
+    const f0 = triToFace[e.tris[0]];
+    const f1 = triToFace[e.tris[1]];
     // canonical direction: lower-ordered vertex first (stable, undirected)
     const [a, b] = e.a < e.b ? [e.a, e.b] : [e.b, e.a];
     let tangent = _c4Sub(V[b], V[a]);
@@ -1556,7 +1636,13 @@ function _c6Len(v) { return Math.hypot(v[0], v[1], v[2]); }
  */
 function filletEdges(part, edgesIn, radiusIn, opts = {}) {
   const M = manifoldModule.Manifold;
-  const SEGMENTS = 96;
+  // Arc tessellation. 96 segments left a measurable sliver: each flat facet
+  // between chord vertices dips inward by r·(1−cos(π/96)) ≈ 1.07e-3 mm for
+  // r=2, leaving a thin residual band of the original flat face along the
+  // whole fillet (measured 4.5e-2 mm³ per 20 mm edge vs the analytic
+  // circle-exact fillet). 384 segments cut that ~16x (2.7e-3 mm³) for a
+  // trivial mesh cost (~400 tris per edge vs ~108).
+  const SEGMENTS = 384;
   const sphericalCorners = !!opts.sphericalCorners;
 
   let edges = edgesIn;
@@ -1849,6 +1935,71 @@ function _c6AssertPlanarAtEdge(mesh, e) {
   }
 }
 
+// ------------------------------------------------------------------ revolve / extrude (C8)
+// Manifold requires a very specific contour winding (outer CCW, holes CW)
+// and fails SILENTLY when it's wrong: status 'InvalidConstruction', volume
+// 0, no exception. That's how C8 produced "empty geometry" parts with no
+// actionable error. These helpers normalize winding, drop an explicit
+// closing point, and throw a loud, fixable error if the build is still
+// invalid — so the LLM loop gets a real correction instead of "no geometry".
+function _c8ContourArea(pts) {
+  let s = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i], b = pts[(i + 1) % pts.length];
+    s += a[0] * b[1] - b[0] * a[1];
+  }
+  return s / 2;
+}
+function _c8NormalizeContours(contours) {
+  // Accept both makeRevolve([outer, hole]) and makeRevolve(outerPoints).
+  if (!Array.isArray(contours) || !contours.length || !Array.isArray(contours[0]))
+    throw new Error('makeRevolve/makeExtrude: expected an array of contours (array of [x,y] point arrays)');
+  if (typeof contours[0][0] === 'number') contours = [contours]; // bare point list
+  const cleaned = contours.map(pts => {
+    const p = pts.map(v => [v[0], v[1]]);
+    const f = p[0], l = p[p.length - 1];
+    if (p.length > 3 && Math.hypot(f[0] - l[0], f[1] - l[1]) < 1e-9) p.pop(); // explicit close
+    return p;
+  });
+  for (const p of cleaned)
+    if (p.length < 3)
+      throw new Error('makeRevolve/makeExtrude: every contour needs >= 3 distinct points — the profile is not closed');
+  // outermost = largest |area| must be CCW; all others are holes -> CW.
+  const order = cleaned.map((p, i) => i)
+    .sort((a, b) => Math.abs(_c8ContourArea(cleaned[b])) - Math.abs(_c8ContourArea(cleaned[a])));
+  return order.map((idx, rank) => {
+    const p = cleaned[idx];
+    if (_c8ContourArea(p) < 0 === (rank === 0)) return p.slice().reverse();
+    return p;
+  });
+}
+function _c8CheckValid(m, what) {
+  if (m.status() !== 'NoError')
+    throw new Error(`${what}: invalid result (status ${m.status()}) — the profile must be a closed polygon; for revolve: x >= 0 (radial), y = height around the axis`);
+  if (m.volume() <= 1e-9)
+    throw new Error(`${what}: result is EMPTY (volume 0) — check the profile has real area and (for revolve) does not sit on the axis`);
+  return m;
+}
+/**
+ * makeRevolve(contours, segments=96) — revolve a 2D profile around its Y axis
+ * (result's axis = Z). contours = [[x,y]...] outer first + optional holes;
+ * winding is normalized automatically; throws loudly on an invalid profile
+ * instead of returning a silent empty manifold. Profile: x = radial (>= 0),
+ * y = height along the axis.
+ */
+function makeRevolve(contours, segments = 96) {
+  const cs = new CrossSection(_c8NormalizeContours(contours));
+  return _c8CheckValid(cs.revolve(segments), 'makeRevolve');
+}
+/**
+ * makeExtrude(contours, height) — extrude a 2D profile by `height` along Z.
+ * Same contour rules as makeRevolve (outer CCW + CW holes, auto-normalized).
+ */
+function makeExtrude(contours, height) {
+  const cs = new CrossSection(_c8NormalizeContours(contours));
+  return _c8CheckValid(cs.extrude(height), 'makeExtrude');
+}
+
 // Collection of all helper functions to inject
 const HELPER_FUNCTIONS = {
   shell,
@@ -1892,6 +2043,9 @@ const HELPER_FUNCTIONS = {
   holePattern,
   // C6 fillet (see block above)
   filletEdges,
+  // C8 revolve/extrude with safe winding (see block above)
+  makeRevolve,
+  makeExtrude,
 };
 
 // ============================================================================
