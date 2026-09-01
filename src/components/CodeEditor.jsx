@@ -64,14 +64,34 @@ const CodeEditor = forwardRef(({
     }, 1000);
   };
 
-  const editorDidMount = (editor) => {
+  const editorDidMount = (editor, monaco) => {
     editorRef.current = editor;
     editor.focus();
     
+    // Guarantee Select-All works even if a parent element swallows
+    // Ctrl/Cmd+A (e.g. mobile webview). Delete is the standard follow-up.
+    editor.addCommand(
+      monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyA,
+      () => {
+        editor.focus();
+        editor.trigger('keybinding', 'editor.action.selectAll', null);
+      }
+    );
+
     // Execute initial script and add to history
     onExecute(valueRef.current, true);
     
     onCodeChange?.(valueRef.current, 'Initial script');
+  };
+
+  // Select-all + delete in one tap: the "easy way" the keyboard-only
+  // Monaco flow doesn't give you.
+  const clearAll = () => {
+    const ed = editorRef.current;
+    if (!ed) return;
+    ed.focus();
+    ed.trigger('clear', 'editor.action.selectAll', null);
+    ed.trigger('clear', 'delete', null);
   };
 
   useEffect(() => {
@@ -97,6 +117,16 @@ const CodeEditor = forwardRef(({
 
   return (
     <div className="relative flex flex-col h-full bg-gray-900">
+      <div className="flex items-center justify-end px-1 py-0.5 border-b border-gray-700/60 bg-gray-900 shrink-0">
+        <button
+          type="button"
+          onClick={clearAll}
+          title="Select all and delete (clear the editor)"
+          className="text-[10px] font-medium text-gray-400 hover:text-white hover:bg-gray-700/60 rounded px-1.5 py-0.5 transition-colors"
+        >
+          Clear
+        </button>
+      </div>
       <div className="flex-1 min-h-0">
         <Editor
           width="100%"
