@@ -53,3 +53,7 @@ systemPrompt*
 
 # Logo
 logo.*
+.deploy-backups/
+
+# OCCT STEP→OBJ converter — built locally against ~/occt-install, binary never committed
+backend/converter/obj_converter

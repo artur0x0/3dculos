@@ -17,3 +17,26 @@ body {
     background-color: transparent !important;
   }
 }
+
+/* Monaco context menu (long-press on mobile): the dark theme's menu
+   background isn't applied, so text renders black-on-black. Give it a
+   slightly transparent grey backdrop matching the app toolbars. */
+.context-view,
+.context-view .monaco-menu {
+  background-color: rgba(31, 41, 55, 0.95) !important; /* gray-800, 95% */
+  color: #e5e7eb !important; /* gray-200 text */
+  border: 1px solid rgba(75, 85, 99, 0.6); /* gray-600 */
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(4px);
+}
+.context-view .monaco-menu .monaco-list,
+.context-view .monaco-menu .monaco-list .monaco-list-row,
+.context-view .monaco-menu .action-label {
+  background-color: transparent !important;
+  color: #e5e7eb !important;
+}
+/* hover/tap highlight: slightly lighter grey, like toolbar buttons */
+.context-view .monaco-menu .monaco-list-row.focused,
+.context-view .monaco-menu .monaco-list-row:hover {
+  background-color: rgba(75, 85, 99, 0.55) !important; /* gray-600/55 */
+}

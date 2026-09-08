@@ -21,6 +21,8 @@ export default defineConfig({
     exclude: ['@manifold/manifold', '@monaco-editor/react']
   },
   server: {
+    // dev-only: allow cloudflared quick-tunnel hostnames
+    allowedHosts: true,
     proxy: {
       '/api': {
         target: 'http://localhost:3000',

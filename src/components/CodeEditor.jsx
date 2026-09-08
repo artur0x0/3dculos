@@ -1,6 +1,32 @@
 import React, { useState, useRef, useEffect, forwardRef, useImperativeHandle } from 'react';
 import Editor from '@monaco-editor/react';
 
+// "Select All" in the (long-press) context menu. Monaco 0.52 removed
+// registerEditorAction from the public API, so we use the internal
+// EditorAction class (same pattern Monaco's own contextmenu contribution
+// uses) — this registers a command + the menu item in one shot.
+import { EditorAction, registerEditorAction } from 'monaco-editor/esm/vs/editor/browser/editorExtensions.js';
+
+let selectAllMenuRegistered = false;
+function registerSelectAllMenu() {
+  if (selectAllMenuRegistered) return;
+  selectAllMenuRegistered = true;
+  class SelectAllAction extends EditorAction {
+    constructor() {
+      super({
+        id: 'surfcad.selectAll',
+        label: 'Select All',
+        contextMenuOpts: { group: '2_cutcopypaste' },
+      });
+    }
+    run(accessor, editor) {
+      editor.focus();
+      editor.trigger('menu', 'editor.action.selectAll', null);
+    }
+  }
+  registerEditorAction(SelectAllAction);
+}
+
 const CodeEditor = forwardRef(({ 
   initialScript,
   onExecute, 
@@ -67,9 +93,17 @@ const CodeEditor = forwardRef(({
   const editorDidMount = (editor, monaco) => {
     editorRef.current = editor;
     editor.focus();
-    
+
+    // Add "Select All" to the editor context menu (once).
+    // Never let an optional menu feature crash the mount.
+    try {
+      registerSelectAllMenu();
+    } catch (err) {
+      console.warn('[CodeEditor] Select All menu registration failed', err);
+    }
+
     // Guarantee Select-All works even if a parent element swallows
-    // Ctrl/Cmd+A (e.g. mobile webview). Delete is the standard follow-up.
+    // Ctrl/Cmd+A (e.g. mobile webview).
     editor.addCommand(
       monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyA,
       () => {
@@ -84,14 +118,12 @@ const CodeEditor = forwardRef(({
     onCodeChange?.(valueRef.current, 'Initial script');
   };
 
-  // Select-all + delete in one tap: the "easy way" the keyboard-only
-  // Monaco flow doesn't give you.
-  const clearAll = () => {
+  // The easy select-all: keyboard-only flow isn't discoverable on mobile.
+  const selectAll = () => {
     const ed = editorRef.current;
     if (!ed) return;
     ed.focus();
-    ed.trigger('clear', 'editor.action.selectAll', null);
-    ed.trigger('clear', 'delete', null);
+    ed.trigger('select-all', 'editor.action.selectAll', null);
   };
 
   useEffect(() => {
@@ -120,11 +152,11 @@ const CodeEditor = forwardRef(({
       <div className="flex items-center justify-end px-1 py-0.5 border-b border-gray-700/60 bg-gray-900 shrink-0">
         <button
           type="button"
-          onClick={clearAll}
-          title="Select all and delete (clear the editor)"
+          onClick={selectAll}
+          title="Select all text in the editor"
           className="text-[10px] font-medium text-gray-400 hover:text-white hover:bg-gray-700/60 rounded px-1.5 py-0.5 transition-colors"
         >
-          Clear
+          Select All
         </button>
       </div>
       <div className="flex-1 min-h-0">
