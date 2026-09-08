@@ -453,21 +453,40 @@ over `cskDepth`. (CadQuery `cskHole`.)
 
 ### chamferEdges(part, edges, c)
 
-Equal-leg 45° chamfer of length `c` on a **set** of straight convex edges.
-`edges` come from `convexEdges()` / `c4MeshData()`, or a plain
-`[{va, vb, n0, n1}]` array. All cutters are unioned and subtracted once, so
-adjacent-edge corner interactions are handled by the boolean.
+Equal-leg 45° chamfer on a **set** of straight convex edges. `c` is the
+**leg length along each adjacent face** (CAD "C2" = 2 mm on both legs) —
+the perpendicular face offset is derived from the face-to-face angle
+(`offset = c·tan(θ/2)`; at a 90° corner they coincide, at a 120° hex-nut
+corner C2 → 1.155 mm offset). `edges` come from `convexEdges()` /
+`c4MeshData()` / other C4 selectors (they carry `faces: [i0, i1]`, from
+which `chamferEdges` **auto-derives the adjacent face normals**) or a plain
+`[{va, vb, n0, n1}]` array where `n0`/`n1` (outward normals of the two
+adjacent faces) must be provided explicitly.
+
+Cutters are applied **sequentially** (one boolean per edge) and every
+intermediate result is checked, so a single degenerate edge (e.g. at a
+triple-junction rib-base edge where the two "adjacent faces" are
+coplanar) throws a named, actionable error instead of trapping the wasm
+kernel. Cost: n differences instead of 1 — fine for the edge counts these
+parts use (≤ ~30).
 
 ```javascript
 part = chamferEdges(part, convexEdges(part), 2);
 ```
 
+**Throws (named errors):** edge without va/vb; missing adjacent face
+normals (pass `convexEdges()` output on THIS part, or explicit n0/n1);
+coplanar adjacent faces (tessellation seam / wrong face pair); degenerate
+cutter or failed boolean at a specific edge index.
+
 ### convexEdges(m, minAngleDeg = 2)
 
 Genuine straight convex edges: dihedral angle > `minAngleDeg` (filters
 curved-face tessellation seams) and a ball-probe confirms the corner is
-convex (not concave). Returns edge objects with `va`, `vb`, `tangent`, and
-`n0`/`n1` (adjacent face normals) attached — ready for `chamferEdges`.
+convex (not concave). Returns edge objects `{ va, vb, a, b, tris, tangent,
+faces: [i0, i1], n0, n1 }` — `n0`/`n1` are the adjacent face normals and
+`faces` the face indices, so the result is ready for `chamferEdges`
+(normals auto-derived) and `filletEdges` as-is.
 
 ```javascript
 const vConvex = convexEdges(part).filter(e => Math.abs(e.tangent[2]) > 0.99);
@@ -533,8 +552,10 @@ edges (two cutters at a corner, three at a box corner).
   throw. `convexEdges()` already filters these out; passing them directly
   also throws via the ball probe.
 - **Size guard** — `r` must satisfy `t < 0.45·L` where `L` is the edge
-  length; larger throws. A fillet whose tangent point would run off the
-  face is clipped by the boolean (documented lower fidelity vs CAD).
+  length. Edges that FAIL this guard (tessellation slivers picked up from
+  curved-face seams) are **skipped** (part unchanged for that edge), not
+  an error; if EVERY edge is skipped the part is returned unchanged with a
+  console warning.
 - **Arc tessellation** — the fillet arc is an inscribed 96-gon (smaller
   than the true circle, so each cutter is slightly LARGER than ideal):
   the result volume sits at most `L·(π−(n/2)·sin(2π/n))·r²` BELOW the
@@ -556,6 +577,46 @@ fewer than three fillets).
 **Verified** against analytic volumes: single edge, 4 top edges, all 12
 box edges (pair + triple corner overlaps), an obtuse wedge (90°/116°/153°
 corners), and mixed per-edge radii — see `cadgen-workspace/reports/c6-report.md`.
+
+---
+
+## Revolve & Extrude Helpers (C8)
+
+### makeRevolve(contours, segments = 96)
+
+Revolve a 2D profile around its **Y** axis → result axis = **Z**.
+`contours` = `[[x,y]...]` outer first + optional hole contours after;
+winding is **auto-normalized** (outermost CCW, holes CW) — do NOT hand-roll
+`new CrossSection(...).revolve()` and fight winding yourself (wrong winding
+fails silently in raw CrossSection). Profile: **x = radial distance (≥ 0),
+y = height along the axis**. Throws a named error on an invalid profile
+instead of returning a silent empty manifold.
+
+```javascript
+// revolved flange ⌀90×10 + boss ⌀30 base, 30 tall — one closed silhouette
+let part = makeRevolve([ [[0,0],[45,0],[45,10],[15,10],[15,30],[0,30]] ], 96);
+
+// hollow tube OD40 ID28 × 30: outer contour + inner (through) contour
+const tube = makeRevolve([ [[0,0],[20,0],[20,30],[0,30]],
+                           [[14,0],[14,30],[20,30],[20,0]] ], 64);
+```
+
+### makeExtrude(contours, height)
+
+Extrude a 2D profile by `height` along +Z. Same contour rules as
+makeRevolve (outer + optional holes, winding auto-fixed).
+
+```javascript
+const plate = makeExtrude([ [[-40,-15],[40,-15],[40,15],[-40,15]] ], 3);
+```
+
+**Rules for both:**
+- `contours` is an **array of contours** `[outer, hole1, ...]`; a single
+  solid can be written as `[...pts]` (bare point list) — both accepted.
+- Every contour needs **≥ 3 distinct points**, closed polygon (auto-closed
+  if first ≠ last). Open polylines / 2-point lists throw.
+- For a **hollow** part: outer contour + inner contour (through-hole).
+- Invalid profile → **named throw** (never a silent empty).
 
 ---
 
