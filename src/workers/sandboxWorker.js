@@ -1487,25 +1487,55 @@ function cskHole(part, frame, u, v, diaThru, diaCsk, cskDepth, span) {
 /**
  * chamferEdges(part, edges, c) — equal-leg 45° chamfer c on a SET of straight
  * convex edges. Edges = objects from c4MeshData/convexEdges, or a plain
- * [{va, vb, n0, n1}] array (n0/n1 = outward normals of the two adjacent faces
- * at that edge — REQUIRED: after any boolean they can't be derived from the
- * current mesh).
+ * [{va, vb, n0, n1}] array. n0/n1 (outward normals of the two adjacent faces
+ * at that edge) are REQUIRED for hand-built edges, but are AUTO-DERIVED from
+ * the current mesh when the edge object carries {faces: [i0, i1]} (as all
+ * c4MeshData-based selectors do: convexEdges, edgesByOrientation,
+ * edgesByNormal, planarFaceAt-derived selections) — no more
+ * "Cannot read properties of undefined (reading '0')" when mixing selectors
+ * with chamferEdges.
  *
  * Construction (verified, C2 pilot + C4): per edge, cutter = hull of the two
  * edge endpoints plus four corner points pulled c into each adjacent face
- * interior. All cutters are unioned and subtracted ONCE (batched), so corner
- * interactions between adjacent edges are handled by the boolean, not by
- * repeated re-selection. Result must be a valid manifold.
+ * interior. c IS THE LEG LENGTH along each adjacent face (CAD "C2" = 2 mm
+ * on both legs), NOT the perpendicular face offset — the perpendicular
+ * offset is derived from the face-to-face angle (offset = c·tan(θ/2), θ =
+ * angle between n0/n1; at a 90° corner they coincide, at a 120° hex-nut
+ * corner C2 → 1.155 mm offset / 2 mm legs). CUTTERS ARE APPLIED SEQUENTIALLY (one difference per edge) and
+ * each intermediate result is checked: a single degenerate cutter (e.g. at
+ * a triple-junction rib-base edge where the two "adjacent faces" are coplanar
+ * or the cutter self-intersects) must not be allowed to wedge the batch
+ * union into a wasm out-of-bounds trap (observed: chamfering ALL convex
+ * edges of a ribbed plate — one subset crashes the kernel while the rest
+ * build fine). The first bad edge throws a named, actionable error instead.
+ * Cost: n differences instead of 1 — fine for the edge counts these parts
+ * actually use (≤ ~30); the C8 timeout guard catches anything pathological.
  */
 function chamferEdges(part, edges, c) {
   const M = manifoldModule.Manifold;
   if (!edges.length) return part;
-  const cutters = [];
-  for (const e of edges) {
+  let data = null;
+  const laz = () => (data ||= c4MeshData(part));
+  let out = part;
+  for (let ei = 0; ei < edges.length; ei++) {
+    const e = edges[ei];
     const p0 = e.va, p1 = e.vb;
+    if (!p0 || !p1) throw new Error(`chamferEdges: edge ${ei} has no va/vb coordinates`);
     const len = _c4Len(_c4Sub(p1, p0));
     if (len < 1e-9) continue;
     const d = _c4Mul(1/len, _c4Sub(p1, p0));
+    // adjacent face normals: use provided n0/n1, else derive from the mesh
+    // via e.faces (present on all c4MeshData-derived edge objects).
+    let n0 = e.n0, n1 = e.n1;
+    if ((!n0 || !n1) && Array.isArray(e.faces) && e.faces.length === 2) {
+      const ds = laz();
+      n0 = ds.faces[e.faces[0]].normal;
+      n1 = ds.faces[e.faces[1]].normal;
+    }
+    if (!n0 || !n1)
+      throw new Error(`chamferEdges: edge ${ei} has no adjacent face normals (n0/n1) — get the edge from convexEdges()/edgesByOrientation() on THIS part, or pass explicit n0/n1`);
+    if (_c4Dot(n0, n1) > 0.9999)
+      throw new Error(`chamferEdges: edge ${ei} — adjacent faces are coplanar (tessellation seam or wrong face pair); not a chamferable edge`);
     // offset c INTO each adjacent face: (-n) projected perpendicular to the
     // edge direction. This is a unit direction lying IN the face plane,
     // pointing toward the face interior (negated normal = into the solid).
@@ -1513,17 +1543,19 @@ function chamferEdges(part, edges, c) {
       const t = _c4Dot(_c4Mul(-1, n), d);
       return _c4Mul(c, _c4Norm(_c4Sub(_c4Mul(-1, n), _c4Mul(t, d))));
     };
-    const a0 = off(e.n0), a1 = off(e.n1);
-    cutters.push(M.hull([
+    const a0 = off(n0), a1 = off(n1);
+    const cutter = M.hull([
       p0, p1,
       _c4Add(p0, a0), _c4Add(p0, a1),
       _c4Add(p1, a0), _c4Add(p1, a1),
-    ]));
+    ]);
+    if (cutter.status() !== 'NoError')
+      throw new Error(`chamferEdges: edge ${ei} — degenerate cutter (hull status ${cutter.status()}); check the two adjacent faces at this edge`);
+    const next = M.difference(out, cutter);
+    if (next.status() !== 'NoError')
+      throw new Error(`chamferEdges: edge ${ei} — boolean failed (${next.status()}); the cutter geometry is degenerate at this edge (common at triple-junction rib-base edges)`);
+    out = next;
   }
-  let tool = cutters[0];
-  for (let i = 1; i < cutters.length; i++) tool = M.union([tool, cutters[i]]);
-  const out = M.difference(part, tool);
-  if (out.status() !== 'NoError') throw new Error(`chamferEdges: bad result (${out.status()})`);
   return out;
 }
 
@@ -1677,6 +1709,7 @@ function filletEdges(part, edgesIn, radiusIn, opts = {}) {
 
   const cutters = [];
   const edgeGeom = []; // per edge: { kA, kB, V0, V1, r, theta, cyl }
+  const skippedShort = []; // {L, t} per edge skipped as a tessellation sliver
   for (const e of edges) {
     const r = radii.get(e);
     const P0 = e.va, P1 = e.vb;
@@ -1715,8 +1748,15 @@ function filletEdges(part, edgesIn, radiusIn, opts = {}) {
     if (theta < 0.05 || theta > Math.PI - 0.05)
       throw new Error(`filletEdges: degenerate face angle ${theta} rad`);
     const t = r / Math.tan(theta / 2);
-    if (t > 0.45 * L)
-      throw new Error(`filletEdges: r=${r} too large for edge length ${L} (t=${t.toFixed(3)})`);
+    if (t > 0.45 * L) {
+      // SKIP, don't throw: short edges are tessellation slivers of a curved
+      // arc (96/384-seg fillet/chamfer seams) that a filtered edge list
+      // picks up alongside the real edge. Filing one sliver off would only
+      // add noise, and one bad sliver must not kill the whole part — the
+      // C8 parts f394288e/b0c16861/95d717e6 died this way for 4 iters.
+      skippedShort.push({ L: +L.toFixed(4), t: +t.toFixed(4) });
+      continue;
+    }
 
     // arc center line: interior bisector, distance r/sin(θ/2) from the edge
     const sLen = Math.hypot(f0[0]+f1[0], f0[1]+f1[1], f0[2]+f1[2]) || 1;
@@ -1754,6 +1794,12 @@ function filletEdges(part, edgesIn, radiusIn, opts = {}) {
       throw new Error(`filletEdges: bad cutter (${cutter.status()})`);
     cutters.push(cutter);
     edgeGeom.push({ kA: e.a, kB: e.b, V0: P0, V1: P1, r, theta, cyl });
+  }
+  if (!cutters.length) {
+    // Every edge was skipped (tessellation slivers) — nothing to do.
+    if (skippedShort.length)
+      console.warn(`filletEdges: skipped all ${skippedShort.length} edges (too short for r — tessellation slivers); part unchanged`);
+    return part;
   }
   // Union cutters, subtract once: shared-corner overlaps counted once
   // (matches analytic inclusion-exclusion — see block header).
@@ -1974,8 +2020,15 @@ function _c8NormalizeContours(contours) {
   });
 }
 function _c8CheckValid(m, what) {
-  if (m.status() !== 'NoError')
-    throw new Error(`${what}: invalid result (status ${m.status()}) — the profile must be a closed polygon; for revolve: x >= 0 (radial), y = height around the axis`);
+  // Build-tolerant status check: the npm `manifold-3d` returns the string
+  // 'NoError' for valid manifolds, but the bundled `built/manifold.js`
+  // (what the browser worker loads) returns an opaque {} for EVERYTHING.
+  // So only treat a NON-STRING non-NoError status as an error; when status()
+  // is an object (bundled build) the volume check below is the real
+  // degeneracy guard (verified: valid → real volume, bad profile → 0).
+  const s = m.status();
+  if (typeof s === 'string' && s !== 'NoError')
+    throw new Error(`${what}: invalid result (status ${s}) — the profile must be a closed polygon; for revolve: x >= 0 (radial), y = height around the axis`);
   if (m.volume() <= 1e-9)
     throw new Error(`${what}: result is EMPTY (volume 0) — check the profile has real area and (for revolve) does not sit on the axis`);
   return m;
@@ -1988,6 +2041,7 @@ function _c8CheckValid(m, what) {
  * y = height along the axis.
  */
 function makeRevolve(contours, segments = 96) {
+  const { CrossSection } = manifoldModule;
   const cs = new CrossSection(_c8NormalizeContours(contours));
   return _c8CheckValid(cs.revolve(segments), 'makeRevolve');
 }
@@ -1996,6 +2050,7 @@ function makeRevolve(contours, segments = 96) {
  * Same contour rules as makeRevolve (outer CCW + CW holes, auto-normalized).
  */
 function makeExtrude(contours, height) {
+  const { CrossSection } = manifoldModule;
   const cs = new CrossSection(_c8NormalizeContours(contours));
   return _c8CheckValid(cs.extrude(height), 'makeExtrude');
 }
