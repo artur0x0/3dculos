@@ -544,22 +544,65 @@ are unioned and subtracted once, so shared-corner interactions resolve
 through the boolean — matching analytic inclusion-exclusion for adjacent
 edges (two cutters at a corner, three at a box corner).
 
-**Constraints (v1).**
+**Closed circular rims (v2, 2026-09-08).** A curved surface (a cylinder
+wall, a hole wall) meeting a planar face tessellates as a LOOP of many
+short straight mesh edges — e.g. a Ø12 hole rim at 48 segments has
+~0.78mm segments. In v1 this loop was filleted PER SEGMENT, and any
+segment failing the size guard below was silently skipped — for a real
+fillet radius (r=1 on that Ø12 rim, t=1 > 0.45·0.78mm) EVERY segment
+failed, so the whole rim's fillet silently vanished with no error. v2
+detects a maximal chain of input edges that (a) share consecutive mesh
+vertices, (b) turn ≤30° at each shared vertex (a genuine polygon corner
+turns 60-180°; a tessellated circle turns 360/segs°, well under 30° for
+any segs≥12), and (c) keep the same interior angle θ (within 3°) and the
+same radius. If that chain closes into a loop AND fits an exact circle
+(3-point circumcircle, verified against every other vertex in the run),
+the WHOLE rim is filleted as one exact revolved cutter — the same 2D
+corner-sliver cross-section swept a full 360° around the rim's own axis
+— instead of per-segment boxes, so the old per-segment size guard does
+not apply to it at all. `convexEdges(part)` (unfiltered, or filtered only
+by position/orientation — do NOT filter out short segments) is the
+correct input; a "filter out the tiny seam edges" workaround is no longer
+necessary or correct for a genuine curved rim. If a chain doesn't close,
+or doesn't fit a clean circle (mixed/non-circular topology), filletEdges
+falls back to the v1 per-edge construction for every edge in that chain,
+including the size guard below — so isolated straight edges and
+non-circular chains behave exactly as before.
+
+**Constraints (v1 per-edge path — still the fallback for singleton edges
+and non-circular chains).**
 - **Planar faces only** — each adjacent face must be planar at the edge
   (checked: all same-face neighbor triangles coplanar within 1e-3). A
-  fillet touching a curved face (cylinder, cone, torus) **throws**.
+  fillet touching a curved face **throws** for a SINGLETON edge. (A
+  successfully-fit closed circular run skips this check entirely — the
+  circle fit plus per-vertex on-circle verification is a strictly more
+  specific validity proof for "this chain is one smooth curved feature"
+  than the singleton check, which was never designed to look past one
+  edge.)
 - **Convex edges only** — concave corners (rounding = adding material)
   throw. `convexEdges()` already filters these out; passing them directly
-  also throws via the ball probe.
-- **Size guard** — `r` must satisfy `t < 0.45·L` where `L` is the edge
-  length. Edges that FAIL this guard (tessellation slivers picked up from
-  curved-face seams) are **skipped** (part unchanged for that edge), not
-  an error; if EVERY edge is skipped the part is returned unchanged with a
-  console warning.
-- **Arc tessellation** — the fillet arc is an inscribed 96-gon (smaller
-  than the true circle, so each cutter is slightly LARGER than ideal):
-  the result volume sits at most `L·(π−(n/2)·sin(2π/n))·r²` BELOW the
-  circle-exact value per edge (≤ ~0.3 mm³ for L=20, r=5; measured).
+  also throws via the ball probe. (Applies to every edge, run or not.)
+- **Size guard** — for a SINGLETON edge (or an edge in a chain that didn't
+  qualify as a closed circular run), `r` must satisfy `t < 0.45·L` where
+  `L` is the edge length; edges that FAIL this guard are **skipped** (part
+  unchanged for that edge), not an error. Closed-circular-run members are
+  exempt — their per-segment `L` is a tessellation artifact, not a signal
+  that the feature is too small.
+- **Arc tessellation** — a SINGLETON edge's fillet arc is an inscribed
+  384-gon: the result volume sits at most `L·(π−(n/2)·sin(2π/n))·r²` BELOW
+  the circle-exact value per edge. A closed run's revolve resolution is
+  tied to the rim's own mesh segment count exactly (verified necessary
+  for a numerically clean boolean: Manifold's boolean difference between
+  the original n-segment part and a cutter revolved at a DIFFERENT
+  segment count — even a clean integer multiple of n — silently removes
+  LESS than the cutter's own volume), with a separately-tunable, finer
+  resolution for the small fillet arc itself.
+- **Known gaps** — an OPEN curved run (a fillet on a less-than-360° arc)
+  does not get the closed-run treatment and can still lose short segments
+  to the size guard; not exercised by any part in the current corpus
+  (every curved surface here comes from a full-revolution primitive). A
+  closed-run cutter throws (rather than silently clipping) if `r` is so
+  large the fillet would revolve through the rim's own axis.
 
 **Spherical corner caps** (`opts.sphericalCorners: true`). Three fillets
 meeting at a box corner converge to a sharp cusp point — the plain

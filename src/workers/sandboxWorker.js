@@ -45,6 +45,26 @@ let cachedManifold = null;
 // These functions are injected into the script execution scope
 // ============================================================================
 
+// ---------------------------------------------------------------- status
+// Build-tolerant Manifold status probe -- the single source of truth for
+// "is this manifold valid". The two builds in use report status() in
+// DIFFERENT shapes, and both must work:
+//   * npm `manifold-3d` (harness/CI)  -> the string 'NoError'
+//   * bundled `built/manifold.js` (the browser worker) -> an enum object
+//     whose .value is 0 for valid and nonzero for an error (11 = degenerate)
+// So comparing status() against the string 'NoError' inline throws on EVERY
+// valid manifold in the browser while passing in the harness -- the exact C8
+// bug class. Never inline a status comparison again; call this.
+// Returns null when valid (or when the status shape is unknown to this
+// build -- callers keep their volume() floor checks), else a printable label.
+function _c4StatusError(m) {
+  if (!m || typeof m.status !== 'function') return 'not a manifold';
+  const s = m.status();
+  if (typeof s === 'string') return s === 'NoError' ? null : s;
+  if (s && typeof s.value === 'number') return s.value === 0 ? null : `code ${s.value}`;
+  return null;
+}
+
 /**
  * Helper to compute uniform scale ratio based on min perpendicular dimension
  */
@@ -1408,7 +1428,8 @@ function hole(part, frame, u, v, dia, span) {
   const M = manifoldModule.Manifold;
   const cut = _c4PutCyl(M, frame, u, v, dia, span);
   const out = M.difference(part, cut);
-  if (out.status() !== 'NoError') throw new Error(`hole: bad result (${out.status()})`);
+  const se = _c4StatusError(out);
+  if (se) throw new Error(`hole: bad result (${se})`);
   return out;
 }
 // _c4PutCyl: centered cylinder anchored so it spans w ∈ [1, 1-len] in frame
@@ -1454,7 +1475,8 @@ function cboreHole(part, frame, u, v, diaThru, diaCbore, cboreDepth, span) {
   const thru = _c4PutCyl(M, frame, u, v, diaThru, span);
   const cbore = _c4PutCyl(M, frame, u, v, diaCbore, cboreDepth + 1); // [−depth, +1]
   const out = M.difference(M.difference(part, thru), cbore);
-  if (out.status() !== 'NoError') throw new Error(`cboreHole: bad result (${out.status()})`);
+  const se = _c4StatusError(out);
+  if (se) throw new Error(`cboreHole: bad result (${se})`);
   return out;
 }
 
@@ -1480,7 +1502,8 @@ function cskHole(part, frame, u, v, diaThru, diaCsk, cskDepth, span) {
     c[0] + n[0] * w0, c[1] + n[1] * w0, c[2] + n[2] * w0,
   ], x: frame.x, y: frame.y, normal: n });
   const out = M.difference(M.difference(part, thru), cone.transform(t));
-  if (out.status() !== 'NoError') throw new Error(`cskHole: bad result (${out.status()})`);
+  const se = _c4StatusError(out);
+  if (se) throw new Error(`cskHole: bad result (${se})`);
   return out;
 }
 
@@ -1549,11 +1572,13 @@ function chamferEdges(part, edges, c) {
       _c4Add(p0, a0), _c4Add(p0, a1),
       _c4Add(p1, a0), _c4Add(p1, a1),
     ]);
-    if (cutter.status() !== 'NoError')
-      throw new Error(`chamferEdges: edge ${ei} — degenerate cutter (hull status ${cutter.status()}); check the two adjacent faces at this edge`);
+    const seCutter = _c4StatusError(cutter);
+    if (seCutter)
+      throw new Error(`chamferEdges: edge ${ei} — degenerate cutter (hull status ${seCutter}); check the two adjacent faces at this edge`);
     const next = M.difference(out, cutter);
-    if (next.status() !== 'NoError')
-      throw new Error(`chamferEdges: edge ${ei} — boolean failed (${next.status()}); the cutter geometry is degenerate at this edge (common at triple-junction rib-base edges)`);
+    const seNext = _c4StatusError(next);
+    if (seNext)
+      throw new Error(`chamferEdges: edge ${ei} — boolean failed (${seNext}); the cutter geometry is degenerate at this edge (common at triple-junction rib-base edges)`);
     out = next;
   }
   return out;
@@ -1609,11 +1634,19 @@ function holePattern(part, frame, opts) {
 }
 
 // ============================================================================
-// C6 — Fillet helper (Manifold JS has no native fillet; this is the v1
-// geometric construction). Ported from cadgen-workspace/harness/c6_fillet.mjs
-// (8 harness tests green, 08-25).
+// C6 — Fillet helper (Manifold JS has no native fillet; this is the v1/v2
+// geometric construction). v1 ported from cadgen-workspace/harness/c6_fillet.mjs
+// (8 harness tests green, 08-25). v2 (09-08) adds CLOSED CIRCULAR RUN
+// support so a tessellated circular edge (a hole rim, an outer cylinder rim
+// — any curved surface meeting a planar face, which Manifold represents as
+// a LOOP of many short straight mesh edges) fillets as ONE feature instead
+// of silently losing its fillet edge-by-edge. This was a real, verified
+// bug: a Ø12 hole rim at 48 segs has ~0.78mm segments, and r=1 needs
+// t=1 > 0.45·0.78 — every single segment failed the old "tessellation
+// sliver" guard and got skipped, part-wide, with no error.
 //
-// Per edge (both adjacent faces planar, edge convex):
+// Per SINGLETON edge (both adjacent faces planar, edge convex, v1 —
+// unchanged):
 //   Cross-section perpendicular to the edge: the two faces meet at interior
 //   angle θ (material side). A fillet arc of radius r is tangent to both
 //   faces at distance t = r/tan(θ/2) from the corner, centered on the
@@ -1629,14 +1662,79 @@ function holePattern(part, frame, opts) {
 //   subtracted once (same batching as chamferEdges) — shared-corner
 //   overlaps are counted once, matching analytic inclusion-exclusion.
 //
-// Constraints (v1): planar faces at the edge (checked: all same-face
-// neighbor triangles coplanar within 1e-3; curved-face fillets throw);
-// convex edges only (ball probe, same criterion as convexEdges — concave
-// rounding is material ADD and out of scope); radius = number (all edges)
-// or number[] parallel to the edge list (per-edge radii); r must satisfy
+// CLOSED CIRCULAR RUNS (v2): a maximal chain of INPUT edges that (a) share
+// consecutive mesh vertices, (b) turn <=30° at each shared vertex
+// (tangent-continuous — a genuine polygon corner turns 60-180°; a
+// tessellated circle turns 360/segs°, which is <=30° for any segs>=12),
+// and (c) keep the SAME θ (within 3°) and SAME r, are merged into a run;
+// if the chain walk closes on itself, that run is a candidate circular rim.
+//
+// FIRST ATTEMPT (rejected by measurement, keeping the note as a warning):
+// re-using the exact per-segment parallelepiped/cylinder cutter for every
+// segment in the run (just not skipping short ones) looks tempting — v1
+// already unions all cutters and subtracts once, so it seems like "batching
+// was never the problem, only the length guard was." It is WRONG whenever
+// t is not small relative to the segment length L (exactly the case a real
+// fillet radius on a coarse rim produces, e.g. r=5 on a 96-seg, 2.6mm-pitch
+// rim has t=5 ≈ 2·L): each segment's box/cylinder overshoots its own
+// [0,L] span by a large fraction of L, so neighboring segments' cutters —
+// each tilted slightly differently around the curve — overlap heavily and
+// produce either a wasm trap (measured: part 95d717e6 crashed with "memory
+// access out of bounds") or a badly wrong volume (measured: part b0c16861
+// went from 0.7% symRel to 8.1%, removing ~640mm³ against an analytic
+// ~35mm³). Verified on the actual regression corpus before shipping —
+// see fillet-fix/FIX_REPORT.md.
+//
+// ACTUAL v2 CONSTRUCTION: a closed run is fit to an exact circle (3-point
+// circumcircle through 3 well-separated run vertices, then every OTHER
+// vertex in the run is checked to actually lie on that circle within
+// tolerance — a real tessellated Manifold.cylinder rim fits to float
+// precision; a coincidentally-closed loop of unrelated edges will not, and
+// falls back below). Given the fit (center C, axis N, radius R) and the
+// run's (θ, t, r) — constant across the run by the merge criterion — the
+// SAME 2D corner-sliver construction used per-edge is built ONCE in the
+// meridian half-plane (ρ = radial distance from the axis, z = height along
+// it) and swept a full 360° with `makeRevolve`/`CrossSection.revolve`
+// (box-in-the-meridian-plane minus a small offset circle, i.e. a torus) —
+// exactly the "sweep the profile along the fillet edge" construction from
+// the original sketch, specialized (and made exact, not tessellation-
+// approximate) for the circular case, which is what every rim in this
+// corpus (holes, cylinder rims) actually is. ONE boolean-quality cutter per
+// run, no segment-length sensitivity at all, so the R11-class failure mode
+// above cannot occur. If the fit or the in-meridian-plane check fails (a
+// non-circular closed run — mixed topology), or the run isn't closed
+// (a partial/open curved chain), filletEdges FALLS BACK to the v1
+// per-EDGE construction for every edge in that run, INCLUDING the original
+// t > 0.45·L skip guard — i.e. exactly v1 behaviour, not the rejected
+// per-segment-run idea above. Known gap: an OPEN curved run (a fillet on a
+// less-than-360° arc) does not get the new treatment and can still lose
+// short segments to the skip guard; not exercised by the current corpus
+// (every curved surface here comes from a full-revolution primitive).
+//
+// Curved-adjacent-face relaxation (v2): _c6AssertPlanarAtEdge (below)
+// forbids a fillet whose adjacent face is curved — still enforced for
+// SINGLETON edges (including fallback-run edges, treated as singletons).
+// A run that gets the closed-circular-run treatment SKIPS that assert
+// entirely: the circle fit + per-vertex on-circle check IS the validity
+// proof for "this is one smooth curved feature," and is strictly more
+// specific than the singleton assert's local coplanarity probe (which was
+// never designed to look past one edge, and throws on any tessellation
+// finer than 3°/facet — exactly what a genuinely curved rim looks like at
+// high segment counts).
+//
+// Constraints (v1, still true for SINGLETON/fallback edges): planar faces
+// at the edge (checked: all same-face neighbor triangles coplanar within
+// 1e-3; curved-face fillets throw); convex edges only (ball probe, same
+// criterion as convexEdges — concave rounding is material ADD and out of
+// scope); radius = number (all edges) or number[] parallel to the edge
+// list (per-edge radii); a SINGLETON/fallback edge must satisfy
 // t < 0.45·edge length (larger r runs off the face — the boolean clips it,
-// documented lower fidelity). Arc tessellated at 96 segments: results sit
-// ≤ L·(π−(n/2)sin(2π/n))·r² ABOVE the circle-exact volume per edge.
+// documented lower fidelity). A closed-circular-run cutter throws instead
+// of silently clipping if r is so large the fillet would revolve through
+// the rim's own axis. Per-edge arc tessellated at 384 segments (results sit
+// ≤ L·(π−(n/2)sin(2π/n))·r² ABOVE the circle-exact volume per edge); a
+// closed-run's revolve uses its own (generally coarser, still >=96-segment)
+// resolution — see _c6ClosedRunCutter.
 //
 // opts.sphericalCorners: at every vertex where THREE filleted edges meet
 // (~90° corners, equal radii only — v1 scope), the three fillet sails
@@ -1644,12 +1742,244 @@ function holePattern(part, frame, opts) {
 // of radius r centered on the trihedral incenter (equidistant r from all
 // three faces and ON all three sail axes) — the result is a spherical
 // corner patch tangent to each sail along a circle (C1) and to each face
-// at one point, i.e. the true CAD corner for an r/r/r box corner.
+// at one point, i.e. the true CAD corner for an r/r/r box corner. Closed
+// circular runs never participate (a closed loop has no vertex where three
+// DIFFERENT edges converge; interior run vertices are always degree-2).
 // ============================================================================
 function _c6Norm(v) { const l = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0]/l, v[1]/l, v[2]/l]; }
 function _c6Cross(a, b) { return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]]; }
 function _c6Sub(a, b) { return [a[0]-b[0], a[1]-b[1], a[2]-b[2]]; }
 function _c6Len(v) { return Math.hypot(v[0], v[1], v[2]); }
+
+// Per-edge geometry needed by both run-detection and singleton/fallback
+// cutter construction. Throws on exactly the conditions v1 threw on
+// (stale/degenerate mesh lookup, concave edge, degenerate face angle) —
+// BEFORE any run decision is made, so a single bad edge anywhere in the
+// list still fails loud, in the same order as before.
+function _c6EdgeGeom(M, part, mesh, e, r) {
+  const P0 = e.va, P1 = e.vb;
+  const L = Math.hypot(P1[0]-P0[0], P1[1]-P0[1], P1[2]-P0[2]);
+  if (L < 1e-9) return null;
+  const d = [(P1[0]-P0[0])/L, (P1[1]-P0[1])/L, (P1[2]-P0[2])/L];
+
+  // in-face boundary rays from the corner: each of the two triangles on
+  // the edge has a third vertex X inside its face, so (X − P0) projected
+  // perpendicular to the edge is the in-face direction.
+  const eKey = e.a < e.b ? e.a * 1e9 + e.b : e.b * 1e9 + e.a;
+  const ti = mesh.pairMap.get(eKey);
+  if (!ti || ti.length !== 2)
+    throw new Error('filletEdges: edge not found in mesh (stale selection?)');
+  const thirdVertex = (tri) => {
+    for (let k = 0; k < 3; k++) if (tri.vs[k] !== e.a && tri.vs[k] !== e.b) return tri.v[k];
+    throw new Error('filletEdges: degenerate edge triangle');
+  };
+  const f0 = _c6InFaceDir(thirdVertex(mesh.tris[ti[0]]), P0, d);
+  const f1 = _c6InFaceDir(thirdVertex(mesh.tris[ti[1]]), P0, d);
+
+  // convexity guard: ball probe at the midpoint (same criterion as
+  // convexEdges — a dot-product test cannot distinguish a 90° concave
+  // corner from a 90° convex one).
+  const mid = [(P0[0]+P1[0])/2, (P0[1]+P1[1])/2, (P0[2]+P1[2])/2];
+  const rProbe = Math.min(0.05, L * 0.25);
+  const sp = M.sphere(rProbe, 12, 6).transform(
+    [1,0,0,0, 0,1,0,0, 0,0,1,0, mid[0],mid[1],mid[2], 1]);
+  const fIn = M.intersection(part, sp).volume() / sp.volume();
+  if (fIn >= 0.45)
+    throw new Error('filletEdges: edge is concave (pass convexEdges() output)');
+
+  // interior (material-side) angle between the boundary rays
+  const cTheta = Math.max(-1, Math.min(1, f0[0]*f1[0] + f0[1]*f1[1] + f0[2]*f1[2]));
+  const theta = Math.acos(cTheta);
+  if (theta < 0.05 || theta > Math.PI - 0.05)
+    throw new Error(`filletEdges: degenerate face angle ${theta} rad`);
+  const t = r / Math.tan(theta / 2);
+  return { e, P0, P1, L, d, f0, f1, theta, t, r };
+}
+
+// Run detection (v2, see C6 block header). geoms = _c6EdgeGeom results,
+// parallel to the input edge array (nulls for degenerate zero-length
+// edges). Returns [{ idxs: [...], closed }] covering every geoms[] index
+// exactly once; length-1 entries are singleton edges. Walk: at each shared
+// mesh vertex, exactly one OTHER input edge must touch it (a real chain
+// link, not a triple-junction or a branch), with matching r, matching θ
+// (within 3°), and a turn angle <=30° between the two segments' directions
+// (a tessellated circle turns 360/segs° — under 30° for any segs>=12; a
+// genuine polygon corner turns 60-180° and is correctly rejected as a chain
+// link, staying a singleton).
+function _c6DetectRuns(geoms) {
+  const TURN_COS_MIN = Math.cos(30 * Math.PI / 180);
+  const THETA_TOL = 3 * Math.PI / 180;
+  const byVertex = new Map(); // mesh vertex index -> [{idx, end}]
+  geoms.forEach((g, i) => {
+    if (!g) return;
+    for (const end of ['a', 'b']) {
+      const vk = g.e[end];
+      if (!byVertex.has(vk)) byVertex.set(vk, []);
+      byVertex.get(vk).push({ idx: i, end });
+    }
+  });
+  // arrival(g,end): unit direction arriving AT the vertex `end`, walking g
+  // in its natural a->b sense. departure(g,end): unit direction leaving
+  // the vertex `end`, continuing along g in its natural a->b sense.
+  const arrival = (g, end) => end === 'b' ? g.d : [-g.d[0], -g.d[1], -g.d[2]];
+  const departure = (g, end) => end === 'a' ? g.d : [-g.d[0], -g.d[1], -g.d[2]];
+  const findNext = (i, end) => {
+    const vk = geoms[i].e[end];
+    const touching = byVertex.get(vk);
+    if (!touching || touching.length !== 2) return null; // branch/terminus
+    const other = touching.find(x => x.idx !== i);
+    if (!other) return null;
+    const j = other.idx;
+    if (Math.abs(geoms[i].r - geoms[j].r) > 1e-9) return null;
+    if (Math.abs(geoms[i].theta - geoms[j].theta) > THETA_TOL) return null;
+    const arr = arrival(geoms[i], end);
+    const dep = departure(geoms[j], other.end);
+    const cosAng = arr[0]*dep[0] + arr[1]*dep[1] + arr[2]*dep[2];
+    if (cosAng < TURN_COS_MIN) return null; // real corner, not a curve
+    return other;
+  };
+  const visited = new Array(geoms.length).fill(false);
+  const runs = [];
+  for (let i = 0; i < geoms.length; i++) {
+    if (visited[i] || !geoms[i]) continue;
+    visited[i] = true;
+    const chain = [i];
+    let closed = false;
+    let curIdx = i, curEnd = 'b';
+    while (true) {
+      const nxt = findNext(curIdx, curEnd);
+      if (!nxt) break;
+      if (nxt.idx === i) { closed = true; break; } // loop closes on itself
+      if (visited[nxt.idx]) break;
+      chain.push(nxt.idx);
+      visited[nxt.idx] = true;
+      curIdx = nxt.idx;
+      curEnd = nxt.end === 'a' ? 'b' : 'a'; // continue from the far end
+    }
+    if (!closed) {
+      curIdx = i; curEnd = 'a';
+      while (true) {
+        const nxt = findNext(curIdx, curEnd);
+        if (!nxt) break;
+        if (visited[nxt.idx]) break;
+        chain.unshift(nxt.idx);
+        visited[nxt.idx] = true;
+        curIdx = nxt.idx;
+        curEnd = nxt.end === 'a' ? 'b' : 'a';
+      }
+    }
+    runs.push({ idxs: chain, closed });
+  }
+  return runs;
+}
+
+// Exact circumcircle through 3 non-collinear 3D points -> {center, normal,
+// radius}, or null if (near-)collinear. Standard vector formula relative
+// to A: center = A + (|AC|²(AB×AC)×AB + |AB|²AC×(AB×AC)) / (2|AB×AC|²).
+function _c6FitCircle3(A, B, C) {
+  const ab = _c6Sub(B, A), ac = _c6Sub(C, A);
+  const abLen2 = ab[0]*ab[0]+ab[1]*ab[1]+ab[2]*ab[2];
+  const acLen2 = ac[0]*ac[0]+ac[1]*ac[1]+ac[2]*ac[2];
+  const cr = _c6Cross(ab, ac);
+  const denom = 2 * (cr[0]*cr[0]+cr[1]*cr[1]+cr[2]*cr[2]);
+  if (denom < 1e-9) return null; // near-collinear: no well-defined circle
+  const t1 = _c6Cross(cr, ab), t2 = _c6Cross(ac, cr);
+  const center = [
+    A[0] + (acLen2*t1[0] + abLen2*t2[0]) / denom,
+    A[1] + (acLen2*t1[1] + abLen2*t2[1]) / denom,
+    A[2] + (acLen2*t1[2] + abLen2*t2[2]) / denom,
+  ];
+  return { center, normal: _c6Norm(cr), radius: _c6Len(_c6Sub(A, center)) };
+}
+
+// Build the single exact revolve cutter for a CLOSED circular run (see C6
+// block header). Returns null if the run doesn't fit a clean circle or its
+// f0/f1 aren't in the meridian plane (axisymmetric geometry required) —
+// the caller then falls back to the v1 per-edge path for every edge in the
+// run. Throws if the fit is circular but r is too large for the rim
+// (would revolve through the axis).
+function _c6ClosedRunCutter(M, manifoldModule, run, geoms) {
+  const { CrossSection } = manifoldModule;
+  const n = run.idxs.length;
+  const pt = (k) => geoms[run.idxs[k]].P0;
+  const fit = _c6FitCircle3(pt(0), pt(Math.floor(n / 3)), pt(Math.floor(2 * n / 3)));
+  if (!fit) return null;
+  const { center: C, normal: N, radius: R } = fit;
+  if (R < 1e-6) return null;
+  // Sanity: every run vertex must actually lie on this circle (real
+  // tessellated rims fit to float precision; a coincidental closed loop of
+  // unrelated edges will not).
+  const tol = Math.max(0.02 * R, 0.01);
+  for (let k = 0; k < n; k++) {
+    const rel = _c6Sub(pt(k), C);
+    const z = rel[0]*N[0] + rel[1]*N[1] + rel[2]*N[2];
+    const rho = _c6Len([rel[0]-z*N[0], rel[1]-z*N[1], rel[2]-z*N[2]]);
+    if (Math.abs(z) > tol || Math.abs(rho - R) > tol) return null; // not circular
+  }
+  const g0 = geoms[run.idxs[0]];
+  const rel0 = _c6Sub(pt(0), C);
+  const z0 = rel0[0]*N[0] + rel0[1]*N[1] + rel0[2]*N[2];
+  const rhoHat = _c6Norm(_c6Sub(rel0, [z0*N[0], z0*N[1], z0*N[2]]));
+  const yHat = _c6Norm(_c6Cross(N, rhoHat));
+  // f0/f1 SHOULD lie in the meridian plane (axisymmetric geometry), but the
+  // "third vertex" in-face direction (see _c6EdgeGeom) is measured against
+  // ONE mesh triangle, whose third vertex is one tessellation STEP away
+  // around the curve — for an n-segment rim that leaks a genuine tangential
+  // component of magnitude ~sin(π/n) into f0/f1 (verified: 96 segs ->
+  // 0.0327, matches sin(1.875°) exactly). That leak is a tessellation
+  // artifact, not a sign of non-axisymmetric geometry, and `to2d` below
+  // already discards it (keeps only the (ρ,z) components) — so gate on how
+  // much LENGTH survives the projection (near 1 for any reasonably fine
+  // rim; n>=12 — the run-detection turn-angle filter's own floor — keeps
+  // sin(π/12)=0.259 leak, length sqrt(1-0.259²)=0.966, comfortably clear of
+  // this threshold) rather than rejecting on the leak itself.
+  const to2d = (v) => [v[0]*rhoHat[0]+v[1]*rhoHat[1]+v[2]*rhoHat[2], v[0]*N[0]+v[1]*N[1]+v[2]*N[2]];
+  let f0_2d = to2d(g0.f0), f1_2d = to2d(g0.f1);
+  const f0Len = Math.hypot(f0_2d[0], f0_2d[1]), f1Len = Math.hypot(f1_2d[0], f1_2d[1]);
+  if (f0Len < 0.9 || f1Len < 0.9) return null; // not axisymmetric -- fall back
+  f0_2d = [f0_2d[0]/f0Len, f0_2d[1]/f0Len];
+  f1_2d = [f1_2d[0]/f1Len, f1_2d[1]/f1Len];
+  const { theta, t, r } = g0;
+  const P0_2d = [R, 0];
+  const sLen = Math.hypot(f0_2d[0]+f1_2d[0], f0_2d[1]+f1_2d[1]) || 1;
+  const bis = [(f0_2d[0]+f1_2d[0])/sLen, (f0_2d[1]+f1_2d[1])/sLen];
+  const dC = r / Math.sin(theta / 2);
+  const O0 = [P0_2d[0] + dC*bis[0], P0_2d[1] + dC*bis[1]];
+  const quad = [
+    P0_2d,
+    [P0_2d[0]+t*f0_2d[0], P0_2d[1]+t*f0_2d[1]],
+    [P0_2d[0]+t*(f0_2d[0]+f1_2d[0]), P0_2d[1]+t*(f0_2d[1]+f1_2d[1])],
+    [P0_2d[0]+t*f1_2d[0], P0_2d[1]+t*f1_2d[1]],
+  ];
+  const minX = Math.min(quad[0][0], quad[1][0], quad[2][0], quad[3][0], O0[0] - r);
+  if (minX < 1e-6)
+    throw new Error('filletEdges: fillet radius too large for this rim (would revolve through the axis)');
+  // REVOLVE_SEGS MUST equal n exactly (verified empirically, not a style
+  // choice): Manifold's boolean difference between the ORIGINAL part (an
+  // n-segment tessellated rim) and a cutter revolved at a DIFFERENT segment
+  // count is only PARTIALLY effective — even at a clean integer multiple of
+  // n — silently removing less material than the cutter's own volume
+  // (measured on a 40mm-radius rim: cutter built at 96 segs vs the part's
+  // 64 has volume 53.91 but removes only 49.84; at EXACTLY 64 segs it
+  // removes the full 53.86). The two meshes' angular samples must land at
+  // the identical phase for the boolean to fully resolve — a real
+  // robustness limit of the boolean engine at differing/misaligned
+  // tessellation, not a quality/tolerance knob. ARC_SEGS (the small fillet
+  // arc's own resolution) has no such constraint — it only touches the
+  // cutter's OWN geometry, not the part/cutter alignment — so it is free to
+  // be tuned for quality.
+  const REVOLVE_SEGS = n;
+  const ARC_SEGS = 128;
+  const boxRev = makeRevolve([quad], REVOLVE_SEGS);
+  const torusCS = CrossSection.circle(r, ARC_SEGS).translate(O0);
+  const torusRev = _c8CheckValid(torusCS.revolve(REVOLVE_SEGS), 'filletEdges (closed run)');
+  const cutter2D = M.difference(boxRev, torusRev);
+  const seRun = _c4StatusError(cutter2D);
+  if (seRun)
+    throw new Error(`filletEdges: bad run cutter (${seRun})`);
+  const mat = frameToMatrix({ center: C, x: rhoHat, y: yHat, normal: N });
+  return cutter2D.transform(mat);
+}
 
 /**
  * filletEdges(part, edges, radius, opts) — circular fillet of radius r on
@@ -1664,7 +1994,9 @@ function _c6Len(v) { return Math.hypot(v[0], v[1], v[2]); }
  *            (~90°, equal-radius) corners where THREE filleted edges meet,
  *            replacing the cusp with a spherical patch tangent to all three
  *            fillet sails (C1 junction) and to all three faces.
- * Returns the filleted part.
+ * Returns the filleted part. v2: edges that chain into a CLOSED CIRCULAR
+ * RUN (see block header) fillet as one exact revolved feature even though
+ * each mesh segment is individually short (a tessellated circular rim).
  */
 function filletEdges(part, edgesIn, radiusIn, opts = {}) {
   const M = manifoldModule.Manifold;
@@ -1705,55 +2037,54 @@ function filletEdges(part, edgesIn, radiusIn, opts = {}) {
   }
 
   const mesh = _c6BuildMeshInfo(part);
-  for (const e of edges) _c6AssertPlanarAtEdge(mesh, e);
+  // Per-edge geometry ONCE (also validates every edge — same throws as v1,
+  // same order), THEN run detection, THEN try the exact closed-circular-run
+  // cutter per run; runs that don't fit one fall back to v1 per-edge.
+  const geoms = edges.map(e => _c6EdgeGeom(M, part, mesh, e, radii.get(e)));
+  const runs = _c6DetectRuns(geoms);
+  const runCutter = new Map(); // run -> cutter Manifold (only for successful closed runs)
+  const runOf = new Array(edges.length);
+  for (const run of runs) {
+    run.idxs.forEach(i => { runOf[i] = run; });
+    if (run.closed && run.idxs.length > 1) {
+      const c = _c6ClosedRunCutter(M, manifoldModule, run, geoms);
+      if (c) runCutter.set(run, c);
+    }
+  }
+  const isHandled = (i) => runCutter.has(runOf[i]);
+
+
+  // Planarity assert: SINGLETON and fallback edges only (v1 behaviour).
+  // Successfully-fit closed circular runs skip it — the circle fit + on-
+  // circle check IS the run-level validity proof; see block header.
+  for (let i = 0; i < edges.length; i++) {
+    if (!geoms[i] || isHandled(i)) continue;
+    _c6AssertPlanarAtEdge(mesh, edges[i]);
+  }
 
   const cutters = [];
-  const edgeGeom = []; // per edge: { kA, kB, V0, V1, r, theta, cyl }
-  const skippedShort = []; // {L, t} per edge skipped as a tessellation sliver
-  for (const e of edges) {
-    const r = radii.get(e);
-    const P0 = e.va, P1 = e.vb;
-    const L = Math.hypot(P1[0]-P0[0], P1[1]-P0[1], P1[2]-P0[2]);
-    if (L < 1e-9) continue;
-    const d = [(P1[0]-P0[0])/L, (P1[1]-P0[1])/L, (P1[2]-P0[2])/L];
-
-    // in-face boundary rays from the corner: each of the two triangles on
-    // the edge has a third vertex X inside its face, so (X − P0) projected
-    // perpendicular to the edge is the in-face direction.
-    const eKey = e.a < e.b ? e.a * 1e9 + e.b : e.b * 1e9 + e.a;
-    const ti = mesh.pairMap.get(eKey);
-    if (!ti || ti.length !== 2)
-      throw new Error('filletEdges: edge not found in mesh (stale selection?)');
-    const thirdVertex = (tri) => {
-      for (let k = 0; k < 3; k++) if (tri.vs[k] !== e.a && tri.vs[k] !== e.b) return tri.v[k];
-      throw new Error('filletEdges: degenerate edge triangle');
-    };
-    const f0 = _c6InFaceDir(thirdVertex(mesh.tris[ti[0]]), P0, d);
-    const f1 = _c6InFaceDir(thirdVertex(mesh.tris[ti[1]]), P0, d);
-
-    // convexity guard: ball probe at the midpoint (same criterion as
-    // convexEdges — a dot-product test cannot distinguish a 90° concave
-    // corner from a 90° convex one).
-    const mid = [(P0[0]+P1[0])/2, (P0[1]+P1[1])/2, (P0[2]+P1[2])/2];
-    const rProbe = Math.min(0.05, L * 0.25);
-    const sp = M.sphere(rProbe, 12, 6).transform(
-      [1,0,0,0, 0,1,0,0, 0,0,1,0, mid[0],mid[1],mid[2], 1]);
-    const fIn = M.intersection(part, sp).volume() / sp.volume();
-    if (fIn >= 0.45)
-      throw new Error('filletEdges: edge is concave (pass convexEdges() output)');
-
-    // interior (material-side) angle between the boundary rays
-    const cTheta = Math.max(-1, Math.min(1, f0[0]*f1[0] + f0[1]*f1[1] + f0[2]*f1[2]));
-    const theta = Math.acos(cTheta);
-    if (theta < 0.05 || theta > Math.PI - 0.05)
-      throw new Error(`filletEdges: degenerate face angle ${theta} rad`);
-    const t = r / Math.tan(theta / 2);
+  const edgeGeom = []; // per SINGLETON/fallback edge: { kA, kB, V0, V1, r, theta, cyl }
+  const skippedShort = []; // {L, t} per SINGLETON/fallback edge skipped as a sliver
+  const doneRuns = new Set();
+  for (let i = 0; i < edges.length; i++) {
+    const g = geoms[i];
+    if (!g) continue;
+    if (isHandled(i)) {
+      const run = runOf[i];
+      if (!doneRuns.has(run)) {
+        doneRuns.add(run);
+        cutters.push(runCutter.get(run));
+      }
+      continue;
+    }
+    const e = edges[i];
+    const { P0, P1, L, d, f0, f1, theta, t, r } = g;
     if (t > 0.45 * L) {
       // SKIP, don't throw: short edges are tessellation slivers of a curved
       // arc (96/384-seg fillet/chamfer seams) that a filtered edge list
-      // picks up alongside the real edge. Filing one sliver off would only
-      // add noise, and one bad sliver must not kill the whole part — the
-      // C8 parts f394288e/b0c16861/95d717e6 died this way for 4 iters.
+      // picks up alongside the real edge, OR a curved run that didn't fit
+      // a clean circle (see block header) — filing one off would only add
+      // noise, and one bad sliver must not kill the whole part.
       skippedShort.push({ L: +L.toFixed(4), t: +t.toFixed(4) });
       continue;
     }
@@ -1790,8 +2121,9 @@ function filletEdges(part, edgesIn, radiusIn, opts = {}) {
     ];
     const cyl = M.cylinder(L + 2, r, r, SEGMENTS, true).transform(mat);
     const cutter = M.difference(box, cyl);
-    if (cutter.status() !== 'NoError')
-      throw new Error(`filletEdges: bad cutter (${cutter.status()})`);
+    const seC = _c4StatusError(cutter);
+    if (seC)
+      throw new Error(`filletEdges: bad cutter (${seC})`);
     cutters.push(cutter);
     edgeGeom.push({ kA: e.a, kB: e.b, V0: P0, V1: P1, r, theta, cyl });
   }
@@ -1806,7 +2138,8 @@ function filletEdges(part, edgesIn, radiusIn, opts = {}) {
   let tool = cutters[0];
   for (let i = 1; i < cutters.length; i++) tool = M.union([tool, cutters[i]]);
   let out = M.difference(part, tool);
-  if (out.status() !== 'NoError') throw new Error(`filletEdges: bad result (${out.status()})`);
+  const seOut = _c4StatusError(out);
+  if (seOut) throw new Error(`filletEdges: bad result (${seOut})`);
 
   // ------------------------------------------------------------------
   // Optional: spherical corner caps. When THREE filleted edges meet at
@@ -1892,22 +2225,26 @@ function filletEdges(part, edgesIn, radiusIn, opts = {}) {
       ]);
       let cap = cornerBox;
       for (const g of eg) cap = M.intersection(cap, g.cyl);
-      if (cap.status() !== 'NoError' || cap.volume() < 1e-9)
-        throw new Error(`filletEdges: bad corner material (${cap.status()}, vol ${cap.volume()})`);
+      const seCap = _c4StatusError(cap);
+      if (seCap || cap.volume() < 1e-9)
+        throw new Error(`filletEdges: bad corner material (${seCap || 'ok'}, vol ${cap.volume()})`);
       const octant = M.intersection(ball, cornerBox);
-      if (octant.status() !== 'NoError' || octant.volume() < 1e-9)
-        throw new Error(`filletEdges: bad corner octant (${octant.status()})`);
+      const seOct = _c4StatusError(octant);
+      if (seOct || octant.volume() < 1e-9)
+        throw new Error(`filletEdges: bad corner octant (${seOct || 'ok'})`);
       cap = M.difference(cap, octant);
-      if (cap.status() !== 'NoError' || cap.volume() < 1e-9)
-        throw new Error(`filletEdges: bad corner cap (${cap.status()}, vol ${cap.volume()})`);
+      const seCap2 = _c4StatusError(cap);
+      if (seCap2 || cap.volume() < 1e-9)
+        throw new Error(`filletEdges: bad corner cap (${seCap2 || 'ok'}, vol ${cap.volume()})`);
       caps.push(cap);
     }
     if (caps.length) {
       let capTool = caps[0];
       for (let i = 1; i < caps.length; i++) capTool = M.union([capTool, caps[i]]);
       out = M.difference(out, capTool);
-      if (out.status() !== 'NoError')
-        throw new Error(`filletEdges: bad corner-cap result (${out.status()})`);
+      const seCapTool = _c4StatusError(out);
+      if (seCapTool)
+        throw new Error(`filletEdges: bad corner-cap result (${seCapTool})`);
     }
   }
   return out;
@@ -1950,6 +2287,11 @@ function _c6BuildMeshInfo(part) {
 // also hold for all same-face neighbor triangles (shared edge + normal
 // within 3° of the edge triangle's). Deliberately local, NOT per faceID
 // group (Manifold can merge faces from different planes into one group).
+// Called for SINGLETON/fallback edges only (v2): a successfully-fit closed
+// circular run skips this and relies on the circle fit + on-circle check
+// instead — see the C6 block header for why (this probe throws on any
+// tessellation finer than 3°/facet, which is exactly what a genuine
+// curved run looks like).
 const _C6_COS3DEG = Math.cos(3 * Math.PI / 180);
 function _c6AssertPlanarAtEdge(mesh, e) {
   const { tris, pairMap } = mesh;
@@ -2026,9 +2368,9 @@ function _c8CheckValid(m, what) {
   // So only treat a NON-STRING non-NoError status as an error; when status()
   // is an object (bundled build) the volume check below is the real
   // degeneracy guard (verified: valid → real volume, bad profile → 0).
-  const s = m.status();
-  if (typeof s === 'string' && s !== 'NoError')
-    throw new Error(`${what}: invalid result (status ${s}) — the profile must be a closed polygon; for revolve: x >= 0 (radial), y = height around the axis`);
+  const se = _c4StatusError(m);
+  if (se)
+    throw new Error(`${what}: invalid result (status ${se}) — the profile must be a closed polygon; for revolve: x >= 0 (radial), y = height around the axis`);
   if (m.volume() <= 1e-9)
     throw new Error(`${what}: result is EMPTY (volume 0) — check the profile has real area and (for revolve) does not sit on the axis`);
   return m;
@@ -2406,10 +2748,10 @@ self.onmessage = async (event) => {
         const manifold = new Manifold(mesh);
         
         // Validate
-        const status = manifold.status();
-        if (status.value !== 0) {
+        const meshStatus = _c4StatusError(manifold);
+        if (meshStatus) {
           // More descriptive error message
-          throw new Error(`Invalid mesh: status code ${status.value}. The mesh may not be watertight.`);
+          throw new Error(`Invalid mesh: status ${meshStatus}. The mesh may not be watertight.`);
         }
         
         // Cache for script access
