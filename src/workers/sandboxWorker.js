@@ -1970,13 +1970,26 @@ function _c6ClosedRunCutter(M, manifoldModule, run, geoms) {
   // be tuned for quality.
   const REVOLVE_SEGS = n;
   const ARC_SEGS = 128;
-  const boxRev = makeRevolve([quad], REVOLVE_SEGS);
-  const torusCS = CrossSection.circle(r, ARC_SEGS).translate(O0);
-  const torusRev = _c8CheckValid(torusCS.revolve(REVOLVE_SEGS), 'filletEdges (closed run)');
-  const cutter2D = M.difference(boxRev, torusRev);
-  const seRun = _c4StatusError(cutter2D);
-  if (seRun)
-    throw new Error(`filletEdges: bad run cutter (${seRun})`);
+  // Wedge profile built as ONE 2D CrossSection boolean (quad minus the fillet
+  // arc's disk), THEN revolved once. Do NOT revolve the box and the arc into
+  // two 3D solids and difference those (the original construction): the box
+  // corner and the arc are mathematically TANGENT along their whole shared
+  // boundary -- that is the definition of a fillet -- and a 3D boolean
+  // between two meshes meeting at a near-but-not-exactly-tangent surface
+  // (float noise ~1e-7 from the fitted R/t) is the classic worst case for a
+  // mesh boolean: it manufactures a sliver of near-zero-volume overlap that
+  // triangulates into hundreds of degenerate triangles (measured: 316
+  // zero-area tris + 508 q<0.01 needles on the 9e2b61bb flange; the
+  // no-fillet baseline is 0/34). The 2D boolean is well-conditioned (both
+  // shapes are flat; the "torus" is just a circle), the solid is identical
+  // as a point set -- revolve(A\B) = revolve(A)\revolve(B) for full 360
+  // revolutions -- with ZERO degenerate tris, at half the triangle count
+  // (one revolve instead of two). Revolve still locks to n (see above): the
+  // phase-lock constraint is about THIS solid vs the PART mesh, not internal.
+  const quadCS = new CrossSection(_c8NormalizeContours([quad]));
+  const arcCS = CrossSection.circle(r, ARC_SEGS).translate(O0);
+  const cutter2D = _c8CheckValid(
+    quadCS.subtract(arcCS).revolve(REVOLVE_SEGS), 'filletEdges (closed run)');
   const mat = frameToMatrix({ center: C, x: rhoHat, y: yHat, normal: N });
   return cutter2D.transform(mat);
 }
