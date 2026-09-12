@@ -14,6 +14,8 @@ import {
   Raycaster,
   Vector2,
   Vector3,
+  Vector4,
+  Matrix4,
   Triangle,
   LineSegments,
   LineBasicMaterial
@@ -29,6 +31,8 @@ import { selectFaceByID, selectFaceWithTolerance, selectAllConnected } from '../
 import { createCuttingPlaneWidget, updateCuttingPlaneWidget } from '../utils/cuttingPlaneWidget';
 import { AxesHelper } from 'three';
 import { calculateMeasurements, createMeasurementLines, disposeMeasurementLines } from '../utils/measurementTool';
+import { fitView, VIEW_PRESETS } from '../utils/viewCamera';
+import ViewSnapControl from './ViewSnapControl';
 import { validateScript, formatValidationErrors } from '../utils/scriptValidator';
 import manifoldContext from '../utils/ManifoldWorker';
 
@@ -66,6 +70,9 @@ const Viewport = forwardRef(({
   const cuttingPlaneWidgetRef = useRef(null);
   const axisHelperRef = useRef(null);
   const executionAbortRef = useRef(null);
+  // Mirrors the last execution error for the dev-only __VIEWPORT__ hook (the real handler
+  // stores it in state, which a headless caller cannot read synchronously).
+  const stageExecErrorRef = useRef(null);
 
   const clickCountRef = useRef(0);
   const clickTimerRef = useRef(null);
@@ -100,6 +107,8 @@ const Viewport = forwardRef(({
   const [measurementEnabled, setMeasurementEnabled] = useState(false);
   const [measurementFaces, setMeasurementFaces] = useState({ first: null, second: null });
   const [axisHelperEnabled, setAxisHelperEnabled] = useState(false);
+  // Re-frame the part after each successful run, preserving the current orbit direction.
+  const [autoFitEnabled, setAutoFitEnabled] = useState(true);
 
   useImperativeHandle(ref, () => ({
     executeScript,
@@ -616,34 +625,150 @@ const Viewport = forwardRef(({
       // Dev/automation hook used by headless review tooling (harness/stage_shot.mjs).
       // Drives the exact same execute -> render path the Run button uses, and lets a
       // script position the camera deterministically for reproducible screenshots.
+      const __tris = () => {
+        const g = resultRef.current?.geometry;
+        if (!g) return 0;
+        return g.index ? Math.ceil(g.index.count / 3)
+          : (g.attributes?.position ? Math.ceil(g.attributes.position.count / 3) : 0);
+      };
       if (import.meta.env?.DEV) {
         window.__VIEWPORT__ = {
           ready: () => !!(sceneRef.current && rendererRef.current && resultRef.current),
-          executeScript: (s) => executeScript(s),
-          // az/el in degrees, z-up world (the app models parts with +Z up).
-          stageFit: ({ az = 35, el = 20, margin = 1.4, viewTarget = null } = {}) => {
+          // Set this from automation to be notified the instant a mesh lands in the scene.
+          // Fires from renderMeshData with the exact meshData object that was painted.
+          onRendered: null,
+          _lastRenderedMesh: null,
+          _renderCount: 0,
+          lastRenderedIs: (mesh) => window.__VIEWPORT__?._lastRenderedMesh === mesh,
+          // Run a script exactly as the Run button does -- validate, execute in the worker,
+          // render into the live scene, auto-fit. Resolves { error, mesh } so a headless
+          // caller can tell a fresh build from a failure without reading React state.
+          executeScript: async (s) => {
+            stageExecErrorRef.current = null;
+            try {
+              await executeScript(s);
+            } catch (e) {
+              stageExecErrorRef.current = String(e?.message || e);
+            }
+            const err = stageExecErrorRef.current;
+            const mesh = err ? null : (window.__MANIFOLD_CONTEXT__?.lastResult?.mesh ?? null);
+            // Identity check against the render choke point: the object we painted is the
+            // object the worker just returned, or this run did not reach the screen at all.
+            return {
+              error: err,
+              mesh,
+              onScreen: !!mesh && window.__VIEWPORT__?._lastRenderedMesh === mesh,
+              sceneTris: __tris(),
+            };
+          },
+          // az/el in degrees, z-up world (the app models parts with +Z up). Delegates to
+          // the same fitView the UI buttons use, so an automated capture frames the part
+          // exactly as a manual snap would.
+          stageFit: ({ az = 35, el = 20, margin = 1.15, viewTarget = null } = {}) => {
             const cam = cameraRef.current, ctl = controlsRef.current, res = resultRef.current;
             if (!cam || !res || !res.geometry) return false;
-            res.geometry.computeBoundingBox();
-            const b = res.geometry.boundingBox;
-            const empty = !b || !isFinite(b.min.x) || b.isEmpty();
-            const center = viewTarget
-              ? new Vector3(viewTarget[0], viewTarget[1], viewTarget[2])
-              : (empty ? new Vector3(0, 0, 0) : b.getCenter(new Vector3()));
-            const size = empty ? new Vector3(1, 1, 1) : b.getSize(new Vector3());
-            const radius = Math.max(size.length(), 1e-3) / 2;
-            const dist = Math.max(radius, 1e-3) * 2.4 * margin;
             const azr = (az * Math.PI) / 180, elr = (el * Math.PI) / 180;
-            const dir = new Vector3(Math.cos(elr) * Math.cos(azr), Math.cos(elr) * Math.sin(azr), Math.sin(elr));
-            cam.up.set(0, 0, 1);
-            cam.position.copy(center).add(dir.multiplyScalar(dist));
-            cam.near = Math.max(dist / 1000, 1e-4);
-            cam.far = dist * 100;
-            cam.updateProjectionMatrix();
-            cam.lookAt(center);
-            if (ctl) { ctl.target.copy(center); ctl.update(); }
+            const ok = fitView({
+              camera: cam, controls: ctl, geometry: res.geometry,
+              dir: [Math.cos(elr) * Math.cos(azr), Math.cos(elr) * Math.sin(azr), Math.sin(elr)],
+              up: [0, 0, 1], margin,
+            });
             renderer.render(sceneRef.current, cam);
-            return true;
+            return ok;
+          },
+          stageSnap: (key, margin = 1.15) => {
+            const known = Object.prototype.hasOwnProperty.call(VIEW_PRESETS, key) ? key : 'iso';
+            const ok = handleViewSnap(known, margin);
+            renderer.render(sceneRef.current, cameraRef.current);
+            return ok;
+          },
+          stageAutoFit: (on) => { setAutoFitEnabled(!!on); return true; },
+          // Framing assertion for automated review: projects the part's 8 bounding-box
+          // corners through the live camera and reports whether they land inside the
+          // viewport and how much of it the part covers. A snap that silently no-ops, a
+          // part rendered off-screen tiny, or geometry clipped by near/far all fail here
+          // with a readable reason -- which pixels alone would not reliably tell us.
+          stageVerifyFraming: (maxTriangles = 200000) => {
+            const cam = cameraRef.current, res = resultRef.current;
+            if (!cam || !res?.geometry?.attributes?.position) return { ok: false, problems: ['no camera or geometry'] };
+            const g = res.geometry;
+            g.computeBoundingBox();
+            const b = g.boundingBox;
+            if (!b || b.isEmpty()) return { ok: false, problems: ['empty bounding box'] };
+
+            cam.updateMatrixWorld();      // this fork refreshes matrixWorldInverse inside updateMatrixWorld()
+            const mvp = new Matrix4().multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);
+            const p = new Vector4();
+            let minU = Infinity, maxU = -Infinity, minV = Infinity, maxV = -Infinity;
+            let behindNear = 0, beyondFar = 0, invalid = 0;
+            const nearZ = -(cam.far + cam.near) / (cam.far - cam.near);
+            const farZ = 1;
+            for (let i = 0; i < 8; i++) {
+              p.set(
+                i & 1 ? b.max.x : b.min.x,
+                i & 2 ? b.max.y : b.min.y,
+                i & 4 ? b.max.z : b.min.z,
+                1
+              ).applyMatrix4(mvp);
+              if (!isFinite(p.x) || !isFinite(p.y) || !isFinite(p.z) || Math.abs(p.w) < 1e-12) { invalid++; continue; }
+              const u = p.x / p.w, vv = p.y / p.w, z = p.z / p.w;
+              minU = Math.min(minU, u); maxU = Math.max(maxU, u);
+              minV = Math.min(minV, vv); maxV = Math.max(maxV, vv);
+              if (z < nearZ - 1e-3) behindNear++;
+              if (z > farZ + 1e-3) beyondFar++;
+            }
+            if (invalid === 8) return { ok: false, problems: ['projection produced no finite corners'] };
+
+            const problems = [];
+            if (behindNear === 8) problems.push('part is entirely in front of the near plane');
+            if (beyondFar === 8) problems.push('part is entirely beyond the far plane');
+            // The part's largest projected extent, as a fraction of the half-frame. A correct
+            // fit sits in [~0.5, ~1.0]: the biggest dimension fills the frame (minus the margin
+            // factor) and nothing spills outside it. This is the right test, not total frame
+            // coverage -- a long thin part viewed down its long axis legitimately covers a small
+            // fraction of the frame while being framed perfectly.
+            const extent = Math.max(Math.abs(minU), Math.abs(maxU), Math.abs(minV), Math.abs(maxV));
+            if (!Number.isFinite(extent)) problems.push('non-finite projection');
+            else if (extent > 1.05) problems.push(`part projects outside the frame (largest extent ${extent.toFixed(2)} of half-frame)`);
+            else if (extent < 0.40) problems.push(`part fills only ${(extent * 100).toFixed(0)}% of the frame (not fitted)`);
+            const covU = Math.max(0, Math.min(1, maxU) - Math.max(-1, minU));
+            const covV = Math.max(0, Math.min(1, maxV) - Math.max(-1, minV));
+            // Normalised to [0..1]: the visible NDC box is [-1,1]^2, an area of 4. Reported
+            // for context only -- it is expected to be small for slender parts.
+            const coverage = (covU * covV) / 4;
+
+            return {
+              ok: problems.length === 0,
+              problems,
+              extent: Number.isFinite(extent) ? +extent.toFixed(3) : null,
+              u: [minU, maxU].map((x) => +x.toFixed(3)),
+              v: [minV, maxV].map((x) => +x.toFixed(3)),
+              coverage: +coverage.toFixed(3),
+              tris: Math.ceil((g.index ? g.index.count : g.attributes.position.count) / 3),
+            };
+          },
+          // Framing state for automated assertions (headless callers cannot read refs).
+          stageCamera: () => {
+            const cam = cameraRef.current, ctl = controlsRef.current, res = resultRef.current;
+            if (!cam) return null;
+            const g = res?.geometry;
+            g?.computeBoundingBox();
+            const b = g?.boundingBox;
+            // zoom/view/projection-matrix readouts for headless forensics. For this fork the
+            // verified identities are te[5] = zoom / tan(fov_deg * PI/180 / 2) and te[0] =
+            // te[5] / aspect (near cancels out — makePerspective scales width with near).
+            // Measured once: te = {1.293, 2.414} <=> exactly fov 45, aspect 1.867 — so a
+            // mismatch here means someone mutated fov/aspect/zoom, not that the fit is bad.
+            const pe = cam.projectionMatrix?.elements || null;
+            return {
+              position: cam.position.toArray(),
+              up: cam.up.toArray(),
+              target: ctl ? ctl.target.toArray() : null,
+              near: cam.near, far: cam.far, fov: cam.fov, aspect: cam.aspect,
+              zoom: cam.zoom, view: cam.view ? { ...cam.view } : null,
+              te: pe ? { te0: pe[0], te5: pe[5], te8: pe[8], te9: pe[9] } : null,
+              bbox: b && !b.isEmpty() ? { min: b.min.toArray(), max: b.max.toArray() } : null,
+            };
           },
           // Fullscreen the viewport and hide every non-canvas element (toolbars, panels,
           // editor, modals) so captures show only the part on a clean background.
@@ -799,43 +924,37 @@ const Viewport = forwardRef(({
     defineMaterials();
   }, []);
 
-  // Zoom camera to fit the model
+  // Zoom camera to fit the model (keeps the current orbit direction)
   const handleZoomToFit = useCallback(() => {
-    if (!resultRef.current?.geometry || !cameraRef.current || !controlsRef.current) return;
-    
-    const geometry = resultRef.current.geometry;
-    geometry.computeBoundingBox();
-    const boundingBox = geometry.boundingBox;
-    
-    if (!boundingBox) return;
-    
-    // Calculate bounding sphere
-    const center = new Vector3();
-    boundingBox.getCenter(center);
-    
-    const size = new Vector3();
-    boundingBox.getSize(size);
-    const maxDim = Math.max(size.x, size.y, size.z);
-    const fov = cameraRef.current.fov * (Math.PI / 180);
-    let cameraZ = Math.abs(maxDim / 2 / Math.tan(fov / 2));
-    
-    // Add some padding
-    cameraZ *= 1.5;
-    
-    // Position camera
-    const camera = cameraRef.current;
-    const controls = controlsRef.current;
-    
-    camera.position.set(center.x + cameraZ, center.y + cameraZ, center.z + cameraZ);
-    camera.lookAt(center);
-    camera.updateProjectionMatrix();
-    
-    // Update controls target
-    controls.target.copy(center);
-    controls.update();
-    
-    console.log('[Viewport] Zoomed to fit');
+    if (!resultRef.current?.geometry || !cameraRef.current) return;
+    if (fitView({ camera: cameraRef.current, controls: controlsRef.current, geometry: resultRef.current.geometry })) {
+      console.log('[Viewport] Zoomed to fit');
+    }
   }, []);
+
+  // Snap to a canonical view (iso / front / right / top) and re-fit in the same gesture.
+  const handleViewSnap = useCallback((key, margin = 1.15) => {
+    const preset = VIEW_PRESETS[key] || VIEW_PRESETS.iso;
+    if (!resultRef.current?.geometry || !cameraRef.current) return false;
+    const ok = fitView({
+      camera: cameraRef.current,
+      controls: controlsRef.current,
+      geometry: resultRef.current.geometry,
+      dir: preset.dir,
+      up: preset.up,
+      margin,
+    });
+    if (ok) console.log(`[Viewport] Snapped to ${preset.label}`);
+    return ok;
+  }, []);
+
+  const handleAutoFitToggle = useCallback(() => {
+    setAutoFitEnabled((on) => {
+      const next = !on;
+      if (next) handleZoomToFit();
+      return next;
+    });
+  }, [handleZoomToFit]);
 
   const handleMeasurementToggle = () => {
     if (!measurementEnabled && selectedFace) {
@@ -900,6 +1019,16 @@ const Viewport = forwardRef(({
     
     resultRef.current.geometry?.dispose();
     resultRef.current.geometry = geometry;
+
+    // Dev-only: the single choke point where geometry reaches the scene. Report the exact
+    // meshData object we just painted so automation can prove, by identity, that what is on
+    // screen is the part it submitted -- no polling, no timers, no retry logic.
+    if (import.meta.env?.DEV && window.__VIEWPORT__) {
+      const hook = window.__VIEWPORT__;
+      hook._lastRenderedMesh = meshData;
+      hook._renderCount = (hook._renderCount || 0) + 1;
+      try { hook.onRendered?.(meshData); } catch (e) { console.warn('[stage] onRendered failed:', e?.message); }
+    }
 
     const renderer = rendererRef.current;
     const scene = sceneRef.current;
@@ -1007,6 +1136,13 @@ const Viewport = forwardRef(({
 
       // Render the result
       renderMeshData(meshData);
+
+      // Auto scale: re-frame the part after every successful run so the new geometry is
+      // never left off-screen or tiny. Keeps the user's current orbit direction.
+      if (autoFitEnabled) {
+        const bounds = calculateBoundsFromMesh(meshData);
+        if (bounds) handleZoomToFit();
+      }
       
       if (memoryUsedMB) {
         console.log(`[Viewport] Memory after execution: ${memoryUsedMB.toFixed(1)}MB`);
@@ -1016,7 +1152,9 @@ const Viewport = forwardRef(({
 
     } catch (error) {
       console.error('Error executing script:', error);
-      setExecutionError(error.message || 'Script execution failed');
+      const msg = error.message || 'Script execution failed';
+      stageExecErrorRef.current = msg;
+      setExecutionError(msg);
 
       if (resultRef.current) {
         resultRef.current.geometry?.dispose();
@@ -1028,7 +1166,7 @@ const Viewport = forwardRef(({
         executionAbortRef.current = null;
       }
     }
-  }, [currentScript, materials, onFaceSelected, renderMeshData, clearHighlight]);
+  }, [currentScript, materials, onFaceSelected, renderMeshData, clearHighlight, autoFitEnabled, handleZoomToFit]);
 
   /**
    * Download the current model as 3mf
@@ -1078,6 +1216,9 @@ const Viewport = forwardRef(({
           onToggle={handleCrossSectionToggle}
           onPlaneChange={handlePlaneChange}
           onZoomToFit={handleZoomToFit}
+          onAutoFitToggle={handleAutoFitToggle}
+          autoFitEnabled={autoFitEnabled}
+          onSnapView={handleViewSnap}
           bounds={modelBounds}
           measurementEnabled={measurementEnabled}
           onMeasurementToggle={handleMeasurementToggle}

@@ -63,6 +63,31 @@ const CodeEditor = forwardRef(({
       if (addToHistory) {
         onCodeChange?.(content, message);
       }
+    },
+
+    // Update the text WITHOUT re-executing. Used by the headless review loop so the
+    // editor shows the exact source that produced the picture on screen. Deliberately
+    // not loadContent(): that fires onExecute, which would re-run what we just ran.
+    //
+    // No-op when the buffer already holds this exact source. Compared against the live
+    // model rather than the cached valueRef so a debounced manual edit that has not
+    // flushed yet cannot trick us into a redundant write (which would disturb the cursor,
+    // scroll position, and Monaco's undo stack for no reason).
+    // Returns true if it wrote, false if it declined as already-current.
+    setTextOnly: (content) => {
+      if (typeof content !== 'string') return false;
+      const current = editorRef.current ? editorRef.current.getValue() : valueRef.current;
+      if (current === content) return false;          // already what we wanted: nothing to do
+
+      if (historyTimeoutRef.current) {
+        clearTimeout(historyTimeoutRef.current);
+        historyTimeoutRef.current = null;
+      }
+      programmaticValueRef.current = content;   // so handleEditorChange ignores this write
+      valueRef.current = content;
+      setEditorValue(content);
+      editorRef.current?.setValue(content);
+      return true;
     }
   }));
 

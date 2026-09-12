@@ -1,6 +1,7 @@
 // components/CrossSectionPanel.jsx
 import React, { useState, useEffect } from 'react';
-import { FlipHorizontal, ChevronDown, ChevronUp, Maximize2, Ruler, Move3d } from 'lucide-react';
+import { FlipHorizontal, ChevronDown, ChevronUp, Maximize2, Ruler, Move3d, Frame } from 'lucide-react';
+import ViewSnapControl from './ViewSnapControl';
 import { PLANE_PRESETS } from '../utils/crossSection';
 
 const CrossSectionPanel = ({ 
@@ -8,6 +9,9 @@ const CrossSectionPanel = ({
   onToggle,
   onPlaneChange,
   onZoomToFit,
+  onAutoFitToggle,
+  autoFitEnabled = true,
+  onSnapView,
   bounds,
   measurementEnabled,
   onMeasurementToggle,
@@ -158,6 +162,14 @@ const handleButtonClick = () => {
   if (isCollapsed || !enabled) {
     return (
       <div className="absolute bottom-4 right-2 lg:right-4 flex gap-2 bg-white/60 backdrop-blur-sm p-2 rounded-lg shadow-lg z-10">
+        <ViewSnapControl onSnap={onSnapView} />
+        <button
+          onClick={onAutoFitToggle}
+          className={`p-2 rounded ${autoFitEnabled ? 'text-green-600 bg-green-100' : 'text-gray-500'} hover:bg-gray-100`}
+          title={autoFitEnabled ? 'Auto-fit on run: ON (re-frames the part after each run)' : 'Auto-fit on run: OFF'}
+        >
+          <Frame size={20} />
+        </button>
         <button
           onClick={onAxisHelperToggle}
           className={`p-2 rounded ${axisHelperEnabled ? 'text-green-600 bg-green-100' : 'text-blue-600'} hover:bg-gray-100`}
@@ -203,6 +215,14 @@ const handleButtonClick = () => {
     <div className="absolute bottom-4 right-2 lg:right-4 bg-white/50 backdrop-blur-sm rounded-lg shadow-lg p-3 z-10 w-72">
       {/* Header */}
       <div className="flex items-center justify-between mb-3">
+        <ViewSnapControl onSnap={onSnapView} />
+        <button
+          onClick={onAutoFitToggle}
+          className={`p-2 rounded ${autoFitEnabled ? 'text-green-600 bg-green-100' : 'text-gray-500'} hover:bg-gray-100`}
+          title={autoFitEnabled ? 'Auto-fit on run: ON (re-frames the part after each run)' : 'Auto-fit on run: OFF'}
+        >
+          <Frame size={20} />
+        </button>
         <button
           onClick={onAxisHelperToggle}
           className={`p-2 rounded ${axisHelperEnabled ? 'text-green-600 bg-green-100' : 'text-blue-600'} hover:bg-gray-100`}

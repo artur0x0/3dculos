@@ -67,6 +67,9 @@ const App = () => {
       ready: false,
       requested: false,
       done: false,
+      _execSeq: 0,          // monotonic; ++_execSeq must not start from undefined (NaN rejects all callbacks)
+      _lastScript: null,
+      editorMirror: null,   // 'noop' | 'updated' | 'unavailable' from the last run
       status: null,
       error: null,
       volume: null,
@@ -77,27 +80,101 @@ const App = () => {
         this._script = script;
         return 'queued';
       },
-      async run() {
-        const ctx = window.__MANIFOLD_CONTEXT__;
-        if (!ctx || !ctx.isReady) { this.status = 'error'; this.error = 'manifold context not ready'; this.done = true; return false; }
-        if (!window.__VIEWPORT__ || !window.__VIEWPORT__.ready()) { this.status = 'error'; this.error = 'viewport not ready'; this.done = true; return false; }
+      // Execute `script` through the Run path and PROVE the paint via the render choke
+      // point: renderMeshData fires onRendered with the exact meshData object it painted,
+      // so the callback for THIS call must deliver the worker's result. If the run is
+      // superseded (the editor's one-time mount render of the default script can abort it,
+      // or finish LATER and clobber the scene), renderMeshData never runs for us, this
+      // promise rejects, and the harness re-asserts instead of screenshotting a stranger's
+      // geometry. Resolves with the painted mesh.
+      _executeProven(script) {
+        const vp = window.__VIEWPORT__;
+        const execId = ++window.__STAGE__._execSeq;
+        return new Promise((resolve, reject) => {
+          const timer = setTimeout(() => {
+            vp.onRendered = null;
+            reject(new Error('no render within 25s of submitting the script (execution superseded)'));
+          }, 25000);
+          vp.onRendered = (painted) => {
+            if (window.__STAGE__._execSeq !== execId) return;   // a stale run's paint
+            vp.onRendered = null;
+            clearTimeout(timer);
+            const result = window.__MANIFOLD_CONTEXT__?.lastResult?.mesh ?? null;
+            if (!result?.vertProperties?.length || !result?.triVerts?.length) {
+              reject(new Error('worker returned no mesh'));
+            } else if (painted !== result) {
+              reject(new Error('rendered mesh is not the submitted part (painted '
+                + `${painted?.triVerts?.length ?? 0} tris vs result ${result.triVerts.length})`));
+            } else {
+              resolve(result);
+            }
+          };
+          vp.executeScript(script).catch((e) => {
+            if (window.__STAGE__._execSeq !== execId) return;
+            vp.onRendered = null;
+            clearTimeout(timer);
+            reject(new Error(String(e?.message || e)));
+          });
+        });
+      },
+      // Re-claim the screen after a late clobberer (the mount-time default render finishing
+      // after our own paint) by executing the still-stored script again and demanding the
+      // on-render proof once more. The default fires only once, so a re-execute always wins.
+      async reassert() {
         try {
-          const result = await ctx.executeScript(this._script, { timeoutMs: 60000, memoryLimitMB: 512 });
-          this.meshData = result?.mesh || null;
+          const mesh = await this._executeProven(this._script);
+          this.meshData = mesh;   // lastRenderedIs must compare against THIS object
+          return true;
+        }
+        catch (e) { this.error = String(e?.message || e); return false; }
+      },
+      async run() {
+        const vp = window.__VIEWPORT__;
+        const ctx = window.__MANIFOLD_CONTEXT__;
+        this.status = null; this.error = null; this.stack = null;
+        this.volume = null; this.bbox = null; this.meshData = null;
+        if (!ctx || !ctx.isReady) { this.status = 'error'; this.error = 'manifold context not ready'; this.done = true; return false; }
+        if (!vp || !vp.ready()) { this.status = 'error'; this.error = 'viewport not ready'; this.done = true; return false; }
+
+        try {
+          const mesh = await this._executeProven(this._script);
+
+          this.meshData = mesh;
           this.status = 'ok';
+          try {
+            const info = await ctx.getModelInfo(); // worker-side truth, provably ours now
+            if (info) { this.volume = info.volume ?? null; this.bbox = info.boundingBox || null; }
+          } catch {}
+          // Mirror the code we ran into Monaco so the human sees the exact source that
+          // produced this picture. No-ops when the buffer already holds it (see setTextOnly).
+          this.editorMirror = this.mirrorToEditor();
         } catch (err) {
           this.status = 'error';
           this.error = String(err?.message || err);
           this.stack = err?.stack || null;
         }
         this.done = true;
-        return true;
+        return false;
       },
       async fillStats() {
         try {
           const info = await window.__MANIFOLD_CONTEXT__.getModelInfo();
           if (info) { this.volume = info.volume ?? null; this.bbox = info.boundingBox || null; }
         } catch {}
+      },
+      // Show the reviewed source in Monaco so a screenshot is self-explanatory. setTextOnly
+      // declines the write when the buffer already holds this exact text, so re-running the
+      // same script (the common case mid-review) leaves the editor -- cursor, scroll, undo
+      // stack -- completely alone. Never re-executes: that is what keeps this out of a loop
+      // with the mount-time run.
+      mirrorToEditor(script) {
+        try {
+          const ed = window.__STAGE_EDITOR__ || null;
+          if (!ed || typeof ed.setTextOnly !== 'function') return 'unavailable';
+          const wrote = ed.setTextOnly(script);
+          this._lastScript = script;
+          return wrote ? 'updated' : 'noop';
+        } catch { return 'unavailable'; }
       },
     };
     const poll = setInterval(async () => {
