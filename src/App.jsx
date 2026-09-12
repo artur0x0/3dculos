@@ -58,6 +58,57 @@ const App = () => {
     currentBranch: 'main'
   });
 
+  // Headless review bridge for harness/stage_shot.mjs (dev-only).
+  // Lets automation inject a script and run it through the exact same
+  // execute -> render path the Run button uses, then report back over CDP.
+  useEffect(() => {
+    if (!import.meta.env?.DEV || typeof window === 'undefined') return;
+    window.__STAGE__ = {
+      ready: false,
+      requested: false,
+      done: false,
+      status: null,
+      error: null,
+      volume: null,
+      bbox: null,
+      meshData: null,
+      request(script) {
+        this.requested = true;
+        this._script = script;
+        return 'queued';
+      },
+      async run() {
+        const ctx = window.__MANIFOLD_CONTEXT__;
+        if (!ctx || !ctx.isReady) { this.status = 'error'; this.error = 'manifold context not ready'; this.done = true; return false; }
+        if (!window.__VIEWPORT__ || !window.__VIEWPORT__.ready()) { this.status = 'error'; this.error = 'viewport not ready'; this.done = true; return false; }
+        try {
+          const result = await ctx.executeScript(this._script, { timeoutMs: 60000, memoryLimitMB: 512 });
+          this.meshData = result?.mesh || null;
+          this.status = 'ok';
+        } catch (err) {
+          this.status = 'error';
+          this.error = String(err?.message || err);
+          this.stack = err?.stack || null;
+        }
+        this.done = true;
+        return true;
+      },
+      async fillStats() {
+        try {
+          const info = await window.__MANIFOLD_CONTEXT__.getModelInfo();
+          if (info) { this.volume = info.volume ?? null; this.bbox = info.boundingBox || null; }
+        } catch {}
+      },
+    };
+    const poll = setInterval(async () => {
+      const s = window.__STAGE__;
+      if (!s || s.ready || s.done) return;
+      const ctx = window.__MANIFOLD_CONTEXT__;
+      if (ctx?.isReady && window.__VIEWPORT__?.ready?.()) { s.ready = true; clearInterval(poll); }
+    }, 150);
+    setTimeout(() => clearInterval(poll), 60000);
+  }, []);
+
   // Initialize ManifoldWorkerand handle script restoration
   useEffect(() => {
     const initManifold = async () => {

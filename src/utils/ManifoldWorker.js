@@ -545,5 +545,11 @@ class ManifoldContext {
 // Create and export singleton instance
 const manifoldContext = new ManifoldContext();
 
+// Dev/automation hook: lets headless review tooling (harness/stage_shot.mjs) drive the
+// REAL worker path without a human clicking Run. Gated so production bundles are unaffected.
+if (typeof window !== 'undefined' && import.meta.env?.DEV) {
+  window.__MANIFOLD_CONTEXT__ = manifoldContext;
+}
+
 export { ManifoldWorker, ManifoldContext, manifoldContext };
 export default manifoldContext;

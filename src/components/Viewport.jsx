@@ -613,6 +613,79 @@ const Viewport = forwardRef(({
       renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
       rendererRef.current = renderer;
 
+      // Dev/automation hook used by headless review tooling (harness/stage_shot.mjs).
+      // Drives the exact same execute -> render path the Run button uses, and lets a
+      // script position the camera deterministically for reproducible screenshots.
+      if (import.meta.env?.DEV) {
+        window.__VIEWPORT__ = {
+          ready: () => !!(sceneRef.current && rendererRef.current && resultRef.current),
+          executeScript: (s) => executeScript(s),
+          // az/el in degrees, z-up world (the app models parts with +Z up).
+          stageFit: ({ az = 35, el = 20, margin = 1.4, viewTarget = null } = {}) => {
+            const cam = cameraRef.current, ctl = controlsRef.current, res = resultRef.current;
+            if (!cam || !res || !res.geometry) return false;
+            res.geometry.computeBoundingBox();
+            const b = res.geometry.boundingBox;
+            const empty = !b || !isFinite(b.min.x) || b.isEmpty();
+            const center = viewTarget
+              ? new Vector3(viewTarget[0], viewTarget[1], viewTarget[2])
+              : (empty ? new Vector3(0, 0, 0) : b.getCenter(new Vector3()));
+            const size = empty ? new Vector3(1, 1, 1) : b.getSize(new Vector3());
+            const radius = Math.max(size.length(), 1e-3) / 2;
+            const dist = Math.max(radius, 1e-3) * 2.4 * margin;
+            const azr = (az * Math.PI) / 180, elr = (el * Math.PI) / 180;
+            const dir = new Vector3(Math.cos(elr) * Math.cos(azr), Math.cos(elr) * Math.sin(azr), Math.sin(elr));
+            cam.up.set(0, 0, 1);
+            cam.position.copy(center).add(dir.multiplyScalar(dist));
+            cam.near = Math.max(dist / 1000, 1e-4);
+            cam.far = dist * 100;
+            cam.updateProjectionMatrix();
+            cam.lookAt(center);
+            if (ctl) { ctl.target.copy(center); ctl.update(); }
+            renderer.render(sceneRef.current, cam);
+            return true;
+          },
+          // Fullscreen the viewport and hide every non-canvas element (toolbars, panels,
+          // editor, modals) so captures show only the part on a clean background.
+          stageIsolate: ({ bg = '#0d1116' } = {}) => {
+            const container = containerRef.current, canvas = canvasRef.current;
+            if (!container || !canvas) return false;
+            const keep = new Set();
+            for (let el = canvas; el; el = el.parentElement) keep.add(el);
+            for (const el of document.querySelectorAll('body *')) {
+              if (keep.has(el)) continue;
+              el.style.setProperty('display', 'none', 'important');
+            }
+            for (const ch of Array.from(container.children)) {
+              if (ch !== canvas) ch.style.setProperty('display', 'none', 'important');
+            }
+            container.style.setProperty('position', 'fixed', 'important');
+            container.style.setProperty('inset', '0', 'important');
+            container.style.setProperty('width', '100vw', 'important');
+            container.style.setProperty('height', '100vh', 'important');
+            container.style.setProperty('margin', '0', 'important');
+            container.style.setProperty('border', 'none', 'important');
+            container.style.setProperty('z-index', '2147483647', 'important');
+            container.style.setProperty('background', bg, 'important');
+            canvas.style.setProperty('display', 'block', 'important');
+            canvas.style.setProperty('width', '100vw', 'important');
+            canvas.style.setProperty('height', '100vh', 'important');
+            return true;
+          },
+          stageSize: (w, h) => {
+            const r = rendererRef.current, c = cameraRef.current;
+            if (!r || !c) return false;
+            r.setSize(w, h);
+            r.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+            c.aspect = w / h;
+            c.updateProjectionMatrix();
+            renderer.render(sceneRef.current, c);
+            return true;
+          },
+          setAxes: (on) => { setAxisHelperEnabled(!!on); return true; },
+        };
+      }
+
       const controls = new TrackballControls(camera, renderer.domElement);
       controls.enableDamping = true;
       controls.enableRotate = true;
