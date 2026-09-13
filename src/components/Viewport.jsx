@@ -55,7 +55,13 @@ const Viewport = forwardRef(({
   canUndo,
   canRedo,
   currentFilename,
-  isUploading
+  isUploading,
+  mode = 'cad',
+  ghostMeshData = null,
+  onStartGame,
+  onExitGame,
+  onRun,
+  onHint,
 }, ref) => {
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
@@ -64,6 +70,7 @@ const Viewport = forwardRef(({
   const cameraRef = useRef(null);
   const controlsRef = useRef(null);
   const resultRef = useRef(null);
+  const ghostMeshRef = useRef(null);
   const raycasterRef = useRef(new Raycaster());
   const mouseRef = useRef(new Vector2());
   const highlightMeshRef = useRef(null);
@@ -898,6 +905,12 @@ const Viewport = forwardRef(({
       if (resultRef.current?.geometry) {
         resultRef.current.geometry.dispose();
       }
+      if (ghostMeshRef.current) {
+        sceneRef.current?.remove(ghostMeshRef.current);
+        ghostMeshRef.current.geometry?.dispose();
+        ghostMeshRef.current.material?.dispose();
+        ghostMeshRef.current = null;
+      }
       clearHighlight();
       clearCuttingPlane();
     };
@@ -923,6 +936,64 @@ const Viewport = forwardRef(({
     };
     defineMaterials();
   }, []);
+
+  // Ghost target overlay for game mode (translucent; distinct from player attempt)
+  useEffect(() => {
+    let cancelled = false;
+
+    const clearGhost = () => {
+      if (ghostMeshRef.current && sceneRef.current) {
+        sceneRef.current.remove(ghostMeshRef.current);
+        ghostMeshRef.current.geometry?.dispose();
+        ghostMeshRef.current.material?.dispose();
+        ghostMeshRef.current = null;
+      }
+    };
+
+    if (!ghostMeshData?.vertProperties || !ghostMeshData?.triVerts) {
+      clearGhost();
+      return () => { cancelled = true; };
+    }
+
+    const tryAdd = () => {
+      if (cancelled) return;
+      if (!sceneRef.current) {
+        requestAnimationFrame(tryAdd);
+        return;
+      }
+
+      clearGhost();
+
+      const geometry = new BufferGeometry();
+      const vertProperties = new Float32Array(ghostMeshData.vertProperties);
+      const triVerts = new Uint32Array(ghostMeshData.triVerts);
+      geometry.setAttribute('position', new BufferAttribute(vertProperties, 3));
+      geometry.setIndex(new BufferAttribute(triVerts, 1));
+      geometry.computeVertexNormals();
+
+      const material = new MeshLambertMaterial({
+        color: 0x22d3ee,
+        transparent: true,
+        opacity: 0.3,
+        depthWrite: false,
+        flatShading: true,
+        side: 2,
+      });
+
+      const mesh = new ThreeMesh(geometry, material);
+      mesh.name = 'ghostTarget';
+      mesh.renderOrder = 1;
+      sceneRef.current.add(mesh);
+      ghostMeshRef.current = mesh;
+    };
+
+    tryAdd();
+
+    return () => {
+      cancelled = true;
+      clearGhost();
+    };
+  }, [ghostMeshData]);
 
   // Zoom camera to fit the model (keeps the current orbit direction)
   const handleZoomToFit = useCallback(() => {
@@ -1194,6 +1265,7 @@ const Viewport = forwardRef(({
   return (
     <div ref={containerRef} className="relative w-full h-full bg-gray-900 overflow-hidden">
       <Toolbar
+        mode={mode}
         onOpen={onOpen}
         onSave={onSave}
         onAccount={onAccount}
@@ -1208,7 +1280,17 @@ const Viewport = forwardRef(({
         isDownloading={isDownloading}
         isUploading={isUploading}
         currentFilename={currentFilename}
+        onStartGame={onStartGame}
+        onExitGame={onExitGame}
+        onRun={onRun}
+        onHint={onHint}
       />
+
+      {mode === 'game' && (
+        <div className="absolute top-16 left-1/2 -translate-x-1/2 lg:left-4 lg:translate-x-0 bg-cyan-950/80 border border-cyan-600/40 text-cyan-100 text-xs px-3 py-1.5 rounded-lg shadow z-10 pointer-events-none">
+          Match the cyan ghost · edit script · Run
+        </div>
+      )}
       
       {/* Cross-Section Panel */}
         <CrossSectionPanel

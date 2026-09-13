@@ -25,6 +25,8 @@ import {
 } from './utils/editorStorage';
 import manifoldContext from './utils/ManifoldWorker';
 import DEFAULT_SCRIPT from './utils/defaultScript';
+import { DEMO_PUZZLE } from './utils/gamePuzzle';
+import GameHintsModal from './components/GameHintsModal';
 
 const App = () => {
   const [currentScript, setCurrentScript] = useState('');
@@ -42,6 +44,12 @@ const App = () => {
   const [accountModalTab, setAccountModalTab] = useState('info');
   const [editorInitialScript, setEditorInitialScript] = useState(null);
   const [initError, setInitError] = useState(null);
+  const [appMode, setAppMode] = useState('cad'); // 'cad' | 'game'
+  const [ghostMeshData, setGhostMeshData] = useState(null);
+  const [showHints, setShowHints] = useState(false);
+  const [cadScriptBackup, setCadScriptBackup] = useState(null);
+  const [gameLoading, setGameLoading] = useState(false);
+  const [gameError, setGameError] = useState(null);
 
   const { user, isAuthenticated, checkAuth } = useAuth();
 
@@ -409,6 +417,64 @@ const App = () => {
     };
   }, []);
 
+  const handleStartGame = async () => {
+    if (gameLoading) return;
+    setGameLoading(true);
+    setGameError(null);
+    try {
+      const current = codeEditorRef.current?.getContent?.() ?? currentScript;
+      setCadScriptBackup(current);
+
+      // Build ghost mesh via worker (does not paint through Viewport.executeScript)
+      const result = await manifoldContext.executeScript(DEMO_PUZZLE.targetScript, {
+        timeoutMs: 30000,
+      });
+      if (!result?.mesh?.vertProperties) {
+        throw new Error('Ghost target produced no mesh');
+      }
+      setGhostMeshData(result.mesh);
+      setAppMode('game');
+      setShowHints(false);
+      setGameError(null);
+
+      // Load starter into editor (auto-runs attempt solid)
+      codeEditorRef.current?.loadContent(
+        DEMO_PUZZLE.starterScript,
+        `Puzzle: ${DEMO_PUZZLE.title}`,
+        true
+      );
+    } catch (err) {
+      console.error('[App] Failed to start puzzle:', err);
+      setGameError(err.message || 'Failed to start puzzle');
+      setGhostMeshData(null);
+      setCadScriptBackup(null);
+      setAppMode('cad');
+    } finally {
+      setGameLoading(false);
+    }
+  };
+
+  const handleExitGame = () => {
+    setAppMode('cad');
+    setGhostMeshData(null);
+    setShowHints(false);
+    setGameError(null);
+    const restore = cadScriptBackup || DEFAULT_SCRIPT;
+    codeEditorRef.current?.loadContent(restore, 'Back to CAD', true);
+    setCadScriptBackup(null);
+  };
+
+  const handleGameRun = () => {
+    const code = codeEditorRef.current?.getContent?.();
+    if (code != null) {
+      viewportRef.current?.executeScript(code);
+    }
+  };
+
+  const handleGameHint = () => {
+    setShowHints(true);
+  };
+
   const handleExecute = (script, autoExecute=false) => {
     setCurrentScript(script);
     if (autoExecute) {
@@ -692,18 +758,26 @@ const App = () => {
               canUndo={canUndo()}
               canRedo={canRedo()}
               currentFilename={currentFilename}
-              isUploading={isUploading}
+              isUploading={isUploading || gameLoading}
+              mode={appMode}
+              ghostMeshData={ghostMeshData}
+              onStartGame={handleStartGame}
+              onExitGame={handleExitGame}
+              onRun={handleGameRun}
+              onHint={handleGameHint}
             />
           </div>
-          <div className="flex-shrink-0">
-            <PromptInput 
-              onCodeGenerated={handleCodeGenerated}
-              currentCode={codeEditorRef.current?.getContent() || ''}
-              selectedFace={selectedFace}
-              onClearFaceSelection={handleClearFaceSelection}
-              isMobile={isMobile}
-            />
-          </div>
+          {appMode !== 'game' && (
+            <div className="flex-shrink-0">
+              <PromptInput 
+                onCodeGenerated={handleCodeGenerated}
+                currentCode={codeEditorRef.current?.getContent() || ''}
+                selectedFace={selectedFace}
+                onClearFaceSelection={handleClearFaceSelection}
+                isMobile={isMobile}
+              />
+            </div>
+          )}
 
           {/* Login Modal */}
           {showLoginModal && (
@@ -749,6 +823,23 @@ const App = () => {
             />
           )}
           
+
+          {showHints && (
+            <GameHintsModal onClose={() => setShowHints(false)} />
+          )}
+          {gameError && (
+            <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-red-900/90 text-white px-4 py-2 rounded shadow-lg z-50 max-w-md">
+              <div className="flex items-center gap-2">
+                <span>{gameError}</span>
+                <button 
+                  onClick={() => setGameError(null)}
+                  className="ml-2 text-white hover:text-gray-200"
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+          )}
           {uploadError && (
             <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-red-900/90 text-white px-4 py-2 rounded shadow-lg z-50 max-w-md">
               <div className="flex items-center gap-2">
@@ -778,15 +869,17 @@ const App = () => {
               isMobile={isMobile}
             />
           </div>
-          <div className="flex-shrink-0">
-            <PromptInput 
-              onCodeGenerated={handleCodeGenerated}
-              currentCode={codeEditorRef.current?.getContent() || ''}
-              selectedFace={selectedFace}
-              onClearFaceSelection={handleClearFaceSelection}
-              isMobile={false}
-            />
-          </div>
+          {appMode !== 'game' && (
+            <div className="flex-shrink-0">
+              <PromptInput 
+                onCodeGenerated={handleCodeGenerated}
+                currentCode={codeEditorRef.current?.getContent() || ''}
+                selectedFace={selectedFace}
+                onClearFaceSelection={handleClearFaceSelection}
+                isMobile={false}
+              />
+            </div>
+          )}
         </div>
         <div className="w-1/2">
           <Viewport 
@@ -803,7 +896,13 @@ const App = () => {
             canUndo={canUndo()}
             canRedo={canRedo()}
             currentFilename={currentFilename}
-            isUploading={isUploading}
+            isUploading={isUploading || gameLoading}
+            mode={appMode}
+            ghostMeshData={ghostMeshData}
+            onStartGame={handleStartGame}
+            onExitGame={handleExitGame}
+            onRun={handleGameRun}
+            onHint={handleGameHint}
           />
         </div>
 
@@ -851,6 +950,23 @@ const App = () => {
           />
         )}
         
+
+          {showHints && (
+            <GameHintsModal onClose={() => setShowHints(false)} />
+          )}
+        {gameError && (
+          <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-red-900/90 text-white px-4 py-2 rounded shadow-lg z-50 max-w-md">
+            <div className="flex items-center gap-2">
+              <span>{gameError}</span>
+              <button 
+                onClick={() => setGameError(null)}
+                className="ml-2 text-white hover:text-gray-200"
+              >
+                ×
+              </button>
+            </div>
+          </div>
+        )}
         {uploadError && (
           <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-red-900/90 text-white px-4 py-2 rounded shadow-lg z-50 max-w-md">
             <div className="flex items-center gap-2">
