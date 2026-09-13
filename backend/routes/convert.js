@@ -165,8 +165,35 @@ router.post('/step',
       const name = path.parse(req.file.originalname).name.replace(/[^a-zA-Z0-9_-]/g, '_');
       const outputName = `conv_${name}_${Date.now()}.obj`;
       outputPath = path.join(tempDir, outputName);
-      const converterPath = path.join(config.workingFolder, 'obj_converter');
+      // Dev-channel override (cadgen pilot): on boxes whose WORKING_FOLDER converter is the
+      // wrong-arch build (x86 ELF on aarch64 => exit 127), point at a native obj_converter
+      // built from cadgen-workspace/converter/ and give it the OCCT lib dir. Production keeps
+      // the shipped path + firejail sandbox untouched; only takes effect when the env is set.
+      const converterPath = process.env.STAGE_OBJ_CONVERTER
+        ? path.resolve(process.env.STAGE_OBJ_CONVERTER)
+        : path.join(config.workingFolder, 'obj_converter');
+      const converterLib = process.env.STAGE_OBJ_CONVERTER_LD || '/usr/local/lib';
 
+      let stdoutData = '';
+      let stderrData = '';
+      if (process.env.STAGE_OBJ_CONVERTER) {
+        // Un-sandboxed direct exec — dev harness only, guarded by the env above.
+        const { execFile } = await import('child_process');
+        const { promisify: promisify2 } = await import('util');
+        const execFileAsync = promisify2(execFile);
+        try {
+          const { stdout, stderr } = await execFileAsync(converterPath,
+            [inputPath, outputPath, deflection.toFixed(4)],
+            { env: { ...process.env, LD_LIBRARY_PATH: converterLib }, timeout: 40000, maxBuffer: 1024 * 1024 * 6 });
+          stdoutData = stdout || '';
+          stderrData = stderr || '';
+        } catch (execErr) {
+          stdoutData = execErr.stdout || '';
+          stderrData = execErr.stderr || '';
+          const detail = [stdoutData, stderrData].filter(Boolean).join(' | ').slice(0, 300);
+          throw new Error(`Converter process failed (code ${execErr.code || 'unknown'}${detail ? ': ' + detail : ''})`);
+        }
+      } else {
       const firejailArgs = [
         'firejail',
         '--quiet',
@@ -187,8 +214,6 @@ router.post('/step',
       ];
 
       console.log(`[Convert] firejail cmd: ${firejailArgs.join(' ')}`);
-      let stdoutData = '';
-      let stderrData = '';
       try {
         const { stdout, stderr } = await execAsync(firejailArgs.join(' '), {
           shell: '/bin/bash',
@@ -216,6 +241,7 @@ router.post('/step',
           stderr: stderrData.slice(0, 2000)
         });
         throw new Error(`Converter process failed (code ${execErr.code || 'unknown'})`);
+      }
       }
       // After exec – check file
       let stats;
