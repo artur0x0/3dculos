@@ -211,6 +211,89 @@ class ManifoldWorker {
   }
   
   /**
+   * ── Stage verification protocol (dev tooling; pairs with the worker's
+   * stageReference... / stageVerify cases). The staging environment (bundled
+   * built/manifold.wasm) is the single kernel-truth source for the pilot:
+   * push reference solids, fetch/verify against them here, never in a
+   * divergent out-of-process copy.
+   */
+  async stageReferenceLoad(filename, { objString, meshData, tolerance } = {}, options = {}) {
+    if (!this.isReady) throw new Error('ManifoldWorker not initialized');
+    const timeoutMs = options.timeoutMs || this.config.timeoutMs;
+    return new Promise((resolve, reject) => {
+      const requestId = this._generateRequestId();
+      const timeoutId = setTimeout(() => {
+        this.pendingRequests.delete(requestId);
+        reject(new Error(`stageReferenceLoad timed out after ${timeoutMs / 1000}s`));
+      }, timeoutMs);
+      this.pendingRequests.set(requestId, {
+        resolve: (r) => { clearTimeout(timeoutId); resolve(r); },
+        reject: (e) => { clearTimeout(timeoutId); reject(e); },
+      });
+      this.worker.postMessage({
+        type: 'stageReferenceLoad', id: requestId,
+        payload: { filename, objString, meshData, tolerance },
+      });
+    });
+  }
+
+  async stageReferenceList() {
+    if (!this.isReady) throw new Error('ManifoldWorker not initialized');
+    return new Promise((resolve, reject) => {
+      const requestId = this._generateRequestId();
+      this.pendingRequests.set(requestId, { resolve, reject });
+      this.worker.postMessage({ type: 'stageReferenceList', id: requestId, payload: {} });
+    });
+  }
+
+  async stageReferenceClear() {
+    if (!this.isReady) throw new Error('ManifoldWorker not initialized');
+    return new Promise((resolve, reject) => {
+      const requestId = this._generateRequestId();
+      this.pendingRequests.set(requestId, { resolve, reject });
+      this.worker.postMessage({ type: 'stageReferenceClear', id: requestId, payload: {} });
+    });
+  }
+
+  async stageVerify(reference, opts = {}, options = {}) {
+    if (!this.isReady) throw new Error('ManifoldWorker not initialized');
+    const timeoutMs = options.timeoutMs || Math.max(this.config.timeoutMs, 120000);
+    return new Promise((resolve, reject) => {
+      const requestId = this._generateRequestId();
+      const timeoutId = setTimeout(() => {
+        this.pendingRequests.delete(requestId);
+        reject(new Error(`stageVerify timed out after ${timeoutMs / 1000}s`));
+      }, timeoutMs);
+      this.pendingRequests.set(requestId, {
+        resolve: (r) => { clearTimeout(timeoutId); resolve(r); },
+        reject: (e) => { clearTimeout(timeoutId); reject(e); },
+      });
+      this.worker.postMessage({
+        type: 'stageVerify', id: requestId,
+        payload: { reference, passRel: opts.passRel, volGate: opts.volGate,
+                   candidateMesh: opts.candidateMesh, tolerance: opts.tolerance },
+      });
+    });
+  }
+
+  async stageGetLastMesh() {
+    if (!this.isReady) throw new Error('ManifoldWorker not initialized');
+    const timeoutMs = this.config.timeoutMs;
+    return new Promise((resolve, reject) => {
+      const requestId = this._generateRequestId();
+      const timeoutId = setTimeout(() => {
+        this.pendingRequests.delete(requestId);
+        reject(new Error(`stageGetLastMesh timed out after ${timeoutMs / 1000}s`));
+      }, timeoutMs);
+      this.pendingRequests.set(requestId, {
+        resolve: (r) => { clearTimeout(timeoutId); resolve(r); },
+        reject: (e) => { clearTimeout(timeoutId); reject(e); },
+      });
+      this.worker.postMessage({ type: 'stageGetLastMesh', id: requestId, payload: {} });
+    });
+  }
+
+  /**
    * Get list of available helper functions
    * @returns {Promise<string[]>}
    */

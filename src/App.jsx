@@ -162,6 +162,89 @@ const App = () => {
           if (info) { this.volume = info.volume ?? null; this.bbox = info.boundingBox || null; }
         } catch {}
       },
+      // ── Stage verification (kernel-truth arbiter for the cadgen pilot) ──
+      // Runs a candidate script through the SAME worker the Run button uses and keeps
+      // the worker's own report (volume/surfaceArea/status/tris/bbox) beside the mesh.
+      // The verdict never depends on the harness's separate npm manifold-3d copy:
+      // stageVerify asks the WORKER (bundled built/manifold.wasm) to boolean-compare
+      // what its own last execution produced against a staged reference.
+      async stageScript(script, timeoutMs = 300000) {
+        const ctx = window.__MANIFOLD_CONTEXT__;
+        if (!ctx || !ctx.isReady) return { ok: false, error: 'manifold context not ready' };
+        try {
+          const result = await ctx.executeScript(script, { timeoutMs });   // worker 'execute' -> lastResult
+          const p = ctx.lastResult || {};
+          return {
+            ok: true,
+            volume: p.volume ?? null,
+            surfaceArea: p.surfaceArea ?? null,
+            status: p.status ?? null,
+            tris: p.tris ?? (p.mesh ? p.mesh.triVerts.length / 3 : 0),
+            verts: p.mesh ? p.mesh.vertProperties.length / p.mesh.numProp : 0,
+            bbox: p.boundingBox ?? null,
+          };
+        } catch (e) {
+          return { ok: false, error: String(e && e.message || e) };
+        }
+      },
+      async stageGetLastMesh() {
+        const ctx = window.__MANIFOLD_CONTEXT__;
+        if (!ctx || !ctx.isReady) return { ok: false, error: 'manifold context not ready' };
+        try { return { ok: true, ...(await ctx.worker.stageGetLastMesh()) }; }
+        catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+      },
+      async stageVerify(reference, opts) {
+        const ctx = window.__MANIFOLD_CONTEXT__;
+        if (!ctx || !ctx.isReady) return { ok: false, error: 'manifold context not ready' };
+        try { return { ok: true, ...(await ctx.worker.stageVerify(reference, opts || {})) }; }
+        catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+      },
+      async stageReferenceLoad(filename, objString, tolerance, timeoutMs = 180000) {
+        const ctx = window.__MANIFOLD_CONTEXT__;
+        if (!ctx || !ctx.isReady) return { ok: false, error: 'manifold context not ready' };
+        try { return { ok: true, ...(await ctx.worker.stageReferenceLoad(filename, { objString, tolerance }, { timeoutMs })) }; }
+        catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+      },
+      // Push a reference from raw meshData delivered as a JSON string (keeps the CDP
+      // expression a single scalar): { numProp, vertProperties:[...], triVerts:[...] }.
+      // Used by the STEP channel: backend /api/convert/step (OCCT) -> meshData -> worker.
+      async stageReferenceLoadMesh(filename, meshDataJson, tolerance, timeoutMs = 180000) {
+        const ctx = window.__MANIFOLD_CONTEXT__;
+        if (!ctx || !ctx.isReady) return { ok: false, error: 'manifold context not ready' };
+        try {
+          const meshData = JSON.parse(meshDataJson);
+          return { ok: true, ...(await ctx.worker.stageReferenceLoad(filename, { meshData, tolerance }, { timeoutMs })) };
+        }
+        catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+      },
+      async stageReferenceList() {
+        const ctx = window.__MANIFOLD_CONTEXT__;
+        if (!ctx || !ctx.isReady) return { ok: false, error: 'manifold context not ready' };
+        try { return { ok: true, ...(await ctx.worker.stageReferenceList()) }; }
+        catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+      },
+      async stageReferenceClear() {
+        const ctx = window.__MANIFOLD_CONTEXT__;
+        if (!ctx || !ctx.isReady) return { ok: false, error: 'manifold context not ready' };
+        try { return { ok: true, ...(await ctx.worker.stageReferenceClear()) }; }
+        catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+      },
+      // Nuclear recovery for a wedged worker: a script stuck in a runaway loop survives
+      // the execute() promise timeout (the worker thread keeps chewing), so every later
+      // message queues behind it forever. Terminate + re-init drops the thread.
+      async stageRestartWorker() {
+        const ctx = window.__MANIFOLD_CONTEXT__;
+        if (!ctx) return { ok: false, error: 'no context' };
+        try {
+          ctx.worker.terminate();
+          ctx.worker.isReady = false;
+          ctx.worker.pendingRequests.clear();
+          await ctx.worker.init();
+          return { ok: true };
+        } catch (e) {
+          return { ok: false, error: String(e && e.message || e) };
+        }
+      },
       // Show the reviewed source in Monaco so a screenshot is self-explanatory. setTextOnly
       // declines the write when the buffer already holds this exact text, so re-running the
       // same script (the common case mid-review) leaves the editor -- cursor, scroll, undo

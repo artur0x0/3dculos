@@ -2610,6 +2610,192 @@ const checkMemoryUsage = (limitMB) => {
 /**
  * Message handler
  */
+// ============================================================================
+// STAGE VERIFICATION (dev tooling, harness/pilot_eval.mjs)
+// The staging environment is the single source of kernel truth: candidate
+// scripts AND reference solids both execute against the SAME bundled
+// built/manifold.wasm the browser uses, and the symmetric-difference verdict
+// runs HERE, in the worker, against that build. The harness's npm manifold-3d
+// copy stays a cross-check, never the arbiter.
+//
+// Reference channel: STEP has no browser import path (backend obj_converter is
+// a x86_64 ELF and firejail is absent on this box), so references are pushed as
+// OBJ. The app's own importOBJ uses the STRICT constructor and is untouched;
+// these paths weld in JS first (exact float-identity, then tolerance grid),
+// because the WASM Mesh.merge() repair ladder crashes on unwelded input.
+// ============================================================================
+
+const _stagedReferences = new Map();   // filename -> { manifold, volume, boundingBox, source }
+
+function _weldMeshData(vertProperties, triVerts, tolerance) {
+  const vp = vertProperties;
+  const n = vp.length / 3;
+  const remap = new Int32Array(n);
+  const out = [];
+  const seen = new Map();
+  const inv = tolerance > 0 ? 1 / tolerance : 0;
+  for (let i = 0; i < n; i++) {
+    const key = inv
+      ? `${Math.round(vp[i * 3] * inv)}|${Math.round(vp[i * 3 + 1] * inv)}|${Math.round(vp[i * 3 + 2] * inv)}`
+      : `${vp[i * 3]}|${vp[i * 3 + 1]}|${vp[i * 3 + 2]}`;
+    let j = seen.get(key);
+    if (j === undefined) { j = out.length / 3; seen.set(key, j); out.push(vp[i * 3], vp[i * 3 + 1], vp[i * 3 + 2]); }
+    remap[i] = j;
+  }
+  const nt = new Uint32Array(triVerts.length);
+  for (let i = 0; i < triVerts.length; i++) nt[i] = remap[triVerts[i]];
+  return { numProp: 3, vertProperties: new Float32Array(out), triVerts: nt };
+}
+
+/** Build a Manifold from raw mesh arrays: strict first, then weld-exact, then weld@tol. */
+function _meshDataToManifold(vertProperties, triVerts, tolerance = 0.001) {
+  const { Mesh, Manifold } = manifoldModule;
+  const tryBuild = (data) => {
+    try {
+      const m = new Manifold(new Mesh({ numProp: 3, vertProperties: new Float32Array(data.vertProperties), triVerts: new Uint32Array(data.triVerts) }));
+      if (m && !m.isEmpty()) {
+        const vol = m.volume();
+        if (isFinite(vol) && vol > 0) return m;
+      }
+    } catch (e) {
+      // strict constructor throws 'Not manifold' on unwelded STL-style meshes; fall through
+    }
+    return null;
+  };
+  let m = tryBuild({ vertProperties, triVerts });
+  if (m) return { manifold: m, repair: 'strict' };
+  console.log(`[stage] strict build failed for ${vertProperties.length / 3}v/${triVerts.length / 3}t — trying weld-exact`);
+  m = tryBuild(_weldMeshData(vertProperties, triVerts, 0));
+  if (m) return { manifold: m, repair: 'weld-exact' };
+  console.log('[stage] weld-exact failed — trying weld@tol');
+  if (tolerance > 0) {
+    m = tryBuild(_weldMeshData(vertProperties, triVerts, tolerance));
+    if (m) return { manifold: m, repair: `weld@${tolerance}` };
+  }
+  throw new Error('stage: could not construct valid manifold from mesh data');
+}
+
+function _parseOBJToMeshData(objText) {
+  const vertices = [];
+  const triangles = [];
+  for (const raw of String(objText).split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith('#')) continue;
+    const parts = line.split(/\s+/);
+    if (parts[0] === 'v') {
+      const x = parseFloat(parts[1]), y = parseFloat(parts[2]), z = parseFloat(parts[3]);
+      if (isFinite(x) && isFinite(y) && isFinite(z)) vertices.push([x, y, z]);
+    } else if (parts[0] === 'f') {
+      const idx = [];
+      for (let i = 1; i < parts.length; i++) {
+        if (!parts[i]) continue;
+        const v = parseInt(parts[i].split('/')[0], 10);
+        if (!v || isNaN(v)) continue;
+        idx.push(v < 0 ? vertices.length + v : v - 1);
+      }
+      for (let i = 1; i < idx.length - 1; i++) triangles.push([idx[0], idx[i], idx[i + 1]]);
+    }
+  }
+  if (!vertices.length || !triangles.length) throw new Error('stage: OBJ contains no geometry');
+  const vertProperties = new Float32Array(vertices.length * 3);
+  vertices.forEach((p, i) => vertProperties.set(p, i * 3));
+  const triVerts = new Uint32Array(triangles.length * 3);
+  triangles.forEach((p, i) => triVerts.set(p, i * 3));
+  return { vertProperties, triVerts };
+}
+
+function _bboxArray(m) {
+  const b = m.boundingBox();
+  return { min: [...b.min], max: [...b.max] };
+}
+
+function _centerAtBbox(m) {
+  const b = m.boundingBox();
+  return m.translate([-(b.min[0] + b.max[0]) / 2, -(b.min[1] + b.max[1]) / 2, -(b.min[2] + b.max[2]) / 2]);
+}
+
+// All 24 proper cube rotations as euler triples in the manifold rotate()
+// convention: rotate([rx,ry,rz]) applies world-frame X, then Y, then Z, so
+// R = Rz(rz)·Ry(ry)·Rx(rx). Self-tested below at build time.
+function _stage24Rotations() {
+  const d = Math.PI / 180;
+  const eulerToMatrix = (rx, ry, rz) => {
+    rx *= d; ry *= d; rz *= d;
+    const cx = Math.cos(rx), sx = Math.sin(rx), cy = Math.cos(ry), sy = Math.sin(ry), cz = Math.cos(rz), sz = Math.sin(rz);
+    return [
+      [cz * cy, cz * sy * sx - sz * cx, cz * sy * cx + sz * sx],
+      [sz * cy, sz * sy * sx + cz * cx, sz * sy * cx - cz * sx],
+      [-sy, cy * sx, cy * cx],
+    ];
+  };
+  const matrixToEuler = (M) => {
+    const ry = Math.asin(Math.max(-1, Math.min(1, -M[2][0]))) / d;
+    let rx, rz;
+    if (Math.abs(Math.cos(ry * d)) > 1e-9) {
+      rx = Math.atan2(M[2][1], M[2][2]) / d;
+      rz = Math.atan2(M[1][0], M[0][0]) / d;
+    } else {
+      rx = 0;
+      rz = Math.atan2(-M[0][1], M[1][1]) / d;   // gimbal branch: M[1][1]=cos(rz)
+    }
+    return { rx, ry, rz };
+  };
+  const perms = [[0,1,2],[0,2,1],[1,0,2],[1,2,0],[2,0,1],[2,1,0]];
+  const sgn = { '012':1,'120':1,'201':1,'021':-1,'102':-1,'210':-1 };
+  const rots = [];
+  for (const [ax, ay, az] of perms) {
+    for (const sx of [1,-1]) for (const sy of [1,-1]) for (const sz of [1,-1]) {
+      const det = sx * sy * sz * sgn[`${ax}${ay}${az}`];
+      if (det !== 1) continue;
+      const M = [[0,0,0],[0,0,0],[0,0,0]];
+      M[0][ax] = sx; M[1][ay] = sy; M[2][az] = sz;
+      const { rx, ry, rz } = matrixToEuler(M);
+      const M2 = eulerToMatrix(rx, ry, rz);
+      for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) {
+        if (Math.abs(M2[i][j] - M[i][j]) > 1e-9) throw new Error(`stage rotation self-test failed: ${JSON.stringify({ M, M2 })}`);
+      }
+      rots.push({ name: (rx === 0 && ry === 0 && rz === 0) ? 'identity' : `r${rx}_${ry}_${rz}`, euler: [rx, ry, rz] });
+    }
+  }
+  return rots;
+}
+const _STAGE_ORIENTATIONS = _stage24Rotations();
+
+/**
+ * Verdict of candidate vs target, computed entirely in THIS worker against the
+ * bundled build (mirrors harness/verify.mjs verifyManifold semantics).
+ * Both sides must already be live Manifolds. opts: { passRel=0.01, volGate=0.25 }.
+ */
+function _stageVerify(cand, target, opts = {}) {
+  const { Manifold } = manifoldModule;
+  const passRel = opts.passRel ?? 0.01;
+  const volGate = opts.volGate ?? 0.25;
+  const se = _c4StatusError(cand);
+  if (se) return { pass: false, reason: 'invalid_manifold', status: se };
+  const volC = cand.volume();
+  const volT = target.volume();
+  if (!(volC > 0) || !(volT > 0)) return { pass: false, reason: 'zero_volume', volC, volT };
+  const volRel = Math.abs(volC - volT) / volT;
+  if (volRel > volGate) return { pass: false, reason: 'volume_mismatch', volC, volT, volRel };
+  const t = _centerAtBbox(target);
+  const sym = (a, b) => {
+    const u = Manifold.union(a, b);
+    const i = Manifold.intersection(a, b);
+    return Manifold.difference(u, i).volume();
+  };
+  const rel0 = sym(_centerAtBbox(cand), t) / volT;
+  if (rel0 <= passRel) return { pass: true, orientation: 'identity', symRel: rel0, volC, volT };
+  let best = { orientation: 'identity', symRel: rel0 };
+  for (const o of _STAGE_ORIENTATIONS) {
+    if (o.name === 'identity') continue;
+    const r = sym(_centerAtBbox(cand.rotate(o.euler)), t) / volT;
+    if (r < best.symRel) best = { orientation: o.name, symRel: r };
+    if (r <= passRel) break;
+  }
+  if (best.symRel <= passRel) return { pass: true, ...best, volC, volT };
+  return { pass: false, reason: 'symdiff_too_large', ...best, volC, volT };
+}
+
 self.onmessage = async (event) => {
   const { type, payload, id } = event.data;
   
@@ -2655,6 +2841,9 @@ self.onmessage = async (event) => {
             mesh: meshData,
             memoryUsedMB: memoryUsed,
             volume: volume,
+            surfaceArea: result.surfaceArea(),
+            status: _c4StatusError(result) || 'NoError',
+            tris: meshData.triVerts.length / 3,
             boundingBox: {
               min: [...bbox.min],
               max: [...bbox.max]
@@ -2792,6 +2981,105 @@ self.onmessage = async (event) => {
         break;
       }
       
+      // ── Stage verification protocol (dev tooling; see _stageVerify above) ──
+
+      // Push a reference solid into the worker-side registry.
+      //   objString: OBJ text (canonical GT from the STEP converter).
+      //   meshData:  { numProp, vertProperties, triVerts } (numbers; from the backend STEP
+      //              converter route when the bundled obj_converter + firejail are fixed)
+      case 'stageReferenceLoad': {
+        if (!isInitialized) throw new Error('Worker not initialized');
+        const { filename, objString, meshData, tolerance } = payload;
+        if (!filename) throw new Error('stageReferenceLoad: filename required');
+        let md;
+        if (objString) {
+          md = _parseOBJToMeshData(objString);
+        } else if (meshData && meshData.vertProperties && meshData.triVerts) {
+          md = { vertProperties: meshData.vertProperties, triVerts: meshData.triVerts };
+        } else {
+          throw new Error('stageReferenceLoad: provide objString or meshData');
+        }
+        const { manifold, repair } = _meshDataToManifold(md.vertProperties, md.triVerts, tolerance ?? 0.001);
+        _stagedReferences.set(filename, {
+          manifold,
+          volume: manifold.volume(),
+          surfaceArea: manifold.surfaceArea(),
+          boundingBox: _bboxArray(manifold),
+          tris: manifold.getMesh().triVerts.length / 3,
+          repair,
+          source: objString ? 'obj' : 'meshData',
+        });
+        self.postMessage({
+          type: 'result', id,
+          payload: { ok: true, filename, repair, volume: _stagedReferences.get(filename).volume,
+                     surfaceArea: _stagedReferences.get(filename).surfaceArea,
+                     boundingBox: _stagedReferences.get(filename).boundingBox,
+                     tris: _stagedReferences.get(filename).tris,
+                     staged: [..._stagedReferences.keys()] },
+        });
+        break;
+      }
+
+      case 'stageReferenceList': {
+        const list = [];
+        for (const [filename, ref] of _stagedReferences) {
+          list.push({ filename, volume: ref.volume, surfaceArea: ref.surfaceArea,
+                      boundingBox: ref.boundingBox, tris: ref.tris, repair: ref.repair, source: ref.source });
+        }
+        self.postMessage({ type: 'result', id, payload: { references: list } });
+        break;
+      }
+
+      case 'stageReferenceClear': {
+        const n = _stagedReferences.size;
+        _stagedReferences.clear();
+        self.postMessage({ type: 'result', id, payload: { ok: true, cleared: n } });
+        break;
+      }
+
+      // Verify the script's LAST execution result (the cached candidate from the most
+      // recent execute — the same object the Run path painted) against a staged
+      // reference. Verdict computed against the bundled build, in-worker.
+      case 'stageVerify': {
+        if (!isInitialized) throw new Error('Worker not initialized');
+        const { reference, passRel, volGate, candidateMesh } = payload;
+        if (!cachedManifold && !candidateMesh) throw new Error('stageVerify: no candidate — execute a script first');
+        const ref = _stagedReferences.get(reference);
+        if (!ref) throw new Error(`stageVerify: reference '${reference}' not staged (staged: ${[..._stagedReferences.keys()].join(', ') || 'none'})`);
+        let cand;
+        if (candidateMesh) {
+          cand = _meshDataToManifold(candidateMesh.vertProperties, candidateMesh.triVerts, payload.tolerance ?? 0).manifold;
+        } else {
+          cand = cachedManifold;
+        }
+        const verdict = _stageVerify(cand, ref.manifold, { passRel, volGate });
+        self.postMessage({
+          type: 'result', id,
+          payload: { ...verdict, reference, candidateVolume: cand.volume(),
+                     referenceVolume: ref.volume },
+        });
+        break;
+      }
+
+      // Raw geometry probe of the last execution: the meshData the worker produced.
+      case 'stageGetLastMesh': {
+        if (!cachedManifold) throw new Error('stageGetLastMesh: nothing executed yet');
+        const m = cachedManifold.getMesh();
+        self.postMessage({
+          type: 'result', id,
+          payload: {
+            numProp: m.numProp,
+            vertProperties: Array.from(m.vertProperties),
+            triVerts: Array.from(m.triVerts),
+            volume: cachedManifold.volume(),
+            surfaceArea: cachedManifold.surfaceArea(),
+            boundingBox: _bboxArray(cachedManifold),
+            status: _c4StatusError(cachedManifold) || 'NoError',
+          },
+        });
+        break;
+      }
+
       case 'getHelperList': {
         // Return list of available helper functions
         self.postMessage({
