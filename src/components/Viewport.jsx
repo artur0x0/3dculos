@@ -35,6 +35,7 @@ import { fitView, VIEW_PRESETS } from '../utils/viewCamera';
 import ViewSnapControl from './ViewSnapControl';
 import { validateScript, formatValidationErrors } from '../utils/scriptValidator';
 import manifoldContext from '../utils/ManifoldWorker';
+import { formatGameTime } from '../utils/gamePuzzle';
 
 // Execution limits
 const EXECUTION_LIMITS = {
@@ -62,6 +63,8 @@ const Viewport = forwardRef(({
   onExitGame,
   onRun,
   onHint,
+  gameElapsedMs = 0,
+  gameSuccess = false,
 }, ref) => {
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
@@ -1165,7 +1168,7 @@ const Viewport = forwardRef(({
   const executeScript = useCallback(async (scriptOverride) => {
     const script = scriptOverride ?? currentScript;
     
-    if (!script || !sceneRef.current) return;
+    if (!script || !sceneRef.current) return false;
     
     // Cancel any pending execution
     if (executionAbortRef.current) {
@@ -1195,7 +1198,7 @@ const Viewport = forwardRef(({
       
       if (abortController.aborted) {
         console.log('[Viewport] Execution aborted during validation');
-        return;
+        return false;
       }
 
       // Step 2: Load cached models into ManifoldContext
@@ -1216,7 +1219,7 @@ const Viewport = forwardRef(({
       
       if (abortController.aborted) {
         console.log('[Viewport] Execution aborted after worker returned');
-        return;
+        return false;
       }
       
       const { mesh: meshData, memoryUsedMB } = result;
@@ -1247,6 +1250,7 @@ const Viewport = forwardRef(({
       }
       
       console.log('[Viewport] Script executed successfully');
+      return true;
 
     } catch (error) {
       console.error('Error executing script:', error);
@@ -1258,6 +1262,7 @@ const Viewport = forwardRef(({
         resultRef.current.geometry?.dispose();
         resultRef.current.geometry = new BufferGeometry();
       }
+      return false;
     } finally {
       setIsExecuting(false);
       if (executionAbortRef.current === abortController) {
@@ -1311,11 +1316,29 @@ const Viewport = forwardRef(({
         onExitGame={onExitGame}
         onRun={onRun}
         onHint={onHint}
+        gameElapsedMs={gameElapsedMs}
+        gameSuccess={gameSuccess}
       />
 
       {mode === 'game' && (
-        <div className="absolute top-16 left-1/2 -translate-x-1/2 lg:left-4 lg:translate-x-0 bg-cyan-950/80 border border-cyan-600/40 text-cyan-100 text-xs px-3 py-1.5 rounded-lg shadow z-10 pointer-events-none">
-          Match the cyan ghost · edit script · Run
+        <div className={`absolute top-16 left-1/2 -translate-x-1/2 lg:left-4 lg:translate-x-0 text-xs px-3 py-1.5 rounded-lg shadow z-10 pointer-events-none ${
+          gameSuccess
+            ? 'bg-emerald-950/90 border border-emerald-500/50 text-emerald-100'
+            : 'bg-cyan-950/80 border border-cyan-600/40 text-cyan-100'
+        }`}>
+          {gameSuccess
+            ? `Match! ${formatGameTime(gameElapsedMs)} · clearing…`
+            : `Match the cyan ghost · ${formatGameTime(gameElapsedMs)}`}
+        </div>
+      )}
+
+      {mode === 'game' && gameSuccess && (
+        <div className="absolute inset-0 z-20 flex items-center justify-center pointer-events-none">
+          <div className="bg-emerald-900/90 border border-emerald-400/60 text-white px-5 py-3 rounded-xl shadow-xl text-center">
+            <div className="text-sm font-semibold">Match!</div>
+            <div className="text-2xl font-mono tabular-nums mt-1">{formatGameTime(gameElapsedMs)}</div>
+            <div className="text-[11px] text-emerald-200/80 mt-1">lower is better</div>
+          </div>
         </div>
       )}
       

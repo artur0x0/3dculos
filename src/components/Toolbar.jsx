@@ -4,6 +4,7 @@ import {
   Truck, Upload, User, ArrowLeft, Play, BookOpen, Puzzle, MoreHorizontal
 } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
+import { formatGameTime } from '../utils/gamePuzzle';
 
 const Toolbar = ({
   mode = 'cad',
@@ -25,6 +26,8 @@ const Toolbar = ({
   onExitGame,
   onRun,
   onHint,
+  gameElapsedMs = 0,
+  gameSuccess = false,
 }) => {
   const fileInputRef = useRef(null);
   const uploadModelRef = useRef(null);
@@ -86,7 +89,15 @@ const Toolbar = ({
 
   if (isCollapsed) {
     return (
-      <div className="absolute top-4 right-4 flex gap-2 bg-white/70 backdrop-blur-sm p-2 rounded-lg shadow-lg z-10">
+      <div className="absolute top-4 right-4 flex items-center gap-2 bg-white/70 backdrop-blur-sm p-2 rounded-lg shadow-lg z-10">
+        {isGame && (
+          <span
+            className={`px-1.5 text-xs font-mono tabular-nums ${gameSuccess ? 'text-emerald-700' : 'text-gray-700'}`}
+            title="Elapsed time (lower is better)"
+          >
+            {formatGameTime(gameElapsedMs)}
+          </span>
+        )}
         <button
           onClick={() => setIsCollapsed(false)}
           className="p-2 rounded hover:bg-gray-100 text-gray-600"
@@ -101,7 +112,7 @@ const Toolbar = ({
   // ── Game mode: back, undo, run, hint; stash file/account/order chrome ──
   if (isGame) {
     return (
-      <div className="absolute top-4 left-1/2 -translate-x-1/2 lg:left-auto lg:right-4 lg:translate-x-0 flex gap-1 lg:gap-2 bg-white/60 backdrop-blur-sm p-2 rounded-lg shadow-lg z-10">
+      <div className="absolute top-4 left-1/2 -translate-x-1/2 lg:left-auto lg:right-4 lg:translate-x-0 flex items-center gap-1 lg:gap-2 bg-white/60 backdrop-blur-sm p-2 rounded-lg shadow-lg z-10">
         <button
           onClick={onExitGame}
           className="p-2 flex items-center gap-1 text-gray-700 hover:bg-gray-100 rounded"
@@ -144,6 +155,15 @@ const Toolbar = ({
             <Play size={20} />
           )}
         </button>
+
+        <span
+          className={`px-1.5 min-w-[3.25rem] text-center text-xs font-mono tabular-nums ${
+            gameSuccess ? 'text-emerald-700 font-semibold' : 'text-gray-700'
+          }`}
+          title="Elapsed time (lower is better)"
+        >
+          {formatGameTime(gameElapsedMs)}
+        </span>
 
         <button
           onClick={onHint}
