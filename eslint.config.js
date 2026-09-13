@@ -4,44 +4,166 @@ import reactHooks from 'eslint-plugin-react-hooks'
 import reactRefresh from 'eslint-plugin-react-refresh'
 import reactPlugin from 'eslint-plugin-react'
 
+// `globals` ships at least one malformed key (trailing space) in v11.x and
+// eslint 8.57 hard-fails on it, so every merged globals map is sanitized.
+const clean = (ns) =>
+  Object.fromEntries(
+    Object.entries(ns || {})
+      .map(([k, v]) => [k.trim(), v])
+      .filter(([k]) => k.length > 0),
+  )
+
+// The pinned `globals` fork predates some ubiquitous APIs — add what the code
+// actually uses (node 18+ fetch family; newer browser compression streams).
+const browserGlobals = {
+  ...clean(globals.browser),
+  ...clean(globals.builtin),
+  CompressionStream: 'readonly',
+  DecompressionStream: 'readonly',
+}
+const nodeGlobals = {
+  ...clean(globals.builtin),
+  ...clean(globals.node),
+  fetch: 'readonly',
+  Request: 'readonly',
+  Response: 'readonly',
+  Headers: 'readonly',
+  FormData: 'readonly',
+  AbortController: 'readonly',
+}
+
 export default [
-  { ignores: ['dist'] },
-  js.configs.recommended,
   {
-    files: ['**/*.js'],
+    ignores: [
+      'dist/**',
+      'dist-ssr/**',
+      'built/**', // emscripten-generated wasm glue — not ours to lint
+      'backend/node_modules/**',
+      'public/**',
+      '.deploy-backups/**', // gitignored snapshots incl. minified bundles (flat config ignores .gitignore on its own)
+      // Paste-only sample catalog (no importers): snippets share one top-level
+      // scope and redeclare `const func` per example — unparseable as a unit,
+      // yet correct for each snippet's real life (pasted alone into the editor).
+      'codeSamples.js',
+    ],
+  },
+
+  // Baseline for everything that gets linted (rules-only in eslint 8.57).
+  { ...js.configs.recommended },
+
+  // Unused-args policy: 'after-used' keeps positional signatures legal (the
+  // `original` arg of getCutEdges is API even if the body only logs it today);
+  // express callbacks must name positionals literally, so `next` is exempt.
+  {
+    rules: {
+      'no-unused-vars': ['error', {
+        args: 'after-used',
+        argsIgnorePattern: '^(_|next)$',
+        varsIgnorePattern: '^_.*$',
+      }],
+    },
+  },
+
+  // ── Web app: React components (.jsx) ──
+  {
+    files: ['src/**/*.jsx'],
     languageOptions: {
-      ecmaVersion: 2020,
+      ecmaVersion: 2022,
       sourceType: 'module',
-      globals: {
-        ...globals.browser,
-        ...globals.es2020
-      },
-      parserOptions: {
-        ecmaFeatures: {
-          jsx: true
-        }
-      },
+      globals: browserGlobals,
+      parserOptions: { ecmaFeatures: { jsx: true } },
     },
     plugins: {
-      'react': reactPlugin,
+      react: reactPlugin,
       'react-hooks': reactHooks,
       'react-refresh': reactRefresh,
     },
     rules: {
       ...reactHooks.configs.recommended.rules,
-      'react-refresh/only-export-components': [
-        'warn',
-        { allowConstantExport: true }
-      ],
-      // React rules
+      // Schema accepts allowConstantExport (singular) — the pre-fix config's
+      // "allowConstantExports" was invalid; the --ext crash always masked it.
+      'react-refresh/only-export-components': ['warn', { allowConstantExport: true }],
       'react/jsx-uses-react': 'error',
       'react/jsx-uses-vars': 'error',
-      'react/prop-types': 'off' // Disable prop-types
+      'react/prop-types': 'off',
     },
-    settings: {
-      react: {
-        version: 'detect'
-      }
-    }
-  }
+    settings: { react: { version: 'detect' } },
+  },
+
+  // Hook files export hooks by design — the refresh rule is for HMR boundaries.
+  {
+    files: ['src/hooks/**'],
+    rules: { 'react-refresh/only-export-components': 'off' },
+  },
+
+  // ── Web app: plain JS (utils, kernel helpers, worker bridge) ──
+  {
+    files: ['src/**/*.js'],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: 'module',
+      globals: browserGlobals,
+    },
+    plugins: {
+      react: reactPlugin,
+      'react-hooks': reactHooks,
+    },
+    rules: {
+      ...reactHooks.configs.recommended.rules,
+    },
+  },
+
+  // ── Sandbox worker: runs in a dedicated worker context ──
+  {
+    files: ['src/workers/**'],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: 'module',
+      globals: {
+        ...browserGlobals,
+        ...clean(globals.worker),
+        self: 'readonly',
+        importScripts: 'readonly',
+      },
+    },
+  },
+
+  // ── Node harness scripts ──
+  {
+    files: ['scripts/**/*.mjs'],
+    languageOptions: { ecmaVersion: 2022, sourceType: 'module', globals: nodeGlobals },
+  },
+
+  // Golden puzzle scripts are DSL snippets evaluated inside the sandbox via
+  // new Function(...) — function-body semantics, so top-level `return` is
+  // legal ('commonjs' matches that shape; 'script'/'module' do not parse it)
+  // and Manifold/helpers arrive through the injected scope, not globals.
+  {
+    files: ['scripts/golden/puzzle_*.js', 'codeSamples.js'],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: 'commonjs',
+      globals: { ...clean(globals.builtin), Manifold: 'readonly' },
+    },
+    rules: { 'no-undef': 'off', 'no-redeclare': 'off' },
+  },
+
+  // ── Backend (node, ESM) ──
+  {
+    files: ['backend/**/*.js'],
+    languageOptions: { ecmaVersion: 2022, sourceType: 'module', globals: nodeGlobals },
+  },
+
+  // Generated prompt text (gitignored artifact): markdown inside a template
+  // literal legitimately carries \/ \# \* escapes that look useless to eslint.
+  {
+    files: ['backend/systemPrompt.js'],
+    rules: { 'no-useless-escape': 'off' },
+  },
+
+  // ── Root tooling configs ──
+  {
+    files: ['*.config.js'],
+    languageOptions: { ecmaVersion: 2022, sourceType: 'module', globals: browserGlobals },
+  },
 ]

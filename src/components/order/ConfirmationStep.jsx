@@ -1,6 +1,6 @@
 // components/order/ConfirmationStep.jsx - Order confirmation
 import React from 'react';
-import { CheckCircle, Package, Mail, Clock, ExternalLink } from 'lucide-react';
+import { CheckCircle, Package, Mail } from 'lucide-react';
 
 const ConfirmationStep = ({ order, isGuest, onConvertAccount, onClose, onViewOrders }) => {
   return (

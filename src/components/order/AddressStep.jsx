@@ -1,5 +1,5 @@
 // components/order/AddressStep.jsx - Shipping address form
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { MapPin, Loader2, AlertCircle } from 'lucide-react';
 
 // US States
@@ -32,7 +32,7 @@ const US_STATES = [
   { code: 'WY', name: 'Wyoming' },
 ];
 
-const AddressStep = ({ initialAddress, onComplete, onError, isGuest }) => {
+const AddressStep = ({ initialAddress, onComplete, onError }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [isValidating, setIsValidating] = useState(false);
   const [validationResult, setValidationResult] = useState(null);
@@ -60,7 +60,7 @@ const AddressStep = ({ initialAddress, onComplete, onError, isGuest }) => {
     else if (!/^\d{5}(-\d{4})?$/.test(formData.zip.trim())) {
       newErrors.zip = 'Invalid ZIP code format';
     }
-    if (formData.phone && !/^[\d\s\-\(\)]+$/.test(formData.phone)) {
+    if (formData.phone && !/^[\d\s\-()]+$/.test(formData.phone)) {
       newErrors.phone = 'Invalid phone number';
     }
     

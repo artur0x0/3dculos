@@ -1,4 +1,6 @@
 // components/order/PaymentStep.jsx - Payment with Stripe Elements
+/* eslint-disable react-hooks/exhaustive-deps -- createOrderRef guards double-submit;
+   effect must bind once on mount (see ref pattern below) */
 import React, { useState, useEffect, useRef } from 'react';
 import { loadStripe } from '@stripe/stripe-js';
 import {
@@ -224,8 +226,6 @@ const PaymentStep = ({
   address,
   shippingOption,
   currentScript,
-  user,
-  guestEmail,
   onComplete,
   onError,
 }) => {

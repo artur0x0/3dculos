@@ -1,4 +1,6 @@
 // hooks/useAuth.js - Authentication hook
+/* eslint-disable react-hooks/exhaustive-deps -- checkAuth is a stable useCallback([]);
+   effect must bind once on mount */
 import { useState, useEffect, useCallback, createContext, useContext } from 'react';
 
 const AuthContext = createContext(null);

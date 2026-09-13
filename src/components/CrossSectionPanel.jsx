@@ -1,4 +1,5 @@
 // components/CrossSectionPanel.jsx
+/* eslint-disable react-hooks/exhaustive-deps -- see Viewport note; same ref-backed pattern */
 import React, { useState, useEffect } from 'react';
 import { FlipHorizontal, ChevronDown, ChevronUp, Maximize2, Ruler, Move3d, Frame } from 'lucide-react';
 import ViewSnapControl from './ViewSnapControl';
@@ -267,7 +268,7 @@ const handleButtonClick = () => {
             Plane
           </label>
           <div className="grid grid-cols-3 gap-2">
-            {Object.entries(PLANE_PRESETS).map(([key, preset]) => (
+            {Object.entries(PLANE_PRESETS).map(([key]) => (
               <button
                 key={key}
                 onClick={() => handlePresetChange(key)}

@@ -8,9 +8,6 @@ import { promisify } from 'util';
 import Module from 'manifold-3d';
 import config from '../config/index.js';
 
-import { fileURLToPath } from 'url';
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
 const router = Router();
 const execAsync = promisify(exec);
 

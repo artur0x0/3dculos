@@ -203,7 +203,7 @@ async function handleDispute(dispute) {
   const userEmail = order['guest-email'] || 
     (await order.populate('user-id'))?.['user-id']?.email;
 
-  await sendAdminDisputeNotification(order, dispute, userEmail || 'unknown@email.com')
+  await email.sendAdminDisputeNotification(order, dispute, userEmail || 'unknown@email.com')
     .catch(err => console.error('[Webhook] Failed to send dispute admin email:', err));
   }
 

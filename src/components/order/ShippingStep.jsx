@@ -1,6 +1,8 @@
 // components/order/ShippingStep.jsx - Shipping method selection
+/* eslint-disable react-hooks/exhaustive-deps -- fetch-on-mount with isLoading guard is
+   the intended once-per-mount contract; adding fn deps would refetch on every render */
 import React, { useState, useEffect, useRef } from 'react';
-import { Truck, Plane, Zap, Loader2, Package, Calendar } from 'lucide-react';
+import { Truck, Plane, Zap, Package, Calendar } from 'lucide-react';
 
 const SHIPPING_ICONS = {
   ground: Truck,

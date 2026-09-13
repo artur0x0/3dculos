@@ -35,7 +35,8 @@ const OrderModal = ({
   const [guestEmail, setGuestEmail] = useState(restoredGuestEmail || '');
   const [address, setAddress] = useState(restoredAddress || null);
   const [shippingOption, setShippingOption] = useState(null);
-  const [shippingRates, setShippingRates] = useState([]);
+  // value kept for future re-render of restored rates; setter is live (handleShippingComplete)
+  const [_shippingRates, setShippingRates] = useState([]);
   const [order, setOrder] = useState(null);
   const [error, setError] = useState(null);
 
