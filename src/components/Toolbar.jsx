@@ -1,11 +1,15 @@
 import React, { useRef, useState } from 'react';
-import { FolderOpen, Save, Download, Undo, Redo, ChevronLeft, ChevronRight, Truck, Upload, User } from 'lucide-react';
+import {
+  FolderOpen, Save, Download, Undo, Redo, ChevronLeft, ChevronRight,
+  Truck, Upload, User, ArrowLeft, Play, BookOpen, Puzzle, MoreHorizontal
+} from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 
-const Toolbar = ({ 
+const Toolbar = ({
+  mode = 'cad',
   onAccount,
-  onOpen, 
-  onSave, 
+  onOpen,
+  onSave,
   onDownload,
   onQuote,
   onUpload,
@@ -16,13 +20,19 @@ const Toolbar = ({
   isExecuting,
   isDownloading,
   isUploading,
-  currentFilename
+  currentFilename,
+  onStartGame,
+  onExitGame,
+  onRun,
+  onHint,
 }) => {
   const fileInputRef = useRef(null);
   const uploadModelRef = useRef(null);
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const [showOverflow, setShowOverflow] = useState(false);
 
   const { isAuthenticated } = useAuth();
+  const isGame = mode === 'game';
 
   const handleFileSelect = async (event) => {
     const file = event.target.files?.[0];
@@ -34,7 +44,7 @@ const Toolbar = ({
     } catch (err) {
       console.error('Error reading file:', err);
     }
-    
+
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -49,7 +59,7 @@ const Toolbar = ({
     } catch (err) {
       console.error('Error uploading STEP file:', err);
     }
-    
+
     if (uploadModelRef.current) {
       uploadModelRef.current.value = '';
     }
@@ -69,7 +79,107 @@ const Toolbar = ({
     );
   }
 
-return (
+  // ── Game mode: back, undo, run, hint; stash file/account/order chrome ──
+  if (isGame) {
+    return (
+      <div className="absolute top-4 left-1/2 -translate-x-1/2 lg:left-auto lg:right-4 lg:translate-x-0 flex gap-1 lg:gap-2 bg-white/60 backdrop-blur-sm p-2 rounded-lg shadow-lg z-10">
+        <button
+          onClick={onExitGame}
+          className="p-2 flex items-center gap-1 text-gray-700 hover:bg-gray-100 rounded"
+          title="Back to CAD"
+        >
+          <ArrowLeft size={20} />
+        </button>
+
+        <div className="w-px bg-gray-300 mx-1" />
+
+        <button
+          onClick={onUndo}
+          disabled={!canUndo}
+          className="p-2 flex items-center gap-2 text-blue-600 hover:bg-gray-100 rounded disabled:opacity-30"
+          title="Undo"
+        >
+          <Undo size={20} />
+        </button>
+
+        <button
+          onClick={onRedo}
+          disabled={!canRedo}
+          className="p-2 flex items-center gap-2 text-blue-600 hover:bg-gray-100 rounded disabled:opacity-30"
+          title="Redo"
+        >
+          <Redo size={20} />
+        </button>
+
+        <div className="w-px bg-gray-300 mx-1" />
+
+        <button
+          onClick={onRun}
+          disabled={isExecuting}
+          className="p-2 flex items-center gap-1 text-green-600 hover:bg-gray-100 rounded disabled:opacity-50"
+          title="Run script"
+        >
+          {isExecuting ? (
+            <div className="w-5 h-5 border-2 border-green-600 border-t-transparent rounded-full animate-spin" />
+          ) : (
+            <Play size={20} />
+          )}
+        </button>
+
+        <button
+          onClick={onHint}
+          className="p-2 flex items-center gap-1 text-cyan-700 hover:bg-gray-100 rounded"
+          title="Puzzle helpers / docs"
+        >
+          <BookOpen size={20} />
+        </button>
+
+        {/* Overflow: stash CAD file/account actions without losing them entirely */}
+        <div className="relative">
+          <button
+            onClick={() => setShowOverflow((v) => !v)}
+            className="p-2 rounded hover:bg-gray-100 text-gray-500"
+            title="More"
+          >
+            <MoreHorizontal size={20} />
+          </button>
+          {showOverflow && (
+            <div className="absolute right-0 top-full mt-1 flex flex-col gap-0.5 bg-white rounded-lg shadow-lg border border-gray-200 p-1 min-w-[140px]">
+              <button
+                onClick={() => { onAccount?.(); setShowOverflow(false); }}
+                className="flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded"
+              >
+                <User size={16} /> Account
+              </button>
+              <button
+                onClick={() => { onSave?.(); setShowOverflow(false); }}
+                className="flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded"
+              >
+                <Save size={16} /> Save
+              </button>
+              <button
+                onClick={() => { onDownload?.(); setShowOverflow(false); }}
+                disabled={isDownloading || isExecuting}
+                className="flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded disabled:opacity-50"
+              >
+                <Download size={16} /> Download
+              </button>
+            </div>
+          )}
+        </div>
+
+        <button
+          onClick={() => setIsCollapsed(true)}
+          className="p-2 rounded hover:bg-gray-100 text-gray-600"
+          title="Hide Toolbar"
+        >
+          <ChevronRight size={20} />
+        </button>
+      </div>
+    );
+  }
+
+  return (
     <div className="absolute top-4 left-1/2 -translate-x-1/2 lg:left-auto lg:right-4 lg:translate-x-0 flex gap-1 lg:gap-2 bg-white/60 backdrop-blur-sm p-2 rounded-lg shadow-lg z-10">
       {/* Account */}
       <button
@@ -95,7 +205,7 @@ return (
         className="hidden"
         accept=".stl,.obj,.3mf,.step,.stp"
       />
-      
+
       {/* Open */}
       <button
         onClick={() => fileInputRef.current?.click()}
@@ -175,6 +285,15 @@ return (
         title="Get Quote"
       >
         <Truck size={20} />
+      </button>
+
+      {/* Start puzzle / game mode */}
+      <button
+        onClick={onStartGame}
+        className="p-2 rounded hover:bg-gray-100 text-cyan-700"
+        title="Play match-the-part puzzle"
+      >
+        <Puzzle size={20} />
       </button>
 
       {/* Collapse */}
