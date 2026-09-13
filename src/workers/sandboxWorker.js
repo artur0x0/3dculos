@@ -51,6 +51,9 @@ let cachedExecuteNonce = null;
 // Live ghost target for game-mode match (independent cloned handle retained
 // across attempt executes — not an alias of cachedManifold).
 let gameTargetManifold = null;
+// Snapshot of the attempt solid at the execute that ran while a ghost was set.
+// compareGameMatch grades this — never ambient cachedManifold.
+let gameAttemptManifold = null;
 
 /** Best-effort Manifold.dispose (embind .delete); ignore missing/throws. */
 function _safeDeleteManifold(m) {
@@ -2916,6 +2919,8 @@ function _stageVerify(cand, target, opts = {}) {
  * Game-mode match: attempt vs retained ghost, same coordinate frame.
  * Single criterion: V_symdiff / max(V_target, volFloor) < relEps
  * (empty diffs have volume 0, so exact match is covered by rel < relEps).
+ * Uses stageVerify-style sym = difference(union, intersection); no isEmpty
+ * typeof soft-fail. Volume pre-gate + catch fallback if booleans throw.
  */
 function _gameMatchCompare(attempt, target, relEps, volFloor) {
   const { Manifold } = manifoldModule;
@@ -2934,22 +2939,15 @@ function _gameMatchCompare(attempt, target, relEps, volFloor) {
       volA, volT, volDiff: volDelta, rel: volDelta / denom,
     };
   }
-  let extra = null;
-  let missing = null;
+  let u = null;
+  let i = null;
+  let sym = null;
   try {
-    extra = Manifold.difference(attempt, target);
-    missing = Manifold.difference(target, attempt);
-    // Optional fast-path: both empty ⇒ exact match (still dispose in finally).
-    try {
-      if (typeof extra.isEmpty === 'function' && typeof missing.isEmpty === 'function'
-          && extra.isEmpty() && missing.isEmpty()) {
-        return {
-          match: true, reason: 'match',
-          volA, volT, volDiff: 0, rel: 0,
-        };
-      }
-    } catch (_) { /* isEmpty unavailable/throws — fall through to volume */ }
-    const volDiff = extra.volume() + missing.volume();
+    // Prefer union/intersection/difference (more throw-resistant than two raw diffs).
+    u = Manifold.union(attempt, target);
+    i = Manifold.intersection(attempt, target);
+    sym = Manifold.difference(u, i);
+    const volDiff = sym.volume();
     const rel = volDiff / denom;
     const match = rel < relEps;
     return {
@@ -2958,9 +2956,7 @@ function _gameMatchCompare(attempt, target, relEps, volFloor) {
       volA, volT, volDiff, rel,
     };
   } catch (e) {
-    // Volume pre-gate already accepted this pair within relEps. difference() can
-    // throw on near-identical sliver shells (fillets/chamfers) — don't veto a
-    // volume-verified solve.
+    // Booleans failed on near-identical solids: trust the volume pre-gate.
     return {
       match: true,
       reason: 'boolean_failed_vol_fallback',
@@ -2970,8 +2966,9 @@ function _gameMatchCompare(attempt, target, relEps, volFloor) {
       warning: String(e && e.message || e),
     };
   } finally {
-    _safeDeleteManifold(extra);
-    _safeDeleteManifold(missing);
+    _safeDeleteManifold(sym);
+    _safeDeleteManifold(u);
+    _safeDeleteManifold(i);
   }
 }
 
@@ -3003,6 +3000,11 @@ self.onmessage = async (event) => {
         // Cache the manifold for cross-section operations (+ nonce for game compare)
         cachedManifold = result;
         cachedExecuteNonce = (nonce !== undefined && nonce !== null) ? nonce : null;
+        // Independent attempt snapshot for game match (only while a ghost is live).
+        if (gameTargetManifold) {
+          _safeDeleteManifold(gameAttemptManifold);
+          gameAttemptManifold = result.clone();
+        }
         
         // Check memory after execution
         const memoryUsed = checkMemoryUsage(memoryLimitMB || 512);
@@ -3084,6 +3086,8 @@ self.onmessage = async (event) => {
       case 'clearGameTarget': {
         _safeDeleteManifold(gameTargetManifold);
         gameTargetManifold = null;
+        _safeDeleteManifold(gameAttemptManifold);
+        gameAttemptManifold = null;
         self.postMessage({ type: 'result', id, payload: { ok: true } });
         break;
       }
@@ -3091,7 +3095,9 @@ self.onmessage = async (event) => {
       case 'compareGameMatch': {
         if (!isInitialized) throw new Error('Worker not initialized');
         if (!gameTargetManifold) throw new Error('compareGameMatch: no ghost target stored');
-        if (!cachedManifold) throw new Error('compareGameMatch: execute an attempt first');
+        if (!gameAttemptManifold) {
+          throw new Error('compareGameMatch: no attempt snapshot — execute while a ghost target is stored');
+        }
         if (payload?.nonce != null && payload.nonce !== cachedExecuteNonce) {
           self.postMessage({
             type: 'result', id,
@@ -3104,7 +3110,7 @@ self.onmessage = async (event) => {
         }
         const relEps = _positiveFinite(payload?.relEps, 0.002);
         const volFloor = _positiveFinite(payload?.volFloor, 1e-6);
-        const verdict = _gameMatchCompare(cachedManifold, gameTargetManifold, relEps, volFloor);
+        const verdict = _gameMatchCompare(gameAttemptManifold, gameTargetManifold, relEps, volFloor);
         self.postMessage({
           type: 'result', id,
           payload: { ...verdict, relEps, volFloor, nonce: cachedExecuteNonce },

@@ -548,8 +548,9 @@ const App = () => {
           console.log('[App] No match', verdict);
           return;
         }
-        if (verdict.reason === 'boolean_failed_vol_fallback') {
-          console.warn('[App] Match via volume fallback (boolean threw)', verdict.warning);
+        if (verdict.reason === 'boolean_failed_vol_fallback' || verdict.warning) {
+          console.warn('[App] Match via volume fallback (boolean unstable)', verdict.warning);
+          setGameError('Match used volume fallback (boolean unstable)');
         }
         const elapsed = performance.now() - gameTimerStartRef.current;
         setGameTimerRunning(false);
