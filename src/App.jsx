@@ -444,6 +444,7 @@ const App = () => {
       console.error('[App] Failed to start puzzle:', err);
       setUploadError(err.message || 'Failed to start puzzle');
       setGhostMeshData(null);
+      setCadScriptBackup(null);
       setAppMode('cad');
     } finally {
       setGameLoading(false);

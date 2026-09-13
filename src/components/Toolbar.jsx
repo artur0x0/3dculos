@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   FolderOpen, Save, Download, Undo, Redo, ChevronLeft, ChevronRight,
   Truck, Upload, User, ArrowLeft, Play, BookOpen, Puzzle, MoreHorizontal
@@ -30,9 +30,28 @@ const Toolbar = ({
   const uploadModelRef = useRef(null);
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [showOverflow, setShowOverflow] = useState(false);
+  const overflowRef = useRef(null);
 
   const { isAuthenticated } = useAuth();
   const isGame = mode === 'game';
+
+  useEffect(() => {
+    if (!showOverflow) return;
+    const onPointerDown = (e) => {
+      if (overflowRef.current && !overflowRef.current.contains(e.target)) {
+        setShowOverflow(false);
+      }
+    };
+    const onKeyDown = (e) => {
+      if (e.key === 'Escape') setShowOverflow(false);
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [showOverflow]);
 
   const handleFileSelect = async (event) => {
     const file = event.target.files?.[0];
@@ -135,7 +154,7 @@ const Toolbar = ({
         </button>
 
         {/* Overflow: stash CAD file/account actions without losing them entirely */}
-        <div className="relative">
+        <div className="relative" ref={overflowRef}>
           <button
             onClick={() => setShowOverflow((v) => !v)}
             className="p-2 rounded hover:bg-gray-100 text-gray-500"
