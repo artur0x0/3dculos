@@ -49,6 +49,7 @@ const App = () => {
   const [showHints, setShowHints] = useState(false);
   const [cadScriptBackup, setCadScriptBackup] = useState(null);
   const [gameLoading, setGameLoading] = useState(false);
+  const [gameError, setGameError] = useState(null);
 
   const { user, isAuthenticated, checkAuth } = useAuth();
 
@@ -419,6 +420,7 @@ const App = () => {
   const handleStartGame = async () => {
     if (gameLoading) return;
     setGameLoading(true);
+    setGameError(null);
     try {
       const current = codeEditorRef.current?.getContent?.() ?? currentScript;
       setCadScriptBackup(current);
@@ -433,6 +435,7 @@ const App = () => {
       setGhostMeshData(result.mesh);
       setAppMode('game');
       setShowHints(false);
+      setGameError(null);
 
       // Load starter into editor (auto-runs attempt solid)
       codeEditorRef.current?.loadContent(
@@ -442,7 +445,7 @@ const App = () => {
       );
     } catch (err) {
       console.error('[App] Failed to start puzzle:', err);
-      setUploadError(err.message || 'Failed to start puzzle');
+      setGameError(err.message || 'Failed to start puzzle');
       setGhostMeshData(null);
       setCadScriptBackup(null);
       setAppMode('cad');
@@ -455,6 +458,7 @@ const App = () => {
     setAppMode('cad');
     setGhostMeshData(null);
     setShowHints(false);
+    setGameError(null);
     const restore = cadScriptBackup || DEFAULT_SCRIPT;
     codeEditorRef.current?.loadContent(restore, 'Back to CAD', true);
     setCadScriptBackup(null);
@@ -823,6 +827,19 @@ const App = () => {
           {showHints && (
             <GameHintsModal onClose={() => setShowHints(false)} />
           )}
+          {gameError && (
+            <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-red-900/90 text-white px-4 py-2 rounded shadow-lg z-50 max-w-md">
+              <div className="flex items-center gap-2">
+                <span>{gameError}</span>
+                <button 
+                  onClick={() => setGameError(null)}
+                  className="ml-2 text-white hover:text-gray-200"
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+          )}
           {uploadError && (
             <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-red-900/90 text-white px-4 py-2 rounded shadow-lg z-50 max-w-md">
               <div className="flex items-center gap-2">
@@ -937,6 +954,19 @@ const App = () => {
           {showHints && (
             <GameHintsModal onClose={() => setShowHints(false)} />
           )}
+        {gameError && (
+          <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-red-900/90 text-white px-4 py-2 rounded shadow-lg z-50 max-w-md">
+            <div className="flex items-center gap-2">
+              <span>{gameError}</span>
+              <button 
+                onClick={() => setGameError(null)}
+                className="ml-2 text-white hover:text-gray-200"
+              >
+                ×
+              </button>
+            </div>
+          </div>
+        )}
         {uploadError && (
           <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-red-900/90 text-white px-4 py-2 rounded shadow-lg z-50 max-w-md">
             <div className="flex items-center gap-2">
