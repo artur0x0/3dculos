@@ -116,7 +116,8 @@ class ManifoldWorker {
         payload: {
           script,
           importedModels,
-          memoryLimitMB
+          memoryLimitMB,
+          nonce: options.nonce ?? null,
         }
       });
     });
@@ -195,6 +196,7 @@ class ManifoldWorker {
    * @param {Object} [opts]
    * @param {number} [opts.relEps]
    * @param {number} [opts.volFloor]
+   * @param {*} [opts.nonce] - Must match the execute nonce that produced the on-screen solid
    */
   async compareGameMatch(opts = {}, options = {}) {
     if (!this.isReady) throw new Error('ManifoldWorker not initialized');
@@ -212,7 +214,7 @@ class ManifoldWorker {
       this.worker.postMessage({
         type: 'compareGameMatch',
         id: requestId,
-        payload: { relEps: opts.relEps, volFloor: opts.volFloor },
+        payload: { relEps: opts.relEps, volFloor: opts.volFloor, nonce: opts.nonce },
       });
     });
   }

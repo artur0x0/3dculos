@@ -1210,11 +1210,15 @@ const Viewport = forwardRef(({
         }
       }
       
-      // Step 3: Execute script in sandbox worker
+      // Step 3: Execute script in sandbox worker (nonce ties compare to this solid)
       console.log('[Viewport] Executing script in sandbox worker...');
+      const nonce = (typeof crypto !== 'undefined' && crypto.randomUUID)
+        ? crypto.randomUUID()
+        : `exec-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
       const result = await manifoldContext.executeScript(script, {
         timeoutMs: EXECUTION_LIMITS.timeoutMs,
-        memoryLimitMB: EXECUTION_LIMITS.memoryLimitMB
+        memoryLimitMB: EXECUTION_LIMITS.memoryLimitMB,
+        nonce,
       });
       
       if (abortController.aborted) {
@@ -1250,7 +1254,8 @@ const Viewport = forwardRef(({
       }
       
       console.log('[Viewport] Script executed successfully');
-      return true;
+      // Truthy object: callers that only check success keep working; game compare needs nonce.
+      return { ok: true, nonce };
 
     } catch (error) {
       console.error('Error executing script:', error);

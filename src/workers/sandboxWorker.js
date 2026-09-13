@@ -46,6 +46,8 @@ const READONLY_GLOBALS = [
 let manifoldModule = null;
 let isInitialized = false;
 let cachedManifold = null;
+// Nonce of the execute that last wrote cachedManifold (game compare staleness).
+let cachedExecuteNonce = null;
 // Live ghost target for game-mode match (independent cloned handle retained
 // across attempt executes — not an alias of cachedManifold).
 let gameTargetManifold = null;
@@ -2956,9 +2958,16 @@ function _gameMatchCompare(attempt, target, relEps, volFloor) {
       volA, volT, volDiff, rel,
     };
   } catch (e) {
+    // Volume pre-gate already accepted this pair within relEps. difference() can
+    // throw on near-identical sliver shells (fillets/chamfers) — don't veto a
+    // volume-verified solve.
     return {
-      match: false, reason: 'boolean_failed',
-      error: String(e && e.message || e), volA, volT,
+      match: true,
+      reason: 'boolean_failed_vol_fallback',
+      volA, volT,
+      volDiff: volDelta,
+      rel: volDelta / denom,
+      warning: String(e && e.message || e),
     };
   } finally {
     _safeDeleteManifold(extra);
@@ -2983,7 +2992,7 @@ self.onmessage = async (event) => {
           throw new Error('Worker not initialized');
         }
         
-        const { script, importedModels, memoryLimitMB } = payload;
+        const { script, importedModels, memoryLimitMB, nonce } = payload;
         
         // Check memory before execution
         checkMemoryUsage(memoryLimitMB || 512);
@@ -2991,8 +3000,9 @@ self.onmessage = async (event) => {
         // Execute the script
         const result = executeScript(script, importedModels);
         
-        // Cache the manifold for cross-section operations
+        // Cache the manifold for cross-section operations (+ nonce for game compare)
         cachedManifold = result;
+        cachedExecuteNonce = (nonce !== undefined && nonce !== null) ? nonce : null;
         
         // Check memory after execution
         const memoryUsed = checkMemoryUsage(memoryLimitMB || 512);
@@ -3017,7 +3027,8 @@ self.onmessage = async (event) => {
             boundingBox: {
               min: [...bbox.min],
               max: [...bbox.max]
-            }
+            },
+            nonce: cachedExecuteNonce,
           }
         });
         break;
@@ -3081,12 +3092,22 @@ self.onmessage = async (event) => {
         if (!isInitialized) throw new Error('Worker not initialized');
         if (!gameTargetManifold) throw new Error('compareGameMatch: no ghost target stored');
         if (!cachedManifold) throw new Error('compareGameMatch: execute an attempt first');
+        if (payload?.nonce != null && payload.nonce !== cachedExecuteNonce) {
+          self.postMessage({
+            type: 'result', id,
+            payload: {
+              ignored: true, match: false, reason: 'stale_execute',
+              nonce: payload.nonce, cachedNonce: cachedExecuteNonce,
+            },
+          });
+          break;
+        }
         const relEps = _positiveFinite(payload?.relEps, 0.002);
         const volFloor = _positiveFinite(payload?.volFloor, 1e-6);
         const verdict = _gameMatchCompare(cachedManifold, gameTargetManifold, relEps, volFloor);
         self.postMessage({
           type: 'result', id,
-          payload: { ...verdict, relEps, volFloor },
+          payload: { ...verdict, relEps, volFloor, nonce: cachedExecuteNonce },
         });
         break;
       }
@@ -3165,8 +3186,9 @@ self.onmessage = async (event) => {
           throw new Error(`Invalid mesh: status ${meshStatus}. The mesh may not be watertight.`);
         }
         
-        // Cache for script access
+        // Cache for script access (import path — not a script execute nonce)
         cachedManifold = manifold;
+        cachedExecuteNonce = null;
         
         // Get final mesh data
         const finalMesh = manifold.getMesh();

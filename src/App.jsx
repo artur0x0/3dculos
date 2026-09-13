@@ -531,16 +531,25 @@ const App = () => {
     gameRunInFlightRef.current = true;
     setCurrentScript(code);
     try {
-      const ok = await viewportRef.current?.executeScript(code);
-      if (!ok) return;
+      const run = await viewportRef.current?.executeScript(code);
+      if (!run) return;
+      const nonce = typeof run === 'object' ? run.nonce : undefined;
       try {
         const verdict = await manifoldContext.compareGameMatch({
           relEps: MATCH_REL_EPS,
           volFloor: MATCH_VOL_FLOOR_MM3,
+          nonce,
         });
+        if (verdict?.ignored) {
+          console.log('[App] Ignoring stale match compare', verdict);
+          return;
+        }
         if (!verdict?.match) {
           console.log('[App] No match', verdict);
           return;
+        }
+        if (verdict.reason === 'boolean_failed_vol_fallback') {
+          console.warn('[App] Match via volume fallback (boolean threw)', verdict.warning);
         }
         const elapsed = performance.now() - gameTimerStartRef.current;
         setGameTimerRunning(false);
