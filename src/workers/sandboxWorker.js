@@ -1,6 +1,13 @@
 // workers/sandboxWorker.js
 // This worker executes user scripts in an isolated context with restricted globals
 import Module from '../../built/manifold';
+import {
+  fastenerClearanceDia,
+  fastenerTapDrillDia,
+  fastenerMajorDia,
+  listFastenerSizes,
+  resolveFastenerSize,
+} from './fastenerSizes.js';
 
 /**
  * List of globals to block/remove in the worker context
@@ -63,6 +70,23 @@ function _c4StatusError(m) {
   if (typeof s === 'string') return s === 'NoError' ? null : s;
   if (s && typeof s.value === 'number') return s.value === 0 ? null : `code ${s.value}`;
   return null;
+}
+
+/** Slice-01: fail loudly on bad numeric args (never silently produce empty/non-manifold). */
+function _c4RequirePositive(fn, label, val) {
+  if (typeof val !== 'number' || !Number.isFinite(val) || !(val > 0)) {
+    throw new Error(`${fn}: ${label} must be a finite number > 0 (got ${val})`);
+  }
+}
+
+/** Status + empty-volume guard shared by feature cutters. */
+function _c4RequireValidSolid(out, fn) {
+  const se = _c4StatusError(out);
+  if (se) throw new Error(`${fn}: bad result (${se})`);
+  if (typeof out.volume === 'function' && out.volume() <= 1e-9) {
+    throw new Error(`${fn}: result is EMPTY (volume 0) — cutter consumed the solid or inputs were degenerate`);
+  }
+  return out;
 }
 
 /**
@@ -1425,12 +1449,14 @@ function placeOnFace(part, frame, builder) {
  * Returns the cut part.
  */
 function hole(part, frame, u, v, dia, span) {
+  _c4RequirePositive('hole', 'dia', dia);
+  _c4RequirePositive('hole', 'span', span);
+  if (!frame || !frame.normal || !frame.center || !frame.x || !frame.y) {
+    throw new Error('hole: frame must come from workplaneFromFace (needs center/normal/x/y)');
+  }
   const M = manifoldModule.Manifold;
   const cut = _c4PutCyl(M, frame, u, v, dia, span);
-  const out = M.difference(part, cut);
-  const se = _c4StatusError(out);
-  if (se) throw new Error(`hole: bad result (${se})`);
-  return out;
+  return _c4RequireValidSolid(M.difference(part, cut), 'hole');
 }
 // _c4PutCyl: centered cylinder anchored so it spans w ∈ [1, 1-len] in frame
 // space (1mm outside the face, len-1mm INTO the solid).
@@ -1471,13 +1497,20 @@ function holeSpan(part, frame) {
  * — through hole + larger counterbore from the face. (CadQuery cboreHole)
  */
 function cboreHole(part, frame, u, v, diaThru, diaCbore, cboreDepth, span) {
+  _c4RequirePositive('cboreHole', 'diaThru', diaThru);
+  _c4RequirePositive('cboreHole', 'diaCbore', diaCbore);
+  _c4RequirePositive('cboreHole', 'cboreDepth', cboreDepth);
+  _c4RequirePositive('cboreHole', 'span', span);
+  if (!(diaCbore > diaThru)) {
+    throw new Error(`cboreHole: diaCbore (${diaCbore}) must be > diaThru (${diaThru})`);
+  }
+  if (!frame || !frame.normal || !frame.center || !frame.x || !frame.y) {
+    throw new Error('cboreHole: frame must come from workplaneFromFace (needs center/normal/x/y)');
+  }
   const M = manifoldModule.Manifold;
   const thru = _c4PutCyl(M, frame, u, v, diaThru, span);
   const cbore = _c4PutCyl(M, frame, u, v, diaCbore, cboreDepth + 1); // [−depth, +1]
-  const out = M.difference(M.difference(part, thru), cbore);
-  const se = _c4StatusError(out);
-  if (se) throw new Error(`cboreHole: bad result (${se})`);
-  return out;
+  return _c4RequireValidSolid(M.difference(M.difference(part, thru), cbore), 'cboreHole');
 }
 
 /**
@@ -1487,6 +1520,16 @@ function cboreHole(part, frame, u, v, diaThru, diaCbore, cboreDepth, span) {
  * (CadQuery cskHole)
  */
 function cskHole(part, frame, u, v, diaThru, diaCsk, cskDepth, span) {
+  _c4RequirePositive('cskHole', 'diaThru', diaThru);
+  _c4RequirePositive('cskHole', 'diaCsk', diaCsk);
+  _c4RequirePositive('cskHole', 'cskDepth', cskDepth);
+  _c4RequirePositive('cskHole', 'span', span);
+  if (!(diaCsk > diaThru)) {
+    throw new Error(`cskHole: diaCsk (${diaCsk}) must be > diaThru (${diaThru})`);
+  }
+  if (!frame || !frame.normal || !frame.center || !frame.x || !frame.y) {
+    throw new Error('cskHole: frame must come from workplaneFromFace (needs center/normal/x/y)');
+  }
   const M = manifoldModule.Manifold;
   const thru = _c4PutCyl(M, frame, u, v, diaThru, span);
   // Exact csk frustum: small end (diaThru) at depth cskDepth below the face,
@@ -1501,10 +1544,10 @@ function cskHole(part, frame, u, v, diaThru, diaCsk, cskDepth, span) {
   const t = frameToMatrix({ center: [
     c[0] + n[0] * w0, c[1] + n[1] * w0, c[2] + n[2] * w0,
   ], x: frame.x, y: frame.y, normal: n });
-  const out = M.difference(M.difference(part, thru), cone.transform(t));
-  const se = _c4StatusError(out);
-  if (se) throw new Error(`cskHole: bad result (${se})`);
-  return out;
+  return _c4RequireValidSolid(
+    M.difference(M.difference(part, thru), cone.transform(t)),
+    'cskHole',
+  );
 }
 
 /**
@@ -1535,8 +1578,9 @@ function cskHole(part, frame, u, v, diaThru, diaCsk, cskDepth, span) {
  * actually use (≤ ~30); the C8 timeout guard catches anything pathological.
  */
 function chamferEdges(part, edges, c) {
+  _c4RequirePositive('chamferEdges', 'c (leg length)', c);
   const M = manifoldModule.Manifold;
-  if (!edges.length) return part;
+  if (!edges || !edges.length) return part;
   let data = null;
   const laz = () => (data ||= c4MeshData(part));
   let out = part;
@@ -1621,6 +1665,10 @@ function convexEdges(m, minAngleDeg = 2) {
  */
 function holePattern(part, frame, opts) {
   const { n = 1, m = 1, spacingU = 10, spacingV = 10, dia = 2, span, u0 = 0, v0 = 0 } = opts;
+  _c4RequirePositive('holePattern', 'dia', dia);
+  if (!frame || !frame.normal || !frame.center || !frame.x || !frame.y) {
+    throw new Error('holePattern: frame must come from workplaneFromFace (needs center/normal/x/y)');
+  }
   const sp = span ?? holeSpan(part, frame);
   let out = part;
   for (let i = 0; i < n; i++) {
@@ -1631,6 +1679,39 @@ function holePattern(part, frame, opts) {
     }
   }
   return out;
+}
+
+// ---------------------------------------------------------------- fastener holes (slice 01 puzzle vocabulary)
+/**
+ * clearanceHole(part, frame, u, v, size, spanOrOpts?, fit?)
+ * Cut a clearance hole for fastener `size` ('M3', 3, '#8-32', …).
+ * fit: 'close'|'normal'|'loose' (default 'normal'). span defaults to holeSpan().
+ * Also accepts opts object: { fit, span }.
+ */
+function clearanceHole(part, frame, u, v, size, spanOrOpts, fitArg) {
+  let fit = 'normal';
+  let span;
+  if (spanOrOpts && typeof spanOrOpts === 'object' && !Array.isArray(spanOrOpts)) {
+    fit = spanOrOpts.fit ?? 'normal';
+    span = spanOrOpts.span;
+  } else {
+    span = spanOrOpts;
+    if (fitArg != null) fit = fitArg;
+  }
+  const dia = fastenerClearanceDia(size, fit);
+  const sp = span ?? holeSpan(part, frame);
+  return hole(part, frame, u, v, dia, sp);
+}
+
+/**
+ * tapDrillHole(part, frame, u, v, size, span?)
+ * Cut a tap-drill hole for fastener `size` (for subsequent tapping).
+ * span defaults to holeSpan().
+ */
+function tapDrillHole(part, frame, u, v, size, span) {
+  const dia = fastenerTapDrillDia(size);
+  const sp = span ?? holeSpan(part, frame);
+  return hole(part, frame, u, v, dia, sp);
 }
 
 // ============================================================================
@@ -2141,10 +2222,18 @@ function filletEdges(part, edgesIn, radiusIn, opts = {}) {
     edgeGeom.push({ kA: e.a, kB: e.b, V0: P0, V1: P1, r, theta, cyl });
   }
   if (!cutters.length) {
-    // Every edge was skipped (tessellation slivers) — nothing to do.
-    if (skippedShort.length)
-      console.warn(`filletEdges: skipped all ${skippedShort.length} edges (too short for r — tessellation slivers); part unchanged`);
-    return part;
+    // Slice-01: never silently "succeed" with an unchanged part when the
+    // caller asked for fillets. Empty edge list → no-op; non-empty with
+    // zero cutters → loud failure (the old console.warn hid hole-rim misses).
+    if (!edges.length) return part;
+    const hint = skippedShort.length
+      ? `all ${skippedShort.length} edges failed the size guard (t > 0.45·L); example t=${skippedShort[0].t} L=${skippedShort[0].L}`
+      : 'no valid cutters (geometry/status rejected every edge)';
+    throw new Error(
+      `filletEdges: no edges could be filleted (${hint}). ` +
+      `For circular rims pass convexEdges(part) unfiltered so closed-run detection can fire; or reduce r. ` +
+      `Curved-face singleton fillets are unsupported.`,
+    );
   }
   // Union cutters, subtract once: shared-corner overlaps counted once
   // (matches analytic inclusion-exclusion — see block header).
@@ -2451,6 +2540,14 @@ const HELPER_FUNCTIONS = {
   chamferEdges,
   convexEdges,
   holePattern,
+  // Slice-01 fastener vocabulary
+  clearanceHole,
+  tapDrillHole,
+  fastenerClearanceDia,
+  fastenerTapDrillDia,
+  fastenerMajorDia,
+  listFastenerSizes,
+  resolveFastenerSize,
   // C6 fillet (see block above)
   filletEdges,
   // C8 revolve/extrude with safe winding (see block above)

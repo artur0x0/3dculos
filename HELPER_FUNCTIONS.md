@@ -2,6 +2,39 @@
 
 The Manifold Sandbox provides several helper functions in addition to the core Manifold API. These functions are available in all user scripts and simplify common CAD operations.
 
+## Official puzzle vocabulary (Slice 01)
+
+Match-the-part puzzles are expected to stay inside this allowlist. Prefer these
+names over hand-rolled cylinders for fastener features so scripts stay
+comparable and train-able.
+
+| Helper | Role |
+|---|---|
+| `filletEdges(part, edges, r, opts?)` | Circular fillet on convex edges (C6) |
+| `chamferEdges(part, edges, c)` | Equal-leg chamfer (C4) |
+| `hole` / `holeSpan` / `holePattern` | Generic through-holes |
+| `clearanceHole(part, frame, u, v, size, span?, fit?)` | Clearance hole by fastener size |
+| `tapDrillHole(part, frame, u, v, size, span?)` | Tap-drill hole by fastener size |
+| `cboreHole` / `cskHole` | Counterbore / countersink |
+| `convexEdges` / `facesByNormal` / `workplaneFromFace` / `planarFaceAt` / `edgesByOrientation` | Selection |
+| `shell`, `addDraft`, `tube`, `hexPrism`, `roundedBox`, `mirror`, `array3D`, `polarArray`, `center`, `align` | Solids / layout |
+| `loft`, `sweep`, `sweepPoints`, `makeExtrude`, `makeRevolve` | Profiles / paths |
+
+**Loud failure rule:** feature helpers throw named `Error`s on bad inputs,
+degenerate cutters, non-manifold / empty results, or (for `filletEdges`) when
+*every* requested edge is skipped. Silent “success” with an unchanged solid is
+not allowed for puzzle vocabulary ops.
+
+**Supported / unsupported (honest):**
+- **Supported:** straight convex edges; closed circular rims via `filletEdges`
+  closed-run detection; metric + common UNC clearance/tap sizes below.
+- **Unsupported:** curved-face singleton fillets; open (partial-arc) curved
+  runs; concave “fillets” (adding material); arbitrary non-table fastener sizes.
+
+Lookup helpers (also injected): `fastenerClearanceDia(size, fit?)`,
+`fastenerTapDrillDia(size)`, `fastenerMajorDia(size)`, `listFastenerSizes()`,
+`resolveFastenerSize(size)`.
+
 ## Core Manifold API
 
 All standard Manifold functions are available:
@@ -503,6 +536,48 @@ const fr = workplaneFromFace(part, facesByNormal(part, [0,0,1])[0]);
 part = holePattern(part, fr, { n: 3, m: 2, spacingU: 12, spacingV: 10, dia: 4 });
 ```
 
+
+### clearanceHole(part, frame, u, v, size, spanOrOpts?, fit?)
+
+Cut a **clearance** hole sized for fastener `size`. `size` accepts `'M3'`,
+`3`, `'M2.5'`, `'#8-32'`, `'1/4-20'`, etc. `fit` is `'close'|'normal'|'loose'`
+(aliases: tight/medium/coarse). `span` defaults to `holeSpan(part, frame)`.
+You can also pass an options object as the 6th argument:
+`{ fit: 'close', span: 12 }`.
+
+```javascript
+const fr = workplaneFromFace(part, facesByNormal(part, [0,0,1])[0]);
+part = clearanceHole(part, fr, 10, 8, 'M3');                 // normal fit
+part = clearanceHole(part, fr, -10, 8, 'M4', undefined, 'close');
+part = clearanceHole(part, fr, 0, 0, 'M5', { fit: 'loose' });
+```
+
+Throws on unknown size/fit, non-positive derived diameter, bad frame, or empty /
+non-manifold result.
+
+### tapDrillHole(part, frame, u, v, size, span?)
+
+Cut a **tap-drill** hole for fastener `size` (hole intended to be tapped).
+`span` defaults to `holeSpan(part, frame)`.
+
+```javascript
+const fr = workplaneFromFace(part, facesByNormal(part, [0,0,1])[0]);
+part = tapDrillHole(part, fr, 0, 0, 'M3');   // Ø2.5 for M3 coarse
+part = tapDrillHole(part, fr, 12, 0, '#8-32');
+```
+
+### fastenerClearanceDia(size, fit = 'normal') / fastenerTapDrillDia(size)
+
+Return the clearance or tap-drill diameter in **mm** without cutting. Useful
+for custom patterns:
+
+```javascript
+const d = fastenerClearanceDia('M6', 'normal'); // 6.6
+part = holePattern(part, fr, { n: 2, m: 2, spacingU: 20, spacingV: 20, dia: d });
+```
+
+`listFastenerSizes()` → `{ metric: ['M1.6','M2',…], unc: ['#4-40',…] }`.
+
 ---
 
 ## Fillet Helper (C6)
@@ -584,10 +659,11 @@ and non-circular chains).**
   also throws via the ball probe. (Applies to every edge, run or not.)
 - **Size guard** — for a SINGLETON edge (or an edge in a chain that didn't
   qualify as a closed circular run), `r` must satisfy `t < 0.45·L` where
-  `L` is the edge length; edges that FAIL this guard are **skipped** (part
-  unchanged for that edge), not an error. Closed-circular-run members are
-  exempt — their per-segment `L` is a tessellation artifact, not a signal
-  that the feature is too small.
+  `L` is the edge length; individual edges that FAIL this guard are
+  **skipped** when other edges still produce cutters. If **every** requested
+  edge is skipped / rejected, `filletEdges` **throws** (no silent unchanged
+  part). Closed-circular-run members are exempt — their per-segment `L` is a
+  tessellation artifact, not a signal that the feature is too small.
 - **Arc tessellation** — a SINGLETON edge's fillet arc is an inscribed
   384-gon: the result volume sits at most `L·(π−(n/2)·sin(2π/n))·r²` BELOW
   the circle-exact value per edge. A closed run's revolve resolution is
