@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../hooks/useAuth';
-import { X, User, Mail, Loader2, Key, MapPin, Phone } from 'lucide-react';
+import { X, User, Mail, Loader2, Phone } from 'lucide-react';
 
 const AccountModal = ({ onClose, user, selectedTab = 'info' }) => {
   const [activeTab, setActiveTab] = useState(selectedTab);

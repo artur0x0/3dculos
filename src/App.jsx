@@ -163,7 +163,7 @@ const App = () => {
           try {
             const info = await ctx.getModelInfo(); // worker-side truth, provably ours now
             if (info) { this.volume = info.volume ?? null; this.bbox = info.boundingBox || null; }
-          } catch {}
+          } catch { /* best-effort mirror; worker info optional here */ }
           // Mirror the code we ran into Monaco so the human sees the exact source that
           // produced this picture. No-ops when the buffer already holds it (see setTextOnly).
           this.editorMirror = this.mirrorToEditor();
@@ -179,7 +179,7 @@ const App = () => {
         try {
           const info = await window.__MANIFOLD_CONTEXT__.getModelInfo();
           if (info) { this.volume = info.volume ?? null; this.bbox = info.boundingBox || null; }
-        } catch {}
+        } catch { /* best-effort mirror; worker info optional here */ }
       },
       // ── Stage verification (kernel-truth arbiter for the cadgen pilot) ──
       // Runs a candidate script through the SAME worker the Run button uses and keeps
@@ -191,7 +191,7 @@ const App = () => {
         const ctx = window.__MANIFOLD_CONTEXT__;
         if (!ctx || !ctx.isReady) return { ok: false, error: 'manifold context not ready' };
         try {
-          const result = await ctx.executeScript(script, { timeoutMs });   // worker 'execute' -> lastResult
+          await ctx.executeScript(script, { timeoutMs });   // worker 'execute' -> lastResult
           const p = ctx.lastResult || {};
           return {
             ok: true,

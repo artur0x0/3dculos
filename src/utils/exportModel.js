@@ -3,7 +3,7 @@
 
 import { saveAs } from 'file-saver';
 import manifoldContext from './ManifoldWorker';
-import { export3MF, export3MFBase64, blobToBase64 } from './model-io';
+import { export3MF, blobToBase64 } from './model-io';
 
 /**
  * Generate a 3MF blob from the current script

@@ -156,7 +156,6 @@ export function getPlaneOffsetRange(currentScript, normal) {
  */
 export function getCutEdges(original, trimmed) {
   // Get meshes
-  const originalMesh = original.getMesh();
   const trimmedMesh = trimmed.getMesh();
   
   // The cut edges are the new boundary edges in the trimmed mesh

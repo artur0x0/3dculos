@@ -655,165 +655,6 @@ function vecNormalize(v) {
 }
 
 /**
- * Sweep a 2D profile along a 3D path
- * 
- * Creates a 3D manifold by extruding a cross-section profile along a parametric
- * path curve. Uses Frenet-Serret frames for orientation and arc-length 
- * parameterization for uniform distribution.
- * 
- * @param {CrossSection} profile - The 2D cross-section to sweep (centered at origin)
- * @param {Object} path - Parametric path definition
- * @param {Function} path.position - Function(t) returning [x,y,z] position on curve
- * @param {Function} [path.derivative] - Function(t) returning first derivative [dx,dy,dz].
- *                                       If omitted, computed numerically.
- * @param {Function} [path.secondDerivative] - Function(t) returning second derivative.
- *                                             If omitted, computed numerically.
- * @param {number} [path.tMin=0] - Start parameter value
- * @param {number} [path.tMax=1] - End parameter value
- * @param {Object} [options] - Sweep options
- * @param {number} [options.arcSamples=1000] - Samples for arc-length table (higher = more accurate)
- * @param {number} [options.extrudeSegments=64] - Segments along the extrusion
- * @param {number} [options.epsilon=1e-5] - Delta for numerical derivatives
- * @returns {Manifold} The swept 3D manifold
- * 
- * @example
- * // Sweep a circle along a helix
- * const profile = CrossSection.circle(2, 32);
- * const helixPath = {
- *   position: (t) => [10 * Math.cos(t), 10 * Math.sin(t), 3 * t],
- *   tMin: 0,
- *   tMax: 4 * Math.PI
- * };
- * return sweep2(profile, helixPath);
- * 
- * @example
- * // Sweep a square along a bezier-like curve with explicit derivatives
- * const profile = CrossSection.square([4, 4], true);
- * const curvePath = {
- *   position: (t) => [t * 50, 20 * Math.sin(t * Math.PI), 0],
- *   derivative: (t) => [50, 20 * Math.PI * Math.cos(t * Math.PI), 0],
- *   tMin: 0,
- *   tMax: 1
- * };
- * return sweep2(profile, curvePath, { extrudeSegments: 100 });
- */
-function sweep2(profile, path, options = {}) {
-  if (!manifoldModule) throw new Error('Manifold not initialized');
-  const { Manifold, CrossSection } = manifoldModule;
-  
-  // Extract path config with defaults
-  const {
-    position,
-    derivative: explicitDerivative,
-    secondDerivative: explicitSecondDerivative,
-    tMin = 0,
-    tMax = 1
-  } = path;
-  
-  // Extract options with defaults
-  const {
-    arcSamples = 1000,
-    extrudeSegments = 64,
-    epsilon = 1e-5
-  } = options;
-  
-  if (typeof position !== 'function') {
-    throw new Error('path.position must be a function');
-  }
-  
-  // Numerical derivative fallback
-  const derivative = explicitDerivative || ((t) => {
-    const p0 = position(t - epsilon);
-    const p1 = position(t + epsilon);
-    return vecMul(1 / (2 * epsilon), vecSub(p1, p0));
-  });
-  
-  const secondDerivative = explicitSecondDerivative || ((t) => {
-    const d0 = derivative(t - epsilon);
-    const d1 = derivative(t + epsilon);
-    return vecMul(1 / (2 * epsilon), vecSub(d1, d0));
-  });
-  
-  // Precompute arc length table using trapezoidal rule
-  const tValues = [];
-  const sValues = [0];
-  const deltaT = (tMax - tMin) / arcSamples;
-  
-  for (let i = 0; i <= arcSamples; i++) {
-    tValues.push(tMin + i * deltaT);
-  }
-  
-  for (let i = 1; i <= arcSamples; i++) {
-    const speedPrev = vecNorm(derivative(tValues[i - 1]));
-    const speedCurr = vecNorm(derivative(tValues[i]));
-    const deltaS = (speedPrev + speedCurr) / 2 * deltaT;
-    sValues.push(sValues[i - 1] + deltaS);
-  }
-  
-  const totalLength = sValues[sValues.length - 1];
-  
-  if (totalLength < epsilon) {
-    throw new Error('Path has zero or near-zero length');
-  }
-  
-  // Create straight extrusion to warp
-  const straight = Manifold.extrude(profile, totalLength, extrudeSegments);
-  
-  // Warp function using Frenet-Serret frame
-  const warp = (v) => {
-    let [x, y, s] = v;
-    s = Math.max(0, Math.min(totalLength, s));
-    
-    // Binary search for arc length to parameter mapping
-    let low = 0;
-    let high = sValues.length - 1;
-    while (low < high) {
-      const mid = Math.floor((low + high + 1) / 2);
-      if (sValues[mid] <= s) {
-        low = mid;
-      } else {
-        high = mid - 1;
-      }
-    }
-    
-    let i = low;
-    if (i === sValues.length - 1) i--;
-    
-    // Interpolate t value
-    const frac = (s - sValues[i]) / (sValues[i + 1] - sValues[i]);
-    const t = tValues[i] + frac * (tValues[i + 1] - tValues[i]);
-    
-    // Compute Frenet-Serret frame
-    const P = position(t);
-    const TPrime = derivative(t);
-    const speed = vecNorm(TPrime);
-    const T = vecMul(1 / speed, TPrime);
-    
-    // Curvature vector for normal
-    const A = secondDerivative(t);
-    const TDotA = vecDot(T, A);
-    const TDeriv = vecMul(1 / speed, vecSub(A, vecMul(TDotA, T)));
-    const curv = vecNorm(TDeriv);
-    
-    // Normal and binormal
-    let N = curv > 1e-8 ? vecMul(1 / curv, TDeriv) : [1, 0, 0];
-    let B = vecNormalize(vecCross(T, N));
-    
-    // Map local (x, y) to N-B plane
-    const offsetX = x * N[0] + y * B[0];
-    const offsetY = x * N[1] + y * B[1];
-    const offsetZ = x * N[2] + y * B[2];
-    
-    // Assign in-place
-    v[0] = P[0] + offsetX;
-    v[1] = P[1] + offsetY;
-    v[2] = P[2] + offsetZ;
-  };
-  
-  return straight.warp(warp);
-}
-
-/**
  * Sweep a profile along a path defined by an array of points
  * 
  * Convenience wrapper for sweep() that accepts a polyline path.
@@ -1948,7 +1789,7 @@ function _c6DetectRuns(geoms) {
     const chain = [i];
     let closed = false;
     let curIdx = i, curEnd = 'b';
-    while (true) {
+    for (;;) {
       const nxt = findNext(curIdx, curEnd);
       if (!nxt) break;
       if (nxt.idx === i) { closed = true; break; } // loop closes on itself
@@ -1960,7 +1801,7 @@ function _c6DetectRuns(geoms) {
     }
     if (!closed) {
       curIdx = i; curEnd = 'a';
-      while (true) {
+      for (;;) {
         const nxt = findNext(curIdx, curEnd);
         if (!nxt) break;
         if (visited[nxt.idx]) break;

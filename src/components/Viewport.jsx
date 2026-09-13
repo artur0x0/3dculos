@@ -1,4 +1,7 @@
 // components/Viewport.jsx
+/* eslint-disable react-hooks/exhaustive-deps -- legacy: deps arrays below are tuned for
+   three.js render-loop stability (scene/camera/controls live in refs); adding the flagged
+   refs would rebind listeners/materials per render. Revisit deliberately, not via lint. */
 import React, { useEffect, useRef, useState, useCallback, forwardRef, useImperativeHandle } from 'react';
 import {
   WebGLRenderer,
@@ -32,7 +35,7 @@ import { createCuttingPlaneWidget, updateCuttingPlaneWidget } from '../utils/cut
 import { AxesHelper } from 'three';
 import { calculateMeasurements, createMeasurementLines, disposeMeasurementLines } from '../utils/measurementTool';
 import { fitView, VIEW_PRESETS } from '../utils/viewCamera';
-import ViewSnapControl from './ViewSnapControl';
+
 import { validateScript, formatValidationErrors } from '../utils/scriptValidator';
 import manifoldContext from '../utils/ManifoldWorker';
 import { formatGameTime } from '../utils/gamePuzzle';
@@ -687,7 +690,7 @@ const Viewport = forwardRef(({
           // az/el in degrees, z-up world (the app models parts with +Z up). Delegates to
           // the same fitView the UI buttons use, so an automated capture frames the part
           // exactly as a manual snap would.
-          stageFit: ({ az = 35, el = 20, margin = 1.15, viewTarget = null } = {}) => {
+          stageFit: ({ az = 35, el = 20, margin = 1.15 } = {}) => {
             const cam = cameraRef.current, ctl = controlsRef.current, res = resultRef.current;
             if (!cam || !res || !res.geometry) return false;
             const azr = (az * Math.PI) / 180, elr = (el * Math.PI) / 180;
@@ -711,7 +714,7 @@ const Viewport = forwardRef(({
           // viewport and how much of it the part covers. A snap that silently no-ops, a
           // part rendered off-screen tiny, or geometry clipped by near/far all fail here
           // with a readable reason -- which pixels alone would not reliably tell us.
-          stageVerifyFraming: (maxTriangles = 200000) => {
+          stageVerifyFraming: () => {
             const cam = cameraRef.current, res = resultRef.current;
             if (!cam || !res?.geometry?.attributes?.position) return { ok: false, problems: ['no camera or geometry'] };
             const g = res.geometry;
@@ -899,7 +902,7 @@ const Viewport = forwardRef(({
       }
     };
 
-    const resizeObserver = new ResizeObserver((entries) => {
+    const resizeObserver = new ResizeObserver(() => {
       if (!initialized) {
         initScene();
       } else {
@@ -1102,9 +1105,8 @@ const Viewport = forwardRef(({
     }
 
     // Set up material groups
-    if (meshData.runIndex && meshData.runOriginalID) {
+    if (meshData.runIndex) {
       const runIndex = meshData.runIndex;
-      const runOriginalID = meshData.runOriginalID;
       
       let start = runIndex[0];
       for (let run = 0; run < meshData.numRun; ++run) {

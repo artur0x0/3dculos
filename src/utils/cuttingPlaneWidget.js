@@ -7,8 +7,6 @@ import {
   LineSegments,
   EdgesGeometry,
   LineBasicMaterial,
-  BufferGeometry,
-  BufferAttribute,
   Group,
   Vector3
 } from 'three';

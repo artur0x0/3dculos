@@ -467,7 +467,7 @@ async function inflate(data) {
       
       const chunks = [];
       const reader = ds.readable.getReader();
-      while (true) {
+      for (;;) {
         const { done, value } = await reader.read();
         if (done) break;
         chunks.push(value);

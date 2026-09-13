@@ -93,34 +93,6 @@ function buildEdgeMap(geometry, targetGroup) {
 }
 
 /**
- * Get all adjacent triangles to a set of triangles
- */
-function getAdjacentTriangles(triangles, edgeToTriangles, geometry) {
-  const adjacent = new Set();
-  const index = geometry.index.array;
-  
-  for (const triIdx of triangles) {
-    const i0 = index[triIdx * 3];
-    const i1 = index[triIdx * 3 + 1];
-    const i2 = index[triIdx * 3 + 2];
-    
-    const edges = [
-      [Math.min(i0, i1), Math.max(i0, i1)],
-      [Math.min(i1, i2), Math.max(i1, i2)],
-      [Math.min(i2, i0), Math.max(i2, i0)]
-    ];
-    
-    edges.forEach(([v1, v2]) => {
-      const key = `${v1}-${v2}`;
-      const adjacentTris = edgeToTriangles.get(key) || [];
-      adjacentTris.forEach(adjIdx => adjacent.add(adjIdx));
-    });
-  }
-  
-  return Array.from(adjacent);
-}
-
-/**
  * Helper to get edges for a triangle
  */
 function getTriangleEdges(geometry, triIdx) {
@@ -149,20 +121,6 @@ export function selectFaceByID(geometry, seedFaceIndex, faceData) {
   
   const targetNormal = new Vector3(faceData.normal[0], faceData.normal[1], faceData.normal[2]);
   console.log("[Face Selection] Target Normal is:", targetNormal);
-  
-  // Find which group this triangle belongs to
-  const groups = geometry.groups;
-  let targetGroup = null;
-  const indexInBuffer = seedFaceIndex * 3;
-  
-  for (let i = 0; i < groups.length; i++) {
-    const group = groups[i];
-    if (indexInBuffer >= group.start && indexInBuffer < group.start + group.count) {
-      targetGroup = group;
-      console.log('[Face Selection] Target group:', i, group);
-      break;
-    }
-  }
   
   // Build edge-to-triangle map
   const edgeToTriangles = buildEdgeMap(geometry, null);

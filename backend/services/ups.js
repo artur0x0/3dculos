@@ -61,7 +61,7 @@ async function getAccessToken() {
       errorText = await response.text();
       try {
         errorJson = JSON.parse(errorText);
-      } catch {}
+      } catch (_bodyParseErr) { /* malformed error body: keep errorJson null */ }
     } catch (e) {
       errorText = '(could not read response body)';
     }
