@@ -119,6 +119,19 @@ const Viewport = forwardRef(({
 
   useImperativeHandle(ref, () => ({
     executeScript,
+    /** Clear player attempt mesh (game mode enter: ghost-only until Run). */
+    clearAttempt: () => {
+      clearHighlight();
+      setSelectedFace(null);
+      onFaceSelected?.(null);
+      setCachedMeshData(null);
+      setExecutionError(null);
+      setModelBounds(null);
+      if (resultRef.current) {
+        resultRef.current.geometry?.dispose();
+        resultRef.current.geometry = new BufferGeometry();
+      }
+    },
     clearFaceSelection: () => {
       clearHighlight();
       setSelectedFace(null);
@@ -974,10 +987,13 @@ const Viewport = forwardRef(({
       const material = new MeshLambertMaterial({
         color: 0x22d3ee,
         transparent: true,
-        opacity: 0.3,
+        opacity: 0.35,
         depthWrite: false,
         flatShading: true,
         side: 2,
+        wireframe: false,
+        emissive: 0x0e7490,
+        emissiveIntensity: 0.15,
       });
 
       const mesh = new ThreeMesh(geometry, material);
@@ -985,6 +1001,17 @@ const Viewport = forwardRef(({
       mesh.renderOrder = 1;
       sceneRef.current.add(mesh);
       ghostMeshRef.current = mesh;
+
+      // Frame the ghost when there is no attempt solid yet
+      const attemptEmpty = !resultRef.current?.geometry?.attributes?.position?.count;
+      if (attemptEmpty && cameraRef.current && fitView) {
+        fitView({
+          camera: cameraRef.current,
+          controls: controlsRef.current,
+          geometry,
+          margin: 1.2,
+        });
+      }
     };
 
     tryAdd();

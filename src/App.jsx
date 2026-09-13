@@ -437,12 +437,11 @@ const App = () => {
       setShowHints(false);
       setGameError(null);
 
-      // Load starter into editor (auto-runs attempt solid)
-      codeEditorRef.current?.loadContent(
-        DEMO_PUZZLE.starterScript,
-        `Puzzle: ${DEMO_PUZZLE.title}`,
-        true
-      );
+      // Blank editor + no attempt solid until Run (slice 02.1).
+      // Use setTextOnly — loadContent always auto-executes via onExecute(..., true).
+      setCurrentScript('');
+      codeEditorRef.current?.setTextOnly?.('');
+      viewportRef.current?.clearAttempt?.();
     } catch (err) {
       console.error('[App] Failed to start puzzle:', err);
       setGameError(err.message || 'Failed to start puzzle');

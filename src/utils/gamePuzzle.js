@@ -9,15 +9,10 @@ return part;
 `;
 
 /**
- * Starter script loaded into the editor when the player enters game mode.
- * Starts as an unfilleted box so the ghost (filleted) is visually distinct.
+ * Editor content when entering game mode.
+ * Blank on purpose — spoilers live only in the Hint modal (slice 02.1).
  */
-export const GAME_STARTER_SCRIPT = `// Match the translucent cyan ghost target.
-// Rebuild the same solid with helpers, then hit Run.
-// Hint: filletEdges(part, convexEdges(part), 3, { sphericalCorners: true })
-
-return Manifold.cube([40, 30, 20], true);
-`;
+export const GAME_STARTER_SCRIPT = '';
 
 export const DEMO_PUZZLE = {
   id: 'demo-fillet-box',
