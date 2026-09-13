@@ -46,8 +46,22 @@ const READONLY_GLOBALS = [
 let manifoldModule = null;
 let isInitialized = false;
 let cachedManifold = null;
-// Live ghost target for game-mode match (retained across attempt executes).
+// Live ghost target for game-mode match (independent cloned handle retained
+// across attempt executes — not an alias of cachedManifold).
 let gameTargetManifold = null;
+
+/** Best-effort Manifold.dispose (embind .delete); ignore missing/throws. */
+function _safeDeleteManifold(m) {
+  if (!m) return;
+  try {
+    if (typeof m.delete === 'function') m.delete();
+  } catch (_) { /* already freed or non-embind */ }
+}
+
+/** Finite and > 0, else fallback (for relEps / volFloor). */
+function _positiveFinite(v, fallback) {
+  return (Number.isFinite(v) && v > 0) ? v : fallback;
+}
 
 // ============================================================================
 // EXTENDED MANIFOLD HELPERS
@@ -2898,7 +2912,8 @@ function _stageVerify(cand, target, opts = {}) {
 
 /**
  * Game-mode match: attempt vs retained ghost, same coordinate frame.
- * V_symdiff / max(V_target, volFloor) < relEps  (or both boolean diffs empty).
+ * Single criterion: V_symdiff / max(V_target, volFloor) < relEps
+ * (empty diffs have volume 0, so exact match is covered by rel < relEps).
  */
 function _gameMatchCompare(attempt, target, relEps, volFloor) {
   const { Manifold } = manifoldModule;
@@ -2917,14 +2932,24 @@ function _gameMatchCompare(attempt, target, relEps, volFloor) {
       volA, volT, volDiff: volDelta, rel: volDelta / denom,
     };
   }
+  let extra = null;
+  let missing = null;
   try {
-    const extra = Manifold.difference(attempt, target);
-    const missing = Manifold.difference(target, attempt);
-    const empty = (typeof extra.isEmpty === 'function' && extra.isEmpty())
-      && (typeof missing.isEmpty === 'function' && missing.isEmpty());
+    extra = Manifold.difference(attempt, target);
+    missing = Manifold.difference(target, attempt);
+    // Optional fast-path: both empty ⇒ exact match (still dispose in finally).
+    try {
+      if (typeof extra.isEmpty === 'function' && typeof missing.isEmpty === 'function'
+          && extra.isEmpty() && missing.isEmpty()) {
+        return {
+          match: true, reason: 'match',
+          volA, volT, volDiff: 0, rel: 0,
+        };
+      }
+    } catch (_) { /* isEmpty unavailable/throws — fall through to volume */ }
     const volDiff = extra.volume() + missing.volume();
     const rel = volDiff / denom;
-    const match = empty || rel < relEps;
+    const match = rel < relEps;
     return {
       match,
       reason: match ? 'match' : 'difference_too_large',
@@ -2935,6 +2960,9 @@ function _gameMatchCompare(attempt, target, relEps, volFloor) {
       match: false, reason: 'boolean_failed',
       error: String(e && e.message || e), volA, volT,
     };
+  } finally {
+    _safeDeleteManifold(extra);
+    _safeDeleteManifold(missing);
   }
 }
 
@@ -3032,7 +3060,9 @@ self.onmessage = async (event) => {
         if (se) throw new Error(`storeGameTarget: target is invalid (${se})`);
         const volume = cachedManifold.volume();
         if (!(volume > 0)) throw new Error('storeGameTarget: target has no volume');
-        gameTargetManifold = cachedManifold;
+        // Own retained handle — do not alias cachedManifold (attempt Run overwrites it).
+        _safeDeleteManifold(gameTargetManifold);
+        gameTargetManifold = cachedManifold.clone();
         self.postMessage({
           type: 'result', id,
           payload: { ok: true, volume, boundingBox: _bboxArray(cachedManifold) },
@@ -3041,6 +3071,7 @@ self.onmessage = async (event) => {
       }
 
       case 'clearGameTarget': {
+        _safeDeleteManifold(gameTargetManifold);
         gameTargetManifold = null;
         self.postMessage({ type: 'result', id, payload: { ok: true } });
         break;
@@ -3050,8 +3081,8 @@ self.onmessage = async (event) => {
         if (!isInitialized) throw new Error('Worker not initialized');
         if (!gameTargetManifold) throw new Error('compareGameMatch: no ghost target stored');
         if (!cachedManifold) throw new Error('compareGameMatch: execute an attempt first');
-        const relEps = (payload && payload.relEps != null) ? payload.relEps : 0.002;
-        const volFloor = (payload && payload.volFloor != null) ? payload.volFloor : 1e-6;
+        const relEps = _positiveFinite(payload?.relEps, 0.002);
+        const volFloor = _positiveFinite(payload?.volFloor, 1e-6);
         const verdict = _gameMatchCompare(cachedManifold, gameTargetManifold, relEps, volFloor);
         self.postMessage({
           type: 'result', id,

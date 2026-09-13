@@ -9,7 +9,8 @@
         "lint": "eslint . --ext js,jsx --report-unused-disable-directives --max-warnings 0",
         "preview": "vite preview",
         "verify": "node ${CADGEN_HARNESS:-/home/artur/cadgen-workspace}/harness/verify_all.mjs",
-        "golden:slice01": "node scripts/golden/smoke_slice01.mjs"
+        "golden:slice01": "node scripts/golden/smoke_slice01.mjs",
+        "golden:slice03": "node scripts/golden/smoke_slice03_format.mjs"
     },
     "dependencies": {
         "@monaco-editor/react": "^4.6.0",

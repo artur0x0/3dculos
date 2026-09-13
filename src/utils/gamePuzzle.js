@@ -33,7 +33,12 @@ export const DEMO_PUZZLE = {
  *
  * 0.002 (0.2%) covers fillet/chamfer segment slivers on the demo part
  * (~2e4 mm³) while still rejecting a ~0.1 mm miss on a primary dimension.
- * Empty boolean difference (isEmpty on both sides) also counts as a match.
+ * Empty boolean diffs have volume 0, so exact match is covered by the
+ * volume criterion (isEmpty is only an optional fast-path).
+ *
+ * Tiny-solid note: for sub-~0.3 mm features / tiny volumes the volume
+ * pre-filter is weak and grading is dominated by the symdiff branch; the
+ * demo part (~2e4 mm³) is the intended regime.
  *
  * Pose is compared as-built (no recenter / rotation search) so the attempt
  * must sit on the ghost.
@@ -49,6 +54,7 @@ export function formatGameTime(ms) {
   const clamped = Math.max(0, Number(ms) || 0);
   const totalTenths = Math.floor(clamped / 100);
   const minutes = Math.floor(totalTenths / 600);
+  // seconds is 0.0–59.9; padStart(4,'0') yields m:ss.t e.g. 0:05.0 / 1:01.2
   const seconds = (totalTenths % 600) / 10;
   return `${minutes}:${seconds.toFixed(1).padStart(4, '0')}`;
 }

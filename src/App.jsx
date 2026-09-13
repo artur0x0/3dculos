@@ -65,6 +65,7 @@ const App = () => {
   const codeEditorRef = useRef(null);
   const gameTimerStartRef = useRef(0);
   const successClearTimerRef = useRef(null);
+  const gameRunInFlightRef = useRef(false);
   
   const [history, setHistory] = useState({
     branches: {
@@ -469,6 +470,8 @@ const App = () => {
 
   const handleStartGame = async () => {
     if (gameLoading) return;
+    // Clear stale success/timers from Exit-during-success before loading.
+    resetGameScoring();
     setGameLoading(true);
     setGameError(null);
     try {
@@ -522,40 +525,46 @@ const App = () => {
   };
 
   const handleGameRun = async () => {
-    if (gameSuccess) return;
+    if (gameSuccess || gameRunInFlightRef.current) return;
     const code = codeEditorRef.current?.getContent?.();
     if (code == null) return;
+    gameRunInFlightRef.current = true;
     setCurrentScript(code);
-    const ok = await viewportRef.current?.executeScript(code);
-    if (!ok) return;
     try {
-      const verdict = await manifoldContext.compareGameMatch({
-        relEps: MATCH_REL_EPS,
-        volFloor: MATCH_VOL_FLOOR_MM3,
-      });
-      if (!verdict?.match) {
-        console.log('[App] No match', verdict);
-        return;
+      const ok = await viewportRef.current?.executeScript(code);
+      if (!ok) return;
+      try {
+        const verdict = await manifoldContext.compareGameMatch({
+          relEps: MATCH_REL_EPS,
+          volFloor: MATCH_VOL_FLOOR_MM3,
+        });
+        if (!verdict?.match) {
+          console.log('[App] No match', verdict);
+          return;
+        }
+        const elapsed = performance.now() - gameTimerStartRef.current;
+        setGameTimerRunning(false);
+        setGameElapsedMs(elapsed);
+        setGameSuccess(true);
+        clearSuccessTimer();
+        // Default: no Submit. Brief success, then clear attempt + blank editor
+        // so the same puzzle can be tried again. Timer restarts after the clear.
+        successClearTimerRef.current = setTimeout(() => {
+          successClearTimerRef.current = null;
+          setGameSuccess(false);
+          setCurrentScript('');
+          codeEditorRef.current?.setTextOnly?.('');
+          viewportRef.current?.clearAttempt?.();
+          gameTimerStartRef.current = performance.now();
+          setGameElapsedMs(0);
+          setGameTimerRunning(true);
+        }, SUCCESS_CLEAR_MS);
+      } catch (err) {
+        console.warn('[App] Match check failed:', err);
       }
-      const elapsed = performance.now() - gameTimerStartRef.current;
-      setGameTimerRunning(false);
-      setGameElapsedMs(elapsed);
-      setGameSuccess(true);
-      clearSuccessTimer();
-      // Default: no Submit. Brief success, then clear attempt + blank editor
-      // so the same puzzle can be tried again. Timer restarts after the clear.
-      successClearTimerRef.current = setTimeout(() => {
-        successClearTimerRef.current = null;
-        setGameSuccess(false);
-        setCurrentScript('');
-        codeEditorRef.current?.setTextOnly?.('');
-        viewportRef.current?.clearAttempt?.();
-        gameTimerStartRef.current = performance.now();
-        setGameElapsedMs(0);
-        setGameTimerRunning(true);
-      }, SUCCESS_CLEAR_MS);
-    } catch (err) {
-      console.warn('[App] Match check failed:', err);
+    } finally {
+      // Cover execute+compare only so retry Run works after a miss / failed check.
+      gameRunInFlightRef.current = false;
     }
   };
 
