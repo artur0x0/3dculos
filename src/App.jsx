@@ -25,7 +25,12 @@ import {
 } from './utils/editorStorage';
 import manifoldContext from './utils/ManifoldWorker';
 import DEFAULT_SCRIPT from './utils/defaultScript';
-import { DEMO_PUZZLE } from './utils/gamePuzzle';
+import {
+  DEMO_PUZZLE,
+  MATCH_REL_EPS,
+  MATCH_VOL_FLOOR_MM3,
+  SUCCESS_CLEAR_MS,
+} from './utils/gamePuzzle';
 import GameHintsModal from './components/GameHintsModal';
 
 const App = () => {
@@ -50,11 +55,17 @@ const App = () => {
   const [cadScriptBackup, setCadScriptBackup] = useState(null);
   const [gameLoading, setGameLoading] = useState(false);
   const [gameError, setGameError] = useState(null);
+  const [gameElapsedMs, setGameElapsedMs] = useState(0);
+  const [gameTimerRunning, setGameTimerRunning] = useState(false);
+  const [gameSuccess, setGameSuccess] = useState(false);
 
   const { user, isAuthenticated, checkAuth } = useAuth();
 
   const viewportRef = useRef(null);
   const codeEditorRef = useRef(null);
+  const gameTimerStartRef = useRef(0);
+  const successClearTimerRef = useRef(null);
+  const gameRunInFlightRef = useRef(false);
   
   const [history, setHistory] = useState({
     branches: {
@@ -417,8 +428,50 @@ const App = () => {
     };
   }, []);
 
+
+  const clearSuccessTimer = () => {
+    if (successClearTimerRef.current) {
+      clearTimeout(successClearTimerRef.current);
+      successClearTimerRef.current = null;
+    }
+  };
+
+  const resetGameScoring = () => {
+    clearSuccessTimer();
+    setGameTimerRunning(false);
+    setGameElapsedMs(0);
+    setGameSuccess(false);
+    gameTimerStartRef.current = 0;
+  };
+
+  const startGameTimer = () => {
+    clearSuccessTimer();
+    setGameSuccess(false);
+    gameTimerStartRef.current = performance.now();
+    setGameElapsedMs(0);
+    setGameTimerRunning(true);
+  };
+
+  // Puzzle timer: starts on enter, ticks at 10 Hz, stops on match.
+  useEffect(() => {
+    if (!gameTimerRunning) return undefined;
+    const id = setInterval(() => {
+      setGameElapsedMs(performance.now() - gameTimerStartRef.current);
+    }, 100);
+    return () => clearInterval(id);
+  }, [gameTimerRunning]);
+
+  useEffect(() => () => {
+    if (successClearTimerRef.current) {
+      clearTimeout(successClearTimerRef.current);
+      successClearTimerRef.current = null;
+    }
+  }, []);
+
   const handleStartGame = async () => {
     if (gameLoading) return;
+    // Clear stale success/timers from Exit-during-success before loading.
+    resetGameScoring();
     setGameLoading(true);
     setGameError(null);
     try {
@@ -432,6 +485,9 @@ const App = () => {
       if (!result?.mesh?.vertProperties) {
         throw new Error('Ghost target produced no mesh');
       }
+      // Retain the live target manifold for later boolean compare (attempt Run
+      // will overwrite cachedManifold).
+      await manifoldContext.storeGameTarget();
       setGhostMeshData(result.mesh);
       setAppMode('game');
       setShowHints(false);
@@ -442,18 +498,23 @@ const App = () => {
       setCurrentScript('');
       codeEditorRef.current?.setTextOnly?.('');
       viewportRef.current?.clearAttempt?.();
+      startGameTimer();
     } catch (err) {
       console.error('[App] Failed to start puzzle:', err);
       setGameError(err.message || 'Failed to start puzzle');
       setGhostMeshData(null);
       setCadScriptBackup(null);
       setAppMode('cad');
+      resetGameScoring();
+      manifoldContext.clearGameTarget().catch(() => {});
     } finally {
       setGameLoading(false);
     }
   };
 
   const handleExitGame = () => {
+    resetGameScoring();
+    manifoldContext.clearGameTarget().catch(() => {});
     setAppMode('cad');
     setGhostMeshData(null);
     setShowHints(false);
@@ -463,10 +524,57 @@ const App = () => {
     setCadScriptBackup(null);
   };
 
-  const handleGameRun = () => {
+  const handleGameRun = async () => {
+    if (gameSuccess || gameRunInFlightRef.current) return;
     const code = codeEditorRef.current?.getContent?.();
-    if (code != null) {
-      viewportRef.current?.executeScript(code);
+    if (code == null) return;
+    gameRunInFlightRef.current = true;
+    setCurrentScript(code);
+    try {
+      const run = await viewportRef.current?.executeScript(code);
+      if (!run) return;
+      const nonce = typeof run === 'object' ? run.nonce : undefined;
+      try {
+        const verdict = await manifoldContext.compareGameMatch({
+          relEps: MATCH_REL_EPS,
+          volFloor: MATCH_VOL_FLOOR_MM3,
+          nonce,
+        });
+        if (verdict?.ignored) {
+          console.log('[App] Ignoring stale match compare', verdict);
+          return;
+        }
+        if (!verdict?.match) {
+          console.log('[App] No match', verdict);
+          return;
+        }
+        if (verdict.reason === 'boolean_failed_vol_fallback' || verdict.warning) {
+          console.warn('[App] Match via volume fallback (boolean unstable)', verdict.warning);
+          setGameError('Match used volume fallback (boolean unstable)');
+        }
+        const elapsed = performance.now() - gameTimerStartRef.current;
+        setGameTimerRunning(false);
+        setGameElapsedMs(elapsed);
+        setGameSuccess(true);
+        clearSuccessTimer();
+        // Default: no Submit. Brief success, then clear attempt + blank editor
+        // so the same puzzle can be tried again. Timer restarts after the clear.
+        successClearTimerRef.current = setTimeout(() => {
+          successClearTimerRef.current = null;
+          setGameSuccess(false);
+          setCurrentScript('');
+          codeEditorRef.current?.setTextOnly?.('');
+          viewportRef.current?.clearAttempt?.();
+          gameTimerStartRef.current = performance.now();
+          setGameElapsedMs(0);
+          setGameTimerRunning(true);
+        }, SUCCESS_CLEAR_MS);
+      } catch (err) {
+        console.warn('[App] Match check failed:', err);
+      }
+    } finally {
+      // Cover execute+compare only so retry Run works after a miss / failed check.
+      gameRunInFlightRef.current = false;
     }
   };
 
@@ -764,6 +872,8 @@ const App = () => {
               onExitGame={handleExitGame}
               onRun={handleGameRun}
               onHint={handleGameHint}
+              gameElapsedMs={gameElapsedMs}
+              gameSuccess={gameSuccess}
             />
           </div>
           {appMode !== 'game' && (
@@ -902,6 +1012,8 @@ const App = () => {
             onExitGame={handleExitGame}
             onRun={handleGameRun}
             onHint={handleGameHint}
+            gameElapsedMs={gameElapsedMs}
+            gameSuccess={gameSuccess}
           />
         </div>
 

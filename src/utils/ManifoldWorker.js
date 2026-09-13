@@ -116,7 +116,8 @@ class ManifoldWorker {
         payload: {
           script,
           importedModels,
-          memoryLimitMB
+          memoryLimitMB,
+          nonce: options.nonce ?? null,
         }
       });
     });
@@ -164,6 +165,74 @@ class ManifoldWorker {
         id: requestId,
         payload: {}
       });
+    });
+  }
+
+
+  /**
+   * Keep the last execute() solid as the game-mode ghost target.
+   * Must be called immediately after executing the puzzle target script,
+   * before the player's attempt overwrites cachedManifold.
+   */
+  async storeGameTarget(options = {}) {
+    if (!this.isReady) throw new Error('ManifoldWorker not initialized');
+    const timeoutMs = options.timeoutMs || this.config.timeoutMs;
+    return new Promise((resolve, reject) => {
+      const requestId = this._generateRequestId();
+      const timeoutId = setTimeout(() => {
+        this.pendingRequests.delete(requestId);
+        reject(new Error(`storeGameTarget timed out after ${timeoutMs / 1000}s`));
+      }, timeoutMs);
+      this.pendingRequests.set(requestId, {
+        resolve: (r) => { clearTimeout(timeoutId); resolve(r); },
+        reject: (e) => { clearTimeout(timeoutId); reject(e); },
+      });
+      this.worker.postMessage({ type: 'storeGameTarget', id: requestId, payload: {} });
+    });
+  }
+
+  /**
+   * Compare the last execute() solid (attempt) against the stored ghost.
+   * @param {Object} [opts]
+   * @param {number} [opts.relEps]
+   * @param {number} [opts.volFloor]
+   * @param {*} [opts.nonce] - Must match the execute nonce that produced the on-screen solid
+   */
+  async compareGameMatch(opts = {}, options = {}) {
+    if (!this.isReady) throw new Error('ManifoldWorker not initialized');
+    const timeoutMs = options.timeoutMs || this.config.timeoutMs;
+    return new Promise((resolve, reject) => {
+      const requestId = this._generateRequestId();
+      const timeoutId = setTimeout(() => {
+        this.pendingRequests.delete(requestId);
+        reject(new Error(`compareGameMatch timed out after ${timeoutMs / 1000}s`));
+      }, timeoutMs);
+      this.pendingRequests.set(requestId, {
+        resolve: (r) => { clearTimeout(timeoutId); resolve(r); },
+        reject: (e) => { clearTimeout(timeoutId); reject(e); },
+      });
+      this.worker.postMessage({
+        type: 'compareGameMatch',
+        id: requestId,
+        payload: { relEps: opts.relEps, volFloor: opts.volFloor, nonce: opts.nonce },
+      });
+    });
+  }
+
+  async clearGameTarget(options = {}) {
+    if (!this.isReady) throw new Error('ManifoldWorker not initialized');
+    const timeoutMs = options.timeoutMs || this.config.timeoutMs;
+    return new Promise((resolve, reject) => {
+      const requestId = this._generateRequestId();
+      const timeoutId = setTimeout(() => {
+        this.pendingRequests.delete(requestId);
+        reject(new Error(`clearGameTarget timed out after ${timeoutMs / 1000}s`));
+      }, timeoutMs);
+      this.pendingRequests.set(requestId, {
+        resolve: (r) => { clearTimeout(timeoutId); resolve(r); },
+        reject: (e) => { clearTimeout(timeoutId); reject(e); },
+      });
+      this.worker.postMessage({ type: 'clearGameTarget', id: requestId, payload: {} });
     });
   }
 
@@ -522,6 +591,34 @@ class ManifoldContext {
     }
     
     return await this.worker.getModelInfo();
+  }
+
+
+  /**
+   * Retain the last executeScript() solid as the game ghost target.
+   */
+  async storeGameTarget() {
+    if (!this.worker || !this.worker.isReady) {
+      throw new Error('ManifoldContext not initialized');
+    }
+    return await this.worker.storeGameTarget();
+  }
+
+  /**
+   * Boolean-difference the last executeScript() attempt vs the stored ghost.
+   */
+  async compareGameMatch(opts = {}) {
+    if (!this.worker || !this.worker.isReady) {
+      throw new Error('ManifoldContext not initialized');
+    }
+    return await this.worker.compareGameMatch(opts);
+  }
+
+  async clearGameTarget() {
+    if (!this.worker || !this.worker.isReady) {
+      throw new Error('ManifoldContext not initialized');
+    }
+    return await this.worker.clearGameTarget();
   }
 
   /**

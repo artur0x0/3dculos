@@ -46,6 +46,27 @@ const READONLY_GLOBALS = [
 let manifoldModule = null;
 let isInitialized = false;
 let cachedManifold = null;
+// Nonce of the execute that last wrote cachedManifold (game compare staleness).
+let cachedExecuteNonce = null;
+// Live ghost target for game-mode match (independent cloned handle retained
+// across attempt executes — not an alias of cachedManifold).
+let gameTargetManifold = null;
+// Snapshot of the attempt solid at the execute that ran while a ghost was set.
+// compareGameMatch grades this — never ambient cachedManifold.
+let gameAttemptManifold = null;
+
+/** Best-effort Manifold.dispose (embind .delete); ignore missing/throws. */
+function _safeDeleteManifold(m) {
+  if (!m) return;
+  try {
+    if (typeof m.delete === 'function') m.delete();
+  } catch (_) { /* already freed or non-embind */ }
+}
+
+/** Finite and > 0, else fallback (for relEps / volFloor). */
+function _positiveFinite(v, fallback) {
+  return (Number.isFinite(v) && v > 0) ? v : fallback;
+}
 
 // ============================================================================
 // EXTENDED MANIFOLD HELPERS
@@ -2893,6 +2914,64 @@ function _stageVerify(cand, target, opts = {}) {
   return { pass: false, reason: 'symdiff_too_large', ...best, volC, volT };
 }
 
+
+/**
+ * Game-mode match: attempt vs retained ghost, same coordinate frame.
+ * Single criterion: V_symdiff / max(V_target, volFloor) < relEps
+ * (empty diffs have volume 0, so exact match is covered by rel < relEps).
+ * Uses stageVerify-style sym = difference(union, intersection); no isEmpty
+ * typeof soft-fail. Volume pre-gate + catch fallback if booleans throw.
+ */
+function _gameMatchCompare(attempt, target, relEps, volFloor) {
+  const { Manifold } = manifoldModule;
+  const se = _c4StatusError(attempt);
+  if (se) return { match: false, reason: 'invalid_manifold', status: se };
+  const volA = attempt.volume();
+  const volT = target.volume();
+  if (!(volA > 0) || !(volT > 0)) {
+    return { match: false, reason: 'zero_volume', volA, volT, volDiff: null, rel: null };
+  }
+  const denom = Math.max(volT, volFloor);
+  const volDelta = Math.abs(volA - volT);
+  if (volDelta / denom >= relEps) {
+    return {
+      match: false, reason: 'volume_mismatch',
+      volA, volT, volDiff: volDelta, rel: volDelta / denom,
+    };
+  }
+  let u = null;
+  let i = null;
+  let sym = null;
+  try {
+    // Prefer union/intersection/difference (more throw-resistant than two raw diffs).
+    u = Manifold.union(attempt, target);
+    i = Manifold.intersection(attempt, target);
+    sym = Manifold.difference(u, i);
+    const volDiff = sym.volume();
+    const rel = volDiff / denom;
+    const match = rel < relEps;
+    return {
+      match,
+      reason: match ? 'match' : 'difference_too_large',
+      volA, volT, volDiff, rel,
+    };
+  } catch (e) {
+    // Booleans failed on near-identical solids: trust the volume pre-gate.
+    return {
+      match: true,
+      reason: 'boolean_failed_vol_fallback',
+      volA, volT,
+      volDiff: volDelta,
+      rel: volDelta / denom,
+      warning: String(e && e.message || e),
+    };
+  } finally {
+    _safeDeleteManifold(sym);
+    _safeDeleteManifold(u);
+    _safeDeleteManifold(i);
+  }
+}
+
 self.onmessage = async (event) => {
   const { type, payload, id } = event.data;
   
@@ -2910,7 +2989,7 @@ self.onmessage = async (event) => {
           throw new Error('Worker not initialized');
         }
         
-        const { script, importedModels, memoryLimitMB } = payload;
+        const { script, importedModels, memoryLimitMB, nonce } = payload;
         
         // Check memory before execution
         checkMemoryUsage(memoryLimitMB || 512);
@@ -2918,8 +2997,14 @@ self.onmessage = async (event) => {
         // Execute the script
         const result = executeScript(script, importedModels);
         
-        // Cache the manifold for cross-section operations
+        // Cache the manifold for cross-section operations (+ nonce for game compare)
         cachedManifold = result;
+        cachedExecuteNonce = (nonce !== undefined && nonce !== null) ? nonce : null;
+        // Independent attempt snapshot for game match (only while a ghost is live).
+        if (gameTargetManifold) {
+          _safeDeleteManifold(gameAttemptManifold);
+          gameAttemptManifold = result.clone();
+        }
         
         // Check memory after execution
         const memoryUsed = checkMemoryUsage(memoryLimitMB || 512);
@@ -2944,7 +3029,8 @@ self.onmessage = async (event) => {
             boundingBox: {
               min: [...bbox.min],
               max: [...bbox.max]
-            }
+            },
+            nonce: cachedExecuteNonce,
           }
         });
         break;
@@ -2975,6 +3061,59 @@ self.onmessage = async (event) => {
               max: [...bbox.max]
             }
           }
+        });
+        break;
+      }
+
+      // ── Game-mode match: retain ghost solid, compare attempt via boolean difference ──
+      case 'storeGameTarget': {
+        if (!isInitialized) throw new Error('Worker not initialized');
+        if (!cachedManifold) throw new Error('storeGameTarget: execute the target script first');
+        const se = _c4StatusError(cachedManifold);
+        if (se) throw new Error(`storeGameTarget: target is invalid (${se})`);
+        const volume = cachedManifold.volume();
+        if (!(volume > 0)) throw new Error('storeGameTarget: target has no volume');
+        // Own retained handle — do not alias cachedManifold (attempt Run overwrites it).
+        _safeDeleteManifold(gameTargetManifold);
+        gameTargetManifold = cachedManifold.clone();
+        self.postMessage({
+          type: 'result', id,
+          payload: { ok: true, volume, boundingBox: _bboxArray(cachedManifold) },
+        });
+        break;
+      }
+
+      case 'clearGameTarget': {
+        _safeDeleteManifold(gameTargetManifold);
+        gameTargetManifold = null;
+        _safeDeleteManifold(gameAttemptManifold);
+        gameAttemptManifold = null;
+        self.postMessage({ type: 'result', id, payload: { ok: true } });
+        break;
+      }
+
+      case 'compareGameMatch': {
+        if (!isInitialized) throw new Error('Worker not initialized');
+        if (!gameTargetManifold) throw new Error('compareGameMatch: no ghost target stored');
+        if (!gameAttemptManifold) {
+          throw new Error('compareGameMatch: no attempt snapshot — execute while a ghost target is stored');
+        }
+        if (payload?.nonce != null && payload.nonce !== cachedExecuteNonce) {
+          self.postMessage({
+            type: 'result', id,
+            payload: {
+              ignored: true, match: false, reason: 'stale_execute',
+              nonce: payload.nonce, cachedNonce: cachedExecuteNonce,
+            },
+          });
+          break;
+        }
+        const relEps = _positiveFinite(payload?.relEps, 0.002);
+        const volFloor = _positiveFinite(payload?.volFloor, 1e-6);
+        const verdict = _gameMatchCompare(gameAttemptManifold, gameTargetManifold, relEps, volFloor);
+        self.postMessage({
+          type: 'result', id,
+          payload: { ...verdict, relEps, volFloor, nonce: cachedExecuteNonce },
         });
         break;
       }
@@ -3053,8 +3192,9 @@ self.onmessage = async (event) => {
           throw new Error(`Invalid mesh: status ${meshStatus}. The mesh may not be watertight.`);
         }
         
-        // Cache for script access
+        // Cache for script access (import path — not a script execute nonce)
         cachedManifold = manifold;
+        cachedExecuteNonce = null;
         
         // Get final mesh data
         const finalMesh = manifold.getMesh();
