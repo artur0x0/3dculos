@@ -61,6 +61,8 @@ export function getBestTimeMs(puzzleId) {
  */
 export function updateBestTime(puzzleId, timeMs) {
   const ms = Math.max(0, Number(timeMs) || 0);
+  // Guard: never write empty/falsy keys (callers should pass 'unknown').
+  if (!puzzleId || typeof puzzleId !== 'string') return ms;
   const map = loadBestTimes();
   const prev = map[puzzleId];
   if (typeof prev !== 'number' || ms < prev) {
@@ -99,8 +101,12 @@ export async function recordWin({ puzzleId, script, timeMs }) {
   const timestamp = new Date().toISOString();
   const clientId = getClientId();
   const buildId = getBuildId();
+  // Collapse empty/falsy ids so bestTimes never keys on "".
+  const safePuzzleId = (typeof puzzleId === 'string' && puzzleId.trim())
+    ? puzzleId.trim()
+    : 'unknown';
   const record = {
-    puzzleId: String(puzzleId || ''),
+    puzzleId: safePuzzleId,
     script: String(script ?? ''),
     timeMs: Math.max(0, Number(timeMs) || 0),
     timestamp,

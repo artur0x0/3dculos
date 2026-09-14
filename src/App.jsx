@@ -71,6 +71,10 @@ const App = () => {
   const gameTimerStartRef = useRef(0);
   const successClearTimerRef = useRef(null);
   const gameRunInFlightRef = useRef(false);
+  // Latest puzzle id — handleGameRun closes over render-time state; ref lets
+  // verdict-time validate that the puzzle did not switch mid-run.
+  const currentPuzzleRef = useRef(currentPuzzle);
+  currentPuzzleRef.current = currentPuzzle;
   
   const [history, setHistory] = useState({
     branches: {
@@ -553,6 +557,10 @@ const App = () => {
     if (gameSuccess || gameRunInFlightRef.current) return;
     const code = codeEditorRef.current?.getContent?.();
     if (code == null) return;
+    // Capture puzzle identity at Run — loadPuzzle can change currentPuzzle
+    // while execute+compare are in flight (~1s+), which would poison wins.
+    const runPuzzleId = currentPuzzleRef.current?.id;
+    if (!runPuzzleId) return;
     gameRunInFlightRef.current = true;
     setCurrentScript(code);
     try {
@@ -583,14 +591,21 @@ const App = () => {
         setGameSuccess(true);
 
         // Win capture is non-blocking — match UX continues even if POST fails.
-        const puzzleId = currentPuzzle?.id || 'unknown';
-        recordWin({ puzzleId, script: code, timeMs: elapsed })
-          .then(({ bestTimeMs }) => {
-            setGameBestTimeMs(bestTimeMs);
-          })
-          .catch((err) => {
-            console.warn('[App] Win capture failed (non-blocking):', err);
+        // Re-check puzzle id at verdict time (loadPuzzle may have switched).
+        if (currentPuzzleRef.current?.id !== runPuzzleId) {
+          console.log('[App] Ignoring win capture — puzzle changed during run', {
+            runPuzzleId,
+            now: currentPuzzleRef.current?.id,
           });
+        } else {
+          recordWin({ puzzleId: runPuzzleId, script: code, timeMs: elapsed })
+            .then(({ bestTimeMs }) => {
+              setGameBestTimeMs(bestTimeMs);
+            })
+            .catch((err) => {
+              console.warn('[App] Win capture failed (non-blocking):', err);
+            });
+        }
 
         clearSuccessTimer();
         // Default: no Submit. Brief success, then clear attempt + blank editor

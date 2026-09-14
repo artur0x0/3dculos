@@ -789,17 +789,25 @@ function sweepPoints(profile, points, options = {}) {
 function roundedBox(size, radius, segments = 16) {
   if (!manifoldModule) throw new Error('Manifold not initialized');
   const { Manifold } = manifoldModule;
-  
-  // Clamp radius to half the smallest dimension
   const minDim = Math.min(...size);
   const r = Math.min(radius, minDim / 2 - 0.001);
-  
-  // Create inner box
-  const innerSize = size.map(s => s - 2 * r);
-  const innerBox = Manifold.cube(innerSize, true);
-  
-  // Offset the box (Minkowski sum with a sphere)
-  return innerBox.offset(r, segments);
+  if (!(r > 0)) return Manifold.cube(size, true);
+  // Bundled Manifold has no offset()/minkowski — hull of 8 corner spheres
+  // equals cube ⊕ sphere (rounded box).
+  const half = size.map((s) => s / 2 - r);
+  const spheres = [];
+  for (const sx of [-1, 1]) {
+    for (const sy of [-1, 1]) {
+      for (const sz of [-1, 1]) {
+        spheres.push(
+          Manifold.sphere(r, segments).translate([
+            sx * half[0], sy * half[1], sz * half[2],
+          ]),
+        );
+      }
+    }
+  }
+  return Manifold.hull(spheres);
 }
 
 /**
