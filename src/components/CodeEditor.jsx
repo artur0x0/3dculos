@@ -1,5 +1,7 @@
 import React, { useState, useRef, useEffect, forwardRef, useImperativeHandle } from 'react';
 import Editor from '@monaco-editor/react';
+import { SquareDashedBottomCode } from 'lucide-react';
+import Toolbar from './Toolbar';
 
 // "Select All" in the (long-press) context menu. Monaco 0.52 removed
 // registerEditorAction from the public API, so we use the internal
@@ -31,13 +33,29 @@ const CodeEditor = forwardRef(({
   initialScript,
   onExecute, 
   onCodeChange,
-  isMobile
+  isMobile,
+  // Slice 08: game action bar lives in this mid-strip (between Monaco and viewport
+  // on mobile stack; Monaco header on desktop). CAD chrome stays in Viewport.
+  mode = 'cad',
+  onExitGame,
+  onUndo,
+  onRedo,
+  canUndo = false,
+  canRedo = false,
+  isExecuting = false,
+  onRun,
+  onHint,
+  onPickPuzzle,
+  gameElapsedMs = 0,
+  gameSuccess = false,
+  gameBestTimeMs = null,
 }, ref) => {
   const [editorValue, setEditorValue] = useState(initialScript);
   const editorRef = useRef(null);
   const valueRef = useRef(initialScript);
   const historyTimeoutRef = useRef(null);
   const programmaticValueRef = useRef(null);
+  const isGame = mode === 'game';
 
   // Expose methods to parent via ref
   useImperativeHandle(ref, () => ({
@@ -198,14 +216,37 @@ const CodeEditor = forwardRef(({
 
   return (
     <div className="relative flex flex-col h-full bg-gray-900">
-      <div className="flex items-center justify-end px-1 py-0.5 border-b border-gray-700/60 bg-gray-900 shrink-0">
+      {/* Mid-strip: Select All (icon) always; game action bar in game mode (slice 08). */}
+      <div className={`flex items-center gap-1 px-1 py-0.5 border-b border-gray-700/60 bg-gray-900 shrink-0 ${
+        isGame ? 'justify-between' : 'justify-end'
+      }`}>
+        {isGame && (
+          <Toolbar
+            mode="game"
+            variant="strip"
+            onExitGame={onExitGame}
+            onUndo={onUndo}
+            onRedo={onRedo}
+            canUndo={canUndo}
+            canRedo={canRedo}
+            isExecuting={isExecuting}
+            onRun={onRun}
+            onHint={onHint}
+            onPickPuzzle={onPickPuzzle}
+            gameElapsedMs={gameElapsedMs}
+            gameSuccess={gameSuccess}
+            gameBestTimeMs={gameBestTimeMs}
+          />
+        )}
         <button
           type="button"
           onClick={selectAll}
           title="Select all text in the editor"
-          className="text-[10px] font-medium text-gray-400 hover:text-white hover:bg-gray-700/60 rounded px-1.5 py-0.5 transition-colors"
+          aria-label="Select all text in the editor"
+          className="shrink-0 p-1.5 text-gray-400 hover:text-white hover:bg-gray-700/60 rounded transition-colors"
         >
-          Select All
+          {/* lucide-react ^0.469.0 exports SquareDashedBottomCode (preferred). */}
+          <SquareDashedBottomCode size={16} />
         </button>
       </div>
       <div className="flex-1 min-h-0">

@@ -69,7 +69,6 @@ const Viewport = forwardRef(({
   onPickPuzzle,
   gameElapsedMs = 0,
   gameSuccess = false,
-  packComplete = false,
   gamePuzzleTitle = null,
   gameBestTimeMs = null,
   isMobile = false,
@@ -1322,54 +1321,40 @@ const Viewport = forwardRef(({
 
   return (
     <div ref={containerRef} className="relative w-full h-full bg-gray-900 overflow-hidden">
-      <Toolbar
-        mode={mode}
-        onOpen={onOpen}
-        onSave={onSave}
-        onAccount={onAccount}
-        onDownload={handleDownloadModel}
-        onQuote={onQuote}
-        onUpload={onUpload}
-        onUndo={onUndo}
-        onRedo={onRedo}
-        canUndo={canUndo}
-        canRedo={canRedo}
-        isExecuting={isExecuting}
-        isDownloading={isDownloading}
-        isUploading={isUploading}
-        currentFilename={currentFilename}
-        onStartGame={onStartGame}
-        onExitGame={onExitGame}
-        onRun={onRun}
-        onHint={onHint}
-        onPickPuzzle={onPickPuzzle}
-        gameElapsedMs={gameElapsedMs}
-        gameSuccess={gameSuccess}
-        gameBestTimeMs={gameBestTimeMs}
-      />
+      {/* CAD floating chrome. Game actions moved to CodeEditor mid-strip (slice 08). */}
+      {mode !== 'game' && (
+        <Toolbar
+          mode={mode}
+          onOpen={onOpen}
+          onSave={onSave}
+          onAccount={onAccount}
+          onDownload={handleDownloadModel}
+          onQuote={onQuote}
+          onUpload={onUpload}
+          onUndo={onUndo}
+          onRedo={onRedo}
+          canUndo={canUndo}
+          canRedo={canRedo}
+          isExecuting={isExecuting}
+          isDownloading={isDownloading}
+          isUploading={isUploading}
+          currentFilename={currentFilename}
+          onStartGame={onStartGame}
+          onExitGame={onExitGame}
+          onRun={onRun}
+          onHint={onHint}
+          onPickPuzzle={onPickPuzzle}
+          gameElapsedMs={gameElapsedMs}
+          gameSuccess={gameSuccess}
+          gameBestTimeMs={gameBestTimeMs}
+        />
+      )}
 
+      {/* Slice 08: part name only, centered top-middle (where floating bar sat). */}
       {mode === 'game' && (
-        <div className={`absolute text-xs px-3 py-1.5 rounded-lg shadow z-10 pointer-events-none max-w-[min(18rem,calc(100%-5.5rem))] ${
-          isMobile
-            ? 'bottom-3 left-2 right-14'
-            : 'top-20 left-1/2 -translate-x-1/2 lg:left-4 lg:translate-x-0'
-        } ${
-          gameSuccess
-            ? 'bg-emerald-950/90 border border-emerald-500/50 text-emerald-100'
-            : 'bg-gray-900/85 border border-gray-500/50 text-gray-100'
-        }`}>
-          <div className="font-medium truncate">
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10 pointer-events-none max-w-[min(20rem,calc(100%-2rem))]">
+          <div className="text-xs font-medium text-center truncate px-3 py-1.5 rounded-lg shadow bg-gray-900/85 border border-gray-500/50 text-gray-100">
             {gamePuzzleTitle || 'Puzzle'}
-            {gameBestTimeMs != null && (
-              <span className="font-normal opacity-80"> · best {formatGameTime(gameBestTimeMs)}</span>
-            )}
-          </div>
-          <div className="opacity-90 mt-0.5">
-            {gameSuccess
-              ? `Match! ${formatGameTime(gameElapsedMs)}`
-              : packComplete
-                ? `Pack complete · retry last or pick another · ${formatGameTime(gameElapsedMs)}`
-                : `Match the grey ghost · edit script · Run · ${formatGameTime(gameElapsedMs)}`}
           </div>
         </div>
       )}

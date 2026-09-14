@@ -6,8 +6,15 @@ import {
 import { useAuth } from '../hooks/useAuth';
 import { formatGameTime } from '../utils/gamePuzzle';
 
+/**
+ * Shared chrome.
+ * - CAD: floating overlay over the viewport (collapsible).
+ * - Game: action bar lives in the Monaco mid-strip (variant="strip") —
+ *   no floating overlay / no collapse chevron (slice 08).
+ */
 const Toolbar = ({
   mode = 'cad',
+  variant = 'overlay',
   onAccount,
   onOpen,
   onSave,
@@ -37,6 +44,7 @@ const Toolbar = ({
 
   const { isAuthenticated } = useAuth();
   const isGame = mode === 'game';
+  const isStrip = variant === 'strip';
 
   const handleFileSelect = async (event) => {
     const file = event.target.files?.[0];
@@ -69,17 +77,10 @@ const Toolbar = ({
     }
   };
 
-  if (isCollapsed) {
+  // CAD-only collapse chrome (game mode never collapses — bar lives in mid-strip).
+  if (!isGame && isCollapsed) {
     return (
       <div className="absolute top-4 right-4 flex items-center gap-2 bg-white/70 backdrop-blur-sm p-2 rounded-lg shadow-lg z-10">
-        {isGame && (
-          <span
-            className={`px-1.5 text-xs font-mono tabular-nums ${gameSuccess ? 'text-emerald-700' : 'text-gray-700'}`}
-            title="Elapsed time (lower is better)"
-          >
-            {formatGameTime(gameElapsedMs)}
-          </span>
-        )}
         <button
           onClick={() => setIsCollapsed(false)}
           className="p-2 rounded hover:bg-gray-100 text-gray-600"
@@ -92,56 +93,81 @@ const Toolbar = ({
   }
 
   // ── Game mode: back, undo/redo, run, picker, hint (BookOpen only) ──
+  // Slice 08: rendered inline in CodeEditor mid-strip (no absolute overlay,
+  // no ChevronRight collapse).
   if (isGame) {
+    const shellClass = isStrip
+      ? 'flex items-center gap-0.5 sm:gap-1 flex-1 min-w-0 overflow-x-auto'
+      : 'absolute top-4 left-1/2 -translate-x-1/2 lg:left-auto lg:right-4 lg:translate-x-0 flex items-center gap-1 lg:gap-2 bg-white/60 backdrop-blur-sm p-2 rounded-lg shadow-lg z-10 max-w-[calc(100vw-1rem)]';
+
+    const btnPad = isStrip ? 'p-1.5' : 'p-2';
+    const iconSize = isStrip ? 18 : 20;
+    // Strip sits on Monaco dark chrome; overlay fallback keeps light frosted bar.
+    const backCls = isStrip
+      ? 'text-gray-300 hover:bg-gray-700/60 hover:text-white'
+      : 'text-gray-700 hover:bg-gray-100';
+    const editCls = isStrip
+      ? 'text-blue-400 hover:bg-gray-700/60'
+      : 'text-blue-600 hover:bg-gray-100';
+    const runCls = isStrip
+      ? 'text-green-400 hover:bg-gray-700/60'
+      : 'text-green-600 hover:bg-gray-100';
+    const cyanCls = isStrip
+      ? 'text-cyan-400 hover:bg-gray-700/60'
+      : 'text-cyan-700 hover:bg-gray-100';
+    const dividerCls = isStrip ? 'w-px bg-gray-600 mx-0.5 self-stretch my-1' : 'w-px bg-gray-300 mx-1';
+    const timeCls = gameSuccess
+      ? (isStrip ? 'text-emerald-400 font-semibold' : 'text-emerald-700 font-semibold')
+      : (isStrip ? 'text-gray-300' : 'text-gray-700');
+    const spinBorder = isStrip ? 'border-green-400' : 'border-green-600';
+
     return (
-      <div className="absolute top-4 left-1/2 -translate-x-1/2 lg:left-auto lg:right-4 lg:translate-x-0 flex items-center gap-1 lg:gap-2 bg-white/60 backdrop-blur-sm p-2 rounded-lg shadow-lg z-10 max-w-[calc(100vw-1rem)]">
+      <div className={shellClass}>
         <button
           onClick={onExitGame}
-          className="p-2 flex items-center gap-1 text-gray-700 hover:bg-gray-100 rounded"
+          className={`${btnPad} flex items-center gap-1 ${backCls} rounded`}
           title="Back to CAD"
         >
-          <ArrowLeft size={20} />
+          <ArrowLeft size={iconSize} />
         </button>
 
-        <div className="w-px bg-gray-300 mx-1" />
+        <div className={dividerCls} />
 
         <button
           onClick={onUndo}
           disabled={!canUndo}
-          className="p-2 flex items-center gap-2 text-blue-600 hover:bg-gray-100 rounded disabled:opacity-30"
+          className={`${btnPad} flex items-center gap-2 ${editCls} rounded disabled:opacity-30`}
           title="Undo"
         >
-          <Undo size={20} />
+          <Undo size={iconSize} />
         </button>
 
         <button
           onClick={onRedo}
           disabled={!canRedo}
-          className="p-2 flex items-center gap-2 text-blue-600 hover:bg-gray-100 rounded disabled:opacity-30"
+          className={`${btnPad} flex items-center gap-2 ${editCls} rounded disabled:opacity-30`}
           title="Redo"
         >
-          <Redo size={20} />
+          <Redo size={iconSize} />
         </button>
 
-        <div className="w-px bg-gray-300 mx-1" />
+        <div className={dividerCls} />
 
         <button
           onClick={onRun}
           disabled={isExecuting}
-          className="p-2 flex items-center gap-1 text-green-600 hover:bg-gray-100 rounded disabled:opacity-50"
+          className={`${btnPad} flex items-center gap-1 ${runCls} rounded disabled:opacity-50`}
           title="Run script"
         >
           {isExecuting ? (
-            <div className="w-5 h-5 border-2 border-green-600 border-t-transparent rounded-full animate-spin" />
+            <div className={`${isStrip ? 'w-4 h-4' : 'w-5 h-5'} border-2 ${spinBorder} border-t-transparent rounded-full animate-spin`} />
           ) : (
-            <Play size={20} />
+            <Play size={iconSize} />
           )}
         </button>
 
         <span
-          className={`px-1.5 min-w-[3.25rem] text-center text-xs font-mono tabular-nums ${
-            gameSuccess ? 'text-emerald-700 font-semibold' : 'text-gray-700'
-          }`}
+          className={`px-1 min-w-[3rem] text-center text-[11px] font-mono tabular-nums ${timeCls}`}
           title="Elapsed time (lower is better)"
         >
           {formatGameTime(gameElapsedMs)}
@@ -158,10 +184,10 @@ const Toolbar = ({
 
         <button
           onClick={onPickPuzzle}
-          className="p-2 flex items-center gap-1 text-cyan-700 hover:bg-gray-100 rounded"
+          className={`${btnPad} flex items-center gap-1 ${cyanCls} rounded`}
           title="Switch puzzle"
         >
-          <List size={20} />
+          <List size={iconSize} />
         </button>
 
         {/* Slice 07: keep BookOpen as the sole Hint control (removed ⋯ overflow
@@ -169,18 +195,10 @@ const Toolbar = ({
             CAD Account/Save/Download remain available after exiting game. */}
         <button
           onClick={onHint}
-          className="p-2 flex items-center gap-1 text-cyan-700 hover:bg-gray-100 rounded"
+          className={`${btnPad} flex items-center gap-1 ${cyanCls} rounded`}
           title="Hint — target code & helpers"
         >
-          <BookOpen size={20} />
-        </button>
-
-        <button
-          onClick={() => setIsCollapsed(true)}
-          className="p-2 rounded hover:bg-gray-100 text-gray-600"
-          title="Hide Toolbar"
-        >
-          <ChevronRight size={20} />
+          <BookOpen size={iconSize} />
         </button>
       </div>
     );
@@ -303,7 +321,7 @@ const Toolbar = ({
         <Puzzle size={20} />
       </button>
 
-      {/* Collapse */}
+      {/* Collapse (CAD only) */}
       <button
         onClick={() => setIsCollapsed(true)}
         className="p-2 rounded hover:bg-gray-100 text-gray-600"
