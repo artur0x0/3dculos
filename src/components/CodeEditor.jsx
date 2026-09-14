@@ -55,6 +55,8 @@ const CodeEditor = forwardRef(({
   const valueRef = useRef(initialScript);
   const historyTimeoutRef = useRef(null);
   const programmaticValueRef = useRef(null);
+  /** True while insertAtCursor runs executeEdits (sync onChange must not double-fire). */
+  const paletteInsertRef = useRef(false);
   const isGame = mode === 'game';
 
   // Expose methods to parent via ref
@@ -106,13 +108,73 @@ const CodeEditor = forwardRef(({
       setEditorValue(content);
       editorRef.current?.setValue(content);
       return true;
-    }
+    },
+
+    /**
+     * Slice 09: insert text at the Monaco cursor (replaces selection if any).
+     * Syncs React state, triggers execute + history. Returns true on success.
+     */
+    insertAtCursor: (text) => {
+      if (typeof text !== 'string' || text.length === 0) return false;
+      const ed = editorRef.current;
+
+      if (historyTimeoutRef.current) {
+        clearTimeout(historyTimeoutRef.current);
+        historyTimeoutRef.current = null;
+      }
+
+      if (ed) {
+        const selection = ed.getSelection();
+        const range = selection
+          || { startLineNumber: 1, startColumn: 1, endLineNumber: 1, endColumn: 1 };
+        // Flag BEFORE executeEdits — Monaco fires onChange synchronously.
+        paletteInsertRef.current = true;
+        try {
+          ed.executeEdits('helper-palette', [{
+            range,
+            text,
+            forceMoveMarkers: true,
+          }]);
+          const content = ed.getValue();
+          valueRef.current = content;
+          setEditorValue(content);
+          onExecute(content);
+          onCodeChange?.(content, 'Helper insert');
+          try {
+            const pos = ed.getPosition();
+            if (pos) ed.revealPositionInCenter(pos);
+            ed.focus();
+          } catch { /* ignore */ }
+          return true;
+        } finally {
+          paletteInsertRef.current = false;
+        }
+      }
+
+      // Editor not mounted yet — append / replace buffer via state.
+      const current = valueRef.current || '';
+      const content = current.trim()
+        ? `${current}${current.endsWith('\n') ? '' : '\n'}${text}`
+        : text;
+      programmaticValueRef.current = content;
+      valueRef.current = content;
+      setEditorValue(content);
+      onExecute(content);
+      onCodeChange?.(content, 'Helper insert');
+      return true;
+    },
   }));
 
   const handleEditorChange = (newValue) => {
     // Always sync state and ref
     valueRef.current = newValue;
     setEditorValue(newValue);
+
+    // Palette insert owns execute + history (executeEdits fires this sync).
+    if (paletteInsertRef.current) {
+      return;
+    }
+
     onExecute(newValue);
     
     // If this change came from loadContent, skip history handling

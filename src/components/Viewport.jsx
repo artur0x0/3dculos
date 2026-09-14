@@ -26,6 +26,7 @@ import {
 import { TrackballControls } from 'three/addons/controls/TrackballControls.js';
 import Toolbar from './Toolbar';
 import CrossSectionPanel from './CrossSectionPanel';
+import HelperInsertPalette from './HelperInsertPalette';
 import { X } from 'lucide-react';
 import { downloadModelFromMesh, get3MFBase64FromMesh } from '../utils/exportModel';
 import { parseImportedModels, loadCachedModel } from '../utils/importModel';
@@ -72,6 +73,7 @@ const Viewport = forwardRef(({
   gamePuzzleTitle = null,
   gameBestTimeMs = null,
   isMobile = false,
+  onInsertHelper = null,
 }, ref) => {
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
@@ -1369,6 +1371,14 @@ const Viewport = forwardRef(({
         </div>
       )}
       
+      {/* Slice 09: left helper insert palette (game mode only). */}
+      {mode === 'game' && onInsertHelper && (
+        <HelperInsertPalette
+          onInsert={onInsertHelper}
+          compact={isMobile}
+        />
+      )}
+
       {/* Cross-Section Panel */}
         <CrossSectionPanel
           enabled={crossSectionEnabled}

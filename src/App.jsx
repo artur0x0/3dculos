@@ -39,6 +39,7 @@ import { getBestTimeMs, recordWin } from './utils/gameWins';
 import GameHintsModal from './components/GameHintsModal';
 import PuzzlePickerModal from './components/PuzzlePickerModal';
 import GameConfetti from './components/GameConfetti';
+import { buildHelperSnippet, isBufferEmpty } from './utils/helperPaletteSnippets';
 
 const App = () => {
   const [currentScript, setCurrentScript] = useState('');
@@ -709,6 +710,14 @@ const App = () => {
     setShowHints(true);
   };
 
+  /** Slice 09: tap palette → insert named-param snippet at Monaco cursor. */
+  const handleInsertHelper = (helperId) => {
+    const current = codeEditorRef.current?.getContent?.() ?? '';
+    const snippet = buildHelperSnippet(helperId, { bufferEmpty: isBufferEmpty(current) });
+    if (!snippet) return;
+    codeEditorRef.current?.insertAtCursor?.(snippet);
+  };
+
   const handleExecute = (script, autoExecute=false) => {
     setCurrentScript(script);
     // Game mode: never auto-run on Monaco mount/remount (blank-enter / ghost-only).
@@ -1015,6 +1024,7 @@ const App = () => {
               gamePuzzleTitle={currentPuzzle?.title}
               gameBestTimeMs={gameBestTimeMs}
               isMobile={isMobile}
+              onInsertHelper={handleInsertHelper}
             />
     );
 
@@ -1236,6 +1246,7 @@ const App = () => {
             gamePuzzleTitle={currentPuzzle?.title}
             gameBestTimeMs={gameBestTimeMs}
             isMobile={false}
+            onInsertHelper={handleInsertHelper}
           />
         </div>
 
