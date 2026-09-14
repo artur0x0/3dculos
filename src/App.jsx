@@ -75,6 +75,20 @@ const App = () => {
   // verdict-time validate that the puzzle did not switch mid-run.
   const currentPuzzleRef = useRef(currentPuzzle);
   currentPuzzleRef.current = currentPuzzle;
+  const appModeRef = useRef(appMode);
+  appModeRef.current = appMode;
+
+  // iOS Safari keyboard: visualViewport height/offsetTop so the game editor
+  // sits above the keyboard without eating the 3D viewport.
+  const [vv, setVv] = useState(() => ({
+    height: typeof window !== 'undefined'
+      ? (window.visualViewport?.height ?? window.innerHeight)
+      : 800,
+    offsetTop: typeof window !== 'undefined'
+      ? (window.visualViewport?.offsetTop ?? 0)
+      : 0,
+    layoutHeight: typeof window !== 'undefined' ? window.innerHeight : 800,
+  }));
   
   const [history, setHistory] = useState({
     branches: {
@@ -437,6 +451,27 @@ const App = () => {
     };
   }, []);
 
+  // Track visualViewport for mobile keyboard-aware editor height (slice 05).
+  useEffect(() => {
+    const sync = () => {
+      const v = window.visualViewport;
+      setVv({
+        height: v?.height ?? window.innerHeight,
+        offsetTop: v?.offsetTop ?? 0,
+        layoutHeight: window.innerHeight,
+      });
+    };
+    sync();
+    const vvApi = window.visualViewport;
+    vvApi?.addEventListener('resize', sync);
+    vvApi?.addEventListener('scroll', sync);
+    window.addEventListener('resize', sync);
+    return () => {
+      vvApi?.removeEventListener('resize', sync);
+      vvApi?.removeEventListener('scroll', sync);
+      window.removeEventListener('resize', sync);
+    };
+  }, []);
 
   const clearSuccessTimer = () => {
     if (successClearTimerRef.current) {
@@ -519,9 +554,21 @@ const App = () => {
       setShowHints(false);
       setGameError(null);
 
-      // Blank editor + no attempt solid until Run (slice 02.1).
-      setCurrentScript(puzzle.starterScript ?? '');
-      codeEditorRef.current?.setTextOnly?.(puzzle.starterScript ?? '');
+      // Blank Monaco + ghost-only until Run (slice 02.1 / 05).
+      // Always '' — never starter/target/demo (remount + loadContent auto-run
+      // previously leaked DEMO TARGET / Solo Cup into the editor on enter).
+      setCurrentScript('');
+      const blankEditor = () => codeEditorRef.current?.setTextOnly?.('');
+      blankEditor();
+      // Layout swap (viewport top / editor bottom) remounts Monaco after this
+      // tick; double window.rAF waits for remount/paint so initialScript cannot
+      // stick. (No queueMicrotask — rAF covers the remount tick.)
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => {
+          blankEditor();
+          viewportRef.current?.frameGhost?.();
+        });
+      });
       viewportRef.current?.clearAttempt?.();
       startGameTimer();
     } catch (err) {
@@ -637,7 +684,8 @@ const App = () => {
 
   const handleExecute = (script, autoExecute=false) => {
     setCurrentScript(script);
-    if (autoExecute) {
+    // Game mode: never auto-run on Monaco mount/remount (blank-enter / ghost-only).
+    if (autoExecute && appModeRef.current !== 'game') {
       // Pass script directly to avoid stale closure
       setTimeout(() => {
         viewportRef.current?.executeScript(script);
@@ -891,19 +939,25 @@ const App = () => {
     );
   }
 
+  // Mobile game: keyboard-aware editor height from visualViewport.
+  const keyboardOverlap = Math.max(0, vv.layoutHeight - vv.height - vv.offsetTop);
+  const keyboardOpen = keyboardOverlap > 80;
+  const mobileGameEditorPx = keyboardOpen
+    ? Math.round(Math.min(Math.max(vv.height * 0.36, 120), vv.height * 0.42))
+    : Math.round(Math.min(Math.max(vv.height * 0.32, 160), vv.height * 0.38));
+
   if (isMobile) {
-    return (
-        <div className="flex flex-col h-dvh bg-gray-900 overflow-hidden">
-          <div className="h-[33vh] border-b border-gray-700 flex-shrink-0">
-            <CodeEditor 
-              ref={codeEditorRef}
-              initialScript={editorInitialScript}
-              onExecute={handleExecute}
-              onCodeChange={handleCodeChange}
-              isMobile={isMobile}
-            />
-          </div>
-          <div className="flex-1 min-h-0 border-b border-gray-700 overflow-hidden">
+    const mobileShellStyle = appMode === 'game'
+      ? {
+          height: vv.height,
+          top: vv.offsetTop,
+          left: 0,
+          right: 0,
+          position: 'fixed',
+        }
+      : undefined;
+
+    const viewportEl = (
             <Viewport 
               ref={viewportRef} 
               onAccount={handleAccount}
@@ -930,18 +984,58 @@ const App = () => {
               gameSuccess={gameSuccess}
               gamePuzzleTitle={currentPuzzle?.title}
               gameBestTimeMs={gameBestTimeMs}
+              isMobile={isMobile}
             />
-          </div>
-          {appMode !== 'game' && (
-            <div className="flex-shrink-0">
-              <PromptInput 
-                onCodeGenerated={handleCodeGenerated}
-                currentCode={codeEditorRef.current?.getContent() || ''}
-                selectedFace={selectedFace}
-                onClearFaceSelection={handleClearFaceSelection}
-                isMobile={isMobile}
-              />
-            </div>
+    );
+
+    return (
+        <div
+          className={`flex flex-col bg-gray-900 overflow-hidden ${appMode === 'game' ? '' : 'h-dvh'}`}
+          style={mobileShellStyle}
+        >
+          {appMode === 'game' ? (
+            <>
+              {/* Slice 05: viewport TOP, Monaco BOTTOM (near keyboard) */}
+              <div className="flex-1 min-h-0 border-b border-gray-700 overflow-hidden">
+                {viewportEl}
+              </div>
+              <div
+                className="flex-shrink-0 border-t border-gray-700"
+                style={{ height: mobileGameEditorPx }}
+              >
+                <CodeEditor 
+                  ref={codeEditorRef}
+                  initialScript=""
+                  onExecute={handleExecute}
+                  onCodeChange={handleCodeChange}
+                  isMobile={isMobile}
+                />
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="h-[33vh] border-b border-gray-700 flex-shrink-0">
+                <CodeEditor 
+                  ref={codeEditorRef}
+                  initialScript={editorInitialScript}
+                  onExecute={handleExecute}
+                  onCodeChange={handleCodeChange}
+                  isMobile={isMobile}
+                />
+              </div>
+              <div className="flex-1 min-h-0 border-b border-gray-700 overflow-hidden">
+                {viewportEl}
+              </div>
+              <div className="flex-shrink-0">
+                <PromptInput 
+                  onCodeGenerated={handleCodeGenerated}
+                  currentCode={codeEditorRef.current?.getContent() || ''}
+                  selectedFace={selectedFace}
+                  onClearFaceSelection={handleClearFaceSelection}
+                  isMobile={isMobile}
+                />
+              </div>
+            </>
           )}
 
           {/* Login Modal */}
@@ -1084,6 +1178,7 @@ const App = () => {
             gameSuccess={gameSuccess}
             gamePuzzleTitle={currentPuzzle?.title}
             gameBestTimeMs={gameBestTimeMs}
+            isMobile={false}
           />
         </div>
 

@@ -85,7 +85,7 @@ const PuzzlePickerModal = ({
         </div>
 
         <div className="px-4 py-2 border-t border-gray-800 text-[11px] text-gray-500 shrink-0">
-          Blank editor · match the cyan ghost · lower time is better
+          Blank editor · match the grey ghost · lower time is better
         </div>
       </div>
     </div>
