@@ -1350,7 +1350,7 @@ const Viewport = forwardRef(({
         />
       )}
 
-      {/* Slice 08: part name only, centered top-middle (where floating bar sat). */}
+      {/* Slice 08: part name only (best-time suffix dropped deliberately — still in strip timer), centered top-middle. */}
       {mode === 'game' && (
         <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10 pointer-events-none max-w-[min(20rem,calc(100%-2rem))]">
           <div className="text-xs font-medium text-center truncate px-3 py-1.5 rounded-lg shadow bg-gray-900/85 border border-gray-500/50 text-gray-100">

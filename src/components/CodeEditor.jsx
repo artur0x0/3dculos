@@ -245,8 +245,8 @@ const CodeEditor = forwardRef(({
           aria-label="Select all text in the editor"
           className="shrink-0 p-1.5 text-gray-400 hover:text-white hover:bg-gray-700/60 rounded transition-colors"
         >
-          {/* lucide-react ^0.469.0 exports SquareDashedBottomCode (preferred). */}
-          <SquareDashedBottomCode size={16} />
+          {/* lucide-react ^0.469.0 exports SquareDashedBottomCode. */}
+          <SquareDashedBottomCode size={16} aria-hidden={true} />
         </button>
       </div>
       <div className="flex-1 min-h-0">
