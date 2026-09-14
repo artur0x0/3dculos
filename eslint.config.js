@@ -20,6 +20,10 @@ const browserGlobals = {
   ...clean(globals.builtin),
   CompressionStream: 'readonly',
   DecompressionStream: 'readonly',
+  // globals.browser marks these false (readonly) in some forks; Hermes/analysis
+  // tools sometimes treat false as missing — pin explicitly.
+  requestAnimationFrame: 'readonly',
+  queueMicrotask: 'readonly',
 }
 const nodeGlobals = {
   ...clean(globals.builtin),
