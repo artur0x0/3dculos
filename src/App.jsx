@@ -559,8 +559,8 @@ const App = () => {
     if (code == null) return;
     // Capture puzzle identity at Run — loadPuzzle can change currentPuzzle
     // while execute+compare are in flight (~1s+), which would poison wins.
-    const runPuzzleId = currentPuzzleRef.current?.id;
-    if (!runPuzzleId) return;
+    // Ref tracks live id (closure would stay stale across the await).
+    const puzzleIdAtRun = currentPuzzleRef.current?.id || 'unknown';
     gameRunInFlightRef.current = true;
     setCurrentScript(code);
     try {
@@ -581,6 +581,15 @@ const App = () => {
           console.log('[App] No match', verdict);
           return;
         }
+        // Stale — puzzle switched mid-run; do not treat as success / record win.
+        const puzzleIdNow = currentPuzzleRef.current?.id || 'unknown';
+        if (puzzleIdNow !== puzzleIdAtRun) {
+          console.log('[App] Ignoring stale match — puzzle switched mid-run', {
+            puzzleIdAtRun,
+            puzzleIdNow,
+          });
+          return;
+        }
         if (verdict.reason === 'boolean_failed_vol_fallback' || verdict.warning) {
           console.warn('[App] Match via volume fallback (boolean unstable)', verdict.warning);
           setGameError('Match used volume fallback (boolean unstable)');
@@ -591,21 +600,14 @@ const App = () => {
         setGameSuccess(true);
 
         // Win capture is non-blocking — match UX continues even if POST fails.
-        // Re-check puzzle id at verdict time (loadPuzzle may have switched).
-        if (currentPuzzleRef.current?.id !== runPuzzleId) {
-          console.log('[App] Ignoring win capture — puzzle changed during run', {
-            runPuzzleId,
-            now: currentPuzzleRef.current?.id,
+        // Use puzzleIdAtRun (not live currentPuzzle) so the win keys the run that matched.
+        recordWin({ puzzleId: puzzleIdAtRun, script: code, timeMs: elapsed })
+          .then(({ bestTimeMs }) => {
+            setGameBestTimeMs(bestTimeMs);
+          })
+          .catch((err) => {
+            console.warn('[App] Win capture failed (non-blocking):', err);
           });
-        } else {
-          recordWin({ puzzleId: runPuzzleId, script: code, timeMs: elapsed })
-            .then(({ bestTimeMs }) => {
-              setGameBestTimeMs(bestTimeMs);
-            })
-            .catch((err) => {
-              console.warn('[App] Win capture failed (non-blocking):', err);
-            });
-        }
 
         clearSuccessTimer();
         // Default: no Submit. Brief success, then clear attempt + blank editor
