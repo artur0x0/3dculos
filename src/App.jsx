@@ -947,7 +947,10 @@ const App = () => {
     : Math.round(Math.min(Math.max(vv.height * 0.32, 160), vv.height * 0.38));
 
   if (isMobile) {
-    const mobileShellStyle = appMode === 'game'
+    // Keep h-dvh while the keyboard is closed so Monaco can take a real
+    // user-gesture focus (iOS often refuses keyboard inside a fixed+overflow
+    // shell). Once open, pin to visualViewport so the editor stays visible.
+    const mobileShellStyle = appMode === 'game' && keyboardOpen
       ? {
           height: vv.height,
           top: vv.offsetTop,
@@ -990,7 +993,7 @@ const App = () => {
 
     return (
         <div
-          className={`flex flex-col bg-gray-900 overflow-hidden ${appMode === 'game' ? '' : 'h-dvh'}`}
+          className={`flex flex-col bg-gray-900 overflow-hidden ${appMode === 'game' && keyboardOpen ? '' : 'h-dvh'}`}
           style={mobileShellStyle}
         >
           {appMode === 'game' ? (

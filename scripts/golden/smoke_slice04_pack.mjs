@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Slice 04 smoke: puzzle pack shape + every targetScript builds a solid
+ * Slice 04/06 smoke: puzzle pack shape + every targetScript builds a solid
  * through the *bundled* wasm + sandboxWorker helpers (same as the browser).
  */
 import { register } from 'node:module';
@@ -20,7 +20,7 @@ function check(name, ok, detail = '') {
 
 console.log('slice04 smoke — puzzle pack');
 const pack = listPuzzles();
-check('at least 5 puzzles', pack.length >= 5, `count=${pack.length}`);
+check('at least 10 puzzles', pack.length >= 10, `count=${pack.length}`);
 check('DEMO_PUZZLE is first', DEMO_PUZZLE?.id === pack[0]?.id);
 
 const ids = new Set();

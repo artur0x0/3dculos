@@ -117,7 +117,31 @@ const CodeEditor = forwardRef(({
 
   const editorDidMount = (editor, monaco) => {
     editorRef.current = editor;
-    editor.focus();
+
+    // iOS Safari: programmatic focus on mount marks the editor focused
+    // without opening the soft keyboard, so the first user tap is a no-op.
+    // Only auto-focus on fine pointers; on touch, focus inside the gesture.
+    const coarse = typeof window !== 'undefined'
+      && !!window.matchMedia?.('(pointer: coarse)').matches;
+    if (!coarse && !isMobile) {
+      editor.focus();
+    } else {
+      const dom = editor.getDomNode();
+      const focusFromGesture = () => {
+        editor.focus();
+        const ta = dom?.querySelector?.('textarea.inputarea');
+        if (ta && document.activeElement !== ta) {
+          try { ta.focus({ preventScroll: true }); } catch { ta.focus(); }
+        }
+      };
+      // touchend stays within the user-gesture window on iOS; click covers pencil/mouse.
+      dom?.addEventListener('touchend', focusFromGesture, { passive: true });
+      dom?.addEventListener('click', focusFromGesture);
+      editor.onDidDispose(() => {
+        dom?.removeEventListener('touchend', focusFromGesture);
+        dom?.removeEventListener('click', focusFromGesture);
+      });
+    }
 
     // Add "Select All" to the editor context menu (once).
     // Never let an optional menu feature crash the mount.
