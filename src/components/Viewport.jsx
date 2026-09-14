@@ -69,6 +69,7 @@ const Viewport = forwardRef(({
   onPickPuzzle,
   gameElapsedMs = 0,
   gameSuccess = false,
+  packComplete = false,
   gamePuzzleTitle = null,
   gameBestTimeMs = null,
   isMobile = false,
@@ -1344,7 +1345,6 @@ const Viewport = forwardRef(({
         onPickPuzzle={onPickPuzzle}
         gameElapsedMs={gameElapsedMs}
         gameSuccess={gameSuccess}
-        gamePuzzleTitle={gamePuzzleTitle}
         gameBestTimeMs={gameBestTimeMs}
       />
 
@@ -1366,8 +1366,10 @@ const Viewport = forwardRef(({
           </div>
           <div className="opacity-90 mt-0.5">
             {gameSuccess
-              ? `Match! ${formatGameTime(gameElapsedMs)} · clearing…`
-              : `Match the grey ghost · edit script · Run · ${formatGameTime(gameElapsedMs)}`}
+              ? `Match! ${formatGameTime(gameElapsedMs)}`
+              : packComplete
+                ? `Pack complete · retry last or pick another · ${formatGameTime(gameElapsedMs)}`
+                : `Match the grey ghost · edit script · Run · ${formatGameTime(gameElapsedMs)}`}
           </div>
         </div>
       )}

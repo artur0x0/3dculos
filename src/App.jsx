@@ -27,6 +27,10 @@ import manifoldContext from './utils/ManifoldWorker';
 import DEFAULT_SCRIPT from './utils/defaultScript';
 import {
   DEMO_PUZZLE,
+  DEFAULT_PUZZLE_ID,
+  GAME_PUZZLES,
+  getPuzzle,
+  getNextPuzzle,
   MATCH_REL_EPS,
   MATCH_VOL_FLOOR_MM3,
   SUCCESS_CLEAR_MS,
@@ -34,6 +38,7 @@ import {
 import { getBestTimeMs, recordWin } from './utils/gameWins';
 import GameHintsModal from './components/GameHintsModal';
 import PuzzlePickerModal from './components/PuzzlePickerModal';
+import GameConfetti from './components/GameConfetti';
 
 const App = () => {
   const [currentScript, setCurrentScript] = useState('');
@@ -63,6 +68,8 @@ const App = () => {
   const [currentPuzzle, setCurrentPuzzle] = useState(DEMO_PUZZLE);
   const [showPuzzlePicker, setShowPuzzlePicker] = useState(false);
   const [gameBestTimeMs, setGameBestTimeMs] = useState(null);
+  const [showConfetti, setShowConfetti] = useState(false);
+  const [packComplete, setPackComplete] = useState(false);
 
   const { user, isAuthenticated, checkAuth } = useAuth();
 
@@ -512,10 +519,14 @@ const App = () => {
     }
   }, []);
 
-  /** CAD: open picker. Game toolbar List also opens picker. */
+  /**
+   * CAD → game: always start on first pack puzzle (linear progression).
+   * Picker stays secondary via toolbar List (handlePickPuzzle).
+   */
   const handleStartGame = () => {
     if (gameLoading) return;
-    setShowPuzzlePicker(true);
+    const first = getPuzzle(DEFAULT_PUZZLE_ID) || GAME_PUZZLES[0] || DEMO_PUZZLE;
+    loadPuzzle(first, { autoOpenHint: true });
   };
 
   const handlePickPuzzle = () => {
@@ -525,15 +536,19 @@ const App = () => {
 
   /**
    * Load a puzzle: rebuild ghost, blank editor, reset timer.
-   * Used for first enter and mid-game switches.
+   * Used for first enter, auto-advance, and mid-game picker switches.
+   * @param {{ autoOpenHint?: boolean }} [opts]
    */
-  const loadPuzzle = async (puzzle) => {
+  const loadPuzzle = async (puzzle, opts = {}) => {
     if (!puzzle?.targetScript || gameLoading) return;
     const enteringFromCad = appMode !== 'game';
+    const autoOpenHint = Boolean(opts.autoOpenHint);
     resetGameScoring();
     setGameLoading(true);
     setGameError(null);
     setShowPuzzlePicker(false);
+    setShowConfetti(false);
+    setPackComplete(false);
     try {
       if (enteringFromCad) {
         const current = codeEditorRef.current?.getContent?.() ?? currentScript;
@@ -551,7 +566,9 @@ const App = () => {
       setCurrentPuzzle(puzzle);
       setGameBestTimeMs(getBestTimeMs(puzzle.id));
       setAppMode('game');
-      setShowHints(false);
+      // Slice 07: first puzzle auto-opens Hint on enter (Artur playtest).
+      const isFirst = puzzle.id === DEFAULT_PUZZLE_ID || puzzle.id === GAME_PUZZLES[0]?.id;
+      setShowHints(autoOpenHint || isFirst);
       setGameError(null);
 
       // Blank Monaco + ghost-only until Run (slice 02.1 / 05).
@@ -593,6 +610,8 @@ const App = () => {
     setGhostMeshData(null);
     setShowHints(false);
     setShowPuzzlePicker(false);
+    setShowConfetti(false);
+    setPackComplete(false);
     setGameError(null);
     setGameBestTimeMs(null);
     const restore = cadScriptBackup || DEFAULT_SCRIPT;
@@ -645,6 +664,8 @@ const App = () => {
         setGameTimerRunning(false);
         setGameElapsedMs(elapsed);
         setGameSuccess(true);
+        setShowConfetti(true);
+        setShowHints(false);
 
         // Win capture is non-blocking — match UX continues even if POST fails.
         // Use puzzleIdAtRun (not live currentPuzzle) so the win keys the run that matched.
@@ -656,12 +677,19 @@ const App = () => {
             console.warn('[App] Win capture failed (non-blocking):', err);
           });
 
+        const next = getNextPuzzle(puzzleIdAtRun);
         clearSuccessTimer();
-        // Default: no Submit. Brief success, then clear attempt + blank editor
-        // so the same puzzle can be tried again. Timer restarts after the clear.
+        // Brief confetti + banner, then auto-advance (or stay on last).
         successClearTimerRef.current = setTimeout(() => {
           successClearTimerRef.current = null;
           setGameSuccess(false);
+          setShowConfetti(false);
+          if (next) {
+            loadPuzzle(next, { autoOpenHint: false });
+            return;
+          }
+          // End of pack: stay on last, blank editor, mark complete, restart timer.
+          setPackComplete(true);
           setCurrentScript('');
           codeEditorRef.current?.setTextOnly?.('');
           viewportRef.current?.clearAttempt?.();
@@ -987,6 +1015,7 @@ const App = () => {
               gameSuccess={gameSuccess}
               gamePuzzleTitle={currentPuzzle?.title}
               gameBestTimeMs={gameBestTimeMs}
+              packComplete={packComplete}
               isMobile={isMobile}
             />
     );
@@ -1100,6 +1129,7 @@ const App = () => {
               puzzle={currentPuzzle}
             />
           )}
+          {showConfetti && <GameConfetti durationMs={SUCCESS_CLEAR_MS} />}
           {gameError && (
             <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-red-900/90 text-white px-4 py-2 rounded shadow-lg z-50 max-w-md">
               <div className="flex items-center gap-2">
@@ -1181,6 +1211,7 @@ const App = () => {
             gameSuccess={gameSuccess}
             gamePuzzleTitle={currentPuzzle?.title}
             gameBestTimeMs={gameBestTimeMs}
+            packComplete={packComplete}
             isMobile={false}
           />
         </div>
@@ -1244,6 +1275,7 @@ const App = () => {
               puzzle={currentPuzzle}
             />
           )}
+          {showConfetti && <GameConfetti durationMs={SUCCESS_CLEAR_MS} />}
         {gameError && (
           <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-red-900/90 text-white px-4 py-2 rounded shadow-lg z-50 max-w-md">
             <div className="flex items-center gap-2">

@@ -201,3 +201,18 @@ export function getPuzzle(id) {
 export function listPuzzles() {
   return GAME_PUZZLES;
 }
+
+/** Index of puzzle in pack order, or -1. */
+export function getPuzzleIndex(id) {
+  return GAME_PUZZLES.findIndex((p) => p.id === id);
+}
+
+/**
+ * Next puzzle in pack order after `id`.
+ * @returns {GamePuzzle | null} null at end of pack
+ */
+export function getNextPuzzle(id) {
+  const i = getPuzzleIndex(id);
+  if (i < 0 || i >= GAME_PUZZLES.length - 1) return null;
+  return GAME_PUZZLES[i + 1];
+}

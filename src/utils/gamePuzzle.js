@@ -1,4 +1,4 @@
-// Match-the-part game constants + re-exports (Slices 02–04).
+// Match-the-part game constants + re-exports (Slices 02–04, 07).
 // Puzzle definitions live in gamePuzzles.js.
 
 export {
@@ -7,6 +7,8 @@ export {
   DEMO_PUZZLE,
   getPuzzle,
   listPuzzles,
+  getPuzzleIndex,
+  getNextPuzzle,
 } from './gamePuzzles.js';
 
 /**
@@ -39,7 +41,7 @@ export const GAME_STARTER_SCRIPT = '';
 export const MATCH_REL_EPS = 0.002;
 export const MATCH_VOL_FLOOR_MM3 = 1e-6;
 
-/** Brief success banner, then auto-clear attempt + blank editor (no Submit). */
+/** Brief success banner + confetti, then auto-advance / clear (no Submit). */
 export const SUCCESS_CLEAR_MS = 1600;
 
 /** Elapsed display: m:ss.t (lower is better). */
