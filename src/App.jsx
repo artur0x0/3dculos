@@ -69,7 +69,7 @@ const App = () => {
   const [showPuzzlePicker, setShowPuzzlePicker] = useState(false);
   const [gameBestTimeMs, setGameBestTimeMs] = useState(null);
   const [showConfetti, setShowConfetti] = useState(false);
-  const [packComplete, setPackComplete] = useState(false);
+  const [gameRunBusy, setGameRunBusy] = useState(false);
 
   const { user, isAuthenticated, checkAuth } = useAuth();
 
@@ -548,7 +548,6 @@ const App = () => {
     setGameError(null);
     setShowPuzzlePicker(false);
     setShowConfetti(false);
-    setPackComplete(false);
     try {
       if (enteringFromCad) {
         const current = codeEditorRef.current?.getContent?.() ?? currentScript;
@@ -611,7 +610,6 @@ const App = () => {
     setShowHints(false);
     setShowPuzzlePicker(false);
     setShowConfetti(false);
-    setPackComplete(false);
     setGameError(null);
     setGameBestTimeMs(null);
     const restore = cadScriptBackup || DEFAULT_SCRIPT;
@@ -628,6 +626,7 @@ const App = () => {
     // Ref tracks live id (closure would stay stale across the await).
     const puzzleIdAtRun = currentPuzzleRef.current?.id || 'unknown';
     gameRunInFlightRef.current = true;
+    setGameRunBusy(true);
     setCurrentScript(code);
     try {
       const run = await viewportRef.current?.executeScript(code);
@@ -688,8 +687,7 @@ const App = () => {
             loadPuzzle(next, { autoOpenHint: false });
             return;
           }
-          // End of pack: stay on last, blank editor, mark complete, restart timer.
-          setPackComplete(true);
+          // End of pack: stay on last, blank editor, restart timer.
           setCurrentScript('');
           codeEditorRef.current?.setTextOnly?.('');
           viewportRef.current?.clearAttempt?.();
@@ -703,6 +701,7 @@ const App = () => {
     } finally {
       // Cover execute+compare only so retry Run works after a miss / failed check.
       gameRunInFlightRef.current = false;
+      setGameRunBusy(false);
     }
   };
 
@@ -1015,7 +1014,6 @@ const App = () => {
               gameSuccess={gameSuccess}
               gamePuzzleTitle={currentPuzzle?.title}
               gameBestTimeMs={gameBestTimeMs}
-              packComplete={packComplete}
               isMobile={isMobile}
             />
     );
@@ -1041,6 +1039,19 @@ const App = () => {
                   onExecute={handleExecute}
                   onCodeChange={handleCodeChange}
                   isMobile={isMobile}
+                  mode={appMode}
+                  onExitGame={handleExitGame}
+                  onUndo={handleUndo}
+                  onRedo={handleRedo}
+                  canUndo={canUndo()}
+                  canRedo={canRedo()}
+                  isExecuting={gameRunBusy}
+                  onRun={handleGameRun}
+                  onHint={handleGameHint}
+                  onPickPuzzle={handlePickPuzzle}
+                  gameElapsedMs={gameElapsedMs}
+                  gameSuccess={gameSuccess}
+                  gameBestTimeMs={gameBestTimeMs}
                 />
               </div>
             </>
@@ -1170,6 +1181,19 @@ const App = () => {
               onExecute={handleExecute}
               onCodeChange={handleCodeChange}
               isMobile={isMobile}
+              mode={appMode}
+              onExitGame={handleExitGame}
+              onUndo={handleUndo}
+              onRedo={handleRedo}
+              canUndo={canUndo()}
+              canRedo={canRedo()}
+              isExecuting={gameRunBusy}
+              onRun={handleGameRun}
+              onHint={handleGameHint}
+              onPickPuzzle={handlePickPuzzle}
+              gameElapsedMs={gameElapsedMs}
+              gameSuccess={gameSuccess}
+              gameBestTimeMs={gameBestTimeMs}
             />
           </div>
           {appMode !== 'game' && (
@@ -1211,7 +1235,6 @@ const App = () => {
             gameSuccess={gameSuccess}
             gamePuzzleTitle={currentPuzzle?.title}
             gameBestTimeMs={gameBestTimeMs}
-            packComplete={packComplete}
             isMobile={false}
           />
         </div>
