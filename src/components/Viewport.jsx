@@ -145,7 +145,8 @@ const Viewport = forwardRef(({
     /** Frame ghost with phone-friendly margin (puzzle enter / switch). */
     frameGhost: () => {
       const geom = ghostMeshRef.current?.geometry;
-      if (!geom || !cameraRef.current) return false;
+      // Skip empty BufferGeometry ghosts (cleared state) before fitView bbox work.
+      if (!geom?.attributes?.position || !cameraRef.current) return false;
       return fitView({
         camera: cameraRef.current,
         controls: controlsRef.current,

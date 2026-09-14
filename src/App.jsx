@@ -561,16 +561,15 @@ const App = () => {
       const blankEditor = () => codeEditorRef.current?.setTextOnly?.('');
       blankEditor();
       // Layout swap (viewport top / editor bottom) remounts Monaco after this
-      // tick; blank again so initialScript cannot stick.
+      // tick; double-rAF waits for remount/paint so initialScript cannot stick.
+      // (No queueMicrotask — not needed; rAF covers the remount tick.)
       requestAnimationFrame(() => {
-        blankEditor();
-        queueMicrotask(blankEditor);
+        requestAnimationFrame(() => {
+          blankEditor();
+          viewportRef.current?.frameGhost?.();
+        });
       });
       viewportRef.current?.clearAttempt?.();
-      // Extra margin frame after layout settles (phone viewport).
-      requestAnimationFrame(() => {
-        viewportRef.current?.frameGhost?.();
-      });
       startGameTimer();
     } catch (err) {
       console.error('[App] Failed to start puzzle:', err);
