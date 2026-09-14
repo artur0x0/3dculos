@@ -1,7 +1,7 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   FolderOpen, Save, Download, Undo, Redo, ChevronLeft, ChevronRight,
-  Truck, Upload, User, ArrowLeft, Play, BookOpen, Puzzle, MoreHorizontal, List
+  Truck, Upload, User, ArrowLeft, Play, BookOpen, Puzzle, List
 } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import { formatGameTime } from '../utils/gamePuzzle';
@@ -29,35 +29,14 @@ const Toolbar = ({
   onPickPuzzle,
   gameElapsedMs = 0,
   gameSuccess = false,
-  gamePuzzleTitle = null,
   gameBestTimeMs = null,
 }) => {
   const fileInputRef = useRef(null);
   const uploadModelRef = useRef(null);
   const [isCollapsed, setIsCollapsed] = useState(false);
-  const [showOverflow, setShowOverflow] = useState(false);
-  const overflowRef = useRef(null);
 
   const { isAuthenticated } = useAuth();
   const isGame = mode === 'game';
-
-  useEffect(() => {
-    if (!showOverflow) return;
-    const onPointerDown = (e) => {
-      if (overflowRef.current && !overflowRef.current.contains(e.target)) {
-        setShowOverflow(false);
-      }
-    };
-    const onKeyDown = (e) => {
-      if (e.key === 'Escape') setShowOverflow(false);
-    };
-    document.addEventListener('pointerdown', onPointerDown);
-    document.addEventListener('keydown', onKeyDown);
-    return () => {
-      document.removeEventListener('pointerdown', onPointerDown);
-      document.removeEventListener('keydown', onKeyDown);
-    };
-  }, [showOverflow]);
 
   const handleFileSelect = async (event) => {
     const file = event.target.files?.[0];
@@ -112,7 +91,7 @@ const Toolbar = ({
     );
   }
 
-  // ── Game mode: back, undo, run, hint; stash file/account/order chrome ──
+  // ── Game mode: back, undo/redo, run, picker, hint (BookOpen only) ──
   if (isGame) {
     return (
       <div className="absolute top-4 left-1/2 -translate-x-1/2 lg:left-auto lg:right-4 lg:translate-x-0 flex items-center gap-1 lg:gap-2 bg-white/60 backdrop-blur-sm p-2 rounded-lg shadow-lg z-10 max-w-[calc(100vw-1rem)]">
@@ -185,52 +164,16 @@ const Toolbar = ({
           <List size={20} />
         </button>
 
+        {/* Slice 07: keep BookOpen as the sole Hint control (removed ⋯ overflow
+            that sat next to Hint and felt like a second help entry in playtest).
+            CAD Account/Save/Download remain available after exiting game. */}
         <button
           onClick={onHint}
           className="p-2 flex items-center gap-1 text-cyan-700 hover:bg-gray-100 rounded"
-          title="Puzzle helpers / docs"
+          title="Hint — target code & helpers"
         >
           <BookOpen size={20} />
         </button>
-
-        {/* Overflow: stash CAD file/account actions without losing them entirely */}
-        <div className="relative" ref={overflowRef}>
-          <button
-            onClick={() => setShowOverflow((v) => !v)}
-            className="p-2 rounded hover:bg-gray-100 text-gray-500"
-            title="More"
-          >
-            <MoreHorizontal size={20} />
-          </button>
-          {showOverflow && (
-            <div className="absolute right-0 top-full mt-1 flex flex-col gap-0.5 bg-white rounded-lg shadow-lg border border-gray-200 p-1 min-w-[140px]">
-              {gamePuzzleTitle && (
-                <div className="px-3 py-1.5 text-[11px] text-gray-500 border-b border-gray-100 mb-0.5 truncate max-w-[180px]">
-                  {gamePuzzleTitle}
-                </div>
-              )}
-              <button
-                onClick={() => { onAccount?.(); setShowOverflow(false); }}
-                className="flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded"
-              >
-                <User size={16} /> Account
-              </button>
-              <button
-                onClick={() => { onSave?.(); setShowOverflow(false); }}
-                className="flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded"
-              >
-                <Save size={16} /> Save
-              </button>
-              <button
-                onClick={() => { onDownload?.(); setShowOverflow(false); }}
-                disabled={isDownloading || isExecuting}
-                className="flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded disabled:opacity-50"
-              >
-                <Download size={16} /> Download
-              </button>
-            </div>
-          )}
-        </div>
 
         <button
           onClick={() => setIsCollapsed(true)}
