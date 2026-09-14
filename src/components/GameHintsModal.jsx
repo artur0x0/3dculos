@@ -1,10 +1,11 @@
 import React from 'react';
 import { X, BookOpen } from 'lucide-react';
+import { listPuzzles } from '../utils/gamePuzzle';
 
 /**
  * Compact puzzle-vocabulary cheatsheet for game mode.
  * Mirrors the Slice 01 allowlist in HELPER_FUNCTIONS.md — not a full docs rewrite.
- * Optional per-puzzle blurb/hint (no automatic spoilers for the whole pack).
+ * Slice 05: lists every pack puzzle title + blurb so playtest works without editor spoilers.
  */
 const ROWS = [
   { name: 'filletEdges(part, edges, r, opts?)', role: 'Circular fillet on convex edges' },
@@ -21,6 +22,8 @@ const ROWS = [
 ];
 
 const GameHintsModal = ({ onClose, puzzle = null }) => {
+  const pack = listPuzzles();
+
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 p-3">
       <div
@@ -30,7 +33,7 @@ const GameHintsModal = ({ onClose, puzzle = null }) => {
       >
         <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-gray-700 shrink-0">
           <div className="flex items-center gap-2 text-white">
-            <BookOpen size={18} className="text-cyan-400" />
+            <BookOpen size={18} className="text-gray-300" />
             <h2 id="game-hints-title" className="font-semibold text-sm">
               Puzzle helpers
             </h2>
@@ -47,28 +50,54 @@ const GameHintsModal = ({ onClose, puzzle = null }) => {
 
         <div className="overflow-y-auto p-4 space-y-4 text-sm text-gray-200">
           <p className="text-xs text-gray-400">
-            Stay inside the official puzzle vocabulary. Prefer these names so
-            scripts stay comparable. Loud failures on bad inputs are expected.
+            Match the grey ghost. Stay inside the official puzzle vocabulary.
+            Prefer these names so scripts stay comparable. Loud failures on bad
+            inputs are expected. Editor stays blank on enter — use the blurbs
+            below for what to build.
           </p>
 
-          {puzzle && (
-            <div className="rounded border border-cyan-700/40 bg-cyan-950/30 p-3">
-              <div className="text-xs font-semibold text-cyan-300 mb-1">
-                {puzzle.title}
-                {puzzle.difficulty ? (
-                  <span className="ml-2 font-normal text-cyan-500/80 normal-case">
-                    · {puzzle.difficulty}
-                  </span>
-                ) : null}
+          <div>
+            <div className="text-xs font-semibold text-gray-300 mb-2">Puzzle pack</div>
+            <ul className="space-y-2">
+              {pack.map((p) => {
+                const active = puzzle?.id === p.id;
+                return (
+                  <li
+                    key={p.id}
+                    className={`rounded border px-3 py-2 ${
+                      active
+                        ? 'border-gray-400 bg-gray-800/80'
+                        : 'border-gray-800 bg-gray-900/40'
+                    }`}
+                  >
+                    <div className="text-xs font-semibold text-gray-100">
+                      {p.title}
+                      {p.difficulty ? (
+                        <span className="ml-2 font-normal text-gray-500 normal-case">
+                          · {p.difficulty}
+                        </span>
+                      ) : null}
+                      {active ? (
+                        <span className="ml-2 font-normal text-emerald-400/90">· current</span>
+                      ) : null}
+                    </div>
+                    {p.blurb && (
+                      <p className="text-[11px] text-gray-400 mt-0.5">{p.blurb}</p>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+
+          {puzzle?.hint && (
+            <div className="rounded border border-gray-600/50 bg-gray-800/50 p-3">
+              <div className="text-xs font-semibold text-gray-300 mb-1">
+                Hint · {puzzle.title}
               </div>
-              {puzzle.blurb && (
-                <p className="text-[11px] text-cyan-100/80 mb-2">{puzzle.blurb}</p>
-              )}
-              {puzzle.hint && (
-                <pre className="text-[11px] leading-relaxed text-cyan-100/90 whitespace-pre-wrap font-mono overflow-x-auto">
-                  {puzzle.hint}
-                </pre>
-              )}
+              <pre className="text-[11px] leading-relaxed text-gray-200 whitespace-pre-wrap font-mono overflow-x-auto">
+                {puzzle.hint}
+              </pre>
             </div>
           )}
 

@@ -17,7 +17,9 @@ const CrossSectionPanel = ({
   measurementEnabled,
   onMeasurementToggle,
   axisHelperEnabled,
-  onAxisHelperToggle
+  onAxisHelperToggle,
+  /** Mobile game: stack tools vertically so measure stays reachable with keyboard up. */
+  verticalRail = false,
 }) => {
   const [isCollapsed, setIsCollapsed] = useState(true);
   const [planeType, setPlaneType] = useState('XY');
@@ -162,7 +164,9 @@ const handleButtonClick = () => {
 
   if (isCollapsed || !enabled) {
     return (
-      <div className="absolute bottom-4 right-2 lg:right-4 flex gap-2 bg-white/60 backdrop-blur-sm p-2 rounded-lg shadow-lg z-10">
+      <div className={`absolute bottom-4 right-2 lg:right-4 bg-white/60 backdrop-blur-sm p-2 rounded-lg shadow-lg z-10 ${
+        verticalRail ? 'flex flex-col gap-1' : 'flex gap-2'
+      }`}>
         <ViewSnapControl onSnap={onSnapView} />
         <button
           onClick={onAutoFitToggle}

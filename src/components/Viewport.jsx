@@ -71,6 +71,7 @@ const Viewport = forwardRef(({
   gameSuccess = false,
   gamePuzzleTitle = null,
   gameBestTimeMs = null,
+  isMobile = false,
 }, ref) => {
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
@@ -140,6 +141,17 @@ const Viewport = forwardRef(({
         resultRef.current.geometry?.dispose();
         resultRef.current.geometry = new BufferGeometry();
       }
+    },
+    /** Frame ghost with phone-friendly margin (puzzle enter / switch). */
+    frameGhost: () => {
+      const geom = ghostMeshRef.current?.geometry;
+      if (!geom || !cameraRef.current) return false;
+      return fitView({
+        camera: cameraRef.current,
+        controls: controlsRef.current,
+        geometry: geom,
+        margin: 1.55,
+      });
     },
     clearFaceSelection: () => {
       clearHighlight();
@@ -993,16 +1005,17 @@ const Viewport = forwardRef(({
       geometry.setIndex(new BufferAttribute(triVerts, 1));
       geometry.computeVertexNormals();
 
+      // Grey translucent ghost (slice 05) — tip copy must say grey, not cyan.
       const material = new MeshLambertMaterial({
-        color: 0x22d3ee,
+        color: 0x9ca3af,
         transparent: true,
         opacity: 0.35,
         depthWrite: false,
         flatShading: true,
         side: 2,
         wireframe: false,
-        emissive: 0x0e7490,
-        emissiveIntensity: 0.15,
+        emissive: 0x4b5563,
+        emissiveIntensity: 0.12,
       });
 
       const mesh = new ThreeMesh(geometry, material);
@@ -1018,7 +1031,8 @@ const Viewport = forwardRef(({
           camera: cameraRef.current,
           controls: controlsRef.current,
           geometry,
-          margin: 1.2,
+          // Phone viewports need more margin so the ghost isn't edge-clipped.
+          margin: 1.55,
         });
       }
     };
@@ -1334,10 +1348,14 @@ const Viewport = forwardRef(({
       />
 
       {mode === 'game' && (
-        <div className={`absolute top-16 left-1/2 -translate-x-1/2 lg:left-4 lg:translate-x-0 text-xs px-3 py-1.5 rounded-lg shadow z-10 pointer-events-none max-w-[min(20rem,calc(100vw-2rem))] ${
+        <div className={`absolute text-xs px-3 py-1.5 rounded-lg shadow z-10 pointer-events-none max-w-[min(18rem,calc(100%-5.5rem))] ${
+          isMobile
+            ? 'bottom-3 left-2 right-14'
+            : 'top-20 left-1/2 -translate-x-1/2 lg:left-4 lg:translate-x-0'
+        } ${
           gameSuccess
             ? 'bg-emerald-950/90 border border-emerald-500/50 text-emerald-100'
-            : 'bg-cyan-950/80 border border-cyan-600/40 text-cyan-100'
+            : 'bg-gray-900/85 border border-gray-500/50 text-gray-100'
         }`}>
           <div className="font-medium truncate">
             {gamePuzzleTitle || 'Puzzle'}
@@ -1348,7 +1366,7 @@ const Viewport = forwardRef(({
           <div className="opacity-90 mt-0.5">
             {gameSuccess
               ? `Match! ${formatGameTime(gameElapsedMs)} · clearing…`
-              : `Match the cyan ghost · ${formatGameTime(gameElapsedMs)}`}
+              : `Match the grey ghost · edit script · Run · ${formatGameTime(gameElapsedMs)}`}
           </div>
         </div>
       )}
@@ -1377,6 +1395,7 @@ const Viewport = forwardRef(({
           onMeasurementToggle={handleMeasurementToggle}
           axisHelperEnabled={axisHelperEnabled}
           onAxisHelperToggle={handleAxisHelperToggle}
+          verticalRail={mode === 'game' && isMobile}
         />
       
       {executionError && (
