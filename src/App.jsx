@@ -31,7 +31,9 @@ import {
   MATCH_VOL_FLOOR_MM3,
   SUCCESS_CLEAR_MS,
 } from './utils/gamePuzzle';
+import { getBestTimeMs, recordWin } from './utils/gameWins';
 import GameHintsModal from './components/GameHintsModal';
+import PuzzlePickerModal from './components/PuzzlePickerModal';
 
 const App = () => {
   const [currentScript, setCurrentScript] = useState('');
@@ -58,6 +60,9 @@ const App = () => {
   const [gameElapsedMs, setGameElapsedMs] = useState(0);
   const [gameTimerRunning, setGameTimerRunning] = useState(false);
   const [gameSuccess, setGameSuccess] = useState(false);
+  const [currentPuzzle, setCurrentPuzzle] = useState(DEMO_PUZZLE);
+  const [showPuzzlePicker, setShowPuzzlePicker] = useState(false);
+  const [gameBestTimeMs, setGameBestTimeMs] = useState(null);
 
   const { user, isAuthenticated, checkAuth } = useAuth();
 
@@ -66,6 +71,10 @@ const App = () => {
   const gameTimerStartRef = useRef(0);
   const successClearTimerRef = useRef(null);
   const gameRunInFlightRef = useRef(false);
+  // Latest puzzle id — handleGameRun closes over render-time state; ref lets
+  // verdict-time validate that the puzzle did not switch mid-run.
+  const currentPuzzleRef = useRef(currentPuzzle);
+  currentPuzzleRef.current = currentPuzzle;
   
   const [history, setHistory] = useState({
     branches: {
@@ -468,45 +477,63 @@ const App = () => {
     }
   }, []);
 
-  const handleStartGame = async () => {
+  /** CAD: open picker. Game toolbar List also opens picker. */
+  const handleStartGame = () => {
     if (gameLoading) return;
-    // Clear stale success/timers from Exit-during-success before loading.
+    setShowPuzzlePicker(true);
+  };
+
+  const handlePickPuzzle = () => {
+    if (gameLoading) return;
+    setShowPuzzlePicker(true);
+  };
+
+  /**
+   * Load a puzzle: rebuild ghost, blank editor, reset timer.
+   * Used for first enter and mid-game switches.
+   */
+  const loadPuzzle = async (puzzle) => {
+    if (!puzzle?.targetScript || gameLoading) return;
+    const enteringFromCad = appMode !== 'game';
     resetGameScoring();
     setGameLoading(true);
     setGameError(null);
+    setShowPuzzlePicker(false);
     try {
-      const current = codeEditorRef.current?.getContent?.() ?? currentScript;
-      setCadScriptBackup(current);
+      if (enteringFromCad) {
+        const current = codeEditorRef.current?.getContent?.() ?? currentScript;
+        setCadScriptBackup(current);
+      }
 
-      // Build ghost mesh via worker (does not paint through Viewport.executeScript)
-      const result = await manifoldContext.executeScript(DEMO_PUZZLE.targetScript, {
+      const result = await manifoldContext.executeScript(puzzle.targetScript, {
         timeoutMs: 30000,
       });
       if (!result?.mesh?.vertProperties) {
         throw new Error('Ghost target produced no mesh');
       }
-      // Retain the live target manifold for later boolean compare (attempt Run
-      // will overwrite cachedManifold).
       await manifoldContext.storeGameTarget();
       setGhostMeshData(result.mesh);
+      setCurrentPuzzle(puzzle);
+      setGameBestTimeMs(getBestTimeMs(puzzle.id));
       setAppMode('game');
       setShowHints(false);
       setGameError(null);
 
       // Blank editor + no attempt solid until Run (slice 02.1).
-      // Use setTextOnly — loadContent always auto-executes via onExecute(..., true).
-      setCurrentScript('');
-      codeEditorRef.current?.setTextOnly?.('');
+      setCurrentScript(puzzle.starterScript ?? '');
+      codeEditorRef.current?.setTextOnly?.(puzzle.starterScript ?? '');
       viewportRef.current?.clearAttempt?.();
       startGameTimer();
     } catch (err) {
       console.error('[App] Failed to start puzzle:', err);
       setGameError(err.message || 'Failed to start puzzle');
-      setGhostMeshData(null);
-      setCadScriptBackup(null);
-      setAppMode('cad');
-      resetGameScoring();
-      manifoldContext.clearGameTarget().catch(() => {});
+      if (enteringFromCad) {
+        setGhostMeshData(null);
+        setCadScriptBackup(null);
+        setAppMode('cad');
+        resetGameScoring();
+        manifoldContext.clearGameTarget().catch(() => {});
+      }
     } finally {
       setGameLoading(false);
     }
@@ -518,7 +545,9 @@ const App = () => {
     setAppMode('cad');
     setGhostMeshData(null);
     setShowHints(false);
+    setShowPuzzlePicker(false);
     setGameError(null);
+    setGameBestTimeMs(null);
     const restore = cadScriptBackup || DEFAULT_SCRIPT;
     codeEditorRef.current?.loadContent(restore, 'Back to CAD', true);
     setCadScriptBackup(null);
@@ -528,6 +557,10 @@ const App = () => {
     if (gameSuccess || gameRunInFlightRef.current) return;
     const code = codeEditorRef.current?.getContent?.();
     if (code == null) return;
+    // Capture puzzle identity at Run — loadPuzzle can change currentPuzzle
+    // while execute+compare are in flight (~1s+), which would poison wins.
+    // Ref tracks live id (closure would stay stale across the await).
+    const puzzleIdAtRun = currentPuzzleRef.current?.id || 'unknown';
     gameRunInFlightRef.current = true;
     setCurrentScript(code);
     try {
@@ -548,6 +581,15 @@ const App = () => {
           console.log('[App] No match', verdict);
           return;
         }
+        // Stale — puzzle switched mid-run; do not treat as success / record win.
+        const puzzleIdNow = currentPuzzleRef.current?.id || 'unknown';
+        if (puzzleIdNow !== puzzleIdAtRun) {
+          console.log('[App] Ignoring stale match — puzzle switched mid-run', {
+            puzzleIdAtRun,
+            puzzleIdNow,
+          });
+          return;
+        }
         if (verdict.reason === 'boolean_failed_vol_fallback' || verdict.warning) {
           console.warn('[App] Match via volume fallback (boolean unstable)', verdict.warning);
           setGameError('Match used volume fallback (boolean unstable)');
@@ -556,6 +598,17 @@ const App = () => {
         setGameTimerRunning(false);
         setGameElapsedMs(elapsed);
         setGameSuccess(true);
+
+        // Win capture is non-blocking — match UX continues even if POST fails.
+        // Use puzzleIdAtRun (not live currentPuzzle) so the win keys the run that matched.
+        recordWin({ puzzleId: puzzleIdAtRun, script: code, timeMs: elapsed })
+          .then(({ bestTimeMs }) => {
+            setGameBestTimeMs(bestTimeMs);
+          })
+          .catch((err) => {
+            console.warn('[App] Win capture failed (non-blocking):', err);
+          });
+
         clearSuccessTimer();
         // Default: no Submit. Brief success, then clear attempt + blank editor
         // so the same puzzle can be tried again. Timer restarts after the clear.
@@ -872,8 +925,11 @@ const App = () => {
               onExitGame={handleExitGame}
               onRun={handleGameRun}
               onHint={handleGameHint}
+              onPickPuzzle={handlePickPuzzle}
               gameElapsedMs={gameElapsedMs}
               gameSuccess={gameSuccess}
+              gamePuzzleTitle={currentPuzzle?.title}
+              gameBestTimeMs={gameBestTimeMs}
             />
           </div>
           {appMode !== 'game' && (
@@ -933,8 +989,19 @@ const App = () => {
           )}
           
 
+          {showPuzzlePicker && (
+            <PuzzlePickerModal
+              onClose={() => setShowPuzzlePicker(false)}
+              onSelect={loadPuzzle}
+              currentPuzzleId={appMode === 'game' ? currentPuzzle?.id : null}
+              loading={gameLoading}
+            />
+          )}
           {showHints && (
-            <GameHintsModal onClose={() => setShowHints(false)} />
+            <GameHintsModal
+              onClose={() => setShowHints(false)}
+              puzzle={currentPuzzle}
+            />
           )}
           {gameError && (
             <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-red-900/90 text-white px-4 py-2 rounded shadow-lg z-50 max-w-md">
@@ -1012,8 +1079,11 @@ const App = () => {
             onExitGame={handleExitGame}
             onRun={handleGameRun}
             onHint={handleGameHint}
+            onPickPuzzle={handlePickPuzzle}
             gameElapsedMs={gameElapsedMs}
             gameSuccess={gameSuccess}
+            gamePuzzleTitle={currentPuzzle?.title}
+            gameBestTimeMs={gameBestTimeMs}
           />
         </div>
 
@@ -1062,8 +1132,19 @@ const App = () => {
         )}
         
 
+          {showPuzzlePicker && (
+            <PuzzlePickerModal
+              onClose={() => setShowPuzzlePicker(false)}
+              onSelect={loadPuzzle}
+              currentPuzzleId={appMode === 'game' ? currentPuzzle?.id : null}
+              loading={gameLoading}
+            />
+          )}
           {showHints && (
-            <GameHintsModal onClose={() => setShowHints(false)} />
+            <GameHintsModal
+              onClose={() => setShowHints(false)}
+              puzzle={currentPuzzle}
+            />
           )}
         {gameError && (
           <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-red-900/90 text-white px-4 py-2 rounded shadow-lg z-50 max-w-md">

@@ -18,6 +18,7 @@ import shippingRoutes from './routes/shipping.js';
 import orderRoutes from './routes/orders.js';
 import webhookRoutes from './routes/webhooks.js';
 import convertRoutes from './routes/convert.js';
+import winsRoutes from './routes/wins.js';
 
 // CAD and AI 
 import { SYSTEM_PROMPT } from './systemPrompt.js';
@@ -59,6 +60,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/shipping', shippingRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/convert', convertRoutes);
+app.use('/api/wins', winsRoutes);
 
 const MODEL_CONFIG = {
   model: 'meta-llama/llama-4-scout-17b-16e-instruct',

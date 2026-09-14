@@ -4,6 +4,7 @@ import { X, BookOpen } from 'lucide-react';
 /**
  * Compact puzzle-vocabulary cheatsheet for game mode.
  * Mirrors the Slice 01 allowlist in HELPER_FUNCTIONS.md — not a full docs rewrite.
+ * Optional per-puzzle blurb/hint (no automatic spoilers for the whole pack).
  */
 const ROWS = [
   { name: 'filletEdges(part, edges, r, opts?)', role: 'Circular fillet on convex edges' },
@@ -14,16 +15,12 @@ const ROWS = [
   { name: 'tapDrillHole(part, frame, u, v, size, …)', role: 'Tap-drill hole by fastener size' },
   { name: 'cboreHole / cskHole', role: 'Counterbore / countersink' },
   { name: 'hole / holeSpan / holePattern', role: 'Generic through-holes' },
+  { name: 'tube / hexPrism / roundedBox', role: 'Primitive solids' },
   { name: 'facesByNormal / workplaneFromFace / …', role: 'Selection helpers' },
-  { name: 'shell, addDraft, tube, hexPrism, mirror, array3D…', role: 'Solids / layout' },
+  { name: 'shell, addDraft, mirror, array3D…', role: 'Solids / layout' },
 ];
 
-const DEMO_HINT = `// Demo target shape
-let part = Manifold.cube([40, 30, 20], true);
-part = filletEdges(part, convexEdges(part), 3, { sphericalCorners: true });
-return part;`;
-
-const GameHintsModal = ({ onClose }) => {
+const GameHintsModal = ({ onClose, puzzle = null }) => {
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 p-3">
       <div
@@ -54,12 +51,26 @@ const GameHintsModal = ({ onClose }) => {
             scripts stay comparable. Loud failures on bad inputs are expected.
           </p>
 
-          <div className="rounded border border-cyan-700/40 bg-cyan-950/30 p-3">
-            <div className="text-xs font-semibold text-cyan-300 mb-2">Demo puzzle hint</div>
-            <pre className="text-[11px] leading-relaxed text-cyan-100/90 whitespace-pre-wrap font-mono overflow-x-auto">
-              {DEMO_HINT}
-            </pre>
-          </div>
+          {puzzle && (
+            <div className="rounded border border-cyan-700/40 bg-cyan-950/30 p-3">
+              <div className="text-xs font-semibold text-cyan-300 mb-1">
+                {puzzle.title}
+                {puzzle.difficulty ? (
+                  <span className="ml-2 font-normal text-cyan-500/80 normal-case">
+                    · {puzzle.difficulty}
+                  </span>
+                ) : null}
+              </div>
+              {puzzle.blurb && (
+                <p className="text-[11px] text-cyan-100/80 mb-2">{puzzle.blurb}</p>
+              )}
+              {puzzle.hint && (
+                <pre className="text-[11px] leading-relaxed text-cyan-100/90 whitespace-pre-wrap font-mono overflow-x-auto">
+                  {puzzle.hint}
+                </pre>
+              )}
+            </div>
+          )}
 
           <div>
             <div className="text-xs font-semibold text-gray-300 mb-2">Allowlist</div>

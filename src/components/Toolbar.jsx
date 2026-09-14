@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   FolderOpen, Save, Download, Undo, Redo, ChevronLeft, ChevronRight,
-  Truck, Upload, User, ArrowLeft, Play, BookOpen, Puzzle, MoreHorizontal
+  Truck, Upload, User, ArrowLeft, Play, BookOpen, Puzzle, MoreHorizontal, List
 } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import { formatGameTime } from '../utils/gamePuzzle';
@@ -26,8 +26,11 @@ const Toolbar = ({
   onExitGame,
   onRun,
   onHint,
+  onPickPuzzle,
   gameElapsedMs = 0,
   gameSuccess = false,
+  gamePuzzleTitle = null,
+  gameBestTimeMs = null,
 }) => {
   const fileInputRef = useRef(null);
   const uploadModelRef = useRef(null);
@@ -112,7 +115,7 @@ const Toolbar = ({
   // ── Game mode: back, undo, run, hint; stash file/account/order chrome ──
   if (isGame) {
     return (
-      <div className="absolute top-4 left-1/2 -translate-x-1/2 lg:left-auto lg:right-4 lg:translate-x-0 flex items-center gap-1 lg:gap-2 bg-white/60 backdrop-blur-sm p-2 rounded-lg shadow-lg z-10">
+      <div className="absolute top-4 left-1/2 -translate-x-1/2 lg:left-auto lg:right-4 lg:translate-x-0 flex items-center gap-1 lg:gap-2 bg-white/60 backdrop-blur-sm p-2 rounded-lg shadow-lg z-10 max-w-[calc(100vw-1rem)]">
         <button
           onClick={onExitGame}
           className="p-2 flex items-center gap-1 text-gray-700 hover:bg-gray-100 rounded"
@@ -165,6 +168,23 @@ const Toolbar = ({
           {formatGameTime(gameElapsedMs)}
         </span>
 
+        {gameBestTimeMs != null && (
+          <span
+            className="hidden sm:inline px-1 text-[10px] font-mono tabular-nums text-gray-500"
+            title="Best time for this puzzle"
+          >
+            best {formatGameTime(gameBestTimeMs)}
+          </span>
+        )}
+
+        <button
+          onClick={onPickPuzzle}
+          className="p-2 flex items-center gap-1 text-cyan-700 hover:bg-gray-100 rounded"
+          title="Switch puzzle"
+        >
+          <List size={20} />
+        </button>
+
         <button
           onClick={onHint}
           className="p-2 flex items-center gap-1 text-cyan-700 hover:bg-gray-100 rounded"
@@ -184,6 +204,11 @@ const Toolbar = ({
           </button>
           {showOverflow && (
             <div className="absolute right-0 top-full mt-1 flex flex-col gap-0.5 bg-white rounded-lg shadow-lg border border-gray-200 p-1 min-w-[140px]">
+              {gamePuzzleTitle && (
+                <div className="px-3 py-1.5 text-[11px] text-gray-500 border-b border-gray-100 mb-0.5 truncate max-w-[180px]">
+                  {gamePuzzleTitle}
+                </div>
+              )}
               <button
                 onClick={() => { onAccount?.(); setShowOverflow(false); }}
                 className="flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded"
@@ -326,7 +351,7 @@ const Toolbar = ({
         <Truck size={20} />
       </button>
 
-      {/* Start puzzle / game mode */}
+      {/* Start puzzle / game mode — opens picker */}
       <button
         onClick={onStartGame}
         className="p-2 rounded hover:bg-gray-100 text-cyan-700"
