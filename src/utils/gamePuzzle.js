@@ -1,26 +1,19 @@
-// Demo match-the-part puzzle + match/scoring constants (Slice 03).
-// Target is intentionally simple and rebuildable with official puzzle helpers.
+// Match-the-part game constants + re-exports (Slices 02–04).
+// Puzzle definitions live in gamePuzzles.js.
 
-/** Script that builds the ghost target solid (not shown in the editor). */
-export const DEMO_TARGET_SCRIPT = `// Demo target — 40×30×20 box, all convex edges filleted r=3
-let part = Manifold.cube([40, 30, 20], true);
-part = filletEdges(part, convexEdges(part), 3, { sphericalCorners: true });
-return part;
-`;
+export {
+  GAME_PUZZLES,
+  DEFAULT_PUZZLE_ID,
+  DEMO_PUZZLE,
+  getPuzzle,
+  listPuzzles,
+} from './gamePuzzles.js';
 
 /**
  * Editor content when entering game mode.
  * Blank on purpose — spoilers live only in the Hint modal (slice 02.1).
  */
 export const GAME_STARTER_SCRIPT = '';
-
-export const DEMO_PUZZLE = {
-  id: 'demo-fillet-box',
-  title: 'Filleted box',
-  blurb: 'Match the ghost: a 40×30×20 box with r=3 fillets on all convex edges.',
-  targetScript: DEMO_TARGET_SCRIPT,
-  starterScript: GAME_STARTER_SCRIPT,
-};
 
 /**
  * Match epsilon (tessellation-safe).

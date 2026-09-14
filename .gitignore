@@ -57,3 +57,6 @@ logo.*
 
 # OCCT STEP→OBJ converter — built locally against ~/occt-install, binary never committed
 backend/converter/obj_converter
+
+# Puzzle win capture (Slice 04)
+backend/data/wins.jsonl

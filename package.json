@@ -10,7 +10,8 @@
         "preview": "vite preview",
         "verify": "node ${CADGEN_HARNESS:-/home/artur/cadgen-workspace}/harness/verify_all.mjs",
         "golden:slice01": "node scripts/golden/smoke_slice01.mjs",
-        "golden:slice03": "node scripts/golden/smoke_slice03_format.mjs"
+        "golden:slice03": "node scripts/golden/smoke_slice03_format.mjs",
+        "golden:slice04": "node scripts/golden/smoke_slice04_pack.mjs"
     },
     "dependencies": {
         "@monaco-editor/react": "^4.6.0",

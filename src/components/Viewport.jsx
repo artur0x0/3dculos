@@ -66,8 +66,11 @@ const Viewport = forwardRef(({
   onExitGame,
   onRun,
   onHint,
+  onPickPuzzle,
   gameElapsedMs = 0,
   gameSuccess = false,
+  gamePuzzleTitle = null,
+  gameBestTimeMs = null,
 }, ref) => {
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
@@ -1323,19 +1326,30 @@ const Viewport = forwardRef(({
         onExitGame={onExitGame}
         onRun={onRun}
         onHint={onHint}
+        onPickPuzzle={onPickPuzzle}
         gameElapsedMs={gameElapsedMs}
         gameSuccess={gameSuccess}
+        gamePuzzleTitle={gamePuzzleTitle}
+        gameBestTimeMs={gameBestTimeMs}
       />
 
       {mode === 'game' && (
-        <div className={`absolute top-16 left-1/2 -translate-x-1/2 lg:left-4 lg:translate-x-0 text-xs px-3 py-1.5 rounded-lg shadow z-10 pointer-events-none ${
+        <div className={`absolute top-16 left-1/2 -translate-x-1/2 lg:left-4 lg:translate-x-0 text-xs px-3 py-1.5 rounded-lg shadow z-10 pointer-events-none max-w-[min(20rem,calc(100vw-2rem))] ${
           gameSuccess
             ? 'bg-emerald-950/90 border border-emerald-500/50 text-emerald-100'
             : 'bg-cyan-950/80 border border-cyan-600/40 text-cyan-100'
         }`}>
-          {gameSuccess
-            ? `Match! ${formatGameTime(gameElapsedMs)} · clearing…`
-            : `Match the cyan ghost · ${formatGameTime(gameElapsedMs)}`}
+          <div className="font-medium truncate">
+            {gamePuzzleTitle || 'Puzzle'}
+            {gameBestTimeMs != null && (
+              <span className="font-normal opacity-80"> · best {formatGameTime(gameBestTimeMs)}</span>
+            )}
+          </div>
+          <div className="opacity-90 mt-0.5">
+            {gameSuccess
+              ? `Match! ${formatGameTime(gameElapsedMs)} · clearing…`
+              : `Match the cyan ghost · ${formatGameTime(gameElapsedMs)}`}
+          </div>
         </div>
       )}
 
