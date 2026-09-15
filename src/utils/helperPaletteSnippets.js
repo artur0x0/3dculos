@@ -24,6 +24,11 @@ const BODY_BASES = [
   'part', 'box', 'cyl', 'sphere', 'tube', 'hex', 'rbox', 'extrude', 'revolve', 'bore',
 ];
 
+/** Exact base or numbered form only (box, box1) — not prefix (boxCount). */
+function isBodyName(n) {
+  return BODY_BASES.some((b) => b === n || new RegExp('^' + b + '\\d+$').test(n));
+}
+
 /** Strip line/block comments for emptiness / name scans. */
 function stripComments(text) {
   return String(text || '')
@@ -113,13 +118,13 @@ export function listBodyNames(buffer) {
   let m;
   while ((m = decl.exec(s))) {
     const n = m[1];
-    if (BODY_BASES.some((b) => n === b || n.startsWith(b))) names.add(n);
+    if (isBodyName(n)) names.add(n);
   }
   // Also catch `part = …` / `box1 = …` mutations without fresh decl.
   const assign = /\b([A-Za-z_$][\w$]*)\s*=\s*(?:Manifold\.|tube\(|hexPrism\(|roundedBox\(|makeExtrude\(|makeRevolve\(|filletEdges\(|chamferEdges\(|hole\(|clearanceHole\(|tapDrillHole\(|cboreHole\(|cskHole\(|holePattern\(|shell\(|addDraft\(|center\(|align\(|mirror\(|array3D\(|polarArray\()/g;
   while ((m = assign.exec(s))) {
     const n = m[1];
-    if (BODY_BASES.some((b) => n === b || n.startsWith(b))) names.add(n);
+    if (isBodyName(n)) names.add(n);
   }
   return [...names];
 }

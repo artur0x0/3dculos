@@ -90,6 +90,17 @@ console.log('slice-10 palette v2 smoke');
   check('syncs part from box1', /part\s*=\s*box1/.test(buf));
 }
 
+// ── Body selector: exact/numbered only (not prefix) ────────────
+{
+  const bodies = listBodyNames(
+    'const boxCount = 4; const boreRadius = 3; const box1 = cube([1,1,1]);',
+  );
+  check('includes part fallback', bodies.includes('part'));
+  check('includes numbered box1', bodies.includes('box1'));
+  check('excludes boxCount prefix', !bodies.includes('boxCount'));
+  check('excludes boreRadius prefix', !bodies.includes('boreRadius'));
+}
+
 // ── All items compose with defaults (no redecl, one return) ────
 {
   let buf = '';
