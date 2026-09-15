@@ -165,12 +165,10 @@ const CodeEditor = forwardRef(({
     },
 
     /**
-     * Slice 09: template-aware helper insert at the user's caret.
-     * Strips/re-appends trailing `return part;` via composeHelperInsert so
-     * sequential taps stay runnable; mid-buffer carets are preserved (not
-     * silently relocated to document end).
+     * Slice 09/10: template-aware helper insert at caret with optional params.
+     * Returns true on success. Caller (game) may Auto-Run after.
      */
-    insertHelper: (helperId) => {
+    insertHelper: (helperId, params = null) => {
       if (!helperId) return false;
 
       if (historyTimeoutRef.current) {
@@ -198,7 +196,7 @@ const CodeEditor = forwardRef(({
         }
       }
 
-      const content = composeHelperInsert(buffer, helperId, caretOffset);
+      const content = composeHelperInsert(buffer, helperId, caretOffset, params);
       if (typeof content !== 'string') return false;
 
       if (ed) {

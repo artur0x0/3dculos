@@ -709,9 +709,18 @@ const App = () => {
     setShowHints(true);
   };
 
-  /** Slice 09: tap palette → template-aware compose at Monaco caret (return only at end). */
-  const handleInsertHelper = (helperId) => {
-    codeEditorRef.current?.insertHelper?.(helperId);
+  /**
+   * Slice 09/10: palette Confirm → compose at caret with params, then Auto-Run
+   * via the existing game Run path (handleGameRun).
+   */
+  const handleInsertHelper = (helperId, params = null) => {
+    const ok = codeEditorRef.current?.insertHelper?.(helperId, params);
+    if (ok) {
+      // Defer so Monaco state + currentScript settle before execute+compare.
+      setTimeout(() => {
+        handleGameRun();
+      }, 0);
+    }
   };
 
   const handleExecute = (script, autoExecute=false) => {
@@ -1021,6 +1030,7 @@ const App = () => {
               gameBestTimeMs={gameBestTimeMs}
               isMobile={isMobile}
               onInsertHelper={handleInsertHelper}
+              getHelperBuffer={() => codeEditorRef.current?.getContent?.() || ''}
             />
     );
 
@@ -1243,6 +1253,7 @@ const App = () => {
             gameBestTimeMs={gameBestTimeMs}
             isMobile={false}
             onInsertHelper={handleInsertHelper}
+            getHelperBuffer={() => codeEditorRef.current?.getContent?.() || ''}
           />
         </div>
 

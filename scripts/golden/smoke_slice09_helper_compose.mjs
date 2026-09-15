@@ -105,7 +105,7 @@ console.log('slice-09 helper compose smoke');
   }
   check(
     'blind += still broken (baseline)',
-    /return\s+part\s*;[\s\S]+const\s+width/.test(blind),
+    /return\s+part\s*;[\s\S]+Manifold\.cube/.test(blind),
     'expected dead code after return',
   );
 }
