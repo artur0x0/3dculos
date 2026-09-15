@@ -39,7 +39,6 @@ import { getBestTimeMs, recordWin } from './utils/gameWins';
 import GameHintsModal from './components/GameHintsModal';
 import PuzzlePickerModal from './components/PuzzlePickerModal';
 import GameConfetti from './components/GameConfetti';
-import { composeHelperInsert } from './utils/helperPaletteSnippets';
 
 const App = () => {
   const [currentScript, setCurrentScript] = useState('');
@@ -710,12 +709,9 @@ const App = () => {
     setShowHints(true);
   };
 
-  /** Slice 09: tap palette → compose runnable buffer (strip/re-append return part). */
+  /** Slice 09: tap palette → template-aware compose at Monaco caret (return only at end). */
   const handleInsertHelper = (helperId) => {
-    const current = codeEditorRef.current?.getContent?.() ?? '';
-    const next = composeHelperInsert(current, helperId);
-    if (!next) return;
-    codeEditorRef.current?.replaceBuffer?.(next);
+    codeEditorRef.current?.insertHelper?.(helperId);
   };
 
   const handleExecute = (script, autoExecute=false) => {

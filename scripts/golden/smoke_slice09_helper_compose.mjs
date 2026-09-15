@@ -153,6 +153,36 @@ console.log('slice-09 helper compose smoke');
 
 check('unknown id → null', composeHelperInsert('', 'not-a-helper') === null);
 
+check('comment-only buffer counts as empty', isBufferEmpty('// note\n/* x */'));
+{
+  const next = composeHelperInsert('// note\n', 'filletEdges');
+  check('comment-first gets starter part', /let\s+part\s*=/.test(next));
+  check('comment-first keeps comment', next.includes('// note'));
+}
+
+{
+  let buf = composeHelperInsert('', 'filletEdges');
+  buf = composeHelperInsert(buf, 'cube');
+  const stripped = buf.replace(/(?:\r?\n)?return\s+part\s*;\s*$/, '');
+  const afterFillet = stripped.indexOf('filletEdges');
+  const mid = stripped.indexOf('\n', afterFillet) + 1;
+  const withCenter = composeHelperInsert(buf, 'center', mid);
+  const body = withCenter.replace(/(?:\r?\n)?return\s+part\s*;\s*$/, '');
+  const cAt = body.indexOf('part = center');
+  const fAt = body.indexOf('filletEdges');
+  // Second cube assign is `part = Manifold.cube` (starter is `let part = ...`)
+  const cubeRe = body.indexOf('\npart = Manifold.cube');
+  check('mid-caret inserts center', cAt >= 0);
+  check('mid-caret center after fillet line', cAt > fAt, `cAt=${cAt} fAt=${fAt}`);
+  check(
+    'mid-caret center before later cube assign',
+    cubeRe < 0 || cAt < cubeRe,
+    `cAt=${cAt} cubeRe=${cubeRe}`,
+  );
+  check('mid-caret still one trailing return', /\nreturn\s+part\s*;\s*$/.test(withCenter));
+}
+
+
 if (failed) {
   console.log(`\nFAILED: ${failed}`);
   process.exit(1);

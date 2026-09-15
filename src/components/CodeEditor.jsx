@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, forwardRef, useImperativeHandle } f
 import Editor from '@monaco-editor/react';
 import { SquareDashedBottomCode } from 'lucide-react';
 import Toolbar from './Toolbar';
+import { composeHelperInsert } from '../utils/helperPaletteSnippets';
 
 // "Select All" in the (long-press) context menu. Monaco 0.52 removed
 // registerEditorAction from the public API, so we use the internal
@@ -113,7 +114,7 @@ const CodeEditor = forwardRef(({
     /**
      * Slice 09: insert text at the Monaco cursor (replaces selection if any).
      * Syncs React state, triggers execute + history. Returns true on success.
-     * Prefer replaceBuffer for palette taps (template-aware full compose).
+     * Prefer insertHelper for palette taps (template-aware full compose).
      */
     insertAtCursor: (text) => {
       if (typeof text !== 'string' || text.length === 0) return false;
@@ -128,7 +129,6 @@ const CodeEditor = forwardRef(({
         const selection = ed.getSelection();
         const range = selection
           || { startLineNumber: 1, startColumn: 1, endLineNumber: 1, endColumn: 1 };
-        // Flag BEFORE executeEdits — Monaco fires onChange synchronously.
         paletteInsertRef.current = true;
         try {
           ed.executeEdits('helper-palette', [{
@@ -152,7 +152,6 @@ const CodeEditor = forwardRef(({
         }
       }
 
-      // Editor not mounted yet — append / replace buffer via state.
       const current = valueRef.current || '';
       const content = current.trim()
         ? `${current}${current.endsWith('\n') ? '' : '\n'}${text}`
@@ -166,12 +165,13 @@ const CodeEditor = forwardRef(({
     },
 
     /**
-     * Slice 09: replace the entire Monaco buffer with a composed palette result.
-     * Places caret just before the trailing `return part;` when present so the
-     * next manual edit lands in the body (compose itself is caret-independent).
+     * Slice 09: template-aware helper insert at the user's caret.
+     * Strips/re-appends trailing `return part;` via composeHelperInsert so
+     * sequential taps stay runnable; mid-buffer carets are preserved (not
+     * silently relocated to document end).
      */
-    replaceBuffer: (content) => {
-      if (typeof content !== 'string') return false;
+    insertHelper: (helperId) => {
+      if (!helperId) return false;
 
       if (historyTimeoutRef.current) {
         clearTimeout(historyTimeoutRef.current);
@@ -179,6 +179,28 @@ const CodeEditor = forwardRef(({
       }
 
       const ed = editorRef.current;
+      let buffer = ed ? ed.getValue() : (valueRef.current || '');
+      let caretOffset = null;
+
+      if (ed) {
+        const model = ed.getModel();
+        const sel = ed.getSelection();
+        if (model && sel) {
+          const start = model.getOffsetAt(sel.getStartPosition());
+          const end = model.getOffsetAt(sel.getEndPosition());
+          if (start !== end) {
+            buffer = buffer.slice(0, start) + buffer.slice(end);
+          }
+          caretOffset = start;
+        } else if (model) {
+          const pos = ed.getPosition();
+          if (pos) caretOffset = model.getOffsetAt(pos);
+        }
+      }
+
+      const content = composeHelperInsert(buffer, helperId, caretOffset);
+      if (typeof content !== 'string') return false;
+
       if (ed) {
         const model = ed.getModel();
         const range = model
@@ -196,19 +218,12 @@ const CodeEditor = forwardRef(({
           onExecute(content);
           onCodeChange?.(content, 'Helper insert');
           try {
-            // Prefer caret before trailing return so body stays editable.
+            const m = ed.getModel();
             const match = /(?:\r?\n)?return\s+part\s*;\s*$/.exec(content);
-            if (match) {
-              const idx = match.index;
-              const before = content.slice(0, idx);
-              const lines = before.split('\n');
-              const lineNumber = Math.max(1, lines.length);
-              const column = (lines[lines.length - 1] || '').length + 1;
-              ed.setPosition({ lineNumber, column });
-              ed.revealPositionInCenter({ lineNumber, column });
-            } else {
-              const pos = ed.getPosition();
-              if (pos) ed.revealPositionInCenter(pos);
+            if (match && m) {
+              const pos = m.getPositionAt(match.index);
+              ed.setPosition(pos);
+              ed.revealPositionInCenter(pos);
             }
             ed.focus();
           } catch { /* ignore */ }

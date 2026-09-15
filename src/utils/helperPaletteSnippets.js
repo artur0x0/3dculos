@@ -8,7 +8,7 @@
  * re-append exactly one `return part;`.
  */
 
-/** Strip line/block comments for emptiness checks. */
+/** Strip line/block comments for emptiness / name scans. */
 function stripComments(text) {
   return String(text || '')
     .replace(/\/\*[\s\S]*?\*\//g, '')
@@ -30,12 +30,12 @@ export function stripTrailingReturnPart(text) {
   return String(text).replace(/\s*$/, '').replace(/(?:\r?\n)?return\s+part\s*;\s*$/, '');
 }
 
-/** Names already declared with const/let/var in buffer. */
+/** Names already declared with const/let/var in buffer (comments ignored). */
 function declaredNames(buffer) {
   const names = new Set();
   const re = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)/g;
   let m;
-  const s = String(buffer || '');
+  const s = stripComments(buffer);
   while ((m = re.exec(s))) names.add(m[1]);
   return names;
 }
@@ -53,7 +53,6 @@ function filterRedeclarations(snippetText, bufferText) {
     if (m) existing.add(m[1]);
     out.push(line);
   }
-  // Trim leading/trailing blank lines from the filtered snippet.
   while (out.length && !out[0].trim()) out.shift();
   while (out.length && !out[out.length - 1].trim()) out.pop();
   return out.join('\n');
@@ -78,6 +77,7 @@ function ensurePartPrefix(bufferEmpty) {
   return starterBoxLines();
 }
 
+/** Body lines only for non-empty; empty path may still stamp return (stripped by compose). */
 function withReturn(lines, bufferEmpty) {
   if (bufferEmpty) return wrapRunnable(lines);
   return `${lines.join('\n')}\n`;
@@ -98,13 +98,15 @@ export function buildHelperSnippet(id, opts = {}) {
 }
 
 /**
- * Template-aware compose: strip trailing return → append snippet body
+ * Template-aware compose: strip trailing return → insert snippet body at caret
  * (skipping redeclarations) → re-append one `return part;`.
  * @param {string} buffer current Monaco buffer
  * @param {string} id palette item id
+ * @param {number|null} [caretOffset] offset into buffer; clamped into ops region.
+ *   null / omitted → append at end of body (typical sequential taps).
  * @returns {string|null} full replacement buffer
  */
-export function composeHelperInsert(buffer, id) {
+export function composeHelperInsert(buffer, id, caretOffset = null) {
   const item = HELPER_PALETTE_ITEMS.find((h) => h.id === id);
   if (!item) return null;
 
@@ -116,12 +118,28 @@ export function composeHelperInsert(buffer, id) {
   snippet = stripTrailingReturnPart(snippet);
   const filtered = filterRedeclarations(snippet, strippedBuf);
 
-  const base = strippedBuf.replace(/\s+$/, '');
-  const parts = [];
-  if (base.trim()) parts.push(base);
-  if (filtered.trim()) parts.push(filtered);
-  // Always exactly one trailing return — runnable after any tap sequence.
-  return `${parts.join('\n')}\nreturn part;\n`;
+  let insertAt = caretOffset == null ? strippedBuf.length : caretOffset;
+  if (insertAt < 0) insertAt = 0;
+  if (insertAt > strippedBuf.length) insertAt = strippedBuf.length;
+
+  if (!filtered.trim()) {
+    const body = strippedBuf.replace(/\s+$/, '');
+    return body ? `${body}\nreturn part;\n` : 'return part;\n';
+  }
+
+  const before = strippedBuf.slice(0, insertAt);
+  const after = strippedBuf.slice(insertAt);
+
+  let body = '';
+  if (before) {
+    body = before.endsWith('\n') ? before : `${before}\n`;
+  }
+  body += filtered.endsWith('\n') ? filtered : `${filtered}\n`;
+  if (after) {
+    body += after.replace(/^\n+/, '');
+  }
+  body = body.replace(/\s+$/, '');
+  return `${body}\nreturn part;\n`;
 }
 
 /** @typedef {{ id: string, label: string, group: string, title: string, build: (empty: boolean) => string }} PaletteItem */
