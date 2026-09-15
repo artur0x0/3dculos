@@ -146,6 +146,23 @@ const irregularFace = {
   const buf = composeHelperInsert('', 'filletEdges', null, { radius: 2, edgeScope: 'face' }, face);
   check('fillet face filters convexEdges', /convexEdges\(/.test(buf) && /\.filter\(/.test(buf));
   check('fillet faceEdges var', /faceEdges/.test(buf));
+  check('fillet signed parallel (not abs)', /_dot\(n, _n\) > 0\.95/.test(buf) && !/Math\.abs\(_dot/.test(buf));
+}
+
+// ── Clearance pattern preserves size/fit via fastenerClearanceDia ─
+{
+  const face = classifySelectedFace(planarFace);
+  const buf = composeHelperInsert(
+    '',
+    'clearanceHole',
+    null,
+    { size: 'M6', fit: 'loose', usePattern: true, n: 2, m: 2, spacingU: 20, spacingV: 16, through: true },
+    face,
+  );
+  check('clearance pattern uses holePattern', /holePattern/.test(buf));
+  check('clearance pattern fastenerClearanceDia', /fastenerClearanceDia\(\s*'M6'\s*,\s*'loose'\s*\)/.test(buf));
+  check('clearance pattern no hardcoded 3.4', !/dia:\s*3\.4/.test(buf));
+  check('clearance pattern dia from _cd', /dia:\s*_cd\b/.test(buf));
 }
 
 // ── Cylindrical hole ───────────────────────────────────────────

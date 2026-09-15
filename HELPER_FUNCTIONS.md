@@ -41,7 +41,7 @@ Lookup helpers (also injected): `fastenerClearanceDia(size, fit?)`,
 In **game mode**, tapping a face in the viewport then a face-aware palette
 feature (Hole, Clearance, Cbore, Csk, Hole grid, Fillet, Chamfer) opens a
 param sheet seeded from that face. Generated code resolves the face with
-`facesByNormal(body, normal)` + closest-center pick, then
+`facesByNormal(body, normal, tolDeg?)` + closest-center pick, then
 `workplaneFromFace` — never an illegal bare `top` identifier.
 
 **Face classification** (from Viewport `selectedFace`):

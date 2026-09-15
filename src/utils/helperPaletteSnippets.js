@@ -732,9 +732,10 @@ export const HELPER_PALETTE_ITEMS = [
         const m = Math.max(1, Math.round(num(p.m, 2)));
         const su = num(p.spacingU, 18);
         const sv = num(p.spacingV, 14);
-        const dia = 3.4; // approx M3 clearance — pattern uses generic holePattern
+        const cdVar = allocateUniqueName(names, '_cd');
+        lines.push(`const ${cdVar} = fastenerClearanceDia('${size}', '${fit}');`);
         lines.push(
-          `${body} = holePattern(${body}, ${fr}, { n: ${n}, m: ${m}, spacingU: ${su}, spacingV: ${sv}, dia: ${dia} });`,
+          `${body} = holePattern(${body}, ${fr}, { n: ${n}, m: ${m}, spacingU: ${su}, spacingV: ${sv}, dia: ${cdVar} });`,
         );
       } else {
         const { u, v } = faceCtx ? uvForFace(p, faceCtx) : { u: num(p.u, 0), v: num(p.v, 0) };

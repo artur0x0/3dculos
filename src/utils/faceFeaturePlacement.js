@@ -429,7 +429,7 @@ export function emitFaceEdgeLines(body, face, params, names, allocateUniqueName)
     `const ${edgesVar} = convexEdges(${body}).filter((e) => {`,
     `  const _n = ${nLit};`,
     `  const _dot = (a, b) => a[0]*b[0] + a[1]*b[1] + a[2]*b[2];`,
-    `  const _ok = (n) => n && Math.abs(_dot(n, _n)) > 0.95;`,
+    `  const _ok = (n) => n && _dot(n, _n) > 0.95;`,
     `  return _ok(e.n0) || _ok(e.n1);`,
     `});`,
     `if (!${edgesVar}.length) throw new Error('No convex edges adjacent to selected face — try Edges: allConvex');`,
