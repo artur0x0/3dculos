@@ -251,6 +251,11 @@ const Viewport = forwardRef(({
     edgeHighlightRef.current = lines;
   }, [clearEdgeHighlight]);
 
+  // Paint edge selection highlight when selectedEdges changes (idempotent: clear then draw).
+  useEffect(() => {
+    highlightSelectedEdges(selectedEdges);
+  }, [selectedEdges, highlightSelectedEdges]);
+
   const rebuildFeatureEdges = useCallback(() => {
     const geom = resultRef.current?.geometry;
     featureEdgesRef.current = geom ? buildFeatureEdges(geom) : [];
@@ -522,12 +527,7 @@ const Viewport = forwardRef(({
         console.log('[Edge Selection] No feature edge near hit');
         return;
       }
-      setSelectedEdges((prev) => {
-        const next = toggleEdgeSelection(prev, edge);
-        // Defer highlight to effect via state; also paint immediately:
-        queueMicrotask(() => highlightSelectedEdges(next));
-        return next;
-      });
+      setSelectedEdges((prev) => toggleEdgeSelection(prev, edge));
       // Clear face selection so modes do not fight
       clearHighlight();
       setSelectedFace(null);
