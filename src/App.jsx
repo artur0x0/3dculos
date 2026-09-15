@@ -713,8 +713,8 @@ const App = () => {
    * Slice 09/10/11: palette Confirm → compose at caret with params (+ optional
    * faceContext from selected face), then Auto-Run via handleGameRun.
    */
-  const handleInsertHelper = (helperId, params = null, faceContext = null) => {
-    const ok = codeEditorRef.current?.insertHelper?.(helperId, params, faceContext);
+  const handleInsertHelper = (helperId, params = null, faceContext = null, edgeContext = null) => {
+    const ok = codeEditorRef.current?.insertHelper?.(helperId, params, faceContext, edgeContext);
     if (ok) {
       // Defer so Monaco state + currentScript settle before execute+compare.
       setTimeout(() => {

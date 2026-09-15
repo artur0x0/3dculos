@@ -1,7 +1,7 @@
 // components/CrossSectionPanel.jsx
 /* eslint-disable react-hooks/exhaustive-deps -- see Viewport note; same ref-backed pattern */
 import React, { useState, useEffect } from 'react';
-import { FlipHorizontal, ChevronDown, ChevronUp, Maximize2, Ruler, Move3d, Frame } from 'lucide-react';
+import { FlipHorizontal, ChevronDown, ChevronUp, Maximize2, Ruler, Move3d, Frame, BoxSelect, Spline } from 'lucide-react';
 import ViewSnapControl from './ViewSnapControl';
 import { PLANE_PRESETS } from '../utils/crossSection';
 
@@ -18,6 +18,9 @@ const CrossSectionPanel = ({
   onMeasurementToggle,
   axisHelperEnabled,
   onAxisHelperToggle,
+  /** Slice 12: 'face' | 'edge' pick mode */
+  pickMode = 'face',
+  onPickModeChange = null,
   /** Mobile game: stack tools vertically so measure stays reachable with keyboard up. */
   verticalRail = false,
 }) => {
@@ -168,6 +171,32 @@ const handleButtonClick = () => {
         verticalRail ? 'flex flex-col gap-1' : 'flex gap-2'
       }`}>
         <ViewSnapControl onSnap={onSnapView} />
+
+        {typeof onPickModeChange === 'function' && (
+          <>
+            <button
+              type="button"
+              onClick={() => onPickModeChange('face')}
+              className={`p-2 rounded ${pickMode === 'face' ? 'text-green-600 bg-green-100' : 'text-blue-600'} hover:bg-gray-100`}
+              title="Face pick mode"
+              aria-label="Face pick mode"
+              aria-pressed={pickMode === 'face'}
+            >
+              <BoxSelect size={20} />
+            </button>
+            <button
+              type="button"
+              onClick={() => onPickModeChange('edge')}
+              className={`p-2 rounded ${pickMode === 'edge' ? 'text-green-600 bg-green-100' : 'text-blue-600'} hover:bg-gray-100`}
+              title="Edge pick mode (multi-select for Fillet/Chamfer)"
+              aria-label="Edge pick mode"
+              aria-pressed={pickMode === 'edge'}
+            >
+              <Spline size={20} />
+            </button>
+          </>
+        )}
+
         <button
           onClick={onAutoFitToggle}
           className={`p-2 rounded ${autoFitEnabled ? 'text-green-600 bg-green-100' : 'text-gray-500'} hover:bg-gray-100`}

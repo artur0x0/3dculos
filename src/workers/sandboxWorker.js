@@ -1052,7 +1052,10 @@ function c4MeshData(m) {
   const mesh = m.getMesh();
   const np = mesh.numProp;
   const V = [];
-  for (let i = 0; i < mesh.triVerts.length / 3; i++)
+  // Vertex count = vertProperties length / numProp (NOT tri count — that silently
+  // truncated V on welded meshes and read past the buffer on sparse ones).
+  const nVerts = mesh.vertProperties.length / np;
+  for (let i = 0; i < nVerts; i++)
     V.push([mesh.vertProperties[i*np], mesh.vertProperties[i*np+1], mesh.vertProperties[i*np+2]]);
 
   const faceMap = new Map();
@@ -1122,22 +1125,114 @@ function c4MeshData(m) {
     for (const gis of planeGroups.values()) {
       const cn = [0, 0, 0];
       const c = [0, 0, 0];
+      let areaSum = 0;
       const all = [];
       const trisSub = gis.map(gi => tris[gi]);
       for (const t of trisSub) {
         const v0 = V[mesh.triVerts[t*3]], v1 = V[mesh.triVerts[t*3+1]], v2 = V[mesh.triVerts[t*3+2]];
-        const tn = _c4Norm(_c4Cross(_c4Sub(v1, v0), _c4Sub(v2, v0)));
+        const cxv = _c4Cross(_c4Sub(v1, v0), _c4Sub(v2, v0));
+        const area = 0.5 * _c4Len(cxv);
+        const tn = _c4Norm(cxv);
         cn[0] += tn[0]; cn[1] += tn[1]; cn[2] += tn[2];
+        // Area-weighted triangle centroid (matches Viewport face pick center).
+        const tc = [(v0[0]+v1[0]+v2[0])/3, (v0[1]+v1[1]+v2[1])/3, (v0[2]+v1[2]+v2[2])/3];
+        c[0] += tc[0]*area; c[1] += tc[1]*area; c[2] += tc[2]*area;
+        areaSum += area;
         for (const v of [v0, v1, v2]) {
-          c[0] += v[0]; c[1] += v[1]; c[2] += v[2];
           if (!all.includes(v)) all.push(v);
         }
       }
-      const cnt = gis.length * 3;
-      faces.push({ id: fid, tris: trisSub, normal: _c4Norm(cn), center: _c4Mul(1/cnt, c), verts: all });
+      const center = areaSum > 1e-18 ? _c4Mul(1/areaSum, c) : [0, 0, 0];
+      faces.push({ id: fid, tris: trisSub, normal: _c4Norm(cn), center, verts: all });
     }
   }
   faces.sort((a, b) => a.id - b.id);
+
+  // ── Slice 12: merge coplanar connected faces ─────────────────────────
+  // built/manifold.wasm (and some Manifold builds) assign a *unique faceID
+  // per triangle*. Without this pass, a rectangular face is two one-tri
+  // "faces" whose centers are triangle centroids — so workplaneFromFace +
+  // hole(u=0,v=0) misses the true face center (playtest Center miss).
+  // Merge only when adjacent faces share an edge, normals align, and plane
+  // offsets match. Curved walls (normals diverge >1°) stay one-tri each so
+  // convexEdges dihedral filtering still sees tessellation seams.
+  {
+    const nF = faces.length;
+    if (nF > 1) {
+      const parent = Array.from({ length: nF }, (_, i) => i);
+      const find = (i) => { while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i]; } return i; };
+      const union = (a, b) => { a = find(a); b = find(b); if (a !== b) parent[b] = a; };
+      const t2f = new Int32Array(mesh.numTri).fill(-1);
+      for (let fi = 0; fi < nF; fi++)
+        for (const t of faces[fi].tris) t2f[t] = fi;
+      const cosPlanar = Math.cos((1 * Math.PI) / 180);
+      const edgeMapM = new Map();
+      for (let t = 0; t < mesh.numTri; t++) {
+        const vs = [mesh.triVerts[t*3], mesh.triVerts[t*3+1], mesh.triVerts[t*3+2]];
+        for (let k = 0; k < 3; k++) {
+          const u = vs[k], w = vs[(k+1)%3];
+          const key = u < w ? u * 1e9 + w : w * 1e9 + u;
+          if (!edgeMapM.has(key)) edgeMapM.set(key, []);
+          edgeMapM.get(key).push(t);
+        }
+      }
+      for (const trisE of edgeMapM.values()) {
+        if (trisE.length !== 2) continue;
+        const f0 = t2f[trisE[0]], f1 = t2f[trisE[1]];
+        if (f0 < 0 || f1 < 0 || f0 === f1) continue;
+        const A = faces[f0], B = faces[f1];
+        if (_c4Dot(A.normal, B.normal) < cosPlanar) continue;
+        const offA = A.center[0]*A.normal[0] + A.center[1]*A.normal[1] + A.center[2]*A.normal[2];
+        const offB = B.center[0]*A.normal[0] + B.center[1]*A.normal[1] + B.center[2]*A.normal[2];
+        if (Math.abs(offA - offB) > 1e-3) continue;
+        union(f0, f1);
+      }
+      const groups = new Map();
+      for (let fi = 0; fi < nF; fi++) {
+        const r = find(fi);
+        if (!groups.has(r)) groups.set(r, []);
+        groups.get(r).push(fi);
+      }
+      if (groups.size < nF) {
+        const merged = [];
+        for (const members of groups.values()) {
+          if (members.length === 1) {
+            merged.push(faces[members[0]]);
+            continue;
+          }
+          const cn = [0, 0, 0];
+          const c = [0, 0, 0];
+          let areaSum = 0;
+          const all = [];
+          const trisSub = [];
+          let id = faces[members[0]].id;
+          for (const fi of members) {
+            id = Math.min(id, faces[fi].id);
+            for (const t of faces[fi].tris) {
+              trisSub.push(t);
+              const v0 = V[mesh.triVerts[t*3]], v1 = V[mesh.triVerts[t*3+1]], v2 = V[mesh.triVerts[t*3+2]];
+              const cxv = _c4Cross(_c4Sub(v1, v0), _c4Sub(v2, v0));
+              const area = 0.5 * _c4Len(cxv);
+              const tn = _c4Norm(cxv);
+              cn[0] += tn[0]; cn[1] += tn[1]; cn[2] += tn[2];
+              const tc = [(v0[0]+v1[0]+v2[0])/3, (v0[1]+v1[1]+v2[1])/3, (v0[2]+v1[2]+v2[2])/3];
+              c[0] += tc[0]*area; c[1] += tc[1]*area; c[2] += tc[2]*area;
+              areaSum += area;
+              for (const v of [v0, v1, v2]) {
+                if (!all.includes(v)) all.push(v);
+              }
+            }
+          }
+          const center = areaSum > 1e-18 ? _c4Mul(1/areaSum, c) : faces[members[0]].center;
+          merged.push({ id, tris: trisSub, normal: _c4Norm(cn), center, verts: all });
+        }
+        faces.length = 0;
+        faces.push(...merged);
+        faces.sort((a, b) => a.id - b.id);
+      }
+    }
+  }
+
   // Within each faceID group, order sub-faces OUTERMOST-FIRST in the face's
   // normal direction (desc by n·center): for a merged group of parallel
   // planes (e.g. two +Z planes at z=5 and z=15), facesByNormal(+Z)[0] is the
@@ -1199,7 +1294,11 @@ function c4MeshData(m) {
 function facesByNormal(m, dir, tolDeg = 1) {
   const d = _c4Norm(dir);
   const cosT = Math.cos((tolDeg * Math.PI) / 180);
-  return c4MeshData(m).faces.filter(f => _c4Dot(f.normal, d) >= cosT);
+  // Outermost-first along dir so facesByNormal(+Z)[0] is the topmost plane
+  // (byId re-sort below does not rewrite the faces array order).
+  return c4MeshData(m).faces
+    .filter(f => _c4Dot(f.normal, d) >= cosT)
+    .sort((a, b) => _c4Dot(b.center, d) - _c4Dot(a.center, d));
 }
 
 /**

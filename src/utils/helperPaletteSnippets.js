@@ -6,7 +6,7 @@
  * Slice 10: params schema per button, unique var allocator, numbered body lets
  * (box1, tube2, …); features mutate a chosen body; no class inheritance.
  *
- * Slice 11: optional faceContext (from Viewport selectedFace) → face-aware
+ * Slice 11/12: optional faceContext / edgeContext (from Viewport selectedFace) → face-aware
  * workplane via facesByNormal + closest center (never bare `top`).
  *
  * Sequential taps compose via composeHelperInsert:
@@ -16,9 +16,11 @@
 import {
   emitFaceWorkplaneLines,
   emitFaceEdgeLines,
+  emitSelectedEdgeLines,
   emitSpanExpr,
   estimateCylinderAxis,
   roundFaceNum,
+  resolveHoleUV,
 } from './faceFeaturePlacement.js';
 
 /** Metric fastener sizes commonly used in puzzles / hints. */
@@ -336,7 +338,9 @@ function uvForFace(p, faceCtx) {
     const vOff = roundFaceNum(axial - faceAx, 3);
     return { u: 0, v: vOff };
   }
-  return { u: num(p.u, 0), v: num(p.v, 0) };
+  // Planar Center / custom via resolveHoleUV
+  const uv = resolveHoleUV(p, faceCtx, num);
+  return { u: uv.u, v: uv.v };
 }
 
 /**
@@ -353,7 +357,7 @@ export function buildHelperSnippet(id, opts = {}) {
   const bufferEmpty = opts.bufferEmpty != null ? !!opts.bufferEmpty : isBufferEmpty(buffer);
   const params = mergeParams(item, opts.params);
   const names = declaredNames(buffer);
-  return item.build(bufferEmpty, params, names, buffer, opts.faceContext || null);
+  return item.build(bufferEmpty, params, names, buffer, opts.faceContext || null, opts.edgeContext || null);
 }
 
 /**
@@ -365,9 +369,10 @@ export function buildHelperSnippet(id, opts = {}) {
  *   null / omitted → append at end of body (typical sequential taps).
  * @param {object|null} [params] values from HelperParamModal (defaults if null)
  * @param {object|null} [faceContext] Slice 11 classified selected face (or null)
+ * @param {object[]|null} [edgeContext] Slice 12 selected edges for fillet/chamfer
  * @returns {string|null} full replacement buffer
  */
-export function composeHelperInsert(buffer, id, caretOffset = null, params = null, faceContext = null) {
+export function composeHelperInsert(buffer, id, caretOffset = null, params = null, faceContext = null, edgeContext = null) {
   const item = HELPER_PALETTE_ITEMS.find((h) => h.id === id);
   if (!item) return null;
 
@@ -375,7 +380,7 @@ export function composeHelperInsert(buffer, id, caretOffset = null, params = nul
   const empty = isBufferEmpty(strippedBuf);
   const merged = mergeParams(item, params);
   const names = declaredNames(strippedBuf);
-  let snippet = item.build(empty, merged, names, strippedBuf, faceContext);
+  let snippet = item.build(empty, merged, names, strippedBuf, faceContext, edgeContext);
   if (snippet == null) return null;
 
   snippet = stripTrailingReturnPart(snippet);
@@ -598,16 +603,27 @@ export const HELPER_PALETTE_ITEMS = [
       { name: 'radius', type: 'number', default: 3, label: 'Radius', min: 0.01, step: 0.5 },
       { name: 'sphericalCorners', type: 'bool', default: true, label: 'Spherical corners' },
     ],
-    build: (empty, p, names, buffer, faceCtx = null) => {
+    build: (empty, p, names, buffer, faceCtx = null, edgeCtx = null) => {
       const lines = [...ensurePartPrefix(empty, names)];
       const body = resolveBody(p, names, empty ? lines.join('\n') : buffer);
       const r = num(p.radius, 3);
       const sc = bool(p.sphericalCorners, true);
       let edgesExpr = `convexEdges(${body})`;
-      if (faceCtx && faceCtx.type !== 'irregular') {
-        const edge = emitFaceEdgeLines(body, faceCtx, p, names, allocateUniqueName);
+      const scope = p.edgeScope || (edgeCtx && edgeCtx.length ? 'selected' : (faceCtx ? 'face' : 'allConvex'));
+      if (scope === 'selected' || (edgeCtx && edgeCtx.length && scope !== 'face' && scope !== 'allConvex')) {
+        const edge = emitSelectedEdgeLines(body, edgeCtx || [], names, allocateUniqueName);
+        if (!edge.ok) {
+          lines.push(`throw new Error(${JSON.stringify(edge.message)});`);
+        } else {
+          lines.push(...edge.lines);
+          edgesExpr = edge.edgesExpr;
+        }
+      } else if (faceCtx && faceCtx.type !== 'irregular' && scope !== 'allConvex') {
+        const edge = emitFaceEdgeLines(body, faceCtx, { ...p, edgeScope: 'face' }, names, allocateUniqueName);
         lines.push(...edge.lines);
         edgesExpr = edge.edgesExpr;
+      } else if (scope === 'allConvex') {
+        edgesExpr = `convexEdges(${body})`;
       }
       lines.push(
         `${body} = filletEdges(${body}, ${edgesExpr}, ${r}, { sphericalCorners: ${sc} });`,
@@ -625,15 +641,26 @@ export const HELPER_PALETTE_ITEMS = [
       { name: 'body', type: 'body', default: 'part', label: 'Body' },
       { name: 'chamfer', type: 'number', default: 2, label: 'Chamfer', min: 0.01, step: 0.5 },
     ],
-    build: (empty, p, names, buffer, faceCtx = null) => {
+    build: (empty, p, names, buffer, faceCtx = null, edgeCtx = null) => {
       const lines = [...ensurePartPrefix(empty, names)];
       const body = resolveBody(p, names, empty ? lines.join('\n') : buffer);
       const c = num(p.chamfer, 2);
       let edgesExpr = `convexEdges(${body})`;
-      if (faceCtx && faceCtx.type !== 'irregular') {
-        const edge = emitFaceEdgeLines(body, faceCtx, p, names, allocateUniqueName);
+      const scope = p.edgeScope || (edgeCtx && edgeCtx.length ? 'selected' : (faceCtx ? 'face' : 'allConvex'));
+      if (scope === 'selected' || (edgeCtx && edgeCtx.length && scope !== 'face' && scope !== 'allConvex')) {
+        const edge = emitSelectedEdgeLines(body, edgeCtx || [], names, allocateUniqueName);
+        if (!edge.ok) {
+          lines.push(`throw new Error(${JSON.stringify(edge.message)});`);
+        } else {
+          lines.push(...edge.lines);
+          edgesExpr = edge.edgesExpr;
+        }
+      } else if (faceCtx && faceCtx.type !== 'irregular' && scope !== 'allConvex') {
+        const edge = emitFaceEdgeLines(body, faceCtx, { ...p, edgeScope: 'face' }, names, allocateUniqueName);
         lines.push(...edge.lines);
         edgesExpr = edge.edgesExpr;
+      } else if (scope === 'allConvex') {
+        edgesExpr = `convexEdges(${body})`;
       }
       lines.push(`${body} = chamferEdges(${body}, ${edgesExpr}, ${c});`);
       lines.push(...syncPartLines(body, names, hasPartDecl(lines, empty)));
