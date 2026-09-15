@@ -57,39 +57,56 @@ const ICONS = {
 
 /**
  * Slice 09/10/11 — left vertical helper insert palette (game mode).
- * Tap opens HelperParamModal; with selectedFace, face features get a
- * face-type-aware sheet (or refuse for irregular). Confirm → onInsert(id, params, faceContext).
+ * Tap opens HelperParamModal; with selectedFace / selectedEdges, face/edge
+ * features get an aware sheet (or refuse). Confirm → onInsert(id, params, faceContext, edgeContext).
  */
-const HelperInsertPalette = ({ onInsert, getBuffer, selectedFace = null, compact = false }) => {
+const HelperInsertPalette = ({
+  onInsert,
+  getBuffer,
+  selectedFace = null,
+  selectedEdges = null,
+  onRequestEdgeMode = null,
+  compact = false,
+}) => {
   const grouped = itemsByGroup();
   const iconSize = compact ? 16 : 18;
   const pad = compact ? 'p-1.5' : 'p-2';
   const [pending, setPending] = useState(null);
   const [bufferSnapshot, setBufferSnapshot] = useState('');
   const [faceSnapshot, setFaceSnapshot] = useState(null);
+  const [edgeSnapshot, setEdgeSnapshot] = useState(null);
   const [modalMode, setModalMode] = useState('default'); // default | params | refuse
   const [refuseMessage, setRefuseMessage] = useState(null);
 
   const openParams = (item) => {
     const buf = typeof getBuffer === 'function' ? getBuffer() : '';
     setBufferSnapshot(typeof buf === 'string' ? buf : '');
-    const resolved = resolveFaceModal(item, selectedFace);
+    // Auto-switch to edge pick when opening fillet/chamfer with no edges yet.
+    if ((item.id === 'filletEdges' || item.id === 'chamferEdges')
+      && !(selectedEdges && selectedEdges.length)
+      && typeof onRequestEdgeMode === 'function') {
+      onRequestEdgeMode();
+    }
+    const resolved = resolveFaceModal(item, selectedFace, selectedEdges);
     if (resolved.mode === 'refuse') {
       setPending(item);
-      setFaceSnapshot(resolved.face);
+      setFaceSnapshot(resolved.face || null);
+      setEdgeSnapshot(resolved.edges || selectedEdges);
       setRefuseMessage(resolved.message);
       setModalMode('refuse');
       return;
     }
     if (resolved.mode === 'params') {
       setPending(resolved.item);
-      setFaceSnapshot(resolved.face);
+      setFaceSnapshot(resolved.face || null);
+      setEdgeSnapshot(resolved.edges || selectedEdges);
       setRefuseMessage(null);
       setModalMode('params');
       return;
     }
     setPending(item);
     setFaceSnapshot(null);
+    setEdgeSnapshot(null);
     setRefuseMessage(null);
     setModalMode('default');
   };
@@ -97,6 +114,7 @@ const HelperInsertPalette = ({ onInsert, getBuffer, selectedFace = null, compact
   const close = () => {
     setPending(null);
     setFaceSnapshot(null);
+    setEdgeSnapshot(null);
     setRefuseMessage(null);
     setModalMode('default');
   };
@@ -156,12 +174,14 @@ const HelperInsertPalette = ({ onInsert, getBuffer, selectedFace = null, compact
           item={pending}
           buffer={bufferSnapshot}
           faceInfo={faceSnapshot}
+          edgeInfo={edgeSnapshot}
           onCancel={close}
           onConfirm={(params) => {
             const id = pending.id;
             const faceCtx = faceSnapshot;
+            const edgeCtx = edgeSnapshot;
             close();
-            onInsert?.(id, params, faceCtx);
+            onInsert?.(id, params, faceCtx, edgeCtx);
           }}
         />
       )}

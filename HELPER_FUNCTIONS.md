@@ -451,9 +451,12 @@ const vEdges = edgesByOrientation(part, 'z');      // all vertical edges
 ### workplaneFromFace(m, face)
 
 Builds a deterministic, axis-aligned local frame on a face (or a face index
-into `m`). Returns `{ center, normal, x, y }` where `normal` is the outward
-face normal and `(x, y)` are the in-plane axes. Axes are aligned to world
-axes so `(u, v)` map to predictable world directions:
+into `m`). Returns `{ center, normal, x, y }` where `center` is the
+area-weighted face centroid (coplanar connected triangles are merged even
+when Manifold assigns per-triangle `faceID`s — so `hole(…, 0, 0, …)` hits
+the true face center), `normal` is the outward face normal, and `(x, y)`
+are the in-plane axes. Axes are aligned to world axes so `(u, v)` map to
+predictable world directions:
 
 - `+Z` face → `u→+X, v→+Y`   - `-Z` face → `u→+X, v→-Y`
 - `+X` face → `u→+Y, v→+Z`   - `-X` face → `u→+Y, v→-Z`

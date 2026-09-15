@@ -1,8 +1,10 @@
 /**
- * Slice 11 — Face-select → feature placement.
+ * Slice 11/12 — Face-select → feature placement + edge pick for fillet/chamfer.
  *
  * Classify Viewport selectedFace → planar | cylindrical | irregular.
  * Face-aware param schemas + workplane / edge snippet helpers.
+ * Slice 12: resolveHoleUV (Center → u=0,v=0 on snapped workplane);
+ * selected-edge emission for fillet/chamfer.
  *
  * Classification (from Viewport faceData):
  *   - planar:      selectionMode === 'coplanar' (single-click coplanar region)
@@ -154,7 +156,7 @@ export function faceAwareParams(id, faceType) {
         type: 'select',
         default: 'face',
         label: 'Edges',
-        options: ['face', 'allConvex'],
+        options: ['selected', 'face', 'allConvex'],
       },
     ];
   }
@@ -167,7 +169,7 @@ export function faceAwareParams(id, faceType) {
         type: 'select',
         default: 'face',
         label: 'Edges',
-        options: ['face', 'allConvex'],
+        options: ['selected', 'face', 'allConvex'],
       },
     ];
   }
@@ -249,6 +251,13 @@ export function faceAwareParams(id, faceType) {
   }
 
   // ── planar ───────────────────────────────────────────────────
+  const placement = {
+    name: 'placement',
+    type: 'select',
+    default: 'center',
+    label: 'Placement',
+    options: ['center', 'custom'],
+  };
   const uv = [
     { name: 'u', type: 'number', default: 0, label: 'U', step: 0.5, slider: true },
     { name: 'v', type: 'number', default: 0, label: 'V', step: 0.5, slider: true },
@@ -264,6 +273,7 @@ export function faceAwareParams(id, faceType) {
   if (id === 'hole') {
     return [
       body,
+      placement,
       ...uv,
       { name: 'dia', type: 'number', default: 6, label: 'Diameter', min: 0.1, step: 0.5, slider: true },
       through,
@@ -287,6 +297,7 @@ export function faceAwareParams(id, faceType) {
       body,
       { name: 'size', type: 'select', default: 'M3', label: 'Size', options: ['M2', 'M2.5', 'M3', 'M4', 'M5', 'M6', 'M8', 'M10'] },
       { name: 'fit', type: 'select', default: 'normal', label: 'Fit', options: ['close', 'normal', 'loose'] },
+      placement,
       ...uv,
       through,
       depth,
@@ -297,6 +308,7 @@ export function faceAwareParams(id, faceType) {
     return [
       body,
       { name: 'size', type: 'select', default: 'M3', label: 'Size', options: ['M2', 'M2.5', 'M3', 'M4', 'M5', 'M6', 'M8', 'M10'] },
+      placement,
       ...uv,
       through,
       depth,
@@ -308,6 +320,7 @@ export function faceAwareParams(id, faceType) {
       { name: 'diaThru', type: 'number', default: 5.5, label: 'Thru Ø', min: 0.1, step: 0.1, slider: true },
       { name: 'diaCbore', type: 'number', default: 10, label: 'Cbore Ø', min: 0.1, step: 0.1, slider: true },
       { name: 'cboreDepth', type: 'number', default: 4, label: 'Cbore depth', min: 0.1, step: 0.5, slider: true },
+      placement,
       ...uv,
       through,
       depth,
@@ -319,6 +332,7 @@ export function faceAwareParams(id, faceType) {
       { name: 'diaThru', type: 'number', default: 3.4, label: 'Thru Ø', min: 0.1, step: 0.1, slider: true },
       { name: 'diaCsk', type: 'number', default: 6.5, label: 'Csk Ø', min: 0.1, step: 0.1, slider: true },
       { name: 'cskDepth', type: 'number', default: 2, label: 'Csk depth', min: 0.1, step: 0.5, slider: true },
+      placement,
       ...uv,
       through,
       depth,
@@ -354,8 +368,9 @@ export function seedFaceParams(id, face) {
     base.angleDeg = roundFaceNum(angleDeg, 1);
     base.axial = roundFaceNum(axial, 2);
   }
-  // Planar u/v default to face center (0,0 on workplane = face center)
+  // Planar Center → u/v 0,0 on workplane (origin snapped to face center).
   if (face.type === 'planar') {
+    base.placement = 'center';
     base.u = 0;
     base.v = 0;
   }
@@ -391,6 +406,12 @@ export function emitFaceWorkplaneLines(body, face, names, allocateUniqueName) {
     `  return _best;`,
     `})();`,
     `const ${frVar} = workplaneFromFace(${body}, ${faceVar});`,
+    `// Snap origin to selected face center (projected onto plane) so Center → u=0,v=0 hits pick.`,
+    `(() => {`,
+    `  const _pc = ${cLit};`,
+    `  const _off = (_pc[0]-${frVar}.center[0])*${frVar}.normal[0] + (_pc[1]-${frVar}.center[1])*${frVar}.normal[1] + (_pc[2]-${frVar}.center[2])*${frVar}.normal[2];`,
+    `  ${frVar}.center = [_pc[0]-_off*${frVar}.normal[0], _pc[1]-_off*${frVar}.normal[1], _pc[2]-_off*${frVar}.normal[2]];`,
+    `})();`,
   ];
   return { lines, faceVar, frVar };
 }
@@ -438,12 +459,141 @@ export function emitFaceEdgeLines(body, face, params, names, allocateUniqueName)
 }
 
 /**
+ * Resolve planar hole UV for Center vs custom placement.
+ * Center → { u:0, v:0 } in the face workplane (origin snapped to face.center).
+ * Custom → numeric u/v from params.
+ *
+ * @param {object} params
+ * @param {FaceClassification|null} faceCtx
+ * @param {(v:any, fb:number)=>number} numFn
+ * @returns {{ u: number, v: number, mode: 'center'|'custom'|'literal' }}
+ */
+export function resolveHoleUV(params, faceCtx, numFn = (v, fb) => {
+  if (v === '' || v === null || v === undefined || v === '-' || v === '.') return fb;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fb;
+}) {
+  const p = params || {};
+  if (faceCtx && faceCtx.type === 'planar') {
+    // Explicit placement: 'center' → always 0,0. 'custom' → params u/v.
+    // No placement field (legacy / direct compose) → honor params u/v.
+    if (String(p.placement) === 'center') {
+      return { u: 0, v: 0, mode: 'center' };
+    }
+    if (String(p.placement) === 'custom') {
+      return { u: numFn(p.u, 0), v: numFn(p.v, 0), mode: 'custom' };
+    }
+    return { u: numFn(p.u, 0), v: numFn(p.v, 0), mode: 'literal' };
+  }
+  return { u: numFn(p.u, 0), v: numFn(p.v, 0), mode: 'literal' };
+}
+
+/**
+ * Emit edge selection from Viewport multi-select (midpoint match against convexEdges).
+ * Prefer this for fillet/chamfer when the user picked edges.
+ *
+ * @param {string} body
+ * @param {object[]} selectedEdges array of { mid: number[] }
+ * @param {Set<string>} names
+ * @param {(existing: Set<string>, base: string) => string} allocateUniqueName
+ * @returns {{ lines: string[], edgesExpr: string, ok: boolean, message?: string }}
+ */
+export function emitSelectedEdgeLines(body, selectedEdges, names, allocateUniqueName) {
+  const edges = Array.isArray(selectedEdges) ? selectedEdges : [];
+  if (!edges.length) {
+    return {
+      lines: [],
+      edgesExpr: '',
+      ok: false,
+      message:
+        'No edges selected. Switch to Edge pick mode, tap edges to multi-select, then Fillet/Chamfer.',
+    };
+  }
+  const edgesVar = allocateUniqueName(names, 'selEdges');
+  const midsLit = edges.map((e) => {
+    const m = e.mid || [
+      ((e.va?.[0] ?? 0) + (e.vb?.[0] ?? 0)) / 2,
+      ((e.va?.[1] ?? 0) + (e.vb?.[1] ?? 0)) / 2,
+      ((e.va?.[2] ?? 0) + (e.vb?.[2] ?? 0)) / 2,
+    ];
+    return formatVec3(m);
+  }).join(', ');
+  const lines = [
+    `const ${edgesVar} = (() => {`,
+    `  const _mids = [${midsLit}];`,
+    `  const _all = convexEdges(${body});`,
+    `  const _hit = _all.filter((e) => {`,
+    `    const _m = [(e.va[0]+e.vb[0])/2, (e.va[1]+e.vb[1])/2, (e.va[2]+e.vb[2])/2];`,
+    `    return _mids.some((p) => (_m[0]-p[0])**2 + (_m[1]-p[1])**2 + (_m[2]-p[2])**2 < 0.25);`,
+    `  });`,
+    `  if (!_hit.length) throw new Error('Selected edges not found on body — re-pick after geometry changes');`,
+    `  return _hit;`,
+    `})();`,
+  ];
+  return { lines, edgesExpr: edgesVar, ok: true };
+}
+
+/**
+ * Build a modal item view-model for face placement (or refuse).
+ * Optional selectedEdges: when present, fillet/chamfer prefer edge-aware sheet.
+ */
+
+/**
  * Build a modal item view-model for face placement (or refuse).
  * @returns {{ mode: 'params'|'refuse'|'default', item?: object, face?: FaceClassification, message?: string }}
  */
-export function resolveFaceModal(paletteItem, selectedFace) {
+export function resolveFaceModal(paletteItem, selectedFace, selectedEdges = null) {
   if (!paletteItem) return { mode: 'default' };
-  if (!isFaceFeature(paletteItem.id) || !selectedFace) {
+  const id = paletteItem.id;
+  const hasEdges = Array.isArray(selectedEdges) && selectedEdges.length > 0;
+  const isEdgeFeature = id === 'filletEdges' || id === 'chamferEdges';
+
+  // Slice 12: fillet/chamfer with user-selected edges (no face required).
+  if (isEdgeFeature && hasEdges) {
+    const body = { name: 'body', type: 'body', default: 'part', label: 'Body' };
+    const edgeScope = {
+      name: 'edgeScope', type: 'select', default: 'selected', label: 'Edges',
+      options: ['selected', 'face', 'allConvex'],
+    };
+    let params;
+    if (id === 'filletEdges') {
+      params = [
+        body,
+        { name: 'radius', type: 'number', default: 3, label: 'Radius', min: 0.01, step: 0.5, slider: true },
+        { name: 'sphericalCorners', type: 'bool', default: true, label: 'Spherical corners' },
+        edgeScope,
+      ];
+    } else {
+      params = [
+        body,
+        { name: 'chamfer', type: 'number', default: 2, label: 'Chamfer', min: 0.01, step: 0.5, slider: true },
+        edgeScope,
+      ];
+    }
+    return {
+      mode: 'params',
+      face: selectedFace ? classifySelectedFace(selectedFace) : null,
+      edges: selectedEdges,
+      item: {
+        ...paletteItem,
+        params,
+        title: `${paletteItem.title} — ${selectedEdges.length} edge${selectedEdges.length === 1 ? '' : 's'}`,
+        _edgePlacement: true,
+      },
+    };
+  }
+
+  // Fillet/chamfer with no edges and no face → prompt to select edges.
+  if (isEdgeFeature && !selectedFace && !hasEdges) {
+    return {
+      mode: 'refuse',
+      message:
+        'Select edges first (Edge pick mode in the viewport), then Fillet/Chamfer. ' +
+        'Or select a face to fillet its adjacent convex edges.',
+    };
+  }
+
+  if (!isFaceFeature(id) || !selectedFace) {
     return { mode: 'default' };
   }
   const face = classifySelectedFace(selectedFace);
@@ -451,20 +601,27 @@ export function resolveFaceModal(paletteItem, selectedFace) {
   if (face.type === 'irregular') {
     return { mode: 'refuse', face, message: face.refuseMessage };
   }
-  const params = faceAwareParams(paletteItem.id, face.type);
+  const params = faceAwareParams(id, face.type);
   if (!params) return { mode: 'default' };
-  const seeds = seedFaceParams(paletteItem.id, face);
-  const mergedParams = params.map((p) => (
-    seeds[p.name] !== undefined ? { ...p, default: seeds[p.name] } : p
-  ));
+  const seeds = seedFaceParams(id, face);
+  // Prefer selected edges when both face + edges present for fillet/chamfer.
+  const mergedParams = params.map((p) => {
+    let def = seeds[p.name] !== undefined ? seeds[p.name] : p.default;
+    if (p.name === 'edgeScope' && hasEdges) def = 'selected';
+    return def !== p.default ? { ...p, default: def } : (seeds[p.name] !== undefined ? { ...p, default: seeds[p.name] } : p);
+  });
   return {
     mode: 'params',
     face,
+    edges: hasEdges ? selectedEdges : null,
     item: {
       ...paletteItem,
       params: mergedParams,
-      title: `${paletteItem.title} — on ${face.type} face`,
+      title: hasEdges && isEdgeFeature
+        ? `${paletteItem.title} — ${selectedEdges.length} edge${selectedEdges.length === 1 ? '' : 's'}`
+        : `${paletteItem.title} — on ${face.type} face`,
       _facePlacement: true,
+      _edgePlacement: hasEdges && isEdgeFeature,
     },
   };
 }

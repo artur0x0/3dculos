@@ -28,6 +28,7 @@ import Toolbar from './Toolbar';
 import CrossSectionPanel from './CrossSectionPanel';
 import HelperInsertPalette from './HelperInsertPalette';
 import { classifySelectedFace } from '../utils/faceFeaturePlacement';
+import { buildFeatureEdges, pickNearestEdge, toggleEdgeSelection } from '../utils/selectEdge';
 import { X } from 'lucide-react';
 import { downloadModelFromMesh, get3MFBase64FromMesh } from '../utils/exportModel';
 import { parseImportedModels, loadCachedModel } from '../utils/importModel';
@@ -109,6 +110,12 @@ const Viewport = forwardRef(({
   const DRAG_THRESHOLD = 3; // pixels - movement beyond this is considered a drag
   
   const [selectedFace, setSelectedFace] = useState(null);
+  /** Slice 12: 'face' | 'edge' — mutually exclusive pick modes. */
+  const [pickMode, setPickMode] = useState('face');
+  const [selectedEdges, setSelectedEdges] = useState([]);
+  const featureEdgesRef = useRef([]);
+  const edgeHighlightRef = useRef(null);
+  const pickModeRef = useRef('face');
   const [materials, setMaterials] = useState([]);
   const [isExecuting, setIsExecuting] = useState(false);
   const [executionError, setExecutionError] = useState(null);
@@ -131,12 +138,21 @@ const Viewport = forwardRef(({
   // Re-frame the part after each successful run, preserving the current orbit direction.
   const [autoFitEnabled, setAutoFitEnabled] = useState(true);
 
+  pickModeRef.current = pickMode;
+
   useImperativeHandle(ref, () => ({
     executeScript,
     /** Clear player attempt mesh (game mode enter: ghost-only until Run). */
     clearAttempt: () => {
       clearHighlight();
+      if (edgeHighlightRef.current && sceneRef.current) {
+        sceneRef.current.remove(edgeHighlightRef.current);
+        edgeHighlightRef.current.geometry?.dispose();
+        edgeHighlightRef.current.material?.dispose();
+        edgeHighlightRef.current = null;
+      }
       setSelectedFace(null);
+      setSelectedEdges([]);
       onFaceSelected?.(null);
       setCachedMeshData(null);
       setExecutionError(null);
@@ -163,6 +179,16 @@ const Viewport = forwardRef(({
       setSelectedFace(null);
       onFaceSelected?.(null);
     },
+    clearEdgeSelection: () => {
+      if (edgeHighlightRef.current && sceneRef.current) {
+        sceneRef.current.remove(edgeHighlightRef.current);
+        edgeHighlightRef.current.geometry?.dispose();
+        edgeHighlightRef.current.material?.dispose();
+        edgeHighlightRef.current = null;
+      }
+      setSelectedEdges([]);
+    },
+    setPickMode: (mode) => setPickMode(mode === 'edge' ? 'edge' : 'face'),
     // Updated to use cached mesh when available
     export3MF: async () => {
       if (cachedMeshData?.vertProperties) {
@@ -195,6 +221,41 @@ const Viewport = forwardRef(({
       }
     }
   }, []);
+
+  const clearEdgeHighlight = useCallback(() => {
+    if (edgeHighlightRef.current && sceneRef.current) {
+      sceneRef.current.remove(edgeHighlightRef.current);
+      edgeHighlightRef.current.geometry?.dispose();
+      edgeHighlightRef.current.material?.dispose();
+      edgeHighlightRef.current = null;
+    }
+  }, []);
+
+  const highlightSelectedEdges = useCallback((edges) => {
+    clearEdgeHighlight();
+    if (!edges?.length || !sceneRef.current) return;
+    const positions = [];
+    for (const e of edges) {
+      if (!e.va || !e.vb) continue;
+      positions.push(e.va[0], e.va[1], e.va[2], e.vb[0], e.vb[1], e.vb[2]);
+    }
+    if (!positions.length) return;
+    const geom = new BufferGeometry();
+    geom.setAttribute('position', new BufferAttribute(new Float32Array(positions), 3));
+    const lines = new LineSegments(geom, new LineBasicMaterial({
+      color: 0xff9900, linewidth: 3, depthTest: false,
+    }));
+    lines.name = 'edgeSelection';
+    lines.renderOrder = 10;
+    sceneRef.current.add(lines);
+    edgeHighlightRef.current = lines;
+  }, [clearEdgeHighlight]);
+
+  const rebuildFeatureEdges = useCallback(() => {
+    const geom = resultRef.current?.geometry;
+    featureEdgesRef.current = geom ? buildFeatureEdges(geom) : [];
+  }, []);
+
 
   // Clear cutting plane widget
   const clearCuttingPlane = () => {
@@ -424,6 +485,9 @@ const Viewport = forwardRef(({
       
       if (measurementEnabled) {
         console.log("[Measurement] Keeping face selected for measurement");
+      } else if (pickModeRef.current === 'edge') {
+        clearEdgeHighlight();
+        setSelectedEdges([]);
       } else {
         clearHighlight();
         setSelectedFace(null);
@@ -434,9 +498,45 @@ const Viewport = forwardRef(({
     
     // Capture intersection data
     const intersection = intersects[0];
+    const geometry = resultRef.current.geometry;
+
+    // Slice 12: Edge pick mode — toggle nearest feature edge (no face multi-click).
+    if (pickModeRef.current === 'edge') {
+      if (clickTimerRef.current) {
+        clearTimeout(clickTimerRef.current);
+        clickTimerRef.current = null;
+      }
+      clickCountRef.current = 0;
+      pendingClickDataRef.current = null;
+      const hit = intersection.point
+        ? [intersection.point.x, intersection.point.y, intersection.point.z]
+        : null;
+      if (!featureEdgesRef.current.length) {
+        featureEdgesRef.current = buildFeatureEdges(geometry);
+      }
+      const size = modelBounds?.size;
+      const diag = size ? Math.hypot(size[0], size[1], size[2]) : 100;
+      const maxDist = Math.max(1.5, diag * 0.03);
+      const edge = pickNearestEdge(featureEdgesRef.current, hit, maxDist);
+      if (!edge) {
+        console.log('[Edge Selection] No feature edge near hit');
+        return;
+      }
+      setSelectedEdges((prev) => {
+        const next = toggleEdgeSelection(prev, edge);
+        // Defer highlight to effect via state; also paint immediately:
+        queueMicrotask(() => highlightSelectedEdges(next));
+        return next;
+      });
+      // Clear face selection so modes do not fight
+      clearHighlight();
+      setSelectedFace(null);
+      onFaceSelected?.(null);
+      return;
+    }
+
     const clickedFace = intersection.face;
     const seedFaceIndex = intersection.faceIndex;
-    const geometry = resultRef.current.geometry;
     const positions = geometry.attributes.position;
     const index = geometry.index.array;
     
@@ -542,14 +642,16 @@ const Viewport = forwardRef(({
     if (measurementEnabled) {
       handleMeasurementClick(faceData, faceIndices, geometry, positions, index);
     } else {
-      // Normal face selection mode
+      // Normal face selection mode — clear edges so modes do not fight
+      clearEdgeHighlight();
+      setSelectedEdges([]);
       setSelectedFace(faceData);
       onFaceSelected?.(faceData);
       clearHighlight();
       highlightFace(faceIndices, geometry, positions, index, 0xffff00);
     }
     
-  }, [measurementEnabled, measurementFaces, onFaceSelected, clearHighlight, highlightFace]);
+  }, [measurementEnabled, measurementFaces, onFaceSelected, clearHighlight, clearEdgeHighlight, highlightFace]);
 
   /**
    * Handle face selection in measurement mode
@@ -1205,7 +1307,9 @@ const Viewport = forwardRef(({
     setExecutionError(null);
 
     clearHighlight();
+    clearEdgeHighlight();
     setSelectedFace(null);
+    setSelectedEdges([]);
     onFaceSelected?.(null);
 
     try {
@@ -1298,7 +1402,7 @@ const Viewport = forwardRef(({
         executionAbortRef.current = null;
       }
     }
-  }, [currentScript, materials, onFaceSelected, renderMeshData, clearHighlight, autoFitEnabled, handleZoomToFit]);
+  }, [currentScript, materials, onFaceSelected, renderMeshData, clearHighlight, clearEdgeHighlight, autoFitEnabled, handleZoomToFit]);
 
   /**
    * Download the current model as 3mf
@@ -1379,6 +1483,8 @@ const Viewport = forwardRef(({
           onInsert={onInsertHelper}
           getBuffer={getHelperBuffer}
           selectedFace={selectedFace}
+          selectedEdges={selectedEdges}
+          onRequestEdgeMode={() => setPickMode('edge')}
           compact={isMobile}
         />
       )}
@@ -1397,6 +1503,20 @@ const Viewport = forwardRef(({
           onMeasurementToggle={handleMeasurementToggle}
           axisHelperEnabled={axisHelperEnabled}
           onAxisHelperToggle={handleAxisHelperToggle}
+          pickMode={pickMode}
+          onPickModeChange={(mode) => {
+            const next = mode === 'edge' ? 'edge' : 'face';
+            setPickMode(next);
+            if (next === 'edge') {
+              clearHighlight();
+              setSelectedFace(null);
+              onFaceSelected?.(null);
+              rebuildFeatureEdges();
+            } else {
+              clearEdgeHighlight();
+              // keep selectedEdges until user clears / face-picks
+            }
+          }}
           verticalRail={mode === 'game' && isMobile}
         />
       
@@ -1443,6 +1563,35 @@ const Viewport = forwardRef(({
               Tap Hole / Clearance / … on the left to place on this face
             </div>
           )}
+        </div>
+      )}
+
+      {/* Slice 12: Edge selection info */}
+      {selectedEdges.length > 0 && pickMode === 'edge' && (
+        <div
+          className={`absolute bg-black/50 text-white p-2 rounded-lg text-xs font-mono z-10 ${
+            mode === 'game'
+              ? 'bottom-4 right-2 lg:right-4 max-w-[14rem]'
+              : 'bottom-4 left-2 lg:left-4'
+          }`}
+        >
+          <div className="font-bold mb-1">
+            Selected Edges
+            <span className="ml-1 font-normal text-amber-300">({selectedEdges.length})</span>
+          </div>
+          <div className="text-[10px] text-gray-300 normal-case font-sans">
+            Tap edges to toggle · Fillet / Chamfer uses this set
+          </div>
+          <button
+            type="button"
+            className="mt-1 text-[10px] text-amber-200 underline font-sans"
+            onClick={() => {
+              clearEdgeHighlight();
+              setSelectedEdges([]);
+            }}
+          >
+            Clear edges
+          </button>
         </div>
       )}
 

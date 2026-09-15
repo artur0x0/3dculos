@@ -3,8 +3,9 @@ import { X, Check, AlertTriangle } from 'lucide-react';
 import { listBodyNames, coerceNumberParam } from '../utils/helperPaletteSnippets';
 
 /**
- * Slice 10/11 — param popup for guided helper insert.
+ * Slice 10/11/12 — param popup for guided helper insert.
  * Slice 11: optional face banner, sliders for continuous numbers, refuse mode.
+ * Slice 12: edge banner; hide U/V when Placement=center.
  * Confirm → parent builds/inserts; Cancel → no-op.
  */
 const HelperParamModal = ({
@@ -13,6 +14,7 @@ const HelperParamModal = ({
   onConfirm,
   onCancel,
   faceInfo = null,
+  edgeInfo = null,
   refuseMessage = null,
 }) => {
   const params = item?.params || [];
@@ -54,7 +56,7 @@ const HelperParamModal = ({
             <div className="min-w-0 flex items-center gap-2">
               <AlertTriangle size={18} className="text-amber-400 shrink-0" />
               <h2 id="helper-refuse-title" className="font-semibold text-sm text-white truncate">
-                Face not supported
+                {/edge/i.test(refuseMessage || '') ? 'Select edges' : 'Face not supported'}
               </h2>
             </div>
             <button
@@ -116,9 +118,14 @@ const HelperParamModal = ({
 
   const showDepth = values.through === false || values.through === 'false';
   const showPattern = !!values.usePattern;
+  const placementCenter = !values.placement || values.placement === 'center';
   const visibleParams = params.filter((p) => {
     if (p.name === 'depth' && !showDepth) return false;
     if (['n', 'm', 'spacingU', 'spacingV'].includes(p.name) && params.some((x) => x.name === 'usePattern') && !showPattern) {
+      return false;
+    }
+    // Center placement → hide custom U/V (still emitted as 0,0).
+    if ((p.name === 'u' || p.name === 'v') && params.some((x) => x.name === 'placement') && placementCenter) {
       return false;
     }
     return true;
@@ -166,6 +173,16 @@ const HelperParamModal = ({
             n {faceInfo.normal.map((v) => Number(v).toFixed(2)).join(', ')}
             {' · '}
             c {faceInfo.center.map((v) => Number(v).toFixed(1)).join(', ')}
+          </div>
+        )}
+
+        {edgeInfo && edgeInfo.length > 0 && (
+          <div className="px-4 py-2 border-b border-amber-900/50 bg-amber-950/40 text-[11px] text-amber-100/90 shrink-0">
+            <span className="font-semibold uppercase tracking-wide text-amber-300">
+              {edgeInfo.length} edge{edgeInfo.length === 1 ? '' : 's'} selected
+            </span>
+            {' · '}
+            Fillet/Chamfer will use the picked set
           </div>
         )}
 
