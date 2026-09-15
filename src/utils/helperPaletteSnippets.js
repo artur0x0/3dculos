@@ -289,6 +289,7 @@ function emitDefaultTopWorkplane(body, names) {
   return {
     lines: [
       `const ${topFace} = facesByNormal(${body}, [0, 0, 1])[0];`,
+      `if (${topFace} == null) throw new Error('No +Z face for default workplane');`,
       `const ${fr} = workplaneFromFace(${body}, ${topFace});`,
     ],
     frVar: fr,
