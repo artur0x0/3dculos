@@ -8,7 +8,7 @@
  * - geometric: merged planar face center within epsilon (c4MeshData fix)
  */
 import Module from '../../built/manifold.js';
-import { BufferGeometry, Float32BufferAttribute } from 'three';
+import { BufferGeometry, Float32BufferAttribute, OrthographicCamera } from 'three';
 import {
   composeHelperInsert,
   allocateUniqueName,
@@ -24,7 +24,13 @@ import {
 import {
   buildFeatureEdges,
   distPointToSegment,
+  distPointToSegment2D,
   pickNearestEdge,
+  pickNearestEdgeScreen,
+  resolveEdgePickSlopPx,
+  EDGE_PICK_SLOP_PX,
+  EDGE_PICK_SLOP_COARSE_PX,
+  projectWorldToCanvas,
   toggleEdgeSelection,
   edgeKey,
 } from '../../src/utils/selectEdge.js';
@@ -410,6 +416,65 @@ const planarFace = {
     );
   }
   
+  // ── screen-space pick (hotfix fat hit target) ─────────────────
+  {
+    check('distPointToSegment2D interior', Math.abs(distPointToSegment2D(0.5, 1, 0, 0, 1, 0) - 1) < 1e-12);
+    check('distPointToSegment2D endpoint clamp', Math.abs(distPointToSegment2D(-1, 0, 0, 0, 1, 0) - 1) < 1e-12);
+    check('resolveEdgePickSlopPx fine', resolveEdgePickSlopPx({ coarse: false }) === EDGE_PICK_SLOP_PX);
+    check('resolveEdgePickSlopPx coarse', resolveEdgePickSlopPx({ coarse: true }) === EDGE_PICK_SLOP_COARSE_PX);
+    check('resolveEdgePickSlopPx override', resolveEdgePickSlopPx({ slopPx: 28 }) === 28);
+    check('EDGE_PICK_SLOP_PX in 24–40', EDGE_PICK_SLOP_PX >= 24 && EDGE_PICK_SLOP_PX <= 40);
+    check('EDGE_PICK_SLOP_COARSE_PX in 24–40', EDGE_PICK_SLOP_COARSE_PX >= 24 && EDGE_PICK_SLOP_COARSE_PX <= 40);
+
+    const cam = new OrthographicCamera(-50, 50, 50, -50, 0.1, 1000);
+    cam.position.set(0, 0, 100);
+    cam.lookAt(0, 0, 0);
+    cam.updateMatrixWorld(true);
+    cam.updateProjectionMatrix();
+
+    const W = 200;
+    const H = 200;
+    // World edge along X at z=0 → projects across canvas horizontal midline.
+    const edges = [
+      {
+        key: '0-1',
+        a: 0,
+        b: 1,
+        va: [-20, 0, 0],
+        vb: [20, 0, 0],
+        mid: [0, 0, 0],
+        length: 40,
+        tangent: [1, 0, 0],
+      },
+      {
+        key: '2-3',
+        a: 2,
+        b: 3,
+        va: [-20, 30, 0],
+        vb: [20, 30, 0],
+        mid: [0, 30, 0],
+        length: 40,
+        tangent: [1, 0, 0],
+      },
+    ];
+
+    const mid = projectWorldToCanvas(cam, [0, 0, 0], W, H);
+    check('projectWorldToCanvas center on canvas', !!mid && Math.abs(mid.x - 100) < 1 && Math.abs(mid.y - 100) < 1);
+
+    // Pointer 20px above the first edge midline — within 32px slop, far from second edge.
+    const hit = pickNearestEdgeScreen(edges, cam, W, H, 100, 100 - 20, 32);
+    check('pickNearestEdgeScreen within px slop', hit?.key === '0-1');
+
+    const miss = pickNearestEdgeScreen(edges, cam, W, H, 100, 100 - 20, 10);
+    check('pickNearestEdgeScreen beyond px slop → null', miss === null);
+
+    // Empty-space silhouette: pointer not on a mesh face but near projected edge.
+    const sil = pickNearestEdgeScreen(edges, cam, W, H, 100, 100 - 28, 32);
+    check('pickNearestEdgeScreen silhouette near-miss', sil?.key === '0-1');
+
+    check('pickNearestEdgeScreen empty → null', pickNearestEdgeScreen([], cam, W, H, 100, 100, 32) === null);
+  }
+
   // ── toggleEdgeSelection ────────────────────────────────────────
   {
     const src = {
