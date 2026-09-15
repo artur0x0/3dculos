@@ -27,6 +27,7 @@ import { TrackballControls } from 'three/addons/controls/TrackballControls.js';
 import Toolbar from './Toolbar';
 import CrossSectionPanel from './CrossSectionPanel';
 import HelperInsertPalette from './HelperInsertPalette';
+import { classifySelectedFace } from '../utils/faceFeaturePlacement';
 import { X } from 'lucide-react';
 import { downloadModelFromMesh, get3MFBase64FromMesh } from '../utils/exportModel';
 import { parseImportedModels, loadCachedModel } from '../utils/importModel';
@@ -1377,6 +1378,7 @@ const Viewport = forwardRef(({
         <HelperInsertPalette
           onInsert={onInsertHelper}
           getBuffer={getHelperBuffer}
+          selectedFace={selectedFace}
           compact={isMobile}
         />
       )}
@@ -1415,13 +1417,32 @@ const Viewport = forwardRef(({
         </div>
       )}
       
-      {/* Face Info Display */}
+      {/* Face Info Display — Slice 11: show classified type; dodge palette in game mode */}
       {selectedFace && !measurementEnabled && (
-        <div className="absolute bottom-4 left-2 lg:left-4 bg-black/50 text-white rounded-lg text-xs font-mono z-10">
-          <div className="font-bold mb-1">Selected Face</div>
+        <div
+          className={`absolute bg-black/50 text-white p-2 rounded-lg text-xs font-mono z-10 ${
+            mode === 'game'
+              ? 'bottom-4 right-2 lg:right-4 max-w-[14rem]'
+              : 'bottom-4 left-2 lg:left-4'
+          }`}
+        >
+          <div className="font-bold mb-1">
+            Selected Face
+            {(() => {
+              const c = classifySelectedFace(selectedFace);
+              return c ? (
+                <span className="ml-1 font-normal text-cyan-300">({c.type})</span>
+              ) : null;
+            })()}
+          </div>
           <div>Center: [{selectedFace.center.map(v => v.toFixed(1)).join(', ')}]</div>
           <div>Normal: [{selectedFace.normal.map(v => v.toFixed(2)).join(', ')}]</div>
           <div>Area: {selectedFace.area.toFixed(1)} mm²</div>
+          {mode === 'game' && (
+            <div className="mt-1 text-[10px] text-gray-300 normal-case font-sans">
+              Tap Hole / Clearance / … on the left to place on this face
+            </div>
+          )}
         </div>
       )}
 

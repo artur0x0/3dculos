@@ -165,10 +165,11 @@ const CodeEditor = forwardRef(({
     },
 
     /**
-     * Slice 09/10: template-aware helper insert at caret with optional params.
+     * Slice 09/10/11: template-aware helper insert at caret with optional params
+     * and faceContext (classified selected face for face-placed features).
      * Returns true on success. Caller (game) may Auto-Run after.
      */
-    insertHelper: (helperId, params = null) => {
+    insertHelper: (helperId, params = null, faceContext = null) => {
       if (!helperId) return false;
 
       if (historyTimeoutRef.current) {
@@ -196,7 +197,7 @@ const CodeEditor = forwardRef(({
         }
       }
 
-      const content = composeHelperInsert(buffer, helperId, caretOffset, params);
+      const content = composeHelperInsert(buffer, helperId, caretOffset, params, faceContext);
       if (typeof content !== 'string') return false;
 
       if (ed) {

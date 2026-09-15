@@ -1,14 +1,25 @@
 /**
- * Slice 09/10 — Helper insert palette snippets.
+ * Slice 09/10/11 — Helper insert palette snippets.
  * Source of truth: HELPER_FUNCTIONS.md allowlist + gamePuzzles / GameHintsModal.
  * Do NOT invent APIs.
  *
  * Slice 10: params schema per button, unique var allocator, numbered body lets
  * (box1, tube2, …); features mutate a chosen body; no class inheritance.
  *
+ * Slice 11: optional faceContext (from Viewport selectedFace) → face-aware
+ * workplane via facesByNormal + closest center (never bare `top`).
+ *
  * Sequential taps compose via composeHelperInsert:
  * strip one trailing `return part;`, insert body, re-append exactly one `return part;`.
  */
+
+import {
+  emitFaceWorkplaneLines,
+  emitFaceEdgeLines,
+  emitSpanExpr,
+  estimateCylinderAxis,
+  roundFaceNum,
+} from './faceFeaturePlacement.js';
 
 /** Metric fastener sizes commonly used in puzzles / hints. */
 export const FASTENER_SIZE_OPTIONS = [
@@ -265,6 +276,69 @@ function resolveBody(params, names, buffer) {
   return body;
 }
 
+function hasPartDecl(lines, empty) {
+  return /(?:let|const|var)\s+part\b/.test(lines.join('\n')) || !empty;
+}
+
+/**
+ * Default (no face) top-face workplane — facesByNormal(+Z), never bare `top`.
+ */
+function emitDefaultTopWorkplane(body, names) {
+  const topFace = allocateUniqueName(names, 'topFace');
+  const fr = allocateUniqueName(names, 'fr');
+  return {
+    lines: [
+      `const ${topFace} = facesByNormal(${body}, [0, 0, 1])[0];`,
+      `if (${topFace} == null) throw new Error('No +Z face for default workplane');`,
+      `const ${fr} = workplaneFromFace(${body}, ${topFace});`,
+    ],
+    frVar: fr,
+  };
+}
+
+/**
+ * Resolve workplane for a hole-like feature. With faceContext, uses selected
+ * face normal/center (cylindrical: rebuild normal from angleDeg + axis).
+ */
+function resolveFeatureWorkplane(body, p, names, faceCtx) {
+  if (faceCtx && faceCtx.type === 'cylindrical') {
+    const { axis } = estimateCylinderAxis(faceCtx.normal);
+    const angleDeg = num(p.angleDeg, 0);
+    const rad = (angleDeg * Math.PI) / 180;
+    let n;
+    if (axis === 'z') n = [Math.cos(rad), Math.sin(rad), 0];
+    else if (axis === 'y') n = [Math.sin(rad), 0, Math.cos(rad)];
+    else n = [0, Math.cos(rad), Math.sin(rad)];
+    const syn = {
+      ...faceCtx,
+      normal: n,
+      // Keep pick center; axial adjusts v later
+    };
+    return emitFaceWorkplaneLines(body, syn, names, allocateUniqueName);
+  }
+  if (faceCtx && (faceCtx.type === 'planar' || faceCtx.type === 'cylindrical')) {
+    return emitFaceWorkplaneLines(body, faceCtx, names, allocateUniqueName);
+  }
+  return emitDefaultTopWorkplane(body, names);
+}
+
+function uvForFace(p, faceCtx) {
+  if (faceCtx && faceCtx.type === 'cylindrical') {
+    // On cylinder wall workplane: u ~ hoop, v ~ axial relative to face center
+    const axial = num(p.axial, faceCtx.center
+      ? (estimateCylinderAxis(faceCtx.normal).axis === 'z' ? faceCtx.center[2]
+        : estimateCylinderAxis(faceCtx.normal).axis === 'y' ? faceCtx.center[1]
+          : faceCtx.center[0])
+      : 0);
+    // Face already at axial from selection; offset = axial - faceCenterAxis
+    const { axis } = estimateCylinderAxis(faceCtx.normal);
+    const faceAx = axis === 'z' ? faceCtx.center[2] : axis === 'y' ? faceCtx.center[1] : faceCtx.center[0];
+    const vOff = roundFaceNum(axial - faceAx, 3);
+    return { u: 0, v: vOff };
+  }
+  return { u: num(p.u, 0), v: num(p.v, 0) };
+}
+
 /**
  * Build insert text for a palette item (single-shot snippet, may include return).
  * Prefer composeHelperInsert for sequential taps.
@@ -279,7 +353,7 @@ export function buildHelperSnippet(id, opts = {}) {
   const bufferEmpty = opts.bufferEmpty != null ? !!opts.bufferEmpty : isBufferEmpty(buffer);
   const params = mergeParams(item, opts.params);
   const names = declaredNames(buffer);
-  return item.build(bufferEmpty, params, names, buffer);
+  return item.build(bufferEmpty, params, names, buffer, opts.faceContext || null);
 }
 
 /**
@@ -290,9 +364,10 @@ export function buildHelperSnippet(id, opts = {}) {
  * @param {number|null} [caretOffset] offset into buffer; clamped into ops region.
  *   null / omitted → append at end of body (typical sequential taps).
  * @param {object|null} [params] values from HelperParamModal (defaults if null)
+ * @param {object|null} [faceContext] Slice 11 classified selected face (or null)
  * @returns {string|null} full replacement buffer
  */
-export function composeHelperInsert(buffer, id, caretOffset = null, params = null) {
+export function composeHelperInsert(buffer, id, caretOffset = null, params = null, faceContext = null) {
   const item = HELPER_PALETTE_ITEMS.find((h) => h.id === id);
   if (!item) return null;
 
@@ -300,7 +375,7 @@ export function composeHelperInsert(buffer, id, caretOffset = null, params = nul
   const empty = isBufferEmpty(strippedBuf);
   const merged = mergeParams(item, params);
   const names = declaredNames(strippedBuf);
-  let snippet = item.build(empty, merged, names, strippedBuf);
+  let snippet = item.build(empty, merged, names, strippedBuf, faceContext);
   if (snippet == null) return null;
 
   snippet = stripTrailingReturnPart(snippet);
@@ -523,15 +598,21 @@ export const HELPER_PALETTE_ITEMS = [
       { name: 'radius', type: 'number', default: 3, label: 'Radius', min: 0.01, step: 0.5 },
       { name: 'sphericalCorners', type: 'bool', default: true, label: 'Spherical corners' },
     ],
-    build: (empty, p, names, buffer) => {
+    build: (empty, p, names, buffer, faceCtx = null) => {
       const lines = [...ensurePartPrefix(empty, names)];
       const body = resolveBody(p, names, empty ? lines.join('\n') : buffer);
       const r = num(p.radius, 3);
       const sc = bool(p.sphericalCorners, true);
+      let edgesExpr = `convexEdges(${body})`;
+      if (faceCtx && faceCtx.type !== 'irregular') {
+        const edge = emitFaceEdgeLines(body, faceCtx, p, names, allocateUniqueName);
+        lines.push(...edge.lines);
+        edgesExpr = edge.edgesExpr;
+      }
       lines.push(
-        `${body} = filletEdges(${body}, convexEdges(${body}), ${r}, { sphericalCorners: ${sc} });`,
+        `${body} = filletEdges(${body}, ${edgesExpr}, ${r}, { sphericalCorners: ${sc} });`,
       );
-      lines.push(...syncPartLines(body, names, !empty || /(?:let|const|var)\s+part\b/.test(lines.join('\n'))));
+      lines.push(...syncPartLines(body, names, hasPartDecl(lines, empty)));
       return withReturn(lines, empty);
     },
   },
@@ -544,12 +625,18 @@ export const HELPER_PALETTE_ITEMS = [
       { name: 'body', type: 'body', default: 'part', label: 'Body' },
       { name: 'chamfer', type: 'number', default: 2, label: 'Chamfer', min: 0.01, step: 0.5 },
     ],
-    build: (empty, p, names, buffer) => {
+    build: (empty, p, names, buffer, faceCtx = null) => {
       const lines = [...ensurePartPrefix(empty, names)];
       const body = resolveBody(p, names, empty ? lines.join('\n') : buffer);
       const c = num(p.chamfer, 2);
-      lines.push(`${body} = chamferEdges(${body}, convexEdges(${body}), ${c});`);
-      lines.push(...syncPartLines(body, names, /(?:let|const|var)\s+part\b/.test(lines.join('\n')) || !empty));
+      let edgesExpr = `convexEdges(${body})`;
+      if (faceCtx && faceCtx.type !== 'irregular') {
+        const edge = emitFaceEdgeLines(body, faceCtx, p, names, allocateUniqueName);
+        lines.push(...edge.lines);
+        edgesExpr = edge.edgesExpr;
+      }
+      lines.push(`${body} = chamferEdges(${body}, ${edgesExpr}, ${c});`);
+      lines.push(...syncPartLines(body, names, hasPartDecl(lines, empty)));
       return withReturn(lines, empty);
     },
   },
@@ -564,20 +651,29 @@ export const HELPER_PALETTE_ITEMS = [
       { name: 'u', type: 'number', default: 0, label: 'U', step: 1 },
       { name: 'v', type: 'number', default: 0, label: 'V', step: 1 },
     ],
-    build: (empty, p, names, buffer) => {
+    build: (empty, p, names, buffer, faceCtx = null) => {
       const lines = [...ensurePartPrefix(empty, names)];
       const body = resolveBody(p, names, empty ? lines.join('\n') : buffer);
       const dia = num(p.dia, 6);
-      const u = num(p.u, 0);
-      const v = num(p.v, 0);
-      const topFace = allocateUniqueName(names, 'topFace');
-      const fr = allocateUniqueName(names, 'fr');
-      const span = allocateUniqueName(names, 'span');
-      lines.push(`const ${topFace} = facesByNormal(${body}, [0, 0, 1])[0];`);
-      lines.push(`const ${fr} = workplaneFromFace(${body}, ${topFace});`);
-      lines.push(`const ${span} = holeSpan(${body}, ${fr});`);
-      lines.push(`${body} = hole(${body}, ${fr}, ${u}, ${v}, ${dia}, ${span});`);
-      lines.push(...syncPartLines(body, names, /(?:let|const|var)\s+part\b/.test(lines.join('\n')) || !empty));
+      const wp = resolveFeatureWorkplane(body, p, names, faceCtx);
+      lines.push(...wp.lines);
+      const fr = wp.frVar;
+      const usePattern = faceCtx && faceCtx.type === 'planar' && bool(p.usePattern, false);
+      if (usePattern) {
+        const n = Math.max(1, Math.round(num(p.n, 3)));
+        const m = Math.max(1, Math.round(num(p.m, 2)));
+        const su = num(p.spacingU, 18);
+        const sv = num(p.spacingV, 14);
+        lines.push(
+          `${body} = holePattern(${body}, ${fr}, { n: ${n}, m: ${m}, spacingU: ${su}, spacingV: ${sv}, dia: ${dia} });`,
+        );
+      } else {
+        const { u, v } = faceCtx ? uvForFace(p, faceCtx) : { u: num(p.u, 0), v: num(p.v, 0) };
+        const span = emitSpanExpr(body, fr, faceCtx ? p : { through: true }, names, allocateUniqueName, num);
+        lines.push(...span.lines);
+        lines.push(`${body} = hole(${body}, ${fr}, ${u}, ${v}, ${dia}, ${span.spanExpr});`);
+      }
+      lines.push(...syncPartLines(body, names, hasPartDecl(lines, empty)));
       return withReturn(lines, empty);
     },
   },
@@ -594,7 +690,7 @@ export const HELPER_PALETTE_ITEMS = [
       { name: 'spacingV', type: 'number', default: 14, label: 'Spacing V', min: 0.1, step: 1 },
       { name: 'dia', type: 'number', default: 4, label: 'Diameter', min: 0.1, step: 0.5 },
     ],
-    build: (empty, p, names, buffer) => {
+    build: (empty, p, names, buffer, faceCtx = null) => {
       const lines = [...ensurePartPrefix(empty, names)];
       const body = resolveBody(p, names, empty ? lines.join('\n') : buffer);
       const n = Math.max(1, Math.round(num(p.n, 3)));
@@ -602,14 +698,12 @@ export const HELPER_PALETTE_ITEMS = [
       const su = num(p.spacingU, 18);
       const sv = num(p.spacingV, 14);
       const dia = num(p.dia, 4);
-      const topFace = allocateUniqueName(names, 'topFace');
-      const fr = allocateUniqueName(names, 'fr');
-      lines.push(`const ${topFace} = facesByNormal(${body}, [0, 0, 1])[0];`);
-      lines.push(`const ${fr} = workplaneFromFace(${body}, ${topFace});`);
+      const wp = resolveFeatureWorkplane(body, p, names, faceCtx);
+      lines.push(...wp.lines);
       lines.push(
-        `${body} = holePattern(${body}, ${fr}, { n: ${n}, m: ${m}, spacingU: ${su}, spacingV: ${sv}, dia: ${dia} });`,
+        `${body} = holePattern(${body}, ${wp.frVar}, { n: ${n}, m: ${m}, spacingU: ${su}, spacingV: ${sv}, dia: ${dia} });`,
       );
-      lines.push(...syncPartLines(body, names, /(?:let|const|var)\s+part\b/.test(lines.join('\n')) || !empty));
+      lines.push(...syncPartLines(body, names, hasPartDecl(lines, empty)));
       return withReturn(lines, empty);
     },
   },
@@ -625,21 +719,32 @@ export const HELPER_PALETTE_ITEMS = [
       { name: 'u', type: 'number', default: 0, label: 'U', step: 1 },
       { name: 'v', type: 'number', default: 0, label: 'V', step: 1 },
     ],
-    build: (empty, p, names, buffer) => {
+    build: (empty, p, names, buffer, faceCtx = null) => {
       const lines = [...ensurePartPrefix(empty, names)];
       const body = resolveBody(p, names, empty ? lines.join('\n') : buffer);
       const size = str(p.size, 'M3');
       const fit = str(p.fit, 'normal');
-      const u = num(p.u, 0);
-      const v = num(p.v, 0);
-      const topFace = allocateUniqueName(names, 'topFace');
-      const fr = allocateUniqueName(names, 'fr');
-      const span = allocateUniqueName(names, 'span');
-      lines.push(`const ${topFace} = facesByNormal(${body}, [0, 0, 1])[0];`);
-      lines.push(`const ${fr} = workplaneFromFace(${body}, ${topFace});`);
-      lines.push(`const ${span} = holeSpan(${body}, ${fr});`);
-      lines.push(`${body} = clearanceHole(${body}, ${fr}, ${u}, ${v}, '${size}', ${span}, '${fit}');`);
-      lines.push(...syncPartLines(body, names, /(?:let|const|var)\s+part\b/.test(lines.join('\n')) || !empty));
+      const wp = resolveFeatureWorkplane(body, p, names, faceCtx);
+      lines.push(...wp.lines);
+      const fr = wp.frVar;
+      const usePattern = faceCtx && faceCtx.type === 'planar' && bool(p.usePattern, false);
+      if (usePattern) {
+        const n = Math.max(1, Math.round(num(p.n, 3)));
+        const m = Math.max(1, Math.round(num(p.m, 2)));
+        const su = num(p.spacingU, 18);
+        const sv = num(p.spacingV, 14);
+        const cdVar = allocateUniqueName(names, '_cd');
+        lines.push(`const ${cdVar} = fastenerClearanceDia('${size}', '${fit}');`);
+        lines.push(
+          `${body} = holePattern(${body}, ${fr}, { n: ${n}, m: ${m}, spacingU: ${su}, spacingV: ${sv}, dia: ${cdVar} });`,
+        );
+      } else {
+        const { u, v } = faceCtx ? uvForFace(p, faceCtx) : { u: num(p.u, 0), v: num(p.v, 0) };
+        const span = emitSpanExpr(body, fr, faceCtx ? p : { through: true }, names, allocateUniqueName, num);
+        lines.push(...span.lines);
+        lines.push(`${body} = clearanceHole(${body}, ${fr}, ${u}, ${v}, '${size}', ${span.spanExpr}, '${fit}');`);
+      }
+      lines.push(...syncPartLines(body, names, hasPartDecl(lines, empty)));
       return withReturn(lines, empty);
     },
   },
@@ -654,18 +759,22 @@ export const HELPER_PALETTE_ITEMS = [
       { name: 'u', type: 'number', default: 0, label: 'U', step: 1 },
       { name: 'v', type: 'number', default: 0, label: 'V', step: 1 },
     ],
-    build: (empty, p, names, buffer) => {
+    build: (empty, p, names, buffer, faceCtx = null) => {
       const lines = [...ensurePartPrefix(empty, names)];
       const body = resolveBody(p, names, empty ? lines.join('\n') : buffer);
       const size = str(p.size, 'M3');
-      const u = num(p.u, 0);
-      const v = num(p.v, 0);
-      const topFace = allocateUniqueName(names, 'topFace');
-      const fr = allocateUniqueName(names, 'fr');
-      lines.push(`const ${topFace} = facesByNormal(${body}, [0, 0, 1])[0];`);
-      lines.push(`const ${fr} = workplaneFromFace(${body}, ${topFace});`);
-      lines.push(`${body} = tapDrillHole(${body}, ${fr}, ${u}, ${v}, '${size}');`);
-      lines.push(...syncPartLines(body, names, /(?:let|const|var)\s+part\b/.test(lines.join('\n')) || !empty));
+      const { u, v } = faceCtx ? uvForFace(p, faceCtx) : { u: num(p.u, 0), v: num(p.v, 0) };
+      const wp = resolveFeatureWorkplane(body, p, names, faceCtx);
+      lines.push(...wp.lines);
+      const fr = wp.frVar;
+      if (faceCtx && p.through === false) {
+        const span = emitSpanExpr(body, fr, p, names, allocateUniqueName, num);
+        lines.push(...span.lines);
+        lines.push(`${body} = tapDrillHole(${body}, ${fr}, ${u}, ${v}, '${size}', ${span.spanExpr});`);
+      } else {
+        lines.push(`${body} = tapDrillHole(${body}, ${fr}, ${u}, ${v}, '${size}');`);
+      }
+      lines.push(...syncPartLines(body, names, hasPartDecl(lines, empty)));
       return withReturn(lines, empty);
     },
   },
@@ -682,24 +791,22 @@ export const HELPER_PALETTE_ITEMS = [
       { name: 'u', type: 'number', default: 0, label: 'U', step: 1 },
       { name: 'v', type: 'number', default: 0, label: 'V', step: 1 },
     ],
-    build: (empty, p, names, buffer) => {
+    build: (empty, p, names, buffer, faceCtx = null) => {
       const lines = [...ensurePartPrefix(empty, names)];
       const body = resolveBody(p, names, empty ? lines.join('\n') : buffer);
       const diaThru = num(p.diaThru, 5.5);
       const diaCbore = num(p.diaCbore, 10);
       const cboreDepth = num(p.cboreDepth, 4);
-      const u = num(p.u, 0);
-      const v = num(p.v, 0);
-      const topFace = allocateUniqueName(names, 'topFace');
-      const fr = allocateUniqueName(names, 'fr');
-      const span = allocateUniqueName(names, 'span');
-      lines.push(`const ${topFace} = facesByNormal(${body}, [0, 0, 1])[0];`);
-      lines.push(`const ${fr} = workplaneFromFace(${body}, ${topFace});`);
-      lines.push(`const ${span} = holeSpan(${body}, ${fr});`);
+      const { u, v } = faceCtx ? uvForFace(p, faceCtx) : { u: num(p.u, 0), v: num(p.v, 0) };
+      const wp = resolveFeatureWorkplane(body, p, names, faceCtx);
+      lines.push(...wp.lines);
+      const fr = wp.frVar;
+      const span = emitSpanExpr(body, fr, faceCtx ? p : { through: true }, names, allocateUniqueName, num);
+      lines.push(...span.lines);
       lines.push(
-        `${body} = cboreHole(${body}, ${fr}, ${u}, ${v}, ${diaThru}, ${diaCbore}, ${cboreDepth}, ${span});`,
+        `${body} = cboreHole(${body}, ${fr}, ${u}, ${v}, ${diaThru}, ${diaCbore}, ${cboreDepth}, ${span.spanExpr});`,
       );
-      lines.push(...syncPartLines(body, names, /(?:let|const|var)\s+part\b/.test(lines.join('\n')) || !empty));
+      lines.push(...syncPartLines(body, names, hasPartDecl(lines, empty)));
       return withReturn(lines, empty);
     },
   },
@@ -716,24 +823,22 @@ export const HELPER_PALETTE_ITEMS = [
       { name: 'u', type: 'number', default: 0, label: 'U', step: 1 },
       { name: 'v', type: 'number', default: 0, label: 'V', step: 1 },
     ],
-    build: (empty, p, names, buffer) => {
+    build: (empty, p, names, buffer, faceCtx = null) => {
       const lines = [...ensurePartPrefix(empty, names)];
       const body = resolveBody(p, names, empty ? lines.join('\n') : buffer);
       const diaThru = num(p.diaThru, 3.4);
       const diaCsk = num(p.diaCsk, 6.5);
       const cskDepth = num(p.cskDepth, 2);
-      const u = num(p.u, 0);
-      const v = num(p.v, 0);
-      const topFace = allocateUniqueName(names, 'topFace');
-      const fr = allocateUniqueName(names, 'fr');
-      const span = allocateUniqueName(names, 'span');
-      lines.push(`const ${topFace} = facesByNormal(${body}, [0, 0, 1])[0];`);
-      lines.push(`const ${fr} = workplaneFromFace(${body}, ${topFace});`);
-      lines.push(`const ${span} = holeSpan(${body}, ${fr});`);
+      const { u, v } = faceCtx ? uvForFace(p, faceCtx) : { u: num(p.u, 0), v: num(p.v, 0) };
+      const wp = resolveFeatureWorkplane(body, p, names, faceCtx);
+      lines.push(...wp.lines);
+      const fr = wp.frVar;
+      const span = emitSpanExpr(body, fr, faceCtx ? p : { through: true }, names, allocateUniqueName, num);
+      lines.push(...span.lines);
       lines.push(
-        `${body} = cskHole(${body}, ${fr}, ${u}, ${v}, ${diaThru}, ${diaCsk}, ${cskDepth}, ${span});`,
+        `${body} = cskHole(${body}, ${fr}, ${u}, ${v}, ${diaThru}, ${diaCsk}, ${cskDepth}, ${span.spanExpr});`,
       );
-      lines.push(...syncPartLines(body, names, /(?:let|const|var)\s+part\b/.test(lines.join('\n')) || !empty));
+      lines.push(...syncPartLines(body, names, hasPartDecl(lines, empty)));
       return withReturn(lines, empty);
     },
   },
