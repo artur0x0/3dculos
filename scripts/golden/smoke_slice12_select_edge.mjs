@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 /**
- * Slice 12 — selectEdge.js pure branch coverage (no wasm).
- * - buildFeatureEdges: tris.length !== 2 + cosMin dihedral filter
- * - distPointToSegment: param clamping + degenerate segment
- * - pickNearestEdge: maxDist rejection
+ * Slice 12 — selectEdge.js pure geometry coverage (node + three, no wasm).
+ * - buildFeatureEdges: tris.length !== 2 + cosMin dihedral @ DEFAULT_FEATURE_DEG=2°
+ * - distPointToSegment: t clamp + degenerate segment
  * - toggleEdgeSelection: round-trip + copy-on-toggle
+ * - pickNearestEdge: ties / maxDist rejection
  */
 import { BufferGeometry, Float32BufferAttribute } from 'three';
 import {
@@ -49,7 +49,7 @@ function makeIndexed(positions, indices) {
     1, 5, 6, 1, 6, 2,
   ];
   const cubeEdges = buildFeatureEdges(makeIndexed(cubePos, cubeIdx));
-  check('cube yields 12 feature edges', cubeEdges.length === 12, `got ${cubeEdges.length}`);
+  check('unit cube → 12 feature edges', cubeEdges.length === 12, `got ${cubeEdges.length}`);
   check(
     'cube edges all length 2',
     cubeEdges.every((e) => Math.abs(e.length - 2) < 1e-9),
@@ -61,22 +61,35 @@ function makeIndexed(positions, indices) {
   const quadIdx = [0, 1, 2, 0, 2, 3];
   const quadEdges = buildFeatureEdges(makeIndexed(quadPos, quadIdx));
   check(
-    'flat quad yields 0 feature edges (seam + boundary filter)',
+    'flat-subdivided quad → 0 seams',
     quadEdges.length === 0,
     `got ${quadEdges.length}`,
   );
-
-  // Explicit boundary: single triangle → all edges tris.length !== 2
-  const boundaryEdges = buildFeatureEdges(makeIndexed([0, 0, 0, 1, 0, 0, 0, 1, 0], [0, 1, 2]));
-  check('single-tri boundary edges drop out', boundaryEdges.length === 0, `got ${boundaryEdges.length}`);
 
   // 45° crease: n0·n1 = cos45 < cos(2°) → crease kept; outer edges boundary-dropped
   const s45 = Math.SQRT1_2;
   const creasePos = [0, 0, 0, 1, 0, 0, 0, 1, 0, 0, s45, s45];
   const creaseIdx = [0, 1, 2, 0, 1, 3];
   const creaseEdges = buildFeatureEdges(makeIndexed(creasePos, creaseIdx));
-  check('45° crease yields exactly 1 feature edge', creaseEdges.length === 1, `got ${creaseEdges.length}`);
-  check('crease key is shared edge 0-1', creaseEdges[0]?.key === '0-1');
+  check('45° crease → the crease', creaseEdges.length === 1, `got ${creaseEdges.length}`);
+  check('45° crease is shared edge 0-1', creaseEdges[0]?.key === '0-1');
+
+  // Boundary-only mesh: tris.length !== 2 on every edge
+  const lone = buildFeatureEdges(makeIndexed([0, 0, 0, 1, 0, 0, 0, 1, 0], [0, 1, 2]));
+  check('tris.length !== 2 boundary drop', lone.length === 0, `got ${lone.length}`);
+
+  // DEFAULT_FEATURE_DEG = 2° → cosMin = cos(2°); seams with n0·n1 > cosMin drop
+  const cosMin = Math.cos((2 * Math.PI) / 180);
+  check('DEFAULT_FEATURE_DEG cosMin ≈ cos(2°)', Math.abs(cosMin - 0.999390827) < 1e-6);
+  const fold = (deg) => {
+    const a = (deg * Math.PI) / 180;
+    return makeIndexed(
+      [0, 0, 0, 2, 0, 0, 1, 1, 0, 1, Math.cos(a), Math.sin(a)],
+      [0, 1, 2, 0, 1, 3],
+    );
+  };
+  check('crease 0.5° (< 2°) filtered as seam', buildFeatureEdges(fold(0.5)).length === 0);
+  check('crease 5° (> 2°) kept as feature', buildFeatureEdges(fold(5)).length === 1);
 }
 
 // ── distPointToSegment ─────────────────────────────────────────
@@ -94,18 +107,36 @@ function makeIndexed(positions, indices) {
 
 // ── pickNearestEdge ────────────────────────────────────────────
 {
-  const eA = { va: [0, 0, 0], vb: [2, 0, 0], key: 'a' };
-  const eB = { va: [0, 2, 0], vb: [2, 2, 0], key: 'b' };
-  // midBetween is dist 1 from both; strict d < maxDist → ties at boundary reject
+  const sample = [
+    {
+      key: '0-1',
+      a: 0,
+      b: 1,
+      va: [0, 0, 0],
+      vb: [2, 0, 0],
+      mid: [1, 0, 0],
+      length: 2,
+      tangent: [1, 0, 0],
+    },
+    {
+      key: '2-3',
+      a: 2,
+      b: 3,
+      va: [0, 5, 0],
+      vb: [2, 5, 0],
+      mid: [1, 5, 0],
+      length: 2,
+      tangent: [1, 0, 0],
+    },
+  ];
+  check('pickNearestEdge within maxDist', pickNearestEdge(sample, [1, 0.1, 0], 0.5)?.key === '0-1');
+  check('pickNearestEdge beyond maxDist → null', pickNearestEdge(sample, [1, 0.1, 0], 0.05) === null);
+  check('pickNearestEdge empty → null', pickNearestEdge([], [0, 0, 0], 1) === null);
+  // d === maxDist uses strict < → null (tie at boundary)
   check(
     'pickNearestEdge ties/maxDist rejection → null',
-    pickNearestEdge([eA, eB], [1, 1, 0], 1) === null,
+    pickNearestEdge(sample, [1, 0.5, 0], 0.5) === null,
   );
-  check(
-    'pickNearestEdge within maxDist',
-    pickNearestEdge([eA, eB], [1, 0.1, 0], 1)?.key === 'a',
-  );
-  check('pickNearestEdge empty → null', pickNearestEdge([], [0, 0, 0], 1) === null);
 }
 
 // ── toggleEdgeSelection ────────────────────────────────────────
