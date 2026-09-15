@@ -297,12 +297,12 @@ const planarFace = {
 {
   console.log('\nselectEdge helpers');
 
-  function makeIndexed(positions, indices) {
+  const makeIndexed = (positions, indices) => {
     const g = new BufferGeometry();
     g.setAttribute('position', new Float32BufferAttribute(positions, 3));
     g.setIndex(indices);
     return g;
-  }
+  };
   
   // ── buildFeatureEdges ──────────────────────────────────────────
   {
