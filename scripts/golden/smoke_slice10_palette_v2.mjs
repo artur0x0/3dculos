@@ -126,6 +126,7 @@ console.log('slice-10 palette v2 smoke');
   check('blank → default', coerceNumberParam('', p) === 40);
   check('null → default', coerceNumberParam(null, p) === 40);
   check('dash in-progress → default', coerceNumberParam('-', p) === 40);
+  check('dot in-progress → default', coerceNumberParam('.', p) === 40);
   check('below min clamps', coerceNumberParam(-5, p) === 0.1);
   check('above max clamps', coerceNumberParam(999, p) === 100);
   check('finite in range passthrough', coerceNumberParam(12.5, p) === 12.5);

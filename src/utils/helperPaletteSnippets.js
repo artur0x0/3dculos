@@ -171,7 +171,7 @@ function withReturn(lines, bufferEmpty) {
 
 function num(v, fallback) {
   // Number('') === 0 is finite — treat blank/nullish as fallback (defense in depth).
-  if (v === '' || v === null || v === undefined) return fallback;
+  if (v === '' || v === null || v === undefined || v === '-' || v === '.') return fallback;
   const n = Number(v);
   return Number.isFinite(n) ? n : fallback;
 }
