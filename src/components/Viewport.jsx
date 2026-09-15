@@ -74,6 +74,7 @@ const Viewport = forwardRef(({
   gameBestTimeMs = null,
   isMobile = false,
   onInsertHelper = null,
+  getHelperBuffer = null,
 }, ref) => {
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
@@ -1375,6 +1376,7 @@ const Viewport = forwardRef(({
       {mode === 'game' && onInsertHelper && (
         <HelperInsertPalette
           onInsert={onInsertHelper}
+          getBuffer={getHelperBuffer}
           compact={isMobile}
         />
       )}
