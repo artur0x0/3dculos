@@ -69,7 +69,7 @@ const HelperInsertPalette = ({ onInsert, compact = false }) => {
         bg-white/60 backdrop-blur-sm rounded-lg shadow-lg
         max-h-[min(72%,calc(100%-5.5rem))] overflow-y-auto overflow-x-hidden
         ${compact ? 'p-1' : 'p-1.5'}`}
-      role="toolbar"
+      role="group"
       aria-label="Helper insert palette"
     >
       {HELPER_PALETTE_GROUPS.map((group, gi) => (

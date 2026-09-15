@@ -113,6 +113,7 @@ const CodeEditor = forwardRef(({
     /**
      * Slice 09: insert text at the Monaco cursor (replaces selection if any).
      * Syncs React state, triggers execute + history. Returns true on success.
+     * Prefer replaceBuffer for palette taps (template-aware full compose).
      */
     insertAtCursor: (text) => {
       if (typeof text !== 'string' || text.length === 0) return false;
@@ -156,6 +157,67 @@ const CodeEditor = forwardRef(({
       const content = current.trim()
         ? `${current}${current.endsWith('\n') ? '' : '\n'}${text}`
         : text;
+      programmaticValueRef.current = content;
+      valueRef.current = content;
+      setEditorValue(content);
+      onExecute(content);
+      onCodeChange?.(content, 'Helper insert');
+      return true;
+    },
+
+    /**
+     * Slice 09: replace the entire Monaco buffer with a composed palette result.
+     * Places caret just before the trailing `return part;` when present so the
+     * next manual edit lands in the body (compose itself is caret-independent).
+     */
+    replaceBuffer: (content) => {
+      if (typeof content !== 'string') return false;
+
+      if (historyTimeoutRef.current) {
+        clearTimeout(historyTimeoutRef.current);
+        historyTimeoutRef.current = null;
+      }
+
+      const ed = editorRef.current;
+      if (ed) {
+        const model = ed.getModel();
+        const range = model
+          ? model.getFullModelRange()
+          : { startLineNumber: 1, startColumn: 1, endLineNumber: 1, endColumn: 1 };
+        paletteInsertRef.current = true;
+        try {
+          ed.executeEdits('helper-palette', [{
+            range,
+            text: content,
+            forceMoveMarkers: true,
+          }]);
+          valueRef.current = content;
+          setEditorValue(content);
+          onExecute(content);
+          onCodeChange?.(content, 'Helper insert');
+          try {
+            // Prefer caret before trailing return so body stays editable.
+            const match = /(?:\r?\n)?return\s+part\s*;\s*$/.exec(content);
+            if (match) {
+              const idx = match.index;
+              const before = content.slice(0, idx);
+              const lines = before.split('\n');
+              const lineNumber = Math.max(1, lines.length);
+              const column = (lines[lines.length - 1] || '').length + 1;
+              ed.setPosition({ lineNumber, column });
+              ed.revealPositionInCenter({ lineNumber, column });
+            } else {
+              const pos = ed.getPosition();
+              if (pos) ed.revealPositionInCenter(pos);
+            }
+            ed.focus();
+          } catch { /* ignore */ }
+          return true;
+        } finally {
+          paletteInsertRef.current = false;
+        }
+      }
+
       programmaticValueRef.current = content;
       valueRef.current = content;
       setEditorValue(content);

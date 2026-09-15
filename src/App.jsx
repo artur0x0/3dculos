@@ -39,7 +39,7 @@ import { getBestTimeMs, recordWin } from './utils/gameWins';
 import GameHintsModal from './components/GameHintsModal';
 import PuzzlePickerModal from './components/PuzzlePickerModal';
 import GameConfetti from './components/GameConfetti';
-import { buildHelperSnippet, isBufferEmpty } from './utils/helperPaletteSnippets';
+import { composeHelperInsert } from './utils/helperPaletteSnippets';
 
 const App = () => {
   const [currentScript, setCurrentScript] = useState('');
@@ -710,12 +710,12 @@ const App = () => {
     setShowHints(true);
   };
 
-  /** Slice 09: tap palette → insert named-param snippet at Monaco cursor. */
+  /** Slice 09: tap palette → compose runnable buffer (strip/re-append return part). */
   const handleInsertHelper = (helperId) => {
     const current = codeEditorRef.current?.getContent?.() ?? '';
-    const snippet = buildHelperSnippet(helperId, { bufferEmpty: isBufferEmpty(current) });
-    if (!snippet) return;
-    codeEditorRef.current?.insertAtCursor?.(snippet);
+    const next = composeHelperInsert(current, helperId);
+    if (!next) return;
+    codeEditorRef.current?.replaceBuffer?.(next);
   };
 
   const handleExecute = (script, autoExecute=false) => {

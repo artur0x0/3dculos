@@ -2,11 +2,61 @@
  * Slice 09 — Helper insert palette snippets.
  * Source of truth: HELPER_FUNCTIONS.md allowlist + gamePuzzles / GameHintsModal.
  * Do NOT invent APIs. Named consts for dimensions; object options where helpers accept them.
+ *
+ * Sequential taps compose a runnable buffer via composeHelperInsert:
+ * strip one trailing `return part;`, insert body (skipping const/let redeclarations),
+ * re-append exactly one `return part;`.
  */
 
-/** Detect empty / whitespace-only Monaco buffer. */
+/** Strip line/block comments for emptiness checks. */
+function stripComments(text) {
+  return String(text || '')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '');
+}
+
+/**
+ * Detect empty / whitespace-only / comment-only Monaco buffer.
+ * Comment-only counts as empty so feature taps still get ensurePartPrefix.
+ */
 export function isBufferEmpty(text) {
-  return !text || !String(text).trim();
+  if (!text || !String(text).trim()) return true;
+  return !stripComments(text).trim();
+}
+
+/** Remove a single trailing `return part;` (plus trailing whitespace). */
+export function stripTrailingReturnPart(text) {
+  if (!text) return '';
+  return String(text).replace(/\s*$/, '').replace(/(?:\r?\n)?return\s+part\s*;\s*$/, '');
+}
+
+/** Names already declared with const/let/var in buffer. */
+function declaredNames(buffer) {
+  const names = new Set();
+  const re = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)/g;
+  let m;
+  const s = String(buffer || '');
+  while ((m = re.exec(s))) names.add(m[1]);
+  return names;
+}
+
+/**
+ * Drop starter / const lines whose binding already exists in the buffer
+ * (and within earlier lines of the same snippet).
+ */
+function filterRedeclarations(snippetText, bufferText) {
+  const existing = declaredNames(bufferText);
+  const out = [];
+  for (const line of String(snippetText || '').split('\n')) {
+    const m = /^\s*(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=/.exec(line);
+    if (m && existing.has(m[1])) continue;
+    if (m) existing.add(m[1]);
+    out.push(line);
+  }
+  // Trim leading/trailing blank lines from the filtered snippet.
+  while (out.length && !out[0].trim()) out.shift();
+  while (out.length && !out[out.length - 1].trim()) out.pop();
+  return out.join('\n');
 }
 
 /** Minimal centered box — common puzzle starter. */
@@ -34,7 +84,8 @@ function withReturn(lines, bufferEmpty) {
 }
 
 /**
- * Build insert text for a palette item.
+ * Build insert text for a palette item (single-shot snippet, may include return).
+ * Prefer composeHelperInsert for sequential taps.
  * @param {string} id
  * @param {{ bufferEmpty?: boolean }} opts
  * @returns {string|null}
@@ -44,6 +95,33 @@ export function buildHelperSnippet(id, opts = {}) {
   const item = HELPER_PALETTE_ITEMS.find((h) => h.id === id);
   if (!item) return null;
   return item.build(bufferEmpty);
+}
+
+/**
+ * Template-aware compose: strip trailing return → append snippet body
+ * (skipping redeclarations) → re-append one `return part;`.
+ * @param {string} buffer current Monaco buffer
+ * @param {string} id palette item id
+ * @returns {string|null} full replacement buffer
+ */
+export function composeHelperInsert(buffer, id) {
+  const item = HELPER_PALETTE_ITEMS.find((h) => h.id === id);
+  if (!item) return null;
+
+  const strippedBuf = stripTrailingReturnPart(buffer || '');
+  const empty = isBufferEmpty(strippedBuf);
+  let snippet = item.build(empty);
+  if (snippet == null) return null;
+
+  snippet = stripTrailingReturnPart(snippet);
+  const filtered = filterRedeclarations(snippet, strippedBuf);
+
+  const base = strippedBuf.replace(/\s+$/, '');
+  const parts = [];
+  if (base.trim()) parts.push(base);
+  if (filtered.trim()) parts.push(filtered);
+  // Always exactly one trailing return — runnable after any tap sequence.
+  return `${parts.join('\n')}\nreturn part;\n`;
 }
 
 /** @typedef {{ id: string, label: string, group: string, title: string, build: (empty: boolean) => string }} PaletteItem */
