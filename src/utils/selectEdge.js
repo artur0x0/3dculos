@@ -85,6 +85,8 @@ export function distPointToSegment(p, va, vb) {
 
 /**
  * Pick nearest feature edge to a world hit point.
+ * @deprecated-in-app Prefer pickNearestEdgeScreen for Viewport edge mode (screen-space slop).
+ * Kept for golden coverage and any world-space call sites.
  * @returns {object|null}
  */
 export function pickNearestEdge(featureEdges, hitPoint, maxDist) {

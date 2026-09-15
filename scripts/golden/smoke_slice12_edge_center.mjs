@@ -8,7 +8,7 @@
  * - geometric: merged planar face center within epsilon (c4MeshData fix)
  */
 import Module from '../../built/manifold.js';
-import { BufferGeometry, Float32BufferAttribute, OrthographicCamera } from 'three';
+import { BufferGeometry, Float32BufferAttribute, OrthographicCamera, Vector3 } from 'three';
 import {
   composeHelperInsert,
   allocateUniqueName,
@@ -473,6 +473,13 @@ const planarFace = {
     check('pickNearestEdgeScreen silhouette near-miss', sil?.key === '0-1');
 
     check('pickNearestEdgeScreen empty → null', pickNearestEdgeScreen([], cam, W, H, 100, 100, 32) === null);
+
+    // Cover Vector3 `.project` path (app passes scratch Vector3s from Viewport).
+    const hitScratch = pickNearestEdgeScreen(edges, cam, W, H, 100, 100 - 20, 32, {
+      projectScratchA: new Vector3(),
+      projectScratchB: new Vector3(),
+    });
+    check('pickNearestEdgeScreen Vector3.project scratch path', hitScratch?.key === '0-1');
   }
 
   // ── toggleEdgeSelection ────────────────────────────────────────

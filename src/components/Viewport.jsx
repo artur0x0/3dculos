@@ -120,6 +120,8 @@ const Viewport = forwardRef(({
   const [pickMode, setPickMode] = useState('face');
   const [selectedEdges, setSelectedEdges] = useState([]);
   const featureEdgesRef = useRef([]);
+  /** Geometry identity that featureEdgesRef was built from — invalidate on replace. */
+  const featureEdgesSourceRef = useRef(null);
   const edgeHighlightRef = useRef(null);
   const edgeHoverRef = useRef(null);
   const edgePickScratchA = useRef(new Vector3());
@@ -178,6 +180,8 @@ const Viewport = forwardRef(({
         resultRef.current.geometry?.dispose();
         resultRef.current.geometry = new BufferGeometry();
       }
+      featureEdgesRef.current = [];
+      featureEdgesSourceRef.current = null;
     },
     /** Frame ghost with phone-friendly margin (puzzle enter / switch). */
     frameGhost: () => {
@@ -311,10 +315,17 @@ const Viewport = forwardRef(({
     highlightSelectedEdges(selectedEdges);
   }, [selectedEdges, highlightSelectedEdges]);
 
-  const rebuildFeatureEdges = useCallback(() => {
-    const geom = resultRef.current?.geometry;
-    featureEdgesRef.current = geom ? buildFeatureEdges(geom) : [];
+  /** Rebuild feature-edge cache when the source BufferGeometry identity changes. */
+  const syncFeatureEdges = useCallback((geom) => {
+    if (featureEdgesSourceRef.current !== geom) {
+      featureEdgesRef.current = geom ? buildFeatureEdges(geom) : [];
+      featureEdgesSourceRef.current = geom ?? null;
+    }
   }, []);
+
+  const rebuildFeatureEdges = useCallback(() => {
+    syncFeatureEdges(resultRef.current?.geometry ?? null);
+  }, [syncFeatureEdges]);
 
 
   // Clear cutting plane widget
@@ -521,9 +532,7 @@ const Viewport = forwardRef(({
       && cameraRef.current
       && resultRef.current
     ) {
-      if (!featureEdgesRef.current.length) {
-        featureEdgesRef.current = buildFeatureEdges(resultRef.current.geometry);
-      }
+      syncFeatureEdges(resultRef.current.geometry);
       const canvas = canvasRef.current;
       const rect = canvas.getBoundingClientRect();
       const px = event.clientX - rect.left;
@@ -549,7 +558,7 @@ const Viewport = forwardRef(({
     } else if (pickModeRef.current !== 'edge') {
       clearEdgeHover();
     }
-  }, [selectedEdges, highlightHoverEdge, clearEdgeHover]);
+  }, [selectedEdges, highlightHoverEdge, clearEdgeHover, syncFeatureEdges]);
 
   /**
    * Handle mouse up - process click only if not dragging
@@ -580,9 +589,7 @@ const Viewport = forwardRef(({
       clickCountRef.current = 0;
       pendingClickDataRef.current = null;
 
-      if (!featureEdgesRef.current.length) {
-        featureEdgesRef.current = buildFeatureEdges(resultRef.current.geometry);
-      }
+      syncFeatureEdges(resultRef.current.geometry);
       const slop = resolveEdgePickSlopPx();
       const edge = pickNearestEdgeScreen(
         featureEdgesRef.current,
@@ -598,10 +605,9 @@ const Viewport = forwardRef(({
         },
       );
       if (!edge) {
+        // Preserve multi-selection on miss (same as #14) — stray taps must not wipe the set.
         console.log('[Edge Selection] No feature edge within', slop, 'px');
         clearEdgeHover();
-        clearEdgeHighlight();
-        setSelectedEdges([]);
         return;
       }
       clearEdgeHover();
@@ -672,7 +678,7 @@ const Viewport = forwardRef(({
       processClick();
     }, MULTI_CLICK_DELAY);
     
-  }, [onFaceSelected, measurementEnabled, clearHighlight, clearEdgeHighlight, clearEdgeHover]);
+  }, [onFaceSelected, measurementEnabled, clearHighlight, clearEdgeHover, syncFeatureEdges]);
 
 
   /**
