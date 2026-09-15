@@ -709,6 +709,11 @@ const App = () => {
     setShowHints(true);
   };
 
+  /** Slice 09: tap palette → template-aware compose at Monaco caret (return only at end). */
+  const handleInsertHelper = (helperId) => {
+    codeEditorRef.current?.insertHelper?.(helperId);
+  };
+
   const handleExecute = (script, autoExecute=false) => {
     setCurrentScript(script);
     // Game mode: never auto-run on Monaco mount/remount (blank-enter / ghost-only).
@@ -1015,6 +1020,7 @@ const App = () => {
               gamePuzzleTitle={currentPuzzle?.title}
               gameBestTimeMs={gameBestTimeMs}
               isMobile={isMobile}
+              onInsertHelper={handleInsertHelper}
             />
     );
 
@@ -1236,6 +1242,7 @@ const App = () => {
             gamePuzzleTitle={currentPuzzle?.title}
             gameBestTimeMs={gameBestTimeMs}
             isMobile={false}
+            onInsertHelper={handleInsertHelper}
           />
         </div>
 
