@@ -106,24 +106,34 @@ export function allocateUniqueName(existingOrBuffer, base) {
 }
 
 /**
- * Scan buffer for body-like identifiers (declarations + known assigns).
- * Always includes `part` as a fallback option for features.
+ * Scan buffer for *mutable* body-like identifiers (let/var decls + known assigns).
+ * Excludes const-declared names (assignment would throw). Offers `part` as a
+ * fallback only when `part` is not const-declared.
  * @param {string} buffer
  * @returns {string[]}
  */
 export function listBodyNames(buffer) {
-  const names = new Set(['part']);
+  const names = new Set();
+  const constNames = new Set();
   const s = stripComments(buffer || '');
-  const decl = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)/g;
+  const decl = /\b(const|let|var)\s+([A-Za-z_$][\w$]*)/g;
   let m;
   while ((m = decl.exec(s))) {
-    const n = m[1];
+    const kind = m[1];
+    const n = m[2];
+    if (kind === 'const') {
+      constNames.add(n);
+      continue;
+    }
     if (isBodyName(n)) names.add(n);
   }
+  // Fallback only when part is mutable (or undeclared).
+  if (!constNames.has('part')) names.add('part');
   // Also catch `part = …` / `box1 = …` mutations without fresh decl.
   const assign = /\b([A-Za-z_$][\w$]*)\s*=\s*(?:Manifold\.|tube\(|hexPrism\(|roundedBox\(|makeExtrude\(|makeRevolve\(|filletEdges\(|chamferEdges\(|hole\(|clearanceHole\(|tapDrillHole\(|cboreHole\(|cskHole\(|holePattern\(|shell\(|addDraft\(|center\(|align\(|mirror\(|array3D\(|polarArray\()/g;
   while ((m = assign.exec(s))) {
     const n = m[1];
+    if (constNames.has(n)) continue;
     if (isBodyName(n)) names.add(n);
   }
   return [...names];
@@ -157,6 +167,8 @@ function withReturn(lines, bufferEmpty) {
 }
 
 function num(v, fallback) {
+  // Number('') === 0 is finite — treat blank/nullish as fallback (defense in depth).
+  if (v === '' || v === null || v === undefined) return fallback;
   const n = Number(v);
   return Number.isFinite(n) ? n : fallback;
 }
@@ -220,10 +232,11 @@ function syncPartLines(bodyName, names, bufferHasPart) {
 }
 
 function resolveBody(params, names, buffer) {
-  const bodies = listBodyNames(buffer);
+  const bodies = listBodyNames(buffer); // mutable only (const bodies excluded)
   let body = str(params.body, 'part');
-  if (!bodies.includes(body) && body !== 'part') {
-    body = bodies.includes('part') ? 'part' : bodies[0];
+  // Const-declared or unknown → fall back to part if available, else first mutable.
+  if (!bodies.includes(body)) {
+    body = bodies.includes('part') ? 'part' : (bodies[0] || 'part');
   }
   // Touch names set so later allocs see body if it was only assigned, not decl'd.
   if (!names.has(body)) names.add(body);

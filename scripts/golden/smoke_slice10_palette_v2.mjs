@@ -90,15 +90,36 @@ console.log('slice-10 palette v2 smoke');
   check('syncs part from box1', /part\s*=\s*box1/.test(buf));
 }
 
-// ── Body selector: exact/numbered only (not prefix) ────────────
+// ── Body selector: exact/numbered only (not prefix); skip const ─
 {
   const bodies = listBodyNames(
     'const boxCount = 4; const boreRadius = 3; const box1 = cube([1,1,1]);',
   );
   check('includes part fallback', bodies.includes('part'));
-  check('includes numbered box1', bodies.includes('box1'));
+  check('excludes const box1', !bodies.includes('box1'));
   check('excludes boxCount prefix', !bodies.includes('boxCount'));
   check('excludes boreRadius prefix', !bodies.includes('boreRadius'));
+}
+
+{
+  const bodies = listBodyNames('let box1 = Manifold.cube([10,10,10], true);\nlet part = box1;');
+  check('includes let box1', bodies.includes('box1'));
+  check('includes part with let box1', bodies.includes('part'));
+}
+
+// ── Const body must not be mutated by features ─────────────────
+{
+  const prefix = 'const box1 = Manifold.cube([10,10,10], true);\nlet part = box1;';
+  const buf = composeHelperInsert(prefix, 'filletEdges', null, { body: 'box1', radius: 2, sphericalCorners: true });
+  check('const box1 fillet does not assign box1', !/box1\s*=\s*filletEdges/.test(buf));
+  check('const box1 fillet mutates part instead', /part\s*=\s*filletEdges\(part/.test(buf));
+}
+
+// ── Empty number params fall back via num() ────────────────────
+{
+  const buf = composeHelperInsert('', 'cube', null, { width: '', depth: 30, height: 20, center: true });
+  check('empty width uses default 40 not 0', /Manifold\.cube\(\[40,\s*30,\s*20\]/.test(buf));
+  check('empty width does not emit cube([0', !/Manifold\.cube\(\[0,/.test(buf));
 }
 
 // ── All items compose with defaults (no redecl, one return) ────
@@ -126,7 +147,7 @@ console.log('slice-10 palette v2 smoke');
     seen.add(m[1]);
     decls.push(m[1]);
   }
-  check('all items: no redeclarations', true);
+  check('all items: no redeclarations', decls.length === seen.size);
   check('all items: one return part', (buf.match(/\breturn\s+part\s*;/g) || []).length === 1);
 }
 

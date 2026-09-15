@@ -59,7 +59,7 @@ const HelperParamModal = ({
         const raw = out[p.name];
         // Number('') === 0 is finite — treat blank/nullish as default, then enforce min/max.
         let n;
-        if (raw === '' || raw === null || raw === undefined) {
+        if (raw === '' || raw === null || raw === undefined || raw === '-' || raw === '.') {
           n = p.default;
         } else {
           n = Number(raw);
