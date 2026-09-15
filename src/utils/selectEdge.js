@@ -85,6 +85,8 @@ export function distPointToSegment(p, va, vb) {
 
 /**
  * Pick nearest feature edge to a world hit point.
+ * @deprecated-in-app Prefer pickNearestEdgeScreen for Viewport edge mode (screen-space slop).
+ * Kept for golden coverage and any world-space call sites.
  * @returns {object|null}
  */
 export function pickNearestEdge(featureEdges, hitPoint, maxDist) {
@@ -131,4 +133,132 @@ export function toggleEdgeSelection(selected, edge) {
     });
   }
   return list;
+}
+
+/** 2D distance from point (px,py) to segment (ax,ay)–(bx,by). */
+export function distPointToSegment2D(px, py, ax, ay, bx, by) {
+  const abx = bx - ax;
+  const aby = by - ay;
+  const apx = px - ax;
+  const apy = py - ay;
+  const abLen2 = abx * abx + aby * aby;
+  let t = abLen2 > 1e-18 ? (apx * abx + apy * aby) / abLen2 : 0;
+  t = Math.max(0, Math.min(1, t));
+  const qx = ax + t * abx;
+  const qy = ay + t * aby;
+  return Math.hypot(px - qx, py - qy);
+}
+
+/** Default finger slop in CSS pixels for edge pick (mobile-friendly). */
+export const EDGE_PICK_SLOP_PX = 32;
+export const EDGE_PICK_SLOP_COARSE_PX = 40;
+
+/**
+ * Resolve pixel slop for the current pointer type.
+ * Coarse (touch) gets a larger target; fine pointers stay at EDGE_PICK_SLOP_PX.
+ */
+export function resolveEdgePickSlopPx(opts = {}) {
+  if (typeof opts.slopPx === 'number' && opts.slopPx > 0) return opts.slopPx;
+  if (opts.coarse === true) return EDGE_PICK_SLOP_COARSE_PX;
+  if (opts.coarse === false) return EDGE_PICK_SLOP_PX;
+  if (typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)').matches) {
+    return EDGE_PICK_SLOP_COARSE_PX;
+  }
+  return EDGE_PICK_SLOP_PX;
+}
+
+/**
+ * Project a world point through a Three.js camera into canvas pixel coords.
+ * Returns null if the point is outside useful NDC depth (behind / clipped).
+ *
+ * @param {object} camera Three.js Camera
+ * @param {number[]} world [x,y,z]
+ * @param {number} canvasW
+ * @param {number} canvasH
+ * @param {{x:number,y:number,z:number,project?:Function}|null} [tmp]
+ */
+export function projectWorldToCanvas(camera, world, canvasW, canvasH, tmp = null) {
+  if (!camera || !world || !(canvasW > 0) || !(canvasH > 0)) return null;
+  const v = tmp || { x: 0, y: 0, z: 0 };
+  v.x = world[0];
+  v.y = world[1];
+  v.z = world[2];
+  if (typeof v.project === 'function') {
+    v.project(camera);
+  } else {
+    const m = camera.matrixWorldInverse;
+    const p = camera.projectionMatrix;
+    if (!m || !p) return null;
+    const e = m.elements;
+    const x = v.x;
+    const y = v.y;
+    const z = v.z;
+    const wx = e[0] * x + e[4] * y + e[8] * z + e[12];
+    const wy = e[1] * x + e[5] * y + e[9] * z + e[13];
+    const wz = e[2] * x + e[6] * y + e[10] * z + e[14];
+    const ww = e[3] * x + e[7] * y + e[11] * z + e[15];
+    const pe = p.elements;
+    const cx = pe[0] * wx + pe[4] * wy + pe[8] * wz + pe[12] * ww;
+    const cy = pe[1] * wx + pe[5] * wy + pe[9] * wz + pe[13] * ww;
+    const cz = pe[2] * wx + pe[6] * wy + pe[10] * wz + pe[14] * ww;
+    const cw = pe[3] * wx + pe[7] * wy + pe[11] * wz + pe[15] * ww;
+    if (Math.abs(cw) < 1e-12) return null;
+    v.x = cx / cw;
+    v.y = cy / cw;
+    v.z = cz / cw;
+  }
+  if (v.z < -1 || v.z > 1) return null;
+  return {
+    x: (v.x * 0.5 + 0.5) * canvasW,
+    y: (-v.y * 0.5 + 0.5) * canvasH,
+    ndcZ: v.z,
+  };
+}
+
+/**
+ * Screen-space edge pick: nearest feature edge by 2D pixel distance to the
+ * projected segment. Does NOT require a mesh face hit — silhouette / near-miss
+ * taps work. Prefer closer-to-camera edge on near ties.
+ *
+ * @returns {object|null}
+ */
+export function pickNearestEdgeScreen(
+  featureEdges,
+  camera,
+  canvasW,
+  canvasH,
+  px,
+  py,
+  maxPx,
+  opts = {},
+) {
+  if (!featureEdges?.length || !camera || !(maxPx > 0)) return null;
+  const scratchA = opts.projectScratchA || null;
+  const scratchB = opts.projectScratchB || null;
+  let best = null;
+  let bestD = Infinity;
+  let bestDepth = Infinity;
+  for (const e of featureEdges) {
+    const sa = projectWorldToCanvas(camera, e.va, canvasW, canvasH, scratchA);
+    const sb = projectWorldToCanvas(camera, e.vb, canvasW, canvasH, scratchB);
+    if (!sa && !sb) continue;
+    let d;
+    let depth;
+    if (sa && sb) {
+      d = distPointToSegment2D(px, py, sa.x, sa.y, sb.x, sb.y);
+      depth = Math.min(sa.ndcZ, sb.ndcZ);
+    } else {
+      const s = sa || sb;
+      d = Math.hypot(px - s.x, py - s.y);
+      depth = s.ndcZ;
+    }
+    // Strict < maxPx (matches pickNearestEdge); depth tie-break when equal px.
+    if (!(d < maxPx)) continue;
+    if (d < bestD || (d === bestD && depth < bestDepth)) {
+      bestD = d;
+      bestDepth = depth;
+      best = e;
+    }
+  }
+  return best;
 }

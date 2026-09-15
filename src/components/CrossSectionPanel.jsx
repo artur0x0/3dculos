@@ -173,28 +173,44 @@ const handleButtonClick = () => {
         <ViewSnapControl onSnap={onSnapView} />
 
         {typeof onPickModeChange === 'function' && (
-          <>
+          <div
+            className={`flex rounded-md border border-gray-300/80 overflow-hidden bg-white/80 ${
+              verticalRail ? 'flex-col' : 'flex-row'
+            }`}
+            role="group"
+            aria-label="Pick mode"
+          >
             <button
               type="button"
               onClick={() => onPickModeChange('face')}
-              className={`p-2 rounded ${pickMode === 'face' ? 'text-green-600 bg-green-100' : 'text-blue-600'} hover:bg-gray-100`}
-              title="Face pick mode"
+              className={`flex items-center gap-1 px-2 py-1.5 text-xs font-semibold ${
+                pickMode === 'face'
+                  ? 'text-green-800 bg-green-100'
+                  : 'text-blue-700 hover:bg-gray-100'
+              }`}
+              title="Face pick mode — tap a face for Hole / features"
               aria-label="Face pick mode"
               aria-pressed={pickMode === 'face'}
             >
-              <BoxSelect size={20} />
+              <BoxSelect size={16} />
+              <span>Face</span>
             </button>
             <button
               type="button"
               onClick={() => onPickModeChange('edge')}
-              className={`p-2 rounded ${pickMode === 'edge' ? 'text-green-600 bg-green-100' : 'text-blue-600'} hover:bg-gray-100`}
-              title="Edge pick mode (multi-select for Fillet/Chamfer)"
+              className={`flex items-center gap-1 px-2 py-1.5 text-xs font-semibold ${
+                pickMode === 'edge'
+                  ? 'text-amber-900 bg-amber-100'
+                  : 'text-blue-700 hover:bg-gray-100'
+              }`}
+              title="Edge pick mode — tap near edges for Fillet/Chamfer"
               aria-label="Edge pick mode"
               aria-pressed={pickMode === 'edge'}
             >
-              <Spline size={20} />
+              <Spline size={16} />
+              <span>Edge</span>
             </button>
-          </>
+          </div>
         )}
 
         <button

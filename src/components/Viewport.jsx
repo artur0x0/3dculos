@@ -28,7 +28,13 @@ import Toolbar from './Toolbar';
 import CrossSectionPanel from './CrossSectionPanel';
 import HelperInsertPalette from './HelperInsertPalette';
 import { classifySelectedFace } from '../utils/faceFeaturePlacement';
-import { buildFeatureEdges, pickNearestEdge, toggleEdgeSelection } from '../utils/selectEdge';
+import {
+  buildFeatureEdges,
+  pickNearestEdgeScreen,
+  resolveEdgePickSlopPx,
+  toggleEdgeSelection,
+  edgeKey,
+} from '../utils/selectEdge';
 import { X } from 'lucide-react';
 import { downloadModelFromMesh, get3MFBase64FromMesh } from '../utils/exportModel';
 import { parseImportedModels, loadCachedModel } from '../utils/importModel';
@@ -114,8 +120,15 @@ const Viewport = forwardRef(({
   const [pickMode, setPickMode] = useState('face');
   const [selectedEdges, setSelectedEdges] = useState([]);
   const featureEdgesRef = useRef([]);
+  /** Geometry identity that featureEdgesRef was built from — invalidate on replace. */
+  const featureEdgesSourceRef = useRef(null);
   const edgeHighlightRef = useRef(null);
+  const edgeHoverRef = useRef(null);
+  const edgePickScratchA = useRef(new Vector3());
+  const edgePickScratchB = useRef(new Vector3());
   const pickModeRef = useRef('face');
+  const edgeModeToastShownRef = useRef(false);
+  const [edgeModeToast, setEdgeModeToast] = useState(null);
   const [materials, setMaterials] = useState([]);
   const [isExecuting, setIsExecuting] = useState(false);
   const [executionError, setExecutionError] = useState(null);
@@ -151,6 +164,12 @@ const Viewport = forwardRef(({
         edgeHighlightRef.current.material?.dispose();
         edgeHighlightRef.current = null;
       }
+      if (edgeHoverRef.current && sceneRef.current) {
+        sceneRef.current.remove(edgeHoverRef.current);
+        edgeHoverRef.current.geometry?.dispose();
+        edgeHoverRef.current.material?.dispose();
+        edgeHoverRef.current = null;
+      }
       setSelectedFace(null);
       setSelectedEdges([]);
       onFaceSelected?.(null);
@@ -161,6 +180,8 @@ const Viewport = forwardRef(({
         resultRef.current.geometry?.dispose();
         resultRef.current.geometry = new BufferGeometry();
       }
+      featureEdgesRef.current = [];
+      featureEdgesSourceRef.current = null;
     },
     /** Frame ghost with phone-friendly margin (puzzle enter / switch). */
     frameGhost: () => {
@@ -185,6 +206,12 @@ const Viewport = forwardRef(({
         edgeHighlightRef.current.geometry?.dispose();
         edgeHighlightRef.current.material?.dispose();
         edgeHighlightRef.current = null;
+      }
+      if (edgeHoverRef.current && sceneRef.current) {
+        sceneRef.current.remove(edgeHoverRef.current);
+        edgeHoverRef.current.geometry?.dispose();
+        edgeHoverRef.current.material?.dispose();
+        edgeHoverRef.current = null;
       }
       setSelectedEdges([]);
     },
@@ -231,35 +258,74 @@ const Viewport = forwardRef(({
     }
   }, []);
 
-  const highlightSelectedEdges = useCallback((edges) => {
-    clearEdgeHighlight();
-    if (!edges?.length || !sceneRef.current) return;
+  const clearEdgeHover = useCallback(() => {
+    if (edgeHoverRef.current && sceneRef.current) {
+      sceneRef.current.remove(edgeHoverRef.current);
+      edgeHoverRef.current.geometry?.dispose();
+      edgeHoverRef.current.material?.dispose();
+      edgeHoverRef.current = null;
+    }
+  }, []);
+
+  const paintEdgeLines = useCallback((edges, { color, name, opacity = 1 }) => {
+    if (!edges?.length || !sceneRef.current) return null;
     const positions = [];
     for (const e of edges) {
       if (!e.va || !e.vb) continue;
       positions.push(e.va[0], e.va[1], e.va[2], e.vb[0], e.vb[1], e.vb[2]);
     }
-    if (!positions.length) return;
+    if (!positions.length) return null;
     const geom = new BufferGeometry();
     geom.setAttribute('position', new BufferAttribute(new Float32Array(positions), 3));
     const lines = new LineSegments(geom, new LineBasicMaterial({
-      color: 0xff9900, linewidth: 3, depthTest: false,
+      color,
+      linewidth: 3,
+      depthTest: false,
+      transparent: opacity < 1,
+      opacity,
     }));
-    lines.name = 'edgeSelection';
+    lines.name = name;
     lines.renderOrder = 10;
     sceneRef.current.add(lines);
-    edgeHighlightRef.current = lines;
-  }, [clearEdgeHighlight]);
+    return lines;
+  }, []);
+
+  const highlightSelectedEdges = useCallback((edges) => {
+    clearEdgeHighlight();
+    edgeHighlightRef.current = paintEdgeLines(edges, {
+      color: 0xff9900,
+      name: 'edgeSelection',
+    });
+  }, [clearEdgeHighlight, paintEdgeLines]);
+
+  const highlightHoverEdge = useCallback((edge, selectedKeys) => {
+    clearEdgeHover();
+    if (!edge) return;
+    // Do not pre-highlight an already-selected edge (selection orange wins).
+    if (selectedKeys?.has(edgeKey(edge))) return;
+    edgeHoverRef.current = paintEdgeLines([edge], {
+      color: 0xffcc66,
+      name: 'edgeHover',
+      opacity: 0.85,
+    });
+  }, [clearEdgeHover, paintEdgeLines]);
 
   // Paint edge selection highlight when selectedEdges changes (idempotent: clear then draw).
   useEffect(() => {
     highlightSelectedEdges(selectedEdges);
   }, [selectedEdges, highlightSelectedEdges]);
 
-  const rebuildFeatureEdges = useCallback(() => {
-    const geom = resultRef.current?.geometry;
-    featureEdgesRef.current = geom ? buildFeatureEdges(geom) : [];
+  /** Rebuild feature-edge cache when the source BufferGeometry identity changes. */
+  const syncFeatureEdges = useCallback((geom) => {
+    if (featureEdgesSourceRef.current !== geom) {
+      featureEdgesRef.current = geom ? buildFeatureEdges(geom) : [];
+      featureEdgesSourceRef.current = geom ?? null;
+    }
   }, []);
+
+  const rebuildFeatureEdges = useCallback(() => {
+    syncFeatureEdges(resultRef.current?.geometry ?? null);
+  }, [syncFeatureEdges]);
 
 
   // Clear cutting plane widget
@@ -457,7 +523,42 @@ const Viewport = forwardRef(({
         isDraggingRef.current = true;
       }
     }
-  }, []);
+
+    // Optional Edge-mode pre-highlight: teach the fat hit target (nearest edge).
+    if (
+      pickModeRef.current === 'edge'
+      && !isDraggingRef.current
+      && canvasRef.current
+      && cameraRef.current
+      && resultRef.current
+    ) {
+      syncFeatureEdges(resultRef.current.geometry);
+      const canvas = canvasRef.current;
+      const rect = canvas.getBoundingClientRect();
+      const px = event.clientX - rect.left;
+      const py = event.clientY - rect.top;
+      const slop = resolveEdgePickSlopPx();
+      const edge = pickNearestEdgeScreen(
+        featureEdgesRef.current,
+        cameraRef.current,
+        rect.width,
+        rect.height,
+        px,
+        py,
+        slop,
+        {
+          projectScratchA: edgePickScratchA.current,
+          projectScratchB: edgePickScratchB.current,
+        },
+      );
+      const selectedKeys = new Set(
+        (Array.isArray(selectedEdges) ? selectedEdges : []).map((e) => edgeKey(e)),
+      );
+      highlightHoverEdge(edge, selectedKeys);
+    } else if (pickModeRef.current !== 'edge') {
+      clearEdgeHover();
+    }
+  }, [selectedEdges, highlightHoverEdge, clearEdgeHover, syncFeatureEdges]);
 
   /**
    * Handle mouse up - process click only if not dragging
@@ -471,11 +572,53 @@ const Viewport = forwardRef(({
     
     if (!canvasRef.current || !cameraRef.current || !resultRef.current) return;
     
-    // Calculate mouse position and perform raycast
     const canvas = canvasRef.current;
     const rect = canvas.getBoundingClientRect();
-    mouseRef.current.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-    mouseRef.current.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+    const px = event.clientX - rect.left;
+    const py = event.clientY - rect.top;
+    mouseRef.current.x = (px / rect.width) * 2 - 1;
+    mouseRef.current.y = -(py / rect.height) * 2 + 1;
+
+    // Slice 12 hotfix: Edge mode short-circuits face selection entirely.
+    // Screen-space pick with finger slop — no mesh-face hit required.
+    if (pickModeRef.current === 'edge') {
+      if (clickTimerRef.current) {
+        clearTimeout(clickTimerRef.current);
+        clickTimerRef.current = null;
+      }
+      clickCountRef.current = 0;
+      pendingClickDataRef.current = null;
+
+      syncFeatureEdges(resultRef.current.geometry);
+      const slop = resolveEdgePickSlopPx();
+      const edge = pickNearestEdgeScreen(
+        featureEdgesRef.current,
+        cameraRef.current,
+        rect.width,
+        rect.height,
+        px,
+        py,
+        slop,
+        {
+          projectScratchA: edgePickScratchA.current,
+          projectScratchB: edgePickScratchB.current,
+        },
+      );
+      if (!edge) {
+        // Preserve multi-selection on miss (same as #14) — stray taps must not wipe the set.
+        console.log('[Edge Selection] No feature edge within', slop, 'px');
+        clearEdgeHover();
+        return;
+      }
+      clearEdgeHover();
+      setSelectedEdges((prev) => toggleEdgeSelection(prev, edge));
+      // Clear face selection so modes do not fight
+      clearHighlight();
+      setSelectedFace(null);
+      onFaceSelected?.(null);
+      return;
+    }
+
     raycasterRef.current.setFromCamera(mouseRef.current, cameraRef.current);
     const intersects = raycasterRef.current.intersectObject(resultRef.current);
     
@@ -490,9 +633,6 @@ const Viewport = forwardRef(({
       
       if (measurementEnabled) {
         console.log("[Measurement] Keeping face selected for measurement");
-      } else if (pickModeRef.current === 'edge') {
-        clearEdgeHighlight();
-        setSelectedEdges([]);
       } else {
         clearHighlight();
         setSelectedFace(null);
@@ -504,36 +644,6 @@ const Viewport = forwardRef(({
     // Capture intersection data
     const intersection = intersects[0];
     const geometry = resultRef.current.geometry;
-
-    // Slice 12: Edge pick mode — toggle nearest feature edge (no face multi-click).
-    if (pickModeRef.current === 'edge') {
-      if (clickTimerRef.current) {
-        clearTimeout(clickTimerRef.current);
-        clickTimerRef.current = null;
-      }
-      clickCountRef.current = 0;
-      pendingClickDataRef.current = null;
-      const hit = intersection.point
-        ? [intersection.point.x, intersection.point.y, intersection.point.z]
-        : null;
-      if (!featureEdgesRef.current.length) {
-        featureEdgesRef.current = buildFeatureEdges(geometry);
-      }
-      const size = modelBounds?.size;
-      const diag = size ? Math.hypot(size[0], size[1], size[2]) : 100;
-      const maxDist = Math.max(1.5, diag * 0.03);
-      const edge = pickNearestEdge(featureEdgesRef.current, hit, maxDist);
-      if (!edge) {
-        console.log('[Edge Selection] No feature edge near hit');
-        return;
-      }
-      setSelectedEdges((prev) => toggleEdgeSelection(prev, edge));
-      // Clear face selection so modes do not fight
-      clearHighlight();
-      setSelectedFace(null);
-      onFaceSelected?.(null);
-      return;
-    }
 
     const clickedFace = intersection.face;
     const seedFaceIndex = intersection.faceIndex;
@@ -568,7 +678,8 @@ const Viewport = forwardRef(({
       processClick();
     }, MULTI_CLICK_DELAY);
     
-  }, [onFaceSelected, measurementEnabled, measurementFaces, clearHighlight]);
+  }, [onFaceSelected, measurementEnabled, clearHighlight, clearEdgeHover, syncFeatureEdges]);
+
 
   /**
    * Process the pending click based on click count
@@ -1512,8 +1623,15 @@ const Viewport = forwardRef(({
               setSelectedFace(null);
               onFaceSelected?.(null);
               rebuildFeatureEdges();
+              if (!edgeModeToastShownRef.current) {
+                edgeModeToastShownRef.current = true;
+                setEdgeModeToast('Edge pick on — tap near an edge (fat target)');
+                setTimeout(() => setEdgeModeToast(null), 2800);
+              }
             } else {
+              clearEdgeHover();
               clearEdgeHighlight();
+              setEdgeModeToast(null);
               // keep selectedEdges until user clears / face-picks
             }
           }}
@@ -1566,32 +1684,42 @@ const Viewport = forwardRef(({
         </div>
       )}
 
-      {/* Slice 12: Edge selection info */}
-      {selectedEdges.length > 0 && pickMode === 'edge' && (
+      {/* Slice 12 hotfix: Edge pick chip — visible whenever Edge mode is on */}
+      {pickMode === 'edge' && (
         <div
-          className={`absolute bg-black/50 text-white p-2 rounded-lg text-xs font-mono z-10 ${
+          className={`absolute bg-amber-950/85 border border-amber-500/70 text-white px-3 py-2 rounded-lg text-xs z-20 shadow-lg ${
             mode === 'game'
-              ? 'bottom-4 right-2 lg:right-4 max-w-[14rem]'
+              ? 'bottom-4 right-2 lg:right-4 max-w-[16rem]'
               : 'bottom-4 left-2 lg:left-4'
           }`}
         >
-          <div className="font-bold mb-1">
-            Selected Edges
-            <span className="ml-1 font-normal text-amber-300">({selectedEdges.length})</span>
+          <div className="font-bold font-sans text-amber-200">
+            Edge pick · {selectedEdges.length} selected
           </div>
-          <div className="text-[10px] text-gray-300 normal-case font-sans">
-            Tap edges to toggle · Fillet / Chamfer uses this set
+          <div className="text-[10px] text-amber-100/90 normal-case font-sans mt-0.5">
+            Tap near an edge to toggle · Fillet / Chamfer uses this set
           </div>
-          <button
-            type="button"
-            className="mt-1 text-[10px] text-amber-200 underline font-sans"
-            onClick={() => {
-              clearEdgeHighlight();
-              setSelectedEdges([]);
-            }}
-          >
-            Clear edges
-          </button>
+          {selectedEdges.length > 0 && (
+            <button
+              type="button"
+              className="mt-1 text-[10px] text-amber-200 underline font-sans"
+              onClick={() => {
+                clearEdgeHover();
+                clearEdgeHighlight();
+                setSelectedEdges([]);
+              }}
+            >
+              Clear edges
+            </button>
+          )}
+        </div>
+      )}
+
+      {edgeModeToast && (
+        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-30 pointer-events-none">
+          <div className="bg-amber-600 text-white text-xs font-sans font-medium px-3 py-2 rounded-full shadow-lg">
+            {edgeModeToast}
+          </div>
         </div>
       )}
 
