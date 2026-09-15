@@ -35,6 +35,30 @@ Lookup helpers (also injected): `fastenerClearanceDia(size, fit?)`,
 `fastenerTapDrillDia(size)`, `fastenerMajorDia(size)`, `listFastenerSizes()`,
 `resolveFastenerSize(size)`.
 
+
+## Face-select feature placement (Slice 11)
+
+In **game mode**, tapping a face in the viewport then a face-aware palette
+feature (Hole, Clearance, Cbore, Csk, Hole grid, Fillet, Chamfer) opens a
+param sheet seeded from that face. Generated code resolves the face with
+`facesByNormal(body, normal)` + closest-center pick, then
+`workplaneFromFace` — never an illegal bare `top` identifier.
+
+**Face classification** (from Viewport `selectedFace`):
+
+| Type | How detected | Param sheet |
+|---|---|---|
+| Planar | single-click `coplanar` (or small angular walk) | u/v, dia/depth/through, optional n×m pattern |
+| Cylindrical | double-click `angular-tolerance` with ≥8 tris | angle°, axial height, dia/depth/through |
+| Irregular | triple-click `all-connected` | **refused** with a clear message (v1 — no best-fit) |
+
+Fillet/Chamfer with a face filters `convexEdges(body)` to edges whose `n0`/`n1`
+aligns with the face normal (`edgeScope: face`); fallback `allConvex` uses
+all convex edges.
+
+Without a selected face, palette v2 behavior is unchanged (default +Z
+`topFace` workplane / body selector).
+
 ## Core Manifold API
 
 All standard Manifold functions are available:

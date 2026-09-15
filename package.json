@@ -13,7 +13,8 @@
         "golden:slice03": "node scripts/golden/smoke_slice03_format.mjs",
         "golden:slice04": "node scripts/golden/smoke_slice04_pack.mjs",
         "golden:slice09": "node scripts/golden/smoke_slice09_helper_compose.mjs",
-        "golden:slice10": "node scripts/golden/smoke_slice10_palette_v2.mjs"
+        "golden:slice10": "node scripts/golden/smoke_slice10_palette_v2.mjs",
+        "golden:slice11": "node scripts/golden/smoke_slice11_face_feature.mjs"
     },
     "dependencies": {
         "@monaco-editor/react": "^4.6.0",
