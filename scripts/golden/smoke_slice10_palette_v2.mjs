@@ -10,6 +10,7 @@ import {
   listBodyNames,
   HELPER_PALETTE_ITEMS,
   defaultParamsFor,
+  coerceNumberParam,
 } from '../../src/utils/helperPaletteSnippets.js';
 
 let failed = 0;
@@ -113,6 +114,21 @@ console.log('slice-10 palette v2 smoke');
   const buf = composeHelperInsert(prefix, 'filletEdges', null, { body: 'box1', radius: 2, sphericalCorners: true });
   check('const box1 fillet does not assign box1', !/box1\s*=\s*filletEdges/.test(buf));
   check('const box1 fillet mutates part instead', /part\s*=\s*filletEdges\(part/.test(buf));
+  const polar = composeHelperInsert(prefix, 'polarArray', null, { body: 'box1', count: 4, boltCircleRadius: 20, axis: 'z' });
+  check('const box1 polar does not assign box1', !/box1\s*=\s*polarArray/.test(polar));
+  check('const box1 polar mutates part instead', /part\s*=\s*polarArray\(part/.test(polar));
+}
+
+
+// ── coerceNumberParam: blank → default, min/max clamp ──────────
+{
+  const p = { default: 40, min: 0.1, max: 100 };
+  check('blank → default', coerceNumberParam('', p) === 40);
+  check('null → default', coerceNumberParam(null, p) === 40);
+  check('dash in-progress → default', coerceNumberParam('-', p) === 40);
+  check('below min clamps', coerceNumberParam(-5, p) === 0.1);
+  check('above max clamps', coerceNumberParam(999, p) === 100);
+  check('finite in range passthrough', coerceNumberParam(12.5, p) === 12.5);
 }
 
 // ── Empty number params fall back via num() ────────────────────

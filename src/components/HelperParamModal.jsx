@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { X, Check } from 'lucide-react';
-import { listBodyNames } from '../utils/helperPaletteSnippets';
+import { listBodyNames, coerceNumberParam } from '../utils/helperPaletteSnippets';
 
 /**
  * Slice 10 — param popup for guided helper insert.
@@ -56,18 +56,7 @@ const HelperParamModal = ({
     const out = { ...values };
     for (const p of params) {
       if (p.type === 'number') {
-        const raw = out[p.name];
-        // Number('') === 0 is finite — treat blank/nullish as default, then enforce min/max.
-        let n;
-        if (raw === '' || raw === null || raw === undefined || raw === '-' || raw === '.') {
-          n = p.default;
-        } else {
-          n = Number(raw);
-          if (!Number.isFinite(n)) n = p.default;
-        }
-        if (typeof p.min === 'number' && Number.isFinite(p.min) && n < p.min) n = p.min;
-        if (typeof p.max === 'number' && Number.isFinite(p.max) && n > p.max) n = p.max;
-        out[p.name] = n;
+        out[p.name] = coerceNumberParam(out[p.name], p);
       }
     }
     onConfirm?.(out);

@@ -29,6 +29,9 @@ function isBodyName(n) {
   return BODY_BASES.some((b) => b === n || new RegExp('^' + b + '\\d+$').test(n));
 }
 
+/** Monotonic fallback for allocateUniqueName when the numbered loop is exhausted. */
+let uniqueNameFallbackSeq = 0;
+
 /** Strip line/block comments for emptiness / name scans. */
 function stripComments(text) {
   return String(text || '')
@@ -100,7 +103,7 @@ export function allocateUniqueName(existingOrBuffer, base) {
       }
     }
   }
-  const fallback = `${base}_${Date.now()}`;
+  const fallback = `${base}_${++uniqueNameFallbackSeq}`;
   existing.add(fallback);
   return fallback;
 }
@@ -171,6 +174,25 @@ function num(v, fallback) {
   if (v === '' || v === null || v === undefined) return fallback;
   const n = Number(v);
   return Number.isFinite(n) ? n : fallback;
+}
+
+/**
+ * Coerce a modal/raw number field: blank/nullish/in-progress/NaN → default, then clamp min/max.
+ * @param {*} raw
+ * @param {{ default: number, min?: number, max?: number }} p
+ * @returns {number}
+ */
+export function coerceNumberParam(raw, p) {
+  let n;
+  if (raw === '' || raw === null || raw === undefined || raw === '-' || raw === '.') {
+    n = p.default;
+  } else {
+    n = Number(raw);
+    if (!Number.isFinite(n)) n = p.default;
+  }
+  if (typeof p.min === 'number' && Number.isFinite(p.min) && n < p.min) n = p.min;
+  if (typeof p.max === 'number' && Number.isFinite(p.max) && n > p.max) n = p.max;
+  return n;
 }
 
 function bool(v, fallback = false) {
@@ -856,7 +878,7 @@ export const HELPER_PALETTE_ITEMS = [
       { name: 'boreRadius', type: 'number', default: 3, label: 'Bore R (empty)', min: 0.1, step: 0.5 },
       { name: 'boreHeight', type: 'number', default: 10, label: 'Bore H (empty)', min: 0.1, step: 0.5 },
     ],
-    build: (empty, p, names) => {
+    build: (empty, p, names, buffer) => {
       const count = Math.max(1, Math.round(num(p.count, 4)));
       const bcr = num(p.boltCircleRadius, 20);
       const axis = str(p.axis, 'z');
@@ -874,11 +896,10 @@ export const HELPER_PALETTE_ITEMS = [
           '',
         ].join('\n');
       }
-      const body = str(p.body, 'part');
-      const lines = [
-        `${body} = polarArray(${body}, ${count}, ${bcr}, '${axis}');`,
-      ];
-      if (body !== 'part') lines.push(`part = ${body};`);
+      const lines = [];
+      const body = resolveBody(p, names, buffer);
+      lines.push(`${body} = polarArray(${body}, ${count}, ${bcr}, '${axis}');`);
+      lines.push(...syncPartLines(body, names, true));
       return `${lines.join('\n')}\n`;
     },
   },
