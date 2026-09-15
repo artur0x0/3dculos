@@ -30,9 +30,15 @@ import {
   resolveEdgePickSlopPx,
   EDGE_PICK_SLOP_PX,
   EDGE_PICK_SLOP_COARSE_PX,
+  EDGE_BLEND_SIZE_GUARD,
   projectWorldToCanvas,
   toggleEdgeSelection,
+  popLastEdgeSelection,
   edgeKey,
+  minSelectedEdgeLength,
+  defaultEdgeBlendSize,
+  edgeBlendHardMax,
+  edgeBlendFailsSizeGuard,
 } from '../../src/utils/selectEdge.js';
 
 let failed = 0;
@@ -561,4 +567,41 @@ if (failed) {
   console.log(`\nFAILED: ${failed}`);
   process.exit(1);
 }
+
+// ── Polish: default fillet r from edge length ──────────────────
+{
+  console.log('\ndefault fillet r from edge length');
+  const L = 40;
+  const r = defaultEdgeBlendSize(L);
+  check('default r for L=40 is 6', r === 6, `got ${r}`);
+  check('default r under size guard', r < EDGE_BLEND_SIZE_GUARD * L);
+  check('hard max under size guard', edgeBlendHardMax(L) < EDGE_BLEND_SIZE_GUARD * L);
+  check('r=22.51 fails guard on L=40', edgeBlendFailsSizeGuard(22.51, L));
+  check('default r passes guard', !edgeBlendFailsSizeGuard(r, L));
+
+  // Short edge: floor must not exceed softMax / guard
+  const short = defaultEdgeBlendSize(1);
+  check('short edge default ≤ 0.35·L', short <= 0.35 * 1 + 1e-9, `got ${short}`);
+  check('short edge default under guard', short < EDGE_BLEND_SIZE_GUARD * 1);
+
+  const edges = [
+    { mid: [0, 0, 0], va: [0, 0, 0], vb: [40, 0, 0], length: 40 },
+  ];
+  check('minSelectedEdgeLength', minSelectedEdgeLength(edges) === 40);
+  const item = HELPER_PALETTE_ITEMS.find((h) => h.id === 'filletEdges');
+  const resolved = resolveFaceModal(item, null, edges);
+  const radiusParam = resolved.item?.params?.find((p) => p.name === 'radius');
+  check('resolveFaceModal seeds radius from minL', radiusParam?.default === 6, `got ${radiusParam?.default}`);
+  check('resolveFaceModal caps slider max', radiusParam?.max === edgeBlendHardMax(40), `got ${radiusParam?.max}`);
+
+  const chamferItem = HELPER_PALETTE_ITEMS.find((h) => h.id === 'chamferEdges');
+  const cResolved = resolveFaceModal(chamferItem, null, edges);
+  const cParam = cResolved.item?.params?.find((p) => p.name === 'chamfer');
+  check('chamfer default also from minL', cParam?.default === 6, `got ${cParam?.default}`);
+
+  const list = [{ key: 'a' }, { key: 'b' }, { key: 'c' }];
+  check('popLastEdgeSelection drops last', popLastEdgeSelection(list).map((e) => e.key).join(',') === 'a,b');
+}
+
+
 console.log('\nAll slice-12 edge + center-hole checks passed.');

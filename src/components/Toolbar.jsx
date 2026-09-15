@@ -125,7 +125,7 @@ const Toolbar = ({
       <div className={shellClass}>
         <button
           onClick={onExitGame}
-          className={`${btnPad} flex items-center gap-1 ${backCls} rounded`}
+          className={`${btnPad} flex items-center gap-1 ${backCls} rounded active:opacity-80`}
           title="Back to CAD"
         >
           <ArrowLeft size={iconSize} />
@@ -136,7 +136,7 @@ const Toolbar = ({
         <button
           onClick={onUndo}
           disabled={!canUndo}
-          className={`${btnPad} flex items-center gap-2 ${editCls} rounded disabled:opacity-30`}
+          className={`${btnPad} flex items-center gap-2 ${editCls} rounded disabled:opacity-30 active:opacity-80`}
           title="Undo"
         >
           <Undo size={iconSize} />
@@ -145,7 +145,7 @@ const Toolbar = ({
         <button
           onClick={onRedo}
           disabled={!canRedo}
-          className={`${btnPad} flex items-center gap-2 ${editCls} rounded disabled:opacity-30`}
+          className={`${btnPad} flex items-center gap-2 ${editCls} rounded disabled:opacity-30 active:opacity-80`}
           title="Redo"
         >
           <Redo size={iconSize} />
@@ -156,7 +156,7 @@ const Toolbar = ({
         <button
           onClick={onRun}
           disabled={isExecuting}
-          className={`${btnPad} flex items-center gap-1 ${runCls} rounded disabled:opacity-50`}
+          className={`${btnPad} flex items-center gap-1 ${runCls} rounded disabled:opacity-50 active:opacity-80`}
           title="Run script"
         >
           {isExecuting ? (
@@ -184,7 +184,7 @@ const Toolbar = ({
 
         <button
           onClick={onPickPuzzle}
-          className={`${btnPad} flex items-center gap-1 ${cyanCls} rounded`}
+          className={`${btnPad} flex items-center gap-1 ${cyanCls} rounded active:opacity-80`}
           title="Switch puzzle"
         >
           <List size={iconSize} />
@@ -195,7 +195,7 @@ const Toolbar = ({
             CAD Account/Save/Download remain available after exiting game. */}
         <button
           onClick={onHint}
-          className={`${btnPad} flex items-center gap-1 ${cyanCls} rounded`}
+          className={`${btnPad} flex items-center gap-1 ${cyanCls} rounded active:opacity-80`}
           title="Hint — target code & helpers"
         >
           <BookOpen size={iconSize} />

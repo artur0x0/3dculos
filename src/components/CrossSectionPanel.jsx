@@ -172,79 +172,92 @@ const handleButtonClick = () => {
       }`}>
         <ViewSnapControl onSnap={onSnapView} />
 
+        {/* Pick selectors — own section with dividers; icons only; sticky when active */}
         {typeof onPickModeChange === 'function' && (
-          <div
-            className={`flex rounded-md border border-gray-300/80 overflow-hidden bg-white/80 ${
-              verticalRail ? 'flex-col' : 'flex-row'
-            }`}
-            role="group"
-            aria-label="Pick mode"
-          >
-            <button
-              type="button"
-              onClick={() => onPickModeChange('face')}
-              className={`flex items-center gap-1 px-2 py-1.5 text-xs font-semibold ${
-                pickMode === 'face'
-                  ? 'text-green-800 bg-green-100'
-                  : 'text-blue-700 hover:bg-gray-100'
+          <>
+            <div
+              className={verticalRail ? 'h-px w-full bg-gray-300/80 my-0.5' : 'w-px self-stretch bg-gray-300/80 mx-0.5'}
+              aria-hidden
+            />
+            <div
+              className={`flex rounded-md border border-gray-300/80 overflow-hidden bg-white/80 ${
+                verticalRail ? 'flex-col' : 'flex-row'
               }`}
-              title="Face pick mode — tap a face for Hole / features"
-              aria-label="Face pick mode"
-              aria-pressed={pickMode === 'face'}
+              role="group"
+              aria-label="Pick mode"
             >
-              <BoxSelect size={16} />
-              <span>Face</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => onPickModeChange('edge')}
-              className={`flex items-center gap-1 px-2 py-1.5 text-xs font-semibold ${
-                pickMode === 'edge'
-                  ? 'text-amber-900 bg-amber-100'
-                  : 'text-blue-700 hover:bg-gray-100'
-              }`}
-              title="Edge pick mode — tap near edges for Fillet/Chamfer"
-              aria-label="Edge pick mode"
-              aria-pressed={pickMode === 'edge'}
-            >
-              <Spline size={16} />
-              <span>Edge</span>
-            </button>
-          </div>
+              <button
+                type="button"
+                onClick={() => onPickModeChange('face')}
+                className={`flex items-center justify-center p-2 ${
+                  pickMode === 'face'
+                    ? 'text-green-800 bg-green-100'
+                    : 'text-blue-700 hover:bg-gray-100 active:bg-blue-100'
+                }`}
+                title="Face pick mode — tap a face for Hole / features"
+                aria-label="Face pick mode"
+                aria-pressed={pickMode === 'face'}
+              >
+                <BoxSelect size={20} />
+              </button>
+              <button
+                type="button"
+                onClick={() => onPickModeChange('edge')}
+                className={`flex items-center justify-center p-2 ${
+                  pickMode === 'edge'
+                    ? 'text-amber-900 bg-amber-100'
+                    : 'text-blue-700 hover:bg-gray-100 active:bg-amber-50'
+                }`}
+                title="Edge pick mode — tap near edges for Fillet/Chamfer"
+                aria-label="Edge pick mode"
+                aria-pressed={pickMode === 'edge'}
+              >
+                <Spline size={20} />
+              </button>
+            </div>
+            <div
+              className={verticalRail ? 'h-px w-full bg-gray-300/80 my-0.5' : 'w-px self-stretch bg-gray-300/80 mx-0.5'}
+              aria-hidden
+            />
+          </>
         )}
 
         <button
           onClick={onAutoFitToggle}
-          className={`p-2 rounded ${autoFitEnabled ? 'text-green-600 bg-green-100' : 'text-gray-500'} hover:bg-gray-100`}
+          className={`p-2 rounded ${autoFitEnabled ? 'text-green-600 bg-green-100' : 'text-gray-500'} hover:bg-gray-100 active:bg-gray-200`}
           title={autoFitEnabled ? 'Auto-fit on run: ON (re-frames the part after each run)' : 'Auto-fit on run: OFF'}
+          aria-pressed={!!autoFitEnabled}
         >
           <Frame size={20} />
         </button>
         <button
           onClick={onAxisHelperToggle}
-          className={`p-2 rounded ${axisHelperEnabled ? 'text-green-600 bg-green-100' : 'text-blue-600'} hover:bg-gray-100`}
+          className={`p-2 rounded ${axisHelperEnabled ? 'text-green-600 bg-green-100' : 'text-blue-600'} hover:bg-gray-100 active:bg-blue-100`}
           title={axisHelperEnabled ? 'Hide Axis Helper' : 'Show Axis Helper'}
+          aria-pressed={!!axisHelperEnabled}
         >
           <Move3d size={20} />
         </button>
         <button
           onClick={onZoomToFit}
-          className="p-2 rounded text-blue-600 hover:bg-blue-100"
+          className="p-2 rounded text-blue-600 hover:bg-blue-100 active:bg-blue-200"
           title="Zoom to Fit"
         >
           <Maximize2 size={20} />
         </button>
         <button
           onClick={onMeasurementToggle}
-          className={`p-2 rounded ${measurementEnabled ? 'text-green-600 bg-green-100' : 'text-blue-600'} hover:bg-gray-100`}
+          className={`p-2 rounded ${measurementEnabled ? 'text-green-600 bg-green-100' : 'text-blue-600'} hover:bg-gray-100 active:bg-blue-100`}
           title={measurementEnabled ? 'Disable Measurement' : 'Enable Measurement'}
+          aria-pressed={!!measurementEnabled}
         >
           <Ruler size={20} />
         </button>
         <button
           onClick={handleButtonClick}
-          className={`p-2 rounded ${enabled ? 'text-green-600' : 'text-blue-600'} hover:bg-gray-100`}
+          className={`p-2 rounded ${enabled ? 'text-green-600 bg-green-100' : 'text-blue-600'} hover:bg-gray-100 active:bg-blue-100`}
           title={enabled ? 'Disable Cross Section' : 'Enable Cross Section'}
+          aria-pressed={!!enabled}
         >
           <FlipHorizontal size={20} />
         </button>

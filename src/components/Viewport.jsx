@@ -33,6 +33,7 @@ import {
   pickNearestEdgeScreen,
   resolveEdgePickSlopPx,
   toggleEdgeSelection,
+  popLastEdgeSelection,
   edgeKey,
 } from '../utils/selectEdge';
 import { X } from 'lucide-react';
@@ -143,6 +144,8 @@ const Viewport = forwardRef(({
   });
   const [modelBounds, setModelBounds] = useState(null);
   const [cachedMeshData, setCachedMeshData] = useState(null);
+  /** Always-current mesh for failed Auto-Run restore (state alone is stale in closures). */
+  const cachedMeshDataRef = useRef(null);
   
   // Measurement tool and axis helper state
   const [measurementEnabled, setMeasurementEnabled] = useState(false);
@@ -152,6 +155,7 @@ const Viewport = forwardRef(({
   const [autoFitEnabled, setAutoFitEnabled] = useState(true);
 
   pickModeRef.current = pickMode;
+  cachedMeshDataRef.current = cachedMeshData;
 
   useImperativeHandle(ref, () => ({
     executeScript,
@@ -1417,11 +1421,9 @@ const Viewport = forwardRef(({
     setIsExecuting(true);
     setExecutionError(null);
 
-    clearHighlight();
-    clearEdgeHighlight();
-    setSelectedFace(null);
-    setSelectedEdges([]);
-    onFaceSelected?.(null);
+    // Do NOT clear face/edge selection here — a failed Auto-Run must keep the
+    // chip in sync (false "0 selected" was caused by wiping selection up-front).
+    // Clear only after a successful rebuild (geometry changed → stale edges).
 
     try {
       if (!manifoldContext.isReady) {
@@ -1477,9 +1479,28 @@ const Viewport = forwardRef(({
 
       // Cache mesh data for cross-section operations
       setCachedMeshData(meshData);
+      cachedMeshDataRef.current = meshData;
 
       // Render the result
       renderMeshData(meshData);
+
+      // Geometry replaced → previous face/edge picks are stale. Clear intentionally
+      // and nudge the user when they were in edge pick mode.
+      const hadEdges = Array.isArray(selectedEdges) && selectedEdges.length > 0;
+      const wasEdgeMode = pickModeRef.current === 'edge';
+      clearHighlight();
+      clearEdgeHighlight();
+      clearEdgeHover();
+      setSelectedFace(null);
+      setSelectedEdges([]);
+      onFaceSelected?.(null);
+      featureEdgesRef.current = [];
+      featureEdgesSourceRef.current = null;
+      syncFeatureEdges(resultRef.current?.geometry ?? null);
+      if (wasEdgeMode && hadEdges) {
+        setEdgeModeToast('Geometry updated — re-pick edges');
+        setTimeout(() => setEdgeModeToast(null), 2800);
+      }
 
       // Auto scale: re-frame the part after every successful run so the new geometry is
       // never left off-screen or tiny. Keeps the user's current orbit direction.
@@ -1502,9 +1523,31 @@ const Viewport = forwardRef(({
       stageExecErrorRef.current = msg;
       setExecutionError(msg);
 
-      if (resultRef.current) {
+      // Failed Auto-Run: restore the last good mesh and keep edge/face selection
+      // so the chip does not falsely show "0 selected".
+      const prev = cachedMeshDataRef.current;
+      if (prev?.vertProperties && resultRef.current) {
+        renderMeshData(prev);
+        featureEdgesSourceRef.current = null;
+        syncFeatureEdges(resultRef.current?.geometry ?? null);
+        // Re-paint edge highlight from current selection (effect also runs).
+        if (pickModeRef.current === 'edge') {
+          // highlightSelectedEdges is invoked via selectedEdges effect
+        }
+      } else if (resultRef.current) {
         resultRef.current.geometry?.dispose();
         resultRef.current.geometry = new BufferGeometry();
+        // No prior mesh — selection would be meaningless on empty geom.
+        clearHighlight();
+        clearEdgeHighlight();
+        clearEdgeHover();
+        setSelectedFace(null);
+        setSelectedEdges([]);
+        onFaceSelected?.(null);
+        featureEdgesRef.current = [];
+        featureEdgesSourceRef.current = null;
+        setEdgeModeToast('Run failed — selection cleared (no prior solid)');
+        setTimeout(() => setEdgeModeToast(null), 2800);
       }
       return false;
     } finally {
@@ -1513,7 +1556,7 @@ const Viewport = forwardRef(({
         executionAbortRef.current = null;
       }
     }
-  }, [currentScript, materials, onFaceSelected, renderMeshData, clearHighlight, clearEdgeHighlight, autoFitEnabled, handleZoomToFit]);
+  }, [currentScript, materials, onFaceSelected, renderMeshData, clearHighlight, clearEdgeHighlight, clearEdgeHover, autoFitEnabled, handleZoomToFit, selectedEdges, syncFeatureEdges]);
 
   /**
    * Download the current model as 3mf
@@ -1700,17 +1743,31 @@ const Viewport = forwardRef(({
             Tap near an edge to toggle · Fillet / Chamfer uses this set
           </div>
           {selectedEdges.length > 0 && (
-            <button
-              type="button"
-              className="mt-1 text-[10px] text-amber-200 underline font-sans"
-              onClick={() => {
-                clearEdgeHover();
-                clearEdgeHighlight();
-                setSelectedEdges([]);
-              }}
-            >
-              Clear edges
-            </button>
+            <div className="mt-1.5 flex items-center gap-3 font-sans">
+              <button
+                type="button"
+                className="text-[10px] text-amber-200 underline"
+                onClick={() => {
+                  clearEdgeHover();
+                  setSelectedEdges((prev) => popLastEdgeSelection(prev));
+                }}
+                title="Remove last selected edge"
+              >
+                Back
+              </button>
+              <button
+                type="button"
+                className="text-[10px] text-amber-200 underline"
+                onClick={() => {
+                  clearEdgeHover();
+                  clearEdgeHighlight();
+                  setSelectedEdges([]);
+                }}
+                title="Clear all selected edges"
+              >
+                Clear
+              </button>
+            </div>
           )}
         </div>
       )}
