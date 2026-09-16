@@ -21,9 +21,14 @@ import {
   Matrix4,
   Triangle,
   LineSegments,
-  LineBasicMaterial
+  LineBasicMaterial,
+  Group,
 } from 'three';
 import { TrackballControls } from 'three/addons/controls/TrackballControls.js';
+import { LineSegments2 } from 'three/addons/lines/LineSegments2.js';
+import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js';
+import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
+
 import Toolbar from './Toolbar';
 import CrossSectionPanel from './CrossSectionPanel';
 import HelperInsertPalette from './HelperInsertPalette';
@@ -49,6 +54,30 @@ import { fitView, VIEW_PRESETS } from '../utils/viewCamera';
 import { validateScript, formatValidationErrors } from '../utils/scriptValidator';
 import manifoldContext from '../utils/ManifoldWorker';
 import { formatGameTime } from '../utils/gamePuzzle';
+
+/** Screen-space fat-line widths (WebGL ignores LineBasicMaterial.linewidth > 1). */
+const EDGE_CORE_PX = 4;
+const EDGE_HALO_PX = 14;
+const EDGE_HOVER_CORE_PX = 3;
+const EDGE_HOVER_HALO_PX = 10;
+
+/** Dispose LineSegments2 Group (halo+core) or legacy LineSegments. */
+function disposeEdgeOverlayObject(scene, obj) {
+  if (!obj) return;
+  scene?.remove(obj);
+  const disposeOne = (node) => {
+    node.geometry?.dispose?.();
+    const mat = node.material;
+    if (Array.isArray(mat)) mat.forEach((m) => m?.dispose?.());
+    else mat?.dispose?.();
+  };
+  if (typeof obj.traverse === 'function') {
+    obj.traverse((child) => {
+      if (child !== obj) disposeOne(child);
+    });
+  }
+  disposeOne(obj);
+}
 
 // Execution limits
 const EXECUTION_LIMITS = {
@@ -175,18 +204,10 @@ const Viewport = forwardRef(({
     /** Clear player attempt mesh (game mode enter: ghost-only until Run). */
     clearAttempt: () => {
       clearHighlight();
-      if (edgeHighlightRef.current && sceneRef.current) {
-        sceneRef.current.remove(edgeHighlightRef.current);
-        edgeHighlightRef.current.geometry?.dispose();
-        edgeHighlightRef.current.material?.dispose();
-        edgeHighlightRef.current = null;
-      }
-      if (edgeHoverRef.current && sceneRef.current) {
-        sceneRef.current.remove(edgeHoverRef.current);
-        edgeHoverRef.current.geometry?.dispose();
-        edgeHoverRef.current.material?.dispose();
-        edgeHoverRef.current = null;
-      }
+      disposeEdgeOverlayObject(sceneRef.current, edgeHighlightRef.current);
+      edgeHighlightRef.current = null;
+      disposeEdgeOverlayObject(sceneRef.current, edgeHoverRef.current);
+      edgeHoverRef.current = null;
       setSelectedFace(null);
       setSelectedEdges([]);
       onFaceSelected?.(null);
@@ -218,34 +239,18 @@ const Viewport = forwardRef(({
       onFaceSelected?.(null);
     },
     clearEdgeSelection: () => {
-      if (edgeHighlightRef.current && sceneRef.current) {
-        sceneRef.current.remove(edgeHighlightRef.current);
-        edgeHighlightRef.current.geometry?.dispose();
-        edgeHighlightRef.current.material?.dispose();
-        edgeHighlightRef.current = null;
-      }
-      if (edgeHoverRef.current && sceneRef.current) {
-        sceneRef.current.remove(edgeHoverRef.current);
-        edgeHoverRef.current.geometry?.dispose();
-        edgeHoverRef.current.material?.dispose();
-        edgeHoverRef.current = null;
-      }
+      disposeEdgeOverlayObject(sceneRef.current, edgeHighlightRef.current);
+      edgeHighlightRef.current = null;
+      disposeEdgeOverlayObject(sceneRef.current, edgeHoverRef.current);
+      edgeHoverRef.current = null;
       setSelectedEdges([]);
     },
     /** Soft-fail: clear stale edges + toast — never paired with emitting broken JS. */
     softFailStaleEdges: (msg) => {
-      if (edgeHighlightRef.current && sceneRef.current) {
-        sceneRef.current.remove(edgeHighlightRef.current);
-        edgeHighlightRef.current.geometry?.dispose();
-        edgeHighlightRef.current.material?.dispose();
-        edgeHighlightRef.current = null;
-      }
-      if (edgeHoverRef.current && sceneRef.current) {
-        sceneRef.current.remove(edgeHoverRef.current);
-        edgeHoverRef.current.geometry?.dispose();
-        edgeHoverRef.current.material?.dispose();
-        edgeHoverRef.current = null;
-      }
+      disposeEdgeOverlayObject(sceneRef.current, edgeHighlightRef.current);
+      edgeHighlightRef.current = null;
+      disposeEdgeOverlayObject(sceneRef.current, edgeHoverRef.current);
+      edgeHoverRef.current = null;
       setSelectedEdges([]);
       setEdgeModeToast(msg || 'Re-pick edges after geometry changes');
       armEdgeModeToastClear();
@@ -285,24 +290,33 @@ const Viewport = forwardRef(({
   }, []);
 
   const clearEdgeHighlight = useCallback(() => {
-    if (edgeHighlightRef.current && sceneRef.current) {
-      sceneRef.current.remove(edgeHighlightRef.current);
-      edgeHighlightRef.current.geometry?.dispose();
-      edgeHighlightRef.current.material?.dispose();
-      edgeHighlightRef.current = null;
-    }
+    disposeEdgeOverlayObject(sceneRef.current, edgeHighlightRef.current);
+    edgeHighlightRef.current = null;
   }, []);
 
   const clearEdgeHover = useCallback(() => {
-    if (edgeHoverRef.current && sceneRef.current) {
-      sceneRef.current.remove(edgeHoverRef.current);
-      edgeHoverRef.current.geometry?.dispose();
-      edgeHoverRef.current.material?.dispose();
-      edgeHoverRef.current = null;
-    }
+    disposeEdgeOverlayObject(sceneRef.current, edgeHoverRef.current);
+    edgeHoverRef.current = null;
   }, []);
 
-  const paintEdgeLines = useCallback((edges, { color, name, opacity = 1 }) => {
+  const edgeLineResolution = useCallback(() => {
+    const r = rendererRef.current;
+    if (r) {
+      const sz = r.getSize(new Vector2());
+      return sz;
+    }
+    const el = containerRef.current;
+    return new Vector2(el?.clientWidth || 1, el?.clientHeight || 1);
+  }, []);
+
+  /**
+   * Fat screen-space edge overlay: translucent halo + opaque core via LineSegments2.
+   * WebGL ignores LineBasicMaterial.linewidth>1 on most GPUs (esp. mobile); dual-pass
+   * LineMaterial stays cheap (2 draw calls, shared segment list, no CPU tube tessellation).
+   */
+  const paintEdgeLines = useCallback((edges, {
+    color, name, opacity = 1, corePx = EDGE_CORE_PX, haloPx = EDGE_HALO_PX,
+  }) => {
     if (!edges?.length || !sceneRef.current) return null;
     const positions = [];
     for (const e of edges) {
@@ -310,26 +324,45 @@ const Viewport = forwardRef(({
       positions.push(e.va[0], e.va[1], e.va[2], e.vb[0], e.vb[1], e.vb[2]);
     }
     if (!positions.length) return null;
-    const geom = new BufferGeometry();
-    geom.setAttribute('position', new BufferAttribute(new Float32Array(positions), 3));
-    const lines = new LineSegments(geom, new LineBasicMaterial({
-      color,
-      linewidth: 3,
-      depthTest: false,
-      transparent: opacity < 1,
-      opacity,
-    }));
-    lines.name = name;
-    lines.renderOrder = 10;
-    sceneRef.current.add(lines);
-    return lines;
-  }, []);
+    const res = edgeLineResolution();
+    const posArr = positions; // flat xyz pairs for LineSegmentsGeometry.setPositions
+
+    const makeSeg = (linewidth, op, renderOrder) => {
+      const geom = new LineSegmentsGeometry();
+      geom.setPositions(posArr);
+      const mat = new LineMaterial({
+        color,
+        linewidth,
+        transparent: true,
+        opacity: op,
+        depthTest: false,
+        depthWrite: false,
+        worldUnits: false,
+      });
+      mat.resolution.set(res.x, res.y);
+      const line = new LineSegments2(geom, mat);
+      line.renderOrder = renderOrder;
+      line.frustumCulled = false;
+      return line;
+    };
+
+    const group = new Group();
+    group.name = name;
+    // Soft transparent halo first (under), then brighter core on top.
+    group.add(makeSeg(haloPx, Math.min(0.38, opacity * 0.45), 10));
+    group.add(makeSeg(corePx, opacity, 11));
+    sceneRef.current.add(group);
+    return group;
+  }, [edgeLineResolution]);
 
   const highlightSelectedEdges = useCallback((edges) => {
     clearEdgeHighlight();
     edgeHighlightRef.current = paintEdgeLines(edges, {
       color: 0xff9900,
       name: 'edgeSelection',
+      opacity: 1,
+      corePx: EDGE_CORE_PX,
+      haloPx: EDGE_HALO_PX,
     });
   }, [clearEdgeHighlight, paintEdgeLines]);
 
@@ -341,7 +374,9 @@ const Viewport = forwardRef(({
     edgeHoverRef.current = paintEdgeLines([edge], {
       color: 0xffcc66,
       name: 'edgeHover',
-      opacity: 0.85,
+      opacity: 0.9,
+      corePx: EDGE_HOVER_CORE_PX,
+      haloPx: EDGE_HOVER_HALO_PX,
     });
   }, [clearEdgeHover, paintEdgeLines]);
 
@@ -1175,6 +1210,16 @@ const Viewport = forwardRef(({
       
       if (rendererRef.current) {
         rendererRef.current.setSize(width, height);
+
+        // Keep LineMaterial screen-space widths correct after canvas resize.
+        for (const root of [edgeHighlightRef.current, edgeHoverRef.current]) {
+          if (!root || typeof root.traverse !== 'function') continue;
+          root.traverse((child) => {
+            if (child.material?.resolution) {
+              child.material.resolution.set(width, height);
+            }
+          });
+        }
         
         if (controlsRef.current) {
           controlsRef.current.update();
