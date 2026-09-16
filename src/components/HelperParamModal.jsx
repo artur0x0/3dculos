@@ -1,6 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { X, Check, AlertTriangle } from 'lucide-react';
 import { listBodyNames, coerceNumberParam } from '../utils/helperPaletteSnippets';
+import {
+  minSelectedEdgeLength,
+  edgeBlendFailsSizeGuard,
+  edgeBlendHardMax,
+  EDGE_BLEND_SIZE_GUARD,
+} from '../utils/selectEdge';
 
 /**
  * Slice 10/11/12 — param popup for guided helper insert.
@@ -30,13 +36,18 @@ const HelperParamModal = ({
       }
     }
     return o;
-  }, [item?.id, buffer, faceInfo?.type, params]); // eslint-disable-line react-hooks/exhaustive-deps -- reset on item/buffer/face
+  }, [item?.id, buffer, faceInfo?.type, edgeInfo, params]); // eslint-disable-line react-hooks/exhaustive-deps -- reset on item/buffer/face/edges
 
   const [values, setValues] = useState(initial);
 
   useEffect(() => {
     setValues(initial);
   }, [initial]);
+
+  const minEdgeLength = useMemo(
+    () => (item?._minEdgeLength != null ? item._minEdgeLength : minSelectedEdgeLength(edgeInfo)),
+    [item?._minEdgeLength, edgeInfo],
+  );
 
   if (refuseMessage) {
     return (
@@ -106,12 +117,35 @@ const HelperParamModal = ({
     });
   };
 
+  const blendParamName = params.some((p) => p.name === 'radius')
+    ? 'radius'
+    : (params.some((p) => p.name === 'chamfer') ? 'chamfer' : null);
+
+  const blendRaw = blendParamName != null ? values[blendParamName] : null;
+  const blendNum = Number(blendRaw);
+  const sizeGuardFail = (
+    blendParamName != null
+    && minEdgeLength != null
+    && Number.isFinite(blendNum)
+    && edgeBlendFailsSizeGuard(blendNum, minEdgeLength)
+  );
+  const safeBlendMax = minEdgeLength != null ? edgeBlendHardMax(minEdgeLength) : null;
+
   const handleConfirm = () => {
     const out = { ...values };
     for (const p of params) {
       if (p.type === 'number') {
         out[p.name] = coerceNumberParam(out[p.name], p);
       }
+    }
+    // Clamp fillet/chamfer under size guard before insert (typed values can exceed slider max).
+    if (
+      blendParamName
+      && minEdgeLength != null
+      && edgeBlendFailsSizeGuard(out[blendParamName], minEdgeLength)
+      && safeBlendMax != null
+    ) {
+      out[blendParamName] = safeBlendMax;
     }
     onConfirm?.(out);
   };
@@ -183,6 +217,26 @@ const HelperParamModal = ({
             </span>
             {' · '}
             Fillet/Chamfer will use the picked set
+            {minEdgeLength != null && (
+              <>
+                {' · '}
+                min L={minEdgeLength.toFixed(2)}
+                {' · '}
+                keep r &lt; {(EDGE_BLEND_SIZE_GUARD * minEdgeLength).toFixed(2)}
+              </>
+            )}
+          </div>
+        )}
+
+        {sizeGuardFail && (
+          <div className="px-4 py-2 border-b border-red-900/50 bg-red-950/50 text-[11px] text-red-100 shrink-0 flex items-start gap-2">
+            <AlertTriangle size={14} className="text-red-400 shrink-0 mt-0.5" />
+            <div>
+              <span className="font-semibold">{blendParamName === 'chamfer' ? 'Chamfer' : 'Radius'} {blendNum}</span>
+              {' ≥ '}
+              size guard ({EDGE_BLEND_SIZE_GUARD}× min L = {(EDGE_BLEND_SIZE_GUARD * minEdgeLength).toFixed(2)}).
+              {' '}Confirm will clamp to {safeBlendMax}.
+            </div>
           </div>
         )}
 
@@ -252,11 +306,15 @@ const HelperParamModal = ({
           <button
             type="button"
             onClick={handleConfirm}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium
-              bg-cyan-600 hover:bg-cyan-500 text-white"
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium text-white ${
+              sizeGuardFail
+                ? 'bg-amber-600 hover:bg-amber-500'
+                : 'bg-cyan-600 hover:bg-cyan-500'
+            }`}
+            title={sizeGuardFail ? `Clamp to ${safeBlendMax} and insert` : 'Confirm insert'}
           >
             <Check size={16} />
-            Confirm
+            {sizeGuardFail ? `Clamp & Confirm (${safeBlendMax})` : 'Confirm'}
           </button>
         </div>
       </div>

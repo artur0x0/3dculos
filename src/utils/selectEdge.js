@@ -135,6 +135,74 @@ export function toggleEdgeSelection(selected, edge) {
   return list;
 }
 
+/** Kernel size-guard fraction for straight-edge fillet/chamfer (t < 0.45·L). */
+export const EDGE_BLEND_SIZE_GUARD = 0.45;
+
+/**
+ * Minimum length among selected edges (uses .length or |vb-va|).
+ * @param {object[]|null|undefined} edges
+ * @returns {number|null}
+ */
+export function minSelectedEdgeLength(edges) {
+  if (!Array.isArray(edges) || edges.length === 0) return null;
+  let min = Infinity;
+  for (const e of edges) {
+    let L = Number(e?.length);
+    if (!(Number.isFinite(L) && L > 0) && e?.va && e?.vb) {
+      L = Math.hypot(
+        e.vb[0] - e.va[0],
+        e.vb[1] - e.va[1],
+        e.vb[2] - e.va[2],
+      );
+    }
+    if (Number.isFinite(L) && L > 0) min = Math.min(min, L);
+  }
+  return min === Infinity ? null : min;
+}
+
+/**
+ * Safe default fillet/chamfer size from min edge length.
+ * Formula: clamp(0.15·minL, min(0.5, 0.35·minL), 0.35·minL) — always ≤ 0.35·L < 0.45·L.
+ * @param {number} minEdgeLength
+ * @returns {number}
+ */
+export function defaultEdgeBlendSize(minEdgeLength) {
+  const minL = Number(minEdgeLength);
+  if (!(minL > 0)) return 3;
+  const softMax = 0.35 * minL;
+  const floor = Math.min(0.5, softMax);
+  const r = Math.min(softMax, Math.max(floor, 0.15 * minL));
+  // Param min for radius/chamfer is 0.01 — never round a tiny softMax down to 0.
+  return Math.max(0.01, Math.round(r * 100) / 100);
+}
+
+/**
+ * Slider / type hard max under the kernel size guard (0.44·minL).
+ * @param {number} minEdgeLength
+ * @returns {number}
+ */
+export function edgeBlendHardMax(minEdgeLength) {
+  const minL = Number(minEdgeLength);
+  if (!(minL > 0)) return 100;
+  return Math.round(0.44 * minL * 100) / 100;
+}
+
+/** True if blend size would fail the kernel size guard. */
+export function edgeBlendFailsSizeGuard(size, minEdgeLength) {
+  const t = Number(size);
+  const minL = Number(minEdgeLength);
+  if (!(t > 0) || !(minL > 0)) return false;
+  return t >= EDGE_BLEND_SIZE_GUARD * minL;
+}
+
+/** Pop the last selected edge (Back affordance). Returns new array. */
+export function popLastEdgeSelection(selected) {
+  const list = Array.isArray(selected) ? [...selected] : [];
+  if (list.length === 0) return list;
+  list.pop();
+  return list;
+}
+
 /** 2D distance from point (px,py) to segment (ax,ay)–(bx,by). */
 export function distPointToSegment2D(px, py, ax, ay, bx, by) {
   const abx = bx - ax;

@@ -18,6 +18,12 @@
  * facesByNormal(body, normal) + closest-to-center pick, then workplaneFromFace.
  */
 
+import {
+  minSelectedEdgeLength,
+  defaultEdgeBlendSize,
+  edgeBlendHardMax,
+} from './selectEdge.js';
+
 /** Features that place relative to a selected face when one is active. */
 export const FACE_FEATURE_IDS = new Set([
   'hole',
@@ -548,37 +554,49 @@ export function resolveFaceModal(paletteItem, selectedFace, selectedEdges = null
   const hasEdges = Array.isArray(selectedEdges) && selectedEdges.length > 0;
   const isEdgeFeature = id === 'filletEdges' || id === 'chamferEdges';
 
-  // Slice 12: fillet/chamfer with user-selected edges (no face required).
+  // Slice 12 + polish: fillet/chamfer with user-selected edges (no face required).
+  // Seed radius/chamfer from min edge length so short edges get a safe default
+  // (well under the kernel size guard t < 0.45·L), and cap the slider max.
   if (isEdgeFeature && hasEdges) {
     const body = { name: 'body', type: 'body', default: 'part', label: 'Body' };
     const edgeScope = {
       name: 'edgeScope', type: 'select', default: 'selected', label: 'Edges',
       options: ['selected', 'face', 'allConvex'],
     };
+    const minL = minSelectedEdgeLength(selectedEdges);
+    const blendDefault = minL != null ? defaultEdgeBlendSize(minL) : (id === 'filletEdges' ? 3 : 2);
+    const blendMax = minL != null ? edgeBlendHardMax(minL) : undefined;
+    const blendParam = id === 'filletEdges'
+      ? {
+          name: 'radius', type: 'number', default: blendDefault, label: 'Radius',
+          min: 0.01, step: 0.5, slider: true, ...(blendMax != null ? { max: blendMax } : {}),
+        }
+      : {
+          name: 'chamfer', type: 'number', default: blendDefault, label: 'Chamfer',
+          min: 0.01, step: 0.5, slider: true, ...(blendMax != null ? { max: blendMax } : {}),
+        };
     let params;
     if (id === 'filletEdges') {
       params = [
         body,
-        { name: 'radius', type: 'number', default: 3, label: 'Radius', min: 0.01, step: 0.5, slider: true },
+        blendParam,
         { name: 'sphericalCorners', type: 'bool', default: true, label: 'Spherical corners' },
         edgeScope,
       ];
     } else {
-      params = [
-        body,
-        { name: 'chamfer', type: 'number', default: 2, label: 'Chamfer', min: 0.01, step: 0.5, slider: true },
-        edgeScope,
-      ];
+      params = [body, blendParam, edgeScope];
     }
     return {
       mode: 'params',
       face: selectedFace ? classifySelectedFace(selectedFace) : null,
       edges: selectedEdges,
+      minEdgeLength: minL,
       item: {
         ...paletteItem,
         params,
         title: `${paletteItem.title} — ${selectedEdges.length} edge${selectedEdges.length === 1 ? '' : 's'}`,
         _edgePlacement: true,
+        _minEdgeLength: minL,
       },
     };
   }
@@ -604,16 +622,27 @@ export function resolveFaceModal(paletteItem, selectedFace, selectedEdges = null
   const params = faceAwareParams(id, face.type);
   if (!params) return { mode: 'default' };
   const seeds = seedFaceParams(id, face);
+  const minL = hasEdges && isEdgeFeature ? minSelectedEdgeLength(selectedEdges) : null;
+  const blendDefault = minL != null ? defaultEdgeBlendSize(minL) : null;
+  const blendMax = minL != null ? edgeBlendHardMax(minL) : null;
   // Prefer selected edges when both face + edges present for fillet/chamfer.
   const mergedParams = params.map((p) => {
     let def = seeds[p.name] !== undefined ? seeds[p.name] : p.default;
     if (p.name === 'edgeScope' && hasEdges) def = 'selected';
-    return def !== p.default ? { ...p, default: def } : (seeds[p.name] !== undefined ? { ...p, default: seeds[p.name] } : p);
+    if (blendDefault != null && (p.name === 'radius' || p.name === 'chamfer')) def = blendDefault;
+    let next = p;
+    if (def !== p.default) next = { ...next, default: def };
+    else if (seeds[p.name] !== undefined) next = { ...next, default: seeds[p.name] };
+    if (blendMax != null && (p.name === 'radius' || p.name === 'chamfer')) {
+      next = { ...next, max: blendMax, slider: true };
+    }
+    return next;
   });
   return {
     mode: 'params',
     face,
     edges: hasEdges ? selectedEdges : null,
+    minEdgeLength: minL,
     item: {
       ...paletteItem,
       params: mergedParams,
@@ -622,6 +651,7 @@ export function resolveFaceModal(paletteItem, selectedFace, selectedEdges = null
         : `${paletteItem.title} — on ${face.type} face`,
       _facePlacement: true,
       _edgePlacement: hasEdges && isEdgeFeature,
+      _minEdgeLength: minL,
     },
   };
 }
