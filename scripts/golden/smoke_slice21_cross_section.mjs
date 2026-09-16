@@ -45,6 +45,12 @@ function check(name, cond, detail = '') {
   }
 }
 
+function expectThrow(label, fn, re) {
+  let ok = false;
+  try { fn(); } catch (e) { ok = re.test((e && e.message) || ''); }
+  check(label, ok);
+}
+
 console.log('slice-21 cross-section substrate smoke');
 
 const planarFace = {
@@ -98,11 +104,44 @@ const irregularFace = {
 }
 
 // ── Plane frame ────────────────────────────────────────────────
+// Mirrors sandboxWorker workplaneFromFace mapping table (±X/±Y/±Z):
+//   +Z → u→+X,v→+Y ; -Z → u→+X,v→-Y ; +X → u→+Y,v→+Z ;
+//   -X → u→+Y,v→-Z ; +Y → u→+X,v→-Z ; -Y → u→+X,v→+Z.
 {
+  const near = (a, b, eps = 1e-9) =>
+    Math.abs(a[0] - b[0]) < eps && Math.abs(a[1] - b[1]) < eps && Math.abs(a[2] - b[2]) < eps;
+  const frameFor = (normal) =>
+    planeFrameFromFaceData({ center: [0, 0, 0], normal, type: 'planar' });
+
+  const table = [
+    { label: '+Z', n: [0, 0, 1], x: [1, 0, 0], y: [0, 1, 0] },
+    { label: '-Z', n: [0, 0, -1], x: [1, 0, 0], y: [0, -1, 0] },
+    { label: '+X', n: [1, 0, 0], x: [0, 1, 0], y: [0, 0, 1] },
+    { label: '-X', n: [-1, 0, 0], x: [0, 1, 0], y: [0, 0, -1] },
+    { label: '+Y', n: [0, 1, 0], x: [1, 0, 0], y: [0, 0, -1] },
+    { label: '-Y', n: [0, -1, 0], x: [1, 0, 0], y: [0, 0, 1] },
+  ];
+  for (const row of table) {
+    const fr = frameFor(row.n);
+    check(`${row.label} face normal`, near(fr.normal, row.n));
+    check(`${row.label} face x`, near(fr.x, row.x));
+    check(`${row.label} face y`, near(fr.y, row.y));
+  }
+
+  // Keep the classifySelectedFace path for the original +Z planar fixture.
   const fr = planeFrameFromFaceData(classifySelectedFace(planarFace));
-  check('+Z face normal', Math.abs(fr.normal[2] - 1) < 1e-9);
-  check('+Z face x → +X', Math.abs(fr.x[0] - 1) < 1e-9 && Math.abs(fr.x[1]) < 1e-9);
-  check('+Z face y → +Y', Math.abs(fr.y[1] - 1) < 1e-9 && Math.abs(fr.y[0]) < 1e-9);
+  check('+Z face (classified) x → +X', Math.abs(fr.x[0] - 1) < 1e-9 && Math.abs(fr.x[1]) < 1e-9);
+  check('+Z face (classified) y → +Y', Math.abs(fr.y[1] - 1) < 1e-9 && Math.abs(fr.y[0]) < 1e-9);
+
+  // Diagonal (best = 1/√3 ≤ 0.9): axis-min picks +X first; x is NOT projected
+  // onto the plane (worker mirror). y = normalize(n × x) is ⟂ n.
+  const diag = frameFor([1, 1, 1]);
+  const dLen = (v) => Math.hypot(v[0], v[1], v[2]);
+  const dDot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  check('diagonal x → +X (axis-min)', near(diag.x, [1, 0, 0]));
+  check('diagonal |y|=1', Math.abs(dLen(diag.y) - 1) < 1e-9);
+  check('diagonal y ⟂ n', Math.abs(dDot(diag.y, diag.normal)) < 1e-9);
+
   const top = defaultTopPlaneFrame();
   check('default top plane +Z', top.normal[2] === 1);
 }
@@ -124,9 +163,22 @@ const irregularFace = {
   check('quarter-circle closed', qc[0].length >= 4);
   check('quarter-circle area > 0', contourArea2D(qc[0]) > 0);
 
-  let threw = false;
-  try { normalizeClosedPolyline([[0, 0], [1, 0]]); } catch { threw = true; }
-  check('2-point polygon throws', threw);
+  // Message-shape coverage for normalizeClosedPolyline throw branches.
+  expectThrow('2-point → /polyline/', () => normalizeClosedPolyline([[0, 0], [1, 0]]), /polyline/);
+  expectThrow('NaN coords → /finite/', () => normalizeClosedPolyline([[NaN, 0], [1, 0], [0, 1]]), /finite/);
+  // [[0,0],[1,0],[0,0]]: length===3 so drop-close (gated on length>3) never runs;
+  // area is zero → degenerate. The /distinct/ branch after a single pop is
+  // unreachable today (pop only when length>3 ⇒ remainder ≥3).
+  expectThrow(
+    'closed-collinear-3 → /degenerate|zero area/ (not distinct)',
+    () => normalizeClosedPolyline([[0, 0], [1, 0], [0, 0]]),
+    /zero area|degenerate/,
+  );
+  expectThrow(
+    'collinear ≥3 → /zero area|degenerate/',
+    () => normalizeClosedPolyline([[0, 0], [1, 0], [2, 0]]),
+    /zero area|degenerate/,
+  );
 
   const built = buildProfileFromParams({ profileType: 'circle', radius: 4, segments: 16 });
   check('buildProfileFromParams circle', built.profile.type === 'circle' && built.contours[0].length === 16);
