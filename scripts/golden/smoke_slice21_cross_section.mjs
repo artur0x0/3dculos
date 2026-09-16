@@ -166,13 +166,11 @@ const irregularFace = {
   // Message-shape coverage for normalizeClosedPolyline throw branches.
   expectThrow('2-point → /polyline/', () => normalizeClosedPolyline([[0, 0], [1, 0]]), /polyline/);
   expectThrow('NaN coords → /finite/', () => normalizeClosedPolyline([[NaN, 0], [1, 0], [0, 1]]), /finite/);
-  // [[0,0],[1,0],[0,0]]: length===3 so drop-close (gated on length>3) never runs;
-  // area is zero → degenerate. The /distinct/ branch after a single pop is
-  // unreachable today (pop only when length>3 ⇒ remainder ≥3).
+  // [[0,0],[1,0],[0,0]]: drop-close (length>=3) pops → 2 pts → /distinct/.
   expectThrow(
-    'closed-collinear-3 → /degenerate|zero area/ (not distinct)',
+    'closed digon → /distinct/',
     () => normalizeClosedPolyline([[0, 0], [1, 0], [0, 0]]),
-    /zero area|degenerate/,
+    /distinct/,
   );
   expectThrow(
     'collinear ≥3 → /zero area|degenerate/',

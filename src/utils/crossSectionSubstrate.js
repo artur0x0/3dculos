@@ -122,7 +122,8 @@ export function normalizeClosedPolyline(points) {
   }
   const f = p[0];
   const l = p[p.length - 1];
-  if (p.length > 3 && Math.hypot(f[0] - l[0], f[1] - l[1]) < 1e-9) p.pop();
+  // Drop explicit close (incl. digon length===3) so distinct-points check can fire.
+  if (p.length >= 3 && Math.hypot(f[0] - l[0], f[1] - l[1]) < 1e-9) p.pop();
   if (p.length < 3) {
     throw new Error('profilePolygon: need ≥ 3 distinct points');
   }
