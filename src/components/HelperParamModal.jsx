@@ -9,7 +9,7 @@ import {
 } from '../utils/selectEdge';
 
 /**
- * Slice 10/11/12 — param popup for guided helper insert.
+ * Slice 10/11/12/21 — param popup for guided helper insert.
  * Slice 11: optional face banner, sliders for continuous numbers, refuse mode.
  * Slice 12: edge banner; hide U/V when Placement=center.
  * Confirm → parent builds/inserts; Cancel → no-op.
@@ -22,6 +22,7 @@ const HelperParamModal = ({
   faceInfo = null,
   edgeInfo = null,
   refuseMessage = null,
+  onValuesChange = null,
 }) => {
   const params = item?.params || [];
   const bodies = useMemo(() => listBodyNames(buffer), [buffer]);
@@ -43,6 +44,13 @@ const HelperParamModal = ({
   useEffect(() => {
     setValues(initial);
   }, [initial]);
+
+  // Slice 21: live param preview (cross-section profile on plane).
+  useEffect(() => {
+    if (typeof onValuesChange === 'function' && item) {
+      onValuesChange(values, item);
+    }
+  }, [values, item, onValuesChange]);
 
   const minEdgeLength = useMemo(
     () => (item?._minEdgeLength != null ? item._minEdgeLength : minSelectedEdgeLength(edgeInfo)),
@@ -153,6 +161,7 @@ const HelperParamModal = ({
   const showDepth = values.through === false || values.through === 'false';
   const showPattern = !!values.usePattern;
   const placementCenter = !values.placement || values.placement === 'center';
+  const profileType = values.profileType || 'circle';
   const visibleParams = params.filter((p) => {
     if (p.name === 'depth' && !showDepth) return false;
     if (['n', 'm', 'spacingU', 'spacingV'].includes(p.name) && params.some((x) => x.name === 'usePattern') && !showPattern) {
@@ -161,6 +170,16 @@ const HelperParamModal = ({
     // Center placement → hide custom U/V (still emitted as 0,0).
     if ((p.name === 'u' || p.name === 'v') && params.some((x) => x.name === 'placement') && placementCenter) {
       return false;
+    }
+    // Slice 21: show only params relevant to the selected profile type.
+    if (params.some((x) => x.name === 'profileType')) {
+      if (profileType === 'circle') {
+        if (['width', 'height', 'centered', 'polygonPreset'].includes(p.name)) return false;
+      } else if (profileType === 'rectangle') {
+        if (['radius', 'segments', 'polygonPreset'].includes(p.name)) return false;
+      } else if (profileType === 'polygon') {
+        if (['width', 'height', 'centered', 'segments'].includes(p.name)) return false;
+      }
     }
     return true;
   });

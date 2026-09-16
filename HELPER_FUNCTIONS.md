@@ -19,6 +19,7 @@ comparable and train-able.
 | `convexEdges` / `facesByNormal` / `workplaneFromFace` / `planarFaceAt` / `edgesByOrientation` | Selection |
 | `shell`, `addDraft`, `tube`, `hexPrism`, `roundedBox`, `mirror`, `array3D`, `polarArray`, `center`, `align` | Solids / layout |
 | `loft`, `sweep`, `sweepPoints`, `makeExtrude`, `makeRevolve` | Profiles / paths |
+| `profileCircle` / `profileRectangle` / `profilePolygon` / `makeCrossSection` | Cross-section substrate (Slice 21) |
 
 **Loud failure rule:** feature helpers throw named `Error`s on bad inputs,
 degenerate cutters, non-manifold / empty results, or (for `filletEdges`) when
@@ -58,6 +59,12 @@ all convex edges.
 
 Without a selected face, palette v2 behavior is unchanged (default +Z
 `topFace` workplane / body selector).
+
+**Cross-section (Slice 21):** palette **Profile** builds a reusable
+`makeCrossSection(plane, profile)` named let from a **planar** face
+(single-click). Cylindrical / irregular faces are refused. Viewport draws
+the profile outline on the plane while editing params. Does **not**
+extrude, sweep, or fillet — substrate only.
 
 ## Core Manifold API
 
@@ -725,6 +732,87 @@ box edges (pair + triple corner overlaps), an obtuse wedge (90°/116°/153°
 corners), and mixed per-edge radii — see `cadgen-workspace/reports/c6-report.md`.
 
 ---
+
+
+---
+
+## Cross-section substrate (Slice 21)
+
+Reusable **plane + 2D profile** value for later edge→sweep path,
+fillet-via-sweep, then extrude/revolve/loft siblings. This slice ships the
+substrate only — those followers are **not** started here.
+
+Plane comes from `workplaneFromFace` (primary mobile path: selected planar
+face). Profile is a light 2D shape in plane UV. The returned value is a plain
+object (no class inheritance):
+
+```javascript
+{
+  kind: 'crossSection',
+  plane: { center, normal, x, y },  // workplaneFromFace frame
+  profile: { type: 'circle'|'rectangle'|'polygon', ... },
+  contours: [ [[u,v], ...] ],       // ready for makeExtrude / sweep later
+}
+```
+
+### profileCircle(radius, segments = 32)
+
+Circle centered at UV origin.
+
+```javascript
+const p = profileCircle(5, 32);
+```
+
+### profileRectangle(width, height, centered = true)
+
+Axis-aligned rectangle in UV.
+
+```javascript
+const p = profileRectangle(20, 12, true);
+```
+
+### profilePolygon(points)
+
+Simple closed polyline / polygon (≥ 3 `[u,v]` points; explicit close optional;
+winding normalized CCW). Enough for a quarter-circle fillet profile:
+
+```javascript
+const r = 3;
+const filletProf = profilePolygon([
+  [0, 0], [r, 0],
+  [r * Math.cos(Math.PI / 4), r * Math.sin(Math.PI / 4)],
+  [0, r],
+]);
+```
+
+### makeCrossSection(plane, profile)
+
+```javascript
+let part = Manifold.cube([40, 30, 20], true);
+const topFace = facesByNormal(part, [0, 0, 1])[0];
+const fr = workplaneFromFace(part, topFace);
+const xs = makeCrossSection(fr, profileCircle(5, 32));
+// xs.plane / xs.profile / xs.contours — consume in later slices
+return part;
+```
+
+**Parameters:**
+- `plane` — frame from `workplaneFromFace` (`center`, `normal`, `x`, `y`)
+- `profile` — `profileCircle` / `profileRectangle` / `profilePolygon` result,
+  a `{ type, ... }` descriptor, or a contours / point list (same rules as
+  `makeExtrude`)
+
+**Returns:** `{ kind:'crossSection', plane, profile, contours }`
+
+**Loud failures:** missing plane axes; non-positive sizes; < 3 polygon points;
+degenerate (zero-area) profile.
+
+**UI:** FEAT rail → **Profile** → param popup (circle / rectangle / polygon
+presets including quarter-circle). Face select feeds the plane; Auto-Run
+unchanged. Preview overlays the profile on the plane while editing.
+
+**Non-goals (wait for Product brief):** edge→sweep path; fillet-via-sweep;
+extrude/revolve/loft from this value; full sketch editor.
 
 ## Revolve & Extrude Helpers (C8)
 

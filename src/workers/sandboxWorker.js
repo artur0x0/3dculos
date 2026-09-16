@@ -2475,6 +2475,128 @@ function makeExtrude(contours, height) {
   return _c8CheckValid(cs.extrude(height), 'makeExtrude');
 }
 
+
+// ---------------------------------------------------------------- Slice 21 cross-section substrate
+// Reusable plane + 2D profile value for later edge→sweep / fillet-via-sweep /
+// extrude-revolve-loft siblings. Plain object (no class inheritance).
+// Contours are in plane UV; plane is a workplaneFromFace frame.
+function _xsRequirePlane(plane, what) {
+  if (!plane || !plane.center || !plane.normal || !plane.x || !plane.y) {
+    throw new Error(`${what}: plane must come from workplaneFromFace (needs center/normal/x/y)`);
+  }
+}
+function _xsContourArea(pts) {
+  let s = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i], b = pts[(i + 1) % pts.length];
+    s += a[0] * b[1] - b[0] * a[1];
+  }
+  return s / 2;
+}
+function _xsNormalizeLoop(points, what) {
+  if (!Array.isArray(points) || points.length < 3)
+    throw new Error(`${what}: need ≥ 3 points for a closed polyline`);
+  const p = points.map(v => [Number(v[0]), Number(v[1])]);
+  if (p.some(v => !Number.isFinite(v[0]) || !Number.isFinite(v[1])))
+    throw new Error(`${what}: points must be finite [u,v]`);
+  const f = p[0], l = p[p.length - 1];
+  if (p.length > 3 && Math.hypot(f[0] - l[0], f[1] - l[1]) < 1e-9) p.pop();
+  if (p.length < 3) throw new Error(`${what}: need ≥ 3 distinct points`);
+  if (Math.abs(_xsContourArea(p)) < 1e-12)
+    throw new Error(`${what}: degenerate profile (zero area)`);
+  if (_xsContourArea(p) < 0) p.reverse();
+  return p;
+}
+/**
+ * profileCircle(radius, segments=32) → { type:'circle', radius, segments, contours }
+ * Contours centered at UV origin — enough for basic extrude / future fillet.
+ */
+function profileCircle(radius, segments = 32) {
+  _c4RequirePositive('profileCircle', 'radius', radius);
+  const seg = Math.max(3, Math.round(segments || 32));
+  const pts = [];
+  for (let i = 0; i < seg; i++) {
+    const t = (i / seg) * Math.PI * 2;
+    pts.push([radius * Math.cos(t), radius * Math.sin(t)]);
+  }
+  return { type: 'circle', radius, segments: seg, contours: [pts] };
+}
+/**
+ * profileRectangle(width, height, centered=true) → rectangle profile in UV.
+ */
+function profileRectangle(width, height, centered = true) {
+  _c4RequirePositive('profileRectangle', 'width', width);
+  _c4RequirePositive('profileRectangle', 'height', height);
+  let pts;
+  if (centered) {
+    const hw = width / 2, hh = height / 2;
+    pts = [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]];
+  } else {
+    pts = [[0, 0], [width, 0], [width, height], [0, height]];
+  }
+  return { type: 'rectangle', width, height, centered: !!centered, contours: [pts] };
+}
+/**
+ * profilePolygon(points) → closed polyline/polygon profile in UV.
+ * Accepts ≥3 [u,v] points (explicit close optional). Winding normalized CCW.
+ */
+function profilePolygon(points) {
+  const pts = _xsNormalizeLoop(points, 'profilePolygon');
+  return { type: 'polygon', points: pts, contours: [pts] };
+}
+/**
+ * makeCrossSection(plane, profile) → reusable { kind, plane, profile, contours }.
+ * plane: workplaneFromFace frame. profile: profileCircle/Rectangle/Polygon result,
+ * or { type, ... }, or bare contours / point list (same rules as makeExtrude).
+ * Does NOT extrude/sweep — substrate only for later slices.
+ */
+function makeCrossSection(plane, profile) {
+  _xsRequirePlane(plane, 'makeCrossSection');
+  let desc;
+  let contours;
+  if (profile && typeof profile === 'object' && profile.type && Array.isArray(profile.contours)) {
+    desc = { type: profile.type };
+    for (const k of Object.keys(profile)) {
+      if (k === 'contours') continue;
+      desc[k] = profile[k];
+    }
+    contours = profile.contours.map(loop => _xsNormalizeLoop(loop, 'makeCrossSection'));
+  } else if (profile && typeof profile === 'object' && profile.type === 'circle') {
+    const built = profileCircle(profile.radius, profile.segments);
+    desc = { type: 'circle', radius: built.radius, segments: built.segments };
+    contours = built.contours;
+  } else if (profile && typeof profile === 'object' && profile.type === 'rectangle') {
+    const built = profileRectangle(profile.width, profile.height, profile.centered !== false);
+    desc = { type: 'rectangle', width: built.width, height: built.height, centered: built.centered };
+    contours = built.contours;
+  } else if (profile && typeof profile === 'object' && profile.type === 'polygon' && profile.points) {
+    const built = profilePolygon(profile.points);
+    desc = { type: 'polygon', points: built.points };
+    contours = built.contours;
+  } else if (Array.isArray(profile)) {
+    // bare point list or contours array — reuse C8 normalizer shape rules
+    const cleaned = _c8NormalizeContours(profile);
+    contours = cleaned;
+    desc = { type: 'polygon', points: cleaned[0] };
+  } else {
+    throw new Error(
+      'makeCrossSection: profile must be profileCircle/profileRectangle/profilePolygon, '
+      + 'a { type } descriptor, or a contours / point list'
+    );
+  }
+  return {
+    kind: 'crossSection',
+    plane: {
+      center: plane.center.slice(),
+      normal: plane.normal.slice(),
+      x: plane.x.slice(),
+      y: plane.y.slice(),
+    },
+    profile: desc,
+    contours,
+  };
+}
+
 // Collection of all helper functions to inject
 const HELPER_FUNCTIONS = {
   shell,
@@ -2529,6 +2651,11 @@ const HELPER_FUNCTIONS = {
   // C8 revolve/extrude with safe winding (see block above)
   makeRevolve,
   makeExtrude,
+  // Slice 21 cross-section substrate (plane + 2D profile)
+  profileCircle,
+  profileRectangle,
+  profilePolygon,
+  makeCrossSection,
 };
 
 // ============================================================================

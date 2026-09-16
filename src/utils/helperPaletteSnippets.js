@@ -8,6 +8,7 @@
  *
  * Slice 11/12: optional faceContext / edgeContext (from Viewport selectedFace) → face-aware
  * workplane via facesByNormal + closest center (never bare `top`).
+ * Slice 21: crossSection plane+profile substrate (planar face → makeCrossSection).
  *
  * Sequential taps compose via composeHelperInsert:
  * strip one trailing `return part;`, insert body, re-append exactly one `return part;`.
@@ -698,6 +699,81 @@ export const HELPER_PALETTE_ITEMS = [
       }
       lines.push(`${body} = chamferEdges(${body}, ${edgesExpr}, ${c});`);
       lines.push(...syncPartLines(body, names, hasPartDecl(lines, empty)));
+      return withReturn(lines, empty);
+    },
+  },
+
+  {
+    id: 'crossSection',
+    label: 'Profile',
+    group: 'Features',
+    title: 'makeCrossSection(plane, profile) — reusable plane + 2D profile',
+    params: [
+      { name: 'body', type: 'body', default: 'part', label: 'Body' },
+      {
+        name: 'profileType', type: 'select', default: 'circle', label: 'Profile',
+        options: ['circle', 'rectangle', 'polygon'],
+      },
+      { name: 'radius', type: 'number', default: 5, label: 'Radius', min: 0.1, step: 0.5, slider: true },
+      { name: 'segments', type: 'number', default: 32, label: 'Segments', min: 3, step: 1 },
+      { name: 'width', type: 'number', default: 20, label: 'Width', min: 0.1, step: 1, slider: true },
+      { name: 'height', type: 'number', default: 12, label: 'Height', min: 0.1, step: 1, slider: true },
+      { name: 'centered', type: 'bool', default: true, label: 'Centered' },
+      {
+        name: 'polygonPreset', type: 'select', default: 'hexagon', label: 'Polygon',
+        options: ['triangle', 'square', 'pentagon', 'hexagon', 'quarterCircle'],
+      },
+    ],
+    build: (empty, p, names, buffer, faceCtx = null) => {
+      const lines = [...ensurePartPrefix(empty, names)];
+      const body = resolveBody(p, names, empty ? lines.join('\n') : buffer);
+      // Planar face → selected workplane; else default +Z top face.
+      const planarCtx = faceCtx && faceCtx.type === 'planar' ? faceCtx : null;
+      const wp = planarCtx
+        ? emitFaceWorkplaneLines(body, planarCtx, names, allocateUniqueName)
+        : emitDefaultTopWorkplane(body, names);
+      lines.push(...wp.lines);
+      const fr = wp.frVar;
+      const xs = allocateUniqueName(names, 'xs');
+      const type = str(p.profileType, 'circle');
+      let profileExpr;
+      if (type === 'rectangle') {
+        const w = num(p.width, 20);
+        const h = num(p.height, 12);
+        const c = bool(p.centered, true);
+        profileExpr = `profileRectangle(${w}, ${h}, ${c})`;
+      } else if (type === 'polygon') {
+        const preset = str(p.polygonPreset, 'hexagon');
+        const r = num(p.radius, 8);
+        if (preset === 'quarterCircle') {
+          // First-quadrant fillet-style closed polyline (origin→(r,0)→arc→(0,r)).
+          const seg = 8;
+          const pts = ['[0, 0]', `[${r}, 0]`];
+          for (let i = 1; i <= seg; i++) {
+            const t = (i / seg) * (Math.PI / 2);
+            const u = +(r * Math.cos(t)).toFixed(4);
+            const v = +(r * Math.sin(t)).toFixed(4);
+            pts.push(`[${u}, ${v}]`);
+          }
+          profileExpr = `profilePolygon([${pts.join(', ')}])`;
+        } else {
+          const sides = preset === 'triangle' ? 3 : preset === 'square' ? 4 : preset === 'pentagon' ? 5 : 6;
+          const pts = [];
+          for (let i = 0; i < sides; i++) {
+            const t = (i / sides) * Math.PI * 2 - Math.PI / 2;
+            const u = +(r * Math.cos(t)).toFixed(4);
+            const v = +(r * Math.sin(t)).toFixed(4);
+            pts.push(`[${u}, ${v}]`);
+          }
+          profileExpr = `profilePolygon([${pts.join(', ')}])`;
+        }
+      } else {
+        const r = num(p.radius, 5);
+        const seg = Math.max(3, Math.round(num(p.segments, 32)));
+        profileExpr = `profileCircle(${r}, ${seg})`;
+      }
+      // Substrate only — named let for later edge→sweep / fillet / extrude slices.
+      lines.push(`const ${xs} = makeCrossSection(${fr}, ${profileExpr}); // plane+profile substrate`);
       return withReturn(lines, empty);
     },
   },
