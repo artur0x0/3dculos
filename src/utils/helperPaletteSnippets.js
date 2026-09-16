@@ -156,18 +156,57 @@ export function listBodyNames(buffer) {
 }
 
 /**
- * Drop starter / const lines whose binding already exists in the buffer
- * (and within earlier lines of the same snippet).
+ * Drop top-level starter / const lines whose binding already exists in the buffer
+ * (and within earlier top-level lines of the same snippet).
+ *
+ * Only depth-0 declarations are filtered. Nested `const` inside an IIFE is a
+ * new block scope and must be kept — stripping mid-block lines (e.g. the opener
+ * of `const _hit = _all.filter((e) => {`) previously left orphan `});` / `}})();`
+ * and caused Monaco Parser errors on the second fillet/hole insert.
+ *
+ * When skipping a top-level decl that opens a block, consume through the matching
+ * close so we never leave a half-IIFE behind.
  */
 function filterRedeclarations(snippetText, bufferText) {
   const existing = declaredNames(bufferText);
   const out = [];
-  for (const line of String(snippetText || '').split('\n')) {
+  const lines = String(snippetText || '').split('\n');
+  let depth = 0;
+  let i = 0;
+
+  const braceDelta = (line) => {
+    let d = 0;
+    for (let k = 0; k < line.length; k++) {
+      const ch = line[k];
+      if (ch === '{') d += 1;
+      else if (ch === '}') d -= 1;
+    }
+    return d;
+  };
+
+  while (i < lines.length) {
+    const line = lines[i];
     const m = /^\s*(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=/.exec(line);
-    if (m && existing.has(m[1])) continue;
+    const atTop = depth === 0;
+
+    if (atTop && m && existing.has(m[1])) {
+      // Skip whole declaration (including multi-line IIFE / .filter bodies).
+      let skipDepth = braceDelta(line);
+      i += 1;
+      while (skipDepth > 0 && i < lines.length) {
+        skipDepth += braceDelta(lines[i]);
+        i += 1;
+      }
+      continue;
+    }
+
     if (m) existing.add(m[1]);
     out.push(line);
+    depth += braceDelta(line);
+    if (depth < 0) depth = 0;
+    i += 1;
   }
+
   while (out.length && !out[0].trim()) out.shift();
   while (out.length && !out[out.length - 1].trim()) out.pop();
   return out.join('\n');
@@ -612,12 +651,10 @@ export const HELPER_PALETTE_ITEMS = [
       const scope = p.edgeScope || (edgeCtx && edgeCtx.length ? 'selected' : (faceCtx ? 'face' : 'allConvex'));
       if (scope === 'selected' || (edgeCtx && edgeCtx.length && scope !== 'face' && scope !== 'allConvex')) {
         const edge = emitSelectedEdgeLines(body, edgeCtx || [], names, allocateUniqueName);
-        if (!edge.ok) {
-          lines.push(`throw new Error(${JSON.stringify(edge.message)});`);
-        } else {
-          lines.push(...edge.lines);
-          edgesExpr = edge.edgesExpr;
-        }
+        // Soft-fail: never write throw/partial JS — caller clears stale selection.
+        if (!edge.ok) return null;
+        lines.push(...edge.lines);
+        edgesExpr = edge.edgesExpr;
       } else if (faceCtx && faceCtx.type !== 'irregular' && scope !== 'allConvex') {
         const edge = emitFaceEdgeLines(body, faceCtx, { ...p, edgeScope: 'face' }, names, allocateUniqueName);
         lines.push(...edge.lines);
@@ -649,12 +686,9 @@ export const HELPER_PALETTE_ITEMS = [
       const scope = p.edgeScope || (edgeCtx && edgeCtx.length ? 'selected' : (faceCtx ? 'face' : 'allConvex'));
       if (scope === 'selected' || (edgeCtx && edgeCtx.length && scope !== 'face' && scope !== 'allConvex')) {
         const edge = emitSelectedEdgeLines(body, edgeCtx || [], names, allocateUniqueName);
-        if (!edge.ok) {
-          lines.push(`throw new Error(${JSON.stringify(edge.message)});`);
-        } else {
-          lines.push(...edge.lines);
-          edgesExpr = edge.edgesExpr;
-        }
+        if (!edge.ok) return null;
+        lines.push(...edge.lines);
+        edgesExpr = edge.edgesExpr;
       } else if (faceCtx && faceCtx.type !== 'irregular' && scope !== 'allConvex') {
         const edge = emitFaceEdgeLines(body, faceCtx, { ...p, edgeScope: 'face' }, names, allocateUniqueName);
         lines.push(...edge.lines);
