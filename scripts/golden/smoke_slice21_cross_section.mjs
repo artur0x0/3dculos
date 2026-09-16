@@ -133,14 +133,36 @@ const irregularFace = {
   check('+Z face (classified) x → +X', Math.abs(fr.x[0] - 1) < 1e-9 && Math.abs(fr.x[1]) < 1e-9);
   check('+Z face (classified) y → +Y', Math.abs(fr.y[1] - 1) < 1e-9 && Math.abs(fr.y[0]) < 1e-9);
 
-  // Diagonal (best = 1/√3 ≤ 0.9): axis-min picks +X first; x is NOT projected
-  // onto the plane (worker mirror). y = normalize(n × x) is ⟂ n.
-  const diag = frameFor([1, 1, 1]);
+  // Diagonal fallback (best > 0.9): when no world axis is sufficiently in-plane,
+  // planeFrameFromFaceData projects the first usable vert onto the plane
+  // (sandboxWorker.js:1368-1372 mirror). For unit n≈[1,1,1]/√3, best=1/√3 < 0.9
+  // so axis-min still wins (x=+X, not projected onto plane — x·n may be ≠0);
+  // verts are ignored. Frame must stay finite with unit x,y and y ⟂ n,x.
   const dLen = (v) => Math.hypot(v[0], v[1], v[2]);
   const dDot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-  check('diagonal x → +X (axis-min)', near(diag.x, [1, 0, 0]));
-  check('diagonal |y|=1', Math.abs(dLen(diag.y) - 1) < 1e-9);
+  const inv = 1 / Math.sqrt(3);
+  const diagVerts = [
+    [0, 0, 0],
+    [0, 1, -1], // in plane of [1,1,1]
+    [0, -1, 1],
+  ];
+  const diag = planeFrameFromFaceData({
+    center: [0, 0, 0],
+    normal: [inv, inv, inv],
+    type: 'planar',
+    verts: diagVerts,
+  });
+  check('diagonal |n|=1', Math.abs(dLen(diag.normal) - 1) < 1e-9);
+  check('diagonal finite frame',
+    diag.x.every((c) => Number.isFinite(c)) && diag.y.every((c) => Number.isFinite(c))
+    && Math.abs(dLen(diag.x) - 1) < 1e-9
+    && Math.abs(dLen(diag.y) - 1) < 1e-9
+    && Math.abs(dDot(diag.y, diag.normal)) < 1e-9
+    && Math.abs(dDot(diag.x, diag.y)) < 1e-9);
+  check('diagonal x → +X (axis-min, best<0.9)', near(diag.x, [1, 0, 0]));
   check('diagonal y ⟂ n', Math.abs(dDot(diag.y, diag.normal)) < 1e-9);
+  const diagNoVerts = frameFor([1, 1, 1]);
+  check('diagonal+verts ≡ axis-min (verts ignored)', near(diag.x, diagNoVerts.x) && near(diag.y, diagNoVerts.y));
 
   const top = defaultTopPlaneFrame();
   check('default top plane +Z', top.normal[2] === 1);
