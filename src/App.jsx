@@ -722,12 +722,12 @@ const App = () => {
       }, 0);
       return;
     }
-    // Soft-fail: compose refused (e.g. selected-edge fillet with empty edges) — clear
-    // stale chip and prompt re-pick without writing any JS.
+    // Soft-fail: empty selected-edge fillet/chamfer — clear stale chip and toast
+    // without writing any JS. Face-scope / compose-null failures stay quiet.
     const isEdgeFeature = helperId === 'filletEdges' || helperId === 'chamferEdges';
     const scope = params?.edgeScope
       || (edgeContext && edgeContext.length ? 'selected' : null);
-    if (isEdgeFeature && (scope === 'selected' || !(edgeContext && edgeContext.length))) {
+    if (isEdgeFeature && scope === 'selected' && !(edgeContext && edgeContext.length)) {
       viewportRef.current?.softFailStaleEdges?.(
         'No edges selected — re-pick after geometry changes, then Fillet/Chamfer.',
       );
