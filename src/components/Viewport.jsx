@@ -434,6 +434,9 @@ const Viewport = forwardRef(({
     xsPreviewRef.current = group;
   }, [clearXsPreview]);
 
+  // Dispose cross-section preview on unmount (route change / modal still open).
+  useEffect(() => () => clearXsPreview(), [clearXsPreview]);
+
   const highlightSelectedEdges = useCallback((edges) => {
     clearEdgeHighlight();
     edgeHighlightRef.current = paintEdgeLines(edges, {
