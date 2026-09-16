@@ -10,7 +10,7 @@ const DEFAULT_FEATURE_DEG = 2;
 
 /**
  * Build feature edges from a BufferGeometry (indexed).
- * @returns {{ key: string, a: number, b: number, va: number[], vb: number[], mid: number[], length: number, tangent: number[] }[]}
+ * @returns {{ key: string, a: number, b: number, va: number[], vb: number[], mid: number[], length: number, tangent: number[], n0: number[], n1: number[] }[]}
  */
 export function buildFeatureEdges(geometry, minAngleDeg = DEFAULT_FEATURE_DEG) {
   if (!geometry?.index || !geometry.attributes?.position) return [];
@@ -64,6 +64,8 @@ export function buildFeatureEdges(geometry, minAngleDeg = DEFAULT_FEATURE_DEG) {
       mid: [mid.x, mid.y, mid.z],
       length,
       tangent: [tangent.x, tangent.y, tangent.z],
+      n0: [n0.x, n0.y, n0.z],
+      n1: [n1.x, n1.y, n1.z],
     });
   }
   return out;
@@ -283,6 +285,23 @@ export function projectWorldToCanvas(camera, world, canvasW, canvasH, tmp = null
   };
 }
 
+
+/**
+ * True when no adjacent face normal points toward the camera (back / through
+ * solid). Silhouette edges typically have one camera-facing normal — false.
+ * Missing normals: treat as facing away so distance-only rejection still works.
+ */
+export function edgeFacesAwayFromCamera(e, camPos) {
+  if (!e?.mid || !camPos) return true;
+  const mid = e.mid;
+  const vx = camPos[0] - mid[0];
+  const vy = camPos[1] - mid[1];
+  const vz = camPos[2] - mid[2];
+  const toward = (n) => n && (n[0] * vx + n[1] * vy + n[2] * vz) > 0;
+  if (!e.n0 && !e.n1) return true;
+  return !(toward(e.n0) || toward(e.n1));
+}
+
 /**
  * Screen-space edge pick: nearest feature edge by 2D pixel distance to the
  * projected segment. Does NOT require a mesh face hit — silhouette / near-miss
@@ -290,8 +309,11 @@ export function projectWorldToCanvas(camera, world, canvasW, canvasH, tmp = null
  *
  * Occlusion (opts.meshHitPoint + opts.cameraPosition): when the tap hits the
  * mesh, reject edges whose midpoint is further from the camera than the hit
- * (plus a small epsilon). Prevents picking back-face / through-solid edges
- * that project near the tap. Silhouette taps (no mesh hit) skip this filter.
+ * (plus a small epsilon) AND whose adjacent face normals both face away from
+ * the camera. Pure distance rejection false-rejects silhouette / boundary
+ * edges beside the solid (lateral offset makes mid farther even when the edge
+ * is the intended pick). Edges with any camera-facing normal (silhouette band)
+ * are kept. Taps with no mesh hit skip this filter.
  *
  * @returns {object|null}
  */
@@ -334,11 +356,14 @@ export function pickNearestEdgeScreen(
     }
     // Strict < maxPx (matches pickNearestEdge); depth tie-break when equal px.
     if (!(d < maxPx)) continue;
-    // Mesh occlusion: drop edges behind the front-face hit.
+    // Mesh occlusion: drop edges behind the front-face hit, but only when the
+    // edge faces away from the camera. Silhouette edges beside the solid have
+    // a lateral mid offset that exceeds hitDist+eps even though one face
+    // normal still faces the camera — keep those.
     if (hitDist != null && camPos && e.mid) {
       const mid = e.mid;
       const edgeDist = Math.hypot(mid[0] - camPos[0], mid[1] - camPos[1], mid[2] - camPos[2]);
-      if (edgeDist > hitDist + occludeEps) continue;
+      if (edgeDist > hitDist + occludeEps && edgeFacesAwayFromCamera(e, camPos)) continue;
     }
     if (d < bestD || (d === bestD && depth < bestDepth)) {
       bestD = d;
@@ -350,9 +375,9 @@ export function pickNearestEdgeScreen(
 }
 
 /** Default G1 (tangent) propagation threshold in degrees.
- * 22° covers typical circular tessellations (16-seg → 22.5° turn) while
- * still breaking at genuine sharp corners (≥45–90°). */
-export const TANGENT_PROP_DEG = 22;
+ * 25° covers production 16-seg circles (22.5° turn, cos=0.9239 < cos(22°))
+ * while still breaking genuine hard corners (≥45°). N=12 (30°) stays seed-only. */
+export const TANGENT_PROP_DEG = 25;
 
 /**
  * Build adjacency: vertex index → feature edges touching it.

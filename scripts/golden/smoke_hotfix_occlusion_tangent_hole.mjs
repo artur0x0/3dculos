@@ -28,6 +28,31 @@ function check(name, cond, detail = '') {
 
 console.log('hotfix occlusion / tangent / hole-after-fillet smoke');
 
+/** Regular N-gon ring (turn = 360/N° between successive tangents). */
+const makeRing = (N) => {
+  const ring = [];
+  for (let i = 0; i < N; i++) {
+    const a0 = (i / N) * Math.PI * 2;
+    const a1 = ((i + 1) / N) * Math.PI * 2;
+    const va = [Math.cos(a0), Math.sin(a0), 0];
+    const vb = [Math.cos(a1), Math.sin(a1), 0];
+    const tx = vb[0] - va[0], ty = vb[1] - va[1];
+    const L = Math.hypot(tx, ty) || 1;
+    ring.push({
+      key: `${i}-${(i + 1) % N}`,
+      a: i,
+      b: (i + 1) % N,
+      va, vb,
+      mid: [(va[0] + vb[0]) / 2, (va[1] + vb[1]) / 2, 0],
+      length: L,
+      tangent: [tx / L, ty / L, 0],
+    });
+  }
+  return ring;
+};
+
+
+
 // ── Occlusion: back-face edge must lose to front when mesh hit is set ─
 {
   console.log('\nocclusion filter');
@@ -41,10 +66,12 @@ console.log('hotfix occlusion / tangent / hole-after-fillet smoke');
   const front = {
     key: 'f', a: 0, b: 1,
     va: [-20, 0, 0], vb: [20, 0, 0], mid: [0, 0, 0], length: 40, tangent: [1, 0, 0],
+    n0: [0, 0, 1], n1: [0, 1, 0], // camera-facing / silhouette-capable
   };
   const back = {
     key: 'b', a: 2, b: 3,
     va: [-20, 0, -40], vb: [20, 0, -40], mid: [0, 0, -40], length: 40, tangent: [1, 0, 0],
+    n0: [0, 0, -1], n1: [0, -1, 0], // both away from +Z camera
   };
   const scratchA = new Vector3();
   const scratchB = new Vector3();
@@ -84,6 +111,62 @@ console.log('hotfix occlusion / tangent / hole-after-fillet smoke');
     { projectScratchA: scratchA, projectScratchB: scratchB, cameraPosition: [0, 0, 100] },
   );
   check('silhouette (no hit) still picks edge', sil?.key === 'b');
+
+  // Reviewer probe class: opaque tap lands ON the solid beside a boundary edge.
+  // Cam at [0,0,500], left silhouette mid=[-200,0,200], hit 6mm inside on front
+  // face — edgeDist > hitDist+eps, but one normal faces camera → must KEEP.
+  const silCam = new OrthographicCamera(-250, 250, 250, -250, 0.1, 2000);
+  silCam.position.set(0, 0, 500);
+  silCam.lookAt(0, 0, 0);
+  silCam.updateMatrixWorld(true);
+  silCam.updateProjectionMatrix();
+  const wallEdge = {
+    key: 'wall-L', a: 10, b: 11,
+    va: [-200, -100, 200], vb: [-200, 100, 200],
+    mid: [-200, 0, 200], length: 200, tangent: [0, 1, 0],
+    n0: [0, 0, 1],   // front face toward camera
+    n1: [-1, 0, 0],  // left face
+  };
+  const camPos = [0, 0, 500];
+  const hitBeside = [-194, 0, 200];
+  const hitDist = Math.hypot(hitBeside[0] - camPos[0], hitBeside[1] - camPos[1], hitBeside[2] - camPos[2]);
+  const edgeDist = Math.hypot(wallEdge.mid[0] - camPos[0], wallEdge.mid[1] - camPos[1], wallEdge.mid[2] - camPos[2]);
+  check('probe geometry: edge mid farther than hit+eps', edgeDist > hitDist + 0.75,
+    `edgeDist=${edgeDist.toFixed(2)} hitDist=${hitDist.toFixed(2)}`);
+  // Project mid to canvas so pick lands near the edge
+  const midProj = (() => {
+    const v = new Vector3(-200, 0, 200).project(silCam);
+    return { x: (v.x * 0.5 + 0.5) * 400, y: (-v.y * 0.5 + 0.5) * 400 };
+  })();
+  const beside = pickNearestEdgeScreen(
+    [wallEdge], silCam, 400, 400, midProj.x + 6, midProj.y, EDGE_PICK_SLOP_PX,
+    {
+      projectScratchA: scratchA,
+      projectScratchB: scratchB,
+      cameraPosition: camPos,
+      meshHitPoint: hitBeside,
+    },
+  );
+  check('silhouette-beside-solid kept despite farther mid', beside?.key === 'wall-L');
+
+  // Same geometry but both normals face away → still reject (true back edge)
+  const away = {
+    ...wallEdge,
+    key: 'away',
+    // Both normals point away from cam at [0,0,500] (view from mid ≈ [+x,+z]).
+    n0: [0, 0, -1],
+    n1: [-1, 0, 0],
+  };
+  const awayPick = pickNearestEdgeScreen(
+    [away], silCam, 400, 400, midProj.x + 6, midProj.y, EDGE_PICK_SLOP_PX,
+    {
+      projectScratchA: scratchA,
+      projectScratchB: scratchB,
+      cameraPosition: camPos,
+      meshHitPoint: hitBeside,
+    },
+  );
+  check('farther mid + normals away still rejected', awayPick === null);
 }
 
 // ── G1 tangent propagation ─────────────────────────────────────
@@ -108,33 +191,26 @@ console.log('hotfix occlusion / tangent / hole-after-fillet smoke');
   const alone = propagateTangentEdges(chain, chain[3]);
   check('isolated soft-fails to seed only', alone.length === 1 && edgeKey(alone[0]) === '3-4');
 
-  // Circular-ish: 8 segments of a regular octagon with ~12°? Exterior turn is 45°.
-  // Use small turn (10°) ring approximating a circle.
-  const ring = [];
-  const N = 24;
-  for (let i = 0; i < N; i++) {
-    const a0 = (i / N) * Math.PI * 2;
-    const a1 = ((i + 1) / N) * Math.PI * 2;
-    const va = [Math.cos(a0), Math.sin(a0), 0];
-    const vb = [Math.cos(a1), Math.sin(a1), 0];
-    const tx = vb[0] - va[0], ty = vb[1] - va[1];
-    const L = Math.hypot(tx, ty) || 1;
-    ring.push({
-      key: `${i}-${(i + 1) % N}`,
-      a: i,
-      b: (i + 1) % N,
-      va, vb,
-      mid: [(va[0] + vb[0]) / 2, (va[1] + vb[1]) / 2, 0],
-      length: L,
-      tangent: [tx / L, ty / L, 0],
-    });
-  }
-  const loop = propagateTangentEdges(ring, ring[0]);
-  check('24-gon loop fully propagates', loop.length === N, `got ${loop.length}`);
+  // Production tessellation: sandboxWorker documents 16-seg circles (22.5° steps).
+  // TANGENT_PROP_DEG must be >= 23 (we use 25) so the full rim propagates.
+  check('TANGENT_PROP_DEG >= 23 for 16-seg', TANGENT_PROP_DEG >= 23, `got ${TANGENT_PROP_DEG}`);
+  const ring16 = makeRing(16);
+  const loop16 = propagateTangentEdges(ring16, ring16[0]);
+  check('16-gon (production) loop fully propagates', loop16.length === 16, `got ${loop16.length}`);
 
-  const added = toggleEdgeSelectionPropagated([], ring[0], { propagate: true, featureEdges: ring });
-  check('toggle propagated adds full loop', added.length === N, `got ${added.length}`);
-  const off = toggleEdgeSelectionPropagated([], ring[0], { propagate: false, featureEdges: ring });
+  // N=12 → 30° corners: deliberately seed-only (per-segment pick desired).
+  const ring12 = makeRing(12);
+  const loop12 = propagateTangentEdges(ring12, ring12[0]);
+  check('12-gon stays seed-only (30° corners)', loop12.length === 1, `got ${loop12.length}`);
+
+  // 24-gon still fully propagates (finer than production).
+  const ring24 = makeRing(24);
+  const loop24 = propagateTangentEdges(ring24, ring24[0]);
+  check('24-gon loop fully propagates', loop24.length === 24, `got ${loop24.length}`);
+
+  const added = toggleEdgeSelectionPropagated([], ring16[0], { propagate: true, featureEdges: ring16 });
+  check('toggle propagated adds full 16-loop', added.length === 16, `got ${added.length}`);
+  const off = toggleEdgeSelectionPropagated([], ring16[0], { propagate: false, featureEdges: ring16 });
   check('toggle propagate:false adds seed only', off.length === 1);
 }
 
