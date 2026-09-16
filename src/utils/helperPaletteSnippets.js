@@ -757,7 +757,7 @@ export const HELPER_PALETTE_ITEMS = [
           }
           profileExpr = `profilePolygon([${pts.join(', ')}])`;
         } else {
-          const sides = preset === 'triangle' ? 3 : preset === 'square' ? 4 : 6;
+          const sides = preset === 'triangle' ? 3 : preset === 'square' ? 4 : preset === 'pentagon' ? 5 : 6;
           const pts = [];
           for (let i = 0; i < sides; i++) {
             const t = (i / sides) * Math.PI * 2 - Math.PI / 2;
