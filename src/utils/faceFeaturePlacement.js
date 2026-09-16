@@ -679,7 +679,7 @@ export function resolveFaceModal(paletteItem, selectedFace, selectedEdges = null
   if (face.type === 'irregular') {
     return { mode: 'refuse', face, message: face.refuseMessage };
   }
-  // catch-all for future planar-only ids (crossSection already refused above)
+  // Catch-all for future planar-only ids (crossSection already gated earlier).
   if (PLANAR_ONLY_FEATURE_IDS.has(id) && face.type !== 'planar') {
     return { mode: 'refuse', face, message: CROSS_SECTION_REFUSE_NON_PLANAR };
   }
