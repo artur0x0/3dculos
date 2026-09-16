@@ -32,7 +32,7 @@ import {
   buildFeatureEdges,
   pickNearestEdgeScreen,
   resolveEdgePickSlopPx,
-  toggleEdgeSelection,
+  toggleEdgeSelectionPropagated,
   popLastEdgeSelection,
   edgeKey,
 } from '../utils/selectEdge';
@@ -131,6 +131,9 @@ const Viewport = forwardRef(({
   const edgeModeToastShownRef = useRef(false);
   const edgeModeToastTimerRef = useRef(null);
   const [edgeModeToast, setEdgeModeToast] = useState(null);
+  /** G1 tangent chain propagation for Edge pick — ON by default (circular / fillet loops). */
+  const [tangentProp, setTangentProp] = useState(true);
+  const tangentPropRef = useRef(true);
 
   const armEdgeModeToastClear = () => {
     if (edgeModeToastTimerRef.current) clearTimeout(edgeModeToastTimerRef.current);
@@ -164,6 +167,7 @@ const Viewport = forwardRef(({
   const [autoFitEnabled, setAutoFitEnabled] = useState(true);
 
   pickModeRef.current = pickMode;
+  tangentPropRef.current = tangentProp;
   cachedMeshDataRef.current = cachedMeshData;
 
   useImperativeHandle(ref, () => ({
@@ -533,6 +537,46 @@ const Viewport = forwardRef(({
     }
   }, [clearMeasurementLines]);
 
+
+  /** Shared screen-space edge pick. Occlusion raycast is opt-in (click path);
+   *  hover skips it to avoid full mesh intersect on every mousemove (iPhone jank). */
+  const pickEdgeAtClient = useCallback((clientX, clientY, { occlude = true } = {}) => {
+    if (!canvasRef.current || !cameraRef.current || !resultRef.current) return null;
+    syncFeatureEdges(resultRef.current.geometry);
+    const canvas = canvasRef.current;
+    const rect = canvas.getBoundingClientRect();
+    const px = clientX - rect.left;
+    const py = clientY - rect.top;
+    const slop = resolveEdgePickSlopPx();
+    const cam = cameraRef.current.position;
+    const opts = {
+      projectScratchA: edgePickScratchA.current,
+      projectScratchB: edgePickScratchB.current,
+      cameraPosition: [cam.x, cam.y, cam.z],
+    };
+    if (occlude) {
+      // Raycast mesh for occlusion — reject back-face edges behind the hit.
+      mouseRef.current.x = (px / rect.width) * 2 - 1;
+      mouseRef.current.y = -(py / rect.height) * 2 + 1;
+      raycasterRef.current.setFromCamera(mouseRef.current, cameraRef.current);
+      const hits = raycasterRef.current.intersectObject(resultRef.current);
+      if (hits.length > 0) {
+        const p = hits[0].point;
+        opts.meshHitPoint = [p.x, p.y, p.z];
+      }
+    }
+    return pickNearestEdgeScreen(
+      featureEdgesRef.current,
+      cameraRef.current,
+      rect.width,
+      rect.height,
+      px,
+      py,
+      slop,
+      opts,
+    );
+  }, [syncFeatureEdges]);
+
   /**
    * Handle mouse down - record position for drag detection
    */
@@ -563,25 +607,7 @@ const Viewport = forwardRef(({
       && cameraRef.current
       && resultRef.current
     ) {
-      syncFeatureEdges(resultRef.current.geometry);
-      const canvas = canvasRef.current;
-      const rect = canvas.getBoundingClientRect();
-      const px = event.clientX - rect.left;
-      const py = event.clientY - rect.top;
-      const slop = resolveEdgePickSlopPx();
-      const edge = pickNearestEdgeScreen(
-        featureEdgesRef.current,
-        cameraRef.current,
-        rect.width,
-        rect.height,
-        px,
-        py,
-        slop,
-        {
-          projectScratchA: edgePickScratchA.current,
-          projectScratchB: edgePickScratchB.current,
-        },
-      );
+      const edge = pickEdgeAtClient(event.clientX, event.clientY, { occlude: false });
       const selectedKeys = new Set(
         (Array.isArray(selectedEdges) ? selectedEdges : []).map((e) => edgeKey(e)),
       );
@@ -589,7 +615,7 @@ const Viewport = forwardRef(({
     } else if (pickModeRef.current !== 'edge') {
       clearEdgeHover();
     }
-  }, [selectedEdges, highlightHoverEdge, clearEdgeHover, syncFeatureEdges]);
+  }, [selectedEdges, highlightHoverEdge, clearEdgeHover, pickEdgeAtClient]);
 
   /**
    * Handle mouse up - process click only if not dragging
@@ -620,21 +646,8 @@ const Viewport = forwardRef(({
       clickCountRef.current = 0;
       pendingClickDataRef.current = null;
 
-      syncFeatureEdges(resultRef.current.geometry);
       const slop = resolveEdgePickSlopPx();
-      const edge = pickNearestEdgeScreen(
-        featureEdgesRef.current,
-        cameraRef.current,
-        rect.width,
-        rect.height,
-        px,
-        py,
-        slop,
-        {
-          projectScratchA: edgePickScratchA.current,
-          projectScratchB: edgePickScratchB.current,
-        },
-      );
+      const edge = pickEdgeAtClient(event.clientX, event.clientY);
       if (!edge) {
         // Preserve multi-selection on miss (same as #14) — stray taps must not wipe the set.
         console.log('[Edge Selection] No feature edge within', slop, 'px');
@@ -642,7 +655,10 @@ const Viewport = forwardRef(({
         return;
       }
       clearEdgeHover();
-      setSelectedEdges((prev) => toggleEdgeSelection(prev, edge));
+      setSelectedEdges((prev) => toggleEdgeSelectionPropagated(prev, edge, {
+        propagate: tangentPropRef.current,
+        featureEdges: featureEdgesRef.current,
+      }));
       // Clear face selection so modes do not fight
       clearHighlight();
       setSelectedFace(null);
@@ -709,7 +725,7 @@ const Viewport = forwardRef(({
       processClick();
     }, MULTI_CLICK_DELAY);
     
-  }, [onFaceSelected, measurementEnabled, clearHighlight, clearEdgeHover, syncFeatureEdges]);
+  }, [onFaceSelected, measurementEnabled, clearHighlight, clearEdgeHover, pickEdgeAtClient]);
 
 
   /**
@@ -1716,7 +1732,7 @@ const Viewport = forwardRef(({
               rebuildFeatureEdges();
               if (!edgeModeToastShownRef.current) {
                 edgeModeToastShownRef.current = true;
-                setEdgeModeToast('Edge pick on — tap near an edge (fat target)');
+                setEdgeModeToast('Edge pick on — tap near an edge (tangent loops on)');
                 armEdgeModeToastClear();
               }
             } else {
@@ -1794,33 +1810,44 @@ const Viewport = forwardRef(({
           <div className="text-[10px] text-amber-100/90 normal-case font-sans mt-0.5">
             Tap near an edge to toggle · Fillet / Chamfer uses this set
           </div>
-          {selectedEdges.length > 0 && (
-            <div className="mt-1.5 flex items-center gap-3 font-sans">
-              <button
-                type="button"
-                className="text-[10px] text-amber-200 underline"
-                onClick={() => {
-                  clearEdgeHover();
-                  setSelectedEdges((prev) => popLastEdgeSelection(prev));
-                }}
-                title="Remove last selected edge"
-              >
-                Back
-              </button>
-              <button
-                type="button"
-                className="text-[10px] text-amber-200 underline"
-                onClick={() => {
-                  clearEdgeHover();
-                  clearEdgeHighlight();
-                  setSelectedEdges([]);
-                }}
-                title="Clear all selected edges"
-              >
-                Clear
-              </button>
-            </div>
-          )}
+          <div className="mt-1.5 flex items-center gap-3 font-sans flex-wrap">
+            <button
+              type="button"
+              className={`text-[10px] underline ${tangentProp ? 'text-cyan-300' : 'text-amber-200/70'}`}
+              onClick={() => setTangentProp((v) => !v)}
+              title="When on, picking one edge adds G1-connected (tangent) edges in the loop"
+              aria-pressed={tangentProp}
+            >
+              Tangent {tangentProp ? 'on' : 'off'}
+            </button>
+            {selectedEdges.length > 0 && (
+              <>
+                <button
+                  type="button"
+                  className="text-[10px] text-amber-200 underline"
+                  onClick={() => {
+                    clearEdgeHover();
+                    setSelectedEdges((prev) => popLastEdgeSelection(prev));
+                  }}
+                  title="Remove last selected edge"
+                >
+                  Back
+                </button>
+                <button
+                  type="button"
+                  className="text-[10px] text-amber-200 underline"
+                  onClick={() => {
+                    clearEdgeHover();
+                    clearEdgeHighlight();
+                    setSelectedEdges([]);
+                  }}
+                  title="Clear all selected edges"
+                >
+                  Clear
+                </button>
+              </>
+            )}
+          </div>
         </div>
       )}
 
