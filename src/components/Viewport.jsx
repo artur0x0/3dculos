@@ -538,8 +538,9 @@ const Viewport = forwardRef(({
   }, [clearMeasurementLines]);
 
 
-  /** Shared screen-space edge pick with mesh occlusion when the ray hits the solid. */
-  const pickEdgeAtClient = useCallback((clientX, clientY) => {
+  /** Shared screen-space edge pick. Occlusion raycast is opt-in (click path);
+   *  hover skips it to avoid full mesh intersect on every mousemove (iPhone jank). */
+  const pickEdgeAtClient = useCallback((clientX, clientY, { occlude = true } = {}) => {
     if (!canvasRef.current || !cameraRef.current || !resultRef.current) return null;
     syncFeatureEdges(resultRef.current.geometry);
     const canvas = canvasRef.current;
@@ -547,20 +548,22 @@ const Viewport = forwardRef(({
     const px = clientX - rect.left;
     const py = clientY - rect.top;
     const slop = resolveEdgePickSlopPx();
-    // Raycast mesh for occlusion — reject back-face edges behind the hit.
-    mouseRef.current.x = (px / rect.width) * 2 - 1;
-    mouseRef.current.y = -(py / rect.height) * 2 + 1;
-    raycasterRef.current.setFromCamera(mouseRef.current, cameraRef.current);
-    const hits = raycasterRef.current.intersectObject(resultRef.current);
     const cam = cameraRef.current.position;
     const opts = {
       projectScratchA: edgePickScratchA.current,
       projectScratchB: edgePickScratchB.current,
       cameraPosition: [cam.x, cam.y, cam.z],
     };
-    if (hits.length > 0) {
-      const p = hits[0].point;
-      opts.meshHitPoint = [p.x, p.y, p.z];
+    if (occlude) {
+      // Raycast mesh for occlusion — reject back-face edges behind the hit.
+      mouseRef.current.x = (px / rect.width) * 2 - 1;
+      mouseRef.current.y = -(py / rect.height) * 2 + 1;
+      raycasterRef.current.setFromCamera(mouseRef.current, cameraRef.current);
+      const hits = raycasterRef.current.intersectObject(resultRef.current);
+      if (hits.length > 0) {
+        const p = hits[0].point;
+        opts.meshHitPoint = [p.x, p.y, p.z];
+      }
     }
     return pickNearestEdgeScreen(
       featureEdgesRef.current,
@@ -604,7 +607,7 @@ const Viewport = forwardRef(({
       && cameraRef.current
       && resultRef.current
     ) {
-      const edge = pickEdgeAtClient(event.clientX, event.clientY);
+      const edge = pickEdgeAtClient(event.clientX, event.clientY, { occlude: false });
       const selectedKeys = new Set(
         (Array.isArray(selectedEdges) ? selectedEdges : []).map((e) => edgeKey(e)),
       );
