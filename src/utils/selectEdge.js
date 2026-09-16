@@ -288,6 +288,11 @@ export function projectWorldToCanvas(camera, world, canvasW, canvasH, tmp = null
  * projected segment. Does NOT require a mesh face hit — silhouette / near-miss
  * taps work. Prefer closer-to-camera edge on near ties.
  *
+ * Occlusion (opts.meshHitPoint + opts.cameraPosition): when the tap hits the
+ * mesh, reject edges whose midpoint is further from the camera than the hit
+ * (plus a small epsilon). Prevents picking back-face / through-solid edges
+ * that project near the tap. Silhouette taps (no mesh hit) skip this filter.
+ *
  * @returns {object|null}
  */
 export function pickNearestEdgeScreen(
@@ -303,6 +308,13 @@ export function pickNearestEdgeScreen(
   if (!featureEdges?.length || !camera || !(maxPx > 0)) return null;
   const scratchA = opts.projectScratchA || null;
   const scratchB = opts.projectScratchB || null;
+  const hit = opts.meshHitPoint;
+  const camPos = opts.cameraPosition;
+  const occludeEps = typeof opts.occlusionEps === 'number' ? opts.occlusionEps : 0.75;
+  let hitDist = null;
+  if (hit && camPos && Array.isArray(hit) && Array.isArray(camPos)) {
+    hitDist = Math.hypot(hit[0] - camPos[0], hit[1] - camPos[1], hit[2] - camPos[2]);
+  }
   let best = null;
   let bestD = Infinity;
   let bestDepth = Infinity;
@@ -322,6 +334,12 @@ export function pickNearestEdgeScreen(
     }
     // Strict < maxPx (matches pickNearestEdge); depth tie-break when equal px.
     if (!(d < maxPx)) continue;
+    // Mesh occlusion: drop edges behind the front-face hit.
+    if (hitDist != null && camPos && e.mid) {
+      const mid = e.mid;
+      const edgeDist = Math.hypot(mid[0] - camPos[0], mid[1] - camPos[1], mid[2] - camPos[2]);
+      if (edgeDist > hitDist + occludeEps) continue;
+    }
     if (d < bestD || (d === bestD && depth < bestDepth)) {
       bestD = d;
       bestDepth = depth;
@@ -329,4 +347,127 @@ export function pickNearestEdgeScreen(
     }
   }
   return best;
+}
+
+/** Default G1 (tangent) propagation threshold in degrees.
+ * 22° covers typical circular tessellations (16-seg → 22.5° turn) while
+ * still breaking at genuine sharp corners (≥45–90°). */
+export const TANGENT_PROP_DEG = 22;
+
+/**
+ * Build adjacency: vertex index → feature edges touching it.
+ * @param {object[]} featureEdges
+ * @returns {Map<number, object[]>}
+ */
+export function buildEdgeVertexAdj(featureEdges) {
+  const adj = new Map();
+  if (!featureEdges?.length) return adj;
+  for (const e of featureEdges) {
+    for (const v of [e.a, e.b]) {
+      if (!adj.has(v)) adj.set(v, []);
+      adj.get(v).push(e);
+    }
+  }
+  return adj;
+}
+
+/**
+ * Absolute tangent alignment |t0·t1| for G1 test (direction-insensitive).
+ */
+export function tangentAlign(t0, t1) {
+  if (!t0 || !t1) return 0;
+  return Math.abs(t0[0] * t1[0] + t0[1] * t1[1] + t0[2] * t1[2]);
+}
+
+/**
+ * Propagate G1-connected (tangent) edges from a seed through the feature-edge
+ * graph. Soft-fails to [seed] when no tangent neighbors exist.
+ *
+ * Walk rule: at a shared vertex, accept a neighbor when |t_seed·t_nbr| >= cos(tolDeg)
+ * (tessellated circular / fillet loops stay linked; sharp corners break the chain).
+ *
+ * @param {object[]} featureEdges
+ * @param {object} seedEdge
+ * @param {{ tolDeg?: number, adj?: Map<number, object[]> }} [opts]
+ * @returns {object[]} seed + G1 chain (deduped by edgeKey)
+ */
+export function propagateTangentEdges(featureEdges, seedEdge, opts = {}) {
+  if (!seedEdge) return [];
+  const tolDeg = typeof opts.tolDeg === 'number' ? opts.tolDeg : TANGENT_PROP_DEG;
+  const cosTol = Math.cos((tolDeg * Math.PI) / 180);
+  const adj = opts.adj || buildEdgeVertexAdj(featureEdges || []);
+  const seedKey = edgeKey(seedEdge);
+  const out = new Map();
+  out.set(seedKey, {
+    key: seedKey,
+    a: seedEdge.a,
+    b: seedEdge.b,
+    va: seedEdge.va?.slice?.() ?? seedEdge.va,
+    vb: seedEdge.vb?.slice?.() ?? seedEdge.vb,
+    mid: seedEdge.mid?.slice?.() ?? seedEdge.mid,
+    length: seedEdge.length,
+    tangent: seedEdge.tangent ? seedEdge.tangent.slice() : undefined,
+  });
+
+  const queue = [out.get(seedKey)];
+  while (queue.length) {
+    const cur = queue.shift();
+    const t0 = cur.tangent;
+    if (!t0) continue;
+    for (const v of [cur.a, cur.b]) {
+      const nbrs = adj.get(v) || [];
+      for (const nbr of nbrs) {
+        const nk = edgeKey(nbr);
+        if (out.has(nk)) continue;
+        if (tangentAlign(t0, nbr.tangent) < cosTol) continue;
+        const copy = {
+          key: nk,
+          a: nbr.a,
+          b: nbr.b,
+          va: nbr.va.slice(),
+          vb: nbr.vb.slice(),
+          mid: nbr.mid.slice(),
+          length: nbr.length,
+          tangent: nbr.tangent ? nbr.tangent.slice() : undefined,
+        };
+        out.set(nk, copy);
+        queue.push(copy);
+      }
+    }
+  }
+  return [...out.values()];
+}
+
+/**
+ * Add seed (+ optional G1 chain) to selection, or remove seed if already selected.
+ * When removing, only the tapped edge is removed (chain stays unless toggled off).
+ *
+ * @param {object[]} selected
+ * @param {object} edge
+ * @param {{ propagate?: boolean, featureEdges?: object[], tolDeg?: number }} [opts]
+ */
+export function toggleEdgeSelectionPropagated(selected, edge, opts = {}) {
+  const key = edgeKey(edge);
+  const list = Array.isArray(selected) ? [...selected] : [];
+  const idx = list.findIndex((e) => edgeKey(e) === key);
+  if (idx >= 0) {
+    list.splice(idx, 1);
+    return list;
+  }
+  const propagate = opts.propagate !== false;
+  const toAdd = propagate && opts.featureEdges?.length
+    ? propagateTangentEdges(opts.featureEdges, edge, { tolDeg: opts.tolDeg })
+    : null;
+  if (!toAdd || toAdd.length <= 1) {
+    // Soft-fail: no tangents — just the seed (same as toggleEdgeSelection add).
+    return toggleEdgeSelection(list, edge);
+  }
+  const have = new Set(list.map((e) => edgeKey(e)));
+  for (const e of toAdd) {
+    const k = edgeKey(e);
+    if (have.has(k)) continue;
+    list.push(e);
+    have.add(k);
+  }
+  return list;
 }

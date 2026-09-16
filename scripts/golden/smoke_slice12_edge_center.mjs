@@ -148,7 +148,7 @@ function mergedFaces(m) {
   };
   const t2f = new Int32Array(mesh.numTri).fill(-1);
   for (let fi = 0; fi < nF; fi++) for (const t of faces[fi].tris) t2f[t] = fi;
-  const cosPlanar = Math.cos(Math.PI / 180);
+  const cosPlanar = Math.cos((0.1 * Math.PI) / 180); // match sandboxWorker c4MeshData merge
   const edgeMapM = new Map();
   for (let t = 0; t < mesh.numTri; t++) {
     const vs = [mesh.triVerts[t * 3], mesh.triVerts[t * 3 + 1], mesh.triVerts[t * 3 + 2]];

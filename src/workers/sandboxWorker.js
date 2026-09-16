@@ -1154,8 +1154,15 @@ function c4MeshData(m) {
   // "faces" whose centers are triangle centroids — so workplaneFromFace +
   // hole(u=0,v=0) misses the true face center (playtest Center miss).
   // Merge only when adjacent faces share an edge, normals align, and plane
-  // offsets match. Curved walls (normals diverge >1°) stay one-tri each so
-  // convexEdges dihedral filtering still sees tessellation seams.
+  // offsets match.
+  //
+  // Hotfix (occlusion/tangent/hole slice): use a tight 0.1° pairwise gate.
+  // A 1° gate + union-find was transitive through fillet chord facets
+  // (~0.23° steps on a 384-seg arc), absorbing the true planar top into a
+  // frankenstein face whose averaged normal drifted >5° from +Z — then
+  // facesByNormal(selNormal, 5) missed the face the Viewport chip showed.
+  // Curved walls (normals diverge >0.1°) stay one-tri each so convexEdges
+  // dihedral filtering still sees tessellation seams.
   {
     const nF = faces.length;
     if (nF > 1) {
@@ -1165,7 +1172,7 @@ function c4MeshData(m) {
       const t2f = new Int32Array(mesh.numTri).fill(-1);
       for (let fi = 0; fi < nF; fi++)
         for (const t of faces[fi].tris) t2f[t] = fi;
-      const cosPlanar = Math.cos((1 * Math.PI) / 180);
+      const cosPlanar = Math.cos((0.1 * Math.PI) / 180);
       const edgeMapM = new Map();
       for (let t = 0; t < mesh.numTri; t++) {
         const vs = [mesh.triVerts[t*3], mesh.triVerts[t*3+1], mesh.triVerts[t*3+2]];

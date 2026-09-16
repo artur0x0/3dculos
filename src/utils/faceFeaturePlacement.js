@@ -409,11 +409,16 @@ export function emitFaceWorkplaneLines(body, face, names, allocateUniqueName) {
   const off = allocateUniqueName(names, '_off');
   const nLit = formatVec3(face.normal);
   const cLit = formatVec3(face.center);
+  // Hotfix: after adjacent fillets, c4 faces near the pick can have normals
+  // a few degrees off the Viewport chip (merge / tessellation). Prefer closest
+  // center among a wide normal band (25°); fall back message tells user to
+  // re-pick rather than the cryptic "No face near selected normal".
   const lines = [
     `const ${faceVar} = (() => {`,
-    `  const ${cands} = facesByNormal(${body}, ${nLit}, 5);`,
-    `  if (!${cands}.length) throw new Error('No face near selected normal ${nLit}');`,
     `  const ${c} = ${cLit};`,
+    `  let ${cands} = facesByNormal(${body}, ${nLit}, 25);`,
+    `  if (!${cands}.length) ${cands} = facesByNormal(${body}, ${nLit}, 45);`,
+    `  if (!${cands}.length) throw new Error('Selected face not found on body after geometry changes — re-pick the planar face, then Hole/Clearance (normal ${nLit})');`,
     `  let ${best} = ${cands}[0], ${bd} = Infinity;`,
     `  for (const ${f} of ${cands}) {`,
     `    const ${d} = (${f}.center[0]-${c}[0])**2 + (${f}.center[1]-${c}[1])**2 + (${f}.center[2]-${c}[2])**2;`,
