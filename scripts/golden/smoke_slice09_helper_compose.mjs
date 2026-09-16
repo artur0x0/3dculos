@@ -183,6 +183,43 @@ check('comment-only buffer counts as empty', isBufferEmpty('// note\n/* x */'));
 }
 
 
+// ── Hotfix: sequential selected-edge fillets stay parseable ─────
+{
+  const e1 = [{ mid: [20, 15, 10], va: [20, 0, 10], vb: [20, 30, 10] }];
+  const e2 = [{ mid: [-20, 15, 10], va: [-20, 0, 10], vb: [-20, 30, 10] }];
+  let buf = composeHelperInsert('', 'cube', null, { width: 40, depth: 30, height: 20, center: true });
+  buf = composeHelperInsert(
+    buf, 'filletEdges', null,
+    { radius: 3, sphericalCorners: true, edgeScope: 'selected', body: 'part' },
+    null, e1,
+  );
+  const twice = composeHelperInsert(
+    buf, 'filletEdges', null,
+    { radius: 6, sphericalCorners: true, edgeScope: 'selected', body: 'part' },
+    null, e2,
+  );
+  check('sequential fillets: string', typeof twice === 'string' && twice.length > 0);
+  check('sequential fillets: selEdges2', /selEdges2/.test(twice));
+  check('sequential fillets: unique _mids2', /_mids2/.test(twice));
+  check('sequential fillets: no orphan filter close', !/selEdges2 = \(\(\) => \{\s*return _mids/.test(twice));
+  assertSingleTrailingReturn(twice, 'sequential fillets');
+  assertNoRedeclares(twice, 'sequential fillets');
+  try {
+    // Parse only — stub convexEdges() returns [] so runtime mid-match would throw.
+    new Function(twice);
+    check('sequential fillets: parseable (Function)', true);
+  } catch (e) {
+    check('sequential fillets: parseable (Function)', false, String(e.message || e));
+  }
+
+  const soft = composeHelperInsert(
+    buf, 'filletEdges', null,
+    { radius: 3, sphericalCorners: true, edgeScope: 'selected', body: 'part' },
+    null, [],
+  );
+  check('selected-edge soft-fail → null (no JS)', soft === null);
+}
+
 if (failed) {
   console.log(`\nFAILED: ${failed}`);
   process.exit(1);

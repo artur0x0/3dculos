@@ -228,6 +228,24 @@ const Viewport = forwardRef(({
       }
       setSelectedEdges([]);
     },
+    /** Soft-fail: clear stale edges + toast — never paired with emitting broken JS. */
+    softFailStaleEdges: (msg) => {
+      if (edgeHighlightRef.current && sceneRef.current) {
+        sceneRef.current.remove(edgeHighlightRef.current);
+        edgeHighlightRef.current.geometry?.dispose();
+        edgeHighlightRef.current.material?.dispose();
+        edgeHighlightRef.current = null;
+      }
+      if (edgeHoverRef.current && sceneRef.current) {
+        sceneRef.current.remove(edgeHoverRef.current);
+        edgeHoverRef.current.geometry?.dispose();
+        edgeHoverRef.current.material?.dispose();
+        edgeHoverRef.current = null;
+      }
+      setSelectedEdges([]);
+      setEdgeModeToast(msg || 'Re-pick edges after geometry changes');
+      armEdgeModeToastClear();
+    },
     setPickMode: (mode) => setPickMode(mode === 'edge' ? 'edge' : 'face'),
     // Updated to use cached mesh when available
     export3MF: async () => {
@@ -1536,8 +1554,18 @@ const Viewport = forwardRef(({
       stageExecErrorRef.current = msg;
       setExecutionError(msg);
 
+      // Soft-fail stale edge IDs: clear selection + prompt re-pick (never leave armed chip).
+      const staleEdges = /Selected edges not found|stale selection|re-pick after geometry/i.test(msg);
+      if (staleEdges) {
+        clearEdgeHighlight();
+        clearEdgeHover();
+        setSelectedEdges([]);
+        setEdgeModeToast('Selected edges not found — re-pick after geometry changes');
+        armEdgeModeToastClear();
+      }
+
       // Failed Auto-Run: restore the last good mesh and keep edge/face selection
-      // so the chip does not falsely show "0 selected".
+      // so the chip does not falsely show "0 selected" (unless soft-cleared above).
       const prev = cachedMeshDataRef.current;
       if (prev?.vertProperties && resultRef.current) {
         renderMeshData(prev);
@@ -1652,6 +1680,13 @@ const Viewport = forwardRef(({
           selectedFace={selectedFace}
           selectedEdges={selectedEdges}
           onRequestEdgeMode={() => setPickMode('edge')}
+          onStaleEdgesClear={(msg) => {
+            clearEdgeHighlight();
+            clearEdgeHover();
+            setSelectedEdges([]);
+            setEdgeModeToast(msg || 'Re-pick edges after geometry changes');
+            armEdgeModeToastClear();
+          }}
           compact={isMobile}
         />
       )}

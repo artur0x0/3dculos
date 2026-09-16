@@ -397,26 +397,36 @@ export function seedFaceParams(id, face) {
 export function emitFaceWorkplaneLines(body, face, names, allocateUniqueName) {
   const faceVar = allocateUniqueName(names, 'selFace');
   const frVar = allocateUniqueName(names, 'fr');
+  // Unique temps so sequential inserts never collide with filterRedeclarations
+  // (flat declaredNames used to strip mid-IIFE lines and leave orphan `});` / `}})();`).
+  const cands = allocateUniqueName(names, '_cands');
+  const c = allocateUniqueName(names, '_c');
+  const best = allocateUniqueName(names, '_best');
+  const bd = allocateUniqueName(names, '_bd');
+  const f = allocateUniqueName(names, '_f');
+  const d = allocateUniqueName(names, '_d');
+  const pc = allocateUniqueName(names, '_pc');
+  const off = allocateUniqueName(names, '_off');
   const nLit = formatVec3(face.normal);
   const cLit = formatVec3(face.center);
   const lines = [
     `const ${faceVar} = (() => {`,
-    `  const _cands = facesByNormal(${body}, ${nLit}, 5);`,
-    `  if (!_cands.length) throw new Error('No face near selected normal ${nLit}');`,
-    `  const _c = ${cLit};`,
-    `  let _best = _cands[0], _bd = Infinity;`,
-    `  for (const _f of _cands) {`,
-    `    const _d = (_f.center[0]-_c[0])**2 + (_f.center[1]-_c[1])**2 + (_f.center[2]-_c[2])**2;`,
-    `    if (_d < _bd) { _bd = _d; _best = _f; }`,
+    `  const ${cands} = facesByNormal(${body}, ${nLit}, 5);`,
+    `  if (!${cands}.length) throw new Error('No face near selected normal ${nLit}');`,
+    `  const ${c} = ${cLit};`,
+    `  let ${best} = ${cands}[0], ${bd} = Infinity;`,
+    `  for (const ${f} of ${cands}) {`,
+    `    const ${d} = (${f}.center[0]-${c}[0])**2 + (${f}.center[1]-${c}[1])**2 + (${f}.center[2]-${c}[2])**2;`,
+    `    if (${d} < ${bd}) { ${bd} = ${d}; ${best} = ${f}; }`,
     `  }`,
-    `  return _best;`,
+    `  return ${best};`,
     `})();`,
     `const ${frVar} = workplaneFromFace(${body}, ${faceVar});`,
     `// Snap origin to selected face center (projected onto plane) so Center → u=0,v=0 hits pick.`,
     `(() => {`,
-    `  const _pc = ${cLit};`,
-    `  const _off = (_pc[0]-${frVar}.center[0])*${frVar}.normal[0] + (_pc[1]-${frVar}.center[1])*${frVar}.normal[1] + (_pc[2]-${frVar}.center[2])*${frVar}.normal[2];`,
-    `  ${frVar}.center = [_pc[0]-_off*${frVar}.normal[0], _pc[1]-_off*${frVar}.normal[1], _pc[2]-_off*${frVar}.normal[2]];`,
+    `  const ${pc} = ${cLit};`,
+    `  const ${off} = (${pc}[0]-${frVar}.center[0])*${frVar}.normal[0] + (${pc}[1]-${frVar}.center[1])*${frVar}.normal[1] + (${pc}[2]-${frVar}.center[2])*${frVar}.normal[2];`,
+    `  ${frVar}.center = [${pc}[0]-${off}*${frVar}.normal[0], ${pc}[1]-${off}*${frVar}.normal[1], ${pc}[2]-${off}*${frVar}.normal[2]];`,
     `})();`,
   ];
   return { lines, faceVar, frVar };
@@ -451,13 +461,16 @@ export function emitFaceEdgeLines(body, face, params, names, allocateUniqueName)
     return { lines: [], edgesExpr: `convexEdges(${body})` };
   }
   const edgesVar = allocateUniqueName(names, 'faceEdges');
+  const n = allocateUniqueName(names, '_n');
+  const dot = allocateUniqueName(names, '_dot');
+  const ok = allocateUniqueName(names, '_ok');
   const nLit = formatVec3(face.normal);
   const lines = [
     `const ${edgesVar} = convexEdges(${body}).filter((e) => {`,
-    `  const _n = ${nLit};`,
-    `  const _dot = (a, b) => a[0]*b[0] + a[1]*b[1] + a[2]*b[2];`,
-    `  const _ok = (n) => n && _dot(n, _n) > 0.95;`,
-    `  return _ok(e.n0) || _ok(e.n1);`,
+    `  const ${n} = ${nLit};`,
+    `  const ${dot} = (a, b) => a[0]*b[0] + a[1]*b[1] + a[2]*b[2];`,
+    `  const ${ok} = (nn) => nn && ${dot}(nn, ${n}) > 0.95;`,
+    `  return ${ok}(e.n0) || ${ok}(e.n1);`,
     `});`,
     `if (!${edgesVar}.length) throw new Error('No convex edges adjacent to selected face — try Edges: allConvex');`,
   ];
@@ -516,24 +529,30 @@ export function emitSelectedEdgeLines(body, selectedEdges, names, allocateUnique
     };
   }
   const edgesVar = allocateUniqueName(names, 'selEdges');
+  // Unique temps — sequential fillet/chamfer must not share _mids/_all/_hit with a prior IIFE
+  // or filterRedeclarations will strip mid-block lines and corrupt the script (Parser error).
+  const mids = allocateUniqueName(names, '_mids');
+  const all = allocateUniqueName(names, '_all');
+  const hit = allocateUniqueName(names, '_hit');
+  const m = allocateUniqueName(names, '_m');
   const midsLit = edges.map((e) => {
-    const m = e.mid || [
+    const mid = e.mid || [
       ((e.va?.[0] ?? 0) + (e.vb?.[0] ?? 0)) / 2,
       ((e.va?.[1] ?? 0) + (e.vb?.[1] ?? 0)) / 2,
       ((e.va?.[2] ?? 0) + (e.vb?.[2] ?? 0)) / 2,
     ];
-    return formatVec3(m);
+    return formatVec3(mid);
   }).join(', ');
   const lines = [
     `const ${edgesVar} = (() => {`,
-    `  const _mids = [${midsLit}];`,
-    `  const _all = convexEdges(${body});`,
-    `  const _hit = _all.filter((e) => {`,
-    `    const _m = [(e.va[0]+e.vb[0])/2, (e.va[1]+e.vb[1])/2, (e.va[2]+e.vb[2])/2];`,
-    `    return _mids.some((p) => (_m[0]-p[0])**2 + (_m[1]-p[1])**2 + (_m[2]-p[2])**2 < 0.25);`,
+    `  const ${mids} = [${midsLit}];`,
+    `  const ${all} = convexEdges(${body});`,
+    `  const ${hit} = ${all}.filter((e) => {`,
+    `    const ${m} = [(e.va[0]+e.vb[0])/2, (e.va[1]+e.vb[1])/2, (e.va[2]+e.vb[2])/2];`,
+    `    return ${mids}.some((p) => (${m}[0]-p[0])**2 + (${m}[1]-p[1])**2 + (${m}[2]-p[2])**2 < 0.25);`,
     `  });`,
-    `  if (!_hit.length) throw new Error('Selected edges not found on body — re-pick after geometry changes');`,
-    `  return _hit;`,
+    `  if (!${hit}.length) throw new Error('Selected edges not found on body — re-pick after geometry changes');`,
+    `  return ${hit};`,
     `})();`,
   ];
   return { lines, edgesExpr: edgesVar, ok: true };

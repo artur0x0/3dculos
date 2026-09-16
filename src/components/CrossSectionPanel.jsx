@@ -172,7 +172,7 @@ const handleButtonClick = () => {
       }`}>
         <ViewSnapControl onSnap={onSnapView} />
 
-        {/* Pick selectors — own section with dividers; icons only (Face | Edge) */}
+        {/* Pick selectors — icons only; idle matches Fit/ruler (no filled tan/opaque frame) */}
         {typeof onPickModeChange === 'function' && (
           <>
             <div
@@ -180,19 +180,17 @@ const handleButtonClick = () => {
               aria-hidden
             />
             <div
-              className={`flex rounded-md border border-gray-300/80 overflow-hidden bg-white/80 ${
-                verticalRail ? 'flex-col' : 'flex-row'
-              }`}
+              className={`flex ${verticalRail ? 'flex-col' : 'flex-row'}`}
               role="group"
               aria-label="Pick mode"
             >
               <button
                 type="button"
                 onClick={() => onPickModeChange('face')}
-                className={`flex items-center justify-center p-2 ${
+                className={`p-2 rounded ${
                   pickMode === 'face'
-                    ? 'text-green-800 bg-green-100'
-                    : 'text-blue-700 hover:bg-gray-100 active:bg-blue-100'
+                    ? 'text-green-600 bg-green-100'
+                    : 'text-blue-600 hover:bg-gray-100 active:bg-blue-100'
                 }`}
                 title="Face pick mode — tap a face for Hole / features"
                 aria-label="Face pick mode"
@@ -203,10 +201,10 @@ const handleButtonClick = () => {
               <button
                 type="button"
                 onClick={() => onPickModeChange('edge')}
-                className={`flex items-center justify-center p-2 ${
+                className={`p-2 rounded ${
                   pickMode === 'edge'
-                    ? 'text-amber-900 bg-amber-100'
-                    : 'text-blue-700 hover:bg-gray-100 active:bg-amber-50'
+                    ? 'text-green-600 bg-green-100'
+                    : 'text-blue-600 hover:bg-gray-100 active:bg-blue-100'
                 }`}
                 title="Edge pick mode — tap near edges for Fillet/Chamfer"
                 aria-label="Edge pick mode"

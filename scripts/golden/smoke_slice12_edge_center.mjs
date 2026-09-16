@@ -602,6 +602,58 @@ const planarFace = {
   check('popLastEdgeSelection drops last', popLastEdgeSelection(list).map((e) => e.key).join(',') === 'a,b');
 }
 
+// ── Hotfix: second fillet / hole after fillet stays parseable ─
+{
+  console.log('\npost-fillet sequential insert');
+  const e1 = [{ mid: [20, 15, 10], va: [20, 0, 10], vb: [20, 30, 10], length: 30 }];
+  const e2 = [{ mid: [-20, 15, 10], va: [-20, 0, 10], vb: [-20, 30, 10], length: 30 }];
+  const face = {
+    type: 'planar', center: [0, 0, 10], normal: [0, 0, 1],
+    area: 100, triangleCount: 2, selectionMode: 'coplanar',
+  };
+  let buf = composeHelperInsert('', 'cube', null, { width: 40, depth: 30, height: 20, center: true });
+  buf = composeHelperInsert(
+    buf, 'filletEdges', null,
+    { radius: 3, sphericalCorners: true, edgeScope: 'selected', body: 'part' },
+    null, e1,
+  );
+  const twice = composeHelperInsert(
+    buf, 'filletEdges', null,
+    { radius: 2, sphericalCorners: true, edgeScope: 'selected', body: 'part' },
+    null, e2,
+  );
+  check('2nd fillet compose ok', typeof twice === 'string');
+  check('2nd fillet uses selEdges2 + _mids2', /selEdges2/.test(twice) && /_mids2/.test(twice));
+  try {
+    new Function(twice);
+    check('2nd fillet parseable (Function)', true);
+  } catch (e) {
+    check('2nd fillet parseable (Function)', false, String(e.message || e));
+  }
+
+  const withHole = composeHelperInsert(
+    buf, 'hole', null,
+    { dia: 6, placement: 'center', through: true, body: 'part' },
+    face, null,
+  );
+  check('fillet→hole compose ok', typeof withHole === 'string' && /\bhole\s*\(/.test(withHole));
+  try {
+    new Function(withHole);
+    check('fillet→hole parseable (Function)', true);
+  } catch (e) {
+    check('fillet→hole parseable (Function)', false, String(e.message || e));
+  }
+
+  check(
+    'soft-fail empty edges → null',
+    composeHelperInsert(
+      buf, 'filletEdges', null,
+      { radius: 3, sphericalCorners: true, edgeScope: 'selected', body: 'part' },
+      null, [],
+    ) === null,
+  );
+}
+
 if (failed) {
   console.log(`\nFAILED: ${failed}`);
   process.exit(1);
