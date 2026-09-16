@@ -66,6 +66,7 @@ const HelperInsertPalette = ({
   selectedFace = null,
   selectedEdges = null,
   onRequestEdgeMode = null,
+  onStaleEdgesClear = null,
   compact = false,
 }) => {
   const grouped = itemsByGroup();
@@ -180,6 +181,17 @@ const HelperInsertPalette = ({
             const id = pending.id;
             const faceCtx = faceSnapshot;
             const edgeCtx = edgeSnapshot;
+            const isEdgeFeature = id === 'filletEdges' || id === 'chamferEdges';
+            const scope = params?.edgeScope
+              || (edgeCtx && edgeCtx.length ? 'selected' : (faceCtx ? 'face' : 'allConvex'));
+            // Soft-fail: selected-edge scope with no edges — clear + prompt, never emit JS.
+            if (isEdgeFeature && scope === 'selected' && !(edgeCtx && edgeCtx.length)) {
+              close();
+              onStaleEdgesClear?.(
+                'No edges selected — re-pick after geometry changes, then Fillet/Chamfer.',
+              );
+              return;
+            }
             close();
             onInsert?.(id, params, faceCtx, edgeCtx);
           }}

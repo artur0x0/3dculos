@@ -44,7 +44,7 @@ const ViewSnapControl = ({ onSnap }) => {
             <button
               key={key}
               onClick={() => handleSnap(key)}
-              className="p-2 rounded text-blue-600 hover:bg-blue-100"
+              className="p-2 rounded text-blue-600 hover:bg-blue-100 active:bg-blue-200"
               title={label}
               aria-label={label}
             >
@@ -56,7 +56,11 @@ const ViewSnapControl = ({ onSnap }) => {
 
       <button
         onClick={handleBox}
-        className={`p-2 rounded ${open ? 'text-green-600 bg-green-100' : 'text-blue-600'} hover:bg-gray-100`}
+        className={`p-2 rounded ${
+          open
+            ? 'text-green-600 bg-green-100'
+            : 'text-blue-600 hover:bg-gray-100 active:bg-blue-100'
+        }`}
         title={open ? 'Snap to Isometric (closes view snaps)' : 'Show view snaps (Front / Right / Top)'}
         aria-label="View snaps"
         aria-expanded={open}

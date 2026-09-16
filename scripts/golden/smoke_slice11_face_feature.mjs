@@ -146,7 +146,7 @@ const irregularFace = {
   const buf = composeHelperInsert('', 'filletEdges', null, { radius: 2, edgeScope: 'face' }, face);
   check('fillet face filters convexEdges', /convexEdges\(/.test(buf) && /\.filter\(/.test(buf));
   check('fillet faceEdges var', /faceEdges/.test(buf));
-  check('fillet signed parallel (not abs)', /_dot\(n, _n\) > 0\.95/.test(buf) && !/Math\.abs\(_dot/.test(buf));
+  check('fillet signed parallel (not abs)', /_dot\(\w+, _n\) > 0\.95/.test(buf) && !/Math\.abs\(_dot/.test(buf));
 }
 
 // ── Clearance pattern preserves size/fit via fastenerClearanceDia ─
