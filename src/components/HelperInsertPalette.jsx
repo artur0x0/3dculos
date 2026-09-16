@@ -23,6 +23,7 @@ import {
   Frame,
   ArrowUpFromLine,
   Rotate3d,
+  SquareDashed,
 } from 'lucide-react';
 import { HELPER_PALETTE_GROUPS, itemsByGroup } from '../utils/helperPaletteSnippets';
 import { resolveFaceModal } from '../utils/faceFeaturePlacement';
@@ -53,6 +54,7 @@ const ICONS = {
   workplane: Frame,
   makeExtrude: ArrowUpFromLine,
   makeRevolve: Rotate3d,
+  crossSection: SquareDashed,
 };
 
 /**
@@ -67,6 +69,7 @@ const HelperInsertPalette = ({
   selectedEdges = null,
   onRequestEdgeMode = null,
   onStaleEdgesClear = null,
+  onProfilePreview = null,
   compact = false,
 }) => {
   const grouped = itemsByGroup();
@@ -118,6 +121,7 @@ const HelperInsertPalette = ({
     setEdgeSnapshot(null);
     setRefuseMessage(null);
     setModalMode('default');
+    onProfilePreview?.(null);
   };
 
   return (
@@ -177,6 +181,16 @@ const HelperInsertPalette = ({
           faceInfo={faceSnapshot}
           edgeInfo={edgeSnapshot}
           onCancel={close}
+          onValuesChange={(values, item) => {
+            if (item?.id !== 'crossSection') {
+              onProfilePreview?.(null);
+              return;
+            }
+            onProfilePreview?.({
+              face: faceSnapshot,
+              params: values,
+            });
+          }}
           onConfirm={(params) => {
             const id = pending.id;
             const faceCtx = faceSnapshot;

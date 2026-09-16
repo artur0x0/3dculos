@@ -1,10 +1,11 @@
 /**
- * Slice 11/12 — Face-select → feature placement + edge pick for fillet/chamfer.
+ * Slice 11/12/21 — Face-select → feature placement + edge pick + cross-section plane.
  *
  * Classify Viewport selectedFace → planar | cylindrical | irregular.
  * Face-aware param schemas + workplane / edge snippet helpers.
  * Slice 12: resolveHoleUV (Center → u=0,v=0 on snapped workplane);
  * selected-edge emission for fillet/chamfer.
+ * Slice 21: cross-section substrate plane from planar face only.
  *
  * Classification (from Viewport faceData):
  *   - planar:      selectionMode === 'coplanar' (single-click coplanar region)
@@ -23,6 +24,9 @@ import {
   defaultEdgeBlendSize,
   edgeBlendHardMax,
 } from './selectEdge.js';
+import {
+  CROSS_SECTION_REFUSE_NON_PLANAR,
+} from './crossSectionSubstrate.js';
 
 /** Features that place relative to a selected face when one is active. */
 export const FACE_FEATURE_IDS = new Set([
@@ -34,6 +38,12 @@ export const FACE_FEATURE_IDS = new Set([
   'cskHole',
   'filletEdges',
   'chamferEdges',
+  'crossSection',
+]);
+
+/** Features that require a planar face when one is selected (Slice 21). */
+export const PLANAR_ONLY_FEATURE_IDS = new Set([
+  'crossSection',
 ]);
 
 export function isFaceFeature(id) {
@@ -635,6 +645,32 @@ export function resolveFaceModal(paletteItem, selectedFace, selectedEdges = null
     };
   }
 
+  // Slice 21: cross-section plane from planar face only.
+  if (id === 'crossSection' && selectedFace) {
+    const face = classifySelectedFace(selectedFace);
+    if (!face) return { mode: 'default' };
+    if (face.type !== 'planar') {
+      return {
+        mode: 'refuse',
+        face,
+        message: face.type === 'irregular'
+          ? face.refuseMessage
+          : CROSS_SECTION_REFUSE_NON_PLANAR,
+      };
+    }
+    return {
+      mode: 'params',
+      face,
+      edges: null,
+      item: {
+        ...paletteItem,
+        title: `${paletteItem.title} — on planar face`,
+        _facePlacement: true,
+        _crossSectionPlacement: true,
+      },
+    };
+  }
+
   if (!isFaceFeature(id) || !selectedFace) {
     return { mode: 'default' };
   }
@@ -642,6 +678,9 @@ export function resolveFaceModal(paletteItem, selectedFace, selectedEdges = null
   if (!face) return { mode: 'default' };
   if (face.type === 'irregular') {
     return { mode: 'refuse', face, message: face.refuseMessage };
+  }
+  if (PLANAR_ONLY_FEATURE_IDS.has(id) && face.type !== 'planar') {
+    return { mode: 'refuse', face, message: CROSS_SECTION_REFUSE_NON_PLANAR };
   }
   const params = faceAwareParams(id, face.type);
   if (!params) return { mode: 'default' };

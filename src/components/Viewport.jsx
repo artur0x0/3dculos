@@ -21,6 +21,7 @@ import {
   Matrix4,
   Triangle,
   LineSegments,
+  LineLoop,
   LineBasicMaterial,
   Group,
 } from 'three';
@@ -33,6 +34,7 @@ import Toolbar from './Toolbar';
 import CrossSectionPanel from './CrossSectionPanel';
 import HelperInsertPalette from './HelperInsertPalette';
 import { classifySelectedFace } from '../utils/faceFeaturePlacement';
+import { buildCrossSectionPreview } from '../utils/crossSectionSubstrate';
 import {
   buildFeatureEdges,
   pickNearestEdgeScreen,
@@ -154,6 +156,8 @@ const Viewport = forwardRef(({
   const featureEdgesSourceRef = useRef(null);
   const edgeHighlightRef = useRef(null);
   const edgeHoverRef = useRef(null);
+  /** Slice 21: plane+profile preview overlay while HelperParamModal is open. */
+  const xsPreviewRef = useRef(null);
   const edgePickScratchA = useRef(new Vector3());
   const edgePickScratchB = useRef(new Vector3());
   const pickModeRef = useRef('face');
@@ -208,6 +212,8 @@ const Viewport = forwardRef(({
       edgeHighlightRef.current = null;
       disposeEdgeOverlayObject(sceneRef.current, edgeHoverRef.current);
       edgeHoverRef.current = null;
+      disposeEdgeOverlayObject(sceneRef.current, xsPreviewRef.current);
+      xsPreviewRef.current = null;
       setSelectedFace(null);
       setSelectedEdges([]);
       onFaceSelected?.(null);
@@ -354,6 +360,79 @@ const Viewport = forwardRef(({
     sceneRef.current.add(group);
     return group;
   }, [edgeLineResolution]);
+
+  const clearXsPreview = useCallback(() => {
+    if (!xsPreviewRef.current) return;
+    disposeEdgeOverlayObject(sceneRef.current, xsPreviewRef.current);
+    xsPreviewRef.current = null;
+  }, []);
+
+  /**
+   * Slice 21: draw profile outline(s) on the cross-section plane while editing params.
+   * @param {{ face: object|null, params: object }|null} payload
+   */
+  const setXsPreview = useCallback((payload) => {
+    clearXsPreview();
+    if (!payload || !sceneRef.current) return;
+    const preview = buildCrossSectionPreview(payload.face || null, payload.params || {});
+    if (!preview?.rings?.length) return;
+    const group = new Group();
+    group.name = 'crossSectionPreview';
+    const mat = new LineBasicMaterial({
+      color: 0x22d3ee,
+      depthTest: false,
+      depthWrite: false,
+      transparent: true,
+      opacity: 0.95,
+    });
+    for (const ring of preview.rings) {
+      if (!ring?.length) continue;
+      const positions = new Float32Array(ring.length * 3);
+      for (let i = 0; i < ring.length; i++) {
+        positions[i * 3] = ring[i][0];
+        positions[i * 3 + 1] = ring[i][1];
+        positions[i * 3 + 2] = ring[i][2];
+      }
+      const geom = new BufferGeometry();
+      geom.setAttribute('position', new BufferAttribute(positions, 3));
+      const loop = new LineLoop(geom, mat);
+      loop.renderOrder = 12;
+      loop.frustumCulled = false;
+      group.add(loop);
+    }
+    // Plane axes hint (short u/v ticks at origin)
+    const { plane } = preview;
+    if (plane) {
+      const axisLen = 4;
+      const axisMat = new LineBasicMaterial({
+        color: 0xa5f3fc,
+        depthTest: false,
+        depthWrite: false,
+        transparent: true,
+        opacity: 0.55,
+      });
+      const makeAxis = (dir) => {
+        const a = plane.center;
+        const b = [
+          a[0] + axisLen * dir[0],
+          a[1] + axisLen * dir[1],
+          a[2] + axisLen * dir[2],
+        ];
+        const g = new BufferGeometry();
+        g.setAttribute('position', new BufferAttribute(new Float32Array([
+          a[0], a[1], a[2], b[0], b[1], b[2],
+        ]), 3));
+        const line = new LineSegments(g, axisMat);
+        line.renderOrder = 12;
+        line.frustumCulled = false;
+        return line;
+      };
+      group.add(makeAxis(plane.x));
+      group.add(makeAxis(plane.y));
+    }
+    sceneRef.current.add(group);
+    xsPreviewRef.current = group;
+  }, [clearXsPreview]);
 
   const highlightSelectedEdges = useCallback((edges) => {
     clearEdgeHighlight();
@@ -1748,6 +1827,7 @@ const Viewport = forwardRef(({
             setEdgeModeToast(msg || 'Re-pick edges after geometry changes');
             armEdgeModeToastClear();
           }}
+          onProfilePreview={setXsPreview}
           compact={isMobile}
         />
       )}
