@@ -315,7 +315,7 @@ export function assembleCrossSection(plane, profileOrParams) {
   let contours;
   if (profileOrParams && profileOrParams.type && Array.isArray(profileOrParams.contours)) {
     profile = { ...profileOrParams };
-    contours = profileOrParams.contours;
+    contours = profileOrParams.contours.map((pts) => normalizeClosedPolyline(pts));
     delete profile.contours;
   } else if (profileOrParams && Array.isArray(profileOrParams) && Array.isArray(profileOrParams[0])) {
     // bare contours or bare point list

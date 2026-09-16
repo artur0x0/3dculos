@@ -721,7 +721,7 @@ export const HELPER_PALETTE_ITEMS = [
       { name: 'centered', type: 'bool', default: true, label: 'Centered' },
       {
         name: 'polygonPreset', type: 'select', default: 'hexagon', label: 'Polygon',
-        options: ['triangle', 'square', 'hexagon', 'quarterCircle'],
+        options: ['triangle', 'square', 'pentagon', 'hexagon', 'quarterCircle'],
       },
     ],
     build: (empty, p, names, buffer, faceCtx = null) => {

@@ -89,6 +89,10 @@ function stubRunner(source) {
     polarArray: (p) => p,
     makeExtrude: () => solid('ex'),
     makeRevolve: () => solid('rev'),
+    profileCircle: (r) => ({ type: 'circle', contours: [[[r, 0], [0, r], [-r, 0], [0, -r]]] }),
+    profileRectangle: (w, h) => ({ type: 'rectangle', contours: [[[0, 0], [w, 0], [w, h], [0, h]]] }),
+    profilePolygon: (pts) => ({ type: 'polygon', contours: [pts] }),
+    makeCrossSection: () => ({ kind: 'crossSection' }),
   };
   const keys = Object.keys(stubs);
   const fn = new Function(...keys, `"use strict";\n${source}`);
