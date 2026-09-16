@@ -129,7 +129,16 @@ const Viewport = forwardRef(({
   const edgePickScratchB = useRef(new Vector3());
   const pickModeRef = useRef('face');
   const edgeModeToastShownRef = useRef(false);
+  const edgeModeToastTimerRef = useRef(null);
   const [edgeModeToast, setEdgeModeToast] = useState(null);
+
+  const armEdgeModeToastClear = () => {
+    if (edgeModeToastTimerRef.current) clearTimeout(edgeModeToastTimerRef.current);
+    edgeModeToastTimerRef.current = setTimeout(() => {
+      edgeModeToastTimerRef.current = null;
+      setEdgeModeToast(null);
+    }, 2800);
+  };
   const [materials, setMaterials] = useState([]);
   const [isExecuting, setIsExecuting] = useState(false);
   const [executionError, setExecutionError] = useState(null);
@@ -820,12 +829,16 @@ const Viewport = forwardRef(({
     };
   }, [handleMouseDown, handleMouseMove, handleMouseUp]);
 
-  // Click cleanup effect
+  // Click / toast timer cleanup effect
   useEffect(() => {
     return () => {
       // Cleanup click timer on unmount
       if (clickTimerRef.current) {
         clearTimeout(clickTimerRef.current);
+      }
+      if (edgeModeToastTimerRef.current) {
+        clearTimeout(edgeModeToastTimerRef.current);
+        edgeModeToastTimerRef.current = null;
       }
       // Cleanup measurement lines on unmount
       clearMeasurementLines();
@@ -1499,7 +1512,7 @@ const Viewport = forwardRef(({
       syncFeatureEdges(resultRef.current?.geometry ?? null);
       if (wasEdgeMode && hadEdges) {
         setEdgeModeToast('Geometry updated — re-pick edges');
-        setTimeout(() => setEdgeModeToast(null), 2800);
+        armEdgeModeToastClear();
       }
 
       // Auto scale: re-frame the part after every successful run so the new geometry is
@@ -1547,7 +1560,7 @@ const Viewport = forwardRef(({
         featureEdgesRef.current = [];
         featureEdgesSourceRef.current = null;
         setEdgeModeToast('Run failed — selection cleared (no prior solid)');
-        setTimeout(() => setEdgeModeToast(null), 2800);
+        armEdgeModeToastClear();
       }
       return false;
     } finally {
@@ -1669,11 +1682,15 @@ const Viewport = forwardRef(({
               if (!edgeModeToastShownRef.current) {
                 edgeModeToastShownRef.current = true;
                 setEdgeModeToast('Edge pick on — tap near an edge (fat target)');
-                setTimeout(() => setEdgeModeToast(null), 2800);
+                armEdgeModeToastClear();
               }
             } else {
               clearEdgeHover();
               clearEdgeHighlight();
+              if (edgeModeToastTimerRef.current) {
+                clearTimeout(edgeModeToastTimerRef.current);
+                edgeModeToastTimerRef.current = null;
+              }
               setEdgeModeToast(null);
               // keep selectedEdges until user clears / face-picks
             }

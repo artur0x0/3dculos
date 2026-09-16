@@ -172,7 +172,8 @@ export function defaultEdgeBlendSize(minEdgeLength) {
   const softMax = 0.35 * minL;
   const floor = Math.min(0.5, softMax);
   const r = Math.min(softMax, Math.max(floor, 0.15 * minL));
-  return Math.round(r * 100) / 100;
+  // Param min for radius/chamfer is 0.01 — never round a tiny softMax down to 0.
+  return Math.max(0.01, Math.round(r * 100) / 100);
 }
 
 /**

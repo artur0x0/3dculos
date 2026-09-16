@@ -563,11 +563,6 @@ const planarFace = {
   check('pre-fix triangle-centroid miss leaves probe solid', badInter > 10, `vol=${badInter}`);
 }
 
-if (failed) {
-  console.log(`\nFAILED: ${failed}`);
-  process.exit(1);
-}
-
 // ── Polish: default fillet r from edge length ──────────────────
 {
   console.log('\ndefault fillet r from edge length');
@@ -583,6 +578,10 @@ if (failed) {
   const short = defaultEdgeBlendSize(1);
   check('short edge default ≤ 0.35·L', short <= 0.35 * 1 + 1e-9, `got ${short}`);
   check('short edge default under guard', short < EDGE_BLEND_SIZE_GUARD * 1);
+
+  // Param min is 0.01 — rounding must not collapse tiny edges to 0
+  const tiny = defaultEdgeBlendSize(0.01);
+  check('tiny edge default floors at param min 0.01', tiny === 0.01, `got ${tiny}`);
 
   const edges = [
     { mid: [0, 0, 0], va: [0, 0, 0], vb: [40, 0, 0], length: 40 },
@@ -603,5 +602,9 @@ if (failed) {
   check('popLastEdgeSelection drops last', popLastEdgeSelection(list).map((e) => e.key).join(',') === 'a,b');
 }
 
+if (failed) {
+  console.log(`\nFAILED: ${failed}`);
+  process.exit(1);
+}
 
 console.log('\nAll slice-12 edge + center-hole checks passed.');

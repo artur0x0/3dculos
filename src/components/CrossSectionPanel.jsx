@@ -172,7 +172,7 @@ const handleButtonClick = () => {
       }`}>
         <ViewSnapControl onSnap={onSnapView} />
 
-        {/* Pick selectors — own section with dividers; icons only; sticky when active */}
+        {/* Pick selectors — own section with dividers; icons only (Face | Edge) */}
         {typeof onPickModeChange === 'function' && (
           <>
             <div
