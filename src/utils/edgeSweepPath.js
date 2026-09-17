@@ -141,6 +141,8 @@ export function orderEdgePath(selectedEdges) {
   const raw = Array.isArray(selectedEdges) ? selectedEdges : [];
   const uniq = new Map();
   for (const e of raw) {
+    if (!e) continue;
+    if (!Number.isFinite(e.a) || !Number.isFinite(e.b)) continue;
     const n = normalizePathEdge(e);
     if (!n) continue;
     if (!uniq.has(n.key)) uniq.set(n.key, n);

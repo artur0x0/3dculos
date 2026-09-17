@@ -2613,6 +2613,7 @@ function makeSweepPath(edges, opts = {}) {
   const uniq = new Map();
   for (const e of edges) {
     if (!e || !Array.isArray(e.va) || !Array.isArray(e.vb)) continue;
+    if (!Number.isFinite(e.a) || !Number.isFinite(e.b)) continue;
     const a = Math.min(e.a, e.b);
     const b = Math.max(e.a, e.b);
     const key = e.key || `${a}-${b}`;
