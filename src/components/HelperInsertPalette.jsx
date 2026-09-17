@@ -24,6 +24,7 @@ import {
   ArrowUpFromLine,
   Rotate3d,
   SquareDashed,
+  Route,
 } from 'lucide-react';
 import { HELPER_PALETTE_GROUPS, itemsByGroup } from '../utils/helperPaletteSnippets';
 import { resolveFaceModal } from '../utils/faceFeaturePlacement';
@@ -55,6 +56,7 @@ const ICONS = {
   makeExtrude: ArrowUpFromLine,
   makeRevolve: Rotate3d,
   crossSection: SquareDashed,
+  sweepPath: Route,
 };
 
 /**
@@ -70,6 +72,7 @@ const HelperInsertPalette = ({
   onRequestEdgeMode = null,
   onStaleEdgesClear = null,
   onProfilePreview = null,
+  onPathPreview = null,
   compact = false,
 }) => {
   const grouped = itemsByGroup();
@@ -86,7 +89,7 @@ const HelperInsertPalette = ({
     const buf = typeof getBuffer === 'function' ? getBuffer() : '';
     setBufferSnapshot(typeof buf === 'string' ? buf : '');
     // Auto-switch to edge pick when opening fillet/chamfer with no edges yet.
-    if ((item.id === 'filletEdges' || item.id === 'chamferEdges')
+    if ((item.id === 'filletEdges' || item.id === 'chamferEdges' || item.id === 'sweepPath')
       && !(selectedEdges && selectedEdges.length)
       && typeof onRequestEdgeMode === 'function') {
       onRequestEdgeMode();
@@ -122,6 +125,7 @@ const HelperInsertPalette = ({
     setRefuseMessage(null);
     setModalMode('default');
     onProfilePreview?.(null);
+    onPathPreview?.(null);
   };
 
   return (
@@ -182,20 +186,31 @@ const HelperInsertPalette = ({
           edgeInfo={edgeSnapshot}
           onCancel={close}
           onValuesChange={(values, item) => {
-            if (item?.id !== 'crossSection') {
-              onProfilePreview?.(null);
+            if (item?.id === 'crossSection') {
+              onPathPreview?.(null);
+              onProfilePreview?.({
+                face: faceSnapshot,
+                params: values,
+              });
               return;
             }
-            onProfilePreview?.({
-              face: faceSnapshot,
-              params: values,
-            });
+            if (item?.id === 'sweepPath') {
+              onProfilePreview?.(null);
+              onPathPreview?.({
+                edges: edgeSnapshot,
+                params: values,
+              });
+              return;
+            }
+            onProfilePreview?.(null);
+            onPathPreview?.(null);
           }}
           onConfirm={(params) => {
             const id = pending.id;
             const faceCtx = faceSnapshot;
             const edgeCtx = edgeSnapshot;
             const isEdgeFeature = id === 'filletEdges' || id === 'chamferEdges';
+            const isSweepPath = id === 'sweepPath';
             const scope = params?.edgeScope
               || (edgeCtx && edgeCtx.length ? 'selected' : (faceCtx ? 'face' : 'allConvex'));
             // Soft-fail: selected-edge scope with no edges — clear + prompt, never emit JS.
@@ -203,6 +218,13 @@ const HelperInsertPalette = ({
               close();
               onStaleEdgesClear?.(
                 'No edges selected — re-pick after geometry changes, then Fillet/Chamfer.',
+              );
+              return;
+            }
+            if (isSweepPath && !(edgeCtx && edgeCtx.length)) {
+              close();
+              onStaleEdgesClear?.(
+                'No edges selected — re-pick a contiguous chain or loop, then Path.',
               );
               return;
             }

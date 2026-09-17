@@ -141,10 +141,17 @@ console.log('slice-10 palette v2 smoke');
 
 // ── All items compose with defaults (no redecl, one return) ────
 {
+  // Slice 22 Path soft-fails without edges — supply a tiny open chain.
+  const pathEdges = [
+    { key: '0-1', a: 0, b: 1, va: [0, 0, 0], vb: [10, 0, 0], mid: [5, 0, 0], length: 10 },
+    { key: '1-2', a: 1, b: 2, va: [10, 0, 0], vb: [10, 8, 0], mid: [10, 4, 0], length: 8 },
+  ];
   let buf = '';
   const seen = new Set();
   for (const item of HELPER_PALETTE_ITEMS) {
-    const next = composeHelperInsert(buf, item.id);
+    const next = item.id === 'sweepPath'
+      ? composeHelperInsert(buf, item.id, null, null, null, pathEdges)
+      : composeHelperInsert(buf, item.id);
     check(`compose ${item.id}`, typeof next === 'string' && next.length > 0);
     // no illegal top
     if (/\btop\b/.test(next)) {

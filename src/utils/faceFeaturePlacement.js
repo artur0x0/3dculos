@@ -1,11 +1,12 @@
 /**
- * Slice 11/12/21 — Face-select → feature placement + edge pick + cross-section plane.
+ * Slice 11/12/21/22 — Face-select → feature placement + edge pick + cross-section + sweep path.
  *
  * Classify Viewport selectedFace → planar | cylindrical | irregular.
  * Face-aware param schemas + workplane / edge snippet helpers.
  * Slice 12: resolveHoleUV (Center → u=0,v=0 on snapped workplane);
  * selected-edge emission for fillet/chamfer.
  * Slice 21: cross-section substrate plane from planar face only.
+ * Slice 22: edge → ordered sweep path from Edge (or Face|Edge) selection.
  *
  * Classification (from Viewport faceData):
  *   - planar:      selectionMode === 'coplanar' (single-click coplanar region)
@@ -27,6 +28,10 @@ import {
 import {
   CROSS_SECTION_REFUSE_NON_PLANAR,
 } from './crossSectionSubstrate.js';
+import {
+  assembleSweepPath,
+  SWEEP_PATH_EMPTY,
+} from './edgeSweepPath.js';
 
 /** Features that place relative to a selected face when one is active. */
 export const FACE_FEATURE_IDS = new Set([
@@ -39,11 +44,13 @@ export const FACE_FEATURE_IDS = new Set([
   'filletEdges',
   'chamferEdges',
   'crossSection',
+  'sweepPath',
 ]);
 
 /** Features that require a planar face when one is selected (Slice 21). */
 export const PLANAR_ONLY_FEATURE_IDS = new Set([
   'crossSection',
+  'sweepPath',
 ]);
 
 export function isFaceFeature(id) {
@@ -587,6 +594,40 @@ export function resolveFaceModal(paletteItem, selectedFace, selectedEdges = null
   const id = paletteItem.id;
   const hasEdges = Array.isArray(selectedEdges) && selectedEdges.length > 0;
   const isEdgeFeature = id === 'filletEdges' || id === 'chamferEdges';
+  const isSweepPath = id === 'sweepPath';
+
+  // Slice 22: ordered sweep path from current edge selection.
+  if (isSweepPath) {
+    if (!hasEdges) {
+      return {
+        mode: 'refuse',
+        message: SWEEP_PATH_EMPTY,
+      };
+    }
+    const ordered = assembleSweepPath(selectedEdges);
+    if (!ordered.ok) {
+      return {
+        mode: 'refuse',
+        message: ordered.message || SWEEP_PATH_EMPTY,
+      };
+    }
+    const body = { name: 'body', type: 'body', default: 'part', label: 'Body' };
+    const reverse = { name: 'reverse', type: 'bool', default: false, label: 'Reverse direction' };
+    const n = selectedEdges.length;
+    const loop = ordered.value.closed ? 'closed loop' : 'open chain';
+    return {
+      mode: 'params',
+      face: selectedFace ? classifySelectedFace(selectedFace) : null,
+      edges: selectedEdges,
+      item: {
+        ...paletteItem,
+        params: [body, reverse],
+        title: `${paletteItem.title} — ${n} edge${n === 1 ? '' : 's'} (${loop})`,
+        _edgePlacement: true,
+        _sweepPathPlacement: true,
+      },
+    };
+  }
 
   // Slice 12 + polish: fillet/chamfer with user-selected edges (no face required).
   // Seed radius/chamfer from min edge length so short edges get a safe default

@@ -70,7 +70,11 @@ function stubRunner(source) {
     roundedBox: () => solid('rb'),
     filletEdges: (p) => p,
     chamferEdges: (p) => p,
-    convexEdges: () => [],
+    // Non-empty so Slice 22 Path mid-match IIFE does not throw under stubRunner.
+    convexEdges: () => [
+      { va: [0, 0, 0], vb: [10, 0, 0] },
+      { va: [10, 0, 0], vb: [10, 8, 0] },
+    ],
     facesByNormal: () => [0],
     workplaneFromFace: () => ({}),
     holeSpan: () => 20,
@@ -93,6 +97,7 @@ function stubRunner(source) {
     profileRectangle: (w, h) => ({ type: 'rectangle', contours: [[[0, 0], [w, 0], [w, h], [0, h]]] }),
     profilePolygon: (pts) => ({ type: 'polygon', contours: [pts] }),
     makeCrossSection: () => ({ kind: 'crossSection' }),
+    makeSweepPath: () => ({ kind: 'sweepPath', closed: false, points: [[0,0,0],[1,0,0]], length: 1, edgeCount: 1 }),
   };
   const keys = Object.keys(stubs);
   const fn = new Function(...keys, `"use strict";\n${source}`);
@@ -139,9 +144,16 @@ console.log('slice-09 helper compose smoke');
 
 // ── Every palette item in sequence stays single-return / no redecl ─
 {
+  // Slice 22 Path requires an edge selection (soft-fails null otherwise).
+  const pathEdges = [
+    { key: '0-1', a: 0, b: 1, va: [0, 0, 0], vb: [10, 0, 0], mid: [5, 0, 0], length: 10 },
+    { key: '1-2', a: 1, b: 2, va: [10, 0, 0], vb: [10, 8, 0], mid: [10, 4, 0], length: 8 },
+  ];
   let buf = '';
   for (const item of HELPER_PALETTE_ITEMS) {
-    const next = composeHelperInsert(buf, item.id);
+    const next = item.id === 'sweepPath'
+      ? composeHelperInsert(buf, item.id, null, null, null, pathEdges)
+      : composeHelperInsert(buf, item.id);
     check(`compose ${item.id} returns string`, typeof next === 'string' && next.length > 0);
     buf = next;
   }
