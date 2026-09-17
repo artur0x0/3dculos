@@ -13,6 +13,7 @@
  */
 
 import { assembleSweepPath } from './edgeSweepPath.js';
+export { SLIVER_MAX_ABS, SLIVER_MAX_FRAC, isFilletSliverDirty } from './filletSliverGuard.js';
 
 export const FILLET_SWEEP_EMPTY =
   'Select edges first (Edge pick mode), then Fillet with Strategy=sweep (or Strategy=auto). Tangent-on chains work for circular rims.';
@@ -22,10 +23,6 @@ export const FILLET_SWEEP_DISCONNECTED =
 
 export const FILLET_SWEEP_BRANCH =
   'Selected edges branch (junction) — sweep fillet needs a simple open chain or closed loop, not a Y/T junction.';
-
-/** Degenerate-tri loud-fail gates shared with golden (must not drift). */
-export const SLIVER_MAX_ABS = 80;
-export const SLIVER_MAX_FRAC = 0.06;
 
 /**
  * Fillet cutter wedge in UV (u≥0, v≥0): origin → (r,0) → arc (center (r,r)) → (0,r).

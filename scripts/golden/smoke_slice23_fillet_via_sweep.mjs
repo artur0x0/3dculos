@@ -28,8 +28,7 @@ import {
   FILLET_SWEEP_EMPTY,
   FILLET_SWEEP_DISCONNECTED,
   FILLET_SWEEP_BRANCH,
-  SLIVER_MAX_ABS,
-  SLIVER_MAX_FRAC,
+  isFilletSliverDirty,
 } from '../../src/utils/filletAlongPath.js';
 import {
   effectiveBlendEdgeLength,
@@ -261,6 +260,63 @@ console.log('slice-23 fillet via sweep smoke');
   }
   check('auto→planar on 6-edge clean planar loop', pickFilletStrategy(planar6) === 'planar');
 
+  // 4-edge box top rectangle → planar
+  const planar4 = [];
+  {
+    const verts = [[-20, -15, 10], [20, -15, 10], [20, 15, 10], [-20, 15, 10]];
+    const sideN = [[0, -1, 0], [1, 0, 0], [0, 1, 0], [-1, 0, 0]];
+    for (let i = 0; i < 4; i++) {
+      const a = i, b = (i + 1) % 4;
+      const va = verts[a], vb = verts[b];
+      planar4.push({
+        key: `${a}-${b}`, a, b, va, vb,
+        mid: [(va[0] + vb[0]) / 2, (va[1] + vb[1]) / 2, (va[2] + vb[2]) / 2],
+        length: Math.hypot(vb[0] - va[0], vb[1] - va[1], vb[2] - va[2]),
+        n0: [0, 0, 1],
+        n1: sideN[i],
+      });
+    }
+  }
+  check('auto→planar on 4-edge clean planar loop', pickFilletStrategy(planar4) === 'planar');
+
+  // 200-edge coplanar rectangle subdivision (cardinal side normals only) → planar
+  const planar200 = [];
+  {
+    const sides = [
+      { a: [-20, -15, 10], b: [20, -15, 10], n: [0, -1, 0], nSeg: 50 },
+      { a: [20, -15, 10], b: [20, 15, 10], n: [1, 0, 0], nSeg: 50 },
+      { a: [20, 15, 10], b: [-20, 15, 10], n: [0, 1, 0], nSeg: 50 },
+      { a: [-20, 15, 10], b: [-20, -15, 10], n: [-1, 0, 0], nSeg: 50 },
+    ];
+    let k = 0;
+    for (const s of sides) {
+      for (let i = 0; i < s.nSeg; i++) {
+        const t0 = i / s.nSeg, t1 = (i + 1) / s.nSeg;
+        const va = [
+          s.a[0] + (s.b[0] - s.a[0]) * t0,
+          s.a[1] + (s.b[1] - s.a[1]) * t0,
+          s.a[2] + (s.b[2] - s.a[2]) * t0,
+        ];
+        const vb = [
+          s.a[0] + (s.b[0] - s.a[0]) * t1,
+          s.a[1] + (s.b[1] - s.a[1]) * t1,
+          s.a[2] + (s.b[2] - s.a[2]) * t1,
+        ];
+        planar200.push({
+          key: String(k), a: k, b: k + 1, va, vb,
+          mid: [(va[0] + vb[0]) / 2, (va[1] + vb[1]) / 2, (va[2] + vb[2]) / 2],
+          length: Math.hypot(vb[0] - va[0], vb[1] - va[1], vb[2] - va[2]),
+          n0: [0, 0, 1],
+          n1: s.n,
+        });
+        k++;
+      }
+    }
+    // Fix last→first vertex index for closed orderEdgePath
+    planar200[planar200.length - 1].b = 0;
+  }
+  check('auto→planar on 200-edge clean planar loop', pickFilletStrategy(planar200) === 'planar');
+
   const boxEdge = [{
     key: '0-1', a: 0, b: 1,
     va: [-20, -15, 10], vb: [20, -15, 10],
@@ -382,7 +438,8 @@ return part;
         const A = 0.5 * Math.hypot(ay * bz - az * by, az * bx - ax * bz, ax * by - ay * bx);
         if (A < 1e-8) tiny++;
       }
-      check('closed-rim no sliver scraps', tiny <= SLIVER_MAX_ABS || tiny <= SLIVER_MAX_FRAC * nTri,
+      // Same fail gate as sandboxWorker filletAlongPath (shared isFilletSliverDirty)
+      check('closed-rim no sliver scraps', !isFilletSliverDirty(tiny, nTri),
         `tiny=${tiny}/${nTri}`);
     } else {
       check('closed-rim no sliver scraps', false, 'missing mesh');

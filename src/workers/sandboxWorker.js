@@ -8,7 +8,7 @@ import {
   listFastenerSizes,
   resolveFastenerSize,
 } from './fastenerSizes.js';
-import { SLIVER_MAX_ABS, SLIVER_MAX_FRAC } from '../utils/filletAlongPath.js';
+import { isFilletSliverDirty } from '../utils/filletSliverGuard.js';
 
 /**
  * List of globals to block/remove in the worker context
@@ -3284,7 +3284,7 @@ function filletAlongPath(part, path, radius, opts = {}) {
     }
     // C6 closed-run filletEdges itself yields ~0.5–1% needles @1e-8 from
     // mesh boolean — only fail when the mesh is clearly scrap-sheet dirty.
-    if (tiny > SLIVER_MAX_ABS && tiny > SLIVER_MAX_FRAC * nTri) {
+    if (isFilletSliverDirty(tiny, nTri)) {
       throw new Error(
         `filletAlongPath: result has ${tiny}/${nTri} degenerate triangles (sliver scraps) — `
         + 'failing loud rather than shipping a dirty solid; try a smaller radius or Strategy=planar',
