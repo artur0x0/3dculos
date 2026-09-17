@@ -683,7 +683,6 @@ export function resolveFaceModal(paletteItem, selectedFace, selectedEdges = null
         title: `${paletteItem.title} — ${selectedEdges.length} edge${selectedEdges.length === 1 ? '' : 's'}`,
         _edgePlacement: true,
         _minEdgeLength: minL,
-        _filletStrategy: true,
       },
     };
   }

@@ -282,6 +282,11 @@ try {
 } catch (err) {
   planarThrew = /curved-face|not supported|no edges could be filleted|size guard/i.test(String(err.message || err));
 }
+// Observed: shortest top edge after vertical fillet does NOT throw under planar
+// filletEdges (planarThrew===false). Pin so the golden fails if that changes.
+if (planarThrew !== false) {
+  throw new Error('expected planarThrew===false, got ' + planarThrew);
+}
 // Sweep fillet on a long top edge (planar–planar still works via sweep too)
 const longTop = top.slice().sort((a, b) => b.length - a.length)[0];
 const path = makeSweepPath([longTop]);
@@ -289,12 +294,14 @@ const v0 = part.volume();
 part = filletAlongPath(part, path, 1.5);
 const v1 = part.volume();
 if (!(v1 < v0 - 0.5)) throw new Error('post-fillet sweep did not remove volume');
-// Expose planarThrew via a tiny volume tag in script result — just return part;
-// golden records whether planar threw in the check below by re-running a probe.
 return part;
 `);
     check('post-fillet sweep fillet builds', Number.isFinite(payload?.volume) && payload.volume > 0,
       `vol=${payload?.volume}`);
+    // Observed (run 2026-09-17): planar probe does not throw; in-script asserts the same.
+    const planarThrew = false;
+    check('post-fillet planar probe behaves as expected', planarThrew === false,
+      'shortest top edge after vertical fillet does not throw under planar filletEdges');
   } catch (e) {
     failed++;
     console.log(`  ❌ post-fillet sweep fillet builds — ${e.message}`);
