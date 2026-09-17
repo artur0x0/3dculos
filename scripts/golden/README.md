@@ -20,3 +20,4 @@ Note: npm `manifold-3d` ≠ bundled `built/manifold.wasm`. Gate acceptance still
 requires `test_real_worker.mjs` via `npm run verify` once the harness is present.
 
 | `smoke_slice21_cross_section.mjs` | Slice 21 cross-section substrate: plane from planar face, profiles, preview, compose |
+| `smoke_slice23_fillet_via_sweep.mjs` | Slice 23 sweep fillet: wedge contours, palette Strategy=sweep, closed-rim + post-fillet geometry via worker |

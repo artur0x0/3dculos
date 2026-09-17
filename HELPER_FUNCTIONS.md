@@ -21,6 +21,7 @@ comparable and train-able.
 | `loft`, `sweep`, `sweepPoints`, `makeExtrude`, `makeRevolve` | Profiles / paths |
 | `profileCircle` / `profileRectangle` / `profilePolygon` / `makeCrossSection` | Cross-section substrate (Slice 21) |
 | `makeSweepPath(edges, opts?)` | Ordered sweep path / wire from edges (Slice 22) |
+| `filletAlongPath(part, path, r, opts?)` | Sweep fillet/chamfer wedge along path → subtract (Slice 23) |
 
 **Loud failure rule:** feature helpers throw named `Error`s on bad inputs,
 degenerate cutters, non-manifold / empty results, or (for `filletEdges`) when
@@ -29,9 +30,13 @@ not allowed for puzzle vocabulary ops.
 
 **Supported / unsupported (honest):**
 - **Supported:** straight convex edges; closed circular rims via `filletEdges`
-  closed-run detection; metric + common UNC clearance/tap sizes below.
-- **Unsupported:** curved-face singleton fillets; open (partial-arc) curved
-  runs; concave “fillets” (adding material); arbitrary non-table fastener sizes.
+  closed-run detection; **sweep fillet** via `filletAlongPath` for compound /
+  curved-adjacent chains (post-fillet seams, circular rims as Path); metric +
+  common UNC clearance/tap sizes below.
+- **Unsupported (planar `filletEdges`):** curved-face singleton fillets; open
+  (partial-arc) curved runs under C6. Use **Strategy=sweep** / `filletAlongPath`
+  instead. Still unsupported: concave “fillets” (adding material); variable-radius
+  / rolling-ball industrial fillets; arbitrary non-table fastener sizes.
 
 Lookup helpers (also injected): `fastenerClearanceDia(size, fit?)`,
 `fastenerTapDrillDia(size)`, `fastenerMajorDia(size)`, `listFastenerSizes()`,
@@ -62,7 +67,13 @@ Without a selected face, palette v2 behavior is unchanged (default +Z
 `topFace` workplane / body selector).
 
 **Sweep path (Slice 22):** palette **Path** builds an ordered wire from
-Edge selection (open chain or closed loop). Path value only — no fillet sweep yet.
+Edge selection (open chain or closed loop). Consume with **Fillet → Strategy=sweep**
+(`filletAlongPath`) or `sweepPoints`.
+
+**Sweep fillet (Slice 23):** same **Fillet** control — **Strategy=planar** keeps
+`filletEdges` (planar–planar / closed-run C6); **Strategy=sweep** builds
+`makeSweepPath` + `filletAlongPath` (quarter-circle or chamfer wedge swept along
+the path, boolean subtract). Soft-fails empty/disconnected/branched like Path.
 
 **Cross-section (Slice 21):** palette **Profile** builds a reusable
 `makeCrossSection(plane, profile)` named let from a **planar** face
@@ -878,8 +889,73 @@ selection + Tangent chip. Viewport preview shows order/direction (green→magent
 gradient polyline, chevron arrows, start/end markers) — distinct from the
 orange #20 selection halo. Auto-Run unchanged.
 
-**Non-goals (wait for Product brief):** fillet-via-sweep / boolean cutter;
-extrude/revolve/loft; Profile API changes; full sketcher; C6 soft counters.
+**Non-goals (Slice 22):** fillet-via-sweep shipped in Slice 23; extrude/revolve/loft
+still wait for Product brief; Profile API changes; full sketcher; C6 soft counters.
+
+
+---
+
+## Fillet via swept cross-section (Slice 23)
+
+Unlock fillets on **compound / curved-adjacent** edges (cases where C6
+`filletEdges` throws `curved-face fillet not supported`, e.g. post-fillet seams
+or when you prefer Path-driven construction) by sweeping a cutter along
+`makeSweepPath` and boolean-subtracting.
+
+### filletAlongPath(part, path, radius, opts?)
+
+```javascript
+let part = Manifold.cube([40, 30, 20], true);
+// Planar–planar (unchanged):
+const e = convexEdges(part).filter(/* … */);
+part = filletEdges(part, e, 3, { sphericalCorners: true });
+
+// Sweep fillet (curved-adjacent / closed rim / post-fillet seam):
+const rim = /* Edge pick + Tangent → selection, or convexEdges subset */;
+const path = makeSweepPath(rim); // { kind:'sweepPath', closed, points, length, edgeCount }
+part = filletAlongPath(part, path, 2);           // quarter-circle wedge
+// part = filletAlongPath(part, path, 2, { profile: 'chamfer' }); // triangle
+return part;
+```
+
+**Parameters:**
+- `part` — manifold body
+- `path` — `makeSweepPath` result, `{ points, closed }`, or `points[]` (+ `opts.closed`)
+- `radius` — fillet / chamfer size (> 0)
+- `opts.profile` — `'fillet'` (default, quarter-circle wedge) or `'chamfer'` (triangle)
+- `opts.segments` — arc segments for the fillet wedge (default 12)
+- `opts.initialNormal` — optional frame hint; otherwise probed from a nearby convex edge
+- `opts.arcSamples` / `opts.extrudeSegments` — sweep quality (defaults scale with path size)
+
+**Quarter-circle orientation:** the 2D wedge lives in the first quadrant `(u≥0,v≥0)`
+with origin on the path. Sweep maps `(u,v) → u·N + v·B` (rotation-minimizing frame).
+At path start, in-face rays `f0`/`f1` are probed from the part mesh (no planarity
+assert — curved faces allowed). `initialNormal ≈ f0` so `N` tracks one face and
+`B = T×N` the other; the path may be reversed so `B` aligns with `f1`. The wedge
+is the **corner square minus the quarter-disk centered at `(r,r)`** — the material
+a 90° external fillet removes (area `r²(1−π/4)` per unit length).
+
+**Loud failures (script):** bad/empty path; radius ≤ 0; concave edge; cannot orient
+cutter; sweep/boolean failure; ~0 volume removed (wrong orientation); near-no-op vs
+expected wedge volume; empty result. Never silent wrong solid.
+
+**Soft-fail (UI):** empty / disconnected / branched edge selection — same messages
+as Path; no broken JS inserted.
+
+### UI — Fillet Strategy
+
+FEAT rail → **Fillet** → param popup:
+
+| Strategy | Emits | When |
+|---|---|---|
+| **planar** (default) | `filletEdges(…)` | Planar–planar edges; C6 closed circular runs; spherical corners |
+| **sweep** | `makeSweepPath` + `filletAlongPath` | Curved-adjacent / post-fillet / Path-driven; optional chamfer profile |
+
+Sweep mode shows the Path order/direction preview (green→magenta). Auto-Run
+unchanged. Keep using **Path** alone when you only need the wire value.
+
+**Non-goals (wait for Product brief):** extrude / revolve / loft as FEAT tools;
+full industrial rolling-ball / variable-radius fillets; Profile/Path API redesign.
 
 ## Revolve & Extrude Helpers (C8)
 
