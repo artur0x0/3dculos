@@ -652,10 +652,21 @@ export function resolveFaceModal(paletteItem, selectedFace, selectedEdges = null
         };
     let params;
     if (id === 'filletEdges') {
+      // Slice 23: Strategy planar (filletEdges) | sweep (filletAlongPath).
+      // Sweep reuses Path soft-fail topology; planar keeps C6 sphericalCorners.
       params = [
         body,
+        {
+          name: 'strategy', type: 'select', default: 'planar', label: 'Strategy',
+          options: ['planar', 'sweep'],
+        },
         blendParam,
         { name: 'sphericalCorners', type: 'bool', default: true, label: 'Spherical corners' },
+        {
+          name: 'profile', type: 'select', default: 'fillet', label: 'Sweep profile',
+          options: ['fillet', 'chamfer'],
+        },
+        { name: 'reverse', type: 'bool', default: false, label: 'Reverse path' },
         edgeScope,
       ];
     } else {
@@ -672,6 +683,7 @@ export function resolveFaceModal(paletteItem, selectedFace, selectedEdges = null
         title: `${paletteItem.title} — ${selectedEdges.length} edge${selectedEdges.length === 1 ? '' : 's'}`,
         _edgePlacement: true,
         _minEdgeLength: minL,
+        _filletStrategy: true,
       },
     };
   }

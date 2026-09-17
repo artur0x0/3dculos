@@ -7,7 +7,8 @@ import { X, BookOpen, Copy, Check } from 'lucide-react';
  * Allowlist mirrors HELPER_FUNCTIONS.md puzzle vocabulary (compact).
  */
 const ALLOWLIST = [
-  { name: 'filletEdges(part, edges, r, opts?)', role: 'Circular fillet on convex edges' },
+  { name: 'filletEdges(part, edges, r, opts?)', role: 'Circular fillet on convex edges (planar / closed-run)' },
+  { name: 'filletAlongPath(part, path, r, opts?)', role: 'Sweep fillet/chamfer wedge along Path (Slice 23)' },
   { name: 'chamferEdges(part, edges, c)', role: 'Equal-leg chamfer' },
   { name: 'convexEdges(part)', role: 'Select convex edges (for fillet/chamfer)' },
   { name: 'roundedBox(size, radius, segments?)', role: 'Box with rounded edges' },
@@ -113,7 +114,7 @@ const GameHintsModal = ({ onClose, puzzle = null }) => {
 
           <p className="text-[11px] text-gray-500">
             Full reference: HELPER_FUNCTIONS.md (repo root). Unsupported: curved
-            singleton fillets, open curved runs, concave “fillets”, arbitrary
+            planar singleton curved-face fillets (use filletAlongPath / Strategy=sweep), open curved runs under C6, concave “fillets”, arbitrary
             fastener sizes outside the table.
           </p>
         </div>

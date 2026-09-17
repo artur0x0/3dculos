@@ -10,6 +10,7 @@
  * workplane via facesByNormal + closest center (never bare `top`).
  * Slice 21: crossSection plane+profile substrate (planar face → makeCrossSection).
  * Slice 22: sweepPath ordered wire from edge selection (makeSweepPath).
+ * Slice 23: filletAlongPath — sweep fillet wedge along Path; Fillet Strategy=sweep|planar.
  *
  * Sequential taps compose via composeHelperInsert:
  * strip one trailing `return part;`, insert body, re-append exactly one `return part;`.
@@ -148,7 +149,7 @@ export function listBodyNames(buffer) {
   // Fallback only when part is mutable (or undeclared).
   if (!constNames.has('part')) names.add('part');
   // Also catch `part = …` / `box1 = …` mutations without fresh decl.
-  const assign = /\b([A-Za-z_$][\w$]*)\s*=\s*(?:Manifold\.|tube\(|hexPrism\(|roundedBox\(|makeExtrude\(|makeRevolve\(|filletEdges\(|chamferEdges\(|hole\(|clearanceHole\(|tapDrillHole\(|cboreHole\(|cskHole\(|holePattern\(|shell\(|addDraft\(|center\(|align\(|mirror\(|array3D\(|polarArray\()/g;
+  const assign = /\b([A-Za-z_$][\w$]*)\s*=\s*(?:Manifold\.|tube\(|hexPrism\(|roundedBox\(|makeExtrude\(|makeRevolve\(|filletEdges\(|filletAlongPath\(|chamferEdges\(|hole\(|clearanceHole\(|tapDrillHole\(|cboreHole\(|cskHole\(|holePattern\(|shell\(|addDraft\(|center\(|align\(|mirror\(|array3D\(|polarArray\()/g;
   while ((m = assign.exec(s))) {
     const n = m[1];
     if (constNames.has(n)) continue;
@@ -638,16 +639,46 @@ export const HELPER_PALETTE_ITEMS = [
     id: 'filletEdges',
     label: 'Fillet',
     group: 'Features',
-    title: 'filletEdges(part, edges, r, opts?)',
+    title: 'filletEdges / filletAlongPath — Strategy planar | sweep',
     params: [
       { name: 'body', type: 'body', default: 'part', label: 'Body' },
+      {
+        name: 'strategy', type: 'select', default: 'planar', label: 'Strategy',
+        options: ['planar', 'sweep'],
+      },
       { name: 'radius', type: 'number', default: 3, label: 'Radius', min: 0.01, step: 0.5 },
       { name: 'sphericalCorners', type: 'bool', default: true, label: 'Spherical corners' },
+      {
+        name: 'profile', type: 'select', default: 'fillet', label: 'Sweep profile',
+        options: ['fillet', 'chamfer'],
+      },
+      { name: 'reverse', type: 'bool', default: false, label: 'Reverse path' },
     ],
     build: (empty, p, names, buffer, faceCtx = null, edgeCtx = null) => {
       const lines = [...ensurePartPrefix(empty, names)];
       const body = resolveBody(p, names, empty ? lines.join('\n') : buffer);
       const r = num(p.radius, 3);
+      const strategy = str(p.strategy, 'planar');
+      // Slice 23: Strategy=sweep → makeSweepPath + filletAlongPath (curved-adjacent OK).
+      // Strategy=planar (default) → classic filletEdges for planar–planar edges.
+      if (strategy === 'sweep') {
+        const edge = emitSelectedEdgeLines(body, edgeCtx || [], names, allocateUniqueName);
+        if (!edge.ok) return null;
+        lines.push(...edge.lines);
+        const path = allocateUniqueName(names, 'path');
+        const rev = bool(p.reverse, false);
+        const optsPath = rev ? ', { reverse: true }' : '';
+        const profile = str(p.profile, 'fillet');
+        const sweepOpts = profile === 'chamfer'
+          ? `, { profile: 'chamfer' }`
+          : '';
+        lines.push(`const ${path} = makeSweepPath(${edge.edgesExpr}${optsPath}); // edge→sweep path`);
+        lines.push(
+          `${body} = filletAlongPath(${body}, ${path}, ${r}${sweepOpts}); // sweep fillet wedge`,
+        );
+        lines.push(...syncPartLines(body, names, hasPartDecl(lines, empty)));
+        return withReturn(lines, empty);
+      }
       const sc = bool(p.sphericalCorners, true);
       let edgesExpr = `convexEdges(${body})`;
       const scope = p.edgeScope || (edgeCtx && edgeCtx.length ? 'selected' : (faceCtx ? 'face' : 'allConvex'));
@@ -797,7 +828,7 @@ export const HELPER_PALETTE_ITEMS = [
       const path = allocateUniqueName(names, 'path');
       const rev = bool(p.reverse, false);
       const opts = rev ? ', { reverse: true }' : '';
-      // Path value only — fillet-via-sweep / sweep cutter wait for Product brief.
+      // Path value — consume with filletAlongPath (Slice 23) or sweepPoints.
       lines.push(`const ${path} = makeSweepPath(${edge.edgesExpr}${opts}); // edge→sweep path`);
       return withReturn(lines, empty);
     },

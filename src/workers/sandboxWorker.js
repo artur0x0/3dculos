@@ -2739,6 +2739,316 @@ function makeSweepPath(edges, opts = {}) {
   };
 }
 
+// ---------------------------------------------------------------- Slice 23 fillet via swept cross-section
+// Unlock fillets on compound / curved-adjacent edges by sweeping a quarter-circle
+// (or chamfer triangle) cutter along makeSweepPath and boolean-subtracting.
+// Planar–planar edges still use filletEdges (UI Strategy=planar). Extrude/revolve/loft
+// are NOT started here — wait for Product brief.
+function _s23Norm(v) {
+  const L = Math.hypot(v[0], v[1], v[2]) || 1;
+  return [v[0] / L, v[1] / L, v[2] / L];
+}
+function _s23Sub(a, b) { return [a[0] - b[0], a[1] - b[1], a[2] - b[2]]; }
+function _s23Cross(a, b) {
+  return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]];
+}
+function _s23Dot(a, b) { return a[0]*b[0] + a[1]*b[1] + a[2]*b[2]; }
+
+/** Fillet wedge contour: square−quarterDisk@ (r,r). Chamfer: right triangle. */
+function _s23WedgeContour(radius, profile, arcSegments) {
+  const r = Number(radius);
+  if (!(r > 0) || !Number.isFinite(r)) {
+    throw new Error('filletAlongPath: radius must be > 0');
+  }
+  if (profile === 'chamfer') {
+    return [[0, 0], [r, 0], [0, r]];
+  }
+  const seg = Math.max(2, Math.round(Number(arcSegments) || 12));
+  const pts = [[0, 0], [r, 0]];
+  for (let i = 1; i <= seg; i++) {
+    const t = (i / seg) * (Math.PI / 2);
+    pts.push([r - r * Math.sin(t), r - r * Math.cos(t)]);
+  }
+  return pts;
+}
+
+/**
+ * Normalize path → { points, closed, length }. Loud on bad input.
+ */
+function _s23NormalizePath(path, opts) {
+  if (!path) throw new Error('filletAlongPath: path is required (makeSweepPath result or points[])');
+  let points;
+  let closed = !!(opts && opts.closed);
+  if (Array.isArray(path)) {
+    points = path;
+  } else if (typeof path === 'object') {
+    if (path.kind && path.kind !== 'sweepPath') {
+      throw new Error(`filletAlongPath: unexpected path.kind "${path.kind}" (want sweepPath)`);
+    }
+    if (!Array.isArray(path.points)) {
+      throw new Error('filletAlongPath: path.points must be an array of [x,y,z]');
+    }
+    points = path.points;
+    if (path.closed != null) closed = !!path.closed;
+  } else {
+    throw new Error('filletAlongPath: path must be makeSweepPath result or points[]');
+  }
+  if (!Array.isArray(points) || points.length < 2) {
+    throw new Error('filletAlongPath: path needs ≥ 2 points');
+  }
+  const out = [];
+  for (let i = 0; i < points.length; i++) {
+    const p = points[i];
+    if (!Array.isArray(p) || p.length < 3) {
+      throw new Error(`filletAlongPath: point[${i}] must be [x,y,z]`);
+    }
+    const x = Number(p[0]), y = Number(p[1]), z = Number(p[2]);
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) {
+      throw new Error(`filletAlongPath: point[${i}] has non-finite coords`);
+    }
+    if (out.length) {
+      const prev = out[out.length - 1];
+      if (Math.hypot(x - prev[0], y - prev[1], z - prev[2]) < 1e-9) continue;
+    }
+    out.push([x, y, z]);
+  }
+  if (out.length < 2) throw new Error('filletAlongPath: path collapsed to < 2 distinct points');
+  if (closed && out.length > 2) {
+    const a = out[0], b = out[out.length - 1];
+    if (Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) < 1e-5) out.pop();
+  }
+  if (closed && out.length < 3) {
+    throw new Error('filletAlongPath: closed path needs ≥ 3 distinct points');
+  }
+  let length = 0;
+  for (let i = 0; i < out.length - 1; i++) {
+    const a = out[i], b = out[i + 1];
+    length += Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+  }
+  if (closed) {
+    const a = out[out.length - 1], b = out[0];
+    length += Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+  }
+  if (!(length > 1e-9)) throw new Error('filletAlongPath: path has zero length');
+  return { points: out, closed, length };
+}
+
+/**
+ * Probe in-face directions at path start from the part mesh (no planarity assert —
+ * curved-adjacent faces are the point of this helper). Returns { T, f0, f1 } or null.
+ */
+function _s23ProbeFrame(M, part, points) {
+  const p0 = points[0];
+  const p1 = points[1];
+  const T = _s23Norm(_s23Sub(p1, p0));
+  const mid = [(p0[0] + p1[0]) / 2, (p0[1] + p1[1]) / 2, (p0[2] + p1[2]) / 2];
+
+  // Prefer convexEdges mid match — carries {a,b,va,vb} for mesh lookup.
+  let best = null;
+  let bestD = Infinity;
+  try {
+    const edges = convexEdges(part);
+    for (const e of edges) {
+      if (!e || !Array.isArray(e.va) || !Array.isArray(e.vb)) continue;
+      const em = Array.isArray(e.mid)
+        ? e.mid
+        : [(e.va[0] + e.vb[0]) / 2, (e.va[1] + e.vb[1]) / 2, (e.va[2] + e.vb[2]) / 2];
+      const d = Math.hypot(em[0] - mid[0], em[1] - mid[1], em[2] - mid[2]);
+      if (d < bestD) {
+        bestD = d;
+        best = e;
+      }
+    }
+  } catch (_) {
+    best = null;
+  }
+  // Tolerance: half segment length or 0.5mm floor
+  const segL = Math.hypot(p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]) || 1;
+  if (!best || bestD > Math.max(0.5, 0.55 * segL)) {
+    return null;
+  }
+
+  const mesh = _c6BuildMeshInfo(part);
+  const eKey = best.a < best.b ? best.a * 1e9 + best.b : best.b * 1e9 + best.a;
+  const ti = mesh.pairMap.get(eKey);
+  if (!ti || ti.length !== 2) return null;
+
+  const P0 = best.va;
+  const thirdVertex = (tri) => {
+    for (let k = 0; k < 3; k++) {
+      if (tri.vs[k] !== best.a && tri.vs[k] !== best.b) return tri.v[k];
+    }
+    return null;
+  };
+  const X0 = thirdVertex(mesh.tris[ti[0]]);
+  const X1 = thirdVertex(mesh.tris[ti[1]]);
+  if (!X0 || !X1) return null;
+  const f0 = _c6InFaceDir(X0, P0, T);
+  const f1 = _c6InFaceDir(X1, P0, T);
+  // Convexity: ball at mid should be mostly outside (same criterion as filletEdges).
+  const rProbe = Math.min(0.05, segL * 0.25);
+  const sp = M.sphere(rProbe, 12, 6).transform(
+    [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, mid[0], mid[1], mid[2], 1],
+  );
+  const fIn = M.intersection(part, sp).volume() / sp.volume();
+  if (fIn >= 0.45) {
+    throw new Error('filletAlongPath: edge is concave (sweep fillet is external / material-remove only)');
+  }
+  return { T, f0, f1, mid };
+}
+
+/**
+ * filletAlongPath(part, path, radius, opts?)
+ * Sweep a quarter-circle (or chamfer) cutter along path → boolean subtract.
+ *
+ * Orientation: profile (u,v) in first quadrant maps to u·N + v·B where N,B are
+ * rotation-minimizing frame axes. initialNormal is chosen from in-face rays at
+ * path start so N≈f0 and B≈f1 (into the two adjacent faces). Path may be reversed
+ * so B aligns with f1.
+ *
+ * @param {Manifold} part
+ * @param {object|number[][]} path — makeSweepPath result or points
+ * @param {number} radius
+ * @param {object} [opts]
+ * @param {'fillet'|'chamfer'} [opts.profile='fillet']
+ * @param {number} [opts.segments=12] — arc segments for fillet wedge
+ * @param {number[]} [opts.initialNormal] — override probed frame
+ * @param {boolean} [opts.closed] — when path is bare points[]
+ * @param {number} [opts.arcSamples]
+ * @param {number} [opts.extrudeSegments]
+ */
+function filletAlongPath(part, path, radius, opts = {}) {
+  const M = manifoldModule.Manifold;
+  const { CrossSection } = manifoldModule;
+  _c4RequirePositive('filletAlongPath', 'radius', radius);
+
+  const profileKind = (opts.profile === 'chamfer') ? 'chamfer' : 'fillet';
+  const arcSegs = opts.segments != null ? opts.segments : 12;
+  let { points, closed, length } = _s23NormalizePath(path, opts);
+
+  // Probe face frame; may reverse path so B aligns with f1.
+  let initialNormal = opts.initialNormal ? opts.initialNormal.slice() : null;
+  let probed = null;
+  if (!initialNormal) {
+    probed = _s23ProbeFrame(M, part, points);
+    if (probed) {
+      const { T, f0, f1 } = probed;
+      // Project f0 onto plane ⊥ T
+      let N = _s23Sub(f0, [ _s23Dot(f0, T) * T[0], _s23Dot(f0, T) * T[1], _s23Dot(f0, T) * T[2] ]);
+      if (Math.hypot(N[0], N[1], N[2]) < 1e-8) {
+        N = _s23Sub(f1, [ _s23Dot(f1, T) * T[0], _s23Dot(f1, T) * T[1], _s23Dot(f1, T) * T[2] ]);
+      }
+      N = _s23Norm(N);
+      let B = _s23Cross(T, N);
+      // If B opposes f1, reverse path (flips T and thus B) without flipping N into exterior.
+      if (_s23Dot(B, f1) < 0) {
+        points = points.slice().reverse();
+        // Recompute T after reverse
+        const T2 = _s23Norm(_s23Sub(points[1], points[0]));
+        N = _s23Sub(f0, [ _s23Dot(f0, T2) * T2[0], _s23Dot(f0, T2) * T2[1], _s23Dot(f0, T2) * T2[2] ]);
+        if (Math.hypot(N[0], N[1], N[2]) < 1e-8) {
+          N = _s23Sub(f1, [ _s23Dot(f1, T2) * T2[0], _s23Dot(f1, T2) * T2[1], _s23Dot(f1, T2) * T2[2] ]);
+        }
+        N = _s23Norm(N);
+        B = _s23Cross(T2, N);
+        if (_s23Dot(B, f1) < 0 && _s23Dot(B, f0) > _s23Dot(N, f0)) {
+          // Swap: use f1 as N
+          N = _s23Sub(f1, [ _s23Dot(f1, T2) * T2[0], _s23Dot(f1, T2) * T2[1], _s23Dot(f1, T2) * T2[2] ]);
+          N = _s23Norm(N);
+        }
+      }
+      // Prefer the face-ray that is more orthogonal as the "other" axis.
+      const Tuse = _s23Norm(_s23Sub(points[1], points[0]));
+      const Bnow = _s23Cross(Tuse, N);
+      if (Math.abs(_s23Dot(Bnow, f1)) < Math.abs(_s23Dot(N, f1)) * 0.25
+          && Math.abs(_s23Dot(N, f0)) < Math.abs(_s23Dot(Bnow, f0)) + 0.5) {
+        // Axes swapped relative to (f0,f1) — start with f1 as N
+        let N2 = _s23Sub(f1, [ _s23Dot(f1, Tuse) * Tuse[0], _s23Dot(f1, Tuse) * Tuse[1], _s23Dot(f1, Tuse) * Tuse[2] ]);
+        if (Math.hypot(N2[0], N2[1], N2[2]) > 1e-8) N = _s23Norm(N2);
+      }
+      initialNormal = N;
+    }
+  }
+
+  if (!initialNormal) {
+    throw new Error(
+      'filletAlongPath: could not orient cutter to part (no nearby convex edge at path start). '
+      + 'Pass opts.initialNormal, or ensure path follows a convex feature edge.',
+    );
+  }
+
+  const contour = _s23WedgeContour(radius, profileKind, arcSegs);
+  // Ensure CCW
+  let area2 = 0;
+  for (let i = 0; i < contour.length; i++) {
+    const a = contour[i], b = contour[(i + 1) % contour.length];
+    area2 += a[0] * b[1] - b[0] * a[1];
+  }
+  if (area2 < 0) contour.reverse();
+
+  const cs = new CrossSection([contour]);
+  // Mobile-friendly sampling: scale with path complexity, capped.
+  const nPts = points.length;
+  const arcSamples = opts.arcSamples != null
+    ? opts.arcSamples
+    : Math.min(320, Math.max(48, Math.round(nPts * (closed ? 3 : 4))));
+  const extrudeSegments = opts.extrudeSegments != null
+    ? opts.extrudeSegments
+    : Math.min(48, Math.max(12, Math.round(nPts * 0.75)));
+
+  let cutter;
+  try {
+    cutter = sweepPoints(cs, points, {
+      closed,
+      initialNormal,
+      arcSamples,
+      extrudeSegments,
+    });
+  } catch (e) {
+    throw new Error(`filletAlongPath: sweep failed — ${e && e.message ? e.message : e}`);
+  }
+  const seC = _c4StatusError(cutter);
+  if (seC) throw new Error(`filletAlongPath: bad cutter (${seC})`);
+  const cutterVol = typeof cutter.volume === 'function' ? cutter.volume() : 0;
+  if (!(cutterVol > 1e-9)) {
+    throw new Error('filletAlongPath: cutter has zero volume — check radius / path');
+  }
+
+  const volBefore = part.volume();
+  let out;
+  try {
+    out = M.difference(part, cutter);
+  } catch (e) {
+    throw new Error(`filletAlongPath: boolean subtract failed — ${e && e.message ? e.message : e}`);
+  }
+  const seOut = _c4StatusError(out);
+  if (seOut) throw new Error(`filletAlongPath: bad result (${seOut})`);
+  const volAfter = out.volume();
+  if (!(volAfter > 1e-9)) {
+    throw new Error('filletAlongPath: result is EMPTY (cutter consumed the solid) — reduce radius');
+  }
+  const removed = volBefore - volAfter;
+  if (!(removed > 1e-6)) {
+    throw new Error(
+      'filletAlongPath: subtract removed ~0 volume — cutter likely outside the solid '
+      + '(wrong orientation / path). Try reversing the path or pass opts.initialNormal.',
+    );
+  }
+  // Sanity: removed should not exceed cutter (overlap) by a huge margin of nonsense,
+  // and should be at least a small fraction of expected wedge·length for 90° cases.
+  const expectArea = profileKind === 'chamfer'
+    ? 0.5 * radius * radius
+    : radius * radius * (1 - Math.PI / 4);
+  const expectVol = expectArea * length;
+  if (expectVol > 1e-3 && removed < 0.02 * expectVol) {
+    throw new Error(
+      `filletAlongPath: removed only ${removed.toFixed(4)} vs expected ~${expectVol.toFixed(4)} `
+      + '(orientation/overlap failure) — failing loud rather than shipping a near-no-op solid',
+    );
+  }
+  return out;
+}
+
 // Collection of all helper functions to inject
 const HELPER_FUNCTIONS = {
   shell,
@@ -2800,6 +3110,8 @@ const HELPER_FUNCTIONS = {
   makeCrossSection,
   // Slice 22 edge → sweep path / wire
   makeSweepPath,
+  // Slice 23 fillet via swept cross-section
+  filletAlongPath,
 };
 
 // ============================================================================
