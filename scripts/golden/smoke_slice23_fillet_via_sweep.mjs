@@ -23,10 +23,17 @@ import {
   normalizeFilletPath,
   canBuildFilletAlongPath,
   filletWedgeArea,
+  pickFilletStrategy,
+  resolveFilletStrategy,
   FILLET_SWEEP_EMPTY,
   FILLET_SWEEP_DISCONNECTED,
   FILLET_SWEEP_BRANCH,
+  isFilletSliverDirty,
 } from '../../src/utils/filletAlongPath.js';
+import {
+  effectiveBlendEdgeLength,
+  minSelectedEdgeLength,
+} from '../../src/utils/selectEdge.js';
 
 register('./manifold-resolve-hook.mjs', import.meta.url);
 
@@ -125,7 +132,9 @@ console.log('slice-23 fillet via sweep smoke');
   const item = HELPER_PALETTE_ITEMS.find((h) => h.id === 'filletEdges');
   check('palette has filletEdges', !!item);
   check('strategy param', item.params.some((p) => p.name === 'strategy'));
-  check('strategy options', item.params.find((p) => p.name === 'strategy')?.options?.includes('sweep'));
+  const strat = item.params.find((p) => p.name === 'strategy');
+  check('strategy options include auto+sweep', strat?.options?.includes('auto') && strat?.options?.includes('sweep'));
+  check('strategy default auto', strat?.default === 'auto');
 
   const V = [
     [-20, -15, 10], [20, -15, 10], [20, 15, 10], [-20, 15, 10],
@@ -178,7 +187,176 @@ console.log('slice-23 fillet via sweep smoke');
   check('chamfer profile opt', /profile:\s*'chamfer'/.test(bufChamfer));
 
   check('fillet is face feature', isFaceFeature('filletEdges'));
+
+  // Auto strategy: curvedFaces (radial n1 fan) → sweep; clean planar loops stay planar
+  const rimish = [];
+  for (let i = 0; i < 12; i++) {
+    const a = i, b = (i + 1) % 12;
+    const ang0 = (i / 12) * Math.PI * 2;
+    const ang1 = ((i + 1) / 12) * Math.PI * 2;
+    const va = [Math.cos(ang0), Math.sin(ang0), 0];
+    const vb = [Math.cos(ang1), Math.sin(ang1), 0];
+    const radial = [(va[0] + vb[0]) / 2, (va[1] + vb[1]) / 2, 0];
+    const rLen = Math.hypot(radial[0], radial[1]) || 1;
+    rimish.push({
+      key: `${a}-${b}`, a, b, va, vb,
+      mid: [(va[0] + vb[0]) / 2, (va[1] + vb[1]) / 2, 0],
+      length: Math.hypot(vb[0] - va[0], vb[1] - va[1], vb[2] - va[2]),
+      n0: [0, 0, 1],
+      n1: [radial[0] / rLen, radial[1] / rLen, 0],
+    });
+  }
+  check('auto→sweep on curved rim (normal fan)', pickFilletStrategy(rimish) === 'sweep');
+  check('resolve auto→sweep', resolveFilletStrategy('auto', rimish) === 'sweep');
+  check('manual planar overrides auto', resolveFilletStrategy('planar', rimish) === 'planar');
+
+  // 8-edge rectangle-style coplanar loop: top + four cardinal sides only → planar
+  const planar8 = [];
+  {
+    const verts = [
+      [-20, -15, 10], [0, -15, 10], [20, -15, 10], [20, 0, 10],
+      [20, 15, 10], [0, 15, 10], [-20, 15, 10], [-20, 0, 10],
+    ];
+    const sideN = [
+      [0, -1, 0], [0, -1, 0], [1, 0, 0], [1, 0, 0],
+      [0, 1, 0], [0, 1, 0], [-1, 0, 0], [-1, 0, 0],
+    ];
+    for (let i = 0; i < 8; i++) {
+      const a = i, b = (i + 1) % 8;
+      const va = verts[a], vb = verts[b];
+      planar8.push({
+        key: `${a}-${b}`, a, b, va, vb,
+        mid: [(va[0] + vb[0]) / 2, (va[1] + vb[1]) / 2, (va[2] + vb[2]) / 2],
+        length: Math.hypot(vb[0] - va[0], vb[1] - va[1], vb[2] - va[2]),
+        n0: [0, 0, 1],
+        n1: sideN[i],
+      });
+    }
+  }
+  check('auto→planar on 8-edge clean planar loop', pickFilletStrategy(planar8) === 'planar');
+
+  // 6-edge planar closed loop (same box-like normals) → planar
+  const planar6 = [];
+  {
+    const verts = [
+      [-20, -15, 10], [20, -15, 10], [20, 0, 10],
+      [20, 15, 10], [-20, 15, 10], [-20, 0, 10],
+    ];
+    const sideN = [
+      [0, -1, 0], [1, 0, 0], [1, 0, 0],
+      [0, 1, 0], [-1, 0, 0], [-1, 0, 0],
+    ];
+    for (let i = 0; i < 6; i++) {
+      const a = i, b = (i + 1) % 6;
+      const va = verts[a], vb = verts[b];
+      planar6.push({
+        key: `${a}-${b}`, a, b, va, vb,
+        mid: [(va[0] + vb[0]) / 2, (va[1] + vb[1]) / 2, (va[2] + vb[2]) / 2],
+        length: Math.hypot(vb[0] - va[0], vb[1] - va[1], vb[2] - va[2]),
+        n0: [0, 0, 1],
+        n1: sideN[i],
+      });
+    }
+  }
+  check('auto→planar on 6-edge clean planar loop', pickFilletStrategy(planar6) === 'planar');
+
+  // 4-edge box top rectangle → planar
+  const planar4 = [];
+  {
+    const verts = [[-20, -15, 10], [20, -15, 10], [20, 15, 10], [-20, 15, 10]];
+    const sideN = [[0, -1, 0], [1, 0, 0], [0, 1, 0], [-1, 0, 0]];
+    for (let i = 0; i < 4; i++) {
+      const a = i, b = (i + 1) % 4;
+      const va = verts[a], vb = verts[b];
+      planar4.push({
+        key: `${a}-${b}`, a, b, va, vb,
+        mid: [(va[0] + vb[0]) / 2, (va[1] + vb[1]) / 2, (va[2] + vb[2]) / 2],
+        length: Math.hypot(vb[0] - va[0], vb[1] - va[1], vb[2] - va[2]),
+        n0: [0, 0, 1],
+        n1: sideN[i],
+      });
+    }
+  }
+  check('auto→planar on 4-edge clean planar loop', pickFilletStrategy(planar4) === 'planar');
+
+  // 200-edge coplanar rectangle subdivision (cardinal side normals only) → planar
+  const planar200 = [];
+  {
+    const sides = [
+      { a: [-20, -15, 10], b: [20, -15, 10], n: [0, -1, 0], nSeg: 50 },
+      { a: [20, -15, 10], b: [20, 15, 10], n: [1, 0, 0], nSeg: 50 },
+      { a: [20, 15, 10], b: [-20, 15, 10], n: [0, 1, 0], nSeg: 50 },
+      { a: [-20, 15, 10], b: [-20, -15, 10], n: [-1, 0, 0], nSeg: 50 },
+    ];
+    let k = 0;
+    for (const s of sides) {
+      for (let i = 0; i < s.nSeg; i++) {
+        const t0 = i / s.nSeg, t1 = (i + 1) / s.nSeg;
+        const va = [
+          s.a[0] + (s.b[0] - s.a[0]) * t0,
+          s.a[1] + (s.b[1] - s.a[1]) * t0,
+          s.a[2] + (s.b[2] - s.a[2]) * t0,
+        ];
+        const vb = [
+          s.a[0] + (s.b[0] - s.a[0]) * t1,
+          s.a[1] + (s.b[1] - s.a[1]) * t1,
+          s.a[2] + (s.b[2] - s.a[2]) * t1,
+        ];
+        planar200.push({
+          key: String(k), a: k, b: k + 1, va, vb,
+          mid: [(va[0] + vb[0]) / 2, (va[1] + vb[1]) / 2, (va[2] + vb[2]) / 2],
+          length: Math.hypot(vb[0] - va[0], vb[1] - va[1], vb[2] - va[2]),
+          n0: [0, 0, 1],
+          n1: s.n,
+        });
+        k++;
+      }
+    }
+    // Fix last→first vertex index for closed orderEdgePath
+    planar200[planar200.length - 1].b = 0;
+  }
+  check('auto→planar on 200-edge clean planar loop', pickFilletStrategy(planar200) === 'planar');
+
+  const boxEdge = [{
+    key: '0-1', a: 0, b: 1,
+    va: [-20, -15, 10], vb: [20, -15, 10],
+    mid: [0, -15, 10], length: 40,
+    n0: [0, 0, 1], n1: [0, -1, 0],
+  }];
+  check('auto→planar on single box edge', pickFilletStrategy(boxEdge) === 'planar');
+
+  const bufAuto = composeHelperInsert(
+    'let part = Manifold.cube([40,30,20], true);\n',
+    'filletEdges',
+    null,
+    { body: 'part', strategy: 'auto', radius: 2, sphericalCorners: false, edgeScope: 'selected' },
+    null,
+    boxEdge,
+  );
+  check('auto on planar edge emits filletEdges', /filletEdges\(/.test(bufAuto));
+
+  // Slider: multi-edge with a scrap outlier must not collapse to ~0.03
+  const multi = [
+    { length: 0.08, va: [0, 0, 0], vb: [0.08, 0, 0] },
+    { length: 2.0, va: [0, 0, 0], vb: [2, 0, 0] },
+    { length: 2.1, va: [2, 0, 0], vb: [4.1, 0, 0] },
+    { length: 1.9, va: [4.1, 0, 0], vb: [6, 0, 0] },
+  ];
+  check('raw min poisoned by scrap', Math.abs(minSelectedEdgeLength(multi) - 0.08) < 1e-9);
+  const eff = effectiveBlendEdgeLength(multi);
+  check('effective minL drops scrap', eff != null && eff >= 1.9, `eff=${eff}`);
+  const resolvedMulti = resolveFaceModal(item, null, multi);
+  const rParam = resolvedMulti.item?.params?.find((x) => x.name === 'radius');
+  // Pinned for fixture lengths 0.08/2.0/2.1/1.9 → eff=1.9 (not mirror of helpers)
+  check('multi-edge radius default from effective', rParam?.default === 0.5,
+    `got ${rParam?.default}`);
+  check('multi-edge slider max from effective', rParam?.max === 0.84,
+    `got ${rParam?.max}`);
+  check('multi-edge slider step scaled', rParam?.step === 0.04,
+    `got ${rParam?.step}`);
+  check('strategy default auto on modal', resolvedMulti.item?.params?.find((x) => x.name === 'strategy')?.default === 'auto');
 }
+
 
 // ── Geometry via sandboxWorker ─────────────────────────────────
 console.log('slice-23 geometry (bundled wasm + helpers)');
@@ -243,6 +421,29 @@ return part;
 `);
     check('closed-rim sweep fillet builds', Number.isFinite(payload?.volume) && payload.volume > 0,
       `vol=${payload?.volume}`);
+    check('closed-rim status NoError', payload?.status === 'NoError' || !payload?.status,
+      `status=${payload?.status}`);
+    // Sliver probe: degenerate tri count should stay tiny after polyline sweep.
+    const mesh = payload?.mesh;
+    if (mesh?.triVerts && mesh?.vertProperties) {
+      const np = mesh.numProp || 3;
+      const V = mesh.vertProperties;
+      const T = mesh.triVerts;
+      const nTri = T.length / 3;
+      let tiny = 0;
+      for (let ti = 0; ti < nTri; ti++) {
+        const i0 = T[ti * 3] * np, i1 = T[ti * 3 + 1] * np, i2 = T[ti * 3 + 2] * np;
+        const ax = V[i1] - V[i0], ay = V[i1 + 1] - V[i0 + 1], az = V[i1 + 2] - V[i0 + 2];
+        const bx = V[i2] - V[i0], by = V[i2 + 1] - V[i0 + 1], bz = V[i2 + 2] - V[i0 + 2];
+        const A = 0.5 * Math.hypot(ay * bz - az * by, az * bx - ax * bz, ax * by - ay * bx);
+        if (A < 1e-8) tiny++;
+      }
+      // Same fail gate as sandboxWorker filletAlongPath (shared isFilletSliverDirty)
+      check('closed-rim no sliver scraps', !isFilletSliverDirty(tiny, nTri),
+        `tiny=${tiny}/${nTri}`);
+    } else {
+      check('closed-rim no sliver scraps', false, 'missing mesh');
+    }
   } catch (e) {
     failed++;
     console.log(`  ❌ closed-rim sweep fillet builds — ${e.message}`);
@@ -282,6 +483,11 @@ try {
 } catch (err) {
   planarThrew = /curved-face|not supported|no edges could be filleted|size guard/i.test(String(err.message || err));
 }
+// Observed: shortest top edge after vertical fillet does NOT throw under planar
+// filletEdges (planarThrew===false). Pin so the golden fails if that changes.
+if (planarThrew !== false) {
+  throw new Error('expected planarThrew===false, got ' + planarThrew);
+}
 // Sweep fillet on a long top edge (planar–planar still works via sweep too)
 const longTop = top.slice().sort((a, b) => b.length - a.length)[0];
 const path = makeSweepPath([longTop]);
@@ -289,12 +495,14 @@ const v0 = part.volume();
 part = filletAlongPath(part, path, 1.5);
 const v1 = part.volume();
 if (!(v1 < v0 - 0.5)) throw new Error('post-fillet sweep did not remove volume');
-// Expose planarThrew via a tiny volume tag in script result — just return part;
-// golden records whether planar threw in the check below by re-running a probe.
 return part;
 `);
     check('post-fillet sweep fillet builds', Number.isFinite(payload?.volume) && payload.volume > 0,
       `vol=${payload?.volume}`);
+    // Observed (run 2026-09-17): planar probe does not throw; in-script asserts the same.
+    const planarThrew = false;
+    check('post-fillet planar probe behaves as expected', planarThrew === false,
+      'shortest top edge after vertical fillet does not throw under planar filletEdges');
   } catch (e) {
     failed++;
     console.log(`  ❌ post-fillet sweep fillet builds — ${e.message}`);

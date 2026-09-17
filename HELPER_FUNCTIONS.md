@@ -70,10 +70,14 @@ Without a selected face, palette v2 behavior is unchanged (default +Z
 Edge selection (open chain or closed loop). Consume with **Fillet → Strategy=sweep**
 (`filletAlongPath`) or `sweepPoints`.
 
-**Sweep fillet (Slice 23):** same **Fillet** control — **Strategy=planar** keeps
-`filletEdges` (planar–planar / closed-run C6); **Strategy=sweep** builds
-`makeSweepPath` + `filletAlongPath` (quarter-circle or chamfer wedge swept along
-the path, boolean subtract). Soft-fails empty/disconnected/branched like Path.
+**Sweep fillet (Slice 23+):** same **Fillet** control — **Strategy=auto** (default)
+picks **sweep** vs **planar** from the edge set (adjacent-face normals fan into
+>6 direction clusters → sweep; clean planar–planar stays planar). Manual
+**planar** / **sweep** still override. **planar** keeps `filletEdges`
+(planar–planar / closed-run C6); **sweep** builds `makeSweepPath` +
+`filletAlongPath` (quarter-circle or chamfer wedge swept as a **linear polyline**
+along the edge wire, boolean subtract). Soft-fails empty/disconnected/branched
+like Path.
 
 **Cross-section (Slice 21):** palette **Profile** builds a reusable
 `makeCrossSection(plane, profile)` named let from a **planar** face
@@ -927,6 +931,12 @@ return part;
 - `opts.initialNormal` — optional frame hint; otherwise probed from a nearby convex edge
 - `opts.arcSamples` / `opts.extrudeSegments` — sweep quality (defaults scale with path size)
 
+**Path / cutter:** open chains sweep the wedge along a **linear polyline** of the
+edge wire (not Catmull-Rom — spline bulge left purple scraps). Closed paths that
+fit a circle use a **revolved meridian wedge** (C6-style, phase-locked to the
+tessellation). Disconnected cutter scraps are dropped via `decompose` when present.
+Loud-fail if the kept solid is still scrap-sheet dirty.
+
 **Quarter-circle orientation:** the 2D wedge lives in the first quadrant `(u≥0,v≥0)`
 with origin on the path. Sweep maps `(u,v) → u·N + v·B` (rotation-minimizing frame).
 At path start, in-face rays `f0`/`f1` are probed from the part mesh (no planarity
@@ -948,8 +958,19 @@ FEAT rail → **Fillet** → param popup:
 
 | Strategy | Emits | When |
 |---|---|---|
-| **planar** (default) | `filletEdges(…)` | Planar–planar edges; C6 closed circular runs; spherical corners |
-| **sweep** | `makeSweepPath` + `filletAlongPath` | Curved-adjacent / post-fillet / Path-driven; optional chamfer profile |
+| **auto** (default) | `filletEdges` or `makeSweepPath`+`filletAlongPath` | Heuristic from selection (see below) |
+| **planar** | `filletEdges(…)` | Force planar–planar / C6 closed-run; spherical corners |
+| **sweep** | `makeSweepPath` + `filletAlongPath` | Force curved-adjacent / Path-driven; optional chamfer profile |
+
+**Auto heuristic (brief):** sweep when adjacent-face normals fan into >6
+direction clusters (curved / tessellated walls; 8° bins). Clean planar–planar
+selections stay planar — edge count alone never forces sweep. Manual
+**Strategy** select always overrides.
+
+**Radius slider:** defaults / max / step use the **effective** min edge length
+(outliers dropped: short edges &lt;25% of median are ignored) so multi-edge /
+tangent sets are not stuck near r≈0.03; typed values still clamp under the
+0.45·L size guard.
 
 Sweep mode shows the Path order/direction preview (green→magenta). Auto-Run
 unchanged. Keep using **Path** alone when you only need the wire value.

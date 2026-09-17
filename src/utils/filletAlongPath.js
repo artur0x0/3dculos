@@ -8,13 +8,15 @@
  * centered at (r,r) — the material removed by a 90° external fillet. Chamfer:
  * triangle (0,0)-(c,0)-(0,c).
  *
+ * Strategy=auto picks sweep vs planar from the edge set (manual override kept).
  * Does NOT ship extrude/revolve/loft — wait for Product brief.
  */
 
 import { assembleSweepPath } from './edgeSweepPath.js';
+export { SLIVER_MAX_ABS, SLIVER_MAX_FRAC, isFilletSliverDirty } from './filletSliverGuard.js';
 
 export const FILLET_SWEEP_EMPTY =
-  'Select edges first (Edge pick mode), then Fillet with Strategy=sweep. Tangent-on chains work for circular rims.';
+  'Select edges first (Edge pick mode), then Fillet with Strategy=sweep (or Strategy=auto). Tangent-on chains work for circular rims.';
 
 export const FILLET_SWEEP_DISCONNECTED =
   'Selected edges are disconnected — sweep fillet needs a single contiguous chain or loop (use Tangent for circular rims).';
@@ -134,6 +136,80 @@ export function normalizeFilletPath(path, opts = {}) {
     throw new Error('filletAlongPath: path has zero length');
   }
   return { points: out, closed, length, edgeCount };
+}
+
+
+function _dot3(a, b) {
+  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+}
+
+/**
+ * Cluster unit-ish normals; count distinct directions within cosTol.
+ * Many clusters ⇒ curved / compound face set (rim wall fans around).
+ * @param {number[][]} normals
+ * @param {number} cosTol
+ */
+function _clusterNormals(normals, cosTol) {
+  const clusters = [];
+  for (const n of normals) {
+    if (!n || n.length < 3) continue;
+    const len = Math.hypot(n[0], n[1], n[2]) || 1;
+    const u = [n[0] / len, n[1] / len, n[2] / len];
+    let found = false;
+    for (const c of clusters) {
+      if (_dot3(c, u) >= cosTol) {
+        found = true;
+        break;
+      }
+    }
+    if (!found) clusters.push(u);
+  }
+  return clusters.length;
+}
+
+/**
+ * Auto fillet strategy from selected edges.
+ * Heuristic: curved-adjacent (normal fan) → sweep; clean planar–planar → planar.
+ * Manual Strategy select overrides.
+ *
+ * Signals for sweep:
+ * - adjacent-face normals fan into >6 direction clusters (curved / tessellated
+ *   walls; 8° bins). Requires ≥4 normals collected from n0/n1.
+ *
+ * Clean multi-edge planar loops (box-like top + cardinal sides) stay planar —
+ * edge count alone never forces sweep.
+ *
+ * @param {object[]|null|undefined} edges
+ * @returns {'planar'|'sweep'}
+ */
+export function pickFilletStrategy(edges) {
+  if (!Array.isArray(edges) || edges.length === 0) return 'planar';
+
+  const normals = [];
+  for (const e of edges) {
+    if (Array.isArray(e?.n0)) normals.push(e.n0);
+    if (Array.isArray(e?.n1)) normals.push(e.n1);
+  }
+  // 8° bins: tessellated cylinder wall fans into many clusters; a box top
+  // rectangle stays at ≤5 (top + 4 sides). Threshold >6 catches curved walls
+  // without flipping clean planar polygons to sweep.
+  const curvedFaces = normals.length >= 4
+    && _clusterNormals(normals, Math.cos((8 * Math.PI) / 180)) > 6;
+
+  if (curvedFaces) return 'sweep';
+  return 'planar';
+}
+
+/**
+ * Resolve Strategy select value: auto → heuristic; planar|sweep passthrough.
+ * @param {string|null|undefined} strategy
+ * @param {object[]|null|undefined} edges
+ * @returns {'planar'|'sweep'}
+ */
+export function resolveFilletStrategy(strategy, edges) {
+  const s = String(strategy || 'auto').toLowerCase();
+  if (s === 'planar' || s === 'sweep') return s;
+  return pickFilletStrategy(edges);
 }
 
 /**

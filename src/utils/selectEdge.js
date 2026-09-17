@@ -163,6 +163,49 @@ export function minSelectedEdgeLength(edges) {
 }
 
 /**
+ * Length used for Fillet/Chamfer slider defaults on multi-edge picks.
+ * Raw min() collapses to ~0.03 when a tangent/compound set includes short
+ * tessellation scraps; drop outliers below 25% of the median, then take min
+ * of the kept pool (single-edge unchanged).
+ * @param {object[]|null|undefined} edges
+ * @returns {number|null}
+ */
+export function effectiveBlendEdgeLength(edges) {
+  if (!Array.isArray(edges) || edges.length === 0) return null;
+  const lengths = [];
+  for (const e of edges) {
+    let L = Number(e?.length);
+    if (!(Number.isFinite(L) && L > 0) && e?.va && e?.vb) {
+      L = Math.hypot(
+        e.vb[0] - e.va[0],
+        e.vb[1] - e.va[1],
+        e.vb[2] - e.va[2],
+      );
+    }
+    if (Number.isFinite(L) && L > 0) lengths.push(L);
+  }
+  if (!lengths.length) return null;
+  if (lengths.length === 1) return lengths[0];
+  lengths.sort((a, b) => a - b);
+  const med = lengths[Math.floor(lengths.length / 2)];
+  const kept = lengths.filter((L) => L >= 0.25 * med);
+  const pool = kept.length ? kept : [med];
+  return Math.min(...pool);
+}
+
+/**
+ * Range-input step scaled to hard-max so short-edge sliders are not stuck
+ * (step 0.5 with max≈0.03 leaves the thumb immovable).
+ * @param {number|null|undefined} hardMax
+ * @returns {number}
+ */
+export function blendSliderStep(hardMax) {
+  const m = Number(hardMax);
+  if (!(m > 0) || m >= 5) return 0.5;
+  return Math.max(0.01, Math.round((m / 20) * 100) / 100);
+}
+
+/**
  * Safe default fillet/chamfer size from min edge length.
  * Formula: clamp(0.15·minL, min(0.5, 0.35·minL), 0.35·minL) — always ≤ 0.35·L < 0.45·L.
  * @param {number} minEdgeLength

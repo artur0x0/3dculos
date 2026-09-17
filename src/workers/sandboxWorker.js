@@ -8,6 +8,7 @@ import {
   listFastenerSizes,
   resolveFastenerSize,
 } from './fastenerSizes.js';
+import { isFilletSliverDirty } from '../utils/filletSliverGuard.js';
 
 /**
  * List of globals to block/remove in the worker context
@@ -2742,8 +2743,9 @@ function makeSweepPath(edges, opts = {}) {
 // ---------------------------------------------------------------- Slice 23 fillet via swept cross-section
 // Unlock fillets on compound / curved-adjacent edges by sweeping a quarter-circle
 // (or chamfer triangle) cutter along makeSweepPath and boolean-subtracting.
-// Planar–planar edges still use filletEdges (UI Strategy=planar). Extrude/revolve/loft
-// are NOT started here — wait for Product brief.
+// Path is a LINEAR polyline (edge wire) — Catmull-Rom bulges off chords and left
+// purple sliver scraps. Planar–planar still uses filletEdges (UI Strategy=planar|auto).
+// Extrude/revolve/loft are NOT started here — wait for Product brief.
 function _s23Norm(v) {
   const L = Math.hypot(v[0], v[1], v[2]) || 1;
   return [v[0] / L, v[1] / L, v[2] / L];
@@ -2898,6 +2900,152 @@ function _s23ProbeFrame(M, part, points) {
 }
 
 /**
+ * When the closed path fits a circle, build the fillet cutter by revolving the
+ * 2D wedge in the meridian plane (same idea as C6 closed-run). Avoids closed
+ * extrude+warp RMF seams that leave purple sliver sheets.
+ * Returns null if the path is not a clean circle.
+ */
+function _s23TryRevolveCutter(CrossSection, points, radius, profileKind, arcSegs, probed) {
+  if (!points || points.length < 6) return null;
+  const n = points.length;
+  const fit = _c6FitCircle3(points[0], points[Math.floor(n / 3)], points[Math.floor((2 * n) / 3)]);
+  if (!fit) return null;
+  const { center: C, normal: N, radius: R } = fit;
+  if (!(R > 1e-6)) return null;
+  const tol = Math.max(0.02 * R, 0.05);
+  for (let k = 0; k < n; k++) {
+    const rel = _s23Sub(points[k], C);
+    const z = _s23Dot(rel, N);
+    const rhoVec = _s23Sub(rel, [z * N[0], z * N[1], z * N[2]]);
+    const rho = Math.hypot(rhoVec[0], rhoVec[1], rhoVec[2]);
+    if (Math.abs(z) > tol || Math.abs(rho - R) > tol) return null;
+  }
+  // Meridian frame at points[0]
+  const rel0 = _s23Sub(points[0], C);
+  const z0 = _s23Dot(rel0, N);
+  const rhoHat = _s23Norm(_s23Sub(rel0, [z0 * N[0], z0 * N[1], z0 * N[2]]));
+  const yHat = _s23Norm(_s23Cross(N, rhoHat));
+
+  // Map in-face rays into meridian (ρ, z). Prefer probed f0/f1.
+  const to2d = (v) => [_s23Dot(v, rhoHat), _s23Dot(v, N)];
+  let f0 = probed && probed.f0 ? probed.f0 : rhoHat.map((x) => -x); // into top ≈ -radial for outer rim
+  let f1 = probed && probed.f1 ? probed.f1 : N.map((x) => -x); // into wall ≈ -axis for top rim
+  let f0_2d = to2d(f0);
+  let f1_2d = to2d(f1);
+  let f0Len = Math.hypot(f0_2d[0], f0_2d[1]);
+  let f1Len = Math.hypot(f1_2d[0], f1_2d[1]);
+  if (f0Len < 0.85 || f1Len < 0.85) {
+    // Fallback for axisymmetric top rim: -ρ and -N
+    f0_2d = [-1, 0];
+    f1_2d = [0, -1];
+  } else {
+    f0_2d = [f0_2d[0] / f0Len, f0_2d[1] / f0Len];
+    f1_2d = [f1_2d[0] / f1Len, f1_2d[1] / f1Len];
+  }
+  // Ensure first-quadrant wedge maps into the solid (both axes point "inward")
+  // If either axis points outward in ρ, flip.
+  // Place wedge origin at (R, 0) in a local meridian where z'=0 at the rim.
+  const wedge = _s23WedgeContour(radius, profileKind, arcSegs);
+  const mapped = [];
+  for (const [u, v] of wedge) {
+    // (ρ, z_rel) = (R,0) + u*f0_2d + v*f1_2d
+    const rho = R + u * f0_2d[0] + v * f1_2d[0];
+    const zRel = 0 + u * f0_2d[1] + v * f1_2d[1];
+    mapped.push([rho, zRel]);
+  }
+  // Ensure CCW in (ρ,z)
+  let a2 = 0;
+  for (let i = 0; i < mapped.length; i++) {
+    const a = mapped[i], b = mapped[(i + 1) % mapped.length];
+    a2 += a[0] * b[1] - b[0] * a[1];
+  }
+  if (a2 < 0) mapped.reverse();
+  // Must stay ρ≥0
+  for (const p of mapped) {
+    if (p[0] < 1e-6) {
+      throw new Error('filletAlongPath: fillet radius too large for this rim (would revolve through the axis)');
+    }
+  }
+  const REVOLVE_SEGS = n; // phase-lock with tessellation (see C6)
+  const cs = new CrossSection([mapped]);
+  let solid;
+  try {
+    solid = cs.revolve(REVOLVE_SEGS);
+  } catch (e) {
+    return null;
+  }
+  // Shift so zRel=0 lies at the rim height along N, then frame to world.
+  // mapped uses zRel about the rim; rim world = C + R*rhoHat + z0*N, and
+  // revolve is about Y in CrossSection... Manifold revolve: profile x=radial, y=height → axis Z.
+  // Our CrossSection (ρ, zRel) revolved → solid with axis Z. Transform to world:
+  // x_axis = rhoHat, y_axis = yHat, z_axis = N, origin = C + z0*N
+  // frameToMatrix expects {center, x, y, normal} where normal is Z.
+  const origin = [C[0] + z0 * N[0], C[1] + z0 * N[1], C[2] + z0 * N[2]];
+  const mat = frameToMatrix({ center: origin, x: rhoHat, y: yHat, normal: N });
+  return solid.transform(mat);
+}
+
+/**
+ * Linear polyline path for fillet sweep (NOT Catmull-Rom).
+ * Catmull-Rom bulges off mesh chords / rounds corners and leaves thin purple
+ * cutter scraps after boolean subtract — follow the edge wire exactly.
+ */
+function _s23PolylinePath(points, closed) {
+  const n = points.length;
+  const segCount = closed ? n : Math.max(1, n - 1);
+  const segLens = [];
+  let total = 0;
+  for (let i = 0; i < segCount; i++) {
+    const a = points[i];
+    const b = points[(i + 1) % n];
+    const L = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+    segLens.push(L);
+    total += L;
+  }
+  if (!(total > 1e-12)) {
+    throw new Error('filletAlongPath: polyline path has zero length');
+  }
+  const cum = [0];
+  for (const L of segLens) cum.push(cum[cum.length - 1] + L);
+
+  const atS = (s) => {
+    const ss = Math.max(0, Math.min(total, s));
+    let i = 0;
+    while (i < segCount - 1 && cum[i + 1] < ss - 1e-12) i++;
+    const L = segLens[i] || 1;
+    const local = (ss - cum[i]) / L;
+    const a = points[i];
+    const b = points[(i + 1) % n];
+    return {
+      p: [
+        a[0] + local * (b[0] - a[0]),
+        a[1] + local * (b[1] - a[1]),
+        a[2] + local * (b[2] - a[2]),
+      ],
+      i,
+    };
+  };
+
+  return {
+    position: (t) => atS(Math.max(0, Math.min(1, t)) * total).p,
+    derivative: (t) => {
+      const { i } = atS(Math.max(0, Math.min(1, t)) * total);
+      const a = points[i];
+      const b = points[(i + 1) % n];
+      const L = segLens[i] || 1;
+      // dpos/dt = tangent * totalLength (t ∈ [0,1] arc-length fraction)
+      return [
+        ((b[0] - a[0]) / L) * total,
+        ((b[1] - a[1]) / L) * total,
+        ((b[2] - a[2]) / L) * total,
+      ];
+    },
+    tMin: 0,
+    tMax: 1,
+  };
+}
+
+/**
  * filletAlongPath(part, path, radius, opts?)
  * Sweep a quarter-circle (or chamfer) cutter along path → boolean subtract.
  *
@@ -2986,6 +3134,14 @@ function filletAlongPath(part, path, radius, opts = {}) {
   }
   if (area2 < 0) contour.reverse();
 
+  // Slightly extend the wedge past the edge origin into the exterior so the
+  // boolean is not tangent-coincident (classic sliver source). Profile stays
+  // first-quadrant dominant; a tiny (-eps,-eps) corner overlaps the crease.
+  const eps = Math.min(0.02 * radius, 0.05);
+  if (eps > 1e-9) {
+    contour.unshift([-eps, -eps]);
+  }
+
   const cs = new CrossSection([contour]);
   // Mobile-friendly sampling: scale with path complexity, capped.
   const nPts = points.length;
@@ -2994,18 +3150,48 @@ function filletAlongPath(part, path, radius, opts = {}) {
     : Math.min(320, Math.max(48, Math.round(nPts * (closed ? 3 : 4))));
   const extrudeSegments = opts.extrudeSegments != null
     ? opts.extrudeSegments
-    : Math.min(48, Math.max(12, Math.round(nPts * 0.75)));
+    : Math.min(64, Math.max(16, Math.round(nPts * (closed ? 1.5 : 0.75))));
 
-  let cutter;
-  try {
-    cutter = sweepPoints(cs, points, {
-      closed,
-      initialNormal,
-      arcSamples,
-      extrudeSegments,
-    });
-  } catch (e) {
-    throw new Error(`filletAlongPath: sweep failed — ${e && e.message ? e.message : e}`);
+  // Polyline along the edge wire. Closed loops are swept as an OPEN path that
+  // covers one full lap + a small overlap — a true closed extrude+warp leaves
+  // an RMF seam that triangulates into purple sliver sheets.
+  let sweepPts = points;
+  let sweepClosed = closed;
+  if (closed && points.length >= 3) {
+    const a = points[0];
+    const b = points[1];
+    const overlap = 0.08; // fraction of first segment
+    sweepPts = points.concat([
+      a.slice(),
+      [
+        a[0] + overlap * (b[0] - a[0]),
+        a[1] + overlap * (b[1] - a[1]),
+        a[2] + overlap * (b[2] - a[2]),
+      ],
+    ]);
+    sweepClosed = false;
+  }
+
+  let cutter = null;
+  if (closed) {
+    try {
+      cutter = _s23TryRevolveCutter(CrossSection, points, radius, profileKind, arcSegs, probed);
+    } catch (e) {
+      if (/too large for this rim/i.test(String(e && e.message))) throw e;
+      cutter = null;
+    }
+  }
+  if (!cutter) {
+    try {
+      const polyPath = _s23PolylinePath(sweepPts, sweepClosed);
+      cutter = sweep(cs, polyPath, {
+        initialNormal,
+        arcSamples,
+        extrudeSegments,
+      });
+    } catch (e) {
+      throw new Error(`filletAlongPath: sweep failed — ${e && e.message ? e.message : e}`);
+    }
   }
   const seC = _c4StatusError(cutter);
   if (seC) throw new Error(`filletAlongPath: bad cutter (${seC})`);
@@ -3045,6 +3231,67 @@ function filletAlongPath(part, path, radius, opts = {}) {
       `filletAlongPath: removed only ${removed.toFixed(4)} vs expected ~${expectVol.toFixed(4)} `
       + '(orientation/overlap failure) — failing loud rather than shipping a near-no-op solid',
     );
+  }
+  // Drop disconnected cutter scraps (thin purple sheets) via decompose —
+  // closed-loop sweep seams often leave tiny extra components. For closed
+  // paths, multiple components are a hard fail (no silent keep-largest).
+  try {
+    if (typeof out.decompose === 'function') {
+      const parts = out.decompose();
+      if (Array.isArray(parts) && parts.length > 1) {
+        if (closed) {
+          throw new Error(
+            `filletAlongPath: decompose found ${parts.length} components on closed path `
+            + '— failing loud rather than shipping a dirty solid',
+          );
+        }
+        let best = parts[0];
+        let bestVol = best.volume();
+        for (let i = 1; i < parts.length; i++) {
+          const v = parts[i].volume();
+          if (v > bestVol) { bestVol = v; best = parts[i]; }
+        }
+        const scrapVol = parts.reduce((s, c) => s + c.volume(), 0) - bestVol;
+        // If scraps are a real fraction of the solid, something is badly wrong.
+        if (scrapVol > 0.05 * bestVol && scrapVol > 1e-2) {
+          throw new Error(
+            `filletAlongPath: decompose found ${parts.length} components with scrap vol `
+            + `${scrapVol.toFixed(4)} — failing loud rather than shipping a dirty solid`,
+          );
+        }
+        out = best;
+      }
+    }
+  } catch (e) {
+    if (/decompose found|dirty solid/i.test(String(e && e.message))) throw e;
+  }
+  // Loud fail if the kept solid still has many degenerate tris (attached slivers).
+  try {
+    const mesh = out.getMesh();
+    const np = mesh.numProp || 3;
+    const V = mesh.vertProperties;
+    const T = mesh.triVerts;
+    const nTri = T.length / 3;
+    let tiny = 0;
+    for (let ti = 0; ti < nTri; ti++) {
+      const i0 = T[ti * 3] * np;
+      const i1 = T[ti * 3 + 1] * np;
+      const i2 = T[ti * 3 + 2] * np;
+      const ax = V[i1] - V[i0], ay = V[i1 + 1] - V[i0 + 1], az = V[i1 + 2] - V[i0 + 2];
+      const bx = V[i2] - V[i0], by = V[i2 + 1] - V[i0 + 1], bz = V[i2 + 2] - V[i0 + 2];
+      const A = 0.5 * Math.hypot(ay * bz - az * by, az * bx - ax * bz, ax * by - ay * bx);
+      if (A < 1e-8) tiny++;
+    }
+    // C6 closed-run filletEdges itself yields ~0.5–1% needles @1e-8 from
+    // mesh boolean — only fail when the mesh is clearly scrap-sheet dirty.
+    if (isFilletSliverDirty(tiny, nTri)) {
+      throw new Error(
+        `filletAlongPath: result has ${tiny}/${nTri} degenerate triangles (sliver scraps) — `
+        + 'failing loud rather than shipping a dirty solid; try a smaller radius or Strategy=planar',
+      );
+    }
+  } catch (e) {
+    if (/sliver scraps|degenerate triangles/i.test(String(e && e.message))) throw e;
   }
   return out;
 }

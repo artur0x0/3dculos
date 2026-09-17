@@ -22,8 +22,10 @@
 
 import {
   minSelectedEdgeLength,
+  effectiveBlendEdgeLength,
   defaultEdgeBlendSize,
   edgeBlendHardMax,
+  blendSliderStep,
 } from './selectEdge.js';
 import {
   CROSS_SECTION_REFUSE_NON_PLANAR,
@@ -638,27 +640,30 @@ export function resolveFaceModal(paletteItem, selectedFace, selectedEdges = null
       name: 'edgeScope', type: 'select', default: 'selected', label: 'Edges',
       options: ['selected', 'face', 'allConvex'],
     };
-    const minL = minSelectedEdgeLength(selectedEdges);
+    // Multi-edge: effective length drops short tessellation scraps so the
+    // radius slider is not stuck near 0.03 on tangent/compound sets.
+    const minL = effectiveBlendEdgeLength(selectedEdges) ?? minSelectedEdgeLength(selectedEdges);
     const blendDefault = minL != null ? defaultEdgeBlendSize(minL) : (id === 'filletEdges' ? 3 : 2);
     const blendMax = minL != null ? edgeBlendHardMax(minL) : undefined;
+    const blendStep = blendSliderStep(blendMax);
     const blendParam = id === 'filletEdges'
       ? {
           name: 'radius', type: 'number', default: blendDefault, label: 'Radius',
-          min: 0.01, step: 0.5, slider: true, ...(blendMax != null ? { max: blendMax } : {}),
+          min: 0.01, step: blendStep, slider: true, ...(blendMax != null ? { max: blendMax } : {}),
         }
       : {
           name: 'chamfer', type: 'number', default: blendDefault, label: 'Chamfer',
-          min: 0.01, step: 0.5, slider: true, ...(blendMax != null ? { max: blendMax } : {}),
+          min: 0.01, step: blendStep, slider: true, ...(blendMax != null ? { max: blendMax } : {}),
         };
     let params;
     if (id === 'filletEdges') {
-      // Slice 23: Strategy planar (filletEdges) | sweep (filletAlongPath).
-      // Sweep reuses Path soft-fail topology; planar keeps C6 sphericalCorners.
+      // Strategy auto (default) | planar | sweep. Auto picks from edge set;
+      // manual select still overrides at compose time.
       params = [
         body,
         {
-          name: 'strategy', type: 'select', default: 'planar', label: 'Strategy',
-          options: ['planar', 'sweep'],
+          name: 'strategy', type: 'select', default: 'auto', label: 'Strategy',
+          options: ['auto', 'planar', 'sweep'],
         },
         blendParam,
         { name: 'sphericalCorners', type: 'bool', default: true, label: 'Spherical corners' },
@@ -683,7 +688,6 @@ export function resolveFaceModal(paletteItem, selectedFace, selectedEdges = null
         title: `${paletteItem.title} — ${selectedEdges.length} edge${selectedEdges.length === 1 ? '' : 's'}`,
         _edgePlacement: true,
         _minEdgeLength: minL,
-        _filletStrategy: true,
       },
     };
   }
@@ -739,9 +743,12 @@ export function resolveFaceModal(paletteItem, selectedFace, selectedEdges = null
   const params = faceAwareParams(id, face.type);
   if (!params) return { mode: 'default' };
   const seeds = seedFaceParams(id, face);
-  const minL = hasEdges && isEdgeFeature ? minSelectedEdgeLength(selectedEdges) : null;
+  const minL = hasEdges && isEdgeFeature
+    ? (effectiveBlendEdgeLength(selectedEdges) ?? minSelectedEdgeLength(selectedEdges))
+    : null;
   const blendDefault = minL != null ? defaultEdgeBlendSize(minL) : null;
   const blendMax = minL != null ? edgeBlendHardMax(minL) : null;
+  const blendStep = blendSliderStep(blendMax);
   // Prefer selected edges when both face + edges present for fillet/chamfer.
   const mergedParams = params.map((p) => {
     let def = seeds[p.name] !== undefined ? seeds[p.name] : p.default;
@@ -751,7 +758,7 @@ export function resolveFaceModal(paletteItem, selectedFace, selectedEdges = null
     if (def !== p.default) next = { ...next, default: def };
     else if (seeds[p.name] !== undefined) next = { ...next, default: seeds[p.name] };
     if (blendMax != null && (p.name === 'radius' || p.name === 'chamfer')) {
-      next = { ...next, max: blendMax, slider: true };
+      next = { ...next, max: blendMax, step: blendStep, slider: true };
     }
     return next;
   });
