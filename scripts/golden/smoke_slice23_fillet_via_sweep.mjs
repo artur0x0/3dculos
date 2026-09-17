@@ -355,6 +355,33 @@ console.log('slice-23 fillet via sweep smoke');
   check('multi-edge slider step scaled', rParam?.step === 0.04,
     `got ${rParam?.step}`);
   check('strategy default auto on modal', resolvedMulti.item?.params?.find((x) => x.name === 'strategy')?.default === 'auto');
+
+  // Sweep size guard: curved rim (auto→sweep) must NOT pin slider under 0.45·L
+  const rimishSweep = [];
+  for (let i = 0; i < 12; i++) {
+    const a = i, b = (i + 1) % 12;
+    const ang0 = (i / 12) * Math.PI * 2;
+    const ang1 = ((i + 1) / 12) * Math.PI * 2;
+    const va = [Math.cos(ang0), Math.sin(ang0), 0];
+    const vb = [Math.cos(ang1), Math.sin(ang1), 0];
+    const radial = [(va[0] + vb[0]) / 2, (va[1] + vb[1]) / 2, 0];
+    const rLen = Math.hypot(radial[0], radial[1]) || 1;
+    rimishSweep.push({
+      key: `${a}-${b}`, a, b, va, vb,
+      mid: [(va[0] + vb[0]) / 2, (va[1] + vb[1]) / 2, 0],
+      length: Math.hypot(vb[0] - va[0], vb[1] - va[1], vb[2] - va[2]),
+      n0: [0, 0, 1],
+      n1: [radial[0] / rLen, radial[1] / rLen, 0],
+    });
+  }
+  check('auto→sweep on rimish for size test', pickFilletStrategy(rimishSweep) === 'sweep');
+  const resolvedRim = resolveFaceModal(item, null, rimishSweep);
+  const rRim = resolvedRim.item?.params?.find((x) => x.name === 'radius');
+  check('sweep modal skips planar size clamp (max≥6)', rRim?.max != null && rRim.max >= 6,
+    `max=${rRim?.max}`);
+  check('sweep modal default usable (default≥1)', rRim?.default != null && rRim.default >= 1,
+    `default=${rRim?.default}`);
+  check('sweep modal _blendSizeGuard false', resolvedRim.item?._blendSizeGuard === false);
 }
 
 
@@ -506,6 +533,60 @@ return part;
   } catch (e) {
     failed++;
     console.log(`  ❌ post-fillet sweep fillet builds — ${e.message}`);
+  }
+}
+
+// Fillet-on-fillet: vertical planar fillets then sweep top perimeter @ r=6
+// (path includes tessellated prior-fillet arcs — must stay clean, no scraps)
+{
+  try {
+    const payload = await exec(`
+let part = Manifold.cube([40, 30, 20], true);
+const verts = convexEdges(part).filter((e) => {
+  const dz = Math.abs(e.va[2] - e.vb[2]);
+  const dxy = Math.hypot(e.va[0] - e.vb[0], e.va[1] - e.vb[1]);
+  return dz > 15 && dxy < 0.5;
+});
+if (verts.length < 4) throw new Error('need 4 verticals, got ' + verts.length);
+part = filletEdges(part, verts, 4, { sphericalCorners: false });
+const top = convexEdges(part).filter((e) => {
+  const m = [(e.va[0]+e.vb[0])/2, (e.va[1]+e.vb[1])/2, (e.va[2]+e.vb[2])/2];
+  return Math.abs(m[2] - 10) < 0.5 && Math.abs(e.va[2] - e.vb[2]) < 1.5;
+});
+if (top.length < 4) throw new Error('need top edges after fillet, got ' + top.length);
+const path = makeSweepPath(top);
+const v0 = part.volume();
+part = filletAlongPath(part, path, 6);
+const v1 = part.volume();
+if (!(v1 < v0 - 10)) throw new Error('fillet-on-fillet r=6 did not remove volume');
+return part;
+`);
+    check('fillet-on-fillet sweep r=6 builds', Number.isFinite(payload?.volume) && payload.volume > 0,
+      `vol=${payload?.volume}`);
+    check('fillet-on-fillet status NoError', payload?.status === 'NoError' || !payload?.status,
+      `status=${payload?.status}`);
+    const mesh = payload?.mesh;
+    if (mesh?.triVerts && mesh?.vertProperties) {
+      const np = mesh.numProp || 3;
+      const V = mesh.vertProperties;
+      const T = mesh.triVerts;
+      const nTri = T.length / 3;
+      let tiny = 0;
+      for (let ti = 0; ti < nTri; ti++) {
+        const i0 = T[ti * 3] * np, i1 = T[ti * 3 + 1] * np, i2 = T[ti * 3 + 2] * np;
+        const ax = V[i1] - V[i0], ay = V[i1 + 1] - V[i0 + 1], az = V[i1 + 2] - V[i0 + 2];
+        const bx = V[i2] - V[i0], by = V[i2 + 1] - V[i0 + 1], bz = V[i2 + 2] - V[i0 + 2];
+        const A = 0.5 * Math.hypot(ay * bz - az * by, az * bx - ax * bz, ax * by - ay * bx);
+        if (A < 1e-8) tiny++;
+      }
+      check('fillet-on-fillet no sliver scraps', !isFilletSliverDirty(tiny, nTri),
+        `tiny=${tiny}/${nTri}`);
+    } else {
+      check('fillet-on-fillet no sliver scraps', false, 'missing mesh');
+    }
+  } catch (e) {
+    failed++;
+    console.log(`  ❌ fillet-on-fillet sweep r=6 builds — ${e.message}`);
   }
 }
 

@@ -3046,6 +3046,85 @@ function _s23PolylinePath(points, closed) {
 }
 
 /**
+ * Fillet-on-fillet / path-on-blend prep.
+ * Tessellated rims of a prior fillet are dense micro-segments. Sweeping the
+ * full closed wire (straights + micro arcs) leaves jagged attached sheets;
+ * sweeping only the significant open runs (or a decimated micro path) is clean.
+ *
+ * @returns {{ mode:'as-is' }
+ *   | { mode:'runs', runs:number[][][] }
+ *   | { mode:'decimate', points:number[][], closed:boolean }}
+ */
+function _s23PlanPathForSweep(points, closed, radius) {
+  const n = points.length;
+  if (n < 2) return { mode: 'as-is' };
+  const segCount = closed ? n : n - 1;
+  if (segCount < 2) return { mode: 'as-is' };
+  const lens = [];
+  for (let i = 0; i < segCount; i++) {
+    const a = points[i];
+    const b = points[(i + 1) % n];
+    lens.push(Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]));
+  }
+  const sorted = lens.slice().sort((a, b) => a - b);
+  const med = sorted[Math.floor(sorted.length / 2)] || 0;
+  const thr = Math.max(0.25 * med, 0.15 * Number(radius) || 0, 1e-3);
+  let nMicro = 0;
+  let nLong = 0;
+  for (const L of lens) {
+    if (L < thr) nMicro++;
+    else nLong++;
+  }
+  // Mixed: long straights + micro arcs on prior fillet — fillet long runs only.
+  if (nLong >= 1 && nMicro >= 2) {
+    const runs = [];
+    let cur = [];
+    const pushRun = () => {
+      if (cur.length >= 2) runs.push(cur);
+      cur = [];
+    };
+    for (let i = 0; i < segCount; i++) {
+      if (lens[i] >= thr) {
+        if (cur.length === 0) cur.push(points[i].slice());
+        cur.push(points[(i + 1) % n].slice());
+      } else {
+        pushRun();
+      }
+    }
+    pushRun();
+    // Closed wrap: if first & last run are both long and only micros separate
+    // them at the index-0 seam, they stay separate open runs (correct).
+    if (runs.length >= 1) return { mode: 'runs', runs };
+  }
+  // All / mostly micro (path lies on a curved blend): decimate for a clean sweep.
+  if (nMicro >= 4 && nMicro >= 0.5 * segCount) {
+    let pathLen = 0;
+    for (const L of lens) pathLen += L;
+    const spacing = Math.max(0.5, pathLen / 12, 0.25 * Number(radius) || 0);
+    const dec = [points[0].slice()];
+    let last = points[0];
+    const lim = n;
+    for (let i = 1; i < lim; i++) {
+      const p = points[i % n];
+      if (Math.hypot(p[0] - last[0], p[1] - last[1], p[2] - last[2]) >= spacing) {
+        dec.push(p.slice());
+        last = p;
+      }
+    }
+    if (!closed) {
+      const end = points[n - 1];
+      if (Math.hypot(end[0] - dec[dec.length - 1][0], end[1] - dec[dec.length - 1][1], end[2] - dec[dec.length - 1][2]) > 1e-6) {
+        dec.push(end.slice());
+      }
+    }
+    if (dec.length >= (closed ? 3 : 2)) {
+      return { mode: 'decimate', points: dec, closed: !!closed };
+    }
+  }
+  return { mode: 'as-is' };
+}
+
+/**
  * filletAlongPath(part, path, radius, opts?)
  * Sweep a quarter-circle (or chamfer) cutter along path → boolean subtract.
  *
@@ -3073,6 +3152,35 @@ function filletAlongPath(part, path, radius, opts = {}) {
   const profileKind = (opts.profile === 'chamfer') ? 'chamfer' : 'fillet';
   const arcSegs = opts.segments != null ? opts.segments : 12;
   let { points, closed, length } = _s23NormalizePath(path, opts);
+
+  // Fillet-on-fillet: paths that follow a prior fillet rim mix long edges with
+  // dense micro arcs. Sweeping the whole wire leaves jagged sheets — split into
+  // open long runs, or decimate an all-micro blend path. Recurse with _rawPath.
+  if (!opts._rawPath) {
+    const plan = _s23PlanPathForSweep(points, closed, radius);
+    if (plan.mode === 'runs') {
+      let out = part;
+      const subOpts = { ...opts, _rawPath: true };
+      for (const run of plan.runs) {
+        out = filletAlongPath(out, { kind: 'sweepPath', points: run, closed: false }, radius, subOpts);
+      }
+      return out;
+    }
+    if (plan.mode === 'decimate') {
+      points = plan.points;
+      closed = plan.closed;
+      // Recompute length for expectVol checks below.
+      length = 0;
+      for (let i = 0; i < points.length - 1; i++) {
+        const a = points[i], b = points[i + 1];
+        length += Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+      }
+      if (closed && points.length >= 3) {
+        const a = points[points.length - 1], b = points[0];
+        length += Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+      }
+    }
+  }
 
   // Probe face frame; may reverse path so B aligns with f1.
   let initialNormal = opts.initialNormal ? opts.initialNormal.slice() : null;

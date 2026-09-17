@@ -137,7 +137,12 @@ export function toggleEdgeSelection(selected, edge) {
   return list;
 }
 
-/** Kernel size-guard fraction for straight-edge fillet/chamfer (t < 0.45·L). */
+/**
+ * Kernel size-guard fraction for **planar** filletEdges / chamferEdges (t < 0.45·L).
+ * Planar-only: Strategy=sweep / filletAlongPath must NOT use this clamp — short
+ * tessellation edges on a prior fillet rim would pin the slider near ~0.04 while
+ * r=6 is fine in script. See defaultSweepBlendSize / sweepBlendHardMax.
+ */
 export const EDGE_BLEND_SIZE_GUARD = 0.45;
 
 /**
@@ -232,12 +237,66 @@ export function edgeBlendHardMax(minEdgeLength) {
   return Math.round(0.44 * minL * 100) / 100;
 }
 
-/** True if blend size would fail the kernel size guard. */
+/**
+ * True if blend size would fail the **planar** kernel size guard (t ≥ 0.45·L).
+ * Do not call for Strategy=sweep / filletAlongPath — see sweepBlendHardMax.
+ */
 export function edgeBlendFailsSizeGuard(size, minEdgeLength) {
   const t = Number(size);
   const minL = Number(minEdgeLength);
   if (!(t > 0) || !(minL > 0)) return false;
   return t >= EDGE_BLEND_SIZE_GUARD * minL;
+}
+
+/**
+ * Total path length of selected edges (sum of .length / |vb−va|).
+ * Used for Strategy=sweep radius defaults when per-edge min L is tessellation-scale.
+ * @param {object[]|null|undefined} edges
+ * @returns {number|null}
+ */
+export function pathLengthFromEdges(edges) {
+  if (!Array.isArray(edges) || edges.length === 0) return null;
+  let sum = 0;
+  let n = 0;
+  for (const e of edges) {
+    let L = Number(e?.length);
+    if (!(Number.isFinite(L) && L > 0) && e?.va && e?.vb) {
+      L = Math.hypot(
+        e.vb[0] - e.va[0],
+        e.vb[1] - e.va[1],
+        e.vb[2] - e.va[2],
+      );
+    }
+    if (Number.isFinite(L) && L > 0) {
+      sum += L;
+      n++;
+    }
+  }
+  return n ? sum : null;
+}
+
+/**
+ * Sweep fillet default radius from path length (not 0.45·minL).
+ * Caps at 6 so box-scale perimeter picks get a usable thumb without planar clamp.
+ * @param {number} pathLength
+ * @returns {number}
+ */
+export function defaultSweepBlendSize(pathLength) {
+  const L = Number(pathLength);
+  if (!(L > 0)) return 3;
+  const r = Math.min(6, Math.max(1, 0.1 * L));
+  return Math.max(0.01, Math.round(r * 100) / 100);
+}
+
+/**
+ * Sweep slider / typed hard max — generous; planar 0.45·L must not apply.
+ * @param {number} [pathLength]
+ * @returns {number}
+ */
+export function sweepBlendHardMax(pathLength) {
+  const L = Number(pathLength);
+  if (L > 0) return Math.max(50, Math.round(0.5 * L * 100) / 100);
+  return 100;
 }
 
 /** Pop the last selected edge (Back affordance). Returns new array. */
