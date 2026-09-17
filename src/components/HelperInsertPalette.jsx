@@ -28,7 +28,7 @@ import {
 } from 'lucide-react';
 import { HELPER_PALETTE_GROUPS, itemsByGroup } from '../utils/helperPaletteSnippets';
 import { resolveFaceModal } from '../utils/faceFeaturePlacement';
-import { canBuildFilletAlongPath } from '../utils/filletAlongPath';
+import { canBuildFilletAlongPath, resolveFilletStrategy } from '../utils/filletAlongPath';
 import HelperParamModal from './HelperParamModal';
 
 const ICONS = {
@@ -203,8 +203,11 @@ const HelperInsertPalette = ({
               });
               return;
             }
-            // Slice 23: Fillet Strategy=sweep → same path preview as Path.
-            if (item?.id === 'filletEdges' && values?.strategy === 'sweep') {
+            // Fillet Strategy=sweep (or auto→sweep) → same path preview as Path.
+            if (
+              item?.id === 'filletEdges'
+              && resolveFilletStrategy(values?.strategy, edgeSnapshot) === 'sweep'
+            ) {
               onProfilePreview?.(null);
               onPathPreview?.({
                 edges: edgeSnapshot,
@@ -238,8 +241,8 @@ const HelperInsertPalette = ({
               );
               return;
             }
-            // Slice 23: Fillet Strategy=sweep soft-fails like Path (empty / disconnected / branch).
-            if (id === 'filletEdges' && params?.strategy === 'sweep') {
+            // Fillet Strategy=sweep (or auto→sweep) soft-fails like Path.
+            if (id === 'filletEdges' && resolveFilletStrategy(params?.strategy, edgeCtx) === 'sweep') {
               const gate = canBuildFilletAlongPath(edgeCtx);
               if (!gate.ok) {
                 close();
