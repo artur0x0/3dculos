@@ -12,7 +12,7 @@
  * Does NOT ship extrude/revolve/loft — wait for Product brief.
  */
 
-import { assembleSweepPath, orderEdgePath } from './edgeSweepPath.js';
+import { assembleSweepPath } from './edgeSweepPath.js';
 
 export const FILLET_SWEEP_EMPTY =
   'Select edges first (Edge pick mode), then Fillet with Strategy=sweep (or Strategy=auto). Tangent-on chains work for circular rims.';
@@ -22,6 +22,10 @@ export const FILLET_SWEEP_DISCONNECTED =
 
 export const FILLET_SWEEP_BRANCH =
   'Selected edges branch (junction) — sweep fillet needs a simple open chain or closed loop, not a Y/T junction.';
+
+/** Degenerate-tri loud-fail gates shared with golden (must not drift). */
+export const SLIVER_MAX_ABS = 80;
+export const SLIVER_MAX_FRAC = 0.06;
 
 /**
  * Fillet cutter wedge in UV (u≥0, v≥0): origin → (r,0) → arc (center (r,r)) → (0,r).
@@ -168,20 +172,21 @@ function _clusterNormals(normals, cosTol) {
 
 /**
  * Auto fillet strategy from selected edges.
- * Heuristic: any curved-adjacent / non-planar-pair → sweep;
- * clean planar–planar → planar. Manual Strategy select overrides.
+ * Heuristic: curved-adjacent (normal fan) → sweep; clean planar–planar → planar.
+ * Manual Strategy select overrides.
  *
  * Signals for sweep:
- * - closed contiguous loop with ≥3 edges (circular rims / tangent loops)
- * - ≥6 edges in a contiguous chain (typical Tangent propagate)
- * - adjacent-face normals fan into >4 direction clusters (curved wall)
+ * - adjacent-face normals fan into >6 direction clusters (curved / tessellated
+ *   walls; 8° bins). Requires ≥4 normals collected from n0/n1.
+ *
+ * Clean multi-edge planar loops (box-like top + cardinal sides) stay planar —
+ * edge count alone never forces sweep.
  *
  * @param {object[]|null|undefined} edges
  * @returns {'planar'|'sweep'}
  */
 export function pickFilletStrategy(edges) {
   if (!Array.isArray(edges) || edges.length === 0) return 'planar';
-  const ordered = orderEdgePath(edges);
 
   const normals = [];
   for (const e of edges) {
@@ -194,11 +199,6 @@ export function pickFilletStrategy(edges) {
   const curvedFaces = normals.length >= 4
     && _clusterNormals(normals, Math.cos((8 * Math.PI) / 180)) > 6;
 
-  // Closed tessellated rims (Tangent on a hole) → sweep. Short planar loops
-  // (box top 4-gon) stay planar unless normals already look curved.
-  if (ordered.ok && ordered.closed && (edges.length >= 8 || curvedFaces)) return 'sweep';
-  // Long contiguous chains from Tangent propagate → sweep.
-  if (ordered.ok && edges.length >= 6) return 'sweep';
   if (curvedFaces) return 'sweep';
   return 'planar';
 }

@@ -8,6 +8,7 @@ import {
   listFastenerSizes,
   resolveFastenerSize,
 } from './fastenerSizes.js';
+import { SLIVER_MAX_ABS, SLIVER_MAX_FRAC } from '../utils/filletAlongPath.js';
 
 /**
  * List of globals to block/remove in the worker context
@@ -3232,11 +3233,18 @@ function filletAlongPath(part, path, radius, opts = {}) {
     );
   }
   // Drop disconnected cutter scraps (thin purple sheets) via decompose —
-  // closed-loop sweep seams often leave tiny extra components.
+  // closed-loop sweep seams often leave tiny extra components. For closed
+  // paths, multiple components are a hard fail (no silent keep-largest).
   try {
     if (typeof out.decompose === 'function') {
       const parts = out.decompose();
       if (Array.isArray(parts) && parts.length > 1) {
+        if (closed) {
+          throw new Error(
+            `filletAlongPath: decompose found ${parts.length} components on closed path `
+            + '— failing loud rather than shipping a dirty solid',
+          );
+        }
         let best = parts[0];
         let bestVol = best.volume();
         for (let i = 1; i < parts.length; i++) {
@@ -3276,7 +3284,7 @@ function filletAlongPath(part, path, radius, opts = {}) {
     }
     // C6 closed-run filletEdges itself yields ~0.5–1% needles @1e-8 from
     // mesh boolean — only fail when the mesh is clearly scrap-sheet dirty.
-    if (tiny > 80 && tiny > 0.06 * nTri) {
+    if (tiny > SLIVER_MAX_ABS && tiny > SLIVER_MAX_FRAC * nTri) {
       throw new Error(
         `filletAlongPath: result has ${tiny}/${nTri} degenerate triangles (sliver scraps) — `
         + 'failing loud rather than shipping a dirty solid; try a smaller radius or Strategy=planar',

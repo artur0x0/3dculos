@@ -28,12 +28,11 @@ import {
   FILLET_SWEEP_EMPTY,
   FILLET_SWEEP_DISCONNECTED,
   FILLET_SWEEP_BRANCH,
+  SLIVER_MAX_ABS,
+  SLIVER_MAX_FRAC,
 } from '../../src/utils/filletAlongPath.js';
 import {
   effectiveBlendEdgeLength,
-  defaultEdgeBlendSize,
-  edgeBlendHardMax,
-  blendSliderStep,
   minSelectedEdgeLength,
 } from '../../src/utils/selectEdge.js';
 
@@ -190,7 +189,7 @@ console.log('slice-23 fillet via sweep smoke');
 
   check('fillet is face feature', isFaceFeature('filletEdges'));
 
-  // Auto strategy: closed tessellated rim (≥8) → sweep; short planar box edges → planar
+  // Auto strategy: curvedFaces (radial n1 fan) → sweep; clean planar loops stay planar
   const rimish = [];
   for (let i = 0; i < 12; i++) {
     const a = i, b = (i + 1) % 12;
@@ -208,9 +207,59 @@ console.log('slice-23 fillet via sweep smoke');
       n1: [radial[0] / rLen, radial[1] / rLen, 0],
     });
   }
-  check('auto→sweep on closed rim (≥8)', pickFilletStrategy(rimish) === 'sweep');
+  check('auto→sweep on curved rim (normal fan)', pickFilletStrategy(rimish) === 'sweep');
   check('resolve auto→sweep', resolveFilletStrategy('auto', rimish) === 'sweep');
   check('manual planar overrides auto', resolveFilletStrategy('planar', rimish) === 'planar');
+
+  // 8-edge rectangle-style coplanar loop: top + four cardinal sides only → planar
+  const planar8 = [];
+  {
+    const verts = [
+      [-20, -15, 10], [0, -15, 10], [20, -15, 10], [20, 0, 10],
+      [20, 15, 10], [0, 15, 10], [-20, 15, 10], [-20, 0, 10],
+    ];
+    const sideN = [
+      [0, -1, 0], [0, -1, 0], [1, 0, 0], [1, 0, 0],
+      [0, 1, 0], [0, 1, 0], [-1, 0, 0], [-1, 0, 0],
+    ];
+    for (let i = 0; i < 8; i++) {
+      const a = i, b = (i + 1) % 8;
+      const va = verts[a], vb = verts[b];
+      planar8.push({
+        key: `${a}-${b}`, a, b, va, vb,
+        mid: [(va[0] + vb[0]) / 2, (va[1] + vb[1]) / 2, (va[2] + vb[2]) / 2],
+        length: Math.hypot(vb[0] - va[0], vb[1] - va[1], vb[2] - va[2]),
+        n0: [0, 0, 1],
+        n1: sideN[i],
+      });
+    }
+  }
+  check('auto→planar on 8-edge clean planar loop', pickFilletStrategy(planar8) === 'planar');
+
+  // 6-edge planar closed loop (same box-like normals) → planar
+  const planar6 = [];
+  {
+    const verts = [
+      [-20, -15, 10], [20, -15, 10], [20, 0, 10],
+      [20, 15, 10], [-20, 15, 10], [-20, 0, 10],
+    ];
+    const sideN = [
+      [0, -1, 0], [1, 0, 0], [1, 0, 0],
+      [0, 1, 0], [-1, 0, 0], [-1, 0, 0],
+    ];
+    for (let i = 0; i < 6; i++) {
+      const a = i, b = (i + 1) % 6;
+      const va = verts[a], vb = verts[b];
+      planar6.push({
+        key: `${a}-${b}`, a, b, va, vb,
+        mid: [(va[0] + vb[0]) / 2, (va[1] + vb[1]) / 2, (va[2] + vb[2]) / 2],
+        length: Math.hypot(vb[0] - va[0], vb[1] - va[1], vb[2] - va[2]),
+        n0: [0, 0, 1],
+        n1: sideN[i],
+      });
+    }
+  }
+  check('auto→planar on 6-edge clean planar loop', pickFilletStrategy(planar6) === 'planar');
 
   const boxEdge = [{
     key: '0-1', a: 0, b: 1,
@@ -242,11 +291,12 @@ console.log('slice-23 fillet via sweep smoke');
   check('effective minL drops scrap', eff != null && eff >= 1.9, `eff=${eff}`);
   const resolvedMulti = resolveFaceModal(item, null, multi);
   const rParam = resolvedMulti.item?.params?.find((x) => x.name === 'radius');
-  check('multi-edge radius default from effective', rParam?.default === defaultEdgeBlendSize(eff),
+  // Pinned for fixture lengths 0.08/2.0/2.1/1.9 → eff=1.9 (not mirror of helpers)
+  check('multi-edge radius default from effective', rParam?.default === 0.5,
     `got ${rParam?.default}`);
-  check('multi-edge slider max from effective', rParam?.max === edgeBlendHardMax(eff),
+  check('multi-edge slider max from effective', rParam?.max === 0.84,
     `got ${rParam?.max}`);
-  check('multi-edge slider step scaled', rParam?.step === blendSliderStep(rParam?.max),
+  check('multi-edge slider step scaled', rParam?.step === 0.04,
     `got ${rParam?.step}`);
   check('strategy default auto on modal', resolvedMulti.item?.params?.find((x) => x.name === 'strategy')?.default === 'auto');
 }
@@ -332,7 +382,7 @@ return part;
         const A = 0.5 * Math.hypot(ay * bz - az * by, az * bx - ax * bz, ax * by - ay * bx);
         if (A < 1e-8) tiny++;
       }
-      check('closed-rim no sliver scraps', tiny <= 80 || tiny <= 0.06 * nTri,
+      check('closed-rim no sliver scraps', tiny <= SLIVER_MAX_ABS || tiny <= SLIVER_MAX_FRAC * nTri,
         `tiny=${tiny}/${nTri}`);
     } else {
       check('closed-rim no sliver scraps', false, 'missing mesh');

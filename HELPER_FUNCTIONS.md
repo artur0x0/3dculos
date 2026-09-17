@@ -71,9 +71,9 @@ Edge selection (open chain or closed loop). Consume with **Fillet → Strategy=s
 (`filletAlongPath`) or `sweepPoints`.
 
 **Sweep fillet (Slice 23+):** same **Fillet** control — **Strategy=auto** (default)
-picks **sweep** vs **planar** from the edge set (closed tessellated rims / long
-Tangent chains / curved-face normal fans → sweep; clean planar–planar → planar).
-Manual **planar** / **sweep** still override. **planar** keeps `filletEdges`
+picks **sweep** vs **planar** from the edge set (adjacent-face normals fan into
+>6 direction clusters → sweep; clean planar–planar stays planar). Manual
+**planar** / **sweep** still override. **planar** keeps `filletEdges`
 (planar–planar / closed-run C6); **sweep** builds `makeSweepPath` +
 `filletAlongPath` (quarter-circle or chamfer wedge swept as a **linear polyline**
 along the edge wire, boolean subtract). Soft-fails empty/disconnected/branched
@@ -962,14 +962,15 @@ FEAT rail → **Fillet** → param popup:
 | **planar** | `filletEdges(…)` | Force planar–planar / C6 closed-run; spherical corners |
 | **sweep** | `makeSweepPath` + `filletAlongPath` | Force curved-adjacent / Path-driven; optional chamfer profile |
 
-**Auto heuristic (brief):** sweep when the selection is a closed loop with ≥8
-edges (typical Tangent rim), a contiguous chain of ≥6 edges, or adjacent-face
-normals fan into >6 direction clusters (curved wall). Otherwise planar. Manual
+**Auto heuristic (brief):** sweep when adjacent-face normals fan into >6
+direction clusters (curved / tessellated walls; 8° bins). Clean planar–planar
+selections stay planar — edge count alone never forces sweep. Manual
 **Strategy** select always overrides.
 
-**Radius slider:** defaults / max / step scale from an **effective** min edge
-length — multi-edge picks drop short outliers (&lt;25% of median) so tangent sets
-are not stuck near r≈0.03; typed values still clamp under the 0.45·L size guard.
+**Radius slider:** defaults / max / step use the **effective** min edge length
+(outliers dropped: short edges &lt;25% of median are ignored) so multi-edge /
+tangent sets are not stuck near r≈0.03; typed values still clamp under the
+0.45·L size guard.
 
 Sweep mode shows the Path order/direction preview (green→magenta). Auto-Run
 unchanged. Keep using **Path** alone when you only need the wire value.
