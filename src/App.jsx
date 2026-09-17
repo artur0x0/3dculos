@@ -722,14 +722,19 @@ const App = () => {
       }, 0);
       return;
     }
-    // Soft-fail: empty selected-edge fillet/chamfer — clear stale chip and toast
+    // Soft-fail: empty selected-edge fillet/chamfer/path — clear stale chip and toast
     // without writing any JS. Face-scope / compose-null failures stay quiet.
     const isEdgeFeature = helperId === 'filletEdges' || helperId === 'chamferEdges';
+    const isSweepPath = helperId === 'sweepPath';
     const scope = params?.edgeScope
       || (edgeContext && edgeContext.length ? 'selected' : null);
     if (isEdgeFeature && scope === 'selected' && !(edgeContext && edgeContext.length)) {
       viewportRef.current?.softFailStaleEdges?.(
         'No edges selected — re-pick after geometry changes, then Fillet/Chamfer.',
+      );
+    } else if (isSweepPath && !(edgeContext && edgeContext.length)) {
+      viewportRef.current?.softFailStaleEdges?.(
+        'No edges selected — re-pick a contiguous chain or loop, then Path.',
       );
     }
   };

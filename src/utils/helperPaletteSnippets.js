@@ -9,6 +9,7 @@
  * Slice 11/12: optional faceContext / edgeContext (from Viewport selectedFace) → face-aware
  * workplane via facesByNormal + closest center (never bare `top`).
  * Slice 21: crossSection plane+profile substrate (planar face → makeCrossSection).
+ * Slice 22: sweepPath ordered wire from edge selection (makeSweepPath).
  *
  * Sequential taps compose via composeHelperInsert:
  * strip one trailing `return part;`, insert body, re-append exactly one `return part;`.
@@ -774,6 +775,30 @@ export const HELPER_PALETTE_ITEMS = [
       }
       // Substrate only — named let for later edge→sweep / fillet / extrude slices.
       lines.push(`const ${xs} = makeCrossSection(${fr}, ${profileExpr}); // plane+profile substrate`);
+      return withReturn(lines, empty);
+    },
+  },
+  {
+    id: 'sweepPath',
+    label: 'Path',
+    group: 'Features',
+    title: 'makeSweepPath(edges) — ordered sweep path / wire from edges',
+    params: [
+      { name: 'body', type: 'body', default: 'part', label: 'Body' },
+      { name: 'reverse', type: 'bool', default: false, label: 'Reverse direction' },
+    ],
+    build: (empty, p, names, buffer, _ = null, edgeCtx = null) => {
+      const lines = [...ensurePartPrefix(empty, names)];
+      const body = resolveBody(p, names, empty ? lines.join('\n') : buffer);
+      const edge = emitSelectedEdgeLines(body, edgeCtx || [], names, allocateUniqueName);
+      // Soft-fail: never write throw/partial JS — caller clears stale selection.
+      if (!edge.ok) return null;
+      lines.push(...edge.lines);
+      const path = allocateUniqueName(names, 'path');
+      const rev = bool(p.reverse, false);
+      const opts = rev ? ', { reverse: true }' : '';
+      // Path value only — fillet-via-sweep / sweep cutter wait for Product brief.
+      lines.push(`const ${path} = makeSweepPath(${edge.edgesExpr}${opts}); // edge→sweep path`);
       return withReturn(lines, empty);
     },
   },

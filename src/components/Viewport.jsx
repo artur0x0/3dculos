@@ -22,7 +22,9 @@ import {
   Triangle,
   LineSegments,
   LineLoop,
+  Line,
   LineBasicMaterial,
+  SphereGeometry,
   Group,
 } from 'three';
 import { TrackballControls } from 'three/addons/controls/TrackballControls.js';
@@ -35,6 +37,7 @@ import CrossSectionPanel from './CrossSectionPanel';
 import HelperInsertPalette from './HelperInsertPalette';
 import { classifySelectedFace } from '../utils/faceFeaturePlacement';
 import { buildCrossSectionPreview } from '../utils/crossSectionSubstrate';
+import { buildSweepPathPreview } from '../utils/edgeSweepPath';
 import {
   buildFeatureEdges,
   pickNearestEdgeScreen,
@@ -158,6 +161,7 @@ const Viewport = forwardRef(({
   const edgeHoverRef = useRef(null);
   /** Slice 21: plane+profile preview overlay while HelperParamModal is open. */
   const xsPreviewRef = useRef(null);
+  const pathPreviewRef = useRef(null);
   const edgePickScratchA = useRef(new Vector3());
   const edgePickScratchB = useRef(new Vector3());
   const pickModeRef = useRef('face');
@@ -214,6 +218,8 @@ const Viewport = forwardRef(({
       edgeHoverRef.current = null;
       disposeEdgeOverlayObject(sceneRef.current, xsPreviewRef.current);
       xsPreviewRef.current = null;
+      disposeEdgeOverlayObject(sceneRef.current, pathPreviewRef.current);
+      pathPreviewRef.current = null;
       setSelectedFace(null);
       setSelectedEdges([]);
       onFaceSelected?.(null);
@@ -257,6 +263,8 @@ const Viewport = forwardRef(({
       edgeHighlightRef.current = null;
       disposeEdgeOverlayObject(sceneRef.current, edgeHoverRef.current);
       edgeHoverRef.current = null;
+      disposeEdgeOverlayObject(sceneRef.current, pathPreviewRef.current);
+      pathPreviewRef.current = null;
       setSelectedEdges([]);
       setEdgeModeToast(msg || 'Re-pick edges after geometry changes');
       armEdgeModeToastClear();
@@ -436,6 +444,118 @@ const Viewport = forwardRef(({
 
   // Dispose cross-section preview on unmount (route change / modal still open).
   useEffect(() => () => clearXsPreview(), [clearXsPreview]);
+
+  const clearPathPreview = useCallback(() => {
+    if (!pathPreviewRef.current) return;
+    disposeEdgeOverlayObject(sceneRef.current, pathPreviewRef.current);
+    pathPreviewRef.current = null;
+  }, []);
+
+  /**
+   * Slice 22: ordered path preview (gradient + direction arrows), distinct from orange selection halo.
+   * @param {{ edges: object[], params?: object }|null} payload
+   */
+  const setPathPreview = useCallback((payload) => {
+    clearPathPreview();
+    if (!payload?.edges?.length || !sceneRef.current) return;
+    const preview = buildSweepPathPreview(payload.edges, {
+      reverse: !!payload.params?.reverse,
+    });
+    if (!preview?.points?.length) return;
+
+    const group = new Group();
+    group.name = 'sweepPathPreview';
+
+    // Gradient polyline (green → magenta) showing order/direction.
+    const pts = preview.points;
+    const colors = preview.colors || [];
+    const positions = new Float32Array(pts.length * 3);
+    const colorArr = new Float32Array(pts.length * 3);
+    for (let i = 0; i < pts.length; i++) {
+      positions[i * 3] = pts[i][0];
+      positions[i * 3 + 1] = pts[i][1];
+      positions[i * 3 + 2] = pts[i][2];
+      const c = colors[i] || [0.66, 0.33, 0.97];
+      colorArr[i * 3] = c[0];
+      colorArr[i * 3 + 1] = c[1];
+      colorArr[i * 3 + 2] = c[2];
+    }
+    const lineGeom = new BufferGeometry();
+    lineGeom.setAttribute('position', new BufferAttribute(positions, 3));
+    lineGeom.setAttribute('color', new BufferAttribute(colorArr, 3));
+    const lineMat = new LineBasicMaterial({
+      vertexColors: true,
+      depthTest: false,
+      depthWrite: false,
+      transparent: true,
+      opacity: 0.98,
+    });
+    const line = new Line(lineGeom, lineMat);
+    line.renderOrder = 13;
+    line.frustumCulled = false;
+    group.add(line);
+
+    // Direction chevrons (arrows) along the path.
+    const arrowMat = new LineBasicMaterial({
+      color: 0xe879f9,
+      depthTest: false,
+      depthWrite: false,
+      transparent: true,
+      opacity: 0.95,
+    });
+    for (const ar of preview.arrows || []) {
+      const arrPos = new Float32Array([
+        ar.left[0], ar.left[1], ar.left[2],
+        ar.tip[0], ar.tip[1], ar.tip[2],
+        ar.right[0], ar.right[1], ar.right[2],
+        ar.tip[0], ar.tip[1], ar.tip[2],
+      ]);
+      const g = new BufferGeometry();
+      g.setAttribute('position', new BufferAttribute(arrPos, 3));
+      const seg = new LineSegments(g, arrowMat);
+      seg.renderOrder = 14;
+      seg.frustumCulled = false;
+      group.add(seg);
+    }
+
+    // Start / end markers (numbered cue via size: start larger).
+    const startMat = new MeshBasicMaterial({
+      color: 0x22c55e,
+      depthTest: false,
+      depthWrite: false,
+      transparent: true,
+      opacity: 0.95,
+    });
+    const endMat = new MeshBasicMaterial({
+      color: 0xa855f7,
+      depthTest: false,
+      depthWrite: false,
+      transparent: true,
+      opacity: 0.95,
+    });
+    const markers = preview.markers || [];
+    if (markers.length) {
+      const s = markers[0];
+      const startMesh = new ThreeMesh(new SphereGeometry(0.55, 10, 10), startMat);
+      startMesh.position.set(s.pos[0], s.pos[1], s.pos[2]);
+      startMesh.renderOrder = 15;
+      startMesh.frustumCulled = false;
+      group.add(startMesh);
+    }
+    if (markers.length > 1 && !preview.closed) {
+      const e = markers[markers.length - 1];
+      const endMesh = new ThreeMesh(new SphereGeometry(0.45, 10, 10), endMat);
+      endMesh.position.set(e.pos[0], e.pos[1], e.pos[2]);
+      endMesh.renderOrder = 15;
+      endMesh.frustumCulled = false;
+      group.add(endMesh);
+    }
+
+    sceneRef.current.add(group);
+    pathPreviewRef.current = group;
+  }, [clearPathPreview]);
+
+  useEffect(() => () => clearPathPreview(), [clearPathPreview]);
 
   const highlightSelectedEdges = useCallback((edges) => {
     clearEdgeHighlight();
@@ -1826,11 +1946,13 @@ const Viewport = forwardRef(({
           onStaleEdgesClear={(msg) => {
             clearEdgeHighlight();
             clearEdgeHover();
+            clearPathPreview();
             setSelectedEdges([]);
             setEdgeModeToast(msg || 'Re-pick edges after geometry changes');
             armEdgeModeToastClear();
           }}
           onProfilePreview={setXsPreview}
+          onPathPreview={setPathPreview}
           compact={isMobile}
         />
       )}

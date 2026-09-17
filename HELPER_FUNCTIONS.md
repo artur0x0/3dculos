@@ -20,6 +20,7 @@ comparable and train-able.
 | `shell`, `addDraft`, `tube`, `hexPrism`, `roundedBox`, `mirror`, `array3D`, `polarArray`, `center`, `align` | Solids / layout |
 | `loft`, `sweep`, `sweepPoints`, `makeExtrude`, `makeRevolve` | Profiles / paths |
 | `profileCircle` / `profileRectangle` / `profilePolygon` / `makeCrossSection` | Cross-section substrate (Slice 21) |
+| `makeSweepPath(edges, opts?)` | Ordered sweep path / wire from edges (Slice 22) |
 
 **Loud failure rule:** feature helpers throw named `Error`s on bad inputs,
 degenerate cutters, non-manifold / empty results, or (for `filletEdges`) when
@@ -59,6 +60,9 @@ all convex edges.
 
 Without a selected face, palette v2 behavior is unchanged (default +Z
 `topFace` workplane / body selector).
+
+**Sweep path (Slice 22):** palette **Path** builds an ordered wire from
+Edge selection (open chain or closed loop). Path value only — no fillet sweep yet.
 
 **Cross-section (Slice 21):** palette **Profile** builds a reusable
 `makeCrossSection(plane, profile)` named let from a **planar** face
@@ -811,8 +815,71 @@ degenerate (zero-area) profile.
 presets including quarter-circle). Face select feeds the plane; Auto-Run
 unchanged. Preview overlays the profile on the plane while editing.
 
-**Non-goals (wait for Product brief):** edge→sweep path; fillet-via-sweep;
+**Non-goals (wait for Product brief):** fillet-via-sweep;
 extrude/revolve/loft from this value; full sketch editor.
+(Edge→sweep path is Slice 22 — see below.)
+
+---
+
+## Edge → sweep path (Slice 22)
+
+Ordered **sweep path / wire** from the current edge selection (including
+tangent-prop chains). Later slices consume this value to sweep a cross-section
+cutter along it. This slice ships the path value only — fillet-via-sweep is
+**not** started here (wait for Product brief).
+
+```javascript
+{
+  kind: 'sweepPath',
+  closed: false,                 // true for circular / loop selections
+  points: [ [x,y,z], ... ],      // ordered polyline (closed: first ≠ last)
+  length: 40,                    // total path length
+  edgeCount: 3,
+}
+```
+
+### Ordering
+
+Selection is walked on the feature-edge graph (`buildEdgeVertexAdj` /
+selection keys):
+
+- **Open chain** — exactly two degree-1 endpoints; walk from an endpoint on
+  the first-selected edge (stable direction).
+- **Closed loop** — all vertices degree 2 (e.g. tangent-prop circular rim);
+  walk from the first-selected edge.
+- **Soft-fail** (toast, no broken JS): empty selection, disconnected
+  components, or branched (Y/T) junctions.
+
+### makeSweepPath(edges, opts?)
+
+```javascript
+let part = Manifold.cube([40, 30, 20], true);
+const top = facesByNormal(part, [0, 0, 1])[0];
+const fr = workplaneFromFace(part, top);
+// Script path: pass convexEdges (or a filtered subset) — UI emits mid-matched selection.
+const rim = convexEdges(part); // or selected edges from Edge pick + Tangent
+const path = makeSweepPath(rim); // { kind:'sweepPath', closed, points, length, edgeCount }
+// Later: sweepPoints(profile, path.points, { closed: path.closed })
+return part;
+```
+
+**Parameters:**
+- `edges` — array of feature edges `{ a, b, va, vb, length?, key? }` (from
+  `convexEdges` / Edge pick selection)
+- `opts.reverse` — optional; reverse polyline direction
+
+**Returns:** `{ kind:'sweepPath', closed, points, length, edgeCount }`
+
+**Loud failures (script):** empty / unusable edges; disconnected selection;
+branched junctions; walk failure.
+
+**UI:** FEAT rail → **Path** → param popup (Body, Reverse). Uses current Edge
+selection + Tangent chip. Viewport preview shows order/direction (green→magenta
+gradient polyline, chevron arrows, start/end markers) — distinct from the
+orange #20 selection halo. Auto-Run unchanged.
+
+**Non-goals (wait for Product brief):** fillet-via-sweep / boolean cutter;
+extrude/revolve/loft; Profile API changes; full sketcher; C6 soft counters.
 
 ## Revolve & Extrude Helpers (C8)
 

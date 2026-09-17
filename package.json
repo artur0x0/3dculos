@@ -17,7 +17,8 @@
         "golden:slice11": "node scripts/golden/smoke_slice11_face_feature.mjs",
         "golden:slice12": "node scripts/golden/smoke_slice12_edge_center.mjs",
         "golden:hotfix-occ": "node scripts/golden/smoke_hotfix_occlusion_tangent_hole.mjs",
-        "golden:slice21": "node scripts/golden/smoke_slice21_cross_section.mjs"
+        "golden:slice21": "node scripts/golden/smoke_slice21_cross_section.mjs",
+        "golden:slice22": "node scripts/golden/smoke_slice22_edge_sweep_path.mjs"
     },
     "dependencies": {
         "@monaco-editor/react": "^4.6.0",
