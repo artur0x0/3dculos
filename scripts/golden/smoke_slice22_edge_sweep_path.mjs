@@ -310,6 +310,18 @@ const box = boxTopEdges();
   const dup = orderEdgePath([box.e01, box.e01, box.e12]);
   check('dedupes duplicate keys', dup.ok && dup.orderedEdges.length === 2);
   check('edgeKey stable', edgeKey(box.e01) === box.e01.key);
+
+  // Unindexed edge payloads must be skipped rather than collapsing as NaN-NaN.
+  const unindexed = [
+    { va: [0, 0, 0], vb: [1, 0, 0], length: 1 },
+    { va: [1, 0, 0], vb: [2, 0, 0], length: 1 },
+    { va: [2, 0, 0], vb: [3, 0, 0], length: 1 },
+  ];
+  const unindexedPath = assembleSweepPath(unindexed);
+  check('unindexed edges soft-fail empty', !unindexedPath.ok && unindexedPath.code === 'empty');
+  check('unindexed edges do not collapse to closed one-edge path',
+    !(unindexedPath.ok && unindexedPath.value.closed && unindexedPath.value.edgeCount === 1));
+  expectThrow('loud unindexed edges fail empty', () => makeSweepPathLoud(unindexed), /Select edges first|empty/i);
 }
 
 if (failed) {
