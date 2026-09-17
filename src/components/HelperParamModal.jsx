@@ -239,7 +239,7 @@ const HelperParamModal = ({
             {minEdgeLength != null && (
               <>
                 {' · '}
-                min L={minEdgeLength.toFixed(2)}
+                min L={minEdgeLength.toFixed(2)}{item?._minEdgeLength != null ? ' (effective)' : ''}
                 {' · '}
                 keep r &lt; {(EDGE_BLEND_SIZE_GUARD * minEdgeLength).toFixed(2)}
               </>
