@@ -27,6 +27,7 @@ import {
   pickFilletStrategy,
   resolveFilletStrategy,
   planFilletSweepPath,
+  filletSweepDecimateFloor,
   FILLET_SWEEP_EMPTY,
   FILLET_SWEEP_DISCONNECTED,
   FILLET_SWEEP_BRANCH,
@@ -465,6 +466,10 @@ console.log('slice-23 fillet via sweep smoke');
     `mode=${planRim.mode} pts=${planRim.points?.length}`);
   check('decimate floor constant ≥16', FILLET_SWEEP_DECIMATE_MIN >= 16,
     `min=${FILLET_SWEEP_DECIMATE_MIN}`);
+  check('decimate floor(12) pins 16', filletSweepDecimateFloor(12) === 16,
+    `got ${filletSweepDecimateFloor(12)}`);
+  check('decimate floor(100) pins 25', filletSweepDecimateFloor(100) === 25,
+    `got ${filletSweepDecimateFloor(100)}`);
   // Over-decimation probe: pre-#27-bug spacing (absolute 0.5) yields ~3 pts on
   // unit 12-gon; floor must reject that count (suite goes red if MIN dropped to 3).
   {
