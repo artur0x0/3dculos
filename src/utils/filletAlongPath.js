@@ -267,11 +267,9 @@ export function chamferWedgeArea(c) {
  * net mutation-tests. Current policy never returns `runs`.
  *
  * @param {number[][]} points
- * @param {boolean} [_closed] reserved; skip-micro used this, wrap does not
- * @param {number} [_radius] reserved; skip-micro used this, wrap does not
  * @returns {{ mode:'as-is' } | { mode:'empty' }}
  */
-export function planFilletSweepPath(points, _closed, _radius) {
+export function planFilletSweepPath(points) {
   if (!Array.isArray(points) || points.length < 2) return { mode: 'empty' };
   return { mode: 'as-is' };
 }
