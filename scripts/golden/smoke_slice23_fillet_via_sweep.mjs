@@ -573,6 +573,11 @@ console.log('slice-23 fillet via sweep smoke');
         ext <= r * 1.05,
         `ext=${ext}`,
       );
+      check(
+        `exterior origin (−e,−e) r=${r} (${kind})`,
+        ex[0][0] < 0 && ex[0][1] < 0,
+        `p0=${ex[0]}`,
+      );
     }
   }
 }
