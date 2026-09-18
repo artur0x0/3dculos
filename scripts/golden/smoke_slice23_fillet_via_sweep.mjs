@@ -538,11 +538,11 @@ console.log('slice-23 fillet via sweep smoke');
       Math.abs(ex[0][0] + e6) < 1e-12 && Math.abs(ex[0][1] + e6) < 1e-12,
       `p0=${ex[0]} e=${e6}`);
     check('expanded wedge (r,0) leg stays at requested r',
-      ex.some((p) => Math.abs(p[1]) < 1e-9 && Math.abs(p[0] - 6) <= 6 * 0.05),
+      ex.some((p) => Math.abs(p[1]) < 1e-9 && Math.abs(p[0] - 6) < 1e-9),
       `pts=${JSON.stringify(ex.slice(0, 3))}`);
     const last = ex[ex.length - 1];
     check('expanded wedge (0,r) leg stays at requested r',
-      last[0] < 1e-9 && Math.abs(last[1] - 6) <= 6 * 0.05,
+      last[0] < 1e-9 && Math.abs(last[1] - 6) < 1e-9,
       `last=${last}`);
     const ext6 = Math.max(...ex.map((p) => Math.max(p[0], p[1])));
     check('realised blend within 5% of requested r=6', ext6 <= 6 * 1.05, `ext=${ext6}`);
@@ -831,8 +831,12 @@ return part;
       `vol=${payload?.volume}`);
     check('fillet-on-fillet status NoError', payload?.status === 'NoError' || !payload?.status,
       `status=${payload?.status}`);
-    // Blend-present coverage is the two in-worker throws (leftover micro-rim
-    // count + fIn probe). Do not add an always-true check() here.
+    // Falsifiable stand-in for the old always-true "blend present" pin.
+    // Cube 40×30×20 = 24000; in-worker already throws unless v1 < v0 - 10
+    // (top sweep after vertical r=4). This outer check still fails if the
+    // exec returns an unfilleted / near-full cube.
+    check('fillet-on-fillet volume dropped vs cube', payload.volume < 24000 - 10,
+      `vol=${payload.volume}`);
     const mesh = payload?.mesh;
     if (mesh?.triVerts && mesh?.vertProperties) {
       const np = mesh.numProp || 3;
