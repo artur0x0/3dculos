@@ -501,7 +501,7 @@ console.log('slice-23 fillet via sweep smoke');
 
   // Blocking 2 — planFilletSweepPath: never drop micro rim arcs (PR #27 skip
   // left fillet-on-fillet gaps). Uniform closed rims and mixed long+micro both
-  // stay as-is; cutter inflate consumes slivers.
+  // stay as-is; empty input is a distinct branch (pins must be able to fail).
   const unitRimPts = [];
   for (let i = 0; i < 12; i++) {
     const ang = (i / 12) * Math.PI * 2;
@@ -516,8 +516,14 @@ console.log('slice-23 fillet via sweep smoke');
   const planMixed = planFilletSweepPath(mixedPts, false, 1);
   check('mixed long+micro plan as-is (do not skip micro rim)', planMixed.mode === 'as-is',
     `mode=${planMixed.mode}`);
+  const planEmpty = planFilletSweepPath([], true, 1);
+  check('empty points plan mode=empty (distinct from as-is)', planEmpty.mode === 'empty',
+    `mode=${planEmpty.mode}`);
+  const planShort = planFilletSweepPath([[0, 0, 0]], false, 1);
+  check('single-point plan mode=empty', planShort.mode === 'empty',
+    `mode=${planShort.mode}`);
 
-  // Cutter inflate: origin into exterior + first-quadrant grow
+  // Cutter boolean-fuzz: origin into exterior; Q1 extent stays at requested r.
   {
     const e6 = filletSweepCutterExpand(6);
     check('expand(6) is 4%·r (0.24)', Math.abs(e6 - 0.24) < 1e-12, `got ${e6}`);
@@ -528,12 +534,18 @@ console.log('slice-23 fillet via sweep smoke');
     const ex = expandFilletCutterContour(w, 6);
     check('expanded wedge origin in exterior', ex[0][0] < 0 && ex[0][1] < 0,
       `p0=${ex[0]}`);
-    check('expanded wedge grows (r,0) leg',
-      ex.some((p) => Math.abs(p[1]) < 1e-9 && p[0] > 6),
+    check('expanded origin is (−e,−e)',
+      Math.abs(ex[0][0] + e6) < 1e-12 && Math.abs(ex[0][1] + e6) < 1e-12,
+      `p0=${ex[0]} e=${e6}`);
+    check('expanded wedge (r,0) leg stays at requested r',
+      ex.some((p) => Math.abs(p[1]) < 1e-9 && Math.abs(p[0] - 6) <= 6 * 0.05),
       `pts=${JSON.stringify(ex.slice(0, 3))}`);
     const last = ex[ex.length - 1];
-    check('expanded wedge grows (0,r) leg', last[0] < 1e-9 && last[1] > 6,
+    check('expanded wedge (0,r) leg stays at requested r',
+      last[0] < 1e-9 && Math.abs(last[1] - 6) <= 6 * 0.05,
       `last=${last}`);
+    const ext6 = Math.max(...ex.map((p) => Math.max(p[0], p[1])));
+    check('realised blend within 5% of requested r=6', ext6 <= 6 * 1.05, `ext=${ext6}`);
     let area0 = 0, area1 = 0;
     for (let i = 0; i < w.length; i++) {
       const a = w[i], b = w[(i + 1) % w.length];
@@ -543,8 +555,25 @@ console.log('slice-23 fillet via sweep smoke');
       const a = ex[i], b = ex[(i + 1) % ex.length];
       area1 += a[0] * b[1] - b[0] * a[1];
     }
-    check('expanded wedge area > original', Math.abs(area1) > Math.abs(area0),
+    // Exterior triangle adds area; Q1 extent must not. Area pin is the
+    // (−e,−e) overlap, not a radius grow.
+    check('expanded wedge area grows from exterior overlap', Math.abs(area1) > Math.abs(area0),
       `a0=${area0} a1=${area1}`);
+    check('expanded wedge Q1 extent not grown', ext6 <= 6 + 1e-12, `ext=${ext6}`);
+  }
+
+  const REALISED_RS = [0.01, 0.02, 0.05, 0.1, 0.5, 1, 2, 6, 20, 10000];
+  for (const kind of ['fillet', 'chamfer']) {
+    for (const r of REALISED_RS) {
+      const w = kind === 'chamfer' ? chamferWedgeContour(r) : filletWedgeContour(r, 8);
+      const ex = expandFilletCutterContour(w, r);
+      const ext = Math.max(...ex.map((p) => Math.max(p[0], p[1])));
+      check(
+        `realised blend within 5% of requested r=${r} (${kind})`,
+        ext <= r * 1.05,
+        `ext=${ext}`,
+      );
+    }
   }
 }
 
@@ -797,7 +826,8 @@ return part;
       `vol=${payload?.volume}`);
     check('fillet-on-fillet status NoError', payload?.status === 'NoError' || !payload?.status,
       `status=${payload?.status}`);
-    check('fillet-on-fillet blend present (not gap)', true);
+    // Blend-present coverage is the two in-worker throws (leftover micro-rim
+    // count + fIn probe). Do not add an always-true check() here.
     const mesh = payload?.mesh;
     if (mesh?.triVerts && mesh?.vertProperties) {
       const np = mesh.numProp || 3;

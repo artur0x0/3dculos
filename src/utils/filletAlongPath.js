@@ -254,35 +254,38 @@ export function chamferWedgeArea(c) {
 }
 
 /**
- * Sweep-path policy for filletAlongPath (shared by sandboxWorker + goldens).
+ * Sweep-path policy for filletAlongPath (sandboxWorker + goldens).
  *
  * PR #27 skipped tessellated prior-fillet micro-arcs (mixed long+micro → open
  * long runs only). That left a gap instead of wrapping the prior blend.
  * Always keep the full wire — including micro rim arcs. Slivers are consumed
- * by expanding the cutter cross-section (`expandFilletCutterContour`), not by
- * dropping path segments.
+ * by a size-neutral exterior overlap on the cutter (`expandFilletCutterContour`),
+ * not by dropping path segments.
+ *
+ * sandboxWorker calls this and honors `mode:'runs'` if a future planner
+ * returns it — that is the skip-micro regression the fillet-on-fillet gap
+ * net mutation-tests. Current policy never returns `runs`.
  *
  * @param {number[][]} points
- * @param {boolean} [_closed]
- * @param {number} [_radius]
- * @returns {{ mode:'as-is' }}
+ * @param {boolean} [_closed] reserved; skip-micro used this, wrap does not
+ * @param {number} [_radius] reserved; skip-micro used this, wrap does not
+ * @returns {{ mode:'as-is' } | { mode:'empty' }}
  */
-export function planFilletSweepPath(points, closed, radius) {
-  void closed;
-  void radius;
-  if (!Array.isArray(points) || points.length < 2) return { mode: 'as-is' };
+export function planFilletSweepPath(points, _closed, _radius) {
+  if (!Array.isArray(points) || points.length < 2) return { mode: 'empty' };
   return { mode: 'as-is' };
 }
 
-/** Fraction of radius to inflate the sweep cutter (boolean overlap margin). */
+/** Fraction of radius used as exterior boolean-fuzz (does not grow Q1 extent). */
 export const FILLET_SWEEP_EXPAND_FRAC = 0.04;
-/** Floor so tiny radii still get a boolean-fuzz overlap (mm). */
+/** Floor so tiny radii still get a boolean-fuzz overlap (mm). Size-neutral. */
 export const FILLET_SWEEP_EXPAND_MIN = 0.08;
-/** Cap so the visible fillet stays “slightly” larger, not a different size (mm). */
+/** Cap on exterior overlap (mm). Size-neutral — does not redefine fillet r. */
 export const FILLET_SWEEP_EXPAND_MAX = 0.30;
 
 /**
- * Overlap / inflate margin for the sweep cutter body.
+ * Exterior overlap margin for the sweep cutter origin (−e,−e).
+ * Decoupled from blend size: first-quadrant extent stays at requested r.
  * @param {number} radius
  * @returns {number}
  */
@@ -296,11 +299,24 @@ export function filletSweepCutterExpand(radius) {
 }
 
 /**
- * Inflate a fillet/chamfer wedge contour so the boolean is not tangent-coincident
- * and fillet-on-fillet sliver sheets get consumed.
+ * Boolean-fuzz a fillet/chamfer wedge so cutter legs are not
+ * tangent-coincident with the part faces.
  *
- * Grows first-quadrant extent by the expand margin (slightly larger cutter) and
- * pushes the origin into the exterior (−e,−e). Pure 2D — no Manifold.
+ * Mechanism: the nominal wedge legs (0,0)→(r,0) and (0,0)→(0,r) lie ON the
+ * two adjacent faces. Manifold CSG on coincident surfaces leaves sliver
+ * sheets — worse when the path includes tessellated prior-fillet micro-arcs
+ * (chordal RMF frames sitting near-tangent to the old cylinder). Uniform
+ * scale `s=(r+e)/r` consumed those sheets by redefining the requested
+ * fillet size (unbounded relative error once the absolute floor bound
+ * `e` for r < 2). That is not this function's job.
+ *
+ * Size-invariant redesign: keep every first-quadrant vertex at the
+ * requested r (realized blend extent = r) and replace the origin with
+ * (−e,−e). Extra cutter lives in empty space past the crease; the legs
+ * no longer coplanar-coincide with the faces. (−e,−e) is load-bearing as
+ * the origin vertex (the (0,0) corner is skipped so this must replace it).
+ *
+ * Pure 2D — no Manifold.
  *
  * @param {number[][]} contour  wedge from filletWedgeContour / chamferWedgeContour
  * @param {number} radius
@@ -315,7 +331,6 @@ export function expandFilletCutterContour(contour, radius) {
   if (!(e > 0) || !(r > 0) || !Number.isFinite(r)) {
     return contour.map((p) => [Number(p[0]), Number(p[1])]);
   }
-  const s = (r + e) / r;
   const out = [];
   for (const p of contour) {
     const u = Number(p[0]);
@@ -324,7 +339,7 @@ export function expandFilletCutterContour(contour, radius) {
       throw new Error('expandFilletCutterContour: non-finite vertex');
     }
     if (Math.abs(u) < 1e-15 && Math.abs(v) < 1e-15) continue;
-    out.push([u * s, v * s]);
+    out.push([u, v]);
   }
   out.unshift([-e, -e]);
   if (out.length < 3) {

@@ -937,8 +937,9 @@ fit a circle use a **revolved meridian wedge** (C6-style, phase-locked to the
 tessellation). **Fillet-on-fillet / path on a prior blend:** keep the full wire,
 including tessellated micro rim arcs — do **not** skip those segments (skipping
 left a gap instead of wrapping the prior fillet). The quarter-circle / chamfer
-cutter cross-section is **slightly expanded** (overlap margin into the exterior
-plus a small radius grow) so the boolean consumes coincident sliver sheets.
+cutter origin is pushed into the exterior `(−e,−e)` so the boolean consumes
+coincident sliver sheets **without growing the requested blend** (realized
+first-quadrant extent stays at `r`).
 Disconnected cutter scraps are dropped via `decompose` when present.
 Loud-fail if the kept solid is still scrap-sheet dirty.
 
