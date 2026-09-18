@@ -654,7 +654,9 @@ export function resolveFaceModal(paletteItem, selectedFace, selectedEdges = null
       : 'planar';
     const useSweepSize = resolved === 'sweep';
     const blendDefault = useSweepSize
-      ? defaultSweepBlendSize(pathLen ?? minL ?? 30)
+      ? ((pathLen ?? minL) != null
+        ? defaultSweepBlendSize(pathLen ?? minL)
+        : (id === 'filletEdges' ? 3 : 2))
       : (minL != null ? defaultEdgeBlendSize(minL) : (id === 'filletEdges' ? 3 : 2));
     const blendMax = useSweepSize
       ? sweepBlendHardMax(pathLen ?? minL)
@@ -766,7 +768,9 @@ export function resolveFaceModal(paletteItem, selectedFace, selectedEdges = null
   const useSweepSizeFace = id === 'filletEdges' && hasEdges
     && resolveFilletStrategy('auto', selectedEdges) === 'sweep';
   const blendDefault = useSweepSizeFace
-    ? defaultSweepBlendSize(pathLenFace ?? minL ?? 30)
+    ? ((pathLenFace ?? minL) != null
+      ? defaultSweepBlendSize(pathLenFace ?? minL)
+      : (id === 'filletEdges' ? 3 : 2))
     : (minL != null ? defaultEdgeBlendSize(minL) : null);
   const blendMax = useSweepSizeFace
     ? sweepBlendHardMax(pathLenFace ?? minL)

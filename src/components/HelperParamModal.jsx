@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { X, Check, AlertTriangle } from 'lucide-react';
-import { listBodyNames, coerceNumberParam } from '../utils/helperPaletteSnippets';
+import { listBodyNames, coerceFilletConfirmNumbers } from '../utils/helperPaletteSnippets';
 import {
   minSelectedEdgeLength,
   edgeBlendFailsSizeGuard,
@@ -158,16 +158,16 @@ const HelperParamModal = ({
     : sweepBlendHardMax(item?._pathLength ?? minEdgeLength);
 
   const handleConfirm = () => {
-    const out = { ...values };
-    for (const p of params) {
-      if (p.type === 'number') {
-        out[p.name] = coerceNumberParam(out[p.name], p);
-      }
-    }
-    // Clamp under planar size guard only — never for Strategy=sweep.
+    // Resolve strategy BEFORE number coercion — open-time planar p.max must not
+    // silently clamp a typed radius after the user switches Strategy→sweep.
     const confirmStrategy = hasStrategy
-      ? resolveFilletStrategy(out.strategy, edgeInfo)
+      ? resolveFilletStrategy(values.strategy, edgeInfo)
       : 'planar';
+    const out = coerceFilletConfirmNumbers(values, params, {
+      strategy: confirmStrategy,
+      sweepMax,
+    });
+    // Clamp under planar size guard only — never for Strategy=sweep.
     if (
       confirmStrategy !== 'sweep'
       && blendParamName

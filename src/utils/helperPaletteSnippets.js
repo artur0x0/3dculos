@@ -251,6 +251,37 @@ export function coerceNumberParam(raw, p) {
   return n;
 }
 
+/**
+ * Confirm-time number coerce for HelperParamModal.
+ * Resolve Strategy *before* clamping: Strategy=sweep must use sweepMax for
+ * radius/chamfer, not the open-time planar p.max (typed 6 must not become ~0.26).
+ *
+ * @param {Record<string, unknown>} values
+ * @param {object[]} params
+ * @param {{ strategy?: string, sweepMax?: number|null }} [opts]
+ * @returns {Record<string, unknown>}
+ */
+export function coerceFilletConfirmNumbers(values, params, opts = {}) {
+  const strategy = opts.strategy || 'planar';
+  const sweepMax = opts.sweepMax;
+  const out = { ...values };
+  const list = Array.isArray(params) ? params : [];
+  for (const p of list) {
+    if (p.type !== 'number') continue;
+    const useSweep = (
+      strategy === 'sweep'
+      && (p.name === 'radius' || p.name === 'chamfer')
+      && sweepMax != null
+      && Number.isFinite(Number(sweepMax))
+    );
+    const spec = useSweep
+      ? { ...p, max: Math.max(Number(p.max) || 0, Number(sweepMax)) }
+      : p;
+    out[p.name] = coerceNumberParam(out[p.name], spec);
+  }
+  return out;
+}
+
 function bool(v, fallback = false) {
   if (typeof v === 'boolean') return v;
   if (v === 'true' || v === '1') return true;

@@ -252,3 +252,102 @@ export function filletWedgeArea(r) {
 export function chamferWedgeArea(c) {
   return 0.5 * c * c;
 }
+
+/**
+ * Minimum vertex count after micro-path decimation.
+ * Absolute floor so a 12-gon rim can never collapse to a triangle (ceil(12/4)=3
+ * alone is not enough). Golden pins this; mutating it below ~12 fails the probe.
+ */
+export const FILLET_SWEEP_DECIMATE_MIN = 16;
+
+/**
+ * Fillet-on-fillet / path-on-blend prep (shared by sandboxWorker + goldens).
+ * Tessellated prior-fillet rims are dense micro-segments. Sweeping the full
+ * closed wire (straights + micro arcs) leaves jagged sheets; sweeping only the
+ * significant open runs is clean. Uniform closed curved fans stay as-is so the
+ * revolve / polyline fast-path keeps full tessellation (never chord to a triangle).
+ *
+ * @param {number[][]} points
+ * @param {boolean} closed
+ * @param {number} radius
+ * @returns {{ mode:'as-is' }
+ *   | { mode:'runs', runs:number[][][] }
+ *   | { mode:'decimate', points:number[][], closed:boolean }}
+ */
+export function planFilletSweepPath(points, closed, radius) {
+  const n = points.length;
+  if (n < 2) return { mode: 'as-is' };
+  const segCount = closed ? n : n - 1;
+  if (segCount < 2) return { mode: 'as-is' };
+  const lens = [];
+  for (let i = 0; i < segCount; i++) {
+    const a = points[i];
+    const b = points[(i + 1) % n];
+    lens.push(Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]));
+  }
+  const sorted = lens.slice().sort((a, b) => a - b);
+  const med = sorted[Math.floor(sorted.length / 2)] || 0;
+  const rNum = Number(radius);
+  const rTerm = Number.isFinite(rNum) ? 0.15 * rNum : 0;
+  const thr = Math.max(0.25 * med, rTerm, 1e-3);
+  let nMicro = 0;
+  let nLong = 0;
+  for (const L of lens) {
+    if (L < thr) nMicro++;
+    else nLong++;
+  }
+  // Mixed: long straights + micro arcs on prior fillet — fillet long runs only.
+  if (nLong >= 1 && nMicro >= 2) {
+    const runs = [];
+    let cur = [];
+    const pushRun = () => {
+      if (cur.length >= 2) runs.push(cur);
+      cur = [];
+    };
+    for (let i = 0; i < segCount; i++) {
+      if (lens[i] >= thr) {
+        if (cur.length === 0) cur.push(points[i].slice());
+        cur.push(points[(i + 1) % n].slice());
+      } else {
+        pushRun();
+      }
+    }
+    pushRun();
+    if (runs.length >= 1) return { mode: 'runs', runs };
+  }
+  // Mostly micro. Decimate only with bimodal evidence (some segments ≥ thr).
+  // Uniform all-micro fans (closed or open) keep full tessellation — pre-#27.
+  if (nLong >= 1 && nMicro >= 4 && nMicro >= 0.5 * segCount) {
+
+    let pathLen = 0;
+    for (const L of lens) pathLen += L;
+    const rSpace = Number.isFinite(rNum) ? 0.25 * rNum : 0;
+    // Scale-relative spacing: aim for ≥ FILLET_SWEEP_DECIMATE_MIN samples.
+    // (Absolute 0.5 floor used to force ~3 pts on a unit 12-gon — removed.)
+    const minKeep = Math.max(FILLET_SWEEP_DECIMATE_MIN, Math.ceil(segCount / 4));
+    const spacing = Math.max(pathLen / minKeep, pathLen / Math.max(segCount, 1), rSpace, 1e-9);
+    const dec = [points[0].slice()];
+    let last = points[0];
+    const lim = n;
+    for (let i = 1; i < lim; i++) {
+      const p = points[i % n];
+      if (Math.hypot(p[0] - last[0], p[1] - last[1], p[2] - last[2]) >= spacing) {
+        dec.push(p.slice());
+        last = p;
+      }
+    }
+    if (!closed) {
+      const end = points[n - 1];
+      if (Math.hypot(end[0] - dec[dec.length - 1][0], end[1] - dec[dec.length - 1][1], end[2] - dec[dec.length - 1][2]) > 1e-6) {
+        dec.push(end.slice());
+      }
+    }
+    const need = closed ? 3 : 2;
+    const floor = Math.min(minKeep, n);
+    // Over-decimation guard: if spacing still collapsed below the floor, keep as-is.
+    if (dec.length >= need && dec.length >= floor) {
+      return { mode: 'decimate', points: dec, closed: !!closed };
+    }
+  }
+  return { mode: 'as-is' };
+}

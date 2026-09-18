@@ -276,26 +276,41 @@ export function pathLengthFromEdges(edges) {
 }
 
 /**
+ * Absolute model-unit floor/cap for defaultSweepBlendSize (box-scale UX).
+ * 0.1·L is scale-relative; these bound the thumb on ~10–60 unit perimeters.
+ */
+export const SWEEP_BLEND_DEFAULT_MIN = 1;
+export const SWEEP_BLEND_DEFAULT_MAX = 6;
+
+/**
  * Sweep fillet default radius from path length (not 0.45·minL).
- * Caps at 6 so box-scale perimeter picks get a usable thumb without planar clamp.
+ * Caps at SWEEP_BLEND_DEFAULT_MAX so box-scale perimeter picks get a usable
+ * thumb without the planar 0.45·L clamp. Empty L → 3 (planar fillet seed);
+ * call sites pass null through rather than inventing L=30.
  * @param {number} pathLength
  * @returns {number}
  */
 export function defaultSweepBlendSize(pathLength) {
   const L = Number(pathLength);
   if (!(L > 0)) return 3;
-  const r = Math.min(6, Math.max(1, 0.1 * L));
+  const r = Math.min(
+    SWEEP_BLEND_DEFAULT_MAX,
+    Math.max(SWEEP_BLEND_DEFAULT_MIN, 0.1 * L),
+  );
   return Math.max(0.01, Math.round(r * 100) / 100);
 }
 
 /**
- * Sweep slider / typed hard max — generous; planar 0.45·L must not apply.
+ * Sweep slider / typed hard max — scale-relative (½·L), floored at 6 (not 50).
+ * Floor 6 (vs review's suggested 5) keeps typed-6 + max≥6 golden on short rims;
+ * absolute 50 was oversized (~13× segment on box-scale paths).
+ * Empty / non-positive L → 100 (no invented L=30).
  * @param {number} [pathLength]
  * @returns {number}
  */
 export function sweepBlendHardMax(pathLength) {
   const L = Number(pathLength);
-  if (L > 0) return Math.max(50, Math.round(0.5 * L * 100) / 100);
+  if (L > 0) return Math.max(6, Math.round(0.5 * L * 100) / 100);
   return 100;
 }
 
