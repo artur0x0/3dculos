@@ -262,9 +262,11 @@ export function chamferWedgeArea(c) {
  * by a size-neutral exterior overlap on the cutter (`expandFilletCutterContour`),
  * not by dropping path segments.
  *
- * sandboxWorker calls this and honors `mode:'runs'` if a future planner
+ * sandboxWorker calls this (still passing closed/radius so a skip-micro
+ * paste-back receives them) and honors `mode:'runs'` if a future planner
  * returns it — that is the skip-micro regression the fillet-on-fillet gap
- * net mutation-tests. Current policy never returns `runs`.
+ * net mutation-tests. Current policy never returns `runs`. Signature is
+ * `(points)` — wrap does not split on closed/radius.
  *
  * @param {number[][]} points
  * @returns {{ mode:'as-is' } | { mode:'empty' }}
