@@ -27,15 +27,14 @@ import {
   pickFilletStrategy,
   resolveFilletStrategy,
   planFilletSweepPath,
-  filletSweepDecimateFloor,
   FILLET_SWEEP_EMPTY,
   FILLET_SWEEP_DISCONNECTED,
   FILLET_SWEEP_BRANCH,
-  FILLET_SWEEP_DECIMATE_MIN,
   isFilletSliverDirty,
 } from '../../src/utils/filletAlongPath.js';
 import {
   effectiveBlendEdgeLength,
+  edgeBlendHardMax,
   minSelectedEdgeLength,
   pathLengthFromEdges,
   sweepBlendHardMax,
@@ -432,6 +431,46 @@ console.log('slice-23 fillet via sweep smoke');
   );
   check('typed 6 survives sweep confirm coerce', confirmed.radius === 6,
     `got ${confirmed.radius} (open max=${rTyped?.max} sweepMax=${sweepMaxTyped})`);
+  const confirmedPlanar = coerceFilletConfirmNumbers(
+    { body: 'part', strategy: 'planar', radius: 6, profile: 'fillet', reverse: false },
+    resolvedTyped.item?.params || [],
+    { strategy: 'planar', sweepMax: sweepMaxTyped },
+  );
+  check('planar strategy clamps typed 6 to open-time p.max', confirmedPlanar.radius === rTyped.max,
+    `got ${confirmedPlanar.radius} (open max=${rTyped.max})`);
+
+  // Slider parity: when planar open-spec max > sweepMax, typed box must cap at sweepMax
+  // (not Math.max(p.max, sweepMax)). Artur probe: edgeBlendHardMax(20)=8.8, sweepBlendHardMax(12)=6.
+  {
+    const planarMaxHi = edgeBlendHardMax(20);
+    const sweepCeilLo = sweepBlendHardMax(12);
+    check('ceiling-parity fixture p.max > sweepMax', planarMaxHi > sweepCeilLo,
+      `planar=${planarMaxHi} sweep=${sweepCeilLo}`);
+    const overSweep = coerceFilletConfirmNumbers(
+      { radius: 8 },
+      [{ name: 'radius', type: 'number', min: 0.01, max: planarMaxHi, default: 0.5 }],
+      { strategy: 'sweep', sweepMax: sweepCeilLo },
+    );
+    check('typed above sweepMax clamps to sweepMax (slider parity)', overSweep.radius === sweepCeilLo,
+      `got ${overSweep.radius} (typed 8, planar max=${planarMaxHi}, sweepMax=${sweepCeilLo})`);
+  }
+
+  // Number.isFinite(sweepMax) guard: NaN / null / absent must fall back to planar open-spec.
+  {
+    const planarOpen = rTyped.max;
+    const params = resolvedTyped.item?.params || [];
+    const vals = { body: 'part', strategy: 'sweep', radius: 6, profile: 'fillet', reverse: false };
+    const nanMax = coerceFilletConfirmNumbers(vals, params, { strategy: 'sweep', sweepMax: NaN });
+    check('sweepMax NaN falls back to planar clamp', nanMax.radius === planarOpen,
+      `got ${nanMax.radius} (open max=${planarOpen})`);
+    const nullMax = coerceFilletConfirmNumbers(vals, params, { strategy: 'sweep', sweepMax: null });
+    check('sweepMax null falls back to planar clamp', nullMax.radius === planarOpen,
+      `got ${nullMax.radius} (open max=${planarOpen})`);
+    const absentMax = coerceFilletConfirmNumbers(vals, params, { strategy: 'sweep' });
+    check('sweepMax absent falls back to planar clamp', absentMax.radius === planarOpen,
+      `got ${absentMax.radius} (open max=${planarOpen})`);
+  }
+
   const bufTyped = composeHelperInsert(
     'let part = Manifold.cube([40,30,20], true);\n',
     'filletEdges',
@@ -464,33 +503,6 @@ console.log('slice-23 fillet via sweep smoke');
   const planRim = planFilletSweepPath(unitRimPts, true, 6);
   check('uniform closed rim plan as-is (no decimate)', planRim.mode === 'as-is',
     `mode=${planRim.mode} pts=${planRim.points?.length}`);
-  check('decimate floor constant ≥16', FILLET_SWEEP_DECIMATE_MIN >= 16,
-    `min=${FILLET_SWEEP_DECIMATE_MIN}`);
-  check('decimate floor(12) pins 16', filletSweepDecimateFloor(12) === 16,
-    `got ${filletSweepDecimateFloor(12)}`);
-  check('decimate floor(100) pins 25', filletSweepDecimateFloor(100) === 25,
-    `got ${filletSweepDecimateFloor(100)}`);
-  // Over-decimation probe: pre-#27-bug spacing (absolute 0.5) yields ~3 pts on
-  // unit 12-gon; floor must reject that count (suite goes red if MIN dropped to 3).
-  {
-    let pathLen = 0;
-    for (let i = 0; i < 12; i++) {
-      const a = unitRimPts[i], b = unitRimPts[(i + 1) % 12];
-      pathLen += Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
-    }
-    const legacySpacing = Math.max(0.5, pathLen / 12, 0.25 * 6);
-    let legacyDec = 1;
-    let last = unitRimPts[0];
-    for (let i = 1; i < 12; i++) {
-      const pt = unitRimPts[i];
-      if (Math.hypot(pt[0] - last[0], pt[1] - last[1], pt[2] - last[2]) >= legacySpacing) {
-        legacyDec++;
-        last = pt;
-      }
-    }
-    check('over-decimation probe: legacy spacing < floor', legacyDec < FILLET_SWEEP_DECIMATE_MIN,
-      `legacyDec=${legacyDec} floor=${FILLET_SWEEP_DECIMATE_MIN}`);
-  }
   // Mixed long+micro → runs (intended fillet-on-fillet case)
   const mixedPts = [
     [0, 0, 0], [10, 0, 0], [10.05, 0, 0], [10.1, 0, 0], [20, 0, 0],

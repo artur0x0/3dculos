@@ -254,32 +254,17 @@ export function chamferWedgeArea(c) {
 }
 
 /**
- * Minimum vertex count after micro-path decimation.
- * Absolute floor so a 12-gon rim can never collapse to a triangle (ceil(12/4)=3
- * alone is not enough). Golden pins this; mutating it below 16 fails the probe.
- */
-export const FILLET_SWEEP_DECIMATE_MIN = 16;
-
-/** Floor for decimated vertex count: max(FILLET_SWEEP_DECIMATE_MIN, ceil(segCount/4)). */
-export function filletSweepDecimateFloor(segCount) {
-  const n = Number(segCount);
-  if (!(n > 0)) return FILLET_SWEEP_DECIMATE_MIN;
-  return Math.max(FILLET_SWEEP_DECIMATE_MIN, Math.ceil(n / 4));
-}
-
-/**
  * Fillet-on-fillet / path-on-blend prep (shared by sandboxWorker + goldens).
  * Tessellated prior-fillet rims are dense micro-segments. Sweeping the full
  * closed wire (straights + micro arcs) leaves jagged sheets; sweeping only the
- * significant open runs is clean. Uniform closed curved fans stay as-is so the
- * revolve / polyline fast-path keeps full tessellation (never chord to a triangle).
+ * significant open runs is clean. Uniform all-micro fans sweep un-decimated so
+ * the revolve fast-path keeps full tessellation.
  *
  * @param {number[][]} points
  * @param {boolean} closed
  * @param {number} radius
  * @returns {{ mode:'as-is' }
- *   | { mode:'runs', runs:number[][][] }
- *   | { mode:'decimate', points:number[][], closed:boolean }}
+ *   | { mode:'runs', runs:number[][][] }}
  */
 export function planFilletSweepPath(points, closed, radius) {
   const n = points.length;
@@ -322,50 +307,5 @@ export function planFilletSweepPath(points, closed, radius) {
     pushRun();
     if (runs.length >= 1) return { mode: 'runs', runs };
   }
-  // Mostly micro: only decimate with bimodal evidence (some segments ≥ thr).
-  // Uniform all-micro fans keep full tessellation — never chord a 12-gon to a triangle.
-  if (nLong >= 1 && nMicro >= 4 && nMicro >= 0.5 * segCount) {
-    let pathLen = 0;
-    for (const L of lens) pathLen += L;
-    const rSpace = Number.isFinite(rNum) ? 0.25 * rNum : 0;
-    const minKeep = filletSweepDecimateFloor(segCount);
-    // Scale-relative spacing (no absolute 0.5 floor). Cap so we keep ≥ minKeep.
-    const spacingFloor = Math.max(1e-3, 0.02 * pathLen);
-    const spacingCap = pathLen / Math.max(1, minKeep);
-    const spacing = Math.min(
-      Math.max(spacingFloor, pathLen / 12, rSpace),
-      spacingCap,
-    );
-    const dec = [points[0].slice()];
-    let last = points[0];
-    for (let i = 1; i < n; i++) {
-      const p = points[i % n];
-      if (Math.hypot(p[0] - last[0], p[1] - last[1], p[2] - last[2]) >= spacing) {
-        dec.push(p.slice());
-        last = p;
-      }
-    }
-    if (!closed) {
-      const end = points[n - 1];
-      if (Math.hypot(
-        end[0] - dec[dec.length - 1][0],
-        end[1] - dec[dec.length - 1][1],
-        end[2] - dec[dec.length - 1][2],
-      ) > 1e-6) {
-        dec.push(end.slice());
-      }
-    }
-    const need = closed ? 3 : 2;
-    const floor = Math.min(minKeep, n);
-    // Over-decimation guard: if spacing still collapsed below the floor, keep as-is.
-    if (dec.length >= need && dec.length >= floor) {
-      return { mode: 'decimate', points: dec, closed: !!closed };
-    }
-  }
   return { mode: 'as-is' };
-}
-
-/** Alias — same planner (review / worker naming). */
-export function planPathForSweep(points, closed, radius) {
-  return planFilletSweepPath(points, closed, radius);
 }

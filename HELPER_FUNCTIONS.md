@@ -935,8 +935,9 @@ return part;
 edge wire (not Catmull-Rom — spline bulge left purple scraps). Closed paths that
 fit a circle use a **revolved meridian wedge** (C6-style, phase-locked to the
 tessellation). **Fillet-on-fillet / path on a prior blend:** dense micro-segments
-from a tessellated fillet rim are split into open long runs (or decimated when
-the whole path is micro) so the sweep stays clean — never leave jagged sheets.
+from a tessellated fillet rim are split into open long runs; uniform all-micro
+fans sweep un-decimated (the revolve fast-path keeps full tessellation) so the
+sweep stays clean — never leave jagged sheets.
 Disconnected cutter scraps are dropped via `decompose` when present.
 Loud-fail if the kept solid is still scrap-sheet dirty.
 

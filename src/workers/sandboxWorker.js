@@ -3089,20 +3089,6 @@ function filletAlongPath(part, path, radius, opts = {}) {
       }
       return out;
     }
-    if (plan.mode === 'decimate') {
-      points = plan.points;
-      closed = plan.closed;
-      // Recompute length for expectVol checks below.
-      length = 0;
-      for (let i = 0; i < points.length - 1; i++) {
-        const a = points[i], b = points[i + 1];
-        length += Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
-      }
-      if (closed && points.length >= 3) {
-        const a = points[points.length - 1], b = points[0];
-        length += Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
-      }
-    }
   }
 
   // Probe face frame; may reverse path so B aligns with f1.
