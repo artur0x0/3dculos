@@ -9,7 +9,7 @@ import {
   resolveFastenerSize,
 } from './fastenerSizes.js';
 import { isFilletSliverDirty } from '../utils/filletSliverGuard.js';
-import { planFilletSweepPath } from '../utils/filletAlongPath.js';
+import { expandFilletCutterContour } from '../utils/filletAlongPath.js';
 
 /**
  * List of globals to block/remove in the worker context
@@ -2946,7 +2946,10 @@ function _s23TryRevolveCutter(CrossSection, points, radius, profileKind, arcSegs
   // Ensure first-quadrant wedge maps into the solid (both axes point "inward")
   // If either axis points outward in ρ, flip.
   // Place wedge origin at (R, 0) in a local meridian where z'=0 at the rim.
-  const wedge = _s23WedgeContour(radius, profileKind, arcSegs);
+  const wedge = expandFilletCutterContour(
+    _s23WedgeContour(radius, profileKind, arcSegs),
+    radius,
+  );
   const mapped = [];
   for (const [u, v] of wedge) {
     // (ρ, z_rel) = (R,0) + u*f0_2d + v*f1_2d
@@ -3076,21 +3079,6 @@ function filletAlongPath(part, path, radius, opts = {}) {
   const arcSegs = opts.segments != null ? opts.segments : 12;
   let { points, closed, length } = _s23NormalizePath(path, opts);
 
-  // Fillet-on-fillet: paths that follow a prior fillet rim mix long edges with
-  // dense micro arcs. Sweeping the whole wire leaves jagged sheets — split into
-  // open long runs (uniform all-micro fans stay as-is). Recurse with _rawPath.
-  if (!opts._rawPath) {
-    const plan = planFilletSweepPath(points, closed, radius);
-    if (plan.mode === 'runs') {
-      let out = part;
-      const subOpts = { ...opts, _rawPath: true };
-      for (const run of plan.runs) {
-        out = filletAlongPath(out, { kind: 'sweepPath', points: run, closed: false }, radius, subOpts);
-      }
-      return out;
-    }
-  }
-
   // Probe face frame; may reverse path so B aligns with f1.
   let initialNormal = opts.initialNormal ? opts.initialNormal.slice() : null;
   let probed = null;
@@ -3142,22 +3130,17 @@ function filletAlongPath(part, path, radius, opts = {}) {
     );
   }
 
-  const contour = _s23WedgeContour(radius, profileKind, arcSegs);
-  // Ensure CCW
+  const contour = expandFilletCutterContour(
+    _s23WedgeContour(radius, profileKind, arcSegs),
+    radius,
+  );
+  // Ensure CCW. Expand (not skip-micro) provides the boolean overlap margin.
   let area2 = 0;
   for (let i = 0; i < contour.length; i++) {
     const a = contour[i], b = contour[(i + 1) % contour.length];
     area2 += a[0] * b[1] - b[0] * a[1];
   }
   if (area2 < 0) contour.reverse();
-
-  // Slightly extend the wedge past the edge origin into the exterior so the
-  // boolean is not tangent-coincident (classic sliver source). Profile stays
-  // first-quadrant dominant; a tiny (-eps,-eps) corner overlaps the crease.
-  const eps = Math.min(0.02 * radius, 0.05);
-  if (eps > 1e-9) {
-    contour.unshift([-eps, -eps]);
-  }
 
   const cs = new CrossSection([contour]);
   // Mobile-friendly sampling: scale with path complexity, capped.

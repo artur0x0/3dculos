@@ -254,58 +254,81 @@ export function chamferWedgeArea(c) {
 }
 
 /**
- * Fillet-on-fillet / path-on-blend prep (shared by sandboxWorker + goldens).
- * Tessellated prior-fillet rims are dense micro-segments. Sweeping the full
- * closed wire (straights + micro arcs) leaves jagged sheets; sweeping only the
- * significant open runs is clean. Uniform all-micro fans sweep un-decimated so
- * the revolve fast-path keeps full tessellation.
+ * Sweep-path policy for filletAlongPath (shared by sandboxWorker + goldens).
+ *
+ * PR #27 skipped tessellated prior-fillet micro-arcs (mixed long+micro → open
+ * long runs only). That left a gap instead of wrapping the prior blend.
+ * Always keep the full wire — including micro rim arcs. Slivers are consumed
+ * by expanding the cutter cross-section (`expandFilletCutterContour`), not by
+ * dropping path segments.
  *
  * @param {number[][]} points
- * @param {boolean} closed
- * @param {number} radius
- * @returns {{ mode:'as-is' }
- *   | { mode:'runs', runs:number[][][] }}
+ * @param {boolean} [_closed]
+ * @param {number} [_radius]
+ * @returns {{ mode:'as-is' }}
  */
 export function planFilletSweepPath(points, closed, radius) {
-  const n = points.length;
-  if (n < 2) return { mode: 'as-is' };
-  const segCount = closed ? n : n - 1;
-  if (segCount < 2) return { mode: 'as-is' };
-  const lens = [];
-  for (let i = 0; i < segCount; i++) {
-    const a = points[i];
-    const b = points[(i + 1) % n];
-    lens.push(Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]));
-  }
-  const sorted = lens.slice().sort((a, b) => a - b);
-  const med = sorted[Math.floor(sorted.length / 2)] || 0;
-  const rNum = Number(radius);
-  const rTerm = Number.isFinite(rNum) ? 0.15 * rNum : 0;
-  const thr = Math.max(0.25 * med, rTerm, 1e-3);
-  let nMicro = 0;
-  let nLong = 0;
-  for (const L of lens) {
-    if (L < thr) nMicro++;
-    else nLong++;
-  }
-  // Mixed: long straights + micro arcs on prior fillet — fillet long runs only.
-  if (nLong >= 1 && nMicro >= 2) {
-    const runs = [];
-    let cur = [];
-    const pushRun = () => {
-      if (cur.length >= 2) runs.push(cur);
-      cur = [];
-    };
-    for (let i = 0; i < segCount; i++) {
-      if (lens[i] >= thr) {
-        if (cur.length === 0) cur.push(points[i].slice());
-        cur.push(points[(i + 1) % n].slice());
-      } else {
-        pushRun();
-      }
-    }
-    pushRun();
-    if (runs.length >= 1) return { mode: 'runs', runs };
-  }
+  void closed;
+  void radius;
+  if (!Array.isArray(points) || points.length < 2) return { mode: 'as-is' };
   return { mode: 'as-is' };
+}
+
+/** Fraction of radius to inflate the sweep cutter (boolean overlap margin). */
+export const FILLET_SWEEP_EXPAND_FRAC = 0.04;
+/** Floor so tiny radii still get a boolean-fuzz overlap (mm). */
+export const FILLET_SWEEP_EXPAND_MIN = 0.08;
+/** Cap so the visible fillet stays “slightly” larger, not a different size (mm). */
+export const FILLET_SWEEP_EXPAND_MAX = 0.30;
+
+/**
+ * Overlap / inflate margin for the sweep cutter body.
+ * @param {number} radius
+ * @returns {number}
+ */
+export function filletSweepCutterExpand(radius) {
+  const r = Number(radius);
+  if (!(r > 0) || !Number.isFinite(r)) return 0;
+  return Math.min(
+    FILLET_SWEEP_EXPAND_MAX,
+    Math.max(FILLET_SWEEP_EXPAND_MIN, FILLET_SWEEP_EXPAND_FRAC * r),
+  );
+}
+
+/**
+ * Inflate a fillet/chamfer wedge contour so the boolean is not tangent-coincident
+ * and fillet-on-fillet sliver sheets get consumed.
+ *
+ * Grows first-quadrant extent by the expand margin (slightly larger cutter) and
+ * pushes the origin into the exterior (−e,−e). Pure 2D — no Manifold.
+ *
+ * @param {number[][]} contour  wedge from filletWedgeContour / chamferWedgeContour
+ * @param {number} radius
+ * @returns {number[][]}
+ */
+export function expandFilletCutterContour(contour, radius) {
+  if (!Array.isArray(contour) || contour.length < 3) {
+    throw new Error('expandFilletCutterContour: need a wedge (≥3 pts)');
+  }
+  const e = filletSweepCutterExpand(radius);
+  const r = Number(radius);
+  if (!(e > 0) || !(r > 0) || !Number.isFinite(r)) {
+    return contour.map((p) => [Number(p[0]), Number(p[1])]);
+  }
+  const s = (r + e) / r;
+  const out = [];
+  for (const p of contour) {
+    const u = Number(p[0]);
+    const v = Number(p[1]);
+    if (!Number.isFinite(u) || !Number.isFinite(v)) {
+      throw new Error('expandFilletCutterContour: non-finite vertex');
+    }
+    if (Math.abs(u) < 1e-15 && Math.abs(v) < 1e-15) continue;
+    out.push([u * s, v * s]);
+  }
+  out.unshift([-e, -e]);
+  if (out.length < 3) {
+    throw new Error('expandFilletCutterContour: contour collapsed');
+  }
+  return out;
 }
