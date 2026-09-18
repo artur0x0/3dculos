@@ -9,6 +9,7 @@ import {
   resolveFastenerSize,
 } from './fastenerSizes.js';
 import { isFilletSliverDirty } from '../utils/filletSliverGuard.js';
+import { planFilletSweepPath } from '../utils/filletAlongPath.js';
 
 /**
  * List of globals to block/remove in the worker context
@@ -3045,6 +3046,7 @@ function _s23PolylinePath(points, closed) {
   };
 }
 
+
 /**
  * filletAlongPath(part, path, radius, opts?)
  * Sweep a quarter-circle (or chamfer) cutter along path → boolean subtract.
@@ -3073,6 +3075,21 @@ function filletAlongPath(part, path, radius, opts = {}) {
   const profileKind = (opts.profile === 'chamfer') ? 'chamfer' : 'fillet';
   const arcSegs = opts.segments != null ? opts.segments : 12;
   let { points, closed, length } = _s23NormalizePath(path, opts);
+
+  // Fillet-on-fillet: paths that follow a prior fillet rim mix long edges with
+  // dense micro arcs. Sweeping the whole wire leaves jagged sheets — split into
+  // open long runs (uniform all-micro fans stay as-is). Recurse with _rawPath.
+  if (!opts._rawPath) {
+    const plan = planFilletSweepPath(points, closed, radius);
+    if (plan.mode === 'runs') {
+      let out = part;
+      const subOpts = { ...opts, _rawPath: true };
+      for (const run of plan.runs) {
+        out = filletAlongPath(out, { kind: 'sweepPath', points: run, closed: false }, radius, subOpts);
+      }
+      return out;
+    }
+  }
 
   // Probe face frame; may reverse path so B aligns with f1.
   let initialNormal = opts.initialNormal ? opts.initialNormal.slice() : null;

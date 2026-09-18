@@ -252,3 +252,60 @@ export function filletWedgeArea(r) {
 export function chamferWedgeArea(c) {
   return 0.5 * c * c;
 }
+
+/**
+ * Fillet-on-fillet / path-on-blend prep (shared by sandboxWorker + goldens).
+ * Tessellated prior-fillet rims are dense micro-segments. Sweeping the full
+ * closed wire (straights + micro arcs) leaves jagged sheets; sweeping only the
+ * significant open runs is clean. Uniform all-micro fans sweep un-decimated so
+ * the revolve fast-path keeps full tessellation.
+ *
+ * @param {number[][]} points
+ * @param {boolean} closed
+ * @param {number} radius
+ * @returns {{ mode:'as-is' }
+ *   | { mode:'runs', runs:number[][][] }}
+ */
+export function planFilletSweepPath(points, closed, radius) {
+  const n = points.length;
+  if (n < 2) return { mode: 'as-is' };
+  const segCount = closed ? n : n - 1;
+  if (segCount < 2) return { mode: 'as-is' };
+  const lens = [];
+  for (let i = 0; i < segCount; i++) {
+    const a = points[i];
+    const b = points[(i + 1) % n];
+    lens.push(Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]));
+  }
+  const sorted = lens.slice().sort((a, b) => a - b);
+  const med = sorted[Math.floor(sorted.length / 2)] || 0;
+  const rNum = Number(radius);
+  const rTerm = Number.isFinite(rNum) ? 0.15 * rNum : 0;
+  const thr = Math.max(0.25 * med, rTerm, 1e-3);
+  let nMicro = 0;
+  let nLong = 0;
+  for (const L of lens) {
+    if (L < thr) nMicro++;
+    else nLong++;
+  }
+  // Mixed: long straights + micro arcs on prior fillet — fillet long runs only.
+  if (nLong >= 1 && nMicro >= 2) {
+    const runs = [];
+    let cur = [];
+    const pushRun = () => {
+      if (cur.length >= 2) runs.push(cur);
+      cur = [];
+    };
+    for (let i = 0; i < segCount; i++) {
+      if (lens[i] >= thr) {
+        if (cur.length === 0) cur.push(points[i].slice());
+        cur.push(points[(i + 1) % n].slice());
+      } else {
+        pushRun();
+      }
+    }
+    pushRun();
+    if (runs.length >= 1) return { mode: 'runs', runs };
+  }
+  return { mode: 'as-is' };
+}

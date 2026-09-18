@@ -1,12 +1,14 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { X, Check, AlertTriangle } from 'lucide-react';
-import { listBodyNames, coerceNumberParam } from '../utils/helperPaletteSnippets';
+import { listBodyNames, coerceFilletConfirmNumbers } from '../utils/helperPaletteSnippets';
 import {
   minSelectedEdgeLength,
   edgeBlendFailsSizeGuard,
   edgeBlendHardMax,
   EDGE_BLEND_SIZE_GUARD,
+  sweepBlendHardMax,
 } from '../utils/selectEdge';
+import { resolveFilletStrategy } from '../utils/filletAlongPath';
 
 /**
  * Slice 10/11/12/21 — param popup for guided helper insert.
@@ -129,26 +131,46 @@ const HelperParamModal = ({
     ? 'radius'
     : (params.some((p) => p.name === 'chamfer') ? 'chamfer' : null);
 
+  // Planar-only size guard. Strategy=sweep / auto→sweep / filletAlongPath must
+  // not inherit the 0.45·L clamp (tessellated prior-fillet rims pin ~0.04).
+  const hasStrategy = params.some((p) => p.name === 'strategy');
+  const resolvedStrategy = hasStrategy
+    ? resolveFilletStrategy(values.strategy, edgeInfo)
+    : 'planar';
+  // Strategy wins over the open-time _blendSizeGuard flag so switching
+  // planar↔sweep in the modal correctly enables/disables the planar clamp.
+  const applySizeGuard = (
+    resolvedStrategy !== 'sweep'
+    && blendParamName != null
+    && minEdgeLength != null
+  );
+
   const blendRaw = blendParamName != null ? values[blendParamName] : null;
   const blendNum = Number(blendRaw);
   const sizeGuardFail = (
-    blendParamName != null
-    && minEdgeLength != null
+    applySizeGuard
     && Number.isFinite(blendNum)
     && edgeBlendFailsSizeGuard(blendNum, minEdgeLength)
   );
   const safeBlendMax = minEdgeLength != null ? edgeBlendHardMax(minEdgeLength) : null;
+  const sweepMax = item?._sweepBlendMax != null
+    ? item._sweepBlendMax
+    : sweepBlendHardMax(item?._pathLength ?? minEdgeLength);
 
   const handleConfirm = () => {
-    const out = { ...values };
-    for (const p of params) {
-      if (p.type === 'number') {
-        out[p.name] = coerceNumberParam(out[p.name], p);
-      }
-    }
-    // Clamp fillet/chamfer under size guard before insert (typed values can exceed slider max).
+    // Resolve strategy BEFORE number coercion — open-time planar p.max must not
+    // silently clamp a typed radius after the user switches Strategy→sweep.
+    const confirmStrategy = hasStrategy
+      ? resolveFilletStrategy(values.strategy, edgeInfo)
+      : 'planar';
+    const out = coerceFilletConfirmNumbers(values, params, {
+      strategy: confirmStrategy,
+      sweepMax,
+    });
+    // Clamp under planar size guard only — never for Strategy=sweep.
     if (
-      blendParamName
+      confirmStrategy !== 'sweep'
+      && blendParamName
       && minEdgeLength != null
       && edgeBlendFailsSizeGuard(out[blendParamName], minEdgeLength)
       && safeBlendMax != null
@@ -240,8 +262,18 @@ const HelperParamModal = ({
               <>
                 {' · '}
                 min L={minEdgeLength.toFixed(2)}{item?._minEdgeLength != null ? ' (effective)' : ''}
-                {' · '}
-                keep r &lt; {(EDGE_BLEND_SIZE_GUARD * minEdgeLength).toFixed(2)}
+                {applySizeGuard && (
+                  <>
+                    {' · '}
+                    keep r &lt; {(EDGE_BLEND_SIZE_GUARD * minEdgeLength).toFixed(2)} (planar)
+                  </>
+                )}
+                {resolvedStrategy === 'sweep' && (
+                  <>
+                    {' · '}
+                    sweep — no 0.45·L clamp (max {Number(sweepMax).toFixed(0)})
+                  </>
+                )}
               </>
             )}
           </div>
@@ -294,8 +326,16 @@ const HelperParamModal = ({
                       type="range"
                       value={Number.isFinite(Number(values[p.name])) ? Number(values[p.name]) : (p.default ?? 0)}
                       min={p.min ?? (typeof p.default === 'number' && p.default < 0 ? p.default * 2 : 0)}
-                      max={p.max ?? Math.max(100, Math.abs(Number(p.default) || 0) * 4, 40)}
-                      step={p.step ?? 0.5}
+                      max={
+                        (p.name === 'radius' || p.name === 'chamfer') && resolvedStrategy === 'sweep'
+                          ? sweepMax
+                          : (p.max ?? Math.max(100, Math.abs(Number(p.default) || 0) * 4, 40))
+                      }
+                      step={
+                        (p.name === 'radius' || p.name === 'chamfer') && resolvedStrategy === 'sweep'
+                          ? Math.max(0.5, Math.round((sweepMax / 40) * 100) / 100)
+                          : (p.step ?? 0.5)
+                      }
                       onChange={(e) => setField(p.name, e.target.value, 'number')}
                       className="w-full accent-cyan-500"
                     />

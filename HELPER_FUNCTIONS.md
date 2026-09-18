@@ -934,7 +934,11 @@ return part;
 **Path / cutter:** open chains sweep the wedge along a **linear polyline** of the
 edge wire (not Catmull-Rom — spline bulge left purple scraps). Closed paths that
 fit a circle use a **revolved meridian wedge** (C6-style, phase-locked to the
-tessellation). Disconnected cutter scraps are dropped via `decompose` when present.
+tessellation). **Fillet-on-fillet / path on a prior blend:** dense micro-segments
+from a tessellated fillet rim are split into open long runs; uniform all-micro
+fans sweep un-decimated (the revolve fast-path keeps full tessellation) so the
+sweep stays clean — never leave jagged sheets.
+Disconnected cutter scraps are dropped via `decompose` when present.
 Loud-fail if the kept solid is still scrap-sheet dirty.
 
 **Quarter-circle orientation:** the 2D wedge lives in the first quadrant `(u≥0,v≥0)`
@@ -969,8 +973,11 @@ selections stay planar — edge count alone never forces sweep. Manual
 
 **Radius slider:** defaults / max / step use the **effective** min edge length
 (outliers dropped: short edges &lt;25% of median are ignored) so multi-edge /
-tangent sets are not stuck near r≈0.03; typed values still clamp under the
-0.45·L size guard.
+tangent sets are not stuck near r≈0.03. The **0.45·L size guard is planar-only**
+(`filletEdges` / Strategy=planar|auto→planar) — Strategy=sweep / `filletAlongPath`
+uses path-length defaults (e.g. r≈6 on box-scale perimeters) and does **not**
+clamp typed values under 0.45·L (tessellated prior-fillet rims would otherwise
+pin the slider near ~0.04).
 
 Sweep mode shows the Path order/direction preview (green→magenta). Auto-Run
 unchanged. Keep using **Path** alone when you only need the wire value.

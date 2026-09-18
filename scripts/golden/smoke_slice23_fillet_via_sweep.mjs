@@ -12,6 +12,7 @@ import { register } from 'node:module';
 import {
   composeHelperInsert,
   HELPER_PALETTE_ITEMS,
+  coerceFilletConfirmNumbers,
 } from '../../src/utils/helperPaletteSnippets.js';
 import {
   resolveFaceModal,
@@ -25,6 +26,7 @@ import {
   filletWedgeArea,
   pickFilletStrategy,
   resolveFilletStrategy,
+  planFilletSweepPath,
   FILLET_SWEEP_EMPTY,
   FILLET_SWEEP_DISCONNECTED,
   FILLET_SWEEP_BRANCH,
@@ -32,7 +34,10 @@ import {
 } from '../../src/utils/filletAlongPath.js';
 import {
   effectiveBlendEdgeLength,
+  edgeBlendHardMax,
   minSelectedEdgeLength,
+  pathLengthFromEdges,
+  sweepBlendHardMax,
 } from '../../src/utils/selectEdge.js';
 
 register('./manifold-resolve-hook.mjs', import.meta.url);
@@ -355,6 +360,156 @@ console.log('slice-23 fillet via sweep smoke');
   check('multi-edge slider step scaled', rParam?.step === 0.04,
     `got ${rParam?.step}`);
   check('strategy default auto on modal', resolvedMulti.item?.params?.find((x) => x.name === 'strategy')?.default === 'auto');
+
+  // Sweep size guard: curved rim (auto→sweep) must NOT pin slider under 0.45·L
+  const rimishSweep = [];
+  for (let i = 0; i < 12; i++) {
+    const a = i, b = (i + 1) % 12;
+    const ang0 = (i / 12) * Math.PI * 2;
+    const ang1 = ((i + 1) / 12) * Math.PI * 2;
+    const va = [Math.cos(ang0), Math.sin(ang0), 0];
+    const vb = [Math.cos(ang1), Math.sin(ang1), 0];
+    const radial = [(va[0] + vb[0]) / 2, (va[1] + vb[1]) / 2, 0];
+    const rLen = Math.hypot(radial[0], radial[1]) || 1;
+    rimishSweep.push({
+      key: `${a}-${b}`, a, b, va, vb,
+      mid: [(va[0] + vb[0]) / 2, (va[1] + vb[1]) / 2, 0],
+      length: Math.hypot(vb[0] - va[0], vb[1] - va[1], vb[2] - va[2]),
+      n0: [0, 0, 1],
+      n1: [radial[0] / rLen, radial[1] / rLen, 0],
+    });
+  }
+  check('auto→sweep on rimish for size test', pickFilletStrategy(rimishSweep) === 'sweep');
+  const resolvedRim = resolveFaceModal(item, null, rimishSweep);
+  const rRim = resolvedRim.item?.params?.find((x) => x.name === 'radius');
+  check('sweep modal skips planar size clamp (max≥6)', rRim?.max != null && rRim.max >= 6,
+    `max=${rRim?.max}`);
+  check('sweep modal default usable (default≥1)', rRim?.default != null && rRim.default >= 1,
+    `default=${rRim?.default}`);
+  check('sweep modal _blendSizeGuard false', resolvedRim.item?._blendSizeGuard === false);
+  check('sweep hard max scale-relative (not absolute 50)', rRim?.max != null && rRim.max < 50,
+    `max=${rRim?.max}`);
+  check('short-L hard max is floor not 50', sweepBlendHardMax(3.77) === 6,
+    `got ${sweepBlendHardMax(3.77)}`);
+
+  // Blocking 1 — typed radius must survive Strategy→sweep confirm (not open-time planar max).
+  // 6-edge coplanar loop opens auto→planar with small p.max; switch to sweep + type 6.
+  const planarSide = 1.2;
+  const planarTyped = [];
+  {
+    const verts = [
+      [0, 0, 0], [planarSide, 0, 0], [planarSide, planarSide, 0],
+      [planarSide * 0.5, planarSide, 0], [0, planarSide, 0], [0, planarSide * 0.5, 0],
+    ];
+    const sideN = [
+      [0, -1, 0], [1, 0, 0], [0, 1, 0],
+      [0, 1, 0], [-1, 0, 0], [-1, 0, 0],
+    ];
+    for (let i = 0; i < 6; i++) {
+      const a = i, b = (i + 1) % 6;
+      const va = verts[a], vb = verts[b];
+      planarTyped.push({
+        key: `${a}-${b}`, a, b, va, vb,
+        mid: [(va[0] + vb[0]) / 2, (va[1] + vb[1]) / 2, (va[2] + vb[2]) / 2],
+        length: Math.hypot(vb[0] - va[0], vb[1] - va[1], vb[2] - va[2]),
+        n0: [0, 0, 1],
+        n1: sideN[i],
+      });
+    }
+  }
+  check('typed-confirm fixture auto→planar', pickFilletStrategy(planarTyped) === 'planar');
+  const resolvedTyped = resolveFaceModal(item, null, planarTyped);
+  const rTyped = resolvedTyped.item?.params?.find((x) => x.name === 'radius');
+  check('open-time planar max < 6', rTyped?.max != null && rTyped.max < 6,
+    `max=${rTyped?.max}`);
+  const sweepMaxTyped = resolvedTyped.item?._sweepBlendMax
+    ?? sweepBlendHardMax(resolvedTyped.item?._pathLength ?? resolvedTyped.minEdgeLength);
+  const confirmed = coerceFilletConfirmNumbers(
+    { body: 'part', strategy: 'sweep', radius: 6, profile: 'fillet', reverse: false },
+    resolvedTyped.item?.params || [],
+    { strategy: resolveFilletStrategy('sweep', planarTyped), sweepMax: sweepMaxTyped },
+  );
+  check('typed 6 survives sweep confirm coerce', confirmed.radius === 6,
+    `got ${confirmed.radius} (open max=${rTyped?.max} sweepMax=${sweepMaxTyped})`);
+  const confirmedPlanar = coerceFilletConfirmNumbers(
+    { body: 'part', strategy: 'planar', radius: 6, profile: 'fillet', reverse: false },
+    resolvedTyped.item?.params || [],
+    { strategy: 'planar', sweepMax: sweepMaxTyped },
+  );
+  check('planar strategy clamps typed 6 to open-time p.max', confirmedPlanar.radius === rTyped.max,
+    `got ${confirmedPlanar.radius} (open max=${rTyped.max})`);
+
+  // Slider parity: when planar open-spec max > sweepMax, typed box must cap at sweepMax
+  // (not Math.max(p.max, sweepMax)). Artur probe: edgeBlendHardMax(20)=8.8, sweepBlendHardMax(12)=6.
+  {
+    const planarMaxHi = edgeBlendHardMax(20);
+    const sweepCeilLo = sweepBlendHardMax(12);
+    check('ceiling-parity fixture p.max > sweepMax', planarMaxHi > sweepCeilLo,
+      `planar=${planarMaxHi} sweep=${sweepCeilLo}`);
+    const overSweep = coerceFilletConfirmNumbers(
+      { radius: 8 },
+      [{ name: 'radius', type: 'number', min: 0.01, max: planarMaxHi, default: 0.5 }],
+      { strategy: 'sweep', sweepMax: sweepCeilLo },
+    );
+    check('typed above sweepMax clamps to sweepMax (slider parity)', overSweep.radius === sweepCeilLo,
+      `got ${overSweep.radius} (typed 8, planar max=${planarMaxHi}, sweepMax=${sweepCeilLo})`);
+  }
+
+  // Number.isFinite(sweepMax) guard: NaN / null / absent must fall back to planar open-spec.
+  {
+    const planarOpen = rTyped.max;
+    const params = resolvedTyped.item?.params || [];
+    const vals = { body: 'part', strategy: 'sweep', radius: 6, profile: 'fillet', reverse: false };
+    const nanMax = coerceFilletConfirmNumbers(vals, params, { strategy: 'sweep', sweepMax: NaN });
+    check('sweepMax NaN falls back to planar clamp', nanMax.radius === planarOpen,
+      `got ${nanMax.radius} (open max=${planarOpen})`);
+    const nullMax = coerceFilletConfirmNumbers(vals, params, { strategy: 'sweep', sweepMax: null });
+    check('sweepMax null falls back to planar clamp', nullMax.radius === planarOpen,
+      `got ${nullMax.radius} (open max=${planarOpen})`);
+    const absentMax = coerceFilletConfirmNumbers(vals, params, { strategy: 'sweep' });
+    check('sweepMax absent falls back to planar clamp', absentMax.radius === planarOpen,
+      `got ${absentMax.radius} (open max=${planarOpen})`);
+  }
+
+  const bufTyped = composeHelperInsert(
+    'let part = Manifold.cube([40,30,20], true);\n',
+    'filletEdges',
+    null,
+    {
+      body: 'part', strategy: 'sweep', radius: confirmed.radius,
+      profile: 'fillet', reverse: false,
+    },
+    null,
+    planarTyped,
+  );
+  check('typed sweep confirm inserts , 6', /,\s*6\b/.test(bufTyped),
+    `buf snippet=${String(bufTyped).split('\n').filter((l) => /filletAlongPath/.test(l)).join(' | ')}`);
+
+  // Nit 6 — pathLengthFromEdges must use va/vb when .length omitted.
+  const vaVbOnly = [
+    { va: [0, 0, 0], vb: [3, 0, 0] },
+    { va: [3, 0, 0], vb: [3, 4, 0] },
+  ];
+  const plenFallback = pathLengthFromEdges(vaVbOnly);
+  check('pathLengthFromEdges va/vb fallback', plenFallback != null && Math.abs(plenFallback - 7) < 1e-9,
+    `got ${plenFallback}`);
+
+  // Blocking 2 — planFilletSweepPath: uniform closed rim must NOT decimate-to-triangle.
+  const unitRimPts = [];
+  for (let i = 0; i < 12; i++) {
+    const ang = (i / 12) * Math.PI * 2;
+    unitRimPts.push([Math.cos(ang), Math.sin(ang), 0]);
+  }
+  const planRim = planFilletSweepPath(unitRimPts, true, 6);
+  check('uniform closed rim plan as-is (no decimate)', planRim.mode === 'as-is',
+    `mode=${planRim.mode} pts=${planRim.points?.length}`);
+  // Mixed long+micro → runs (intended fillet-on-fillet case)
+  const mixedPts = [
+    [0, 0, 0], [10, 0, 0], [10.05, 0, 0], [10.1, 0, 0], [20, 0, 0],
+  ];
+  const planMixed = planFilletSweepPath(mixedPts, false, 1);
+  check('mixed long+micro plan runs', planMixed.mode === 'runs',
+    `mode=${planMixed.mode}`);
 }
 
 
@@ -450,6 +605,52 @@ return part;
   }
 }
 
+// All-micro closed rim n=12 @ r=6 — must stay clean (no decimate-to-triangle slivers)
+{
+  try {
+    const payload = await exec(`
+let part = Manifold.cylinder(20, 15, 15, 12, true);
+const rim = convexEdges(part).filter((e) => {
+  const m = [(e.va[0]+e.vb[0])/2, (e.va[1]+e.vb[1])/2, (e.va[2]+e.vb[2])/2];
+  return Math.abs(m[2] - 10) < 0.4;
+});
+if (rim.length < 8) throw new Error('expected top rim edges, got ' + rim.length);
+const path = makeSweepPath(rim);
+if (!path.closed) throw new Error('rim path should be closed');
+if (path.points.length < 10) throw new Error('expected ~12 rim pts, got ' + path.points.length);
+const before = part.volume();
+part = filletAlongPath(part, path, 6);
+const after = part.volume();
+if (!(after < before - 1)) throw new Error('volume did not drop enough: ' + before + ' → ' + after);
+return part;
+`);
+    check('n12-r6 closed-rim sweep builds', Number.isFinite(payload?.volume) && payload.volume > 0,
+      `vol=${payload?.volume}`);
+    const mesh = payload?.mesh;
+    if (mesh?.triVerts && mesh?.vertProperties) {
+      const np = mesh.numProp || 3;
+      const V = mesh.vertProperties;
+      const T = mesh.triVerts;
+      const nTri = T.length / 3;
+      let tiny = 0;
+      for (let ti = 0; ti < nTri; ti++) {
+        const i0 = T[ti * 3] * np, i1 = T[ti * 3 + 1] * np, i2 = T[ti * 3 + 2] * np;
+        const ax = V[i1] - V[i0], ay = V[i1 + 1] - V[i0 + 1], az = V[i1 + 2] - V[i0 + 2];
+        const bx = V[i2] - V[i0], by = V[i2 + 1] - V[i0 + 1], bz = V[i2 + 2] - V[i0 + 2];
+        const A = 0.5 * Math.hypot(ay * bz - az * by, az * bx - ax * bz, ax * by - ay * bx);
+        if (A < 1e-8) tiny++;
+      }
+      check('n12-r6 closed-rim no sliver scraps', !isFilletSliverDirty(tiny, nTri),
+        `tiny=${tiny}/${nTri}`);
+    } else {
+      check('n12-r6 closed-rim no sliver scraps', false, 'missing mesh');
+    }
+  } catch (e) {
+    failed++;
+    console.log(`  ❌ n12-r6 closed-rim sweep builds — ${e.message}`);
+  }
+}
+
 // Post-fillet seam: planar fillet first, then sweep-fillet a remaining straight edge
 // that abuts the curved sail (would throw curved-face if filleted as singleton via C6
 // against the sail — here we sweep along a still-planar top edge chain).
@@ -506,6 +707,107 @@ return part;
   } catch (e) {
     failed++;
     console.log(`  ❌ post-fillet sweep fillet builds — ${e.message}`);
+  }
+}
+
+// Fillet-on-fillet: vertical planar fillets then sweep top perimeter @ r=6
+// (path includes tessellated prior-fillet arcs — must stay clean, no scraps)
+{
+  try {
+    const payload = await exec(`
+let part = Manifold.cube([40, 30, 20], true);
+const verts = convexEdges(part).filter((e) => {
+  const dz = Math.abs(e.va[2] - e.vb[2]);
+  const dxy = Math.hypot(e.va[0] - e.vb[0], e.va[1] - e.vb[1]);
+  return dz > 15 && dxy < 0.5;
+});
+if (verts.length < 4) throw new Error('need 4 verticals, got ' + verts.length);
+part = filletEdges(part, verts, 4, { sphericalCorners: false });
+const top = convexEdges(part).filter((e) => {
+  const m = [(e.va[0]+e.vb[0])/2, (e.va[1]+e.vb[1])/2, (e.va[2]+e.vb[2])/2];
+  return Math.abs(m[2] - 10) < 0.5 && Math.abs(e.va[2] - e.vb[2]) < 1.5;
+});
+if (top.length < 4) throw new Error('need top edges after fillet, got ' + top.length);
+const path = makeSweepPath(top);
+const v0 = part.volume();
+part = filletAlongPath(part, path, 6);
+const v1 = part.volume();
+if (!(v1 < v0 - 10)) throw new Error('fillet-on-fillet r=6 did not remove volume');
+return part;
+`);
+    check('fillet-on-fillet sweep r=6 builds', Number.isFinite(payload?.volume) && payload.volume > 0,
+      `vol=${payload?.volume}`);
+    check('fillet-on-fillet status NoError', payload?.status === 'NoError' || !payload?.status,
+      `status=${payload?.status}`);
+    const mesh = payload?.mesh;
+    if (mesh?.triVerts && mesh?.vertProperties) {
+      const np = mesh.numProp || 3;
+      const V = mesh.vertProperties;
+      const T = mesh.triVerts;
+      const nTri = T.length / 3;
+      let tiny = 0;
+      for (let ti = 0; ti < nTri; ti++) {
+        const i0 = T[ti * 3] * np, i1 = T[ti * 3 + 1] * np, i2 = T[ti * 3 + 2] * np;
+        const ax = V[i1] - V[i0], ay = V[i1 + 1] - V[i0 + 1], az = V[i1 + 2] - V[i0 + 2];
+        const bx = V[i2] - V[i0], by = V[i2 + 1] - V[i0 + 1], bz = V[i2 + 2] - V[i0 + 2];
+        const A = 0.5 * Math.hypot(ay * bz - az * by, az * bx - ax * bz, ax * by - ay * bx);
+        if (A < 1e-8) tiny++;
+      }
+      check('fillet-on-fillet no sliver scraps', !isFilletSliverDirty(tiny, nTri),
+        `tiny=${tiny}/${nTri}`);
+    } else {
+      check('fillet-on-fillet no sliver scraps', false, 'missing mesh');
+    }
+  } catch (e) {
+    failed++;
+    console.log(`  ❌ fillet-on-fillet sweep r=6 builds — ${e.message}`);
+  }
+}
+
+// All-micro closed rim n=12 @ r=6 — must stay clean (no decimate→triangle)
+{
+  try {
+    const payload = await exec(`
+let part = Manifold.cylinder(20, 10, 10, 12, true);
+const rim = convexEdges(part).filter((e) => {
+  const m = [(e.va[0]+e.vb[0])/2, (e.va[1]+e.vb[1])/2, (e.va[2]+e.vb[2])/2];
+  return Math.abs(m[2] - 10) < 0.5;
+});
+if (rim.length < 8) throw new Error('expected top rim, got ' + rim.length);
+const path = makeSweepPath(rim);
+if (!path.closed) throw new Error('rim should be closed');
+const before = part.volume();
+part = filletAlongPath(part, path, 6);
+const after = part.volume();
+if (!(after < before - 1)) throw new Error('volume did not drop: ' + before + ' → ' + after);
+return part;
+`);
+    check('all-micro n=12 rim sweep builds', Number.isFinite(payload?.volume) && payload.volume > 0,
+      `vol=${payload?.volume}`);
+    check('all-micro n=12 rim status NoError', payload?.status === 'NoError' || !payload?.status,
+      `status=${payload?.status}`);
+    const mesh = payload?.mesh;
+    if (mesh?.triVerts && mesh?.vertProperties) {
+      const np = mesh.numProp || 3;
+      const V = mesh.vertProperties;
+      const T = mesh.triVerts;
+      const nTri = T.length / 3;
+      let tiny = 0;
+      for (let ti = 0; ti < nTri; ti++) {
+        const i0 = T[ti * 3] * np, i1 = T[ti * 3 + 1] * np, i2 = T[ti * 3 + 2] * np;
+        const ax = V[i1] - V[i0], ay = V[i1 + 1] - V[i0 + 1], az = V[i1 + 2] - V[i0 + 2];
+        const bx = V[i2] - V[i0], by = V[i2 + 1] - V[i0 + 1], bz = V[i2 + 2] - V[i0 + 2];
+        const A = 0.5 * Math.hypot(ay * bz - az * by, az * bx - ax * bz, ax * by - ay * bx);
+        if (A < 1e-8) tiny++;
+      }
+      check('all-micro n=12 rim !isFilletSliverDirty', !isFilletSliverDirty(tiny, nTri),
+        `tiny=${tiny}/${nTri}`);
+    } else {
+      check('all-micro n=12 rim !isFilletSliverDirty', false, 'missing mesh');
+    }
+  } catch (e) {
+    failed++;
+    console.log(`  ❌ all-micro n=12 rim sweep builds — ${e.message}`);
   }
 }
 

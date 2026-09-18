@@ -26,7 +26,11 @@ import {
   defaultEdgeBlendSize,
   edgeBlendHardMax,
   blendSliderStep,
+  pathLengthFromEdges,
+  defaultSweepBlendSize,
+  sweepBlendHardMax,
 } from './selectEdge.js';
+import { resolveFilletStrategy } from './filletAlongPath.js';
 import {
   CROSS_SECTION_REFUSE_NON_PLANAR,
 } from './crossSectionSubstrate.js';
@@ -632,19 +636,31 @@ export function resolveFaceModal(paletteItem, selectedFace, selectedEdges = null
   }
 
   // Slice 12 + polish: fillet/chamfer with user-selected edges (no face required).
-  // Seed radius/chamfer from min edge length so short edges get a safe default
-  // (well under the kernel size guard t < 0.45·L), and cap the slider max.
+  // Planar: seed/cap under kernel size guard t < 0.45·L.
+  // Sweep / auto→sweep: NO planar size clamp — path-length defaults (r≈6 on box
+  // perimeter). Tessellated prior-fillet rims must not pin the slider ~0.04.
   if (isEdgeFeature && hasEdges) {
     const body = { name: 'body', type: 'body', default: 'part', label: 'Body' };
     const edgeScope = {
       name: 'edgeScope', type: 'select', default: 'selected', label: 'Edges',
       options: ['selected', 'face', 'allConvex'],
     };
-    // Multi-edge: effective length drops short tessellation scraps so the
-    // radius slider is not stuck near 0.03 on tangent/compound sets.
     const minL = effectiveBlendEdgeLength(selectedEdges) ?? minSelectedEdgeLength(selectedEdges);
-    const blendDefault = minL != null ? defaultEdgeBlendSize(minL) : (id === 'filletEdges' ? 3 : 2);
-    const blendMax = minL != null ? edgeBlendHardMax(minL) : undefined;
+    const pathLen = pathLengthFromEdges(selectedEdges);
+    // Fillet: size from resolved auto strategy so sweep opens with a usable radius.
+    // Chamfer stays planar-guarded (no sweep strategy).
+    const resolved = id === 'filletEdges'
+      ? resolveFilletStrategy('auto', selectedEdges)
+      : 'planar';
+    const useSweepSize = resolved === 'sweep';
+    const blendDefault = useSweepSize
+      ? ((pathLen ?? minL) != null
+        ? defaultSweepBlendSize(pathLen ?? minL)
+        : (id === 'filletEdges' ? 3 : 2))
+      : (minL != null ? defaultEdgeBlendSize(minL) : (id === 'filletEdges' ? 3 : 2));
+    const blendMax = useSweepSize
+      ? sweepBlendHardMax(pathLen ?? minL)
+      : (minL != null ? edgeBlendHardMax(minL) : undefined);
     const blendStep = blendSliderStep(blendMax);
     const blendParam = id === 'filletEdges'
       ? {
@@ -657,8 +673,6 @@ export function resolveFaceModal(paletteItem, selectedFace, selectedEdges = null
         };
     let params;
     if (id === 'filletEdges') {
-      // Strategy auto (default) | planar | sweep. Auto picks from edge set;
-      // manual select still overrides at compose time.
       params = [
         body,
         {
@@ -688,6 +702,10 @@ export function resolveFaceModal(paletteItem, selectedFace, selectedEdges = null
         title: `${paletteItem.title} — ${selectedEdges.length} edge${selectedEdges.length === 1 ? '' : 's'}`,
         _edgePlacement: true,
         _minEdgeLength: minL,
+        // Modal: skip planar 0.45·L clamp when Strategy resolves to sweep.
+        _blendSizeGuard: !useSweepSize,
+        _sweepBlendMax: sweepBlendHardMax(pathLen ?? minL),
+        _pathLength: pathLen,
       },
     };
   }
@@ -746,8 +764,17 @@ export function resolveFaceModal(paletteItem, selectedFace, selectedEdges = null
   const minL = hasEdges && isEdgeFeature
     ? (effectiveBlendEdgeLength(selectedEdges) ?? minSelectedEdgeLength(selectedEdges))
     : null;
-  const blendDefault = minL != null ? defaultEdgeBlendSize(minL) : null;
-  const blendMax = minL != null ? edgeBlendHardMax(minL) : null;
+  const pathLenFace = hasEdges && isEdgeFeature ? pathLengthFromEdges(selectedEdges) : null;
+  const useSweepSizeFace = id === 'filletEdges' && hasEdges
+    && resolveFilletStrategy('auto', selectedEdges) === 'sweep';
+  const blendDefault = useSweepSizeFace
+    ? ((pathLenFace ?? minL) != null
+      ? defaultSweepBlendSize(pathLenFace ?? minL)
+      : (id === 'filletEdges' ? 3 : 2))
+    : (minL != null ? defaultEdgeBlendSize(minL) : null);
+  const blendMax = useSweepSizeFace
+    ? sweepBlendHardMax(pathLenFace ?? minL)
+    : (minL != null ? edgeBlendHardMax(minL) : null);
   const blendStep = blendSliderStep(blendMax);
   // Prefer selected edges when both face + edges present for fillet/chamfer.
   const mergedParams = params.map((p) => {
@@ -776,6 +803,9 @@ export function resolveFaceModal(paletteItem, selectedFace, selectedEdges = null
       _facePlacement: true,
       _edgePlacement: hasEdges && isEdgeFeature,
       _minEdgeLength: minL,
+      _blendSizeGuard: hasEdges && isEdgeFeature ? !useSweepSizeFace : true,
+      _sweepBlendMax: sweepBlendHardMax(pathLenFace ?? minL),
+      _pathLength: pathLenFace,
     },
   };
 }
