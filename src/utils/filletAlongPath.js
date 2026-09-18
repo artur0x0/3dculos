@@ -303,23 +303,24 @@ export function filletSweepCutterExpand(radius) {
  * tangent-coincident with the part faces.
  *
  * Mechanism: the nominal wedge legs (0,0)→(r,0) and (0,0)→(0,r) lie ON the
- * two adjacent faces. Manifold CSG on coincident surfaces leaves sliver
+ * two adjacent faces. Manifold CSG on coincident surfaces can leave sliver
  * sheets — worse when the path includes tessellated prior-fillet micro-arcs
  * (chordal RMF frames sitting near-tangent to the old cylinder).
  *
- * Probe (scripts/golden/smoke_slice23_fillet_via_sweep.mjs, fillet-on-fillet:
- * cube 40×30×20, vertical r=4, then perimeter sweep r=6; sphere at the old
- * +x+y rim): wrapping the full wire but dropping (−e,−e) leaves that rim
- * occupied at fIn=0.239 (threshold 0.18). Re-instating PR #27 skip-micro
- * (`plan.mode='runs'`) trips the same fIn. Uniform Q1 scale is not required
- * for that net — it only redefined requested r (absolute floor on `e` binds
- * for r < 2: at UI min r=0.01, s=(r+e)/r → realized 0.09 = 9×).
- *
  * Size-neutral boolean robustness: keep every first-quadrant vertex at the
- * requested r (realized blend extent = r) and replace the origin with
- * (−e,−e). Extra cutter lives in empty space past the crease; the legs
- * no longer coplanar-coincide with the faces. (−e,−e) is load-bearing as
- * the origin vertex (the (0,0) corner is skipped so this must replace it).
+ * requested r (realized blend extent = requested r) and replace the origin
+ * with (−e,−e). Extra cutter lives in empty space past the crease so the
+ * legs are not coplanar-coincident with the faces. Uniform Q1 scale is not
+ * used — it only redefined requested r (absolute floor on `e` binds for
+ * r < 2: at UI min r=0.01, s=(r+e)/r → realized 0.09 = 9×).
+ *
+ * (−e,−e) is an unvalidated boolean-robustness margin: kept because legs
+ * must not coplanar-coincide with faces, and as the origin vertex (the
+ * (0,0) corner is skipped so this must replace it or the contour
+ * collapses). Size-neutral. It is not proven load-bearing by the rim
+ * fIn net — that net is a gap detector on the whole rim sphere and
+ * cannot certify pad / coincident slivers. The same net still catches
+ * path truncation / skip-micro (M6), separately from the pad.
  *
  * Pure 2D — no Manifold.
  *

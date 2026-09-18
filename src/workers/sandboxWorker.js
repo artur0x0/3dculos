@@ -3069,6 +3069,8 @@ function _s23PolylinePath(points, closed) {
  * @param {boolean} [opts.closed] — when path is bare points[]
  * @param {number} [opts.arcSamples]
  * @param {number} [opts.extrudeSegments]
+ * @param {number} [opts._testCutterScale] — test-only: scale 2D cutter vertices
+ *   (e.g. 4) against nominal r so the 8× oversize guard can be pinned
  */
 function filletAlongPath(part, path, radius, opts = {}) {
   const M = manifoldModule.Manifold;
@@ -3148,10 +3150,19 @@ function filletAlongPath(part, path, radius, opts = {}) {
     );
   }
 
+  const testCutterScale = Number(opts._testCutterScale);
+  const testingOversize = Number.isFinite(testCutterScale) && testCutterScale > 1;
+
   const contour = expandFilletCutterContour(
     _s23WedgeContour(radius, profileKind, arcSegs),
     radius,
   );
+  if (testingOversize) {
+    for (const p of contour) {
+      p[0] *= testCutterScale;
+      p[1] *= testCutterScale;
+    }
+  }
   // Ensure CCW. Exterior (−e,−e) overlap (not skip-micro, not a radius grow)
   // provides the boolean margin so cutter legs are not face-coincident.
   let area2 = 0;
@@ -3192,7 +3203,8 @@ function filletAlongPath(part, path, radius, opts = {}) {
   }
 
   let cutter = null;
-  if (closed) {
+  // Skip revolve fast-path when pinning an oversized sweep cutter.
+  if (closed && !testingOversize) {
     try {
       cutter = _s23TryRevolveCutter(CrossSection, points, radius, profileKind, arcSegs, probed);
     } catch (e) {
@@ -3248,7 +3260,9 @@ function filletAlongPath(part, path, radius, opts = {}) {
     ? 0.5 * radius * radius
     : radius * radius * (1 - Math.PI / 4);
   const expectVol = expectArea * length;
-  if (expectVol > 1e-3 && removed < 0.02 * expectVol) {
+  // Neutralise near-no-op when pinning the sibling 8× oversize guard —
+  // a coordinated oversize probe would otherwise throw here first.
+  if (!testingOversize && expectVol > 1e-3 && removed < 0.02 * expectVol) {
     throw new Error(
       `filletAlongPath: removed only ${removed.toFixed(4)} vs expected ~${expectVol.toFixed(4)} `
       + '(orientation/overlap failure) — failing loud rather than shipping a near-no-op solid',

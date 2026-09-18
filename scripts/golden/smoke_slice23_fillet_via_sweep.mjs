@@ -831,10 +831,11 @@ return part;
       `vol=${payload?.volume}`);
     check('fillet-on-fillet status NoError', payload?.status === 'NoError' || !payload?.status,
       `status=${payload?.status}`);
-    // Falsifiable stand-in for the old always-true "blend present" pin.
-    // Cube 40×30×20 = 24000; in-worker already throws unless v1 < v0 - 10
-    // (top sweep after vertical r=4). This outer check still fails if the
-    // exec returns an unfilleted / near-full cube.
+    // Volume dropped vs the unfilleted 40×30×20 cube (24000) across the
+    // whole script (vertical r=4 + top sweep r=6). Does not isolate the
+    // sweep: a no-op top sweep still passes because vertical r=4 already
+    // took the cube below 24000-10. Sweep-delta coverage is the in-worker
+    // throw (`v1 < v0 - 10`) in the exec above.
     check('fillet-on-fillet volume dropped vs cube', payload.volume < 24000 - 10,
       `vol=${payload.volume}`);
     const mesh = payload?.mesh;
@@ -906,6 +907,29 @@ return part;
   } catch (e) {
     failed++;
     console.log(`  ❌ all-micro n=12 rim sweep builds — ${e.message}`);
+  }
+}
+
+// 8× oversize guard: scale cutter vertices ×4 against small nominal r so
+// removed > 8*expectVol. Sibling near-no-op is skipped via the same opt
+// (would otherwise throw first). Assert the upper-bound message.
+{
+  try {
+    await exec(`
+let part = Manifold.cube([40, 30, 20], true);
+const e = convexEdges(part)[0];
+const path = makeSweepPath([e]);
+part = filletAlongPath(part, path, 0.5, { _testCutterScale: 4 });
+return part;
+`);
+    failed++;
+    console.log('  ❌ 8× oversize cutter guard — expected throw');
+  } catch (e) {
+    check(
+      '8× oversize cutter guard',
+      /cutter far larger than requested radius/i.test(e.message || ''),
+      e.message,
+    );
   }
 }
 
