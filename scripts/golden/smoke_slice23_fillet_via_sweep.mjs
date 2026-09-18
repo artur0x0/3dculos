@@ -387,6 +387,10 @@ console.log('slice-23 fillet via sweep smoke');
   check('sweep modal default usable (default≥1)', rRim?.default != null && rRim.default >= 1,
     `default=${rRim?.default}`);
   check('sweep modal _blendSizeGuard false', resolvedRim.item?._blendSizeGuard === false);
+  check('sweep hard max scale-relative (not absolute 50)', rRim?.max != null && rRim.max < 50,
+    `max=${rRim?.max}`);
+  check('short-L hard max is floor not 50', sweepBlendHardMax(3.77) === 6,
+    `got ${sweepBlendHardMax(3.77)}`);
 
   // Blocking 1 — typed radius must survive Strategy→sweep confirm (not open-time planar max).
   // 6-edge coplanar loop opens auto→planar with small p.max; switch to sweep + type 6.
@@ -740,6 +744,53 @@ return part;
   } catch (e) {
     failed++;
     console.log(`  ❌ fillet-on-fillet sweep r=6 builds — ${e.message}`);
+  }
+}
+
+// All-micro closed rim n=12 @ r=6 — must stay clean (no decimate→triangle)
+{
+  try {
+    const payload = await exec(`
+let part = Manifold.cylinder(20, 10, 10, 12, true);
+const rim = convexEdges(part).filter((e) => {
+  const m = [(e.va[0]+e.vb[0])/2, (e.va[1]+e.vb[1])/2, (e.va[2]+e.vb[2])/2];
+  return Math.abs(m[2] - 10) < 0.5;
+});
+if (rim.length < 8) throw new Error('expected top rim, got ' + rim.length);
+const path = makeSweepPath(rim);
+if (!path.closed) throw new Error('rim should be closed');
+const before = part.volume();
+part = filletAlongPath(part, path, 6);
+const after = part.volume();
+if (!(after < before - 1)) throw new Error('volume did not drop: ' + before + ' → ' + after);
+return part;
+`);
+    check('all-micro n=12 rim sweep builds', Number.isFinite(payload?.volume) && payload.volume > 0,
+      `vol=${payload?.volume}`);
+    check('all-micro n=12 rim status NoError', payload?.status === 'NoError' || !payload?.status,
+      `status=${payload?.status}`);
+    const mesh = payload?.mesh;
+    if (mesh?.triVerts && mesh?.vertProperties) {
+      const np = mesh.numProp || 3;
+      const V = mesh.vertProperties;
+      const T = mesh.triVerts;
+      const nTri = T.length / 3;
+      let tiny = 0;
+      for (let ti = 0; ti < nTri; ti++) {
+        const i0 = T[ti * 3] * np, i1 = T[ti * 3 + 1] * np, i2 = T[ti * 3 + 2] * np;
+        const ax = V[i1] - V[i0], ay = V[i1 + 1] - V[i0 + 1], az = V[i1 + 2] - V[i0 + 2];
+        const bx = V[i2] - V[i0], by = V[i2 + 1] - V[i0 + 1], bz = V[i2 + 2] - V[i0 + 2];
+        const A = 0.5 * Math.hypot(ay * bz - az * by, az * bx - ax * bz, ax * by - ay * bx);
+        if (A < 1e-8) tiny++;
+      }
+      check('all-micro n=12 rim !isFilletSliverDirty', !isFilletSliverDirty(tiny, nTri),
+        `tiny=${tiny}/${nTri}`);
+    } else {
+      check('all-micro n=12 rim !isFilletSliverDirty', false, 'missing mesh');
+    }
+  } catch (e) {
+    failed++;
+    console.log(`  ❌ all-micro n=12 rim sweep builds — ${e.message}`);
   }
 }
 

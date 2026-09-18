@@ -3078,7 +3078,7 @@ function filletAlongPath(part, path, radius, opts = {}) {
 
   // Fillet-on-fillet: paths that follow a prior fillet rim mix long edges with
   // dense micro arcs. Sweeping the whole wire leaves jagged sheets — split into
-  // open long runs, or decimate an all-micro blend path. Recurse with _rawPath.
+  // open long runs (uniform all-micro fans stay as-is). Recurse with _rawPath.
   if (!opts._rawPath) {
     const plan = planFilletSweepPath(points, closed, radius);
     if (plan.mode === 'runs') {
