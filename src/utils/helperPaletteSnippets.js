@@ -11,7 +11,8 @@
  * Slice 21: crossSection plane+profile substrate (planar face → makeCrossSection).
  * Slice 22: sweepPath ordered wire from edge selection (makeSweepPath).
  * Slice 23: filletAlongPath — sweep fillet wedge along Path; Fillet Strategy=sweep (default) | planar.
- * Slice 24: contour-mode Profile region (markers + custom polyline points). Extrude solid is later.
+ * Slice 24: contour-mode Profile region (markers + custom polyline points).
+ * Slice 25: Extrude Confirm wraps profile + makeExtrude / placeOnFace in extrude markers.
  *
  * Sequential taps compose via composeHelperInsert:
  * strip one trailing `return part;`, insert body, re-append exactly one `return part;`.
@@ -32,6 +33,10 @@ import { resolveFilletStrategy } from './filletAlongPath.js';
 /** Slice 24 — in-mode Profile region so Confirm can replace without appending. */
 export const CONTOUR_PROFILE_BEGIN = '// --- contour-mode profile begin ---';
 export const CONTOUR_PROFILE_END = '// --- contour-mode profile end ---';
+
+/** Slice 25 — in-mode Extrude region (profile + solid). Second Confirm replaces this block. */
+export const CONTOUR_EXTRUDE_BEGIN = '// --- contour-mode extrude begin ---';
+export const CONTOUR_EXTRUDE_END = '// --- contour-mode extrude end ---';
 
 /** Metric fastener sizes commonly used in puzzles / hints. */
 export const FASTENER_SIZE_OPTIONS = [
@@ -854,8 +859,26 @@ export const HELPER_PALETTE_ITEMS = [
       }
       // Substrate only — named let for later edge→sweep / fillet / extrude slices.
       const profileLine = `const ${xs} = makeCrossSection(${fr}, ${profileExpr}); // plane+profile substrate`;
-      // Slice 24: wrap in-mode Profile so Confirm replaces the region (no Extrude).
-      if (p._contourMode) {
+      // Slice 25: Extrude Confirm — profile + makeExtrude placed on the workplane.
+      if (p._contourExtrude) {
+        const ext = p._contourExtrude;
+        const distance = num(ext.distance, 10);
+        const sense = str(ext.sense, 'positive');
+        let w = 0;
+        if (sense === 'negative') w = -distance;
+        else if (sense === 'both') w = -distance / 2;
+        w = +Number(w).toFixed(4);
+        const extrude = allocateUniqueName(names, 'extrude');
+        lines.push(CONTOUR_EXTRUDE_BEGIN);
+        lines.push(...wp.lines);
+        lines.push(profileLine);
+        lines.push(
+          `const ${extrude} = placeOnFace(part, ${xs}.plane, ({ put }) => put(makeExtrude(${xs}.contours, ${distance}), [0, 0, ${w}]));`,
+        );
+        lines.push(`part = part.add(${extrude});`);
+        lines.push(CONTOUR_EXTRUDE_END);
+      } else if (p._contourMode) {
+        // Slice 24: wrap in-mode Profile so Confirm replaces the region (no Extrude).
         lines.push(CONTOUR_PROFILE_BEGIN);
         lines.push(...wp.lines);
         lines.push(profileLine);
@@ -1284,18 +1307,20 @@ export const HELPER_PALETTE_ITEMS = [
     id: 'makeExtrude',
     label: 'Extrude',
     group: 'Transforms',
-    title: 'makeExtrude(contours, height)',
+    title: 'Extrude — contour mode (profile + makeExtrude on the workplane)',
     bodyBase: 'extrude',
     params: [
       { name: 'height', type: 'number', default: 10, label: 'Height', min: 0.1, step: 1 },
     ],
+    // UI always enters contour mode (Slice 24/25). This build is only the
+    // sequential-compose / golden fallback — not a one-shot hardcoded plate.
     build: (empty, p, names) => {
-      const extrude = allocateUniqueName(names, 'extrude');
       const h = num(p.height, 10);
+      const xs = allocateUniqueName(names, 'xs');
+      const extrude = allocateUniqueName(names, 'extrude');
       const lines = [
-        `let ${extrude} = makeExtrude([`,
-        '  [[-20, -15], [20, -15], [20, 15], [-20, 15]]',
-        `], ${h});`,
+        `const ${xs} = makeCrossSection({ center: [0, 0, 0], normal: [0, 0, 1], x: [1, 0, 0], y: [0, 1, 0] }, profileRectangle(40, 30, true));`,
+        `let ${extrude} = makeExtrude(${xs}.contours, ${h});`,
       ];
       if (empty || !names.has('part')) {
         const partName = allocateUniqueName(names, 'part');
