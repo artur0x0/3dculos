@@ -34,8 +34,8 @@ not allowed for puzzle vocabulary ops.
   curved-adjacent chains (post-fillet seams, circular rims as Path); metric +
   common UNC clearance/tap sizes below.
 - **Unsupported (planar `filletEdges`):** curved-face singleton fillets; open
-  (partial-arc) curved runs under C6. Use **Strategy=sweep** / `filletAlongPath`
-  instead. Still unsupported: concave “fillets” (adding material); variable-radius
+  (partial-arc) curved runs under C6. **Strategy=sweep** / `filletAlongPath` is
+  the default Fillet path. Still unsupported: concave “fillets” (adding material); variable-radius
   / rolling-ball industrial fillets; arbitrary non-table fastener sizes.
 
 Lookup helpers (also injected): `fastenerClearanceDia(size, fit?)`,
@@ -70,14 +70,12 @@ Without a selected face, palette v2 behavior is unchanged (default +Z
 Edge selection (open chain or closed loop). Consume with **Fillet → Strategy=sweep**
 (`filletAlongPath`) or `sweepPoints`.
 
-**Sweep fillet (Slice 23+):** same **Fillet** control — **Strategy=auto** (default)
-picks **sweep** vs **planar** from the edge set (adjacent-face normals fan into
->6 direction clusters → sweep; clean planar–planar stays planar). Manual
-**planar** / **sweep** still override. **planar** keeps `filletEdges`
-(planar–planar / closed-run C6); **sweep** builds `makeSweepPath` +
-`filletAlongPath` (quarter-circle or chamfer wedge swept as a **linear polyline**
-along the edge wire, boolean subtract). Soft-fails empty/disconnected/branched
-like Path.
+**Sweep fillet (Slice 23+):** same **Fillet** control — **Strategy=sweep** is the
+universal default (and **auto** resolves to sweep). **planar** is an explicit
+manual override for classic `filletEdges` (planar–planar / closed-run C6).
+**sweep** builds `makeSweepPath` + `filletAlongPath` (quarter-circle or chamfer
+wedge swept as a **linear polyline** along the edge wire, boolean subtract).
+Soft-fails empty/disconnected/branched like Path.
 
 **Cross-section (Slice 21):** palette **Profile** builds a reusable
 `makeCrossSection(plane, profile)` named let from a **planar** face
@@ -937,9 +935,10 @@ fit a circle use a **revolved meridian wedge** (C6-style, phase-locked to the
 tessellation). **Fillet-on-fillet / path on a prior blend:** keep the full wire,
 including tessellated micro rim arcs — do **not** skip those segments (skipping
 left a gap instead of wrapping the prior fillet). The quarter-circle / chamfer
-cutter origin is pushed into the exterior `(−e,−e)` so the boolean consumes
-coincident sliver sheets **without growing the requested blend** (realized
-first-quadrant extent stays at `r`).
+cutter origin is pushed into a rear exterior bumper `(−e,−e)` plus thickness-`e`
+strips so the boolean consumes coincident sliver sheets **without growing the
+requested blend** (realized first-quadrant extent stays at `r`). Mixed-radius /
+tighter follow-on sweeps use a deeper rear pad than the original 4%·r sliver.
 Disconnected cutter scraps are dropped via `decompose` when present.
 Loud-fail if the kept solid is still scrap-sheet dirty.
 
@@ -964,22 +963,18 @@ FEAT rail → **Fillet** → param popup:
 
 | Strategy | Emits | When |
 |---|---|---|
-| **auto** (default) | `filletEdges` or `makeSweepPath`+`filletAlongPath` | Heuristic from selection (see below) |
-| **planar** | `filletEdges(…)` | Force planar–planar / C6 closed-run; spherical corners |
-| **sweep** | `makeSweepPath` + `filletAlongPath` | Force curved-adjacent / Path-driven; optional chamfer profile |
-
-**Auto heuristic (brief):** sweep when adjacent-face normals fan into >6
-direction clusters (curved / tessellated walls; 8° bins). Clean planar–planar
-selections stay planar — edge count alone never forces sweep. Manual
-**Strategy** select always overrides.
+| **sweep** (default) | `makeSweepPath` + `filletAlongPath` | Universal fillet — opening Fillet without override |
+| **auto** | same as **sweep** | Kept for older sheets; always resolves to sweep |
+| **planar** | `filletEdges(…)` | Manual override for classic planar–planar / C6 closed-run |
 
 **Radius slider:** defaults / max / step use the **effective** min edge length
 (outliers dropped: short edges &lt;25% of median are ignored) so multi-edge /
 tangent sets are not stuck near r≈0.03. The **0.45·L size guard is planar-only**
-(`filletEdges` / Strategy=planar|auto→planar) — Strategy=sweep / `filletAlongPath`
+(`filletEdges` / Strategy=planar) — Strategy=sweep / `filletAlongPath`
 uses path-length defaults (e.g. r≈6 on box-scale perimeters) and does **not**
 clamp typed values under 0.45·L (tessellated prior-fillet rims would otherwise
-pin the slider near ~0.04).
+pin the slider near ~0.04). Opening Fillet without override uses the sweep
+slider (no 0.45·L clamp).
 
 Sweep mode shows the Path order/direction preview (green→magenta). Auto-Run
 unchanged. Keep using **Path** alone when you only need the wire value.

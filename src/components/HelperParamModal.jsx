@@ -131,7 +131,7 @@ const HelperParamModal = ({
     ? 'radius'
     : (params.some((p) => p.name === 'chamfer') ? 'chamfer' : null);
 
-  // Planar-only size guard. Strategy=sweep / auto→sweep / filletAlongPath must
+  // Planar-only size guard. Strategy=sweep (default / auto) / filletAlongPath must
   // not inherit the 0.45·L clamp (tessellated prior-fillet rims pin ~0.04).
   const hasStrategy = params.some((p) => p.name === 'strategy');
   const resolvedStrategy = hasStrategy

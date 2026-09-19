@@ -203,7 +203,7 @@ const HelperInsertPalette = ({
               });
               return;
             }
-            // Fillet Strategy=sweep (or auto→sweep) → same path preview as Path.
+            // Fillet Strategy=sweep (default / auto→sweep) → same path preview as Path.
             if (
               item?.id === 'filletEdges'
               && resolveFilletStrategy(values?.strategy, edgeSnapshot) === 'sweep'
@@ -241,7 +241,7 @@ const HelperInsertPalette = ({
               );
               return;
             }
-            // Fillet Strategy=sweep (or auto→sweep) soft-fails like Path.
+            // Fillet Strategy=sweep (default / auto→sweep) soft-fails like Path.
             if (id === 'filletEdges' && resolveFilletStrategy(params?.strategy, edgeCtx) === 'sweep') {
               const gate = canBuildFilletAlongPath(edgeCtx);
               if (!gate.ok) {

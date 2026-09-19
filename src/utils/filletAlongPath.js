@@ -8,7 +8,8 @@
  * centered at (r,r) — the material removed by a 90° external fillet. Chamfer:
  * triangle (0,0)-(c,0)-(0,c).
  *
- * Strategy=auto picks sweep vs planar from the edge set (manual override kept).
+ * Strategy default (and auto) is sweep — the universal fillet. Planar is an
+ * explicit manual override for classic filletEdges only.
  * Does NOT ship extrude/revolve/loft — wait for Product brief.
  */
 
@@ -16,7 +17,7 @@ import { assembleSweepPath } from './edgeSweepPath.js';
 export { SLIVER_MAX_ABS, SLIVER_MAX_FRAC, isFilletSliverDirty } from './filletSliverGuard.js';
 
 export const FILLET_SWEEP_EMPTY =
-  'Select edges first (Edge pick mode), then Fillet with Strategy=sweep (or Strategy=auto). Tangent-on chains work for circular rims.';
+  'Select edges first (Edge pick mode), then Fillet (Strategy=sweep by default). Tangent-on chains work for circular rims.';
 
 export const FILLET_SWEEP_DISCONNECTED =
   'Selected edges are disconnected — sweep fillet needs a single contiguous chain or loop (use Tangent for circular rims).';
@@ -139,77 +140,29 @@ export function normalizeFilletPath(path, opts = {}) {
 }
 
 
-function _dot3(a, b) {
-  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-}
-
 /**
- * Cluster unit-ish normals; count distinct directions within cosTol.
- * Many clusters ⇒ curved / compound face set (rim wall fans around).
- * @param {number[][]} normals
- * @param {number} cosTol
- */
-function _clusterNormals(normals, cosTol) {
-  const clusters = [];
-  for (const n of normals) {
-    if (!n || n.length < 3) continue;
-    const len = Math.hypot(n[0], n[1], n[2]) || 1;
-    const u = [n[0] / len, n[1] / len, n[2] / len];
-    let found = false;
-    for (const c of clusters) {
-      if (_dot3(c, u) >= cosTol) {
-        found = true;
-        break;
-      }
-    }
-    if (!found) clusters.push(u);
-  }
-  return clusters.length;
-}
-
-/**
- * Auto fillet strategy from selected edges.
- * Heuristic: curved-adjacent (normal fan) → sweep; clean planar–planar → planar.
- * Manual Strategy select overrides.
+ * Fillet strategy from selected edges.
+ * Sweep is the universal default — planar is never chosen automatically.
+ * Manual Strategy=planar still overrides via resolveFilletStrategy.
  *
- * Signals for sweep:
- * - adjacent-face normals fan into >6 direction clusters (curved / tessellated
- *   walls; 8° bins). Requires ≥4 normals collected from n0/n1.
- *
- * Clean multi-edge planar loops (box-like top + cardinal sides) stay planar —
- * edge count alone never forces sweep.
- *
- * @param {object[]|null|undefined} edges
+ * @param {object[]|null|undefined} _edges
  * @returns {'planar'|'sweep'}
  */
-export function pickFilletStrategy(edges) {
-  if (!Array.isArray(edges) || edges.length === 0) return 'planar';
-
-  const normals = [];
-  for (const e of edges) {
-    if (Array.isArray(e?.n0)) normals.push(e.n0);
-    if (Array.isArray(e?.n1)) normals.push(e.n1);
-  }
-  // 8° bins: tessellated cylinder wall fans into many clusters; a box top
-  // rectangle stays at ≤5 (top + 4 sides). Threshold >6 catches curved walls
-  // without flipping clean planar polygons to sweep.
-  const curvedFaces = normals.length >= 4
-    && _clusterNormals(normals, Math.cos((8 * Math.PI) / 180)) > 6;
-
-  if (curvedFaces) return 'sweep';
-  return 'planar';
+export function pickFilletStrategy(_edges) {
+  return 'sweep';
 }
 
 /**
- * Resolve Strategy select value: auto → heuristic; planar|sweep passthrough.
+ * Resolve Strategy select value: sweep is default; auto → sweep;
+ * planar is the only manual override (classic filletEdges).
  * @param {string|null|undefined} strategy
- * @param {object[]|null|undefined} edges
+ * @param {object[]|null|undefined} _edges
  * @returns {'planar'|'sweep'}
  */
-export function resolveFilletStrategy(strategy, edges) {
-  const s = String(strategy || 'auto').toLowerCase();
-  if (s === 'planar' || s === 'sweep') return s;
-  return pickFilletStrategy(edges);
+export function resolveFilletStrategy(strategy, _edges) {
+  const s = String(strategy || 'sweep').toLowerCase();
+  if (s === 'planar') return 'planar';
+  return 'sweep';
 }
 
 /**
@@ -282,15 +235,15 @@ export function planFilletSweepPath(points) {
   return { mode: 'as-is' };
 }
 
-/** Fraction of radius used as exterior boolean-fuzz (does not grow Q1 extent). */
-export const FILLET_SWEEP_EXPAND_FRAC = 0.04;
-/** Floor so tiny radii still get a boolean-fuzz overlap (mm). Size-neutral. */
-export const FILLET_SWEEP_EXPAND_MIN = 0.08;
-/** Cap on exterior overlap (mm). Size-neutral — does not redefine fillet r. */
-export const FILLET_SWEEP_EXPAND_MAX = 0.30;
+/** Fraction of radius used as exterior / rear boolean-fuzz (does not grow Q1 extent). */
+export const FILLET_SWEEP_EXPAND_FRAC = 0.15;
+/** Floor so tiny / tighter follow-on radii still get a rear overlap (mm). Size-neutral. */
+export const FILLET_SWEEP_EXPAND_MIN = 0.30;
+/** Cap on exterior / rear overlap (mm). Size-neutral — does not redefine fillet r. */
+export const FILLET_SWEEP_EXPAND_MAX = 1.20;
 
 /**
- * Exterior overlap margin for the sweep cutter origin (−e,−e).
+ * Exterior / rear overlap margin for the sweep cutter (−e,−e) family.
  * Decoupled from blend size: first-quadrant extent stays at requested r.
  * @param {number} radius
  * @returns {number}
@@ -315,13 +268,14 @@ export function filletSweepCutterExpand(radius) {
  *
  * Size-neutral boolean robustness: keep every first-quadrant vertex at the
  * requested r (realized blend extent = requested r) and replace the origin
- * with (−e,−e). Extra cutter lives in empty space past the crease so the
- * legs are not coplanar-coincident with the faces. Uniform Q1 scale is not
- * used — it only redefined requested r (absolute floor on `e` binds for
- * r < 2: at UI min r=0.01, s=(r+e)/r → realized 0.09 = 9×).
+ * with a rear bumper in the (−e,−e) family: (−e,−e) plus thickness-e strips
+ * in Q2/Q4. Extra cutter lives in empty space past the crease so the legs
+ * are not coplanar-coincident with the faces — mixed-radius / tighter
+ * follow-on sweeps need a deeper rear pad than the original 4%·r sliver.
+ * Uniform Q1 scale is not used — it only redefined requested r.
  *
- * (−e,−e) is an unvalidated boolean-robustness margin: kept because legs
- * must not coplanar-coincide with faces, and as the origin vertex (the
+ * (−e,−e) family is an unvalidated boolean-robustness margin: kept because
+ * legs must not coplanar-coincide with faces, and as the origin vertex (the
  * (0,0) corner is skipped so this must replace it or the contour
  * collapses). Size-neutral. It is not proven load-bearing by the rim
  * fIn net — that net is a gap detector on the whole rim sphere and
@@ -343,7 +297,7 @@ export function expandFilletCutterContour(contour, radius) {
   if (!(e > 0) || !(r > 0) || !Number.isFinite(r)) {
     return contour.map((p) => [Number(p[0]), Number(p[1])]);
   }
-  const out = [];
+  const q1 = [];
   for (const p of contour) {
     const u = Number(p[0]);
     const v = Number(p[1]);
@@ -351,9 +305,15 @@ export function expandFilletCutterContour(contour, radius) {
       throw new Error('expandFilletCutterContour: non-finite vertex');
     }
     if (Math.abs(u) < 1e-15 && Math.abs(v) < 1e-15) continue;
-    out.push([u, v]);
+    q1.push([u, v]);
   }
-  out.unshift([-e, -e]);
+  if (q1.length < 2) {
+    throw new Error('expandFilletCutterContour: contour collapsed');
+  }
+  // Rear bumper: Q3 origin + Q4/Q2 strips of thickness e. Q1 stays at r.
+  const uMax = Math.max(...q1.map((p) => p[0]));
+  const vMax = Math.max(...q1.map((p) => p[1]));
+  const out = [[-e, -e], [uMax, -e], ...q1, [-e, vMax]];
   if (out.length < 3) {
     throw new Error('expandFilletCutterContour: contour collapsed');
   }
