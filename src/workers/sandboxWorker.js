@@ -9,7 +9,7 @@ import {
   resolveFastenerSize,
 } from './fastenerSizes.js';
 import { isFilletSliverDirty } from '../utils/filletSliverGuard.js';
-import { planFilletSweepPath } from '../utils/filletAlongPath.js';
+import { expandFilletCutterContour, planFilletSweepPath } from '../utils/filletAlongPath.js';
 
 /**
  * List of globals to block/remove in the worker context
@@ -2946,7 +2946,10 @@ function _s23TryRevolveCutter(CrossSection, points, radius, profileKind, arcSegs
   // Ensure first-quadrant wedge maps into the solid (both axes point "inward")
   // If either axis points outward in ρ, flip.
   // Place wedge origin at (R, 0) in a local meridian where z'=0 at the rim.
-  const wedge = _s23WedgeContour(radius, profileKind, arcSegs);
+  const wedge = expandFilletCutterContour(
+    _s23WedgeContour(radius, profileKind, arcSegs),
+    radius,
+  );
   const mapped = [];
   for (const [u, v] of wedge) {
     // (ρ, z_rel) = (R,0) + u*f0_2d + v*f1_2d
@@ -3066,6 +3069,8 @@ function _s23PolylinePath(points, closed) {
  * @param {boolean} [opts.closed] — when path is bare points[]
  * @param {number} [opts.arcSamples]
  * @param {number} [opts.extrudeSegments]
+ * @param {number} [opts._testCutterScale] — test-only: scale 2D cutter vertices
+ *   (e.g. 4) against nominal r so the 8× oversize guard can be pinned
  */
 function filletAlongPath(part, path, radius, opts = {}) {
   const M = manifoldModule.Manifold;
@@ -3076,9 +3081,9 @@ function filletAlongPath(part, path, radius, opts = {}) {
   const arcSegs = opts.segments != null ? opts.segments : 12;
   let { points, closed, length } = _s23NormalizePath(path, opts);
 
-  // Fillet-on-fillet: paths that follow a prior fillet rim mix long edges with
-  // dense micro arcs. Sweeping the whole wire leaves jagged sheets — split into
-  // open long runs (uniform all-micro fans stay as-is). Recurse with _rawPath.
+  // Sweep-path policy seam (planFilletSweepPath): keep the full wire.
+  // If a future planner returns mode:'runs' (PR #27 skip-micro), honor it so
+  // the fillet-on-fillet gap net still mutation-tests that regression.
   if (!opts._rawPath) {
     const plan = planFilletSweepPath(points, closed, radius);
     if (plan.mode === 'runs') {
@@ -3088,6 +3093,9 @@ function filletAlongPath(part, path, radius, opts = {}) {
         out = filletAlongPath(out, { kind: 'sweepPath', points: run, closed: false }, radius, subOpts);
       }
       return out;
+    }
+    if (plan.mode !== 'as-is') {
+      throw new Error(`filletAlongPath: unexpected sweep-path plan mode=${plan.mode}`);
     }
   }
 
@@ -3142,22 +3150,27 @@ function filletAlongPath(part, path, radius, opts = {}) {
     );
   }
 
-  const contour = _s23WedgeContour(radius, profileKind, arcSegs);
-  // Ensure CCW
+  const testCutterScale = Number(opts._testCutterScale);
+  const testingOversize = Number.isFinite(testCutterScale) && testCutterScale > 1;
+
+  const contour = expandFilletCutterContour(
+    _s23WedgeContour(radius, profileKind, arcSegs),
+    radius,
+  );
+  if (testingOversize) {
+    for (const p of contour) {
+      p[0] *= testCutterScale;
+      p[1] *= testCutterScale;
+    }
+  }
+  // Ensure CCW. Exterior (−e,−e) overlap (not skip-micro, not a radius grow)
+  // provides the boolean margin so cutter legs are not face-coincident.
   let area2 = 0;
   for (let i = 0; i < contour.length; i++) {
     const a = contour[i], b = contour[(i + 1) % contour.length];
     area2 += a[0] * b[1] - b[0] * a[1];
   }
   if (area2 < 0) contour.reverse();
-
-  // Slightly extend the wedge past the edge origin into the exterior so the
-  // boolean is not tangent-coincident (classic sliver source). Profile stays
-  // first-quadrant dominant; a tiny (-eps,-eps) corner overlaps the crease.
-  const eps = Math.min(0.02 * radius, 0.05);
-  if (eps > 1e-9) {
-    contour.unshift([-eps, -eps]);
-  }
 
   const cs = new CrossSection([contour]);
   // Mobile-friendly sampling: scale with path complexity, capped.
@@ -3190,7 +3203,8 @@ function filletAlongPath(part, path, radius, opts = {}) {
   }
 
   let cutter = null;
-  if (closed) {
+  // Skip revolve fast-path when pinning an oversized sweep cutter.
+  if (closed && !testingOversize) {
     try {
       cutter = _s23TryRevolveCutter(CrossSection, points, radius, profileKind, arcSegs, probed);
     } catch (e) {
@@ -3237,16 +3251,27 @@ function filletAlongPath(part, path, radius, opts = {}) {
       + '(wrong orientation / path). Try reversing the path or pass opts.initialNormal.',
     );
   }
-  // Sanity: removed should not exceed cutter (overlap) by a huge margin of nonsense,
-  // and should be at least a small fraction of expected wedge·length for 90° cases.
+  // Sanity vs expected wedge·length for 90° cases: near-no-op (orientation
+  // miss) AND oversize cutter (requested r silently redefined). The upper
+  // bound is against expectVol, not cutterVol — difference cannot exceed
+  // cutter volume geometrically, so a cutter-vs-removed check would not
+  // catch a uniformly scaled wedge.
   const expectArea = profileKind === 'chamfer'
     ? 0.5 * radius * radius
     : radius * radius * (1 - Math.PI / 4);
   const expectVol = expectArea * length;
-  if (expectVol > 1e-3 && removed < 0.02 * expectVol) {
+  // Neutralise near-no-op when pinning the sibling 8× oversize guard —
+  // a coordinated oversize probe would otherwise throw here first.
+  if (!testingOversize && expectVol > 1e-3 && removed < 0.02 * expectVol) {
     throw new Error(
       `filletAlongPath: removed only ${removed.toFixed(4)} vs expected ~${expectVol.toFixed(4)} `
       + '(orientation/overlap failure) — failing loud rather than shipping a near-no-op solid',
+    );
+  }
+  if (expectVol > 1e-3 && removed > 8 * expectVol) {
+    throw new Error(
+      `filletAlongPath: removed ${removed.toFixed(4)} vs expected ~${expectVol.toFixed(4)} `
+      + '(cutter far larger than requested radius) — failing loud rather than shipping an oversized blend',
     );
   }
   // Drop disconnected cutter scraps (thin purple sheets) via decompose —

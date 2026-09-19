@@ -27,6 +27,11 @@ import {
   pickFilletStrategy,
   resolveFilletStrategy,
   planFilletSweepPath,
+  expandFilletCutterContour,
+  filletSweepCutterExpand,
+  FILLET_SWEEP_EXPAND_FRAC,
+  FILLET_SWEEP_EXPAND_MIN,
+  FILLET_SWEEP_EXPAND_MAX,
   FILLET_SWEEP_EMPTY,
   FILLET_SWEEP_DISCONNECTED,
   FILLET_SWEEP_BRANCH,
@@ -494,7 +499,9 @@ console.log('slice-23 fillet via sweep smoke');
   check('pathLengthFromEdges va/vb fallback', plenFallback != null && Math.abs(plenFallback - 7) < 1e-9,
     `got ${plenFallback}`);
 
-  // Blocking 2 — planFilletSweepPath: uniform closed rim must NOT decimate-to-triangle.
+  // Blocking 2 — planFilletSweepPath: never drop micro rim arcs (PR #27 skip
+  // left fillet-on-fillet gaps). Uniform closed rims and mixed long+micro both
+  // stay as-is; empty input is a distinct branch (pins must be able to fail).
   const unitRimPts = [];
   for (let i = 0; i < 12; i++) {
     const ang = (i / 12) * Math.PI * 2;
@@ -503,13 +510,76 @@ console.log('slice-23 fillet via sweep smoke');
   const planRim = planFilletSweepPath(unitRimPts, true, 6);
   check('uniform closed rim plan as-is (no decimate)', planRim.mode === 'as-is',
     `mode=${planRim.mode} pts=${planRim.points?.length}`);
-  // Mixed long+micro → runs (intended fillet-on-fillet case)
   const mixedPts = [
     [0, 0, 0], [10, 0, 0], [10.05, 0, 0], [10.1, 0, 0], [20, 0, 0],
   ];
   const planMixed = planFilletSweepPath(mixedPts, false, 1);
-  check('mixed long+micro plan runs', planMixed.mode === 'runs',
+  check('mixed long+micro plan as-is (do not skip micro rim)', planMixed.mode === 'as-is',
     `mode=${planMixed.mode}`);
+  const planEmpty = planFilletSweepPath([], true, 1);
+  check('empty points plan mode=empty (distinct from as-is)', planEmpty.mode === 'empty',
+    `mode=${planEmpty.mode}`);
+  const planShort = planFilletSweepPath([[0, 0, 0]], false, 1);
+  check('single-point plan mode=empty', planShort.mode === 'empty',
+    `mode=${planShort.mode}`);
+
+  // Cutter boolean-fuzz: origin into exterior; Q1 extent stays at requested r.
+  {
+    const e6 = filletSweepCutterExpand(6);
+    check('expand(6) is 4%·r (0.24)', Math.abs(e6 - 0.24) < 1e-12, `got ${e6}`);
+    check('expand floor on tiny r', filletSweepCutterExpand(0.5) === FILLET_SWEEP_EXPAND_MIN);
+    check('expand cap on huge r', filletSweepCutterExpand(100) === FILLET_SWEEP_EXPAND_MAX);
+    check('expand frac constant', FILLET_SWEEP_EXPAND_FRAC === 0.04);
+    const w = filletWedgeContour(6, 8);
+    const ex = expandFilletCutterContour(w, 6);
+    check('expanded wedge origin in exterior', ex[0][0] < 0 && ex[0][1] < 0,
+      `p0=${ex[0]}`);
+    check('expanded origin is (−e,−e)',
+      Math.abs(ex[0][0] + e6) < 1e-12 && Math.abs(ex[0][1] + e6) < 1e-12,
+      `p0=${ex[0]} e=${e6}`);
+    check('expanded wedge (r,0) leg stays at requested r',
+      ex.some((p) => Math.abs(p[1]) < 1e-9 && Math.abs(p[0] - 6) < 1e-9),
+      `pts=${JSON.stringify(ex.slice(0, 3))}`);
+    const last = ex[ex.length - 1];
+    check('expanded wedge (0,r) leg stays at requested r',
+      last[0] < 1e-9 && Math.abs(last[1] - 6) < 1e-9,
+      `last=${last}`);
+    const ext6 = Math.max(...ex.map((p) => Math.max(p[0], p[1])));
+    check('realised blend within 5% of requested r=6', ext6 <= 6 * 1.05, `ext=${ext6}`);
+    let area0 = 0, area1 = 0;
+    for (let i = 0; i < w.length; i++) {
+      const a = w[i], b = w[(i + 1) % w.length];
+      area0 += a[0] * b[1] - b[0] * a[1];
+    }
+    for (let i = 0; i < ex.length; i++) {
+      const a = ex[i], b = ex[(i + 1) % ex.length];
+      area1 += a[0] * b[1] - b[0] * a[1];
+    }
+    // Exterior triangle adds area; Q1 extent must not. Area pin is the
+    // (−e,−e) overlap, not a radius grow.
+    check('expanded wedge area grows from exterior overlap', Math.abs(area1) > Math.abs(area0),
+      `a0=${area0} a1=${area1}`);
+    check('expanded wedge Q1 extent not grown', ext6 <= 6 + 1e-12, `ext=${ext6}`);
+  }
+
+  const REALISED_RS = [0.01, 0.02, 0.05, 0.1, 0.5, 1, 2, 6, 20, 10000];
+  for (const kind of ['fillet', 'chamfer']) {
+    for (const r of REALISED_RS) {
+      const w = kind === 'chamfer' ? chamferWedgeContour(r) : filletWedgeContour(r, 8);
+      const ex = expandFilletCutterContour(w, r);
+      const ext = Math.max(...ex.map((p) => Math.max(p[0], p[1])));
+      check(
+        `realised blend within 5% of requested r=${r} (${kind})`,
+        ext <= r * 1.05,
+        `ext=${ext}`,
+      );
+      check(
+        `exterior origin (−e,−e) r=${r} (${kind})`,
+        ex[0][0] < 0 && ex[0][1] < 0,
+        `p0=${ex[0]}`,
+      );
+    }
+  }
 }
 
 
@@ -711,7 +781,8 @@ return part;
 }
 
 // Fillet-on-fillet: vertical planar fillets then sweep top perimeter @ r=6
-// (path includes tessellated prior-fillet arcs — must stay clean, no scraps)
+// (path includes tessellated prior-fillet arcs — must WRAP them: blend present,
+// no gap, no leftover sliver sheets).
 {
   try {
     const payload = await exec(`
@@ -729,16 +800,44 @@ const top = convexEdges(part).filter((e) => {
 });
 if (top.length < 4) throw new Error('need top edges after fillet, got ' + top.length);
 const path = makeSweepPath(top);
+if (path.points.length < 8) throw new Error('perimeter should include prior-fillet arcs, pts=' + path.points.length);
 const v0 = part.volume();
 part = filletAlongPath(part, path, 6);
 const v1 = part.volume();
 if (!(v1 < v0 - 10)) throw new Error('fillet-on-fillet r=6 did not remove volume');
+// Blend-present: old top-of-vertical-fillet rim at +x+y must be consumed.
+// Cube 40×30×20 centered; vertical r=4 → quarter-cyl center (16,11), z=10.
+const cx = 20 - 4, cy = 15 - 4, cz = 10;
+const k = Math.SQRT1_2;
+const px = cx + 4 * k, py = cy + 4 * k;
+const leftover = convexEdges(part).filter((e) => {
+  const m = [(e.va[0]+e.vb[0])/2, (e.va[1]+e.vb[1])/2, (e.va[2]+e.vb[2])/2];
+  return Math.abs(m[2] - cz) < 0.35
+    && Math.hypot(m[0] - px, m[1] - py) < 2.5
+    && e.length < 1.5;
+});
+if (leftover.length >= 2) {
+  throw new Error('fillet-on-fillet gap: ' + leftover.length + ' micro rim edges remain at prior fillet');
+}
+const probeR = 1.0;
+const sp = Manifold.sphere(probeR, 18, 10).translate([px, py, cz]);
+const fIn = Manifold.intersection(part, sp).volume() / sp.volume();
+if (fIn > 0.18) {
+  throw new Error('fillet-on-fillet gap: prior-fillet rim still occupied fIn=' + fIn.toFixed(3));
+}
 return part;
 `);
     check('fillet-on-fillet sweep r=6 builds', Number.isFinite(payload?.volume) && payload.volume > 0,
       `vol=${payload?.volume}`);
     check('fillet-on-fillet status NoError', payload?.status === 'NoError' || !payload?.status,
       `status=${payload?.status}`);
+    // Volume dropped vs the unfilleted 40×30×20 cube (24000) across the
+    // whole script (vertical r=4 + top sweep r=6). Does not isolate the
+    // sweep: a no-op top sweep still passes because vertical r=4 already
+    // took the cube below 24000-10. Sweep-delta coverage is the in-worker
+    // throw (`v1 < v0 - 10`) in the exec above.
+    check('fillet-on-fillet volume dropped vs cube', payload.volume < 24000 - 10,
+      `vol=${payload.volume}`);
     const mesh = payload?.mesh;
     if (mesh?.triVerts && mesh?.vertProperties) {
       const np = mesh.numProp || 3;
@@ -808,6 +907,29 @@ return part;
   } catch (e) {
     failed++;
     console.log(`  ❌ all-micro n=12 rim sweep builds — ${e.message}`);
+  }
+}
+
+// 8× oversize guard: scale cutter vertices ×4 against small nominal r so
+// removed > 8*expectVol. Sibling near-no-op is skipped via the same opt
+// (would otherwise throw first). Assert the upper-bound message.
+{
+  try {
+    await exec(`
+let part = Manifold.cube([40, 30, 20], true);
+const e = convexEdges(part)[0];
+const path = makeSweepPath([e]);
+part = filletAlongPath(part, path, 0.5, { _testCutterScale: 4 });
+return part;
+`);
+    failed++;
+    console.log('  ❌ 8× oversize cutter guard — expected throw');
+  } catch (e) {
+    check(
+      '8× oversize cutter guard',
+      /cutter far larger than requested radius/i.test(e.message || ''),
+      e.message,
+    );
   }
 }
 

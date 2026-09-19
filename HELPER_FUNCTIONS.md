@@ -934,10 +934,12 @@ return part;
 **Path / cutter:** open chains sweep the wedge along a **linear polyline** of the
 edge wire (not Catmull-Rom — spline bulge left purple scraps). Closed paths that
 fit a circle use a **revolved meridian wedge** (C6-style, phase-locked to the
-tessellation). **Fillet-on-fillet / path on a prior blend:** dense micro-segments
-from a tessellated fillet rim are split into open long runs; uniform all-micro
-fans sweep un-decimated (the revolve fast-path keeps full tessellation) so the
-sweep stays clean — never leave jagged sheets.
+tessellation). **Fillet-on-fillet / path on a prior blend:** keep the full wire,
+including tessellated micro rim arcs — do **not** skip those segments (skipping
+left a gap instead of wrapping the prior fillet). The quarter-circle / chamfer
+cutter origin is pushed into the exterior `(−e,−e)` so the boolean consumes
+coincident sliver sheets **without growing the requested blend** (realized
+first-quadrant extent stays at `r`).
 Disconnected cutter scraps are dropped via `decompose` when present.
 Loud-fail if the kept solid is still scrap-sheet dirty.
 

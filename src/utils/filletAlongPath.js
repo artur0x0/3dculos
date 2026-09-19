@@ -254,58 +254,102 @@ export function chamferWedgeArea(c) {
 }
 
 /**
- * Fillet-on-fillet / path-on-blend prep (shared by sandboxWorker + goldens).
- * Tessellated prior-fillet rims are dense micro-segments. Sweeping the full
- * closed wire (straights + micro arcs) leaves jagged sheets; sweeping only the
- * significant open runs is clean. Uniform all-micro fans sweep un-decimated so
- * the revolve fast-path keeps full tessellation.
+ * Sweep-path policy for filletAlongPath (sandboxWorker + goldens).
+ *
+ * PR #27 skipped tessellated prior-fillet micro-arcs (mixed long+micro → open
+ * long runs only). That left a gap instead of wrapping the prior blend.
+ * Always keep the full wire — including micro rim arcs. Slivers are consumed
+ * by a size-neutral exterior overlap on the cutter (`expandFilletCutterContour`),
+ * not by dropping path segments.
+ *
+ * sandboxWorker calls this (still passing closed/radius so a skip-micro
+ * paste-back receives them) and honors `mode:'runs'` if a future planner
+ * returns it — that is the skip-micro regression the fillet-on-fillet gap
+ * net mutation-tests. Current policy never returns `runs`. Signature is
+ * `(points)` — wrap does not split on closed/radius.
  *
  * @param {number[][]} points
- * @param {boolean} closed
- * @param {number} radius
- * @returns {{ mode:'as-is' }
- *   | { mode:'runs', runs:number[][][] }}
+ * @returns {{ mode:'as-is' } | { mode:'empty' }}
  */
-export function planFilletSweepPath(points, closed, radius) {
-  const n = points.length;
-  if (n < 2) return { mode: 'as-is' };
-  const segCount = closed ? n : n - 1;
-  if (segCount < 2) return { mode: 'as-is' };
-  const lens = [];
-  for (let i = 0; i < segCount; i++) {
-    const a = points[i];
-    const b = points[(i + 1) % n];
-    lens.push(Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]));
-  }
-  const sorted = lens.slice().sort((a, b) => a - b);
-  const med = sorted[Math.floor(sorted.length / 2)] || 0;
-  const rNum = Number(radius);
-  const rTerm = Number.isFinite(rNum) ? 0.15 * rNum : 0;
-  const thr = Math.max(0.25 * med, rTerm, 1e-3);
-  let nMicro = 0;
-  let nLong = 0;
-  for (const L of lens) {
-    if (L < thr) nMicro++;
-    else nLong++;
-  }
-  // Mixed: long straights + micro arcs on prior fillet — fillet long runs only.
-  if (nLong >= 1 && nMicro >= 2) {
-    const runs = [];
-    let cur = [];
-    const pushRun = () => {
-      if (cur.length >= 2) runs.push(cur);
-      cur = [];
-    };
-    for (let i = 0; i < segCount; i++) {
-      if (lens[i] >= thr) {
-        if (cur.length === 0) cur.push(points[i].slice());
-        cur.push(points[(i + 1) % n].slice());
-      } else {
-        pushRun();
-      }
-    }
-    pushRun();
-    if (runs.length >= 1) return { mode: 'runs', runs };
-  }
+export function planFilletSweepPath(points) {
+  if (!Array.isArray(points) || points.length < 2) return { mode: 'empty' };
   return { mode: 'as-is' };
+}
+
+/** Fraction of radius used as exterior boolean-fuzz (does not grow Q1 extent). */
+export const FILLET_SWEEP_EXPAND_FRAC = 0.04;
+/** Floor so tiny radii still get a boolean-fuzz overlap (mm). Size-neutral. */
+export const FILLET_SWEEP_EXPAND_MIN = 0.08;
+/** Cap on exterior overlap (mm). Size-neutral — does not redefine fillet r. */
+export const FILLET_SWEEP_EXPAND_MAX = 0.30;
+
+/**
+ * Exterior overlap margin for the sweep cutter origin (−e,−e).
+ * Decoupled from blend size: first-quadrant extent stays at requested r.
+ * @param {number} radius
+ * @returns {number}
+ */
+export function filletSweepCutterExpand(radius) {
+  const r = Number(radius);
+  if (!(r > 0) || !Number.isFinite(r)) return 0;
+  return Math.min(
+    FILLET_SWEEP_EXPAND_MAX,
+    Math.max(FILLET_SWEEP_EXPAND_MIN, FILLET_SWEEP_EXPAND_FRAC * r),
+  );
+}
+
+/**
+ * Boolean-fuzz a fillet/chamfer wedge so cutter legs are not
+ * tangent-coincident with the part faces.
+ *
+ * Mechanism: the nominal wedge legs (0,0)→(r,0) and (0,0)→(0,r) lie ON the
+ * two adjacent faces. Manifold CSG on coincident surfaces can leave sliver
+ * sheets — worse when the path includes tessellated prior-fillet micro-arcs
+ * (chordal RMF frames sitting near-tangent to the old cylinder).
+ *
+ * Size-neutral boolean robustness: keep every first-quadrant vertex at the
+ * requested r (realized blend extent = requested r) and replace the origin
+ * with (−e,−e). Extra cutter lives in empty space past the crease so the
+ * legs are not coplanar-coincident with the faces. Uniform Q1 scale is not
+ * used — it only redefined requested r (absolute floor on `e` binds for
+ * r < 2: at UI min r=0.01, s=(r+e)/r → realized 0.09 = 9×).
+ *
+ * (−e,−e) is an unvalidated boolean-robustness margin: kept because legs
+ * must not coplanar-coincide with faces, and as the origin vertex (the
+ * (0,0) corner is skipped so this must replace it or the contour
+ * collapses). Size-neutral. It is not proven load-bearing by the rim
+ * fIn net — that net is a gap detector on the whole rim sphere and
+ * cannot certify pad / coincident slivers. The same net still catches
+ * path truncation / skip-micro (M6), separately from the pad.
+ *
+ * Pure 2D — no Manifold.
+ *
+ * @param {number[][]} contour  wedge from filletWedgeContour / chamferWedgeContour
+ * @param {number} radius
+ * @returns {number[][]}
+ */
+export function expandFilletCutterContour(contour, radius) {
+  if (!Array.isArray(contour) || contour.length < 3) {
+    throw new Error('expandFilletCutterContour: need a wedge (≥3 pts)');
+  }
+  const e = filletSweepCutterExpand(radius);
+  const r = Number(radius);
+  if (!(e > 0) || !(r > 0) || !Number.isFinite(r)) {
+    return contour.map((p) => [Number(p[0]), Number(p[1])]);
+  }
+  const out = [];
+  for (const p of contour) {
+    const u = Number(p[0]);
+    const v = Number(p[1]);
+    if (!Number.isFinite(u) || !Number.isFinite(v)) {
+      throw new Error('expandFilletCutterContour: non-finite vertex');
+    }
+    if (Math.abs(u) < 1e-15 && Math.abs(v) < 1e-15) continue;
+    out.push([u, v]);
+  }
+  out.unshift([-e, -e]);
+  if (out.length < 3) {
+    throw new Error('expandFilletCutterContour: contour collapsed');
+  }
+  return out;
 }
