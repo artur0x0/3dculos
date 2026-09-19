@@ -144,22 +144,22 @@ export function normalizeFilletPath(path, opts = {}) {
  * Fillet strategy from selected edges.
  * Sweep is the universal default — planar is never chosen automatically.
  * Manual Strategy=planar still overrides via resolveFilletStrategy.
+ * Extra args (edge set) are ignored — kept so call sites stay stable.
  *
- * @param {object[]|null|undefined} _edges
  * @returns {'planar'|'sweep'}
  */
-export function pickFilletStrategy(_edges) {
+export function pickFilletStrategy() {
   return 'sweep';
 }
 
 /**
  * Resolve Strategy select value: sweep is default; auto → sweep;
  * planar is the only manual override (classic filletEdges).
+ * Extra args (edge set) are ignored — kept so call sites stay stable.
  * @param {string|null|undefined} strategy
- * @param {object[]|null|undefined} _edges
  * @returns {'planar'|'sweep'}
  */
-export function resolveFilletStrategy(strategy, _edges) {
+export function resolveFilletStrategy(strategy) {
   const s = String(strategy || 'sweep').toLowerCase();
   if (s === 'planar') return 'planar';
   return 'sweep';

@@ -692,12 +692,10 @@ export const HELPER_PALETTE_ITEMS = [
       const body = resolveBody(p, names, empty ? lines.join('\n') : buffer);
       const r = num(p.radius, 3);
       // Sweep is the universal default (and auto). Planar is manual override.
-      // Script-style inserts with no picked wire stay classic filletEdges.
+      // No picked wire → classic filletEdges (script-style / all-convex / face scope).
       const hasPicked = Array.isArray(edgeCtx) && edgeCtx.length > 0;
-      const requested = p.strategy != null
-        ? str(p.strategy, 'sweep')
-        : (hasPicked ? 'sweep' : 'planar');
-      const strategy = resolveFilletStrategy(requested, edgeCtx);
+      let strategy = resolveFilletStrategy(p.strategy != null ? str(p.strategy, 'sweep') : 'sweep');
+      if (strategy === 'sweep' && !hasPicked) strategy = 'planar';
       // Strategy=sweep → makeSweepPath + filletAlongPath (curved-adjacent OK).
       // Strategy=planar → classic filletEdges for planar–planar edges.
       if (strategy === 'sweep') {
