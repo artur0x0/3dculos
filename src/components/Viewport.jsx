@@ -12,6 +12,9 @@ import {
   MeshLambertMaterial,
   MeshNormalMaterial,
   MeshBasicMaterial,
+  PlaneGeometry,
+  DoubleSide,
+  Quaternion,
   BufferGeometry,
   BufferAttribute,
   Raycaster,
@@ -35,8 +38,23 @@ import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import Toolbar from './Toolbar';
 import CrossSectionPanel from './CrossSectionPanel';
 import HelperInsertPalette from './HelperInsertPalette';
+import ContourModeRail from './ContourModeRail';
+import ContourModeChip from './ContourModeChip';
 import { classifySelectedFace } from '../utils/faceFeaturePlacement';
 import { buildCrossSectionPreview } from '../utils/crossSectionSubstrate';
+import {
+  buildContourPreview,
+  enterContourState,
+  intersectRayPlane,
+  planeFromContourFace,
+  resolveContourWorkplane,
+  switchContourTool,
+  toolToProfileParams,
+  validateContourProfile,
+  worldToPlaneUV,
+  workplaneOverlaySize,
+  workplaneQuadCorners,
+} from '../utils/contourMode';
 import { buildSweepPathPreview } from '../utils/edgeSweepPath';
 import {
   buildFeatureEdges,
@@ -117,6 +135,7 @@ const Viewport = forwardRef(({
   gameBestTimeMs = null,
   isMobile = false,
   onInsertHelper = null,
+  onCommitContourProfile = null,
   getHelperBuffer = null,
 }, ref) => {
   const canvasRef = useRef(null);
@@ -168,6 +187,14 @@ const Viewport = forwardRef(({
   const edgeModeToastShownRef = useRef(false);
   const edgeModeToastTimerRef = useRef(null);
   const [edgeModeToast, setEdgeModeToast] = useState(null);
+  /** Slice 24: contour-mode shell (Profile-in-mode; no Extrude commit). */
+  const [contourMode, setContourMode] = useState(null);
+  const contourModeRef = useRef(null);
+  const workplaneOverlayRef = useRef(null);
+  const polylineDraftRef = useRef(null);
+  const contourGhostMatsRef = useRef(null);
+  const [contourToast, setContourToast] = useState(null);
+  const contourToastTimerRef = useRef(null);
   /** G1 tangent chain propagation for Edge pick — ON by default (circular / fillet loops). */
   const [tangentProp, setTangentProp] = useState(true);
   const tangentPropRef = useRef(true);
@@ -178,6 +205,17 @@ const Viewport = forwardRef(({
       edgeModeToastTimerRef.current = null;
       setEdgeModeToast(null);
     }, 2800);
+  };
+  const armContourToastClear = () => {
+    if (contourToastTimerRef.current) clearTimeout(contourToastTimerRef.current);
+    contourToastTimerRef.current = setTimeout(() => {
+      contourToastTimerRef.current = null;
+      setContourToast(null);
+    }, 3200);
+  };
+  const showContourToast = (msg) => {
+    setContourToast(msg);
+    armContourToastClear();
   };
   const [materials, setMaterials] = useState([]);
   const [isExecuting, setIsExecuting] = useState(false);
@@ -206,6 +244,7 @@ const Viewport = forwardRef(({
   pickModeRef.current = pickMode;
   tangentPropRef.current = tangentProp;
   cachedMeshDataRef.current = cachedMeshData;
+  contourModeRef.current = contourMode;
 
   useImperativeHandle(ref, () => ({
     executeScript,
@@ -220,6 +259,13 @@ const Viewport = forwardRef(({
       xsPreviewRef.current = null;
       disposeEdgeOverlayObject(sceneRef.current, pathPreviewRef.current);
       pathPreviewRef.current = null;
+      disposeEdgeOverlayObject(sceneRef.current, workplaneOverlayRef.current);
+      workplaneOverlayRef.current = null;
+      disposeEdgeOverlayObject(sceneRef.current, polylineDraftRef.current);
+      polylineDraftRef.current = null;
+      setContourMode(null);
+      contourModeRef.current = null;
+      setContourToast(null);
       setSelectedFace(null);
       setSelectedEdges([]);
       onFaceSelected?.(null);
@@ -270,6 +316,10 @@ const Viewport = forwardRef(({
       armEdgeModeToastClear();
     },
     setPickMode: (mode) => setPickMode(mode === 'edge' ? 'edge' : 'face'),
+    /** Slice 24: loud-fail toast while contour mode is open. */
+    softFailContour: (msg) => {
+      showContourToast(msg || 'Contour mode refused — check the workplane / profile.');
+    },
     // Updated to use cached mesh when available
     export3MF: async () => {
       if (cachedMeshData?.vertProperties) {
@@ -444,6 +494,245 @@ const Viewport = forwardRef(({
 
   // Dispose cross-section preview on unmount (route change / modal still open).
   useEffect(() => () => clearXsPreview(), [clearXsPreview]);
+
+  const clearWorkplaneOverlay = useCallback(() => {
+    disposeEdgeOverlayObject(sceneRef.current, workplaneOverlayRef.current);
+    workplaneOverlayRef.current = null;
+  }, []);
+
+  const clearPolylineDraft = useCallback(() => {
+    disposeEdgeOverlayObject(sceneRef.current, polylineDraftRef.current);
+    polylineDraftRef.current = null;
+  }, []);
+
+  const applyContourPartGhost = useCallback((on) => {
+    const mesh = resultRef.current;
+    if (!mesh) return;
+    if (on) {
+      if (!contourGhostMatsRef.current) {
+        contourGhostMatsRef.current = mesh.material;
+      }
+      const ghost = new MeshLambertMaterial({
+        color: 0x9ca3af,
+        transparent: true,
+        opacity: 0.28,
+        depthWrite: false,
+        flatShading: true,
+        side: DoubleSide,
+        emissive: 0x4b5563,
+        emissiveIntensity: 0.08,
+      });
+      mesh.material = Array.isArray(contourGhostMatsRef.current)
+        ? [ghost, ghost, ghost]
+        : ghost;
+    } else if (contourGhostMatsRef.current) {
+      const current = mesh.material;
+      mesh.material = contourGhostMatsRef.current;
+      contourGhostMatsRef.current = null;
+      const disposeGhost = (mat) => {
+        if (!mat || mat === mesh.material) return;
+        if (Array.isArray(mat)) mat.forEach((m) => m?.dispose?.());
+        else mat.dispose?.();
+      };
+      if (current !== mesh.material) disposeGhost(current);
+    }
+  }, []);
+
+  const paintWorkplaneOverlay = useCallback((plane, face) => {
+    clearWorkplaneOverlay();
+    if (!plane || !sceneRef.current) return;
+    const size = workplaneOverlaySize(face);
+    const group = new Group();
+    group.name = 'contourWorkplane';
+    const geom = new PlaneGeometry(size, size);
+    const mat = new MeshBasicMaterial({
+      color: 0x22d3ee,
+      transparent: true,
+      opacity: 0.12,
+      depthWrite: false,
+      side: DoubleSide,
+    });
+    const quad = new ThreeMesh(geom, mat);
+    quad.position.set(plane.center[0], plane.center[1], plane.center[2]);
+    const q = new Quaternion();
+    q.setFromRotationMatrix(new Matrix4().makeBasis(
+      new Vector3(plane.x[0], plane.x[1], plane.x[2]),
+      new Vector3(plane.y[0], plane.y[1], plane.y[2]),
+      new Vector3(plane.normal[0], plane.normal[1], plane.normal[2]),
+    ));
+    quad.quaternion.copy(q);
+    quad.renderOrder = 8;
+    quad.frustumCulled = false;
+    group.add(quad);
+    // Outline
+    try {
+      const corners = workplaneQuadCorners(plane, size);
+      const ring = [...corners, corners[0]];
+      const pos = new Float32Array(ring.length * 3);
+      for (let i = 0; i < ring.length; i++) {
+        pos[i * 3] = ring[i][0];
+        pos[i * 3 + 1] = ring[i][1];
+        pos[i * 3 + 2] = ring[i][2];
+      }
+      const lineGeom = new BufferGeometry();
+      lineGeom.setAttribute('position', new BufferAttribute(pos, 3));
+      const lineMat = new LineBasicMaterial({
+        color: 0x67e8f9,
+        transparent: true,
+        opacity: 0.7,
+        depthTest: false,
+        depthWrite: false,
+      });
+      const loop = new Line(lineGeom, lineMat);
+      loop.renderOrder = 9;
+      loop.frustumCulled = false;
+      group.add(loop);
+    } catch { /* overlay outline is best-effort */ }
+    sceneRef.current.add(group);
+    workplaneOverlayRef.current = group;
+  }, [clearWorkplaneOverlay]);
+
+  const paintPolylineDraft = useCallback((plane, points) => {
+    clearPolylineDraft();
+    if (!plane || !points?.length || !sceneRef.current) return;
+    const group = new Group();
+    group.name = 'contourPolylineDraft';
+    const world = points.map(([u, v]) => [
+      plane.center[0] + u * plane.x[0] + v * plane.y[0],
+      plane.center[1] + u * plane.x[1] + v * plane.y[1],
+      plane.center[2] + u * plane.x[2] + v * plane.y[2],
+    ]);
+    const ptMat = new MeshBasicMaterial({
+      color: 0x22d3ee,
+      depthTest: false,
+      depthWrite: false,
+      transparent: true,
+      opacity: 0.95,
+    });
+    for (const p of world) {
+      const s = new ThreeMesh(new SphereGeometry(0.45, 8, 8), ptMat);
+      s.position.set(p[0], p[1], p[2]);
+      s.renderOrder = 16;
+      s.frustumCulled = false;
+      group.add(s);
+    }
+    if (world.length >= 2) {
+      const pos = new Float32Array(world.length * 3);
+      for (let i = 0; i < world.length; i++) {
+        pos[i * 3] = world[i][0];
+        pos[i * 3 + 1] = world[i][1];
+        pos[i * 3 + 2] = world[i][2];
+      }
+      const g = new BufferGeometry();
+      g.setAttribute('position', new BufferAttribute(pos, 3));
+      const line = new Line(g, new LineBasicMaterial({
+        color: 0x22d3ee,
+        depthTest: false,
+        depthWrite: false,
+        transparent: true,
+        opacity: 0.85,
+      }));
+      line.renderOrder = 15;
+      line.frustumCulled = false;
+      group.add(line);
+    }
+    sceneRef.current.add(group);
+    polylineDraftRef.current = group;
+  }, [clearPolylineDraft]);
+
+  const exitContourMode = useCallback(() => {
+    setContourMode(null);
+    contourModeRef.current = null;
+    clearXsPreview();
+    clearWorkplaneOverlay();
+    clearPolylineDraft();
+    applyContourPartGhost(false);
+    if (contourToastTimerRef.current) {
+      clearTimeout(contourToastTimerRef.current);
+      contourToastTimerRef.current = null;
+    }
+    setContourToast(null);
+  }, [clearXsPreview, clearWorkplaneOverlay, clearPolylineDraft, applyContourPartGhost]);
+
+  const enterContourMode = useCallback(({ entry } = {}) => {
+    setPickMode('face');
+    disposeEdgeOverlayObject(sceneRef.current, pathPreviewRef.current);
+    pathPreviewRef.current = null;
+    const next = enterContourState(entry, selectedFace);
+    setContourMode(next);
+    if (next.enterRefuse) showContourToast(next.enterRefuse);
+    applyContourPartGhost(true);
+  }, [selectedFace, applyContourPartGhost]);
+
+  const confirmContourProfile = useCallback(() => {
+    const state = contourModeRef.current;
+    if (!state) return;
+    const gate = validateContourProfile(state.tool, state.params);
+    if (!gate.ok) {
+      showContourToast(gate.message);
+      return;
+    }
+    const ok = onCommitContourProfile?.({
+      face: state.planeFace,
+      tool: state.tool,
+      params: state.params,
+    });
+    if (ok) {
+      showContourToast('Profile saved — still in contour mode (no Extrude).');
+    }
+  }, [onCommitContourProfile]);
+
+  // Live workplane + makeCrossSection profile preview while contour mode is open.
+  useEffect(() => {
+    if (!contourMode) {
+      clearWorkplaneOverlay();
+      clearPolylineDraft();
+      applyContourPartGhost(false);
+      return;
+    }
+    const plane = planeFromContourFace(contourMode.planeFace);
+    paintWorkplaneOverlay(plane, contourMode.planeFace);
+    applyContourPartGhost(true);
+    const pts = contourMode.params?.points;
+    if (contourMode.tool === 'polyline' && (!Array.isArray(pts) || pts.length < 3)) {
+      clearXsPreview();
+      paintPolylineDraft(plane, pts || []);
+      return;
+    }
+    clearPolylineDraft();
+    if (buildContourPreview(contourMode.planeFace, contourMode.tool, contourMode.params)) {
+      setXsPreview({
+        face: contourMode.planeFace,
+        params: toolToProfileParams(contourMode.tool, contourMode.params),
+      });
+    } else {
+      clearXsPreview();
+    }
+  }, [contourMode, paintWorkplaneOverlay, paintPolylineDraft, applyContourPartGhost, clearWorkplaneOverlay, clearPolylineDraft, clearXsPreview, setXsPreview]);
+
+  useEffect(() => () => {
+    clearWorkplaneOverlay();
+    clearPolylineDraft();
+    applyContourPartGhost(false);
+    if (contourToastTimerRef.current) clearTimeout(contourToastTimerRef.current);
+  }, [clearWorkplaneOverlay, clearPolylineDraft, applyContourPartGhost]);
+
+  // Contour mode: planar face tap updates the workplane; non-planar is a loud refuse.
+  useEffect(() => {
+    if (!contourModeRef.current || !selectedFace) return;
+    const resolved = resolveContourWorkplane(selectedFace);
+    if (!resolved.ok) {
+      showContourToast(resolved.message);
+      clearHighlight();
+      setSelectedFace(null);
+      onFaceSelected?.(null);
+      return;
+    }
+    setContourMode((prev) => {
+      if (!prev) return prev;
+      return { ...prev, planeFace: resolved.face };
+    });
+  }, [selectedFace, onFaceSelected, clearHighlight]);
 
   const clearPathPreview = useCallback(() => {
     if (!pathPreviewRef.current) return;
@@ -864,7 +1153,9 @@ const Viewport = forwardRef(({
       return;
     }
     
-    if (!canvasRef.current || !cameraRef.current || !resultRef.current) return;
+    if (!canvasRef.current || !cameraRef.current) return;
+    // Face/edge pick still needs a part mesh; polyline workplane taps do not.
+    if (!resultRef.current && contourModeRef.current?.tool !== 'polyline') return;
     
     const canvas = canvasRef.current;
     const rect = canvas.getBoundingClientRect();
@@ -872,6 +1163,48 @@ const Viewport = forwardRef(({
     const py = event.clientY - rect.top;
     mouseRef.current.x = (px / rect.width) * 2 - 1;
     mouseRef.current.y = -(py / rect.height) * 2 + 1;
+
+    // Slice 24: polyline tool — tap the workplane to add UV points (cheap draw).
+    if (contourModeRef.current?.tool === 'polyline') {
+      if (clickTimerRef.current) {
+        clearTimeout(clickTimerRef.current);
+        clickTimerRef.current = null;
+      }
+      clickCountRef.current = 0;
+      pendingClickDataRef.current = null;
+      const plane = planeFromContourFace(contourModeRef.current.planeFace);
+      raycasterRef.current.setFromCamera(mouseRef.current, cameraRef.current);
+      const origin = raycasterRef.current.ray.origin;
+      const dir = raycasterRef.current.ray.direction;
+      const hit = intersectRayPlane(
+        [origin.x, origin.y, origin.z],
+        [dir.x, dir.y, dir.z],
+        plane,
+      );
+      if (!hit) {
+        showContourToast('Could not hit the workplane — orbit so the plane faces the camera.');
+        return;
+      }
+      let uv;
+      try {
+        uv = worldToPlaneUV(hit, plane);
+      } catch (e) {
+        showContourToast(e.message || 'Could not project onto the workplane.');
+        return;
+      }
+      if (!uv.every(Number.isFinite)) {
+        showContourToast('Workplane tap produced a non-finite UV — refusing the point.');
+        return;
+      }
+      setContourMode((prev) => {
+        if (!prev || prev.tool !== 'polyline') return prev;
+        const points = [...(prev.params?.points || []), [uv[0], uv[1]]];
+        return { ...prev, params: { ...prev.params, points } };
+      });
+      return;
+    }
+
+    if (!resultRef.current) return;
 
     // Slice 12 hotfix: Edge mode short-circuits face selection entirely.
     // Screen-space pick with finger slop — no mesh-face hit required.
@@ -917,6 +1250,8 @@ const Viewport = forwardRef(({
       
       if (measurementEnabled) {
         console.log("[Measurement] Keeping face selected for measurement");
+      } else if (contourModeRef.current) {
+        // Keep the contour workplane — empty taps must not drop the plane.
       } else {
         clearHighlight();
         setSelectedFace(null);
@@ -1936,7 +2271,7 @@ const Viewport = forwardRef(({
       )}
       
       {/* Slice 09: left helper insert palette (game mode only). */}
-      {mode === 'game' && onInsertHelper && (
+      {mode === 'game' && onInsertHelper && !contourMode && (
         <HelperInsertPalette
           onInsert={onInsertHelper}
           getBuffer={getHelperBuffer}
@@ -1953,7 +2288,18 @@ const Viewport = forwardRef(({
           }}
           onProfilePreview={setXsPreview}
           onPathPreview={setPathPreview}
+          onEnterContourMode={enterContourMode}
           compact={isMobile}
+        />
+      )}
+
+      {/* Slice 24: contour-mode rail (tools + Back). */}
+      {mode === 'game' && contourMode && (
+        <ContourModeRail
+          tool={contourMode.tool}
+          compact={isMobile}
+          onSelectTool={(id) => setContourMode((prev) => (prev ? switchContourTool(prev, id) : prev))}
+          onBack={exitContourMode}
         />
       )}
 
@@ -2017,7 +2363,7 @@ const Viewport = forwardRef(({
       )}
       
       {/* Face Info Display — Slice 11: show classified type; dodge palette in game mode */}
-      {selectedFace && !measurementEnabled && (
+      {selectedFace && !measurementEnabled && !contourMode && (
         <div
           className={`absolute bg-black/50 text-white p-2 rounded-lg text-xs font-mono z-10 ${
             mode === 'game'
@@ -2045,8 +2391,33 @@ const Viewport = forwardRef(({
         </div>
       )}
 
+      {/* Slice 24: contour chip — plane + profile params (Edge-pick pattern). */}
+      {contourMode && (
+        <ContourModeChip
+          tool={contourMode.tool}
+          params={contourMode.params}
+          compact={isMobile}
+          planeLabel={
+            contourMode.planeFace
+              ? `planar n=[${contourMode.planeFace.normal.map((v) => Number(v).toFixed(2)).join(', ')}]`
+              : 'default +Z top'
+          }
+          onParamChange={(next) => setContourMode((prev) => (prev ? { ...prev, params: next } : prev))}
+          onConfirm={confirmContourProfile}
+          onUndoPoint={() => setContourMode((prev) => {
+            if (!prev || prev.tool !== 'polyline') return prev;
+            const points = (prev.params?.points || []).slice(0, -1);
+            return { ...prev, params: { ...prev.params, points } };
+          })}
+          onClearPoints={() => setContourMode((prev) => {
+            if (!prev || prev.tool !== 'polyline') return prev;
+            return { ...prev, params: { ...prev.params, points: [] } };
+          })}
+        />
+      )}
+
       {/* Slice 12 hotfix: Edge pick chip — visible whenever Edge mode is on */}
-      {pickMode === 'edge' && (
+      {pickMode === 'edge' && !contourMode && (
         <div
           className={`absolute bg-amber-950/85 border border-amber-500/70 text-white px-3 py-2 rounded-lg text-xs z-20 shadow-lg ${
             mode === 'game'
@@ -2105,6 +2476,14 @@ const Viewport = forwardRef(({
         <div className="absolute top-16 left-1/2 -translate-x-1/2 z-30 pointer-events-none">
           <div className="bg-amber-600 text-white text-xs font-sans font-medium px-3 py-2 rounded-full shadow-lg">
             {edgeModeToast}
+          </div>
+        </div>
+      )}
+
+      {contourToast && (
+        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-30 pointer-events-none max-w-[min(22rem,calc(100%-2rem))]">
+          <div className="bg-cyan-700 text-white text-xs font-sans font-medium px-3 py-2 rounded-full shadow-lg text-center">
+            {contourToast}
           </div>
         </div>
       )}

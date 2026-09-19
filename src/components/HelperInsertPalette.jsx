@@ -29,6 +29,7 @@ import {
 import { HELPER_PALETTE_GROUPS, itemsByGroup } from '../utils/helperPaletteSnippets';
 import { resolveFaceModal } from '../utils/faceFeaturePlacement';
 import { canBuildFilletAlongPath, resolveFilletStrategy } from '../utils/filletAlongPath';
+import { isContourEntry } from '../utils/contourMode';
 import HelperParamModal from './HelperParamModal';
 
 const ICONS = {
@@ -64,6 +65,7 @@ const ICONS = {
  * Slice 09/10/11 — left vertical helper insert palette (game mode).
  * Tap opens HelperParamModal; with selectedFace / selectedEdges, face/edge
  * features get an aware sheet (or refuse). Confirm → onInsert(id, params, faceContext, edgeContext).
+ * Slice 24: Extrude / Revolve / Profile call onEnterContourMode (shell + Profile only).
  */
 const HelperInsertPalette = ({
   onInsert,
@@ -74,6 +76,7 @@ const HelperInsertPalette = ({
   onStaleEdgesClear = null,
   onProfilePreview = null,
   onPathPreview = null,
+  onEnterContourMode = null,
   compact = false,
 }) => {
   const grouped = itemsByGroup();
@@ -87,6 +90,11 @@ const HelperInsertPalette = ({
   const [refuseMessage, setRefuseMessage] = useState(null);
 
   const openParams = (item) => {
+    // Slice 24: Extrude / Revolve / Profile enter contour mode (no one-shot Extrude).
+    if (isContourEntry(item.id) && typeof onEnterContourMode === 'function') {
+      onEnterContourMode({ entry: item.id });
+      return;
+    }
     const buf = typeof getBuffer === 'function' ? getBuffer() : '';
     setBufferSnapshot(typeof buf === 'string' ? buf : '');
     // Auto-switch to edge pick when opening fillet/chamfer with no edges yet.

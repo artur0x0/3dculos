@@ -77,11 +77,18 @@ manual override for classic `filletEdges` (planar–planar / closed-run C6).
 wedge swept as a **linear polyline** along the edge wire, boolean subtract).
 Soft-fails empty/disconnected/branched like Path.
 
-**Cross-section (Slice 21):** palette **Profile** builds a reusable
-`makeCrossSection(plane, profile)` named let from a **planar** face
-(single-click). Cylindrical / irregular faces are refused. Viewport draws
-the profile outline on the plane while editing params. Does **not**
-extrude, sweep, or fillet — substrate only.
+**Cross-section (Slice 21):** `makeCrossSection(plane, profile)` is the reusable
+plane + 2D profile substrate (planar face via `workplaneFromFace`, or default
++Z). Cylindrical / irregular faces are refused. Does **not** extrude, sweep,
+or fillet — substrate only.
+
+**Contour mode (Slice 24):** in game mode, tapping **Extrude**, **Revolve**, or
+**Profile** enters a shared contour shell — the part stays on screen but is
+ghosted, the left rail swaps to circle / rect / polygon / polyline + **Back**,
+and a chip (Edge-pick pattern) holds plane + profile params. Live preview uses
+`makeCrossSection`. **Confirm** writes or updates the in-mode Profile only.
+**Back** exits with no solid commit. Extrude / Revolve / Loft solids are later
+slices — this shell must not emit `makeExtrude`.
 
 ## Core Manifold API
 
