@@ -185,6 +185,8 @@ console.log('slice-23 fillet via sweep smoke');
   check('sweep emits makeSweepPath', /makeSweepPath\(/.test(bufSweep));
   check('sweep emits filletAlongPath', /filletAlongPath\(/.test(bufSweep));
   check('sweep no filletEdges call', !/=\s*filletEdges\(/.test(bufSweep));
+  check('sweep emits literal selEdges (no convexEdges rematch)',
+    /selEdges\s*=\s*\[/.test(bufSweep) && !/convexEdges\(/.test(bufSweep));
 
   const bufChamfer = composeHelperInsert(
     'let part = Manifold.cube([40,30,20], true);\n',

@@ -222,7 +222,20 @@ const box = boxTopEdges();
   const disc = orderEdgePath([box.e01, box.e23]);
   check('disconnected not ok', disc.ok === false);
   check('disconnected code', disc.code === 'disconnected');
-  check('disconnected message', disc.message === SWEEP_PATH_DISCONNECTED);
+  check('disconnected message', disc.message.startsWith(SWEEP_PATH_DISCONNECTED));
+  check('disconnected names components', /2 components, largest 1 of 2/.test(disc.message));
+
+  // Largest-component recovery: 3-edge chain + 1 stray (3/4 = 0.75).
+  const stray = {
+    key: '90-91', a: 90, b: 91,
+    va: [100, 0, 0], vb: [101, 0, 0],
+    mid: [100.5, 0, 0], length: 1,
+  };
+  const rec = orderEdgePath([box.e01, box.e12, box.e23, stray]);
+  check('recovers largest chain from strays', rec.ok === true && rec.orderedEdges.length === 3);
+  check('recovery flag set', rec.recovered === true);
+  const twoPlusStray = orderEdgePath([box.e01, box.e12, stray]);
+  check('2+1 below 75% still refuse', twoPlusStray.ok === false && twoPlusStray.code === 'disconnected');
 
   // Branch: add a spur from mid of chain — invent vertex 99 sharing with e01.a
   const spur = {
@@ -284,7 +297,8 @@ const box = boxTopEdges();
   check('compose has makeSweepPath', /makeSweepPath\s*\(/.test(buf || ''));
   check('compose has named path', /const path\d*\s*=\s*makeSweepPath/.test(buf || ''));
   check('compose keeps return part', /return part;/.test(buf || ''));
-  check('compose has selEdges IIFE', /convexEdges\(/.test(buf || ''));
+  check('compose has literal selEdges', /selEdges\s*=\s*\[/.test(buf || ''));
+  check('compose sweep does not rematch convexEdges', !/convexEdges\(/.test(buf || ''));
 
   const revBuf = composeHelperInsert(
     'let part = Manifold.cube([40, 30, 20], true);\nreturn part;\n',

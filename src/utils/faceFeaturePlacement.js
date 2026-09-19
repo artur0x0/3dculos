@@ -587,12 +587,64 @@ export function emitSelectedEdgeLines(body, selectedEdges, names, allocateUnique
 }
 
 /**
- * Build a modal item view-model for face placement (or refuse).
- * Optional selectedEdges: when present, fillet/chamfer prefer edge-aware sheet.
+ * Emit the picked edge wire as literals for makeSweepPath / filletAlongPath.
+ * Do NOT rematch convexEdges — post-fillet G1 rails often fail the convex ball
+ * probe, so mid-match drops bridges and makeSweepPath sees a disconnected set
+ * even when Edge pick + Tangent selected a valid chain (~95–98 edges).
+ *
+ * @param {string} _body unused (kept for emitSelectedEdgeLines call-shape)
+ * @param {object[]} selectedEdges
+ * @param {Set<string>} names
+ * @param {(existing: Set<string>, base: string) => string} allocateUniqueName
+ * @returns {{ lines: string[], edgesExpr: string, ok: boolean, message?: string }}
  */
+export function emitSelectedEdgeLiteralLines(_body, selectedEdges, names, allocateUniqueName) {
+  const edges = Array.isArray(selectedEdges) ? selectedEdges : [];
+  if (!edges.length) {
+    return {
+      lines: [],
+      edgesExpr: '',
+      ok: false,
+      message:
+        'No edges selected. Switch to Edge pick mode, tap edges to multi-select, then Path/Fillet.',
+    };
+  }
+  const lits = [];
+  for (const e of edges) {
+    if (!e || !Array.isArray(e.va) || !Array.isArray(e.vb)) continue;
+    if (!Number.isFinite(e.a) || !Number.isFinite(e.b)) continue;
+    const va = formatVec3(e.va, 6);
+    const vb = formatVec3(e.vb, 6);
+    let length = Number(e.length);
+    if (!(length > 0)) {
+      length = Math.hypot(e.vb[0] - e.va[0], e.vb[1] - e.va[1], e.vb[2] - e.va[2]);
+    }
+    if (!(length > 1e-12)) continue;
+    const key = e.key ? `, key: ${JSON.stringify(String(e.key))}` : '';
+    lits.push(
+      `{ a: ${e.a}, b: ${e.b}, va: ${va}, vb: ${vb}, length: ${+length.toFixed(6)}${key} }`,
+    );
+  }
+  if (!lits.length) {
+    return {
+      lines: [],
+      edgesExpr: '',
+      ok: false,
+      message:
+        'Selected edges have no usable endpoints — re-pick after geometry changes.',
+    };
+  }
+  const edgesVar = allocateUniqueName(names, 'selEdges');
+  return {
+    lines: [`const ${edgesVar} = [${lits.join(', ')}];`],
+    edgesExpr: edgesVar,
+    ok: true,
+  };
+}
 
 /**
  * Build a modal item view-model for face placement (or refuse).
+ * Optional selectedEdges: when present, fillet/chamfer prefer edge-aware sheet.
  * @returns {{ mode: 'params'|'refuse'|'default', item?: object, face?: FaceClassification, message?: string }}
  */
 export function resolveFaceModal(paletteItem, selectedFace, selectedEdges = null) {

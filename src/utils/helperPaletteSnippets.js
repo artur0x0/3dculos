@@ -20,6 +20,7 @@ import {
   emitFaceWorkplaneLines,
   emitFaceEdgeLines,
   emitSelectedEdgeLines,
+  emitSelectedEdgeLiteralLines,
   emitSpanExpr,
   estimateCylinderAxis,
   roundFaceNum,
@@ -695,7 +696,7 @@ export const HELPER_PALETTE_ITEMS = [
       // Strategy=sweep → makeSweepPath + filletAlongPath (curved-adjacent OK).
       // Strategy=planar → classic filletEdges for planar–planar edges.
       if (strategy === 'sweep') {
-        const edge = emitSelectedEdgeLines(body, edgeCtx || [], names, allocateUniqueName);
+        const edge = emitSelectedEdgeLiteralLines(body, edgeCtx || [], names, allocateUniqueName);
         if (!edge.ok) return null;
         lines.push(...edge.lines);
         const path = allocateUniqueName(names, 'path');
@@ -854,7 +855,7 @@ export const HELPER_PALETTE_ITEMS = [
     build: (empty, p, names, buffer, _ = null, edgeCtx = null) => {
       const lines = [...ensurePartPrefix(empty, names)];
       const body = resolveBody(p, names, empty ? lines.join('\n') : buffer);
-      const edge = emitSelectedEdgeLines(body, edgeCtx || [], names, allocateUniqueName);
+      const edge = emitSelectedEdgeLiteralLines(body, edgeCtx || [], names, allocateUniqueName);
       // Soft-fail: never write throw/partial JS — caller clears stale selection.
       if (!edge.ok) return null;
       lines.push(...edge.lines);
@@ -862,6 +863,7 @@ export const HELPER_PALETTE_ITEMS = [
       const rev = bool(p.reverse, false);
       const opts = rev ? ', { reverse: true }' : '';
       // Path value — consume with filletAlongPath (Slice 23) or sweepPoints.
+      // Literal wire (not convexEdges mid-match) so post-fillet G1 chains stay contiguous.
       lines.push(`const ${path} = makeSweepPath(${edge.edgesExpr}${opts}); // edge→sweep path`);
       return withReturn(lines, empty);
     },
