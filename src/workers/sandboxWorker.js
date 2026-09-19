@@ -10,6 +10,7 @@ import {
 } from './fastenerSizes.js';
 import { isFilletSliverDirty } from '../utils/filletSliverGuard.js';
 import { expandFilletCutterContour, planFilletSweepPath } from '../utils/filletAlongPath.js';
+import { assembleSweepPath } from '../utils/edgeSweepPath.js';
 
 /**
  * List of globals to block/remove in the worker context
@@ -2603,142 +2604,33 @@ function makeCrossSection(plane, profile) {
  * makeSweepPath(edges, opts?) → reusable ordered sweep path / wire.
  * edges: feature / convexEdges-style {a,b,va,vb,...} (selection or query).
  * Soft topology: empty / disconnected / branched → loud Error (UI soft-fails before insert).
+ * Recovers the largest simple component when the set is mostly one chain + strays.
  * Does NOT sweep a cutter — path value only (consume later via sweepPoints / fillet-via-sweep).
  */
 function makeSweepPath(edges, opts = {}) {
-  if (!Array.isArray(edges) || edges.length === 0) {
+  const r = assembleSweepPath(edges, opts);
+  if (r.ok) return r.value;
+  if (r.code === 'empty') {
+    const noUsable = /usable|endpoint/i.test(r.message || '');
     throw new Error(
-      'makeSweepPath: need at least one edge — pick edges in Edge mode (Tangent for circular rims)'
+      noUsable
+        ? 'makeSweepPath: no usable edges (need va/vb endpoints)'
+        : 'makeSweepPath: need at least one edge — pick edges in Edge mode (Tangent for circular rims)',
     );
   }
-  // Dedupe by stable key
-  const uniq = new Map();
-  for (const e of edges) {
-    if (!e || !Array.isArray(e.va) || !Array.isArray(e.vb)) continue;
-    if (!Number.isFinite(e.a) || !Number.isFinite(e.b)) continue;
-    const a = Math.min(e.a, e.b);
-    const b = Math.max(e.a, e.b);
-    const key = e.key || `${a}-${b}`;
-    if (uniq.has(key)) continue;
-    let length = Number(e.length);
-    if (!(length > 0)) {
-      length = Math.hypot(e.vb[0] - e.va[0], e.vb[1] - e.va[1], e.vb[2] - e.va[2]);
-    }
-    if (!(length > 1e-12)) continue;
-    uniq.set(key, {
-      key,
-      a: e.a,
-      b: e.b,
-      va: [e.va[0], e.va[1], e.va[2]],
-      vb: [e.vb[0], e.vb[1], e.vb[2]],
-      length,
-    });
-  }
-  const unique = [...uniq.values()];
-  if (!unique.length) {
-    throw new Error('makeSweepPath: no usable edges (need va/vb endpoints)');
-  }
-
-  const adj = new Map();
-  for (const e of unique) {
-    for (const v of [e.a, e.b]) {
-      if (!adj.has(v)) adj.set(v, []);
-      adj.get(v).push(e);
-    }
-  }
-
-  const visited = new Set();
-  const q = [unique[0]];
-  visited.add(unique[0].key);
-  while (q.length) {
-    const cur = q.shift();
-    for (const v of [cur.a, cur.b]) {
-      for (const nbr of adj.get(v) || []) {
-        if (visited.has(nbr.key)) continue;
-        visited.add(nbr.key);
-        q.push(nbr);
-      }
-    }
-  }
-  if (visited.size !== unique.length) {
+  if (r.code === 'disconnected') {
+    const extra = (r.message || '').match(/\([^)]*component[^)]*\)/);
     throw new Error(
       'makeSweepPath: edges are disconnected — pick a single contiguous chain or loop'
+      + (extra ? ` ${extra[0]}` : ''),
     );
   }
-
-  const endpoints = [];
-  for (const [v, list] of adj) {
-    if (list.length > 2) {
-      throw new Error(
-        'makeSweepPath: edges branch (junction) — need a simple open chain or closed loop'
-      );
-    }
-    if (list.length === 1) endpoints.push(v);
+  if (r.code === 'branch') {
+    throw new Error(
+      'makeSweepPath: edges branch (junction) — need a simple open chain or closed loop',
+    );
   }
-  const closed = endpoints.length === 0;
-  if (!closed && endpoints.length !== 2) {
-    throw new Error('makeSweepPath: could not order edges into a path');
-  }
-
-  let startVert;
-  if (closed) {
-    startVert = unique[0].a;
-  } else {
-    const seed = unique[0];
-    if (endpoints.includes(seed.a)) startVert = seed.a;
-    else if (endpoints.includes(seed.b)) startVert = seed.b;
-    else startVert = endpoints[0];
-  }
-
-  const used = new Set();
-  const ordered = [];
-  let curV = startVert;
-  for (let guard = 0; guard < unique.length + 2; guard++) {
-    const nbrs = (adj.get(curV) || []).filter((e) => !used.has(e.key));
-    if (!nbrs.length) break;
-    let pick = nbrs[0];
-    if (ordered.length === 0) {
-      const prefer = nbrs.find((e) => e.key === unique[0].key);
-      if (prefer) pick = prefer;
-    }
-    let va, vb, a, b;
-    if (pick.a === curV) {
-      a = pick.a; b = pick.b; va = pick.va; vb = pick.vb;
-    } else {
-      a = pick.b; b = pick.a; va = pick.vb; vb = pick.va;
-    }
-    used.add(pick.key);
-    ordered.push({ key: pick.key, a, b, va: va.slice(), vb: vb.slice(), length: pick.length });
-    curV = b;
-    if (used.size === unique.length) break;
-  }
-  if (ordered.length !== unique.length) {
-    throw new Error('makeSweepPath: could not order edges into a path');
-  }
-
-  let points = [ordered[0].va.slice()];
-  for (const e of ordered) points.push(e.vb.slice());
-  let length = 0;
-  for (const e of ordered) length += e.length;
-
-  if (closed && points.length > 1) {
-    const p0 = points[0], pN = points[points.length - 1];
-    if (Math.hypot(p0[0] - pN[0], p0[1] - pN[1], p0[2] - pN[2]) < 1e-5) {
-      points = points.slice(0, -1);
-    }
-  }
-
-  if (opts && opts.reverse) {
-    points = points.slice().reverse();
-  }
-
-  return {
-    kind: 'sweepPath',
-    closed,
-    points,
-    length,
-    edgeCount: ordered.length,
-  };
+  throw new Error('makeSweepPath: could not order edges into a path');
 }
 
 // ---------------------------------------------------------------- Slice 23 fillet via swept cross-section

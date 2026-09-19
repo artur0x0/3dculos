@@ -221,7 +221,13 @@ export function canBuildFilletAlongPath(edges) {
   const base = assembleSweepPath(edges);
   if (base.ok) return { ok: true };
   const msg = base.message || FILLET_SWEEP_EMPTY;
-  if (/disconnect/i.test(msg)) return { ok: false, message: FILLET_SWEEP_DISCONNECTED };
+  if (/disconnect/i.test(msg)) {
+    const extra = (msg.match(/\([^)]*component[^)]*\)/) || [])[0];
+    return {
+      ok: false,
+      message: FILLET_SWEEP_DISCONNECTED + (extra ? ` ${extra}` : ''),
+    };
+  }
   if (/branch/i.test(msg)) return { ok: false, message: FILLET_SWEEP_BRANCH };
   return { ok: false, message: msg || FILLET_SWEEP_EMPTY };
 }

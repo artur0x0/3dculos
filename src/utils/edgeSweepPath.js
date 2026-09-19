@@ -30,6 +30,75 @@ export const SWEEP_PATH_BRANCH =
 export const SWEEP_PATH_INVALID =
   'Could not order selected edges into a path — re-pick a contiguous chain or loop.';
 
+/** Recover a dominant simple chain when strays are a small leftover (not a tie). */
+export const SWEEP_PATH_RECOVER_MIN_FRAC = 0.75;
+
+function disconnectedMessage(compSizes, total) {
+  const sizes = compSizes.slice().sort((a, b) => b - a);
+  const n = sizes.length;
+  const extra = n > 1
+    ? ` (${n} components, largest ${sizes[0]} of ${total})`
+    : '';
+  return SWEEP_PATH_DISCONNECTED + extra;
+}
+
+function edgeComponents(unique, adj) {
+  const visited = new Set();
+  const comps = [];
+  for (const start of unique) {
+    if (visited.has(start.key)) continue;
+    const q = [start];
+    visited.add(start.key);
+    const list = [];
+    while (q.length) {
+      const cur = q.shift();
+      list.push(cur);
+      for (const v of [cur.a, cur.b]) {
+        for (const nbr of adj.get(v) || []) {
+          const nk = edgeKey(nbr);
+          if (visited.has(nk)) continue;
+          visited.add(nk);
+          q.push(nbr);
+        }
+      }
+    }
+    comps.push(list);
+  }
+  return comps;
+}
+
+function isSimpleChainOrLoop(edges) {
+  const adj = buildEdgeVertexAdj(edges);
+  let endpoints = 0;
+  for (const list of adj.values()) {
+    if (list.length > 2) return false;
+    if (list.length === 1) endpoints++;
+  }
+  return endpoints === 0 || endpoints === 2;
+}
+
+/**
+ * Prefer the largest simple component when the selection is mostly one chain
+ * plus stray scraps. Refuse ties / split-in-half sets (unsafe to guess).
+ */
+function pickPathComponent(unique, adj) {
+  const comps = edgeComponents(unique, adj);
+  if (comps.length <= 1) {
+    return { edges: unique, recovered: false, comps };
+  }
+  const sorted = comps.slice().sort((a, b) => b.length - a.length);
+  const largest = sorted[0];
+  const second = sorted[1];
+  const recoverable = largest.length >= 2
+    && largest.length > second.length
+    && (largest.length / unique.length) >= SWEEP_PATH_RECOVER_MIN_FRAC
+    && isSimpleChainOrLoop(largest);
+  if (recoverable) {
+    return { edges: largest, recovered: true, comps };
+  }
+  return { edges: null, recovered: false, comps };
+}
+
 function _dist(a, b) {
   return Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 }
@@ -123,6 +192,8 @@ function orientFromVert(edge, fromVert) {
  * Open: walk from a degree-1 endpoint.
  * Closed: all degrees 2; walk from the first selected edge.
  * Soft-fails (ok:false) on empty, disconnected, or branched selections.
+ * If the set is mostly one simple chain/loop plus stray scraps (≥75% in the
+ * largest simple component, not a size-tie), recovers that component.
  *
  * @param {object[]} selectedEdges
  * @returns {{
@@ -153,28 +224,19 @@ export function orderEdgePath(selectedEdges) {
   }
 
   const adj = buildEdgeVertexAdj(unique);
-
-  // Connected component on the edge graph.
-  const visited = new Set();
-  const q = [unique[0]];
-  visited.add(unique[0].key);
-  while (q.length) {
-    const cur = q.shift();
-    for (const v of [cur.a, cur.b]) {
-      for (const nbr of adj.get(v) || []) {
-        const nk = edgeKey(nbr);
-        if (visited.has(nk)) continue;
-        visited.add(nk);
-        q.push(nbr);
-      }
-    }
+  const picked = pickPathComponent(unique, adj);
+  if (!picked.edges) {
+    return {
+      ok: false,
+      code: 'disconnected',
+      message: disconnectedMessage(picked.comps.map((c) => c.length), unique.length),
+    };
   }
-  if (visited.size !== unique.length) {
-    return { ok: false, code: 'disconnected', message: SWEEP_PATH_DISCONNECTED };
-  }
+  const working = picked.edges;
+  const workAdj = picked.recovered ? buildEdgeVertexAdj(working) : adj;
 
   const endpoints = [];
-  for (const [v, list] of adj) {
+  for (const [v, list] of workAdj) {
     if (list.length > 2) {
       return { ok: false, code: 'branch', message: SWEEP_PATH_BRANCH };
     }
@@ -187,28 +249,26 @@ export function orderEdgePath(selectedEdges) {
   }
 
   // Open: prefer an endpoint on the first-selected edge for stable direction.
-  // Closed: start at unique[0].a.
+  // Closed: start at working[0].a. After recovery, first-selected may be a stray.
+  const seed = working.find((e) => e.key === unique[0].key) || working[0];
   let startVert;
   if (closed) {
-    startVert = unique[0].a;
-  } else {
-    const seed = unique[0];
-    if (endpoints.includes(seed.a)) startVert = seed.a;
-    else if (endpoints.includes(seed.b)) startVert = seed.b;
-    else startVert = endpoints[0];
-  }
+    startVert = seed.a;
+  } else if (endpoints.includes(seed.a)) startVert = seed.a;
+  else if (endpoints.includes(seed.b)) startVert = seed.b;
+  else startVert = endpoints[0];
 
   const used = new Set();
   const ordered = [];
   let curV = startVert;
 
-  for (let guard = 0; guard < unique.length + 2; guard++) {
-    const nbrs = (adj.get(curV) || []).filter((e) => !used.has(edgeKey(e)));
+  for (let guard = 0; guard < working.length + 2; guard++) {
+    const nbrs = (workAdj.get(curV) || []).filter((e) => !used.has(edgeKey(e)));
     if (!nbrs.length) break;
 
     let pick = nbrs[0];
     if (ordered.length === 0) {
-      const prefer = nbrs.find((e) => edgeKey(e) === unique[0].key);
+      const prefer = nbrs.find((e) => edgeKey(e) === seed.key);
       if (prefer) pick = prefer;
     }
 
@@ -216,10 +276,10 @@ export function orderEdgePath(selectedEdges) {
     used.add(edge.key);
     ordered.push(edge);
     curV = edge.b;
-    if (used.size === unique.length) break;
+    if (used.size === working.length) break;
   }
 
-  if (ordered.length !== unique.length) {
+  if (ordered.length !== working.length) {
     return { ok: false, code: 'invalid', message: SWEEP_PATH_INVALID };
   }
 
@@ -235,6 +295,7 @@ export function orderEdgePath(selectedEdges) {
     orderedEdges: ordered,
     points,
     length,
+    recovered: !!picked.recovered,
   };
 }
 
