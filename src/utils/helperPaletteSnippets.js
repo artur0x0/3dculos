@@ -11,6 +11,7 @@
  * Slice 21: crossSection plane+profile substrate (planar face → makeCrossSection).
  * Slice 22: sweepPath ordered wire from edge selection (makeSweepPath).
  * Slice 23: filletAlongPath — sweep fillet wedge along Path; Fillet Strategy=sweep (default) | planar.
+ * Slice 24: contour-mode Profile region (markers + custom polyline points). Extrude solid is later.
  *
  * Sequential taps compose via composeHelperInsert:
  * strip one trailing `return part;`, insert body, re-append exactly one `return part;`.
@@ -27,6 +28,10 @@ import {
   resolveHoleUV,
 } from './faceFeaturePlacement.js';
 import { resolveFilletStrategy } from './filletAlongPath.js';
+
+/** Slice 24 — in-mode Profile region so Confirm can replace without appending. */
+export const CONTOUR_PROFILE_BEGIN = '// --- contour-mode profile begin ---';
+export const CONTOUR_PROFILE_END = '// --- contour-mode profile end ---';
 
 /** Metric fastener sizes commonly used in puzzles / hints. */
 export const FASTENER_SIZE_OPTIONS = [
@@ -801,7 +806,6 @@ export const HELPER_PALETTE_ITEMS = [
       const wp = planarCtx
         ? emitFaceWorkplaneLines(body, planarCtx, names, allocateUniqueName)
         : emitDefaultTopWorkplane(body, names);
-      lines.push(...wp.lines);
       const fr = wp.frVar;
       const xs = allocateUniqueName(names, 'xs');
       const type = str(p.profileType, 'circle');
@@ -814,7 +818,14 @@ export const HELPER_PALETTE_ITEMS = [
       } else if (type === 'polygon') {
         const preset = str(p.polygonPreset, 'hexagon');
         const r = num(p.radius, 8);
-        if (preset === 'quarterCircle') {
+        if (preset === 'custom' && Array.isArray(p.points)) {
+          const pts = p.points.map((v) => {
+            const u = Number(v?.[0]);
+            const vv = Number(v?.[1]);
+            return `[${roundFaceNum(u, 4)}, ${roundFaceNum(vv, 4)}]`;
+          });
+          profileExpr = `profilePolygon([${pts.join(', ')}])`;
+        } else if (preset === 'quarterCircle') {
           // First-quadrant fillet-style closed polyline (origin→(r,0)→arc→(0,r)).
           const seg = 8;
           const pts = ['[0, 0]', `[${r}, 0]`];
@@ -842,7 +853,17 @@ export const HELPER_PALETTE_ITEMS = [
         profileExpr = `profileCircle(${r}, ${seg})`;
       }
       // Substrate only — named let for later edge→sweep / fillet / extrude slices.
-      lines.push(`const ${xs} = makeCrossSection(${fr}, ${profileExpr}); // plane+profile substrate`);
+      const profileLine = `const ${xs} = makeCrossSection(${fr}, ${profileExpr}); // plane+profile substrate`;
+      // Slice 24: wrap in-mode Profile so Confirm replaces the region (no Extrude).
+      if (p._contourMode) {
+        lines.push(CONTOUR_PROFILE_BEGIN);
+        lines.push(...wp.lines);
+        lines.push(profileLine);
+        lines.push(CONTOUR_PROFILE_END);
+      } else {
+        lines.push(...wp.lines);
+        lines.push(profileLine);
+      }
       return withReturn(lines, empty);
     },
   },

@@ -239,6 +239,58 @@ const CodeEditor = forwardRef(({
       onCodeChange?.(content, 'Helper insert');
       return true;
     },
+
+    /**
+     * Slice 24: write a precomposed buffer (contour-mode Profile confirm/update).
+     * Does not Auto-Run — caller decides. Same Monaco write path as insertHelper.
+     */
+    applyBuffer: (content, message = 'Contour profile') => {
+      if (typeof content !== 'string') return false;
+
+      if (historyTimeoutRef.current) {
+        clearTimeout(historyTimeoutRef.current);
+        historyTimeoutRef.current = null;
+      }
+
+      const ed = editorRef.current;
+      if (ed) {
+        const model = ed.getModel();
+        const range = model
+          ? model.getFullModelRange()
+          : { startLineNumber: 1, startColumn: 1, endLineNumber: 1, endColumn: 1 };
+        paletteInsertRef.current = true;
+        try {
+          ed.executeEdits('contour-profile', [{
+            range,
+            text: content,
+            forceMoveMarkers: true,
+          }]);
+          valueRef.current = content;
+          setEditorValue(content);
+          onExecute(content);
+          onCodeChange?.(content, message);
+          try {
+            const m = ed.getModel();
+            const match = /(?:\r?\n)?return\s+part\s*;\s*$/.exec(content);
+            if (match && m) {
+              const pos = m.getPositionAt(match.index);
+              ed.setPosition(pos);
+              ed.revealPositionInCenter(pos);
+            }
+          } catch { /* ignore */ }
+          return true;
+        } finally {
+          paletteInsertRef.current = false;
+        }
+      }
+
+      programmaticValueRef.current = content;
+      valueRef.current = content;
+      setEditorValue(content);
+      onExecute(content);
+      onCodeChange?.(content, message);
+      return true;
+    },
   }));
 
   const handleEditorChange = (newValue) => {

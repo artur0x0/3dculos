@@ -39,6 +39,7 @@ import { getBestTimeMs, recordWin } from './utils/gameWins';
 import GameHintsModal from './components/GameHintsModal';
 import PuzzlePickerModal from './components/PuzzlePickerModal';
 import GameConfetti from './components/GameConfetti';
+import { composeContourProfile } from './utils/contourMode';
 
 const App = () => {
   const [currentScript, setCurrentScript] = useState('');
@@ -739,6 +740,27 @@ const App = () => {
     }
   };
 
+  /**
+   * Slice 24: in-mode Profile confirm/update. Writes makeCrossSection only —
+   * no Auto-Run (solid unchanged) and never makeExtrude.
+   */
+  const handleCommitContourProfile = (payload) => {
+    const buf = codeEditorRef.current?.getContent?.() || '';
+    const result = composeContourProfile(buf, payload || {});
+    if (!result.ok) {
+      viewportRef.current?.softFailContour?.(result.message);
+      return false;
+    }
+    const wrote = codeEditorRef.current?.applyBuffer?.(result.buffer, 'Contour profile');
+    if (!wrote) {
+      viewportRef.current?.softFailContour?.(
+        'Could not write Profile into the editor — try again.',
+      );
+      return false;
+    }
+    return true;
+  };
+
   const handleExecute = (script, autoExecute=false) => {
     setCurrentScript(script);
     // Game mode: never auto-run on Monaco mount/remount (blank-enter / ghost-only).
@@ -1046,6 +1068,7 @@ const App = () => {
               gameBestTimeMs={gameBestTimeMs}
               isMobile={isMobile}
               onInsertHelper={handleInsertHelper}
+              onCommitContourProfile={handleCommitContourProfile}
               getHelperBuffer={() => codeEditorRef.current?.getContent?.() || ''}
             />
     );
@@ -1269,6 +1292,7 @@ const App = () => {
             gameBestTimeMs={gameBestTimeMs}
             isMobile={false}
             onInsertHelper={handleInsertHelper}
+            onCommitContourProfile={handleCommitContourProfile}
             getHelperBuffer={() => codeEditorRef.current?.getContent?.() || ''}
           />
         </div>
