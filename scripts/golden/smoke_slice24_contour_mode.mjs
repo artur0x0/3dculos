@@ -41,6 +41,7 @@ import {
   composeContourProfile,
   stripContourProfileBlock,
   hasContourProfileBlock,
+  contourProfileOwnedRegion,
   countMakeCrossSection,
   countMakeExtrude,
 } from '../../src/utils/contourMode.js';
@@ -205,6 +206,8 @@ function rFace() {
     params: { points: [[-4, -3], [4, -3], [0, 5]] },
   });
   check('polyline compose ok', poly.ok && /profilePolygon\s*\(/.test(poly.buffer));
+  check('polyline tapped points', /profilePolygon\(\[\[-4, -3\], \[4, -3\], \[0, 5\]\]/.test(poly.buffer));
+  check('polyline is not default hexagon', !/4\.3301/.test(poly.buffer));
   check('polyline no Extrude', countMakeExtrude(poly.buffer) === 0);
 
   const hex = composeContourProfile(starter, {
@@ -234,6 +237,23 @@ function rFace() {
   check('strip keeps part', /Manifold\.cube/.test(stripped));
 
   check('NO_SOLID copy present', /Extrude/.test(CONTOUR_NO_SOLID));
+
+  // Guard must not refuse pre-existing solids; only the emitted contour region.
+  const withSolid =
+    'let part = Manifold.cube([40, 30, 20], true);\n'
+    + 'part = makeExtrude(profileRectangle(10, 5), 4, part);\n'
+    + 'return part;\n';
+  const ontoSolid = composeContourProfile(withSolid, {
+    face,
+    tool: 'circle',
+    params: { radius: 5, segments: 32 },
+  });
+  const emitted = contourProfileOwnedRegion(ontoSolid.buffer || '');
+  check('compose onto existing Extrude is ok', ontoSolid.ok === true);
+  check('compose onto Extrude keeps profile block', hasContourProfileBlock(ontoSolid.buffer || ''));
+  check('emitted region has no solid call',
+    emitted.length > 0 && !/makeExtrude\s*\(|makeRevolve\s*\(|\bloft\s*\(/.test(emitted));
+  check('existing Extrude still in buffer', countMakeExtrude(ontoSolid.buffer) === 1);
 }
 
 // ── One-shot Extrude compose still exists (Slice B; UI must not call it) ──

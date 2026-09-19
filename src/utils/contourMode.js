@@ -305,6 +305,16 @@ export function hasContourProfileBlock(buffer) {
   return t.includes(CONTOUR_PROFILE_BEGIN) && t.includes(CONTOUR_PROFILE_END);
 }
 
+/** Text this composer owns — between CONTOUR_PROFILE_BEGIN and CONTOUR_PROFILE_END. */
+export function contourProfileOwnedRegion(buffer) {
+  const text = String(buffer || '');
+  const i = text.lastIndexOf(CONTOUR_PROFILE_BEGIN);
+  if (i < 0) return '';
+  const j = text.indexOf(CONTOUR_PROFILE_END, i);
+  if (j < 0) return '';
+  return text.slice(i, j + CONTOUR_PROFILE_END.length);
+}
+
 /**
  * Remove the in-mode Profile region so Confirm can replace it.
  * If markers are missing/unbalanced, leave the buffer unchanged (loud later).
@@ -352,7 +362,10 @@ export function composeContourProfile(buffer, { face = null, tool = 'circle', pa
       message: 'Could not compose Profile — need a part and a planar workplane.',
     };
   }
-  if (/makeExtrude\s*\(|makeRevolve\s*\(|\bloft\s*\(/.test(composed)) {
+  // Only the contour block is this composer's responsibility. Pre-existing
+  // makeExtrude / makeRevolve / loft in the user's script must not block Confirm.
+  const owned = contourProfileOwnedRegion(composed);
+  if (/makeExtrude\s*\(|makeRevolve\s*\(|\bloft\s*\(/.test(owned)) {
     return {
       ok: false,
       message: CONTOUR_NO_SOLID,
