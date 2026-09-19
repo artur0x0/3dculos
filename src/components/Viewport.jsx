@@ -508,33 +508,35 @@ const Viewport = forwardRef(({
   const applyContourPartGhost = useCallback((on) => {
     const mesh = resultRef.current;
     if (!mesh) return;
+    const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
     if (on) {
-      if (!contourGhostMatsRef.current) {
-        contourGhostMatsRef.current = mesh.material;
+      contourGhostMatsRef.current = true;
+      for (const m of mats) {
+        if (!m) continue;
+        if (m.userData._contourPrev == null) {
+          m.userData._contourPrev = {
+            transparent: m.transparent,
+            opacity: m.opacity,
+            depthWrite: m.depthWrite,
+          };
+        }
+        // Dim in place so the part stays recognizable (not a grey void).
+        m.transparent = true;
+        m.opacity = 0.4;
+        m.depthWrite = false;
+        m.needsUpdate = true;
       }
-      const ghost = new MeshLambertMaterial({
-        color: 0x9ca3af,
-        transparent: true,
-        opacity: 0.28,
-        depthWrite: false,
-        flatShading: true,
-        side: DoubleSide,
-        emissive: 0x4b5563,
-        emissiveIntensity: 0.08,
-      });
-      mesh.material = Array.isArray(contourGhostMatsRef.current)
-        ? [ghost, ghost, ghost]
-        : ghost;
     } else if (contourGhostMatsRef.current) {
-      const current = mesh.material;
-      mesh.material = contourGhostMatsRef.current;
+      for (const m of mats) {
+        const prev = m?.userData?._contourPrev;
+        if (!prev) continue;
+        m.transparent = prev.transparent;
+        m.opacity = prev.opacity;
+        m.depthWrite = prev.depthWrite;
+        m.needsUpdate = true;
+        delete m.userData._contourPrev;
+      }
       contourGhostMatsRef.current = null;
-      const disposeGhost = (mat) => {
-        if (!mat || mat === mesh.material) return;
-        if (Array.isArray(mat)) mat.forEach((m) => m?.dispose?.());
-        else mat.dispose?.();
-      };
-      if (current !== mesh.material) disposeGhost(current);
     }
   }, []);
 
@@ -548,7 +550,7 @@ const Viewport = forwardRef(({
     const mat = new MeshBasicMaterial({
       color: 0x22d3ee,
       transparent: true,
-      opacity: 0.12,
+      opacity: 0.18,
       depthWrite: false,
       side: DoubleSide,
     });
