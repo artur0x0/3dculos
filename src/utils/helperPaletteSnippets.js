@@ -10,7 +10,7 @@
  * workplane via facesByNormal + closest center (never bare `top`).
  * Slice 21: crossSection plane+profile substrate (planar face → makeCrossSection).
  * Slice 22: sweepPath ordered wire from edge selection (makeSweepPath).
- * Slice 23: filletAlongPath — sweep fillet wedge along Path; Fillet Strategy=sweep|planar.
+ * Slice 23: filletAlongPath — sweep fillet wedge along Path; Fillet Strategy=sweep (default) | planar.
  *
  * Sequential taps compose via composeHelperInsert:
  * strip one trailing `return part;`, insert body, re-append exactly one `return part;`.
@@ -672,12 +672,12 @@ export const HELPER_PALETTE_ITEMS = [
     id: 'filletEdges',
     label: 'Fillet',
     group: 'Features',
-    title: 'filletEdges / filletAlongPath — Strategy auto | planar | sweep',
+    title: 'filletEdges / filletAlongPath — Strategy sweep (default) | planar',
     params: [
       { name: 'body', type: 'body', default: 'part', label: 'Body' },
       {
-        name: 'strategy', type: 'select', default: 'auto', label: 'Strategy',
-        options: ['auto', 'planar', 'sweep'],
+        name: 'strategy', type: 'select', default: 'sweep', label: 'Strategy',
+        options: ['sweep', 'planar', 'auto'],
       },
       { name: 'radius', type: 'number', default: 3, label: 'Radius', min: 0.01, step: 0.5 },
       { name: 'sphericalCorners', type: 'bool', default: true, label: 'Spherical corners' },
@@ -691,8 +691,11 @@ export const HELPER_PALETTE_ITEMS = [
       const lines = [...ensurePartPrefix(empty, names)];
       const body = resolveBody(p, names, empty ? lines.join('\n') : buffer);
       const r = num(p.radius, 3);
-      // auto → heuristic from edge set; planar|sweep override.
-      const strategy = resolveFilletStrategy(str(p.strategy, 'auto'), edgeCtx);
+      // Sweep is the universal default (and auto). Planar is manual override.
+      // No picked wire → classic filletEdges (script-style / all-convex / face scope).
+      const hasPicked = Array.isArray(edgeCtx) && edgeCtx.length > 0;
+      let strategy = resolveFilletStrategy(p.strategy != null ? str(p.strategy, 'sweep') : 'sweep');
+      if (strategy === 'sweep' && !hasPicked) strategy = 'planar';
       // Strategy=sweep → makeSweepPath + filletAlongPath (curved-adjacent OK).
       // Strategy=planar → classic filletEdges for planar–planar edges.
       if (strategy === 'sweep') {

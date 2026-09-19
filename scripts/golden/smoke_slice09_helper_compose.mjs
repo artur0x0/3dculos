@@ -206,12 +206,12 @@ check('comment-only buffer counts as empty', isBufferEmpty('// note\n/* x */'));
   let buf = composeHelperInsert('', 'cube', null, { width: 40, depth: 30, height: 20, center: true });
   buf = composeHelperInsert(
     buf, 'filletEdges', null,
-    { radius: 3, sphericalCorners: true, edgeScope: 'selected', body: 'part' },
+    { strategy: 'planar', radius: 3, sphericalCorners: true, edgeScope: 'selected', body: 'part' },
     null, e1,
   );
   const twice = composeHelperInsert(
     buf, 'filletEdges', null,
-    { radius: 6, sphericalCorners: true, edgeScope: 'selected', body: 'part' },
+    { strategy: 'planar', radius: 6, sphericalCorners: true, edgeScope: 'selected', body: 'part' },
     null, e2,
   );
   check('sequential fillets: string', typeof twice === 'string' && twice.length > 0);
@@ -230,7 +230,7 @@ check('comment-only buffer counts as empty', isBufferEmpty('// note\n/* x */'));
 
   const soft = composeHelperInsert(
     buf, 'filletEdges', null,
-    { radius: 3, sphericalCorners: true, edgeScope: 'selected', body: 'part' },
+    { strategy: 'planar', radius: 3, sphericalCorners: true, edgeScope: 'selected', body: 'part' },
     null, [],
   );
   check('selected-edge soft-fail → null (no JS)', soft === null);

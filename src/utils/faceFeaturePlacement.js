@@ -689,7 +689,7 @@ export function resolveFaceModal(paletteItem, selectedFace, selectedEdges = null
 
   // Slice 12 + polish: fillet/chamfer with user-selected edges (no face required).
   // Planar: seed/cap under kernel size guard t < 0.45·L.
-  // Sweep / auto→sweep: NO planar size clamp — path-length defaults (r≈6 on box
+  // Sweep (default / auto): NO planar size clamp — path-length defaults (r≈6 on box
   // perimeter). Tessellated prior-fillet rims must not pin the slider ~0.04.
   if (isEdgeFeature && hasEdges) {
     const body = { name: 'body', type: 'body', default: 'part', label: 'Body' };
@@ -699,10 +699,10 @@ export function resolveFaceModal(paletteItem, selectedFace, selectedEdges = null
     };
     const minL = effectiveBlendEdgeLength(selectedEdges) ?? minSelectedEdgeLength(selectedEdges);
     const pathLen = pathLengthFromEdges(selectedEdges);
-    // Fillet: size from resolved auto strategy so sweep opens with a usable radius.
+    // Fillet: sweep is the universal default — open with path-length radius.
     // Chamfer stays planar-guarded (no sweep strategy).
     const resolved = id === 'filletEdges'
-      ? resolveFilletStrategy('auto', selectedEdges)
+      ? resolveFilletStrategy('sweep', selectedEdges)
       : 'planar';
     const useSweepSize = resolved === 'sweep';
     const blendDefault = useSweepSize
@@ -728,8 +728,8 @@ export function resolveFaceModal(paletteItem, selectedFace, selectedEdges = null
       params = [
         body,
         {
-          name: 'strategy', type: 'select', default: 'auto', label: 'Strategy',
-          options: ['auto', 'planar', 'sweep'],
+          name: 'strategy', type: 'select', default: 'sweep', label: 'Strategy',
+          options: ['sweep', 'planar', 'auto'],
         },
         blendParam,
         { name: 'sphericalCorners', type: 'bool', default: true, label: 'Spherical corners' },
@@ -818,7 +818,7 @@ export function resolveFaceModal(paletteItem, selectedFace, selectedEdges = null
     : null;
   const pathLenFace = hasEdges && isEdgeFeature ? pathLengthFromEdges(selectedEdges) : null;
   const useSweepSizeFace = id === 'filletEdges' && hasEdges
-    && resolveFilletStrategy('auto', selectedEdges) === 'sweep';
+    && resolveFilletStrategy('sweep', selectedEdges) === 'sweep';
   const blendDefault = useSweepSizeFace
     ? ((pathLenFace ?? minL) != null
       ? defaultSweepBlendSize(pathLenFace ?? minL)

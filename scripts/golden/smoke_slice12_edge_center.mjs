@@ -38,6 +38,7 @@ import {
   minSelectedEdgeLength,
   defaultEdgeBlendSize,
   edgeBlendHardMax,
+  sweepBlendHardMax,
   edgeBlendFailsSizeGuard,
 } from '../../src/utils/selectEdge.js';
 
@@ -294,7 +295,7 @@ const planarFace = {
     '',
     'filletEdges',
     null,
-    { radius: 2.5, sphericalCorners: true, edgeScope: 'selected' },
+    { strategy: 'planar', radius: 2.5, sphericalCorners: true, edgeScope: 'selected' },
     null,
     edges,
   );
@@ -590,8 +591,8 @@ const planarFace = {
   const item = HELPER_PALETTE_ITEMS.find((h) => h.id === 'filletEdges');
   const resolved = resolveFaceModal(item, null, edges);
   const radiusParam = resolved.item?.params?.find((p) => p.name === 'radius');
-  check('resolveFaceModal seeds radius from minL', radiusParam?.default === 6, `got ${radiusParam?.default}`);
-  check('resolveFaceModal caps slider max', radiusParam?.max === edgeBlendHardMax(40), `got ${radiusParam?.max}`);
+  check('resolveFaceModal seeds radius from path length', radiusParam?.default === 4, `got ${radiusParam?.default}`);
+  check('resolveFaceModal caps slider max', radiusParam?.max === sweepBlendHardMax(40), `got ${radiusParam?.max}`);
 
   const chamferItem = HELPER_PALETTE_ITEMS.find((h) => h.id === 'chamferEdges');
   const cResolved = resolveFaceModal(chamferItem, null, edges);
@@ -614,12 +615,12 @@ const planarFace = {
   let buf = composeHelperInsert('', 'cube', null, { width: 40, depth: 30, height: 20, center: true });
   buf = composeHelperInsert(
     buf, 'filletEdges', null,
-    { radius: 3, sphericalCorners: true, edgeScope: 'selected', body: 'part' },
+    { strategy: 'planar', radius: 3, sphericalCorners: true, edgeScope: 'selected', body: 'part' },
     null, e1,
   );
   const twice = composeHelperInsert(
     buf, 'filletEdges', null,
-    { radius: 2, sphericalCorners: true, edgeScope: 'selected', body: 'part' },
+    { strategy: 'planar', radius: 2, sphericalCorners: true, edgeScope: 'selected', body: 'part' },
     null, e2,
   );
   check('2nd fillet compose ok', typeof twice === 'string');
@@ -648,7 +649,7 @@ const planarFace = {
     'soft-fail empty edges → null',
     composeHelperInsert(
       buf, 'filletEdges', null,
-      { radius: 3, sphericalCorners: true, edgeScope: 'selected', body: 'part' },
+      { strategy: 'planar', radius: 3, sphericalCorners: true, edgeScope: 'selected', body: 'part' },
       null, [],
     ) === null,
   );

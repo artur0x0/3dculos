@@ -2637,7 +2637,7 @@ function makeSweepPath(edges, opts = {}) {
 // Unlock fillets on compound / curved-adjacent edges by sweeping a quarter-circle
 // (or chamfer triangle) cutter along makeSweepPath and boolean-subtracting.
 // Path is a LINEAR polyline (edge wire) — Catmull-Rom bulges off chords and left
-// purple sliver scraps. Planar–planar still uses filletEdges (UI Strategy=planar|auto).
+// purple sliver scraps. Planar–planar uses filletEdges only when UI Strategy=planar.
 // Extrude/revolve/loft are NOT started here — wait for Product brief.
 function _s23Norm(v) {
   const L = Math.hypot(v[0], v[1], v[2]) || 1;
