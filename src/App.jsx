@@ -40,6 +40,7 @@ import GameHintsModal from './components/GameHintsModal';
 import PuzzlePickerModal from './components/PuzzlePickerModal';
 import GameConfetti from './components/GameConfetti';
 import { composeContourCommit } from './utils/contourMode';
+import { composeFilletCommit } from './utils/filletMode';
 
 const App = () => {
   const [currentScript, setCurrentScript] = useState('');
@@ -774,6 +775,32 @@ const App = () => {
     return true;
   };
 
+  /**
+   * Slice 27: in-mode Fillet Accept. Writes makeSweepPath + filletAlongPath
+   * and Auto-Runs. Second Accept replaces the same marked block.
+   */
+  const handleCommitFillet = (payload) => {
+    const buf = codeEditorRef.current?.getContent?.() || '';
+    const result = composeFilletCommit(buf, payload || {});
+    if (!result.ok) {
+      viewportRef.current?.softFailFillet?.(result.message);
+      return false;
+    }
+    const wrote = codeEditorRef.current?.applyBuffer?.(result.buffer, 'Fillet mode');
+    if (!wrote) {
+      viewportRef.current?.softFailFillet?.(
+        'Could not write Fillet into the editor — try again.',
+      );
+      return false;
+    }
+    if (result.run) {
+      setTimeout(() => {
+        handleGameRun();
+      }, 0);
+    }
+    return true;
+  };
+
   const handleExecute = (script, autoExecute=false) => {
     setCurrentScript(script);
     // Game mode: never auto-run on Monaco mount/remount (blank-enter / ghost-only).
@@ -1082,6 +1109,7 @@ const App = () => {
               isMobile={isMobile}
               onInsertHelper={handleInsertHelper}
               onCommitContourProfile={handleCommitContourProfile}
+              onCommitFillet={handleCommitFillet}
               getHelperBuffer={() => codeEditorRef.current?.getContent?.() || ''}
             />
     );
@@ -1306,6 +1334,7 @@ const App = () => {
             isMobile={false}
             onInsertHelper={handleInsertHelper}
             onCommitContourProfile={handleCommitContourProfile}
+            onCommitFillet={handleCommitFillet}
             getHelperBuffer={() => codeEditorRef.current?.getContent?.() || ''}
           />
         </div>

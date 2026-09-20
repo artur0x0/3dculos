@@ -14,6 +14,7 @@
  * Slice 24: contour-mode Profile region (markers + custom polyline points).
  * Slice 25: Extrude Confirm wraps profile + makeExtrude / placeOnFace in extrude markers.
  * Slice 26: Revolve Confirm wraps profile + makeRevolve / placeOnFace in revolve markers.
+ * Slice 27: Fillet-in-mode Accept wraps makeSweepPath + filletAlongPath in fillet markers.
  *
  * Sequential taps compose via composeHelperInsert:
  * strip one trailing `return part;`, insert body, re-append exactly one `return part;`.
@@ -42,6 +43,10 @@ export const CONTOUR_EXTRUDE_END = '// --- contour-mode extrude end ---';
 /** Slice 26 — in-mode Revolve region (profile + solid). Second Confirm replaces this block. */
 export const CONTOUR_REVOLVE_BEGIN = '// --- contour-mode revolve begin ---';
 export const CONTOUR_REVOLVE_END = '// --- contour-mode revolve end ---';
+
+/** Slice 27 — in-mode Fillet region (makeSweepPath + filletAlongPath). Second Accept replaces this block. */
+export const FILLET_MODE_BEGIN = '// --- fillet-mode begin ---';
+export const FILLET_MODE_END = '// --- fillet-mode end ---';
 
 /** Metric fastener sizes commonly used in puzzles / hints. */
 export const FASTENER_SIZE_OPTIONS = [
@@ -754,12 +759,13 @@ export const HELPER_PALETTE_ITEMS = [
       const hasPicked = Array.isArray(edgeCtx) && edgeCtx.length > 0;
       let strategy = resolveFilletStrategy(p.strategy != null ? str(p.strategy, 'sweep') : 'sweep');
       if (strategy === 'sweep' && !hasPicked) strategy = 'planar';
+      const feat = [];
       // Strategy=sweep → makeSweepPath + filletAlongPath (curved-adjacent OK).
       // Strategy=planar → classic filletEdges for planar–planar edges.
       if (strategy === 'sweep') {
         const edge = emitSelectedEdgeLiteralLines(body, edgeCtx || [], names, allocateUniqueName);
         if (!edge.ok) return null;
-        lines.push(...edge.lines);
+        feat.push(...edge.lines);
         const path = allocateUniqueName(names, 'path');
         const rev = bool(p.reverse, false);
         const optsPath = rev ? ', { reverse: true }' : '';
@@ -767,33 +773,42 @@ export const HELPER_PALETTE_ITEMS = [
         const sweepOpts = profile === 'chamfer'
           ? `, { profile: 'chamfer' }`
           : '';
-        lines.push(`const ${path} = makeSweepPath(${edge.edgesExpr}${optsPath}); // edge→sweep path`);
-        lines.push(
+        feat.push(`const ${path} = makeSweepPath(${edge.edgesExpr}${optsPath}); // edge→sweep path`);
+        feat.push(
           `${body} = filletAlongPath(${body}, ${path}, ${r}${sweepOpts}); // sweep fillet wedge`,
         );
-        lines.push(...syncPartLines(body, names, hasPartDecl(lines, empty)));
-        return withReturn(lines, empty);
+        feat.push(...syncPartLines(body, names, hasPartDecl([...lines, ...feat], empty)));
+      } else {
+        const sc = bool(p.sphericalCorners, true);
+        let edgesExpr = `convexEdges(${body})`;
+        const scope = p.edgeScope || (edgeCtx && edgeCtx.length ? 'selected' : (faceCtx ? 'face' : 'allConvex'));
+        if (scope === 'selected' || (edgeCtx && edgeCtx.length && scope !== 'face' && scope !== 'allConvex')) {
+          const edge = emitSelectedEdgeLines(body, edgeCtx || [], names, allocateUniqueName);
+          // Soft-fail: never write throw/partial JS — caller clears stale selection.
+          if (!edge.ok) return null;
+          feat.push(...edge.lines);
+          edgesExpr = edge.edgesExpr;
+        } else if (faceCtx && faceCtx.type !== 'irregular' && scope !== 'allConvex') {
+          const edge = emitFaceEdgeLines(body, faceCtx, { ...p, edgeScope: 'face' }, names, allocateUniqueName);
+          feat.push(...edge.lines);
+          edgesExpr = edge.edgesExpr;
+        } else if (scope === 'allConvex') {
+          edgesExpr = `convexEdges(${body})`;
+        }
+        feat.push(
+          `${body} = filletEdges(${body}, ${edgesExpr}, ${r}, { sphericalCorners: ${sc} });`,
+        );
+        feat.push(...syncPartLines(body, names, hasPartDecl([...lines, ...feat], empty)));
       }
-      const sc = bool(p.sphericalCorners, true);
-      let edgesExpr = `convexEdges(${body})`;
-      const scope = p.edgeScope || (edgeCtx && edgeCtx.length ? 'selected' : (faceCtx ? 'face' : 'allConvex'));
-      if (scope === 'selected' || (edgeCtx && edgeCtx.length && scope !== 'face' && scope !== 'allConvex')) {
-        const edge = emitSelectedEdgeLines(body, edgeCtx || [], names, allocateUniqueName);
-        // Soft-fail: never write throw/partial JS — caller clears stale selection.
-        if (!edge.ok) return null;
-        lines.push(...edge.lines);
-        edgesExpr = edge.edgesExpr;
-      } else if (faceCtx && faceCtx.type !== 'irregular' && scope !== 'allConvex') {
-        const edge = emitFaceEdgeLines(body, faceCtx, { ...p, edgeScope: 'face' }, names, allocateUniqueName);
-        lines.push(...edge.lines);
-        edgesExpr = edge.edgesExpr;
-      } else if (scope === 'allConvex') {
-        edgesExpr = `convexEdges(${body})`;
+      // Slice 27: in-mode Accept wraps the same sweep/planar emit so second Accept
+      // can replace the marked block. One-shot palette Confirm is unchanged.
+      if (p._filletMode) {
+        lines.push(FILLET_MODE_BEGIN);
+        lines.push(...feat);
+        lines.push(FILLET_MODE_END);
+      } else {
+        lines.push(...feat);
       }
-      lines.push(
-        `${body} = filletEdges(${body}, ${edgesExpr}, ${r}, { sphericalCorners: ${sc} });`,
-      );
-      lines.push(...syncPartLines(body, names, hasPartDecl(lines, empty)));
       return withReturn(lines, empty);
     },
   },

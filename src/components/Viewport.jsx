@@ -42,6 +42,7 @@ import CrossSectionPanel from './CrossSectionPanel';
 import HelperInsertPalette from './HelperInsertPalette';
 import ContourModeRail from './ContourModeRail';
 import ContourModeChip from './ContourModeChip';
+import FilletModeChip from './FilletModeChip';
 import { classifySelectedFace } from '../utils/faceFeaturePlacement';
 import { buildCrossSectionPreview } from '../utils/crossSectionSubstrate';
 import {
@@ -67,12 +68,20 @@ import {
 } from '../utils/contourMode';
 import { buildSweepPathPreview } from '../utils/edgeSweepPath';
 import {
+  buildFilletBlendPreview,
+  enterFilletState,
+  validateFilletAccept,
+  defaultFilletParams,
+} from '../utils/filletMode';
+import {
   buildFeatureEdges,
   pickNearestEdgeScreen,
   resolveEdgePickSlopPx,
   toggleEdgeSelectionPropagated,
   popLastEdgeSelection,
   edgeKey,
+  pathLengthFromEdges,
+  sweepBlendHardMax,
 } from '../utils/selectEdge';
 import { X } from 'lucide-react';
 import { downloadModelFromMesh, get3MFBase64FromMesh } from '../utils/exportModel';
@@ -146,6 +155,7 @@ const Viewport = forwardRef(({
   isMobile = false,
   onInsertHelper = null,
   onCommitContourProfile = null,
+  onCommitFillet = null,
   getHelperBuffer = null,
 }, ref) => {
   const canvasRef = useRef(null);
@@ -207,6 +217,12 @@ const Viewport = forwardRef(({
   const contourGhostMatsRef = useRef(null);
   const [contourToast, setContourToast] = useState(null);
   const contourToastTimerRef = useRef(null);
+  /** Slice 27: Fillet-in-mode (enter without edges; Accept commits sweep fillet). */
+  const [filletMode, setFilletMode] = useState(null);
+  const filletModeRef = useRef(null);
+  const filletBlendPreviewRef = useRef(null);
+  const [filletToast, setFilletToast] = useState(null);
+  const filletToastTimerRef = useRef(null);
   /** G1 tangent chain propagation for Edge pick — ON by default (circular / fillet loops). */
   const [tangentProp, setTangentProp] = useState(true);
   const tangentPropRef = useRef(true);
@@ -228,6 +244,17 @@ const Viewport = forwardRef(({
   const showContourToast = (msg) => {
     setContourToast(msg);
     armContourToastClear();
+  };
+  const armFilletToastClear = () => {
+    if (filletToastTimerRef.current) clearTimeout(filletToastTimerRef.current);
+    filletToastTimerRef.current = setTimeout(() => {
+      filletToastTimerRef.current = null;
+      setFilletToast(null);
+    }, 3200);
+  };
+  const showFilletToast = (msg) => {
+    setFilletToast(msg);
+    armFilletToastClear();
   };
   const [materials, setMaterials] = useState([]);
   const [isExecuting, setIsExecuting] = useState(false);
@@ -257,6 +284,7 @@ const Viewport = forwardRef(({
   tangentPropRef.current = tangentProp;
   cachedMeshDataRef.current = cachedMeshData;
   contourModeRef.current = contourMode;
+  filletModeRef.current = filletMode;
 
   useImperativeHandle(ref, () => ({
     executeScript,
@@ -279,9 +307,14 @@ const Viewport = forwardRef(({
       extrudePreviewRef.current = null;
       disposeEdgeOverlayObject(sceneRef.current, revolvePreviewRef.current);
       revolvePreviewRef.current = null;
+      disposeEdgeOverlayObject(sceneRef.current, filletBlendPreviewRef.current);
+      filletBlendPreviewRef.current = null;
       setContourMode(null);
       contourModeRef.current = null;
+      setFilletMode(null);
+      filletModeRef.current = null;
       setContourToast(null);
+      setFilletToast(null);
       setSelectedFace(null);
       setSelectedEdges([]);
       onFaceSelected?.(null);
@@ -335,6 +368,10 @@ const Viewport = forwardRef(({
     /** Slice 24: loud-fail toast while contour mode is open. */
     softFailContour: (msg) => {
       showContourToast(msg || 'Contour mode refused — check the workplane / profile.');
+    },
+    /** Slice 27: loud-fail toast — keep the path visible (do not clear edges). */
+    softFailFillet: (msg) => {
+      showFilletToast(msg || 'Fillet refused — pick a contiguous chain, then Accept.');
     },
     // Updated to use cached mesh when available
     export3MF: async () => {
@@ -807,6 +844,106 @@ const Viewport = forwardRef(({
     polylineDraftRef.current = group;
   }, [clearPolylineDraft]);
 
+  const clearFilletBlendPreview = useCallback(() => {
+    disposeEdgeOverlayObject(sceneRef.current, filletBlendPreviewRef.current);
+    filletBlendPreviewRef.current = null;
+  }, []);
+
+  /**
+   * Slice 27: live sweep-fillet blend (path + swept wedge). Disconnected
+   * selections keep their polylines visible — loud fail, not a wrong solid.
+   */
+  const paintFilletBlendPreview = useCallback((payload) => {
+    clearFilletBlendPreview();
+    if (!payload || !sceneRef.current) return;
+    const group = new Group();
+    group.name = 'filletBlendPreview';
+
+    const addPolyline = (pts, color, opacity = 0.95) => {
+      if (!pts || pts.length < 2) return;
+      const pos = new Float32Array(pts.length * 3);
+      for (let i = 0; i < pts.length; i++) {
+        pos[i * 3] = pts[i][0];
+        pos[i * 3 + 1] = pts[i][1];
+        pos[i * 3 + 2] = pts[i][2];
+      }
+      const geom = new BufferGeometry();
+      geom.setAttribute('position', new BufferAttribute(pos, 3));
+      const line = new Line(geom, new LineBasicMaterial({
+        color,
+        depthTest: false,
+        depthWrite: false,
+        transparent: true,
+        opacity,
+      }));
+      line.renderOrder = 16;
+      line.frustumCulled = false;
+      group.add(line);
+    };
+
+    if (payload.preview?.points?.length) {
+      addPolyline(payload.preview.points, payload.ok ? 0x22c55e : 0xf97316, 0.98);
+    } else {
+      for (const poly of payload.polylines || []) addPolyline(poly, 0xf97316, 0.9);
+    }
+
+    const rings = payload.rings;
+    if (payload.ok && rings?.length >= 2) {
+      const n = rings[0].length;
+      if (n >= 3) {
+        const positions = new Float32Array(rings.length * n * 3);
+        let w = 0;
+        for (const ring of rings) {
+          for (let i = 0; i < n; i++) {
+            const p = ring[i] || ring[0];
+            positions[w++] = p[0];
+            positions[w++] = p[1];
+            positions[w++] = p[2];
+          }
+        }
+        const indices = [];
+        for (let j = 0; j < rings.length - 1; j++) {
+          for (let i = 0; i < n; i++) {
+            const i1 = (i + 1) % n;
+            const a = j * n + i;
+            const b = a + n;
+            indices.push(a, b, j * n + i1, b, b + i1 - i, j * n + i1);
+          }
+        }
+        if (payload.closed && rings.length > 2) {
+          const last = rings.length - 1;
+          for (let i = 0; i < n; i++) {
+            const i1 = (i + 1) % n;
+            const a = last * n + i;
+            const b = i;
+            indices.push(a, b, last * n + i1, b, i1, last * n + i1);
+          }
+        }
+        const geom = new BufferGeometry();
+        geom.setAttribute('position', new BufferAttribute(positions, 3));
+        geom.setIndex(indices);
+        geom.computeVertexNormals();
+        const mat = new MeshBasicMaterial({
+          color: 0xfbbf24,
+          transparent: true,
+          opacity: 0.38,
+          depthWrite: false,
+          side: DoubleSide,
+        });
+        const mesh = new ThreeMesh(geom, mat);
+        mesh.name = 'filletBlendWedge';
+        mesh.renderOrder = 10;
+        mesh.frustumCulled = false;
+        group.add(mesh);
+      }
+    }
+
+    if (group.children.length) {
+      sceneRef.current.add(group);
+      filletBlendPreviewRef.current = group;
+    }
+  }, [clearFilletBlendPreview]);
+
   const exitContourMode = useCallback(() => {
     setContourMode(null);
     contourModeRef.current = null;
@@ -824,6 +961,9 @@ const Viewport = forwardRef(({
   }, [clearXsPreview, clearWorkplaneOverlay, clearPolylineDraft, clearExtrudePreview, clearRevolvePreview, applyContourPartGhost]);
 
   const enterContourMode = useCallback(({ entry } = {}) => {
+    setFilletMode(null);
+    filletModeRef.current = null;
+    clearFilletBlendPreview();
     setPickMode('face');
     disposeEdgeOverlayObject(sceneRef.current, pathPreviewRef.current);
     pathPreviewRef.current = null;
@@ -831,7 +971,7 @@ const Viewport = forwardRef(({
     setContourMode(next);
     if (next.enterRefuse) showContourToast(next.enterRefuse);
     applyContourPartGhost(true);
-  }, [selectedFace, applyContourPartGhost]);
+  }, [selectedFace, applyContourPartGhost, clearFilletBlendPreview]);
 
   const confirmContourProfile = useCallback(() => {
     const state = contourModeRef.current;
@@ -889,6 +1029,77 @@ const Viewport = forwardRef(({
       );
     }
   }, [onCommitContourProfile]);
+
+  const exitFilletMode = useCallback(() => {
+    setFilletMode(null);
+    filletModeRef.current = null;
+    clearFilletBlendPreview();
+    if (filletToastTimerRef.current) {
+      clearTimeout(filletToastTimerRef.current);
+      filletToastTimerRef.current = null;
+    }
+    setFilletToast(null);
+  }, [clearFilletBlendPreview]);
+
+  const enterFilletMode = useCallback(() => {
+    exitContourMode();
+    setPickMode('edge');
+    clearHighlight();
+    setSelectedFace(null);
+    onFaceSelected?.(null);
+    const next = enterFilletState(selectedEdges);
+    setFilletMode(next);
+    filletModeRef.current = next;
+    setTangentProp(true);
+    showFilletToast(
+      selectedEdges?.length
+        ? 'Fillet mode — Accept commits the sweep blend. Back exits with no commit.'
+        : 'Fillet mode — tap edges (Tangent on). Accept commits; Back exits.',
+    );
+  }, [exitContourMode, onFaceSelected, selectedEdges, clearHighlight]);
+
+  const acceptFillet = useCallback(() => {
+    const state = filletModeRef.current;
+    if (!state) return;
+    const gate = validateFilletAccept(selectedEdges, state.params);
+    if (!gate.ok) {
+      showFilletToast(gate.message);
+      return;
+    }
+    const ok = onCommitFillet?.({
+      edges: selectedEdges,
+      params: gate.normalized,
+    });
+    if (ok) {
+      showFilletToast('Fillet saved — still in Fillet mode. Accept again to update.');
+    }
+  }, [onCommitFillet, selectedEdges]);
+
+  // Live sweep-fillet blend as edges accumulate.
+  useEffect(() => {
+    if (!filletMode) {
+      clearFilletBlendPreview();
+      return;
+    }
+    if (!filletMode.radiusTouched) {
+      const seeded = defaultFilletParams(selectedEdges);
+      if (Number(filletMode.params?.radius) !== seeded.radius) {
+        setFilletMode((prev) => (
+          prev && !prev.radiusTouched
+            ? { ...prev, params: { ...prev.params, radius: seeded.radius } }
+            : prev
+        ));
+        return;
+      }
+    }
+    const preview = buildFilletBlendPreview(selectedEdges, filletMode.params);
+    paintFilletBlendPreview(preview);
+  }, [filletMode, selectedEdges, paintFilletBlendPreview, clearFilletBlendPreview]);
+
+  useEffect(() => () => {
+    clearFilletBlendPreview();
+    if (filletToastTimerRef.current) clearTimeout(filletToastTimerRef.current);
+  }, [clearFilletBlendPreview]);
 
   // Live workplane + makeCrossSection profile (+ Extrude / Revolve solid) preview.
   useEffect(() => {
@@ -1143,6 +1354,9 @@ const Viewport = forwardRef(({
     syncFeatureEdges(resultRef.current?.geometry ?? null);
   }, [syncFeatureEdges]);
 
+  useEffect(() => {
+    if (filletMode && pickMode === 'edge') rebuildFeatureEdges();
+  }, [filletMode, pickMode, rebuildFeatureEdges]);
 
   // Clear cutting plane widget
   const clearCuttingPlane = () => {
@@ -2526,7 +2740,7 @@ const Viewport = forwardRef(({
       )}
       
       {/* Slice 09: left helper insert palette (game mode only). */}
-      {mode === 'game' && onInsertHelper && !contourMode && (
+      {mode === 'game' && onInsertHelper && !contourMode && !filletMode && (
         <HelperInsertPalette
           onInsert={onInsertHelper}
           getBuffer={getHelperBuffer}
@@ -2544,6 +2758,7 @@ const Viewport = forwardRef(({
           onProfilePreview={setXsPreview}
           onPathPreview={setPathPreview}
           onEnterContourMode={enterContourMode}
+          onEnterFilletMode={enterFilletMode}
           compact={isMobile}
         />
       )}
@@ -2618,7 +2833,7 @@ const Viewport = forwardRef(({
       )}
       
       {/* Face Info Display — Slice 11: show classified type; dodge palette in game mode */}
-      {selectedFace && !measurementEnabled && !contourMode && (
+      {selectedFace && !measurementEnabled && !contourMode && !filletMode && (
         <div
           className={`absolute bg-black/50 text-white p-2 rounded-lg text-xs font-mono z-10 ${
             mode === 'game'
@@ -2676,8 +2891,39 @@ const Viewport = forwardRef(({
         />
       )}
 
+      {/* Slice 27: Fillet-in-mode chip — Tangent / Clear / Accept / Back */}
+      {filletMode && (
+        <FilletModeChip
+          edgeCount={selectedEdges.length}
+          tangentOn={tangentProp}
+          params={{
+            ...filletMode.params,
+            _sweepMax: sweepBlendHardMax(pathLengthFromEdges(selectedEdges)),
+          }}
+          pathOk={buildFilletBlendPreview(selectedEdges, filletMode.params).ok}
+          compact={isMobile}
+          onToggleTangent={() => setTangentProp((v) => !v)}
+          onClear={() => {
+            clearEdgeHover();
+            clearEdgeHighlight();
+            setSelectedEdges([]);
+          }}
+          onAccept={acceptFillet}
+          onBack={exitFilletMode}
+          onParamChange={(next, extra) => setFilletMode((prev) => (
+            prev
+              ? {
+                ...prev,
+                params: { ...prev.params, ...next },
+                radiusTouched: extra?.radiusTouched ? true : prev.radiusTouched,
+              }
+              : prev
+          ))}
+        />
+      )}
+
       {/* Slice 12 hotfix: Edge pick chip — visible whenever Edge mode is on */}
-      {pickMode === 'edge' && !contourMode && (
+      {pickMode === 'edge' && !contourMode && !filletMode && (
         <div
           className={`absolute bg-amber-950/85 border border-amber-500/70 text-white px-3 py-2 rounded-lg text-xs z-20 shadow-lg ${
             mode === 'game'
@@ -2744,6 +2990,14 @@ const Viewport = forwardRef(({
         <div className="absolute top-16 left-1/2 -translate-x-1/2 z-30 pointer-events-none max-w-[min(22rem,calc(100%-2rem))]">
           <div className="bg-cyan-700 text-white text-xs font-sans font-medium px-3 py-2 rounded-full shadow-lg text-center">
             {contourToast}
+          </div>
+        </div>
+      )}
+
+      {filletToast && (
+        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-30 pointer-events-none max-w-[min(22rem,calc(100%-2rem))]">
+          <div className="bg-amber-700 text-white text-xs font-sans font-medium px-3 py-2 rounded-full shadow-lg text-center">
+            {filletToast}
           </div>
         </div>
       )}

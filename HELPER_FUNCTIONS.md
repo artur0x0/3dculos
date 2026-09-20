@@ -75,24 +75,32 @@ universal default (and **auto** resolves to sweep). **planar** is an explicit
 manual override for classic `filletEdges` (planar–planar / closed-run C6).
 **sweep** builds `makeSweepPath` + `filletAlongPath` (quarter-circle or chamfer
 wedge swept as a **linear polyline** along the edge wire, boolean subtract).
-Soft-fails empty/disconnected/branched like Path.
+Disconnected / branched selections loud-fail (path stays visible) — never a
+wrong solid.
+
+**Fillet mode (Slice 27):** tapping **Fillet** enters edge-pick mode with no
+prior selection required (no soft-fail / no pre-select). The chip is Tangent
+(default-on) / Clear / **Accept** / Back. Live sweep-blend preview updates as
+edges accumulate. **Accept** writes `makeSweepPath` + `filletAlongPath` in a
+marked block and Auto-Runs; second Accept replaces that same block. **Back**
+exits with no commit. Strategy default stays **sweep**.
 
 **Cross-section (Slice 21):** `makeCrossSection(plane, profile)` is the reusable
 plane + 2D profile substrate (planar face via `workplaneFromFace`, or default
 +Z). Cylindrical / irregular faces are refused. Does **not** extrude, sweep,
 or fillet — substrate only.
 
-**Contour mode (Slice 24/25):** in game mode, tapping **Extrude**, **Revolve**, or
+**Contour mode (Slice 24/25/26):** in game mode, tapping **Extrude**, **Revolve**, or
 **Profile** enters a shared contour shell — the part stays on screen but is
 ghosted, the left rail swaps to circle / rect / polygon / polyline + **Back**,
 and a chip (Edge-pick pattern) holds plane + profile params. Live preview uses
-`makeCrossSection`. **Profile** and **Revolve** Confirm write or update the
-in-mode Profile only. **Extrude** Confirm commits the profile plus a
-`makeExtrude` solid (`placeOnFace` onto the workplane; live solid preview as
-distance / direction / sense change). Second Confirm updates the same marked
-block. **Back** exits with no additional solid commit. Revolve / Loft solids
-are later slices. The one-shot Xform Extrude stub is gone — Extrude always
-enters contour mode.
+`makeCrossSection`. **Profile** Confirm writes or updates the in-mode Profile
+only. **Extrude** / **Revolve** Confirm commit the profile plus a solid
+(`makeExtrude` / `makeRevolve` via `placeOnFace`; live solid preview). Second
+Confirm updates the same marked block. **Back** exits with no additional solid
+commit. **Fillet** is its own edge-pick mode (Slice 27), not a contour entry.
+Loft solid is a later slice. The one-shot Xform Extrude stub is gone — Extrude
+always enters contour mode.
 
 ## Core Manifold API
 

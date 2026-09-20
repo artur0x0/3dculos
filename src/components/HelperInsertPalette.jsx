@@ -30,6 +30,7 @@ import { HELPER_PALETTE_GROUPS, itemsByGroup } from '../utils/helperPaletteSnipp
 import { resolveFaceModal } from '../utils/faceFeaturePlacement';
 import { canBuildFilletAlongPath, resolveFilletStrategy } from '../utils/filletAlongPath';
 import { isContourEntry } from '../utils/contourMode';
+import { isFilletEntry } from '../utils/filletMode';
 import HelperParamModal from './HelperParamModal';
 
 const ICONS = {
@@ -67,6 +68,7 @@ const ICONS = {
  * features get an aware sheet (or refuse). Confirm → onInsert(id, params, faceContext, edgeContext).
  * Slice 24/25/26: Extrude / Revolve / Profile call onEnterContourMode.
  * Extrude / Revolve Confirm commits the solid; Profile stays Profile-only.
+ * Slice 27: Fillet enters edge-pick mode (no pre-select / no soft-fail).
  */
 const HelperInsertPalette = ({
   onInsert,
@@ -78,6 +80,7 @@ const HelperInsertPalette = ({
   onProfilePreview = null,
   onPathPreview = null,
   onEnterContourMode = null,
+  onEnterFilletMode = null,
   compact = false,
 }) => {
   const grouped = itemsByGroup();
@@ -96,10 +99,15 @@ const HelperInsertPalette = ({
       onEnterContourMode({ entry: item.id });
       return;
     }
+    // Slice 27: Fillet enters edge-pick mode even with no prior selection.
+    if (isFilletEntry(item.id) && typeof onEnterFilletMode === 'function') {
+      onEnterFilletMode();
+      return;
+    }
     const buf = typeof getBuffer === 'function' ? getBuffer() : '';
     setBufferSnapshot(typeof buf === 'string' ? buf : '');
-    // Auto-switch to edge pick when opening fillet/chamfer with no edges yet.
-    if ((item.id === 'filletEdges' || item.id === 'chamferEdges' || item.id === 'sweepPath')
+    // Auto-switch to edge pick when opening chamfer/path with no edges yet.
+    if ((item.id === 'chamferEdges' || item.id === 'sweepPath')
       && !(selectedEdges && selectedEdges.length)
       && typeof onRequestEdgeMode === 'function') {
       onRequestEdgeMode();
