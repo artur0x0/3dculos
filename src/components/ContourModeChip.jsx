@@ -2,9 +2,9 @@ import React from 'react';
 import { Check } from 'lucide-react';
 
 /**
- * Slice 24/25/26 — contour-mode chip (Edge-pick pattern).
- * Plane + profile params; Extrude / Revolve entries also edit solid params
- * and Confirm commits the solid. Mobile-first compact card.
+ * Slice 24/25/26/28 — contour-mode chip (Edge-pick pattern).
+ * Plane + profile params; Extrude / Revolve / Loft entries also edit solid
+ * params and Confirm commits the solid. Mobile-first compact card.
  */
 const ContourModeChip = ({
   tool = 'circle',
@@ -12,10 +12,15 @@ const ContourModeChip = ({
   params = {},
   extrude = {},
   revolve = {},
+  loft = {},
   planeLabel = 'default +Z',
   onParamChange,
   onExtrudeChange,
   onRevolveChange,
+  onSelectLoftProfile,
+  onAddLoftProfile,
+  onRemoveLoftProfile,
+  onLoftOffsetChange,
   onConfirm,
   onUndoPoint,
   onClearPoints,
@@ -23,6 +28,11 @@ const ContourModeChip = ({
 }) => {
   const isExtrude = entry === 'makeExtrude';
   const isRevolve = entry === 'makeRevolve';
+  const isLoft = entry === 'makeLoft';
+  const loftProfiles = Array.isArray(loft.profiles) ? loft.profiles : [];
+  const loftSelected = Number.isInteger(loft.selected) ? loft.selected : 0;
+  const loftOffset = Number(loftProfiles[loftSelected]?.offset);
+  const loftOffsetVal = Number.isFinite(loftOffset) ? loftOffset : 0;
   const set = (name, raw, type) => {
     let v = raw;
     if (type === 'number') {
@@ -139,7 +149,13 @@ const ContourModeChip = ({
     <div
       className={`absolute bg-cyan-950/90 border border-cyan-400/70 text-white px-3 py-2
         rounded-lg text-xs z-20 shadow-lg ${
-          compact ? 'bottom-4 right-2 max-w-[min(16rem,calc(100%-5.5rem))]' : 'bottom-4 right-2 lg:right-4 max-w-[16rem]'
+          compact
+            ? (isLoft
+              ? 'bottom-4 right-2 max-w-[min(18rem,calc(100%-5.5rem))]'
+              : 'bottom-4 right-2 max-w-[min(16rem,calc(100%-5.5rem))]')
+            : (isLoft
+              ? 'bottom-4 right-2 lg:right-4 max-w-[18rem]'
+              : 'bottom-4 right-2 lg:right-4 max-w-[16rem]')
         }`}
     >
       <div className="font-bold font-sans text-cyan-200">
@@ -237,6 +253,87 @@ const ContourModeChip = ({
           </div>
         </div>
       )}
+      {isLoft && (
+        <div className="mt-2 pt-1.5 border-t border-cyan-700/50 flex flex-col gap-1.5 font-sans">
+          <div className="text-[10px] uppercase tracking-wide text-cyan-200/80">Loft profiles</div>
+          <div className="flex items-center gap-1 flex-wrap">
+            {loftProfiles.map((p, i) => {
+              const active = i === loftSelected;
+              return (
+                <button
+                  key={p.id || i}
+                  type="button"
+                  onClick={() => onSelectLoftProfile?.(i)}
+                  className={`px-1.5 py-0.5 rounded text-[11px] ${
+                    active ? 'bg-cyan-600 text-white' : 'bg-cyan-950/80 text-cyan-100 border border-cyan-700/70'
+                  }`}
+                  aria-pressed={active}
+                  title={`Select profile ${i + 1}`}
+                >
+                  P{i + 1}
+                </button>
+              );
+            })}
+            <button
+              type="button"
+              onClick={() => onAddLoftProfile?.()}
+              className="px-1.5 py-0.5 rounded text-[11px] bg-cyan-950/80 text-cyan-100 border border-cyan-700/70"
+              title="Add a profile (same workplane, next offset)"
+              disabled={loftProfiles.length >= 8}
+            >
+              +
+            </button>
+            {loftProfiles.length > 2 && (
+              <button
+                type="button"
+                onClick={() => onRemoveLoftProfile?.(loftSelected)}
+                className="px-1.5 py-0.5 rounded text-[11px] text-cyan-200 underline"
+                title="Remove selected profile"
+              >
+                Remove
+              </button>
+            )}
+          </div>
+          <label className="flex flex-col gap-0.5 min-w-0">
+            <span className="text-[10px] uppercase tracking-wide text-cyan-200/80">Offset</span>
+            <div className="flex items-center gap-1.5">
+              <input
+                type="range"
+                value={loftOffsetVal}
+                min={-80}
+                max={80}
+                step={0.5}
+                onChange={(e) => {
+                  const n = Number(e.target.value);
+                  onLoftOffsetChange?.(Number.isFinite(n) ? n : loftOffsetVal);
+                }}
+                className="flex-1 min-w-0 accent-cyan-400"
+                aria-label="Offset"
+              />
+              <input
+                type="number"
+                value={Number.isFinite(loftOffset) ? loftOffset : ''}
+                step="any"
+                onChange={(e) => {
+                  const raw = e.target.value;
+                  if (raw === '' || raw === '-' || raw === '.') {
+                    onLoftOffsetChange?.(raw);
+                    return;
+                  }
+                  const n = Number(raw);
+                  onLoftOffsetChange?.(Number.isFinite(n) ? n : loftOffsetVal);
+                }}
+                className="w-14 rounded border border-cyan-700/70 bg-cyan-950/80 px-1 py-0.5
+                  text-[11px] tabular-nums text-white"
+                aria-label="Offset value"
+              />
+            </div>
+          </label>
+          <div className="text-[10px] text-cyan-200/70 leading-tight">
+            Same plane · offset along normal · min 2
+          </div>
+        </div>
+      )}
       {isExtrude && (
         <div className="mt-2 pt-1.5 border-t border-cyan-700/50 flex flex-col gap-1.5 font-sans">
           <div className="text-[10px] uppercase tracking-wide text-cyan-200/80">Extrude</div>
@@ -323,11 +420,13 @@ const ContourModeChip = ({
       )}
       <div className="mt-2 flex items-center justify-between gap-2">
         <span className="text-[10px] text-cyan-200/70 leading-tight">
-          {isRevolve
-            ? 'Confirm writes Revolve'
-            : isExtrude
-              ? 'Confirm writes Extrude'
-              : 'Confirm writes Profile only'}
+          {isLoft
+            ? 'Confirm writes Loft'
+            : isRevolve
+              ? 'Confirm writes Revolve'
+              : isExtrude
+                ? 'Confirm writes Extrude'
+                : 'Confirm writes Profile only'}
         </span>
         <button
           type="button"
@@ -335,11 +434,13 @@ const ContourModeChip = ({
           className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium
             bg-cyan-600 hover:bg-cyan-500 active:bg-cyan-400 text-white shrink-0"
           title={
-            isRevolve
-              ? 'Commit or update Revolve (profile + makeRevolve). Second Confirm updates the same block.'
-              : isExtrude
-                ? 'Commit or update Extrude (profile + makeExtrude). Second Confirm updates the same block.'
-                : 'Commit or update in-mode Profile (makeCrossSection). Does not Extrude or Revolve.'
+            isLoft
+              ? 'Commit or update Loft (profiles + makeLoft). Second Confirm updates the same block.'
+              : isRevolve
+                ? 'Commit or update Revolve (profile + makeRevolve). Second Confirm updates the same block.'
+                : isExtrude
+                  ? 'Commit or update Extrude (profile + makeExtrude). Second Confirm updates the same block.'
+                  : 'Commit or update in-mode Profile (makeCrossSection). Does not Extrude or Revolve.'
           }
         >
           <Check size={14} />

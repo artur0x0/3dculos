@@ -23,6 +23,7 @@ import {
   Frame,
   ArrowUpFromLine,
   Rotate3d,
+  Layers,
   SquareDashed,
   Route,
 } from 'lucide-react';
@@ -58,6 +59,7 @@ const ICONS = {
   workplane: Frame,
   makeExtrude: ArrowUpFromLine,
   makeRevolve: Rotate3d,
+  makeLoft: Layers,
   crossSection: SquareDashed,
   sweepPath: Route,
 };
@@ -66,8 +68,8 @@ const ICONS = {
  * Slice 09/10/11 — left vertical helper insert palette (game mode).
  * Tap opens HelperParamModal; with selectedFace / selectedEdges, face/edge
  * features get an aware sheet (or refuse). Confirm → onInsert(id, params, faceContext, edgeContext).
- * Slice 24/25/26: Extrude / Revolve / Profile call onEnterContourMode.
- * Extrude / Revolve Confirm commits the solid; Profile stays Profile-only.
+ * Slice 24/25/26/28: Extrude / Revolve / Loft / Profile call onEnterContourMode.
+ * Extrude / Revolve / Loft Confirm commits the solid; Profile stays Profile-only.
  * Slice 27: Fillet enters edge-pick mode (no pre-select / no soft-fail).
  */
 const HelperInsertPalette = ({

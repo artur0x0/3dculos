@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Slice 24 — Contour-mode shell (Profile-in-mode only).
- * - Extrude / Revolve / Profile are contour entries
+ * - Extrude / Revolve / Loft / Profile are contour entries
  * - planar workplane via workplaneFromFace; non-planar loud refuse
  * - circle / rect / polygon / polyline → makeCrossSection preview
  * - Confirm composes Profile only (no makeExtrude)
@@ -89,7 +89,8 @@ const starter = 'let part = Manifold.cube([40, 30, 20], true);\nreturn part;\n';
   check('Revolve is contour entry', isContourEntry('makeRevolve'));
   check('Profile is contour entry', isContourEntry('crossSection'));
   check('Fillet is NOT contour entry', !isContourEntry('filletEdges'));
-  check('entry set size 3', CONTOUR_ENTRY_IDS.size === 3);
+  check('entry set size 4 (Extrude/Revolve/Loft/Profile)', CONTOUR_ENTRY_IDS.size === 4);
+  check('Loft is contour entry', isContourEntry('makeLoft'));
   check('circle/rect/polygon/polyline tools', CONTOUR_TOOLS.length === 4);
   check('isContourTool circle', isContourTool('circle'));
   check('isContourTool refuses loft', !isContourTool('loft'));

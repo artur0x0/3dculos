@@ -18,7 +18,7 @@ comparable and train-able.
 | `cboreHole` / `cskHole` | Counterbore / countersink |
 | `convexEdges` / `facesByNormal` / `workplaneFromFace` / `planarFaceAt` / `edgesByOrientation` / `placeInFrame` / `transformByFrame` | Selection / frame |
 | `shell`, `addDraft`, `tube`, `hexPrism`, `roundedBox`, `mirror`, `array3D`, `polarArray`, `center`, `align` | Solids / layout |
-| `loft`, `sweep`, `sweepPoints`, `makeExtrude`, `makeRevolve` | Profiles / paths |
+| `loft`, `makeLoft`, `offsetPlaneFrame`, `sweep`, `sweepPoints`, `makeExtrude`, `makeRevolve` | Profiles / paths |
 | `profileCircle` / `profileRectangle` / `profilePolygon` / `makeCrossSection` | Cross-section substrate (Slice 21) |
 | `makeSweepPath(edges, opts?)` | Ordered sweep path / wire from edges (Slice 22) |
 | `filletAlongPath(part, path, r, opts?)` | Sweep fillet/chamfer wedge along path → subtract (Slice 23) |
@@ -90,17 +90,25 @@ plane + 2D profile substrate (planar face via `workplaneFromFace`, or default
 +Z). Cylindrical / irregular faces are refused. Does **not** extrude, sweep,
 or fillet — substrate only.
 
-**Contour mode (Slice 24/25/26):** in game mode, tapping **Extrude**, **Revolve**, or
-**Profile** enters a shared contour shell — the part stays on screen but is
-ghosted, the left rail swaps to circle / rect / polygon / polyline + **Back**,
-and a chip (Edge-pick pattern) holds plane + profile params. Live preview uses
-`makeCrossSection`. **Profile** Confirm writes or updates the in-mode Profile
-only. **Extrude** / **Revolve** Confirm commit the profile plus a solid
-(`makeExtrude` / `makeRevolve` via `placeInFrame` — replace `part`, no host add; live solid preview). Second
+**Contour mode (Slice 24/25/26/28):** in game mode, tapping **Extrude**, **Revolve**,
+**Loft**, or **Profile** enters a shared contour shell — the part stays on
+screen but is ghosted, the left rail swaps to circle / rect / polygon /
+polyline + **Back**, and a chip (Edge-pick pattern) holds plane + profile params.
+Live preview uses `makeCrossSection`. **Profile** Confirm writes or updates the
+in-mode Profile only. **Extrude** / **Revolve** / **Loft** Confirm commit the
+profile(s) plus a solid (`makeExtrude` / `makeRevolve` / `makeLoft` via
+`placeInFrame` — replace `part`, no host add; live solid preview). Second
 Confirm updates the same marked block. **Back** exits with no additional solid
 commit. **Fillet** is its own edge-pick mode (Slice 27), not a contour entry.
-Loft solid is a later slice. The one-shot Xform Extrude stub is gone — Extrude
-always enters contour mode.
+The one-shot Xform Extrude stub is gone — Extrude always enters contour mode.
+
+**Loft v1 plane model (Slice 28):** one shared workplane (selected planar face
+or default +Z). Each profile is `makeCrossSection` on `offsetPlaneFrame(plane,
+offset)` — a copy of that plane whose `center` is translated by
+`offset * normal`. Planes must stay parallel. Independent (skew / non-parallel)
+profile planes are a later slice. Loud-fail on fewer than 2 profiles or
+coincident station offsets. Confirm replaces `part` with
+`placeInFrame(frame, makeLoft(sections))` (no host box / no `placeOnFace`+add).
 
 ## Core Manifold API
 
@@ -1014,8 +1022,9 @@ slider (no 0.45·L clamp).
 Sweep mode shows the Path order/direction preview (green→magenta). Auto-Run
 unchanged. Keep using **Path** alone when you only need the wire value.
 
-**Non-goals (wait for Product brief):** extrude / revolve / loft as FEAT tools;
-full industrial rolling-ball / variable-radius fillets; Profile/Path API redesign.
+**Non-goals (wait for Product brief):** full industrial rolling-ball /
+variable-radius fillets; Profile/Path API redesign; Loft through independent
+(non-parallel) planes.
 
 ## Revolve & Extrude Helpers (C8)
 
@@ -1086,6 +1095,40 @@ part = placeInFrame({
 world axis is refused unless it lies on the profile plane. Loud-fail on a
 bad plane, profile, angle, or an on-axis / zero-width / entirely-negative
 radial profile.
+
+### makeLoft(sections, opts?) / offsetPlaneFrame(plane, offset)
+
+Loft ≥2 `makeCrossSection` values into a solid. **v1 plane model:** all
+planes must be parallel (same workplane + per-profile offset along the
+normal). `offsetPlaneFrame(plane, offset)` copies a PlaneFrame and translates
+`center` by `offset * normal`. The solid is **local** (XY = station UV, Z
+along the shared normal, z=0 at the lowest station) — Confirm places it with
+`placeInFrame`. The legacy `loft({ topCS, bottomCS, height })` cup helper is
+unchanged.
+
+```javascript
+const fr = { center: [0, 0, 0], normal: [0, 0, 1], x: [1, 0, 0], y: [0, 1, 0] };
+const xs0 = makeCrossSection(fr, profileCircle(5, 32));
+const xs1 = makeCrossSection(offsetPlaneFrame(fr, 20), profileCircle(8, 32));
+part = placeInFrame(fr, makeLoft([xs0, xs1]));
+```
+
+**Contour-mode Loft (Slice 28):** game-mode **Loft** builds a multi-profile
+list on the shared workplane (min 2, default circle r=5 @ 0 and circle r=8
+@ 20). Circle / rect / polygon / polyline edit the selected profile. Confirm
+emits one `makeCrossSection` per station (`offsetPlaneFrame` + profile) plus
+`makeLoft`, then `part = placeInFrame(frame, makeLoft(…))` (replace, no host
+add / no starter cube). Second Confirm replaces the same marked block.
+**Back** exits with no commit. Live preview skins the stations as offsets /
+shapes change.
+
+**Loud failures:** < 2 profiles; coincident station offsets (zero-height);
+non-parallel planes; degenerate / empty contours; empty result volume.
+Never a silent wrong solid.
+
+`opts.align` (default true) rotates neighboring contours to minimize
+point-to-point distance. `opts.resolution` (default 64) is the resample
+count for the warp.
 
 **Rules for both:**
 - `contours` is an **array of contours** `[outer, hole1, ...]`; a single
