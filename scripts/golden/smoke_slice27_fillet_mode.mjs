@@ -298,10 +298,34 @@ const e30 = mk(3, 0);
   }
   const over = composeFilletCommit(starter, { edges: [e01, e12], params: { strategy: 'sweep', radius: 999 } });
   const overMax = sweepBlendHardMax(pathLengthFromEdges([e01, e12]));
-  check('over-max typed radius commits the clamp, not the raw value', /,\s*35\)/.test(committedRadius(over.buffer) === '35' ? ', 35)' : '') && over.ok === true,
-    `committed=${committedRadius(over.buffer)} sweepMax=${overMax}`);
-  check('clamped commit stays ≤ sweepBlendHardMax', Number(committedRadius(over.buffer)) <= overMax,
-    `committed=${committedRadius(over.buffer)} sweepMax=${overMax}`);
+  const overWritten = committedRadius(over.buffer);
+  // Pin against the live hard max (not a fixture-specific 35). Falsifiable: drop
+  // the clamp in normalizeFilletParams and this writes 999 instead of overMax.
+  check(
+    'over-max typed radius commits the clamp, not the raw value',
+    over.ok === true && overWritten === String(overMax) && overWritten !== '999',
+    `committed=${overWritten} sweepMax=${overMax}`,
+  );
+  check(
+    'clamped commit stays ≤ sweepBlendHardMax',
+    Number(overWritten) <= overMax,
+    `committed=${overWritten} sweepMax=${overMax}`,
+  );
+
+  // Nit 2 invariant: the deleted validateFilletAccept radius>0 arm stays
+  // unreachable because normalizeFilletParams never yields a bad radius.
+  {
+    const wild = [NaN, -1, 0, Infinity, -Infinity, 'abc', '', [], '1e999', true, false, null, undefined, '0', Number.MIN_VALUE];
+    const strategies = ['sweep', 'planar', 'auto', undefined];
+    let hits = 0;
+    for (const radius of wild) {
+      for (const strategy of strategies) {
+        const n = normalizeFilletParams({ radius, strategy }, [e01, e12]);
+        if (!(n.radius > 0) || !Number.isFinite(n.radius)) hits++;
+      }
+    }
+    check('normalize never yields non-finite/non-positive radius (nit-2 invariant)', hits === 0, `hits=${hits}`);
+  }
 }
 
 if (failed) {
