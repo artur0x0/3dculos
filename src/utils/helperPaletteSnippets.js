@@ -12,8 +12,10 @@
  * Slice 22: sweepPath ordered wire from edge selection (makeSweepPath).
  * Slice 23: filletAlongPath — sweep fillet wedge along Path; Fillet Strategy=sweep (default) | planar.
  * Slice 24: contour-mode Profile region (markers + custom polyline points).
- * Slice 25: Extrude Confirm wraps profile + makeExtrude / placeOnFace in extrude markers.
- * Slice 26: Revolve Confirm wraps profile + makeRevolve / placeOnFace in revolve markers.
+ * Slice 25/hotfix: Extrude Confirm wraps profile + makeExtrude / placeInFrame
+ * (replace part — no host add) in extrude markers.
+ * Slice 26/hotfix: Revolve Confirm wraps profile + makeRevolve / placeInFrame
+ * (replace part — no host add) in revolve markers.
  * Slice 27: Fillet-in-mode Accept wraps makeSweepPath + filletAlongPath in fillet markers.
  *
  * Sequential taps compose via composeHelperInsert:
@@ -414,7 +416,33 @@ function emitUvCombo(uName, vName, cu, cv, add) {
   return `${expr} - ${-s}`;
 }
 
-/** placeOnFace frame: local X=radial, Y=plane normal, Z=in-plane axis. */
+/** Compact `[x, y, z]` for a composed PlaneFrame literal. */
+function emitVec3Literal(v, fallback = [0, 0, 0]) {
+  const src = Array.isArray(v) && v.length >= 3 ? v : fallback;
+  const n = (x) => {
+    const r = +Number(x).toFixed(6);
+    return Object.is(r, -0) ? 0 : r;
+  };
+  return `[${n(src[0])}, ${n(src[1])}, ${n(src[2])}]`;
+}
+
+/**
+ * Emit a PlaneFrame plain object `{ center, normal, x, y }`.
+ * Frame-only — never a Manifold / cube / scaffold.
+ */
+export function emitPlaneFrameLiteral(plane) {
+  const p = plane && typeof plane === 'object' ? plane : {};
+  return `{ center: ${emitVec3Literal(p.center, [0, 0, 0])}, normal: ${emitVec3Literal(p.normal, [0, 0, 1])}, x: ${emitVec3Literal(p.x, [1, 0, 0])}, y: ${emitVec3Literal(p.y, [0, 1, 0])} }`;
+}
+
+/** New-body Confirm: `let part = expr` on empty, `part = expr` when part exists. */
+function emitPartReplace(names, expr, partDeclared) {
+  if (partDeclared) return `part = ${expr};`;
+  names.add('part');
+  return `let part = ${expr};`;
+}
+
+/** placeInFrame frame: local X=radial, Y=plane normal, Z=in-plane axis. */
 function emitRevolvePlaceFrame(xs, rU, rV, aU, aV) {
   const rad = emitPlaneVecCombo(xs, rU, rV);
   const axi = emitPlaneVecCombo(xs, aU, aV);
@@ -867,13 +895,28 @@ export const HELPER_PALETTE_ITEMS = [
       },
     ],
     build: (empty, p, names, buffer, faceCtx = null) => {
-      const lines = [...ensurePartPrefix(empty, names)];
+      // New-body Extrude / Revolve Confirm: no starter cube, no host query.
+      // Plane is a literal PlaneFrame; part is replaced (not added onto).
+      const isNewBodySolid = !!(p._contourRevolve || p._contourExtrude);
+      // Capture before resolveBody, which always touches `part` in the names set.
+      const partDeclared = names.has('part');
+      const lines = isNewBodySolid ? [] : [...ensurePartPrefix(empty, names)];
       const body = resolveBody(p, names, empty ? lines.join('\n') : buffer);
       // Planar face → selected workplane; else default +Z top face.
       const planarCtx = faceCtx && faceCtx.type === 'planar' ? faceCtx : null;
-      const wp = planarCtx
-        ? emitFaceWorkplaneLines(body, planarCtx, names, allocateUniqueName)
-        : emitDefaultTopWorkplane(body, names);
+      let wp;
+      if (isNewBodySolid) {
+        const plane = p._contourRevolve?.plane || p._contourExtrude?.plane || null;
+        const fr = allocateUniqueName(names, 'fr');
+        wp = {
+          lines: [`const ${fr} = ${emitPlaneFrameLiteral(plane)};`],
+          frVar: fr,
+        };
+      } else {
+        wp = planarCtx
+          ? emitFaceWorkplaneLines(body, planarCtx, names, allocateUniqueName)
+          : emitDefaultTopWorkplane(body, names);
+      }
       const fr = wp.frVar;
       const xs = allocateUniqueName(names, 'xs');
       const type = str(p.profileType, 'circle');
@@ -932,7 +975,6 @@ export const HELPER_PALETTE_ITEMS = [
         const rV = num(rev.rV, 0);
         const aU = num(rev.aU, 0);
         const aV = num(rev.aV, 1);
-        const revolve = allocateUniqueName(names, 'revolve');
         const mapped = `${xs}.contours.map((ring) => ring.map(([u, v]) => [${emitUvCombo('u', 'v', rU, rV, 0)}, ${emitUvCombo('u', 'v', aU, aV, 0)}]))`;
         let solidExpr = `makeRevolve(${mapped}, ${segs}, ${+Number(angle).toFixed(4)})`;
         if (Math.abs(startDeg) > 1e-9) {
@@ -942,10 +984,7 @@ export const HELPER_PALETTE_ITEMS = [
         lines.push(CONTOUR_REVOLVE_BEGIN);
         lines.push(...wp.lines);
         lines.push(profileLine);
-        lines.push(
-          `const ${revolve} = placeOnFace(part, ${frame}, ({ put }) => put(${solidExpr}, [0, 0, 0]));`,
-        );
-        lines.push(`part = part.add(${revolve});`);
+        lines.push(emitPartReplace(names, `placeInFrame(${frame}, ${solidExpr})`, partDeclared));
         lines.push(CONTOUR_REVOLVE_END);
       } else if (p._contourExtrude) {
         const ext = p._contourExtrude;
@@ -955,14 +994,14 @@ export const HELPER_PALETTE_ITEMS = [
         if (sense === 'negative') w = -distance;
         else if (sense === 'both') w = -distance / 2;
         w = +Number(w).toFixed(4);
-        const extrude = allocateUniqueName(names, 'extrude');
         lines.push(CONTOUR_EXTRUDE_BEGIN);
         lines.push(...wp.lines);
         lines.push(profileLine);
-        lines.push(
-          `const ${extrude} = placeOnFace(part, ${xs}.plane, ({ put }) => put(makeExtrude(${xs}.contours, ${distance}), [0, 0, ${w}]));`,
-        );
-        lines.push(`part = part.add(${extrude});`);
+        lines.push(emitPartReplace(
+          names,
+          `placeInFrame(${xs}.plane, makeExtrude(${xs}.contours, ${distance}), [0, 0, ${w}])`,
+          partDeclared,
+        ));
         lines.push(CONTOUR_EXTRUDE_END);
       } else if (p._contourMode) {
         // Slice 24: wrap in-mode Profile so Confirm replaces the region (no Extrude).

@@ -12,7 +12,7 @@
  * Loft solid is a later slice.
  *
  * Reuses Slice 21: workplaneFromFace / makeCrossSection / profile* substrate.
- * Reuses C8 makeExtrude / makeRevolve + placeOnFace for the workplane transform.
+ * Reuses C8 makeExtrude / makeRevolve + placeInFrame (frame-only, replace part).
  */
 
 import {
@@ -34,6 +34,7 @@ import {
   CONTOUR_EXTRUDE_END,
   CONTOUR_REVOLVE_BEGIN,
   CONTOUR_REVOLVE_END,
+  isBufferEmpty,
 } from './helperPaletteSnippets.js';
 
 /** Palette ids that enter contour mode instead of one-shot insert. */
@@ -106,7 +107,7 @@ export function normalizeExtrudeParams(raw = {}) {
   return { distance, direction, sense };
 }
 
-/** Local-Z start of makeExtrude on the workplane (sense → placeOnFace w). */
+/** Local-Z start of makeExtrude on the workplane (sense → placeInFrame w). */
 export function extrudeWOffset(distance, sense) {
   const d = Number(distance);
   if (sense === 'negative') return -d;
@@ -116,7 +117,7 @@ export function extrudeWOffset(distance, sense) {
 
 /**
  * World-axis direction must be parallel to the workplane normal.
- * `normal` always uses the plane normal (placeOnFace maps local Z → normal).
+ * `normal` always uses the plane normal (placeInFrame maps local Z → normal).
  */
 export function resolveExtrudeAxis(plane, direction) {
   if (!plane?.normal) {
@@ -758,8 +759,8 @@ export function stripContourExtrudeBlock(buffer) {
 }
 
 /**
- * Confirm → insert or replace in-mode Extrude (profile + makeExtrude + placeOnFace).
- * Second Confirm updates the same marked block (no duplicate stack).
+ * Confirm → insert or replace in-mode Extrude (profile + makeExtrude + placeInFrame).
+ * New-body path replaces `part` (no host add). Second Confirm updates the same block.
  *
  * @returns {{ ok: true, buffer: string, run: true } | { ok: false, message: string }}
  */
@@ -794,7 +795,10 @@ export function composeContourExtrude(buffer, {
   const profileParams = {
     ...toolToProfileParams(tool, params),
     body: params.body || 'part',
-    _contourExtrude: extGate.normalized,
+    _contourExtrude: {
+      ...extGate.normalized,
+      plane,
+    },
   };
   const composed = composeHelperInsert(
     stripped,
@@ -823,10 +827,22 @@ export function composeContourExtrude(buffer, {
       message: 'composeContourExtrude: makeExtrude missing — refusing silent no-op.',
     };
   }
-  if (!/placeOnFace\s*\(/.test(owned)) {
+  if (!/placeInFrame\s*\(|transformByFrame\s*\(/.test(owned)) {
     return {
       ok: false,
-      message: 'composeContourExtrude: placeOnFace missing — refusing unscoped insert.',
+      message: 'composeContourExtrude: placeInFrame missing — refusing unscoped insert.',
+    };
+  }
+  if (/placeOnFace\s*\(/.test(owned)) {
+    return {
+      ok: false,
+      message: 'composeContourExtrude: placeOnFace is the host path — refusing leftover host.',
+    };
+  }
+  if (/part\s*=\s*part\.add\(/.test(owned)) {
+    return {
+      ok: false,
+      message: 'composeContourExtrude: host-add is not the new-body path — refusing leftover host.',
     };
   }
   if (!hasContourExtrudeBlock(composed)) {
@@ -839,6 +855,12 @@ export function composeContourExtrude(buffer, {
     return {
       ok: false,
       message: 'composeContourExtrude: unexpected Revolve/Loft in the Extrude block.',
+    };
+  }
+  if (isBufferEmpty(String(buffer || '')) && /Manifold\.cube\s*\(/.test(composed)) {
+    return {
+      ok: false,
+      message: 'composeContourExtrude: unexpected starter box on empty buffer — refusing extra solid.',
     };
   }
   return { ok: true, buffer: composed, run: true };
@@ -871,8 +893,8 @@ export function stripContourRevolveBlock(buffer) {
 }
 
 /**
- * Confirm → insert or replace in-mode Revolve (profile + makeRevolve + placeOnFace).
- * Second Confirm updates the same marked block (no duplicate stack).
+ * Confirm → insert or replace in-mode Revolve (profile + makeRevolve + placeInFrame).
+ * New-body path replaces `part` (no host add). Second Confirm updates the same block.
  *
  * @returns {{ ok: true, buffer: string, run: true } | { ok: false, message: string }}
  */
@@ -924,6 +946,7 @@ export function composeContourRevolve(buffer, {
       rV: mapped.rV,
       aU: mapped.aU,
       aV: mapped.aV,
+      plane,
     },
   };
   const composed = composeHelperInsert(
@@ -953,10 +976,22 @@ export function composeContourRevolve(buffer, {
       message: 'composeContourRevolve: makeRevolve missing — refusing silent no-op.',
     };
   }
-  if (!/placeOnFace\s*\(/.test(owned)) {
+  if (!/placeInFrame\s*\(|transformByFrame\s*\(/.test(owned)) {
     return {
       ok: false,
-      message: 'composeContourRevolve: placeOnFace missing — refusing unscoped insert.',
+      message: 'composeContourRevolve: placeInFrame missing — refusing unscoped insert.',
+    };
+  }
+  if (/placeOnFace\s*\(/.test(owned)) {
+    return {
+      ok: false,
+      message: 'composeContourRevolve: placeOnFace is the host path — refusing leftover host.',
+    };
+  }
+  if (/part\s*=\s*part\.add\(/.test(owned)) {
+    return {
+      ok: false,
+      message: 'composeContourRevolve: host-add is not the new-body path — refusing leftover host.',
     };
   }
   if (!hasContourRevolveBlock(composed)) {
@@ -969,6 +1004,12 @@ export function composeContourRevolve(buffer, {
     return {
       ok: false,
       message: 'composeContourRevolve: unexpected Extrude/Loft in the Revolve block.',
+    };
+  }
+  if (isBufferEmpty(String(buffer || '')) && /Manifold\.cube\s*\(/.test(composed)) {
+    return {
+      ok: false,
+      message: 'composeContourRevolve: unexpected starter box on empty buffer — refusing extra solid.',
     };
   }
   return { ok: true, buffer: composed, run: true };

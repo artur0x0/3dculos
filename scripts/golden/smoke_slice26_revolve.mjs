@@ -3,7 +3,7 @@
  * Slice 26 — Revolve solid (contour → makeRevolve).
  * - Revolve enters contour mode (Slice 24 shell)
  * - live solid preview payload (angle / axis on plane / sense)
- * - Confirm composes profile + makeRevolve + placeOnFace
+ * - Confirm composes profile + makeRevolve + placeInFrame (replace part)
  * - second Confirm replaces the same marked block (no duplicate stack)
  * - Profile Confirm stays Profile-only; Extrude from #32 unchanged
  * - Loft still shell-only (not a contour entry)
@@ -240,8 +240,8 @@ function rFace() {
   check('has makeCrossSection', /makeCrossSection\s*\(/.test(first.buffer));
   check('has profileCircle', /profileCircle\s*\(/.test(first.buffer));
   check('has makeRevolve', /makeRevolve\s*\(/.test(first.buffer));
-  check('has placeOnFace', /placeOnFace\s*\(/.test(first.buffer));
-  check('unions onto part', /part\s*=\s*part\.add\(/.test(first.buffer));
+  check('has placeInFrame', /placeInFrame\s*\(/.test(first.buffer));
+  check('replaces part (no host add)', /part\s*=\s*placeInFrame\s*\(/.test(first.buffer) && !/part\s*=\s*part\.add\(/.test(first.buffer));
   check('has revolve markers', hasContourRevolveBlock(first.buffer));
   check('markers wrap solid', first.buffer.includes(CONTOUR_REVOLVE_BEGIN) && first.buffer.includes(CONTOUR_REVOLVE_END));
   check('one makeCrossSection', countMakeCrossSection(first.buffer) === 1);
@@ -258,7 +258,7 @@ function rFace() {
 
   const owned = contourRevolveOwnedRegion(first.buffer);
   check('owned region has profile + solid',
-    /makeCrossSection/.test(owned) && /makeRevolve/.test(owned) && /placeOnFace/.test(owned));
+    /makeCrossSection/.test(owned) && /makeRevolve/.test(owned) && /placeInFrame/.test(owned));
 
   const second = composeContourRevolve(first.buffer, {
     face,
@@ -307,7 +307,7 @@ function rFace() {
     params: { radius: 3, segments: 16 },
     revolve: { angle: 360, axis: 'v', sense: 'positive' },
   });
-  check('default +Z compose ok', defPlane.ok && /facesByNormal/.test(defPlane.buffer));
+  check('default +Z compose ok', defPlane.ok && /normal:\s*\[0,\s*0,\s*1\]/.test(defPlane.buffer));
 
   const refuseR = composeContourRevolve(starter, {
     face,
@@ -373,7 +373,7 @@ function rFace() {
   check('commit Extrude unchanged (solid + Auto-Run)', ext.ok && ext.run && countMakeExtrude(ext.buffer) === 1);
   check('commit Extrude has no Revolve', countMakeRevolve(ext.buffer) === 0);
   check('commit Extrude still has extrude markers', hasContourExtrudeBlock(ext.buffer));
-  check('commit Extrude distance 10 / w 0', /put\(makeExtrude\([^,]+, 10\), \[0, 0, 0\]\)/.test(ext.buffer));
+  check('commit Extrude distance 10 / w 0', /placeInFrame\([^,]+, makeExtrude\([^,]+, 10\), \[0, 0, 0\]\)/.test(ext.buffer));
 
   // Profile-only then Revolve Confirm: replace profile block with revolve block.
   const thenRev = composeContourRevolve(prof.buffer, {
@@ -431,7 +431,8 @@ function rFace() {
       contours: profile.contours,
     }),
     makeRevolve: () => ({ _t: 'rv', rotate() { return this; } }),
-    placeOnFace: (_part, _fr, builder) => builder({ put: (m) => m }),
+    placeInFrame: (_fr, solid) => solid,
+    transformByFrame: (_fr, solid) => solid,
   };
   try {
     const fn = new Function(...Object.keys(stubs), `"use strict";\n${composed.buffer}`);
