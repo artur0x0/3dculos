@@ -1061,16 +1061,20 @@ const Viewport = forwardRef(({
   const acceptFillet = useCallback(() => {
     const state = filletModeRef.current;
     if (!state) return;
-    const gate = validateFilletAccept(selectedEdges, state.params);
+    const edges = (selectedEdges && selectedEdges.length)
+      ? selectedEdges
+      : (state.lastEdges || []);
+    const gate = validateFilletAccept(edges, state.params);
     if (!gate.ok) {
       showFilletToast(gate.message);
       return;
     }
     const ok = onCommitFillet?.({
-      edges: selectedEdges,
+      edges,
       params: gate.normalized,
     });
     if (ok) {
+      setFilletMode((prev) => (prev ? { ...prev, lastEdges: edges.slice() } : prev));
       showFilletToast('Fillet saved — still in Fillet mode. Accept again to update.');
     }
   }, [onCommitFillet, selectedEdges]);
@@ -2584,20 +2588,28 @@ const Viewport = forwardRef(({
 
       // Geometry replaced → previous face/edge picks are stale. Clear intentionally
       // and nudge the user when they were in edge pick mode.
+      // Slice 27: in Fillet mode keep the picked wire — Accept uses literals, so
+      // second Accept can replace the same marked block without a re-pick.
+      const inFilletMode = !!filletModeRef.current;
       const hadEdges = Array.isArray(selectedEdges) && selectedEdges.length > 0;
       const wasEdgeMode = pickModeRef.current === 'edge';
       clearHighlight();
-      clearEdgeHighlight();
-      clearEdgeHover();
       setSelectedFace(null);
-      setSelectedEdges([]);
       onFaceSelected?.(null);
       featureEdgesRef.current = [];
       featureEdgesSourceRef.current = null;
       syncFeatureEdges(resultRef.current?.geometry ?? null);
-      if (wasEdgeMode && hadEdges) {
-        setEdgeModeToast('Geometry updated — re-pick edges');
-        armEdgeModeToastClear();
+      if (inFilletMode) {
+        clearEdgeHover();
+        // Re-paint the kept selection on the new mesh (world va/vb still draw).
+      } else {
+        clearEdgeHighlight();
+        clearEdgeHover();
+        setSelectedEdges([]);
+        if (wasEdgeMode && hadEdges) {
+          setEdgeModeToast('Geometry updated — re-pick edges');
+          armEdgeModeToastClear();
+        }
       }
 
       // Auto scale: re-frame the part after every successful run so the new geometry is

@@ -61,6 +61,7 @@ export function enterFilletState(edges = null) {
     entry: 'filletEdges',
     params: defaultFilletParams(edges),
     radiusTouched: false,
+    lastEdges: Array.isArray(edges) && edges.length ? edges.slice() : [],
     enterRefuse: null,
   };
 }

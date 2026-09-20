@@ -104,6 +104,7 @@ const e30 = mk(3, 0);
   check('enter empty strategy sweep', empty.params.strategy === 'sweep');
   check('enter empty radius > 0', empty.params.radius > 0);
   check('enter empty radiusTouched false', empty.radiusTouched === false);
+  check('enter empty lastEdges empty', Array.isArray(empty.lastEdges) && empty.lastEdges.length === 0);
 
   const withEdges = enterFilletState([e01, e12]);
   check('enter with edges still no refuse', withEdges.enterRefuse == null);
