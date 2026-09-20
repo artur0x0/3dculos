@@ -69,10 +69,20 @@ export function enterFilletState(edges = null) {
 export function normalizeFilletParams(raw = {}, edges = null) {
   const seeded = defaultFilletParams(edges);
   const radius = Number(raw.radius);
+  const strategy = resolveFilletStrategy(raw.strategy);
+  let r = Number.isFinite(radius) && radius > 0 ? radius : seeded.radius;
+  // Sweep regime mirrors the live preview (buildFilletBlendPreview) exactly:
+  // clamp the committed radius to the path-length hard max so Accept writes the
+  // same radius the blend preview painted — no preview≠commit divergence, and
+  // the worker's loud "removed X vs expected" net never fires from the chip.
+  // Planar keeps its own 0.45·L guard (different regime) — clamp only sweep.
+  if (strategy === 'sweep') {
+    r = Math.min(r, sweepBlendHardMax(pathLengthFromEdges(edges)));
+  }
   return {
     body: raw.body || seeded.body,
-    strategy: resolveFilletStrategy(raw.strategy),
-    radius: Number.isFinite(radius) && radius > 0 ? radius : seeded.radius,
+    strategy,
+    radius: r,
     sphericalCorners: raw.sphericalCorners !== false,
     profile: raw.profile === 'chamfer' ? 'chamfer' : 'fillet',
     reverse: !!raw.reverse,
@@ -86,9 +96,11 @@ export function validateFilletAccept(edges, params = {}) {
     return { ok: false, message: FILLET_MODE_EMPTY };
   }
   const n = normalizeFilletParams(params, list);
-  if (!(n.radius > 0) || !Number.isFinite(n.radius)) {
-    return { ok: false, message: 'Fillet radius must be > 0' };
-  }
+  // nit: dropped the `!(n.radius > 0)` arm here — normalizeFilletParams is the
+  // single normaliser and already guarantees a finite radius > 0 (bad input seeds
+  // the default; sweep additionally clamps to sweepBlendHardMax). 0/3076 probes
+  // ever reached the old arm, so it was a pin on unreachable code. No behaviour
+  // change; the empty-selection and connectivity gates above/below are the live ones.
   if (n.strategy === 'sweep') {
     const gate = canBuildFilletAlongPath(list);
     if (!gate.ok) {
