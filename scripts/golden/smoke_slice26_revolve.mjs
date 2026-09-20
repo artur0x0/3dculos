@@ -161,7 +161,17 @@ function rFace() {
 
   const slim = [[[0, 0], [0, 4], [0, 8]]];
   const onAxis = mapContoursToRevolve(slim, [0, 1]);
-  check('on-axis slim profile loud fail', !onAxis.ok && /axis/i.test(onAxis.message || ''));
+  // Message-specific: `/axis/i` also matches the maxR arm, so gutting
+  // `maxR - minR < 1e-9` left this pin green (fixture fell into maxR).
+  check('on-axis slim profile loud fail',
+    !onAxis.ok && /width off the axis/.test(onAxis.message || ''));
+
+  // Sole rejecter for the zero-width gate: off-axis collinear has maxR=5,
+  // so it cannot fall into `maxR < 1e-6`. Gutting `:289` must turn this red.
+  const collinear = [[[5, 0], [5, 4], [5, 8]]];
+  const zeroWidth = mapContoursToRevolve(collinear, [0, 1]);
+  check('off-axis collinear zero-width loud fail',
+    !zeroWidth.ok && /width off the axis/.test(zeroWidth.message || ''));
 
   // Reachable +radial-empty refuse (replaces the dead post-shift p[0]<0 arm).
   // Gutting `if (maxR < 1e-6)` must turn this red.
