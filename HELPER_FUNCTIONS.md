@@ -1110,3 +1110,7 @@ Scripts run in an isolated Web Worker sandbox with:
 - Execution timeout enforced
 
 Imported models are available via `window.__importedManifolds['filename']`.
+
+## Cloud agent identity probe
+
+Probe commit — safe to close/revert.
