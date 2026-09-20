@@ -2,7 +2,7 @@
 /* eslint-disable react-hooks/exhaustive-deps -- legacy: deps arrays below are tuned for
    three.js render-loop stability (scene/camera/controls live in refs); adding the flagged
    refs would rebind listeners/materials per render. Revisit deliberately, not via lint. */
-import React, { useEffect, useRef, useState, useCallback, forwardRef, useImperativeHandle } from 'react';
+import React, { useEffect, useMemo, useRef, useState, useCallback, forwardRef, useImperativeHandle } from 'react';
 import {
   WebGLRenderer,
   Scene,
@@ -1079,7 +1079,15 @@ const Viewport = forwardRef(({
     }
   }, [onCommitFillet, selectedEdges]);
 
-  // Live sweep-fillet blend as edges accumulate.
+  // Live sweep-fillet blend as edges accumulate. The payload is memoized so the
+  // chip's pathOk flag and the painter share ONE build per input (Slice 27 nit:
+  // the chip used to re-run buildFilletBlendPreview on every render just for .ok).
+  const filletBlendPayload = useMemo(
+    () => (filletMode
+      ? buildFilletBlendPreview(selectedEdges, filletMode.params)
+      : null),
+    [filletMode, selectedEdges],
+  );
   useEffect(() => {
     if (!filletMode) {
       clearFilletBlendPreview();
@@ -1096,9 +1104,8 @@ const Viewport = forwardRef(({
         return;
       }
     }
-    const preview = buildFilletBlendPreview(selectedEdges, filletMode.params);
-    paintFilletBlendPreview(preview);
-  }, [filletMode, selectedEdges, paintFilletBlendPreview, clearFilletBlendPreview]);
+    paintFilletBlendPreview(filletBlendPayload);
+  }, [filletMode, selectedEdges, filletBlendPayload, paintFilletBlendPreview, clearFilletBlendPreview]);
 
   useEffect(() => () => {
     clearFilletBlendPreview();
@@ -2602,6 +2609,10 @@ const Viewport = forwardRef(({
       if (inFilletMode) {
         clearEdgeHover();
         // Re-paint the kept selection on the new mesh (world va/vb still draw).
+        // The selectedEdges effect only fires on reference change, which a kept
+        // wire does not produce across an Auto-Run — repaint explicitly so the
+        // orange halo cannot go stale against the replaced geometry.
+        if (hadEdges) highlightSelectedEdges(selectedEdges);
       } else {
         clearEdgeHighlight();
         clearEdgeHover();
@@ -2912,7 +2923,7 @@ const Viewport = forwardRef(({
             ...filletMode.params,
             _sweepMax: sweepBlendHardMax(pathLengthFromEdges(selectedEdges)),
           }}
-          pathOk={buildFilletBlendPreview(selectedEdges, filletMode.params).ok}
+          pathOk={filletBlendPayload?.ok === true}
           compact={isMobile}
           onToggleTangent={() => setTangentProp((v) => !v)}
           onClear={() => {

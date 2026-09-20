@@ -69,6 +69,7 @@ const FilletModeChip = ({
               type="number"
               value={radius ?? ''}
               min={0.01}
+              max={max}
               step="any"
               onChange={(e) => setRadius(e.target.value)}
               className="w-14 rounded border border-amber-700/70 bg-amber-950/80 px-1 py-0.5

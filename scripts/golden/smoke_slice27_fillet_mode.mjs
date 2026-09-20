@@ -52,6 +52,7 @@ import {
   FILLET_MODE_EMPTY,
   FILLET_MODE_NO_COMMIT,
 } from '../../src/utils/filletMode.js';
+import { sweepBlendHardMax, pathLengthFromEdges } from '../../src/utils/selectEdge.js';
 
 let failed = 0;
 function check(name, cond, detail = '') {
@@ -267,6 +268,40 @@ const e30 = mk(3, 0);
   const e = filletSweepCutterExpand(2);
   check('#30 rear pad ≥ min', e >= FILLET_SWEEP_EXPAND_MIN);
   check('canBuild still gates disconnect', !canBuildFilletAlongPath([e01, e23]).ok);
+}
+
+// ── Follow-up #34 nit-1: preview radius == committed radius (no preview≠commit divergence)
+// The live blend preview clamps the sweep radius to the path-length hard max
+// (buildFilletBlendPreview → sweepBlendHardMax). Before the fix, composeFilletCommit
+// wrote the RAW typed value while the preview showed the clamped one (typed 999 →
+// preview 35, snippet 999). normalizeFilletParams now clamps the committed radius by
+// the same sweepBlendHardMax, so what the user saw is what lands in the script and
+// the worker's loud "removed X vs expected Y" net never fires from the chip.
+// These checks sit BEFORE the sole `if (failed)` guard below so they can turn the
+// suite red (mutation-verified: reverting the clamp in normalizeFilletParams flips
+// all four to ❌ + exit 1).
+{
+  const committedRadius = (buf) => {
+    const line = String(buf || '').split('\n').find((l) => /filletAlongPath\s*\(/.test(l));
+    const m = line && line.match(/filletAlongPath\([^,]+,\s*[^,]+,\s*([^),]+)\)/);
+    return m ? m[1].trim() : null;
+  };
+  for (const typed of [999, 40, 3, 0, -5, NaN, '', '999', '1e999', Infinity]) {
+    const pv = buildFilletBlendPreview([e01, e12], { strategy: 'sweep', radius: typed });
+    const c = composeFilletCommit(starter, { edges: [e01, e12], params: { strategy: 'sweep', radius: typed } });
+    const written = c.ok ? committedRadius(c.buffer) : null;
+    check(
+      `preview radius == committed radius (typed ${JSON.stringify(typed)})`,
+      c.ok === true && written === String(pv.radius),
+      `preview=${pv.radius} committed=${written}`,
+    );
+  }
+  const over = composeFilletCommit(starter, { edges: [e01, e12], params: { strategy: 'sweep', radius: 999 } });
+  const overMax = sweepBlendHardMax(pathLengthFromEdges([e01, e12]));
+  check('over-max typed radius commits the clamp, not the raw value', /,\s*35\)/.test(committedRadius(over.buffer) === '35' ? ', 35)' : '') && over.ok === true,
+    `committed=${committedRadius(over.buffer)} sweepMax=${overMax}`);
+  check('clamped commit stays ≤ sweepBlendHardMax', Number(committedRadius(over.buffer)) <= overMax,
+    `committed=${committedRadius(over.buffer)} sweepMax=${overMax}`);
 }
 
 if (failed) {
