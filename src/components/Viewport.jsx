@@ -14,7 +14,6 @@ import {
   MeshBasicMaterial,
   PlaneGeometry,
   ExtrudeGeometry,
-  LatheGeometry,
   Shape,
   DoubleSide,
   Quaternion,
@@ -589,12 +588,17 @@ const Viewport = forwardRef(({
   }, []);
 
   /**
-   * Slice 26: live Revolve solid (Three.js LatheGeometry on an in-plane axis).
-   * Lathe Y = axis; sense offsets phiStart (out / in / both).
+   * Slice 26: live Revolve solid (surface of revolution on an in-plane axis).
+   * Local X=radial, Y=axis, Z=plane normal; sense offsets the start angle.
    */
   const paintRevolvePreview = useCallback((payload) => {
     clearRevolvePreview();
     if (!payload?.contours?.length || !payload?.center || !sceneRef.current) return;
+    const radial = payload.radial;
+    const axis = payload.axis;
+    const out = payload.plane?.normal;
+    const c = payload.center;
+    if (!radial || !axis || !out || !c) return;
     const loop = payload.contours[0];
     if (!loop || loop.length < 3) return;
     const pts = [];
@@ -602,37 +606,57 @@ const Viewport = forwardRef(({
       const r = Number(p[0]);
       const h = Number(p[1]);
       if (!Number.isFinite(r) || !Number.isFinite(h)) return;
-      pts.push(new Vector2(Math.max(0, r), h));
+      pts.push([Math.max(0, r), h]);
     }
     if (pts.length < 3) return;
-    const first = pts[0];
-    const last = pts[pts.length - 1];
-    if (first.distanceTo(last) > 1e-6) pts.push(first.clone());
+    const f0 = pts[0];
+    const f1 = pts[pts.length - 1];
+    if (Math.hypot(f0[0] - f1[0], f0[1] - f1[1]) > 1e-6) pts.push([f0[0], f0[1]]);
     const angle = Number(payload.angle);
     if (!(angle > 0) || !Number.isFinite(angle)) return;
     const start = (Number(payload.startDeg) || 0) * (Math.PI / 180);
-    const length = angle * (Math.PI / 180);
-    const geom = new LatheGeometry(pts, 48, start, length);
+    const span = angle * (Math.PI / 180);
+    const segs = Math.max(16, Math.round(48 * Math.max(0.2, angle / 360)));
+    const n = pts.length;
+    const positions = new Float32Array((segs + 1) * n * 3);
+    let w = 0;
+    for (let j = 0; j <= segs; j++) {
+      const th = start + (j / segs) * span;
+      const ct = Math.cos(th);
+      const st = Math.sin(th);
+      for (let i = 0; i < n; i++) {
+        positions[w++] = pts[i][0] * ct;
+        positions[w++] = pts[i][1];
+        positions[w++] = pts[i][0] * st;
+      }
+    }
+    const indices = [];
+    for (let j = 0; j < segs; j++) {
+      for (let i = 0; i < n - 1; i++) {
+        const a = j * n + i;
+        const b = a + n;
+        indices.push(a, b, a + 1, b, b + 1, a + 1);
+      }
+    }
+    const geom = new BufferGeometry();
+    geom.setAttribute('position', new BufferAttribute(positions, 3));
+    geom.setIndex(indices);
+    geom.computeVertexNormals();
     const mat = new MeshLambertMaterial({
       color: 0x22d3ee,
       transparent: true,
-      opacity: 0.42,
+      opacity: 0.5,
       depthWrite: false,
       flatShading: true,
       side: DoubleSide,
       emissive: 0x164e63,
-      emissiveIntensity: 0.2,
+      emissiveIntensity: 0.35,
     });
     const mesh = new ThreeMesh(geom, mat);
     mesh.name = 'contourRevolvePreview';
-    mesh.renderOrder = 8;
+    mesh.renderOrder = 10;
     mesh.frustumCulled = false;
-    const radial = payload.radial;
-    const axis = payload.axis;
-    const out = payload.plane?.normal;
-    const c = payload.center;
-    if (!radial || !axis || !out || !c) return;
-    // Lathe: X=radial, Y=axis, Z=other (plane normal).
+    // Local: X=radial, Y=axis, Z=plane normal.
     mesh.matrix.set(
       radial[0], axis[0], out[0], c[0],
       radial[1], axis[1], out[1], c[1],
