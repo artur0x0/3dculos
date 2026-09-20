@@ -1,7 +1,8 @@
 /**
  * Slice 24/25/26 — Contour-mode shell + Extrude / Revolve solid commit.
  *
- * Shared mode Extrude / Revolve / Loft (later Fillet-without-edges) will own.
+ * Shared mode Extrude / Revolve / Loft own. Fillet-without-edges is Slice 27
+ * (its own edge-pick mode — not a contour entry).
  * Slice 24: enter mode, ghost the part, swap the left rail, pick a workplane,
  * draw circle/rect/polygon/(cheap polyline), live makeCrossSection preview.
  * Slice 25: Extrude entry Confirm commits profile + makeExtrude solid (live
