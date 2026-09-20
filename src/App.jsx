@@ -39,7 +39,7 @@ import { getBestTimeMs, recordWin } from './utils/gameWins';
 import GameHintsModal from './components/GameHintsModal';
 import PuzzlePickerModal from './components/PuzzlePickerModal';
 import GameConfetti from './components/GameConfetti';
-import { composeContourProfile } from './utils/contourMode';
+import { composeContourCommit } from './utils/contourMode';
 
 const App = () => {
   const [currentScript, setCurrentScript] = useState('');
@@ -741,22 +741,30 @@ const App = () => {
   };
 
   /**
-   * Slice 24: in-mode Profile confirm/update. Writes makeCrossSection only —
-   * no Auto-Run (solid unchanged) and never makeExtrude.
+   * Slice 24/25: in-mode Confirm. Profile / Revolve write makeCrossSection only
+   * (no Auto-Run). Extrude writes profile + makeExtrude and Auto-Runs.
    */
   const handleCommitContourProfile = (payload) => {
     const buf = codeEditorRef.current?.getContent?.() || '';
-    const result = composeContourProfile(buf, payload || {});
+    const result = composeContourCommit(buf, payload || {});
     if (!result.ok) {
       viewportRef.current?.softFailContour?.(result.message);
       return false;
     }
-    const wrote = codeEditorRef.current?.applyBuffer?.(result.buffer, 'Contour profile');
+    const msg = result.run ? 'Contour extrude' : 'Contour profile';
+    const wrote = codeEditorRef.current?.applyBuffer?.(result.buffer, msg);
     if (!wrote) {
       viewportRef.current?.softFailContour?.(
-        'Could not write Profile into the editor — try again.',
+        result.run
+          ? 'Could not write Extrude into the editor — try again.'
+          : 'Could not write Profile into the editor — try again.',
       );
       return false;
+    }
+    if (result.run) {
+      setTimeout(() => {
+        handleGameRun();
+      }, 0);
     }
     return true;
   };

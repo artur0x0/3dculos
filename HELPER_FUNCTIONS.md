@@ -82,13 +82,17 @@ plane + 2D profile substrate (planar face via `workplaneFromFace`, or default
 +Z). Cylindrical / irregular faces are refused. Does **not** extrude, sweep,
 or fillet — substrate only.
 
-**Contour mode (Slice 24):** in game mode, tapping **Extrude**, **Revolve**, or
+**Contour mode (Slice 24/25):** in game mode, tapping **Extrude**, **Revolve**, or
 **Profile** enters a shared contour shell — the part stays on screen but is
 ghosted, the left rail swaps to circle / rect / polygon / polyline + **Back**,
 and a chip (Edge-pick pattern) holds plane + profile params. Live preview uses
-`makeCrossSection`. **Confirm** writes or updates the in-mode Profile only.
-**Back** exits with no solid commit. Extrude / Revolve / Loft solids are later
-slices — this shell must not emit `makeExtrude`.
+`makeCrossSection`. **Profile** and **Revolve** Confirm write or update the
+in-mode Profile only. **Extrude** Confirm commits the profile plus a
+`makeExtrude` solid (`placeOnFace` onto the workplane; live solid preview as
+distance / direction / sense change). Second Confirm updates the same marked
+block. **Back** exits with no additional solid commit. Revolve / Loft solids
+are later slices. The one-shot Xform Extrude stub is gone — Extrude always
+enters contour mode.
 
 ## Core Manifold API
 
@@ -1018,6 +1022,21 @@ makeRevolve (outer + optional holes, winding auto-fixed).
 ```javascript
 const plate = makeExtrude([ [[-40,-15],[40,-15],[40,15],[-40,15]] ], 3);
 ```
+
+**Contour-mode Extrude (Slice 25):** game-mode **Extrude** builds a profile on
+the workplane, then Confirm emits:
+
+```javascript
+const xs = makeCrossSection(fr, profileCircle(5, 32));
+const extrude = placeOnFace(part, xs.plane, ({ put }) =>
+  put(makeExtrude(xs.contours, 10), [0, 0, 0]));
+part = part.add(extrude);
+```
+
+`height` is always > 0. Sense **In** uses `w = −height`; **Both** uses
+`w = −height/2`. Direction defaults to the plane normal; a world axis is
+refused unless it is parallel to that normal. Loud-fail on a bad plane,
+profile, or distance.
 
 **Rules for both:**
 - `contours` is an **array of contours** `[outer, hole1, ...]`; a single

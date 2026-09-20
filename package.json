@@ -21,6 +21,7 @@
         "golden:slice22": "node scripts/golden/smoke_slice22_edge_sweep_path.mjs",
         "golden:slice23": "node scripts/golden/smoke_slice23_fillet_via_sweep.mjs",
         "golden:slice24": "node scripts/golden/smoke_slice24_contour_mode.mjs",
+        "golden:slice25": "node scripts/golden/smoke_slice25_extrude.mjs",
         "golden:hotfix-sweep-path": "node scripts/golden/smoke_hotfix_sweep_path_disconnect.mjs"
     },
     "dependencies": {
