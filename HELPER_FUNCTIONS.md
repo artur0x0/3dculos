@@ -16,7 +16,7 @@ comparable and train-able.
 | `clearanceHole(part, frame, u, v, size, span?, fit?)` | Clearance hole by fastener size |
 | `tapDrillHole(part, frame, u, v, size, span?)` | Tap-drill hole by fastener size |
 | `cboreHole` / `cskHole` | Counterbore / countersink |
-| `convexEdges` / `facesByNormal` / `workplaneFromFace` / `planarFaceAt` / `edgesByOrientation` | Selection |
+| `convexEdges` / `facesByNormal` / `workplaneFromFace` / `planarFaceAt` / `edgesByOrientation` / `placeInFrame` / `transformByFrame` | Selection / frame |
 | `shell`, `addDraft`, `tube`, `hexPrism`, `roundedBox`, `mirror`, `array3D`, `polarArray`, `center`, `align` | Solids / layout |
 | `loft`, `sweep`, `sweepPoints`, `makeExtrude`, `makeRevolve` | Profiles / paths |
 | `profileCircle` / `profileRectangle` / `profilePolygon` / `makeCrossSection` | Cross-section substrate (Slice 21) |
@@ -96,7 +96,7 @@ ghosted, the left rail swaps to circle / rect / polygon / polyline + **Back**,
 and a chip (Edge-pick pattern) holds plane + profile params. Live preview uses
 `makeCrossSection`. **Profile** Confirm writes or updates the in-mode Profile
 only. **Extrude** / **Revolve** Confirm commit the profile plus a solid
-(`makeExtrude` / `makeRevolve` via `placeOnFace`; live solid preview). Second
+(`makeExtrude` / `makeRevolve` via `placeInFrame` — replace `part`, no host add; live solid preview). Second
 Confirm updates the same marked block. **Back** exits with no additional solid
 commit. **Fillet** is its own edge-pick mode (Slice 27), not a contour entry.
 Loft solid is a later slice. The one-shot Xform Extrude stub is gone — Extrude
@@ -510,6 +510,21 @@ const fr = workplaneFromFace(part, facesByNormal(part, [0,0,1])[0]);
 // fr.center, fr.normal, fr.x, fr.y
 ```
 
+### placeInFrame(frame, solid, uvw = [0, 0, 0]) / transformByFrame(…)
+
+Places a solid on a **PlaneFrame** `{ center, normal, x, y }` (from
+`workplaneFromFace` / `makeCrossSection.plane` / default +Z). The solid's
+local origin lands at `center + u·x + v·y + w·normal`, axes aligned to
+`(x, y, normal)`. **Frame-only** — never a Manifold / cube / scaffold.
+Does not take a host part; assign the result (`part = placeInFrame(…)`).
+`transformByFrame` is the same helper.
+
+```javascript
+const fr = { center: [0, 0, 0], normal: [0, 0, 1], x: [1, 0, 0], y: [0, 1, 0] };
+const xs = makeCrossSection(fr, profileCircle(5, 32));
+part = placeInFrame(xs.plane, makeExtrude(xs.contours, 10), [0, 0, 0]);
+```
+
 ### placeOnFace(part, frame, builder)
 
 Runs `builder` in the face's local frame. The builder receives
@@ -517,7 +532,8 @@ Runs `builder` in the face's local frame. The builder receives
 Manifold so its origin lands at `center + u·x + v·y + w·normal` (w is along
 the outward normal; negative w goes into the solid). Lets scripts write
 axis-aligned geometry for arbitrary face normals. Returns the builder's
-Manifold.
+Manifold. `part` is unused (legacy host arg). New-body Extrude / Revolve
+Confirm uses `placeInFrame` and replaces `part` instead of `part.add`.
 
 ```javascript
 const fr = workplaneFromFace(part, facesByNormal(part, [0,0,1])[0]);
@@ -1037,10 +1053,9 @@ const plate = makeExtrude([ [[-40,-15],[40,-15],[40,15],[-40,15]] ], 3);
 the workplane, then Confirm emits:
 
 ```javascript
+const fr = { center: [0, 0, 0], normal: [0, 0, 1], x: [1, 0, 0], y: [0, 1, 0] };
 const xs = makeCrossSection(fr, profileCircle(5, 32));
-const extrude = placeOnFace(part, xs.plane, ({ put }) =>
-  put(makeExtrude(xs.contours, 10), [0, 0, 0]));
-part = part.add(extrude);
+part = placeInFrame(xs.plane, makeExtrude(xs.contours, 10), [0, 0, 0]);
 ```
 
 `height` is always > 0. Sense **In** uses `w = −height`; **Both** uses
@@ -1058,12 +1073,12 @@ about a diameter — a sphere. Profiles that cross the axis are clipped to
 −radial profiles loud-fail.
 
 ```javascript
+const fr = { center: [0, 0, 0], normal: [0, 0, 1], x: [1, 0, 0], y: [0, 1, 0] };
 const xs = makeCrossSection(fr, profileCircle(5, 32));
-const revolve = placeOnFace(part, {
+part = placeInFrame({
   center: xs.plane.center,
   x: xs.plane.x, y: xs.plane.normal, normal: xs.plane.y,
-}, ({ put }) => put(makeRevolve(xs.contours.map((ring) => ring.map(([u, v]) => [u, v])), 96, 360), [0, 0, 0]));
-part = part.add(revolve);
+}, makeRevolve(xs.contours.map((ring) => ring.map(([u, v]) => [u, v])), 96, 360));
 ```
 
 `angle` is always > 0 and ≤ 360 (default 360). Sense **In** starts at

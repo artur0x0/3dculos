@@ -868,8 +868,12 @@ const App = () => {
         }
       }));
 
-      // Load the code from the commit
-      codeEditorRef.current?.loadContent(commit.code, null, false);
+      // Restore editor without loadContent autoExecute (CAD-only; game skips).
+      // Auto-Run via handleGameRun — same path as palette insert / Confirm.
+      codeEditorRef.current?.setTextOnly?.(commit.code);
+      setTimeout(() => {
+        handleGameRun();
+      }, 0);
     }
   };
 
@@ -897,8 +901,12 @@ const App = () => {
         }
       }));
 
-      // Load the code from the commit
-      codeEditorRef.current?.loadContent(commit.code, null, false);
+      // Restore editor without loadContent autoExecute (CAD-only; game skips).
+      // Auto-Run via handleGameRun — same path as palette insert / Confirm.
+      codeEditorRef.current?.setTextOnly?.(commit.code);
+      setTimeout(() => {
+        handleGameRun();
+      }, 0);
     }
   };
 

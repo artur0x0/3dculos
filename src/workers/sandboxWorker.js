@@ -1397,24 +1397,63 @@ function frameToMatrix(frame) {
 }
 
 /**
+ * placeInFrame(frame, solid, uvw = [0, 0, 0])
+ * Transform `solid` so its local origin lands at
+ * center + u·x + v·y + w·normal, axes aligned to (x, y, normal).
+ * `frame` is a PlaneFrame { center, normal, x, y } — never a Manifold.
+ * Does not take a host part; caller assigns the result (replace, not add).
+ */
+function placeInFrame(frame, solid, uvw = [0, 0, 0]) {
+  if (frame && typeof frame.status === 'function') {
+    throw new Error('placeInFrame: frame must be a PlaneFrame { center, normal, x, y }, not a Manifold solid');
+  }
+  if (!frame || !frame.center || !frame.normal || !frame.x || !frame.y) {
+    throw new Error('placeInFrame: frame must be a PlaneFrame { center, normal, x, y }');
+  }
+  if (!solid || typeof solid.status !== 'function') {
+    throw new Error('placeInFrame: solid must be a Manifold');
+  }
+  const u = Number(uvw?.[0]) || 0;
+  const v = Number(uvw?.[1]) || 0;
+  const w = Number(uvw?.[2]) || 0;
+  const x = frame.x, y = frame.y, n = frame.normal, c = frame.center;
+  const t = frameToMatrix({
+    center: [
+      c[0] + u * x[0] + v * y[0] + w * n[0],
+      c[1] + u * x[1] + v * y[1] + w * n[1],
+      c[2] + u * x[2] + v * y[2] + w * n[2],
+    ],
+    x,
+    y,
+    normal: n,
+  });
+  return solid.transform(t);
+}
+
+/** Alias — same frame-only replace transform as placeInFrame. */
+function transformByFrame(frame, solid, uvw = [0, 0, 0]) {
+  return placeInFrame(frame, solid, uvw);
+}
+
+/**
  * placeOnFace(part, frame, builder) — run builder in the face's local frame.
  * builder receives { Manifold: statics, frame, put } where put(m, [u,v,w])
  * returns m transformed so its local origin lands at
  * center + u·x + v·y + w·normal (w is along the outward normal), with its
  * local axes aligned to (x, y, normal). Lets scripts write axis-aligned
  * geometry for arbitrary face normals.
+ *
+ * `part` is unused (legacy host arg). New-body Confirm should assign
+ * placeInFrame/transformByFrame instead of placeOnFace + part.add.
  */
 function placeOnFace(part, frame, builder) {
+  void part;
   const M = manifoldModule.Manifold;
-  const built = builder({ Manifold: M, frame, put: (mm, [u, v, w]) => {
-    const x = frame.x, y = frame.y, n = frame.normal, c = frame.center;
-    const t = frameToMatrix({ center: [
-      c[0] + u*x[0] + v*y[0] + w*n[0],
-      c[1] + u*x[1] + v*y[1] + w*n[1],
-      c[2] + u*x[2] + v*y[2] + w*n[2],
-    ], x, y, normal: n });
-    return mm.transform(t);
-  }});
+  const built = builder({
+    Manifold: M,
+    frame,
+    put: (mm, offset) => placeInFrame(frame, mm, offset),
+  });
   if (!built || typeof built.status !== 'function')
     throw new Error('placeOnFace: builder must return a Manifold');
   return built;
@@ -3272,6 +3311,8 @@ const HELPER_FUNCTIONS = {
   planarFaceAt,
   edgesByOrientation,
   workplaneFromFace,
+  placeInFrame,
+  transformByFrame,
   placeOnFace,
   hole,
   holeSpan,

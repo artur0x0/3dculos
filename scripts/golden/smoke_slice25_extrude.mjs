@@ -3,7 +3,7 @@
  * Slice 25 — Extrude solid (contour → makeExtrude).
  * - Extrude enters contour mode (Slice 24 shell)
  * - live solid preview payload (distance / direction / sense)
- * - Confirm composes profile + makeExtrude + placeOnFace
+ * - Confirm composes profile + makeExtrude + placeInFrame (replace part)
  * - second Confirm replaces the same marked block (no duplicate stack)
  * - Profile Confirm stays Profile-only; Revolve Confirm is Slice 26 (solid)
  * - one-shot Xform Extrude stub replaced (no hardcoded plate)
@@ -166,8 +166,8 @@ function rFace() {
   check('has makeCrossSection', /makeCrossSection\s*\(/.test(first.buffer));
   check('has profileCircle', /profileCircle\s*\(/.test(first.buffer));
   check('has makeExtrude', /makeExtrude\s*\(/.test(first.buffer));
-  check('has placeOnFace', /placeOnFace\s*\(/.test(first.buffer));
-  check('unions onto part', /part\s*=\s*part\.add\(/.test(first.buffer));
+  check('has placeInFrame', /placeInFrame\s*\(/.test(first.buffer));
+  check('replaces part (no host add)', /part\s*=\s*placeInFrame\s*\(/.test(first.buffer) && !/part\s*=\s*part\.add\(/.test(first.buffer));
   check('has extrude markers', hasContourExtrudeBlock(first.buffer));
   check('markers wrap solid', first.buffer.includes(CONTOUR_EXTRUDE_BEGIN) && first.buffer.includes(CONTOUR_EXTRUDE_END));
   check('one makeCrossSection', countMakeCrossSection(first.buffer) === 1);
@@ -175,11 +175,11 @@ function rFace() {
   check('no makeRevolve', !/makeRevolve\s*\(/.test(first.buffer));
   check('still returns part', /return\s+part\s*;/.test(first.buffer));
   check('no illegal bare top', !/\btop\b/.test(first.buffer.replace(/topFace/g, 'FACE')));
-  check('w offset 0 for Out', /put\(makeExtrude\([^,]+, 10\), \[0, 0, 0\]\)/.test(first.buffer));
+  check('w offset 0 for Out', /placeInFrame\([^,]+, makeExtrude\([^,]+, 10\), \[0, 0, 0\]\)/.test(first.buffer));
 
   const owned = contourExtrudeOwnedRegion(first.buffer);
   check('owned region has profile + solid',
-    /makeCrossSection/.test(owned) && /makeExtrude/.test(owned) && /placeOnFace/.test(owned));
+    /makeCrossSection/.test(owned) && /makeExtrude/.test(owned) && /placeInFrame/.test(owned));
 
   const second = composeContourExtrude(first.buffer, {
     face,
@@ -192,7 +192,7 @@ function rFace() {
   check('update still one makeExtrude', countMakeExtrude(second.buffer) === 1);
   check('update uses profileRectangle', /profileRectangle\s*\(/.test(second.buffer));
   check('update dropped circle', !/profileCircle\s*\(/.test(second.buffer));
-  check('update sense In uses -6', /put\(makeExtrude\([^,]+, 6\), \[0, 0, -6\]\)/.test(second.buffer));
+  check('update sense In uses -6', /placeInFrame\([^,]+, makeExtrude\([^,]+, 6\), \[0, 0, -6\]\)/.test(second.buffer));
   check('update keeps one return', (second.buffer.match(/\breturn\s+part\s*;/g) || []).length === 1);
   check('update still one extrude block', (second.buffer.match(/contour-mode extrude begin/g) || []).length === 1);
 
@@ -203,7 +203,7 @@ function rFace() {
     extrude: { distance: 12, direction: 'normal', sense: 'both' },
   });
   check('both-sense compose ok', both.ok && /profilePolygon/.test(both.buffer));
-  check('both-sense w = -6', /put\(makeExtrude\([^,]+, 12\), \[0, 0, -6\]\)/.test(both.buffer));
+  check('both-sense w = -6', /placeInFrame\([^,]+, makeExtrude\([^,]+, 12\), \[0, 0, -6\]\)/.test(both.buffer));
 
   const defPlane = composeContourExtrude(starter, {
     face: null,
@@ -211,7 +211,7 @@ function rFace() {
     params: { radius: 3, segments: 16 },
     extrude: { distance: 4, direction: 'z', sense: 'positive' },
   });
-  check('default +Z + direction z ok', defPlane.ok && /facesByNormal/.test(defPlane.buffer));
+  check('default +Z + direction z ok', defPlane.ok && /normal:\s*\[0,\s*0,\s*1\]/.test(defPlane.buffer));
 
   const refuseR = composeContourExtrude(starter, {
     face,
@@ -320,7 +320,8 @@ function rFace() {
       contours: profile.contours,
     }),
     makeExtrude: () => ({ _t: 'ex' }),
-    placeOnFace: (_part, _fr, builder) => builder({ put: (m) => m }),
+    placeInFrame: (_fr, solid) => solid,
+    transformByFrame: (_fr, solid) => solid,
   };
   try {
     const fn = new Function(...Object.keys(stubs), `"use strict";\n${composed.buffer}`);
