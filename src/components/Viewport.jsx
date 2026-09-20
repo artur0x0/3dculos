@@ -642,15 +642,12 @@ const Viewport = forwardRef(({
     geom.setAttribute('position', new BufferAttribute(positions, 3));
     geom.setIndex(indices);
     geom.computeVertexNormals();
-    const mat = new MeshLambertMaterial({
+    const mat = new MeshBasicMaterial({
       color: 0x22d3ee,
       transparent: true,
-      opacity: 0.5,
+      opacity: 0.4,
       depthWrite: false,
-      flatShading: true,
       side: DoubleSide,
-      emissive: 0x164e63,
-      emissiveIntensity: 0.35,
     });
     const mesh = new ThreeMesh(geom, mat);
     mesh.name = 'contourRevolvePreview';
@@ -901,8 +898,25 @@ const Viewport = forwardRef(({
       applyContourPartGhost(false);
       return;
     }
-    const plane = planeFromContourFace(contourMode.planeFace);
-    paintWorkplaneOverlay(plane, contourMode.planeFace);
+    // No face pick: snap the default +Z plane to the part top so the live
+    // solid sits on the workplane (same intent as facesByNormal on Confirm).
+    let planeFace = contourMode.planeFace;
+    if (!planeFace && modelBounds?.max && Number.isFinite(Number(modelBounds.max[2]))) {
+      planeFace = {
+        type: 'planar',
+        center: [
+          Number(modelBounds.center?.[0]) || 0,
+          Number(modelBounds.center?.[1]) || 0,
+          Number(modelBounds.max[2]),
+        ],
+        normal: [0, 0, 1],
+        area: Math.max(1, (Number(modelBounds.size?.[0]) || 20) * (Number(modelBounds.size?.[1]) || 20)),
+        triangleCount: 2,
+        selectionMode: 'coplanar',
+      };
+    }
+    const plane = planeFromContourFace(planeFace);
+    paintWorkplaneOverlay(plane, planeFace);
     applyContourPartGhost(true);
     const pts = contourMode.params?.points;
     if (contourMode.tool === 'polyline' && (!Array.isArray(pts) || pts.length < 3)) {
@@ -913,9 +927,9 @@ const Viewport = forwardRef(({
       return;
     }
     clearPolylineDraft();
-    if (buildContourPreview(contourMode.planeFace, contourMode.tool, contourMode.params)) {
+    if (buildContourPreview(planeFace, contourMode.tool, contourMode.params)) {
       setXsPreview({
-        face: contourMode.planeFace,
+        face: planeFace,
         params: toolToProfileParams(contourMode.tool, contourMode.params),
       });
     } else {
@@ -924,7 +938,7 @@ const Viewport = forwardRef(({
     if (isExtrudeEntry(contourMode.entry)) {
       clearRevolvePreview();
       const solid = buildExtrudeSolidPreview(
-        contourMode.planeFace,
+        planeFace,
         contourMode.tool,
         contourMode.params,
         contourMode.extrude,
@@ -934,7 +948,7 @@ const Viewport = forwardRef(({
     } else if (isRevolveEntry(contourMode.entry)) {
       clearExtrudePreview();
       const solid = buildRevolveSolidPreview(
-        contourMode.planeFace,
+        planeFace,
         contourMode.tool,
         contourMode.params,
         contourMode.revolve,
@@ -945,7 +959,7 @@ const Viewport = forwardRef(({
       clearExtrudePreview();
       clearRevolvePreview();
     }
-  }, [contourMode, paintWorkplaneOverlay, paintPolylineDraft, paintExtrudePreview, paintRevolvePreview, applyContourPartGhost, clearWorkplaneOverlay, clearPolylineDraft, clearExtrudePreview, clearRevolvePreview, clearXsPreview, setXsPreview]);
+  }, [contourMode, modelBounds, paintWorkplaneOverlay, paintPolylineDraft, paintExtrudePreview, paintRevolvePreview, applyContourPartGhost, clearWorkplaneOverlay, clearPolylineDraft, clearExtrudePreview, clearRevolvePreview, clearXsPreview, setXsPreview]);
 
   useEffect(() => () => {
     clearWorkplaneOverlay();
