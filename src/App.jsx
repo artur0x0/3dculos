@@ -741,8 +741,8 @@ const App = () => {
   };
 
   /**
-   * Slice 24/25: in-mode Confirm. Profile / Revolve write makeCrossSection only
-   * (no Auto-Run). Extrude writes profile + makeExtrude and Auto-Runs.
+   * Slice 24/25/26: in-mode Confirm. Profile writes makeCrossSection only
+   * (no Auto-Run). Extrude / Revolve write the solid and Auto-Run.
    */
   const handleCommitContourProfile = (payload) => {
     const buf = codeEditorRef.current?.getContent?.() || '';
@@ -751,12 +751,17 @@ const App = () => {
       viewportRef.current?.softFailContour?.(result.message);
       return false;
     }
-    const msg = result.run ? 'Contour extrude' : 'Contour profile';
+    const entry = payload?.entry;
+    const msg = result.run
+      ? (entry === 'makeRevolve' ? 'Contour revolve' : 'Contour extrude')
+      : 'Contour profile';
     const wrote = codeEditorRef.current?.applyBuffer?.(result.buffer, msg);
     if (!wrote) {
       viewportRef.current?.softFailContour?.(
         result.run
-          ? 'Could not write Extrude into the editor — try again.'
+          ? (entry === 'makeRevolve'
+            ? 'Could not write Revolve into the editor — try again.'
+            : 'Could not write Extrude into the editor — try again.')
           : 'Could not write Profile into the editor — try again.',
       );
       return false;

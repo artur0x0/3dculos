@@ -47,16 +47,20 @@ import { buildCrossSectionPreview } from '../utils/crossSectionSubstrate';
 import {
   buildContourPreview,
   buildExtrudeSolidPreview,
+  buildRevolveSolidPreview,
   enterContourState,
   intersectRayPlane,
   isExtrudeEntry,
+  isRevolveEntry,
   planeFromContourFace,
   resolveContourWorkplane,
   resolveExtrudeAxis,
+  resolveRevolveAxis,
   switchContourTool,
   toolToProfileParams,
   validateContourProfile,
   validateExtrudeParams,
+  validateRevolveParams,
   worldToPlaneUV,
   workplaneOverlaySize,
   workplaneQuadCorners,
@@ -193,12 +197,13 @@ const Viewport = forwardRef(({
   const edgeModeToastShownRef = useRef(false);
   const edgeModeToastTimerRef = useRef(null);
   const [edgeModeToast, setEdgeModeToast] = useState(null);
-  /** Slice 24/25: contour-mode shell (Profile-in-mode; Extrude commits a solid). */
+  /** Slice 24/25/26: contour-mode shell (Profile-in-mode; Extrude / Revolve commit a solid). */
   const [contourMode, setContourMode] = useState(null);
   const contourModeRef = useRef(null);
   const workplaneOverlayRef = useRef(null);
   const polylineDraftRef = useRef(null);
   const extrudePreviewRef = useRef(null);
+  const revolvePreviewRef = useRef(null);
   const contourGhostMatsRef = useRef(null);
   const [contourToast, setContourToast] = useState(null);
   const contourToastTimerRef = useRef(null);
@@ -272,6 +277,8 @@ const Viewport = forwardRef(({
       polylineDraftRef.current = null;
       disposeEdgeOverlayObject(sceneRef.current, extrudePreviewRef.current);
       extrudePreviewRef.current = null;
+      disposeEdgeOverlayObject(sceneRef.current, revolvePreviewRef.current);
+      revolvePreviewRef.current = null;
       setContourMode(null);
       contourModeRef.current = null;
       setContourToast(null);
@@ -575,6 +582,94 @@ const Viewport = forwardRef(({
     extrudePreviewRef.current = group;
   }, [clearExtrudePreview]);
 
+  const clearRevolvePreview = useCallback(() => {
+    disposeEdgeOverlayObject(sceneRef.current, revolvePreviewRef.current);
+    revolvePreviewRef.current = null;
+  }, []);
+
+  /**
+   * Slice 26: live Revolve solid (surface of revolution on an in-plane axis).
+   * Local X=radial, Y=axis, Z=plane normal; sense offsets the start angle.
+   * Identity remap: axis through the workplane origin; clamp r<0 to match
+   * makeRevolve / Manifold's positive-X clip (centered circle → sphere).
+   */
+  const paintRevolvePreview = useCallback((payload) => {
+    clearRevolvePreview();
+    if (!payload?.contours?.length || !payload?.center || !sceneRef.current) return;
+    const radial = payload.radial;
+    const axis = payload.axis;
+    const out = payload.plane?.normal;
+    const c = payload.center;
+    if (!radial || !axis || !out || !c) return;
+    const loop = payload.contours[0];
+    if (!loop || loop.length < 3) return;
+    const pts = [];
+    for (const p of loop) {
+      const r = Number(p[0]);
+      const h = Number(p[1]);
+      if (!Number.isFinite(r) || !Number.isFinite(h)) return;
+      pts.push([Math.max(0, r), h]);
+    }
+    if (pts.length < 3) return;
+    const f0 = pts[0];
+    const f1 = pts[pts.length - 1];
+    if (Math.hypot(f0[0] - f1[0], f0[1] - f1[1]) > 1e-6) pts.push([f0[0], f0[1]]);
+    const angle = Number(payload.angle);
+    if (!(angle > 0) || !Number.isFinite(angle)) return;
+    const start = (Number(payload.startDeg) || 0) * (Math.PI / 180);
+    const span = angle * (Math.PI / 180);
+    const segs = Math.max(16, Math.round(48 * Math.max(0.2, angle / 360)));
+    const n = pts.length;
+    const positions = new Float32Array((segs + 1) * n * 3);
+    let w = 0;
+    for (let j = 0; j <= segs; j++) {
+      const th = start + (j / segs) * span;
+      const ct = Math.cos(th);
+      const st = Math.sin(th);
+      for (let i = 0; i < n; i++) {
+        positions[w++] = pts[i][0] * ct;
+        positions[w++] = pts[i][1];
+        positions[w++] = pts[i][0] * st;
+      }
+    }
+    const indices = [];
+    for (let j = 0; j < segs; j++) {
+      for (let i = 0; i < n - 1; i++) {
+        const a = j * n + i;
+        const b = a + n;
+        indices.push(a, b, a + 1, b, b + 1, a + 1);
+      }
+    }
+    const geom = new BufferGeometry();
+    geom.setAttribute('position', new BufferAttribute(positions, 3));
+    geom.setIndex(indices);
+    geom.computeVertexNormals();
+    const mat = new MeshBasicMaterial({
+      color: 0x22d3ee,
+      transparent: true,
+      opacity: 0.4,
+      depthWrite: false,
+      side: DoubleSide,
+    });
+    const mesh = new ThreeMesh(geom, mat);
+    mesh.name = 'contourRevolvePreview';
+    mesh.renderOrder = 10;
+    mesh.frustumCulled = false;
+    // Local: X=radial, Y=axis, Z=plane normal.
+    mesh.matrix.set(
+      radial[0], axis[0], out[0], c[0],
+      radial[1], axis[1], out[1], c[1],
+      radial[2], axis[2], out[2], c[2],
+      0, 0, 0, 1,
+    );
+    mesh.matrixAutoUpdate = false;
+    const group = new Group();
+    group.name = 'contourRevolvePreviewGroup';
+    group.add(mesh);
+    sceneRef.current.add(group);
+    revolvePreviewRef.current = group;
+  }, [clearRevolvePreview]);
+
   const applyContourPartGhost = useCallback((on) => {
     const mesh = resultRef.current;
     if (!mesh) return;
@@ -719,13 +814,14 @@ const Viewport = forwardRef(({
     clearWorkplaneOverlay();
     clearPolylineDraft();
     clearExtrudePreview();
+    clearRevolvePreview();
     applyContourPartGhost(false);
     if (contourToastTimerRef.current) {
       clearTimeout(contourToastTimerRef.current);
       contourToastTimerRef.current = null;
     }
     setContourToast(null);
-  }, [clearXsPreview, clearWorkplaneOverlay, clearPolylineDraft, clearExtrudePreview, applyContourPartGhost]);
+  }, [clearXsPreview, clearWorkplaneOverlay, clearPolylineDraft, clearExtrudePreview, clearRevolvePreview, applyContourPartGhost]);
 
   const enterContourMode = useCallback(({ entry } = {}) => {
     setPickMode('face');
@@ -760,71 +856,121 @@ const Viewport = forwardRef(({
         return;
       }
     }
+    if (isRevolveEntry(state.entry)) {
+      const revGate = validateRevolveParams(state.revolve);
+      if (!revGate.ok) {
+        showContourToast(revGate.message);
+        return;
+      }
+      const axis = resolveRevolveAxis(
+        planeFromContourFace(state.planeFace),
+        revGate.normalized.axis,
+      );
+      if (!axis.ok) {
+        showContourToast(axis.message);
+        return;
+      }
+    }
     const ok = onCommitContourProfile?.({
       face: state.planeFace,
       tool: state.tool,
       params: state.params,
       entry: state.entry,
       extrude: state.extrude,
+      revolve: state.revolve,
     });
     if (ok) {
       showContourToast(
-        isExtrudeEntry(state.entry)
-          ? 'Extrude saved — still in contour mode. Confirm again to update.'
-          : 'Profile saved — still in contour mode (no Extrude).',
+        isRevolveEntry(state.entry)
+          ? 'Revolve saved — still in contour mode. Confirm again to update.'
+          : isExtrudeEntry(state.entry)
+            ? 'Extrude saved — still in contour mode. Confirm again to update.'
+            : 'Profile saved — still in contour mode (Profile only).',
       );
     }
   }, [onCommitContourProfile]);
 
-  // Live workplane + makeCrossSection profile (+ Extrude solid) preview.
+  // Live workplane + makeCrossSection profile (+ Extrude / Revolve solid) preview.
   useEffect(() => {
     if (!contourMode) {
       clearWorkplaneOverlay();
       clearPolylineDraft();
       clearExtrudePreview();
+      clearRevolvePreview();
       applyContourPartGhost(false);
       return;
     }
-    const plane = planeFromContourFace(contourMode.planeFace);
-    paintWorkplaneOverlay(plane, contourMode.planeFace);
+    // No face pick: snap the default +Z plane to the part top so the live
+    // solid sits on the workplane (same intent as facesByNormal on Confirm).
+    let planeFace = contourMode.planeFace;
+    if (!planeFace && modelBounds?.max && Number.isFinite(Number(modelBounds.max[2]))) {
+      planeFace = {
+        type: 'planar',
+        center: [
+          Number(modelBounds.center?.[0]) || 0,
+          Number(modelBounds.center?.[1]) || 0,
+          Number(modelBounds.max[2]),
+        ],
+        normal: [0, 0, 1],
+        area: Math.max(1, (Number(modelBounds.size?.[0]) || 20) * (Number(modelBounds.size?.[1]) || 20)),
+        triangleCount: 2,
+        selectionMode: 'coplanar',
+      };
+    }
+    const plane = planeFromContourFace(planeFace);
+    paintWorkplaneOverlay(plane, planeFace);
     applyContourPartGhost(true);
     const pts = contourMode.params?.points;
     if (contourMode.tool === 'polyline' && (!Array.isArray(pts) || pts.length < 3)) {
       clearXsPreview();
       clearExtrudePreview();
+      clearRevolvePreview();
       paintPolylineDraft(plane, pts || []);
       return;
     }
     clearPolylineDraft();
-    if (buildContourPreview(contourMode.planeFace, contourMode.tool, contourMode.params)) {
+    if (buildContourPreview(planeFace, contourMode.tool, contourMode.params)) {
       setXsPreview({
-        face: contourMode.planeFace,
+        face: planeFace,
         params: toolToProfileParams(contourMode.tool, contourMode.params),
       });
     } else {
       clearXsPreview();
     }
     if (isExtrudeEntry(contourMode.entry)) {
+      clearRevolvePreview();
       const solid = buildExtrudeSolidPreview(
-        contourMode.planeFace,
+        planeFace,
         contourMode.tool,
         contourMode.params,
         contourMode.extrude,
       );
       if (solid) paintExtrudePreview(solid);
       else clearExtrudePreview();
+    } else if (isRevolveEntry(contourMode.entry)) {
+      clearExtrudePreview();
+      const solid = buildRevolveSolidPreview(
+        planeFace,
+        contourMode.tool,
+        contourMode.params,
+        contourMode.revolve,
+      );
+      if (solid) paintRevolvePreview(solid);
+      else clearRevolvePreview();
     } else {
       clearExtrudePreview();
+      clearRevolvePreview();
     }
-  }, [contourMode, paintWorkplaneOverlay, paintPolylineDraft, paintExtrudePreview, applyContourPartGhost, clearWorkplaneOverlay, clearPolylineDraft, clearExtrudePreview, clearXsPreview, setXsPreview]);
+  }, [contourMode, modelBounds, paintWorkplaneOverlay, paintPolylineDraft, paintExtrudePreview, paintRevolvePreview, applyContourPartGhost, clearWorkplaneOverlay, clearPolylineDraft, clearExtrudePreview, clearRevolvePreview, clearXsPreview, setXsPreview]);
 
   useEffect(() => () => {
     clearWorkplaneOverlay();
     clearPolylineDraft();
     clearExtrudePreview();
+    clearRevolvePreview();
     applyContourPartGhost(false);
     if (contourToastTimerRef.current) clearTimeout(contourToastTimerRef.current);
-  }, [clearWorkplaneOverlay, clearPolylineDraft, clearExtrudePreview, applyContourPartGhost]);
+  }, [clearWorkplaneOverlay, clearPolylineDraft, clearExtrudePreview, clearRevolvePreview, applyContourPartGhost]);
 
   // Contour mode: planar face tap updates the workplane; non-planar is a loud refuse.
   useEffect(() => {
@@ -2507,6 +2653,7 @@ const Viewport = forwardRef(({
           entry={contourMode.entry}
           params={contourMode.params}
           extrude={contourMode.extrude || {}}
+          revolve={contourMode.revolve || {}}
           compact={isMobile}
           planeLabel={
             contourMode.planeFace
@@ -2515,6 +2662,7 @@ const Viewport = forwardRef(({
           }
           onParamChange={(next) => setContourMode((prev) => (prev ? { ...prev, params: next } : prev))}
           onExtrudeChange={(next) => setContourMode((prev) => (prev ? { ...prev, extrude: next } : prev))}
+          onRevolveChange={(next) => setContourMode((prev) => (prev ? { ...prev, revolve: next } : prev))}
           onConfirm={confirmContourProfile}
           onUndoPoint={() => setContourMode((prev) => {
             if (!prev || prev.tool !== 'polyline') return prev;

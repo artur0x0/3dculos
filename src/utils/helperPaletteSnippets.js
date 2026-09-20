@@ -13,6 +13,7 @@
  * Slice 23: filletAlongPath — sweep fillet wedge along Path; Fillet Strategy=sweep (default) | planar.
  * Slice 24: contour-mode Profile region (markers + custom polyline points).
  * Slice 25: Extrude Confirm wraps profile + makeExtrude / placeOnFace in extrude markers.
+ * Slice 26: Revolve Confirm wraps profile + makeRevolve / placeOnFace in revolve markers.
  *
  * Sequential taps compose via composeHelperInsert:
  * strip one trailing `return part;`, insert body, re-append exactly one `return part;`.
@@ -37,6 +38,10 @@ export const CONTOUR_PROFILE_END = '// --- contour-mode profile end ---';
 /** Slice 25 — in-mode Extrude region (profile + solid). Second Confirm replaces this block. */
 export const CONTOUR_EXTRUDE_BEGIN = '// --- contour-mode extrude begin ---';
 export const CONTOUR_EXTRUDE_END = '// --- contour-mode extrude end ---';
+
+/** Slice 26 — in-mode Revolve region (profile + solid). Second Confirm replaces this block. */
+export const CONTOUR_REVOLVE_BEGIN = '// --- contour-mode revolve begin ---';
+export const CONTOUR_REVOLVE_END = '// --- contour-mode revolve end ---';
 
 /** Metric fastener sizes commonly used in puzzles / hints. */
 export const FASTENER_SIZE_OPTIONS = [
@@ -381,6 +386,49 @@ function emitDefaultTopWorkplane(body, names) {
     ],
     frVar: fr,
   };
+}
+
+/** Compact `cu*u + cv*v + add` for contour-mode Revolve remapping. */
+function emitUvCombo(uName, vName, cu, cv, add) {
+  const parts = [];
+  const pushTerm = (c, name) => {
+    const n = +Number(c).toFixed(6);
+    if (Math.abs(n) < 1e-12) return;
+    if (n === 1) parts.push(name);
+    else if (n === -1) parts.push(`-${name}`);
+    else parts.push(`${n} * ${name}`);
+  };
+  pushTerm(cu, uName);
+  pushTerm(cv, vName);
+  let expr = '0';
+  if (parts.length === 1) expr = parts[0];
+  else if (parts.length > 1) expr = parts.join(' + ').replace(/ \+ -/g, ' - ');
+  const s = +Number(add).toFixed(4);
+  if (s === 0) return expr;
+  if (s > 0) return `${expr} + ${s}`;
+  return `${expr} - ${-s}`;
+}
+
+/** placeOnFace frame: local X=radial, Y=plane normal, Z=in-plane axis. */
+function emitRevolvePlaceFrame(xs, rU, rV, aU, aV) {
+  const rad = emitPlaneVecCombo(xs, rU, rV);
+  const axi = emitPlaneVecCombo(xs, aU, aV);
+  // Identity remap: axis through the workplane origin (no min-radial shift).
+  return `{ center: ${xs}.plane.center, x: ${rad}, y: ${xs}.plane.normal, normal: ${axi} }`;
+}
+
+function emitPlaneVecCombo(xs, cu, cv) {
+  const u = +Number(cu).toFixed(6);
+  const v = +Number(cv).toFixed(6);
+  if (Math.abs(v) < 1e-12 && Math.abs(u - 1) < 1e-12) return `${xs}.plane.x`;
+  if (Math.abs(v) < 1e-12 && Math.abs(u + 1) < 1e-12) return `[-${xs}.plane.x[0], -${xs}.plane.x[1], -${xs}.plane.x[2]]`;
+  if (Math.abs(u) < 1e-12 && Math.abs(v - 1) < 1e-12) return `${xs}.plane.y`;
+  if (Math.abs(u) < 1e-12 && Math.abs(v + 1) < 1e-12) return `[-${xs}.plane.y[0], -${xs}.plane.y[1], -${xs}.plane.y[2]]`;
+  return `[
+    (${u}) * ${xs}.plane.x[0] + (${v}) * ${xs}.plane.y[0],
+    (${u}) * ${xs}.plane.x[1] + (${v}) * ${xs}.plane.y[1],
+    (${u}) * ${xs}.plane.x[2] + (${v}) * ${xs}.plane.y[2],
+  ]`;
 }
 
 /**
@@ -859,8 +907,32 @@ export const HELPER_PALETTE_ITEMS = [
       }
       // Substrate only — named let for later edge→sweep / fillet / extrude slices.
       const profileLine = `const ${xs} = makeCrossSection(${fr}, ${profileExpr}); // plane+profile substrate`;
-      // Slice 25: Extrude Confirm — profile + makeExtrude placed on the workplane.
-      if (p._contourExtrude) {
+      // Slice 26: Revolve Confirm — profile + makeRevolve on an in-plane axis.
+      if (p._contourRevolve) {
+        const rev = p._contourRevolve;
+        const angle = num(rev.angle, 360);
+        const segs = Math.max(3, Math.round(num(rev.segments, 96)));
+        const startDeg = num(rev.startDeg, 0);
+        const rU = num(rev.rU, 1);
+        const rV = num(rev.rV, 0);
+        const aU = num(rev.aU, 0);
+        const aV = num(rev.aV, 1);
+        const revolve = allocateUniqueName(names, 'revolve');
+        const mapped = `${xs}.contours.map((ring) => ring.map(([u, v]) => [${emitUvCombo('u', 'v', rU, rV, 0)}, ${emitUvCombo('u', 'v', aU, aV, 0)}]))`;
+        let solidExpr = `makeRevolve(${mapped}, ${segs}, ${+Number(angle).toFixed(4)})`;
+        if (Math.abs(startDeg) > 1e-9) {
+          solidExpr = `${solidExpr}.rotate([0, 0, ${+Number(startDeg).toFixed(4)}])`;
+        }
+        const frame = emitRevolvePlaceFrame(xs, rU, rV, aU, aV);
+        lines.push(CONTOUR_REVOLVE_BEGIN);
+        lines.push(...wp.lines);
+        lines.push(profileLine);
+        lines.push(
+          `const ${revolve} = placeOnFace(part, ${frame}, ({ put }) => put(${solidExpr}, [0, 0, 0]));`,
+        );
+        lines.push(`part = part.add(${revolve});`);
+        lines.push(CONTOUR_REVOLVE_END);
+      } else if (p._contourExtrude) {
         const ext = p._contourExtrude;
         const distance = num(ext.distance, 10);
         const sense = str(ext.sense, 'positive');
@@ -1336,7 +1408,7 @@ export const HELPER_PALETTE_ITEMS = [
     id: 'makeRevolve',
     label: 'Revolve',
     group: 'Transforms',
-    title: 'makeRevolve(contours, segments?) — x=radial, y=height',
+    title: 'Revolve — contour mode (profile + makeRevolve on an in-plane axis)',
     bodyBase: 'revolve',
     params: [
       { name: 'segments', type: 'number', default: 64, label: 'Segments', min: 3, step: 1 },

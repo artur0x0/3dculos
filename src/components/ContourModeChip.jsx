@@ -2,8 +2,8 @@ import React from 'react';
 import { Check } from 'lucide-react';
 
 /**
- * Slice 24/25 — contour-mode chip (Edge-pick pattern).
- * Plane + profile params; Extrude entry also edits distance / direction / sense
+ * Slice 24/25/26 — contour-mode chip (Edge-pick pattern).
+ * Plane + profile params; Extrude / Revolve entries also edit solid params
  * and Confirm commits the solid. Mobile-first compact card.
  */
 const ContourModeChip = ({
@@ -11,15 +11,18 @@ const ContourModeChip = ({
   entry = 'crossSection',
   params = {},
   extrude = {},
+  revolve = {},
   planeLabel = 'default +Z',
   onParamChange,
   onExtrudeChange,
+  onRevolveChange,
   onConfirm,
   onUndoPoint,
   onClearPoints,
   compact = false,
 }) => {
   const isExtrude = entry === 'makeExtrude';
+  const isRevolve = entry === 'makeRevolve';
   const set = (name, raw, type) => {
     let v = raw;
     if (type === 'number') {
@@ -148,6 +151,92 @@ const ContourModeChip = ({
       <div className="mt-1.5 flex flex-col gap-1.5 font-sans">
         {fields}
       </div>
+      {isRevolve && (
+        <div className="mt-2 pt-1.5 border-t border-cyan-700/50 flex flex-col gap-1.5 font-sans">
+          <div className="text-[10px] uppercase tracking-wide text-cyan-200/80">Revolve</div>
+          <label className="flex flex-col gap-0.5 min-w-0">
+            <span className="text-[10px] uppercase tracking-wide text-cyan-200/80">Angle</span>
+            <div className="flex items-center gap-1.5">
+              <input
+                type="range"
+                value={Number.isFinite(Number(revolve.angle)) ? Number(revolve.angle) : 360}
+                min={0.1}
+                max={360}
+                step={1}
+                onChange={(e) => {
+                  const n = Number(e.target.value);
+                  onRevolveChange?.({
+                    ...revolve,
+                    angle: Number.isFinite(n) ? n : revolve.angle,
+                  });
+                }}
+                className="flex-1 min-w-0 accent-cyan-400"
+                aria-label="Angle"
+              />
+              <input
+                type="number"
+                value={revolve.angle ?? ''}
+                min={0.1}
+                max={360}
+                step="any"
+                onChange={(e) => {
+                  const raw = e.target.value;
+                  let v = raw;
+                  if (raw === '' || raw === '-' || raw === '.') v = raw;
+                  else {
+                    const n = Number(raw);
+                    v = Number.isFinite(n) ? n : revolve.angle;
+                  }
+                  onRevolveChange?.({ ...revolve, angle: v });
+                }}
+                className="w-14 rounded border border-cyan-700/70 bg-cyan-950/80 px-1 py-0.5
+                  text-[11px] tabular-nums text-white"
+                aria-label="Angle value"
+              />
+            </div>
+          </label>
+          <label className="flex flex-col gap-0.5">
+            <span className="text-[10px] uppercase tracking-wide text-cyan-200/80">Axis</span>
+            <select
+              value={revolve.axis || 'v'}
+              onChange={(e) => onRevolveChange?.({ ...revolve, axis: e.target.value })}
+              className="rounded border border-cyan-700/70 bg-cyan-950/80 px-1.5 py-1 text-[11px] text-white"
+              aria-label="Axis"
+            >
+              <option value="v">along V</option>
+              <option value="u">along U</option>
+              <option value="x">+X</option>
+              <option value="y">+Y</option>
+              <option value="z">+Z</option>
+            </select>
+          </label>
+          <div className="flex flex-col gap-0.5">
+            <span className="text-[10px] uppercase tracking-wide text-cyan-200/80">Sense</span>
+            <div className="flex rounded border border-cyan-700/70 overflow-hidden">
+              {[
+                { id: 'positive', label: 'Out' },
+                { id: 'negative', label: 'In' },
+                { id: 'both', label: 'Both' },
+              ].map((opt) => {
+                const active = (revolve.sense || 'positive') === opt.id;
+                return (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => onRevolveChange?.({ ...revolve, sense: opt.id })}
+                    className={`flex-1 px-1 py-0.5 text-[11px] ${
+                      active ? 'bg-cyan-600 text-white' : 'bg-cyan-950/80 text-cyan-100'
+                    }`}
+                    aria-pressed={active}
+                  >
+                    {opt.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
       {isExtrude && (
         <div className="mt-2 pt-1.5 border-t border-cyan-700/50 flex flex-col gap-1.5 font-sans">
           <div className="text-[10px] uppercase tracking-wide text-cyan-200/80">Extrude</div>
@@ -234,7 +323,11 @@ const ContourModeChip = ({
       )}
       <div className="mt-2 flex items-center justify-between gap-2">
         <span className="text-[10px] text-cyan-200/70 leading-tight">
-          {isExtrude ? 'Confirm writes Extrude' : 'Confirm writes Profile only'}
+          {isRevolve
+            ? 'Confirm writes Revolve'
+            : isExtrude
+              ? 'Confirm writes Extrude'
+              : 'Confirm writes Profile only'}
         </span>
         <button
           type="button"
@@ -242,9 +335,11 @@ const ContourModeChip = ({
           className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium
             bg-cyan-600 hover:bg-cyan-500 active:bg-cyan-400 text-white shrink-0"
           title={
-            isExtrude
-              ? 'Commit or update Extrude (profile + makeExtrude). Second Confirm updates the same block.'
-              : 'Commit or update in-mode Profile (makeCrossSection). Does not Extrude.'
+            isRevolve
+              ? 'Commit or update Revolve (profile + makeRevolve). Second Confirm updates the same block.'
+              : isExtrude
+                ? 'Commit or update Extrude (profile + makeExtrude). Second Confirm updates the same block.'
+                : 'Commit or update in-mode Profile (makeCrossSection). Does not Extrude or Revolve.'
           }
         >
           <Check size={14} />
