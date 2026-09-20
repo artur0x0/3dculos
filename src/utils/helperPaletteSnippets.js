@@ -27,9 +27,14 @@ import {
   emitSelectedEdgeLiteralLines,
   emitSpanExpr,
   estimateCylinderAxis,
+  formatVec3,
   roundFaceNum,
   resolveHoleUV,
 } from './faceFeaturePlacement.js';
+import {
+  defaultTopPlaneFrame,
+  planeFrameFromFaceData,
+} from './crossSectionSubstrate.js';
 import { resolveFilletStrategy } from './filletAlongPath.js';
 
 /** Slice 24 — in-mode Profile region so Confirm can replace without appending. */
@@ -375,6 +380,23 @@ function resolveBody(params, names, buffer) {
 
 function hasPartDecl(lines, empty) {
   return /(?:let|const|var)\s+part\b/.test(lines.join('\n')) || !empty;
+}
+
+/**
+ * Hostless workplane (empty-buffer Revolve): literal plane, no starter cube.
+ * Selected planar face → that frame; else default +Z at the origin.
+ */
+function emitLiteralPlaneWorkplane(face, names) {
+  const fr = allocateUniqueName(names, 'fr');
+  const plane = (face && face.type === 'planar' && face.center && face.normal)
+    ? planeFrameFromFaceData(face)
+    : defaultTopPlaneFrame();
+  return {
+    lines: [
+      `const ${fr} = { center: ${formatVec3(plane.center)}, normal: ${formatVec3(plane.normal)}, x: ${formatVec3(plane.x)}, y: ${formatVec3(plane.y)} };`,
+    ],
+    frVar: fr,
+  };
 }
 
 /**
@@ -867,13 +889,20 @@ export const HELPER_PALETTE_ITEMS = [
       },
     ],
     build: (empty, p, names, buffer, faceCtx = null) => {
-      const lines = [...ensurePartPrefix(empty, names)];
-      const body = resolveBody(p, names, empty ? lines.join('\n') : buffer);
+      // Empty-buffer Revolve: do not inject ensurePartPrefix's 40×30×20 cube.
+      // The revolve is the part (same as the one-shot Revolve stub).
+      const hostlessRevolve = empty && !!p._contourRevolve;
+      const lines = hostlessRevolve ? [] : [...ensurePartPrefix(empty, names)];
+      const body = hostlessRevolve
+        ? 'part'
+        : resolveBody(p, names, empty ? lines.join('\n') : buffer);
       // Planar face → selected workplane; else default +Z top face.
       const planarCtx = faceCtx && faceCtx.type === 'planar' ? faceCtx : null;
-      const wp = planarCtx
-        ? emitFaceWorkplaneLines(body, planarCtx, names, allocateUniqueName)
-        : emitDefaultTopWorkplane(body, names);
+      const wp = hostlessRevolve
+        ? emitLiteralPlaneWorkplane(planarCtx, names)
+        : (planarCtx
+          ? emitFaceWorkplaneLines(body, planarCtx, names, allocateUniqueName)
+          : emitDefaultTopWorkplane(body, names));
       const fr = wp.frVar;
       const xs = allocateUniqueName(names, 'xs');
       const type = str(p.profileType, 'circle');
@@ -932,7 +961,6 @@ export const HELPER_PALETTE_ITEMS = [
         const rV = num(rev.rV, 0);
         const aU = num(rev.aU, 0);
         const aV = num(rev.aV, 1);
-        const revolve = allocateUniqueName(names, 'revolve');
         const mapped = `${xs}.contours.map((ring) => ring.map(([u, v]) => [${emitUvCombo('u', 'v', rU, rV, 0)}, ${emitUvCombo('u', 'v', aU, aV, 0)}]))`;
         let solidExpr = `makeRevolve(${mapped}, ${segs}, ${+Number(angle).toFixed(4)})`;
         if (Math.abs(startDeg) > 1e-9) {
@@ -942,10 +970,18 @@ export const HELPER_PALETTE_ITEMS = [
         lines.push(CONTOUR_REVOLVE_BEGIN);
         lines.push(...wp.lines);
         lines.push(profileLine);
-        lines.push(
-          `const ${revolve} = placeOnFace(part, ${frame}, ({ put }) => put(${solidExpr}, [0, 0, 0]));`,
-        );
-        lines.push(`part = part.add(${revolve});`);
+        if (hostlessRevolve) {
+          // No host solid — Revolve *is* the part (placeOnFace first arg unused).
+          lines.push(
+            `let part = placeOnFace(null, ${frame}, ({ put }) => put(${solidExpr}, [0, 0, 0]));`,
+          );
+        } else {
+          const revolve = allocateUniqueName(names, 'revolve');
+          lines.push(
+            `const ${revolve} = placeOnFace(part, ${frame}, ({ put }) => put(${solidExpr}, [0, 0, 0]));`,
+          );
+          lines.push(`part = part.add(${revolve});`);
+        }
         lines.push(CONTOUR_REVOLVE_END);
       } else if (p._contourExtrude) {
         const ext = p._contourExtrude;

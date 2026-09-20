@@ -34,6 +34,7 @@ import {
   CONTOUR_EXTRUDE_END,
   CONTOUR_REVOLVE_BEGIN,
   CONTOUR_REVOLVE_END,
+  isBufferEmpty,
 } from './helperPaletteSnippets.js';
 
 /** Palette ids that enter contour mode instead of one-shot insert. */
@@ -969,6 +970,13 @@ export function composeContourRevolve(buffer, {
     return {
       ok: false,
       message: 'composeContourRevolve: unexpected Extrude/Loft in the Revolve block.',
+    };
+  }
+  // Empty editor (game blank / comment-only): a starter cube is an extra solid.
+  if (isBufferEmpty(String(buffer || '')) && /Manifold\.cube\s*\(/.test(composed)) {
+    return {
+      ok: false,
+      message: 'composeContourRevolve: unexpected starter box on empty buffer — refusing extra solid.',
     };
   }
   return { ok: true, buffer: composed, run: true };

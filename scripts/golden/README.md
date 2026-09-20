@@ -25,3 +25,4 @@ requires `test_real_worker.mjs` via `npm run verify` once the harness is present
 | `smoke_slice25_extrude.mjs` | Slice 25 Extrude solid: live preview params, Confirm compose (makeExtrude + placeOnFace), update-in-place, Back/no-orphan, #30 fillet sweep default |
 | `smoke_slice26_revolve.mjs` | Slice 26 Revolve solid: identity (u,v)→(radial,height) remap (centered circle → sphere; washer → torus), live preview params, Confirm compose (makeRevolve + placeOnFace), update-in-place, Back/no-orphan, Extrude/Profile/Loft unchanged, #30 fillet sweep default |
 | `smoke_slice27_fillet_mode.mjs` | Slice 27 Fillet-in-mode: enter without edges, live blend preview as edges accumulate, Accept compose (makeSweepPath + filletAlongPath) + replace-in-place, Back/no-commit, disconnected path stays visible, #27–#30 sweep stack |
+| `smoke_hotfix_revolve_box_undo_autorun.mjs` | Hotfix: empty-buffer Revolve has no starter cube; Undo/Redo Auto-Run via handleGameRun |

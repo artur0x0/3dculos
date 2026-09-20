@@ -339,6 +339,27 @@ function rFace() {
   check('strip removes makeCrossSection', countMakeCrossSection(stripped) === 0);
   check('strip keeps part', /Manifold\.cube/.test(stripped));
   check('Back-equivalent has no orphan Revolve', countMakeRevolve(stripped) === 0);
+
+  // Empty / comment-only buffer: Revolve is the part — no ensurePartPrefix cube.
+  const fromEmpty = composeContourRevolve('', {
+    face,
+    tool: 'circle',
+    params: { radius: 5, segments: 32 },
+    revolve: { angle: 360, axis: 'v', sense: 'positive' },
+  });
+  check('empty-buffer compose ok', fromEmpty.ok && fromEmpty.run === true);
+  check('empty-buffer has makeRevolve', countMakeRevolve(fromEmpty.buffer) === 1);
+  check('empty-buffer has no starter cube', !/Manifold\.cube\s*\(/.test(fromEmpty.buffer));
+  check('empty-buffer does not union onto a host', !/part\s*=\s*part\.add\(/.test(fromEmpty.buffer));
+  check('empty-buffer assigns part from placeOnFace', /let\s+part\s*=\s*placeOnFace\(null,/.test(fromEmpty.buffer));
+
+  const fromComments = composeContourRevolve('// blank\n/* wait */\n', {
+    face: null,
+    tool: 'circle',
+    params: { radius: 5, segments: 32 },
+    revolve: { angle: 360, axis: 'v', sense: 'positive' },
+  });
+  check('comment-only compose ok (no cube)', fromComments.ok && !/Manifold\.cube\s*\(/.test(fromComments.buffer));
 }
 
 // ── Commit router: Revolve vs Profile / Extrude ────────────────
