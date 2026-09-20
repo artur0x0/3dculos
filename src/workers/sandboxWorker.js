@@ -2462,6 +2462,7 @@ function _c8CheckValid(m, what) {
  * + optional holes; winding is normalized automatically; throws loudly on
  * an invalid profile instead of returning a silent empty manifold.
  * Profile: x = radial (>= 0), y = height along the axis.
+ * If polygons cross the Y-axis, only the positive-X side is used.
  */
 function makeRevolve(contours, segments = 96, degrees = 360) {
   const { CrossSection } = manifoldModule;

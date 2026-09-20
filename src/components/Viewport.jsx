@@ -590,6 +590,8 @@ const Viewport = forwardRef(({
   /**
    * Slice 26: live Revolve solid (surface of revolution on an in-plane axis).
    * Local X=radial, Y=axis, Z=plane normal; sense offsets the start angle.
+   * Identity remap: axis through the workplane origin; clamp r<0 to match
+   * makeRevolve / Manifold's positive-X clip (centered circle → sphere).
    */
   const paintRevolvePreview = useCallback((payload) => {
     clearRevolvePreview();

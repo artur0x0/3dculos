@@ -241,8 +241,15 @@ export function validateRevolveParams(raw) {
 
 /**
  * Map workplane UV contours into makeRevolve (radial, height) space.
- * Axis through the min-radial edge so a centered circle becomes a sphere
- * (revolve about a diameter) instead of silently clipping across the axis.
+ *
+ * Identity (u,v)→(radial,height) in the axis/radial basis — axis through the
+ * workplane origin, no min-radial shift. makeRevolve / Manifold then clips
+ * x < 0 (positive-X half only), so a centered circle revolves about a
+ * diameter → sphere. Shifting by minR was the opposite geometry: it parked
+ * the axis on the profile's leftmost edge (horn torus / filled washer).
+ *
+ * Crossing (minR < 0 < maxR) is accepted and clipped. Profiles with no
+ * +radial material (on-axis / entirely negative) loud-fail.
  */
 export function mapContoursToRevolve(contours, uvAxis) {
   if (!Array.isArray(contours) || !contours.length) {
@@ -261,18 +268,23 @@ export function mapContoursToRevolve(contours, uvAxis) {
   const rV = -aU;
   let minR = Infinity;
   let maxR = -Infinity;
+  const mapped = [];
   for (const ring of contours) {
     if (!Array.isArray(ring)) {
       return { ok: false, message: 'makeRevolve: expected an array of contours' };
     }
+    const out = [];
     for (const p of ring) {
-      const r = rU * Number(p?.[0]) + rV * Number(p?.[1]);
-      if (!Number.isFinite(r)) {
+      const radial = rU * Number(p?.[0]) + rV * Number(p?.[1]);
+      const height = aU * Number(p?.[0]) + aV * Number(p?.[1]);
+      if (!Number.isFinite(radial) || !Number.isFinite(height)) {
         return { ok: false, message: 'makeRevolve: contour point is not finite' };
       }
-      if (r < minR) minR = r;
-      if (r > maxR) maxR = r;
+      if (radial < minR) minR = radial;
+      if (radial > maxR) maxR = radial;
+      out.push([radial, height]);
     }
+    mapped.push(out);
   }
   if (!Number.isFinite(minR) || maxR - minR < 1e-9) {
     return {
@@ -280,20 +292,16 @@ export function mapContoursToRevolve(contours, uvAxis) {
       message: 'makeRevolve: profile has no width off the axis — would sit on the axis',
     };
   }
-  const shift = minR;
-  const mapped = contours.map((ring) => ring.map((p) => {
-    const radial = rU * Number(p[0]) + rV * Number(p[1]) - shift;
-    const height = aU * Number(p[0]) + aV * Number(p[1]);
-    return [radial, height];
-  }));
-  for (const ring of mapped) {
-    for (const p of ring) {
-      if (p[0] < -1e-6) {
-        return { ok: false, message: 'makeRevolve: profile crosses the revolve axis' };
-      }
-    }
+  // Reachable: entirely −radial has width but no +X material (empty revolve).
+  // Gutting this arm must turn the entirely-negative golden red. Crossing
+  // (minR < 0 < maxR) is accepted — Manifold clips to +radial (sphere case).
+  if (maxR < 1e-6) {
+    return {
+      ok: false,
+      message: 'makeRevolve: profile has no material on the +radial side of the axis',
+    };
   }
-  return { ok: true, mapped, shift, rU, rV, aU, aV };
+  return { ok: true, mapped, shift: 0, rU, rV, aU, aV, minR, maxR };
 }
 
 /**
@@ -595,11 +603,8 @@ export function buildRevolveSolidPreview(face, tool, params, revolve) {
     mapped.rU * plane.x[2] + mapped.rV * plane.y[2],
   ];
   const axisWorld = axis.world.slice();
-  const center = [
-    plane.center[0] + mapped.shift * radialWorld[0],
-    plane.center[1] + mapped.shift * radialWorld[1],
-    plane.center[2] + mapped.shift * radialWorld[2],
-  ];
+  // Axis through the workplane origin (identity remap — no min-radial shift).
+  const center = plane.center.slice();
   return {
     plane,
     rings: prev.rings,
@@ -609,7 +614,7 @@ export function buildRevolveSolidPreview(face, tool, params, revolve) {
     axis: axisWorld,
     radial: radialWorld,
     center,
-    shift: mapped.shift,
+    shift: 0,
     startDeg,
     angle: revGate.normalized.angle,
   };
@@ -913,7 +918,6 @@ export function composeContourRevolve(buffer, {
     _contourRevolve: {
       ...revGate.normalized,
       segments: REVOLVE_SEGMENTS,
-      shift: mapped.shift,
       startDeg: revolveStartDeg(revGate.normalized.angle, revGate.normalized.sense),
       rU: mapped.rU,
       rV: mapped.rV,

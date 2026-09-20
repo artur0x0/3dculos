@@ -1002,9 +1002,10 @@ Revolve a 2D profile around its **Y** axis → result axis = **Z**.
 winding is **auto-normalized** (outermost CCW, holes CW) — do NOT hand-roll
 `new CrossSection(...).revolve()` and fight winding yourself (wrong winding
 fails silently in raw CrossSection). Profile: **x = radial distance (≥ 0),
-y = height along the axis**. `degrees` is the sweep (default 360, must be
-> 0 and ≤ 360). Throws a named error on an invalid profile instead of
-returning a silent empty manifold.
+y = height along the axis**. If a polygon crosses the Y-axis, only the
+positive-X side is used (Manifold clip). `degrees` is the sweep (default
+360, must be > 0 and ≤ 360). Throws a named error on an invalid profile
+instead of returning a silent empty manifold.
 
 ```javascript
 // revolved flange ⌀90×10 + boss ⌀30 base, 30 tall — one closed silhouette
@@ -1042,27 +1043,26 @@ profile, or distance.
 **Contour-mode Revolve (Slice 26):** game-mode **Revolve** builds a profile on
 the workplane, then Confirm emits `makeCrossSection` + `makeRevolve` placed
 so the axis lies **on the profile plane** (default: along V). The profile
-is remapped to `makeRevolve`'s x=radial, y=height space with the axis at
-the min-radial edge (a centered circle becomes a sphere — revolve about a
-diameter) instead of silently clipping across the axis.
+is remapped with identity `(u,v)→(radial,height)` in the axis/radial basis
+(axis through the workplane origin). A centered circle therefore revolves
+about a diameter — a sphere. Profiles that cross the axis are clipped to
++radial (`makeRevolve` / Manifold); on-axis, zero-width, and entirely
+−radial profiles loud-fail.
 
 ```javascript
 const xs = makeCrossSection(fr, profileCircle(5, 32));
 const revolve = placeOnFace(part, {
-  center: [
-    xs.plane.center[0] + (-5) * xs.plane.x[0],
-    xs.plane.center[1] + (-5) * xs.plane.x[1],
-    xs.plane.center[2] + (-5) * xs.plane.x[2],
-  ],
+  center: xs.plane.center,
   x: xs.plane.x, y: xs.plane.normal, normal: xs.plane.y,
-}, ({ put }) => put(makeRevolve(xs.contours.map((ring) => ring.map(([u, v]) => [u + 5, v])), 96, 360), [0, 0, 0]));
+}, ({ put }) => put(makeRevolve(xs.contours.map((ring) => ring.map(([u, v]) => [u, v])), 96, 360), [0, 0, 0]));
 part = part.add(revolve);
 ```
 
 `angle` is always > 0 and ≤ 360 (default 360). Sense **In** starts at
 `−angle`; **Both** starts at `−angle/2`. Axis defaults to plane **V**; a
 world axis is refused unless it lies on the profile plane. Loud-fail on a
-bad plane, profile, angle, or an axis-crossing / on-axis profile.
+bad plane, profile, angle, or an on-axis / zero-width / entirely-negative
+radial profile.
 
 **Rules for both:**
 - `contours` is an **array of contours** `[outer, hole1, ...]`; a single

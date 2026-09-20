@@ -410,16 +410,11 @@ function emitUvCombo(uName, vName, cu, cv, add) {
 }
 
 /** placeOnFace frame: local X=radial, Y=plane normal, Z=in-plane axis. */
-function emitRevolvePlaceFrame(xs, rU, rV, aU, aV, shift) {
+function emitRevolvePlaceFrame(xs, rU, rV, aU, aV) {
   const rad = emitPlaneVecCombo(xs, rU, rV);
   const axi = emitPlaneVecCombo(xs, aU, aV);
-  const sh = +Number(shift).toFixed(4);
-  const center = `[
-    ${xs}.plane.center[0] + (${sh}) * ${rad}[0],
-    ${xs}.plane.center[1] + (${sh}) * ${rad}[1],
-    ${xs}.plane.center[2] + (${sh}) * ${rad}[2],
-  ]`;
-  return `{ center: ${center}, x: ${rad}, y: ${xs}.plane.normal, normal: ${axi} }`;
+  // Identity remap: axis through the workplane origin (no min-radial shift).
+  return `{ center: ${xs}.plane.center, x: ${rad}, y: ${xs}.plane.normal, normal: ${axi} }`;
 }
 
 function emitPlaneVecCombo(xs, cu, cv) {
@@ -917,19 +912,18 @@ export const HELPER_PALETTE_ITEMS = [
         const rev = p._contourRevolve;
         const angle = num(rev.angle, 360);
         const segs = Math.max(3, Math.round(num(rev.segments, 96)));
-        const shift = num(rev.shift, 0);
         const startDeg = num(rev.startDeg, 0);
         const rU = num(rev.rU, 1);
         const rV = num(rev.rV, 0);
         const aU = num(rev.aU, 0);
         const aV = num(rev.aV, 1);
         const revolve = allocateUniqueName(names, 'revolve');
-        const mapped = `${xs}.contours.map((ring) => ring.map(([u, v]) => [${emitUvCombo('u', 'v', rU, rV, -shift)}, ${emitUvCombo('u', 'v', aU, aV, 0)}]))`;
+        const mapped = `${xs}.contours.map((ring) => ring.map(([u, v]) => [${emitUvCombo('u', 'v', rU, rV, 0)}, ${emitUvCombo('u', 'v', aU, aV, 0)}]))`;
         let solidExpr = `makeRevolve(${mapped}, ${segs}, ${+Number(angle).toFixed(4)})`;
         if (Math.abs(startDeg) > 1e-9) {
           solidExpr = `${solidExpr}.rotate([0, 0, ${+Number(startDeg).toFixed(4)}])`;
         }
-        const frame = emitRevolvePlaceFrame(xs, rU, rV, aU, aV, shift);
+        const frame = emitRevolvePlaceFrame(xs, rU, rV, aU, aV);
         lines.push(CONTOUR_REVOLVE_BEGIN);
         lines.push(...wp.lines);
         lines.push(profileLine);

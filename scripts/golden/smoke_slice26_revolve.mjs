@@ -8,7 +8,9 @@
  * - Profile Confirm stays Profile-only; Extrude from #32 unchanged
  * - Loft still shell-only (not a contour entry)
  * - #30 fillet Strategy default remains sweep
+ * - Identity (u,v)→(radial,height): centered circle → sphere; washer → torus
  */
+import Module from '../../built/manifold.js';
 import {
   composeHelperInsert,
   HELPER_PALETTE_ITEMS,
@@ -130,20 +132,43 @@ function rFace() {
   check('axis +Z on +Z plane loud fail (normal)', !axZ.ok && /plane/i.test(axZ.message || ''));
 }
 
-// ── Contour remap (axis at min-radial edge) ────────────────────
+// ── Contour remap (identity; axis through workplane origin) ────
 {
   const circle = [
     [[5, 0], [0, 5], [-5, 0], [0, -5]],
   ];
   const mapped = mapContoursToRevolve(circle, [0, 1]);
   check('circle about V remaps', mapped.ok && mapped.mapped[0].length === 4);
-  check('circle shift is min U', mapped.ok && Math.abs(mapped.shift + 5) < 1e-9);
-  check('circle remapped radial >= 0', mapped.ok && mapped.mapped[0].every((p) => p[0] >= -1e-9));
-  check('circle remapped left edge on axis', mapped.ok && mapped.mapped[0].some((p) => Math.abs(p[0]) < 1e-9));
+  check('circle remap is identity (no min-radial shift)', mapped.ok && mapped.shift === 0);
+  check('circle remap keeps negative radial (crossing accepted)',
+    mapped.ok && mapped.mapped[0].some((p) => p[0] < -1e-6));
+  check('circle remapped right edge stays at +r',
+    mapped.ok && mapped.mapped[0].some((p) => Math.abs(p[0] - 5) < 1e-9));
+  // Pin: re-adding `if (p[0] < -1e-6) refuse` must turn this red.
+  check('centered circle is accepted (diameter-revolve / sphere)', mapped.ok === true);
+
+  const washer = [[[10, 0], [20, 0], [20, 4], [10, 4]]];
+  const wash = mapContoursToRevolve(washer, [0, 1]);
+  check('offset washer remaps identity', wash.ok && wash.shift === 0);
+  check('offset washer keeps hole (min radial 10, not 0)',
+    wash.ok && Math.abs(wash.minR - 10) < 1e-9 && wash.mapped[0].every((p) => p[0] >= 10 - 1e-9));
+
+  const crossing = [[[-2, 0], [8, 0], [8, 3], [-2, 3]]];
+  const cross = mapContoursToRevolve(crossing, [0, 1]);
+  check('crossing profile is accepted (Manifold clips +radial)', cross.ok === true);
+  check('crossing remap keeps a negative-radial vertex',
+    cross.ok && cross.mapped[0].some((p) => p[0] < -1e-6));
 
   const slim = [[[0, 0], [0, 4], [0, 8]]];
   const onAxis = mapContoursToRevolve(slim, [0, 1]);
   check('on-axis slim profile loud fail', !onAxis.ok && /axis/i.test(onAxis.message || ''));
+
+  // Reachable +radial-empty refuse (replaces the dead post-shift p[0]<0 arm).
+  // Gutting `if (maxR < 1e-6)` must turn this red.
+  const neg = [[[-12, 0], [-6, 0], [-6, 4], [-12, 4]]];
+  const allNeg = mapContoursToRevolve(neg, [0, 1]);
+  check('entirely-negative radial loud fail',
+    !allNeg.ok && /radial|axis/i.test(allNeg.message || ''));
 }
 
 // ── Live solid preview ─────────────────────────────────────────
@@ -159,7 +184,12 @@ function rFace() {
   check('solid preview startDeg out is 0', prev && prev.startDeg === 0);
   check('solid preview axis along +Y', prev && Math.abs(prev.axis[1] - 1) < 1e-6);
   check('solid preview radial along +X', prev && Math.abs(prev.radial[0] - 1) < 1e-6);
-  check('solid preview remapped x >= 0', prev && prev.contours[0].every((p) => p[0] >= -1e-9));
+  check('solid preview axis through workplane origin',
+    prev && Math.hypot(prev.center[0] - 0, prev.center[1] - 0, prev.center[2] - 10) < 1e-6);
+  check('solid preview identity remap keeps −radial (clip in paint)',
+    prev && prev.contours[0].some((p) => p[0] < -1e-6));
+  check('solid preview has +radial extent',
+    prev && prev.contours[0].some((p) => p[0] > 1e-6));
 
   const both = buildRevolveSolidPreview(
     rFace(),
@@ -211,7 +241,10 @@ function rFace() {
   check('still returns part', /return\s+part\s*;/.test(first.buffer));
   check('no illegal bare top', !/\btop\b/.test(first.buffer.replace(/topFace/g, 'FACE')));
   check('emits 360° default', /, 96, 360\)/.test(first.buffer));
-  check('shifts circle onto +radial', /u \+ 5/.test(first.buffer));
+  check('identity remap (no min-radial shift)', !/\bu \+ 5\b/.test(first.buffer));
+  check('emits identity [u, v] map', /\[u, v\]/.test(first.buffer));
+  check('place frame center is workplane origin',
+    /center:\s*xs\d*\.plane\.center/.test(first.buffer));
 
   const owned = contourRevolveOwnedRegion(first.buffer);
   check('owned region has profile + solid',
@@ -443,6 +476,42 @@ function rFace() {
   check('fillet compose still emits filletAlongPath or filletEdges',
     /filletAlongPath\s*\(|filletEdges\s*\(/.test(filBuf || ''));
   check('fillet compose has no revolve markers', !hasContourRevolveBlock(filBuf || ''));
+}
+
+// ── Volume contracts on built/manifold.js (identity remap) ─────
+{
+  const wasm = await Module();
+  wasm.setup();
+  const { CrossSection } = wasm;
+
+  const circlePts = [];
+  const n = 96;
+  for (let i = 0; i < n; i++) {
+    const t = (i / n) * Math.PI * 2;
+    circlePts.push([5 * Math.cos(t), 5 * Math.sin(t)]);
+  }
+  const circleMapped = mapContoursToRevolve([circlePts], [0, 1]);
+  check('volume probe: centered circle remaps', circleMapped.ok === true);
+  const sph = new CrossSection(circleMapped.mapped).revolve(96, 360);
+  const sphVol = sph.volume();
+  const sphExpect = (4 / 3) * Math.PI * 125; // ≈ 523.60; Manifold 96-seg clip ≈ 522.66
+  check(
+    'centered circle → sphere vol ≈ 4/3πr³ (522–524)',
+    sphVol > 522 && sphVol < 524,
+    `vol=${sphVol} expected≈${sphExpect.toFixed(2)}`,
+  );
+
+  const washer = [[[10, 0], [20, 0], [20, 4], [10, 4]]];
+  const washMapped = mapContoursToRevolve(washer, [0, 1]);
+  check('volume probe: washer remaps', washMapped.ok === true);
+  const tor = new CrossSection(washMapped.mapped).revolve(96, 360);
+  const torVol = tor.volume();
+  const cylVol = Math.PI * 10 * 10 * 4; // filled cylinder if minR-shifted ≈ 1256.64
+  check(
+    'offset washer → torus tube ~3767 (not filled cylinder)',
+    torVol > 3700 && torVol < 3830 && Math.abs(torVol - cylVol) > 1000,
+    `vol=${torVol} cylinder=${cylVol.toFixed(2)}`,
+  );
 }
 
 if (failed) {
