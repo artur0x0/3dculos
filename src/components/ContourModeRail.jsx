@@ -69,7 +69,7 @@ const ContourModeRail = ({
       <button
         type="button"
         onClick={() => onBack?.()}
-        title="Back — exit contour mode (no Extrude)"
+        title="Back — exit contour mode (no additional solid write)"
         aria-label="Back — exit contour mode without committing a solid"
         className={`${pad} rounded text-gray-700 hover:bg-gray-200 active:bg-gray-300
           flex items-center justify-center transition-colors`}

@@ -65,8 +65,8 @@ const ICONS = {
  * Slice 09/10/11 — left vertical helper insert palette (game mode).
  * Tap opens HelperParamModal; with selectedFace / selectedEdges, face/edge
  * features get an aware sheet (or refuse). Confirm → onInsert(id, params, faceContext, edgeContext).
- * Slice 24/25: Extrude / Revolve / Profile call onEnterContourMode.
- * Extrude Confirm commits the solid; Profile / Revolve stay Profile-only.
+ * Slice 24/25/26: Extrude / Revolve / Profile call onEnterContourMode.
+ * Extrude / Revolve Confirm commits the solid; Profile stays Profile-only.
  */
 const HelperInsertPalette = ({
   onInsert,
@@ -91,7 +91,7 @@ const HelperInsertPalette = ({
   const [refuseMessage, setRefuseMessage] = useState(null);
 
   const openParams = (item) => {
-    // Slice 24/25: Extrude / Revolve / Profile enter contour mode (never one-shot Extrude).
+    // Slice 24/25/26: Extrude / Revolve / Profile enter contour mode (never one-shot).
     if (isContourEntry(item.id) && typeof onEnterContourMode === 'function') {
       onEnterContourMode({ entry: item.id });
       return;

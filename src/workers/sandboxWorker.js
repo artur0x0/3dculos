@@ -2457,16 +2457,24 @@ function _c8CheckValid(m, what) {
   return m;
 }
 /**
- * makeRevolve(contours, segments=96) — revolve a 2D profile around its Y axis
- * (result's axis = Z). contours = [[x,y]...] outer first + optional holes;
- * winding is normalized automatically; throws loudly on an invalid profile
- * instead of returning a silent empty manifold. Profile: x = radial (>= 0),
- * y = height along the axis.
+ * makeRevolve(contours, segments=96, degrees=360) — revolve a 2D profile
+ * around its Y axis (result's axis = Z). contours = [[x,y]...] outer first
+ * + optional holes; winding is normalized automatically; throws loudly on
+ * an invalid profile instead of returning a silent empty manifold.
+ * Profile: x = radial (>= 0), y = height along the axis.
  */
-function makeRevolve(contours, segments = 96) {
+function makeRevolve(contours, segments = 96, degrees = 360) {
   const { CrossSection } = manifoldModule;
   const cs = new CrossSection(_c8NormalizeContours(contours));
-  return _c8CheckValid(cs.revolve(segments), 'makeRevolve');
+  const segs = Number(segments);
+  if (!(segs >= 3) || !Number.isFinite(segs)) {
+    throw new Error('makeRevolve: segments must be >= 3');
+  }
+  const deg = degrees == null ? 360 : Number(degrees);
+  if (!(deg > 0) || !Number.isFinite(deg) || deg > 360) {
+    throw new Error('makeRevolve: angle must be > 0 and ≤ 360');
+  }
+  return _c8CheckValid(cs.revolve(Math.round(segs), deg), 'makeRevolve');
 }
 /**
  * makeExtrude(contours, height) — extrude a 2D profile by `height` along Z.

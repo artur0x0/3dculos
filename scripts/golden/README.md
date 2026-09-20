@@ -23,3 +23,4 @@ requires `test_real_worker.mjs` via `npm run verify` once the harness is present
 | `smoke_slice23_fillet_via_sweep.mjs` | Slice 23 sweep fillet: wedge contours, palette Strategy=sweep, closed-rim + post-fillet geometry via worker |
 | `smoke_slice24_contour_mode.mjs` | Slice 24 contour-mode shell: plane refuse, Profile-in-mode compose (no Extrude), update-in-place, #30 fillet sweep default |
 | `smoke_slice25_extrude.mjs` | Slice 25 Extrude solid: live preview params, Confirm compose (makeExtrude + placeOnFace), update-in-place, Back/no-orphan, #30 fillet sweep default |
+| `smoke_slice26_revolve.mjs` | Slice 26 Revolve solid: live preview params (angle/axis/sense), Confirm compose (makeRevolve + placeOnFace), update-in-place, Back/no-orphan, Extrude/Profile/Loft unchanged, #30 fillet sweep default |

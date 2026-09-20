@@ -5,7 +5,7 @@
  * - live solid preview payload (distance / direction / sense)
  * - Confirm composes profile + makeExtrude + placeOnFace
  * - second Confirm replaces the same marked block (no duplicate stack)
- * - Profile / Revolve Confirm stay Profile-only
+ * - Profile Confirm stays Profile-only; Revolve Confirm is Slice 26 (solid)
  * - one-shot Xform Extrude stub replaced (no hardcoded plate)
  * - #30 fillet Strategy default remains sweep
  */
@@ -272,7 +272,7 @@ function rFace() {
     tool: 'circle',
     params: { radius: 5, segments: 32 },
   });
-  check('commit Revolve is Profile-only (Slice C)', rev.ok && rev.run === false && !/makeRevolve\s*\(/.test(rev.buffer));
+  check('commit Revolve emits solid (Slice C)', rev.ok && rev.run === true && /makeRevolve\s*\(/.test(rev.buffer));
   check('commit Revolve has no Extrude', countMakeExtrude(rev.buffer) === 0);
 
   // Profile-only then Extrude Confirm: replace profile block with extrude block.

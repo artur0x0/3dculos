@@ -1,15 +1,17 @@
 /**
- * Slice 24/25 — Contour-mode shell + Extrude solid commit.
+ * Slice 24/25/26 — Contour-mode shell + Extrude / Revolve solid commit.
  *
  * Shared mode Extrude / Revolve / Loft (later Fillet-without-edges) will own.
  * Slice 24: enter mode, ghost the part, swap the left rail, pick a workplane,
  * draw circle/rect/polygon/(cheap polyline), live makeCrossSection preview.
  * Slice 25: Extrude entry Confirm commits profile + makeExtrude solid (live
- * solid preview; second Confirm updates the same marked block). Profile and
- * Revolve entry stay Profile-only (Revolve solid = later slice).
+ * solid preview; second Confirm updates the same marked block).
+ * Slice 26: Revolve entry Confirm commits profile + makeRevolve solid (live
+ * solid preview; axis on the profile plane). Profile stays Profile-only.
+ * Loft solid is a later slice.
  *
  * Reuses Slice 21: workplaneFromFace / makeCrossSection / profile* substrate.
- * Reuses C8 makeExtrude + placeOnFace for the workplane transform.
+ * Reuses C8 makeExtrude / makeRevolve + placeOnFace for the workplane transform.
  */
 
 import {
@@ -29,6 +31,8 @@ import {
   CONTOUR_PROFILE_END,
   CONTOUR_EXTRUDE_BEGIN,
   CONTOUR_EXTRUDE_END,
+  CONTOUR_REVOLVE_BEGIN,
+  CONTOUR_REVOLVE_END,
 } from './helperPaletteSnippets.js';
 
 /** Palette ids that enter contour mode instead of one-shot insert. */
@@ -48,10 +52,13 @@ export const CONTOUR_TOOLS = [
 export const CONTOUR_TOOL_IDS = CONTOUR_TOOLS.map((t) => t.id);
 
 export const CONTOUR_NO_SOLID =
-  'This Confirm writes Profile only (makeCrossSection). Extrude solids use the Extrude entry; Revolve / Loft solid is a later slice.';
+  'This Confirm writes Profile only (makeCrossSection). Extrude solids use the Extrude entry; Revolve solids use the Revolve entry; Loft solid is a later slice.';
 
 export const EXTRUDE_SENSES = ['positive', 'negative', 'both'];
 export const EXTRUDE_DIRECTIONS = ['normal', 'x', 'y', 'z'];
+export const REVOLVE_SENSES = ['positive', 'negative', 'both'];
+export const REVOLVE_AXES = ['u', 'v', 'x', 'y', 'z'];
+export const REVOLVE_SEGMENTS = 96;
 
 export function isContourEntry(id) {
   return CONTOUR_ENTRY_IDS.has(id);
@@ -59,6 +66,10 @@ export function isContourEntry(id) {
 
 export function isExtrudeEntry(id) {
   return id === 'makeExtrude';
+}
+
+export function isRevolveEntry(id) {
+  return id === 'makeRevolve';
 }
 
 export function isContourTool(id) {
@@ -144,6 +155,147 @@ export function validateExtrudeParams(raw) {
   return { ok: true, normalized: n };
 }
 
+/** Sane mobile defaults: full 360° around the plane V axis (on-plane). */
+export function defaultRevolveParams() {
+  return { angle: 360, axis: 'v', sense: 'positive' };
+}
+
+export function normalizeRevolveParams(raw = {}) {
+  const angle = Number(raw.angle);
+  let sense = String(raw.sense ?? 'positive');
+  if (sense === '+' || sense === 'out' || sense === 'along' || sense === 'ccw') sense = 'positive';
+  if (sense === '-' || sense === 'in' || sense === 'opposite' || sense === 'cw') sense = 'negative';
+  if (sense === 'mid' || sense === '±' || sense === '+-' || sense === 'symmetric') sense = 'both';
+  let axis = String(raw.axis ?? 'v');
+  if (axis === 'plane-y' || axis === 'along-v' || axis === 'height' || axis === 'vy') axis = 'v';
+  if (axis === 'plane-x' || axis === 'along-u' || axis === 'ux') axis = 'u';
+  return { angle, axis, sense };
+}
+
+/** Start angle of makeRevolve (sense → rotate around the result Z axis). */
+export function revolveStartDeg(angle, sense) {
+  const a = Number(angle);
+  if (sense === 'negative') return -a;
+  if (sense === 'both') return -a / 2;
+  return 0;
+}
+
+/**
+ * Revolve axis must lie on the profile plane (inverse of Extrude's normal rule).
+ * `u` / `v` are the workplane basis; world x/y/z must be parallel to the plane.
+ */
+export function resolveRevolveAxis(plane, axis) {
+  if (!plane?.normal || !plane?.x || !plane?.y) {
+    return { ok: false, message: 'Revolve: workplane is missing a frame' };
+  }
+  const dir = axis || 'v';
+  if (dir === 'u') {
+    return { ok: true, uv: [1, 0], world: plane.x.slice(), source: 'u' };
+  }
+  if (dir === 'v') {
+    return { ok: true, uv: [0, 1], world: plane.y.slice(), source: 'v' };
+  }
+  const map = { x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] };
+  const world = map[dir];
+  if (!world) {
+    return { ok: false, message: 'Revolve axis must be u, v, x, y, or z' };
+  }
+  if (Math.abs(_dot(world, plane.normal)) > 0.01) {
+    return {
+      ok: false,
+      message:
+        'Revolve axis must lie on the profile plane (or a world axis parallel to it).',
+    };
+  }
+  const u = _dot(world, plane.x);
+  const v = _dot(world, plane.y);
+  const len = Math.hypot(u, v);
+  if (len < 1e-9) {
+    return { ok: false, message: 'Revolve axis must lie on the profile plane' };
+  }
+  return {
+    ok: true,
+    uv: [u / len, v / len],
+    world: [
+      (u / len) * plane.x[0] + (v / len) * plane.y[0],
+      (u / len) * plane.x[1] + (v / len) * plane.y[1],
+      (u / len) * plane.x[2] + (v / len) * plane.y[2],
+    ],
+    source: dir,
+  };
+}
+
+export function validateRevolveParams(raw) {
+  const n = normalizeRevolveParams(raw);
+  if (!(n.angle > 0) || !Number.isFinite(n.angle) || n.angle > 360) {
+    return { ok: false, message: 'makeRevolve: angle must be > 0 and ≤ 360' };
+  }
+  if (!REVOLVE_AXES.includes(n.axis)) {
+    return { ok: false, message: 'Revolve axis must be u, v, x, y, or z' };
+  }
+  if (!REVOLVE_SENSES.includes(n.sense)) {
+    return { ok: false, message: 'Revolve sense must be positive, negative, or both' };
+  }
+  return { ok: true, normalized: n };
+}
+
+/**
+ * Map workplane UV contours into makeRevolve (radial, height) space.
+ * Axis through the min-radial edge so a centered circle becomes a sphere
+ * (revolve about a diameter) instead of silently clipping across the axis.
+ */
+export function mapContoursToRevolve(contours, uvAxis) {
+  if (!Array.isArray(contours) || !contours.length) {
+    return { ok: false, message: 'makeRevolve: expected an array of contours' };
+  }
+  const au = Number(uvAxis?.[0]);
+  const av = Number(uvAxis?.[1]);
+  if (!Number.isFinite(au) || !Number.isFinite(av) || Math.hypot(au, av) < 1e-9) {
+    return { ok: false, message: 'makeRevolve: axis UV direction is missing' };
+  }
+  const inv = 1 / Math.hypot(au, av);
+  const aU = au * inv;
+  const aV = av * inv;
+  // Radial = rotate axis 90° CW in the plane so V-axis → +U (x=radial, y=height).
+  const rU = aV;
+  const rV = -aU;
+  let minR = Infinity;
+  let maxR = -Infinity;
+  for (const ring of contours) {
+    if (!Array.isArray(ring)) {
+      return { ok: false, message: 'makeRevolve: expected an array of contours' };
+    }
+    for (const p of ring) {
+      const r = rU * Number(p?.[0]) + rV * Number(p?.[1]);
+      if (!Number.isFinite(r)) {
+        return { ok: false, message: 'makeRevolve: contour point is not finite' };
+      }
+      if (r < minR) minR = r;
+      if (r > maxR) maxR = r;
+    }
+  }
+  if (!Number.isFinite(minR) || maxR - minR < 1e-9) {
+    return {
+      ok: false,
+      message: 'makeRevolve: profile has no width off the axis — would sit on the axis',
+    };
+  }
+  const shift = minR;
+  const mapped = contours.map((ring) => ring.map((p) => {
+    const radial = rU * Number(p[0]) + rV * Number(p[1]) - shift;
+    const height = aU * Number(p[0]) + aV * Number(p[1]);
+    return [radial, height];
+  }));
+  for (const ring of mapped) {
+    for (const p of ring) {
+      if (p[0] < -1e-6) {
+        return { ok: false, message: 'makeRevolve: profile crosses the revolve axis' };
+      }
+    }
+  }
+  return { ok: true, mapped, shift, rU, rV, aU, aV };
+}
+
 /**
  * Seed mode state from a palette entry + current face pick.
  * Non-planar face → default +Z plane + loud enterRefuse (do not invent a plane).
@@ -155,6 +307,7 @@ export function enterContourState(entry, faceData = null) {
     tool: 'circle',
     params: defaultContourParams('circle'),
     extrude: defaultExtrudeParams(),
+    revolve: defaultRevolveParams(),
     planeFace: resolved.ok ? resolved.face : null,
     enterRefuse: resolved.ok ? null : resolved.message,
   };
@@ -412,6 +565,56 @@ export function buildExtrudeSolidPreview(face, tool, params, extrude) {
   };
 }
 
+/**
+ * Live Revolve solid preview payload (plane + remapped radial/height contours).
+ * Null when profile or revolve params are incomplete / invalid.
+ */
+export function buildRevolveSolidPreview(face, tool, params, revolve) {
+  const gate = validateContourProfile(tool, params);
+  if (!gate.ok) return null;
+  const revGate = validateRevolveParams(revolve);
+  if (!revGate.ok) return null;
+  const prev = buildContourPreview(face, tool, params);
+  if (!prev?.plane) return null;
+  const axis = resolveRevolveAxis(prev.plane, revGate.normalized.axis);
+  if (!axis.ok) return null;
+  let contours;
+  try {
+    contours = buildProfileFromParams(toolToProfileParams(tool, params)).contours;
+  } catch {
+    return null;
+  }
+  if (!contours?.length) return null;
+  const mapped = mapContoursToRevolve(contours, axis.uv);
+  if (!mapped.ok) return null;
+  const startDeg = revolveStartDeg(revGate.normalized.angle, revGate.normalized.sense);
+  const plane = prev.plane;
+  const radialWorld = [
+    mapped.rU * plane.x[0] + mapped.rV * plane.y[0],
+    mapped.rU * plane.x[1] + mapped.rV * plane.y[1],
+    mapped.rU * plane.x[2] + mapped.rV * plane.y[2],
+  ];
+  const axisWorld = axis.world.slice();
+  const center = [
+    plane.center[0] + mapped.shift * radialWorld[0],
+    plane.center[1] + mapped.shift * radialWorld[1],
+    plane.center[2] + mapped.shift * radialWorld[2],
+  ];
+  return {
+    plane,
+    rings: prev.rings,
+    contours: mapped.mapped,
+    profile: prev.profile,
+    revolve: revGate.normalized,
+    axis: axisWorld,
+    radial: radialWorld,
+    center,
+    shift: mapped.shift,
+    startDeg,
+    angle: revGate.normalized.angle,
+  };
+}
+
 export function hasContourProfileBlock(buffer) {
   const t = String(buffer || '');
   return t.includes(CONTOUR_PROFILE_BEGIN) && t.includes(CONTOUR_PROFILE_END);
@@ -508,6 +711,11 @@ export function countMakeExtrude(buffer) {
   return m ? m.length : 0;
 }
 
+export function countMakeRevolve(buffer) {
+  const m = String(buffer || '').match(/makeRevolve\s*\(/g);
+  return m ? m.length : 0;
+}
+
 function markersUnbalanced(text, begin, end) {
   const i = text.lastIndexOf(begin);
   const j = text.indexOf(end, i < 0 ? 0 : i);
@@ -574,7 +782,9 @@ export function composeContourExtrude(buffer, {
   }
 
   const planar = face && face.type === 'planar' ? face : null;
-  const stripped = stripContourExtrudeBlock(stripContourProfileBlock(buffer));
+  const stripped = stripContourRevolveBlock(
+    stripContourExtrudeBlock(stripContourProfileBlock(buffer)),
+  );
   const profileParams = {
     ...toolToProfileParams(tool, params),
     body: params.body || 'part',
@@ -628,13 +838,147 @@ export function composeContourExtrude(buffer, {
   return { ok: true, buffer: composed, run: true };
 }
 
+export function hasContourRevolveBlock(buffer) {
+  const t = String(buffer || '');
+  return t.includes(CONTOUR_REVOLVE_BEGIN) && t.includes(CONTOUR_REVOLVE_END);
+}
+
+export function contourRevolveOwnedRegion(buffer) {
+  const text = String(buffer || '');
+  const i = text.lastIndexOf(CONTOUR_REVOLVE_BEGIN);
+  if (i < 0) return '';
+  const j = text.indexOf(CONTOUR_REVOLVE_END, i);
+  if (j < 0) return '';
+  return text.slice(i, j + CONTOUR_REVOLVE_END.length);
+}
+
+export function stripContourRevolveBlock(buffer) {
+  const text = String(buffer || '');
+  const i = text.lastIndexOf(CONTOUR_REVOLVE_BEGIN);
+  if (i < 0) return text;
+  const j = text.indexOf(CONTOUR_REVOLVE_END, i);
+  if (j < 0) return text;
+  const after = text.slice(j + CONTOUR_REVOLVE_END.length).replace(/^\r?\n/, '');
+  const before = text.slice(0, i).replace(/\s+$/, '');
+  if (before && after) return `${before}\n${after}`;
+  return before || after;
+}
+
 /**
- * Confirm router: Extrude entry → solid; Profile / Revolve stay Profile-only.
+ * Confirm → insert or replace in-mode Revolve (profile + makeRevolve + placeOnFace).
+ * Second Confirm updates the same marked block (no duplicate stack).
+ *
+ * @returns {{ ok: true, buffer: string, run: true } | { ok: false, message: string }}
+ */
+export function composeContourRevolve(buffer, {
+  face = null,
+  tool = 'circle',
+  params = {},
+  revolve = {},
+} = {}) {
+  const gate = validateContourProfile(tool, params);
+  if (!gate.ok) return gate;
+
+  const revGate = validateRevolveParams({ ...defaultRevolveParams(), ...revolve });
+  if (!revGate.ok) return revGate;
+
+  const plane = planeFromContourFace(face);
+  const axis = resolveRevolveAxis(plane, revGate.normalized.axis);
+  if (!axis.ok) return axis;
+
+  let contours;
+  try {
+    contours = buildProfileFromParams(toolToProfileParams(tool, params)).contours;
+  } catch (e) {
+    return { ok: false, message: (e && e.message) || String(e) };
+  }
+  const mapped = mapContoursToRevolve(contours, axis.uv);
+  if (!mapped.ok) return mapped;
+
+  const text = String(buffer || '');
+  if (markersUnbalanced(text, CONTOUR_REVOLVE_BEGIN, CONTOUR_REVOLVE_END)) {
+    return {
+      ok: false,
+      message: 'composeContourRevolve: unbalanced revolve markers — refusing silent no-op.',
+    };
+  }
+
+  const planar = face && face.type === 'planar' ? face : null;
+  const stripped = stripContourRevolveBlock(
+    stripContourExtrudeBlock(stripContourProfileBlock(buffer)),
+  );
+  const profileParams = {
+    ...toolToProfileParams(tool, params),
+    body: params.body || 'part',
+    _contourRevolve: {
+      ...revGate.normalized,
+      segments: REVOLVE_SEGMENTS,
+      shift: mapped.shift,
+      startDeg: revolveStartDeg(revGate.normalized.angle, revGate.normalized.sense),
+      rU: mapped.rU,
+      rV: mapped.rV,
+      aU: mapped.aU,
+      aV: mapped.aV,
+    },
+  };
+  const composed = composeHelperInsert(
+    stripped,
+    'crossSection',
+    null,
+    profileParams,
+    planar,
+    null,
+  );
+  if (typeof composed !== 'string') {
+    return {
+      ok: false,
+      message: 'Could not compose Revolve — need a part and a planar workplane.',
+    };
+  }
+  const owned = contourRevolveOwnedRegion(composed);
+  if (!/makeCrossSection\s*\(/.test(owned)) {
+    return {
+      ok: false,
+      message: 'composeContourRevolve: makeCrossSection missing — refusing silent no-op.',
+    };
+  }
+  if (!/makeRevolve\s*\(/.test(owned)) {
+    return {
+      ok: false,
+      message: 'composeContourRevolve: makeRevolve missing — refusing silent no-op.',
+    };
+  }
+  if (!/placeOnFace\s*\(/.test(owned)) {
+    return {
+      ok: false,
+      message: 'composeContourRevolve: placeOnFace missing — refusing unscoped insert.',
+    };
+  }
+  if (!hasContourRevolveBlock(composed)) {
+    return {
+      ok: false,
+      message: 'composeContourRevolve: contour-mode revolve markers missing — refusing unscoped insert.',
+    };
+  }
+  if (/makeExtrude\s*\(|\bloft\s*\(/.test(owned)) {
+    return {
+      ok: false,
+      message: 'composeContourRevolve: unexpected Extrude/Loft in the Revolve block.',
+    };
+  }
+  return { ok: true, buffer: composed, run: true };
+}
+
+/**
+ * Confirm router: Extrude / Revolve entry → solid; Profile stays Profile-only.
  */
 export function composeContourCommit(buffer, payload = {}) {
   const entry = payload.entry || 'crossSection';
   if (isExtrudeEntry(entry)) {
     return composeContourExtrude(buffer, payload);
+  }
+  if (isRevolveEntry(entry)) {
+    return composeContourRevolve(buffer, payload);
   }
   const result = composeContourProfile(buffer, payload);
   if (result.ok) result.run = false;
