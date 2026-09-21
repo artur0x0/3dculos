@@ -11,6 +11,39 @@
 export const MAKE_LOFT_MIN_PROFILES = 2;
 export const MAKE_LOFT_RESOLUTION = 64;
 export const MAKE_LOFT_EXTRUDE_SEGS = 64;
+/** Same epsilon assembleLoftStations uses for coincident stations. */
+export const MAKE_LOFT_COINCIDENT_EPS = 1e-6;
+/** Hard ceiling: segs ≤ k × MAKE_LOFT_EXTRUDE_SEGS. Sliver offsets must not explode WASM. */
+export const MAKE_LOFT_EXTRUDE_SEGS_CAP_K = 4;
+
+/**
+ * Vertical extrude divisions for the piecewise loft warp.
+ *
+ * A station closer than `height / segs` gets no vertex on its plane — the
+ * middle profile is skipped (disjoint / wrong slice). Inflate so the
+ * tightest span still has samples (`ceil(height / minSpan) * 16`), but cap
+ * at k×64. Offset `step="any"` can store 1e-6; that is the coincident
+ * floor, not a license for 640M divisions.
+ *
+ * `minSpan` is a signed delta. Negative / zero collapse to the coincident
+ * floor (same 1e-6 assembleLoftStations already uses) — no second floor.
+ */
+export function resolveLoftExtrudeSegs(height, minSpan, opts = {}) {
+  const cap = MAKE_LOFT_EXTRUDE_SEGS_CAP_K * MAKE_LOFT_EXTRUDE_SEGS;
+  const requested = Math.max(
+    8,
+    Math.round(Number(opts.extrudeSegments) || MAKE_LOFT_EXTRUDE_SEGS),
+  );
+  const h = Number(height);
+  const span = Math.max(MAKE_LOFT_COINCIDENT_EPS, Number(minSpan));
+  let segs = Number.isFinite(requested) ? requested : MAKE_LOFT_EXTRUDE_SEGS;
+  if (Number.isFinite(h) && h > 0 && Number.isFinite(span)) {
+    const inflated = Math.ceil(h / span) * 16;
+    if (Number.isFinite(inflated)) segs = Math.max(segs, inflated);
+  }
+  if (!Number.isFinite(segs) || segs < 1) segs = MAKE_LOFT_EXTRUDE_SEGS;
+  return Math.min(cap, segs);
+}
 
 function _dot(a, b) {
   return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
@@ -242,7 +275,7 @@ export function assembleLoftStations(sections) {
     }
     const stations = raw.slice().sort((a, b) => a.offset - b.offset);
     for (let i = 1; i < stations.length; i++) {
-      if (Math.abs(stations[i].offset - stations[i - 1].offset) < 1e-6) {
+      if (Math.abs(stations[i].offset - stations[i - 1].offset) < MAKE_LOFT_COINCIDENT_EPS) {
         return {
           ok: false,
           message:
@@ -310,13 +343,12 @@ export function buildMakeLoftSolid(Manifold, CrossSection, sections, opts = {}) 
   }
   let minSpan = height;
   for (let i = 1; i < stations.length; i++) {
-    minSpan = Math.min(minSpan, stations[i].offset - stations[i - 1].offset);
+    minSpan = Math.min(
+      minSpan,
+      Math.max(MAKE_LOFT_COINCIDENT_EPS, stations[i].offset - stations[i - 1].offset),
+    );
   }
-  const segs = Math.max(
-    8,
-    Math.round(Number(opts.extrudeSegments) || MAKE_LOFT_EXTRUDE_SEGS),
-    Math.ceil(height / Math.max(minSpan, 1e-6)) * 16,
-  );
+  const segs = resolveLoftExtrudeSegs(height, minSpan, opts);
   const bottom = stations[0].contour;
   const bottomCS = new CrossSection([bottom]);
   const straight = Manifold.extrude

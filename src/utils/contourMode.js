@@ -1332,16 +1332,6 @@ export function composeContourLoft(buffer, {
       profiles: stationParams,
     },
   };
-  for (let i = 0; i < sections.normalized.length; i++) {
-    const src = sections.normalized[i];
-    const dst = stationParams[i];
-    if (src.tool === 'circle' && Number(src.params?.radius) !== Number(dst.radius)) {
-      return {
-        ok: false,
-        message: 'composeContourLoft: station profile params lost — refusing silent collapse.',
-      };
-    }
-  }
   const composed = composeHelperInsert(
     stripped,
     'crossSection',
@@ -1368,25 +1358,6 @@ export function composeContourLoft(buffer, {
       ok: false,
       message: 'composeContourLoft: need at least 2 makeCrossSection profiles — refusing silent no-op.',
     };
-  }
-  {
-    const srcRadii = sections.normalized
-      .filter((p) => p.tool === 'circle')
-      .map((p) => Number(p.params?.radius))
-      .filter((r) => Number.isFinite(r));
-    const uniqueSrc = new Set(srcRadii.map((r) => +r.toFixed(4)));
-    if (uniqueSrc.size >= 2) {
-      const emitted = [...owned.matchAll(/profileCircle\s*\(\s*(\d+(?:\.\d+)?)/g)]
-        .map((m) => Number(m[1]))
-        .filter((r) => Number.isFinite(r));
-      const uniqueEmitted = new Set(emitted.map((r) => +r.toFixed(4)));
-      if (uniqueEmitted.size < uniqueSrc.size) {
-        return {
-          ok: false,
-          message: 'composeContourLoft: distinct stations collapsed to one profile — refusing wrong solid.',
-        };
-      }
-    }
   }
   if (!/makeLoft\s*\(/.test(owned)) {
     return {

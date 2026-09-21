@@ -401,6 +401,23 @@ function emitDefaultTopWorkplane(body, names) {
   };
 }
 
+/**
+ * Per-station profile fields only. Parent helper params (mergeParams defaults
+ * or a selected-chip radius) must not leak onto sibling stations.
+ */
+export function isolateLoftStationParams(prof = {}) {
+  return {
+    profileType: prof.profileType,
+    radius: prof.radius,
+    segments: prof.segments,
+    width: prof.width,
+    height: prof.height,
+    centered: prof.centered,
+    polygonPreset: prof.polygonPreset,
+    points: prof.points,
+  };
+}
+
 /** Emit profileCircle / profileRectangle / profilePolygon from Slice 21 params. */
 function emitProfileExprFromParams(p) {
   const type = str(p.profileType, 'circle');
@@ -997,17 +1014,11 @@ export const HELPER_PALETTE_ITEMS = [
           xsNames.push(xsN);
           const planeExpr = emitOffsetPlaneExpr(fr, prof.offset);
           // Isolate station fields so the parent helper params (defaults /
-          // selected chip) cannot rewrite every profile from one object.
-          const isolated = {
-            profileType: prof.profileType,
-            radius: prof.radius,
-            segments: prof.segments,
-            width: prof.width,
-            height: prof.height,
-            centered: prof.centered,
-            polygonPreset: prof.polygonPreset,
-            points: prof.points,
-          };
+          // selected chip / station-0 bleed) cannot rewrite every profile
+          // from one object. golden:slice28 pins composeHelperInsert with
+          // parent radius ≠ P2 — forcing these eight from station 0 / `p`
+          // turns that check RED.
+          const isolated = isolateLoftStationParams(prof);
           lines.push(
             `const ${xsN} = makeCrossSection(${planeExpr}, ${emitProfileExprFromParams(isolated)});`,
           );

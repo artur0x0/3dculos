@@ -15,6 +15,7 @@
 import Module from '../../built/manifold.js';
 import {
   composeHelperInsert,
+  isolateLoftStationParams,
   HELPER_PALETTE_ITEMS,
   CONTOUR_LOFT_BEGIN,
   CONTOUR_LOFT_END,
@@ -33,6 +34,10 @@ import {
   buildMakeLoftSolid,
   offsetPlaneFrame,
   rotateContour,
+  resolveLoftExtrudeSegs,
+  MAKE_LOFT_EXTRUDE_SEGS,
+  MAKE_LOFT_EXTRUDE_SEGS_CAP_K,
+  MAKE_LOFT_COINCIDENT_EPS,
 } from '../../src/utils/makeLoft.js';
 import {
   isContourEntry,
@@ -387,6 +392,43 @@ function xyExtent(cs) {
       clobber.ok
       && (clobber.buffer.match(/profileCircle\s*\(\s*99\s*,/g) || []).length === 1
       && (clobber.buffer.match(/profileCircle\s*\(\s*8\s*,/g) || []).length === 1);
+  }
+
+  // Isolation lives in helperPaletteSnippets (emit), not composeContourLoft.
+  // Parent mergeParams defaults / station-0 chip used to rewrite every
+  // profileCircle. Forcing isolateLoftStationParams from `p` / profiles[0]
+  // must turn this RED.
+  {
+    const isolated = isolateLoftStationParams({
+      profileType: 'circle',
+      radius: 8,
+      segments: 32,
+    });
+    check(
+      'isolateLoftStationParams keeps station radius (not parent default)',
+      isolated.radius === 8 && isolated.profileType === 'circle',
+      JSON.stringify(isolated),
+    );
+    const bleed = composeHelperInsert(starter, 'crossSection', null, {
+      radius: 99,
+      segments: 16,
+      profileType: 'circle',
+      _contourLoft: {
+        plane: { center: [0, 0, 0], normal: [0, 0, 1], x: [1, 0, 0], y: [0, 1, 0] },
+        profiles: [
+          { profileType: 'circle', radius: 5, segments: 32, offset: 0 },
+          { profileType: 'circle', radius: 8, segments: 32, offset: 20 },
+        ],
+      },
+    }, null, null);
+    check(
+      'composeHelperInsert isolates per-station radii (station-0 bleed does not rewrite P2)',
+      typeof bleed === 'string'
+      && /profileCircle\s*\(\s*5\s*,/.test(bleed)
+      && /profileCircle\s*\(\s*8\s*,/.test(bleed)
+      && !/profileCircle\s*\(\s*99\s*,/.test(bleed),
+      typeof bleed === 'string' ? bleed.match(/profileCircle\s*\([^)]+\)/g)?.join(' ') : String(bleed),
+    );
   }
 
   const defPlane = composeContourLoft(starter, {
@@ -867,6 +909,82 @@ function xyExtent(cs) {
       Math.abs(midR - 8) < 0.2,
       `midR=${midR.toFixed(3)}`,
     );
+  }
+
+  const segsCap = MAKE_LOFT_EXTRUDE_SEGS_CAP_K * MAKE_LOFT_EXTRUDE_SEGS;
+  const segsTight = resolveLoftExtrudeSegs(40, 5);
+  const segsSliver = resolveLoftExtrudeSegs(40, 0.001);
+  const segsFloor = resolveLoftExtrudeSegs(40, MAKE_LOFT_COINCIDENT_EPS);
+  const segsSigned = resolveLoftExtrudeSegs(40, -2);
+  check(
+    'tight span inflates segs past default 64 (subdivision is a live net)',
+    segsTight > MAKE_LOFT_EXTRUDE_SEGS && segsTight === 128,
+    `segs=${segsTight}`,
+  );
+  check(
+    'segs always ≤ k × MAKE_LOFT_EXTRUDE_SEGS',
+    segsTight <= segsCap
+    && segsSliver <= segsCap
+    && segsFloor <= segsCap
+    && segsSigned <= segsCap
+    && resolveLoftExtrudeSegs(40, 1e-9) <= segsCap
+    && resolveLoftExtrudeSegs(40, 5, { extrudeSegments: 1e9 }) <= segsCap,
+    `tight=${segsTight} sliver=${segsSliver} floor=${segsFloor} signed=${segsSigned}`,
+  );
+  check(
+    '1e-6 coincident floor is capped (not 640M divisions)',
+    segsFloor === segsCap && Number.isFinite(segsFloor),
+    `floor=${segsFloor} cap=${segsCap}`,
+  );
+  check(
+    'signed minSpan clamps to coincident floor (not a negative span)',
+    segsSigned === segsCap,
+    `signed=${segsSigned}`,
+  );
+
+  {
+    let sliverSolid = null;
+    let sliverErr = '';
+    try {
+      sliverSolid = buildMakeLoftSolid(Manifold, CrossSection, [
+        { plane, contours: [circlePts(5, 32)], offset: 0 },
+        { plane: offsetPlaneFrame(plane, MAKE_LOFT_COINCIDENT_EPS), contours: [circlePts(6, 32)], offset: MAKE_LOFT_COINCIDENT_EPS },
+        { plane: offsetPlaneFrame(plane, 40), contours: [circlePts(8, 32)], offset: 40 },
+      ], { resolution: 32 });
+    } catch (e) {
+      sliverErr = (e && e.message) || String(e);
+    }
+    check(
+      '1e-6 coalescing floor assembles a solid (no WASM throw)',
+      sliverSolid != null && typeof sliverSolid.volume === 'function' && sliverSolid.volume() > 1e-9,
+      sliverErr || (sliverSolid ? `vol=${sliverSolid.volume()}` : 'null'),
+    );
+  }
+
+  // Span 0.3125 over height 40: default 64 segs places no vertex on the
+  // middle plane (slice interpolates r=5→rect). Inflation+cap (256) does.
+  // Dropping the ceil(height/minSpan)*16 term leaves this RED.
+  {
+    const midOff = 0.3125;
+    const tight = buildMakeLoftSolid(Manifold, CrossSection, [
+      { plane, contours: [circlePts(5, 64)], offset: 0 },
+      { plane: offsetPlaneFrame(plane, midOff), contours: [rectPts(16, 10)], offset: midOff },
+      { plane: offsetPlaneFrame(plane, 40), contours: [circlePts(8, 64)], offset: 40 },
+    ], { resolution: 64 });
+    const slMid = tight.slice(midOff);
+    const areaMid = contourArea(slMid);
+    const slNear = tight.slice(midOff + 0.05);
+    check(
+      'tight-span middle station area ≈ 16×10 (subdivision required)',
+      Math.abs(areaMid - 160) / 160 < 0.08,
+      `area=${areaMid.toFixed(2)} segs=${resolveLoftExtrudeSegs(40, midOff)}`,
+    );
+    check(
+      'tight-span middle stays on path (not a 64-seg skip)',
+      Math.abs(contourArea(slNear) - areaMid) / Math.max(areaMid, 1e-6) < 0.12,
+      `aMid=${areaMid.toFixed(2)} aNear=${contourArea(slNear).toFixed(2)}`,
+    );
+    check('tight-span one connected solid', tight.decompose().length === 1);
   }
 }
 
