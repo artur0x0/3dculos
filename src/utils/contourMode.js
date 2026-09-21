@@ -196,7 +196,7 @@ function _newLoftProfileId(profiles = []) {
 export function defaultLoftProfiles() {
   return [
     { id: 'p0', tool: 'circle', params: defaultContourParams('circle'), offset: 0 },
-    { id: 'p1', tool: 'circle', params: { radius: 8, segments: 32 }, offset: 20 },
+    { id: 'p1', tool: 'circle', params: { ...defaultContourParams('circle'), radius: 8 }, offset: 20 },
   ];
 }
 
@@ -220,7 +220,9 @@ export function writeLoftSelected(state, patch = {}) {
   if (!state?.loft?.profiles?.length) return state;
   const selected = Math.max(0, Math.min(state.loft.selected || 0, state.loft.profiles.length - 1));
   const profiles = state.loft.profiles.map((p, i) => {
-    if (i !== selected) return p;
+    if (i !== selected) {
+      return { ...p, params: { ...(p.params || {}) } };
+    }
     const next = { ...p, ...patch };
     if (patch.params) next.params = { ...p.params, ...patch.params };
     return normalizeLoftProfile(next, p.tool);
@@ -1279,8 +1281,25 @@ export function composeContourLoft(buffer, {
   face = null,
   loft = {},
   profiles = null,
+  tool = null,
+  params = null,
 } = {}) {
-  const list = profiles || loft.profiles || defaultLoftProfiles();
+  const raw = profiles || loft.profiles || defaultLoftProfiles();
+  // Clone every station so Confirm cannot alias two profiles to one params
+  // object. If the chip passed tool/params, flush them onto the selected
+  // station only — never rewrite siblings from the live chip.
+  const selected = Math.max(0, Math.min(Number(loft.selected) || 0, raw.length - 1));
+  const list = raw.map((p, i) => {
+    const cloned = {
+      ...p,
+      params: { ...(p.params || {}) },
+    };
+    if (!profiles && i === selected && (tool || params)) {
+      cloned.tool = tool || cloned.tool;
+      cloned.params = { ...cloned.params, ...(params || {}) };
+    }
+    return cloned;
+  });
   let sections;
   try {
     const built = loftSectionsForCompose(face, list);
@@ -1300,17 +1319,29 @@ export function composeContourLoft(buffer, {
 
   const planar = face && face.type === 'planar' ? face : null;
   const stripped = stripContourSiblingBlocks(buffer);
+  const stationParams = sections.normalized.map((p) => ({
+    ...toolToProfileParams(p.tool, { ...(p.params || {}) }),
+    offset: p.offset,
+  }));
+  // Do not spread station 0 onto the helper params object — that was rewriting
+  // every makeCrossSection from one profile when emit fell back to parent fields.
   const profileParams = {
-    ...toolToProfileParams(sections.normalized[0].tool, sections.normalized[0].params),
     body: 'part',
     _contourLoft: {
       plane: planeFromContourFace(face),
-      profiles: sections.normalized.map((p) => ({
-        ...toolToProfileParams(p.tool, p.params),
-        offset: p.offset,
-      })),
+      profiles: stationParams,
     },
   };
+  for (let i = 0; i < sections.normalized.length; i++) {
+    const src = sections.normalized[i];
+    const dst = stationParams[i];
+    if (src.tool === 'circle' && Number(src.params?.radius) !== Number(dst.radius)) {
+      return {
+        ok: false,
+        message: 'composeContourLoft: station profile params lost — refusing silent collapse.',
+      };
+    }
+  }
   const composed = composeHelperInsert(
     stripped,
     'crossSection',
@@ -1337,6 +1368,25 @@ export function composeContourLoft(buffer, {
       ok: false,
       message: 'composeContourLoft: need at least 2 makeCrossSection profiles — refusing silent no-op.',
     };
+  }
+  {
+    const srcRadii = sections.normalized
+      .filter((p) => p.tool === 'circle')
+      .map((p) => Number(p.params?.radius))
+      .filter((r) => Number.isFinite(r));
+    const uniqueSrc = new Set(srcRadii.map((r) => +r.toFixed(4)));
+    if (uniqueSrc.size >= 2) {
+      const emitted = [...owned.matchAll(/profileCircle\s*\(\s*(\d+(?:\.\d+)?)/g)]
+        .map((m) => Number(m[1]))
+        .filter((r) => Number.isFinite(r));
+      const uniqueEmitted = new Set(emitted.map((r) => +r.toFixed(4)));
+      if (uniqueEmitted.size < uniqueSrc.size) {
+        return {
+          ok: false,
+          message: 'composeContourLoft: distinct stations collapsed to one profile — refusing wrong solid.',
+        };
+      }
+    }
   }
   if (!/makeLoft\s*\(/.test(owned)) {
     return {

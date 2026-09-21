@@ -1119,14 +1119,20 @@ const Viewport = forwardRef(({
         return;
       }
     }
+    const loftState = isLoftEntry(state.entry)
+      ? writeLoftSelected(state, {
+        tool: state.tool,
+        params: { ...(state.params || {}) },
+      })
+      : state;
     const ok = onCommitContourProfile?.({
-      face: state.planeFace,
-      tool: state.tool,
-      params: state.params,
-      entry: state.entry,
-      extrude: state.extrude,
-      revolve: state.revolve,
-      loft: state.loft,
+      face: loftState.planeFace,
+      tool: loftState.tool,
+      params: loftState.params,
+      entry: loftState.entry,
+      extrude: loftState.extrude,
+      revolve: loftState.revolve,
+      loft: loftState.loft,
     });
     if (ok) {
       showContourToast(

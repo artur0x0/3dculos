@@ -996,8 +996,20 @@ export const HELPER_PALETTE_ITEMS = [
           const xsN = allocateUniqueName(names, 'xs');
           xsNames.push(xsN);
           const planeExpr = emitOffsetPlaneExpr(fr, prof.offset);
+          // Isolate station fields so the parent helper params (defaults /
+          // selected chip) cannot rewrite every profile from one object.
+          const isolated = {
+            profileType: prof.profileType,
+            radius: prof.radius,
+            segments: prof.segments,
+            width: prof.width,
+            height: prof.height,
+            centered: prof.centered,
+            polygonPreset: prof.polygonPreset,
+            points: prof.points,
+          };
           lines.push(
-            `const ${xsN} = makeCrossSection(${planeExpr}, ${emitProfileExprFromParams(prof)});`,
+            `const ${xsN} = makeCrossSection(${planeExpr}, ${emitProfileExprFromParams(isolated)});`,
           );
         }
         const solidExpr = `makeLoft([${xsNames.join(', ')}])`;

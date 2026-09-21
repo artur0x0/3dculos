@@ -18,12 +18,6 @@ function _dot(a, b) {
 function _sub(a, b) {
   return [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 }
-function _add(a, b) {
-  return [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
-}
-function _mul(s, a) {
-  return [s * a[0], s * a[1], s * a[2]];
-}
 function _norm(v) {
   const L = Math.hypot(v[0], v[1], v[2]);
   if (!(L > 1e-12)) return null;
@@ -262,60 +256,37 @@ export function assembleLoftStations(sections) {
   }
 }
 
-function _loftPair(Manifold, CrossSection, bottom, top, height, opts) {
+/**
+ * Rotate each station to match the previous (already aligned) contour.
+ * Pairwise loft used to align each span independently, so the middle
+ * station was the rotated top of span i and the unrotated bottom of
+ * span i+1 — a visible disjoint. One chain keeps a single contour per
+ * station. `opts.align === false` leaves contours as authored (preview
+ * and Confirm stay in lockstep).
+ */
+export function alignStationContours(stations, opts = {}) {
   const resolution = Math.max(16, Math.round(Number(opts.resolution) || MAKE_LOFT_RESOLUTION));
-  const segs = Math.max(8, Math.round(Number(opts.extrudeSegments) || MAKE_LOFT_EXTRUDE_SEGS));
-  const h = Number(height);
-  if (!(h > 1e-9) || !Number.isFinite(h)) {
-    throw new Error('makeLoft: station spacing must be > 0');
-  }
-  let topAligned = top;
-  if (opts.align !== false) {
-    const bottomTable = resampleContour(bottom, resolution);
-    const topTable = resampleContour(top, resolution);
-    topAligned = rotateContour(top, _alignRotationDeg(bottomTable, topTable));
-  }
-  const bottomCS = new CrossSection([bottom]);
-  const straight = Manifold.extrude
-    ? Manifold.extrude(bottomCS, h, segs)
-    : bottomCS.extrude(h, segs);
-  const warp = (v) => {
-    const x = v[0];
-    const y = v[1];
-    const z = v[2];
-    const t = z / h;
-    const rOrig = Math.hypot(x, y);
-    if (rOrig < 1e-8) {
-      v[0] = 0;
-      v[1] = 0;
-      return;
+  const out = [];
+  for (let i = 0; i < stations.length; i++) {
+    const src = stations[i];
+    let contour = src.contour;
+    if (opts.align !== false && i > 0) {
+      const prev = out[i - 1].contour;
+      const rot = _alignRotationDeg(
+        resampleContour(prev, resolution),
+        resampleContour(contour, resolution),
+      );
+      contour = rotateContour(contour, rot);
     }
-    const dx = x / rOrig;
-    const dy = y / rOrig;
-    const hitB = _contourRayHit(bottom, dx, dy);
-    const hitT = _contourRayHit(topAligned, dx, dy);
-    if (!hitB || !hitT) return;
-    const rBottom = Math.hypot(hitB[0], hitB[1]);
-    const scale = rBottom > 1e-9 ? rOrig / rBottom : 1;
-    v[0] = x + t * (hitT[0] * scale - x);
-    v[1] = y + t * (hitT[1] * scale - y);
-  };
-  return straight.warp(warp);
+    out.push({ ...src, contour });
+  }
+  return out;
 }
 
-function _transformToPlane(manifold, plane, z0) {
-  const x = plane.x;
-  const y = plane.y;
-  const n = plane.normal;
-  const c = _add(plane.center, _mul(z0, n));
-  return manifold.warp((v) => {
-    const u = v[0];
-    const vv = v[1];
-    const w = v[2];
-    v[0] = c[0] + u * x[0] + vv * y[0] + w * n[0];
-    v[1] = c[1] + u * x[1] + vv * y[1] + w * n[1];
-    v[2] = c[2] + u * x[2] + vv * y[2] + w * n[2];
-  });
+function _spanIndex(stations, zWorld) {
+  let i = 0;
+  while (i < stations.length - 2 && zWorld >= stations[i + 1].offset) i += 1;
+  return i;
 }
 
 /**
@@ -323,37 +294,66 @@ function _transformToPlane(manifold, plane, z0) {
  * Result is local to the shared workplane: XY = station UV, Z along the shared
  * normal, z=0 at the lowest-offset station. Confirm places it with
  * `placeInFrame(frame, makeLoft(sections), [0, 0, minOffset])`.
+ *
+ * One extrusion + piecewise ray warp through every station (not pairwise
+ * boolean-union). Middle stations stay on the loft path.
  */
 export function buildMakeLoftSolid(Manifold, CrossSection, sections, opts = {}) {
   const assembled = assembleLoftStations(sections);
   if (!assembled.ok) throw new Error(assembled.message);
-  const { stations } = assembled;
+  const stations = alignStationContours(assembled.stations, opts);
   const z0 = stations[0].offset;
-  const pieces = [];
-  for (let i = 0; i < stations.length - 1; i++) {
+  const zN = stations[stations.length - 1].offset;
+  const height = zN - z0;
+  if (!(height > 1e-9) || !Number.isFinite(height)) {
+    throw new Error('makeLoft: station spacing must be > 0');
+  }
+  let minSpan = height;
+  for (let i = 1; i < stations.length; i++) {
+    minSpan = Math.min(minSpan, stations[i].offset - stations[i - 1].offset);
+  }
+  const segs = Math.max(
+    8,
+    Math.round(Number(opts.extrudeSegments) || MAKE_LOFT_EXTRUDE_SEGS),
+    Math.ceil(height / Math.max(minSpan, 1e-6)) * 16,
+  );
+  const bottom = stations[0].contour;
+  const bottomCS = new CrossSection([bottom]);
+  const straight = Manifold.extrude
+    ? Manifold.extrude(bottomCS, height, segs)
+    : bottomCS.extrude(height, segs);
+  const warp = (v) => {
+    const x = v[0];
+    const y = v[1];
+    const z = v[2];
+    const rOrig = Math.hypot(x, y);
+    if (rOrig < 1e-8) {
+      v[0] = 0;
+      v[1] = 0;
+      return;
+    }
+    const zWorld = z0 + z;
+    const i = _spanIndex(stations, zWorld);
     const a = stations[i];
     const b = stations[i + 1];
-    const height = b.offset - a.offset;
-    const pair = _loftPair(Manifold, CrossSection, a.contour, b.contour, height, opts);
-    // Local pair sits on XY at z=0…height. Shift so z=0 is the lowest station.
-    const zLocal = a.offset - z0;
-    pieces.push(
-      Math.abs(zLocal) < 1e-12
-        ? pair
-        : (typeof pair.translate === 'function'
-          ? pair.translate([0, 0, zLocal])
-          : _transformToPlane(pair, {
-            center: [0, 0, 0],
-            normal: [0, 0, 1],
-            x: [1, 0, 0],
-            y: [0, 1, 0],
-          }, zLocal)),
-    );
-  }
-  let out = pieces[0];
-  for (let i = 1; i < pieces.length; i++) {
-    out = out.add ? out.add(pieces[i]) : Manifold.union([out, pieces[i]]);
-  }
+    const span = b.offset - a.offset;
+    let t = span > 1e-12 ? (zWorld - a.offset) / span : 1;
+    if (t < 0) t = 0;
+    if (t > 1) t = 1;
+    const dx = x / rOrig;
+    const dy = y / rOrig;
+    const hitA = _contourRayHit(a.contour, dx, dy);
+    const hitB = _contourRayHit(b.contour, dx, dy);
+    const hitBase = _contourRayHit(bottom, dx, dy);
+    if (!hitA || !hitB || !hitBase) return;
+    const rBottom = Math.hypot(hitBase[0], hitBase[1]);
+    const scale = rBottom > 1e-9 ? rOrig / rBottom : 1;
+    const tx = hitA[0] + t * (hitB[0] - hitA[0]);
+    const ty = hitA[1] + t * (hitB[1] - hitA[1]);
+    v[0] = tx * scale;
+    v[1] = ty * scale;
+  };
+  const out = straight.warp(warp);
   const vol = typeof out.volume === 'function' ? out.volume() : 0;
   if (!(vol > 1e-9)) {
     throw new Error('makeLoft: result is EMPTY (volume 0) — check profiles have area and distinct offsets');
@@ -363,15 +363,17 @@ export function buildMakeLoftSolid(Manifold, CrossSection, sections, opts = {}) 
 
 /**
  * Client / golden preview payload: resampled UV rings + world frames.
+ * Rings use the same aligned contours as makeLoft so preview ≈ Accept.
  * Null when <2 valid stations (incomplete polyline, bad offset, …).
  */
-export function buildLoftPreviewStations(sections, sampleN = 32) {
+export function buildLoftPreviewStations(sections, sampleN = 32, opts = {}) {
   const assembled = assembleLoftStations(sections);
   if (!assembled.ok) return null;
+  const aligned = alignStationContours(assembled.stations, opts);
   const n = Math.max(8, Math.round(Number(sampleN) || 32));
   return {
     plane: assembled.stations[0].plane,
-    stations: assembled.stations.map((s) => ({
+    stations: aligned.map((s) => ({
       offset: s.offset,
       plane: s.plane,
       ring: resampleContour(s.contour, n),

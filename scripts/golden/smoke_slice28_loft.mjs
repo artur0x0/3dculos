@@ -5,6 +5,8 @@
  * - multi-profile list (min 2); each profile = makeCrossSection on offset plane
  * - live solid preview payload as profiles / offsets change
  * - Confirm composes profiles + makeLoft + placeInFrame replace; Auto-Run
+ * - 2-profile Confirm keeps distinct stations (script + solid ends)
+ * - 3-profile middle station stays on the loft path (continuous, not an island)
  * - second Confirm replaces the same marked block (no duplicate stack)
  * - Back / strip = no orphan loft
  * - Extrude / Revolve stay frame-only; Profile Confirm profile-only; Fillet (#34)
@@ -115,6 +117,31 @@ function rectPts(w, h) {
 function diamondPts(diag) {
   const h = diag / 2;
   return [[0, h], [-h, 0], [0, -h], [h, 0]];
+}
+
+function contourArea(cs) {
+  const polys = typeof cs?.toPolygons === 'function' ? cs.toPolygons() : [];
+  let a = 0;
+  for (const p of polys) {
+    let s = 0;
+    for (let i = 0; i < p.length; i++) {
+      const x0 = p[i][0];
+      const y0 = p[i][1];
+      const x1 = p[(i + 1) % p.length][0];
+      const y1 = p[(i + 1) % p.length][1];
+      s += x0 * y1 - x1 * y0;
+    }
+    a += s / 2;
+  }
+  return Math.abs(a);
+}
+
+function xyExtent(cs) {
+  const b = cs.bounds();
+  return {
+    x: b.max[0] - b.min[0],
+    y: b.max[1] - b.min[1],
+  };
 }
 
 // ── Entry / defaults ───────────────────────────────────────────
@@ -275,6 +302,9 @@ function diamondPts(diag) {
   check('has makeCrossSection', /makeCrossSection\s*\(/.test(first.buffer));
   check('has two makeCrossSection', countMakeCrossSection(first.buffer) === 2);
   check('has profileCircle', /profileCircle\s*\(/.test(first.buffer));
+  check('2-profile script keeps distinct radii (5 and 8)',
+    /profileCircle\s*\(\s*5\s*,/.test(first.buffer)
+    && /profileCircle\s*\(\s*8\s*,/.test(first.buffer));
   check('has makeLoft', /makeLoft\s*\(/.test(first.buffer));
   check('has placeInFrame', /placeInFrame\s*\(/.test(first.buffer));
   check('replaces part (no host add)', /part\s*=\s*placeInFrame\s*\(/.test(first.buffer) && !/part\s*=\s*part\.add\(/.test(first.buffer));
@@ -310,6 +340,8 @@ function diamondPts(diag) {
   check('update still two makeCrossSection', countMakeCrossSection(second.buffer) === 2);
   check('update still one makeLoft', countMakeLoft(second.buffer) === 1);
   check('update uses profileRectangle', /profileRectangle\s*\(/.test(second.buffer));
+  check('update keeps distinct stations (rect + circle 6)',
+    /profileRectangle\s*\(/.test(second.buffer) && /profileCircle\s*\(\s*6\s*,/.test(second.buffer));
   check('update keeps one return', (second.buffer.match(/\breturn\s+part\s*;/g) || []).length === 1);
   check('update still one loft block', (second.buffer.match(/contour-mode loft begin/g) || []).length === 1);
 
@@ -325,6 +357,37 @@ function diamondPts(diag) {
   check('3-profile compose ok', three.ok && countMakeCrossSection(three.buffer) === 3);
   check('3-profile one makeLoft', countMakeLoft(three.buffer) === 1);
   check('3-profile has polygon', /profilePolygon/.test(three.buffer));
+  check('3-profile keeps P1/P2 distinct + middle polygon',
+    /profileCircle\s*\(\s*5\s*,/.test(three.buffer)
+    && /profileCircle\s*\(\s*8\s*,/.test(three.buffer)
+    && /profilePolygon/.test(three.buffer));
+
+  {
+    let st = enterContourState('makeLoft', planarFace);
+    st = selectLoftProfile(st, 1);
+    st = writeLoftSelected(st, { params: { radius: 12, segments: 32 } });
+    const edited = composeContourLoft(starter, {
+      face,
+      loft: st.loft,
+      tool: st.tool,
+      params: st.params,
+    });
+    check('chip-flush Confirm keeps P2 radius 12 (does not collapse to P1)',
+      edited.ok
+      && /profileCircle\s*\(\s*5\s*,/.test(edited.buffer)
+      && /profileCircle\s*\(\s*12\s*,/.test(edited.buffer));
+
+    const clobber = composeContourLoft(starter, {
+      face,
+      loft: { profiles: defaultLoftProfiles(), selected: 0 },
+      tool: 'circle',
+      params: { radius: 99, segments: 32 },
+    });
+    check('selected-chip flush does not rewrite sibling station',
+      clobber.ok
+      && (clobber.buffer.match(/profileCircle\s*\(\s*99\s*,/g) || []).length === 1
+      && (clobber.buffer.match(/profileCircle\s*\(\s*8\s*,/g) || []).length === 1);
+  }
 
   const defPlane = composeContourLoft(starter, {
     face: null,
@@ -744,6 +807,67 @@ function diamondPts(diag) {
     Math.abs(descVol - ascVol) < 1,
     `asc=${ascVol} desc=${descVol}`,
   );
+
+  {
+    const two = buildMakeLoftSolid(Manifold, CrossSection, [
+      { plane, contours: [circlePts(5, 64)] },
+      { plane: offsetPlaneFrame(plane, 20), contours: [circlePts(8, 64)] },
+    ], { resolution: 64 });
+    const a0 = contourArea(two.slice(0.2));
+    const a1 = contourArea(two.slice(19.8));
+    const r0 = Math.sqrt(a0 / Math.PI);
+    const r1 = Math.sqrt(a1 / Math.PI);
+    check(
+      '2-profile distinct ends (bottom ≈ r=5, top ≈ r=8)',
+      Math.abs(r0 - 5) < 0.2 && Math.abs(r1 - 8) < 0.2 && Math.abs(r1 - r0) > 2,
+      `r0=${r0.toFixed(3)} r1=${r1.toFixed(3)}`,
+    );
+    check('2-profile one connected solid', two.decompose().length === 1);
+
+    const mid = buildMakeLoftSolid(Manifold, CrossSection, [
+      { plane, contours: [circlePts(5, 64)], offset: 0 },
+      { plane: offsetPlaneFrame(plane, 20), contours: [rectPts(16, 10)], offset: 20 },
+      { plane: offsetPlaneFrame(plane, 40), contours: [circlePts(8, 64)], offset: 40 },
+    ], { resolution: 64 });
+    const sl19 = mid.slice(19.5);
+    const sl20 = mid.slice(20);
+    const sl21 = mid.slice(20.5);
+    const area20 = contourArea(sl20);
+    const e19 = xyExtent(sl19);
+    const e20 = xyExtent(sl20);
+    const e21 = xyExtent(sl21);
+    const yJumpDown = Math.abs(e19.y - e20.y) / Math.max(e20.y, 1e-6);
+    const yJumpUp = Math.abs(e21.y - e20.y) / Math.max(e20.y, 1e-6);
+    check(
+      '3-profile middle station area ≈ 16×10 rect (160)',
+      Math.abs(area20 - 160) / 160 < 0.08,
+      `area=${area20.toFixed(2)}`,
+    );
+    check(
+      '3-profile middle stays on path (nearby Y extents continuous, not a disjoint snap)',
+      yJumpDown < 0.12 && yJumpUp < 0.12,
+      `y@19.5=${e19.y.toFixed(2)} y@20=${e20.y.toFixed(2)} y@20.5=${e21.y.toFixed(2)}`,
+    );
+    check(
+      '3-profile middle nearby areas continuous',
+      Math.abs(contourArea(sl19) - area20) / area20 < 0.12
+      && Math.abs(contourArea(sl21) - area20) / area20 < 0.12,
+      `a19=${contourArea(sl19).toFixed(2)} a20=${area20.toFixed(2)} a21=${contourArea(sl21).toFixed(2)}`,
+    );
+    check('3-profile one connected solid (no island)', mid.decompose().length === 1);
+
+    const threeCirc = buildMakeLoftSolid(Manifold, CrossSection, [
+      { plane, contours: [circlePts(5, 64)], offset: 0 },
+      { plane: offsetPlaneFrame(plane, 20), contours: [circlePts(8, 64)], offset: 20 },
+      { plane: offsetPlaneFrame(plane, 40), contours: [circlePts(12, 64)], offset: 40 },
+    ], { resolution: 64 });
+    const midR = Math.sqrt(contourArea(threeCirc.slice(20)) / Math.PI);
+    check(
+      '3-profile circle middle radius ≈ 8 (on the loft path)',
+      Math.abs(midR - 8) < 0.2,
+      `midR=${midR.toFixed(3)}`,
+    );
+  }
 }
 
 if (failed) {
