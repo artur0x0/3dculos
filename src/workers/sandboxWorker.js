@@ -11,6 +11,7 @@ import {
 import { isFilletSliverDirty } from '../utils/filletSliverGuard.js';
 import { expandFilletCutterContour, planFilletSweepPath } from '../utils/filletAlongPath.js';
 import { assembleSweepPath } from '../utils/edgeSweepPath.js';
+import { buildMakeLoftSolid, offsetPlaneFrame } from '../utils/makeLoft.js';
 
 /**
  * List of globals to block/remove in the worker context
@@ -2526,6 +2527,19 @@ function makeExtrude(contours, height) {
   return _c8CheckValid(cs.extrude(height), 'makeExtrude');
 }
 
+/**
+ * makeLoft(sections, opts?) — loft ≥2 makeCrossSection values.
+ * v1: parallel planes (same workplane + offset along the normal).
+ * Result is local (z=0 at the lowest station). Confirm places it with
+ * placeInFrame. Loud-fail on <2 profiles, coincident offsets,
+ * non-parallel planes, or empty volume.
+ */
+function makeLoft(sections, opts = {}) {
+  if (!manifoldModule) throw new Error('Manifold not initialized');
+  const { Manifold, CrossSection } = manifoldModule;
+  return _c8CheckValid(buildMakeLoftSolid(Manifold, CrossSection, sections, opts), 'makeLoft');
+}
+
 
 // ---------------------------------------------------------------- Slice 21 cross-section substrate
 // Reusable plane + 2D profile value for later edge→sweep / fillet-via-sweep /
@@ -2686,7 +2700,7 @@ function makeSweepPath(edges, opts = {}) {
 // (or chamfer triangle) cutter along makeSweepPath and boolean-subtracting.
 // Path is a LINEAR polyline (edge wire) — Catmull-Rom bulges off chords and left
 // purple sliver scraps. Planar–planar uses filletEdges only when UI Strategy=planar.
-// Extrude/revolve/loft are NOT started here — wait for Product brief.
+// Extrude/revolve/loft FEAT tools live in contour mode (Slices 25/26/28).
 function _s23Norm(v) {
   const L = Math.hypot(v[0], v[1], v[2]) || 1;
   return [v[0] / L, v[1] / L, v[2] / L];
@@ -3334,6 +3348,8 @@ const HELPER_FUNCTIONS = {
   // C8 revolve/extrude with safe winding (see block above)
   makeRevolve,
   makeExtrude,
+  makeLoft,
+  offsetPlaneFrame,
   // Slice 21 cross-section substrate (plane + 2D profile)
   profileCircle,
   profileRectangle,

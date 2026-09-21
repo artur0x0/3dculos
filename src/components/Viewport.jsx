@@ -46,25 +46,33 @@ import FilletModeChip from './FilletModeChip';
 import { classifySelectedFace } from '../utils/faceFeaturePlacement';
 import { buildCrossSectionPreview } from '../utils/crossSectionSubstrate';
 import {
+  addLoftProfile,
   buildContourPreview,
   buildExtrudeSolidPreview,
+  buildLoftSolidPreview,
   buildRevolveSolidPreview,
   enterContourState,
   intersectRayPlane,
   isExtrudeEntry,
+  isLoftEntry,
   isRevolveEntry,
   planeFromContourFace,
+  removeLoftProfile,
   resolveContourWorkplane,
   resolveExtrudeAxis,
   resolveRevolveAxis,
+  selectLoftProfile,
+  setLoftProfileOffset,
   switchContourTool,
   toolToProfileParams,
   validateContourProfile,
   validateExtrudeParams,
+  validateLoftProfiles,
   validateRevolveParams,
   worldToPlaneUV,
   workplaneOverlaySize,
   workplaneQuadCorners,
+  writeLoftSelected,
 } from '../utils/contourMode';
 import { buildSweepPathPreview } from '../utils/edgeSweepPath';
 import {
@@ -207,13 +215,14 @@ const Viewport = forwardRef(({
   const edgeModeToastShownRef = useRef(false);
   const edgeModeToastTimerRef = useRef(null);
   const [edgeModeToast, setEdgeModeToast] = useState(null);
-  /** Slice 24/25/26: contour-mode shell (Profile-in-mode; Extrude / Revolve commit a solid). */
+  /** Slice 24/25/26/28: contour-mode shell (Profile-in-mode; Extrude / Revolve / Loft commit a solid). */
   const [contourMode, setContourMode] = useState(null);
   const contourModeRef = useRef(null);
   const workplaneOverlayRef = useRef(null);
   const polylineDraftRef = useRef(null);
   const extrudePreviewRef = useRef(null);
   const revolvePreviewRef = useRef(null);
+  const loftPreviewRef = useRef(null);
   const contourGhostMatsRef = useRef(null);
   const [contourToast, setContourToast] = useState(null);
   const contourToastTimerRef = useRef(null);
@@ -307,6 +316,8 @@ const Viewport = forwardRef(({
       extrudePreviewRef.current = null;
       disposeEdgeOverlayObject(sceneRef.current, revolvePreviewRef.current);
       revolvePreviewRef.current = null;
+      disposeEdgeOverlayObject(sceneRef.current, loftPreviewRef.current);
+      loftPreviewRef.current = null;
       disposeEdgeOverlayObject(sceneRef.current, filletBlendPreviewRef.current);
       filletBlendPreviewRef.current = null;
       setContourMode(null);
@@ -707,6 +718,95 @@ const Viewport = forwardRef(({
     revolvePreviewRef.current = group;
   }, [clearRevolvePreview]);
 
+  const clearLoftPreview = useCallback(() => {
+    disposeEdgeOverlayObject(sceneRef.current, loftPreviewRef.current);
+    loftPreviewRef.current = null;
+  }, []);
+
+  /**
+   * Slice 28: live Loft solid (linear skin between offset stations) + profile rings.
+   * Stations live on copies of the workplane offset along the normal.
+   */
+  const paintLoftPreview = useCallback((payload) => {
+    clearLoftPreview();
+    if (!payload?.stations?.length || !sceneRef.current) return;
+    const group = new Group();
+    group.name = 'contourLoftPreviewGroup';
+    const ringMat = new LineBasicMaterial({
+      color: 0x67e8f9,
+      transparent: true,
+      opacity: 0.95,
+      depthTest: false,
+    });
+    const skinMat = new MeshBasicMaterial({
+      color: 0x22d3ee,
+      transparent: true,
+      opacity: 0.38,
+      depthWrite: false,
+      side: DoubleSide,
+    });
+    const worldRing = (station) => {
+      const plane = station.plane;
+      return (station.ring || []).map((uv) => [
+        plane.center[0] + uv[0] * plane.x[0] + uv[1] * plane.y[0],
+        plane.center[1] + uv[0] * plane.x[1] + uv[1] * plane.y[1],
+        plane.center[2] + uv[0] * plane.x[2] + uv[1] * plane.y[2],
+      ]);
+    };
+    for (const station of payload.stations) {
+      const ring = worldRing(station);
+      if (ring.length < 3) continue;
+      const pos = new Float32Array((ring.length + 1) * 3);
+      for (let i = 0; i < ring.length; i++) {
+        pos[i * 3] = ring[i][0];
+        pos[i * 3 + 1] = ring[i][1];
+        pos[i * 3 + 2] = ring[i][2];
+      }
+      pos[ring.length * 3] = ring[0][0];
+      pos[ring.length * 3 + 1] = ring[0][1];
+      pos[ring.length * 3 + 2] = ring[0][2];
+      const g = new BufferGeometry();
+      g.setAttribute('position', new BufferAttribute(pos, 3));
+      const line = new Line(g, ringMat);
+      line.renderOrder = 11;
+      line.frustumCulled = false;
+      group.add(line);
+    }
+    for (let s = 0; s < payload.stations.length - 1; s++) {
+      const a = worldRing(payload.stations[s]);
+      const b = worldRing(payload.stations[s + 1]);
+      const n = Math.min(a.length, b.length);
+      if (n < 3) continue;
+      const positions = new Float32Array(n * 2 * 3);
+      for (let i = 0; i < n; i++) {
+        positions[i * 3] = a[i][0];
+        positions[i * 3 + 1] = a[i][1];
+        positions[i * 3 + 2] = a[i][2];
+        positions[(n + i) * 3] = b[i][0];
+        positions[(n + i) * 3 + 1] = b[i][1];
+        positions[(n + i) * 3 + 2] = b[i][2];
+      }
+      const indices = [];
+      for (let i = 0; i < n; i++) {
+        const i1 = (i + 1) % n;
+        indices.push(i, n + i, i1, n + i, n + i1, i1);
+      }
+      const geom = new BufferGeometry();
+      geom.setAttribute('position', new BufferAttribute(positions, 3));
+      geom.setIndex(indices);
+      geom.computeVertexNormals();
+      const mesh = new ThreeMesh(geom, skinMat);
+      mesh.name = 'contourLoftPreview';
+      mesh.renderOrder = 8;
+      mesh.frustumCulled = false;
+      group.add(mesh);
+    }
+    if (group.children.length) {
+      sceneRef.current.add(group);
+      loftPreviewRef.current = group;
+    }
+  }, [clearLoftPreview]);
+
   const applyContourPartGhost = useCallback((on) => {
     const mesh = resultRef.current;
     if (!mesh) return;
@@ -952,13 +1052,14 @@ const Viewport = forwardRef(({
     clearPolylineDraft();
     clearExtrudePreview();
     clearRevolvePreview();
+    clearLoftPreview();
     applyContourPartGhost(false);
     if (contourToastTimerRef.current) {
       clearTimeout(contourToastTimerRef.current);
       contourToastTimerRef.current = null;
     }
     setContourToast(null);
-  }, [clearXsPreview, clearWorkplaneOverlay, clearPolylineDraft, clearExtrudePreview, clearRevolvePreview, applyContourPartGhost]);
+  }, [clearXsPreview, clearWorkplaneOverlay, clearPolylineDraft, clearExtrudePreview, clearRevolvePreview, clearLoftPreview, applyContourPartGhost]);
 
   const enterContourMode = useCallback(({ entry } = {}) => {
     setFilletMode(null);
@@ -1011,6 +1112,13 @@ const Viewport = forwardRef(({
         return;
       }
     }
+    if (isLoftEntry(state.entry)) {
+      const loftGate = validateLoftProfiles(state.loft?.profiles);
+      if (!loftGate.ok) {
+        showContourToast(loftGate.message);
+        return;
+      }
+    }
     const ok = onCommitContourProfile?.({
       face: state.planeFace,
       tool: state.tool,
@@ -1018,14 +1126,17 @@ const Viewport = forwardRef(({
       entry: state.entry,
       extrude: state.extrude,
       revolve: state.revolve,
+      loft: state.loft,
     });
     if (ok) {
       showContourToast(
-        isRevolveEntry(state.entry)
-          ? 'Revolve saved — still in contour mode. Confirm again to update.'
-          : isExtrudeEntry(state.entry)
-            ? 'Extrude saved — still in contour mode. Confirm again to update.'
-            : 'Profile saved — still in contour mode (Profile only).',
+        isLoftEntry(state.entry)
+          ? 'Loft saved — still in contour mode. Confirm again to update.'
+          : isRevolveEntry(state.entry)
+            ? 'Revolve saved — still in contour mode. Confirm again to update.'
+            : isExtrudeEntry(state.entry)
+              ? 'Extrude saved — still in contour mode. Confirm again to update.'
+              : 'Profile saved — still in contour mode (Profile only).',
       );
     }
   }, [onCommitContourProfile]);
@@ -1112,13 +1223,14 @@ const Viewport = forwardRef(({
     if (filletToastTimerRef.current) clearTimeout(filletToastTimerRef.current);
   }, [clearFilletBlendPreview]);
 
-  // Live workplane + makeCrossSection profile (+ Extrude / Revolve solid) preview.
+  // Live workplane + makeCrossSection profile (+ Extrude / Revolve / Loft solid) preview.
   useEffect(() => {
     if (!contourMode) {
       clearWorkplaneOverlay();
       clearPolylineDraft();
       clearExtrudePreview();
       clearRevolvePreview();
+      clearLoftPreview();
       applyContourPartGhost(false);
       return;
     }
@@ -1148,51 +1260,72 @@ const Viewport = forwardRef(({
       clearExtrudePreview();
       clearRevolvePreview();
       paintPolylineDraft(plane, pts || []);
+      if (isLoftEntry(contourMode.entry)) {
+        const solid = buildLoftSolidPreview(planeFace, contourMode.loft?.profiles);
+        if (solid) paintLoftPreview(solid);
+        else clearLoftPreview();
+      } else {
+        clearLoftPreview();
+      }
       return;
     }
     clearPolylineDraft();
-    if (buildContourPreview(planeFace, contourMode.tool, contourMode.params)) {
+    if (isLoftEntry(contourMode.entry)) {
+      clearXsPreview();
+      clearExtrudePreview();
+      clearRevolvePreview();
+      const solid = buildLoftSolidPreview(planeFace, contourMode.loft?.profiles);
+      if (solid) paintLoftPreview(solid);
+      else clearLoftPreview();
+    } else if (buildContourPreview(planeFace, contourMode.tool, contourMode.params)) {
       setXsPreview({
         face: planeFace,
         params: toolToProfileParams(contourMode.tool, contourMode.params),
       });
+      if (isExtrudeEntry(contourMode.entry)) {
+        clearRevolvePreview();
+        clearLoftPreview();
+        const solid = buildExtrudeSolidPreview(
+          planeFace,
+          contourMode.tool,
+          contourMode.params,
+          contourMode.extrude,
+        );
+        if (solid) paintExtrudePreview(solid);
+        else clearExtrudePreview();
+      } else if (isRevolveEntry(contourMode.entry)) {
+        clearExtrudePreview();
+        clearLoftPreview();
+        const solid = buildRevolveSolidPreview(
+          planeFace,
+          contourMode.tool,
+          contourMode.params,
+          contourMode.revolve,
+        );
+        if (solid) paintRevolvePreview(solid);
+        else clearRevolvePreview();
+      } else {
+        clearExtrudePreview();
+        clearRevolvePreview();
+        clearLoftPreview();
+      }
     } else {
       clearXsPreview();
-    }
-    if (isExtrudeEntry(contourMode.entry)) {
-      clearRevolvePreview();
-      const solid = buildExtrudeSolidPreview(
-        planeFace,
-        contourMode.tool,
-        contourMode.params,
-        contourMode.extrude,
-      );
-      if (solid) paintExtrudePreview(solid);
-      else clearExtrudePreview();
-    } else if (isRevolveEntry(contourMode.entry)) {
-      clearExtrudePreview();
-      const solid = buildRevolveSolidPreview(
-        planeFace,
-        contourMode.tool,
-        contourMode.params,
-        contourMode.revolve,
-      );
-      if (solid) paintRevolvePreview(solid);
-      else clearRevolvePreview();
-    } else {
       clearExtrudePreview();
       clearRevolvePreview();
+      clearLoftPreview();
     }
-  }, [contourMode, modelBounds, paintWorkplaneOverlay, paintPolylineDraft, paintExtrudePreview, paintRevolvePreview, applyContourPartGhost, clearWorkplaneOverlay, clearPolylineDraft, clearExtrudePreview, clearRevolvePreview, clearXsPreview, setXsPreview]);
+  }, [contourMode, modelBounds, paintWorkplaneOverlay, paintPolylineDraft, paintExtrudePreview, paintRevolvePreview, paintLoftPreview, applyContourPartGhost, clearWorkplaneOverlay, clearPolylineDraft, clearExtrudePreview, clearRevolvePreview, clearLoftPreview, clearXsPreview, setXsPreview]);
 
   useEffect(() => () => {
     clearWorkplaneOverlay();
     clearPolylineDraft();
     clearExtrudePreview();
     clearRevolvePreview();
+    clearLoftPreview();
     applyContourPartGhost(false);
     if (contourToastTimerRef.current) clearTimeout(contourToastTimerRef.current);
-  }, [clearWorkplaneOverlay, clearPolylineDraft, clearExtrudePreview, clearRevolvePreview, applyContourPartGhost]);
+  }, [clearWorkplaneOverlay, clearPolylineDraft, clearExtrudePreview, clearRevolvePreview, clearLoftPreview, applyContourPartGhost]);
 
   // Contour mode: planar face tap updates the workplane; non-planar is a loud refuse.
   useEffect(() => {
@@ -1679,7 +1812,8 @@ const Viewport = forwardRef(({
       setContourMode((prev) => {
         if (!prev || prev.tool !== 'polyline') return prev;
         const points = [...(prev.params?.points || []), [uv[0], uv[1]]];
-        return { ...prev, params: { ...prev.params, points } };
+        const next = { ...prev, params: { ...prev.params, points } };
+        return isLoftEntry(prev.entry) ? writeLoftSelected(next, { params: next.params }) : next;
       });
       return;
     }
@@ -2892,24 +3026,35 @@ const Viewport = forwardRef(({
           params={contourMode.params}
           extrude={contourMode.extrude || {}}
           revolve={contourMode.revolve || {}}
+          loft={contourMode.loft || {}}
           compact={isMobile}
           planeLabel={
             contourMode.planeFace
               ? `planar n=[${contourMode.planeFace.normal.map((v) => Number(v).toFixed(2)).join(', ')}]`
               : 'default +Z top'
           }
-          onParamChange={(next) => setContourMode((prev) => (prev ? { ...prev, params: next } : prev))}
+          onParamChange={(next) => setContourMode((prev) => {
+            if (!prev) return prev;
+            const updated = { ...prev, params: next };
+            return isLoftEntry(prev.entry) ? writeLoftSelected(updated, { params: next }) : updated;
+          })}
           onExtrudeChange={(next) => setContourMode((prev) => (prev ? { ...prev, extrude: next } : prev))}
           onRevolveChange={(next) => setContourMode((prev) => (prev ? { ...prev, revolve: next } : prev))}
+          onSelectLoftProfile={(i) => setContourMode((prev) => (prev ? selectLoftProfile(prev, i) : prev))}
+          onAddLoftProfile={() => setContourMode((prev) => (prev ? addLoftProfile(prev) : prev))}
+          onRemoveLoftProfile={(i) => setContourMode((prev) => (prev ? removeLoftProfile(prev, i) : prev))}
+          onLoftOffsetChange={(offset) => setContourMode((prev) => (prev ? setLoftProfileOffset(prev, offset) : prev))}
           onConfirm={confirmContourProfile}
           onUndoPoint={() => setContourMode((prev) => {
             if (!prev || prev.tool !== 'polyline') return prev;
             const points = (prev.params?.points || []).slice(0, -1);
-            return { ...prev, params: { ...prev.params, points } };
+            const next = { ...prev, params: { ...prev.params, points } };
+            return isLoftEntry(prev.entry) ? writeLoftSelected(next, { params: next.params }) : next;
           })}
           onClearPoints={() => setContourMode((prev) => {
             if (!prev || prev.tool !== 'polyline') return prev;
-            return { ...prev, params: { ...prev.params, points: [] } };
+            const next = { ...prev, params: { ...prev.params, points: [] } };
+            return isLoftEntry(prev.entry) ? writeLoftSelected(next, { params: next.params }) : next;
           })}
         />
       )}

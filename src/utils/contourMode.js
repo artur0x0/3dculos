@@ -1,5 +1,5 @@
 /**
- * Slice 24/25/26 — Contour-mode shell + Extrude / Revolve solid commit.
+ * Slice 24/25/26/28 — Contour-mode shell + Extrude / Revolve / Loft solid commit.
  *
  * Shared mode Extrude / Revolve / Loft own. Fillet-without-edges is Slice 27
  * (its own edge-pick mode — not a contour entry).
@@ -9,10 +9,11 @@
  * solid preview; second Confirm updates the same marked block).
  * Slice 26: Revolve entry Confirm commits profile + makeRevolve solid (live
  * solid preview; axis on the profile plane). Profile stays Profile-only.
- * Loft solid is a later slice.
+ * Slice 28: Loft entry Confirm commits ≥2 profiles + makeLoft (same workplane
+ * + per-profile offset along the normal; live solid preview).
  *
  * Reuses Slice 21: workplaneFromFace / makeCrossSection / profile* substrate.
- * Reuses C8 makeExtrude / makeRevolve + placeInFrame (frame-only, replace part).
+ * Reuses C8 makeExtrude / makeRevolve / makeLoft + placeInFrame (frame-only, replace part).
  */
 
 import {
@@ -34,13 +35,21 @@ import {
   CONTOUR_EXTRUDE_END,
   CONTOUR_REVOLVE_BEGIN,
   CONTOUR_REVOLVE_END,
+  CONTOUR_LOFT_BEGIN,
+  CONTOUR_LOFT_END,
   isBufferEmpty,
 } from './helperPaletteSnippets.js';
+import {
+  assembleLoftStations,
+  buildLoftPreviewStations,
+  offsetPlaneFrame,
+} from './makeLoft.js';
 
 /** Palette ids that enter contour mode instead of one-shot insert. */
 export const CONTOUR_ENTRY_IDS = new Set([
   'makeExtrude',
   'makeRevolve',
+  'makeLoft',
   'crossSection',
 ]);
 
@@ -54,7 +63,10 @@ export const CONTOUR_TOOLS = [
 export const CONTOUR_TOOL_IDS = CONTOUR_TOOLS.map((t) => t.id);
 
 export const CONTOUR_NO_SOLID =
-  'This Confirm writes Profile only (makeCrossSection). Extrude solids use the Extrude entry; Revolve solids use the Revolve entry; Loft solid is a later slice.';
+  'This Confirm writes Profile only (makeCrossSection). Extrude solids use the Extrude entry; Revolve solids use the Revolve entry; Loft solids use the Loft entry.';
+
+export const LOFT_MIN_PROFILES = 2;
+export const LOFT_MAX_PROFILES = 8;
 
 export const EXTRUDE_SENSES = ['positive', 'negative', 'both'];
 export const EXTRUDE_DIRECTIONS = ['normal', 'x', 'y', 'z'];
@@ -72,6 +84,10 @@ export function isExtrudeEntry(id) {
 
 export function isRevolveEntry(id) {
   return id === 'makeRevolve';
+}
+
+export function isLoftEntry(id) {
+  return id === 'makeLoft';
 }
 
 export function isContourTool(id) {
@@ -160,6 +176,121 @@ export function validateExtrudeParams(raw) {
 /** Sane mobile defaults: full 360° around the plane V axis (on-plane). */
 export function defaultRevolveParams() {
   return { angle: 360, axis: 'v', sense: 'positive' };
+}
+
+function _newLoftProfileId(profiles = []) {
+  const used = new Set((profiles || []).map((p) => p?.id));
+  let n = profiles?.length || 0;
+  let id = `p${n}`;
+  while (used.has(id)) {
+    n += 1;
+    id = `p${n}`;
+  }
+  return id;
+}
+
+/**
+ * v1 Loft: two stations on the shared workplane (circle r=5 @ 0, circle r=8 @ 20).
+ * Same-plane + offset-along-normal. Independent planes are a later slice.
+ */
+export function defaultLoftProfiles() {
+  return [
+    { id: 'p0', tool: 'circle', params: defaultContourParams('circle'), offset: 0 },
+    { id: 'p1', tool: 'circle', params: { radius: 8, segments: 32 }, offset: 20 },
+  ];
+}
+
+export function defaultLoftState() {
+  return { profiles: defaultLoftProfiles(), selected: 0 };
+}
+
+export function normalizeLoftProfile(raw = {}, fallbackTool = 'circle') {
+  const tool = isContourTool(raw.tool) ? raw.tool : fallbackTool;
+  const params = { ...defaultContourParams(tool), ...(raw.params || {}) };
+  const offset = Number(raw.offset);
+  return {
+    id: raw.id || _newLoftProfileId(),
+    tool,
+    params,
+    offset: Number.isFinite(offset) ? offset : 0,
+  };
+}
+
+export function writeLoftSelected(state, patch = {}) {
+  if (!state?.loft?.profiles?.length) return state;
+  const selected = Math.max(0, Math.min(state.loft.selected || 0, state.loft.profiles.length - 1));
+  const profiles = state.loft.profiles.map((p, i) => {
+    if (i !== selected) return p;
+    const next = { ...p, ...patch };
+    if (patch.params) next.params = { ...p.params, ...patch.params };
+    return normalizeLoftProfile(next, p.tool);
+  });
+  const cur = profiles[selected];
+  return {
+    ...state,
+    tool: cur.tool,
+    params: { ...cur.params },
+    loft: { ...state.loft, profiles, selected },
+  };
+}
+
+export function selectLoftProfile(state, index) {
+  if (!state?.loft?.profiles?.length) return state;
+  const selected = Math.max(0, Math.min(Number(index) || 0, state.loft.profiles.length - 1));
+  const cur = state.loft.profiles[selected];
+  return {
+    ...state,
+    tool: cur.tool,
+    params: { ...cur.params },
+    loft: { ...state.loft, selected },
+  };
+}
+
+export function addLoftProfile(state) {
+  if (!state?.loft?.profiles) return state;
+  if (state.loft.profiles.length >= LOFT_MAX_PROFILES) return state;
+  const profiles = state.loft.profiles.map((p) => normalizeLoftProfile(p, p.tool));
+  const maxOff = profiles.reduce((m, p) => Math.max(m, Number(p.offset) || 0), 0);
+  const next = normalizeLoftProfile({
+    id: _newLoftProfileId(profiles),
+    tool: state.tool || 'circle',
+    params: { ...(state.params || defaultContourParams(state.tool || 'circle')) },
+    offset: maxOff + 20,
+  }, state.tool || 'circle');
+  profiles.push(next);
+  return {
+    ...state,
+    tool: next.tool,
+    params: { ...next.params },
+    loft: { profiles, selected: profiles.length - 1 },
+  };
+}
+
+export function removeLoftProfile(state, index) {
+  if (!state?.loft?.profiles || state.loft.profiles.length <= LOFT_MIN_PROFILES) {
+    return state;
+  }
+  const i = Number(index);
+  if (!Number.isInteger(i) || i < 0 || i >= state.loft.profiles.length) return state;
+  const profiles = state.loft.profiles.filter((_, k) => k !== i);
+  const selected = Math.min(
+    i === state.loft.selected ? Math.max(0, i - 1) : state.loft.selected > i ? state.loft.selected - 1 : state.loft.selected,
+    profiles.length - 1,
+  );
+  const cur = profiles[selected];
+  return {
+    ...state,
+    tool: cur.tool,
+    params: { ...cur.params },
+    loft: { profiles, selected },
+  };
+}
+
+export function setLoftProfileOffset(state, offset) {
+  if (!state?.loft?.profiles?.length) return state;
+  const selected = Math.max(0, Math.min(state.loft.selected || 0, state.loft.profiles.length - 1));
+  const profiles = state.loft.profiles.map((p, i) => (i === selected ? { ...p, offset } : p));
+  return { ...state, loft: { ...state.loft, profiles, selected } };
 }
 
 export function normalizeRevolveParams(raw = {}) {
@@ -312,12 +443,15 @@ export function mapContoursToRevolve(contours, uvAxis) {
  */
 export function enterContourState(entry, faceData = null) {
   const resolved = resolveContourWorkplane(faceData);
+  const loft = defaultLoftState();
+  const first = loft.profiles[0];
   return {
     entry: CONTOUR_ENTRY_IDS.has(entry) ? entry : 'crossSection',
-    tool: 'circle',
-    params: defaultContourParams('circle'),
+    tool: first.tool,
+    params: { ...first.params },
     extrude: defaultExtrudeParams(),
     revolve: defaultRevolveParams(),
+    loft,
     planeFace: resolved.ok ? resolved.face : null,
     enterRefuse: resolved.ok ? null : resolved.message,
   };
@@ -329,7 +463,11 @@ export function switchContourTool(state, tool) {
   if (state?.params?.radius != null && next.radius != null) {
     next.radius = state.params.radius;
   }
-  return { ...state, tool: nextTool, params: next };
+  const nextState = { ...state, tool: nextTool, params: next };
+  if (isLoftEntry(state?.entry)) {
+    return writeLoftSelected(nextState, { tool: nextTool, params: next });
+  }
+  return nextState;
 }
 
 /**
@@ -622,6 +760,86 @@ export function buildRevolveSolidPreview(face, tool, params, revolve) {
   };
 }
 
+export function validateLoftProfiles(profiles) {
+  if (!Array.isArray(profiles) || profiles.length < LOFT_MIN_PROFILES) {
+    return { ok: false, message: 'makeLoft: need at least 2 profiles' };
+  }
+  if (profiles.length > LOFT_MAX_PROFILES) {
+    return { ok: false, message: `makeLoft: at most ${LOFT_MAX_PROFILES} profiles in v1` };
+  }
+  const normalized = [];
+  const offsets = [];
+  for (let i = 0; i < profiles.length; i++) {
+    const p = normalizeLoftProfile(profiles[i], profiles[i]?.tool || 'circle');
+    const gate = validateContourProfile(p.tool, p.params);
+    if (!gate.ok) {
+      return { ok: false, message: `makeLoft: profile ${i + 1}: ${gate.message}` };
+    }
+    if (!Number.isFinite(Number(p.offset))) {
+      return { ok: false, message: `makeLoft: profile ${i + 1}: offset must be finite` };
+    }
+    normalized.push(p);
+    offsets.push(Number(p.offset));
+  }
+  const sorted = offsets.slice().sort((a, b) => a - b);
+  for (let i = 1; i < sorted.length; i++) {
+    if (Math.abs(sorted[i] - sorted[i - 1]) < 1e-6) {
+      return {
+        ok: false,
+        message: 'makeLoft: profiles share the same station offset — would be a zero-height loft',
+      };
+    }
+  }
+  return { ok: true, normalized };
+}
+
+/**
+ * Live Loft solid preview payload (shared workplane + offset stations).
+ * Null when <2 valid profiles or coincident offsets.
+ */
+export function buildLoftSolidPreview(face, profiles) {
+  const gate = validateLoftProfiles(profiles);
+  if (!gate.ok) return null;
+  const plane = planeFromContourFace(face);
+  const sections = [];
+  try {
+    for (const p of gate.normalized) {
+      const built = buildProfileFromParams(toolToProfileParams(p.tool, p.params));
+      if (!built?.contours?.length) return null;
+      sections.push({
+        plane: offsetPlaneFrame(plane, p.offset),
+        contours: built.contours,
+        offset: p.offset,
+      });
+    }
+  } catch {
+    return null;
+  }
+  const preview = buildLoftPreviewStations(sections, 32);
+  if (!preview) return null;
+  return {
+    plane,
+    stations: preview.stations,
+    profiles: gate.normalized,
+  };
+}
+
+export function loftSectionsForCompose(face, profiles) {
+  const gate = validateLoftProfiles(profiles);
+  if (!gate.ok) return gate;
+  const plane = planeFromContourFace(face);
+  const sections = gate.normalized.map((p) => ({
+    plane: offsetPlaneFrame(plane, p.offset),
+    contours: buildProfileFromParams(toolToProfileParams(p.tool, p.params)).contours,
+    offset: p.offset,
+    tool: p.tool,
+    params: p.params,
+  }));
+  const assembled = assembleLoftStations(sections);
+  if (!assembled.ok) return assembled;
+  return { ok: true, normalized: gate.normalized, sections, assembled };
+}
+
 export function hasContourProfileBlock(buffer) {
   const t = String(buffer || '');
   return t.includes(CONTOUR_PROFILE_BEGIN) && t.includes(CONTOUR_PROFILE_END);
@@ -687,7 +905,7 @@ export function composeContourProfile(buffer, { face = null, tool = 'circle', pa
   // Only the contour block is this composer's responsibility. Pre-existing
   // makeExtrude / makeRevolve / loft in the user's script must not block Confirm.
   const owned = contourProfileOwnedRegion(composed);
-  if (/makeExtrude\s*\(|makeRevolve\s*\(|\bloft\s*\(/.test(owned)) {
+  if (/makeExtrude\s*\(|makeRevolve\s*\(|makeLoft\s*\(|\bloft\s*\(/.test(owned)) {
     return {
       ok: false,
       message: CONTOUR_NO_SOLID,
@@ -720,6 +938,11 @@ export function countMakeExtrude(buffer) {
 
 export function countMakeRevolve(buffer) {
   const m = String(buffer || '').match(/makeRevolve\s*\(/g);
+  return m ? m.length : 0;
+}
+
+export function countMakeLoft(buffer) {
+  const m = String(buffer || '').match(/makeLoft\s*\(/g);
   return m ? m.length : 0;
 }
 
@@ -789,9 +1012,7 @@ export function composeContourExtrude(buffer, {
   }
 
   const planar = face && face.type === 'planar' ? face : null;
-  const stripped = stripContourRevolveBlock(
-    stripContourExtrudeBlock(stripContourProfileBlock(buffer)),
-  );
+  const stripped = stripContourSiblingBlocks(buffer);
   const profileParams = {
     ...toolToProfileParams(tool, params),
     body: params.body || 'part',
@@ -851,7 +1072,7 @@ export function composeContourExtrude(buffer, {
       message: 'composeContourExtrude: contour-mode extrude markers missing — refusing unscoped insert.',
     };
   }
-  if (/makeRevolve\s*\(|\bloft\s*\(/.test(owned)) {
+  if (/makeRevolve\s*\(|makeLoft\s*\(|\bloft\s*\(/.test(owned)) {
     return {
       ok: false,
       message: 'composeContourExtrude: unexpected Revolve/Loft in the Extrude block.',
@@ -932,9 +1153,7 @@ export function composeContourRevolve(buffer, {
   }
 
   const planar = face && face.type === 'planar' ? face : null;
-  const stripped = stripContourRevolveBlock(
-    stripContourExtrudeBlock(stripContourProfileBlock(buffer)),
-  );
+  const stripped = stripContourSiblingBlocks(buffer);
   const profileParams = {
     ...toolToProfileParams(tool, params),
     body: params.body || 'part',
@@ -1000,7 +1219,7 @@ export function composeContourRevolve(buffer, {
       message: 'composeContourRevolve: contour-mode revolve markers missing — refusing unscoped insert.',
     };
   }
-  if (/makeExtrude\s*\(|\bloft\s*\(/.test(owned)) {
+  if (/makeExtrude\s*\(|makeLoft\s*\(|\bloft\s*\(/.test(owned)) {
     return {
       ok: false,
       message: 'composeContourRevolve: unexpected Extrude/Loft in the Revolve block.',
@@ -1015,8 +1234,157 @@ export function composeContourRevolve(buffer, {
   return { ok: true, buffer: composed, run: true };
 }
 
+export function hasContourLoftBlock(buffer) {
+  const t = String(buffer || '');
+  return t.includes(CONTOUR_LOFT_BEGIN) && t.includes(CONTOUR_LOFT_END);
+}
+
+export function contourLoftOwnedRegion(buffer) {
+  const text = String(buffer || '');
+  const i = text.lastIndexOf(CONTOUR_LOFT_BEGIN);
+  if (i < 0) return '';
+  const j = text.indexOf(CONTOUR_LOFT_END, i);
+  if (j < 0) return '';
+  return text.slice(i, j + CONTOUR_LOFT_END.length);
+}
+
+export function stripContourLoftBlock(buffer) {
+  const text = String(buffer || '');
+  const i = text.lastIndexOf(CONTOUR_LOFT_BEGIN);
+  if (i < 0) return text;
+  const j = text.indexOf(CONTOUR_LOFT_END, i);
+  if (j < 0) return text;
+  const after = text.slice(j + CONTOUR_LOFT_END.length).replace(/^\r?\n/, '');
+  const before = text.slice(0, i).replace(/\s+$/, '');
+  if (before && after) return `${before}\n${after}`;
+  return before || after;
+}
+
+function stripContourSiblingBlocks(buffer) {
+  return stripContourLoftBlock(
+    stripContourRevolveBlock(
+      stripContourExtrudeBlock(stripContourProfileBlock(buffer)),
+    ),
+  );
+}
+
 /**
- * Confirm router: Extrude / Revolve entry → solid; Profile stays Profile-only.
+ * Confirm → insert or replace in-mode Loft (≥2 profiles + makeLoft + placeInFrame).
+ * New-body path replaces `part` (no host add). Second Confirm updates the same block.
+ * v1: same workplane, each profile offset along the plane normal.
+ *
+ * @returns {{ ok: true, buffer: string, run: true } | { ok: false, message: string }}
+ */
+export function composeContourLoft(buffer, {
+  face = null,
+  loft = {},
+  profiles = null,
+} = {}) {
+  const list = profiles || loft.profiles || defaultLoftProfiles();
+  let sections;
+  try {
+    const built = loftSectionsForCompose(face, list);
+    if (!built.ok) return built;
+    sections = built;
+  } catch (e) {
+    return { ok: false, message: (e && e.message) || String(e) };
+  }
+
+  const text = String(buffer || '');
+  if (markersUnbalanced(text, CONTOUR_LOFT_BEGIN, CONTOUR_LOFT_END)) {
+    return {
+      ok: false,
+      message: 'composeContourLoft: unbalanced loft markers — refusing silent no-op.',
+    };
+  }
+
+  const planar = face && face.type === 'planar' ? face : null;
+  const stripped = stripContourSiblingBlocks(buffer);
+  const profileParams = {
+    ...toolToProfileParams(sections.normalized[0].tool, sections.normalized[0].params),
+    body: 'part',
+    _contourLoft: {
+      plane: planeFromContourFace(face),
+      profiles: sections.normalized.map((p) => ({
+        ...toolToProfileParams(p.tool, p.params),
+        offset: p.offset,
+      })),
+    },
+  };
+  const composed = composeHelperInsert(
+    stripped,
+    'crossSection',
+    null,
+    profileParams,
+    planar,
+    null,
+  );
+  if (typeof composed !== 'string') {
+    return {
+      ok: false,
+      message: 'Could not compose Loft — need a part and a planar workplane.',
+    };
+  }
+  const owned = contourLoftOwnedRegion(composed);
+  if (!/makeCrossSection\s*\(/.test(owned)) {
+    return {
+      ok: false,
+      message: 'composeContourLoft: makeCrossSection missing — refusing silent no-op.',
+    };
+  }
+  if ((owned.match(/makeCrossSection\s*\(/g) || []).length < LOFT_MIN_PROFILES) {
+    return {
+      ok: false,
+      message: 'composeContourLoft: need at least 2 makeCrossSection profiles — refusing silent no-op.',
+    };
+  }
+  if (!/makeLoft\s*\(/.test(owned)) {
+    return {
+      ok: false,
+      message: 'composeContourLoft: makeLoft missing — refusing silent no-op.',
+    };
+  }
+  if (!/placeInFrame\s*\(|transformByFrame\s*\(/.test(owned)) {
+    return {
+      ok: false,
+      message: 'composeContourLoft: placeInFrame missing — refusing unscoped insert.',
+    };
+  }
+  if (/placeOnFace\s*\(/.test(owned)) {
+    return {
+      ok: false,
+      message: 'composeContourLoft: placeOnFace is the host path — refusing leftover host.',
+    };
+  }
+  if (/part\s*=\s*part\.add\(/.test(owned)) {
+    return {
+      ok: false,
+      message: 'composeContourLoft: host-add is not the new-body path — refusing leftover host.',
+    };
+  }
+  if (!hasContourLoftBlock(composed)) {
+    return {
+      ok: false,
+      message: 'composeContourLoft: contour-mode loft markers missing — refusing unscoped insert.',
+    };
+  }
+  if (/makeExtrude\s*\(|makeRevolve\s*\(/.test(owned)) {
+    return {
+      ok: false,
+      message: 'composeContourLoft: unexpected Extrude/Revolve in the Loft block.',
+    };
+  }
+  if (isBufferEmpty(String(buffer || '')) && /Manifold\.cube\s*\(/.test(composed)) {
+    return {
+      ok: false,
+      message: 'composeContourLoft: unexpected starter box on empty buffer — refusing extra solid.',
+    };
+  }
+  return { ok: true, buffer: composed, run: true };
+}
+
+/**
+ * Confirm router: Extrude / Revolve / Loft entry → solid; Profile stays Profile-only.
  */
 export function composeContourCommit(buffer, payload = {}) {
   const entry = payload.entry || 'crossSection';
@@ -1025,6 +1393,9 @@ export function composeContourCommit(buffer, payload = {}) {
   }
   if (isRevolveEntry(entry)) {
     return composeContourRevolve(buffer, payload);
+  }
+  if (isLoftEntry(entry)) {
+    return composeContourLoft(buffer, payload);
   }
   const result = composeContourProfile(buffer, payload);
   if (result.ok) result.run = false;

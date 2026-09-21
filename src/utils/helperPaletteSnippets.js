@@ -17,6 +17,8 @@
  * Slice 26/hotfix: Revolve Confirm wraps profile + makeRevolve / placeInFrame
  * (replace part — no host add) in revolve markers.
  * Slice 27: Fillet-in-mode Accept wraps makeSweepPath + filletAlongPath in fillet markers.
+ * Slice 28/hotfix: Loft Confirm wraps ≥2 makeCrossSection + makeLoft / placeInFrame
+ * (replace part — no host add) in loft markers.
  *
  * Sequential taps compose via composeHelperInsert:
  * strip one trailing `return part;`, insert body, re-append exactly one `return part;`.
@@ -46,6 +48,10 @@ export const CONTOUR_EXTRUDE_END = '// --- contour-mode extrude end ---';
 export const CONTOUR_REVOLVE_BEGIN = '// --- contour-mode revolve begin ---';
 export const CONTOUR_REVOLVE_END = '// --- contour-mode revolve end ---';
 
+/** Slice 28 — in-mode Loft region (profiles + makeLoft). Second Confirm replaces this block. */
+export const CONTOUR_LOFT_BEGIN = '// --- contour-mode loft begin ---';
+export const CONTOUR_LOFT_END = '// --- contour-mode loft end ---';
+
 /** Slice 27 — in-mode Fillet region (makeSweepPath + filletAlongPath). Second Accept replaces this block. */
 export const FILLET_MODE_BEGIN = '// --- fillet-mode begin ---';
 export const FILLET_MODE_END = '// --- fillet-mode end ---';
@@ -61,7 +67,7 @@ export const MIRROR_PLANE_OPTIONS = ['xy', 'yz', 'xz'];
 
 /** Bases treated as body identifiers for the body selector. */
 const BODY_BASES = [
-  'part', 'box', 'cyl', 'sphere', 'tube', 'hex', 'rbox', 'extrude', 'revolve', 'bore',
+  'part', 'box', 'cyl', 'sphere', 'tube', 'hex', 'rbox', 'extrude', 'revolve', 'lofted', 'bore',
 ];
 
 /** Exact base or numbered form only (box, box1) — not prefix (boxCount). */
@@ -173,7 +179,7 @@ export function listBodyNames(buffer) {
   // Fallback only when part is mutable (or undeclared).
   if (!constNames.has('part')) names.add('part');
   // Also catch `part = …` / `box1 = …` mutations without fresh decl.
-  const assign = /\b([A-Za-z_$][\w$]*)\s*=\s*(?:Manifold\.|tube\(|hexPrism\(|roundedBox\(|makeExtrude\(|makeRevolve\(|filletEdges\(|filletAlongPath\(|chamferEdges\(|hole\(|clearanceHole\(|tapDrillHole\(|cboreHole\(|cskHole\(|holePattern\(|shell\(|addDraft\(|center\(|align\(|mirror\(|array3D\(|polarArray\()/g;
+  const assign = /\b([A-Za-z_$][\w$]*)\s*=\s*(?:Manifold\.|tube\(|hexPrism\(|roundedBox\(|makeExtrude\(|makeRevolve\(|makeLoft\(|filletEdges\(|filletAlongPath\(|chamferEdges\(|hole\(|clearanceHole\(|tapDrillHole\(|cboreHole\(|cskHole\(|holePattern\(|shell\(|addDraft\(|center\(|align\(|mirror\(|array3D\(|polarArray\()/g;
   while ((m = assign.exec(s))) {
     const n = m[1];
     if (constNames.has(n)) continue;
@@ -393,6 +399,59 @@ function emitDefaultTopWorkplane(body, names) {
     ],
     frVar: fr,
   };
+}
+
+/** Emit profileCircle / profileRectangle / profilePolygon from Slice 21 params. */
+function emitProfileExprFromParams(p) {
+  const type = str(p.profileType, 'circle');
+  if (type === 'rectangle') {
+    const w = num(p.width, 20);
+    const h = num(p.height, 12);
+    const c = bool(p.centered, true);
+    return `profileRectangle(${w}, ${h}, ${c})`;
+  }
+  if (type === 'polygon') {
+    const preset = str(p.polygonPreset, 'hexagon');
+    const r = num(p.radius, 8);
+    if (preset === 'custom' && Array.isArray(p.points)) {
+      const pts = p.points.map((v) => {
+        const u = Number(v?.[0]);
+        const vv = Number(v?.[1]);
+        return `[${roundFaceNum(u, 4)}, ${roundFaceNum(vv, 4)}]`;
+      });
+      return `profilePolygon([${pts.join(', ')}])`;
+    }
+    if (preset === 'quarterCircle') {
+      const seg = 8;
+      const pts = ['[0, 0]', `[${r}, 0]`];
+      for (let i = 1; i <= seg; i++) {
+        const t = (i / seg) * (Math.PI / 2);
+        const u = +(r * Math.cos(t)).toFixed(4);
+        const v = +(r * Math.sin(t)).toFixed(4);
+        pts.push(`[${u}, ${v}]`);
+      }
+      return `profilePolygon([${pts.join(', ')}])`;
+    }
+    const sides = preset === 'triangle' ? 3 : preset === 'square' ? 4 : preset === 'pentagon' ? 5 : 6;
+    const pts = [];
+    for (let i = 0; i < sides; i++) {
+      const t = (i / sides) * Math.PI * 2 - Math.PI / 2;
+      const u = +(r * Math.cos(t)).toFixed(4);
+      const v = +(r * Math.sin(t)).toFixed(4);
+      pts.push(`[${u}, ${v}]`);
+    }
+    return `profilePolygon([${pts.join(', ')}])`;
+  }
+  const r = num(p.radius, 5);
+  const seg = Math.max(3, Math.round(num(p.segments, 32)));
+  return `profileCircle(${r}, ${seg})`;
+}
+
+/** Shared-workplane loft station: offsetPlaneFrame(plane, offset). */
+function emitOffsetPlaneExpr(frVar, offset) {
+  const w = +Number(offset).toFixed(4);
+  if (Math.abs(w) < 1e-12) return frVar;
+  return `offsetPlaneFrame(${frVar}, ${w})`;
 }
 
 /** Compact `cu*u + cv*v + add` for contour-mode Revolve remapping. */
@@ -895,9 +954,9 @@ export const HELPER_PALETTE_ITEMS = [
       },
     ],
     build: (empty, p, names, buffer, faceCtx = null) => {
-      // New-body Extrude / Revolve Confirm: no starter cube, no host query.
+      // New-body Extrude / Revolve / Loft Confirm: no starter cube, no host query.
       // Plane is a literal PlaneFrame; part is replaced (not added onto).
-      const isNewBodySolid = !!(p._contourRevolve || p._contourExtrude);
+      const isNewBodySolid = !!(p._contourRevolve || p._contourExtrude || p._contourLoft);
       // Capture before resolveBody, which always touches `part` in the names set.
       const partDeclared = names.has('part');
       const lines = isNewBodySolid ? [] : [...ensurePartPrefix(empty, names)];
@@ -906,7 +965,10 @@ export const HELPER_PALETTE_ITEMS = [
       const planarCtx = faceCtx && faceCtx.type === 'planar' ? faceCtx : null;
       let wp;
       if (isNewBodySolid) {
-        const plane = p._contourRevolve?.plane || p._contourExtrude?.plane || null;
+        const plane = p._contourRevolve?.plane
+          || p._contourExtrude?.plane
+          || p._contourLoft?.plane
+          || null;
         const fr = allocateUniqueName(names, 'fr');
         wp = {
           lines: [`const ${fr} = ${emitPlaneFrameLiteral(plane)};`],
@@ -919,54 +981,32 @@ export const HELPER_PALETTE_ITEMS = [
       }
       const fr = wp.frVar;
       const xs = allocateUniqueName(names, 'xs');
-      const type = str(p.profileType, 'circle');
-      let profileExpr;
-      if (type === 'rectangle') {
-        const w = num(p.width, 20);
-        const h = num(p.height, 12);
-        const c = bool(p.centered, true);
-        profileExpr = `profileRectangle(${w}, ${h}, ${c})`;
-      } else if (type === 'polygon') {
-        const preset = str(p.polygonPreset, 'hexagon');
-        const r = num(p.radius, 8);
-        if (preset === 'custom' && Array.isArray(p.points)) {
-          const pts = p.points.map((v) => {
-            const u = Number(v?.[0]);
-            const vv = Number(v?.[1]);
-            return `[${roundFaceNum(u, 4)}, ${roundFaceNum(vv, 4)}]`;
-          });
-          profileExpr = `profilePolygon([${pts.join(', ')}])`;
-        } else if (preset === 'quarterCircle') {
-          // First-quadrant fillet-style closed polyline (origin→(r,0)→arc→(0,r)).
-          const seg = 8;
-          const pts = ['[0, 0]', `[${r}, 0]`];
-          for (let i = 1; i <= seg; i++) {
-            const t = (i / seg) * (Math.PI / 2);
-            const u = +(r * Math.cos(t)).toFixed(4);
-            const v = +(r * Math.sin(t)).toFixed(4);
-            pts.push(`[${u}, ${v}]`);
-          }
-          profileExpr = `profilePolygon([${pts.join(', ')}])`;
-        } else {
-          const sides = preset === 'triangle' ? 3 : preset === 'square' ? 4 : preset === 'pentagon' ? 5 : 6;
-          const pts = [];
-          for (let i = 0; i < sides; i++) {
-            const t = (i / sides) * Math.PI * 2 - Math.PI / 2;
-            const u = +(r * Math.cos(t)).toFixed(4);
-            const v = +(r * Math.sin(t)).toFixed(4);
-            pts.push(`[${u}, ${v}]`);
-          }
-          profileExpr = `profilePolygon([${pts.join(', ')}])`;
-        }
-      } else {
-        const r = num(p.radius, 5);
-        const seg = Math.max(3, Math.round(num(p.segments, 32)));
-        profileExpr = `profileCircle(${r}, ${seg})`;
-      }
+      const profileExpr = emitProfileExprFromParams(p);
       // Substrate only — named let for later edge→sweep / fillet / extrude slices.
       const profileLine = `const ${xs} = makeCrossSection(${fr}, ${profileExpr}); // plane+profile substrate`;
-      // Slice 26: Revolve Confirm — profile + makeRevolve on an in-plane axis.
-      if (p._contourRevolve) {
+      // Slice 28: Loft Confirm — ≥2 makeCrossSection (same workplane + offsets) + makeLoft.
+      if (p._contourLoft && Array.isArray(p._contourLoft.profiles)) {
+        const xsNames = [];
+        const offsets = p._contourLoft.profiles.map((prof) => Number(prof.offset) || 0);
+        const minOff = offsets.length ? Math.min(...offsets) : 0;
+        const w = +Number(minOff).toFixed(4);
+        lines.push(CONTOUR_LOFT_BEGIN);
+        lines.push(...wp.lines);
+        for (const prof of p._contourLoft.profiles) {
+          const xsN = allocateUniqueName(names, 'xs');
+          xsNames.push(xsN);
+          const planeExpr = emitOffsetPlaneExpr(fr, prof.offset);
+          lines.push(
+            `const ${xsN} = makeCrossSection(${planeExpr}, ${emitProfileExprFromParams(prof)});`,
+          );
+        }
+        const solidExpr = `makeLoft([${xsNames.join(', ')}])`;
+        const placed = Math.abs(w) < 1e-12
+          ? `placeInFrame(${fr}, ${solidExpr})`
+          : `placeInFrame(${fr}, ${solidExpr}, [0, 0, ${w}])`;
+        lines.push(emitPartReplace(names, placed, partDeclared));
+        lines.push(CONTOUR_LOFT_END);
+      } else if (p._contourRevolve) {
         const rev = p._contourRevolve;
         const angle = num(rev.angle, 360);
         const segs = Math.max(3, Math.round(num(rev.segments, 96)));
@@ -1481,6 +1521,37 @@ export const HELPER_PALETTE_ITEMS = [
         if (partName !== 'part') lines.push(`part = ${partName};`);
       } else {
         lines.push(`part = ${revolve};`);
+      }
+      return withReturn(lines, empty);
+    },
+  },
+  {
+    id: 'makeLoft',
+    label: 'Loft',
+    group: 'Transforms',
+    title: 'Loft — contour mode (multi-profile makeCrossSection + makeLoft)',
+    bodyBase: 'lofted',
+    params: [
+      { name: 'height', type: 'number', default: 20, label: 'Offset', min: 0.1, step: 1 },
+    ],
+    // UI always enters contour mode (Slice 28). This build is the sequential /
+    // golden fallback — two circles on +Z, same-plane + offset.
+    build: (empty, p, names) => {
+      const h = num(p.height, 20);
+      const xs0 = allocateUniqueName(names, 'xs');
+      const xs1 = allocateUniqueName(names, 'xs');
+      const lofted = allocateUniqueName(names, 'lofted');
+      const lines = [
+        `const ${xs0} = makeCrossSection({ center: [0, 0, 0], normal: [0, 0, 1], x: [1, 0, 0], y: [0, 1, 0] }, profileCircle(5, 32));`,
+        `const ${xs1} = makeCrossSection({ center: [0, 0, ${h}], normal: [0, 0, 1], x: [1, 0, 0], y: [0, 1, 0] }, profileCircle(8, 32));`,
+        `let ${lofted} = makeLoft([${xs0}, ${xs1}]);`,
+      ];
+      if (empty || !names.has('part')) {
+        const partName = allocateUniqueName(names, 'part');
+        lines.push(partName === 'part' ? `let part = ${lofted};` : `let ${partName} = ${lofted};`);
+        if (partName !== 'part') lines.push(`part = ${partName};`);
+      } else {
+        lines.push(`part = ${lofted};`);
       }
       return withReturn(lines, empty);
     },

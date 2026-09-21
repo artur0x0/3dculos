@@ -18,7 +18,7 @@ const ALLOWLIST = [
   { name: 'hole / holeSpan / holePattern', role: 'Generic through-holes' },
   { name: 'facesByNormal / workplaneFromFace / …', role: 'Selection helpers' },
   { name: 'shell, addDraft, mirror, array3D, polarArray…', role: 'Solids / layout' },
-  { name: 'loft, sweep, makeExtrude, makeRevolve', role: 'Profiles / paths' },
+  { name: 'loft / makeLoft, offsetPlaneFrame, sweep, makeExtrude, makeRevolve', role: 'Profiles / paths' },
   { name: 'center / align', role: 'Placement' },
 ];
 
