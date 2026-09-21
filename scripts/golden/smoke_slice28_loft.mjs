@@ -30,6 +30,7 @@ import {
   assembleLoftStations,
   buildMakeLoftSolid,
   offsetPlaneFrame,
+  rotateContour,
 } from '../../src/utils/makeLoft.js';
 import {
   isContourEntry,
@@ -98,6 +99,22 @@ function circlePts(r, n = 32) {
     pts.push([r * Math.cos(t), r * Math.sin(t)]);
   }
   return pts;
+}
+
+function squarePts(side) {
+  const h = side / 2;
+  return [[-h, -h], [h, -h], [h, h], [-h, h]];
+}
+
+function rectPts(w, h) {
+  return [[-w / 2, -h / 2], [w / 2, -h / 2], [w / 2, h / 2], [-w / 2, h / 2]];
+}
+
+/** Diamond with the given diagonal length; start at +Y so a start-vertex
+ *  / angle-index mismatch is visible (axis-start diamonds can pass by luck). */
+function diamondPts(diag) {
+  const h = diag / 2;
+  return [[0, h], [-h, 0], [0, -h], [h, 0]];
 }
 
 // ── Entry / defaults ───────────────────────────────────────────
@@ -345,6 +362,63 @@ function circlePts(r, n = 32) {
   });
   check('compose refuses coincident offset', !refuseOff.ok && /offset/i.test(refuseOff.message || ''));
 
+  {
+    const item = HELPER_PALETTE_ITEMS.find((h) => h.id === 'crossSection');
+    const origBuild = item.build;
+    const loftArgs = { face, loft: { profiles: defaultLoftProfiles() } };
+    const guardCases = [
+      {
+        name: 'unbalanced loft markers',
+        msg: 'unbalanced loft markers',
+        buffer: `${starter}${CONTOUR_LOFT_BEGIN}\n`,
+      },
+      {
+        name: 'makeCrossSection missing',
+        msg: 'makeCrossSection missing',
+        buffer: starter,
+        patch() {
+          item.build = () => (
+            `${CONTOUR_LOFT_BEGIN}\n`
+            + 'let part = placeInFrame({center:[0,0,0],normal:[0,0,1],x:[1,0,0],y:[0,1,0]}, makeLoft([]));\n'
+            + `${CONTOUR_LOFT_END}\n`
+          );
+        },
+      },
+      {
+        name: 'need at least 2 makeCrossSection',
+        msg: 'need at least 2 makeCrossSection',
+        buffer: starter,
+        patch() {
+          item.build = () => (
+            `${CONTOUR_LOFT_BEGIN}\n`
+            + 'const xs0 = makeCrossSection(fr, profileCircle(5));\n'
+            + 'let part = placeInFrame(fr, makeLoft([xs0]));\n'
+            + `${CONTOUR_LOFT_END}\n`
+          );
+        },
+      },
+      {
+        name: 'Could not compose Loft',
+        msg: 'Could not compose Loft',
+        buffer: starter,
+        patch() { item.build = () => null; },
+      },
+    ];
+    for (const c of guardCases) {
+      try {
+        if (c.patch) c.patch();
+        const r = composeContourLoft(c.buffer, loftArgs);
+        check(
+          `compose guard: ${c.name}`,
+          !r.ok && new RegExp(c.msg, 'i').test(r.message || ''),
+          r.ok ? 'ok=true' : (r.message || ''),
+        );
+      } finally {
+        item.build = origBuild;
+      }
+    }
+  }
+
   const stripped = stripContourLoftBlock(first.buffer);
   check('strip removes loft markers', !hasContourLoftBlock(stripped));
   check('strip removes makeLoft', countMakeLoft(stripped) === 0);
@@ -540,6 +614,39 @@ function circlePts(r, n = 32) {
   check('fillet compose has no loft markers', !hasContourLoftBlock(filBuf || ''));
 }
 
+// ── Volume-0 guard at the util layer (mock solid, no wasm) ─────
+{
+  const plane = {
+    center: [0, 0, 0],
+    normal: [0, 0, 1],
+    x: [1, 0, 0],
+    y: [0, 1, 0],
+  };
+  const fakeSolid = {
+    warp() { return this; },
+    translate() { return this; },
+    add() { return this; },
+    volume() { return 0; },
+  };
+  const FakeManifold = { extrude() { return fakeSolid; } };
+  const FakeCrossSection = function FakeCrossSection() {};
+  FakeCrossSection.prototype.extrude = function extrude() { return fakeSolid; };
+  let msg = '';
+  try {
+    buildMakeLoftSolid(FakeManifold, FakeCrossSection, [
+      { plane, contours: [circlePts(5)] },
+      { plane: offsetPlaneFrame(plane, 20), contours: [circlePts(8)] },
+    ]);
+  } catch (e) {
+    msg = (e && e.message) || String(e);
+  }
+  check(
+    'volume-0 guard at util layer',
+    /EMPTY|volume 0/i.test(msg),
+    msg || 'did not throw',
+  );
+}
+
 // ── Volume contracts on built/manifold.js ──────────────────────
 {
   const wasm = await Module();
@@ -573,6 +680,69 @@ function circlePts(r, n = 32) {
     'r=10→5 loft → frustum vol ≈ (1/3)πh(R²+Rr+r²) (3400–3900)',
     frVol > 3400 && frVol < 3900,
     `vol=${frVol} expected≈${frExpect.toFixed(2)}`,
+  );
+
+  // Congruent parallel sections → prism: volume = area × height.
+  // Tight relative band so a fixed parameterisation bias cannot hide.
+  const prismH = 20;
+  const prismCases = [
+    { name: 'circle r=10', pts: circlePts(10, 64), area: Math.PI * 100 },
+    { name: 'square 20x20', pts: squarePts(20), area: 400 },
+    { name: 'rect 30x10', pts: rectPts(30, 10), area: 300 },
+    { name: 'diamond diagonals 20', pts: diamondPts(20), area: 200 },
+  ];
+  for (const c of prismCases) {
+    const solid = buildMakeLoftSolid(Manifold, CrossSection, [
+      { plane, contours: [c.pts] },
+      { plane: offsetPlaneFrame(plane, prismH), contours: [c.pts] },
+    ], { resolution: 64 });
+    const got = solid.volume();
+    const expect = c.area * prismH;
+    const rel = Math.abs(got - expect) / expect;
+    check(
+      `congruent ${c.name} loft vol ≈ area×h`,
+      rel < 0.02,
+      `vol=${got} expected=${expect.toFixed(2)} rel=${(rel * 100).toFixed(2)}%`,
+    );
+  }
+
+  const rect = rectPts(30, 10);
+  const aligned = buildMakeLoftSolid(Manifold, CrossSection, [
+    { plane, contours: [rect] },
+    { plane: offsetPlaneFrame(plane, 20), contours: [rotateContour(rect, 45)] },
+  ], { resolution: 64 });
+  const twisted = buildMakeLoftSolid(Manifold, CrossSection, [
+    { plane, contours: [rect] },
+    { plane: offsetPlaneFrame(plane, 20), contours: [rotateContour(rect, 45)] },
+  ], { align: false, resolution: 64 });
+  const alignedVol = aligned.volume();
+  const twistedVol = twisted.volume();
+  const prismVol = 30 * 10 * 20;
+  check(
+    'align default differs from align:false',
+    Math.abs(alignedVol - twistedVol) > 100,
+    `default=${alignedVol} align:false=${twistedVol}`,
+  );
+  check(
+    'align default is the aligned arm',
+    Math.abs(alignedVol - prismVol) < Math.abs(twistedVol - prismVol),
+    `default=${alignedVol} twisted=${twistedVol} prism=${prismVol}`,
+  );
+
+  const sectionsAsc = [
+    { plane, contours: [circlePts(5, 64)], offset: 0 },
+    { plane: offsetPlaneFrame(plane, 20), contours: [circlePts(5, 64)], offset: 20 },
+  ];
+  const sectionsDesc = [
+    { plane: offsetPlaneFrame(plane, 20), contours: [circlePts(5, 64)], offset: 20 },
+    { plane, contours: [circlePts(5, 64)], offset: 0 },
+  ];
+  const ascVol = buildMakeLoftSolid(Manifold, CrossSection, sectionsAsc, { resolution: 64 }).volume();
+  const descVol = buildMakeLoftSolid(Manifold, CrossSection, sectionsDesc, { resolution: 64 }).volume();
+  check(
+    'descending offsets loft same as ascending',
+    Math.abs(descVol - ascVol) < 1,
+    `asc=${ascVol} desc=${descVol}`,
   );
 }
 

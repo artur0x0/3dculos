@@ -141,7 +141,7 @@ function _sumSqDist(a, b) {
   return d;
 }
 
-function _alignContours(bottom, top) {
+function _alignRotationDeg(bottom, top) {
   let bestRot = 0;
   let minDist = Infinity;
   const steps = 72;
@@ -153,7 +153,36 @@ function _alignContours(bottom, top) {
       bestRot = rot;
     }
   }
-  return rotateContour(top, bestRot);
+  return bestRot;
+}
+
+/**
+ * Nearest forward hit of the ray from the origin along unit (dx, dy)
+ * with a closed polyline. Angular parameterisation for the loft warp:
+ * a vertex at angle θ maps to the boundary point at that same angle
+ * (not to an arc-length sample whose index happens to equal θ/2π).
+ */
+function _contourRayHit(contour, dx, dy) {
+  let bestT = Infinity;
+  let best = null;
+  const n = contour.length;
+  for (let i = 0; i < n; i++) {
+    const ax = contour[i][0];
+    const ay = contour[i][1];
+    const bx = contour[(i + 1) % n][0];
+    const by = contour[(i + 1) % n][1];
+    const ex = bx - ax;
+    const ey = by - ay;
+    const det = dx * ey - ex * dy;
+    if (Math.abs(det) < 1e-14) continue;
+    const u = (ax * dy - dx * ay) / det;
+    const t = (ax * ey - ex * ay) / det;
+    if (u < -1e-9 || u > 1 + 1e-9) continue;
+    if (!(t > 1e-14) || t >= bestT) continue;
+    bestT = t;
+    best = [t * dx, t * dy];
+  }
+  return best;
 }
 
 function _outerContour(section, what) {
@@ -240,12 +269,12 @@ function _loftPair(Manifold, CrossSection, bottom, top, height, opts) {
   if (!(h > 1e-9) || !Number.isFinite(h)) {
     throw new Error('makeLoft: station spacing must be > 0');
   }
-  const bottomTable = resampleContour(bottom, resolution);
-  let topTable = resampleContour(top, resolution);
+  let topAligned = top;
   if (opts.align !== false) {
-    topTable = _alignContours(bottomTable, topTable);
+    const bottomTable = resampleContour(bottom, resolution);
+    const topTable = resampleContour(top, resolution);
+    topAligned = rotateContour(top, _alignRotationDeg(bottomTable, topTable));
   }
-  const radialTable = bottomTable.map((p) => Math.hypot(p[0], p[1]));
   const bottomCS = new CrossSection([bottom]);
   const straight = Manifold.extrude
     ? Manifold.extrude(bottomCS, h, segs)
@@ -261,22 +290,15 @@ function _loftPair(Manifold, CrossSection, bottom, top, height, opts) {
       v[1] = 0;
       return;
     }
-    let angle = Math.atan2(y, x);
-    if (angle < 0) angle += 2 * Math.PI;
-    const s = angle / (2 * Math.PI);
-    const i = Math.floor(s * resolution);
-    const frac = (s * resolution) - i;
-    const i0 = ((i % resolution) + resolution) % resolution;
-    const i1 = (i0 + 1) % resolution;
-    let rBottom = radialTable[i0];
-    rBottom += frac * (radialTable[i1] - radialTable[i0]);
+    const dx = x / rOrig;
+    const dy = y / rOrig;
+    const hitB = _contourRayHit(bottom, dx, dy);
+    const hitT = _contourRayHit(topAligned, dx, dy);
+    if (!hitB || !hitT) return;
+    const rBottom = Math.hypot(hitB[0], hitB[1]);
     const scale = rBottom > 1e-9 ? rOrig / rBottom : 1;
-    let tx = topTable[i0][0];
-    let ty = topTable[i0][1];
-    tx += frac * (topTable[i1][0] - tx);
-    ty += frac * (topTable[i1][1] - ty);
-    v[0] = x + t * (tx * scale - x);
-    v[1] = y + t * (ty * scale - y);
+    v[0] = x + t * (hitT[0] * scale - x);
+    v[1] = y + t * (hitT[1] * scale - y);
   };
   return straight.warp(warp);
 }
