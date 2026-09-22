@@ -54,6 +54,8 @@ function assertNoRedeclares(buf, label) {
 function solid(tag = 's') {
   const o = { _t: tag };
   o.subtract = () => solid(`${tag}-sub`);
+  o.add = (x) => x;
+  o.volume = () => 1;
   return o;
 }
 
@@ -97,8 +99,18 @@ function stubRunner(source) {
     profileCircle: (r) => ({ type: 'circle', contours: [[[r, 0], [0, r], [-r, 0], [0, -r]]] }),
     profileRectangle: (w, h) => ({ type: 'rectangle', contours: [[[0, 0], [w, 0], [w, h], [0, h]]] }),
     profilePolygon: (pts) => ({ type: 'polygon', contours: [pts] }),
-    makeCrossSection: () => ({ kind: 'crossSection' }),
+    makeCrossSection: (plane, profile) => ({
+      kind: 'crossSection',
+      plane: plane && plane.center ? plane : {
+        center: [0, 0, 0], normal: [0, 0, 1], x: [1, 0, 0], y: [0, 1, 0],
+      },
+      contours: (profile && profile.contours) || [[[1, 0], [0, 1], [-1, 0]]],
+    }),
     makeSweepPath: () => ({ kind: 'sweepPath', closed: false, points: [[0,0,0],[1,0,0]], length: 1, edgeCount: 1 }),
+    CrossSection: function CrossSection() { return {}; },
+    sweepPoints: () => solid('sweep'),
+    placeInFrame: (_, solidArg) => solidArg,
+    transformByFrame: (_, solidArg) => solidArg,
   };
   const keys = Object.keys(stubs);
   const fn = new Function(...keys, `"use strict";\n${source}`);

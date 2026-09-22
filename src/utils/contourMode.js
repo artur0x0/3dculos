@@ -11,9 +11,13 @@
  * solid preview; axis on the profile plane). Profile stays Profile-only.
  * Slice 28: Loft entry Confirm commits ≥2 profiles + makeLoft (same workplane
  * + per-profile offset along the normal; live solid preview).
+ * Slice 30: Sweep entry Confirm commits profile + makeSweepPath + sweepPoints
+ * (path in the plane frame, placeInFrame replace; live station preview).
  *
  * Reuses Slice 21: workplaneFromFace / makeCrossSection / profile* substrate.
- * Reuses C8 makeExtrude / makeRevolve / makeLoft + placeInFrame (frame-only, replace part).
+ * Reuses Slice 22: makeSweepPath / assembleSweepPath.
+ * Reuses C8 makeExtrude / makeRevolve / makeLoft + sweepPoints + placeInFrame
+ * (frame-only, replace part).
  */
 
 import {
@@ -37,6 +41,8 @@ import {
   CONTOUR_REVOLVE_END,
   CONTOUR_LOFT_BEGIN,
   CONTOUR_LOFT_END,
+  CONTOUR_SWEEP_BEGIN,
+  CONTOUR_SWEEP_END,
   isBufferEmpty,
 } from './helperPaletteSnippets.js';
 import {
@@ -44,12 +50,14 @@ import {
   buildLoftPreviewStations,
   offsetPlaneFrame,
 } from './makeLoft.js';
+import { assembleSweepPath } from './edgeSweepPath.js';
 
 /** Palette ids that enter contour mode instead of one-shot insert. */
 export const CONTOUR_ENTRY_IDS = new Set([
   'makeExtrude',
   'makeRevolve',
   'makeLoft',
+  'makeSweep',
   'crossSection',
 ]);
 
@@ -63,7 +71,10 @@ export const CONTOUR_TOOLS = [
 export const CONTOUR_TOOL_IDS = CONTOUR_TOOLS.map((t) => t.id);
 
 export const CONTOUR_NO_SOLID =
-  'This Confirm writes Profile only (makeCrossSection). Extrude solids use the Extrude entry; Revolve solids use the Revolve entry; Loft solids use the Loft entry.';
+  'This Confirm writes Profile only (makeCrossSection). Extrude solids use the Extrude entry; Revolve solids use the Revolve entry; Loft solids use the Loft entry; Sweep solids use the Sweep entry.';
+
+export const SWEEP_EMPTY_PATH =
+  'Sweep: pick a path first — select a contiguous edge chain (Edge pick, Tangent on), then Confirm.';
 
 export const LOFT_MIN_PROFILES = 2;
 export const LOFT_MAX_PROFILES = 8;
@@ -88,6 +99,10 @@ export function isRevolveEntry(id) {
 
 export function isLoftEntry(id) {
   return id === 'makeLoft';
+}
+
+export function isSweepEntry(id) {
+  return id === 'makeSweep';
 }
 
 export function isContourTool(id) {
@@ -176,6 +191,15 @@ export function validateExtrudeParams(raw) {
 /** Sane mobile defaults: full 360° around the plane V axis (on-plane). */
 export function defaultRevolveParams() {
   return { angle: 360, axis: 'v', sense: 'positive' };
+}
+
+/** Path direction toggle. The wire itself comes from the edge selection. */
+export function defaultSweepParams() {
+  return { reverse: false };
+}
+
+export function normalizeSweepParams(raw = {}) {
+  return { reverse: !!(raw && raw.reverse) };
 }
 
 function _newLoftProfileId(profiles = []) {
@@ -453,6 +477,7 @@ export function enterContourState(entry, faceData = null) {
     params: { ...first.params },
     extrude: defaultExtrudeParams(),
     revolve: defaultRevolveParams(),
+    sweep: defaultSweepParams(),
     loft,
     planeFace: resolved.ok ? resolved.face : null,
     enterRefuse: resolved.ok ? null : resolved.message,
@@ -826,6 +851,169 @@ export function buildLoftSolidPreview(face, profiles) {
   };
 }
 
+function _norm3(v) {
+  const l = Math.hypot(v[0], v[1], v[2]);
+  if (!(l > 1e-12)) return null;
+  return [v[0] / l, v[1] / l, v[2] / l];
+}
+
+function _cross3(a, b) {
+  return [
+    a[1] * b[2] - a[2] * b[1],
+    a[2] * b[0] - a[0] * b[2],
+    a[0] * b[1] - a[1] * b[0],
+  ];
+}
+
+/** World XYZ → plane-frame UVW (same map the Sweep script emits). */
+export function worldToFrameLocal(world, plane) {
+  if (!world || !plane?.center || !plane?.x || !plane?.y || !plane?.normal) {
+    throw new Error('worldToFrameLocal: need a world point and a plane frame');
+  }
+  const d0 = world[0] - plane.center[0];
+  const d1 = world[1] - plane.center[1];
+  const d2 = world[2] - plane.center[2];
+  const along = (ax) => d0 * ax[0] + d1 * ax[1] + d2 * ax[2];
+  return [along(plane.x), along(plane.y), along(plane.normal)];
+}
+
+/** Plane-frame UVW → world XYZ (placeInFrame with no extra uvw offset). */
+export function frameLocalToWorld(local, plane) {
+  if (!local || !plane?.center || !plane?.x || !plane?.y || !plane?.normal) {
+    throw new Error('frameLocalToWorld: need a local point and a plane frame');
+  }
+  const c = plane.center;
+  const x = plane.x;
+  const y = plane.y;
+  const n = plane.normal;
+  return [
+    c[0] + local[0] * x[0] + local[1] * y[0] + local[2] * n[0],
+    c[1] + local[0] * x[1] + local[1] * y[1] + local[2] * n[1],
+    c[2] + local[0] * x[2] + local[1] * y[2] + local[2] * n[2],
+  ];
+}
+
+/**
+ * Loud-fail gate for Sweep Confirm. Empty / disconnected / branched paths
+ * refuse before any script is written.
+ */
+export function validateSweepPath(edges, sweep = {}) {
+  const normalized = normalizeSweepParams(sweep);
+  const list = Array.isArray(edges) ? edges : [];
+  if (!list.length) {
+    return { ok: false, message: SWEEP_EMPTY_PATH };
+  }
+  const ordered = assembleSweepPath(list, { reverse: normalized.reverse });
+  if (!ordered.ok) {
+    return {
+      ok: false,
+      message: ordered.message || 'makeSweepPath: could not order edges into a path',
+    };
+  }
+  const value = ordered.value;
+  if (!value?.points || value.points.length < 2) {
+    return { ok: false, message: 'makeSweepPath: path needs at least 2 points' };
+  }
+  if (!(value.length > 1e-6)) {
+    return { ok: false, message: 'makeSweepPath: path has zero or near-zero length' };
+  }
+  return { ok: true, path: value, normalized };
+}
+
+function sweepLocalFrames(points, closed) {
+  const n = points.length;
+  const tangentAt = (i) => {
+    let a;
+    let b;
+    if (closed) {
+      a = points[i];
+      b = points[(i + 1) % n];
+    } else if (i >= n - 1) {
+      a = points[n - 2];
+      b = points[n - 1];
+    } else {
+      a = points[i];
+      b = points[i + 1];
+    }
+    return _norm3([b[0] - a[0], b[1] - a[1], b[2] - a[2]]) || [0, 0, 1];
+  };
+  const hint = [1, 0, 0];
+  const t0 = tangentAt(0);
+  const hd = _dot(hint, t0);
+  let normal = _norm3([
+    hint[0] - hd * t0[0],
+    hint[1] - hd * t0[1],
+    hint[2] - hd * t0[2],
+  ]) || [0, 0, 1];
+  const frames = [];
+  for (let i = 0; i < n; i++) {
+    const t = tangentAt(i);
+    const proj = _dot(normal, t);
+    const next = _norm3([
+      normal[0] - proj * t[0],
+      normal[1] - proj * t[1],
+      normal[2] - proj * t[2],
+    ]) || [0, 1, 0];
+    frames.push({ N: next, B: _cross3(t, next) });
+    normal = next;
+  }
+  return frames;
+}
+
+function subsampleSweepStations(stations, maxN) {
+  if (!stations || stations.length <= maxN) return stations;
+  const last = stations.length - 1;
+  const out = [];
+  let prev = -1;
+  for (let i = 0; i < maxN; i++) {
+    const idx = Math.round((i / (maxN - 1)) * last);
+    if (idx === prev) continue;
+    prev = idx;
+    out.push(stations[idx]);
+  }
+  return out;
+}
+
+/**
+ * Live Sweep preview: profile stations carried along the path in the plane
+ * frame (same initial normal as sweepPoints). Null when profile or path is
+ * not ready — caller keeps the profile ring and does not invent a solid.
+ */
+export function buildSweepSolidPreview(face, tool, params, edges, sweep) {
+  const gate = validateContourProfile(tool, params);
+  if (!gate.ok) return null;
+  const pathGate = validateSweepPath(edges, sweep);
+  if (!pathGate.ok) return null;
+  const prev = buildContourPreview(face, tool, params);
+  if (!prev?.plane) return null;
+  let loop;
+  try {
+    loop = buildProfileFromParams(toolToProfileParams(tool, params)).contours?.[0];
+  } catch {
+    return null;
+  }
+  if (!loop || loop.length < 3) return null;
+  const plane = prev.plane;
+  const localPts = pathGate.path.points.map((p) => worldToFrameLocal(p, plane));
+  const frames = sweepLocalFrames(localPts, !!pathGate.path.closed);
+  const stations = localPts.map((origin, i) => {
+    const { N, B } = frames[i];
+    const ring = loop.map(([u, v]) => frameLocalToWorld([
+      origin[0] + u * N[0] + v * B[0],
+      origin[1] + u * N[1] + v * B[1],
+      origin[2] + u * N[2] + v * B[2],
+    ], plane));
+    return { ring };
+  });
+  return {
+    plane,
+    stations: subsampleSweepStations(stations, 32),
+    closed: !!pathGate.path.closed,
+    length: pathGate.path.length,
+    edgeCount: pathGate.path.edgeCount,
+  };
+}
+
 export function loftSectionsForCompose(face, profiles) {
   const gate = validateLoftProfiles(profiles);
   if (!gate.ok) return gate;
@@ -907,7 +1095,7 @@ export function composeContourProfile(buffer, { face = null, tool = 'circle', pa
   // Only the contour block is this composer's responsibility. Pre-existing
   // makeExtrude / makeRevolve / loft in the user's script must not block Confirm.
   const owned = contourProfileOwnedRegion(composed);
-  if (/makeExtrude\s*\(|makeRevolve\s*\(|makeLoft\s*\(|\bloft\s*\(/.test(owned)) {
+  if (/makeExtrude\s*\(|makeRevolve\s*\(|makeLoft\s*\(|\bloft\s*\(|\bsweepPoints\s*\(|\bsweep\s*\(/.test(owned)) {
     return {
       ok: false,
       message: CONTOUR_NO_SOLID,
@@ -1074,10 +1262,10 @@ export function composeContourExtrude(buffer, {
       message: 'composeContourExtrude: contour-mode extrude markers missing — refusing unscoped insert.',
     };
   }
-  if (/makeRevolve\s*\(|makeLoft\s*\(|\bloft\s*\(/.test(owned)) {
+  if (/makeRevolve\s*\(|makeLoft\s*\(|\bloft\s*\(|\bsweepPoints\s*\(/.test(owned)) {
     return {
       ok: false,
-      message: 'composeContourExtrude: unexpected Revolve/Loft in the Extrude block.',
+      message: 'composeContourExtrude: unexpected Revolve/Loft/Sweep in the Extrude block.',
     };
   }
   if (isBufferEmpty(String(buffer || '')) && /Manifold\.cube\s*\(/.test(composed)) {
@@ -1221,10 +1409,10 @@ export function composeContourRevolve(buffer, {
       message: 'composeContourRevolve: contour-mode revolve markers missing — refusing unscoped insert.',
     };
   }
-  if (/makeExtrude\s*\(|makeLoft\s*\(|\bloft\s*\(/.test(owned)) {
+  if (/makeExtrude\s*\(|makeLoft\s*\(|\bloft\s*\(|\bsweepPoints\s*\(/.test(owned)) {
     return {
       ok: false,
-      message: 'composeContourRevolve: unexpected Extrude/Loft in the Revolve block.',
+      message: 'composeContourRevolve: unexpected Extrude/Loft/Sweep in the Revolve block.',
     };
   }
   if (isBufferEmpty(String(buffer || '')) && /Manifold\.cube\s*\(/.test(composed)) {
@@ -1263,9 +1451,11 @@ export function stripContourLoftBlock(buffer) {
 }
 
 function stripContourSiblingBlocks(buffer) {
-  return stripContourLoftBlock(
-    stripContourRevolveBlock(
-      stripContourExtrudeBlock(stripContourProfileBlock(buffer)),
+  return stripContourSweepBlock(
+    stripContourLoftBlock(
+      stripContourRevolveBlock(
+        stripContourExtrudeBlock(stripContourProfileBlock(buffer)),
+      ),
     ),
   );
 }
@@ -1389,10 +1579,10 @@ export function composeContourLoft(buffer, {
       message: 'composeContourLoft: contour-mode loft markers missing — refusing unscoped insert.',
     };
   }
-  if (/makeExtrude\s*\(|makeRevolve\s*\(/.test(owned)) {
+  if (/makeExtrude\s*\(|makeRevolve\s*\(|\bsweepPoints\s*\(/.test(owned)) {
     return {
       ok: false,
-      message: 'composeContourLoft: unexpected Extrude/Revolve in the Loft block.',
+      message: 'composeContourLoft: unexpected Extrude/Revolve/Sweep in the Loft block.',
     };
   }
   if (isBufferEmpty(String(buffer || '')) && /Manifold\.cube\s*\(/.test(composed)) {
@@ -1404,8 +1594,155 @@ export function composeContourLoft(buffer, {
   return { ok: true, buffer: composed, run: true };
 }
 
+export function countSweepPoints(buffer) {
+  const m = String(buffer || '').match(/\bsweepPoints\s*\(/g);
+  return m ? m.length : 0;
+}
+
+export function hasContourSweepBlock(buffer) {
+  const t = String(buffer || '');
+  return t.includes(CONTOUR_SWEEP_BEGIN) && t.includes(CONTOUR_SWEEP_END);
+}
+
+export function contourSweepOwnedRegion(buffer) {
+  const text = String(buffer || '');
+  const i = text.lastIndexOf(CONTOUR_SWEEP_BEGIN);
+  if (i < 0) return '';
+  const j = text.indexOf(CONTOUR_SWEEP_END, i);
+  if (j < 0) return '';
+  return text.slice(i, j + CONTOUR_SWEEP_END.length);
+}
+
+export function stripContourSweepBlock(buffer) {
+  const text = String(buffer || '');
+  const i = text.lastIndexOf(CONTOUR_SWEEP_BEGIN);
+  if (i < 0) return text;
+  const j = text.indexOf(CONTOUR_SWEEP_END, i);
+  if (j < 0) return text;
+  const after = text.slice(j + CONTOUR_SWEEP_END.length).replace(/^\r?\n/, '');
+  const before = text.slice(0, i).replace(/\s+$/, '');
+  if (before && after) return `${before}\n${after}`;
+  return before || after;
+}
+
 /**
- * Confirm router: Extrude / Revolve / Loft entry → solid; Profile stays Profile-only.
+ * Confirm → insert or replace in-mode Sweep
+ * (makeCrossSection + makeSweepPath + sweepPoints + placeInFrame).
+ * New-body path replaces `part` (no host add). Second Confirm updates the same block.
+ *
+ * @returns {{ ok: true, buffer: string, run: true } | { ok: false, message: string }}
+ */
+export function composeContourSweep(buffer, {
+  face = null,
+  tool = 'circle',
+  params = {},
+  edges = null,
+  sweep = {},
+} = {}) {
+  const gate = validateContourProfile(tool, params);
+  if (!gate.ok) return gate;
+  const pathGate = validateSweepPath(edges, sweep);
+  if (!pathGate.ok) return pathGate;
+
+  const plane = planeFromContourFace(face);
+  const text = String(buffer || '');
+  if (markersUnbalanced(text, CONTOUR_SWEEP_BEGIN, CONTOUR_SWEEP_END)) {
+    return {
+      ok: false,
+      message: 'composeContourSweep: unbalanced sweep markers — refusing silent no-op.',
+    };
+  }
+
+  const planar = face && face.type === 'planar' ? face : null;
+  const stripped = stripContourSiblingBlocks(buffer);
+  const profileParams = {
+    ...toolToProfileParams(tool, params),
+    body: params.body || 'part',
+    _contourSweep: {
+      plane,
+      reverse: pathGate.normalized.reverse,
+    },
+  };
+  const composed = composeHelperInsert(
+    stripped,
+    'crossSection',
+    null,
+    profileParams,
+    planar,
+    edges,
+  );
+  if (typeof composed !== 'string') {
+    return {
+      ok: false,
+      message: 'Could not compose Sweep — need a profile and a contiguous path.',
+    };
+  }
+  const owned = contourSweepOwnedRegion(composed);
+  if (!/makeCrossSection\s*\(/.test(owned)) {
+    return {
+      ok: false,
+      message: 'composeContourSweep: makeCrossSection missing — refusing silent no-op.',
+    };
+  }
+  if (!/makeSweepPath\s*\(/.test(owned)) {
+    return {
+      ok: false,
+      message: 'composeContourSweep: makeSweepPath missing — refusing silent no-op.',
+    };
+  }
+  if (!/sweepPoints\s*\(/.test(owned)) {
+    return {
+      ok: false,
+      message: 'composeContourSweep: sweepPoints missing — refusing silent no-op.',
+    };
+  }
+  if (!/placeInFrame\s*\(|transformByFrame\s*\(/.test(owned)) {
+    return {
+      ok: false,
+      message: 'composeContourSweep: placeInFrame missing — refusing unscoped insert.',
+    };
+  }
+  if (/placeOnFace\s*\(/.test(owned)) {
+    return {
+      ok: false,
+      message: 'composeContourSweep: placeOnFace is the host path — refusing leftover host.',
+    };
+  }
+  if (/part\s*=\s*part\.add\(/.test(owned)) {
+    return {
+      ok: false,
+      message: 'composeContourSweep: host-add is not the new-body path — refusing leftover host.',
+    };
+  }
+  if (!hasContourSweepBlock(composed)) {
+    return {
+      ok: false,
+      message: 'composeContourSweep: contour-mode sweep markers missing — refusing unscoped insert.',
+    };
+  }
+  if (/makeExtrude\s*\(|makeRevolve\s*\(|makeLoft\s*\(|\bloft\s*\(/.test(owned)) {
+    return {
+      ok: false,
+      message: 'composeContourSweep: unexpected Extrude/Revolve/Loft in the Sweep block.',
+    };
+  }
+  if (isBufferEmpty(String(buffer || '')) && /Manifold\.cube\s*\(/.test(composed)) {
+    return {
+      ok: false,
+      message: 'composeContourSweep: unexpected starter box on empty buffer — refusing extra solid.',
+    };
+  }
+  if (pathGate.normalized.reverse && !/reverse:\s*true/.test(owned)) {
+    return {
+      ok: false,
+      message: 'composeContourSweep: reverse flag missing — refusing silent no-op.',
+    };
+  }
+  return { ok: true, buffer: composed, run: true };
+}
+
+/**
+ * Confirm router: Extrude / Revolve / Loft / Sweep entry → solid; Profile stays Profile-only.
  */
 export function composeContourCommit(buffer, payload = {}) {
   const entry = payload.entry || 'crossSection';
@@ -1417,6 +1754,9 @@ export function composeContourCommit(buffer, payload = {}) {
   }
   if (isLoftEntry(entry)) {
     return composeContourLoft(buffer, payload);
+  }
+  if (isSweepEntry(entry)) {
+    return composeContourSweep(buffer, payload);
   }
   const result = composeContourProfile(buffer, payload);
   if (result.ok) result.run = false;

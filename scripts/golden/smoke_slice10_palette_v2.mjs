@@ -20,6 +20,7 @@ import {
   isExtrudeEntry,
   isRevolveEntry,
   isLoftEntry,
+  isSweepEntry,
 } from '../../src/utils/contourMode.js';
 import { isFilletEntry } from '../../src/utils/filletMode.js';
 
@@ -212,11 +213,19 @@ check('declaredNames export', declaredNames('let box1 = 1;').has('box1'));
       === 'makeExtrude,makeRevolve,makeSweep,makeLoft',
   );
   const sweep = grouped.Advanced.find((i) => i.id === 'makeSweep');
-  check('Sweep placeholder flag', sweep && sweep.placeholder === true && sweep.label === 'Sweep');
+  check('Sweep is a real Advanced tool', sweep && sweep.placeholder !== true && sweep.label === 'Sweep');
   const sweepBuf = composeHelperInsert('let part = box1;\n', 'makeSweep');
-  check('Sweep compose keeps part', sweepBuf && /let part = box1/.test(sweepBuf));
-  check('Sweep compose has no sweep call', sweepBuf && !/\bsweep\s*\(/.test(sweepBuf));
-  check('Sweep compose is comment-only insert', sweepBuf && /Sweep placeholder/.test(sweepBuf));
+  check('Sweep one-shot keeps part binding', sweepBuf && /let part = box1/.test(sweepBuf));
+  check(
+    'Sweep one-shot uses profile + path + sweepPoints + placeInFrame',
+    sweepBuf
+      && /makeCrossSection\s*\(/.test(sweepBuf)
+      && /makeSweepPath\s*\(/.test(sweepBuf)
+      && /sweepPoints\s*\(/.test(sweepBuf)
+      && /placeInFrame\s*\(/.test(sweepBuf),
+  );
+  check('Sweep one-shot is not the placeholder comment', sweepBuf && !/Sweep placeholder/.test(sweepBuf));
+  check('Sweep one-shot has no host add', sweepBuf && !/part\.add\(/.test(sweepBuf));
   const feat = grouped.Features.map((i) => i.id);
   check('Fillet stays in Features', feat.includes('filletEdges'));
   check('holes stay in Features', ['hole', 'holePattern', 'clearanceHole', 'tapDrillHole', 'cboreHole', 'cskHole'].every((id) => feat.includes(id)));
@@ -230,7 +239,7 @@ check('declaredNames export', declaredNames('let box1 = 1;').has('box1'));
       && xform.indexOf('array3D') < xform.indexOf('addDraft'),
   );
   check('Extrude left Transforms', !xform.includes('makeExtrude') && !xform.includes('makeLoft'));
-  check('Sweep is not a contour entry', !isContourEntry('makeSweep'));
+  check('Sweep is a contour entry', isContourEntry('makeSweep') && isSweepEntry('makeSweep'));
   check('Extrude contour entry preserved', isContourEntry('makeExtrude') && isExtrudeEntry('makeExtrude'));
   check('Revolve contour entry preserved', isContourEntry('makeRevolve') && isRevolveEntry('makeRevolve'));
   check('Loft contour entry preserved', isContourEntry('makeLoft') && isLoftEntry('makeLoft'));

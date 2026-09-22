@@ -25,6 +25,7 @@
         "golden:slice26": "node scripts/golden/smoke_slice26_revolve.mjs",
         "golden:slice27": "node scripts/golden/smoke_slice27_fillet_mode.mjs",
         "golden:slice28": "node scripts/golden/smoke_slice28_loft.mjs",
+        "golden:slice30": "node scripts/golden/smoke_slice30_sweep.mjs",
         "golden:hotfix-frame-only": "node scripts/golden/smoke_hotfix_frame_only_plane_undo_autorun.mjs",
         "golden:hotfix-sweep-path": "node scripts/golden/smoke_hotfix_sweep_path_disconnect.mjs"
     },
