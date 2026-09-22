@@ -742,8 +742,8 @@ const App = () => {
   };
 
   /**
-   * Slice 24/25/26/28: in-mode Confirm. Profile writes makeCrossSection only
-   * (no Auto-Run). Extrude / Revolve / Loft write the solid and Auto-Run.
+   * Slice 24/25/26/28/30: in-mode Confirm. Profile writes makeCrossSection only
+   * (no Auto-Run). Extrude / Revolve / Loft / Sweep write the solid and Auto-Run.
    */
   const handleCommitContourProfile = (payload) => {
     const buf = codeEditorRef.current?.getContent?.() || '';
@@ -753,19 +753,27 @@ const App = () => {
       return false;
     }
     const entry = payload?.entry;
-    const msg = result.run
-      ? (entry === 'makeLoft' ? 'Contour loft' : entry === 'makeRevolve' ? 'Contour revolve' : 'Contour extrude')
-      : 'Contour profile';
+    const solidLabel = entry === 'makeSweep'
+      ? 'sweep'
+      : entry === 'makeLoft'
+        ? 'loft'
+        : entry === 'makeRevolve'
+          ? 'revolve'
+          : 'extrude';
+    const msg = result.run ? `Contour ${solidLabel}` : 'Contour profile';
     const wrote = codeEditorRef.current?.applyBuffer?.(result.buffer, msg);
     if (!wrote) {
+      const writeName = entry === 'makeSweep'
+        ? 'Sweep'
+        : entry === 'makeLoft'
+          ? 'Loft'
+          : entry === 'makeRevolve'
+            ? 'Revolve'
+            : result.run
+              ? 'Extrude'
+              : 'Profile';
       viewportRef.current?.softFailContour?.(
-        result.run
-          ? (entry === 'makeLoft'
-            ? 'Could not write Loft into the editor — try again.'
-            : entry === 'makeRevolve'
-              ? 'Could not write Revolve into the editor — try again.'
-              : 'Could not write Extrude into the editor — try again.')
-          : 'Could not write Profile into the editor — try again.',
+        `Could not write ${writeName} into the editor — try again.`,
       );
       return false;
     }

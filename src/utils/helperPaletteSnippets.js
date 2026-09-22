@@ -20,8 +20,9 @@
  * Slice 28/hotfix: Loft Confirm wraps ≥2 makeCrossSection + makeLoft / placeInFrame
  * (replace part — no host add) in loft markers.
  * Slice 29: rail groups Prim / Advanced / Features / Xforms. Extrude, Revolve,
- * Sweep, Loft live in Advanced. Sweep (`makeSweep`) is a labeled placeholder —
- * compose inserts a comment only; the solid is Slice 3. Draft moves to Transforms.
+ * Sweep, Loft live in Advanced. Draft moves to Transforms.
+ * Slice 30: Sweep Confirm wraps makeCrossSection + makeSweepPath + sweepPoints
+ * / placeInFrame (replace part — no host add) in sweep markers.
  *
  * Sequential taps compose via composeHelperInsert:
  * strip one trailing `return part;`, insert body, re-append exactly one `return part;`.
@@ -54,6 +55,10 @@ export const CONTOUR_REVOLVE_END = '// --- contour-mode revolve end ---';
 /** Slice 28 — in-mode Loft region (profiles + makeLoft). Second Confirm replaces this block. */
 export const CONTOUR_LOFT_BEGIN = '// --- contour-mode loft begin ---';
 export const CONTOUR_LOFT_END = '// --- contour-mode loft end ---';
+
+/** Slice 30 — in-mode Sweep region (profile + path + sweepPoints). Second Confirm replaces this block. */
+export const CONTOUR_SWEEP_BEGIN = '// --- contour-mode sweep begin ---';
+export const CONTOUR_SWEEP_END = '// --- contour-mode sweep end ---';
 
 /** Slice 27 — in-mode Fillet region (makeSweepPath + filletAlongPath). Second Accept replaces this block. */
 export const FILLET_MODE_BEGIN = '// --- fillet-mode begin ---';
@@ -521,6 +526,30 @@ function emitPartReplace(names, expr, partDeclared) {
   return `let part = ${expr};`;
 }
 
+/**
+ * World point → plane-frame UVW. Sweep runs in that frame so placeInFrame
+ * maps the solid back without a second host transform.
+ */
+function emitWorldToFrameExpr(pt, plane) {
+  const dx = `(${pt}[0] - ${plane}.center[0])`;
+  const dy = `(${pt}[1] - ${plane}.center[1])`;
+  const dz = `(${pt}[2] - ${plane}.center[2])`;
+  const axis = (name) => `${dx} * ${plane}.${name}[0] + ${dy} * ${plane}.${name}[1] + ${dz} * ${plane}.${name}[2]`;
+  return `[${axis('x')}, ${axis('y')}, ${axis('normal')}]`;
+}
+
+/** sweepPoints in the plane frame, then frame-only placeInFrame replace. */
+function emitSweepSolidTail(names, xs, path, partDeclared) {
+  const local = allocateUniqueName(names, 'sweepLocal');
+  const swept = allocateUniqueName(names, 'swept');
+  return [
+    `const ${local} = ${path}.points.map((pt) => ${emitWorldToFrameExpr('pt', `${xs}.plane`)});`,
+    `const ${swept} = sweepPoints(new CrossSection(${xs}.contours), ${local}, { closed: !!${path}.closed, initialNormal: [1, 0, 0] });`,
+    `if (!(${swept}.volume() > 1e-8)) throw new Error('sweep: result is EMPTY (volume 0) — check profile area and path');`,
+    emitPartReplace(names, `placeInFrame(${xs}.plane, ${swept})`, partDeclared),
+  ];
+}
+
 /** placeInFrame frame: local X=radial, Y=plane normal, Z=in-plane axis. */
 function emitRevolvePlaceFrame(xs, rU, rV, aU, aV) {
   const rad = emitPlaneVecCombo(xs, rU, rV);
@@ -973,10 +1002,10 @@ export const HELPER_PALETTE_ITEMS = [
         options: ['triangle', 'square', 'pentagon', 'hexagon', 'quarterCircle'],
       },
     ],
-    build: (empty, p, names, buffer, faceCtx = null) => {
-      // New-body Extrude / Revolve / Loft Confirm: no starter cube, no host query.
+    build: (empty, p, names, buffer, faceCtx = null, edgeCtx = null) => {
+      // New-body Extrude / Revolve / Loft / Sweep Confirm: no starter cube, no host query.
       // Plane is a literal PlaneFrame; part is replaced (not added onto).
-      const isNewBodySolid = !!(p._contourRevolve || p._contourExtrude || p._contourLoft);
+      const isNewBodySolid = !!(p._contourRevolve || p._contourExtrude || p._contourLoft || p._contourSweep);
       // Capture before resolveBody, which always touches `part` in the names set.
       const partDeclared = names.has('part');
       const lines = isNewBodySolid ? [] : [...ensurePartPrefix(empty, names)];
@@ -988,6 +1017,7 @@ export const HELPER_PALETTE_ITEMS = [
         const plane = p._contourRevolve?.plane
           || p._contourExtrude?.plane
           || p._contourLoft?.plane
+          || p._contourSweep?.plane
           || null;
         const fr = allocateUniqueName(names, 'fr');
         wp = {
@@ -1069,6 +1099,19 @@ export const HELPER_PALETTE_ITEMS = [
           partDeclared,
         ));
         lines.push(CONTOUR_EXTRUDE_END);
+      } else if (p._contourSweep) {
+        const sw = p._contourSweep;
+        const edge = emitSelectedEdgeLiteralLines(body, edgeCtx || [], names, allocateUniqueName);
+        if (!edge.ok) return null;
+        const path = allocateUniqueName(names, 'path');
+        const opts = sw.reverse ? ', { reverse: true }' : '';
+        lines.push(CONTOUR_SWEEP_BEGIN);
+        lines.push(...wp.lines);
+        lines.push(profileLine);
+        lines.push(...edge.lines);
+        lines.push(`const ${path} = makeSweepPath(${edge.edgesExpr}${opts}); // edge→sweep path`);
+        lines.push(...emitSweepSolidTail(names, xs, path, partDeclared));
+        lines.push(CONTOUR_SWEEP_END);
       } else if (p._contourMode) {
         // Slice 24: wrap in-mode Profile so Confirm replaces the region (no Extrude).
         lines.push(CONTOUR_PROFILE_BEGIN);
@@ -1555,12 +1598,25 @@ export const HELPER_PALETTE_ITEMS = [
     id: 'makeSweep',
     label: 'Sweep',
     group: 'Advanced',
-    title: 'Sweep — placeholder until Slice 3 (does not build a solid)',
-    placeholder: true,
+    title: 'Sweep — contour mode (profile + makeSweepPath + sweepPoints on the workplane)',
+    bodyBase: 'swept',
     params: [],
-    // Slot only. UI refuses instead of entering contour mode. Compose inserts
-    // a comment so sequential palette goldens stay runnable without a sweep().
-    build: () => '// Sweep placeholder — solid lands in Slice 3; this slot does not insert geometry.\n',
+    // UI always enters contour mode (Slice 30). This build is the sequential /
+    // golden fallback — circle profile swept along a straight +Z edge.
+    build: (empty, p, names) => {
+      void p;
+      const partDeclared = names.has('part');
+      const xs = allocateUniqueName(names, 'xs');
+      const edges = allocateUniqueName(names, 'selEdges');
+      const path = allocateUniqueName(names, 'path');
+      const lines = [
+        `const ${xs} = makeCrossSection({ center: [0, 0, 0], normal: [0, 0, 1], x: [1, 0, 0], y: [0, 1, 0] }, profileCircle(2, 16));`,
+        `const ${edges} = [{ a: 0, b: 1, va: [0, 0, 0], vb: [0, 0, 20], length: 20, key: 'sweep-fallback' }];`,
+        `const ${path} = makeSweepPath(${edges}); // edge→sweep path`,
+        ...emitSweepSolidTail(names, xs, path, partDeclared),
+      ];
+      return withReturn(lines, empty);
+    },
   },
   {
     id: 'makeLoft',

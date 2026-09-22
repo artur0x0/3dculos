@@ -2,9 +2,9 @@ import React from 'react';
 import { Check } from 'lucide-react';
 
 /**
- * Slice 24/25/26/28 — contour-mode chip (Edge-pick pattern).
- * Plane + profile params; Extrude / Revolve / Loft entries also edit solid
- * params and Confirm commits the solid. Mobile-first compact card.
+ * Slice 24/25/26/28/30 — contour-mode chip (Edge-pick pattern).
+ * Plane + profile params; Extrude / Revolve / Loft / Sweep entries also edit
+ * solid params and Confirm commits the solid. Mobile-first compact card.
  */
 const ContourModeChip = ({
   tool = 'circle',
@@ -13,10 +13,16 @@ const ContourModeChip = ({
   extrude = {},
   revolve = {},
   loft = {},
+  sweep = {},
+  sweepPath = null,
+  pickMode = 'face',
   planeLabel = 'default +Z',
   onParamChange,
   onExtrudeChange,
   onRevolveChange,
+  onSweepChange,
+  onPickPath,
+  onPickPlane,
   onSelectLoftProfile,
   onAddLoftProfile,
   onRemoveLoftProfile,
@@ -29,6 +35,8 @@ const ContourModeChip = ({
   const isExtrude = entry === 'makeExtrude';
   const isRevolve = entry === 'makeRevolve';
   const isLoft = entry === 'makeLoft';
+  const isSweep = entry === 'makeSweep';
+  const commitName = isSweep ? 'Sweep' : isLoft ? 'Loft' : isRevolve ? 'Revolve' : isExtrude ? 'Extrude' : null;
   const loftProfiles = Array.isArray(loft.profiles) ? loft.profiles : [];
   const loftSelected = Number.isInteger(loft.selected) ? loft.selected : 0;
   const loftOffset = Number(loftProfiles[loftSelected]?.offset);
@@ -150,10 +158,10 @@ const ContourModeChip = ({
       className={`absolute bg-cyan-950/90 border border-cyan-400/70 text-white px-3 py-2
         rounded-lg text-xs z-20 shadow-lg ${
           compact
-            ? (isLoft
+            ? ((isLoft || isSweep)
               ? 'bottom-4 right-2 max-w-[min(18rem,calc(100%-5.5rem))]'
               : 'bottom-4 right-2 max-w-[min(16rem,calc(100%-5.5rem))]')
-            : (isLoft
+            : ((isLoft || isSweep)
               ? 'bottom-4 right-2 lg:right-4 max-w-[18rem]'
               : 'bottom-4 right-2 lg:right-4 max-w-[16rem]')
         }`}
@@ -334,6 +342,49 @@ const ContourModeChip = ({
           </div>
         </div>
       )}
+      {isSweep && (
+        <div className="mt-2 pt-1.5 border-t border-cyan-700/50 flex flex-col gap-1.5 font-sans">
+          <div className="text-[10px] uppercase tracking-wide text-cyan-200/80">Path</div>
+          <div className="text-[11px] text-cyan-100 leading-tight">
+            {sweepPath?.ok
+              ? `${sweepPath.path.edgeCount} edge${sweepPath.path.edgeCount === 1 ? '' : 's'} · ${sweepPath.path.closed ? 'loop' : 'chain'} · ${Number(sweepPath.path.length).toFixed(1)} mm`
+              : (sweepPath?.message || 'Pick a contiguous edge chain')}
+          </div>
+          <div className="flex gap-1">
+            <button
+              type="button"
+              onClick={() => onPickPath?.()}
+              aria-pressed={pickMode === 'edge'}
+              className={`flex-1 px-1 py-1 rounded text-[11px] ${
+                pickMode === 'edge' ? 'bg-cyan-600 text-white' : 'bg-cyan-950/80 text-cyan-100 border border-cyan-700/70'
+              }`}
+              title="Pick the sweep path from edges"
+            >
+              Path
+            </button>
+            <button
+              type="button"
+              onClick={() => onPickPlane?.()}
+              aria-pressed={pickMode !== 'edge'}
+              className={`flex-1 px-1 py-1 rounded text-[11px] ${
+                pickMode !== 'edge' ? 'bg-cyan-600 text-white' : 'bg-cyan-950/80 text-cyan-100 border border-cyan-700/70'
+              }`}
+              title="Pick the profile workplane"
+            >
+              Plane
+            </button>
+          </div>
+          <label className="flex items-center gap-2 text-[11px] text-cyan-100">
+            <input
+              type="checkbox"
+              checked={!!sweep.reverse}
+              onChange={(e) => onSweepChange?.({ ...sweep, reverse: e.target.checked })}
+              className="h-3.5 w-3.5 accent-cyan-400"
+            />
+            Reverse path
+          </label>
+        </div>
+      )}
       {isExtrude && (
         <div className="mt-2 pt-1.5 border-t border-cyan-700/50 flex flex-col gap-1.5 font-sans">
           <div className="text-[10px] uppercase tracking-wide text-cyan-200/80">Extrude</div>
@@ -420,13 +471,7 @@ const ContourModeChip = ({
       )}
       <div className="mt-2 flex items-center justify-between gap-2">
         <span className="text-[10px] text-cyan-200/70 leading-tight">
-          {isLoft
-            ? 'Confirm writes Loft'
-            : isRevolve
-              ? 'Confirm writes Revolve'
-              : isExtrude
-                ? 'Confirm writes Extrude'
-                : 'Confirm writes Profile only'}
+          {commitName ? `Confirm writes ${commitName}` : 'Confirm writes Profile only'}
         </span>
         <button
           type="button"
@@ -434,13 +479,9 @@ const ContourModeChip = ({
           className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium
             bg-cyan-600 hover:bg-cyan-500 active:bg-cyan-400 text-white shrink-0"
           title={
-            isLoft
-              ? 'Commit or update Loft (profiles + makeLoft). Second Confirm updates the same block.'
-              : isRevolve
-                ? 'Commit or update Revolve (profile + makeRevolve). Second Confirm updates the same block.'
-                : isExtrude
-                  ? 'Commit or update Extrude (profile + makeExtrude). Second Confirm updates the same block.'
-                  : 'Commit or update in-mode Profile (makeCrossSection). Does not Extrude or Revolve.'
+            commitName
+              ? `Commit or update ${commitName}. Second Confirm updates the same block.`
+              : 'Commit or update in-mode Profile (makeCrossSection). Does not Extrude, Revolve, Loft, or Sweep.'
           }
         >
           <Check size={14} />

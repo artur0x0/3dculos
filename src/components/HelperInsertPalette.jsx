@@ -77,10 +77,10 @@ const GROUP_SHORT_LABEL = {
  * Slice 09/10/11 — left vertical helper insert palette (game mode).
  * Tap opens HelperParamModal; with selectedFace / selectedEdges, face/edge
  * features get an aware sheet (or refuse). Confirm → onInsert(id, params, faceContext, edgeContext).
- * Slice 24/25/26/28: Extrude / Revolve / Loft / Profile call onEnterContourMode.
- * Extrude / Revolve / Loft Confirm commits the solid; Profile stays Profile-only.
+ * Slice 24/25/26/28/30: Extrude / Revolve / Loft / Sweep / Profile call onEnterContourMode.
+ * Extrude / Revolve / Loft / Sweep Confirm commits the solid; Profile stays Profile-only.
  * Slice 27: Fillet enters edge-pick mode (no pre-select / no soft-fail).
- * Slice 29: groups Prim / Adv / Feat / Xform. Sweep is a placeholder slot.
+ * Slice 29: groups Prim / Adv / Feat / Xform.
  */
 const HelperInsertPalette = ({
   onInsert,
@@ -107,20 +107,18 @@ const HelperInsertPalette = ({
   const [refuseTitle, setRefuseTitle] = useState(null);
 
   const openParams = (item) => {
-    // Slice 29: Sweep is a labeled slot only — no contour entry, no insert.
+    // Labeled slots with no builder stay a refuse — Sweep is a real contour entry.
     if (item.placeholder) {
       setPending(null);
       setFaceSnapshot(null);
       setEdgeSnapshot(null);
       setRefuseTitle(item.label);
-      setRefuseMessage(
-        'Sweep is a placeholder until Slice 3. It does not build a solid yet.',
-      );
+      setRefuseMessage(`${item.label} is not available yet.`);
       setModalMode('refuse');
       return;
     }
     setRefuseTitle(null);
-    // Slice 24/25/26: Extrude / Revolve / Profile enter contour mode (never one-shot).
+    // Slice 24/25/26/28/30: Extrude / Revolve / Loft / Sweep / Profile enter contour mode.
     if (isContourEntry(item.id) && typeof onEnterContourMode === 'function') {
       onEnterContourMode({ entry: item.id });
       return;
