@@ -24,6 +24,7 @@ const HelperParamModal = ({
   faceInfo = null,
   edgeInfo = null,
   refuseMessage = null,
+  refuseTitle = null,
   onValuesChange = null,
 }) => {
   const params = item?.params || [];
@@ -77,7 +78,8 @@ const HelperParamModal = ({
             <div className="min-w-0 flex items-center gap-2">
               <AlertTriangle size={18} className="text-amber-400 shrink-0" />
               <h2 id="helper-refuse-title" className="font-semibold text-sm text-white truncate">
-                {/edge/i.test(refuseMessage || '') ? 'Select edges' : 'Face not supported'}
+                {refuseTitle
+                  || (/edge/i.test(refuseMessage || '') ? 'Select edges' : 'Face not supported')}
               </h2>
             </div>
             <button

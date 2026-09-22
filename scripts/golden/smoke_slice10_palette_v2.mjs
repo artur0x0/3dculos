@@ -2,6 +2,7 @@
 /**
  * Slice 10 — Palette v2: params, unique body vars, no illegal `top`, compose+defaults.
  */
+import { readFileSync } from 'node:fs';
 import {
   composeHelperInsert,
   buildHelperSnippet,
@@ -9,9 +10,18 @@ import {
   declaredNames,
   listBodyNames,
   HELPER_PALETTE_ITEMS,
+  HELPER_PALETTE_GROUPS,
+  itemsByGroup,
   defaultParamsFor,
   coerceNumberParam,
 } from '../../src/utils/helperPaletteSnippets.js';
+import {
+  isContourEntry,
+  isExtrudeEntry,
+  isRevolveEntry,
+  isLoftEntry,
+} from '../../src/utils/contourMode.js';
+import { isFilletEntry } from '../../src/utils/filletMode.js';
 
 let failed = 0;
 function check(name, cond, detail = '') {
@@ -183,6 +193,55 @@ console.log('slice-10 palette v2 smoke');
 
 check('unknown id → null', composeHelperInsert('', 'nope') === null);
 check('declaredNames export', declaredNames('let box1 = 1;').has('box1'));
+
+// ── Slice 29: Prim / Adv / Feat / Xform ────────────────────────
+{
+  check(
+    'group order',
+    HELPER_PALETTE_GROUPS.join('|') === 'Primitives|Advanced|Features|Transforms',
+  );
+  const grouped = itemsByGroup();
+  check(
+    'Prim contents',
+    grouped.Primitives.map((i) => i.id).join(',')
+      === 'cube,cylinder,sphere,tube,hexPrism,roundedBox',
+  );
+  check(
+    'Advanced order Extrude Revolve Sweep Loft',
+    grouped.Advanced.map((i) => i.id).join(',')
+      === 'makeExtrude,makeRevolve,makeSweep,makeLoft',
+  );
+  const sweep = grouped.Advanced.find((i) => i.id === 'makeSweep');
+  check('Sweep placeholder flag', sweep && sweep.placeholder === true && sweep.label === 'Sweep');
+  const sweepBuf = composeHelperInsert('let part = box1;\n', 'makeSweep');
+  check('Sweep compose keeps part', sweepBuf && /let part = box1/.test(sweepBuf));
+  check('Sweep compose has no sweep call', sweepBuf && !/\bsweep\s*\(/.test(sweepBuf));
+  check('Sweep compose is comment-only insert', sweepBuf && /Sweep placeholder/.test(sweepBuf));
+  const feat = grouped.Features.map((i) => i.id);
+  check('Fillet stays in Features', feat.includes('filletEdges'));
+  check('holes stay in Features', ['hole', 'holePattern', 'clearanceHole', 'tapDrillHole', 'cboreHole', 'cskHole'].every((id) => feat.includes(id)));
+  check('Profile stays in Features', feat.includes('crossSection'));
+  check('Path stays in Features', feat.includes('sweepPath'));
+  const xform = grouped.Transforms.map((i) => i.id);
+  check('Draft moved to Transforms', xform.includes('addDraft') && !feat.includes('addDraft'));
+  check(
+    'Xform mirror then array then draft',
+    xform.indexOf('mirror') < xform.indexOf('array3D')
+      && xform.indexOf('array3D') < xform.indexOf('addDraft'),
+  );
+  check('Extrude left Transforms', !xform.includes('makeExtrude') && !xform.includes('makeLoft'));
+  check('Sweep is not a contour entry', !isContourEntry('makeSweep'));
+  check('Extrude contour entry preserved', isContourEntry('makeExtrude') && isExtrudeEntry('makeExtrude'));
+  check('Revolve contour entry preserved', isContourEntry('makeRevolve') && isRevolveEntry('makeRevolve'));
+  check('Loft contour entry preserved', isContourEntry('makeLoft') && isLoftEntry('makeLoft'));
+  check('Fillet entry preserved', isFilletEntry('filletEdges') && !isFilletEntry('makeSweep'));
+
+  const rail = readFileSync(new URL('../../src/components/HelperInsertPalette.jsx', import.meta.url), 'utf8');
+  check('Fillet icon is Squircle', /filletEdges:\s*Squircle/.test(rail));
+  check('cbore icon is Cylinder', /cboreHole:\s*Cylinder/.test(rail));
+  check('Sweep icon is Spline', /makeSweep:\s*Spline/.test(rail));
+  check('compact labels Prim Adv Feat Xform', /Primitives:\s*'Prim'/.test(rail) && /Advanced:\s*'Adv'/.test(rail) && /Features:\s*'Feat'/.test(rail) && /Transforms:\s*'Xform'/.test(rail));
+}
 
 if (failed) {
   console.log(`\nFAILED: ${failed}`);

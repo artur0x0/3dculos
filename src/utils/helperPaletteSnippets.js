@@ -19,6 +19,9 @@
  * Slice 27: Fillet-in-mode Accept wraps makeSweepPath + filletAlongPath in fillet markers.
  * Slice 28/hotfix: Loft Confirm wraps ≥2 makeCrossSection + makeLoft / placeInFrame
  * (replace part — no host add) in loft markers.
+ * Slice 29: rail groups Prim / Advanced / Features / Xforms. Extrude, Revolve,
+ * Sweep, Loft live in Advanced. Sweep (`makeSweep`) is a labeled placeholder —
+ * compose inserts a comment only; the solid is Slice 3. Draft moves to Transforms.
  *
  * Sequential taps compose via composeHelperInsert:
  * strip one trailing `return part;`, insert body, re-append exactly one `return part;`.
@@ -661,7 +664,7 @@ export function defaultParamsFor(id) {
 
 /**
  * @typedef {{ name: string, type: 'number'|'bool'|'select'|'body', default: any, label: string, options?: string[], step?: number, min?: number }} ParamDef
- * @typedef {{ id: string, label: string, group: string, title: string, bodyBase?: string, params: ParamDef[], build: Function }} PaletteItem
+ * @typedef {{ id: string, label: string, group: string, title: string, bodyBase?: string, params: ParamDef[], build: Function, placeholder?: boolean }} PaletteItem
  */
 
 /** @type {PaletteItem[]} */
@@ -1326,26 +1329,6 @@ export const HELPER_PALETTE_ITEMS = [
       return withReturn(lines, empty);
     },
   },
-  {
-    id: 'addDraft',
-    label: 'Draft',
-    group: 'Features',
-    title: "addDraft(manifold, draftDeg, axis)",
-    params: [
-      { name: 'body', type: 'body', default: 'part', label: 'Body' },
-      { name: 'draftDeg', type: 'number', default: 2, label: 'Draft °', min: 0, step: 0.5 },
-      { name: 'axis', type: 'select', default: 'z', label: 'Axis', options: AXIS_OPTIONS },
-    ],
-    build: (empty, p, names, buffer) => {
-      const lines = [...ensurePartPrefix(empty, names)];
-      const body = resolveBody(p, names, empty ? lines.join('\n') : buffer);
-      const deg = num(p.draftDeg, 2);
-      const axis = str(p.axis, 'z');
-      lines.push(`${body} = addDraft(${body}, ${deg}, '${axis}');`);
-      lines.push(...syncPartLines(body, names, /(?:let|const|var)\s+part\b/.test(lines.join('\n')) || !empty));
-      return withReturn(lines, empty);
-    },
-  },
 
   // ── Transforms / layout ─────────────────────────────────────
   {
@@ -1473,6 +1456,26 @@ export const HELPER_PALETTE_ITEMS = [
     },
   },
   {
+    id: 'addDraft',
+    label: 'Draft',
+    group: 'Transforms',
+    title: "addDraft(manifold, draftDeg, axis)",
+    params: [
+      { name: 'body', type: 'body', default: 'part', label: 'Body' },
+      { name: 'draftDeg', type: 'number', default: 2, label: 'Draft °', min: 0, step: 0.5 },
+      { name: 'axis', type: 'select', default: 'z', label: 'Axis', options: AXIS_OPTIONS },
+    ],
+    build: (empty, p, names, buffer) => {
+      const lines = [...ensurePartPrefix(empty, names)];
+      const body = resolveBody(p, names, empty ? lines.join('\n') : buffer);
+      const deg = num(p.draftDeg, 2);
+      const axis = str(p.axis, 'z');
+      lines.push(`${body} = addDraft(${body}, ${deg}, '${axis}');`);
+      lines.push(...syncPartLines(body, names, /(?:let|const|var)\s+part\b/.test(lines.join('\n')) || !empty));
+      return withReturn(lines, empty);
+    },
+  },
+  {
     id: 'workplane',
     label: 'Workplane',
     group: 'Transforms',
@@ -1495,7 +1498,7 @@ export const HELPER_PALETTE_ITEMS = [
   {
     id: 'makeExtrude',
     label: 'Extrude',
-    group: 'Transforms',
+    group: 'Advanced',
     title: 'Extrude — contour mode (profile + makeExtrude on the workplane)',
     bodyBase: 'extrude',
     params: [
@@ -1524,7 +1527,7 @@ export const HELPER_PALETTE_ITEMS = [
   {
     id: 'makeRevolve',
     label: 'Revolve',
-    group: 'Transforms',
+    group: 'Advanced',
     title: 'Revolve — contour mode (profile + makeRevolve on an in-plane axis)',
     bodyBase: 'revolve',
     params: [
@@ -1549,9 +1552,20 @@ export const HELPER_PALETTE_ITEMS = [
     },
   },
   {
+    id: 'makeSweep',
+    label: 'Sweep',
+    group: 'Advanced',
+    title: 'Sweep — placeholder until Slice 3 (does not build a solid)',
+    placeholder: true,
+    params: [],
+    // Slot only. UI refuses instead of entering contour mode. Compose inserts
+    // a comment so sequential palette goldens stay runnable without a sweep().
+    build: () => '// Sweep placeholder — solid lands in Slice 3; this slot does not insert geometry.\n',
+  },
+  {
     id: 'makeLoft',
     label: 'Loft',
-    group: 'Transforms',
+    group: 'Advanced',
     title: 'Loft — contour mode (multi-profile makeCrossSection + makeLoft)',
     bodyBase: 'lofted',
     params: [
@@ -1581,8 +1595,8 @@ export const HELPER_PALETTE_ITEMS = [
   },
 ];
 
-/** Group order for the palette UI. */
-export const HELPER_PALETTE_GROUPS = ['Primitives', 'Features', 'Transforms'];
+/** Group order for the palette UI (Slice 29): Prim, Advanced, Features, Xforms. */
+export const HELPER_PALETTE_GROUPS = ['Primitives', 'Advanced', 'Features', 'Transforms'];
 
 export function itemsByGroup() {
   const map = Object.fromEntries(HELPER_PALETTE_GROUPS.map((g) => [g, []]));

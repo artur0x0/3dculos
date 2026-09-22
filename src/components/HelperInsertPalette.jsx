@@ -6,7 +6,6 @@ import {
   Donut,
   Hexagon,
   Squircle,
-  Radius,
   Triangle,
   CircleDot,
   Grid3x3,
@@ -26,6 +25,7 @@ import {
   Layers,
   SquareDashed,
   Route,
+  Spline,
 } from 'lucide-react';
 import { HELPER_PALETTE_GROUPS, itemsByGroup } from '../utils/helperPaletteSnippets';
 import { resolveFaceModal } from '../utils/faceFeaturePlacement';
@@ -41,13 +41,13 @@ const ICONS = {
   tube: Donut,
   hexPrism: Hexagon,
   roundedBox: Squircle,
-  filletEdges: Radius,
+  filletEdges: Squircle,
   chamferEdges: Triangle,
   hole: CircleDot,
   holePattern: Grid3x3,
   clearanceHole: Bolt,
   tapDrillHole: Drill,
-  cboreHole: Cone,
+  cboreHole: Cylinder,
   cskHole: Cone,
   shell: BoxSelect,
   addDraft: MoveVertical,
@@ -60,8 +60,17 @@ const ICONS = {
   makeExtrude: ArrowUpFromLine,
   makeRevolve: Rotate3d,
   makeLoft: Layers,
+  makeSweep: Spline,
   crossSection: SquareDashed,
   sweepPath: Route,
+};
+
+/** Mobile-first group captions (full names stay on the data model). */
+const GROUP_SHORT_LABEL = {
+  Primitives: 'Prim',
+  Advanced: 'Adv',
+  Features: 'Feat',
+  Transforms: 'Xform',
 };
 
 /**
@@ -71,6 +80,7 @@ const ICONS = {
  * Slice 24/25/26/28: Extrude / Revolve / Loft / Profile call onEnterContourMode.
  * Extrude / Revolve / Loft Confirm commits the solid; Profile stays Profile-only.
  * Slice 27: Fillet enters edge-pick mode (no pre-select / no soft-fail).
+ * Slice 29: groups Prim / Adv / Feat / Xform. Sweep is a placeholder slot.
  */
 const HelperInsertPalette = ({
   onInsert,
@@ -94,8 +104,22 @@ const HelperInsertPalette = ({
   const [edgeSnapshot, setEdgeSnapshot] = useState(null);
   const [modalMode, setModalMode] = useState('default'); // default | params | refuse
   const [refuseMessage, setRefuseMessage] = useState(null);
+  const [refuseTitle, setRefuseTitle] = useState(null);
 
   const openParams = (item) => {
+    // Slice 29: Sweep is a labeled slot only — no contour entry, no insert.
+    if (item.placeholder) {
+      setPending(null);
+      setFaceSnapshot(null);
+      setEdgeSnapshot(null);
+      setRefuseTitle(item.label);
+      setRefuseMessage(
+        'Sweep is a placeholder until Slice 3. It does not build a solid yet.',
+      );
+      setModalMode('refuse');
+      return;
+    }
+    setRefuseTitle(null);
     // Slice 24/25/26: Extrude / Revolve / Profile enter contour mode (never one-shot).
     if (isContourEntry(item.id) && typeof onEnterContourMode === 'function') {
       onEnterContourMode({ entry: item.id });
@@ -143,6 +167,7 @@ const HelperInsertPalette = ({
     setFaceSnapshot(null);
     setEdgeSnapshot(null);
     setRefuseMessage(null);
+    setRefuseTitle(null);
     setModalMode('default');
     onProfilePreview?.(null);
     onPathPreview?.(null);
@@ -168,7 +193,7 @@ const HelperInsertPalette = ({
                 compact ? 'leading-3' : 'leading-4'
               }`}
             >
-              {group === 'Primitives' ? 'Prim' : group === 'Features' ? 'Feat' : 'Xform'}
+              {GROUP_SHORT_LABEL[group] || group}
             </div>
             {(grouped[group] || []).map((item) => {
               const Icon = ICONS[item.id] || Box;
@@ -178,7 +203,11 @@ const HelperInsertPalette = ({
                   type="button"
                   onClick={() => openParams(item)}
                   title={item.title}
-                  aria-label={`Insert ${item.label}: ${item.title}`}
+                  aria-label={
+                    item.placeholder
+                      ? `${item.label} placeholder: ${item.title}`
+                      : `Insert ${item.label}: ${item.title}`
+                  }
                   className={`${pad} rounded text-blue-700 hover:bg-blue-100 active:bg-blue-200
                     flex items-center justify-center transition-colors`}
                 >
@@ -194,6 +223,7 @@ const HelperInsertPalette = ({
         <HelperParamModal
           item={null}
           refuseMessage={refuseMessage}
+          refuseTitle={refuseTitle}
           onCancel={close}
         />
       )}
