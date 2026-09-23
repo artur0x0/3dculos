@@ -3034,9 +3034,39 @@ function _s23PolylinePath(points, closed) {
 
 const _S23_THETA_TOL = (3 * Math.PI) / 180;
 
+function _s23CarryFrame(src, T) {
+  const Tn = _s23Norm(T);
+  let N = _s23Sub(src.N, [
+    _s23Dot(src.N, Tn) * Tn[0],
+    _s23Dot(src.N, Tn) * Tn[1],
+    _s23Dot(src.N, Tn) * Tn[2],
+  ]);
+  if (Math.hypot(N[0], N[1], N[2]) < 1e-8) N = src.N.slice();
+  else N = _s23Norm(N);
+  let B = _s23Norm(_s23Cross(Tn, N));
+  if (_s23Dot(B, src.B) < 0) {
+    N = [-N[0], -N[1], -N[2]];
+    B = [-B[0], -B[1], -B[2]];
+  }
+  return { N, B, theta: src.theta, f0: src.f0, f1: src.f1, T: Tn };
+}
+
+function _s23NearestMatched(raw, i, closed) {
+  for (let d = 1; d < raw.length; d++) {
+    const idxs = closed
+      ? [(i - d + raw.length) % raw.length, (i + d) % raw.length]
+      : [i - d, i + d].filter((k) => k >= 0 && k < raw.length);
+    for (const k of idxs) {
+      if (raw[k].matched) return raw[k];
+    }
+  }
+  return null;
+}
+
 /**
  * In-face frame at every path segment. One convexEdges pass + one mesh info.
- * Throws when a sample has no convex edge, the edge is concave, or θ is
+ * Smooth G1 bridges are not convex edges: they keep the neighboring dihedral
+ * frame. Throws when no segment matches, the edge is concave, or θ is
  * degenerate — a 90° start-frame fallback is the acute-edge hook.
  */
 function _s23ProbeSegments(M, part, points, closed) {
@@ -3044,9 +3074,7 @@ function _s23ProbeSegments(M, part, points, closed) {
   const mesh = _c6BuildMeshInfo(part);
   const n = points.length;
   const segCount = closed ? n : n - 1;
-  const segs = [];
-  let prevN = null;
-  let checkedConvex = false;
+  const raw = [];
   for (let i = 0; i < segCount; i++) {
     const p0 = points[i];
     const p1 = points[(i + 1) % n];
@@ -3064,36 +3092,34 @@ function _s23ProbeSegments(M, part, points, closed) {
         best = e;
       }
     }
-    if (!best || bestD > Math.max(0.5, 0.55 * (segL || 1))) {
-      throw new Error(
-        'filletAlongPath: could not orient cutter to part (no nearby convex edge along the path). '
-        + 'Pass opts.initialNormal, or re-pick edges.',
-      );
+    const hit = best && bestD <= Math.max(0.5, 0.55 * (segL || 1));
+    raw.push({ p0, p1, T, length: segL, mid, best: hit ? best : null, matched: false });
+  }
+
+  const thirdVertex = (tri, edge) => {
+    for (let k = 0; k < 3; k++) {
+      if (tri.vs[k] !== edge.a && tri.vs[k] !== edge.b) return tri.v[k];
     }
+    return null;
+  };
+
+  let prevN = null;
+  let checkedConvex = false;
+  for (const seg of raw) {
+    if (!seg.best) continue;
+    const best = seg.best;
     const eKey = best.a < best.b ? best.a * 1e9 + best.b : best.b * 1e9 + best.a;
     const ti = mesh.pairMap.get(eKey);
-    if (!ti || ti.length !== 2) {
-      throw new Error(
-        'filletAlongPath: could not orient cutter to part (edge missing from mesh). Re-pick edges.',
-      );
-    }
-    const thirdVertex = (tri) => {
-      for (let k = 0; k < 3; k++) {
-        if (tri.vs[k] !== best.a && tri.vs[k] !== best.b) return tri.v[k];
-      }
-      return null;
-    };
-    const X0 = thirdVertex(mesh.tris[ti[0]]);
-    const X1 = thirdVertex(mesh.tris[ti[1]]);
-    if (!X0 || !X1) {
-      throw new Error('filletAlongPath: could not orient cutter to part (degenerate edge triangle).');
-    }
-    const f0 = _c6InFaceDir(X0, best.va, T);
-    const f1 = _c6InFaceDir(X1, best.va, T);
+    if (!ti || ti.length !== 2) continue;
+    const X0 = thirdVertex(mesh.tris[ti[0]], best);
+    const X1 = thirdVertex(mesh.tris[ti[1]], best);
+    if (!X0 || !X1) continue;
+    const f0 = _c6InFaceDir(X0, best.va, seg.T);
+    const f1 = _c6InFaceDir(X1, best.va, seg.T);
     if (!checkedConvex) {
-      const rProbe = Math.min(0.05, (segL || 1) * 0.25);
+      const rProbe = Math.min(0.05, (seg.length || 1) * 0.25);
       const sp = M.sphere(rProbe, 12, 6).transform(
-        [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, mid[0], mid[1], mid[2], 1],
+        [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, seg.mid[0], seg.mid[1], seg.mid[2], 1],
       );
       const fIn = M.intersection(part, sp).volume() / sp.volume();
       if (fIn >= 0.45) {
@@ -3101,26 +3127,51 @@ function _s23ProbeSegments(M, part, points, closed) {
       }
       checkedConvex = true;
     }
-    const frame = orientFilletFrame(T, f0, f1, prevN);
+    const frame = orientFilletFrame(seg.T, f0, f1, prevN);
     if (!(frame.theta > 0.05) || frame.theta > Math.PI - 0.05) {
       throw new Error(
         `filletAlongPath: face angle ${frame.theta.toFixed(3)} rad is degenerate — re-pick edges.`,
       );
     }
+    seg.matched = true;
+    seg.N = frame.N;
+    seg.B = frame.B;
+    seg.theta = frame.theta;
+    seg.f0 = f0;
+    seg.f1 = f1;
     prevN = frame.N;
-    segs.push({
-      T,
-      N: frame.N,
-      B: frame.B,
-      theta: frame.theta,
-      length: segL,
-      f0,
-      f1,
-      p0,
-      p1,
-    });
   }
-  return segs;
+
+  if (!raw.some((seg) => seg.matched)) {
+    throw new Error(
+      'filletAlongPath: could not orient cutter to part (no nearby convex edge along the path). '
+      + 'Pass opts.initialNormal, or re-pick edges.',
+    );
+  }
+
+  for (let i = 0; i < raw.length; i++) {
+    if (raw[i].matched) continue;
+    const src = _s23NearestMatched(raw, i, closed);
+    const carried = _s23CarryFrame(src, raw[i].T);
+    raw[i].N = carried.N;
+    raw[i].B = carried.B;
+    raw[i].theta = carried.theta;
+    raw[i].f0 = carried.f0;
+    raw[i].f1 = carried.f1;
+    raw[i].T = carried.T;
+  }
+
+  return raw.map((seg) => ({
+    T: seg.T,
+    N: seg.N,
+    B: seg.B,
+    theta: seg.theta,
+    length: seg.length,
+    f0: seg.f0,
+    f1: seg.f1,
+    p0: seg.p0,
+    p1: seg.p1,
+  }));
 }
 
 function _s23GroupRuns(segs, closed) {

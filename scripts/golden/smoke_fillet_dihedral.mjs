@@ -149,6 +149,8 @@ function send(type, payload = {}) {
   });
 }
 
+const { register } = await import('node:module');
+register('./manifold-resolve-hook.mjs', import.meta.url);
 await import('../../src/workers/sandboxWorker.js');
 await send('init');
 
@@ -270,12 +272,18 @@ return part;
     const payload = await exec(`
 let part = Manifold.cube([40, 30, 20], true);
 const before = part.volume();
-const e = convexEdges(part).filter((ed) => Math.abs(ed.va[2] - ed.vb[2]) < 0.2 && ed.length > 20)[0];
+const e = convexEdges(part).filter((ed) => {
+  const dz = Math.abs(ed.va[2] - ed.vb[2]);
+  const len = Math.hypot(ed.vb[0] - ed.va[0], ed.vb[1] - ed.va[1], ed.vb[2] - ed.va[2]);
+  return dz < 0.2 && len > 20;
+})[0];
+if (!e) throw new Error('no long horizontal cube edge');
+const edgeLen = Math.hypot(e.vb[0] - e.va[0], e.vb[1] - e.va[1], e.vb[2] - e.va[2]);
 const path = makeSweepPath([e]);
 const r = 2;
 part = filletAlongPath(part, path, r);
 const removed = before - part.volume();
-const expect = r * r * (1 - Math.PI / 4) * e.length;
+const expect = r * r * (1 - Math.PI / 4) * edgeLen;
 if (Math.abs(removed - expect) / expect > 0.2) {
   throw new Error('orthogonal removed ' + removed.toFixed(3) + ' vs ' + expect.toFixed(3));
 }

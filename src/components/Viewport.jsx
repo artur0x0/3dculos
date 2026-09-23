@@ -1454,41 +1454,6 @@ const Viewport = forwardRef(({
     idLabelGroupRef.current = null;
   }, []);
 
-  // Fillet mode: face ids (fN) and boundary-edge ids (eN) for the Accept helpers.
-  useEffect(() => {
-    clearIdLabels();
-    if (!filletMode || !sceneRef.current) return undefined;
-    featureEdgesSourceRef.current = null;
-    const geom = resultRef.current?.geometry;
-    if (geom) syncFeatureEdges(geom);
-    setSelectedEdges((prev) => stampBoundaryOnSelection(prev, featureEdgesRef.current));
-    const topo = boundaryTopoRef.current;
-    if (!topo) return undefined;
-    const dims = modelBounds?.size;
-    const span = dims ? Math.max(dims[0], dims[1], dims[2]) : 40;
-    const worldH = Math.max(1.6, span * 0.055);
-    const group = new Group();
-    group.name = 'filletIdLabels';
-    for (const face of topo.faces || []) {
-      const sprite = makeFilletIdSprite(`f${face.id}`, worldH);
-      const n = face.normal || [0, 0, 1];
-      sprite.position.set(
-        face.center[0] + n[0] * worldH * 0.35,
-        face.center[1] + n[1] * worldH * 0.35,
-        face.center[2] + n[2] * worldH * 0.35,
-      );
-      group.add(sprite);
-    }
-    for (const edge of topo.edges || []) {
-      const sprite = makeFilletIdSprite(`e${edge.id}`, worldH * 0.85);
-      sprite.position.set(edge.mid[0], edge.mid[1], edge.mid[2]);
-      group.add(sprite);
-    }
-    sceneRef.current.add(group);
-    idLabelGroupRef.current = group;
-    return () => clearIdLabels();
-  }, [filletMode, cachedMeshData, modelBounds, syncFeatureEdges, clearIdLabels]);
-
   useEffect(() => () => {
     clearFilletBlendPreview();
     if (filletToastTimerRef.current) clearTimeout(filletToastTimerRef.current);
@@ -1842,6 +1807,41 @@ const Viewport = forwardRef(({
       featureEdgesSourceRef.current = geom ?? null;
     }
   }, []);
+
+  // Fillet mode: face ids (fN) and boundary-edge ids (eN) for the Accept helpers.
+  useEffect(() => {
+    clearIdLabels();
+    if (!filletMode || !sceneRef.current) return undefined;
+    featureEdgesSourceRef.current = null;
+    const geom = resultRef.current?.geometry;
+    if (geom) syncFeatureEdges(geom);
+    setSelectedEdges((prev) => stampBoundaryOnSelection(prev, featureEdgesRef.current));
+    const topo = boundaryTopoRef.current;
+    if (!topo) return undefined;
+    const dims = modelBounds?.size;
+    const span = dims ? Math.max(dims[0], dims[1], dims[2]) : 40;
+    const worldH = Math.max(1.6, span * 0.055);
+    const group = new Group();
+    group.name = 'filletIdLabels';
+    for (const face of topo.faces || []) {
+      const sprite = makeFilletIdSprite(`f${face.id}`, worldH);
+      const n = face.normal || [0, 0, 1];
+      sprite.position.set(
+        face.center[0] + n[0] * worldH * 0.35,
+        face.center[1] + n[1] * worldH * 0.35,
+        face.center[2] + n[2] * worldH * 0.35,
+      );
+      group.add(sprite);
+    }
+    for (const edge of topo.edges || []) {
+      const sprite = makeFilletIdSprite(`e${edge.id}`, worldH * 0.85);
+      sprite.position.set(edge.mid[0], edge.mid[1], edge.mid[2]);
+      group.add(sprite);
+    }
+    sceneRef.current.add(group);
+    idLabelGroupRef.current = group;
+    return () => clearIdLabels();
+  }, [filletMode, cachedMeshData, modelBounds, syncFeatureEdges, clearIdLabels]);
 
   const rebuildFeatureEdges = useCallback(() => {
     syncFeatureEdges(resultRef.current?.geometry ?? null);

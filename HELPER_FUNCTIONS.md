@@ -1008,7 +1008,8 @@ Loud-fail if the kept solid is still scrap-sheet dirty.
 for that interior angle θ: fillet setback `t = r/tan(θ/2)`, removed area
 `r·t − ½·r²·(π−θ)` (at 90° this is `r²(1−π/4)`); chamfer area `½·c²·sin θ`
 (at 90° this is `½·c²`). Segments whose θ stays within 3° share one profile and
-are swept with those per-segment frames. A closed run that fits a circle is
+are swept with those per-segment frames. A smooth segment that is not a convex
+edge keeps the neighboring frame, so a compound chain can still sweep. A closed run that fits a circle is
 revolved. `opts.initialNormal` is the only path that still uses a 90° wedge and
 one start-frame RMF. The exterior bumper still keeps cutter legs off the faces;
 at 90° it matches the old `(−e,−e)` pad.
