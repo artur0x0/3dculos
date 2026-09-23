@@ -241,7 +241,10 @@ function rFace() {
   check('has profileCircle', /profileCircle\s*\(/.test(first.buffer));
   check('has makeRevolve', /makeRevolve\s*\(/.test(first.buffer));
   check('has placeInFrame', /placeInFrame\s*\(/.test(first.buffer));
-  check('replaces part (no host add)', /part\s*=\s*placeInFrame\s*\(/.test(first.buffer) && !/part\s*=\s*part\.add\(/.test(first.buffer));
+  check('unions onto existing part',
+    /Manifold\.cube\(/.test(first.buffer)
+    && /part\s*=\s*part\.add\(\s*placeInFrame\s*\(/.test(first.buffer)
+    && !/placeOnFace\s*\(/.test(first.buffer));
   check('has revolve markers', hasContourRevolveBlock(first.buffer));
   check('markers wrap solid', first.buffer.includes(CONTOUR_REVOLVE_BEGIN) && first.buffer.includes(CONTOUR_REVOLVE_END));
   check('one makeCrossSection', countMakeCrossSection(first.buffer) === 1);

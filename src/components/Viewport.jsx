@@ -44,7 +44,13 @@ import ContourModeRail from './ContourModeRail';
 import ContourModeChip from './ContourModeChip';
 import FilletModeChip from './FilletModeChip';
 import { classifySelectedFace } from '../utils/faceFeaturePlacement';
-import { buildCrossSectionPreview } from '../utils/crossSectionSubstrate';
+import { buildCrossSectionPreview, defaultTopPlaneFrame } from '../utils/crossSectionSubstrate';
+import {
+  applySavedContour,
+  listSavedContours,
+  savedContourRings,
+  withAutoPickedContour,
+} from '../utils/savedContours';
 import {
   addLoftProfile,
   buildContourPreview,
@@ -57,6 +63,7 @@ import {
   isExtrudeEntry,
   isLoftEntry,
   isRevolveEntry,
+  isSolidContourEntry,
   isSweepEntry,
   planeFromContourFace,
   removeLoftProfile,
@@ -211,6 +218,8 @@ const Viewport = forwardRef(({
   const edgeHoverRef = useRef(null);
   /** Slice 21: plane+profile preview overlay while HelperParamModal is open. */
   const xsPreviewRef = useRef(null);
+  /** Saved makeCrossSection wires while contour mode is open. */
+  const savedContourGhostRef = useRef(null);
   const pathPreviewRef = useRef(null);
   const edgePickScratchA = useRef(new Vector3());
   const edgePickScratchB = useRef(new Vector3());
@@ -494,6 +503,55 @@ const Viewport = forwardRef(({
     disposeEdgeOverlayObject(sceneRef.current, xsPreviewRef.current);
     xsPreviewRef.current = null;
   }, []);
+
+  const clearSavedContourGhosts = useCallback(() => {
+    if (!savedContourGhostRef.current) return;
+    disposeEdgeOverlayObject(sceneRef.current, savedContourGhostRef.current);
+    savedContourGhostRef.current = null;
+  }, []);
+
+  /**
+   * Wire ghosts for every saved contour. Selected pick is amber; the rest
+   * stay readable but dim so an empty menu is not the only signal.
+   */
+  const paintSavedContourGhosts = useCallback((contours, pickedId, hostPlane) => {
+    clearSavedContourGhosts();
+    if (!contours?.length || !sceneRef.current) return;
+    const group = new Group();
+    group.name = 'savedContourGhosts';
+    let drew = false;
+    for (const contour of contours) {
+      const rings = savedContourRings(contour, hostPlane);
+      if (!rings.length) continue;
+      const selected = contour.id === pickedId;
+      for (const ring of rings) {
+        if (!ring?.length) continue;
+        const mat = new LineBasicMaterial({
+          color: selected ? 0xf59e0b : 0xe2e8f0,
+          depthTest: false,
+          depthWrite: false,
+          transparent: true,
+          opacity: selected ? 0.95 : 0.55,
+        });
+        const positions = new Float32Array(ring.length * 3);
+        for (let i = 0; i < ring.length; i++) {
+          positions[i * 3] = ring[i][0];
+          positions[i * 3 + 1] = ring[i][1];
+          positions[i * 3 + 2] = ring[i][2];
+        }
+        const geom = new BufferGeometry();
+        geom.setAttribute('position', new BufferAttribute(positions, 3));
+        const loop = new LineLoop(geom, mat);
+        loop.renderOrder = selected ? 13 : 11;
+        loop.frustumCulled = false;
+        group.add(loop);
+        drew = true;
+      }
+    }
+    if (!drew) return;
+    sceneRef.current.add(group);
+    savedContourGhostRef.current = group;
+  }, [clearSavedContourGhosts]);
 
   /**
    * Slice 21: draw profile outline(s) on the cross-section plane while editing params.
@@ -1147,12 +1205,13 @@ const Viewport = forwardRef(({
     disposeEdgeOverlayObject(sceneRef.current, pathPreviewRef.current);
     pathPreviewRef.current = null;
     applyContourPartGhost(false);
+    clearSavedContourGhosts();
     if (contourToastTimerRef.current) {
       clearTimeout(contourToastTimerRef.current);
       contourToastTimerRef.current = null;
     }
     setContourToast(null);
-  }, [clearXsPreview, clearWorkplaneOverlay, clearPolylineDraft, clearExtrudePreview, clearRevolvePreview, clearLoftPreview, clearSweepPreview, applyContourPartGhost]);
+  }, [clearXsPreview, clearWorkplaneOverlay, clearPolylineDraft, clearExtrudePreview, clearRevolvePreview, clearLoftPreview, clearSweepPreview, applyContourPartGhost, clearSavedContourGhosts]);
 
   const enterContourMode = useCallback(({ entry } = {}) => {
     setFilletMode(null);
@@ -1161,18 +1220,22 @@ const Viewport = forwardRef(({
     setPickMode('face');
     disposeEdgeOverlayObject(sceneRef.current, pathPreviewRef.current);
     pathPreviewRef.current = null;
-    const next = enterContourState(entry, selectedFace);
+    const buf = (typeof getHelperBuffer === 'function' ? getHelperBuffer() : '') || currentScript || '';
+    const saved = listSavedContours(buf);
+    const next = withAutoPickedContour(enterContourState(entry, selectedFace), saved);
     setContourMode(next);
     if (next.enterRefuse) showContourToast(next.enterRefuse);
     else if (isSweepEntry(entry)) {
       showContourToast(
         selectedEdges?.length
-          ? 'Sweep — profile on the plane, path from the selected edges. Confirm replaces the part.'
+          ? 'Sweep — profile on the plane, path from the selected edges. Confirm adds when part exists.'
           : 'Sweep — draw a profile, then Path to pick a contiguous edge chain.',
       );
+    } else if (isSolidContourEntry(entry) && saved.length) {
+      showContourToast(`Using ${saved[saved.length - 1].label}. Draw a new profile anytime.`);
     }
     applyContourPartGhost(true);
-  }, [selectedFace, selectedEdges, applyContourPartGhost, clearFilletBlendPreview]);
+  }, [selectedFace, selectedEdges, applyContourPartGhost, clearFilletBlendPreview, getHelperBuffer, currentScript]);
 
   const confirmContourProfile = useCallback(() => {
     const state = contourModeRef.current;
@@ -1340,6 +1403,40 @@ const Viewport = forwardRef(({
     if (filletToastTimerRef.current) clearTimeout(filletToastTimerRef.current);
   }, [clearFilletBlendPreview]);
 
+  const savedContours = useMemo(
+    () => listSavedContours(currentScript || ''),
+    [currentScript],
+  );
+
+  const savedContourHostPlane = useMemo(() => {
+    if (modelBounds?.max && Number.isFinite(Number(modelBounds.max[2]))) {
+      return defaultTopPlaneFrame([
+        Number(modelBounds.center?.[0]) || 0,
+        Number(modelBounds.center?.[1]) || 0,
+        Number(modelBounds.max[2]),
+      ]);
+    }
+    return defaultTopPlaneFrame([0, 0, 0]);
+  }, [modelBounds]);
+
+  useEffect(() => {
+    if (!contourMode) {
+      clearSavedContourGhosts();
+      return;
+    }
+    paintSavedContourGhosts(
+      savedContours,
+      contourMode.pickedContourId,
+      savedContourHostPlane,
+    );
+  }, [
+    contourMode,
+    savedContours,
+    savedContourHostPlane,
+    paintSavedContourGhosts,
+    clearSavedContourGhosts,
+  ]);
+
   // Live workplane + makeCrossSection profile (+ Extrude / Revolve / Loft solid) preview.
   useEffect(() => {
     if (!contourMode) {
@@ -1462,8 +1559,9 @@ const Viewport = forwardRef(({
     clearLoftPreview();
     clearSweepPreview();
     applyContourPartGhost(false);
+    clearSavedContourGhosts();
     if (contourToastTimerRef.current) clearTimeout(contourToastTimerRef.current);
-  }, [clearWorkplaneOverlay, clearPolylineDraft, clearExtrudePreview, clearRevolvePreview, clearLoftPreview, clearSweepPreview, applyContourPartGhost]);
+  }, [clearWorkplaneOverlay, clearPolylineDraft, clearExtrudePreview, clearRevolvePreview, clearLoftPreview, clearSweepPreview, applyContourPartGhost, clearSavedContourGhosts]);
 
   // Contour mode: planar face tap updates the workplane; non-planar is a loud refuse.
   useEffect(() => {
@@ -3222,6 +3320,13 @@ const Viewport = forwardRef(({
           onAddLoftProfile={() => setContourMode((prev) => (prev ? addLoftProfile(prev) : prev))}
           onRemoveLoftProfile={(i) => setContourMode((prev) => (prev ? removeLoftProfile(prev, i) : prev))}
           onLoftOffsetChange={(offset) => setContourMode((prev) => (prev ? setLoftProfileOffset(prev, offset) : prev))}
+          savedContours={savedContours}
+          pickedContourId={contourMode.pickedContourId || null}
+          onPickSaved={(id) => {
+            const hit = savedContours.find((c) => c.id === id);
+            if (!hit) return;
+            setContourMode((prev) => (prev ? applySavedContour(prev, hit) : prev));
+          }}
           onConfirm={confirmContourProfile}
           onUndoPoint={() => setContourMode((prev) => {
             if (!prev || prev.tool !== 'polyline') return prev;

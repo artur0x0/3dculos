@@ -312,7 +312,10 @@ function xyExtent(cs) {
     && /profileCircle\s*\(\s*8\s*,/.test(first.buffer));
   check('has makeLoft', /makeLoft\s*\(/.test(first.buffer));
   check('has placeInFrame', /placeInFrame\s*\(/.test(first.buffer));
-  check('replaces part (no host add)', /part\s*=\s*placeInFrame\s*\(/.test(first.buffer) && !/part\s*=\s*part\.add\(/.test(first.buffer));
+  check('unions onto existing part',
+    /Manifold\.cube\(/.test(first.buffer)
+    && /part\s*=\s*part\.add\(\s*placeInFrame\s*\(/.test(first.buffer)
+    && !/placeOnFace\s*\(/.test(first.buffer));
   check('no placeOnFace', !/placeOnFace\s*\(/.test(first.buffer));
   check('has loft markers', hasContourLoftBlock(first.buffer));
   check('markers wrap solid', first.buffer.includes(CONTOUR_LOFT_BEGIN) && first.buffer.includes(CONTOUR_LOFT_END));
@@ -562,8 +565,11 @@ function xyExtent(cs) {
   check('commit Extrude unchanged (solid + Auto-Run)', ext.ok && ext.run && countMakeExtrude(ext.buffer) === 1);
   check('commit Extrude has no Loft', countMakeLoft(ext.buffer) === 0);
   check('commit Extrude still has extrude markers', hasContourExtrudeBlock(ext.buffer));
-  check('commit Extrude stays frame-only',
-    /placeInFrame\s*\(/.test(ext.buffer) && !/placeOnFace\s*\(/.test(ext.buffer) && !/part\s*=\s*part\.add\(/.test(ext.buffer));
+  check('commit Extrude unions onto the cube',
+    /placeInFrame\s*\(/.test(ext.buffer)
+    && /part\s*=\s*part\.add\(\s*placeInFrame\s*\(/.test(ext.buffer)
+    && /Manifold\.cube\(/.test(ext.buffer)
+    && !/placeOnFace\s*\(/.test(ext.buffer));
 
   const rev = composeContourCommit(starter, {
     entry: 'makeRevolve',
@@ -575,8 +581,11 @@ function xyExtent(cs) {
   check('commit Revolve unchanged (solid + Auto-Run)', rev.ok && rev.run && countMakeRevolve(rev.buffer) === 1);
   check('commit Revolve has no Loft', countMakeLoft(rev.buffer) === 0);
   check('commit Revolve still has revolve markers', hasContourRevolveBlock(rev.buffer));
-  check('commit Revolve stays frame-only',
-    /placeInFrame\s*\(/.test(rev.buffer) && !/placeOnFace\s*\(/.test(rev.buffer) && !/part\s*=\s*part\.add\(/.test(rev.buffer));
+  check('commit Revolve unions onto the cube',
+    /placeInFrame\s*\(/.test(rev.buffer)
+    && /part\s*=\s*part\.add\(\s*placeInFrame\s*\(/.test(rev.buffer)
+    && /Manifold\.cube\(/.test(rev.buffer)
+    && !/placeOnFace\s*\(/.test(rev.buffer));
 
   const thenLoft = composeContourLoft(prof.buffer, {
     face,

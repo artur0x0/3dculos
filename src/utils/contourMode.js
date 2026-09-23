@@ -44,6 +44,7 @@ import {
   CONTOUR_SWEEP_BEGIN,
   CONTOUR_SWEEP_END,
   isBufferEmpty,
+  scriptHasPriorSolid,
 } from './helperPaletteSnippets.js';
 import {
   assembleLoftStations,
@@ -103,6 +104,11 @@ export function isLoftEntry(id) {
 
 export function isSweepEntry(id) {
   return id === 'makeSweep';
+}
+
+/** Extrude / Revolve / Sweep / Loft — solid Confirm, not Profile-only. */
+export function isSolidContourEntry(id) {
+  return isExtrudeEntry(id) || isRevolveEntry(id) || isLoftEntry(id) || isSweepEntry(id);
 }
 
 export function isContourTool(id) {
@@ -490,9 +496,10 @@ export function switchContourTool(state, tool) {
   if (state?.params?.radius != null && next.radius != null) {
     next.radius = state.params.radius;
   }
-  const nextState = { ...state, tool: nextTool, params: next };
+  const nextState = { ...state, tool: nextTool, params: next, pickedContourId: null };
   if (isLoftEntry(state?.entry)) {
-    return writeLoftSelected(nextState, { tool: nextTool, params: next });
+    const written = writeLoftSelected(nextState, { tool: nextTool, params: next });
+    return { ...written, pickedContourId: null };
   }
   return nextState;
 }
@@ -593,6 +600,15 @@ export function resolveContourWorkplane(faceData) {
  * Plane frame used by live preview (same snap as buildCrossSectionPreview).
  */
 export function planeFromContourFace(face) {
+  const framed = face?.planeFrame;
+  if (framed?.center && framed?.normal && framed?.x && framed?.y) {
+    return {
+      center: framed.center.map(Number),
+      normal: framed.normal.map(Number),
+      x: framed.x.map(Number),
+      y: framed.y.map(Number),
+    };
+  }
   if (!face || face.type !== 'planar') return defaultTopPlaneFrame(face?.center);
   const preview = buildCrossSectionPreview(face, { profileType: 'circle', radius: 1 });
   if (preview?.plane) return preview.plane;
@@ -1136,6 +1152,28 @@ export function countMakeLoft(buffer) {
   return m ? m.length : 0;
 }
 
+/**
+ * Empty / first-body Confirm must stay `let part = placeInFrame` (no host add,
+ * no placeOnFace). When `part` already exists, Confirm must union
+ * `part.add(placeInFrame(...))` — a bare replace wipes prior geometry.
+ */
+function advancedPlaceError(owned, prior, label) {
+  if (/placeOnFace\s*\(/.test(owned)) {
+    return `${label}: placeOnFace is the host path — refusing leftover host.`;
+  }
+  const unioned = /part\s*=\s*part\.add\(\s*placeInFrame\s*\(/.test(owned);
+  if (prior) {
+    if (!unioned) {
+      return `${label}: existing part must union the new solid — refusing wipe.`;
+    }
+    return null;
+  }
+  if (/part\s*=\s*part\.add\(/.test(owned)) {
+    return `${label}: host-add is not the new-body path — refusing leftover host.`;
+  }
+  return null;
+}
+
 function markersUnbalanced(text, begin, end) {
   const i = text.lastIndexOf(begin);
   const j = text.indexOf(end, i < 0 ? 0 : i);
@@ -1173,7 +1211,8 @@ export function stripContourExtrudeBlock(buffer) {
 
 /**
  * Confirm → insert or replace in-mode Extrude (profile + makeExtrude + placeInFrame).
- * New-body path replaces `part` (no host add). Second Confirm updates the same block.
+ * Empty buffer: `let part = placeInFrame`. Existing part: union via `part.add`.
+ * Second Confirm updates the same block only.
  *
  * @returns {{ ok: true, buffer: string, run: true } | { ok: false, message: string }}
  */
@@ -1244,18 +1283,8 @@ export function composeContourExtrude(buffer, {
       message: 'composeContourExtrude: placeInFrame missing — refusing unscoped insert.',
     };
   }
-  if (/placeOnFace\s*\(/.test(owned)) {
-    return {
-      ok: false,
-      message: 'composeContourExtrude: placeOnFace is the host path — refusing leftover host.',
-    };
-  }
-  if (/part\s*=\s*part\.add\(/.test(owned)) {
-    return {
-      ok: false,
-      message: 'composeContourExtrude: host-add is not the new-body path — refusing leftover host.',
-    };
-  }
+  const placeErr = advancedPlaceError(owned, scriptHasPriorSolid(stripped), 'composeContourExtrude');
+  if (placeErr) return { ok: false, message: placeErr };
   if (!hasContourExtrudeBlock(composed)) {
     return {
       ok: false,
@@ -1305,7 +1334,8 @@ export function stripContourRevolveBlock(buffer) {
 
 /**
  * Confirm → insert or replace in-mode Revolve (profile + makeRevolve + placeInFrame).
- * New-body path replaces `part` (no host add). Second Confirm updates the same block.
+ * Empty buffer: `let part = placeInFrame`. Existing part: union via `part.add`.
+ * Second Confirm updates the same block only.
  *
  * @returns {{ ok: true, buffer: string, run: true } | { ok: false, message: string }}
  */
@@ -1391,18 +1421,8 @@ export function composeContourRevolve(buffer, {
       message: 'composeContourRevolve: placeInFrame missing — refusing unscoped insert.',
     };
   }
-  if (/placeOnFace\s*\(/.test(owned)) {
-    return {
-      ok: false,
-      message: 'composeContourRevolve: placeOnFace is the host path — refusing leftover host.',
-    };
-  }
-  if (/part\s*=\s*part\.add\(/.test(owned)) {
-    return {
-      ok: false,
-      message: 'composeContourRevolve: host-add is not the new-body path — refusing leftover host.',
-    };
-  }
+  const placeErr = advancedPlaceError(owned, scriptHasPriorSolid(stripped), 'composeContourRevolve');
+  if (placeErr) return { ok: false, message: placeErr };
   if (!hasContourRevolveBlock(composed)) {
     return {
       ok: false,
@@ -1462,7 +1482,8 @@ function stripContourSiblingBlocks(buffer) {
 
 /**
  * Confirm → insert or replace in-mode Loft (≥2 profiles + makeLoft + placeInFrame).
- * New-body path replaces `part` (no host add). Second Confirm updates the same block.
+ * Empty buffer: `let part = placeInFrame`. Existing part: union via `part.add`.
+ * Second Confirm updates the same block only.
  * v1: same workplane, each profile offset along the plane normal.
  *
  * @returns {{ ok: true, buffer: string, run: true } | { ok: false, message: string }}
@@ -1561,18 +1582,8 @@ export function composeContourLoft(buffer, {
       message: 'composeContourLoft: placeInFrame missing — refusing unscoped insert.',
     };
   }
-  if (/placeOnFace\s*\(/.test(owned)) {
-    return {
-      ok: false,
-      message: 'composeContourLoft: placeOnFace is the host path — refusing leftover host.',
-    };
-  }
-  if (/part\s*=\s*part\.add\(/.test(owned)) {
-    return {
-      ok: false,
-      message: 'composeContourLoft: host-add is not the new-body path — refusing leftover host.',
-    };
-  }
+  const placeErr = advancedPlaceError(owned, scriptHasPriorSolid(stripped), 'composeContourLoft');
+  if (placeErr) return { ok: false, message: placeErr };
   if (!hasContourLoftBlock(composed)) {
     return {
       ok: false,
@@ -1628,7 +1639,8 @@ export function stripContourSweepBlock(buffer) {
 /**
  * Confirm → insert or replace in-mode Sweep
  * (makeCrossSection + makeSweepPath + sweepPoints + placeInFrame).
- * New-body path replaces `part` (no host add). Second Confirm updates the same block.
+ * Empty buffer: `let part = placeInFrame`. Existing part: union via `part.add`.
+ * Second Confirm updates the same block only.
  *
  * @returns {{ ok: true, buffer: string, run: true } | { ok: false, message: string }}
  */
@@ -1702,18 +1714,8 @@ export function composeContourSweep(buffer, {
       message: 'composeContourSweep: placeInFrame missing — refusing unscoped insert.',
     };
   }
-  if (/placeOnFace\s*\(/.test(owned)) {
-    return {
-      ok: false,
-      message: 'composeContourSweep: placeOnFace is the host path — refusing leftover host.',
-    };
-  }
-  if (/part\s*=\s*part\.add\(/.test(owned)) {
-    return {
-      ok: false,
-      message: 'composeContourSweep: host-add is not the new-body path — refusing leftover host.',
-    };
-  }
+  const placeErr = advancedPlaceError(owned, scriptHasPriorSolid(stripped), 'composeContourSweep');
+  if (placeErr) return { ok: false, message: placeErr };
   if (!hasContourSweepBlock(composed)) {
     return {
       ok: false,

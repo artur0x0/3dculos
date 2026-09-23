@@ -112,15 +112,17 @@ function sweepPayload(extra = {}) {
     HELPER_PALETTE_GROUPS.join('|') === 'Primitives|Advanced|Features|Transforms',
   );
   check(
-    'Advanced order Extrude Revolve Sweep Loft',
-    grouped.Advanced.map((i) => i.id).join(',') === 'makeExtrude,makeRevolve,makeSweep,makeLoft',
+    'Advanced order Profile Workplane Extrude Revolve Sweep Loft',
+    grouped.Advanced.map((i) => i.id).join(',') === 'crossSection,workplane,makeExtrude,makeRevolve,makeSweep,makeLoft',
   );
   const sweep = grouped.Advanced.find((i) => i.id === 'makeSweep');
   check('Sweep is not a placeholder', sweep && sweep.placeholder !== true);
   check('Sweep title is contour mode', /contour/i.test(sweep?.title || ''));
   check('Fillet still in Features', grouped.Features.some((i) => i.id === 'filletEdges'));
   check('Path still in Features', grouped.Features.some((i) => i.id === 'sweepPath'));
-  check('Profile still in Features', grouped.Features.some((i) => i.id === 'crossSection'));
+  check('Profile in Advanced', grouped.Advanced.some((i) => i.id === 'crossSection'));
+  check('Workplane in Advanced', grouped.Advanced.some((i) => i.id === 'workplane'));
+  check('Profile left Features', !grouped.Features.some((i) => i.id === 'crossSection'));
 
   const st = enterContourState('makeSweep', null);
   check('enter Sweep keeps entry', st.entry === 'makeSweep');
@@ -197,8 +199,10 @@ function sweepPayload(extra = {}) {
   check('Back-equivalent has no makeCrossSection', countMakeCrossSection(stripped) === 0);
 
   const onStarter = composeContourSweep(starter, sweepPayload());
-  check('starter Sweep replaces part', onStarter.ok && /part\s*=\s*placeInFrame\(/.test(onStarter.buffer));
-  check('starter Sweep keeps no host add', !/part\.add\(/.test(contourSweepOwnedRegion(onStarter.buffer)));
+  check('starter Sweep unions onto part',
+    onStarter.ok && /part\s*=\s*part\.add\(\s*placeInFrame\(/.test(onStarter.buffer));
+  check('starter Sweep keeps the cube', /Manifold\.cube\(/.test(onStarter.buffer));
+  check('starter Sweep has no placeOnFace', !/placeOnFace\s*\(/.test(contourSweepOwnedRegion(onStarter.buffer)));
   const back = stripContourSweepBlock(onStarter.buffer);
   check('strip restores a buffer without sweep markers', !hasContourSweepBlock(back));
   check('strip leaves the starter cube', /Manifold\.cube\(/.test(back));
@@ -248,7 +252,7 @@ function sweepPayload(extra = {}) {
 {
   const composed = composeContourSweep(starter, sweepPayload());
   const stubs = {
-    Manifold: { cube: () => ({ _cube: true }) },
+    Manifold: { cube: () => ({ _cube: true, add(x) { return x; } }) },
     profileCircle: (r) => ({ type: 'circle', contours: [[[r, 0], [0, r], [-r, 0], [0, -r]]] }),
     makeCrossSection: (plane, profile) => ({
       kind: 'crossSection',

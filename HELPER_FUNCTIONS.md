@@ -94,12 +94,18 @@ or fillet — substrate only.
 **Loft**, or **Profile** enters a shared contour shell — the part stays on
 screen but is ghosted, the left rail swaps to circle / rect / polygon /
 polyline + **Back**, and a chip (Edge-pick pattern) holds plane + profile params.
-Live preview uses `makeCrossSection`. **Profile** Confirm writes or updates the
-in-mode Profile only. **Extrude** / **Revolve** / **Loft** Confirm commit the
-profile(s) plus a solid (`makeExtrude` / `makeRevolve` / `makeLoft` via
-`placeInFrame` — replace `part`, no host add; live solid preview). Second
-Confirm updates the same marked block. **Back** exits with no additional solid
-commit. **Fillet** is its own edge-pick mode (Slice 27), not a contour entry.
+Live preview uses `makeCrossSection`. **Profile** and **Workplane** live on the
+**Advanced** rail with Extrude / Revolve / Sweep / Loft. Saved
+`makeCrossSection` contours show in the contour-pick menu and as viewport
+wires; entering Extrude / Revolve / Sweep / Loft auto-picks the latest one.
+**Profile** Confirm writes or updates the in-mode Profile only. **Extrude** /
+**Revolve** / **Loft** / **Sweep** Confirm commit the profile plus a solid via
+`placeInFrame`. When `part` already exists, Confirm unions
+(`part = part.add(placeInFrame(...))`) so prior geometry stays. An empty
+script still uses `let part = placeInFrame(...)` (no starter cube, no
+`placeOnFace`). Second Confirm updates the same marked block only. **Back**
+exits with no additional solid commit. **Fillet** is its own edge-pick mode
+(Slice 27), not a contour entry.
 The one-shot Xform Extrude stub is gone — Extrude always enters contour mode.
 
 **Loft v1 plane model (Slice 28):** one shared workplane (selected planar face
@@ -107,8 +113,10 @@ or default +Z). Each profile is `makeCrossSection` on `offsetPlaneFrame(plane,
 offset)` — a copy of that plane whose `center` is translated by
 `offset * normal`. Planes must stay parallel. Independent (skew / non-parallel)
 profile planes are a later slice. Loud-fail on fewer than 2 profiles or
-coincident station offsets. Confirm replaces `part` with
-`placeInFrame(frame, makeLoft(sections))` (no host box / no `placeOnFace`+add).
+coincident station offsets. Confirm places the loft with `placeInFrame`.
+When `part` already exists that placement is unioned (`part.add`); an empty
+script still assigns `let part = placeInFrame(...)` (no host box / no
+`placeOnFace`).
 
 ## Core Manifold API
 
@@ -524,7 +532,9 @@ Places a solid on a **PlaneFrame** `{ center, normal, x, y }` (from
 `workplaneFromFace` / `makeCrossSection.plane` / default +Z). The solid's
 local origin lands at `center + u·x + v·y + w·normal`, axes aligned to
 `(x, y, normal)`. **Frame-only** — never a Manifold / cube / scaffold.
-Does not take a host part; assign the result (`part = placeInFrame(…)`).
+Does not take a host part. A first body assigns `let part = placeInFrame(…)`.
+Advanced Confirm (Extrude / Revolve / Sweep / Loft), when `part` already
+exists, unions instead: `part = part.add(placeInFrame(…))`.
 `transformByFrame` is the same helper.
 
 ```javascript
@@ -867,9 +877,10 @@ return part;
 **Loud failures:** missing plane axes; non-positive sizes; < 3 polygon points;
 degenerate (zero-area) profile.
 
-**UI:** FEAT rail → **Profile** → param popup (circle / rectangle / polygon
-presets including quarter-circle). Face select feeds the plane; Auto-Run
-unchanged. Preview overlays the profile on the plane while editing.
+**UI:** Advanced rail → **Profile** (with **Workplane**) → contour mode
+(circle / rectangle / polygon / polyline). Face select feeds the plane.
+Saved contours stay pickable for Extrude / Revolve / Sweep / Loft. Preview
+overlays the profile on the plane while editing.
 
 **Non-goals (wait for Product brief):** fillet-via-sweep;
 extrude/revolve/loft from this value; full sketch editor.
@@ -1065,9 +1076,13 @@ the workplane, then Confirm emits:
 const fr = { center: [0, 0, 0], normal: [0, 0, 1], x: [1, 0, 0], y: [0, 1, 0] };
 const xs = makeCrossSection(fr, profileCircle(5, 32));
 part = placeInFrame(xs.plane, makeExtrude(xs.contours, 10), [0, 0, 0]);
+// when part already exists, Confirm unions instead of replacing:
+// part = part.add(placeInFrame(xs.plane, makeExtrude(xs.contours, 10), [0, 0, 0]));
 ```
 
-`height` is always > 0. Sense **In** uses `w = −height`; **Both** uses
+`height` is always > 0. When `part` already exists, Advanced Confirm is
+additive (`part.add` of the placed solid). An empty script still uses
+`let part = placeInFrame(...)`. Sense **In** uses `w = −height`; **Both** uses
 `w = −height/2`. Direction defaults to the plane normal; a world axis is
 refused unless it is parallel to that normal. Loud-fail on a bad plane,
 profile, or distance.
