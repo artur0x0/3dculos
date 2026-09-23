@@ -28,7 +28,8 @@
         "golden:slice30": "node scripts/golden/smoke_slice30_sweep.mjs",
         "golden:hotfix-frame-only": "node scripts/golden/smoke_hotfix_frame_only_plane_undo_autorun.mjs",
         "golden:hotfix-sweep-path": "node scripts/golden/smoke_hotfix_sweep_path_disconnect.mjs",
-        "golden:hotfix-contour-picker": "node scripts/golden/smoke_hotfix_contour_picker_additive.mjs"
+        "golden:hotfix-contour-picker": "node scripts/golden/smoke_hotfix_contour_picker_additive.mjs",
+        "golden:polish-adv-ux": "node scripts/golden/smoke_polish_adv_ux.mjs"
     },
     "dependencies": {
         "@monaco-editor/react": "^4.6.0",

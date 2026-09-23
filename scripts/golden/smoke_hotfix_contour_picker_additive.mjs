@@ -181,7 +181,11 @@ return part;
 
   const wp = composeHelperInsert(starter, 'workplane');
   check('workplane emit has no bare top', wp && !/\btop\b/.test(wp.replace(/topFace/g, 'FACE')));
-  check('workplane still uses facesByNormal', /facesByNormal/.test(wp) && /workplaneFromFace/.test(wp));
+  check('workplane is a literal plane, not a new host cube',
+    /normal:\s*\[0,\s*0,\s*1\]/.test(wp)
+    && /x:\s*\[1,\s*0,\s*0\]/.test(wp)
+    && (wp.match(/Manifold\.cube\s*\(/g) || []).length === 1
+    && !/facesByNormal/.test(wp));
 
   const docs = readFileSync(join(here, '../../HELPER_FUNCTIONS.md'), 'utf8');
   check('HELPER notes additive Confirm',

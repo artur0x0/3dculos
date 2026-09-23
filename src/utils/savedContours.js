@@ -303,6 +303,68 @@ export function applySavedContour(state, contour) {
  * contour when the picker has at least one. Profile stays a fresh draw.
  * Returns the same state when there is nothing to pick.
  */
+/**
+ * Literal construction planes in the script (`const fr = { center, normal, x, y }`).
+ * Host queries (`workplaneFromFace`) are not construction planes — they need a solid.
+ */
+export function listConstructionPlanes(buffer) {
+  return indexPlanes(String(buffer || ''))
+    .filter((p) => p.plane && !p.host)
+    .map((p) => ({
+      id: `${p.name}@${p.end}`,
+      name: p.name,
+      plane: p.plane,
+    }));
+}
+
+function _raySegDist(origin, dir, a, b) {
+  const u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+  const dd = dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2];
+  if (!(dd > 1e-18)) return Infinity;
+  const uu = u[0] * u[0] + u[1] * u[1] + u[2] * u[2];
+  const ud = u[0] * dir[0] + u[1] * dir[1] + u[2] * dir[2];
+  const w = [origin[0] - a[0], origin[1] - a[1], origin[2] - a[2]];
+  const wd = w[0] * dir[0] + w[1] * dir[1] + w[2] * dir[2];
+  const wu = w[0] * u[0] + w[1] * u[1] + w[2] * u[2];
+  const den = uu * dd - ud * ud;
+  let s = den > 1e-12 ? (ud * wd - dd * wu) / den : 0;
+  if (s < 0) s = 0;
+  if (s > 1) s = 1;
+  const px = a[0] + s * u[0];
+  const py = a[1] + s * u[1];
+  const pz = a[2] + s * u[2];
+  const t = ((px - origin[0]) * dir[0] + (py - origin[1]) * dir[1] + (pz - origin[2]) * dir[2]) / dd;
+  if (!(t >= 0)) return Infinity;
+  const qx = origin[0] + t * dir[0];
+  const qy = origin[1] + t * dir[1];
+  const qz = origin[2] + t * dir[2];
+  return Math.hypot(px - qx, py - qy, pz - qz);
+}
+
+/**
+ * Nearest saved contour to a world ray. `maxDist` is world units (caller
+ * scales it with camera distance so a finger can hit the wire).
+ */
+export function pickContourByRay(origin, dir, contours, hostPlane = null, maxDist = 2) {
+  if (!origin || !dir || !contours?.length) return null;
+  let best = null;
+  let bestD = maxDist;
+  for (const contour of contours) {
+    const rings = savedContourRings(contour, hostPlane);
+    for (const ring of rings) {
+      if (!ring || ring.length < 2) continue;
+      for (let i = 0; i < ring.length; i++) {
+        const d = _raySegDist(origin, dir, ring[i], ring[(i + 1) % ring.length]);
+        if (d < bestD) {
+          bestD = d;
+          best = contour;
+        }
+      }
+    }
+  }
+  return best;
+}
+
 export function withAutoPickedContour(state, contours) {
   if (!state || !isSolidContourEntry(state.entry)) return state;
   const last = mostRecentSavedContour(contours);

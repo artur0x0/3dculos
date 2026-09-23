@@ -33,6 +33,19 @@ const ContourModeChip = ({
   savedContours = [],
   pickedContourId = null,
   onPickSaved,
+  planePreset = 'z',
+  planeAngles = {},
+  constructionPlanes = [],
+  pickedPlaneId = '',
+  onPlanePreset,
+  onPlaneAngles,
+  onPickWorkplane,
+  onPickFace,
+  tangentOn = false,
+  edgeCount = 0,
+  onToggleTangent,
+  onClearEdges,
+  onPopEdge,
   compact = false,
 }) => {
   const isExtrude = entry === 'makeExtrude';
@@ -174,6 +187,81 @@ const ContourModeChip = ({
       </div>
       <div className="text-[10px] text-cyan-100/90 normal-case font-sans mt-0.5">
         Plane · {planeLabel}
+      </div>
+      <div className="mt-1.5 font-sans" data-plane-editor="1" role="group" aria-label="Contour plane">
+        <div className="flex gap-1 flex-wrap">
+          {['x', 'y', 'z'].map((axis) => {
+            const active = planePreset === axis;
+            return (
+              <button
+                key={axis}
+                type="button"
+                onClick={() => onPlanePreset?.(axis)}
+                aria-pressed={active}
+                className={`px-1.5 py-0.5 rounded text-[11px] uppercase ${
+                  active ? 'bg-cyan-600 text-white' : 'bg-cyan-950/80 text-cyan-100 border border-cyan-700/70'
+                }`}
+                title={`World ${axis.toUpperCase()} plane`}
+              >
+                {axis}
+              </button>
+            );
+          })}
+          <button
+            type="button"
+            onClick={() => onPickFace?.()}
+            aria-pressed={planePreset === 'face'}
+            className={`px-1.5 py-0.5 rounded text-[11px] ${
+              planePreset === 'face' ? 'bg-cyan-600 text-white' : 'bg-cyan-950/80 text-cyan-100 border border-cyan-700/70'
+            }`}
+            title="Tap a planar face to set the plane"
+          >
+            Face
+          </button>
+        </div>
+        {constructionPlanes.length > 0 && (
+          <label className="mt-1 flex flex-col gap-0.5">
+            <span className="text-[10px] uppercase tracking-wide text-cyan-200/80">Workplane</span>
+            <select
+              value={pickedPlaneId || ''}
+              onChange={(e) => {
+                const id = e.target.value;
+                const hit = constructionPlanes.find((p) => p.id === id);
+                if (hit) onPickWorkplane?.(hit.plane, hit.id);
+              }}
+              className="rounded border border-cyan-700/70 bg-cyan-950/80 px-1.5 py-1 text-[11px] text-white"
+              aria-label="Pick a saved workplane"
+            >
+              <option value="">Pick workplane…</option>
+              {constructionPlanes.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+          </label>
+        )}
+        {['x', 'y', 'z'].map((axis) => {
+          const val = Number(planeAngles?.[axis]);
+          const shown = Number.isFinite(val) ? val : 0;
+          return (
+            <label key={`ang-${axis}`} className="mt-1 flex items-center gap-1.5 min-w-0">
+              <span className="text-[10px] uppercase tracking-wide text-cyan-200/80 w-6">∠{axis}</span>
+              <input
+                type="range"
+                min={-180}
+                max={180}
+                step={1}
+                value={shown}
+                onChange={(e) => {
+                  const n = Number(e.target.value);
+                  onPlaneAngles?.({ ...planeAngles, [axis]: Number.isFinite(n) ? n : 0 });
+                }}
+                className="flex-1 min-w-0 accent-cyan-400"
+                aria-label={`Plane angle ${axis}`}
+              />
+              <span className="w-8 text-right text-[10px] tabular-nums text-cyan-100">{shown}°</span>
+            </label>
+          );
+        })}
       </div>
       <div className="mt-1.5 font-sans" role="group" aria-label="Saved contours">
         <div className="text-[10px] uppercase tracking-wide text-cyan-200/80">
@@ -378,12 +466,47 @@ const ContourModeChip = ({
         </div>
       )}
       {isSweep && (
-        <div className="mt-2 pt-1.5 border-t border-cyan-700/50 flex flex-col gap-1.5 font-sans">
+        <div
+          className="mt-2 pt-1.5 border-t border-cyan-700/50 flex flex-col gap-1.5 font-sans"
+          data-sweep-path-selector="embedded"
+        >
           <div className="text-[10px] uppercase tracking-wide text-cyan-200/80">Path</div>
           <div className="text-[11px] text-cyan-100 leading-tight">
             {sweepPath?.ok
               ? `${sweepPath.path.edgeCount} edge${sweepPath.path.edgeCount === 1 ? '' : 's'} · ${sweepPath.path.closed ? 'loop' : 'chain'} · ${Number(sweepPath.path.length).toFixed(1)} mm`
               : (sweepPath?.message || 'Pick a contiguous edge chain')}
+          </div>
+          <div className="flex items-center gap-2 flex-wrap text-[10px]">
+            <span className="text-cyan-100">{edgeCount} edge{edgeCount === 1 ? '' : 's'}</span>
+            <button
+              type="button"
+              className={`underline ${tangentOn ? 'text-cyan-300' : 'text-cyan-200/70'}`}
+              onClick={() => onToggleTangent?.()}
+              aria-pressed={tangentOn}
+              title="When on, picking one edge adds tangent-connected edges"
+            >
+              Tangent {tangentOn ? 'on' : 'off'}
+            </button>
+            {edgeCount > 0 && (
+              <>
+                <button
+                  type="button"
+                  className="text-cyan-200 underline"
+                  onClick={() => onPopEdge?.()}
+                  title="Remove the last path edge"
+                >
+                  Undo edge
+                </button>
+                <button
+                  type="button"
+                  className="text-cyan-200 underline"
+                  onClick={() => onClearEdges?.()}
+                  title="Clear the path"
+                >
+                  Clear
+                </button>
+              </>
+            )}
           </div>
           <div className="flex gap-1">
             <button

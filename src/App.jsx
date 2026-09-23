@@ -632,7 +632,7 @@ const App = () => {
     setCurrentScript(code);
     try {
       const run = await viewportRef.current?.executeScript(code);
-      if (!run) return;
+      if (!run || run.cleared) return;
       const nonce = typeof run === 'object' ? run.nonce : undefined;
       try {
         const verdict = await manifoldContext.compareGameMatch({

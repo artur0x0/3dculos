@@ -68,13 +68,20 @@ console.log('slice-10 palette v2 smoke');
 
 // ── Illegal top keyword ────────────────────────────────────────
 {
-  for (const id of ['hole', 'clearanceHole', 'tapDrillHole', 'workplane', 'holePattern', 'cboreHole', 'cskHole']) {
+  for (const id of ['hole', 'clearanceHole', 'tapDrillHole', 'holePattern', 'cboreHole', 'cskHole']) {
     const buf = composeHelperInsert('', id);
     check(`${id}: no \\btop\\b`, !/\btop\b/.test(buf), buf.slice(0, 120));
     check(`${id}: uses topFace`, /\btopFace\b/.test(buf));
     check(`${id}: facesByNormal`, /facesByNormal/.test(buf));
     check(`${id}: workplaneFromFace`, /workplaneFromFace/.test(buf));
   }
+  const wp = composeHelperInsert('', 'workplane');
+  check('workplane: no \\btop\\b', wp && !/\btop\b/.test(wp));
+  check('workplane: literal frame, no host cube',
+    /center:\s*\[0,\s*0,\s*0\]/.test(wp)
+    && /normal:\s*\[0,\s*0,\s*1\]/.test(wp)
+    && !/Manifold\.cube\s*\(/.test(wp)
+    && !/facesByNormal/.test(wp));
 }
 
 // ── Params flow into snippet ───────────────────────────────────

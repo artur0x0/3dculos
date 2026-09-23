@@ -47,10 +47,13 @@ import { classifySelectedFace } from '../utils/faceFeaturePlacement';
 import { buildCrossSectionPreview, defaultTopPlaneFrame } from '../utils/crossSectionSubstrate';
 import {
   applySavedContour,
+  listConstructionPlanes,
   listSavedContours,
+  pickContourByRay,
   savedContourRings,
   withAutoPickedContour,
 } from '../utils/savedContours';
+import { shouldClearViewportScript } from '../utils/helperPaletteSnippets';
 import {
   addLoftProfile,
   buildContourPreview,
@@ -58,6 +61,10 @@ import {
   buildLoftSolidPreview,
   buildRevolveSolidPreview,
   buildSweepSolidPreview,
+  activeContourFace,
+  applyContourPlaneEdit,
+  axisPresetFrame,
+  contourHostCenter,
   enterContourState,
   intersectRayPlane,
   isExtrudeEntry,
@@ -229,8 +236,14 @@ const Viewport = forwardRef(({
   const [edgeModeToast, setEdgeModeToast] = useState(null);
   /** Slice 24/25/26/28/30: contour-mode shell (Profile-in-mode; Extrude / Revolve / Loft / Sweep commit a solid). */
   const [contourMode, setContourMode] = useState(null);
+  const [selectedPlaneId, setSelectedPlaneId] = useState(null);
+  const [armedContourId, setArmedContourId] = useState(null);
+  const [sceneReady, setSceneReady] = useState(false);
   const contourModeRef = useRef(null);
   const workplaneOverlayRef = useRef(null);
+  const constructionPlaneRef = useRef(null);
+  const savedContoursRef = useRef([]);
+  const savedContourHostPlaneRef = useRef(null);
   const polylineDraftRef = useRef(null);
   const extrudePreviewRef = useRef(null);
   const revolvePreviewRef = useRef(null);
@@ -517,41 +530,40 @@ const Viewport = forwardRef(({
   const paintSavedContourGhosts = useCallback((contours, pickedId, hostPlane) => {
     clearSavedContourGhosts();
     if (!contours?.length || !sceneRef.current) return;
-    const group = new Group();
-    group.name = 'savedContourGhosts';
-    let drew = false;
+    const selected = [];
+    const rest = [];
     for (const contour of contours) {
       const rings = savedContourRings(contour, hostPlane);
-      if (!rings.length) continue;
-      const selected = contour.id === pickedId;
+      const bucket = contour.id === pickedId ? selected : rest;
       for (const ring of rings) {
-        if (!ring?.length) continue;
-        const mat = new LineBasicMaterial({
-          color: selected ? 0xf59e0b : 0xe2e8f0,
-          depthTest: false,
-          depthWrite: false,
-          transparent: true,
-          opacity: selected ? 0.95 : 0.55,
-        });
-        const positions = new Float32Array(ring.length * 3);
+        if (!ring || ring.length < 2) continue;
         for (let i = 0; i < ring.length; i++) {
-          positions[i * 3] = ring[i][0];
-          positions[i * 3 + 1] = ring[i][1];
-          positions[i * 3 + 2] = ring[i][2];
+          bucket.push({ va: ring[i], vb: ring[(i + 1) % ring.length] });
         }
-        const geom = new BufferGeometry();
-        geom.setAttribute('position', new BufferAttribute(positions, 3));
-        const loop = new LineLoop(geom, mat);
-        loop.renderOrder = selected ? 13 : 11;
-        loop.frustumCulled = false;
-        group.add(loop);
-        drew = true;
       }
     }
-    if (!drew) return;
+    const group = new Group();
+    group.name = 'savedContourGhosts';
+    const sel = paintEdgeLines(selected, {
+      color: 0xff9900,
+      name: 'contourSelected',
+      opacity: 1,
+      corePx: EDGE_CORE_PX,
+      haloPx: EDGE_HALO_PX,
+    });
+    const idle = paintEdgeLines(rest, {
+      color: 0xe2e8f0,
+      name: 'contourIdle',
+      opacity: 0.9,
+      corePx: 2,
+      haloPx: 8,
+    });
+    if (sel) group.add(sel);
+    if (idle) group.add(idle);
+    if (!group.children.length) return;
     sceneRef.current.add(group);
     savedContourGhostRef.current = group;
-  }, [clearSavedContourGhosts]);
+  }, [clearSavedContourGhosts, paintEdgeLines]);
 
   /**
    * Slice 21: draw profile outline(s) on the cross-section plane while editing params.
@@ -1044,6 +1056,49 @@ const Viewport = forwardRef(({
     workplaneOverlayRef.current = group;
   }, [clearWorkplaneOverlay]);
 
+  const clearConstructionPlanes = useCallback(() => {
+    if (!constructionPlaneRef.current) return;
+    disposeEdgeOverlayObject(sceneRef.current, constructionPlaneRef.current);
+    constructionPlaneRef.current = null;
+  }, []);
+
+  const paintConstructionPlanes = useCallback((planes, activeId) => {
+    clearConstructionPlanes();
+    if (!planes?.length || !sceneRef.current) return;
+    const group = new Group();
+    group.name = 'constructionPlanes';
+    for (const p of planes) {
+      const plane = p.plane;
+      if (!plane?.center || !plane?.x || !plane?.y || !plane?.normal) continue;
+      const size = 48;
+      const geom = new PlaneGeometry(size, size);
+      const selected = p.id === activeId;
+      const mat = new MeshBasicMaterial({
+        color: selected ? 0xf59e0b : 0x67e8f9,
+        transparent: true,
+        opacity: selected ? 0.32 : 0.18,
+        depthWrite: false,
+        side: DoubleSide,
+      });
+      const quad = new ThreeMesh(geom, mat);
+      quad.position.set(plane.center[0], plane.center[1], plane.center[2]);
+      const q = new Quaternion();
+      q.setFromRotationMatrix(new Matrix4().makeBasis(
+        new Vector3(plane.x[0], plane.x[1], plane.x[2]),
+        new Vector3(plane.y[0], plane.y[1], plane.y[2]),
+        new Vector3(plane.normal[0], plane.normal[1], plane.normal[2]),
+      ));
+      quad.quaternion.copy(q);
+      quad.renderOrder = 7;
+      quad.frustumCulled = false;
+      quad.userData = { planeId: p.id, plane, kind: 'constructionPlane' };
+      group.add(quad);
+    }
+    if (!group.children.length) return;
+    sceneRef.current.add(group);
+    constructionPlaneRef.current = group;
+  }, [clearConstructionPlanes]);
+
   const paintPolylineDraft = useCallback((plane, points) => {
     clearPolylineDraft();
     if (!plane || !points?.length || !sceneRef.current) return;
@@ -1195,6 +1250,7 @@ const Viewport = forwardRef(({
   const exitContourMode = useCallback(() => {
     setContourMode(null);
     contourModeRef.current = null;
+    setPickMode('face');
     clearXsPreview();
     clearWorkplaneOverlay();
     clearPolylineDraft();
@@ -1222,7 +1278,25 @@ const Viewport = forwardRef(({
     pathPreviewRef.current = null;
     const buf = (typeof getHelperBuffer === 'function' ? getHelperBuffer() : '') || currentScript || '';
     const saved = listSavedContours(buf);
-    const next = withAutoPickedContour(enterContourState(entry, selectedFace), saved);
+    const planes = listConstructionPlanes(buf);
+    const armedPlane = planes.find((p) => p.id === selectedPlaneId);
+    const faceArg = selectedFace || (armedPlane ? {
+      type: 'planar',
+      center: armedPlane.plane.center.slice(),
+      normal: armedPlane.plane.normal.slice(),
+      area: 400,
+      triangleCount: 2,
+      selectionMode: 'coplanar',
+      planeFrame: {
+        center: armedPlane.plane.center.slice(),
+        normal: armedPlane.plane.normal.slice(),
+        x: armedPlane.plane.x.slice(),
+        y: armedPlane.plane.y.slice(),
+      },
+    } : null);
+    let next = enterContourState(entry, faceArg);
+    const armed = saved.find((c) => c.id === armedContourId);
+    next = armed ? applySavedContour(next, armed) : withAutoPickedContour(next, saved);
     setContourMode(next);
     if (next.enterRefuse) showContourToast(next.enterRefuse);
     else if (isSweepEntry(entry)) {
@@ -1235,7 +1309,7 @@ const Viewport = forwardRef(({
       showContourToast(`Using ${saved[saved.length - 1].label}. Draw a new profile anytime.`);
     }
     applyContourPartGhost(true);
-  }, [selectedFace, selectedEdges, applyContourPartGhost, clearFilletBlendPreview, getHelperBuffer, currentScript]);
+  }, [selectedFace, selectedEdges, selectedPlaneId, armedContourId, applyContourPartGhost, clearFilletBlendPreview, getHelperBuffer, currentScript]);
 
   const confirmContourProfile = useCallback(() => {
     const state = contourModeRef.current;
@@ -1245,6 +1319,7 @@ const Viewport = forwardRef(({
       showContourToast(gate.message);
       return;
     }
+    const commitFace = activeContourFace(state, modelBounds);
     if (isExtrudeEntry(state.entry)) {
       const extGate = validateExtrudeParams(state.extrude);
       if (!extGate.ok) {
@@ -1252,7 +1327,7 @@ const Viewport = forwardRef(({
         return;
       }
       const axis = resolveExtrudeAxis(
-        planeFromContourFace(state.planeFace),
+        planeFromContourFace(commitFace),
         extGate.normalized.direction,
       );
       if (!axis.ok) {
@@ -1267,7 +1342,7 @@ const Viewport = forwardRef(({
         return;
       }
       const axis = resolveRevolveAxis(
-        planeFromContourFace(state.planeFace),
+        planeFromContourFace(commitFace),
         revGate.normalized.axis,
       );
       if (!axis.ok) {
@@ -1296,7 +1371,7 @@ const Viewport = forwardRef(({
       })
       : state;
     const ok = onCommitContourProfile?.({
-      face: loftState.planeFace,
+      face: loftState.planeFace || commitFace,
       tool: loftState.tool,
       params: loftState.params,
       entry: loftState.entry,
@@ -1307,19 +1382,9 @@ const Viewport = forwardRef(({
       edges: selectedEdges,
     });
     if (ok) {
-      showContourToast(
-        isSweepEntry(state.entry)
-          ? 'Sweep saved — still in contour mode. Confirm again to update.'
-          : isLoftEntry(state.entry)
-            ? 'Loft saved — still in contour mode. Confirm again to update.'
-            : isRevolveEntry(state.entry)
-              ? 'Revolve saved — still in contour mode. Confirm again to update.'
-              : isExtrudeEntry(state.entry)
-                ? 'Extrude saved — still in contour mode. Confirm again to update.'
-                : 'Profile saved — still in contour mode (Profile only).',
-      );
+      exitContourMode();
     }
-  }, [onCommitContourProfile, selectedEdges]);
+  }, [onCommitContourProfile, selectedEdges, modelBounds, exitContourMode]);
 
   const exitFilletMode = useCallback(() => {
     setFilletMode(null);
@@ -1408,6 +1473,11 @@ const Viewport = forwardRef(({
     [currentScript],
   );
 
+  const constructionPlanes = useMemo(
+    () => listConstructionPlanes(currentScript || ''),
+    [currentScript],
+  );
+
   const savedContourHostPlane = useMemo(() => {
     if (modelBounds?.max && Number.isFinite(Number(modelBounds.max[2]))) {
       return defaultTopPlaneFrame([
@@ -1420,22 +1490,29 @@ const Viewport = forwardRef(({
   }, [modelBounds]);
 
   useEffect(() => {
-    if (!contourMode) {
-      clearSavedContourGhosts();
-      return;
-    }
+    savedContoursRef.current = savedContours;
+    savedContourHostPlaneRef.current = savedContourHostPlane;
     paintSavedContourGhosts(
       savedContours,
-      contourMode.pickedContourId,
+      contourMode?.pickedContourId || armedContourId,
       savedContourHostPlane,
     );
   }, [
     contourMode,
+    armedContourId,
     savedContours,
     savedContourHostPlane,
     paintSavedContourGhosts,
-    clearSavedContourGhosts,
+    sceneReady,
   ]);
+
+  useEffect(() => {
+    paintConstructionPlanes(constructionPlanes, selectedPlaneId);
+  }, [constructionPlanes, selectedPlaneId, paintConstructionPlanes, sceneReady]);
+
+  useEffect(() => () => {
+    clearConstructionPlanes();
+  }, [clearConstructionPlanes]);
 
   // Live workplane + makeCrossSection profile (+ Extrude / Revolve / Loft solid) preview.
   useEffect(() => {
@@ -1576,7 +1653,11 @@ const Viewport = forwardRef(({
     }
     setContourMode((prev) => {
       if (!prev) return prev;
-      return { ...prev, planeFace: resolved.face };
+      return applyContourPlaneEdit(prev, {
+        preset: 'face',
+        base: planeFromContourFace(resolved.face),
+        angles: { x: 0, y: 0, z: 0 },
+      });
     });
   }, [selectedFace, onFaceSelected, clearHighlight]);
 
@@ -2116,7 +2197,49 @@ const Viewport = forwardRef(({
     }
 
     raycasterRef.current.setFromCamera(mouseRef.current, cameraRef.current);
-    const intersects = raycasterRef.current.intersectObject(resultRef.current);
+    const ray = raycasterRef.current.ray;
+    const origin = [ray.origin.x, ray.origin.y, ray.origin.z];
+    const dir = [ray.direction.x, ray.direction.y, ray.direction.z];
+    const camDist = Math.hypot(ray.origin.x, ray.origin.y, ray.origin.z) || 80;
+    if (contourModeRef.current?.tool !== 'polyline') {
+      const hitC = pickContourByRay(
+        origin,
+        dir,
+        savedContoursRef.current,
+        savedContourHostPlaneRef.current,
+        Math.max(1.5, camDist * 0.02),
+      );
+      if (hitC) {
+        setArmedContourId(hitC.id);
+        setContourMode((prev) => (prev ? applySavedContour(prev, hitC) : prev));
+        return;
+      }
+    }
+    const planeHits = constructionPlaneRef.current
+      ? raycasterRef.current.intersectObject(constructionPlaneRef.current, true)
+      : [];
+    const solidHits = resultRef.current?.geometry?.attributes?.position
+      ? raycasterRef.current.intersectObject(resultRef.current)
+      : [];
+    const planeD = planeHits[0]?.distance ?? Infinity;
+    const solidD = solidHits[0]?.distance ?? Infinity;
+    if (planeHits.length && planeD <= solidD + 0.5) {
+      const ud = planeHits[0].object.userData?.plane
+        ? planeHits[0].object.userData
+        : planeHits[0].object.parent?.userData;
+      if (ud?.plane) {
+        setSelectedPlaneId(ud.planeId || null);
+        setContourMode((prev) => (prev
+          ? applyContourPlaneEdit(prev, {
+            preset: 'workplane',
+            base: ud.plane,
+            angles: { x: 0, y: 0, z: 0 },
+          })
+          : prev));
+        return;
+      }
+    }
+    const intersects = solidHits;
     
     // Handle click on empty space (only if not dragging)
     if (intersects.length === 0) {
@@ -2373,6 +2496,7 @@ const Viewport = forwardRef(({
 
       sceneRef.current = scene;
       cameraRef.current = camera;
+      setSceneReady(true);
 
       const renderer = new WebGLRenderer({
         canvas: canvasRef.current,
@@ -2915,9 +3039,36 @@ const Viewport = forwardRef(({
    * Execute script using the sandbox worker
    */
   const executeScript = useCallback(async (scriptOverride) => {
-    const script = scriptOverride ?? currentScript;
-    
-    if (!script || !sceneRef.current) return false;
+    const script = scriptOverride ?? currentScript ?? '';
+
+    if (!sceneRef.current) return false;
+
+    if (shouldClearViewportScript(script)) {
+      setExecutionError(null);
+      setCachedMeshData(null);
+      cachedMeshDataRef.current = null;
+      setModelBounds(null);
+      clearHighlight();
+      clearEdgeHighlight();
+      clearEdgeHover();
+      setSelectedFace(null);
+      setSelectedEdges([]);
+      onFaceSelected?.(null);
+      featureEdgesRef.current = [];
+      featureEdgesSourceRef.current = null;
+      if (resultRef.current) {
+        resultRef.current.geometry?.dispose();
+        resultRef.current.geometry = new BufferGeometry();
+      }
+      if (window.__VIEWPORT__) window.__VIEWPORT__._lastRenderedMesh = null;
+      const renderer = rendererRef.current;
+      const scene = sceneRef.current;
+      const camera = cameraRef.current;
+      if (renderer && scene && camera) renderer.render(scene, camera);
+      return { ok: true, cleared: true };
+    }
+
+    if (!script) return false;
     
     // Cancel any pending execution
     if (executionAbortRef.current) {
@@ -3306,6 +3457,52 @@ const Viewport = forwardRef(({
               ? `planar n=[${contourMode.planeFace.normal.map((v) => Number(v).toFixed(2)).join(', ')}]`
               : 'default +Z top'
           }
+          planePreset={contourMode.planePreset || 'z'}
+          planeAngles={contourMode.planeAngles || { x: 0, y: 0, z: 0 }}
+          constructionPlanes={constructionPlanes}
+          pickedPlaneId={selectedPlaneId || ''}
+          onPlanePreset={(axis) => setContourMode((prev) => {
+            if (!prev) return prev;
+            const center = prev.planeBase?.center
+              || prev.planeFace?.center
+              || contourHostCenter(modelBounds);
+            return applyContourPlaneEdit(prev, {
+              preset: axis,
+              base: axisPresetFrame(axis, center),
+              angles: { x: 0, y: 0, z: 0 },
+            });
+          })}
+          onPlaneAngles={(angles) => setContourMode((prev) => {
+            if (!prev) return prev;
+            const center = prev.planeBase?.center
+              || prev.planeFace?.center
+              || contourHostCenter(modelBounds);
+            const base = prev.planeBase || axisPresetFrame(prev.planePreset || 'z', center);
+            return applyContourPlaneEdit(prev, { angles, base });
+          })}
+          onPickWorkplane={(plane, id) => {
+            setSelectedPlaneId(id || null);
+            setContourMode((prev) => (prev
+              ? applyContourPlaneEdit(prev, {
+                preset: 'workplane',
+                base: plane,
+                angles: { x: 0, y: 0, z: 0 },
+              })
+              : prev));
+          }}
+          onPickFace={() => {
+            setPickMode('face');
+            setContourMode((prev) => (prev ? { ...prev, planePreset: 'face' } : prev));
+          }}
+          tangentOn={tangentProp}
+          edgeCount={selectedEdges.length}
+          onToggleTangent={() => setTangentProp((v) => !v)}
+          onPopEdge={() => setSelectedEdges((prev) => popLastEdgeSelection(prev))}
+          onClearEdges={() => {
+            clearEdgeHover();
+            clearEdgeHighlight();
+            setSelectedEdges([]);
+          }}
           onParamChange={(next) => setContourMode((prev) => {
             if (!prev) return prev;
             const updated = { ...prev, params: next };
@@ -3376,6 +3573,7 @@ const Viewport = forwardRef(({
       {/* Slice 12 hotfix: Edge pick chip — visible whenever Edge mode is on */}
       {pickMode === 'edge' && !contourMode && !filletMode && (
         <div
+          data-edge-selector="standalone"
           className={`absolute bg-amber-950/85 border border-amber-500/70 text-white px-3 py-2 rounded-lg text-xs z-20 shadow-lg ${
             mode === 'game'
               ? 'bottom-4 right-2 lg:right-4 max-w-[16rem]'

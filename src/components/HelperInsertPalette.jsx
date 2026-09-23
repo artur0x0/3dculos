@@ -130,6 +130,11 @@ const HelperInsertPalette = ({
       onEnterFilletMode();
       return;
     }
+    // Workplane is a construction plane, not a param sheet and not a host solid.
+    if (item.id === 'workplane') {
+      onInsert?.('workplane', {}, selectedFace, null);
+      return;
+    }
     const buf = typeof getBuffer === 'function' ? getBuffer() : '';
     setBufferSnapshot(typeof buf === 'string' ? buf : '');
     // Auto-switch to edge pick when opening chamfer/path with no edges yet.

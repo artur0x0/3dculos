@@ -10,6 +10,8 @@
 
 export const MAKE_LOFT_MIN_PROFILES = 2;
 export const MAKE_LOFT_RESOLUTION = 64;
+/** Uniform polar samples. Vertex angles are always added on top. */
+export const MAKE_LOFT_POLAR_SAMPLES = 128;
 export const MAKE_LOFT_EXTRUDE_SEGS = 64;
 /** Same epsilon assembleLoftStations uses for coincident stations. */
 export const MAKE_LOFT_COINCIDENT_EPS = 1e-6;
@@ -158,29 +160,124 @@ export function rotateContour(contour, deg) {
   ]);
 }
 
-function _sumSqDist(a, b) {
-  let d = 0;
-  for (let i = 0; i < a.length; i++) {
-    const dx = a[i][0] - b[i][0];
-    const dy = a[i][1] - b[i][1];
-    d += dx * dx + dy * dy;
+function _radialSpreadRatio(contour) {
+  let minR = Infinity;
+  let maxR = 0;
+  for (const p of contour) {
+    const r = Math.hypot(p[0], p[1]);
+    if (r < minR) minR = r;
+    if (r > maxR) maxR = r;
   }
-  return d;
+  if (!(maxR > 1e-9)) return 0;
+  return (maxR - minR) / maxR;
 }
 
-function _alignRotationDeg(bottom, top) {
-  let bestRot = 0;
-  let minDist = Infinity;
-  const steps = 72;
-  for (let k = 0; k < steps; k++) {
-    const rot = k * (360 / steps);
-    const d = _sumSqDist(bottom, rotateContour(top, rot));
-    if (d < minDist) {
-      minDist = d;
-      bestRot = rot;
+/** High-resolution, almost-constant radius → circle (or a very round station). */
+function _isRoundStation(contour) {
+  if (!contour || contour.length < 12) return false;
+  return _radialSpreadRatio(contour) < 0.02;
+}
+
+/** Angle of the outermost vertex (first one wins ties — the authored start). */
+function _primaryCornerAngle(contour) {
+  let bestI = 0;
+  let bestR = -1;
+  for (let i = 0; i < contour.length; i++) {
+    const r = Math.hypot(contour[i][0], contour[i][1]);
+    if (r > bestR + 1e-8) {
+      bestR = r;
+      bestI = i;
     }
   }
-  return bestRot;
+  return Math.atan2(contour[bestI][1], contour[bestI][0]);
+}
+
+/**
+ * Rotate `top` onto `bottom` when both are cornered polygons (45° rect test).
+ * A round station returns 0: spinning a rectangle to match a circle's
+ * arc-length samples is what left the loft off-angle to the standard views.
+ */
+function _alignRotationDeg(bottom, top) {
+  if (_isRoundStation(bottom) || _isRoundStation(top)) return 0;
+  const delta = _primaryCornerAngle(bottom) - _primaryCornerAngle(top);
+  let deg = delta * 180 / Math.PI;
+  while (deg > 180) deg -= 360;
+  while (deg < -180) deg += 360;
+  return deg;
+}
+
+function _angleOf(x, y) {
+  let a = Math.atan2(y, x);
+  if (a < 0) a += Math.PI * 2;
+  if (a >= Math.PI * 2 - 1e-12) a = 0;
+  return a;
+}
+
+/**
+ * Angle-indexed boundary tables. Uniform angles + arc-length sample angles
+ * + exact vertex angles, ray-hit so a rectangle corner is a table entry
+ * even when it falls between the other profile's samples.
+ */
+function _polarTables(stations, sampleN) {
+  const raw = [];
+  const n = Math.max(16, Math.round(sampleN));
+  for (let i = 0; i < n; i++) raw.push((i / n) * Math.PI * 2);
+  for (const s of stations) {
+    const arc = resampleContour(s.contour, n);
+    const pts = arc.concat(s.contour);
+    for (const p of pts) {
+      if (Math.hypot(p[0], p[1]) > 1e-8) raw.push(_angleOf(p[0], p[1]));
+    }
+  }
+  raw.sort((a, b) => a - b);
+  const angles = [];
+  for (const a of raw) {
+    if (!angles.length || a - angles[angles.length - 1] > 1e-4) angles.push(a);
+  }
+  if (angles.length > 1 && (angles[0] + Math.PI * 2) - angles[angles.length - 1] < 1e-4) {
+    angles.pop();
+  }
+  const kept = [];
+  const tables = stations.map(() => []);
+  for (const a of angles) {
+    const hits = stations.map((s) => _contourRayHit(s.contour, Math.cos(a), Math.sin(a)));
+    if (hits.some((h) => !h)) continue;
+    kept.push(a);
+    hits.forEach((h, i) => tables[i].push(h));
+  }
+  if (kept.length < 3) {
+    throw new Error('makeLoft: could not build an angle table (profiles must contain the plane origin)');
+  }
+  return { angles: kept, tables };
+}
+
+function _lookupPolar(table, angles, angle) {
+  const n = angles.length;
+  const a0 = angles[0];
+  const aN = angles[n - 1];
+  if (angle < a0 || angle > aN) {
+    const start = aN;
+    const end = a0 + Math.PI * 2;
+    const span = end - start;
+    let t = span > 1e-12 ? ((angle < a0 ? angle + Math.PI * 2 : angle) - start) / span : 0;
+    if (t < 0) t = 0;
+    if (t > 1) t = 1;
+    const p0 = table[n - 1];
+    const p1 = table[0];
+    return [p0[0] + t * (p1[0] - p0[0]), p0[1] + t * (p1[1] - p0[1])];
+  }
+  let lo = 0;
+  let hi = n - 1;
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    if (angles[mid] <= angle) lo = mid;
+    else hi = mid;
+  }
+  const span = angles[hi] - angles[lo];
+  const t = span > 1e-12 ? (angle - angles[lo]) / span : 0;
+  const p0 = table[lo];
+  const p1 = table[hi];
+  return [p0[0] + t * (p1[0] - p0[0]), p0[1] + t * (p1[1] - p0[1])];
 }
 
 /**
@@ -328,8 +425,16 @@ function _spanIndex(stations, zWorld) {
  * normal, z=0 at the lowest-offset station. Confirm places it with
  * `placeInFrame(frame, makeLoft(sections), [0, 0, minOffset])`.
  *
- * One extrusion + piecewise ray warp through every station (not pairwise
+ * One extrusion + piecewise polar warp through every station (not pairwise
  * boolean-union). Middle stations stay on the loft path.
+ *
+ * Mapping (Solo Cup / legacy loft spirit): arc-length resample each station,
+ * union those sample angles with every profile vertex angle, and warp an
+ * angle-indexed ray-hit table. The old per-vertex ray hit only moved the
+ * extruded mesh's native samples, so a circle's chords bit into rectangle
+ * corners that fell between those angles. Vertex angles are in the table,
+ * so corners stay sharp. A nearly circular station is not used to spin the
+ * other profile — that rotation was the off-angle circle↔rect default.
  */
 export function buildMakeLoftSolid(Manifold, CrossSection, sections, opts = {}) {
   const assembled = assembleLoftStations(sections);
@@ -349,7 +454,13 @@ export function buildMakeLoftSolid(Manifold, CrossSection, sections, opts = {}) 
     );
   }
   const segs = resolveLoftExtrudeSegs(height, minSpan, opts);
-  const bottom = stations[0].contour;
+  const requested = Math.round(Number(opts.resolution) || MAKE_LOFT_RESOLUTION);
+  const polarN = Math.max(
+    MAKE_LOFT_POLAR_SAMPLES,
+    Math.min(256, Number.isFinite(requested) ? requested : MAKE_LOFT_POLAR_SAMPLES),
+  );
+  const { angles, tables } = _polarTables(stations, polarN);
+  const bottom = tables[0];
   const bottomCS = new CrossSection([bottom]);
   const straight = Manifold.extrude
     ? Manifold.extrude(bottomCS, height, segs)
@@ -372,12 +483,10 @@ export function buildMakeLoftSolid(Manifold, CrossSection, sections, opts = {}) 
     let t = span > 1e-12 ? (zWorld - a.offset) / span : 1;
     if (t < 0) t = 0;
     if (t > 1) t = 1;
-    const dx = x / rOrig;
-    const dy = y / rOrig;
-    const hitA = _contourRayHit(a.contour, dx, dy);
-    const hitB = _contourRayHit(b.contour, dx, dy);
-    const hitBase = _contourRayHit(bottom, dx, dy);
-    if (!hitA || !hitB || !hitBase) return;
+    const angle = _angleOf(x, y);
+    const hitA = _lookupPolar(tables[i], angles, angle);
+    const hitB = _lookupPolar(tables[i + 1], angles, angle);
+    const hitBase = _lookupPolar(tables[0], angles, angle);
     const rBottom = Math.hypot(hitBase[0], hitBase[1]);
     const scale = rBottom > 1e-9 ? rOrig / rBottom : 1;
     const tx = hitA[0] + t * (hitB[0] - hitA[0]);
