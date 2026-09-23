@@ -2531,8 +2531,11 @@ function makeExtrude(contours, height) {
  * makeLoft(sections, opts?) — loft ≥2 makeCrossSection values.
  * v1: parallel planes (same workplane + offset along the normal).
  * Result is local (z=0 at the lowest station). Confirm places it with
- * placeInFrame. Loud-fail on <2 profiles, coincident offsets,
- * non-parallel planes, or empty volume.
+ * placeInFrame. Mapping is an angle-indexed polar warp (arc-length
+ * samples + exact vertex angles) so circle↔rect corners stay sharp and
+ * a circle does not spin the other profile off the world axes.
+ * Loud-fail on <2 profiles, coincident offsets, non-parallel planes,
+ * or empty volume. Legacy loft({ topCS, bottomCS, height }) is unchanged.
  */
 function makeLoft(sections, opts = {}) {
   if (!manifoldModule) throw new Error('Manifold not initialized');

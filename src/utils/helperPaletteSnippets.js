@@ -31,6 +31,7 @@
  */
 
 import {
+  classifySelectedFace,
   emitFaceWorkplaneLines,
   emitFaceEdgeLines,
   emitSelectedEdgeLines,
@@ -41,6 +42,7 @@ import {
   resolveHoleUV,
 } from './faceFeaturePlacement.js';
 import { resolveFilletStrategy } from './filletAlongPath.js';
+import { planeFrameFromFaceData } from './crossSectionSubstrate.js';
 
 /** Slice 24 — in-mode Profile region so Confirm can replace without appending. */
 export const CONTOUR_PROFILE_BEGIN = '// --- contour-mode profile begin ---';
@@ -102,6 +104,42 @@ function stripComments(text) {
 export function isBufferEmpty(text) {
   if (!text || !String(text).trim()) return true;
   return !stripComments(text).trim();
+}
+
+/**
+ * Script is only construction-plane literals (optional `return part` with no
+ * part). Running it must clear the solid — Workplane alone is not a host cube.
+ */
+export function isConstructionPlaneOnlyScript(text) {
+  if (isBufferEmpty(text)) return false;
+  let body = stripComments(text)
+    .replace(/\/\/[^\n]*/g, '')
+    .replace(/\breturn\s+part\s*;/g, '')
+    .trim();
+  if (!body) return false;
+  if (/\bpart\b/.test(body)) return false;
+  if (/\b(?:Manifold|CrossSection|make[A-Z]|sweep|fillet|hole|cube|cylinder|sphere)\b/.test(body)) {
+    return false;
+  }
+  const stmts = body.split(';').map((s) => s.trim()).filter(Boolean);
+  if (!stmts.length) return false;
+  return stmts.every((s) => (
+    /^(?:const|let|var)\s+[A-Za-z_$][\w$]*\s*=\s*\{/.test(s)
+    && /center\s*:/.test(s)
+    && /normal\s*:/.test(s)
+    && /\bx\s*:/.test(s)
+    && /\by\s*:/.test(s)
+  ));
+}
+
+/**
+ * Empty / comment-only buffer, or a construction-plane-only script.
+ * The viewport clears; it does not keep the previous solid.
+ */
+export function shouldClearViewportScript(text) {
+  if (text == null) return false;
+  if (isBufferEmpty(text)) return true;
+  return isConstructionPlaneOnlyScript(text);
 }
 
 /**
@@ -1549,20 +1587,34 @@ export const HELPER_PALETTE_ITEMS = [
     id: 'workplane',
     label: 'Workplane',
     group: 'Advanced',
-    title: 'facesByNormal + workplaneFromFace (top face)',
-    params: [
-      { name: 'body', type: 'body', default: 'part', label: 'Body' },
-    ],
-    build: (empty, p, names, buffer) => {
-      const lines = [...ensurePartPrefix(empty, names)];
-      const body = resolveBody(p, names, empty ? lines.join('\n') : buffer);
-      const topFace = allocateUniqueName(names, 'topFace');
+    title: 'Construction plane — literal PlaneFrame, rendered and selectable. Not a solid.',
+    params: [],
+    build: (empty, p, names, buffer, faceCtx = null) => {
+      void empty;
+      void p;
+      void buffer;
       const fr = allocateUniqueName(names, 'fr');
-      const span = allocateUniqueName(names, 'span');
-      lines.push(`const ${topFace} = facesByNormal(${body}, [0, 0, 1])[0];`);
-      lines.push(`const ${fr} = workplaneFromFace(${body}, ${topFace});`);
-      lines.push(`const ${span} = holeSpan(${body}, ${fr});`);
-      return withReturn(lines, empty);
+      let plane = null;
+      let face = faceCtx;
+      if (face && face.type !== 'planar' && face.type !== 'cylindrical' && face.type !== 'irregular') {
+        face = classifySelectedFace(face) || null;
+      }
+      if (face && face.type === 'planar') {
+        if (face.planeFrame?.center && face.planeFrame?.normal && face.planeFrame?.x && face.planeFrame?.y) {
+          plane = face.planeFrame;
+        } else {
+          try {
+            plane = planeFrameFromFaceData({
+              center: face.center,
+              normal: face.normal,
+              verts: face.vertices || face.verts,
+            });
+          } catch {
+            plane = null;
+          }
+        }
+      }
+      return `const ${fr} = ${emitPlaneFrameLiteral(plane)}; // construction plane\n`;
     },
   },
   {

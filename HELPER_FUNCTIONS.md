@@ -1141,9 +1141,29 @@ shapes change.
 non-parallel planes; degenerate / empty contours; empty result volume.
 Never a silent wrong solid.
 
-`opts.align` (default true) rotates neighboring contours to minimize
-point-to-point distance. `opts.resolution` (default 64) is the resample
-count for the warp.
+`opts.align` (default true) matches cornered stations by their outermost
+vertex angle (a 45° copy of the same rectangle un-rotates back to a prism).
+A nearly circular station does **not** spin the other profile — that was
+the off-angle circle↔rectangle default. `opts.resolution` (default 64) feeds
+the polar sample count. The warp builds an **angle-indexed table**: uniform
+angles, arc-length samples, and every profile vertex angle, then ray-hits
+each station. Rectangle corners are table entries, so a circle’s chords no
+longer bite them. Legacy `loft({ topCS, bottomCS, height })` is unchanged.
+
+**Default contour plane** (no face and no saved workplane) is world **+Z**
+with **X/Y** axes — the standard views. A picked face or construction
+workplane still supplies the frame. Angle sliders in the contour chip rotate
+that frame; Confirm uses the edited plane.
+
+**Workplane** (Advanced) inserts a literal PlaneFrame
+`{ center, normal, x, y }` — a rendered, selectable construction plane.
+It does **not** create a host cube. Tapping it on an empty script leaves
+the viewport empty of solids (the plane overlay remains).
+
+**Blank run:** an empty, whitespace, or comment-only script (and a
+construction-plane-only script) clears the 3D view. Undo back to a blank
+buffer does not keep the previous solid. A failed non-empty script still
+restores the last good mesh.
 
 **Rules for both:**
 - `contours` is an **array of contours** `[outer, hole1, ...]`; a single

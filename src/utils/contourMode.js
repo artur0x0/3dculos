@@ -486,6 +486,9 @@ export function enterContourState(entry, faceData = null) {
     sweep: defaultSweepParams(),
     loft,
     planeFace: resolved.ok ? resolved.face : null,
+    planePreset: resolved.source === 'face' ? 'face' : 'z',
+    planeAngles: { x: 0, y: 0, z: 0 },
+    planeBase: resolved.source === 'face' ? resolved.plane : null,
     enterRefuse: resolved.ok ? null : resolved.message,
   };
 }
@@ -617,6 +620,138 @@ export function planeFromContourFace(face) {
   } catch {
     return defaultTopPlaneFrame(face.center);
   }
+}
+
+/**
+ * World-axis construction frame. +Z is XY (standard views). +X / +Y follow
+ * workplaneFromFace: u is the in-plane world axis, v = normal × u.
+ */
+export function axisPresetFrame(axis, center = [0, 0, 0]) {
+  const c = [
+    Number(center?.[0]) || 0,
+    Number(center?.[1]) || 0,
+    Number(center?.[2]) || 0,
+  ];
+  if (axis === 'x') return { center: c, normal: [1, 0, 0], x: [0, 1, 0], y: [0, 0, 1] };
+  if (axis === 'y') return { center: c, normal: [0, 1, 0], x: [1, 0, 0], y: [0, 0, -1] };
+  return { center: c, normal: [0, 0, 1], x: [1, 0, 0], y: [0, 1, 0] };
+}
+
+function _rotAbout(v, axis, deg) {
+  const a = (Number(deg) || 0) * Math.PI / 180;
+  const c = Math.cos(a);
+  const s = Math.sin(a);
+  const x = v[0];
+  const y = v[1];
+  const z = v[2];
+  if (axis === 'x') return [x, y * c - z * s, y * s + z * c];
+  if (axis === 'y') return [x * c + z * s, y, -x * s + z * c];
+  return [x * c - y * s, x * s + y * c, z];
+}
+
+/** Rotate a plane frame by degrees about world X, then Y, then Z. */
+export function orientPlaneFrame(plane, angles = {}) {
+  if (!plane?.center || !plane?.normal || !plane?.x || !plane?.y) return plane;
+  const apply = (v) => _rotAbout(_rotAbout(_rotAbout(v, 'x', angles.x), 'y', angles.y), 'z', angles.z);
+  let normal = _norm3(apply(plane.normal));
+  let x = _norm3(apply(plane.x));
+  if (!normal || !x) return plane;
+  const along = _dot(x, normal);
+  x = _norm3([
+    x[0] - along * normal[0],
+    x[1] - along * normal[1],
+    x[2] - along * normal[2],
+  ]);
+  const y = x ? _norm3(_cross3(normal, x)) : null;
+  if (!x || !y) return plane;
+  return {
+    center: plane.center.map(Number),
+    normal,
+    x,
+    y,
+  };
+}
+
+function _faceFromFrame(frame) {
+  return {
+    type: 'planar',
+    center: frame.center.slice(),
+    normal: frame.normal.slice(),
+    area: 400,
+    triangleCount: 2,
+    selectionMode: 'coplanar',
+    planeFrame: {
+      center: frame.center.slice(),
+      normal: frame.normal.slice(),
+      x: frame.x.slice(),
+      y: frame.y.slice(),
+    },
+  };
+}
+
+/**
+ * Part-top center for the default +Z plane (preview and Confirm share it).
+ * No bounds → world origin.
+ */
+export function contourHostCenter(bounds) {
+  if (bounds?.max && Number.isFinite(Number(bounds.max[2]))) {
+    return [
+      Number(bounds.center?.[0]) || 0,
+      Number(bounds.center?.[1]) || 0,
+      Number(bounds.max[2]),
+    ];
+  }
+  return [0, 0, 0];
+}
+
+/** Default contour face: world +Z, X/Y axes, center at the host top or origin. */
+export function defaultContourPlaneFace(center) {
+  return _faceFromFrame(defaultTopPlaneFrame(center || [0, 0, 0]));
+}
+
+/**
+ * Face Confirm should use. An edited frame wins; otherwise the default
+ * view-aligned +Z plane (not a tilted host face).
+ */
+export function activeContourFace(state, bounds) {
+  if (state?.planeFace) return state.planeFace;
+  return defaultContourPlaneFace(contourHostCenter(bounds));
+}
+
+/**
+ * Apply an X/Y/Z preset, a picked workplane/face frame, and/or angle sliders.
+ * The result is stored on planeFace.planeFrame so live preview and Confirm
+ * share one plane.
+ */
+export function applyContourPlaneEdit(state, edit = {}) {
+  if (!state) return state;
+  const prevAngles = state.planeAngles || { x: 0, y: 0, z: 0 };
+  const angles = {
+    x: Number(edit.angles?.x ?? prevAngles.x) || 0,
+    y: Number(edit.angles?.y ?? prevAngles.y) || 0,
+    z: Number(edit.angles?.z ?? prevAngles.z) || 0,
+  };
+  let preset = edit.preset || state.planePreset || 'z';
+  let base = edit.base || state.planeBase || null;
+  if (edit.preset === 'x' || edit.preset === 'y' || edit.preset === 'z') {
+    const center = (edit.base || base || state.planeFace)?.center || [0, 0, 0];
+    base = axisPresetFrame(edit.preset, center);
+    preset = edit.preset;
+    if (!edit.keepAngles) {
+      angles.x = 0;
+      angles.y = 0;
+      angles.z = 0;
+    }
+  }
+  if (!base) base = axisPresetFrame('z', state.planeFace?.center || [0, 0, 0]);
+  const frame = orientPlaneFrame(base, angles);
+  return {
+    ...state,
+    planePreset: preset,
+    planeAngles: angles,
+    planeBase: base,
+    planeFace: _faceFromFrame(frame),
+  };
 }
 
 export function workplaneOverlaySize(face, fallback = 36) {
