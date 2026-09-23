@@ -15,6 +15,9 @@ import { composeHelperInsert, FILLET_MODE_BEGIN, FILLET_MODE_END } from './helpe
 import {
   canBuildFilletAlongPath,
   filletWedgeContour,
+  dihedralFilletContour,
+  dihedralChamferContour,
+  orientFilletFrame,
   resolveFilletStrategy,
   FILLET_SWEEP_DISCONNECTED,
   FILLET_SWEEP_BRANCH,
@@ -142,6 +145,15 @@ function _n(v) {
   return [v[0] / L, v[1] / L, v[2] / L];
 }
 
+function inFaceFromNormal(n, T, nOther) {
+  if (!n || !T) return null;
+  const f = _cross(n, T);
+  if (_len(f) < 1e-8) return null;
+  let out = _n(f);
+  if (nOther && _dot(out, _mul(-1, nOther)) < 0) out = _mul(-1, out);
+  return out;
+}
+
 function projectPerp(v, T) {
   if (!v) return null;
   const out = _sub(v, _mul(_dot(v, T), T));
@@ -191,11 +203,17 @@ export function disconnectedPathPolylines(edges) {
   return out;
 }
 
-function ringsFromFrames(frames, wedge) {
-  if (!frames?.length || !wedge?.length) return null;
-  return frames.map((fr) => wedge.map(([u, v]) => (
-    _add(fr.origin, _add(_mul(u, fr.N), _mul(v, fr.B)))
-  )));
+function ringsFromFrames(frames) {
+  if (!frames?.length) return null;
+  const rings = [];
+  for (const fr of frames) {
+    const wedge = fr.wedge;
+    if (!wedge?.length) return null;
+    rings.push(wedge.map(([u, v]) => (
+      _add(fr.origin, _add(_mul(u, fr.N), _mul(v, fr.B)))
+    )));
+  }
+  return rings;
 }
 
 /**
@@ -246,7 +264,9 @@ export function buildFilletBlendPreview(edges, params = {}) {
   const preview = buildSweepPathPreview(list, { reverse: n.reverse });
   let wedge = null;
   try {
-    wedge = filletWedgeContour(radius, 8);
+    wedge = n.profile === 'chamfer'
+      ? dihedralChamferContour(radius, Math.PI / 2)
+      : filletWedgeContour(radius, 8);
   } catch {
     wedge = null;
   }
@@ -256,6 +276,7 @@ export function buildFilletBlendPreview(edges, params = {}) {
   const ordered = assembled.orderedEdges || [];
   const closed = !!assembled.value.closed;
   const frames = [];
+  let prevN = null;
   for (let i = 0; i < pts.length; i++) {
     const e = ordered[Math.min(i, Math.max(0, ordered.length - 1))];
     const nr = e ? normals.get(e.key) : null;
@@ -263,8 +284,31 @@ export function buildFilletBlendPreview(edges, params = {}) {
     if (i < pts.length - 1) T = _n(_sub(pts[i + 1], pts[i]));
     else if (closed) T = _n(_sub(pts[0], pts[i]));
     else T = _n(_sub(pts[i], pts[i - 1]));
-    const { N, B } = frameFromNormals(T, nr?.n0, nr?.n1);
-    frames.push({ origin: pts[i], T, N, B });
+    const f0 = inFaceFromNormal(nr?.n0, T, nr?.n1);
+    const f1 = inFaceFromNormal(nr?.n1, T, nr?.n0);
+    let N;
+    let B;
+    let theta = Math.PI / 2;
+    let frameWedge = wedge;
+    if (f0 && f1) {
+      const fr = orientFilletFrame(T, f0, f1, prevN);
+      N = fr.N;
+      B = fr.B;
+      theta = fr.theta;
+      prevN = N;
+      try {
+        frameWedge = n.profile === 'chamfer'
+          ? dihedralChamferContour(radius, theta)
+          : dihedralFilletContour(radius, theta, 8);
+      } catch {
+        frameWedge = wedge;
+      }
+    } else {
+      const fb = frameFromNormals(T, nr?.n0, nr?.n1);
+      N = fb.N;
+      B = fb.B;
+    }
+    frames.push({ origin: pts[i], T, N, B, theta, wedge: frameWedge });
   }
 
   return {
@@ -272,9 +316,9 @@ export function buildFilletBlendPreview(edges, params = {}) {
     ok: true,
     path: assembled.value,
     preview,
-    wedge,
+    wedge: frames[0]?.wedge || wedge,
     frames,
-    rings: ringsFromFrames(frames, wedge),
+    rings: ringsFromFrames(frames),
     polylines: preview?.points ? [preview.points] : [],
     closed,
     length: assembled.value.length,

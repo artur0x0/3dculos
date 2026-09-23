@@ -35,6 +35,7 @@ import {
   emitFaceEdgeLines,
   emitSelectedEdgeLines,
   emitSelectedEdgeLiteralLines,
+  emitFilletBoundaryLines,
   emitSpanExpr,
   estimateCylinderAxis,
   roundFaceNum,
@@ -925,7 +926,8 @@ export const HELPER_PALETTE_ITEMS = [
       // Strategy=sweep → makeSweepPath + filletAlongPath (curved-adjacent OK).
       // Strategy=planar → classic filletEdges for planar–planar edges.
       if (strategy === 'sweep') {
-        const edge = emitSelectedEdgeLiteralLines(body, edgeCtx || [], names, allocateUniqueName);
+        const edge = emitFilletBoundaryLines(body, edgeCtx || [], names, allocateUniqueName)
+          || emitSelectedEdgeLiteralLines(body, edgeCtx || [], names, allocateUniqueName);
         if (!edge.ok) return null;
         feat.push(...edge.lines);
         const path = allocateUniqueName(names, 'path');

@@ -9,7 +9,17 @@ import {
   resolveFastenerSize,
 } from './fastenerSizes.js';
 import { isFilletSliverDirty } from '../utils/filletSliverGuard.js';
-import { expandFilletCutterContour, planFilletSweepPath } from '../utils/filletAlongPath.js';
+import {
+  expandFilletCutterContour,
+  expandDihedralCutterContour,
+  planFilletSweepPath,
+  dihedralFilletContour,
+  dihedralChamferContour,
+  filletRemovedArea,
+  chamferRemovedArea,
+  orientFilletFrame,
+} from '../utils/filletAlongPath.js';
+import { indexBoundaryEdges } from '../utils/boundaryEdgeIds.js';
 import { assembleSweepPath } from '../utils/edgeSweepPath.js';
 import { buildMakeLoftSolid, offsetPlaneFrame } from '../utils/makeLoft.js';
 
@@ -2900,15 +2910,33 @@ function _s23TryRevolveCutter(CrossSection, points, radius, profileKind, arcSegs
   // Ensure first-quadrant wedge maps into the solid (both axes point "inward")
   // If either axis points outward in ρ, flip.
   // Place wedge origin at (R, 0) in a local meridian where z'=0 at the rim.
-  const wedge = expandFilletCutterContour(
-    _s23WedgeContour(radius, profileKind, arcSegs),
-    radius,
-  );
+  // Orthonormal meridian axes. A 90° rim (f0 ⟂ f1) matches the old
+  // u·f0+v·f1 map; a non-orthogonal rim uses the dihedral contour instead
+  // of shearing a quarter-circle through non-orthogonal axes.
+  const e0 = f0_2d;
+  const proj = f1_2d[0] * e0[0] + f1_2d[1] * e0[1];
+  let e1x = f1_2d[0] - proj * e0[0];
+  let e1y = f1_2d[1] - proj * e0[1];
+  const e1L = Math.hypot(e1x, e1y);
+  if (e1L < 1e-6) return null;
+  e1x /= e1L;
+  e1y /= e1L;
+  const cth = Math.max(-1, Math.min(1, f0_2d[0] * f1_2d[0] + f0_2d[1] * f1_2d[1]));
+  const theta = Math.acos(cth);
+  if (theta < 0.05 || theta > Math.PI - 0.05) return null;
+  let wedge;
+  try {
+    const nominal = profileKind === 'chamfer'
+      ? dihedralChamferContour(radius, theta)
+      : dihedralFilletContour(radius, theta, arcSegs);
+    wedge = expandDihedralCutterContour(nominal, radius, theta);
+  } catch (_) {
+    return null;
+  }
   const mapped = [];
   for (const [u, v] of wedge) {
-    // (ρ, z_rel) = (R,0) + u*f0_2d + v*f1_2d
-    const rho = R + u * f0_2d[0] + v * f1_2d[0];
-    const zRel = 0 + u * f0_2d[1] + v * f1_2d[1];
+    const rho = R + u * e0[0] + v * e1x;
+    const zRel = u * e0[1] + v * e1y;
     mapped.push([rho, zRel]);
   }
   // Ensure CCW in (ρ,z)
@@ -3004,14 +3032,279 @@ function _s23PolylinePath(points, closed) {
 }
 
 
+const _S23_THETA_TOL = (3 * Math.PI) / 180;
+
+/**
+ * In-face frame at every path segment. One convexEdges pass + one mesh info.
+ * Throws when a sample has no convex edge, the edge is concave, or θ is
+ * degenerate — a 90° start-frame fallback is the acute-edge hook.
+ */
+function _s23ProbeSegments(M, part, points, closed) {
+  const edges = convexEdges(part);
+  const mesh = _c6BuildMeshInfo(part);
+  const n = points.length;
+  const segCount = closed ? n : n - 1;
+  const segs = [];
+  let prevN = null;
+  let checkedConvex = false;
+  for (let i = 0; i < segCount; i++) {
+    const p0 = points[i];
+    const p1 = points[(i + 1) % n];
+    const segL = Math.hypot(p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]);
+    const T = _s23Norm(_s23Sub(p1, p0));
+    const mid = [(p0[0] + p1[0]) / 2, (p0[1] + p1[1]) / 2, (p0[2] + p1[2]) / 2];
+    let best = null;
+    let bestD = Infinity;
+    for (const e of edges) {
+      if (!e || !Array.isArray(e.va) || !Array.isArray(e.vb)) continue;
+      const em = [(e.va[0] + e.vb[0]) / 2, (e.va[1] + e.vb[1]) / 2, (e.va[2] + e.vb[2]) / 2];
+      const d = Math.hypot(em[0] - mid[0], em[1] - mid[1], em[2] - mid[2]);
+      if (d < bestD) {
+        bestD = d;
+        best = e;
+      }
+    }
+    if (!best || bestD > Math.max(0.5, 0.55 * (segL || 1))) {
+      throw new Error(
+        'filletAlongPath: could not orient cutter to part (no nearby convex edge along the path). '
+        + 'Pass opts.initialNormal, or re-pick edges.',
+      );
+    }
+    const eKey = best.a < best.b ? best.a * 1e9 + best.b : best.b * 1e9 + best.a;
+    const ti = mesh.pairMap.get(eKey);
+    if (!ti || ti.length !== 2) {
+      throw new Error(
+        'filletAlongPath: could not orient cutter to part (edge missing from mesh). Re-pick edges.',
+      );
+    }
+    const thirdVertex = (tri) => {
+      for (let k = 0; k < 3; k++) {
+        if (tri.vs[k] !== best.a && tri.vs[k] !== best.b) return tri.v[k];
+      }
+      return null;
+    };
+    const X0 = thirdVertex(mesh.tris[ti[0]]);
+    const X1 = thirdVertex(mesh.tris[ti[1]]);
+    if (!X0 || !X1) {
+      throw new Error('filletAlongPath: could not orient cutter to part (degenerate edge triangle).');
+    }
+    const f0 = _c6InFaceDir(X0, best.va, T);
+    const f1 = _c6InFaceDir(X1, best.va, T);
+    if (!checkedConvex) {
+      const rProbe = Math.min(0.05, (segL || 1) * 0.25);
+      const sp = M.sphere(rProbe, 12, 6).transform(
+        [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, mid[0], mid[1], mid[2], 1],
+      );
+      const fIn = M.intersection(part, sp).volume() / sp.volume();
+      if (fIn >= 0.45) {
+        throw new Error('filletAlongPath: edge is concave (sweep fillet is external / material-remove only)');
+      }
+      checkedConvex = true;
+    }
+    const frame = orientFilletFrame(T, f0, f1, prevN);
+    if (!(frame.theta > 0.05) || frame.theta > Math.PI - 0.05) {
+      throw new Error(
+        `filletAlongPath: face angle ${frame.theta.toFixed(3)} rad is degenerate — re-pick edges.`,
+      );
+    }
+    prevN = frame.N;
+    segs.push({
+      T,
+      N: frame.N,
+      B: frame.B,
+      theta: frame.theta,
+      length: segL,
+      f0,
+      f1,
+      p0,
+      p1,
+    });
+  }
+  return segs;
+}
+
+function _s23GroupRuns(segs, closed) {
+  if (!segs.length) return [];
+  const runs = [];
+  let cur = [segs[0]];
+  for (let i = 1; i < segs.length; i++) {
+    if (Math.abs(segs[i].theta - cur[0].theta) < _S23_THETA_TOL) cur.push(segs[i]);
+    else {
+      runs.push(cur);
+      cur = [segs[i]];
+    }
+  }
+  runs.push(cur);
+  if (closed && runs.length > 1) {
+    const head = runs[0];
+    const tail = runs[runs.length - 1];
+    if (Math.abs(head[0].theta - tail[0].theta) < _S23_THETA_TOL) {
+      runs[0] = tail.concat(head);
+      runs.pop();
+    }
+  }
+  return runs;
+}
+
+function _s23RunGeometry(run, closedPath, onlyRun) {
+  const pts = [run[0].p0.slice()];
+  for (const seg of run) pts.push(seg.p1.slice());
+  const frames = run.map((seg) => ({
+    N: seg.N, B: seg.B, T: seg.T, f0: seg.f0, f1: seg.f1,
+  }));
+  if (onlyRun && closedPath && pts.length >= 2) {
+    const a = pts[0];
+    const b = pts[pts.length - 1];
+    if (Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) < 1e-5) pts.pop();
+    return { points: pts, frames, closed: true };
+  }
+  return { points: pts, frames, closed: false };
+}
+
+function _s23DihedralContour(radius, theta, profileKind, arcSegs, testScale) {
+  const nominal = profileKind === 'chamfer'
+    ? dihedralChamferContour(radius, theta)
+    : dihedralFilletContour(radius, theta, arcSegs);
+  const contour = expandDihedralCutterContour(nominal, radius, theta);
+  if (testScale > 1) {
+    for (const p of contour) {
+      p[0] *= testScale;
+      p[1] *= testScale;
+    }
+  }
+  let area2 = 0;
+  for (let i = 0; i < contour.length; i++) {
+    const a = contour[i];
+    const b = contour[(i + 1) % contour.length];
+    area2 += a[0] * b[1] - b[0] * a[1];
+  }
+  if (area2 < 0) contour.reverse();
+  return contour;
+}
+
+/** Extrude + warp with one (N,B) frame per segment. Not an RMF from path start. */
+function _s23SweepExplicit(Manifold, profile, points, frames, extrudeSegments) {
+  const nSeg = points.length - 1;
+  if (nSeg < 1 || frames.length !== nSeg) {
+    throw new Error('filletAlongPath: sweep frame count does not match the path');
+  }
+  const segLens = [];
+  const cum = [0];
+  for (let i = 0; i < nSeg; i++) {
+    const a = points[i];
+    const b = points[i + 1];
+    const L = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+    segLens.push(L);
+    cum.push(cum[cum.length - 1] + L);
+  }
+  const total = cum[cum.length - 1];
+  if (!(total > 1e-12)) throw new Error('filletAlongPath: polyline path has zero length');
+  const straight = Manifold.extrude(profile, total, extrudeSegments);
+  const warp = (v) => {
+    let x = v[0];
+    let y = v[1];
+    let s = v[2];
+    if (s < 0) s = 0;
+    if (s > total) s = total;
+    let i = 0;
+    while (i < nSeg - 1 && cum[i + 1] < s - 1e-12) i++;
+    const L = segLens[i] || 1;
+    const frac = Math.max(0, Math.min(1, (s - cum[i]) / L));
+    const a = points[i];
+    const b = points[i + 1];
+    const P0 = a[0] + frac * (b[0] - a[0]);
+    const P1 = a[1] + frac * (b[1] - a[1]);
+    const P2 = a[2] + frac * (b[2] - a[2]);
+    const fr = frames[i];
+    v[0] = P0 + x * fr.N[0] + y * fr.B[0];
+    v[1] = P1 + x * fr.N[1] + y * fr.B[1];
+    v[2] = P2 + x * fr.N[2] + y * fr.B[2];
+  };
+  return straight.warp(warp);
+}
+
+function _s23SweepRun(Manifold, CrossSection, runGeom, radius, profileKind, arcSegs, testScale) {
+  const thetaUse = runGeom.theta;
+  if (runGeom.closed && !(testScale > 1)) {
+    try {
+      const probed = { f0: runGeom.frames[0].f0, f1: runGeom.frames[0].f1 };
+      const rev = _s23TryRevolveCutter(
+        CrossSection, runGeom.points, radius, profileKind, arcSegs, probed,
+      );
+      if (rev) return rev;
+    } catch (e) {
+      if (/too large for this rim/i.test(String(e && e.message))) throw e;
+    }
+  }
+  let sweepPts = runGeom.points;
+  let sweepFrames = runGeom.frames;
+  if (runGeom.closed && runGeom.points.length >= 3) {
+    const a = runGeom.points[0];
+    const b = runGeom.points[1];
+    const overlap = 0.08;
+    sweepPts = runGeom.points.concat([
+      a.slice(),
+      [
+        a[0] + overlap * (b[0] - a[0]),
+        a[1] + overlap * (b[1] - a[1]),
+        a[2] + overlap * (b[2] - a[2]),
+      ],
+    ]);
+    sweepFrames = runGeom.frames.concat([runGeom.frames[0]]);
+  }
+  const contour = _s23DihedralContour(radius, thetaUse, profileKind, arcSegs, testScale);
+  const cs = new CrossSection([contour]);
+  const extrudeSegments = Math.min(128, Math.max(24, sweepFrames.length * 2));
+  return _s23SweepExplicit(Manifold, cs, sweepPts, sweepFrames, extrudeSegments);
+}
+
+function _s23BuildDihedralCutter(M, CrossSection, part, points, closed, radius, profileKind, arcSegs, testScale) {
+  const segs = _s23ProbeSegments(M, part, points, closed);
+  const runs = _s23GroupRuns(segs, closed);
+  const cutters = [];
+  let expectVol = 0;
+  for (const run of runs) {
+    const theta = run[0].theta;
+    const area = profileKind === 'chamfer'
+      ? chamferRemovedArea(radius, theta)
+      : filletRemovedArea(radius, theta);
+    const len = run.reduce((s, seg) => s + seg.length, 0);
+    expectVol += area * len;
+    const geom = _s23RunGeometry(run, closed, runs.length === 1);
+    geom.theta = theta;
+    for (const fr of geom.frames) fr.theta = theta;
+    let piece;
+    try {
+      piece = _s23SweepRun(M, CrossSection, geom, radius, profileKind, arcSegs, testScale);
+    } catch (e) {
+      if (/too large for this rim|face angle|radius/i.test(String(e && e.message))) throw e;
+      throw new Error(`filletAlongPath: sweep failed — ${e && e.message ? e.message : e}`);
+    }
+    const se = _c4StatusError(piece);
+    if (se) throw new Error(`filletAlongPath: bad cutter (${se})`);
+    cutters.push(piece);
+  }
+  let cutter = cutters[0];
+  if (cutters.length > 1) {
+    try {
+      cutter = M.union(cutters);
+    } catch (e) {
+      throw new Error(`filletAlongPath: sweep failed — ${e && e.message ? e.message : e}`);
+    }
+    const se = _c4StatusError(cutter);
+    if (se) throw new Error(`filletAlongPath: bad cutter (${se})`);
+  }
+  return { cutter, expectVol };
+}
+
 /**
  * filletAlongPath(part, path, radius, opts?)
- * Sweep a quarter-circle (or chamfer) cutter along path → boolean subtract.
+ * Sweep a dihedral fillet (or equal-leg chamfer) along path → boolean subtract.
  *
- * Orientation: profile (u,v) in first quadrant maps to u·N + v·B where N,B are
- * rotation-minimizing frame axes. initialNormal is chosen from in-face rays at
- * path start so N≈f0 and B≈f1 (into the two adjacent faces). Path may be reversed
- * so B aligns with f1.
+ * Default: each path segment gets an in-face frame. Consecutive segments whose
+ * interior angle stays within 3° share one cutter profile (that run's θ) and
+ * are swept with those frames — not a 90° wedge spun by a single start RMF.
+ * opts.initialNormal keeps the legacy 90° RMF sweep (explicit override).
  *
  * @param {Manifold} part
  * @param {object|number[][]} path — makeSweepPath result or points
@@ -3053,7 +3346,21 @@ function filletAlongPath(part, path, radius, opts = {}) {
     }
   }
 
-  // Probe face frame; may reverse path so B aligns with f1.
+  const testCutterScale = Number(opts._testCutterScale);
+  const testingOversize = Number.isFinite(testCutterScale) && testCutterScale > 1;
+  let cutter = null;
+  let expectVolOverride = null;
+  if (!opts.initialNormal) {
+    const built = _s23BuildDihedralCutter(
+      M, CrossSection, part, points, closed, radius, profileKind, arcSegs,
+      testingOversize ? testCutterScale : 1,
+    );
+    cutter = built.cutter;
+    expectVolOverride = built.expectVol;
+  }
+
+  // Legacy 90° RMF — only when opts.initialNormal is set. May reverse the path.
+  if (!cutter) {
   let initialNormal = opts.initialNormal ? opts.initialNormal.slice() : null;
   let probed = null;
   if (!initialNormal) {
@@ -3104,9 +3411,6 @@ function filletAlongPath(part, path, radius, opts = {}) {
     );
   }
 
-  const testCutterScale = Number(opts._testCutterScale);
-  const testingOversize = Number.isFinite(testCutterScale) && testCutterScale > 1;
-
   const contour = expandFilletCutterContour(
     _s23WedgeContour(radius, profileKind, arcSegs),
     radius,
@@ -3156,7 +3460,6 @@ function filletAlongPath(part, path, radius, opts = {}) {
     sweepClosed = false;
   }
 
-  let cutter = null;
   // Skip revolve fast-path when pinning an oversized sweep cutter.
   if (closed && !testingOversize) {
     try {
@@ -3177,6 +3480,7 @@ function filletAlongPath(part, path, radius, opts = {}) {
     } catch (e) {
       throw new Error(`filletAlongPath: sweep failed — ${e && e.message ? e.message : e}`);
     }
+  }
   }
   const seC = _c4StatusError(cutter);
   if (seC) throw new Error(`filletAlongPath: bad cutter (${seC})`);
@@ -3205,15 +3509,13 @@ function filletAlongPath(part, path, radius, opts = {}) {
       + '(wrong orientation / path). Try reversing the path or pass opts.initialNormal.',
     );
   }
-  // Sanity vs expected wedge·length for 90° cases: near-no-op (orientation
-  // miss) AND oversize cutter (requested r silently redefined). The upper
-  // bound is against expectVol, not cutterVol — difference cannot exceed
-  // cutter volume geometrically, so a cutter-vs-removed check would not
-  // catch a uniformly scaled wedge.
+  // Near-no-op and oversize guards use the dihedral removed-area when the
+  // per-segment cutter ran. A 90°-only expect false-trips an acute fillet
+  // (removed area grows as θ shrinks) and misses a hooked 90° wedge.
   const expectArea = profileKind === 'chamfer'
     ? 0.5 * radius * radius
     : radius * radius * (1 - Math.PI / 4);
-  const expectVol = expectArea * length;
+  const expectVol = expectVolOverride != null ? expectVolOverride : expectArea * length;
   // Neutralise near-no-op when pinning the sibling 8× oversize guard —
   // a coordinated oversize probe would otherwise throw here first.
   if (!testingOversize && expectVol > 1e-3 && removed < 0.02 * expectVol) {
@@ -3292,6 +3594,95 @@ function filletAlongPath(part, path, radius, opts = {}) {
   return out;
 }
 
+// ---------------------------------------------------------------- Fillet edge ids (edge-spec A)
+// Ids come from the current mesh. faceID is Manifold provenance and can
+// merge or split after a boolean, so a miss throws instead of guessing.
+const _boundaryCache = new WeakMap();
+
+function _boundaryPositions(mesh) {
+  const np = mesh.numProp || 3;
+  const src = mesh.vertProperties;
+  if (np === 3) return src;
+  const nVert = Math.floor(src.length / np);
+  const positions = new Float64Array(nVert * 3);
+  for (let i = 0; i < nVert; i++) {
+    positions[i * 3] = src[i * np];
+    positions[i * 3 + 1] = src[i * np + 1];
+    positions[i * 3 + 2] = src[i * np + 2];
+  }
+  return positions;
+}
+
+function _boundaryIndex(part) {
+  if (!part || typeof part.getMesh !== 'function') {
+    throw new Error('part must be a Manifold');
+  }
+  if (_boundaryCache.has(part)) return _boundaryCache.get(part);
+  const mesh = part.getMesh();
+  const topo = indexBoundaryEdges({
+    positions: _boundaryPositions(mesh),
+    indices: mesh.triVerts,
+    faceIDs: mesh.faceID,
+  });
+  _boundaryCache.set(part, topo);
+  return topo;
+}
+
+function _rePickEdges(detail) {
+  throw new Error(
+    `re-pick edges — ${detail}. Face and edge ids belong to this mesh; `
+    + 'Manifold faceID can merge or split after a boolean, so the previous ids are not reused.',
+  );
+}
+
+/**
+ * edge(part, id) → mesh segments of one boundary edge.
+ * id is the integer shown as e{id} in Fillet mode. Suitable for makeSweepPath.
+ */
+function edge(part, id) {
+  const topo = _boundaryIndex(part);
+  const n = Number(id);
+  const found = (topo.edges || []).find((e) => e.id === n);
+  if (!found) _rePickEdges(`edge ${id} is not on this solid`);
+  return found.segments.map((seg) => ({ ...seg }));
+}
+
+/**
+ * edgesBetween(part, faceA, faceB) → segments of the only boundary between
+ * those face ids. Two disconnected boundaries of the same pair throw —
+ * use edge(part, id) for the one you want.
+ */
+function edgesBetween(part, faceA, faceB) {
+  const topo = _boundaryIndex(part);
+  const fa = Number(faceA);
+  const fb = Number(faceB);
+  const hits = (topo.edges || []).filter((e) => (
+    (e.faceA === fa && e.faceB === fb) || (e.faceA === fb && e.faceB === fa)
+  ));
+  if (!hits.length) _rePickEdges(`no boundary between faces ${fa} and ${fb}`);
+  if (hits.length > 1) {
+    _rePickEdges(
+      `faces ${fa} and ${fb} share ${hits.length} boundary edges — use edge(part, id)`,
+    );
+  }
+  return hits[0].segments.map((seg) => ({ ...seg }));
+}
+
+/**
+ * boundaryEdges(part) → catalog { id, faceA, faceB, mid, length } for the
+ * current mesh. Discovery helper; Fillet Accept emits edge / edgesBetween.
+ */
+function boundaryEdges(part) {
+  const topo = _boundaryIndex(part);
+  return (topo.edges || []).map((e) => ({
+    id: e.id,
+    faceA: e.faceA,
+    faceB: e.faceB,
+    mid: e.mid.slice(),
+    length: e.length,
+  }));
+}
+
 // Collection of all helper functions to inject
 const HELPER_FUNCTIONS = {
   shell,
@@ -3359,6 +3750,10 @@ const HELPER_FUNCTIONS = {
   makeSweepPath,
   // Slice 23 fillet via swept cross-section
   filletAlongPath,
+  // Fillet-mode edge ids
+  edge,
+  edgesBetween,
+  boundaryEdges,
 };
 
 // ============================================================================

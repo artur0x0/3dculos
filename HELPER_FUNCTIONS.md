@@ -21,7 +21,8 @@ comparable and train-able.
 | `loft`, `makeLoft`, `offsetPlaneFrame`, `sweep`, `sweepPoints`, `makeExtrude`, `makeRevolve` | Profiles / paths |
 | `profileCircle` / `profileRectangle` / `profilePolygon` / `makeCrossSection` | Cross-section substrate (Slice 21) |
 | `makeSweepPath(edges, opts?)` | Ordered sweep path / wire from edges (Slice 22) |
-| `filletAlongPath(part, path, r, opts?)` | Sweep fillet/chamfer wedge along path → subtract (Slice 23) |
+| `filletAlongPath(part, path, r, opts?)` | Dihedral fillet/chamfer swept along a path → subtract |
+| `edge(part, id)` / `edgesBetween(part, faceA, faceB)` / `boundaryEdges(part)` | Fillet-mode face/edge ids (re-pick if the mesh changes) |
 
 **Loud failure rule:** feature helpers throw named `Error`s on bad inputs,
 degenerate cutters, non-manifold / empty results, or (for `filletEdges`) when
@@ -73,17 +74,22 @@ Edge selection (open chain or closed loop). Consume with **Fillet → Strategy=s
 **Sweep fillet (Slice 23+):** same **Fillet** control — **Strategy=sweep** is the
 universal default (and **auto** resolves to sweep). **planar** is an explicit
 manual override for classic `filletEdges` (planar–planar / closed-run C6).
-**sweep** builds `makeSweepPath` + `filletAlongPath` (quarter-circle or chamfer
-wedge swept as a **linear polyline** along the edge wire, boolean subtract).
+**sweep** builds `makeSweepPath` + `filletAlongPath` (dihedral fillet or
+equal-leg chamfer swept along the edge wire, boolean subtract). Fillet-mode
+**Accept** emits `edge(part, id)` / `edgesBetween(part, faceA, faceB)` when
+the viewport has boundary ids (`eN` / `fN` labels).
 Disconnected / branched selections loud-fail (path stays visible) — never a
 wrong solid.
 
 **Fillet mode (Slice 27):** tapping **Fillet** enters edge-pick mode with no
 prior selection required (no soft-fail / no pre-select). The chip is Tangent
 (default-on) / Clear / **Accept** / Back. Live sweep-blend preview updates as
-edges accumulate. **Accept** writes `makeSweepPath` + `filletAlongPath` in a
-marked block and Auto-Runs; second Accept replaces that same block. **Back**
-exits with no commit. Strategy default stays **sweep**.
+edges accumulate. While Fillet mode is open the viewport labels each merged
+face `fN` and each boundary edge `eN`. **Accept** writes `makeSweepPath` +
+`filletAlongPath` in a marked block, with `edgesBetween` / `edge` instead of
+a `va`/`vb` dump when those ids are present, and Auto-Runs; second Accept
+replaces that same block. **Back** exits with no commit. Strategy default
+stays **sweep**.
 
 **Cross-section (Slice 21):** `makeCrossSection(plane, profile)` is the reusable
 plane + 2D profile substrate (planar face via `workplaneFromFace`, or default
@@ -969,19 +975,19 @@ part = filletEdges(part, e, 3, { sphericalCorners: true });
 // Sweep fillet (curved-adjacent / closed rim / post-fillet seam):
 const rim = /* Edge pick + Tangent → selection, or convexEdges subset */;
 const path = makeSweepPath(rim); // { kind:'sweepPath', closed, points, length, edgeCount }
-part = filletAlongPath(part, path, 2);           // quarter-circle wedge
-// part = filletAlongPath(part, path, 2, { profile: 'chamfer' }); // triangle
+part = filletAlongPath(part, path, 2);           // dihedral fillet
+// part = filletAlongPath(part, path, 2, { profile: 'chamfer' }); // equal-leg chamfer
 return part;
 ```
 
 **Parameters:**
 - `part` — manifold body
 - `path` — `makeSweepPath` result, `{ points, closed }`, or `points[]` (+ `opts.closed`)
-- `radius` — fillet / chamfer size (> 0)
-- `opts.profile` — `'fillet'` (default, quarter-circle wedge) or `'chamfer'` (triangle)
-- `opts.segments` — arc segments for the fillet wedge (default 12)
-- `opts.initialNormal` — optional frame hint; otherwise probed from a nearby convex edge
-- `opts.arcSamples` / `opts.extrudeSegments` — sweep quality (defaults scale with path size)
+- `radius` — fillet radius, or chamfer leg length (> 0)
+- `opts.profile` — `'fillet'` (default) or `'chamfer'`
+- `opts.segments` — arc segments for the fillet profile (default 12)
+- `opts.initialNormal` — optional. When set, keeps the legacy 90° wedge and a single start-frame RMF. Leave unset for the dihedral cutter.
+- `opts.arcSamples` / `opts.extrudeSegments` — legacy RMF sweep quality only
 
 **Path / cutter:** open chains sweep the wedge along a **linear polyline** of the
 edge wire (not Catmull-Rom — spline bulge left purple scraps). Closed paths that
@@ -996,13 +1002,50 @@ tighter follow-on sweeps use a deeper rear pad than the original 4%·r sliver.
 Disconnected cutter scraps are dropped via `decompose` when present.
 Loud-fail if the kept solid is still scrap-sheet dirty.
 
-**Quarter-circle orientation:** the 2D wedge lives in the first quadrant `(u≥0,v≥0)`
-with origin on the path. Sweep maps `(u,v) → u·N + v·B` (rotation-minimizing frame).
-At path start, in-face rays `f0`/`f1` are probed from the part mesh (no planarity
-assert — curved faces allowed). `initialNormal ≈ f0` so `N` tracks one face and
-`B = T×N` the other; the path may be reversed so `B` aligns with `f1`. The wedge
-is the **corner square minus the quarter-disk centered at `(r,r)`** — the material
-a 90° external fillet removes (area `r²(1−π/4)` per unit length).
+**Dihedral cutter:** each path segment is probed from the two adjacent triangles
+(in-face rays from the third vertices — not face normals, not faceID groups).
+`N` lies in one face, `B = T×N` points toward the other, and the profile is built
+for that interior angle θ: fillet setback `t = r/tan(θ/2)`, removed area
+`r·t − ½·r²·(π−θ)` (at 90° this is `r²(1−π/4)`); chamfer area `½·c²·sin θ`
+(at 90° this is `½·c²`). Segments whose θ stays within 3° share one profile and
+are swept with those per-segment frames. A closed run that fits a circle is
+revolved. `opts.initialNormal` is the only path that still uses a 90° wedge and
+one start-frame RMF. The exterior bumper still keeps cutter legs off the faces;
+at 90° it matches the old `(−e,−e)` pad.
+
+### edge(part, id) / edgesBetween(part, faceA, faceB) / boundaryEdges(part)
+
+Fillet-mode labels and Accept use these instead of tessellation keys like
+`"1268-1269"`.
+
+```javascript
+let part = Manifold.cube([40, 30, 20], true);
+const cat = boundaryEdges(part); // [{ id, faceA, faceB, mid, length }, ...]
+const one = cat[0];
+const selEdges = edgesBetween(part, one.faceA, one.faceB);
+// partial chain: [id, id].flatMap((id) => edge(part, id))
+const path = makeSweepPath(selEdges);
+part = filletAlongPath(part, path, 2);
+return part;
+```
+
+**How ids are assigned (current mesh only):**
+- A **face id** is the minimum Manifold `faceID` in a coplanar connected group
+  (normals within 0.1°, plane offset within 1e-3). Shown as `fN`.
+- A **boundary edge id** groups triangle segments that share one unordered face
+  pair and connect through vertices. One CAD edge that was tessellated collinearly
+  is one id (`eN`). A curved rim, where each facet is its own face, stays many ids.
+- Ids are sorted by `(min face, max face, midpoint)` so a fresh cube is stable.
+- `edge(part, id)` and `edgesBetween(part, faceA, faceB)` return
+  `{ key, a, b, va, vb, mid, length }` segments for `makeSweepPath`.
+  `edgesBetween` throws when that pair has more than one boundary — use `edge`.
+
+**Rematch limits:** ids are not a CAD feature tree. Manifold `faceID` is
+provenance and can merge or split after a boolean, and two disconnected regions
+can share one minimum faceID. `edge` / `edgesBetween` throw `re-pick edges`
+when the id or pair is missing. Re-running a script from scratch is stable only
+while the solid *before* the fillet is deterministic. After geometry changes,
+re-pick in Fillet mode (the labels update) rather than editing a stale id.
 
 **Loud failures (script):** bad/empty path; radius ≤ 0; concave edge; cannot orient
 cutter; sweep/boolean failure; ~0 volume removed (wrong orientation); near-no-op vs

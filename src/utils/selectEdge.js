@@ -123,18 +123,29 @@ export function toggleEdgeSelection(selected, edge) {
   const idx = list.findIndex((e) => edgeKey(e) === key);
   if (idx >= 0) list.splice(idx, 1);
   else {
-    list.push({
-      key,
-      a: edge.a,
-      b: edge.b,
-      va: edge.va.slice(),
-      vb: edge.vb.slice(),
-      mid: edge.mid.slice(),
-      length: edge.length,
-      tangent: edge.tangent ? edge.tangent.slice() : undefined,
-    });
+    list.push(copyPickEdge(edge, key));
   }
   return list;
+}
+
+/** Fields the viewport pick must keep so Fillet Accept can emit face/edge ids. */
+function copyPickEdge(edge, key) {
+  return {
+    key,
+    a: edge.a,
+    b: edge.b,
+    va: edge.va.slice(),
+    vb: edge.vb.slice(),
+    mid: edge.mid.slice(),
+    length: edge.length,
+    tangent: edge.tangent ? edge.tangent.slice() : undefined,
+    n0: edge.n0 ? edge.n0.slice() : undefined,
+    n1: edge.n1 ? edge.n1.slice() : undefined,
+    faceA: Number.isFinite(edge.faceA) ? edge.faceA : undefined,
+    faceB: Number.isFinite(edge.faceB) ? edge.faceB : undefined,
+    boundaryId: Number.isFinite(edge.boundaryId) ? edge.boundaryId : undefined,
+    pairCount: Number.isFinite(edge.pairCount) ? edge.pairCount : undefined,
+  };
 }
 
 /**
@@ -562,16 +573,7 @@ export function propagateTangentEdges(featureEdges, seedEdge, opts = {}) {
         const nk = edgeKey(nbr);
         if (out.has(nk)) continue;
         if (tangentAlign(t0, nbr.tangent) < cosTol) continue;
-        const copy = {
-          key: nk,
-          a: nbr.a,
-          b: nbr.b,
-          va: nbr.va.slice(),
-          vb: nbr.vb.slice(),
-          mid: nbr.mid.slice(),
-          length: nbr.length,
-          tangent: nbr.tangent ? nbr.tangent.slice() : undefined,
-        };
+        const copy = copyPickEdge(nbr, nk);
         out.set(nk, copy);
         queue.push(copy);
       }

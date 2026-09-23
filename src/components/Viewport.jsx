@@ -31,6 +31,9 @@ import {
   LineBasicMaterial,
   SphereGeometry,
   Group,
+  Sprite,
+  SpriteMaterial,
+  CanvasTexture,
 } from 'three';
 import { TrackballControls } from 'three/addons/controls/TrackballControls.js';
 import { LineSegments2 } from 'three/addons/lines/LineSegments2.js';
@@ -101,6 +104,11 @@ import {
   pathLengthFromEdges,
   sweepBlendHardMax,
 } from '../utils/selectEdge';
+import {
+  annotateFeatureEdges,
+  indexBoundaryEdgesFromGeometry,
+  stampBoundaryOnSelection,
+} from '../utils/boundaryEdgeIds';
 import { X } from 'lucide-react';
 import { downloadModelFromMesh, get3MFBase64FromMesh } from '../utils/exportModel';
 import { parseImportedModels, loadCachedModel } from '../utils/importModel';
@@ -120,6 +128,36 @@ const EDGE_CORE_PX = 4;
 const EDGE_HALO_PX = 14;
 const EDGE_HOVER_CORE_PX = 3;
 const EDGE_HOVER_HALO_PX = 10;
+
+/** Screen-facing f{id} / e{id} chip. depthTest off so it stays readable on the part. */
+function makeFilletIdSprite(text, worldH) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 192;
+  canvas.height = 96;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, 192, 96);
+  ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
+  ctx.fillRect(8, 12, 176, 72);
+  ctx.fillStyle = text.startsWith('e') ? '#bbf7d0' : '#7dd3fc';
+  ctx.font = 'bold 52px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, 96, 50);
+  const tex = new CanvasTexture(canvas);
+  tex.needsUpdate = true;
+  const mat = new SpriteMaterial({
+    map: tex,
+    depthTest: false,
+    depthWrite: false,
+    transparent: true,
+  });
+  const sprite = new Sprite(mat);
+  sprite.scale.set(worldH * 2, worldH, 1);
+  sprite.renderOrder = 30;
+  sprite.frustumCulled = false;
+  sprite.raycast = () => {};
+  return sprite;
+}
 
 /** Dispose LineSegments2 Group (halo+core) or legacy LineSegments. */
 function disposeEdgeOverlayObject(scene, obj) {
@@ -214,6 +252,10 @@ const Viewport = forwardRef(({
   const featureEdgesRef = useRef([]);
   /** Geometry identity that featureEdgesRef was built from — invalidate on replace. */
   const featureEdgesSourceRef = useRef(null);
+  /** Per-triangle Manifold faceID from the last worker mesh (not a per-vertex attribute). */
+  const faceIDsRef = useRef(null);
+  const boundaryTopoRef = useRef(null);
+  const idLabelGroupRef = useRef(null);
   const edgeHighlightRef = useRef(null);
   const edgeHoverRef = useRef(null);
   /** Slice 21: plane+profile preview overlay while HelperParamModal is open. */
@@ -1398,6 +1440,55 @@ const Viewport = forwardRef(({
     paintFilletBlendPreview(filletBlendPayload);
   }, [filletMode, selectedEdges, filletBlendPayload, paintFilletBlendPreview, clearFilletBlendPreview]);
 
+  const clearIdLabels = useCallback(() => {
+    const group = idLabelGroupRef.current;
+    if (group && sceneRef.current) sceneRef.current.remove(group);
+    if (group) {
+      group.traverse((obj) => {
+        if (obj.material) {
+          obj.material.map?.dispose();
+          obj.material.dispose();
+        }
+      });
+    }
+    idLabelGroupRef.current = null;
+  }, []);
+
+  // Fillet mode: face ids (fN) and boundary-edge ids (eN) for the Accept helpers.
+  useEffect(() => {
+    clearIdLabels();
+    if (!filletMode || !sceneRef.current) return undefined;
+    featureEdgesSourceRef.current = null;
+    const geom = resultRef.current?.geometry;
+    if (geom) syncFeatureEdges(geom);
+    setSelectedEdges((prev) => stampBoundaryOnSelection(prev, featureEdgesRef.current));
+    const topo = boundaryTopoRef.current;
+    if (!topo) return undefined;
+    const dims = modelBounds?.size;
+    const span = dims ? Math.max(dims[0], dims[1], dims[2]) : 40;
+    const worldH = Math.max(1.6, span * 0.055);
+    const group = new Group();
+    group.name = 'filletIdLabels';
+    for (const face of topo.faces || []) {
+      const sprite = makeFilletIdSprite(`f${face.id}`, worldH);
+      const n = face.normal || [0, 0, 1];
+      sprite.position.set(
+        face.center[0] + n[0] * worldH * 0.35,
+        face.center[1] + n[1] * worldH * 0.35,
+        face.center[2] + n[2] * worldH * 0.35,
+      );
+      group.add(sprite);
+    }
+    for (const edge of topo.edges || []) {
+      const sprite = makeFilletIdSprite(`e${edge.id}`, worldH * 0.85);
+      sprite.position.set(edge.mid[0], edge.mid[1], edge.mid[2]);
+      group.add(sprite);
+    }
+    sceneRef.current.add(group);
+    idLabelGroupRef.current = group;
+    return () => clearIdLabels();
+  }, [filletMode, cachedMeshData, modelBounds, syncFeatureEdges, clearIdLabels]);
+
   useEffect(() => () => {
     clearFilletBlendPreview();
     if (filletToastTimerRef.current) clearTimeout(filletToastTimerRef.current);
@@ -1738,7 +1829,16 @@ const Viewport = forwardRef(({
   /** Rebuild feature-edge cache when the source BufferGeometry identity changes. */
   const syncFeatureEdges = useCallback((geom) => {
     if (featureEdgesSourceRef.current !== geom) {
-      featureEdgesRef.current = geom ? buildFeatureEdges(geom) : [];
+      const raw = geom ? buildFeatureEdges(geom) : [];
+      const faceIDs = faceIDsRef.current;
+      if (geom && faceIDs && faceIDs.length) {
+        const topo = indexBoundaryEdgesFromGeometry(geom, faceIDs);
+        featureEdgesRef.current = annotateFeatureEdges(raw, topo);
+        boundaryTopoRef.current = topo;
+      } else {
+        featureEdgesRef.current = raw;
+        boundaryTopoRef.current = null;
+      }
       featureEdgesSourceRef.current = geom ?? null;
     }
   }, []);
@@ -2847,7 +2947,8 @@ const Viewport = forwardRef(({
     geometry.setAttribute('position', new BufferAttribute(vertProperties, 3));
     geometry.setIndex(new BufferAttribute(triVerts, 1));
 
-    if (meshData.faceID && meshData.faceID.length > 0) {
+    faceIDsRef.current = meshData.faceID && meshData.faceID.length > 0 ? meshData.faceID : null;
+    if (faceIDsRef.current) {
       geometry.setAttribute('faceID', new BufferAttribute(new Float32Array(meshData.faceID), 1));
     }
 
@@ -3015,6 +3116,9 @@ const Viewport = forwardRef(({
         // wire does not produce across an Auto-Run — repaint explicitly so the
         // orange halo cannot go stale against the replaced geometry.
         if (hadEdges) highlightSelectedEdges(selectedEdges);
+        if (inFilletMode) {
+          setSelectedEdges((prev) => stampBoundaryOnSelection(prev, featureEdgesRef.current));
+        }
       } else {
         clearEdgeHighlight();
         clearEdgeHover();

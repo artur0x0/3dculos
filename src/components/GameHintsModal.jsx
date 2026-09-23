@@ -8,7 +8,8 @@ import { X, BookOpen, Copy, Check } from 'lucide-react';
  */
 const ALLOWLIST = [
   { name: 'filletEdges(part, edges, r, opts?)', role: 'Circular fillet on convex edges (planar / closed-run)' },
-  { name: 'filletAlongPath(part, path, r, opts?)', role: 'Sweep fillet/chamfer wedge along Path (Slice 23)' },
+  { name: 'filletAlongPath(part, path, r, opts?)', role: 'Dihedral fillet/chamfer swept along a path' },
+  { name: 'edge(part, id) / edgesBetween(part, faceA, faceB)', role: 'Fillet-mode boundary by id (re-pick if faceIDs change)' },
   { name: 'chamferEdges(part, edges, c)', role: 'Equal-leg chamfer' },
   { name: 'convexEdges(part)', role: 'Select convex edges (for fillet/chamfer)' },
   { name: 'roundedBox(size, radius, segments?)', role: 'Box with rounded edges' },
