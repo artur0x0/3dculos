@@ -113,10 +113,10 @@ function noHostBox(buf) {
     params: { radius: 5, segments: 32 },
     revolve: { angle: 360, axis: 'v', sense: 'positive' },
   });
-  check('existing-part Revolve replaces (no add)',
+  check('existing-part Revolve unions (cube kept, no placeOnFace)',
     host.ok
-    && /part\s*=\s*placeInFrame\s*\(/.test(host.buffer)
-    && !/part\s*=\s*part\.add\(/.test(host.buffer)
+    && /part\s*=\s*part\.add\(\s*placeInFrame\s*\(/.test(host.buffer)
+    && /Manifold\.cube\(/.test(host.buffer)
     && !/placeOnFace\s*\(/.test(host.buffer));
   check('existing-part still one makeRevolve', countMakeRevolve(host.buffer) === 1);
 
@@ -147,10 +147,11 @@ function noHostBox(buf) {
     params: { radius: 5, segments: 32 },
     extrude: { distance: 10, direction: 'normal', sense: 'positive' },
   });
-  check('existing-part Extrude replaces (no add)',
+  check('existing-part Extrude unions (cube kept, no placeOnFace)',
     host.ok
-    && /part\s*=\s*placeInFrame\s*\(/.test(host.buffer)
-    && !/part\s*=\s*part\.add\(/.test(host.buffer));
+    && /part\s*=\s*part\.add\(\s*placeInFrame\s*\(/.test(host.buffer)
+    && /Manifold\.cube\(/.test(host.buffer)
+    && !/placeOnFace\s*\(/.test(host.buffer));
 }
 
 // ── Bug 1: composed empty Revolve is Function()-runnable ───────

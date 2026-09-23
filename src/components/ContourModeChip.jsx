@@ -30,6 +30,9 @@ const ContourModeChip = ({
   onConfirm,
   onUndoPoint,
   onClearPoints,
+  savedContours = [],
+  pickedContourId = null,
+  onPickSaved,
   compact = false,
 }) => {
   const isExtrude = entry === 'makeExtrude';
@@ -171,6 +174,38 @@ const ContourModeChip = ({
       </div>
       <div className="text-[10px] text-cyan-100/90 normal-case font-sans mt-0.5">
         Plane · {planeLabel}
+      </div>
+      <div className="mt-1.5 font-sans" role="group" aria-label="Saved contours">
+        <div className="text-[10px] uppercase tracking-wide text-cyan-200/80">
+          Saved · {savedContours.length}
+        </div>
+        {savedContours.length === 0 ? (
+          <p className="mt-0.5 text-[10px] text-cyan-100/80 leading-tight" role="status">
+            No saved contours yet. Confirm Profile, or draw one here.
+          </p>
+        ) : (
+          <div className="mt-0.5 flex flex-col gap-0.5 max-h-16 overflow-y-auto">
+            {savedContours.map((c) => {
+              const active = c.id === pickedContourId;
+              return (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => onPickSaved?.(c.id)}
+                  aria-pressed={active}
+                  title={`Use ${c.label}`}
+                  className={`truncate rounded px-1.5 py-0.5 text-left text-[11px] ${
+                    active
+                      ? 'bg-amber-500 text-amber-950'
+                      : 'bg-cyan-950/80 text-cyan-100 border border-cyan-700/70'
+                  }`}
+                >
+                  {c.label}
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
       <div className="mt-1.5 flex flex-col gap-1.5 font-sans">
         {fields}
@@ -471,7 +506,9 @@ const ContourModeChip = ({
       )}
       <div className="mt-2 flex items-center justify-between gap-2">
         <span className="text-[10px] text-cyan-200/70 leading-tight">
-          {commitName ? `Confirm writes ${commitName}` : 'Confirm writes Profile only'}
+          {commitName
+            ? `Confirm writes ${commitName} (adds if part exists)`
+            : 'Confirm writes Profile only'}
         </span>
         <button
           type="button"

@@ -167,7 +167,10 @@ function rFace() {
   check('has profileCircle', /profileCircle\s*\(/.test(first.buffer));
   check('has makeExtrude', /makeExtrude\s*\(/.test(first.buffer));
   check('has placeInFrame', /placeInFrame\s*\(/.test(first.buffer));
-  check('replaces part (no host add)', /part\s*=\s*placeInFrame\s*\(/.test(first.buffer) && !/part\s*=\s*part\.add\(/.test(first.buffer));
+  check('unions onto existing part',
+    /Manifold\.cube\(/.test(first.buffer)
+    && /part\s*=\s*part\.add\(\s*placeInFrame\s*\(/.test(first.buffer)
+    && !/placeOnFace\s*\(/.test(first.buffer));
   check('has extrude markers', hasContourExtrudeBlock(first.buffer));
   check('markers wrap solid', first.buffer.includes(CONTOUR_EXTRUDE_BEGIN) && first.buffer.includes(CONTOUR_EXTRUDE_END));
   check('one makeCrossSection', countMakeCrossSection(first.buffer) === 1);

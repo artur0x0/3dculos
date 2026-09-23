@@ -13,16 +13,18 @@
  * Slice 23: filletAlongPath — sweep fillet wedge along Path; Fillet Strategy=sweep (default) | planar.
  * Slice 24: contour-mode Profile region (markers + custom polyline points).
  * Slice 25/hotfix: Extrude Confirm wraps profile + makeExtrude / placeInFrame
- * (replace part — no host add) in extrude markers.
+ * in extrude markers. When `part` already exists, Confirm unions
+ * (`part = part.add(placeInFrame(...))`); an empty script still uses
+ * `let part = placeInFrame(...)`.
  * Slice 26/hotfix: Revolve Confirm wraps profile + makeRevolve / placeInFrame
- * (replace part — no host add) in revolve markers.
+ * in revolve markers (same additive rule when `part` already exists).
  * Slice 27: Fillet-in-mode Accept wraps makeSweepPath + filletAlongPath in fillet markers.
  * Slice 28/hotfix: Loft Confirm wraps ≥2 makeCrossSection + makeLoft / placeInFrame
- * (replace part — no host add) in loft markers.
- * Slice 29: rail groups Prim / Advanced / Features / Xforms. Extrude, Revolve,
- * Sweep, Loft live in Advanced. Draft moves to Transforms.
+ * in loft markers (additive when `part` already exists).
+ * Slice 29: rail groups Prim / Advanced / Features / Xforms. Profile, Workplane,
+ * Extrude, Revolve, Sweep, and Loft live in Advanced. Draft stays in Transforms.
  * Slice 30: Sweep Confirm wraps makeCrossSection + makeSweepPath + sweepPoints
- * / placeInFrame (replace part — no host add) in sweep markers.
+ * / placeInFrame in sweep markers (additive when `part` already exists).
  *
  * Sequential taps compose via composeHelperInsert:
  * strip one trailing `return part;`, insert body, re-append exactly one `return part;`.
@@ -100,6 +102,16 @@ function stripComments(text) {
 export function isBufferEmpty(text) {
   if (!text || !String(text).trim()) return true;
   return !stripComments(text).trim();
+}
+
+/**
+ * True when the buffer already binds `part` to a solid (primitive, feature,
+ * or a prior commit outside the block about to be replaced).
+ * Advanced Confirm unions onto that part instead of replacing it.
+ */
+export function scriptHasPriorSolid(buffer) {
+  if (isBufferEmpty(buffer)) return false;
+  return declaredNames(buffer).has('part');
 }
 
 /** Remove a single trailing `return part;` (plus trailing whitespace). */
@@ -527,6 +539,20 @@ function emitPartReplace(names, expr, partDeclared) {
 }
 
 /**
+ * Advanced Confirm placement.
+ * Empty / first body: `let part = placeInFrame(...)`.
+ * Part already exists: `part = part.add(placeInFrame(...))` so prior solids stay.
+ * Second Confirm still replaces only the marked block (the add is inside it).
+ */
+function emitPartPlace(names, expr, partDeclared, additive) {
+  if (additive && partDeclared) {
+    names.add('part');
+    return `part = part.add(${expr});`;
+  }
+  return emitPartReplace(names, expr, partDeclared);
+}
+
+/**
  * World point → plane-frame UVW. Sweep runs in that frame so placeInFrame
  * maps the solid back without a second host transform.
  */
@@ -539,14 +565,14 @@ function emitWorldToFrameExpr(pt, plane) {
 }
 
 /** sweepPoints in the plane frame, then frame-only placeInFrame replace. */
-function emitSweepSolidTail(names, xs, path, partDeclared) {
+function emitSweepSolidTail(names, xs, path, partDeclared, additive = false) {
   const local = allocateUniqueName(names, 'sweepLocal');
   const swept = allocateUniqueName(names, 'swept');
   return [
     `const ${local} = ${path}.points.map((pt) => ${emitWorldToFrameExpr('pt', `${xs}.plane`)});`,
     `const ${swept} = sweepPoints(new CrossSection(${xs}.contours), ${local}, { closed: !!${path}.closed, initialNormal: [1, 0, 0] });`,
     `if (!(${swept}.volume() > 1e-8)) throw new Error('sweep: result is EMPTY (volume 0) — check profile area and path');`,
-    emitPartReplace(names, `placeInFrame(${xs}.plane, ${swept})`, partDeclared),
+    emitPartPlace(names, `placeInFrame(${xs}.plane, ${swept})`, partDeclared, additive),
   ];
 }
 
@@ -984,7 +1010,7 @@ export const HELPER_PALETTE_ITEMS = [
   {
     id: 'crossSection',
     label: 'Profile',
-    group: 'Features',
+    group: 'Advanced',
     title: 'makeCrossSection(plane, profile) — reusable plane + 2D profile',
     params: [
       { name: 'body', type: 'body', default: 'part', label: 'Body' },
@@ -1060,7 +1086,7 @@ export const HELPER_PALETTE_ITEMS = [
         const placed = Math.abs(w) < 1e-12
           ? `placeInFrame(${fr}, ${solidExpr})`
           : `placeInFrame(${fr}, ${solidExpr}, [0, 0, ${w}])`;
-        lines.push(emitPartReplace(names, placed, partDeclared));
+        lines.push(emitPartPlace(names, placed, partDeclared, partDeclared));
         lines.push(CONTOUR_LOFT_END);
       } else if (p._contourRevolve) {
         const rev = p._contourRevolve;
@@ -1080,7 +1106,7 @@ export const HELPER_PALETTE_ITEMS = [
         lines.push(CONTOUR_REVOLVE_BEGIN);
         lines.push(...wp.lines);
         lines.push(profileLine);
-        lines.push(emitPartReplace(names, `placeInFrame(${frame}, ${solidExpr})`, partDeclared));
+        lines.push(emitPartPlace(names, `placeInFrame(${frame}, ${solidExpr})`, partDeclared, partDeclared));
         lines.push(CONTOUR_REVOLVE_END);
       } else if (p._contourExtrude) {
         const ext = p._contourExtrude;
@@ -1093,9 +1119,10 @@ export const HELPER_PALETTE_ITEMS = [
         lines.push(CONTOUR_EXTRUDE_BEGIN);
         lines.push(...wp.lines);
         lines.push(profileLine);
-        lines.push(emitPartReplace(
+        lines.push(emitPartPlace(
           names,
           `placeInFrame(${xs}.plane, makeExtrude(${xs}.contours, ${distance}), [0, 0, ${w}])`,
+          partDeclared,
           partDeclared,
         ));
         lines.push(CONTOUR_EXTRUDE_END);
@@ -1110,7 +1137,7 @@ export const HELPER_PALETTE_ITEMS = [
         lines.push(profileLine);
         lines.push(...edge.lines);
         lines.push(`const ${path} = makeSweepPath(${edge.edgesExpr}${opts}); // edge→sweep path`);
-        lines.push(...emitSweepSolidTail(names, xs, path, partDeclared));
+        lines.push(...emitSweepSolidTail(names, xs, path, partDeclared, partDeclared));
         lines.push(CONTOUR_SWEEP_END);
       } else if (p._contourMode) {
         // Slice 24: wrap in-mode Profile so Confirm replaces the region (no Extrude).
@@ -1521,7 +1548,7 @@ export const HELPER_PALETTE_ITEMS = [
   {
     id: 'workplane',
     label: 'Workplane',
-    group: 'Transforms',
+    group: 'Advanced',
     title: 'facesByNormal + workplaneFromFace (top face)',
     params: [
       { name: 'body', type: 'body', default: 'part', label: 'Body' },
@@ -1542,7 +1569,7 @@ export const HELPER_PALETTE_ITEMS = [
     id: 'makeExtrude',
     label: 'Extrude',
     group: 'Advanced',
-    title: 'Extrude — contour mode (profile + makeExtrude on the workplane)',
+    title: 'Extrude — contour mode (profile + makeExtrude). Confirm unions onto part when part already exists.',
     bodyBase: 'extrude',
     params: [
       { name: 'height', type: 'number', default: 10, label: 'Height', min: 0.1, step: 1 },
@@ -1571,7 +1598,7 @@ export const HELPER_PALETTE_ITEMS = [
     id: 'makeRevolve',
     label: 'Revolve',
     group: 'Advanced',
-    title: 'Revolve — contour mode (profile + makeRevolve on an in-plane axis)',
+    title: 'Revolve — contour mode (profile + makeRevolve). Confirm unions onto part when part already exists.',
     bodyBase: 'revolve',
     params: [
       { name: 'segments', type: 'number', default: 64, label: 'Segments', min: 3, step: 1 },
@@ -1598,7 +1625,7 @@ export const HELPER_PALETTE_ITEMS = [
     id: 'makeSweep',
     label: 'Sweep',
     group: 'Advanced',
-    title: 'Sweep — contour mode (profile + makeSweepPath + sweepPoints on the workplane)',
+    title: 'Sweep — contour mode (profile + path + sweepPoints). Confirm unions onto part when part already exists.',
     bodyBase: 'swept',
     params: [],
     // UI always enters contour mode (Slice 30). This build is the sequential /
@@ -1622,7 +1649,7 @@ export const HELPER_PALETTE_ITEMS = [
     id: 'makeLoft',
     label: 'Loft',
     group: 'Advanced',
-    title: 'Loft — contour mode (multi-profile makeCrossSection + makeLoft)',
+    title: 'Loft — contour mode (multi-profile makeCrossSection + makeLoft). Confirm unions onto part when part already exists.',
     bodyBase: 'lofted',
     params: [
       { name: 'height', type: 'number', default: 20, label: 'Offset', min: 0.1, step: 1 },

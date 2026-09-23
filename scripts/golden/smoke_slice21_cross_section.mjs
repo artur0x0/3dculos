@@ -85,7 +85,7 @@ const irregularFace = {
 
   const item = HELPER_PALETTE_ITEMS.find((h) => h.id === 'crossSection');
   check('palette has crossSection', !!item);
-  check('palette in Features group', item && item.group === 'Features');
+  check('palette in Advanced group', item && item.group === 'Advanced');
 
   const r0 = resolveFaceModal(item, null);
   check('no face → default modal', r0.mode === 'default');

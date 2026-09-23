@@ -81,6 +81,8 @@ const GROUP_SHORT_LABEL = {
  * Extrude / Revolve / Loft / Sweep Confirm commits the solid; Profile stays Profile-only.
  * Slice 27: Fillet enters edge-pick mode (no pre-select / no soft-fail).
  * Slice 29: groups Prim / Adv / Feat / Xform.
+ * Profile and Workplane sit in Advanced with Extrude / Revolve / Sweep / Loft.
+ * Advanced Confirm unions onto `part` when a solid is already in the script.
  */
 const HelperInsertPalette = ({
   onInsert,

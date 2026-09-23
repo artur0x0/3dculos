@@ -208,9 +208,9 @@ check('declaredNames export', declaredNames('let box1 = 1;').has('box1'));
       === 'cube,cylinder,sphere,tube,hexPrism,roundedBox',
   );
   check(
-    'Advanced order Extrude Revolve Sweep Loft',
+    'Advanced order Profile Workplane Extrude Revolve Sweep Loft',
     grouped.Advanced.map((i) => i.id).join(',')
-      === 'makeExtrude,makeRevolve,makeSweep,makeLoft',
+      === 'crossSection,workplane,makeExtrude,makeRevolve,makeSweep,makeLoft',
   );
   const sweep = grouped.Advanced.find((i) => i.id === 'makeSweep');
   check('Sweep is a real Advanced tool', sweep && sweep.placeholder !== true && sweep.label === 'Sweep');
@@ -229,9 +229,10 @@ check('declaredNames export', declaredNames('let box1 = 1;').has('box1'));
   const feat = grouped.Features.map((i) => i.id);
   check('Fillet stays in Features', feat.includes('filletEdges'));
   check('holes stay in Features', ['hole', 'holePattern', 'clearanceHole', 'tapDrillHole', 'cboreHole', 'cskHole'].every((id) => feat.includes(id)));
-  check('Profile stays in Features', feat.includes('crossSection'));
+  check('Profile moved to Advanced', grouped.Advanced.some((i) => i.id === 'crossSection') && !feat.includes('crossSection'));
   check('Path stays in Features', feat.includes('sweepPath'));
   const xform = grouped.Transforms.map((i) => i.id);
+  check('Workplane moved to Advanced', grouped.Advanced.some((i) => i.id === 'workplane') && !xform.includes('workplane'));
   check('Draft moved to Transforms', xform.includes('addDraft') && !feat.includes('addDraft'));
   check(
     'Xform mirror then array then draft',
