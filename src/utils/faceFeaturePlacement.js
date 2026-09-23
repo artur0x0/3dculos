@@ -643,6 +643,61 @@ export function emitSelectedEdgeLiteralLines(_body, selectedEdges, names, alloca
 }
 
 /**
+ * Fillet / chamfer-via-sweep Accept: short face/edge helpers instead of
+ * tessellation va/vb dumps. Edges without boundary ids return null so the
+ * caller can keep the literal wire (Path tool, older fixtures).
+ *
+ * One face pair that is the only boundary between those faces →
+ * `edgesBetween(part, faceA, faceB)`. Otherwise explicit `edge(part, id)`
+ * so a partial chain is not widened to every edge of the pair.
+ *
+ * @returns {{ lines: string[], edgesExpr: string, ok: true } | null}
+ */
+export function emitFilletBoundaryLines(body, selectedEdges, names, allocateUniqueName) {
+  const edges = Array.isArray(selectedEdges) ? selectedEdges : [];
+  if (!edges.length) return null;
+  const tagged = [];
+  for (const edge of edges) {
+    if (!edge) continue;
+    if (!Number.isFinite(edge.boundaryId)) return null;
+    if (!Number.isFinite(edge.faceA) || !Number.isFinite(edge.faceB)) return null;
+    tagged.push(edge);
+  }
+  if (!tagged.length) return null;
+
+  const ids = [];
+  const seen = new Set();
+  const pairs = new Map();
+  let pairCount = null;
+  for (const edge of tagged) {
+    if (!seen.has(edge.boundaryId)) {
+      seen.add(edge.boundaryId);
+      ids.push(edge.boundaryId);
+    }
+    const fa = Math.min(edge.faceA, edge.faceB);
+    const fb = Math.max(edge.faceA, edge.faceB);
+    pairs.set(`${fa}:${fb}`, [fa, fb]);
+    if (pairCount == null) pairCount = edge.pairCount;
+    else if (edge.pairCount != null && edge.pairCount !== pairCount) pairCount = -1;
+  }
+
+  const edgesVar = allocateUniqueName(names, 'selEdges');
+  const solePair = pairs.size === 1 && ids.length === 1 && (pairCount == null || pairCount === 1);
+  let lines;
+  if (solePair) {
+    const [fa, fb] = [...pairs.values()][0];
+    lines = [
+      `const ${edgesVar} = edgesBetween(${body}, ${fa}, ${fb}); // boundary edge ${ids[0]}`,
+    ];
+  } else {
+    lines = [
+      `const ${edgesVar} = [${ids.join(', ')}].flatMap((id) => edge(${body}, id));`,
+    ];
+  }
+  return { lines, edgesExpr: edgesVar, ok: true };
+}
+
+/**
  * Build a modal item view-model for face placement (or refuse).
  * Optional selectedEdges: when present, fillet/chamfer prefer edge-aware sheet.
  * @returns {{ mode: 'params'|'refuse'|'default', item?: object, face?: FaceClassification, message?: string }}
