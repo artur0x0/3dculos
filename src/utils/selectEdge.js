@@ -551,16 +551,7 @@ export function propagateTangentEdges(featureEdges, seedEdge, opts = {}) {
   const adj = opts.adj || buildEdgeVertexAdj(featureEdges || []);
   const seedKey = edgeKey(seedEdge);
   const out = new Map();
-  out.set(seedKey, {
-    key: seedKey,
-    a: seedEdge.a,
-    b: seedEdge.b,
-    va: seedEdge.va?.slice?.() ?? seedEdge.va,
-    vb: seedEdge.vb?.slice?.() ?? seedEdge.vb,
-    mid: seedEdge.mid?.slice?.() ?? seedEdge.mid,
-    length: seedEdge.length,
-    tangent: seedEdge.tangent ? seedEdge.tangent.slice() : undefined,
-  });
+  out.set(seedKey, copyPickEdge(seedEdge, seedKey));
 
   const queue = [out.get(seedKey)];
   while (queue.length) {

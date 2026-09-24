@@ -100,6 +100,7 @@ import {
   enterFilletState,
   validateFilletAccept,
   defaultFilletParams,
+  hasFilletModeBlock,
 } from '../utils/filletMode';
 import {
   buildFeatureEdges,
@@ -115,6 +116,8 @@ import {
   annotateFeatureEdges,
   indexBoundaryEdgesFromGeometry,
   stampBoundaryOnSelection,
+  featureEdgesFromBoundary,
+  filletOverlayTargets,
 } from '../utils/boundaryEdgeIds';
 import { X } from 'lucide-react';
 import { downloadModelFromMesh, get3MFBase64FromMesh } from '../utils/exportModel';
@@ -142,6 +145,7 @@ function makeFilletIdSprite(text, worldH) {
   canvas.width = 192;
   canvas.height = 96;
   const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
   ctx.clearRect(0, 0, 192, 96);
   ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
   ctx.fillRect(8, 12, 176, 72);
@@ -300,6 +304,8 @@ const Viewport = forwardRef(({
   const filletBlendPreviewRef = useRef(null);
   const [filletToast, setFilletToast] = useState(null);
   const filletToastTimerRef = useRef(null);
+  /** Successful Fillet Accept already left the mode; don't toast a false re-pick. */
+  const edgeRematchToastSuppressRef = useRef(false);
   /** G1 tangent chain propagation for Edge pick — ON by default (circular / fillet loops). */
   const [tangentProp, setTangentProp] = useState(true);
   const tangentPropRef = useRef(true);
@@ -1451,8 +1457,8 @@ const Viewport = forwardRef(({
     setTangentProp(true);
     showFilletToast(
       selectedEdges?.length
-        ? 'Fillet mode — Accept commits the sweep blend. Back exits with no commit.'
-        : 'Fillet mode — tap edges (Tangent on). Accept commits; Back exits.',
+        ? 'Fillet mode — Accept commits and exits. X or Back leaves with no commit.'
+        : 'Fillet mode — tap sharp edges (Tangent on). Accept commits and exits; X or Back does not.',
     );
   }, [exitContourMode, onFaceSelected, selectedEdges, clearHighlight]);
 
@@ -1467,15 +1473,22 @@ const Viewport = forwardRef(({
       showFilletToast(gate.message);
       return;
     }
+    const buf = (typeof getHelperBuffer === 'function' ? getHelperBuffer() : '') || '';
     const ok = onCommitFillet?.({
       edges,
       params: gate.normalized,
+      commitMode: hasFilletModeBlock(buf) ? 'append' : 'replace',
     });
     if (ok) {
-      setFilletMode((prev) => (prev ? { ...prev, lastEdges: edges.slice() } : prev));
-      showFilletToast('Fillet saved — still in Fillet mode. Accept again to update.');
+      edgeRematchToastSuppressRef.current = true;
+      pickModeRef.current = 'face';
+      setPickMode('face');
+      clearEdgeHover();
+      clearEdgeHighlight();
+      setSelectedEdges([]);
+      exitFilletMode();
     }
-  }, [onCommitFillet, selectedEdges]);
+  }, [onCommitFillet, selectedEdges, getHelperBuffer, exitFilletMode, clearEdgeHover, clearEdgeHighlight]);
 
   // Live sweep-fillet blend as edges accumulate. The payload is memoized so the
   // chip's pathOk flag and the painter share ONE build per input (Slice 27 nit:
@@ -1874,64 +1887,119 @@ const Viewport = forwardRef(({
 
   /** Rebuild feature-edge cache when the source BufferGeometry identity changes. */
   const syncFeatureEdges = useCallback((geom) => {
-    if (featureEdgesSourceRef.current !== geom) {
-      const raw = geom ? buildFeatureEdges(geom) : [];
-      const faceIDs = faceIDsRef.current;
+    const inFillet = !!filletModeRef.current;
+    if (!inFillet && featureEdgesSourceRef.current === geom) return;
+    const faceIDs = faceIDsRef.current;
+    if (inFillet) {
       if (geom && faceIDs && faceIDs.length) {
         const topo = indexBoundaryEdgesFromGeometry(geom, faceIDs);
-        featureEdgesRef.current = annotateFeatureEdges(raw, topo);
         boundaryTopoRef.current = topo;
+        featureEdgesRef.current = featureEdgesFromBoundary(topo);
       } else {
-        featureEdgesRef.current = raw;
+        featureEdgesRef.current = [];
         boundaryTopoRef.current = null;
       }
       featureEdgesSourceRef.current = geom ?? null;
+      return;
     }
+    const raw = geom ? buildFeatureEdges(geom) : [];
+    if (geom && faceIDs && faceIDs.length) {
+      const topo = indexBoundaryEdgesFromGeometry(geom, faceIDs);
+      featureEdgesRef.current = annotateFeatureEdges(raw, topo);
+      boundaryTopoRef.current = topo;
+    } else {
+      featureEdgesRef.current = raw;
+      boundaryTopoRef.current = null;
+    }
+    featureEdgesSourceRef.current = geom ?? null;
   }, []);
 
   // Fillet mode: face ids (fN) and boundary-edge ids (eN) for the Accept helpers.
+  const filletActive = !!filletMode;
   useEffect(() => {
     clearIdLabels();
-    if (!filletMode || !sceneRef.current) return undefined;
+    if (!filletActive || !sceneRef.current) return undefined;
     featureEdgesSourceRef.current = null;
     const geom = resultRef.current?.geometry;
-    if (geom) syncFeatureEdges(geom);
-    setSelectedEdges((prev) => stampBoundaryOnSelection(prev, featureEdgesRef.current));
+    const note = (msg) => {
+      setFilletToast(msg);
+      if (filletToastTimerRef.current) clearTimeout(filletToastTimerRef.current);
+      filletToastTimerRef.current = setTimeout(() => {
+        filletToastTimerRef.current = null;
+        setFilletToast(null);
+      }, 3200);
+    };
+    try {
+      if (geom) syncFeatureEdges(geom);
+      setSelectedEdges((prev) => stampBoundaryOnSelection(prev, featureEdgesRef.current));
+    } catch (err) {
+      note(err?.message || 'Fillet could not read edges on this solid.');
+      return undefined;
+    }
     const topo = boundaryTopoRef.current;
-    if (!topo) return undefined;
+    if (!topo) {
+      if (geom) note('This solid has no face ids — Fillet cannot pick edges.');
+      return undefined;
+    }
+    const targets = filletOverlayTargets(topo);
+    if (!targets.edges.length) {
+      note('No sharp edges on this solid. Blend strips and shallow tessellation are not pickable.');
+    }
     const dims = modelBounds?.size;
     const span = dims ? Math.max(dims[0], dims[1], dims[2]) : 40;
     const worldH = Math.max(1.6, span * 0.055);
     const group = new Group();
     group.name = 'filletIdLabels';
-    for (const face of topo.faces || []) {
-      const sprite = makeFilletIdSprite(`f${face.id}`, worldH);
-      const n = face.normal || [0, 0, 1];
-      sprite.position.set(
-        face.center[0] + n[0] * worldH * 0.35,
-        face.center[1] + n[1] * worldH * 0.35,
-        face.center[2] + n[2] * worldH * 0.35,
-      );
-      group.add(sprite);
-    }
-    for (const edge of topo.edges || []) {
-      const sprite = makeFilletIdSprite(`e${edge.id}`, worldH * 0.85);
-      sprite.position.set(edge.mid[0], edge.mid[1], edge.mid[2]);
-      group.add(sprite);
+    try {
+      for (const face of targets.faces) {
+        if (!face?.center) continue;
+        const sprite = makeFilletIdSprite(`f${face.id}`, worldH);
+        if (!sprite) continue;
+        const n = face.normal || [0, 0, 1];
+        sprite.position.set(
+          face.center[0] + n[0] * worldH * 0.35,
+          face.center[1] + n[1] * worldH * 0.35,
+          face.center[2] + n[2] * worldH * 0.35,
+        );
+        group.add(sprite);
+      }
+      for (const edge of targets.edges) {
+        if (!edge?.mid) continue;
+        const sprite = makeFilletIdSprite(`e${edge.id}`, worldH * 0.85);
+        if (!sprite) continue;
+        sprite.position.set(edge.mid[0], edge.mid[1], edge.mid[2]);
+        group.add(sprite);
+      }
+    } catch (err) {
+      clearIdLabels();
+      note(err?.message || 'Could not label edges — pick still uses the sharp set.');
+      return undefined;
     }
     sceneRef.current.add(group);
     idLabelGroupRef.current = group;
     return () => clearIdLabels();
-  }, [filletMode, cachedMeshData, modelBounds, syncFeatureEdges, clearIdLabels]);
+  }, [filletActive, cachedMeshData, modelBounds, syncFeatureEdges, clearIdLabels]);
 
   const rebuildFeatureEdges = useCallback(() => {
     syncFeatureEdges(resultRef.current?.geometry ?? null);
   }, [syncFeatureEdges]);
 
+  const wasFilletActiveRef = useRef(false);
   useEffect(() => {
-    if (filletMode && pickMode === 'edge') rebuildFeatureEdges();
-    if (contourMode && isSweepEntry(contourMode.entry) && pickMode === 'edge') rebuildFeatureEdges();
-  }, [filletMode, contourMode, pickMode, rebuildFeatureEdges]);
+    const leftFillet = wasFilletActiveRef.current && !filletActive;
+    wasFilletActiveRef.current = filletActive;
+    if (pickMode !== 'edge') return;
+    if (filletActive) return;
+    if (contourMode && isSweepEntry(contourMode.entry)) {
+      rebuildFeatureEdges();
+      return;
+    }
+    // Back / X leave Fillet but stay in Edge pick — drop the sharp-only cache.
+    if (leftFillet) {
+      featureEdgesSourceRef.current = null;
+      rebuildFeatureEdges();
+    }
+  }, [filletActive, contourMode, pickMode, rebuildFeatureEdges]);
 
   const pickSweepPath = useCallback(() => {
     setPickMode('edge');
@@ -3274,7 +3342,9 @@ const Viewport = forwardRef(({
         clearEdgeHighlight();
         clearEdgeHover();
         setSelectedEdges([]);
-        if (wasEdgeMode && hadEdges) {
+        if (edgeRematchToastSuppressRef.current) {
+          edgeRematchToastSuppressRef.current = false;
+        } else if (wasEdgeMode && hadEdges) {
           setEdgeModeToast('Geometry updated — re-pick edges');
           armEdgeModeToastClear();
         }
@@ -3662,6 +3732,7 @@ const Viewport = forwardRef(({
           }}
           onAccept={acceptFillet}
           onBack={exitFilletMode}
+          onDismiss={exitFilletMode}
           onParamChange={(next, extra) => setFilletMode((prev) => (
             prev
               ? {

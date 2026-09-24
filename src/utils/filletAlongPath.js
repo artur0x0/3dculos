@@ -27,18 +27,26 @@ export const FILLET_SWEEP_BRANCH =
   'Selected edges branch (junction) — sweep fillet needs a simple open chain or closed loop, not a Y/T junction.';
 
 /**
+ * Default fillet-arc tessellation. 12 steps on a 90° corner is a 7.5° facet
+ * (and a ~3% face on a box-scale edge). 24 steps halves that dihedral so the
+ * boundary filter (15° / 5% of the largest face) drops blend strips and keeps
+ * the remaining sharp edges.
+ */
+export const FILLET_ARC_SEGMENTS = 24;
+
+/**
  * Fillet cutter wedge in UV (u≥0, v≥0): origin → (r,0) → arc (center (r,r)) → (0,r).
  * Area = r²(1 − π/4). Opposite of a quarter-disk pie.
  * @param {number} radius
  * @param {number} [arcSegments=12]
  * @returns {number[][]} closed polyline (first ≠ last)
  */
-export function filletWedgeContour(radius, arcSegments = 12) {
+export function filletWedgeContour(radius, arcSegments = FILLET_ARC_SEGMENTS) {
   const r = Number(radius);
   if (!(r > 0) || !Number.isFinite(r)) {
     throw new Error('filletWedgeContour: radius must be > 0');
   }
-  const seg = Math.max(2, Math.round(Number(arcSegments) || 12));
+  const seg = Math.max(2, Math.round(Number(arcSegments) || FILLET_ARC_SEGMENTS));
   const pts = [[0, 0], [r, 0]];
   for (let i = 1; i <= seg; i++) {
     const t = (i / seg) * (Math.PI / 2);
@@ -435,9 +443,9 @@ function _requireDihedral(name, radius, theta) {
  * @param {number} [arcSegments=12]
  * @returns {number[][]}
  */
-export function dihedralFilletContour(radius, theta, arcSegments = 12) {
+export function dihedralFilletContour(radius, theta, arcSegments = FILLET_ARC_SEGMENTS) {
   const { r, th } = _requireDihedral('dihedralFilletContour', radius, theta);
-  const seg = Math.max(2, Math.round(Number(arcSegments) || 12));
+  const seg = Math.max(2, Math.round(Number(arcSegments) || FILLET_ARC_SEGMENTS));
   const t = r / Math.tan(th / 2);
   const p1 = [t * Math.cos(th), t * Math.sin(th)];
   const span = Math.PI - th;

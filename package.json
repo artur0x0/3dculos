@@ -21,6 +21,7 @@
         "golden:slice22": "node scripts/golden/smoke_slice22_edge_sweep_path.mjs",
         "golden:slice23": "node scripts/golden/smoke_slice23_fillet_via_sweep.mjs",
         "golden:fillet-dihedral": "node scripts/golden/smoke_fillet_dihedral.mjs",
+        "golden:fillet-followup": "node scripts/golden/smoke_fillet_followup.mjs",
         "golden:slice24": "node scripts/golden/smoke_slice24_contour_mode.mjs",
         "golden:slice25": "node scripts/golden/smoke_slice25_extrude.mjs",
         "golden:slice26": "node scripts/golden/smoke_slice26_revolve.mjs",

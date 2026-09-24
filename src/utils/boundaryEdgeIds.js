@@ -11,10 +11,27 @@
  * Manifold faceID is provenance, not an eternal CAD edge. Booleans can
  * merge or split faces, so a later script run that no longer has the same
  * ids fails loud ("re-pick edges") instead of guessing.
+ *
+ * Pick / overlay candidates are design edges only. A boundary is dropped when
+ * the dihedral is shallower than BOUNDARY_SHALLOW_DEG (fillet-arc steps,
+ * smooth loft seams) or the smaller face is below BOUNDARY_SMALL_FACE_FRAC
+ * of the largest face (blend facets and their end-cap chords). Sharp edges
+ * between substantial faces stay, and ids are assigned only to that set.
  */
 
 const PLANAR_COS = Math.cos((0.1 * Math.PI) / 180);
 const FEATURE_COS = Math.cos((2 * Math.PI) / 180);
+
+/** Tessellation seam / fillet-arc step. 90° box corners stay; ~4–11° facets do not. */
+export const BOUNDARY_SHALLOW_DEG = 15;
+/**
+ * Smaller adjacent face vs the largest face on the solid.
+ * A 12-seg fillet facet on a 40×30 box is ~3% of the big face; loft wall
+ * facets on a circle–circle loft are ~13%. 5% drops the blend, keeps the rim.
+ */
+export const BOUNDARY_SMALL_FACE_FRAC = 0.05;
+/** Hard cap so Fillet mode cannot allocate a sprite per micro-triangle. */
+export const FILLET_OVERLAY_LABEL_CAP = 240;
 
 function sub(a, b) {
   return [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
@@ -146,6 +163,7 @@ export function indexBoundaryEdges(mesh) {
     }
     const face = {
       id: Number.isFinite(id) ? id : 0,
+      area: areaSum,
       center: areaSum > 1e-18
         ? [c[0] / areaSum, c[1] / areaSum, c[2] / areaSum]
         : tris[members[0]].centroid.slice(),
@@ -176,6 +194,9 @@ export function indexBoundaryEdges(mesh) {
     if (!(L > 1e-9)) continue;
     const faceA = faces[f0].id;
     const faceB = faces[f1].id;
+    const nA = faces[f0].normal;
+    const nB = faces[f1].normal;
+    const dihedralDeg = Math.acos(Math.min(1, Math.max(-1, dot(nA, nB)))) * 180 / Math.PI;
     segments.push({
       key,
       a: ia,
@@ -187,6 +208,10 @@ export function indexBoundaryEdges(mesh) {
       faceA,
       faceB,
       pairKey: faceA < faceB ? `${faceA}:${faceB}` : `${faceB}:${faceA}`,
+      dihedralDeg,
+      minFaceArea: Math.min(faces[f0].area || 0, faces[f1].area || 0),
+      n0: nA.slice(),
+      n1: nB.slice(),
     });
   }
 
@@ -231,6 +256,10 @@ export function indexBoundaryEdges(mesh) {
         faceA: segs[0].faceA,
         faceB: segs[0].faceB,
         length: total,
+        dihedralDeg: segs[0].dihedralDeg,
+        minFaceArea: segs[0].minFaceArea,
+        n0: segs[0].n0,
+        n1: segs[0].n1,
         mid: total > 0
           ? [cx / total, cy / total, cz / total]
           : segs[0].mid.slice(),
@@ -247,7 +276,15 @@ export function indexBoundaryEdges(mesh) {
     }
   }
 
-  boundaries.sort((a, b) => {
+  const maxArea = faces.reduce((m, f) => Math.max(m, Number(f.area) || 0), 0);
+  const smallLimit = BOUNDARY_SMALL_FACE_FRAC * maxArea;
+  const eligible = boundaries.filter((edge) => {
+    if (!(edge.dihedralDeg >= BOUNDARY_SHALLOW_DEG)) return false;
+    if (!(maxArea > 0)) return true;
+    return edge.minFaceArea >= smallLimit;
+  });
+
+  eligible.sort((a, b) => {
     const a0 = Math.min(a.faceA, a.faceB);
     const b0 = Math.min(b.faceA, b.faceB);
     if (a0 !== b0) return a0 - b0;
@@ -260,12 +297,12 @@ export function indexBoundaryEdges(mesh) {
     }
     return 0;
   });
-  boundaries.forEach((edge, i) => {
+  eligible.forEach((edge, i) => {
     edge.id = i;
   });
 
   const pairCounts = new Map();
-  for (const edge of boundaries) {
+  for (const edge of eligible) {
     const pk = edge.faceA < edge.faceB
       ? `${edge.faceA}:${edge.faceB}`
       : `${edge.faceB}:${edge.faceA}`;
@@ -273,12 +310,12 @@ export function indexBoundaryEdges(mesh) {
     edge.pairCount = 0;
     edge._pairKey = pk;
   }
-  for (const edge of boundaries) {
+  for (const edge of eligible) {
     edge.pairCount = pairCounts.get(edge._pairKey) || 1;
     delete edge._pairKey;
   }
 
-  return { faces, edges: boundaries };
+  return { faces, edges: eligible };
 }
 
 /**
@@ -361,4 +398,72 @@ export function stampBoundaryOnSelection(selected, featureEdges) {
     };
   });
   return changed ? next : list;
+}
+
+/**
+ * Pickable feature edges for Fillet mode: one entry per candidate boundary
+ * segment, carrying the boundary id so Accept can emit edge() / edgesBetween.
+ * Blend strips are already absent from topo.edges.
+ * @param {{ faces?: object[], edges?: object[] }} topo
+ */
+export function featureEdgesFromBoundary(topo) {
+  const out = [];
+  for (const edge of topo?.edges || []) {
+    const n0 = Array.isArray(edge.n0) ? edge.n0 : null;
+    const n1 = Array.isArray(edge.n1) ? edge.n1 : null;
+    for (const seg of edge.segments || []) {
+      if (!Array.isArray(seg.va) || !Array.isArray(seg.vb)) continue;
+      const delta = sub(seg.vb, seg.va);
+      if (!(Math.hypot(delta[0], delta[1], delta[2]) > 1e-9)) continue;
+      out.push({
+        key: seg.key,
+        a: seg.a,
+        b: seg.b,
+        va: seg.va.slice(),
+        vb: seg.vb.slice(),
+        mid: seg.mid.slice(),
+        length: seg.length,
+        tangent: norm(delta),
+        n0: n0 ? n0.slice() : undefined,
+        n1: n1 ? n1.slice() : undefined,
+        faceA: edge.faceA,
+        faceB: edge.faceB,
+        boundaryId: edge.id,
+        pairCount: edge.pairCount,
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * Faces and edges worth a Fillet-mode label. Small faces (blend facets,
+ * loft micro-triangles) are omitted. The label count is capped so a dense
+ * mesh cannot allocate thousands of canvases.
+ * @param {{ faces?: object[], edges?: object[] }} topo
+ * @param {{ maxLabels?: number }} [opts]
+ * @returns {{ faces: object[], edges: object[], truncated: boolean }}
+ */
+export function filletOverlayTargets(topo, opts = {}) {
+  const cap = Number.isFinite(opts.maxLabels) && opts.maxLabels > 0
+    ? Math.round(opts.maxLabels)
+    : FILLET_OVERLAY_LABEL_CAP;
+  const faces = Array.isArray(topo?.faces) ? topo.faces : [];
+  const edges = Array.isArray(topo?.edges) ? topo.edges : [];
+  const maxArea = faces.reduce((m, f) => Math.max(m, Number(f.area) || 0), 0);
+  const floor = BOUNDARY_SMALL_FACE_FRAC * maxArea;
+  const labelFaces = maxArea > 0
+    ? faces.filter((f) => (Number(f.area) || 0) >= floor)
+    : [];
+  if (labelFaces.length + edges.length <= cap) {
+    return { faces: labelFaces, edges, truncated: false };
+  }
+  const edgeBudget = Math.min(edges.length, Math.max(1, cap - 8));
+  const faceBudget = Math.max(0, cap - edgeBudget);
+  const biggest = labelFaces.slice().sort((a, b) => (b.area || 0) - (a.area || 0));
+  return {
+    faces: biggest.slice(0, faceBudget),
+    edges: edges.slice(0, edgeBudget),
+    truncated: true,
+  };
 }
