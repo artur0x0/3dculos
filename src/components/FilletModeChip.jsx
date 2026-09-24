@@ -1,5 +1,5 @@
 import React from 'react';
-import { Check } from 'lucide-react';
+import { Check, X } from 'lucide-react';
 
 /**
  * Slice 27 — Fillet-in-mode chip (Edge-pick pattern).
@@ -16,6 +16,7 @@ const FilletModeChip = ({
   onClear,
   onAccept,
   onBack,
+  onDismiss,
   onParamChange,
 }) => {
   const setRadius = (raw) => {
@@ -41,15 +42,28 @@ const FilletModeChip = ({
       role="group"
       aria-label="Fillet edge pick"
     >
-      <div className="font-bold font-sans text-amber-200">
-        Fillet · {edgeCount} edge{edgeCount === 1 ? '' : 's'}
-      </div>
-      <div className="text-[10px] text-amber-100/90 normal-case font-sans mt-0.5">
-        {pathOk
-          ? 'Sweep blend preview · Accept commits'
-          : edgeCount
-            ? 'Path not ready — pick a contiguous chain (Tangent on)'
-            : 'Tap edges — no pre-select required'}
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="font-bold font-sans text-amber-200">
+            Fillet · {edgeCount} edge{edgeCount === 1 ? '' : 's'}
+          </div>
+          <div className="text-[10px] text-amber-100/90 normal-case font-sans mt-0.5">
+            {pathOk
+              ? 'Sweep blend preview · Accept commits and exits'
+              : edgeCount
+                ? 'Path not ready — pick a contiguous chain (Tangent on)'
+                : 'Tap sharp edges — blend strips are not pickable'}
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => (onDismiss || onBack)?.()}
+          className="shrink-0 text-amber-200 hover:text-white"
+          title="Exit Fillet mode without committing"
+          aria-label="Dismiss Fillet mode without committing"
+        >
+          <X size={14} />
+        </button>
       </div>
       <div className="mt-1.5 flex flex-col gap-1.5 font-sans">
         <label className="flex flex-col gap-0.5 min-w-0">
@@ -115,7 +129,7 @@ const FilletModeChip = ({
           onClick={() => onAccept?.()}
           className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium
             bg-amber-600 hover:bg-amber-500 active:bg-amber-400 text-white shrink-0"
-          title="Commit or update Fillet (makeSweepPath + filletAlongPath). Second Accept updates the same block."
+          title="Commit this fillet (makeSweepPath + filletAlongPath) and leave Fillet mode."
         >
           <Check size={14} />
           Accept

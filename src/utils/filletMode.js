@@ -3,9 +3,12 @@
  * preview, Accept commits makeSweepPath + filletAlongPath.
  *
  * Locked UX: tapping Fillet never soft-fails for empty selection. Edge-pick
- * chip (Tangent / Clear / Accept / Back) owns the session. Accept writes a
- * marked block and Auto-Runs; second Accept replaces the same block. Back
- * exits with no commit. Strategy default stays sweep (#30).
+ * chip (Tangent / Clear / Accept / Back / X) owns the session. Accept writes
+ * a marked block, Auto-Runs, and exits. A later Fillet on a different sharp
+ * edge appends another block (commitMode 'append') so edge() runs on the
+ * already-filleted solid. Replace stays the default for an in-place update
+ * of the same block. Back and X exit with no commit. Strategy default stays
+ * sweep (#30).
  *
  * Reuses Slice 22/23: makeSweepPath / filletAlongPath / canBuildFilletAlongPath.
  * Does not change Extrude / Revolve / Profile / Loft.
@@ -21,6 +24,7 @@ import {
   resolveFilletStrategy,
   FILLET_SWEEP_DISCONNECTED,
   FILLET_SWEEP_BRANCH,
+  FILLET_ARC_SEGMENTS,
 } from './filletAlongPath.js';
 import { assembleSweepPath, buildSweepPathPreview } from './edgeSweepPath.js';
 import {
@@ -37,6 +41,9 @@ export const FILLET_MODE_EMPTY =
 
 export const FILLET_MODE_NO_COMMIT =
   'Back exits Fillet mode with no commit.';
+
+export const FILLET_BLEND_ONLY =
+  'Those edges are an existing blend. Pick a sharp edge — re-filleting a blend is not supported.';
 
 export function isFilletEntry(id) {
   return FILLET_ENTRY_IDS.has(id);
@@ -97,6 +104,9 @@ export function validateFilletAccept(edges, params = {}) {
   const list = Array.isArray(edges) ? edges : [];
   if (!list.length) {
     return { ok: false, message: FILLET_MODE_EMPTY };
+  }
+  if (list.every((edge) => edge && edge.blendStrip === true)) {
+    return { ok: false, message: FILLET_BLEND_ONLY };
   }
   const n = normalizeFilletParams(params, list);
   // nit: dropped the `!(n.radius > 0)` arm here — normalizeFilletParams is the
@@ -266,7 +276,7 @@ export function buildFilletBlendPreview(edges, params = {}) {
   try {
     wedge = n.profile === 'chamfer'
       ? dihedralChamferContour(radius, Math.PI / 2)
-      : filletWedgeContour(radius, 8);
+      : filletWedgeContour(radius, FILLET_ARC_SEGMENTS);
   } catch {
     wedge = null;
   }
@@ -299,7 +309,7 @@ export function buildFilletBlendPreview(edges, params = {}) {
       try {
         frameWedge = n.profile === 'chamfer'
           ? dihedralChamferContour(radius, theta)
-          : dihedralFilletContour(radius, theta, 8);
+          : dihedralFilletContour(radius, theta, FILLET_ARC_SEGMENTS);
       } catch {
         frameWedge = wedge;
       }
@@ -371,12 +381,14 @@ export function countMakeSweepPath(buffer) {
 }
 
 /**
- * Accept → insert or replace in-mode Fillet (makeSweepPath + filletAlongPath).
- * Second Accept updates the same marked block (no duplicate stack).
+ * Accept → insert, replace, or append in-mode Fillet (makeSweepPath + filletAlongPath).
+ * commitMode 'replace' (default) updates the last marked block.
+ * commitMode 'append' keeps that block and adds another, so a second sharp
+ * edge is filleted on the solid the first block already produced.
  *
  * @returns {{ ok: true, buffer: string, run: true } | { ok: false, message: string }}
  */
-export function composeFilletCommit(buffer, { edges = null, params = {} } = {}) {
+export function composeFilletCommit(buffer, { edges = null, params = {}, commitMode = 'replace' } = {}) {
   const gate = validateFilletAccept(edges, params);
   if (!gate.ok) return gate;
 
@@ -388,9 +400,9 @@ export function composeFilletCommit(buffer, { edges = null, params = {} } = {}) 
     };
   }
 
-  const stripped = stripFilletModeBlock(buffer);
+  const base = commitMode === 'append' ? text : stripFilletModeBlock(text);
   const composed = composeHelperInsert(
-    stripped,
+    base,
     'filletEdges',
     null,
     { ...gate.normalized, _filletMode: true },

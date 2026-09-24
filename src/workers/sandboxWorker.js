@@ -18,6 +18,7 @@ import {
   filletRemovedArea,
   chamferRemovedArea,
   orientFilletFrame,
+  FILLET_ARC_SEGMENTS,
 } from '../utils/filletAlongPath.js';
 import { indexBoundaryEdges } from '../utils/boundaryEdgeIds.js';
 import { assembleSweepPath } from '../utils/edgeSweepPath.js';
@@ -3365,7 +3366,7 @@ function _s23BuildDihedralCutter(M, CrossSection, part, points, closed, radius, 
  * @param {number} radius
  * @param {object} [opts]
  * @param {'fillet'|'chamfer'} [opts.profile='fillet']
- * @param {number} [opts.segments=12] — arc segments for fillet wedge
+ * @param {number} [opts.segments=24] — arc segments for fillet wedge
  * @param {number[]} [opts.initialNormal] — override probed frame
  * @param {boolean} [opts.closed] — when path is bare points[]
  * @param {number} [opts.arcSamples]
@@ -3379,7 +3380,7 @@ function filletAlongPath(part, path, radius, opts = {}) {
   _c4RequirePositive('filletAlongPath', 'radius', radius);
 
   const profileKind = (opts.profile === 'chamfer') ? 'chamfer' : 'fillet';
-  const arcSegs = opts.segments != null ? opts.segments : 12;
+  const arcSegs = opts.segments != null ? opts.segments : FILLET_ARC_SEGMENTS;
   let { points, closed, length } = _s23NormalizePath(path, opts);
 
   // Sweep-path policy seam (planFilletSweepPath): keep the full wire.
@@ -3649,8 +3650,10 @@ function filletAlongPath(part, path, radius, opts = {}) {
 }
 
 // ---------------------------------------------------------------- Fillet edge ids (edge-spec A)
-// Ids come from the current mesh. faceID is Manifold provenance and can
-// merge or split after a boolean, so a miss throws instead of guessing.
+// Ids come from the current mesh, and only from sharp edges that survive the
+// boundary filter (shallow dihedral / tiny blend faces are not addressable).
+// faceID is Manifold provenance and can merge or split after a boolean, so a
+// miss throws instead of guessing.
 const _boundaryCache = new WeakMap();
 
 function _boundaryPositions(mesh) {
