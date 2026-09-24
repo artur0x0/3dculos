@@ -259,6 +259,12 @@ const Viewport = forwardRef(({
   const [selectedFace, setSelectedFace] = useState(null);
   /** Slice 12: 'face' | 'edge' — mutually exclusive pick modes. */
   const [pickMode, setPickMode] = useState('face');
+  /**
+   * Plane / contour overlay visibility. Independent of Face/Edge.
+   * Session state only (same as pick mode) — both default on.
+   */
+  const [showPlanes, setShowPlanes] = useState(true);
+  const [showContours, setShowContours] = useState(true);
   const [selectedEdges, setSelectedEdges] = useState([]);
   const featureEdgesRef = useRef([]);
   /** Geometry identity that featureEdgesRef was built from — invalidate on replace. */
@@ -277,6 +283,8 @@ const Viewport = forwardRef(({
   const edgePickScratchA = useRef(new Vector3());
   const edgePickScratchB = useRef(new Vector3());
   const pickModeRef = useRef('face');
+  const showPlanesRef = useRef(true);
+  const showContoursRef = useRef(true);
   const edgeModeToastShownRef = useRef(false);
   const edgeModeToastTimerRef = useRef(null);
   const [edgeModeToast, setEdgeModeToast] = useState(null);
@@ -364,6 +372,8 @@ const Viewport = forwardRef(({
   const [autoFitEnabled, setAutoFitEnabled] = useState(true);
 
   pickModeRef.current = pickMode;
+  showPlanesRef.current = showPlanes;
+  showContoursRef.current = showContours;
   tangentPropRef.current = tangentProp;
   cachedMeshDataRef.current = cachedMeshData;
   contourModeRef.current = contourMode;
@@ -1561,6 +1571,10 @@ const Viewport = forwardRef(({
   useEffect(() => {
     savedContoursRef.current = savedContours;
     savedContourHostPlaneRef.current = savedContourHostPlane;
+    if (!showContours) {
+      clearSavedContourGhosts();
+      return;
+    }
     paintSavedContourGhosts(
       savedContours,
       contourMode?.pickedContourId || armedContourId,
@@ -1571,13 +1585,19 @@ const Viewport = forwardRef(({
     armedContourId,
     savedContours,
     savedContourHostPlane,
+    showContours,
     paintSavedContourGhosts,
+    clearSavedContourGhosts,
     sceneReady,
   ]);
 
   useEffect(() => {
+    if (!showPlanes) {
+      clearConstructionPlanes();
+      return;
+    }
     paintConstructionPlanes(constructionPlanes, selectedPlaneId);
-  }, [constructionPlanes, selectedPlaneId, paintConstructionPlanes, sceneReady]);
+  }, [constructionPlanes, selectedPlaneId, showPlanes, paintConstructionPlanes, clearConstructionPlanes, sceneReady]);
 
   useEffect(() => () => {
     clearConstructionPlanes();
@@ -1613,7 +1633,8 @@ const Viewport = forwardRef(({
       };
     }
     const plane = planeFromContourFace(planeFace);
-    paintWorkplaneOverlay(plane, planeFace);
+    if (showPlanes) paintWorkplaneOverlay(plane, planeFace);
+    else clearWorkplaneOverlay();
     applyContourPartGhost(true);
     const pts = contourMode.params?.points;
     if (contourMode.tool === 'polyline' && (!Array.isArray(pts) || pts.length < 3)) {
@@ -1695,7 +1716,7 @@ const Viewport = forwardRef(({
       clearLoftPreview();
       clearSweepPreview();
     }
-  }, [contourMode, modelBounds, selectedEdges, paintWorkplaneOverlay, paintPolylineDraft, paintExtrudePreview, paintRevolvePreview, paintLoftPreview, paintSweepPreview, applyContourPartGhost, clearWorkplaneOverlay, clearPolylineDraft, clearExtrudePreview, clearRevolvePreview, clearLoftPreview, clearSweepPreview, clearXsPreview, setXsPreview]);
+  }, [contourMode, modelBounds, selectedEdges, showPlanes, paintWorkplaneOverlay, paintPolylineDraft, paintExtrudePreview, paintRevolvePreview, paintLoftPreview, paintSweepPreview, applyContourPartGhost, clearWorkplaneOverlay, clearPolylineDraft, clearExtrudePreview, clearRevolvePreview, clearLoftPreview, clearSweepPreview, clearXsPreview, setXsPreview]);
 
   useEffect(() => () => {
     clearWorkplaneOverlay();
@@ -2369,7 +2390,7 @@ const Viewport = forwardRef(({
     const origin = [ray.origin.x, ray.origin.y, ray.origin.z];
     const dir = [ray.direction.x, ray.direction.y, ray.direction.z];
     const camDist = Math.hypot(ray.origin.x, ray.origin.y, ray.origin.z) || 80;
-    if (contourModeRef.current?.tool !== 'polyline') {
+    if (showContoursRef.current && contourModeRef.current?.tool !== 'polyline') {
       const hitC = pickContourByRay(
         origin,
         dir,
@@ -2383,7 +2404,7 @@ const Viewport = forwardRef(({
         return;
       }
     }
-    const planeHits = constructionPlaneRef.current
+    const planeHits = (showPlanesRef.current && constructionPlaneRef.current)
       ? raycasterRef.current.intersectObject(constructionPlaneRef.current, true)
       : [];
     const solidHits = resultRef.current?.geometry?.attributes?.position
@@ -3489,9 +3510,10 @@ const Viewport = forwardRef(({
         </div>
       )}
       
-      {/* Slice 09: left helper insert palette (game mode only). */}
-      {mode === 'game' && onInsertHelper && !contourMode && !filletMode && (
+      {/* Left helper rail. Game keeps Advanced; CAD promotes those tools into Model. */}
+      {onInsertHelper && !contourMode && !filletMode && (
         <HelperInsertPalette
+          layout={mode === 'game' ? 'game' : 'cad'}
           onInsert={onInsertHelper}
           getBuffer={getHelperBuffer}
           selectedFace={selectedFace}
@@ -3513,8 +3535,8 @@ const Viewport = forwardRef(({
         />
       )}
 
-      {/* Slice 24: contour-mode rail (tools + Back). */}
-      {mode === 'game' && contourMode && (
+      {/* Slice 24: contour-mode rail (tools + Back). Same shell in CAD and game. */}
+      {contourMode && (
         <ContourModeRail
           tool={contourMode.tool}
           compact={isMobile}
@@ -3538,6 +3560,10 @@ const Viewport = forwardRef(({
           axisHelperEnabled={axisHelperEnabled}
           onAxisHelperToggle={handleAxisHelperToggle}
           pickMode={pickMode}
+          showPlanes={showPlanes}
+          showContours={showContours}
+          onShowPlanesChange={setShowPlanes}
+          onShowContoursChange={setShowContours}
           onPickModeChange={(mode) => {
             const next = mode === 'edge' ? 'edge' : 'face';
             setPickMode(next);
@@ -3588,7 +3614,7 @@ const Viewport = forwardRef(({
           className={`absolute bg-black/50 text-white p-2 rounded-lg text-xs font-mono z-10 ${
             mode === 'game'
               ? 'bottom-4 right-2 lg:right-4 max-w-[14rem]'
-              : 'bottom-4 left-2 lg:left-4'
+              : 'bottom-4 left-16 lg:left-[4.75rem] max-w-[14rem]'
           }`}
         >
           <div className="font-bold mb-1">
@@ -3752,7 +3778,7 @@ const Viewport = forwardRef(({
           className={`absolute bg-amber-950/85 border border-amber-500/70 text-white px-3 py-2 rounded-lg text-xs z-20 shadow-lg ${
             mode === 'game'
               ? 'bottom-4 right-2 lg:right-4 max-w-[16rem]'
-              : 'bottom-4 left-2 lg:left-4'
+              : 'bottom-4 left-16 lg:left-[4.75rem] max-w-[16rem]'
           }`}
         >
           <div className="font-bold font-sans text-amber-200">
@@ -3828,7 +3854,9 @@ const Viewport = forwardRef(({
 
       {/* Measurement Info Display */}
       {measurementEnabled && measurementFaces.first && (
-        <div className="absolute bottom-4 left-2 lg:left-4 bg-black/50 backdrop-blur-sm text-white p-3 rounded-lg text-xs font-mono z-10 space-y-1">
+        <div className={`absolute bottom-4 bg-black/50 backdrop-blur-sm text-white p-3 rounded-lg text-xs font-mono z-10 space-y-1 ${
+          mode === 'game' ? 'left-2 lg:left-4' : 'left-16 lg:left-[4.75rem]'
+        }`}>
           {measurementFaces.second ? (
             <>
                 {(() => {

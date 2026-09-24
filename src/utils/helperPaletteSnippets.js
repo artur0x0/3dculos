@@ -22,7 +22,9 @@
  * Slice 28/hotfix: Loft Confirm wraps ≥2 makeCrossSection + makeLoft / placeInFrame
  * in loft markers (additive when `part` already exists).
  * Slice 29: rail groups Prim / Advanced / Features / Xforms. Profile, Workplane,
- * Extrude, Revolve, Sweep, and Loft live in Advanced. Draft stays in Transforms.
+ * Extrude, Revolve, Sweep, and Loft live in Advanced on the game rail. The CAD
+ * rail promotes that set into Model (paletteRailSections) and does not repeat
+ * them under Advanced. Draft stays in Transforms.
  * Slice 30: Sweep Confirm wraps makeCrossSection + makeSweepPath + sweepPoints
  * / placeInFrame in sweep markers (additive when `part` already exists).
  *
@@ -1742,4 +1744,27 @@ export function itemsByGroup() {
     map[item.group].push(item);
   }
   return map;
+}
+
+/**
+ * Visible rail sections.
+ * Game keeps Advanced as the home of Profile / Workplane / Extrude / Revolve /
+ * Sweep / Loft. Regular CAD promotes that same list into a Model section and
+ * does not also render Advanced (one entry per tool).
+ */
+export function paletteRailSections(layout, grouped = itemsByGroup()) {
+  if (layout === 'cad') {
+    const sections = [];
+    const model = grouped.Advanced || [];
+    if (model.length) sections.push({ key: 'Model', items: model });
+    for (const group of HELPER_PALETTE_GROUPS) {
+      if (group === 'Advanced') continue;
+      sections.push({ key: group, items: grouped[group] || [] });
+    }
+    return sections;
+  }
+  return HELPER_PALETTE_GROUPS.map((group) => ({
+    key: group,
+    items: grouped[group] || [],
+  }));
 }

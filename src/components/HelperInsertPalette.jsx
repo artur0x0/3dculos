@@ -27,7 +27,7 @@ import {
   Route,
   Spline,
 } from 'lucide-react';
-import { HELPER_PALETTE_GROUPS, itemsByGroup } from '../utils/helperPaletteSnippets';
+import { itemsByGroup, paletteRailSections } from '../utils/helperPaletteSnippets';
 import { resolveFaceModal } from '../utils/faceFeaturePlacement';
 import { canBuildFilletAlongPath, resolveFilletStrategy } from '../utils/filletAlongPath';
 import { isContourEntry } from '../utils/contourMode';
@@ -74,14 +74,15 @@ const GROUP_SHORT_LABEL = {
 };
 
 /**
- * Slice 09/10/11 — left vertical helper insert palette (game mode).
+ * Slice 09/10/11 — left vertical helper insert palette.
+ * Game keeps the Advanced grouping. Regular CAD promotes Profile / Workplane /
+ * Extrude / Revolve / Sweep / Loft into the Model section of this same rail.
  * Tap opens HelperParamModal; with selectedFace / selectedEdges, face/edge
  * features get an aware sheet (or refuse). Confirm → onInsert(id, params, faceContext, edgeContext).
  * Slice 24/25/26/28/30: Extrude / Revolve / Loft / Sweep / Profile call onEnterContourMode.
  * Extrude / Revolve / Loft / Sweep Confirm commits the solid; Profile stays Profile-only.
  * Slice 27: Fillet enters edge-pick mode (no pre-select / no soft-fail).
- * Slice 29: groups Prim / Adv / Feat / Xform.
- * Profile and Workplane sit in Advanced with Extrude / Revolve / Sweep / Loft.
+ * Slice 29: groups Prim / Adv / Feat / Xform on the game rail.
  * Advanced Confirm unions onto `part` when a solid is already in the script.
  */
 const HelperInsertPalette = ({
@@ -96,6 +97,8 @@ const HelperInsertPalette = ({
   onEnterContourMode = null,
   onEnterFilletMode = null,
   compact = false,
+  /** 'game' keeps Advanced. 'cad' promotes that set into Model. */
+  layout = 'game',
 }) => {
   const grouped = itemsByGroup();
   const iconSize = compact ? 16 : 18;
@@ -178,6 +181,13 @@ const HelperInsertPalette = ({
     onPathPreview?.(null);
   };
 
+  const sections = paletteRailSections(layout, grouped).map((section) => ({
+    key: section.key,
+    label: section.key === 'Model' ? 'Model' : (GROUP_SHORT_LABEL[section.key] || section.key),
+    section: section.key === 'Model' ? 'model' : section.key.toLowerCase(),
+    items: section.items,
+  }));
+
   return (
     <>
       <div
@@ -187,9 +197,14 @@ const HelperInsertPalette = ({
           ${compact ? 'p-1' : 'p-1.5'}`}
         role="group"
         aria-label="Helper insert palette"
+        data-palette-layout={layout === 'cad' ? 'cad' : 'game'}
       >
-        {HELPER_PALETTE_GROUPS.map((group, gi) => (
-          <div key={group} className="flex flex-col gap-0.5">
+        {sections.map((section, gi) => (
+          <div
+            key={section.key}
+            className="flex flex-col gap-0.5"
+            data-palette-section={section.section}
+          >
             {gi > 0 && (
               <div className="border-t border-gray-300/70 my-0.5 mx-0.5" aria-hidden />
             )}
@@ -198,9 +213,9 @@ const HelperInsertPalette = ({
                 compact ? 'leading-3' : 'leading-4'
               }`}
             >
-              {GROUP_SHORT_LABEL[group] || group}
+              {section.label}
             </div>
-            {(grouped[group] || []).map((item) => {
+            {section.items.map((item) => {
               const Icon = ICONS[item.id] || Box;
               return (
                 <button
