@@ -1,7 +1,7 @@
 // components/CrossSectionPanel.jsx
 /* eslint-disable react-hooks/exhaustive-deps -- see Viewport note; same ref-backed pattern */
 import React, { useState, useEffect } from 'react';
-import { FlipHorizontal, ChevronDown, ChevronUp, Maximize2, Ruler, Move3d, Frame, BoxSelect, Spline } from 'lucide-react';
+import { FlipHorizontal, ChevronDown, ChevronUp, Maximize2, Ruler, Move3d, Frame, BoxSelect, Spline, RectangleHorizontal, SquareDashed } from 'lucide-react';
 import ViewSnapControl from './ViewSnapControl';
 import { PLANE_PRESETS } from '../utils/crossSection';
 
@@ -21,6 +21,11 @@ const CrossSectionPanel = ({
   /** Slice 12: 'face' | 'edge' pick mode */
   pickMode = 'face',
   onPickModeChange = null,
+  /** Plane / contour overlays. Independent of Face/Edge. Default on. Session only. */
+  showPlanes = true,
+  showContours = true,
+  onShowPlanesChange = null,
+  onShowContoursChange = null,
   /** Mobile game: stack tools vertically so measure stays reachable with keyboard up. */
   verticalRail = false,
 }) => {
@@ -168,7 +173,9 @@ const handleButtonClick = () => {
   if (isCollapsed || !enabled) {
     return (
       <div className={`absolute bottom-4 right-2 lg:right-4 bg-white/60 backdrop-blur-sm p-2 rounded-lg shadow-lg z-10 ${
-        verticalRail ? 'flex flex-col gap-1' : 'flex gap-2'
+        verticalRail
+          ? 'flex flex-col gap-1'
+          : 'flex flex-wrap justify-end gap-2 max-w-[calc(100%-1rem)]'
       }`}>
         <ViewSnapControl onSnap={onSnapView} />
 
@@ -179,39 +186,81 @@ const handleButtonClick = () => {
               className={verticalRail ? 'h-px w-full bg-gray-300/80 my-0.5' : 'w-px self-stretch bg-gray-300/80 mx-0.5'}
               aria-hidden
             />
-            <div
-              className={`flex ${verticalRail ? 'flex-col' : 'flex-row'}`}
-              role="group"
-              aria-label="Pick mode"
-            >
-              <button
-                type="button"
-                onClick={() => onPickModeChange('face')}
-                className={`p-2 rounded ${
-                  pickMode === 'face'
-                    ? 'text-green-600 bg-green-100'
-                    : 'text-blue-600 hover:bg-gray-100 active:bg-blue-100'
-                }`}
-                title="Face pick mode — tap a face for Hole / features"
-                aria-label="Face pick mode"
-                aria-pressed={pickMode === 'face'}
+            <div className={`flex items-center ${verticalRail ? 'flex-col' : 'flex-row'}`}>
+              <div
+                className={`flex ${verticalRail ? 'flex-col' : 'flex-row'}`}
+                role="group"
+                aria-label="Pick mode"
               >
-                <BoxSelect size={20} />
-              </button>
-              <button
-                type="button"
-                onClick={() => onPickModeChange('edge')}
-                className={`p-2 rounded ${
-                  pickMode === 'edge'
-                    ? 'text-green-600 bg-green-100'
-                    : 'text-blue-600 hover:bg-gray-100 active:bg-blue-100'
-                }`}
-                title="Edge pick mode — tap near edges for Fillet/Chamfer"
-                aria-label="Edge pick mode"
-                aria-pressed={pickMode === 'edge'}
+                <button
+                  type="button"
+                  onClick={() => onPickModeChange('face')}
+                  className={`p-2 rounded ${
+                    pickMode === 'face'
+                      ? 'text-green-600 bg-green-100'
+                      : 'text-blue-600 hover:bg-gray-100 active:bg-blue-100'
+                  }`}
+                  title="Face pick mode — tap a face for Hole / features"
+                  aria-label="Face pick mode"
+                  aria-pressed={pickMode === 'face'}
+                >
+                  <BoxSelect size={20} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onPickModeChange('edge')}
+                  className={`p-2 rounded ${
+                    pickMode === 'edge'
+                      ? 'text-green-600 bg-green-100'
+                      : 'text-blue-600 hover:bg-gray-100 active:bg-blue-100'
+                  }`}
+                  title="Edge pick mode — tap near edges for Fillet/Chamfer"
+                  aria-label="Edge pick mode"
+                  aria-pressed={pickMode === 'edge'}
+                >
+                  <Spline size={20} />
+                </button>
+              </div>
+              <div
+                className={`flex ${verticalRail ? 'flex-col' : 'flex-row'}`}
+                role="group"
+                aria-label="Plane and contour display"
               >
-                <Spline size={20} />
-              </button>
+                <button
+                  type="button"
+                  onClick={() => onShowPlanesChange?.(!showPlanes)}
+                  className={`min-h-11 min-w-11 p-2 rounded flex items-center justify-center ${
+                    showPlanes
+                      ? 'text-green-600 bg-green-100'
+                      : 'text-blue-600 hover:bg-gray-100 active:bg-blue-100'
+                  }`}
+                  title={showPlanes
+                    ? 'Plane overlays on — tap to hide workplanes'
+                    : 'Plane overlays off — tap to show workplanes'}
+                  aria-label="Plane display"
+                  aria-pressed={!!showPlanes}
+                  data-overlay-toggle="plane"
+                >
+                  <RectangleHorizontal size={20} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onShowContoursChange?.(!showContours)}
+                  className={`min-h-11 min-w-11 p-2 rounded flex items-center justify-center ${
+                    showContours
+                      ? 'text-green-600 bg-green-100'
+                      : 'text-blue-600 hover:bg-gray-100 active:bg-blue-100'
+                  }`}
+                  title={showContours
+                    ? 'Contour overlays on — tap to hide saved contours'
+                    : 'Contour overlays off — tap to show saved contours'}
+                  aria-label="Contour display"
+                  aria-pressed={!!showContours}
+                  data-overlay-toggle="contour"
+                >
+                  <SquareDashed size={20} />
+                </button>
+              </div>
             </div>
             <div
               className={verticalRail ? 'h-px w-full bg-gray-300/80 my-0.5' : 'w-px self-stretch bg-gray-300/80 mx-0.5'}
