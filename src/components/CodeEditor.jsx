@@ -35,8 +35,10 @@ const CodeEditor = forwardRef(({
   onExecute, 
   onCodeChange,
   isMobile,
-  // Slice 08: game action bar lives in this mid-strip (between Monaco and viewport
-  // on mobile stack; Monaco header on desktop). CAD chrome stays in Viewport.
+  // Slice 08: action bar lives in this mid-strip (between Monaco and the
+  // viewport on the mobile stack; Monaco header on desktop). Game renders its
+  // strip inline. Mobile CAD portals the same strip into `onCadToolbarHost`
+  // so download/export state can stay in Viewport.
   mode = 'cad',
   onExitGame,
   onUndo,
@@ -50,6 +52,7 @@ const CodeEditor = forwardRef(({
   gameElapsedMs = 0,
   gameSuccess = false,
   gameBestTimeMs = null,
+  onCadToolbarHost = null,
 }, ref) => {
   const [editorValue, setEditorValue] = useState(initialScript);
   const editorRef = useRef(null);
@@ -59,6 +62,7 @@ const CodeEditor = forwardRef(({
   /** True while insertAtCursor runs executeEdits (sync onChange must not double-fire). */
   const paletteInsertRef = useRef(false);
   const isGame = mode === 'game';
+  const showCadStrip = !isGame && !!isMobile && typeof onCadToolbarHost === 'function';
 
   // Expose methods to parent via ref
   useImperativeHandle(ref, () => ({
@@ -406,9 +410,9 @@ const CodeEditor = forwardRef(({
 
   return (
     <div className="relative flex flex-col h-full bg-gray-900">
-      {/* Mid-strip: Select All (icon) always; game action bar in game mode (slice 08). */}
+      {/* Mid-strip: Select All always. Game actions inline; mobile CAD portals here. */}
       <div className={`flex items-center gap-1 px-1 py-0.5 border-b border-gray-700/60 bg-gray-900 shrink-0 ${
-        isGame ? 'justify-between' : 'justify-end'
+        isGame || showCadStrip ? 'justify-between' : 'justify-end'
       }`}>
         {isGame && (
           <Toolbar
@@ -426,6 +430,13 @@ const CodeEditor = forwardRef(({
             gameElapsedMs={gameElapsedMs}
             gameSuccess={gameSuccess}
             gameBestTimeMs={gameBestTimeMs}
+          />
+        )}
+        {showCadStrip && (
+          <div
+            ref={onCadToolbarHost}
+            className="flex flex-1 min-w-0 items-center overflow-hidden"
+            data-cad-toolbar-host=""
           />
         )}
         <button

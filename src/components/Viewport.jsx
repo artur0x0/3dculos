@@ -3,6 +3,7 @@
    three.js render-loop stability (scene/camera/controls live in refs); adding the flagged
    refs would rebind listeners/materials per render. Revisit deliberately, not via lint. */
 import React, { useEffect, useMemo, useRef, useState, useCallback, forwardRef, useImperativeHandle } from 'react';
+import { createPortal } from 'react-dom';
 import {
   WebGLRenderer,
   Scene,
@@ -188,6 +189,17 @@ function disposeEdgeOverlayObject(scene, obj) {
   disposeOne(obj);
 }
 
+/** Shared top title. Puzzle name in game; filename on mobile CAD. */
+function ViewportTitleChip({ children }) {
+  return (
+    <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10 pointer-events-none max-w-[min(20rem,calc(100%-2rem))]">
+      <div className="text-xs font-medium text-center truncate px-3 py-1.5 rounded-lg shadow bg-gray-900/85 border border-gray-500/50 text-gray-100">
+        {children}
+      </div>
+    </div>
+  );
+}
+
 // Execution limits
 const EXECUTION_LIMITS = {
   timeoutMs: 30000,      // 30 seconds max execution time
@@ -224,6 +236,8 @@ const Viewport = forwardRef(({
   onCommitContourProfile = null,
   onCommitFillet = null,
   getHelperBuffer = null,
+  /** Mobile CAD mid-strip host (CodeEditor). Null on desktop and in game. */
+  cadToolbarHost = null,
 }, ref) => {
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
@@ -3462,10 +3476,11 @@ const Viewport = forwardRef(({
 
   return (
     <div ref={containerRef} className="relative w-full h-full bg-gray-900 overflow-hidden">
-      {/* CAD floating chrome. Game actions moved to CodeEditor mid-strip (slice 08). */}
-      {mode !== 'game' && (
+      {/* Desktop CAD: floating overlay. Mobile CAD uses the puzzle mid-strip. */}
+      {mode !== 'game' && !isMobile && (
         <Toolbar
           mode={mode}
+          variant="overlay"
           onOpen={onOpen}
           onSave={onSave}
           onAccount={onAccount}
@@ -3490,14 +3505,42 @@ const Viewport = forwardRef(({
           gameBestTimeMs={gameBestTimeMs}
         />
       )}
+      {mode !== 'game' && isMobile && cadToolbarHost && createPortal(
+        <Toolbar
+          mode="cad"
+          variant="strip"
+          onOpen={onOpen}
+          onSave={onSave}
+          onAccount={onAccount}
+          onDownload={handleDownloadModel}
+          onQuote={onQuote}
+          onUpload={onUpload}
+          onUndo={onUndo}
+          onRedo={onRedo}
+          canUndo={canUndo}
+          canRedo={canRedo}
+          isExecuting={isExecuting}
+          isDownloading={isDownloading}
+          isUploading={isUploading}
+          currentFilename={currentFilename}
+          onStartGame={onStartGame}
+          onExitGame={onExitGame}
+          onRun={onRun}
+          onHint={onHint}
+          onPickPuzzle={onPickPuzzle}
+          gameElapsedMs={gameElapsedMs}
+          gameSuccess={gameSuccess}
+          gameBestTimeMs={gameBestTimeMs}
+        />,
+        cadToolbarHost,
+      )}
 
-      {/* Slice 08: part name only, centered top-middle (where floating bar sat). */}
+      {/* Title-only top chrome. Game: puzzle name. Mobile CAD: filename. */}
       {mode === 'game' && (
-        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10 pointer-events-none max-w-[min(20rem,calc(100%-2rem))]">
-          <div className="text-xs font-medium text-center truncate px-3 py-1.5 rounded-lg shadow bg-gray-900/85 border border-gray-500/50 text-gray-100">
-            {gamePuzzleTitle || 'Puzzle'}
-          </div>
-        </div>
+        <ViewportTitleChip>{gamePuzzleTitle || 'Puzzle'}</ViewportTitleChip>
+      )}
+      {mode !== 'game' && isMobile && (
+        <ViewportTitleChip>{currentFilename || 'Untitled'}</ViewportTitleChip>
       )}
 
       {mode === 'game' && gameSuccess && (
@@ -3588,7 +3631,7 @@ const Viewport = forwardRef(({
               // keep selectedEdges until user clears / face-picks
             }
           }}
-          verticalRail={mode === 'game' && isMobile}
+          verticalRail={isMobile}
         />
       
       {executionError && (
@@ -3611,10 +3654,10 @@ const Viewport = forwardRef(({
       {/* Face Info Display — Slice 11: show classified type; dodge palette in game mode */}
       {selectedFace && !measurementEnabled && !contourMode && !filletMode && (
         <div
-          className={`absolute bg-black/50 text-white p-2 rounded-lg text-xs font-mono z-10 ${
-            mode === 'game'
-              ? 'bottom-4 right-2 lg:right-4 max-w-[14rem]'
-              : 'bottom-4 left-16 lg:left-[4.75rem] max-w-[14rem]'
+          className={`absolute bg-black/50 text-white p-2 rounded-lg text-xs font-mono z-10 max-w-[14rem] ${
+            mode === 'game' || isMobile
+              ? 'bottom-4 right-2 lg:right-4'
+              : 'bottom-4 left-16 lg:left-[4.75rem]'
           }`}
         >
           <div className="font-bold mb-1">
@@ -3775,10 +3818,10 @@ const Viewport = forwardRef(({
       {pickMode === 'edge' && !contourMode && !filletMode && (
         <div
           data-edge-selector="standalone"
-          className={`absolute bg-amber-950/85 border border-amber-500/70 text-white px-3 py-2 rounded-lg text-xs z-20 shadow-lg ${
-            mode === 'game'
-              ? 'bottom-4 right-2 lg:right-4 max-w-[16rem]'
-              : 'bottom-4 left-16 lg:left-[4.75rem] max-w-[16rem]'
+          className={`absolute bg-amber-950/85 border border-amber-500/70 text-white px-3 py-2 rounded-lg text-xs z-20 shadow-lg max-w-[16rem] ${
+            mode === 'game' || isMobile
+              ? 'bottom-4 right-2 lg:right-4'
+              : 'bottom-4 left-16 lg:left-[4.75rem]'
           }`}
         >
           <div className="font-bold font-sans text-amber-200">

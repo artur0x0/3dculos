@@ -15,7 +15,7 @@ const VIEWS = [
   { key: 'top', label: 'Snap to Top', Icon: PanelTop },
 ];
 
-const ViewSnapControl = ({ onSnap }) => {
+const ViewSnapControl = ({ onSnap, popupAlign = 'start' }) => {
   const [open, setOpen] = useState(false);
 
   const handleBox = () => {
@@ -36,7 +36,9 @@ const ViewSnapControl = ({ onSnap }) => {
     <div className="relative flex">
       {open && (
         <div
-          className="absolute bottom-full left-0 mb-2 flex gap-2 bg-white/60 backdrop-blur-sm p-2 rounded-lg shadow-lg"
+          className={`absolute bottom-full mb-2 flex gap-2 bg-white/60 backdrop-blur-sm p-2 rounded-lg shadow-lg ${
+            popupAlign === 'end' ? 'right-0' : 'left-0'
+          }`}
           role="group"
           aria-label="Standard view snaps"
         >
