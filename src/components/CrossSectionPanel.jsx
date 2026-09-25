@@ -229,7 +229,7 @@ const handleButtonClick = () => {
                 <button
                   type="button"
                   onClick={() => onShowPlanesChange?.(!showPlanes)}
-                  className={`min-h-11 min-w-11 p-2 rounded flex items-center justify-center ${
+                  className={`p-2 rounded ${
                     showPlanes
                       ? 'text-green-600 bg-green-100'
                       : 'text-blue-600 hover:bg-gray-100 active:bg-blue-100'
@@ -246,7 +246,7 @@ const handleButtonClick = () => {
                 <button
                   type="button"
                   onClick={() => onShowContoursChange?.(!showContours)}
-                  className={`min-h-11 min-w-11 p-2 rounded flex items-center justify-center ${
+                  className={`p-2 rounded ${
                     showContours
                       ? 'text-green-600 bg-green-100'
                       : 'text-blue-600 hover:bg-gray-100 active:bg-blue-100'

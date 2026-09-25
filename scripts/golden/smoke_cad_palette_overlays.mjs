@@ -122,7 +122,12 @@ console.log('cad palette + plane/contour toggles');
     /showPlanes[\s\S]{0,80}text-green-600 bg-green-100/.test(panel)
       && /showContours[\s\S]{0,80}text-green-600 bg-green-100/.test(panel),
   );
-  check('mobile hit target on the new toggles', /min-h-11 min-w-11/.test(panel));
+  check(
+    'Plane/Contour use Face/Edge button chrome (no extra hit box)',
+    /onShowPlanesChange[\s\S]{0,220}className=\{`p-2 rounded \$\{/.test(panel)
+      && /onShowContoursChange[\s\S]{0,220}className=\{`p-2 rounded \$\{/.test(panel)
+      && !/min-h-11 min-w-11/.test(panel),
+  );
   check(
     'session state defaults on',
     /const \[showPlanes, setShowPlanes\] = useState\(true\)/.test(view)

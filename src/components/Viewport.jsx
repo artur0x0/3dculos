@@ -105,6 +105,7 @@ import {
 } from '../utils/filletMode';
 import {
   buildFeatureEdges,
+  buildCoherentEdges,
   pickNearestEdgeScreen,
   resolveEdgePickSlopPx,
   toggleEdgeSelectionPropagated,
@@ -117,7 +118,6 @@ import {
   annotateFeatureEdges,
   indexBoundaryEdgesFromGeometry,
   stampBoundaryOnSelection,
-  featureEdgesFromBoundary,
   filletOverlayTargets,
 } from '../utils/boundaryEdgeIds';
 import { X } from 'lucide-react';
@@ -134,11 +134,17 @@ import { validateScript, formatValidationErrors } from '../utils/scriptValidator
 import manifoldContext from '../utils/ManifoldWorker';
 import { formatGameTime } from '../utils/gamePuzzle';
 
-/** Screen-space fat-line widths (WebGL ignores LineBasicMaterial.linewidth > 1). */
-const EDGE_CORE_PX = 4;
-const EDGE_HALO_PX = 14;
-const EDGE_HOVER_CORE_PX = 3;
-const EDGE_HOVER_HALO_PX = 10;
+/**
+ * Screen-space fat-line widths (WebGL ignores LineBasicMaterial.linewidth > 1).
+ * Thinned from the playtest orange (core 4 / halo 14, halo opacity cap 0.38)
+ * so a selected silhouette stays readable on the solid. Hit slop is unchanged.
+ */
+const EDGE_CORE_PX = 2.5;
+const EDGE_HALO_PX = 8;
+const EDGE_HOVER_CORE_PX = 2;
+const EDGE_HOVER_HALO_PX = 6;
+/** Selection core opacity. Was 1 (fully opaque orange). */
+const EDGE_SELECT_OPACITY = 0.72;
 
 /** Screen-facing f{id} / e{id} chip. depthTest off so it stays readable on the part. */
 function makeFilletIdSprite(text, worldH) {
@@ -577,7 +583,7 @@ const Viewport = forwardRef(({
     const group = new Group();
     group.name = name;
     // Soft transparent halo first (under), then brighter core on top.
-    group.add(makeSeg(haloPx, Math.min(0.38, opacity * 0.45), 10));
+    group.add(makeSeg(haloPx, Math.min(0.2, opacity * 0.28), 10));
     group.add(makeSeg(corePx, opacity, 11));
     sceneRef.current.add(group);
     return group;
@@ -619,16 +625,16 @@ const Viewport = forwardRef(({
     const sel = paintEdgeLines(selected, {
       color: 0xff9900,
       name: 'contourSelected',
-      opacity: 1,
+      opacity: 0.75,
       corePx: EDGE_CORE_PX,
       haloPx: EDGE_HALO_PX,
     });
     const idle = paintEdgeLines(rest, {
       color: 0xe2e8f0,
       name: 'contourIdle',
-      opacity: 0.9,
-      corePx: 2,
-      haloPx: 8,
+      opacity: 0.55,
+      corePx: 1.5,
+      haloPx: 5,
     });
     if (sel) group.add(sel);
     if (idle) group.add(idle);
@@ -1895,7 +1901,7 @@ const Viewport = forwardRef(({
     edgeHighlightRef.current = paintEdgeLines(edges, {
       color: 0xff9900,
       name: 'edgeSelection',
-      opacity: 1,
+      opacity: EDGE_SELECT_OPACITY,
       corePx: EDGE_CORE_PX,
       haloPx: EDGE_HALO_PX,
     });
@@ -1920,31 +1926,22 @@ const Viewport = forwardRef(({
     highlightSelectedEdges(selectedEdges);
   }, [selectedEdges, highlightSelectedEdges]);
 
-  /** Rebuild feature-edge cache when the source BufferGeometry identity changes. */
+  /**
+   * Pick graph for Edge, Fillet, and Sweep path.
+   * Sharp creases only, collapsed to silhouette chains (#46 dihedral gate).
+   * Shallow loft-wall seams stay out so tangent-on cannot flood the mesh.
+   */
   const syncFeatureEdges = useCallback((geom) => {
-    const inFillet = !!filletModeRef.current;
-    if (!inFillet && featureEdgesSourceRef.current === geom) return;
+    if (featureEdgesSourceRef.current === geom && featureEdgesRef.current) return;
     const faceIDs = faceIDsRef.current;
-    if (inFillet) {
-      if (geom && faceIDs && faceIDs.length) {
-        const topo = indexBoundaryEdgesFromGeometry(geom, faceIDs);
-        boundaryTopoRef.current = topo;
-        featureEdgesRef.current = featureEdgesFromBoundary(topo);
-      } else {
-        featureEdgesRef.current = [];
-        boundaryTopoRef.current = null;
-      }
-      featureEdgesSourceRef.current = geom ?? null;
-      return;
-    }
     const raw = geom ? buildFeatureEdges(geom) : [];
     if (geom && faceIDs && faceIDs.length) {
       const topo = indexBoundaryEdgesFromGeometry(geom, faceIDs);
-      featureEdgesRef.current = annotateFeatureEdges(raw, topo);
       boundaryTopoRef.current = topo;
+      featureEdgesRef.current = buildCoherentEdges(annotateFeatureEdges(raw, topo));
     } else {
-      featureEdgesRef.current = raw;
       boundaryTopoRef.current = null;
+      featureEdgesRef.current = buildCoherentEdges(raw);
     }
     featureEdgesSourceRef.current = geom ?? null;
   }, []);
