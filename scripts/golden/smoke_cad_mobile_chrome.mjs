@@ -53,7 +53,13 @@ console.log('cad mobile chrome harmonized to puzzle');
 
   check('phone right rail is vertical for both modes', /verticalRail=\{isMobile\}/.test(view));
   check('desktop CAD keeps the overlay toolbar', /variant="overlay"/.test(view));
-  check('mobile CAD portals the strip', /variant="strip"/.test(view) && /createPortal\(/.test(view));
+  // Gate is the call-site, not the createPortal import. The Toolbar prop list
+  // between variant="strip" and the host argument is longer than 400 chars.
+  check(
+    'mobile CAD portals the strip into the editor host',
+    /mode !== 'game' && isMobile && cadToolbarHost && createPortal\(/.test(view) &&
+    /variant="strip"[\s\S]{0,1200}?cadToolbarHost,?\s*\)/.test(view),
+  );
   check('shared title chip', /function ViewportTitleChip/.test(view));
   check(
     'game title still falls back to Puzzle',
