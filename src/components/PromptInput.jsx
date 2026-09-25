@@ -17,7 +17,8 @@ const PromptInput = ({ onCodeGenerated, currentCode, selectedFace, onClearFaceSe
     const textarea = textareaRef.current;
     if (textarea) {
       textarea.style.height = 'auto';
-      textarea.style.height = Math.min(textarea.scrollHeight, 200) + 'px';
+      const cap = isMobile ? 72 : 200;
+      textarea.style.height = Math.min(textarea.scrollHeight, cap) + 'px';
     }
   };
 
@@ -168,10 +169,10 @@ You can choose to modify the existing code or create something completely new ba
   };
 
   return (
-    <div className="border-t border-gray-700/50 bg-[#1e1e1e] p-3"
-         style={isMobile ? { paddingBottom: 'max(12px, env(safe-area-inset-bottom))' } : {}}>
+    <div className={`border-t border-gray-700/50 bg-[#1e1e1e] ${isMobile ? 'px-2 py-1' : 'p-3'}`}
+         style={isMobile ? { paddingBottom: 'max(4px, env(safe-area-inset-bottom))' } : {}}>
 
-      <form onSubmit={handleSubmit} className="flex flex-col gap-2">
+      <form onSubmit={handleSubmit} className={`flex flex-col ${isMobile ? 'gap-1' : 'gap-2'}`}>
         {error && (
           <div className="text-xs text-red-400 px-2">
             {error}
@@ -179,7 +180,7 @@ You can choose to modify the existing code or create something completely new ba
         )}
 
         {selectedFace && (
-          <div className="flex items-center justify-left bg-yellow-500/10 border border-yellow-500/30 rounded py-2">
+          <div className={`flex items-center justify-left bg-yellow-500/10 border border-yellow-500/30 rounded ${isMobile ? 'py-1' : 'py-2'}`}>
             <button
               type="button"
               onClick={onClearFaceSelection}
@@ -205,7 +206,9 @@ You can choose to modify the existing code or create something completely new ba
                 : "[AI] Describe a shape to create or modify..."
             }
             rows={1}
-            className="flex-1 bg-[#1e1e1e] text-gray-200 rounded px-3 py-2 text-base border border-gray-600 opacity-50 focus:outline-none focus:ring-1 focus:ring-white focus:border-transparent focus:opacity-100 placeholder-gray-500 resize-none overflow-hidden"
+            className={`flex-1 bg-[#1e1e1e] text-gray-200 rounded text-base border border-gray-600 opacity-50 focus:outline-none focus:ring-1 focus:ring-white focus:border-transparent focus:opacity-100 placeholder-gray-500 resize-none overflow-hidden ${
+              isMobile ? 'px-2 py-1' : 'px-3 py-2'
+            }`}
             disabled={isLoading}
           />
 
@@ -219,7 +222,7 @@ You can choose to modify the existing code or create something completely new ba
               }
             }}
             disabled={isLoading}
-            className="h-[38px] px-3 bg-[#1e1e1e] text-white rounded border border-gray-600 enabled:hover:ring-1 enabled:hover:ring-white enabled:hover:border-transparent disabled:opacity-50 transition-colors"
+            className={`${isMobile ? 'h-8 px-2' : 'h-[38px] px-3'} bg-[#1e1e1e] text-white rounded border border-gray-600 enabled:hover:ring-1 enabled:hover:ring-white enabled:hover:border-transparent disabled:opacity-50 transition-colors`}
           >
             {isLoading ? (
               <Loader2 size={16} className="animate-spin" />

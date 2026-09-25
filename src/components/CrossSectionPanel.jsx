@@ -26,7 +26,7 @@ const CrossSectionPanel = ({
   showContours = true,
   onShowPlanesChange = null,
   onShowContoursChange = null,
-  /** Mobile game: stack tools vertically so measure stays reachable with keyboard up. */
+  /** Phone: stack tools on the right edge (puzzle + CAD). Desktop stays a wrapping row. */
   verticalRail = false,
 }) => {
   const [isCollapsed, setIsCollapsed] = useState(true);
@@ -177,7 +177,7 @@ const handleButtonClick = () => {
           ? 'flex flex-col gap-1'
           : 'flex flex-wrap justify-end gap-2 max-w-[calc(100%-1rem)]'
       }`}>
-        <ViewSnapControl onSnap={onSnapView} />
+        <ViewSnapControl onSnap={onSnapView} popupAlign={verticalRail ? 'end' : 'start'} />
 
         {/* Pick selectors — icons only; idle matches Fit/ruler (no filled tan/opaque frame) */}
         {typeof onPickModeChange === 'function' && (

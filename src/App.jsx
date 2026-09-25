@@ -72,6 +72,8 @@ const App = () => {
   const [gameBestTimeMs, setGameBestTimeMs] = useState(null);
   const [showConfetti, setShowConfetti] = useState(false);
   const [gameRunBusy, setGameRunBusy] = useState(false);
+  // Mobile CAD mid-strip portal target (CodeEditor header).
+  const [cadToolbarHost, setCadToolbarHost] = useState(null);
 
   const { user, isAuthenticated, checkAuth } = useAuth();
 
@@ -1076,10 +1078,12 @@ const App = () => {
     );
   }
 
-  // Mobile game: keyboard-aware editor height from visualViewport.
+  // Phone shell (puzzle + CAD): viewport on top, Monaco in a bottom budget.
+  // Keyboard open pins the shell to visualViewport (slice 05). CAD's AI row
+  // sits inside that same budget so the viewport stays the same size as puzzle.
   const keyboardOverlap = Math.max(0, vv.layoutHeight - vv.height - vv.offsetTop);
   const keyboardOpen = keyboardOverlap > 80;
-  const mobileGameEditorPx = keyboardOpen
+  const mobileEditorPx = keyboardOpen
     ? Math.round(Math.min(Math.max(vv.height * 0.36, 120), vv.height * 0.42))
     : Math.round(Math.min(Math.max(vv.height * 0.32, 160), vv.height * 0.38));
 
@@ -1087,7 +1091,7 @@ const App = () => {
     // Keep h-dvh while the keyboard is closed so Monaco can take a real
     // user-gesture focus (iOS often refuses keyboard inside a fixed+overflow
     // shell). Once open, pin to visualViewport so the editor stays visible.
-    const mobileShellStyle = appMode === 'game' && keyboardOpen
+    const mobileShellStyle = keyboardOpen
       ? {
           height: vv.height,
           top: vv.offsetTop,
@@ -1129,27 +1133,29 @@ const App = () => {
               onCommitContourProfile={handleCommitContourProfile}
               onCommitFillet={handleCommitFillet}
               getHelperBuffer={() => codeEditorRef.current?.getContent?.() || ''}
+              cadToolbarHost={cadToolbarHost}
             />
     );
 
     return (
         <div
-          className={`flex flex-col bg-gray-900 overflow-hidden ${appMode === 'game' && keyboardOpen ? '' : 'h-dvh'}`}
+          className={`flex flex-col bg-gray-900 overflow-hidden ${keyboardOpen ? '' : 'h-dvh'}`}
           style={mobileShellStyle}
         >
-          {appMode === 'game' ? (
-            <>
-              {/* Slice 05: viewport TOP, Monaco BOTTOM (near keyboard) */}
-              <div className="flex-1 min-h-0 border-b border-gray-700 overflow-hidden">
-                {viewportEl}
-              </div>
-              <div
-                className="flex-shrink-0 border-t border-gray-700"
-                style={{ height: mobileGameEditorPx }}
-              >
-                <CodeEditor 
+          {/* Viewport TOP, Monaco BOTTOM — same stack as puzzle (slice 05). */}
+          <div className="flex-1 min-h-0 border-b border-gray-700 overflow-hidden">
+            {viewportEl}
+          </div>
+          <div
+            className="flex-shrink-0 flex flex-col border-t border-gray-700 min-h-0"
+            style={{ height: mobileEditorPx }}
+          >
+            <div className="relative flex-1 min-h-0">
+              <div className="absolute inset-0">
+                <CodeEditor
+                  key={appMode}
                   ref={codeEditorRef}
-                  initialScript=""
+                  initialScript={appMode === 'game' ? '' : editorInitialScript}
                   onExecute={handleExecute}
                   onCodeChange={handleCodeChange}
                   isMobile={isMobile}
@@ -1166,34 +1172,20 @@ const App = () => {
                   gameElapsedMs={gameElapsedMs}
                   gameSuccess={gameSuccess}
                   gameBestTimeMs={gameBestTimeMs}
+                  onCadToolbarHost={setCadToolbarHost}
                 />
               </div>
-            </>
-          ) : (
-            <>
-              <div className="h-[33vh] border-b border-gray-700 flex-shrink-0">
-                <CodeEditor 
-                  ref={codeEditorRef}
-                  initialScript={editorInitialScript}
-                  onExecute={handleExecute}
-                  onCodeChange={handleCodeChange}
-                  isMobile={isMobile}
-                />
-              </div>
-              <div className="flex-1 min-h-0 border-b border-gray-700 overflow-hidden">
-                {viewportEl}
-              </div>
-              <div className="flex-shrink-0">
-                <PromptInput 
-                  onCodeGenerated={handleCodeGenerated}
-                  currentCode={codeEditorRef.current?.getContent() || ''}
-                  selectedFace={selectedFace}
-                  onClearFaceSelection={handleClearFaceSelection}
-                  isMobile={isMobile}
-                />
-              </div>
-            </>
-          )}
+            </div>
+            {appMode !== 'game' && (
+              <PromptInput
+                onCodeGenerated={handleCodeGenerated}
+                currentCode={codeEditorRef.current?.getContent() || ''}
+                selectedFace={selectedFace}
+                onClearFaceSelection={handleClearFaceSelection}
+                isMobile={isMobile}
+              />
+            )}
+          </div>
 
           {/* Login Modal */}
           {showLoginModal && (
@@ -1308,6 +1300,7 @@ const App = () => {
               gameElapsedMs={gameElapsedMs}
               gameSuccess={gameSuccess}
               gameBestTimeMs={gameBestTimeMs}
+              onCadToolbarHost={setCadToolbarHost}
             />
           </div>
           {appMode !== 'game' && (
@@ -1354,6 +1347,7 @@ const App = () => {
             onCommitContourProfile={handleCommitContourProfile}
             onCommitFillet={handleCommitFillet}
             getHelperBuffer={() => codeEditorRef.current?.getContent?.() || ''}
+            cadToolbarHost={cadToolbarHost}
           />
         </div>
 

@@ -8,9 +8,9 @@ import { formatGameTime } from '../utils/gamePuzzle';
 
 /**
  * Shared chrome.
- * - CAD: floating overlay over the viewport (collapsible).
- * - Game: action bar lives in the Monaco mid-strip (variant="strip") —
- *   no floating overlay / no collapse chevron (slice 08).
+ * - Desktop CAD: floating overlay over the viewport (collapsible).
+ * - Mobile CAD + game: action bar in the Monaco mid-strip (variant="strip").
+ *   No floating overlay and no collapse chevron (slice 08; CAD mobile matches).
  */
 const Toolbar = ({
   mode = 'cad',
@@ -77,8 +77,8 @@ const Toolbar = ({
     }
   };
 
-  // CAD-only collapse chrome (game mode never collapses — bar lives in mid-strip).
-  if (!isGame && isCollapsed) {
+  // Desktop CAD collapse. Strip variants (game + mobile CAD) never collapse.
+  if (!isGame && !isStrip && isCollapsed) {
     return (
       <div className="absolute top-4 right-4 flex items-center gap-2 bg-white/70 backdrop-blur-sm p-2 rounded-lg shadow-lg z-10">
         <button
@@ -199,6 +199,130 @@ const Toolbar = ({
           title="Hint — target code & helpers"
         >
           <BookOpen size={iconSize} />
+        </button>
+      </div>
+    );
+  }
+
+  // Mobile CAD: same mid-strip tokens as the game bar (dark, compact, scroll).
+  // No collapse chevron — the strip is the editor header, not a viewport sheet.
+  if (isStrip) {
+    const btn = 'shrink-0 p-1.5 flex items-center rounded active:opacity-80 hover:bg-gray-700/60';
+    const icon = 18;
+    const blue = 'text-blue-400';
+    const divider = 'shrink-0 w-px bg-gray-600 mx-0.5 self-stretch my-1';
+    return (
+      <div
+        className="flex items-center gap-0.5 sm:gap-1 flex-1 min-w-0 overflow-x-auto"
+        data-toolbar-variant="strip"
+      >
+        <input
+          type="file"
+          ref={fileInputRef}
+          onChange={handleFileSelect}
+          className="hidden"
+          accept=".js,.txt"
+        />
+        <input
+          type="file"
+          ref={uploadModelRef}
+          onChange={handleModelUpload}
+          className="hidden"
+          accept=".stl,.obj,.3mf,.step,.stp"
+        />
+
+        <button
+          type="button"
+          onClick={onAccount}
+          className={`${btn} ${isAuthenticated ? 'text-green-400' : blue}`}
+          title="Account"
+        >
+          <User size={icon} />
+        </button>
+        <button
+          type="button"
+          onClick={() => fileInputRef.current?.click()}
+          className={`${btn} ${blue}`}
+          title="Open File"
+        >
+          <FolderOpen size={icon} />
+        </button>
+        <button
+          type="button"
+          onClick={() => uploadModelRef.current?.click()}
+          disabled={isUploading || isExecuting}
+          className={`${btn} ${blue} disabled:opacity-50`}
+          title="Upload STEP File"
+        >
+          {isUploading ? (
+            <div className="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
+          ) : (
+            <Upload size={icon} />
+          )}
+        </button>
+
+        <div className={divider} />
+
+        <button
+          type="button"
+          onClick={onUndo}
+          disabled={!canUndo}
+          className={`${btn} ${blue} disabled:opacity-30`}
+          title="Undo"
+        >
+          <Undo size={icon} />
+        </button>
+        <button
+          type="button"
+          onClick={onRedo}
+          disabled={!canRedo}
+          className={`${btn} ${blue} disabled:opacity-30`}
+          title="Redo"
+        >
+          <Redo size={icon} />
+        </button>
+
+        <div className={divider} />
+
+        <button
+          type="button"
+          onClick={onSave}
+          className={`${btn} ${blue}`}
+          title={currentFilename ? `Save ${currentFilename}` : 'Save As'}
+        >
+          <Save size={icon} />
+        </button>
+        <button
+          type="button"
+          onClick={onDownload}
+          disabled={isDownloading || isExecuting}
+          className={`${btn} ${blue} disabled:opacity-50`}
+          title="Download Model"
+        >
+          {isDownloading ? (
+            <div className="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
+          ) : (
+            <Download size={icon} />
+          )}
+        </button>
+
+        <div className={divider} />
+
+        <button
+          type="button"
+          onClick={onQuote}
+          className={`${btn} text-green-400`}
+          title="Get Quote"
+        >
+          <Truck size={icon} />
+        </button>
+        <button
+          type="button"
+          onClick={onStartGame}
+          className={`${btn} text-cyan-400`}
+          title="Play match-the-part puzzle"
+        >
+          <Puzzle size={icon} />
         </button>
       </div>
     );
