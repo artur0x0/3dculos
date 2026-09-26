@@ -1,10 +1,9 @@
 /**
- * Slice C — fillet kernel spike (hard-edge path).
+ * Slice C / C2 — fillet kernel (hard-edge path).
  *
- * Production Accept still uses the #45–#46 dihedral sweep for every class.
- * Easy stays that stack (#50). This module records the spike comparison and
- * the recommended hard-path routing for a follow-up PR — it is NOT wired into
- * composeFilletCommit / filletAlongPath.
+ * Easy stays the #45–#46 dihedral sweep (`filletAlongPath`). Hard Accept
+ * routes to segment-wise rolling-ball (`filletEdges` parallelepiped−cylinder
+ * per #49 coherent segment with `relaxPlanar`) when the production flag is on.
  *
  * Measured on the box WASM worker (2026-09-25), cube 40×30×20 edge r=3 and a
  * circle→square hull stand-in for loft generators:
@@ -12,10 +11,9 @@
  *   - naive sphere-hull along bisector: over-removes ~12× analytic on box —
  *     not a rolling-ball fillet
  *   - filletEdges planar (parallelepiped − cylinder): box volume exact; fails
- *     loud on curved-adjacent loft generators ("curved-face fillet not
- *     supported")
- *   - per-segment filletEdges try/catch on loft gens: skips most segments;
- *     not a quality win
+ *     loud on curved-adjacent loft generators without relaxPlanar
+ *   - per-segment filletEdges try/catch on loft gens (strict planar): skips
+ *     most segments; not a quality win
  *
  * Manifold CrossSection has 2D offset; bundled Manifold solid has no
  * offset()/minkowski (shell uses corner-sphere hull). Face-offset pair-blend
@@ -26,14 +24,15 @@
 
 export const FILLET_KERNEL_EASY = 'sweep-dihedral';
 
-/** Recommended production hard path after this spike. */
+/** Production hard path (Slice C2). */
 export const FILLET_KERNEL_HARD_RECOMMENDED = 'rolling-ball-segment';
 
 /**
- * Feature flag for a future hard-class-only trial.
- * Keep false in production until a follow-up PR wires Accept.
+ * Production-on for hard-class Accept (Slice C2).
+ * Easy never reads this flag. When true, hard Accept emits filletEdges with
+ * relaxPlanar instead of a single RMF filletAlongPath sweep.
  */
-export const FILLET_HARD_KERNEL_TRIAL = false;
+export const FILLET_HARD_KERNEL_TRIAL = true;
 
 export const FILLET_KERNEL_CANDIDATES = Object.freeze([
   {
@@ -76,8 +75,8 @@ export const FILLET_KERNEL_CANDIDATES = Object.freeze([
 
 /**
  * Pick the kernel id for a fillet class. Easy always stays the current sweep.
- * Hard returns the recommended follow-up id when the trial flag is on;
- * otherwise still reports the recommendation without changing callers.
+ * Hard returns segment rolling-ball; `trial` mirrors the production flag
+ * (true = Accept is wired to that path).
  *
  * @param {'easy'|'hard'|'empty'|string|null|undefined} klass
  * @param {{ trial?: boolean }} [opts]
@@ -96,22 +95,34 @@ export function pickFilletKernelForClass(klass, opts = {}) {
     kernel: FILLET_KERNEL_HARD_RECOMMENDED,
     trial,
     reason: trial
-      ? 'hard-class trial: segment rolling-ball (not wired to Accept in Slice C)'
-      : 'hard-class recommendation: segment rolling-ball in a follow-up PR',
+      ? 'hard-class Accept: segment rolling-ball (filletEdges + relaxPlanar)'
+      : 'hard-class recommendation: segment rolling-ball (flag off)',
   };
 }
 
 /**
+ * True when Fillet Accept should emit the hard rolling-ball path.
+ * @param {'easy'|'hard'|'empty'|string|null|undefined} klass
+ * @param {{ trial?: boolean }} [opts]
+ */
+export function shouldUseHardRollingBall(klass, opts = {}) {
+  const pick = pickFilletKernelForClass(klass, opts);
+  return klass === 'hard'
+    && pick.kernel === FILLET_KERNEL_HARD_RECOMMENDED
+    && pick.trial === true;
+}
+
+/**
  * Effort note for Product / PR body.
- * @returns {{ effort: '1-follow-up-PR'|'multi-slice', summary: string }}
+ * @returns {{ effort: '1-follow-up-PR'|'done'|'multi-slice', summary: string }}
  */
 export function hardFilletKernelEffort() {
   return {
-    effort: '1-follow-up-PR',
+    effort: 'done',
     summary:
-      'Wire hard-class-only Accept to segment-wise rolling-ball cutters '
-      + '(reuse filletEdges singleton math + #49 chains; relax planar assert '
-      + 'for generator walls; junction caps optional). Face-offset remains a '
+      'C2 wired hard-class Accept to segment-wise rolling-ball cutters '
+      + '(filletEdges singleton math + #49 chains; relaxPlanar for generator '
+      + 'walls; optional sphericalCorners junction caps). Face-offset remains a '
       + 'later multi-slice if Manifold gains solid offset or we build one.',
   };
 }

@@ -1519,10 +1519,16 @@ const Viewport = forwardRef(({
       return;
     }
     const buf = (typeof getHelperBuffer === 'function' ? getHelperBuffer() : '') || '';
+    const edgeClass = classifyFilletEdges(edges, {
+      radius: gate.normalized.radius,
+      geometry: resultRef.current?.geometry,
+    });
     filletQualityWatchRef.current = true;
     const ok = onCommitFillet?.({
       edges,
       params: gate.normalized,
+      filletClass: edgeClass.klass,
+      geometry: resultRef.current?.geometry,
       commitMode: hasFilletModeBlock(buf) ? 'append' : 'replace',
     });
     if (!ok) filletQualityWatchRef.current = false;
