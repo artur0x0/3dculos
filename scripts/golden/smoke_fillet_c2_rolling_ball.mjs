@@ -233,15 +233,25 @@ return part;
     sweepTiny = sliverCount(sweepPayload.mesh).tiny;
   } catch (e) {
     // Sweep may loud-fail on slivers — that is the pre-C2 failure mode.
-    sweepTiny = Infinity;
+    // Do NOT set sweepTiny=Infinity: hardTiny <= Infinity always green-passes.
     sweepErr = e;
+    sweepTiny = null;
   }
-  if (hardTiny != null && sweepTiny != null) {
-    check(
-      'hard variable-profile needles ≤ single-segment sweep needles',
-      hardTiny <= sweepTiny,
-      `hard=${hardTiny} sweep=${sweepTiny}${sweepErr ? ` (sweep threw: ${sweepErr.message})` : ''}`,
-    );
+  if (hardTiny != null) {
+    // Never compare against Infinity — that made the check vacuously green (review B1).
+    if (sweepTiny == null || !Number.isFinite(sweepTiny)) {
+      check(
+        'hard variable-profile needles finite (sweep baseline threw)',
+        Number.isFinite(hardTiny),
+        `hard=${hardTiny}; sweep threw: ${sweepErr?.message || 'unknown'}`,
+      );
+    } else {
+      check(
+        'hard variable-profile needles ≤ single-segment sweep needles',
+        hardTiny <= sweepTiny,
+        `hard=${hardTiny} sweep=${sweepTiny}`,
+      );
+    }
   }
 }
 

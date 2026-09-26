@@ -5,7 +5,11 @@
  */
 
 import { Vector3 } from 'three';
-import { propagateTrueTangentEdges } from './edgeTangencyField.js';
+import {
+  propagateTrueTangentEdges,
+  TANGENCY_PROP_DEG,
+  TANGENCY_NORMAL_ALIGN,
+} from './edgeTangencyField.js';
 
 const DEFAULT_FEATURE_DEG = 2;
 
@@ -507,7 +511,8 @@ export function pickNearestEdgeScreen(
 /** Default G1 (tangent) propagation threshold in degrees.
  * 25° covers production 16-seg circles (22.5° turn, cos=0.9239 < cos(22°))
  * while still breaking genuine hard corners (≥45°). N=12 (30°) stays seed-only. */
-export const TANGENT_PROP_DEG = 25;
+/** Matches edgeTangencyField.TANGENCY_PROP_DEG (true-G1 default). */
+export const TANGENT_PROP_DEG = TANGENCY_PROP_DEG;
 
 /**
  * Build adjacency: vertex index → feature edges touching it.
@@ -551,7 +556,8 @@ export function propagateTangentEdges(featureEdges, seedEdge, opts = {}) {
   // Soft-fails to the seed; caps at COHERENT_EDGE_MAX (no #49 spaghetti).
   if (!seedEdge) return [];
   const chain = propagateTrueTangentEdges(featureEdges || [], seedEdge, {
-    tolDeg: opts.tolDeg,
+    tolDeg: opts.tolDeg != null ? opts.tolDeg : TANGENCY_PROP_DEG,
+    normalAlign: opts.normalAlign != null ? opts.normalAlign : TANGENCY_NORMAL_ALIGN,
     adj: opts.adj || buildEdgeVertexAdj(featureEdges || []),
     max: COHERENT_EDGE_MAX,
   });

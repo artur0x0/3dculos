@@ -105,14 +105,6 @@ export function shouldUseHardVariableSweep(klass, opts = {}) {
 }
 
 /**
- * @deprecated Use shouldUseHardVariableSweep (C3). Kept as alias so older
- * call sites / goldens that still name "rolling-ball" compile during migration.
- */
-export function shouldUseHardRollingBall(klass, opts = {}) {
-  return shouldUseHardVariableSweep(klass, opts);
-}
-
-/**
  * Effort note for Product / PR body.
  */
 export function hardFilletKernelEffort() {

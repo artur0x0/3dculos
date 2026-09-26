@@ -10,6 +10,9 @@
  * - easy cube Accept still uses plain filletAlongPath (no variableProfile)
  */
 import { register } from 'node:module';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 import { BufferGeometry, BufferAttribute } from 'three';
 import {
   buildFeatureEdges,
@@ -37,6 +40,9 @@ import {
   shouldUseHardVariableSweep,
 } from '../../src/utils/filletKernelSpike.js';
 
+const __here = dirname(fileURLToPath(import.meta.url));
+const readRepo = (rel) => readFileSync(join(__here, '../..', rel), 'utf8');
+
 let failed = 0;
 function check(name, cond, detail = '') {
   if (cond) console.log(`  ✅ ${name}`);
@@ -53,6 +59,32 @@ check('hard production flag on', FILLET_HARD_KERNEL_TRIAL === true);
 check('shouldUseHardVariableSweep(hard)', shouldUseHardVariableSweep('hard') === true);
 check('shouldUseHardVariableSweep(easy)', shouldUseHardVariableSweep('easy') === false);
 check('tangency cap matches coherent cap', TANGENCY_CHAIN_MAX === COHERENT_EDGE_MAX);
+
+{
+  const workerSrc = readRepo('src/workers/sandboxWorker.js');
+  check(
+    'sandboxWorker call-site buildVariableProfileFrames',
+    /\bbuildVariableProfileFrames\s*\(/.test(workerSrc),
+  );
+  check(
+    'sandboxWorker densify gated by variableProfile',
+    /if\s*\(\s*variableProfile\s*&&\s*!opts\._rawPath\s*\)/.test(workerSrc)
+      && /densifyPathPoints\s*\(/.test(workerSrc),
+  );
+  check(
+    'sandboxWorker hard path calls _s23BuildVariableProfileCutter',
+    /variableProfile[\s\S]{0,120}_s23BuildVariableProfileCutter\s*\(/.test(workerSrc),
+  );
+  check(
+    'sandboxWorker densified probe gate (0.85 / 0.55*segL)',
+    /bestD\s*<=\s*Math\.max\(\s*0\.85\s*,\s*Math\.max\(\s*0\.55\s*\*\s*\(segL/.test(workerSrc),
+  );
+  const viewSrc = readRepo('src/components/Viewport.jsx');
+  check(
+    'Viewport scrap banner uses delta threshold',
+    /introduced\s*>\s*Math\.max\(\s*300\s*,\s*0\.1\s*\*\s*Math\.max\(\s*preDeg/.test(viewSrc),
+  );
+}
 
 {
   // True G1 vs zig-zag: same tangent, flipped walls → reject.
@@ -271,12 +303,29 @@ return part;
 
   let hardPayload = null;
   let hardErr = null;
+  globalThis.__filletVariableProfileMeta = null;
   try {
     hardPayload = await exec(commit.buffer);
   } catch (e) {
     hardErr = e;
   }
   check('hard variable-profile exec succeeds', !!hardPayload && !hardErr, hardErr?.message || '');
+  const vpMeta = globalThis.__filletVariableProfileMeta;
+  check(
+    'variableProfile used buildVariableProfileFrames (WASM pin)',
+    !!vpMeta && vpMeta.usedFrames === true,
+    vpMeta ? JSON.stringify(vpMeta) : 'meta missing — frames route bypassed',
+  );
+  check(
+    'variableProfile densified frames > undensified segments',
+    !!vpMeta && vpMeta.frameCount > vpMeta.rawSegCount,
+    vpMeta ? `frames=${vpMeta.frameCount} rawSegs=${vpMeta.rawSegCount}` : 'meta missing',
+  );
+  check(
+    'variableProfile strong inscribed-arc frames',
+    !!vpMeta && vpMeta.strongFrames >= 1,
+    vpMeta ? `strong=${vpMeta.strongFrames}` : 'meta missing',
+  );
   if (hardPayload?.mesh) {
     const sc = sliverCount(hardPayload.mesh);
     check('hard result not scrap-sheet dirty', sc.dirty === false, `tiny=${sc.tiny}/${sc.nTri}`);

@@ -12,7 +12,6 @@ import {
   FILLET_KERNEL_CANDIDATES,
   pickFilletKernelForClass,
   shouldUseHardVariableSweep,
-  shouldUseHardRollingBall,
   hardFilletKernelEffort,
 } from '../../src/utils/filletKernelSpike.js';
 import { composeFilletCommit } from '../../src/utils/filletMode.js';
@@ -49,7 +48,6 @@ check('four candidates documented', FILLET_KERNEL_CANDIDATES.length >= 4);
   );
   check('shouldUseHardVariableSweep true for hard', shouldUseHardVariableSweep('hard') === true);
   check('shouldUseHardVariableSweep false for easy', shouldUseHardVariableSweep('easy') === false);
-  check('rolling-ball alias matches variable sweep', shouldUseHardRollingBall('hard') === true);
   const effort = hardFilletKernelEffort();
   check('effort notes C2 done', effort.effort === 'done');
 }
