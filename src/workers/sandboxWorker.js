@@ -3538,7 +3538,7 @@ function _s23BuildVariableProfileCutter(
       T: fr.T,
       N: fr.N,
       B: fr.B,
-      theta: fr.theta * 0.6,
+      theta: fr.theta,
       length,
       f0: fr.f0,
       f1: fr.f1,
