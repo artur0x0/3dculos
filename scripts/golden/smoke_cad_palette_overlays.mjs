@@ -160,6 +160,11 @@ console.log('cad palette + plane/contour toggles');
     /onPickModeChange\('face'\)/.test(panel) && /onPickModeChange\('edge'\)/.test(panel),
   );
   check(
+    'selector groups have a modest gap',
+    /flex gap-1[\s\S]{0,240}data-selector-group="pick-mode"/.test(panel)
+      && /flex gap-1[\s\S]{0,240}data-selector-group="plane-contour"/.test(panel),
+  );
+  check(
     'standalone edge chip still hidden in contour and fillet',
     /pickMode === 'edge' && !contourMode && !filletMode/.test(view),
   );

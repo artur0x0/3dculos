@@ -186,11 +186,12 @@ const handleButtonClick = () => {
               className={verticalRail ? 'h-px w-full bg-gray-300/80 my-0.5' : 'w-px self-stretch bg-gray-300/80 mx-0.5'}
               aria-hidden
             />
-            <div className={`flex items-center ${verticalRail ? 'flex-col' : 'flex-row'}`}>
+            <div className={`flex items-center gap-1 ${verticalRail ? 'flex-col' : 'flex-row'}`}>
               <div
-                className={`flex ${verticalRail ? 'flex-col' : 'flex-row'}`}
+                className={`flex gap-1 ${verticalRail ? 'flex-col' : 'flex-row'}`}
                 role="group"
                 aria-label="Pick mode"
+                data-selector-group="pick-mode"
               >
                 <button
                   type="button"
@@ -222,9 +223,10 @@ const handleButtonClick = () => {
                 </button>
               </div>
               <div
-                className={`flex ${verticalRail ? 'flex-col' : 'flex-row'}`}
+                className={`flex gap-1 ${verticalRail ? 'flex-col' : 'flex-row'}`}
                 role="group"
                 aria-label="Plane and contour display"
+                data-selector-group="plane-contour"
               >
                 <button
                   type="button"

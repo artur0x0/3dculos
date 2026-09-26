@@ -331,6 +331,8 @@ const Viewport = forwardRef(({
   /** Slice 27: Fillet-in-mode (enter without edges; Accept commits sweep fillet). */
   const [filletMode, setFilletMode] = useState(null);
   const filletModeRef = useRef(null);
+  /** Slice C: restore Face/Edge after Fillet Accept / exit (do not snap to default). */
+  const filletPriorPickModeRef = useRef('face');
   const filletBlendPreviewRef = useRef(null);
   const [filletToast, setFilletToast] = useState(null);
   const filletToastTimerRef = useRef(null);
@@ -1480,9 +1482,15 @@ const Viewport = forwardRef(({
       filletToastTimerRef.current = null;
     }
     setFilletToast(null);
+    // Restore pre-Fillet Face/Edge (Plane/Contour toggles were never cleared).
+    const restore = filletPriorPickModeRef.current === 'edge' ? 'edge' : 'face';
+    pickModeRef.current = restore;
+    setPickMode(restore);
   }, [clearFilletBlendPreview]);
 
   const enterFilletMode = useCallback(() => {
+    // Snapshot before exitContourMode, which forces face pick.
+    filletPriorPickModeRef.current = pickModeRef.current === 'edge' ? 'edge' : 'face';
     exitContourMode();
     setPickMode('edge');
     clearHighlight();
@@ -1520,8 +1528,7 @@ const Viewport = forwardRef(({
     if (!ok) filletQualityWatchRef.current = false;
     if (ok) {
       edgeRematchToastSuppressRef.current = true;
-      pickModeRef.current = 'face';
-      setPickMode('face');
+      // Keep Face/Edge (and Plane/Contour) — exitFilletMode restores pre-Fillet pick.
       clearEdgeHover();
       clearEdgeHighlight();
       setSelectedEdges([]);
@@ -2044,7 +2051,7 @@ const Viewport = forwardRef(({
       rebuildFeatureEdges();
       return;
     }
-    // Back / X leave Fillet but stay in Edge pick — drop the sharp-only cache.
+    // Leaving Fillet restores prior Face/Edge; when still in Edge, drop sharp-only cache.
     if (leftFillet) {
       featureEdgesSourceRef.current = null;
       rebuildFeatureEdges();

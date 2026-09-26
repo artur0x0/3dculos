@@ -77,6 +77,10 @@ console.log('cad mobile chrome harmonized to puzzle');
     /onPickModeChange\('face'\)/.test(panel) && /onPickModeChange\('edge'\)/.test(panel),
   );
   check(
+    'vertical rail selector gap',
+    /data-selector-group="pick-mode"/.test(panel) && /flex gap-1/.test(panel),
+  );
+  check(
     'view snaps open inward on the vertical rail',
     /popupAlign=\{verticalRail \? 'end' : 'start'\}/.test(panel),
   );
