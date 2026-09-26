@@ -101,8 +101,10 @@ import {
   enterFilletState,
   validateFilletAccept,
   defaultFilletParams,
+  normalizeFilletParams,
   hasFilletModeBlock,
 } from '../utils/filletMode';
+import { classifyFilletEdges, countDegenerateTriangles } from '../utils/filletEdgeClass';
 import {
   buildFeatureEdges,
   buildCoherentEdges,
@@ -332,6 +334,11 @@ const Viewport = forwardRef(({
   const filletBlendPreviewRef = useRef(null);
   const [filletToast, setFilletToast] = useState(null);
   const filletToastTimerRef = useRef(null);
+  /** Bumps when the solid mesh is replaced so fillet easy/hard recomputes. */
+  const [meshEpoch, setMeshEpoch] = useState(0);
+  /** Set on Fillet Accept; the next successful run reports zero-area scrap. */
+  const filletQualityWatchRef = useRef(false);
+  const [filletScrapNotice, setFilletScrapNotice] = useState(null);
   /** Successful Fillet Accept already left the mode; don't toast a false re-pick. */
   const edgeRematchToastSuppressRef = useRef(false);
   /** G1 tangent chain propagation for Edge pick — ON by default (circular / fillet loops). */
@@ -1504,11 +1511,13 @@ const Viewport = forwardRef(({
       return;
     }
     const buf = (typeof getHelperBuffer === 'function' ? getHelperBuffer() : '') || '';
+    filletQualityWatchRef.current = true;
     const ok = onCommitFillet?.({
       edges,
       params: gate.normalized,
       commitMode: hasFilletModeBlock(buf) ? 'append' : 'replace',
     });
+    if (!ok) filletQualityWatchRef.current = false;
     if (ok) {
       edgeRematchToastSuppressRef.current = true;
       pickModeRef.current = 'face';
@@ -1523,6 +1532,15 @@ const Viewport = forwardRef(({
   // Live sweep-fillet blend as edges accumulate. The payload is memoized so the
   // chip's pathOk flag and the painter share ONE build per input (Slice 27 nit:
   // the chip used to re-run buildFilletBlendPreview on every render just for .ok).
+  const filletEdgeClass = useMemo(() => {
+    if (!filletMode || !selectedEdges?.length) return null;
+    const params = normalizeFilletParams(filletMode.params || {}, selectedEdges);
+    return classifyFilletEdges(selectedEdges, {
+      radius: params.radius,
+      geometry: resultRef.current?.geometry,
+    });
+  }, [filletMode, selectedEdges, meshEpoch]);
+
   const filletBlendPayload = useMemo(
     () => (filletMode
       ? buildFilletBlendPreview(selectedEdges, filletMode.params)
@@ -3194,6 +3212,7 @@ const Viewport = forwardRef(({
     
     resultRef.current.geometry?.dispose();
     resultRef.current.geometry = geometry;
+    setMeshEpoch((n) => n + 1);
 
     // Dev-only: the single choke point where geometry reaches the scene. Report the exact
     // meshData object we just painted so automation can prove, by identity, that what is on
@@ -3344,6 +3363,16 @@ const Viewport = forwardRef(({
       // Render the result
       renderMeshData(meshData);
 
+      if (filletQualityWatchRef.current) {
+        filletQualityWatchRef.current = false;
+        const degenerates = countDegenerateTriangles(resultRef.current?.geometry);
+        setFilletScrapNotice(degenerates > 0
+          ? 'Fillet left zero-area faces. Undo restores the solid.'
+          : null);
+      } else {
+        setFilletScrapNotice(null);
+      }
+
       // Geometry replaced → previous face/edge picks are stale. Clear intentionally
       // and nudge the user when they were in edge pick mode.
       // Slice 27: in Fillet mode keep the picked wire — Accept uses literals, so
@@ -3398,6 +3427,7 @@ const Viewport = forwardRef(({
       return { ok: true, nonce };
 
     } catch (error) {
+      filletQualityWatchRef.current = false;
       console.error('Error executing script:', error);
       const msg = error.message || 'Script execution failed';
       stageExecErrorRef.current = msg;
@@ -3789,6 +3819,7 @@ const Viewport = forwardRef(({
             _sweepMax: sweepBlendHardMax(pathLengthFromEdges(selectedEdges)),
           }}
           pathOk={filletBlendPayload?.ok === true}
+          edgeClass={filletEdgeClass}
           compact={isMobile}
           onToggleTangent={() => setTangentProp((v) => !v)}
           onClear={() => {
@@ -3880,6 +3911,18 @@ const Viewport = forwardRef(({
         <div className="absolute top-16 left-1/2 -translate-x-1/2 z-30 pointer-events-none max-w-[min(22rem,calc(100%-2rem))]">
           <div className="bg-cyan-700 text-white text-xs font-sans font-medium px-3 py-2 rounded-full shadow-lg text-center">
             {contourToast}
+          </div>
+        </div>
+      )}
+
+      {filletScrapNotice && (
+        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-30 pointer-events-none max-w-[min(18rem,calc(100%-2rem))]">
+          <div
+            className="bg-red-950/95 border border-red-400/80 text-red-50 text-xs font-sans font-medium px-3 py-2 rounded-lg shadow-lg text-center"
+            role="status"
+            data-fillet-scrap="1"
+          >
+            {filletScrapNotice}
           </div>
         </div>
       )}

@@ -1,16 +1,18 @@
 import React from 'react';
-import { Check, X } from 'lucide-react';
+import { AlertTriangle, Check, X } from 'lucide-react';
 
 /**
  * Slice 27 — Fillet-in-mode chip (Edge-pick pattern).
  * Tangent (default-on) / Clear / Accept / Back. Live radius while edges accumulate.
- * Mobile-first compact card.
+ * Slice B: a hard edge shows a red banner (same red strip as the feature-modal
+ * size guard) and Accept stays enabled. Mobile-first compact card.
  */
 const FilletModeChip = ({
   edgeCount = 0,
   tangentOn = true,
   params = {},
   pathOk = false,
+  edgeClass = null,
   compact = false,
   onToggleTangent,
   onClear,
@@ -32,6 +34,7 @@ const FilletModeChip = ({
   const radius = params.radius;
   const radiusNum = Number(radius);
   const max = Number(params._sweepMax) > 0 ? Number(params._sweepMax) : 40;
+  const hard = edgeClass?.klass === 'hard';
 
   return (
     <div
@@ -41,7 +44,27 @@ const FilletModeChip = ({
         }`}
       role="group"
       aria-label="Fillet edge pick"
+      data-fillet-class={edgeClass?.klass || 'empty'}
     >
+      {hard && (
+        <div
+          className="mb-1.5 rounded border border-red-400/80 bg-red-950/80 px-2 py-1.5 text-[11px] leading-snug text-red-50"
+          role="status"
+          data-fillet-warn="hard"
+          data-fillet-reason={edgeClass.reason || ''}
+        >
+          <div className="flex items-start gap-1.5">
+            <AlertTriangle size={13} className="text-red-300 shrink-0 mt-0.5" aria-hidden="true" />
+            <div>
+              <span className="font-semibold text-red-200">Hard edge</span>
+              {edgeClass.reason ? ` · ${edgeClass.reason}` : ''}
+              <div className="text-[10px] text-red-100/95 mt-0.5">
+                Quality may be poor. Accept still runs.
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="font-bold font-sans text-amber-200">
@@ -129,6 +152,7 @@ const FilletModeChip = ({
           onClick={() => onAccept?.()}
           className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium
             bg-amber-600 hover:bg-amber-500 active:bg-amber-400 text-white shrink-0"
+          data-fillet-accept="enabled"
           title="Commit this fillet (makeSweepPath + filletAlongPath) and leave Fillet mode."
         >
           <Check size={14} />
