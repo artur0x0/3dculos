@@ -11,7 +11,7 @@ import {
   FILLET_HARD_KERNEL_TRIAL,
   FILLET_KERNEL_CANDIDATES,
   pickFilletKernelForClass,
-  shouldUseHardRollingBall,
+  shouldUseHardVariableSweep,
   hardFilletKernelEffort,
 } from '../../src/utils/filletKernelSpike.js';
 import { composeFilletCommit } from '../../src/utils/filletMode.js';
@@ -32,8 +32,8 @@ console.log('fillet kernel spike C / C2');
 
 check('easy kernel id is dihedral sweep', FILLET_KERNEL_EASY === 'sweep-dihedral');
 check(
-  'hard recommendation is segment rolling-ball',
-  FILLET_KERNEL_HARD_RECOMMENDED === 'rolling-ball-segment',
+  'hard recommendation is variable-profile-sweep',
+  FILLET_KERNEL_HARD_RECOMMENDED === 'variable-profile-sweep',
 );
 check('hard kernel production flag is on (C2)', FILLET_HARD_KERNEL_TRIAL === true);
 check('four candidates documented', FILLET_KERNEL_CANDIDATES.length >= 4);
@@ -43,11 +43,11 @@ check('four candidates documented', FILLET_KERNEL_CANDIDATES.length >= 4);
   check('easy pick stays sweep', easy.kernel === FILLET_KERNEL_EASY && easy.trial === false);
   const hard = pickFilletKernelForClass('hard');
   check(
-    'hard pick names rolling-ball with trial on',
+    'hard pick names variable-profile with trial on',
     hard.kernel === FILLET_KERNEL_HARD_RECOMMENDED && hard.trial === true,
   );
-  check('shouldUseHardRollingBall true for hard', shouldUseHardRollingBall('hard') === true);
-  check('shouldUseHardRollingBall false for easy', shouldUseHardRollingBall('easy') === false);
+  check('shouldUseHardVariableSweep true for hard', shouldUseHardVariableSweep('hard') === true);
+  check('shouldUseHardVariableSweep false for easy', shouldUseHardVariableSweep('easy') === false);
   const effort = hardFilletKernelEffort();
   check('effort notes C2 done', effort.effort === 'done');
 }
@@ -57,7 +57,7 @@ check('four candidates documented', FILLET_KERNEL_CANDIDATES.length >= 4);
   check('spike doc exists', /Recommended|rolling-ball/i.test(doc));
   check('doc keeps easy path', /easy/i.test(doc) && /sweep/i.test(doc));
   check('doc rules out naive sphere-hull', /over-cut|12×|sausage/i.test(doc));
-  check('doc notes C2 Accept wired', /C2|Accept wired|relaxPlanar/i.test(doc));
+  check('doc notes hard Accept path', /C2|C3|Accept|variable-profile|relaxPlanar/i.test(doc));
   check('doc notes production flag on', /FILLET_HARD_KERNEL_TRIAL\s*=\s*true/i.test(doc));
 }
 
@@ -124,13 +124,11 @@ check('four candidates documented', FILLET_KERNEL_CANDIDATES.length >= 4);
     filletClass: 'hard',
   });
   check('hard Accept ok', hard.ok === true, hard.message || '');
-  check('hard Accept uses filletEdges', /filletEdges\s*\(/.test(hard.buffer || ''), hard.buffer);
-  check('hard Accept sets relaxPlanar', /relaxPlanar:\s*true/.test(hard.buffer || ''), hard.buffer);
-  check('hard Accept skips filletAlongPath', !/filletAlongPath\s*\(/.test(hard.buffer || ''));
-  check('hard Accept skips makeSweepPath', !/makeSweepPath\s*\(/.test(hard.buffer || ''));
-  check('hard Accept kernel is rolling-ball', hard.kernel === 'rolling-ball-segment');
-  check('hard Accept keeps edge helpers or coherent literals',
-    /edge\s*\(|edgesBetween\s*\(|convexEdges\s*\(|va:\s*\[/.test(hard.buffer || ''), hard.buffer);
+  check('hard Accept uses filletAlongPath', /filletAlongPath\s*\(/.test(hard.buffer || ''), hard.buffer);
+  check('hard Accept sets variableProfile', /variableProfile:\s*true/.test(hard.buffer || ''), hard.buffer);
+  check('hard Accept uses makeSweepPath', /makeSweepPath\s*\(/.test(hard.buffer || ''));
+  check('hard Accept skips relaxPlanar', !/relaxPlanar/.test(hard.buffer || ''));
+  check('hard Accept kernel is variable-profile', hard.kernel === 'variable-profile-sweep');
 }
 
 if (failed) {

@@ -20,6 +20,7 @@ import {
   orientFilletFrame,
   FILLET_ARC_SEGMENTS,
 } from '../utils/filletAlongPath.js';
+import { densifyPathPoints, buildVariableProfileFrames } from '../utils/edgeTangencyField.js';
 import { indexBoundaryEdges } from '../utils/boundaryEdgeIds.js';
 import { assembleSweepPath } from '../utils/edgeSweepPath.js';
 import { buildMakeLoftSolid, offsetPlaneFrame } from '../utils/makeLoft.js';
@@ -3152,7 +3153,9 @@ function _s23ProbeSegments(M, part, points, closed) {
         best = e;
       }
     }
-    const hit = best && bestD <= Math.max(0.5, 0.55 * (segL || 1));
+    // Densified variable-profile knots are shorter than mesh edges — allow a
+    // slightly looser mid match so loft generators still pick up local walls.
+    const hit = best && bestD <= Math.max(0.85, Math.max(0.55 * (segL || 1), 0.35));
     raw.push({ p0, p1, T, length: segL, mid, best: hit ? best : null, matched: false });
   }
 
@@ -3369,8 +3372,93 @@ function _s23SweepRun(Manifold, CrossSection, runGeom, radius, profileKind, arcS
   return _s23SweepExplicit(Manifold, cs, sweepPts, sweepFrames, extrudeSegments);
 }
 
-function _s23BuildDihedralCutter(M, CrossSection, part, points, closed, radius, profileKind, arcSegs, testScale) {
-  const segs = _s23ProbeSegments(M, part, points, closed);
+/** Last variable-profile framing meta — golden pin (m3 bypass → missing / undensified). */
+let _filletVariableProfileMeta = null;
+
+function _recordVariableProfileMeta(meta) {
+  _filletVariableProfileMeta = meta;
+  if (typeof globalThis !== 'undefined') {
+    globalThis.__filletVariableProfileMeta = meta;
+  }
+}
+
+/**
+ * Probe wall normals (n0/n1) at each densified knot from the nearest convex edge.
+ * Same mid-match spirit as _s23ProbeSegments; feeds buildVariableProfileFrames.
+ */
+function _s23ProbeKnotNormals(M, part, points, closed) {
+  const edges = convexEdges(part);
+  const n = points.length;
+  const segCount = closed ? n : n - 1;
+  const segmentNormals = new Array(segCount).fill(null);
+  let seedNormals = null;
+  let checkedConvex = false;
+  const matchedIdx = [];
+
+  for (let i = 0; i < segCount; i++) {
+    const p0 = points[i];
+    const p1 = points[(i + 1) % n];
+    const segL = Math.hypot(p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]);
+    const mid = [(p0[0] + p1[0]) / 2, (p0[1] + p1[1]) / 2, (p0[2] + p1[2]) / 2];
+    let best = null;
+    let bestD = Infinity;
+    for (const e of edges) {
+      if (!e || !Array.isArray(e.va) || !Array.isArray(e.vb)) continue;
+      if (!e.n0 || !e.n1) continue;
+      const em = [(e.va[0] + e.vb[0]) / 2, (e.va[1] + e.vb[1]) / 2, (e.va[2] + e.vb[2]) / 2];
+      const d = Math.hypot(em[0] - mid[0], em[1] - mid[1], em[2] - mid[2]);
+      if (d < bestD) {
+        bestD = d;
+        best = e;
+      }
+    }
+    const hit = best && bestD <= Math.max(0.85, Math.max(0.55 * (segL || 1), 0.35));
+    if (!hit) continue;
+    if (!checkedConvex) {
+      const rProbe = Math.min(0.05, (segL || 1) * 0.25);
+      const sp = M.sphere(rProbe, 12, 6).transform(
+        [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, mid[0], mid[1], mid[2], 1],
+      );
+      const fIn = M.intersection(part, sp).volume() / sp.volume();
+      if (fIn >= 0.45) {
+        throw new Error('filletAlongPath: edge is concave (sweep fillet is external / material-remove only)');
+      }
+      checkedConvex = true;
+    }
+    const nr = { n0: best.n0, n1: best.n1 };
+    segmentNormals[i] = nr;
+    matchedIdx.push(i);
+    if (!seedNormals) seedNormals = nr;
+  }
+
+  if (!seedNormals) {
+    throw new Error(
+      'filletAlongPath: could not orient cutter to part (no nearby convex edge along the path). '
+      + 'Pass opts.initialNormal, or re-pick edges.',
+    );
+  }
+
+  // Carry nearest matched normals onto densified knots that missed a wall hit.
+  for (let i = 0; i < segCount; i++) {
+    if (segmentNormals[i]) continue;
+    let bestJ = matchedIdx[0];
+    let bestDist = Math.abs(i - bestJ);
+    for (const j of matchedIdx) {
+      let d = Math.abs(i - j);
+      if (closed) d = Math.min(d, segCount - d);
+      if (d < bestDist) {
+        bestDist = d;
+        bestJ = j;
+      }
+    }
+    segmentNormals[i] = segmentNormals[bestJ];
+  }
+
+  return { segmentNormals, seedNormals };
+}
+
+/** Shared run-group → sweep union used by #23 and C3 variable-profile cutters. */
+function _s23CuttersFromSegs(M, CrossSection, segs, closed, radius, profileKind, arcSegs, testScale) {
   const runs = _s23GroupRuns(segs, closed);
   const cutters = [];
   let expectVol = 0;
@@ -3409,6 +3497,64 @@ function _s23BuildDihedralCutter(M, CrossSection, part, points, closed, radius, 
 }
 
 /**
+ * C3 hard: per-knot path-normal inscribed-arc frames via buildVariableProfileFrames.
+ * Probes wall normals at densified knots, then sweeps with those N/B/theta frames.
+ */
+function _s23BuildVariableProfileCutter(
+  M, CrossSection, part, points, closed, radius, profileKind, arcSegs, testScale, rawSegCount,
+) {
+  const { segmentNormals, seedNormals } = _s23ProbeKnotNormals(M, part, points, closed);
+  const built = buildVariableProfileFrames(points, closed, {
+    radius,
+    segmentNormals,
+    seedNormals,
+  });
+  const frames = built.frames || [];
+  const n = points.length;
+  const segCount = closed ? n : n - 1;
+  // buildVariableProfileFrames always emits one frame per segment (strong or weak),
+  // so a length≠segCount throw is unreachable; strongFrames loud-fail covers the gap.
+  const strong = frames.filter((fr) => !fr.weak).length;
+  if (!strong) {
+    throw new Error(
+      'filletAlongPath: could not orient cutter to part (no inscribed-arc frames along the path). '
+      + 'Pass opts.initialNormal, or re-pick edges.',
+    );
+  }
+  _recordVariableProfileMeta({
+    usedFrames: true,
+    frameCount: frames.length,
+    densifiedPoints: points.length,
+    rawSegCount: Number(rawSegCount) || segCount,
+    strongFrames: strong,
+  });
+  const segs = [];
+  for (let i = 0; i < segCount; i++) {
+    const fr = frames[i];
+    const p0 = points[i];
+    const p1 = points[(i + 1) % n];
+    const length = Math.hypot(p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]);
+    segs.push({
+      T: fr.T,
+      N: fr.N,
+      B: fr.B,
+      theta: fr.theta,
+      length,
+      f0: fr.f0,
+      f1: fr.f1,
+      p0,
+      p1,
+    });
+  }
+  return _s23CuttersFromSegs(M, CrossSection, segs, closed, radius, profileKind, arcSegs, testScale);
+}
+
+function _s23BuildDihedralCutter(M, CrossSection, part, points, closed, radius, profileKind, arcSegs, testScale) {
+  const segs = _s23ProbeSegments(M, part, points, closed);
+  return _s23CuttersFromSegs(M, CrossSection, segs, closed, radius, profileKind, arcSegs, testScale);
+}
+
+/**
  * filletAlongPath(part, path, radius, opts?)
  * Sweep a dihedral fillet (or equal-leg chamfer) along path → boolean subtract.
  *
@@ -3429,6 +3575,8 @@ function _s23BuildDihedralCutter(M, CrossSection, part, points, closed, radius, 
  * @param {number} [opts.extrudeSegments]
  * @param {number} [opts._testCutterScale] — test-only: scale 2D cutter vertices
  *   (e.g. 4) against nominal r so the 8× oversize guard can be pinned
+ * @param {boolean} [opts.variableProfile] — C3 hard: densify path + per-knot
+ *   path-normal inscribed-arc frames (adapts to loft twist)
  */
 function filletAlongPath(part, path, radius, opts = {}) {
   const M = manifoldModule.Manifold;
@@ -3439,6 +3587,28 @@ function filletAlongPath(part, path, radius, opts = {}) {
   const arcSegs = opts.segments != null ? opts.segments : FILLET_ARC_SEGMENTS;
   let { points, closed, length } = _s23NormalizePath(path, opts);
 
+  // C3 hard: densify + per-knot path-normal inscribed-arc frames (buildVariableProfileFrames).
+  const variableProfile = !!opts.variableProfile;
+  const rawSegCount = opts._c3RawSegCount != null
+    ? Number(opts._c3RawSegCount)
+    : (closed ? points.length : Math.max(0, points.length - 1));
+  if (variableProfile && !opts._rawPath) {
+    const step = Math.max(0.75 * Number(radius) || 1, 0.5);
+    const dense = densifyPathPoints(points, closed, step);
+    if (dense.length > points.length) {
+      points = dense;
+      length = 0;
+      for (let i = 0; i < points.length - 1; i++) {
+        const a = points[i], b = points[i + 1];
+        length += Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+      }
+      if (closed) {
+        const a = points[points.length - 1], b = points[0];
+        length += Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+      }
+    }
+  }
+
   // Sweep-path policy seam (planFilletSweepPath): keep the full wire.
   // If a future planner returns mode:'runs' (PR #27 skip-micro), honor it so
   // the fillet-on-fillet gap net still mutation-tests that regression.
@@ -3446,7 +3616,7 @@ function filletAlongPath(part, path, radius, opts = {}) {
     const plan = planFilletSweepPath(points, closed, radius);
     if (plan.mode === 'runs') {
       let out = part;
-      const subOpts = { ...opts, _rawPath: true };
+      const subOpts = { ...opts, _rawPath: true, _c3RawSegCount: rawSegCount };
       for (const run of plan.runs) {
         out = filletAlongPath(out, { kind: 'sweepPath', points: run, closed: false }, radius, subOpts);
       }
@@ -3462,10 +3632,14 @@ function filletAlongPath(part, path, radius, opts = {}) {
   let cutter = null;
   let expectVolOverride = null;
   if (!opts.initialNormal) {
-    const built = _s23BuildDihedralCutter(
-      M, CrossSection, part, points, closed, radius, profileKind, arcSegs,
-      testingOversize ? testCutterScale : 1,
-    );
+    const scale = testingOversize ? testCutterScale : 1;
+    const built = variableProfile
+      ? _s23BuildVariableProfileCutter(
+        M, CrossSection, part, points, closed, radius, profileKind, arcSegs, scale, rawSegCount,
+      )
+      : _s23BuildDihedralCutter(
+        M, CrossSection, part, points, closed, radius, profileKind, arcSegs, scale,
+      );
     cutter = built.cutter;
     expectVolOverride = built.expectVol;
   }

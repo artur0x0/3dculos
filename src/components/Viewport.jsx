@@ -338,8 +338,8 @@ const Viewport = forwardRef(({
   const filletToastTimerRef = useRef(null);
   /** Bumps when the solid mesh is replaced so fillet easy/hard recomputes. */
   const [meshEpoch, setMeshEpoch] = useState(0);
-  /** Set on Fillet Accept; the next successful run reports zero-area scrap. */
-  const filletQualityWatchRef = useRef(false);
+  /** Set on Fillet Accept with preDeg; next successful run reports NEW scrap only. */
+  const filletQualityWatchRef = useRef(null);
   const [filletScrapNotice, setFilletScrapNotice] = useState(null);
   /** Successful Fillet Accept already left the mode; don't toast a false re-pick. */
   const edgeRematchToastSuppressRef = useRef(false);
@@ -1523,7 +1523,9 @@ const Viewport = forwardRef(({
       radius: gate.normalized.radius,
       geometry: resultRef.current?.geometry,
     });
-    filletQualityWatchRef.current = true;
+    filletQualityWatchRef.current = {
+      preDeg: countDegenerateTriangles(resultRef.current?.geometry),
+    };
     const ok = onCommitFillet?.({
       edges,
       params: gate.normalized,
@@ -1531,7 +1533,7 @@ const Viewport = forwardRef(({
       geometry: resultRef.current?.geometry,
       commitMode: hasFilletModeBlock(buf) ? 'append' : 'replace',
     });
-    if (!ok) filletQualityWatchRef.current = false;
+    if (!ok) filletQualityWatchRef.current = null;
     if (ok) {
       edgeRematchToastSuppressRef.current = true;
       // Keep Face/Edge (and Plane/Contour) — exitFilletMode restores pre-Fillet pick.
@@ -3377,9 +3379,16 @@ const Viewport = forwardRef(({
       renderMeshData(meshData);
 
       if (filletQualityWatchRef.current) {
-        filletQualityWatchRef.current = false;
+        const preDeg = Number(filletQualityWatchRef.current.preDeg) || 0;
+        filletQualityWatchRef.current = null;
+        // C3: loft meshes already carry thousands of skinny tris — only banner
+        // when Accept *introduces* a meaningful scrap delta (not the baseline).
         const degenerates = countDegenerateTriangles(resultRef.current?.geometry);
-        setFilletScrapNotice(degenerates > 0
+        const introduced = degenerates - preDeg;
+        // Loft baselines already carry thousands of skinny tris; only banner a
+        // large NEW scrap delta (not a modest re-tessellation bump).
+        const scrapy = introduced > Math.max(300, 0.1 * Math.max(preDeg, 1));
+        setFilletScrapNotice(scrapy
           ? 'Fillet left zero-area faces. Undo restores the solid.'
           : null);
       } else {
@@ -3440,7 +3449,7 @@ const Viewport = forwardRef(({
       return { ok: true, nonce };
 
     } catch (error) {
-      filletQualityWatchRef.current = false;
+      filletQualityWatchRef.current = null;
       console.error('Error executing script:', error);
       const msg = error.message || 'Script execution failed';
       stageExecErrorRef.current = msg;

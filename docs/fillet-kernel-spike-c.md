@@ -85,3 +85,11 @@ Face-offset stays a later multi-slice only if Manifold gains solid offset or we 
 ## Non-goals (unchanged)
 
 Hard-block Accept; Slice D warn heuristics; spinner/speed; game mode; easy-path rewrite.
+
+
+## Slice C3 — Variable-profile hard sweep (2026-09-26)
+
+- Shared **tangency + normal field** (`src/utils/edgeTangencyField.js`) for Tangent-on and fillet framing.
+- Hard Accept supersedes C2 `filletEdges+relaxPlanar` with `filletAlongPath(..., { variableProfile: true })`: densified path-normal frames, inscribed arc of radius R in the local wall square (side ~2R).
+- Viewport scrap banner is **delta-based** (loft baseline needles no longer false-trigger “zero-area faces”).
+- Easy Prim/boxy path unchanged. Red Hard-edge warn from B stays. Face-offset still out of scope.
