@@ -44,6 +44,15 @@ console.log('fillet follow-up — Accept chrome + blend loud-fail');
   check('chip has X dismiss without committing', /Dismiss Fillet mode without committing/.test(chip));
   check('Accept leaves Fillet mode', /exitFilletMode\(\)/.test(view) && /commitMode:/.test(view));
   check('Back is still an exit', /onBack=\{exitFilletMode\}/.test(view));
+  check(
+    'Accept does not force Face pick',
+    !/if \(ok\) \{[\s\S]{0,220}setPickMode\('face'\)/.test(view),
+  );
+  check(
+    'exit restores prior Face/Edge',
+    /filletPriorPickModeRef/.test(view)
+      && /filletPriorPickModeRef\.current === 'edge' \? 'edge' : 'face'/.test(view),
+  );
 
   const blend = {
     key: '9-10',
