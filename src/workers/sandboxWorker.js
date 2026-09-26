@@ -1867,25 +1867,48 @@ function _c6Len(v) { return Math.hypot(v[0], v[1], v[2]); }
 // (stale/degenerate mesh lookup, concave edge, degenerate face angle) —
 // BEFORE any run decision is made, so a single bad edge anywhere in the
 // list still fails loud, in the same order as before.
-function _c6EdgeGeom(M, part, mesh, e, r) {
+function _c6InFaceFromNormal(n, d, nOther) {
+  if (!n || !d) return null;
+  let f = _c6Cross(n, d);
+  if (_c6Len(f) < 1e-8) return null;
+  f = _c6Norm(f);
+  if (nOther) {
+    const toward = [-nOther[0], -nOther[1], -nOther[2]];
+    if (f[0]*toward[0] + f[1]*toward[1] + f[2]*toward[2] < 0)
+      f = [-f[0], -f[1], -f[2]];
+  }
+  return f;
+}
+
+function _c6EdgeGeom(M, part, mesh, e, r, opts = {}) {
+  const relaxPlanar = !!opts.relaxPlanar;
   const P0 = e.va, P1 = e.vb;
   const L = Math.hypot(P1[0]-P0[0], P1[1]-P0[1], P1[2]-P0[2]);
   if (L < 1e-9) return null;
   const d = [(P1[0]-P0[0])/L, (P1[1]-P0[1])/L, (P1[2]-P0[2])/L];
 
-  // in-face boundary rays from the corner: each of the two triangles on
-  // the edge has a third vertex X inside its face, so (X − P0) projected
-  // perpendicular to the edge is the in-face direction.
+  // in-face boundary rays: prefer mesh triangles on the edge. Hard Accept
+  // (relaxPlanar) may pass #49 coherent segments whose endpoints are not a
+  // single mesh triangle edge — fall back to carried n0/n1 face normals.
   const eKey = e.a < e.b ? e.a * 1e9 + e.b : e.b * 1e9 + e.a;
   const ti = mesh.pairMap.get(eKey);
-  if (!ti || ti.length !== 2)
+  let f0 = null;
+  let f1 = null;
+  if (ti && ti.length === 2) {
+    const thirdVertex = (tri) => {
+      for (let k = 0; k < 3; k++) if (tri.vs[k] !== e.a && tri.vs[k] !== e.b) return tri.v[k];
+      throw new Error('filletEdges: degenerate edge triangle');
+    };
+    f0 = _c6InFaceDir(thirdVertex(mesh.tris[ti[0]]), P0, d);
+    f1 = _c6InFaceDir(thirdVertex(mesh.tris[ti[1]]), P0, d);
+  } else if (relaxPlanar && e.n0 && e.n1) {
+    f0 = _c6InFaceFromNormal(e.n0, d, e.n1);
+    f1 = _c6InFaceFromNormal(e.n1, d, e.n0);
+  } else if (!ti || ti.length !== 2) {
     throw new Error('filletEdges: edge not found in mesh (stale selection?)');
-  const thirdVertex = (tri) => {
-    for (let k = 0; k < 3; k++) if (tri.vs[k] !== e.a && tri.vs[k] !== e.b) return tri.v[k];
-    throw new Error('filletEdges: degenerate edge triangle');
-  };
-  const f0 = _c6InFaceDir(thirdVertex(mesh.tris[ti[0]]), P0, d);
-  const f1 = _c6InFaceDir(thirdVertex(mesh.tris[ti[1]]), P0, d);
+  }
+  if (!f0 || !f1)
+    throw new Error('filletEdges: could not resolve in-face directions for edge');
 
   // convexity guard: ball probe at the midpoint (same criterion as
   // convexEdges — a dot-product test cannot distinguish a 90° concave
@@ -2114,10 +2137,11 @@ function _c6ClosedRunCutter(M, manifoldModule, run, geoms) {
  *            vertex data).
  *   radius = number (same r for all edges) OR number[] parallel to the
  *            edge list (per-edge radii).
- *   opts   = { sphericalCorners: true } — additionally rounds box-like
- *            (~90°, equal-radius) corners where THREE filleted edges meet,
- *            replacing the cusp with a spherical patch tangent to all three
- *            fillet sails (C1 junction) and to all three faces.
+ *   opts   = { sphericalCorners: true, relaxPlanar: false } —
+ *            sphericalCorners rounds box-like (~90°, equal-radius) corners
+ *            where THREE filleted edges meet (spherical patch / C1 junction).
+ *            relaxPlanar (Slice C2 hard Accept) skips the curved-face planar
+ *            assert so loft generators use per-segment rolling-ball cutters.
  * Returns the filleted part. v2: edges that chain into a CLOSED CIRCULAR
  * RUN (see block header) fillet as one exact revolved feature even though
  * each mesh segment is individually short (a tessellated circular rim).
@@ -2132,6 +2156,9 @@ function filletEdges(part, edgesIn, radiusIn, opts = {}) {
   // trivial mesh cost (~400 tris per edge vs ~108).
   const SEGMENTS = 384;
   const sphericalCorners = !!opts.sphericalCorners;
+  // Slice C2 hard path: skip local planar-adjacent assert so loft generators
+  // can use the same parallelepiped−cylinder cutter per coherent segment.
+  const relaxPlanar = !!opts.relaxPlanar;
 
   let edges = edgesIn;
   let radiusArr = radiusIn;
@@ -2164,7 +2191,7 @@ function filletEdges(part, edgesIn, radiusIn, opts = {}) {
   // Per-edge geometry ONCE (also validates every edge — same throws as v1,
   // same order), THEN run detection, THEN try the exact closed-circular-run
   // cutter per run; runs that don't fit one fall back to v1 per-edge.
-  const geoms = edges.map(e => _c6EdgeGeom(M, part, mesh, e, radii.get(e)));
+  const geoms = edges.map(e => _c6EdgeGeom(M, part, mesh, e, radii.get(e), { relaxPlanar }));
   const runs = _c6DetectRuns(geoms);
   const runCutter = new Map(); // run -> cutter Manifold (only for successful closed runs)
   const runOf = new Array(edges.length);
@@ -2181,9 +2208,11 @@ function filletEdges(part, edgesIn, radiusIn, opts = {}) {
   // Planarity assert: SINGLETON and fallback edges only (v1 behaviour).
   // Successfully-fit closed circular runs skip it — the circle fit + on-
   // circle check IS the run-level validity proof; see block header.
+  // Hard Accept (C2) passes relaxPlanar and skips this assert so generator
+  // walls use per-segment rolling-ball cutters instead of loud-failing.
   for (let i = 0; i < edges.length; i++) {
     if (!geoms[i] || isHandled(i)) continue;
-    _c6AssertPlanarAtEdge(mesh, edges[i]);
+    if (!relaxPlanar) _c6AssertPlanarAtEdge(mesh, edges[i]);
   }
 
   const cutters = [];
@@ -2377,6 +2406,35 @@ function filletEdges(part, edgesIn, radiusIn, opts = {}) {
       const seCapTool = _c4StatusError(out);
       if (seCapTool)
         throw new Error(`filletEdges: bad corner-cap result (${seCapTool})`);
+    }
+  }
+  // Hard rolling-ball (relaxPlanar): loud-fail scrap rather than leave Area≈0
+  // needles unlabeled — Auto-Run restores the prior solid; Undo still works.
+  if (relaxPlanar) {
+    try {
+      const mOut = out.getMesh();
+      const np = mOut.numProp || 3;
+      const V = mOut.vertProperties;
+      const T = mOut.triVerts;
+      const nTri = T.length / 3;
+      let tiny = 0;
+      for (let ti = 0; ti < nTri; ti++) {
+        const i0 = T[ti * 3] * np;
+        const i1 = T[ti * 3 + 1] * np;
+        const i2 = T[ti * 3 + 2] * np;
+        const ax = V[i1] - V[i0], ay = V[i1 + 1] - V[i0 + 1], az = V[i1 + 2] - V[i0 + 2];
+        const bx = V[i2] - V[i0], by = V[i2 + 1] - V[i0 + 1], bz = V[i2 + 2] - V[i0 + 2];
+        const A = 0.5 * Math.hypot(ay * bz - az * by, az * bx - ax * bz, ax * by - ay * bx);
+        if (A < 1e-8) tiny++;
+      }
+      if (isFilletSliverDirty(tiny, nTri)) {
+        throw new Error(
+          `filletEdges: result has ${tiny}/${nTri} degenerate triangles (sliver scraps) — `
+          + 'failing loud rather than shipping a dirty solid; try a smaller radius',
+        );
+      }
+    } catch (e) {
+      if (/sliver scraps|degenerate triangles/i.test(String(e && e.message))) throw e;
     }
   }
   return out;

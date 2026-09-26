@@ -33,6 +33,8 @@ import {
   pathLengthFromEdges,
   sweepBlendHardMax,
 } from './selectEdge.js';
+import { classifyFilletEdges } from './filletEdgeClass.js';
+import { shouldUseHardRollingBall } from './filletKernelSpike.js';
 
 export const FILLET_ENTRY_IDS = new Set(['filletEdges']);
 
@@ -381,14 +383,24 @@ export function countMakeSweepPath(buffer) {
 }
 
 /**
- * Accept → insert, replace, or append in-mode Fillet (makeSweepPath + filletAlongPath).
+ * Accept → insert, replace, or append in-mode Fillet.
+ * Easy / default: makeSweepPath + filletAlongPath.
+ * Hard (C2, production flag on): filletEdges + relaxPlanar (segment rolling-ball).
  * commitMode 'replace' (default) updates the last marked block.
  * commitMode 'append' keeps that block and adds another, so a second sharp
  * edge is filleted on the solid the first block already produced.
  *
- * @returns {{ ok: true, buffer: string, run: true } | { ok: false, message: string }}
+ * @param {string} buffer
+ * @param {{ edges?: object[]|null, params?: object, commitMode?: string, filletClass?: string|null, geometry?: object|null }} [opts]
+ * @returns {{ ok: true, buffer: string, run: true, kernel?: string } | { ok: false, message: string }}
  */
-export function composeFilletCommit(buffer, { edges = null, params = {}, commitMode = 'replace' } = {}) {
+export function composeFilletCommit(buffer, {
+  edges = null,
+  params = {},
+  commitMode = 'replace',
+  filletClass = null,
+  geometry = null,
+} = {}) {
   const gate = validateFilletAccept(edges, params);
   if (!gate.ok) return gate;
 
@@ -400,12 +412,31 @@ export function composeFilletCommit(buffer, { edges = null, params = {}, commitM
     };
   }
 
+  // Prefer an explicit class from the viewport (#50 chip). Without geometry,
+  // untagged edges look "hard" to classifyFilletEdges — do not flip goldens /
+  // one-shot Accept onto the rolling-ball path unless callers ask for hard.
+  let klass = filletClass || params.filletClass || null;
+  const geom = geometry || params.geometry || null;
+  if (!klass && geom) {
+    klass = classifyFilletEdges(edges, {
+      radius: gate.normalized.radius,
+      geometry: geom,
+    }).klass;
+  }
+  if (!klass) klass = 'easy';
+  const hardRollingBall = shouldUseHardRollingBall(klass);
+  const emitParams = {
+    ...gate.normalized,
+    _filletMode: true,
+    ...(hardRollingBall ? { _hardRollingBall: true } : {}),
+  };
+
   const base = commitMode === 'append' ? text : stripFilletModeBlock(text);
   const composed = composeHelperInsert(
     base,
     'filletEdges',
     null,
-    { ...gate.normalized, _filletMode: true },
+    emitParams,
     null,
     edges,
   );
@@ -416,7 +447,26 @@ export function composeFilletCommit(buffer, { edges = null, params = {}, commitM
     };
   }
   const owned = filletModeOwnedRegion(composed);
-  if (gate.normalized.strategy === 'sweep') {
+  if (hardRollingBall) {
+    if (!/filletEdges\s*\(/.test(owned)) {
+      return {
+        ok: false,
+        message: 'composeFilletCommit: filletEdges missing — refusing silent no-op.',
+      };
+    }
+    if (!/relaxPlanar:\s*true/.test(owned)) {
+      return {
+        ok: false,
+        message: 'composeFilletCommit: hard rolling-ball needs relaxPlanar — refusing silent no-op.',
+      };
+    }
+    if (/filletAlongPath\s*\(/.test(owned)) {
+      return {
+        ok: false,
+        message: 'composeFilletCommit: hard Accept must not use filletAlongPath.',
+      };
+    }
+  } else if (gate.normalized.strategy === 'sweep') {
     if (!/makeSweepPath\s*\(/.test(owned)) {
       return {
         ok: false,
@@ -441,5 +491,10 @@ export function composeFilletCommit(buffer, { edges = null, params = {}, commitM
       message: 'composeFilletCommit: fillet-mode markers missing — refusing unscoped insert.',
     };
   }
-  return { ok: true, buffer: composed, run: true };
+  return {
+    ok: true,
+    buffer: composed,
+    run: true,
+    kernel: hardRollingBall ? 'rolling-ball-segment' : 'sweep-dihedral',
+  };
 }

@@ -621,8 +621,12 @@ export function emitSelectedEdgeLiteralLines(_body, selectedEdges, names, alloca
     }
     if (!(length > 1e-12)) continue;
     const key = e.key ? `, key: ${JSON.stringify(String(e.key))}` : '';
+    let normals = '';
+    if (Array.isArray(e.n0) && e.n0.length >= 3 && Array.isArray(e.n1) && e.n1.length >= 3) {
+      normals = `, n0: ${formatVec3(e.n0, 6)}, n1: ${formatVec3(e.n1, 6)}`;
+    }
     lits.push(
-      `{ a: ${e.a}, b: ${e.b}, va: ${va}, vb: ${vb}, length: ${+length.toFixed(6)}${key} }`,
+      `{ a: ${e.a}, b: ${e.b}, va: ${va}, vb: ${vb}, length: ${+length.toFixed(6)}${key}${normals} }`,
     );
   }
   if (!lits.length) {

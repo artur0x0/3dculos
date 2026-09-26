@@ -12,7 +12,7 @@ Compare hard-edge blend options under browser/WASM Manifold and recommend a defa
 
 | Capability | Status |
 | --- | --- |
-| `filletAlongPath` dihedral sweep + boolean subtract | Production path (easy + hard today) |
+| `filletAlongPath` dihedral sweep + boolean subtract | Production path (**easy**; hard until C2) |
 | `filletEdges` parallelepiped − cylinder (planar) | Exact on boxy edges; throws on curved-adjacent faces |
 | `Manifold.sphere` / hull / boolean | Available; used for convexity probes + corner caps |
 | Solid `offset()` / minkowski | **Not** in bundled Manifold (shell fakes round via corner spheres) |
@@ -47,7 +47,7 @@ No solid offset/minkowski. Building offset surfaces for non-planar loft walls is
 
 **Feasible:** yes — preferred product shape.
 
-`#50` already classifies. Easy keeps dihedral sweep + goldens. Hard routes to (1)’s segment rolling-ball once wired. Slice C does **not** flip Accept to that path (flag `FILLET_HARD_KERNEL_TRIAL` stays false).
+`#50` already classifies. Easy keeps dihedral sweep + goldens. **C2** wires hard Accept to (1)’s segment rolling-ball (`FILLET_HARD_KERNEL_TRIAL=true`, production-on).
 
 ### 4. Adaptive / multi-pass sweep
 
@@ -60,19 +60,27 @@ Extra passes cost mobile time (loft stand-in sweep ~200 ms already) without fixi
 | Class | Kernel | Effort |
 | --- | --- | --- |
 | **Easy** | Keep current dihedral sweep (`filletAlongPath`) | none |
-| **Hard** | **Segment-wise rolling-ball** (reuse `filletEdges` singleton cutter math on `#49` coherent segments; relax planar-adjacent assert for generator walls; optional corner caps) | **1 follow-up PR** (C2) |
+| **Hard** | **Segment-wise rolling-ball** (reuse `filletEdges` singleton cutter math on `#49` coherent segments; `relaxPlanar` for generator walls; optional corner caps) | **Done in C2** |
 
 Face-offset stays a later multi-slice only if Manifold gains solid offset or we invest in a custom offsetter.
 
 **Perf:** Expect hard path similar to or slightly above planar `filletEdges` per segment; avoid naive sphere-hull. Still need Slice Speed/spinner for long loft chains — out of scope here.
 
-**Quality:** Boxy easy unchanged. Loft generators should lose most zero-area sweep scraps; warn from `#50` remains until C2 proves clean Accept.
+**Quality:** Boxy easy unchanged. Loft generators should lose most zero-area sweep scraps; `#50` red Hard edge warn remains (junction quality may still be imperfect).
 
 ## What shipped in Slice C
 
-- This doc + `src/utils/filletKernelSpike.js` (recommendation helpers; **not** wired to Accept).
+- This doc + `src/utils/filletKernelSpike.js` (recommendation helpers; Accept wired in C2).
 - Selector spacing (Plane / Contour / Edge / Face gap).
 - Persist Face/Edge pick mode (and Plane/Contour toggles) after Fillet Accept / clean exit.
+
+## Slice C2 — Accept wired (2026-09-25)
+
+- Hard-class Fillet Accept → `filletEdges(..., { relaxPlanar: true, sphericalCorners })` on the selected `#49` coherent segments (lean-A `edge` / `edgesBetween` when tagged).
+- Easy-class Accept unchanged (`makeSweepPath` + `filletAlongPath`).
+- Flag **`FILLET_HARD_KERNEL_TRIAL=true`** (production-on for hard class).
+- Loud fail on scrap-sheet needles for the hard path (keeps prior solid via Auto-Run restore); Undo still restores.
+- No naive sphere-hull; face-offset still out of scope.
 
 ## Non-goals (unchanged)
 
