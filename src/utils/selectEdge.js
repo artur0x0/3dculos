@@ -553,13 +553,15 @@ export function tangentAlign(t0, t1) {
  */
 export function propagateTangentEdges(featureEdges, seedEdge, opts = {}) {
   // C3: true G1 (tangent + wall-normal continuity) via shared tangency field.
-  // Soft-fails to the seed; caps at COHERENT_EDGE_MAX (no #49 spaghetti).
+  // Soft-fails to the seed. Walker is uncapped so long legitimate G1 wires
+  // (playtest ~98) return whole; callers refuse over-cap floods via
+  // COHERENT_EDGE_MAX (see toggleEdgeSelectionPropagated).
   if (!seedEdge) return [];
   const chain = propagateTrueTangentEdges(featureEdges || [], seedEdge, {
     tolDeg: opts.tolDeg != null ? opts.tolDeg : TANGENCY_PROP_DEG,
     normalAlign: opts.normalAlign != null ? opts.normalAlign : TANGENCY_NORMAL_ALIGN,
     adj: opts.adj || buildEdgeVertexAdj(featureEdges || []),
-    max: COHERENT_EDGE_MAX,
+    max: 1e9,
   });
   return chain.map((e) => copyPickEdge(e, edgeKey(e)));
 }

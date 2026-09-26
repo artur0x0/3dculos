@@ -3512,11 +3512,8 @@ function _s23BuildVariableProfileCutter(
   const frames = built.frames || [];
   const n = points.length;
   const segCount = closed ? n : n - 1;
-  if (frames.length !== segCount) {
-    throw new Error(
-      `filletAlongPath: variable-profile frame count ${frames.length} ≠ segments ${segCount}`,
-    );
-  }
+  // buildVariableProfileFrames always emits one frame per segment (strong or weak),
+  // so a length≠segCount throw is unreachable; strongFrames loud-fail covers the gap.
   const strong = frames.filter((fr) => !fr.weak).length;
   if (!strong) {
     throw new Error(

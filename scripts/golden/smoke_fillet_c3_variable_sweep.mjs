@@ -338,6 +338,18 @@ return part;
       wouldBanner === false,
       `pre=${preDeg} post=${postDeg} introduced=${introduced}`,
     );
+    // Geometry pin (B3): swept solid removes ~5 at R=1.6 on this loft fixture.
+    // Bookkeeping-only WASM meta pins miss 8× over-cut (theta*0.6 → ~40 removed).
+    const baseVol = loft.volume;
+    const hardVol = hardPayload.volume;
+    const removed = (Number.isFinite(baseVol) && Number.isFinite(hardVol))
+      ? (baseVol - hardVol)
+      : NaN;
+    check(
+      'hard loft R=1.6 removes ~5 volume (geometry pin)',
+      Number.isFinite(removed) && removed > 3.5 && removed < 8,
+      `base=${baseVol} hard=${hardVol} removed=${removed}`,
+    );
   }
 }
 
