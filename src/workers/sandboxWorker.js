@@ -2410,31 +2410,29 @@ function filletEdges(part, edgesIn, radiusIn, opts = {}) {
   }
   // Hard rolling-ball (relaxPlanar): loud-fail scrap rather than leave Area≈0
   // needles unlabeled — Auto-Run restores the prior solid; Undo still works.
+  // Fail closed: scrap throw and any unexpected inspection fault must
+  // propagate — never swallow unrecognized errors into `return out`.
   if (relaxPlanar) {
-    try {
-      const mOut = out.getMesh();
-      const np = mOut.numProp || 3;
-      const V = mOut.vertProperties;
-      const T = mOut.triVerts;
-      const nTri = T.length / 3;
-      let tiny = 0;
-      for (let ti = 0; ti < nTri; ti++) {
-        const i0 = T[ti * 3] * np;
-        const i1 = T[ti * 3 + 1] * np;
-        const i2 = T[ti * 3 + 2] * np;
-        const ax = V[i1] - V[i0], ay = V[i1 + 1] - V[i0 + 1], az = V[i1 + 2] - V[i0 + 2];
-        const bx = V[i2] - V[i0], by = V[i2 + 1] - V[i0 + 1], bz = V[i2 + 2] - V[i0 + 2];
-        const A = 0.5 * Math.hypot(ay * bz - az * by, az * bx - ax * bz, ax * by - ay * bx);
-        if (A < 1e-8) tiny++;
-      }
-      if (isFilletSliverDirty(tiny, nTri)) {
-        throw new Error(
-          `filletEdges: result has ${tiny}/${nTri} degenerate triangles (sliver scraps) — `
-          + 'failing loud rather than shipping a dirty solid; try a smaller radius',
-        );
-      }
-    } catch (e) {
-      if (/sliver scraps|degenerate triangles/i.test(String(e && e.message))) throw e;
+    const mOut = out.getMesh();
+    const np = mOut.numProp || 3;
+    const V = mOut.vertProperties;
+    const T = mOut.triVerts;
+    const nTri = T.length / 3;
+    let tiny = 0;
+    for (let ti = 0; ti < nTri; ti++) {
+      const i0 = T[ti * 3] * np;
+      const i1 = T[ti * 3 + 1] * np;
+      const i2 = T[ti * 3 + 2] * np;
+      const ax = V[i1] - V[i0], ay = V[i1 + 1] - V[i0 + 1], az = V[i1 + 2] - V[i0 + 2];
+      const bx = V[i2] - V[i0], by = V[i2 + 1] - V[i0 + 1], bz = V[i2 + 2] - V[i0 + 2];
+      const A = 0.5 * Math.hypot(ay * bz - az * by, az * bx - ax * bz, ax * by - ay * bx);
+      if (A < 1e-8) tiny++;
+    }
+    if (isFilletSliverDirty(tiny, nTri)) {
+      throw new Error(
+        `filletEdges: result has ${tiny}/${nTri} degenerate triangles (sliver scraps) — `
+        + 'failing loud rather than shipping a dirty solid; try a smaller radius',
+      );
     }
   }
   return out;

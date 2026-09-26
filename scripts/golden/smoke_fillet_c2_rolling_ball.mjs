@@ -7,6 +7,7 @@
  * - relaxPlanar filletEdges on a loft generator succeeds and is manifold-ish
  * - fewer/no scrap-sheet needles vs pre-C2 single-sweep failure mode
  * - easy cube Accept still uses filletAlongPath
+ * - known-scrap relaxPlanar commit loud-fails /sliver scraps/ (#48-style bar)
  */
 import { register } from 'node:module';
 import { BufferGeometry, BufferAttribute } from 'three';
@@ -188,9 +189,9 @@ return part;
     hardErr = e;
   }
   check('hard rolling-ball exec succeeds', !!hardPayload && !hardErr, hardErr?.message || '');
+  let hardTiny = null;
   if (hardPayload?.mesh) {
     const sc = sliverCount(hardPayload.mesh);
-    check('hard result not scrap-sheet dirty', sc.dirty === false, `tiny=${sc.tiny}/${sc.nTri}`);
     // Shared scrap-sheet gate (same as filletEdges loud-fail) is the
     // manifold-ish bar — dense loft meshes can have many skinny tris.
     check(
@@ -198,10 +199,13 @@ return part;
       sc.dirty === false,
       `tiny=${sc.tiny}/${sc.nTri}`,
     );
+    hardTiny = sc.tiny;
   }
 
-  // Compare: single RMF sweep on same generator (pre-C2 path) — may be dirty.
+  // Compare: single RMF sweep on same generator (pre-C2 path) — may be dirty
+  // or loud-fail; either way hardTiny must stay ≤ the sweep needle count.
   let sweepTiny = null;
+  let sweepErr = null;
   try {
     const mid = [
       (gen.va[0] + gen.vb[0]) / 2,
@@ -228,16 +232,39 @@ return part;
   } catch (e) {
     // Sweep may loud-fail on slivers — that is the pre-C2 failure mode.
     sweepTiny = Infinity;
-    check('pre-C2 sweep failed or threw (expected possible)', true, e.message);
+    sweepErr = e;
   }
-  if (hardPayload?.mesh && sweepTiny != null) {
-    const hardTiny = sliverCount(hardPayload.mesh).tiny;
+  if (hardTiny != null && sweepTiny != null) {
     check(
       'hard rolling-ball needles ≤ pre-C2 sweep needles',
       hardTiny <= sweepTiny,
-      `hard=${hardTiny} sweep=${sweepTiny}`,
+      `hard=${hardTiny} sweep=${sweepTiny}${sweepErr ? ` (sweep threw: ${sweepErr.message})` : ''}`,
     );
   }
+}
+
+{
+  // B2 / #48-style bar: known-scrap relaxPlanar hard commit must loud-fail.
+  // Coarse cylinder + all convexEdges + small r → scrap-sheet needles;
+  // gutting the relaxPlanar scrap guard (or neutering SLIVER_MAX_ABS) goes green.
+  let scrapThrew = false;
+  let scrapMsg = '';
+  try {
+    await exec(`
+let part = Manifold.cylinder(20, 10, 10, 16, true);
+const edges = convexEdges(part);
+part = filletEdges(part, edges, 0.5, { relaxPlanar: true, sphericalCorners: false });
+return part;
+`);
+  } catch (e) {
+    scrapThrew = true;
+    scrapMsg = e.message || String(e);
+  }
+  check(
+    'known-scrap relaxPlanar loud-fails sliver scraps',
+    scrapThrew && /sliver scraps/i.test(scrapMsg),
+    scrapThrew ? scrapMsg : 'did not throw',
+  );
 }
 
 {

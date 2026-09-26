@@ -53,6 +53,11 @@ console.log('fillet follow-up — Accept chrome + blend loud-fail');
     /filletPriorPickModeRef/.test(view)
       && /filletPriorPickModeRef\.current === 'edge' \? 'edge' : 'face'/.test(view),
   );
+  // Carry-over #51: snapshot must run BEFORE exitContourMode (which forces face).
+  check(
+    'enterFillet snapshots pick mode before exitContourMode',
+    /filletPriorPickModeRef\.current\s*=\s*pickModeRef\.current[\s\S]{0,120}exitContourMode\(\)/.test(view),
+  );
 
   const blend = {
     key: '9-10',
