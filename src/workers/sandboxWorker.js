@@ -20,6 +20,7 @@ import {
   orientFilletFrame,
   FILLET_ARC_SEGMENTS,
 } from '../utils/filletAlongPath.js';
+import { densifyPathPoints } from '../utils/edgeTangencyField.js';
 import { indexBoundaryEdges } from '../utils/boundaryEdgeIds.js';
 import { assembleSweepPath } from '../utils/edgeSweepPath.js';
 import { buildMakeLoftSolid, offsetPlaneFrame } from '../utils/makeLoft.js';
@@ -3152,7 +3153,9 @@ function _s23ProbeSegments(M, part, points, closed) {
         best = e;
       }
     }
-    const hit = best && bestD <= Math.max(0.5, 0.55 * (segL || 1));
+    // Densified variable-profile knots are shorter than mesh edges — allow a
+    // slightly looser mid match so loft generators still pick up local walls.
+    const hit = best && bestD <= Math.max(0.85, Math.max(0.55 * (segL || 1), 0.35));
     raw.push({ p0, p1, T, length: segL, mid, best: hit ? best : null, matched: false });
   }
 
@@ -3429,6 +3432,8 @@ function _s23BuildDihedralCutter(M, CrossSection, part, points, closed, radius, 
  * @param {number} [opts.extrudeSegments]
  * @param {number} [opts._testCutterScale] — test-only: scale 2D cutter vertices
  *   (e.g. 4) against nominal r so the 8× oversize guard can be pinned
+ * @param {boolean} [opts.variableProfile] — C3 hard: densify path + per-knot
+ *   path-normal inscribed-arc frames (adapts to loft twist)
  */
 function filletAlongPath(part, path, radius, opts = {}) {
   const M = manifoldModule.Manifold;
@@ -3438,6 +3443,26 @@ function filletAlongPath(part, path, radius, opts = {}) {
   const profileKind = (opts.profile === 'chamfer') ? 'chamfer' : 'fillet';
   const arcSegs = opts.segments != null ? opts.segments : FILLET_ARC_SEGMENTS;
   let { points, closed, length } = _s23NormalizePath(path, opts);
+
+  // C3 hard: densify so path-normal frames track loft twist (one long coherent
+  // segment is not enough — probe each knot against local walls).
+  const variableProfile = !!opts.variableProfile;
+  if (variableProfile && !opts._rawPath) {
+    const step = Math.max(0.75 * Number(radius) || 1, 0.5);
+    const dense = densifyPathPoints(points, closed, step);
+    if (dense.length > points.length) {
+      points = dense;
+      length = 0;
+      for (let i = 0; i < points.length - 1; i++) {
+        const a = points[i], b = points[i + 1];
+        length += Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+      }
+      if (closed) {
+        const a = points[points.length - 1], b = points[0];
+        length += Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+      }
+    }
+  }
 
   // Sweep-path policy seam (planFilletSweepPath): keep the full wire.
   // If a future planner returns mode:'runs' (PR #27 skip-micro), honor it so

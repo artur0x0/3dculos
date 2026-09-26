@@ -5,6 +5,7 @@
  */
 
 import { Vector3 } from 'three';
+import { propagateTrueTangentEdges } from './edgeTangencyField.js';
 
 const DEFAULT_FEATURE_DEG = 2;
 
@@ -546,35 +547,17 @@ export function tangentAlign(t0, t1) {
  * @returns {object[]} seed + G1 chain (deduped by edgeKey)
  */
 export function propagateTangentEdges(featureEdges, seedEdge, opts = {}) {
+  // C3: true G1 (tangent + wall-normal continuity) via shared tangency field.
+  // Soft-fails to the seed; caps at COHERENT_EDGE_MAX (no #49 spaghetti).
   if (!seedEdge) return [];
-  const tolDeg = typeof opts.tolDeg === 'number' ? opts.tolDeg : TANGENT_PROP_DEG;
-  const cosTol = Math.cos((tolDeg * Math.PI) / 180);
-  const adj = opts.adj || buildEdgeVertexAdj(featureEdges || []);
-  const seedKey = edgeKey(seedEdge);
-  const out = new Map();
-  out.set(seedKey, copyPickEdge(seedEdge, seedKey));
-
-  const queue = [out.get(seedKey)];
-  while (queue.length) {
-    const cur = queue.shift();
-    const t0 = cur.tangent;
-    if (!t0) continue;
-    for (const v of [cur.a, cur.b]) {
-      const nbrs = adj.get(v) || [];
-      for (const nbr of nbrs) {
-        const nk = edgeKey(nbr);
-        if (out.has(nk)) continue;
-        if (tangentAlign(t0, nbr.tangent) < cosTol) continue;
-        const copy = copyPickEdge(nbr, nk);
-        out.set(nk, copy);
-        queue.push(copy);
-      }
-    }
-  }
-  return [...out.values()];
+  const chain = propagateTrueTangentEdges(featureEdges || [], seedEdge, {
+    tolDeg: opts.tolDeg,
+    adj: opts.adj || buildEdgeVertexAdj(featureEdges || []),
+    max: COHERENT_EDGE_MAX,
+  });
+  return chain.map((e) => copyPickEdge(e, edgeKey(e)));
 }
 
-/** Dihedral between an edge's two face normals, in degrees. 0 = coplanar. */
 export function edgeDihedralDeg(edge) {
   const n0 = edge?.n0;
   const n1 = edge?.n1;
@@ -1005,9 +988,20 @@ export function buildCoherentEdges(featureEdges, opts = {}) {
     const faceA = _uniqueFinite(chain, 'faceA');
     const faceB = _uniqueFinite(chain, 'faceB');
     const pairCount = _uniqueFinite(chain, 'pairCount');
-    const n0 = chain.find((e) => e.n0)?.n0;
-    const n1 = chain.find((e) => e.n1)?.n1;
     segs.forEach((seg, i) => {
+      // C3: nearest-source normals (not a single first-hit stamp).
+      let best = null;
+      let bestD = Infinity;
+      for (const src of chain) {
+        if (!src?.n0 || !src?.n1 || !src.mid) continue;
+        const d = _dist3(seg.mid, src.mid);
+        if (d < bestD) {
+          bestD = d;
+          best = src;
+        }
+      }
+      const n0 = best?.n0 || chain.find((e) => e.n0)?.n0;
+      const n1 = best?.n1 || chain.find((e) => e.n1)?.n1;
       out.push({
         ...seg,
         key: `coh-${id}-${i}`,
@@ -1045,9 +1039,19 @@ export function buildCoherentEdges(featureEdges, opts = {}) {
       const faceA = _uniqueFinite(chain, 'faceA');
       const faceB = _uniqueFinite(chain, 'faceB');
       const pairCount = _uniqueFinite(chain, 'pairCount');
-      const n0 = chain.find((e) => e.n0)?.n0;
-      const n1 = chain.find((e) => e.n1)?.n1;
       segs.forEach((seg, i) => {
+        let best = null;
+        let bestD = Infinity;
+        for (const src of chain) {
+          if (!src?.n0 || !src?.n1 || !src.mid) continue;
+          const d = _dist3(seg.mid, src.mid);
+          if (d < bestD) {
+            bestD = d;
+            best = src;
+          }
+        }
+        const n0 = best?.n0 || chain.find((e) => e.n0)?.n0;
+        const n1 = best?.n1 || chain.find((e) => e.n1)?.n1;
         out.push({
           ...seg,
           key: `coh-${id}-${i}`,
@@ -1083,16 +1087,20 @@ export function toggleEdgeSelectionPropagated(selected, edge, opts = {}) {
   }
   const propagate = opts.propagate !== false;
   let toAdd = null;
+  let refuseFlood = false;
   if (propagate && Number.isFinite(edge?.chainId) && opts.featureEdges?.length) {
     const chain = opts.featureEdges.filter((e) => e.chainId === edge.chainId);
-    // A chain past the human-scale cap is tessellation spaghetti — add nothing.
-    if (chain.length > COHERENT_EDGE_MAX) return list;
-    if (chain.length > 1) toAdd = chain;
+    // Cap → keep seed (never return empty; never re-flood the same spaghetti).
+    if (chain.length > COHERENT_EDGE_MAX) {
+      refuseFlood = true;
+    } else if (chain.length > 1) {
+      toAdd = chain;
+    }
   }
-  if (!toAdd && propagate && opts.featureEdges?.length) {
+  if (!toAdd && !refuseFlood && propagate && opts.featureEdges?.length) {
     toAdd = propagateTangentEdges(opts.featureEdges, edge, { tolDeg: opts.tolDeg });
-    if (toAdd.length > COHERENT_EDGE_MAX) {
-      // Loud fail: keep the seed rather than committing a mesh dump.
+    // Hitting the cap means tessellation flood — keep the seed only.
+    if (toAdd.length >= COHERENT_EDGE_MAX) {
       toAdd = null;
     }
   }

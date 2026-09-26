@@ -34,7 +34,7 @@ import {
   sweepBlendHardMax,
 } from './selectEdge.js';
 import { classifyFilletEdges } from './filletEdgeClass.js';
-import { shouldUseHardRollingBall } from './filletKernelSpike.js';
+import { shouldUseHardVariableSweep } from './filletKernelSpike.js';
 
 export const FILLET_ENTRY_IDS = new Set(['filletEdges']);
 
@@ -385,7 +385,7 @@ export function countMakeSweepPath(buffer) {
 /**
  * Accept → insert, replace, or append in-mode Fillet.
  * Easy / default: makeSweepPath + filletAlongPath.
- * Hard (C2, production flag on): filletEdges + relaxPlanar (segment rolling-ball).
+ * Hard (C3, production flag on): makeSweepPath + filletAlongPath({ variableProfile }).
  * commitMode 'replace' (default) updates the last marked block.
  * commitMode 'append' keeps that block and adds another, so a second sharp
  * edge is filleted on the solid the first block already produced.
@@ -414,7 +414,7 @@ export function composeFilletCommit(buffer, {
 
   // Prefer an explicit class from the viewport (#50 chip). Without geometry,
   // untagged edges look "hard" to classifyFilletEdges — do not flip goldens /
-  // one-shot Accept onto the rolling-ball path unless callers ask for hard.
+  // one-shot Accept onto the hard variable-profile path unless callers ask.
   let klass = filletClass || params.filletClass || null;
   const geom = geometry || params.geometry || null;
   if (!klass && geom) {
@@ -424,11 +424,11 @@ export function composeFilletCommit(buffer, {
     }).klass;
   }
   if (!klass) klass = 'easy';
-  const hardRollingBall = shouldUseHardRollingBall(klass);
+  const hardVariable = shouldUseHardVariableSweep(klass);
   const emitParams = {
     ...gate.normalized,
     _filletMode: true,
-    ...(hardRollingBall ? { _hardRollingBall: true } : {}),
+    ...(hardVariable ? { _hardVariableProfile: true } : {}),
   };
 
   const base = commitMode === 'append' ? text : stripFilletModeBlock(text);
@@ -447,26 +447,7 @@ export function composeFilletCommit(buffer, {
     };
   }
   const owned = filletModeOwnedRegion(composed);
-  if (hardRollingBall) {
-    if (!/filletEdges\s*\(/.test(owned)) {
-      return {
-        ok: false,
-        message: 'composeFilletCommit: filletEdges missing — refusing silent no-op.',
-      };
-    }
-    if (!/relaxPlanar:\s*true/.test(owned)) {
-      return {
-        ok: false,
-        message: 'composeFilletCommit: hard rolling-ball needs relaxPlanar — refusing silent no-op.',
-      };
-    }
-    if (/filletAlongPath\s*\(/.test(owned)) {
-      return {
-        ok: false,
-        message: 'composeFilletCommit: hard Accept must not use filletAlongPath.',
-      };
-    }
-  } else if (gate.normalized.strategy === 'sweep') {
+  if (hardVariable || gate.normalized.strategy === 'sweep') {
     if (!/makeSweepPath\s*\(/.test(owned)) {
       return {
         ok: false,
@@ -477,6 +458,18 @@ export function composeFilletCommit(buffer, {
       return {
         ok: false,
         message: 'composeFilletCommit: filletAlongPath missing — refusing silent no-op.',
+      };
+    }
+    if (hardVariable && !/variableProfile:\s*true/.test(owned)) {
+      return {
+        ok: false,
+        message: 'composeFilletCommit: hard variable-profile flag missing — refusing silent no-op.',
+      };
+    }
+    if (hardVariable && /relaxPlanar:\s*true/.test(owned)) {
+      return {
+        ok: false,
+        message: 'composeFilletCommit: hard C3 must not use relaxPlanar rolling-ball.',
       };
     }
   } else if (!/filletEdges\s*\(/.test(owned)) {
@@ -495,6 +488,6 @@ export function composeFilletCommit(buffer, {
     ok: true,
     buffer: composed,
     run: true,
-    kernel: hardRollingBall ? 'rolling-ball-segment' : 'sweep-dihedral',
+    kernel: hardVariable ? 'variable-profile-sweep' : 'sweep-dihedral',
   };
 }

@@ -965,10 +965,10 @@ export const HELPER_PALETTE_ITEMS = [
       const feat = [];
       // Strategy=sweep → makeSweepPath + filletAlongPath (easy / curved-adjacent).
       // Strategy=planar → classic filletEdges for planar–planar edges.
-      // Hard Accept (C2): _hardRollingBall → filletEdges + relaxPlanar on the
-      // selected coherent segments (not a single RMF sweep; no sphere-hull).
-      const hardRollingBall = !!p._hardRollingBall;
-      if (strategy === 'sweep' && !hardRollingBall) {
+      // Hard Accept (C3): _hardVariableProfile → same sweep path with
+      // variableProfile:true (densified path-normal inscribed-arc frames).
+      const hardVariable = !!p._hardVariableProfile;
+      if (strategy === 'sweep' || hardVariable) {
         const edge = emitFilletBoundaryLines(body, edgeCtx || [], names, allocateUniqueName)
           || emitSelectedEdgeLiteralLines(body, edgeCtx || [], names, allocateUniqueName);
         if (!edge.ok) return null;
@@ -977,12 +977,16 @@ export const HELPER_PALETTE_ITEMS = [
         const rev = bool(p.reverse, false);
         const optsPath = rev ? ', { reverse: true }' : '';
         const profile = str(p.profile, 'fillet');
-        const sweepOpts = profile === 'chamfer'
-          ? `, { profile: 'chamfer' }`
-          : '';
+        const sweepBits = [];
+        if (profile === 'chamfer') sweepBits.push(`profile: 'chamfer'`);
+        if (hardVariable) sweepBits.push('variableProfile: true');
+        const sweepOpts = sweepBits.length ? `, { ${sweepBits.join(', ')} }` : '';
+        const sweepNote = hardVariable
+          ? ' // hard: variable-profile inscribed-arc sweep (C3)'
+          : ' // sweep fillet wedge';
         feat.push(`const ${path} = makeSweepPath(${edge.edgesExpr}${optsPath}); // edge→sweep path`);
         feat.push(
-          `${body} = filletAlongPath(${body}, ${path}, ${r}${sweepOpts}); // sweep fillet wedge`,
+          `${body} = filletAlongPath(${body}, ${path}, ${r}${sweepOpts});${sweepNote}`,
         );
         feat.push(...syncPartLines(body, names, hasPartDecl([...lines, ...feat], empty)));
       } else {
@@ -990,14 +994,7 @@ export const HELPER_PALETTE_ITEMS = [
         let edgesExpr = `convexEdges(${body})`;
         const scope = p.edgeScope || (edgeCtx && edgeCtx.length ? 'selected' : (faceCtx ? 'face' : 'allConvex'));
         if (scope === 'selected' || (edgeCtx && edgeCtx.length && scope !== 'face' && scope !== 'allConvex')) {
-          // Hard rolling-ball: prefer #49 coherent segment literals (va/vb/n0/n1)
-          // so loft generators stay one long cutter — not mid-matched tessellation scraps.
-          // Tagged boxy edges still prefer lean-A edge()/edgesBetween when present.
-          const edge = hardRollingBall
-            ? (emitFilletBoundaryLines(body, edgeCtx || [], names, allocateUniqueName)
-              || emitSelectedEdgeLiteralLines(body, edgeCtx || [], names, allocateUniqueName)
-              || emitSelectedEdgeLines(body, edgeCtx || [], names, allocateUniqueName))
-            : emitSelectedEdgeLines(body, edgeCtx || [], names, allocateUniqueName);
+          const edge = emitSelectedEdgeLines(body, edgeCtx || [], names, allocateUniqueName);
           // Soft-fail: never write throw/partial JS — caller clears stale selection.
           if (!edge || !edge.ok) return null;
           feat.push(...edge.lines);
@@ -1009,10 +1006,8 @@ export const HELPER_PALETTE_ITEMS = [
         } else if (scope === 'allConvex') {
           edgesExpr = `convexEdges(${body})`;
         }
-        const rbOpts = hardRollingBall ? ', relaxPlanar: true' : '';
-        const rbNote = hardRollingBall ? ' // hard: segment rolling-ball (C2)' : '';
         feat.push(
-          `${body} = filletEdges(${body}, ${edgesExpr}, ${r}, { sphericalCorners: ${sc}${rbOpts} });${rbNote}`,
+          `${body} = filletEdges(${body}, ${edgesExpr}, ${r}, { sphericalCorners: ${sc} });`,
         );
         feat.push(...syncPartLines(body, names, hasPartDecl([...lines, ...feat], empty)));
       }
