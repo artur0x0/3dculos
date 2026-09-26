@@ -3,11 +3,11 @@
  * Slice C2 — hard Accept segment rolling-ball (WASM).
  *
  * Asserts:
- * - hard loft generator Accept emits filletEdges + relaxPlanar (not RMF sweep)
- * - relaxPlanar filletEdges on a loft generator succeeds and is manifold-ish
- * - fewer/no scrap-sheet needles vs pre-C2 single-sweep failure mode
+ * - hard loft generator Accept emits filletAlongPath + variableProfile (C3)
+ * - variable-profile on a loft generator succeeds and is manifold-ish
+ * - scrap delta stays controlled vs a single-segment sweep
  * - easy cube Accept still uses filletAlongPath
- * - known-scrap relaxPlanar commit loud-fails /sliver scraps/ (#48-style bar)
+ * - known-scrap relaxPlanar API still loud-fails /sliver scraps/ (#48-style bar)
  */
 import { register } from 'node:module';
 import { BufferGeometry, BufferAttribute } from 'three';
@@ -28,7 +28,8 @@ import { composeFilletCommit } from '../../src/utils/filletMode.js';
 import { isFilletSliverDirty } from '../../src/utils/filletSliverGuard.js';
 import {
   FILLET_HARD_KERNEL_TRIAL,
-  shouldUseHardRollingBall,
+  FILLET_KERNEL_HARD_RECOMMENDED,
+  shouldUseHardVariableSweep,
 } from '../../src/utils/filletKernelSpike.js';
 
 let failed = 0;
@@ -43,7 +44,8 @@ function check(name, cond, detail = '') {
 console.log('fillet C2 rolling-ball');
 
 check('production hard flag on', FILLET_HARD_KERNEL_TRIAL === true);
-check('hard class uses rolling-ball', shouldUseHardRollingBall('hard') === true);
+check('hard class uses variable-profile (C3)', shouldUseHardVariableSweep('hard') === true);
+check('hard kernel id is variable-profile-sweep', FILLET_KERNEL_HARD_RECOMMENDED === 'variable-profile-sweep');
 
 const pending = new Map();
 let msgId = 0;
@@ -175,10 +177,10 @@ return part;
     geometry: loft.g,
   });
   check('hard loft Accept ok', commit.ok === true, commit.message || '');
-  check('hard loft emits filletEdges', /filletEdges\s*\(/.test(commit.buffer || ''), commit.buffer?.slice(-400));
-  check('hard loft emits relaxPlanar', /relaxPlanar:\s*true/.test(commit.buffer || ''));
-  check('hard loft does not emit filletAlongPath', !/filletAlongPath\s*\(/.test(commit.buffer || ''));
-  check('hard loft kernel rolling-ball', commit.kernel === 'rolling-ball-segment');
+  check('hard loft emits filletAlongPath', /filletAlongPath\s*\(/.test(commit.buffer || ''), commit.buffer?.slice(-400));
+  check('hard loft emits variableProfile', /variableProfile:\s*true/.test(commit.buffer || ''));
+  check('hard loft does not emit relaxPlanar', !/relaxPlanar/.test(commit.buffer || ''));
+  check('hard loft kernel variable-profile', commit.kernel === 'variable-profile-sweep');
 
   // Execute full committed buffer (markers + filletEdges + relaxPlanar).
   let hardPayload = null;
@@ -188,7 +190,7 @@ return part;
   } catch (e) {
     hardErr = e;
   }
-  check('hard rolling-ball exec succeeds', !!hardPayload && !hardErr, hardErr?.message || '');
+  check('hard variable-profile exec succeeds', !!hardPayload && !hardErr, hardErr?.message || '');
   let hardTiny = null;
   if (hardPayload?.mesh) {
     const sc = sliverCount(hardPayload.mesh);
@@ -231,15 +233,25 @@ return part;
     sweepTiny = sliverCount(sweepPayload.mesh).tiny;
   } catch (e) {
     // Sweep may loud-fail on slivers — that is the pre-C2 failure mode.
-    sweepTiny = Infinity;
+    // Do NOT set sweepTiny=Infinity: hardTiny <= Infinity always green-passes.
     sweepErr = e;
+    sweepTiny = null;
   }
-  if (hardTiny != null && sweepTiny != null) {
-    check(
-      'hard rolling-ball needles ≤ pre-C2 sweep needles',
-      hardTiny <= sweepTiny,
-      `hard=${hardTiny} sweep=${sweepTiny}${sweepErr ? ` (sweep threw: ${sweepErr.message})` : ''}`,
-    );
+  if (hardTiny != null) {
+    // Never compare against Infinity — that made the check vacuously green (review B1).
+    if (sweepTiny == null || !Number.isFinite(sweepTiny)) {
+      check(
+        'hard variable-profile needles finite (sweep baseline threw)',
+        Number.isFinite(hardTiny),
+        `hard=${hardTiny}; sweep threw: ${sweepErr?.message || 'unknown'}`,
+      );
+    } else {
+      check(
+        'hard variable-profile needles ≤ single-segment sweep needles',
+        hardTiny <= sweepTiny,
+        `hard=${hardTiny} sweep=${sweepTiny}`,
+      );
+    }
   }
 }
 

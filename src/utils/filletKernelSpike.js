@@ -1,86 +1,78 @@
 /**
- * Slice C / C2 — fillet kernel (hard-edge path).
+ * Slice C / C2 / C3 — fillet kernel (hard-edge path).
  *
  * Easy stays the #45–#46 dihedral sweep (`filletAlongPath`). Hard Accept
- * routes to segment-wise rolling-ball (`filletEdges` parallelepiped−cylinder
- * per #49 coherent segment with `relaxPlanar`) when the production flag is on.
+ * routes to a **variable-profile inscribed-arc sweep** along the coherent
+ * path (C3): at each densified knot, an arc of radius R in the local wall
+ * square (side ~2R) framed by adjacent face normals / path tangent.
  *
- * Measured on the box WASM worker (2026-09-25), cube 40×30×20 edge r=3 and a
- * circle→square hull stand-in for loft generators:
- *   - dihedral sweep (current): box volume error ~0.3%; ~50ms on easy edge
- *   - naive sphere-hull along bisector: over-removes ~12× analytic on box —
- *     not a rolling-ball fillet
- *   - filletEdges planar (parallelepiped − cylinder): box volume exact; fails
- *     loud on curved-adjacent loft generators without relaxPlanar
- *   - per-segment filletEdges try/catch on loft gens (strict planar): skips
- *     most segments; not a quality win
+ * C2 segment rolling-ball (`filletEdges` + `relaxPlanar`) is superseded for
+ * hard/loft when the production flag is on — it left zero-area scrap on
+ * twisted generators. Easy Prim/boxy is unchanged.
  *
  * Manifold CrossSection has 2D offset; bundled Manifold solid has no
- * offset()/minkowski (shell uses corner-sphere hull). Face-offset pair-blend
- * in 3D is therefore not a drop-in.
+ * offset()/minkowski. Face-offset pair-blend stays out of scope.
  */
 
-/** @typedef {'sweep-dihedral' | 'rolling-ball-segment' | 'face-offset' | 'sphere-hull' | 'adaptive-multipass'} FilletKernelId */
+/** @typedef {'sweep-dihedral' | 'variable-profile-sweep' | 'rolling-ball-segment' | 'face-offset' | 'sphere-hull' | 'adaptive-multipass'} FilletKernelId */
 
 export const FILLET_KERNEL_EASY = 'sweep-dihedral';
 
-/** Production hard path (Slice C2). */
-export const FILLET_KERNEL_HARD_RECOMMENDED = 'rolling-ball-segment';
+/** Production hard path (Slice C3). */
+export const FILLET_KERNEL_HARD_RECOMMENDED = 'variable-profile-sweep';
 
 /**
- * Production-on for hard-class Accept (Slice C2).
- * Easy never reads this flag. When true, hard Accept emits filletEdges with
- * relaxPlanar instead of a single RMF filletAlongPath sweep.
+ * Production-on for hard-class Accept (Slice C3).
+ * Easy never reads this flag. When true, hard Accept emits makeSweepPath +
+ * filletAlongPath({ variableProfile: true }) instead of filletEdges+relaxPlanar.
  */
 export const FILLET_HARD_KERNEL_TRIAL = true;
 
 export const FILLET_KERNEL_CANDIDATES = Object.freeze([
   {
+    id: 'variable-profile-sweep',
+    title: 'Variable-profile inscribed-arc sweep (path-normal frames)',
+    feasible: 'yes',
+    note:
+      'C3: densify the coherent path; at each knot build an inscribed arc of '
+      + 'radius R in the local wall square (side ~2R) from adjacent face normals '
+      + '+ path tangent. Adapts to loft twist. Loud scrap fail > Area≈0 banner.',
+  },
+  {
     id: 'sphere-hull',
     title: 'Rolling-ball / sphere (disk) boolean along the edge',
     feasible: 'partial',
     note:
-      'Manifold.sphere + hull/union along the angle bisector is easy in WASM, '
-      + 'but a naive sausage hull massively over-cuts (box test ~12× analytic). '
-      + 'A true rolling-ball needs the parallelepiped−cylinder (or disk-sweep) '
-      + 'construction already used by filletEdges, sampled per segment.',
+      'Naive sausage hull massively over-cuts. True rolling-ball is the '
+      + 'parallelepiped−cylinder construction (C2); superseded by variable-profile for hard.',
   },
   {
     id: 'face-offset',
     title: 'Face-offset / pair-blend between adjacent faces',
     feasible: 'blocked',
     note:
-      'Bundled Manifold has no solid offset()/minkowski. CrossSection.offset is '
-      + '2D-only and helps planar easy edges we already handle. Non-planar loft '
-      + 'walls would need custom offset surfaces — multi-slice effort.',
+      'Bundled Manifold has no solid offset()/minkowski. CrossSection.offset is 2D-only.',
   },
   {
     id: 'hybrid',
-    title: 'Hybrid: easy = dihedral sweep; hard = new kernel',
+    title: 'Hybrid: easy = dihedral sweep; hard = variable-profile',
     feasible: 'yes',
     note:
       'Matches #50 classifyFilletEdges. Easy goldens stay on sweep. Hard routes '
-      + 'to segment-wise rolling-ball (filletEdges-style cutters + #49 coherent '
-      + 'segments, with curved-face relaxation for generator walls).',
+      + 'to C3 variable-profile inscribed-arc sweep.',
   },
   {
     id: 'adaptive-multipass',
     title: 'Adaptive / multi-pass sweep',
     feasible: 'weak',
-    note:
-      'More booleans on mobile without fixing variable-dihedral frame error. '
-      + 'No clear win over hybrid + segment rolling-ball in this spike.',
+    note: 'More booleans on mobile without fixing variable-dihedral frame error.',
   },
 ]);
 
 /**
- * Pick the kernel id for a fillet class. Easy always stays the current sweep.
- * Hard returns segment rolling-ball; `trial` mirrors the production flag
- * (true = Accept is wired to that path).
- *
+ * Pick the kernel id for a fillet class.
  * @param {'easy'|'hard'|'empty'|string|null|undefined} klass
  * @param {{ trial?: boolean }} [opts]
- * @returns {{ kernel: FilletKernelId, trial: boolean, reason: string }}
  */
 export function pickFilletKernelForClass(klass, opts = {}) {
   const trial = opts.trial != null ? !!opts.trial : FILLET_HARD_KERNEL_TRIAL;
@@ -95,17 +87,17 @@ export function pickFilletKernelForClass(klass, opts = {}) {
     kernel: FILLET_KERNEL_HARD_RECOMMENDED,
     trial,
     reason: trial
-      ? 'hard-class Accept: segment rolling-ball (filletEdges + relaxPlanar)'
-      : 'hard-class recommendation: segment rolling-ball (flag off)',
+      ? 'hard-class Accept: variable-profile inscribed-arc sweep (C3)'
+      : 'hard-class recommendation: variable-profile sweep (flag off)',
   };
 }
 
 /**
- * True when Fillet Accept should emit the hard rolling-ball path.
+ * True when Fillet Accept should emit the hard variable-profile sweep.
  * @param {'easy'|'hard'|'empty'|string|null|undefined} klass
  * @param {{ trial?: boolean }} [opts]
  */
-export function shouldUseHardRollingBall(klass, opts = {}) {
+export function shouldUseHardVariableSweep(klass, opts = {}) {
   const pick = pickFilletKernelForClass(klass, opts);
   return klass === 'hard'
     && pick.kernel === FILLET_KERNEL_HARD_RECOMMENDED
@@ -114,15 +106,14 @@ export function shouldUseHardRollingBall(klass, opts = {}) {
 
 /**
  * Effort note for Product / PR body.
- * @returns {{ effort: '1-follow-up-PR'|'done'|'multi-slice', summary: string }}
  */
 export function hardFilletKernelEffort() {
   return {
     effort: 'done',
     summary:
-      'C2 wired hard-class Accept to segment-wise rolling-ball cutters '
-      + '(filletEdges singleton math + #49 chains; relaxPlanar for generator '
-      + 'walls; optional sphericalCorners junction caps). Face-offset remains a '
-      + 'later multi-slice if Manifold gains solid offset or we build one.',
+      'C3 wires hard-class Accept to variable-profile inscribed-arc sweep '
+      + '(densified path-normal frames from the shared tangency field; '
+      + 'supersedes C2 filletEdges+relaxPlanar for hard/loft). Easy stays '
+      + 'dihedral sweep. Face-offset remains a later multi-slice.',
   };
 }
