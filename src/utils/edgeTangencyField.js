@@ -298,7 +298,7 @@ export function densifyPathByMaxTurn(points, closed, maxTurnDeg, maxPasses = 8) 
  * @param {number[]|null} n0
  * @param {number[]|null} n1
  */
-export function inFaceDirsFromNormals(T, n0, n1) {
+export function inFaceDirsFromNormals(T, n0, n1, convex = true) {
   if (!T || !n0 || !n1) return null;
   const Tn = _norm(T);
   let f0 = _cross(n0, Tn);
@@ -308,6 +308,16 @@ export function inFaceDirsFromNormals(T, n0, n1) {
   f1 = _norm(f1);
   if (_dot(f0, n1) > 0) f0 = [-f0[0], -f0[1], -f0[2]];
   if (_dot(f1, n0) > 0) f1 = [-f1[0], -f1[1], -f1[2]];
+  // Those flips orient each ray into the MATERIAL wedge, which is what a convex
+  // blend carves. On a concave edge the material wedge is the reflex one and the
+  // rays end up pointing into solid rather than along the walls (measured on an
+  // L: f0=-Y, f1=-X where the faces actually run +Y and +X). Negating both puts
+  // them back on the walls, spanning the EMPTY corner — exactly the region a
+  // concave round fills, and the same contour then serves as the filler.
+  if (!convex) {
+    f0 = [-f0[0], -f0[1], -f0[2]];
+    f1 = [-f1[0], -f1[1], -f1[2]];
+  }
   return { f0, f1 };
 }
 
@@ -322,8 +332,8 @@ export function inFaceDirsFromNormals(T, n0, n1) {
  * @param {number} radius
  * @param {number[]|null} [prevN]
  */
-export function buildInscribedArcFrame(origin, T, n0, n1, radius, prevN = null) {
-  const dirs = inFaceDirsFromNormals(T, n0, n1);
+export function buildInscribedArcFrame(origin, T, n0, n1, radius, prevN = null, convex = true) {
+  const dirs = inFaceDirsFromNormals(T, n0, n1, convex);
   if (!dirs) return null;
   let A = dirs.f0;
   let C = dirs.f1;
@@ -354,6 +364,7 @@ export function buildInscribedArcFrame(origin, T, n0, n1, radius, prevN = null) 
     squareSide: 2 * r,
     f0: dirs.f0,
     f1: dirs.f1,
+    convex,
   };
 }
 
@@ -567,6 +578,7 @@ export function buildVariableProfileFrames(points, closed, opts = {}) {
   const radius = Number(opts.radius) || 1;
   const seed = opts.seedNormals || null;
   const perSeg = opts.segmentNormals || null;
+  const perSegConvex = opts.segmentConvex || null;
   const rawFrames = [];
   let prevN = null;
   for (let i = 0; i < segCount; i++) {
@@ -574,8 +586,9 @@ export function buildVariableProfileFrames(points, closed, opts = {}) {
     const b = pts[(i + 1) % n];
     const T = _norm(_sub(b, a));
     const nr = perSeg && perSeg[i] ? perSeg[i] : seed;
+    const convex = perSegConvex ? perSegConvex[i] !== false : true;
     const fr = (nr?.n0 && nr?.n1)
-      ? buildInscribedArcFrame(a, T, nr.n0, nr.n1, radius, prevN)
+      ? buildInscribedArcFrame(a, T, nr.n0, nr.n1, radius, prevN, convex)
       : null;
     if (fr) {
       rawFrames.push(fr);
@@ -594,6 +607,7 @@ export function buildVariableProfileFrames(points, closed, opts = {}) {
         squareSide: 2 * radius,
         f0: N,
         f1: B,
+        convex,
         weak: true,
       });
       prevN = N;
