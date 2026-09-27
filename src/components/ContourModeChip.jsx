@@ -269,7 +269,7 @@ const ContourModeChip = ({
         </div>
         {savedContours.length === 0 ? (
           <p className="mt-0.5 text-[10px] text-cyan-100/80 leading-tight" role="status">
-            No saved contours yet. Confirm Profile, or draw one here.
+            No saved contours yet. Confirm Create contour, or draw one here.
           </p>
         ) : (
           <div className="mt-0.5 flex flex-col gap-0.5 max-h-16 overflow-y-auto">

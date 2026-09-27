@@ -19,13 +19,12 @@ import {
   FlipHorizontal2,
   Copy,
   RotateCw,
-  Frame,
+  Layers3,
   ArrowUpFromLine,
   Rotate3d,
   Pyramid,
-  SquareDashed,
+  NotebookPen,
   Route,
-  Spline,
 } from 'lucide-react';
 import SquareRoundCorner from './icons/SquareRoundCorner';
 import { itemsByGroup, paletteRailSections } from '../utils/helperPaletteSnippets';
@@ -57,13 +56,16 @@ const ICONS = {
   mirror: FlipHorizontal2,
   array3D: Copy,
   polarArray: RotateCw,
-  workplane: Frame,
+  // Workplane matches the right rail's plane-visibility toggle (both Layers3),
+  // and Create contour matches its sketch-visibility toggle (both NotebookPen):
+  // the tool that makes the thing wears the icon that shows the thing.
+  workplane: Layers3,
   makeExtrude: ArrowUpFromLine,
   makeRevolve: Rotate3d,
   makeLoft: Pyramid,
-  makeSweep: Spline,
-  crossSection: SquareDashed,
-  sweepPath: Route,
+  // Sweep inherited Route from the retired Path button — a sweep *is* a path.
+  makeSweep: Route,
+  crossSection: NotebookPen,
 };
 
 /** Mobile-first group captions (full names stay on the data model). */

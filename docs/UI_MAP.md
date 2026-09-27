@@ -249,6 +249,15 @@ Import `src/utils/importModel.js` (+ `POST /api/convert/step`); export
   `NotebookPen` = sketch (contour) overlays, `Spline` = Edge pick. In the left
   rail, Loft is `Pyramid` (a tapered stack of profiles), not `Layers`, and
   Fillet is `SquareRoundCorner` — so `Squircle` now means roundedBox alone.
+  **Two left-rail tools deliberately share a glyph with a right-rail toggle:**
+  Create contour = `NotebookPen` (= sketch overlays) and Workplane = `Layers3`
+  (= plane overlays). The tool that makes a thing wears the icon that shows it;
+  the no-duplicates rule is per rail, so this is intended, not a slip.
+- **`railHidden` items** are palette entries with no button:
+  `paletteRailSections` filters them, `itemsByGroup` does not. `sweepPath`
+  (Path) is the only one — Sweep covers it in the UI and inherited its `Route`
+  glyph, but the entry's edge→wire codegen is still composed programmatically.
+  Hide a tool this way rather than deleting an item other code builds with.
 - **Scrolling rails** carry `rail-scroll` alongside `overflow-y-auto`
   (`src/index.css`, bottom). Desktop Chrome's default gutter is square and cuts
   the corners off the rail's `rounded-lg` shell; `rail-scroll` gives a thin
