@@ -34,6 +34,7 @@
         "golden:hotfix-sweep-path": "node scripts/golden/smoke_hotfix_sweep_path_disconnect.mjs",
         "golden:hotfix-contour-picker": "node scripts/golden/smoke_hotfix_contour_picker_additive.mjs",
         "golden:polish-adv-ux": "node scripts/golden/smoke_polish_adv_ux.mjs",
+        "golden:empty-run-clears": "node scripts/golden/smoke_empty_run_clears.mjs",
         "golden:cad-palette": "node scripts/golden/smoke_cad_palette_overlays.mjs",
         "golden:cad-mobile-chrome": "node scripts/golden/smoke_cad_mobile_chrome.mjs",
         "golden:fillet-kernel-spike-c": "node scripts/golden/smoke_fillet_kernel_spike_c.mjs",

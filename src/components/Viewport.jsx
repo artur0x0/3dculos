@@ -3278,6 +3278,11 @@ const Viewport = forwardRef(({
 
     if (!sceneRef.current) return false;
 
+    // A blank / comment-only / construction-plane-only run empties the viewport.
+    // The clear has to be total: anything still holding the previous solid — the
+    // worker's cached manifold, the context's lastResult, the pick topology, the
+    // solid-derived overlays — would hand the last object back through
+    // cross-section, model info, quoting, game compare or the stage hooks.
     if (shouldClearViewportScript(script)) {
       setExecutionError(null);
       setCachedMeshData(null);
@@ -3289,12 +3294,27 @@ const Viewport = forwardRef(({
       setSelectedFace(null);
       setSelectedEdges([]);
       onFaceSelected?.(null);
+      // Pick topology belongs to the gone solid — drop it with the mesh.
       featureEdgesRef.current = [];
       featureEdgesSourceRef.current = null;
+      faceIDsRef.current = null;
+      boundaryTopoRef.current = null;
+      // Overlays drawn from that solid (cut plane, section/path previews, the
+      // fillet blend ghost, f#/e# labels) must not outlive it on screen.
+      clearIdLabels();
+      clearCuttingPlane();
+      clearXsPreview();
+      clearPathPreview();
+      clearFilletBlendPreview();
       if (resultRef.current) {
         resultRef.current.geometry?.dispose();
         resultRef.current.geometry = new BufferGeometry();
       }
+      setMeshEpoch((n) => n + 1);
+      // Nothing executed, so no run will overwrite these — forget them here.
+      manifoldContext.clearResult().catch((e) => {
+        console.warn('[Viewport] clearResult failed:', e?.message || e);
+      });
       if (window.__VIEWPORT__) window.__VIEWPORT__._lastRenderedMesh = null;
       const renderer = rendererRef.current;
       const scene = sceneRef.current;

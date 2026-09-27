@@ -1,6 +1,6 @@
 // workers/sandboxWorker.js
 // This worker executes user scripts in an isolated context with restricted globals
-import Module from '../../built/manifold';
+import Module from '../../built/manifold.js';
 import {
   fastenerClearanceDia,
   fastenerTapDrillDia,
@@ -4943,6 +4943,20 @@ self.onmessage = async (event) => {
           type: 'result', id,
           payload: { ok: true, volume, boundingBox: _bboxArray(cachedManifold) },
         });
+        break;
+      }
+
+      // Drop every retained solid from the last run. The UI sends this when a run
+      // clears the viewport (empty / comment-only / construction-plane-only script):
+      // nothing downstream — cross-section, model info, game compare, stage tooling —
+      // may keep serving the previous object once the screen is empty.
+      case 'clearResult': {
+        _safeDeleteManifold(cachedManifold);
+        cachedManifold = null;
+        cachedExecuteNonce = null;
+        _safeDeleteManifold(gameAttemptManifold);
+        gameAttemptManifold = null;
+        self.postMessage({ type: 'result', id, payload: { ok: true } });
         break;
       }
 

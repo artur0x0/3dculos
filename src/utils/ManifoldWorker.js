@@ -219,6 +219,24 @@ class ManifoldWorker {
     });
   }
 
+  /** Drop the worker's cached solid from the last run (viewport-clearing run). */
+  async clearResult(options = {}) {
+    if (!this.isReady) throw new Error('ManifoldWorker not initialized');
+    const timeoutMs = options.timeoutMs || this.config.timeoutMs;
+    return new Promise((resolve, reject) => {
+      const requestId = this._generateRequestId();
+      const timeoutId = setTimeout(() => {
+        this.pendingRequests.delete(requestId);
+        reject(new Error(`clearResult timed out after ${timeoutMs / 1000}s`));
+      }, timeoutMs);
+      this.pendingRequests.set(requestId, {
+        resolve: (r) => { clearTimeout(timeoutId); resolve(r); },
+        reject: (e) => { clearTimeout(timeoutId); reject(e); },
+      });
+      this.worker.postMessage({ type: 'clearResult', id: requestId, payload: {} });
+    });
+  }
+
   async clearGameTarget(options = {}) {
     if (!this.isReady) throw new Error('ManifoldWorker not initialized');
     const timeoutMs = options.timeoutMs || this.config.timeoutMs;
@@ -612,6 +630,18 @@ class ManifoldContext {
       throw new Error('ManifoldContext not initialized');
     }
     return await this.worker.compareGameMatch(opts);
+  }
+
+  /**
+   * Forget the last execution everywhere: context cache + worker-side manifold.
+   * A run that clears the viewport (empty / comment-only / plane-only script) must
+   * leave nothing behind for cross-section, model info, quoting, game compare or
+   * the stage hooks to serve as "the current part".
+   */
+  async clearResult() {
+    this.lastResult = null;
+    if (!this.worker || !this.worker.isReady) return { ok: true };
+    return await this.worker.clearResult();
   }
 
   async clearGameTarget() {
