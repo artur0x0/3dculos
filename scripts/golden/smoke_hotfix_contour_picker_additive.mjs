@@ -168,11 +168,11 @@ return part;
   check('Fillet stays in Features', grouped.Features.some((i) => i.id === 'filletEdges'));
 
   const rail = readFileSync(join(here, '../../src/components/HelperInsertPalette.jsx'), 'utf8');
-  check('Profile icon SquareDashed', /crossSection:\s*SquareDashed/.test(rail));
-  check('Workplane icon Frame', /workplane:\s*Frame/.test(rail));
+  check('Create contour icon NotebookPen', /crossSection:\s*NotebookPen/.test(rail));
+  check('Workplane icon Layers3', /workplane:\s*Layers3/.test(rail));
   check('Extrude icon ArrowUpFromLine', /makeExtrude:\s*ArrowUpFromLine/.test(rail));
   check('Revolve icon Rotate3d', /makeRevolve:\s*Rotate3d/.test(rail));
-  check('Sweep icon Spline', /makeSweep:\s*Spline/.test(rail));
+  check('Sweep icon Route (inherited from the retired Path button)', /makeSweep:\s*Route/.test(rail));
   check('Loft icon Pyramid', /makeLoft:\s*Pyramid/.test(rail));
   check('Fillet icon SquareRoundCorner', /filletEdges:\s*SquareRoundCorner/.test(rail));
   check('compact labels Prim Adv Feat Xform',

@@ -773,7 +773,7 @@ const App = () => {
             ? 'Revolve'
             : result.run
               ? 'Extrude'
-              : 'Profile';
+              : 'Contour';
       viewportRef.current?.softFailContour?.(
         `Could not write ${writeName} into the editor — try again.`,
       );

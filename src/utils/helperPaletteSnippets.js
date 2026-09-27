@@ -1058,7 +1058,7 @@ export const HELPER_PALETTE_ITEMS = [
 
   {
     id: 'crossSection',
-    label: 'Profile',
+    label: 'Create contour',
     group: 'Advanced',
     title: 'makeCrossSection(plane, profile) — reusable plane + 2D profile',
     params: [
@@ -1205,6 +1205,11 @@ export const HELPER_PALETTE_ITEMS = [
     id: 'sweepPath',
     label: 'Path',
     group: 'Features',
+    // No rail button of its own: Sweep covers the user-facing case and wears
+    // this entry's old Route glyph. The item stays because the edge→wire
+    // codegen is still reached programmatically (filletAlongPath, sweepPoints)
+    // and `composeHelperInsert('sweepPath')` is the seam the goldens drive.
+    railHidden: true,
     title: 'makeSweepPath(edges) — ordered sweep path / wire from edges',
     params: [
       { name: 'body', type: 'body', default: 'part', label: 'Body' },
@@ -1760,18 +1765,22 @@ export function itemsByGroup() {
  * does not also render Advanced (one entry per tool).
  */
 export function paletteRailSections(layout, grouped = itemsByGroup()) {
+  // `railHidden` items keep their group membership and their build(), they just
+  // get no button (see sweepPath). Filter here, not in itemsByGroup, so the
+  // data model stays the whole set.
+  const shown = (group) => (grouped[group] || []).filter((i) => !i.railHidden);
   if (layout === 'cad') {
     const sections = [];
-    const model = grouped.Advanced || [];
+    const model = shown('Advanced');
     if (model.length) sections.push({ key: 'Model', items: model });
     for (const group of HELPER_PALETTE_GROUPS) {
       if (group === 'Advanced') continue;
-      sections.push({ key: group, items: grouped[group] || [] });
+      sections.push({ key: group, items: shown(group) });
     }
     return sections;
   }
   return HELPER_PALETTE_GROUPS.map((group) => ({
     key: group,
-    items: grouped[group] || [],
+    items: shown(group),
   }));
 }

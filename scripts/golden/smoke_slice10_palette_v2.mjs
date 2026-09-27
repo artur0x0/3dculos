@@ -257,7 +257,8 @@ check('declaredNames export', declaredNames('let box1 = 1;').has('box1'));
   check('Fillet icon is the one-rounded-corner square', /filletEdges:\s*SquareRoundCorner/.test(rail));
   check('roundedBox keeps Squircle to itself', /roundedBox:\s*Squircle/.test(rail) && (rail.match(/\bSquircle\b/g) || []).length === 2);
   check('cbore icon is Cylinder', /cboreHole:\s*Cylinder/.test(rail));
-  check('Sweep icon is Spline', /makeSweep:\s*Spline/.test(rail));
+  check('Sweep icon is Route', /makeSweep:\s*Route/.test(rail));
+  check('no glyph is left orphaned by the icon swaps', !/\bSquareDashed\b|\bSpline\b|\bFrame\b/.test(rail));
   check('compact labels Prim Adv Feat Xform', /Primitives:\s*'Prim'/.test(rail) && /Advanced:\s*'Adv'/.test(rail) && /Features:\s*'Feat'/.test(rail) && /Transforms:\s*'Xform'/.test(rail));
 }
 

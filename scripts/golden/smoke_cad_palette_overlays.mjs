@@ -66,6 +66,24 @@ console.log('cad palette + plane/contour toggles');
     cad.find((s) => s.key === 'Model').items.map((i) => i.id).join(',') === PROMOTED,
   );
   check('CAD does not render an Advanced section', !cad.some((s) => s.key === 'Advanced'));
+  // The dedicated Path button is gone; Sweep covers it. The item survives for
+  // programmatic composition, so assert the *rail* drops it while the data
+  // model keeps it.
+  for (const [name, sections] of [['CAD', cad], ['game', game]]) {
+    check(
+      `${name} rail has no Path button`,
+      !sections.flatMap((s) => s.items).some((i) => i.id === 'sweepPath'),
+    );
+  }
+  check('sweepPath is still a palette item', grouped.Features.some((i) => i.id === 'sweepPath'));
+  check(
+    'sweepPath is hidden by the railHidden flag, not by deletion',
+    grouped.Features.find((i) => i.id === 'sweepPath').railHidden === true,
+  );
+  check(
+    'Create contour is the crossSection label',
+    grouped.Advanced.find((i) => i.id === 'crossSection').label === 'Create contour',
+  );
   const cadIds = cad.flatMap((s) => s.items.map((i) => i.id));
   check('CAD has no duplicate tool ids', new Set(cadIds).size === cadIds.length);
   check(
