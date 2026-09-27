@@ -20,7 +20,7 @@ import {
   orientFilletFrame,
   FILLET_ARC_SEGMENTS,
 } from '../utils/filletAlongPath.js';
-import { densifyPathPoints, buildVariableProfileFrames } from '../utils/edgeTangencyField.js';
+import { densifyPathPoints, buildVariableProfileFrames, maxConsecutiveFrameAngleDeg } from '../utils/edgeTangencyField.js';
 import { indexBoundaryEdges } from '../utils/boundaryEdgeIds.js';
 import { assembleSweepPath } from '../utils/edgeSweepPath.js';
 import { buildMakeLoftSolid, offsetPlaneFrame } from '../utils/makeLoft.js';
@@ -3329,10 +3329,27 @@ function _s23SweepExplicit(Manifold, profile, points, frames, extrudeSegments) {
     const P0 = a[0] + frac * (b[0] - a[0]);
     const P1 = a[1] + frac * (b[1] - a[1]);
     const P2 = a[2] + frac * (b[2] - a[2]);
-    const fr = frames[i];
-    v[0] = P0 + x * fr.N[0] + y * fr.B[0];
-    v[1] = P1 + x * fr.N[1] + y * fr.B[1];
-    v[2] = P2 + x * fr.N[2] + y * fr.B[2];
+    // C3.1: lerp N/B toward the next segment frame when present so the ridge
+    // stays continuous between knots (along-path tangency of the frame field).
+    const fr0 = frames[i];
+    const fr1 = frames[Math.min(i + 1, frames.length - 1)];
+    let Nx = fr0.N[0], Ny = fr0.N[1], Nz = fr0.N[2];
+    let Bx = fr0.B[0], By = fr0.B[1], Bz = fr0.B[2];
+    if (fr1 && fr1 !== fr0) {
+      Nx += frac * (fr1.N[0] - fr0.N[0]);
+      Ny += frac * (fr1.N[1] - fr0.N[1]);
+      Nz += frac * (fr1.N[2] - fr0.N[2]);
+      Bx += frac * (fr1.B[0] - fr0.B[0]);
+      By += frac * (fr1.B[1] - fr0.B[1]);
+      Bz += frac * (fr1.B[2] - fr0.B[2]);
+      const nL = Math.hypot(Nx, Ny, Nz) || 1;
+      const bL = Math.hypot(Bx, By, Bz) || 1;
+      Nx /= nL; Ny /= nL; Nz /= nL;
+      Bx /= bL; By /= bL; Bz /= bL;
+    }
+    v[0] = P0 + x * Nx + y * Bx;
+    v[1] = P1 + x * Ny + y * By;
+    v[2] = P2 + x * Nz + y * Bz;
   };
   return straight.warp(warp);
 }
@@ -3527,6 +3544,10 @@ function _s23BuildVariableProfileCutter(
     densifiedPoints: points.length,
     rawSegCount: Number(rawSegCount) || segCount,
     strongFrames: strong,
+    alongPathTransport: built.transported !== false,
+    maxFrameJumpDeg: typeof built.maxFrameJumpDeg === 'number'
+      ? built.maxFrameJumpDeg
+      : maxConsecutiveFrameAngleDeg(frames),
   });
   const segs = [];
   for (let i = 0; i < segCount; i++) {
