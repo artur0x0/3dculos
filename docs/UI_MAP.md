@@ -142,8 +142,11 @@ mode; the Edge-pick chip needs `pickMode === 'edge'`, no active mode, **and at
 least one selected edge**. Break these and overlays stack in the same corner.
 
 **View snaps.** `ViewSnapControl`'s button only opens and closes its popup —
-Front / Right / Top / Iso all live *inside* the popup. While it is open the
-button shows an `ArrowUp`, pointing at the menu above it.
+Front / Right / Top / Iso all live *inside* the popup. The popup flies out **to
+the left** of the trigger (`absolute right-full`, vertically centred on it),
+because the cluster hugs the right edge of the viewport. While it is open the
+button shows an `ArrowLeft`, pointing the same way the menu unfurled. There is
+no alignment prop — both call sites render `<ViewSnapControl onSnap={…} />`.
 
 ---
 
@@ -235,11 +238,22 @@ Import `src/utils/importModel.js` (+ `POST /api/convert/step`); export
   (phone-tight, desktop-roomy). Match this rather than inventing values.
 - **z-index ladder:** overlays `z-10`; edge chip and success banner `z-20`;
   toasts `z-30`; modals and error banners `z-50`.
-- **Icons** are `lucide-react` only. Overlay buttons carry `title` *and*
+- **Icons** are `lucide-react` only, with exactly one vendored exception:
+  `src/components/icons/SquareRoundCorner.jsx` (lucide's `square-round-corner`,
+  the Fillet glyph) exists because that icon landed in lucide 0.511 and we are
+  pinned to 0.469. Delete it and import from `lucide-react` once the dep moves.
+  Overlay buttons carry `title` *and*
   `aria-label`; toggles carry `aria-pressed`. **No two buttons in the same rail
   share a glyph** — the right rail's selectors are deliberately distinct:
   `RectangleHorizontal` = Face pick, `Layers3` = plane overlays,
-  `NotebookPen` = sketch (contour) overlays, `Spline` = Edge pick.
+  `NotebookPen` = sketch (contour) overlays, `Spline` = Edge pick. In the left
+  rail, Loft is `Pyramid` (a tapered stack of profiles), not `Layers`, and
+  Fillet is `SquareRoundCorner` — so `Squircle` now means roundedBox alone.
+- **Scrolling rails** carry `rail-scroll` alongside `overflow-y-auto`
+  (`src/index.css`, bottom). Desktop Chrome's default gutter is square and cuts
+  the corners off the rail's `rounded-lg` shell; `rail-scroll` gives a thin
+  pill thumb over a transparent track, plus the Firefox equivalents. Add it to
+  any new rail that scrolls.
 - **Rail size is shared.** `HelperInsertPalette`, `ContourModeRail` and
   `CrossSectionPanel` all use 20px icons, `p-2` buttons and a `p-2` shell, in
   both shells. If you change one, change all three (`golden:ui-polish` fails

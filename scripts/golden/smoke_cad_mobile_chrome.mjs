@@ -82,8 +82,8 @@ console.log('cad mobile chrome harmonized to puzzle');
     /data-selector-group="pick-mode"/.test(panel) && /flex gap-1/.test(panel),
   );
   check(
-    'view snaps open inward on the vertical rail',
-    /popupAlign=\{verticalRail \? 'end' : 'start'\}/.test(panel),
+    'view snaps need no alignment prop — the menu always flies left',
+    /<ViewSnapControl onSnap=\{onSnapView\} \/>/.test(panel) && !/popupAlign/.test(panel),
   );
   check(
     'filename chip shows in both CAD shells (no toolbar carries it now)',

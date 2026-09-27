@@ -1,14 +1,17 @@
 // components/ViewSnapControl.jsx — standard-view snap cluster for the lower toolbar.
 //
 // One orientation button, one menu, no hidden second action:
-//   tap      unfurls the cluster (Front / Right / Top / Iso appear above it)
-//   tap again closes it — the icon becomes an up arrow while open so it reads as
-//            "this button belongs to the menu above me", not "snap to iso"
+//   tap      unfurls the cluster (Front / Right / Top / Iso appear to its left)
+//   tap again closes it — the icon becomes a left arrow while open so it reads as
+//            "this button belongs to the menu beside me", not "snap to iso"
+// The menu flies out *left* because the cluster lives on the right edge of the
+// viewport: growing leftwards keeps it on screen, and the arrow always points
+// the same way the menu unfurled.
 // Isometric lives *inside* the popup with the other three views (it used to be
 // the trigger's hidden second tap, which nobody could discover).
 // Any snap closes the cluster.
 import React, { useState } from 'react';
-import { Box, Square, PanelRight, PanelTop, Cuboid, ArrowUp } from 'lucide-react';
+import { Box, Square, PanelRight, PanelTop, Cuboid, ArrowLeft } from 'lucide-react';
 
 // Left to right inside the popped-up bar.
 const VIEWS = [
@@ -18,7 +21,7 @@ const VIEWS = [
   { key: 'iso', label: 'Snap to Isometric', Icon: Cuboid },
 ];
 
-const ViewSnapControl = ({ onSnap, popupAlign = 'start' }) => {
+const ViewSnapControl = ({ onSnap }) => {
   const [open, setOpen] = useState(false);
 
   const handleSnap = (key) => {
@@ -30,9 +33,8 @@ const ViewSnapControl = ({ onSnap, popupAlign = 'start' }) => {
     <div className="relative flex">
       {open && (
         <div
-          className={`absolute bottom-full mb-2 flex gap-2 bg-white/60 backdrop-blur-sm p-2 rounded-lg shadow-lg ${
-            popupAlign === 'end' ? 'right-0' : 'left-0'
-          }`}
+          className="absolute right-full top-1/2 -translate-y-1/2 mr-2 flex gap-2
+            bg-white/60 backdrop-blur-sm p-2 rounded-lg shadow-lg"
           role="group"
           aria-label="Standard view snaps"
           data-view-snap-popup=""
@@ -62,8 +64,8 @@ const ViewSnapControl = ({ onSnap, popupAlign = 'start' }) => {
         aria-label="View snaps"
         aria-expanded={open}
       >
-        {/* Open → arrow toward the menu that just unfurled above this button. */}
-        {open ? <ArrowUp size={20} /> : <Box size={20} />}
+        {/* Open → arrow toward the menu that just unfurled left of this button. */}
+        {open ? <ArrowLeft size={20} /> : <Box size={20} />}
       </button>
     </div>
   );

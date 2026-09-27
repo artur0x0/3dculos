@@ -80,11 +80,15 @@ const contourRail = read('../../src/components/ContourModeRail.jsx');
   );
   check(
     'the trigger becomes an arrow toward the open menu',
-    /open \? <ArrowUp size=\{20\} \/> : <Box size=\{20\} \/>/.test(snap),
+    /open \? <ArrowLeft size=\{20\} \/> : <Box size=\{20\} \/>/.test(snap),
   );
   check(
-    'the popup still unfurls upward, so the arrow points at it',
-    /absolute bottom-full/.test(snap),
+    'the popup unfurls leftwards, so the arrow points at it',
+    /absolute right-full/.test(snap) && !/bottom-full/.test(snap),
+  );
+  check(
+    'the leftwards popup is centred on its trigger',
+    /top-1\/2 -translate-y-1\/2/.test(snap),
   );
   check('popup is addressable from tests', /data-view-snap-popup/.test(snap));
 }
@@ -133,6 +137,31 @@ const contourRail = read('../../src/components/ContourModeRail.jsx');
     'right rail is still the 20px / p-2 reference the others copy',
     /size=\{20\}/.test(panel) && /p-2 rounded/.test(panel),
   );
+}
+
+// ── AC6: loft reads as a pyramid, and the left rail's scrollbar is rounded ──
+{
+  const css = read('../../src/index.css');
+  check('loft uses the pyramid glyph', /makeLoft: Pyramid,/.test(palette));
+  const filletIcon = read('../../src/components/icons/SquareRoundCorner.jsx');
+  check('fillet uses the one-rounded-corner square', /filletEdges: SquareRoundCorner,/.test(palette));
+  check(
+    'the vendored fillet glyph carries lucide\'s own paths',
+    /M21 11a8 8 0 0 0-8-8/.test(filletIcon)
+      && /M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4/.test(filletIcon),
+  );
+  check('the vendored glyph takes lucide\'s size prop', /size = 24/.test(filletIcon));
+  check('the retired stacked-layers glyph is gone', !/\bLayers\b/.test(palette));
+  check(
+    'Pyramid is imported and used once in the helper rail',
+    (palette.match(/\bPyramid\b/g) || []).length === 2,
+  );
+  for (const [name, src] of [['helper rail', palette], ['contour rail', contourRail]]) {
+    check(`${name} scroll gutter is the rounded one`, /overflow-y-auto overflow-x-hidden rail-scroll/.test(src));
+  }
+  check('rail-scroll gives the thumb a pill radius', /\.rail-scroll::-webkit-scrollbar-thumb[\s\S]{0,200}?border-radius: 9999px/.test(css));
+  check('rail-scroll leaves the track transparent', /\.rail-scroll::-webkit-scrollbar-track[\s\S]{0,160}?background: transparent/.test(css));
+  check('rail-scroll covers Firefox too', /\.rail-scroll \{[\s\S]{0,160}?scrollbar-width: thin/.test(css));
 }
 
 if (failed) {
