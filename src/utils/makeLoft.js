@@ -503,21 +503,67 @@ export function buildMakeLoftSolid(Manifold, CrossSection, sections, opts = {}) 
 }
 
 /**
- * Client / golden preview payload: resampled UV rings + world frames.
+ * Shared polar angles for the preview rings: `n` uniform angles plus every
+ * station's exact vertex angles, deduped. Same idea as `_polarTables`, but
+ * without the arc-length sample angles — preview only needs enough rungs to
+ * read, and corners must land on a table entry so a square stays square.
+ */
+function _previewRingAngles(stations, sampleN) {
+  const n = Math.max(8, Math.round(Number(sampleN) || 32));
+  const raw = [];
+  for (let i = 0; i < n; i++) raw.push((i / n) * Math.PI * 2);
+  for (const s of stations) {
+    for (const p of s.contour) {
+      if (Math.hypot(p[0], p[1]) > 1e-8) raw.push(_angleOf(p[0], p[1]));
+    }
+  }
+  raw.sort((a, b) => a - b);
+  const angles = [];
+  for (const a of raw) {
+    if (!angles.length || a - angles[angles.length - 1] > 1e-4) angles.push(a);
+  }
+  if (angles.length > 1 && (angles[0] + Math.PI * 2) - angles[angles.length - 1] < 1e-4) {
+    angles.pop();
+  }
+  return angles;
+}
+
+/**
+ * Client / golden preview payload: UV rings + world frames.
  * Rings use the same aligned contours as makeLoft so preview ≈ Accept.
  * Null when <2 valid stations (incomplete polyline, bad offset, …).
+ *
+ * Rings are sampled by **shared polar angle**, not per-station arc length:
+ * the solid's warp maps a boundary point to the point at the same angle on
+ * the next station, so index-matched arc-length rings drew rungs that paired
+ * (say) a circle's 0° sample with a square's 225° corner — a preview that
+ * twisted like an hourglass while Accept built the correct part. Ray-hitting
+ * one shared angle list keeps ring[i] at the same angle on every station.
+ * A station the origin ray misses (origin outside the profile) falls back to
+ * arc-length rings rather than dropping the preview.
  */
 export function buildLoftPreviewStations(sections, sampleN = 32, opts = {}) {
   const assembled = assembleLoftStations(sections);
   if (!assembled.ok) return null;
   const aligned = alignStationContours(assembled.stations, opts);
   const n = Math.max(8, Math.round(Number(sampleN) || 32));
+  const angles = _previewRingAngles(aligned, n);
+  const rings = aligned.map((s) => {
+    const ring = [];
+    for (const a of angles) {
+      const hit = _contourRayHit(s.contour, Math.cos(a), Math.sin(a));
+      if (!hit) return null;
+      ring.push(hit);
+    }
+    return ring.length >= 3 ? ring : null;
+  });
+  const polarOk = rings.every((r) => r);
   return {
     plane: assembled.stations[0].plane,
-    stations: aligned.map((s) => ({
+    stations: aligned.map((s, i) => ({
       offset: s.offset,
       plane: s.plane,
-      ring: resampleContour(s.contour, n),
+      ring: polarOk ? rings[i] : resampleContour(s.contour, n),
       contour: s.contour,
     })),
   };
