@@ -1,31 +1,25 @@
 // components/ViewSnapControl.jsx — standard-view snap cluster for the lower toolbar.
 //
-// One Box button, two taps, no dead state:
-//   1st tap  expands the cluster upward (Front / Right / Top appear above it)
-//   2nd tap  snaps the camera to Isometric and closes the cluster
-// The three popped-up buttons do the same for their own view: snap + auto-zoom.
-// Any snap closes the cluster, so the next tap on Box starts fresh at "expand".
+// One orientation button, one menu, no hidden second action:
+//   tap      unfurls the cluster (Front / Right / Top / Iso appear above it)
+//   tap again closes it — the icon becomes an up arrow while open so it reads as
+//            "this button belongs to the menu above me", not "snap to iso"
+// Isometric lives *inside* the popup with the other three views (it used to be
+// the trigger's hidden second tap, which nobody could discover).
+// Any snap closes the cluster.
 import React, { useState } from 'react';
-import { Box, Square, PanelRight, PanelTop } from 'lucide-react';
+import { Box, Square, PanelRight, PanelTop, Cuboid, ArrowUp } from 'lucide-react';
 
 // Left to right inside the popped-up bar.
 const VIEWS = [
   { key: 'front', label: 'Snap to Front', Icon: Square },
   { key: 'right', label: 'Snap to Right', Icon: PanelRight },
   { key: 'top', label: 'Snap to Top', Icon: PanelTop },
+  { key: 'iso', label: 'Snap to Isometric', Icon: Cuboid },
 ];
 
 const ViewSnapControl = ({ onSnap, popupAlign = 'start' }) => {
   const [open, setOpen] = useState(false);
-
-  const handleBox = () => {
-    if (!open) {
-      setOpen(true);                 // 1st tap: expand
-    } else {
-      onSnap?.('iso');               // 2nd tap: isometric...
-      setOpen(false);                // ...and close the bar
-    }
-  };
 
   const handleSnap = (key) => {
     onSnap?.(key);
@@ -41,6 +35,7 @@ const ViewSnapControl = ({ onSnap, popupAlign = 'start' }) => {
           }`}
           role="group"
           aria-label="Standard view snaps"
+          data-view-snap-popup=""
         >
           {VIEWS.map(({ key, label, Icon }) => (
             <button
@@ -57,17 +52,18 @@ const ViewSnapControl = ({ onSnap, popupAlign = 'start' }) => {
       )}
 
       <button
-        onClick={handleBox}
+        onClick={() => setOpen((v) => !v)}
         className={`p-2 rounded ${
           open
             ? 'text-green-600 bg-green-100'
             : 'text-blue-600 hover:bg-gray-100 active:bg-blue-100'
         }`}
-        title={open ? 'Snap to Isometric (closes view snaps)' : 'Show view snaps (Front / Right / Top)'}
+        title={open ? 'Hide view snaps' : 'Show view snaps (Front / Right / Top / Iso)'}
         aria-label="View snaps"
         aria-expanded={open}
       >
-        <Box size={20} />
+        {/* Open → arrow toward the menu that just unfurled above this button. */}
+        {open ? <ArrowUp size={20} /> : <Box size={20} />}
       </button>
     </div>
   );
