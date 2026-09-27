@@ -207,10 +207,14 @@ one `pickMode` state (`src/components/Viewport.jsx:282`), toggled from the
 Contour / Extrude / Revolve / Loft / Sweep: `src/utils/contourMode.js` +
 `ContourModeRail.jsx` + `ContourModeChip.jsx`; enter/exit/confirm at
 `src/components/Viewport.jsx:1337-1401`.
-Fillet / Chamfer: `src/utils/filletMode.js` + `FilletModeChip.jsx`;
-enter/exit/accept at `src/components/Viewport.jsx:1476-1510`; kernels in
-`src/utils/fillet*.js` and `src/utils/edgeSweepPath.js` — read
-`.claude/skills/fillets/SKILL.md` first.
+Fillet / Chamfer: `src/utils/filletMode.js` + `FilletModeChip.jsx` (same
+edge-pick chip; Chamfer commits `chamferEdges`, Fillet commits the sweep).
+Enter/exit/accept at `src/components/Viewport.jsx` `enterFilletMode` /
+`acceptFillet`. Kernels in `src/utils/fillet*.js` and
+`src/utils/edgeSweepPath.js` — read `.claude/skills/fillets/SKILL.md` first.
+A Create-contour Confirm on a script with no `part` writes a plane literal
+and does not insert the starter cube, so the following Extrude is
+`let part = placeInFrame`, the same shape as Workplane-then-Extrude.
 Both modes share the shape: tool rail on the left, param chip on the right,
 commit writes script text back through `App.jsx`.
 
@@ -249,14 +253,17 @@ Import `src/utils/importModel.js` (+ `POST /api/convert/step`); export
   `NotebookPen` = sketch (contour) overlays, `Spline` = Edge pick. In the left
   rail, Loft is `Pyramid` (a tapered stack of profiles), not `Layers`, and
   Fillet is `SquareRoundCorner` — so `Squircle` now means roundedBox alone.
+  Chamfer is `TriangleRight`.
   **Two left-rail tools deliberately share a glyph with a right-rail toggle:**
   Create contour = `NotebookPen` (= sketch overlays) and Workplane = `Layers3`
   (= plane overlays). The tool that makes a thing wears the icon that shows it;
   the no-duplicates rule is per rail, so this is intended, not a slip.
 - **`railHidden` items** are palette entries with no button:
   `paletteRailSections` filters them, `itemsByGroup` does not. `sweepPath`
-  (Path) is the only one — Sweep covers it in the UI and inherited its `Route`
-  glyph, but the entry's edge→wire codegen is still composed programmatically.
+  (Path) stays so Sweep can still compose an edge wire. `clearanceHole`,
+  `tapDrillHole`, `cboreHole`, and `cskHole` stay so older scripts and goldens
+  can still emit them, but the rail shows one Hole button: Type is clearance
+  or tap drill, and c-bore / c-sink are the Near end and Far end dropdowns.
   Hide a tool this way rather than deleting an item other code builds with.
 - **Scrolling rails** carry `rail-scroll` alongside `overflow-y-auto`
   (`src/index.css`, bottom). Desktop Chrome's default gutter is square and cuts

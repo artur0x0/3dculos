@@ -145,7 +145,7 @@ console.log('slice-09 helper compose smoke');
   );
   check(
     'fillet→cube→hole: keeps fillet + cube + hole ops',
-    /filletEdges/.test(buf) && /Manifold\.cube/.test(buf) && /\bhole\s*\(/.test(buf),
+    /filletEdges/.test(buf) && /Manifold\.cube/.test(buf) && /\bclearanceHole\s*\(/.test(buf),
   );
   try {
     const result = stubRunner(buf);

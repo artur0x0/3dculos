@@ -86,9 +86,18 @@ console.log('slice-10 palette v2 smoke');
 
 // ── Params flow into snippet ───────────────────────────────────
 {
-  const buf = composeHelperInsert('', 'hole', null, { dia: 8.5, u: 2, v: -3 });
-  check('hole dia from params', /hole\([^)]*8\.5/.test(buf));
-  check('hole u,v from params', /hole\([^)]*,\s*2,\s*-3,\s*8\.5/.test(buf));
+  const buf = composeHelperInsert('', 'hole', null, {
+    holeType: 'clearance', size: 'M6', fit: 'close', u: 2, v: -3,
+  });
+  check('hole clearance from params', /clearanceHole\([^)]*'M6'[^)]*'close'/.test(buf));
+  check('hole u,v from params', /clearanceHole\([^)]*,\s*2,\s*-3,\s*'M6'/.test(buf));
+  const bored = composeHelperInsert('', 'hole', null, {
+    holeType: 'tapDrill', size: 'M4', u: 0, v: 0,
+    nearEnd: 'cbore', nearCboreDia: 8, nearCboreDepth: 3,
+    farEnd: 'csk', farCskDia: 9, farCskDepth: 1.5,
+  });
+  check('hole near c-bore', /cboreHole\(/.test(bored) && /tapDrillHole\(/.test(bored) === false);
+  check('hole far c-sink frame', /frFar/.test(bored) && /cskHole\(/.test(bored));
 }
 
 {
@@ -257,6 +266,7 @@ check('declaredNames export', declaredNames('let box1 = 1;').has('box1'));
   check('Fillet icon is the one-rounded-corner square', /filletEdges:\s*SquareRoundCorner/.test(rail));
   check('roundedBox keeps Squircle to itself', /roundedBox:\s*Squircle/.test(rail) && (rail.match(/\bSquircle\b/g) || []).length === 2);
   check('cbore icon is Cylinder', /cboreHole:\s*Cylinder/.test(rail));
+  check('Chamfer icon is TriangleRight', /chamferEdges:\s*TriangleRight/.test(rail));
   check('Sweep icon is Route', /makeSweep:\s*Route/.test(rail));
   check('no glyph is left orphaned by the icon swaps', !/\bSquareDashed\b|\bSpline\b|\bFrame\b/.test(rail));
   check('compact labels Prim Adv Feat Xform', /Primitives:\s*'Prim'/.test(rail) && /Advanced:\s*'Adv'/.test(rail) && /Features:\s*'Feat'/.test(rail) && /Transforms:\s*'Xform'/.test(rail));

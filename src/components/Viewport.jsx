@@ -99,10 +99,13 @@ import { buildSweepPathPreview } from '../utils/edgeSweepPath';
 import {
   buildFilletBlendPreview,
   enterFilletState,
+  enterChamferState,
   validateFilletAccept,
+  validateChamferAccept,
   defaultFilletParams,
   normalizeFilletParams,
   hasFilletModeBlock,
+  hasChamferModeBlock,
 } from '../utils/filletMode';
 import { classifyFilletEdges, countDegenerateTriangles } from '../utils/filletEdgeClass';
 import {
@@ -1488,7 +1491,8 @@ const Viewport = forwardRef(({
     setPickMode(restore);
   }, [clearFilletBlendPreview]);
 
-  const enterFilletMode = useCallback(() => {
+  const enterFilletMode = useCallback((opts = {}) => {
+    const entry = opts?.entry === 'chamferEdges' ? 'chamferEdges' : 'filletEdges';
     // Snapshot before exitContourMode, which forces face pick.
     filletPriorPickModeRef.current = pickModeRef.current === 'edge' ? 'edge' : 'face';
     exitContourMode();
@@ -1496,14 +1500,17 @@ const Viewport = forwardRef(({
     clearHighlight();
     setSelectedFace(null);
     onFaceSelected?.(null);
-    const next = enterFilletState(selectedEdges);
+    const next = entry === 'chamferEdges'
+      ? enterChamferState(selectedEdges)
+      : enterFilletState(selectedEdges);
     setFilletMode(next);
     filletModeRef.current = next;
     setTangentProp(true);
+    const noun = entry === 'chamferEdges' ? 'Chamfer' : 'Fillet';
     showFilletToast(
       selectedEdges?.length
-        ? 'Fillet mode — Accept commits and exits. X or Back leaves with no commit.'
-        : 'Fillet mode — tap sharp edges (Tangent on). Accept commits and exits; X or Back does not.',
+        ? `${noun} mode — Accept commits and exits. X or Back leaves with no commit.`
+        : `${noun} mode — tap edges${entry === 'chamferEdges' ? '' : ' (Tangent on)'}. Accept commits and exits; X or Back does not.`,
     );
   }, [exitContourMode, onFaceSelected, selectedEdges, clearHighlight]);
 
@@ -1513,6 +1520,28 @@ const Viewport = forwardRef(({
     const edges = (selectedEdges && selectedEdges.length)
       ? selectedEdges
       : (state.lastEdges || []);
+    if (state.entry === 'chamferEdges') {
+      const gate = validateChamferAccept(edges, state.params);
+      if (!gate.ok) {
+        showFilletToast(gate.message);
+        return;
+      }
+      const buf = (typeof getHelperBuffer === 'function' ? getHelperBuffer() : '') || '';
+      const ok = onCommitFillet?.({
+        entry: 'chamferEdges',
+        edges,
+        params: gate.normalized,
+        commitMode: hasChamferModeBlock(buf) ? 'append' : 'replace',
+      });
+      if (ok) {
+        edgeRematchToastSuppressRef.current = true;
+        clearEdgeHover();
+        clearEdgeHighlight();
+        setSelectedEdges([]);
+        exitFilletMode();
+      }
+      return;
+    }
     const gate = validateFilletAccept(edges, state.params);
     if (!gate.ok) {
       showFilletToast(gate.message);
@@ -1557,13 +1586,13 @@ const Viewport = forwardRef(({
   }, [filletMode, selectedEdges, meshEpoch]);
 
   const filletBlendPayload = useMemo(
-    () => (filletMode
+    () => (filletMode && filletMode.entry !== 'chamferEdges'
       ? buildFilletBlendPreview(selectedEdges, filletMode.params)
       : null),
     [filletMode, selectedEdges],
   );
   useEffect(() => {
-    if (!filletMode) {
+    if (!filletMode || filletMode.entry === 'chamferEdges') {
       clearFilletBlendPreview();
       return;
     }
@@ -3827,6 +3856,7 @@ const Viewport = forwardRef(({
       {/* Slice 27: Fillet-in-mode chip — Tangent / Clear / Accept / Back */}
       {filletMode && (
         <FilletModeChip
+          kind={filletMode.entry === 'chamferEdges' ? 'chamfer' : 'fillet'}
           edgeCount={selectedEdges.length}
           tangentOn={tangentProp}
           params={{
@@ -3851,6 +3881,7 @@ const Viewport = forwardRef(({
                 ...prev,
                 params: { ...prev.params, ...next },
                 radiusTouched: extra?.radiusTouched ? true : prev.radiusTouched,
+                sizeTouched: extra?.sizeTouched ? true : prev.sizeTouched,
               }
               : prev
           ))}

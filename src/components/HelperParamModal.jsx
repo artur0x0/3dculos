@@ -186,7 +186,15 @@ const HelperParamModal = ({
   const showPattern = !!values.usePattern;
   const placementCenter = !values.placement || values.placement === 'center';
   const profileType = values.profileType || 'circle';
+  const ruleHolds = (rule) => {
+    if (!rule) return true;
+    const rules = Array.isArray(rule) ? rule : [rule];
+    return rules.every((one) => (one.values || []).includes(values[one.field]));
+  };
+  const optionValue = (opt) => (opt && typeof opt === 'object' ? opt.value : opt);
+  const optionLabel = (opt) => (opt && typeof opt === 'object' ? (opt.label ?? opt.value) : opt);
   const visibleParams = params.filter((p) => {
+    if (p.showWhen && !ruleHolds(p.showWhen)) return false;
     if (p.name === 'depth' && !showDepth) return false;
     if (['n', 'm', 'spacingU', 'spacingV'].includes(p.name) && params.some((x) => x.name === 'usePattern') && !showPattern) {
       return false;
@@ -316,8 +324,8 @@ const HelperParamModal = ({
                   className="rounded-md border border-gray-600 bg-gray-950 px-2 py-1.5 text-sm text-white"
                 >
                   {(p.type === 'body' ? bodies : p.options || []).map((opt) => (
-                    <option key={opt} value={opt}>
-                      {opt}
+                    <option key={String(optionValue(opt))} value={String(optionValue(opt))}>
+                      {optionLabel(opt)}
                     </option>
                   ))}
                 </select>

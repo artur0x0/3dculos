@@ -43,6 +43,7 @@ import {
   estimateCylinderAxis,
   roundFaceNum,
   resolveHoleUV,
+  holeFeatureParamDefs,
 } from './faceFeaturePlacement.js';
 import { resolveFilletStrategy } from './filletAlongPath.js';
 import { planeFrameFromFaceData } from './crossSectionSubstrate.js';
@@ -70,6 +71,10 @@ export const CONTOUR_SWEEP_END = '// --- contour-mode sweep end ---';
 /** Slice 27 — in-mode Fillet region (makeSweepPath + filletAlongPath). Second Accept replaces this block. */
 export const FILLET_MODE_BEGIN = '// --- fillet-mode begin ---';
 export const FILLET_MODE_END = '// --- fillet-mode end ---';
+
+/** In-mode Chamfer region (chamferEdges on the picked set). Second Accept replaces this block. */
+export const CHAMFER_MODE_BEGIN = '// --- chamfer-mode begin ---';
+export const CHAMFER_MODE_END = '// --- chamfer-mode end ---';
 
 /** Metric fastener sizes commonly used in puzzles / hints. */
 export const FASTENER_SIZE_OPTIONS = [
@@ -572,6 +577,27 @@ export function emitPlaneFrameLiteral(plane) {
   return `{ center: ${emitVec3Literal(p.center, [0, 0, 0])}, normal: ${emitVec3Literal(p.normal, [0, 0, 1])}, x: ${emitVec3Literal(p.x, [1, 0, 0])}, y: ${emitVec3Literal(p.y, [0, 1, 0])} }`;
 }
 
+/**
+ * Plane literal for a profile that has no host solid yet.
+ * A selected planar face wins; otherwise the default XY construction plane.
+ */
+function literalPlaneFromFace(faceCtx) {
+  if (faceCtx && faceCtx.type === 'planar') {
+    const framed = faceCtx.planeFrame;
+    if (framed?.center && framed?.normal && framed?.x && framed?.y) return framed;
+    try {
+      return planeFrameFromFaceData({
+        center: faceCtx.center,
+        normal: faceCtx.normal,
+        verts: faceCtx.vertices || faceCtx.verts,
+      });
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
 /** New-body Confirm: `let part = expr` on empty, `part = expr` when part exists. */
 function emitPartReplace(names, expr, partDeclared) {
   if (partDeclared) return `part = ${expr};`;
@@ -762,6 +788,132 @@ export function defaultParamsFor(id) {
  * @typedef {{ name: string, type: 'number'|'bool'|'select'|'body', default: any, label: string, options?: string[], step?: number, min?: number }} ParamDef
  * @typedef {{ id: string, label: string, group: string, title: string, bodyBase?: string, params: ParamDef[], build: Function, placeholder?: boolean }} PaletteItem
  */
+
+function holeTypeKind(raw) {
+  const s = str(raw, 'clearance');
+  if (s === 'tapDrill' || s === 'tap drill' || s === 'tap') return 'tapDrill';
+  return 'clearance';
+}
+
+function holeEndKind(raw) {
+  const s = str(raw, 'none');
+  if (s === 'cbore' || s === 'c-bore' || s === 'counterbore') return 'cbore';
+  if (s === 'csk' || s === 'c-sink' || s === 'countersink') return 'csk';
+  return 'none';
+}
+
+function negatedNumberLiteral(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n) || Object.is(n, -0)) return '0';
+  const r = +(-n).toFixed(6);
+  return Object.is(r, -0) ? '0' : String(r);
+}
+
+/** Far face of `body` along `fr.normal`, normal flipped so it points outward. */
+function emitFarFrameLines(body, fr, names) {
+  const far = allocateUniqueName(names, 'frFar');
+  return {
+    frVar: far,
+    lines: [
+      `const ${far} = (() => {`,
+      `  const bb = ${body}.boundingBox();`,
+      `  const fn = ${fr}.normal, fc = ${fr}.center;`,
+      `  const xs = [bb.min[0], bb.max[0]], ys = [bb.min[1], bb.max[1]], zs = [bb.min[2], bb.max[2]];`,
+      `  let minW = Infinity;`,
+      `  for (const x of xs) for (const y of ys) for (const z of zs) {`,
+      `    const w = (x - fc[0]) * fn[0] + (y - fc[1]) * fn[1] + (z - fc[2]) * fn[2];`,
+      `    if (w < minW) minW = w;`,
+      `  }`,
+      `  return {`,
+      `    center: [fc[0] + fn[0] * minW, fc[1] + fn[1] * minW, fc[2] + fn[2] * minW],`,
+      `    normal: [-fn[0], -fn[1], -fn[2]],`,
+      `    x: ${fr}.x.slice(),`,
+      `    y: [-${fr}.y[0], -${fr}.y[1], -${fr}.y[2]],`,
+      `  };`,
+      `})();`,
+    ],
+  };
+}
+
+/**
+ * Unified Hole: clearance or tap drill, optional c-bore / c-sink on each end.
+ * The four old palette ids stay callable; this is what the Hole button emits.
+ */
+function emitUnifiedHole(lines, body, p, names, faceCtx) {
+  const kind = holeTypeKind(p.holeType);
+  const size = str(p.size, 'M3');
+  const fit = str(p.fit, 'normal');
+  const diaExpr = kind === 'tapDrill'
+    ? `fastenerTapDrillDia('${size}')`
+    : `fastenerClearanceDia('${size}', '${fit}')`;
+  const wp = resolveFeatureWorkplane(body, p, names, faceCtx);
+  lines.push(...wp.lines);
+  const fr = wp.frVar;
+  const usePattern = faceCtx && faceCtx.type === 'planar' && bool(p.usePattern, false);
+  if (usePattern) {
+    const n = Math.max(1, Math.round(num(p.n, 3)));
+    const m = Math.max(1, Math.round(num(p.m, 2)));
+    const su = num(p.spacingU, 18);
+    const sv = num(p.spacingV, 14);
+    const cdVar = allocateUniqueName(names, '_cd');
+    lines.push(`const ${cdVar} = ${diaExpr};`);
+    lines.push(
+      `${body} = holePattern(${body}, ${fr}, { n: ${n}, m: ${m}, spacingU: ${su}, spacingV: ${sv}, dia: ${cdVar} });`,
+    );
+    return;
+  }
+  const { u, v } = faceCtx ? uvForFace(p, faceCtx) : { u: num(p.u, 0), v: num(p.v, 0) };
+  const span = emitSpanExpr(body, fr, faceCtx ? p : { through: true }, names, allocateUniqueName, num);
+  lines.push(...span.lines);
+  const near = holeEndKind(p.nearEnd);
+  const far = holeEndKind(p.farEnd);
+  let diaVar = null;
+  const diaName = () => {
+    if (!diaVar) {
+      diaVar = allocateUniqueName(names, 'holeDia');
+      lines.push(`const ${diaVar} = ${diaExpr};`);
+    }
+    return diaVar;
+  };
+  if (near === 'cbore') {
+    const dia = num(p.nearCboreDia, 6.5);
+    const depth = num(p.nearCboreDepth, 3.5);
+    lines.push(
+      `${body} = cboreHole(${body}, ${fr}, ${u}, ${v}, ${diaName()}, ${dia}, ${depth}, ${span.spanExpr});`,
+    );
+  } else if (near === 'csk') {
+    const dia = num(p.nearCskDia, 6.5);
+    const depth = num(p.nearCskDepth, 2);
+    lines.push(
+      `${body} = cskHole(${body}, ${fr}, ${u}, ${v}, ${diaName()}, ${dia}, ${depth}, ${span.spanExpr});`,
+    );
+  } else if (kind === 'tapDrill') {
+    lines.push(`${body} = tapDrillHole(${body}, ${fr}, ${u}, ${v}, '${size}', ${span.spanExpr});`);
+  } else {
+    lines.push(
+      `${body} = clearanceHole(${body}, ${fr}, ${u}, ${v}, '${size}', ${span.spanExpr}, '${fit}');`,
+    );
+  }
+  if (far === 'none') return;
+  const farFrame = emitFarFrameLines(body, fr, names);
+  lines.push(...farFrame.lines);
+  const spanFar = allocateUniqueName(names, 'spanFar');
+  lines.push(`const ${spanFar} = holeSpan(${body}, ${farFrame.frVar});`);
+  const fv = negatedNumberLiteral(v);
+  if (far === 'cbore') {
+    const dia = num(p.farCboreDia, 6.5);
+    const depth = num(p.farCboreDepth, 3.5);
+    lines.push(
+      `${body} = cboreHole(${body}, ${farFrame.frVar}, ${u}, ${fv}, ${diaName()}, ${dia}, ${depth}, ${spanFar});`,
+    );
+  } else {
+    const dia = num(p.farCskDia, 6.5);
+    const depth = num(p.farCskDepth, 2);
+    lines.push(
+      `${body} = cskHole(${body}, ${farFrame.frVar}, ${u}, ${fv}, ${diaName()}, ${dia}, ${depth}, ${spanFar});`,
+    );
+  }
+}
 
 /** @type {PaletteItem[]} */
 export const HELPER_PALETTE_ITEMS = [
@@ -1036,22 +1188,30 @@ export const HELPER_PALETTE_ITEMS = [
       const lines = [...ensurePartPrefix(empty, names)];
       const body = resolveBody(p, names, empty ? lines.join('\n') : buffer);
       const c = num(p.chamfer, 2);
+      const feat = [];
       let edgesExpr = `convexEdges(${body})`;
       const scope = p.edgeScope || (edgeCtx && edgeCtx.length ? 'selected' : (faceCtx ? 'face' : 'allConvex'));
       if (scope === 'selected' || (edgeCtx && edgeCtx.length && scope !== 'face' && scope !== 'allConvex')) {
         const edge = emitSelectedEdgeLines(body, edgeCtx || [], names, allocateUniqueName);
         if (!edge.ok) return null;
-        lines.push(...edge.lines);
+        feat.push(...edge.lines);
         edgesExpr = edge.edgesExpr;
       } else if (faceCtx && faceCtx.type !== 'irregular' && scope !== 'allConvex') {
         const edge = emitFaceEdgeLines(body, faceCtx, { ...p, edgeScope: 'face' }, names, allocateUniqueName);
-        lines.push(...edge.lines);
+        feat.push(...edge.lines);
         edgesExpr = edge.edgesExpr;
       } else if (scope === 'allConvex') {
         edgesExpr = `convexEdges(${body})`;
       }
-      lines.push(`${body} = chamferEdges(${body}, ${edgesExpr}, ${c});`);
-      lines.push(...syncPartLines(body, names, hasPartDecl(lines, empty)));
+      feat.push(`${body} = chamferEdges(${body}, ${edgesExpr}, ${c});`);
+      feat.push(...syncPartLines(body, names, hasPartDecl([...lines, ...feat], empty)));
+      if (p._chamferMode) {
+        lines.push(CHAMFER_MODE_BEGIN);
+        lines.push(...feat);
+        lines.push(CHAMFER_MODE_END);
+      } else {
+        lines.push(...feat);
+      }
       return withReturn(lines, empty);
     },
   },
@@ -1083,17 +1243,23 @@ export const HELPER_PALETTE_ITEMS = [
       const isNewBodySolid = !!(p._contourRevolve || p._contourExtrude || p._contourLoft || p._contourSweep);
       // Capture before resolveBody, which always touches `part` in the names set.
       const partDeclared = names.has('part');
-      const lines = isNewBodySolid ? [] : [...ensurePartPrefix(empty, names)];
+      // Profile Confirm on a script with no solid must not invent the 40×30×20
+      // host cube. That cube declares `part`, so the following Extrude unions
+      // onto it instead of emitting `let part = placeInFrame`.
+      const frameOnlyProfile = !!p._contourMode && !partDeclared;
+      const lines = (isNewBodySolid || frameOnlyProfile) ? [] : [...ensurePartPrefix(empty, names)];
       const body = resolveBody(p, names, empty ? lines.join('\n') : buffer);
       // Planar face → selected workplane; else default +Z top face.
       const planarCtx = faceCtx && faceCtx.type === 'planar' ? faceCtx : null;
       let wp;
-      if (isNewBodySolid) {
-        const plane = p._contourRevolve?.plane
+      if (isNewBodySolid || frameOnlyProfile) {
+        const plane = frameOnlyProfile
+          ? literalPlaneFromFace(planarCtx)
+          : (p._contourRevolve?.plane
           || p._contourExtrude?.plane
           || p._contourLoft?.plane
           || p._contourSweep?.plane
-          || null;
+          || null);
         const fr = allocateUniqueName(names, 'fr');
         wp = {
           lines: [`const ${fr} = ${emitPlaneFrameLiteral(plane)};`],
@@ -1235,35 +1401,12 @@ export const HELPER_PALETTE_ITEMS = [
     id: 'hole',
     label: 'Hole',
     group: 'Features',
-    title: 'hole(part, frame, u, v, dia, span)',
-    params: [
-      { name: 'body', type: 'body', default: 'part', label: 'Body' },
-      { name: 'dia', type: 'number', default: 6, label: 'Diameter', min: 0.1, step: 0.5 },
-      { name: 'u', type: 'number', default: 0, label: 'U', step: 1 },
-      { name: 'v', type: 'number', default: 0, label: 'V', step: 1 },
-    ],
+    title: 'Hole — clearance or tap drill, with optional c-bore / c-sink on each end',
+    params: holeFeatureParamDefs({ uv: true }),
     build: (empty, p, names, buffer, faceCtx = null) => {
       const lines = [...ensurePartPrefix(empty, names)];
       const body = resolveBody(p, names, empty ? lines.join('\n') : buffer);
-      const dia = num(p.dia, 6);
-      const wp = resolveFeatureWorkplane(body, p, names, faceCtx);
-      lines.push(...wp.lines);
-      const fr = wp.frVar;
-      const usePattern = faceCtx && faceCtx.type === 'planar' && bool(p.usePattern, false);
-      if (usePattern) {
-        const n = Math.max(1, Math.round(num(p.n, 3)));
-        const m = Math.max(1, Math.round(num(p.m, 2)));
-        const su = num(p.spacingU, 18);
-        const sv = num(p.spacingV, 14);
-        lines.push(
-          `${body} = holePattern(${body}, ${fr}, { n: ${n}, m: ${m}, spacingU: ${su}, spacingV: ${sv}, dia: ${dia} });`,
-        );
-      } else {
-        const { u, v } = faceCtx ? uvForFace(p, faceCtx) : { u: num(p.u, 0), v: num(p.v, 0) };
-        const span = emitSpanExpr(body, fr, faceCtx ? p : { through: true }, names, allocateUniqueName, num);
-        lines.push(...span.lines);
-        lines.push(`${body} = hole(${body}, ${fr}, ${u}, ${v}, ${dia}, ${span.spanExpr});`);
-      }
+      emitUnifiedHole(lines, body, p, names, faceCtx);
       lines.push(...syncPartLines(body, names, hasPartDecl(lines, empty)));
       return withReturn(lines, empty);
     },
@@ -1302,6 +1445,7 @@ export const HELPER_PALETTE_ITEMS = [
     id: 'clearanceHole',
     label: 'Clearance',
     group: 'Features',
+    railHidden: true,
     title: "clearanceHole(part, frame, u, v, size, span?, fit?)",
     params: [
       { name: 'body', type: 'body', default: 'part', label: 'Body' },
@@ -1343,6 +1487,7 @@ export const HELPER_PALETTE_ITEMS = [
     id: 'tapDrillHole',
     label: 'Tap drill',
     group: 'Features',
+    railHidden: true,
     title: 'tapDrillHole(part, frame, u, v, size, span?)',
     params: [
       { name: 'body', type: 'body', default: 'part', label: 'Body' },
@@ -1373,6 +1518,7 @@ export const HELPER_PALETTE_ITEMS = [
     id: 'cboreHole',
     label: 'Cbore',
     group: 'Features',
+    railHidden: true,
     title: 'cboreHole(part, frame, u, v, diaThru, diaCbore, cboreDepth, span)',
     params: [
       { name: 'body', type: 'body', default: 'part', label: 'Body' },
@@ -1405,6 +1551,7 @@ export const HELPER_PALETTE_ITEMS = [
     id: 'cskHole',
     label: 'Csk',
     group: 'Features',
+    railHidden: true,
     title: 'cskHole(part, frame, u, v, diaThru, diaCsk, cskDepth, span)',
     params: [
       { name: 'body', type: 'body', default: 'part', label: 'Body' },

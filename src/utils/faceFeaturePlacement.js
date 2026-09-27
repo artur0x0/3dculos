@@ -157,6 +157,109 @@ export function estimateCylinderAxis(normal) {
   return { axis: axes[0].axis, axisVec: axes[0].axisVec };
 }
 
+const HOLE_SIZE_OPTIONS = ['M2', 'M2.5', 'M3', 'M4', 'M5', 'M6', 'M8', 'M10'];
+const HOLE_FIT_OPTIONS = ['close', 'normal', 'loose'];
+const HOLE_END_OPTIONS = [
+  { value: 'none', label: 'none' },
+  { value: 'cbore', label: 'c-bore' },
+  { value: 'csk', label: 'c-sink' },
+];
+
+/**
+ * One Hole sheet: type is clearance or tap drill. Counterbore and countersink
+ * are near-end and far-end options, not separate rail buttons.
+ * @param {{ placement?: boolean, uv?: boolean, through?: boolean, pattern?: boolean, cylindrical?: boolean }} [opts]
+ */
+export function holeFeatureParamDefs(opts = {}) {
+  const {
+    placement = false,
+    uv = true,
+    through = false,
+    pattern = false,
+    cylindrical = false,
+  } = opts;
+  const params = [
+    { name: 'body', type: 'body', default: 'part', label: 'Body' },
+    {
+      name: 'holeType', type: 'select', default: 'clearance', label: 'Type',
+      options: [
+        { value: 'clearance', label: 'clearance' },
+        { value: 'tapDrill', label: 'tap drill' },
+      ],
+    },
+    { name: 'size', type: 'select', default: 'M3', label: 'Size', options: HOLE_SIZE_OPTIONS },
+    {
+      name: 'fit', type: 'select', default: 'normal', label: 'Fit', options: HOLE_FIT_OPTIONS,
+      showWhen: { field: 'holeType', values: ['clearance'] },
+    },
+  ];
+  if (cylindrical) {
+    params.push(
+      { name: 'angleDeg', type: 'number', default: 0, label: 'Angle °', step: 1, slider: true },
+      { name: 'axial', type: 'number', default: 0, label: 'Axial height', step: 0.5, slider: true },
+    );
+  }
+  if (placement) {
+    params.push({
+      name: 'placement', type: 'select', default: 'center', label: 'Placement',
+      options: ['center', 'custom'],
+    });
+  }
+  if (uv) {
+    params.push(
+      { name: 'u', type: 'number', default: 0, label: 'U', step: 0.5, slider: true },
+      { name: 'v', type: 'number', default: 0, label: 'V', step: 0.5, slider: true },
+    );
+  }
+  if (through) {
+    params.push(
+      { name: 'through', type: 'bool', default: true, label: 'Through' },
+      { name: 'depth', type: 'number', default: 12, label: 'Depth', min: 0.1, step: 0.5, slider: true },
+    );
+  }
+  if (pattern) {
+    params.push(
+      { name: 'usePattern', type: 'bool', default: false, label: 'n×m pattern' },
+      { name: 'n', type: 'number', default: 3, label: 'Count U', min: 1, step: 1 },
+      { name: 'm', type: 'number', default: 2, label: 'Count V', min: 1, step: 1 },
+      { name: 'spacingU', type: 'number', default: 18, label: 'Spacing U', min: 0.1, step: 1, slider: true },
+      { name: 'spacingV', type: 'number', default: 14, label: 'Spacing V', min: 0.1, step: 1, slider: true },
+    );
+  }
+  const notPattern = { field: 'usePattern', values: [false, undefined] };
+  const endFields = (side) => {
+    const title = side === 'near' ? 'Near end' : 'Far end';
+    const when = (kind) => (pattern
+      ? [{ field: `${side}End`, values: [kind] }, notPattern]
+      : { field: `${side}End`, values: [kind] });
+    return [
+      {
+        name: `${side}End`, type: 'select', default: 'none', label: title,
+        options: HOLE_END_OPTIONS,
+        ...(pattern ? { showWhen: notPattern } : {}),
+      },
+      {
+        name: `${side}CboreDia`, type: 'number', default: 6.5, label: `${title} c-bore Ø`,
+        min: 0.1, step: 0.1, showWhen: when('cbore'),
+      },
+      {
+        name: `${side}CboreDepth`, type: 'number', default: 3.5, label: `${title} c-bore depth`,
+        min: 0.1, step: 0.5, showWhen: when('cbore'),
+      },
+      {
+        name: `${side}CskDia`, type: 'number', default: 6.5, label: `${title} c-sink Ø`,
+        min: 0.1, step: 0.1, showWhen: when('csk'),
+      },
+      {
+        name: `${side}CskDepth`, type: 'number', default: 2, label: `${title} c-sink depth`,
+        min: 0.1, step: 0.5, showWhen: when('csk'),
+      },
+    ];
+  };
+  params.push(...endFields('near'), ...endFields('far'));
+  return params;
+}
+
 /**
  * Extra / replacement params for face-aware modal by face type + feature id.
  * Returns null for non-face features. Merges over base item.params in the UI.
@@ -212,12 +315,7 @@ export function faceAwareParams(id, faceType) {
       depth,
     ];
     if (id === 'hole') {
-      return [
-        ...cylCommon.slice(0, 3),
-        { name: 'dia', type: 'number', default: 6, label: 'Diameter', min: 0.1, step: 0.5, slider: true },
-        through,
-        depth,
-      ];
+      return holeFeatureParamDefs({ cylindrical: true, uv: false, through: true });
     }
     if (id === 'holePattern') {
       // Pattern on cylinder wall is awkward; keep axial/angle as origin + planar-style grid in tangent uv
@@ -300,15 +398,7 @@ export function faceAwareParams(id, faceType) {
   ];
 
   if (id === 'hole') {
-    return [
-      body,
-      placement,
-      ...uv,
-      { name: 'dia', type: 'number', default: 6, label: 'Diameter', min: 0.1, step: 0.5, slider: true },
-      through,
-      depth,
-      ...patternOpts,
-    ];
+    return holeFeatureParamDefs({ placement: true, uv: true, through: true, pattern: true });
   }
   if (id === 'holePattern') {
     return [
