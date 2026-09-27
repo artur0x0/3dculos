@@ -178,7 +178,7 @@ const handleButtonClick = () => {
           ? 'flex flex-col gap-1'
           : 'flex flex-wrap justify-end gap-2 max-w-[calc(100%-1rem)]'
       }`}>
-        <ViewSnapControl onSnap={onSnapView} popupAlign={verticalRail ? 'end' : 'start'} />
+        <ViewSnapControl onSnap={onSnapView} />
 
         {/* Pick selectors — icons only; idle matches Fit/ruler (no filled tan/opaque frame) */}
         {typeof onPickModeChange === 'function' && (

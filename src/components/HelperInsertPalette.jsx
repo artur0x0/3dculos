@@ -22,7 +22,7 @@ import {
   Frame,
   ArrowUpFromLine,
   Rotate3d,
-  Layers,
+  Pyramid,
   SquareDashed,
   Route,
   Spline,
@@ -59,7 +59,7 @@ const ICONS = {
   workplane: Frame,
   makeExtrude: ArrowUpFromLine,
   makeRevolve: Rotate3d,
-  makeLoft: Layers,
+  makeLoft: Pyramid,
   makeSweep: Spline,
   crossSection: SquareDashed,
   sweepPath: Route,
@@ -195,7 +195,7 @@ const HelperInsertPalette = ({
       <div
         className={`absolute left-2 lg:left-4 bottom-4 z-10 flex flex-col gap-1
           bg-white/60 backdrop-blur-sm rounded-lg shadow-lg
-          max-h-[min(72%,calc(100%-5.5rem))] overflow-y-auto overflow-x-hidden
+          max-h-[min(72%,calc(100%-5.5rem))] overflow-y-auto overflow-x-hidden rail-scroll
           p-2`}
         role="group"
         aria-label="Helper insert palette"
