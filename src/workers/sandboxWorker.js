@@ -1661,32 +1661,133 @@ function chamferEdges(part, edges, c) {
 }
 
 /**
- * convexEdges(m, minAngleDeg=2) — genuine straight convex edges.
- * "Genuine" = dihedral angle between the adjacent faces > minAngleDeg
- * (filters tessellation seams on curved faces, which are not real edges).
- * Convexity = ball probe centered ON the edge midpoint: for a convex 90°
- * edge the ball is ~25% inside the solid, for a concave (270°) edge ~75%,
- * for a smooth surface ~50%. Kept: f < 0.45.
- * Returns edges with n0/n1 (adjacent face normals) attached, ready for
- * chamferEdges / the C6 fillet helper.
+ * Ball-probe-equivalent feature threshold (degrees).
+ *
+ * The old convexity test intersected a small sphere at each edge midpoint with
+ * the whole solid and kept `f < 0.45`. Measured across box / cylinder / sphere /
+ * L-shape / loft, that fraction is exactly `(180 - dihedralDeg) / 360` — the
+ * probe was a dihedral threshold wearing a CSG costume, at ~4.5 ms per edge
+ * (5.5 s of a 5.6 s loft fillet). `f < 0.45` ⇔ dihedral > 18°.
+ *
+ * It was also WRONG on fine meshes: on a 384-segment filleted box the probe
+ * sphere shrinks to ~0.012 mm, where Manifold's boolean returns f = 0.5 for
+ * plainly 90° edges and even negative volumes. The local test below has no
+ * such scale dependence.
  */
-function convexEdges(m, minAngleDeg = 2) {
+const FEATURE_EDGE_MIN_DEG = 18;
+
+/**
+ * Coplanarity gate on the FACE-GROUP normal pair that these helpers return.
+ * Downstream (chamferEdges, the fillet framing) consumes n0/n1 and loud-fails
+ * on a coplanar pair, so the returned pair must clear this independently of
+ * the per-triangle dihedral used for the sign.
+ */
+const COPLANAR_PAIR_MIN_DEG = 2;
+
+/** Area of triangle `ti`, for spotting degenerate slivers. */
+function _c4TriArea(tri) {
+  return 0.5 * _c4Len(_c4Cross(_c4Sub(tri.v[1], tri.v[0]), _c4Sub(tri.v[2], tri.v[0])));
+}
+
+/**
+ * Signed feature edges — convex AND concave, by a local winding test.
+ *
+ * Sign: `dot(cross(n0, n1), dir) > 0` is convex, `< 0` is concave, where `dir`
+ * is the edge as wound in the triangle whose normal is n0. Winding is what
+ * carries the inside/outside information; a dot product alone cannot tell a 90°
+ * convex edge from a 270° concave one (they share the same normal angle).
+ *
+ * Normals come from the adjacent TRIANGLES, not the face groups: a face group's
+ * normal is an area-weighted average, and on a curved group (a fillet sail) it
+ * points nowhere near the local surface, which flips the cross product. Where a
+ * triangle is a degenerate sliver — tessellated lofts carry hundreds — its
+ * normal is meaningless, so the face-group normal stands in for it instead.
+ *
+ * `e.tris[i]` is the triangle belonging to face group `e.faces[i]`, so the
+ * substitution always pairs a triangle with its own group.
+ *
+ * @param {Manifold} m
+ * @param {number} [minAngleDeg] dihedral gate; raised to FEATURE_EDGE_MIN_DEG
+ * @returns {object[]} edges with { n0, n1, convex, dihedralDeg }
+ */
+function signedFeatureEdges(m, minAngleDeg = FEATURE_EDGE_MIN_DEG) {
   const data = c4MeshData(m);
-  const M = manifoldModule.Manifold;
-  const cosMin = Math.cos((minAngleDeg * Math.PI) / 180);
+  const info = _c6BuildMeshInfo(m);
+  const gate = Math.max(Number(minAngleDeg) || 0, FEATURE_EDGE_MIN_DEG);
+  const cosGate = Math.cos((gate * Math.PI) / 180);
+  // The old helper's coplanarity pre-gate, kept verbatim at its 2° default.
+  const cosContract = Math.cos((COPLANAR_PAIR_MIN_DEG * Math.PI) / 180);
   const out = [];
   for (const e of data.edges) {
-    const n0 = data.faces[e.faces[0]].normal;
-    const n1 = data.faces[e.faces[1]].normal;
-    if (_c4Dot(n0, n1) > cosMin) continue; // coplanar / tessellation seam
-    const mid = _c4Mul(0.5, _c4Add(e.va, e.vb));
-    const r = Math.min(0.05, _c4Len(_c4Sub(e.vb, e.va)) * 0.25);
-    const sp = M.sphere(r, 12, 6).transform([1,0,0,0, 0,1,0,0, 0,0,1,0, mid[0],mid[1],mid[2],1]);
-    const f = M.intersection(m, sp).volume() / sp.volume();
-    if (f >= 0.45) continue; // concave (>0.55) or smooth/ambiguous (~0.5)
-    out.push({ ...e, n0, n1 });
+    const g0 = data.faces[e.faces[0]].normal;
+    const g1 = data.faces[e.faces[1]].normal;
+    const i0 = e.tris[0];
+    const i1 = e.tris[1];
+    const t0 = info.tris[i0];
+    const t1 = info.tris[i1];
+    if (!t0 || !t1) continue;
+    const eLen = _c4Len(_c4Sub(e.vb, e.va));
+    if (!(eLen > 0)) continue;
+    // Relative sliver test: a 384-segment fillet's triangles are tiny but valid,
+    // so an absolute area floor would reject the whole blend surface.
+    const slivEps = 1e-6 * eLen * eLen;
+    const tOK0 = _c4TriArea(t0) > slivEps;
+    const tOK1 = _c4TriArea(t1) > slivEps;
+    // c4MeshData sums a face group's triangle normals; on difference-derived
+    // solids a group can span opposing patches and cancel to the zero vector
+    // (measured: 13 of 17 convex edges on an L-shape). Those zeros used to
+    // flow straight into the fillet framing as n0/n1. Prefer the group normal,
+    // but fall back to the triangle when the group degenerates.
+    const gOK0 = _c4Len(g0) > 0.5;
+    const gOK1 = _c4Len(g1) > 0.5;
+    if ((!tOK0 && !gOK0) || (!tOK1 && !gOK1)) continue;
+    const n0 = tOK0 ? t0.n : g0;
+    const n1 = tOK1 ? t1.n : g1;
+    const outN0 = gOK0 ? g0 : t0.n;
+    const outN1 = gOK1 ? g1 : t1.n;
+    // Gate 1 (consumer contract): the normals this helper RETURNS are the
+    // face-group pair, and chamferEdges / the fillet framing reject a coplanar
+    // pair. Gating on the triangle normals alone would hand them edges whose
+    // group normals are coplanar — a real regression the pilot caught.
+    if (_c4Dot(outN0, outN1) > cosContract) continue;
+    // Gate 2 (feature): dihedral must clear the ball-probe-equivalent threshold.
+    const dot = _c4Dot(n0, n1);
+    if (dot > cosGate) continue; // coplanar / tessellation seam / below gate
+    // Edge as wound in t0. Vertex ORDER survives degeneracy even when the
+    // normal does not, so this stays valid for sliver triangles.
+    let dir = null;
+    for (let k = 0; k < 3; k++) {
+      const u = t0.vs[k];
+      const w = t0.vs[(k + 1) % 3];
+      if ((u === e.a && w === e.b) || (u === e.b && w === e.a)) {
+        dir = _c4Sub(t0.v[(k + 1) % 3], t0.v[k]);
+        break;
+      }
+    }
+    if (!dir) continue;
+    const convex = _c4Dot(_c4Cross(n0, n1), dir) > 0;
+    const dihedralDeg = (Math.acos(Math.max(-1, Math.min(1, dot))) * 180) / Math.PI;
+    out.push({ ...e, n0: outN0, n1: outN1, convex, dihedralDeg });
   }
   return out;
+}
+
+/**
+ * convexEdges(m, minAngleDeg) — genuine convex feature edges.
+ * Thin filter over signedFeatureEdges; see FEATURE_EDGE_MIN_DEG for why the
+ * ball probe it replaced was both slow and scale-dependent.
+ * n0/n1 stay the FACE-GROUP normals, which is what the fillet framing consumes.
+ */
+function convexEdges(m, minAngleDeg = FEATURE_EDGE_MIN_DEG) {
+  return signedFeatureEdges(m, minAngleDeg).filter((e) => e.convex);
+}
+
+/**
+ * concaveEdges(m, minAngleDeg) — genuine concave (interior) feature edges.
+ * Rounding these is material ADD, not remove; see filletAlongPath.
+ */
+function concaveEdges(m, minAngleDeg = FEATURE_EDGE_MIN_DEG) {
+  return signedFeatureEdges(m, minAngleDeg).filter((e) => !e.convex);
 }
 
 // ---------------------------------------------------------------- hole patterns
@@ -3131,8 +3232,8 @@ function _s23NearestMatched(raw, i, closed) {
  * frame. Throws when no segment matches, the edge is concave, or θ is
  * degenerate — a 90° start-frame fallback is the acute-edge hook.
  */
-function _s23ProbeSegments(M, part, points, closed) {
-  const edges = convexEdges(part);
+function _s23ProbeSegments(part, points, closed) {
+  const edges = signedFeatureEdges(part);
   const mesh = _c6BuildMeshInfo(part);
   const n = points.length;
   const segCount = closed ? n : n - 1;
@@ -3168,7 +3269,6 @@ function _s23ProbeSegments(M, part, points, closed) {
   };
 
   let prevN = null;
-  let checkedConvex = false;
   for (const seg of raw) {
     if (!seg.best) continue;
     const best = seg.best;
@@ -3180,16 +3280,12 @@ function _s23ProbeSegments(M, part, points, closed) {
     if (!X0 || !X1) continue;
     const f0 = _c6InFaceDir(X0, best.va, seg.T);
     const f1 = _c6InFaceDir(X1, best.va, seg.T);
-    if (!checkedConvex) {
-      const rProbe = Math.min(0.05, (seg.length || 1) * 0.25);
-      const sp = M.sphere(rProbe, 12, 6).transform(
-        [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, seg.mid[0], seg.mid[1], seg.mid[2], 1],
-      );
-      const fIn = M.intersection(part, sp).volume() / sp.volume();
-      if (fIn >= 0.45) {
-        throw new Error('filletAlongPath: edge is concave (sweep fillet is external / material-remove only)');
-      }
-      checkedConvex = true;
+    // Per-segment, not once-per-path: a chain that changes sign mid-way used to
+    // be classified by its first matched segment and silently got the wrong
+    // cutter for the rest. The dihedral sweep is material-remove only, so any
+    // concave segment belongs to the variable-profile filler path instead.
+    if (best.convex === false) {
+      throw new Error(_S23_CONCAVE_MSG);
     }
     const frame = orientFilletFrame(seg.T, f0, f1, prevN);
     if (!(frame.theta > 0.05) || frame.theta > Math.PI - 0.05) {
@@ -3407,13 +3503,13 @@ function _recordVariableProfileMeta(meta) {
  * Probe wall normals (n0/n1) at each densified knot from the nearest convex edge.
  * Same mid-match spirit as _s23ProbeSegments; feeds buildVariableProfileFrames.
  */
-function _s23ProbeKnotNormals(M, part, points, closed) {
-  const edges = convexEdges(part);
+function _s23ProbeKnotNormals(part, points, closed) {
+  const edges = signedFeatureEdges(part);
   const n = points.length;
   const segCount = closed ? n : n - 1;
   const segmentNormals = new Array(segCount).fill(null);
+  const segmentConvex = new Array(segCount).fill(null);
   let seedNormals = null;
-  let checkedConvex = false;
   const matchedIdx = [];
 
   for (let i = 0; i < segCount; i++) {
@@ -3435,19 +3531,11 @@ function _s23ProbeKnotNormals(M, part, points, closed) {
     }
     const hit = best && bestD <= Math.max(0.85, Math.max(0.55 * (segL || 1), 0.35));
     if (!hit) continue;
-    if (!checkedConvex) {
-      const rProbe = Math.min(0.05, (segL || 1) * 0.25);
-      const sp = M.sphere(rProbe, 12, 6).transform(
-        [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, mid[0], mid[1], mid[2], 1],
-      );
-      const fIn = M.intersection(part, sp).volume() / sp.volume();
-      if (fIn >= 0.45) {
-        throw new Error('filletAlongPath: edge is concave (sweep fillet is external / material-remove only)');
-      }
-      checkedConvex = true;
-    }
     const nr = { n0: best.n0, n1: best.n1 };
     segmentNormals[i] = nr;
+    // Per-knot sign. C3.3 and earlier sampled convexity ONCE per path, so a
+    // chain that changed sign mid-way was cut as whatever its first segment was.
+    segmentConvex[i] = best.convex !== false;
     matchedIdx.push(i);
     if (!seedNormals) seedNormals = nr;
   }
@@ -3473,9 +3561,10 @@ function _s23ProbeKnotNormals(M, part, points, closed) {
       }
     }
     segmentNormals[i] = segmentNormals[bestJ];
+    segmentConvex[i] = segmentConvex[bestJ];
   }
 
-  return { segmentNormals, seedNormals };
+  return { segmentNormals, seedNormals, segmentConvex };
 }
 
 /**
@@ -3534,6 +3623,10 @@ function _s23CuttersFromSegs(M, CrossSection, segs, closed, radius, profileKind,
   return { cutter, expectVol, runCount: runs.length, thetaRunCount, singleRun };
 }
 
+/** Concave rejection shared by the dihedral (material-remove only) paths. */
+const _S23_CONCAVE_MSG =
+  'filletAlongPath: edge is concave (sweep fillet is external / material-remove only)';
+
 /** Numerical band for a per-knot theta. Outside it the wedge is degenerate. */
 const _S23_THETA_MIN = 0.08;
 const _S23_THETA_MAX = Math.PI - 0.08;
@@ -3554,10 +3647,7 @@ const _S23_THETA_MAX = Math.PI - 0.08;
  * Builds the cutter mesh directly (ring per knot, stitched) instead of
  * extrude+warp, because extrude+warp can only reorient one fixed profile.
  */
-function _s23VaryingProfileCutter(segs, closed, radius, profileKind, arcSegs, testScale) {
-  if (!Array.isArray(segs) || !segs.length) {
-    throw new Error('filletAlongPath: varying-profile cutter needs ≥ 1 segment');
-  }
+function _s23VaryingProfileTube(runSegs, wrapClosed, radius, profileKind, arcSegs, testScale) {
   const place = (contour, origin, N, B) => contour.map(([u, v]) => [
     origin[0] + u * N[0] + v * B[0],
     origin[1] + u * N[1] + v * B[1],
@@ -3567,7 +3657,7 @@ function _s23VaryingProfileCutter(segs, closed, radius, profileKind, arcSegs, te
   const thetas = [];
   let expectVol = 0;
   let clampedKnots = 0;
-  for (const seg of segs) {
+  for (const seg of runSegs) {
     let th = Number(seg.theta);
     if (!Number.isFinite(th)) th = Math.PI / 2;
     // Clamp, don't throw: one noisy knot must not kill a 48-knot blend. A
@@ -3586,25 +3676,25 @@ function _s23VaryingProfileCutter(segs, closed, radius, profileKind, arcSegs, te
       seg.p0, seg.N, seg.B,
     ));
   }
-  if (!closed) {
-    const tail = segs[segs.length - 1];
+  if (!wrapClosed) {
+    const tail = runSegs[runSegs.length - 1];
     rings.push(place(
       _s23DihedralContour(radius, thetas[thetas.length - 1], profileKind, arcSegs, testScale),
       tail.p1, tail.N, tail.B,
     ));
   }
-  const mesh = varyingProfileTubeMesh(rings, closed);
-  let cutter;
+  const mesh = varyingProfileTubeMesh(rings, wrapClosed);
+  let solid;
   let repair;
   try {
-    ({ manifold: cutter, repair } = _meshDataToManifold(mesh.vertProperties, mesh.triVerts));
+    ({ manifold: solid, repair } = _meshDataToManifold(mesh.vertProperties, mesh.triVerts));
   } catch (e) {
     throw new Error(
       'filletAlongPath: varying-profile cutter is not a valid solid (rings likely '
       + `self-intersect — path curves tighter than the blend radius): ${e && e.message ? e.message : e}`,
     );
   }
-  // A cutter that needed welding is a warning sign, not a pass: the rings are
+  // A tube that needed welding is a warning sign, not a pass: the rings are
   // built to be watertight by construction, so a weld means two rings collided.
   if (repair !== 'strict') {
     throw new Error(
@@ -3612,17 +3702,97 @@ function _s23VaryingProfileCutter(segs, closed, radius, profileKind, arcSegs, te
       + 'rings collide along the path. Reduce radius or re-pick edges.',
     );
   }
-  const se = _c4StatusError(cutter);
+  const se = _c4StatusError(solid);
   if (se) throw new Error(`filletAlongPath: bad cutter (${se})`);
-  const degs = thetas.map((t) => (t * 180) / Math.PI);
+  return { solid, expectVol, thetas, ringCount: rings.length, clampedKnots };
+}
+
+/**
+ * C3.3 hard: VARYING cross-section cutter — one profile per knot.
+ *
+ * C3.1 approximated a ramping dihedral with piecewise-constant theta runs
+ * (staircase); C3.2 replaced that with ONE median-theta run (gouge: on the
+ * playtest loft ridge theta ramps 161.5 deg -> 92.8 deg, so a median 109.7 deg
+ * profile cut 4.3x too deep at the shallow end). Both were the same bug — a
+ * constant section swept along a path whose section must change.
+ *
+ * Volume guards could not see it: the median-theta total landed within 1.2x of
+ * the true integral. The error was distributional, not integral. So expectVol
+ * here is the true per-knot integral, which makes those guards meaningful again.
+ *
+ * Builds the cutter mesh directly (ring per knot, stitched) instead of
+ * extrude+warp, because extrude+warp can only reorient one fixed profile.
+ *
+ * C4: the path is split into maximal same-SIGN runs. Convex runs become
+ * cutters (material remove); concave runs become fillers (material add). The
+ * wedge, the frame and the ring machinery are identical for both — only the
+ * boolean differs — because for a concave edge the angle between the two
+ * in-face directions IS the empty-side angle, so the same contour that carves
+ * a convex corner fills a concave one.
+ */
+function _s23VaryingProfileCutter(segs, closed, radius, profileKind, arcSegs, testScale) {
+  if (!Array.isArray(segs) || !segs.length) {
+    throw new Error('filletAlongPath: varying-profile cutter needs ≥ 1 segment');
+  }
+  // Maximal same-sign runs.
+  const runs = [];
+  for (const seg of segs) {
+    const convex = seg.convex !== false;
+    const cur = runs[runs.length - 1];
+    if (!cur || cur.convex !== convex) runs.push({ convex, segs: [seg] });
+    else cur.segs.push(seg);
+  }
+  // A closed path whose head and tail share a sign is one run around the loop.
+  if (closed && runs.length > 1 && runs[0].convex === runs[runs.length - 1].convex) {
+    runs[0].segs = runs[runs.length - 1].segs.concat(runs[0].segs);
+    runs.pop();
+  }
+  const wrapClosed = closed && runs.length === 1;
+
+  const cutters = [];
+  const fillers = [];
+  let expectRemove = 0;
+  let expectAdd = 0;
+  let clampedKnots = 0;
+  let ringCount = 0;
+  const allThetas = [];
+  for (const run of runs) {
+    const t = _s23VaryingProfileTube(
+      run.segs, wrapClosed, radius, profileKind, arcSegs, testScale,
+    );
+    clampedKnots += t.clampedKnots;
+    ringCount += t.ringCount;
+    for (const th of t.thetas) allThetas.push(th);
+    if (run.convex) {
+      cutters.push(t.solid);
+      expectRemove += t.expectVol;
+    } else {
+      fillers.push(t.solid);
+      expectAdd += t.expectVol;
+    }
+  }
+  const M = manifoldModule.Manifold;
+  const merge = (list, what) => {
+    if (!list.length) return null;
+    let m = list[0];
+    for (let i = 1; i < list.length; i++) m = M.union([m, list[i]]);
+    const se = _c4StatusError(m);
+    if (se) throw new Error(`filletAlongPath: bad ${what} (${se})`);
+    return m;
+  };
+  const degs = allThetas.map((t) => (t * 180) / Math.PI);
   return {
-    cutter,
-    expectVol,
-    runCount: 1,
+    cutter: merge(cutters, 'cutter'),
+    filler: merge(fillers, 'filler'),
+    expectVol: expectRemove,
+    expectAdd,
+    runCount: runs.length,
+    convexRuns: runs.filter((r) => r.convex).length,
+    concaveRuns: runs.filter((r) => !r.convex).length,
     thetaRunCount: countThetaRuns(segs),
-    singleRun: true,
+    singleRun: runs.length === 1,
     varyingProfile: true,
-    ringCount: rings.length,
+    ringCount,
     clampedKnots,
     thetaMinDeg: +Math.min(...degs).toFixed(2),
     thetaMaxDeg: +Math.max(...degs).toFixed(2),
@@ -3636,11 +3806,12 @@ function _s23VaryingProfileCutter(segs, closed, radius, profileKind, arcSegs, te
 function _s23BuildVariableProfileCutter(
   M, CrossSection, part, points, closed, radius, profileKind, arcSegs, testScale, rawSegCount,
 ) {
-  const { segmentNormals, seedNormals } = _s23ProbeKnotNormals(M, part, points, closed);
+  const { segmentNormals, seedNormals, segmentConvex } = _s23ProbeKnotNormals(part, points, closed);
   const built = buildVariableProfileFrames(points, closed, {
     radius,
     segmentNormals,
     seedNormals,
+    segmentConvex,
   });
   const frames = built.frames || [];
   const n = points.length;
@@ -3670,6 +3841,7 @@ function _s23BuildVariableProfileCutter(
       f1: fr.f1,
       p0,
       p1,
+      convex: segmentConvex[i] !== false,
     });
   }
   // C3.3: one continuous cutter with a PER-KNOT section. C3.2's single median
@@ -3686,8 +3858,11 @@ function _s23BuildVariableProfileCutter(
     maxFrameJumpDeg: typeof built.maxFrameJumpDeg === 'number'
       ? built.maxFrameJumpDeg
       : maxConsecutiveFrameAngleDeg(frames),
-    singleRunCutter: true,
+    singleRunCutter: cut.singleRun,
     varyingProfile: true,
+    convexRuns: cut.convexRuns,
+    concaveRuns: cut.concaveRuns,
+    expectAdd: cut.expectAdd,
     ringCount: cut.ringCount,
     clampedKnots: cut.clampedKnots,
     thetaMinDeg: cut.thetaMinDeg,
@@ -3699,7 +3874,7 @@ function _s23BuildVariableProfileCutter(
 }
 
 function _s23BuildDihedralCutter(M, CrossSection, part, points, closed, radius, profileKind, arcSegs, testScale) {
-  const segs = _s23ProbeSegments(M, part, points, closed);
+  const segs = _s23ProbeSegments(part, points, closed);
   return _s23CuttersFromSegs(M, CrossSection, segs, closed, radius, profileKind, arcSegs, testScale);
 }
 
@@ -3737,7 +3912,19 @@ function filletAlongPath(part, path, radius, opts = {}) {
   let { points, closed, length } = _s23NormalizePath(path, opts);
 
   // C3 hard: densify + per-knot path-normal inscribed-arc frames (buildVariableProfileFrames).
-  const variableProfile = !!opts.variableProfile;
+  // C4: a concave run is material-ADD, which the dihedral sweep cannot express
+  // at all — so any concave segment routes to the varying-profile builder,
+  // which handles convex, concave and mixed chains. Cheap now that the sign is
+  // a local test rather than a per-edge CSG probe.
+  let variableProfile = !!opts.variableProfile;
+  if (!variableProfile && !opts._rawPath) {
+    try {
+      const scan = _s23ProbeKnotNormals(part, points, closed);
+      if (scan.segmentConvex.some((c) => c === false)) variableProfile = true;
+    } catch (e) {
+      // No match / unorientable — let the normal builder raise the real error.
+    }
+  }
   const rawSegCount = opts._c3RawSegCount != null
     ? Number(opts._c3RawSegCount)
     : (closed ? points.length : Math.max(0, points.length - 1));
@@ -3778,6 +3965,8 @@ function filletAlongPath(part, path, radius, opts = {}) {
   const testCutterScale = Number(opts._testCutterScale);
   const testingOversize = Number.isFinite(testCutterScale) && testCutterScale > 1;
   let cutter = null;
+  let filler = null;
+  let expectAddOverride = 0;
   let expectVolOverride = null;
   if (!opts.initialNormal) {
     const scale = testingOversize ? testCutterScale : 1;
@@ -3789,11 +3978,15 @@ function filletAlongPath(part, path, radius, opts = {}) {
         M, CrossSection, part, points, closed, radius, profileKind, arcSegs, scale,
       );
     cutter = built.cutter;
+    filler = built.filler || null;
+    expectAddOverride = built.expectAdd || 0;
     expectVolOverride = built.expectVol;
   }
 
   // Legacy 90° RMF — only when opts.initialNormal is set. May reverse the path.
-  if (!cutter) {
+  // A filler-only build (every run concave) leaves `cutter` null legitimately,
+  // so both must be absent before falling back here.
+  if (!cutter && !filler) {
   let initialNormal = opts.initialNormal ? opts.initialNormal.slice() : null;
   let probed = null;
   if (!initialNormal) {
@@ -3915,32 +4108,85 @@ function filletAlongPath(part, path, radius, opts = {}) {
     }
   }
   }
-  const seC = _c4StatusError(cutter);
-  if (seC) throw new Error(`filletAlongPath: bad cutter (${seC})`);
-  const cutterVol = typeof cutter.volume === 'function' ? cutter.volume() : 0;
-  if (!(cutterVol > 1e-9)) {
-    throw new Error('filletAlongPath: cutter has zero volume — check radius / path');
+  if (cutter) {
+    const seC = _c4StatusError(cutter);
+    if (seC) throw new Error(`filletAlongPath: bad cutter (${seC})`);
+    const cutterVol = typeof cutter.volume === 'function' ? cutter.volume() : 0;
+    if (!(cutterVol > 1e-9)) {
+      throw new Error('filletAlongPath: cutter has zero volume — check radius / path');
+    }
+  }
+  if (filler) {
+    const seF = _c4StatusError(filler);
+    if (seF) throw new Error(`filletAlongPath: bad filler (${seF})`);
+    const fillerVol = typeof filler.volume === 'function' ? filler.volume() : 0;
+    if (!(fillerVol > 1e-9)) {
+      throw new Error('filletAlongPath: filler has zero volume — check radius / path');
+    }
+  }
+  if (!cutter && !filler) {
+    throw new Error('filletAlongPath: no cutter or filler was built — re-pick edges');
   }
 
-  const volBefore = part.volume();
-  let out;
-  try {
-    out = M.difference(part, cutter);
-  } catch (e) {
-    throw new Error(`filletAlongPath: boolean subtract failed — ${e && e.message ? e.message : e}`);
+  let out = part;
+  // The two booleans run SEPARATELY and are measured separately. A mixed-sign
+  // chain removes on its convex runs and adds on its concave ones, so a single
+  // net-volume check could pass while both halves were wrong.
+  let removed = 0;
+  if (cutter) {
+    let cut;
+    try {
+      cut = M.difference(out, cutter);
+    } catch (e) {
+      throw new Error(`filletAlongPath: boolean subtract failed — ${e && e.message ? e.message : e}`);
+    }
+    const seCut = _c4StatusError(cut);
+    if (seCut) throw new Error(`filletAlongPath: bad result (${seCut})`);
+    const v = cut.volume();
+    if (!(v > 1e-9)) {
+      throw new Error('filletAlongPath: result is EMPTY (cutter consumed the solid) — reduce radius');
+    }
+    removed = out.volume() - v;
+    out = cut;
+    if (!(removed > 1e-6)) {
+      throw new Error(
+        'filletAlongPath: subtract removed ~0 volume — cutter likely outside the solid '
+        + '(wrong orientation / path). Try reversing the path or pass opts.initialNormal.',
+      );
+    }
   }
-  const seOut = _c4StatusError(out);
-  if (seOut) throw new Error(`filletAlongPath: bad result (${seOut})`);
-  const volAfter = out.volume();
-  if (!(volAfter > 1e-9)) {
-    throw new Error('filletAlongPath: result is EMPTY (cutter consumed the solid) — reduce radius');
-  }
-  const removed = volBefore - volAfter;
-  if (!(removed > 1e-6)) {
-    throw new Error(
-      'filletAlongPath: subtract removed ~0 volume — cutter likely outside the solid '
-      + '(wrong orientation / path). Try reversing the path or pass opts.initialNormal.',
-    );
+  // Concave runs ADD material: the same wedge, unioned instead of subtracted.
+  // Guards mirror the remove side — volume must go UP by ~the per-knot integral.
+  if (filler) {
+    const vPre = out.volume();
+    let add;
+    try {
+      add = M.union([out, filler]);
+    } catch (e) {
+      throw new Error(`filletAlongPath: boolean union failed — ${e && e.message ? e.message : e}`);
+    }
+    const seAdd = _c4StatusError(add);
+    if (seAdd) throw new Error(`filletAlongPath: bad result (${seAdd})`);
+    const added = add.volume() - vPre;
+    out = add;
+    if (!(added > 1e-6)) {
+      throw new Error(
+        'filletAlongPath: union added ~0 volume — filler likely already inside the solid '
+        + '(wrong orientation / path). Re-pick edges.',
+      );
+    }
+    if (!testingOversize && expectAddOverride > 1e-3 && added < 0.02 * expectAddOverride) {
+      throw new Error(
+        `filletAlongPath: added only ${added.toFixed(4)} vs expected ~${expectAddOverride.toFixed(4)} `
+        + '(orientation/overlap failure) — failing loud rather than shipping a near-no-op solid',
+      );
+    }
+    if (expectAddOverride > 1e-3 && added > 8 * expectAddOverride) {
+      throw new Error(
+        `filletAlongPath: added ${added.toFixed(4)} vs expected ~${expectAddOverride.toFixed(4)} `
+        + '(filler far larger than requested radius) — failing loud rather than shipping an oversized blend',
+      );
+    }
   }
   // Near-no-op and oversize guards use the dihedral removed-area when the
   // per-segment cutter ran. A 90°-only expect false-trips an acute fillet
@@ -3951,13 +4197,13 @@ function filletAlongPath(part, path, radius, opts = {}) {
   const expectVol = expectVolOverride != null ? expectVolOverride : expectArea * length;
   // Neutralise near-no-op when pinning the sibling 8× oversize guard —
   // a coordinated oversize probe would otherwise throw here first.
-  if (!testingOversize && expectVol > 1e-3 && removed < 0.02 * expectVol) {
+  if (cutter && !testingOversize && expectVol > 1e-3 && removed < 0.02 * expectVol) {
     throw new Error(
       `filletAlongPath: removed only ${removed.toFixed(4)} vs expected ~${expectVol.toFixed(4)} `
       + '(orientation/overlap failure) — failing loud rather than shipping a near-no-op solid',
     );
   }
-  if (expectVol > 1e-3 && removed > 8 * expectVol) {
+  if (cutter && expectVol > 1e-3 && removed > 8 * expectVol) {
     throw new Error(
       `filletAlongPath: removed ${removed.toFixed(4)} vs expected ~${expectVol.toFixed(4)} `
       + '(cutter far larger than requested radius) — failing loud rather than shipping an oversized blend',
@@ -4160,6 +4406,8 @@ const HELPER_FUNCTIONS = {
   cskHole,
   chamferEdges,
   convexEdges,
+  concaveEdges,
+  signedFeatureEdges,
   holePattern,
   // Slice-01 fastener vocabulary
   clearanceHole,

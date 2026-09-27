@@ -146,3 +146,72 @@ same answer at a 12–15° gate). The rear pad `e` is a function of `r` only, so
 shallow edges it is as large as the blend itself — it should scale with the
 local setback `t`. Closed rims over-cut ~34% vs Pappus on **both** easy and
 hard paths, which predates C3.
+
+
+## Slice C4 — Signed feature edges + concave fillets (2026-09-27)
+
+Three changes that are one chain of consequence.
+
+### `convexEdges` — the ball probe was a dihedral test in disguise
+
+It intersected a small sphere at each edge midpoint with the whole solid and
+kept `f < 0.45`. Measured across box / cylinder / sphere / L-shape / loft, that
+fraction is exactly `(180 − dihedralDeg) / 360`, so `f < 0.45` ⇔ **dihedral >
+18°** — at ~4.5 ms per edge, which was **5.5 s of the 5.6 s** loft fillet.
+
+It was also **wrong on fine meshes**: on a 384-segment filleted box the probe
+sphere shrinks to ~0.012 mm, where Manifold's boolean reports `f = 0.5` for
+plainly 90° edges and even *negative* volumes. So it was never trustworthy
+ground truth there, and "reproduce it exactly" was the wrong bar — the goldens
+and the pilot tier are.
+
+Replaced by a local winding test: `dot(cross(n0, n1), dir) > 0` is convex, `< 0`
+concave, with `dir` the edge as wound in n0's triangle. Normals come from the
+adjacent **triangles**, not face groups — a group normal is an area-weighted
+average and on a curved group (a fillet sail) points nowhere near the local
+surface, which flips the cross product (measured: 2101 false concaves on a
+filleted box). Where a triangle is a degenerate sliver, its group normal stands
+in.
+
+**Loft fillet end-to-end: 5647 ms → 414 ms**, removed volume bit-identical.
+
+### Latent bug found on the way
+
+`c4MeshData` sums a face group's triangle normals; on a difference-derived
+solid a group can span opposing patches and cancel to the **zero vector**.
+Measured on an L-shape: **13 of 17** convex edges carried a zero normal, which
+flowed straight into the fillet framing as `n0`/`n1`. Present on `main` since
+long before C4. Now falls back to the triangle normal.
+
+### Convexity is per-knot
+
+Both probes set `checkedConvex` after the first matched segment, so a chain that
+changed sign mid-way was cut as whatever its first segment was. The sign now
+rides alongside the per-knot frames from C3.3.
+
+### Concave = the same wedge, unioned
+
+For a concave edge the angle between the two in-face directions IS the
+empty-side angle, so **the same contour that carves a convex corner fills a
+concave one**. Only two things change: `inFaceDirsFromNormals` negates both rays
+(the convex orientation points them into solid material, measured `f0=−Y,
+f1=−X` on an L where the walls actually run `+Y`, `+X`), and the boolean becomes
+`union` instead of `difference`. `varyingProfileTubeMesh` is untouched.
+
+The path splits into maximal same-**sign** runs: convex runs become cutters,
+concave runs fillers, and the two booleans run and are **measured separately** —
+a single net-volume check could pass while both halves were wrong.
+
+**Verified**: L-shape interior edge r=3 adds 38.73 vs analytic 38.63 (1.003) in
+11 ms; a mixed chain splits into 1 cutter + 1 filler run; box edge still
+analytically exact within 2%; all 34 goldens and `npm run verify` green.
+
+### Still open
+
+Junction quality where a chain changes sign is unpolished (the cutter and filler
+overlap at the corner; measured net +6.4 on a mixed L chain where ideal is ~0) —
+the same class of cusp problem as `sphericalCorners`. The rear pad still scales
+with `r` rather than the local setback `t`. Closed rims over-cut ~34% vs Pappus
+on both paths, predating C3. `buildCoherentEdges`' 15° `minDeg` gate drops ~63%
+of loft feature edges before they can be picked — a picking-UX question, not a
+kernel one.

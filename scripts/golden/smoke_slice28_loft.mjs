@@ -293,6 +293,45 @@ function xyExtent(cs) {
     { tool: 'circle', params: { radius: 8, segments: 16 }, offset: 0 },
   ]);
   check('solid preview refuses coincident offset', coincident == null);
+
+  // Regression: circle↔square preview rungs used to pair arc-length index i on
+  // each station, so ring[0] sat at 0° on the circle and 225° on the square —
+  // an hourglass preview over a part that accepted correctly. Rings are polar
+  // now: ring[i] must be at the same angle on every station.
+  const cs = buildLoftSolidPreview(rFace(), [
+    { tool: 'circle', params: { radius: 8, segments: 32 }, offset: 0 },
+    { tool: 'rectangle', params: { width: 20, height: 20, centered: true }, offset: 20 },
+  ]);
+  const degOf = (q) => {
+    const a = Math.atan2(q[1], q[0]) * 180 / Math.PI;
+    return a < 0 ? a + 360 : a;
+  };
+  let maxTwist = 0;
+  if (cs) {
+    const [A, B] = [cs.stations[0].ring, cs.stations[1].ring];
+    check('circle↔square preview rings are index-aligned', A.length === B.length);
+    for (let i = 0; i < Math.min(A.length, B.length); i++) {
+      let d = Math.abs(degOf(A[i]) - degOf(B[i]));
+      if (d > 180) d = 360 - d;
+      maxTwist = Math.max(maxTwist, d);
+    }
+  }
+  check(
+    'circle↔square preview rungs are not twisted (same polar angle per rung)',
+    cs != null && maxTwist < 0.5,
+    `max rung twist ${maxTwist.toFixed(1)}°`,
+  );
+  const corners = [[10, 10], [-10, 10], [-10, -10], [10, -10]];
+  check(
+    'square preview ring keeps exact corners',
+    cs != null && corners.every((c) =>
+      cs.stations[1].ring.some((q) => Math.hypot(q[0] - c[0], q[1] - c[1]) < 1e-6)),
+  );
+  check(
+    'square preview ring points all lie on the profile boundary',
+    cs != null && cs.stations[1].ring.every(
+      (q) => Math.abs(Math.max(Math.abs(q[0]), Math.abs(q[1])) - 10) < 1e-6),
+  );
 }
 
 // ── Compose Loft ───────────────────────────────────────────────

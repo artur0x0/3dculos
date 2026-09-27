@@ -27,6 +27,12 @@ the bundled WASM Manifold has no solid `offset()` / minkowski. 2D
 | **hard** — loft walls, twisted, variable θ, long chain | **varying-profile sweep** (C3.3): densified path-normal inscribed-arc frames, one cutter with a **per-knot cross-section** | `filletAlongPath(part, path, r, { variableProfile: true })` |
 | manual override | classic **planar rolling-ball**: parallelepiped − cylinder per edge | `filletEdges(part, edges, r, { sphericalCorners })` |
 
+**Concave edges are supported (C4)** and route automatically: the sign is read
+per knot, convex runs become cutters (`difference`), concave runs become fillers
+(`union`). The user never picks — `signedFeatureEdges` decides. Same wedge, same
+rings; for a concave edge the angle between the in-face rays already IS the
+empty-side angle, so only the ray orientation and the boolean differ.
+
 Kernel choice is one function: `filletKernelSpike.js` →
 `shouldUseHardVariableSweep(klass)`, gated by `FILLET_HARD_KERNEL_TRIAL = true`
 (production-on for hard).
@@ -114,6 +120,17 @@ Each one is a scar. Changing it reintroduces a shipped bug.
   and the goldens cannot drift.
 - **No naive sphere-hull cutters.** A sausage of spheres is not a rolling ball —
   measured ~919 mm³ removed vs ~77 mm³ analytic.
+- **No CSG inside the convexity test.** The per-edge ball probe cost 5.5 s of a
+  5.6 s loft fillet and returned garbage on fine meshes (f = 0.5 for 90° edges,
+  negative volumes at ~0.012 mm probe radius). Convexity is a local winding
+  test; keep it that way.
+- **Sign per knot, never once per path.** A chain that changes sign mid-way was
+  cut as whatever its first segment was.
+- **Sign from TRIANGLE normals, angle contract from GROUP normals.** A group
+  normal is an average — on a fillet sail it flips the cross product (2101 false
+  concaves on a filleted box). But the normals the helper *returns* are the
+  group pair, and downstream rejects a coplanar pair, so that gate stays on the
+  returned pair. Getting this backwards broke pilot case 94480bca.
 
 ## Guards — fail loud, never silent
 
@@ -163,6 +180,7 @@ npm run golden:fillet-c3-variable-sweep
 npm run golden:fillet-c3.1-along-path-tangency
 npm run golden:fillet-c3.2-tighter-continuity
 npm run golden:fillet-c3.3-varying-profile     # per-knot section + distribution net
+npm run golden:fillet-c4-signed-concave        # signed edges, per-knot sign, concave filler
 ```
 
 They pin both the pure math **and** the guard thresholds. A threshold change
