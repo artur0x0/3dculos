@@ -80,6 +80,22 @@ console.log('cad palette + plane/contour toggles');
     'sweepPath is hidden by the railHidden flag, not by deletion',
     grouped.Features.find((i) => i.id === 'sweepPath').railHidden === true,
   );
+  for (const id of ['clearanceHole', 'tapDrillHole', 'cboreHole', 'cskHole']) {
+    check(`${id} stays in the data model`, grouped.Features.some((i) => i.id === id));
+    check(`${id} is railHidden`, grouped.Features.find((i) => i.id === id).railHidden === true);
+    for (const [name, sections] of [['CAD', cad], ['game', game]]) {
+      check(
+        `${name} rail has no ${id} button`,
+        !sections.flatMap((s) => s.items).some((i) => i.id === id),
+      );
+    }
+  }
+  const hole = grouped.Features.find((i) => i.id === 'hole');
+  check('Hole type is clearance or tap drill',
+    (hole.params.find((p) => p.name === 'holeType').options || []).map((o) => (o && o.value) || o).join(',')
+      === 'clearance,tapDrill');
+  check('Hole has near and far end options',
+    hole.params.some((p) => p.name === 'nearEnd') && hole.params.some((p) => p.name === 'farEnd'));
   check(
     'Create contour is the crossSection label',
     grouped.Advanced.find((i) => i.id === 'crossSection').label === 'Create contour',

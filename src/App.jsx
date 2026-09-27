@@ -40,7 +40,7 @@ import GameHintsModal from './components/GameHintsModal';
 import PuzzlePickerModal from './components/PuzzlePickerModal';
 import GameConfetti from './components/GameConfetti';
 import { composeContourCommit } from './utils/contourMode';
-import { composeFilletCommit } from './utils/filletMode';
+import { composeFilletCommit, composeChamferCommit } from './utils/filletMode';
 
 const App = () => {
   const [currentScript, setCurrentScript] = useState('');
@@ -793,15 +793,21 @@ const App = () => {
    */
   const handleCommitFillet = (payload) => {
     const buf = codeEditorRef.current?.getContent?.() || '';
-    const result = composeFilletCommit(buf, payload || {});
+    const chamfer = payload?.entry === 'chamferEdges';
+    const result = chamfer
+      ? composeChamferCommit(buf, payload || {})
+      : composeFilletCommit(buf, payload || {});
     if (!result.ok) {
       viewportRef.current?.softFailFillet?.(result.message);
       return false;
     }
-    const wrote = codeEditorRef.current?.applyBuffer?.(result.buffer, 'Fillet mode');
+    const wrote = codeEditorRef.current?.applyBuffer?.(
+      result.buffer,
+      chamfer ? 'Chamfer mode' : 'Fillet mode',
+    );
     if (!wrote) {
       viewportRef.current?.softFailFillet?.(
-        'Could not write Fillet into the editor — try again.',
+        `Could not write ${chamfer ? 'Chamfer' : 'Fillet'} into the editor — try again.`,
       );
       return false;
     }

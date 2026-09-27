@@ -14,7 +14,13 @@
  * Does not change Extrude / Revolve / Profile / Loft.
  */
 
-import { composeHelperInsert, FILLET_MODE_BEGIN, FILLET_MODE_END } from './helperPaletteSnippets.js';
+import {
+  composeHelperInsert,
+  FILLET_MODE_BEGIN,
+  FILLET_MODE_END,
+  CHAMFER_MODE_BEGIN,
+  CHAMFER_MODE_END,
+} from './helperPaletteSnippets.js';
 import {
   canBuildFilletAlongPath,
   filletWedgeContour,
@@ -29,6 +35,7 @@ import {
 import { assembleSweepPath, buildSweepPathPreview } from './edgeSweepPath.js';
 import {
   defaultSweepBlendSize,
+  defaultEdgeBlendSize,
   edgeKey,
   pathLengthFromEdges,
   sweepBlendHardMax,
@@ -49,6 +56,92 @@ export const FILLET_BLEND_ONLY =
 
 export function isFilletEntry(id) {
   return FILLET_ENTRY_IDS.has(id);
+}
+
+export function isChamferEntry(id) {
+  return id === 'chamferEdges';
+}
+
+export function enterChamferState(edges = null) {
+  const list = Array.isArray(edges) && edges.length ? edges : null;
+  const seeded = list ? defaultEdgeBlendSize(Math.min(...list.map((e) => Number(e.length) || Infinity))) : 2;
+  const chamfer = Number.isFinite(seeded) && seeded > 0 && seeded < Infinity ? seeded : 2;
+  return {
+    entry: 'chamferEdges',
+    params: { body: 'part', chamfer, edgeScope: 'selected' },
+    sizeTouched: false,
+    lastEdges: list ? list.slice() : [],
+    enterRefuse: null,
+  };
+}
+
+export function validateChamferAccept(edges, params = {}) {
+  const list = Array.isArray(edges) ? edges : [];
+  if (!list.length) {
+    return { ok: false, message: 'Pick edges in Chamfer mode, then Accept.' };
+  }
+  const raw = Number(params.chamfer);
+  const chamfer = Number.isFinite(raw) && raw > 0 ? raw : 2;
+  return {
+    ok: true,
+    normalized: { body: params.body || 'part', chamfer, edgeScope: 'selected' },
+  };
+}
+
+export function hasChamferModeBlock(buffer) {
+  const t = String(buffer || '');
+  return t.includes(CHAMFER_MODE_BEGIN) && t.includes(CHAMFER_MODE_END);
+}
+
+export function stripChamferModeBlock(buffer) {
+  const text = String(buffer || '');
+  const i = text.lastIndexOf(CHAMFER_MODE_BEGIN);
+  if (i < 0) return text;
+  const j = text.indexOf(CHAMFER_MODE_END, i);
+  if (j < 0) return text;
+  const after = text.slice(j + CHAMFER_MODE_END.length).replace(/^\r?\n/, '');
+  const before = text.slice(0, i).replace(/\s+$/, '');
+  if (before && after) return `${before}\n${after}`;
+  return before || after;
+}
+
+/**
+ * Accept → chamferEdges on the picked set, wrapped in chamfer-mode markers.
+ * commitMode 'append' keeps a previous block so a second chain cuts the
+ * already-chamfered solid.
+ */
+export function composeChamferCommit(buffer, {
+  edges = null,
+  params = {},
+  commitMode = 'replace',
+} = {}) {
+  const gate = validateChamferAccept(edges, params);
+  if (!gate.ok) return gate;
+  const text = String(buffer || '');
+  const base = commitMode === 'append' ? text : stripChamferModeBlock(text);
+  const composed = composeHelperInsert(
+    base,
+    'chamferEdges',
+    null,
+    { ...gate.normalized, _chamferMode: true },
+    null,
+    edges,
+  );
+  if (typeof composed !== 'string') {
+    return { ok: false, message: gate.message || 'Pick edges in Chamfer mode, then Accept.' };
+  }
+  const ownedStart = composed.lastIndexOf(CHAMFER_MODE_BEGIN);
+  const ownedEnd = composed.indexOf(CHAMFER_MODE_END, ownedStart < 0 ? 0 : ownedStart);
+  const owned = ownedStart < 0 || ownedEnd < 0
+    ? ''
+    : composed.slice(ownedStart, ownedEnd + CHAMFER_MODE_END.length);
+  if (!/chamferEdges\s*\(/.test(owned)) {
+    return { ok: false, message: 'composeChamferCommit: chamferEdges missing — refusing silent no-op.' };
+  }
+  if (!owned.includes(CHAMFER_MODE_BEGIN) || !owned.includes(CHAMFER_MODE_END)) {
+    return { ok: false, message: 'composeChamferCommit: chamfer markers missing — refusing unscoped insert.' };
+  }
+  return { ok: true, buffer: composed, run: true };
 }
 
 export function defaultFilletParams(edges = null) {

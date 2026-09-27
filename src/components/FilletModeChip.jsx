@@ -8,6 +8,7 @@ import { AlertTriangle, Check, X } from 'lucide-react';
  * size guard) and Accept stays enabled. Mobile-first compact card.
  */
 const FilletModeChip = ({
+  kind = 'fillet',
   edgeCount = 0,
   tangentOn = true,
   params = {},
@@ -21,20 +22,28 @@ const FilletModeChip = ({
   onDismiss,
   onParamChange,
 }) => {
-  const setRadius = (raw) => {
+  const chamfer = kind === 'chamfer';
+  const sizeKey = chamfer ? 'chamfer' : 'radius';
+  const setSize = (raw) => {
     let v = raw;
     if (raw === '' || raw === '-' || raw === '.') v = raw;
     else {
       const n = Number(raw);
-      v = Number.isFinite(n) ? n : params.radius;
+      v = Number.isFinite(n) ? n : params[sizeKey];
     }
-    onParamChange?.({ ...params, radius: v }, { radiusTouched: true });
+    onParamChange?.(
+      { ...params, [sizeKey]: v },
+      chamfer ? { sizeTouched: true } : { radiusTouched: true },
+    );
   };
 
-  const radius = params.radius;
-  const radiusNum = Number(radius);
-  const max = Number(params._sweepMax) > 0 ? Number(params._sweepMax) : 40;
-  const hard = edgeClass?.klass === 'hard';
+  const size = params[sizeKey];
+  const sizeNum = Number(size);
+  const max = chamfer
+    ? Math.max(40, Number.isFinite(sizeNum) ? sizeNum : 0)
+    : (Number(params._sweepMax) > 0 ? Number(params._sweepMax) : 40);
+  const hard = !chamfer && edgeClass?.klass === 'hard';
+  const title = chamfer ? 'Chamfer' : 'Fillet';
 
   return (
     <div
@@ -43,8 +52,9 @@ const FilletModeChip = ({
           compact ? 'bottom-4 right-2 max-w-[min(16rem,calc(100%-5.5rem))]' : 'bottom-4 right-2 lg:right-4 max-w-[16rem]'
         }`}
       role="group"
-      aria-label="Fillet edge pick"
-      data-fillet-class={edgeClass?.klass || 'empty'}
+      aria-label={chamfer ? 'Chamfer edge pick' : 'Fillet edge pick'}
+      data-edge-blend={chamfer ? 'chamfer' : 'fillet'}
+      data-fillet-class={chamfer ? undefined : (edgeClass?.klass || 'empty')}
     >
       {hard && (
         <div
@@ -68,50 +78,56 @@ const FilletModeChip = ({
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="font-bold font-sans text-amber-200">
-            Fillet · {edgeCount} edge{edgeCount === 1 ? '' : 's'}
+            {title} · {edgeCount} edge{edgeCount === 1 ? '' : 's'}
           </div>
           <div className="text-[10px] text-amber-100/90 normal-case font-sans mt-0.5">
-            {pathOk
-              ? 'Sweep blend preview · Accept commits and exits'
-              : edgeCount
-                ? 'Path not ready — pick a contiguous chain (Tangent on)'
-                : 'Tap sharp edges — blend strips are not pickable'}
+            {chamfer
+              ? (edgeCount
+                ? 'Accept commits the chamfer and exits'
+                : 'Tap edges, then Accept')
+              : (pathOk
+                ? 'Sweep blend preview · Accept commits and exits'
+                : edgeCount
+                  ? 'Path not ready — pick a contiguous chain (Tangent on)'
+                  : 'Tap sharp edges — blend strips are not pickable')}
           </div>
         </div>
         <button
           type="button"
           onClick={() => (onDismiss || onBack)?.()}
           className="shrink-0 text-amber-200 hover:text-white"
-          title="Exit Fillet mode without committing"
-          aria-label="Dismiss Fillet mode without committing"
+          title={`Exit ${title} mode without committing`}
+          aria-label={`Dismiss ${title} mode without committing`}
         >
           <X size={14} />
         </button>
       </div>
       <div className="mt-1.5 flex flex-col gap-1.5 font-sans">
         <label className="flex flex-col gap-0.5 min-w-0">
-          <span className="text-[10px] uppercase tracking-wide text-amber-200/80">Radius</span>
+          <span className="text-[10px] uppercase tracking-wide text-amber-200/80">
+            {chamfer ? 'Size' : 'Radius'}
+          </span>
           <div className="flex items-center gap-1.5">
             <input
               type="range"
-              value={Number.isFinite(radiusNum) ? radiusNum : 3}
+              value={Number.isFinite(sizeNum) ? sizeNum : (chamfer ? 2 : 3)}
               min={0.1}
               max={max}
               step={Math.max(0.5, Math.round((max / 40) * 100) / 100)}
-              onChange={(e) => setRadius(e.target.value)}
+              onChange={(e) => setSize(e.target.value)}
               className="flex-1 min-w-0 accent-amber-400"
-              aria-label="Radius"
+              aria-label={chamfer ? 'Size' : 'Radius'}
             />
             <input
               type="number"
-              value={radius ?? ''}
+              value={size ?? ''}
               min={0.01}
               max={max}
               step="any"
-              onChange={(e) => setRadius(e.target.value)}
+              onChange={(e) => setSize(e.target.value)}
               className="w-14 rounded border border-amber-700/70 bg-amber-950/80 px-1 py-0.5
                 text-[11px] tabular-nums text-white"
-              aria-label="Radius value"
+              aria-label={chamfer ? 'Size value' : 'Radius value'}
             />
           </div>
         </label>
@@ -138,14 +154,14 @@ const FilletModeChip = ({
           type="button"
           className="text-[10px] text-amber-200 underline"
           onClick={() => onBack?.()}
-          title="Exit Fillet mode without committing"
+          title={`Exit ${title} mode without committing`}
         >
           Back
         </button>
       </div>
       <div className="mt-2 flex items-center justify-between gap-2">
         <span className="text-[10px] text-amber-200/70 leading-tight">
-          Strategy · sweep
+          {chamfer ? 'Equal-leg chamfer' : 'Strategy · sweep'}
         </span>
         <button
           type="button"
@@ -153,7 +169,9 @@ const FilletModeChip = ({
           className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium
             bg-amber-600 hover:bg-amber-500 active:bg-amber-400 text-white shrink-0"
           data-fillet-accept="enabled"
-          title="Commit this fillet (makeSweepPath + filletAlongPath) and leave Fillet mode."
+          title={chamfer
+            ? 'Commit this chamfer (chamferEdges) and leave Chamfer mode.'
+            : 'Commit this fillet (makeSweepPath + filletAlongPath) and leave Fillet mode.'}
         >
           <Check size={14} />
           Accept

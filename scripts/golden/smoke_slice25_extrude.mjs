@@ -33,6 +33,7 @@ import {
   validateExtrudeParams,
   buildExtrudeSolidPreview,
   composeContourExtrude,
+  composeContourProfile,
   composeContourCommit,
   stripContourExtrudeBlock,
   hasContourExtrudeBlock,
@@ -368,6 +369,44 @@ function rFace() {
   check('fillet compose still emits filletAlongPath or filletEdges',
     /filletAlongPath\s*\(|filletEdges\s*\(/.test(filBuf || ''));
   check('fillet compose has no extrude markers', !hasContourExtrudeBlock(filBuf || ''));
+}
+
+// ── Contour then Extrude on an empty script is a new body ──────
+{
+  const profile = composeContourProfile('', {
+    face: null,
+    tool: 'circle',
+    params: { radius: 5, segments: 32 },
+  });
+  check('empty contour confirm ok', profile.ok === true, profile.message || '');
+  check('empty contour has no starter cube', !/Manifold\.cube\s*\(/.test(profile.buffer || ''));
+  check('empty contour does not declare part', !/\b(?:let|const|var)\s+part\b/.test(profile.buffer || ''));
+  const ext = composeContourExtrude(profile.buffer, {
+    face: null,
+    tool: 'circle',
+    params: { radius: 5, segments: 32 },
+    extrude: { distance: 10, direction: 'normal', sense: 'positive' },
+  });
+  check('extrude after contour ok', ext.ok === true, ext.message || '');
+  check('extrude after contour is a new body', /let\s+part\s*=\s*placeInFrame\s*\(/.test(ext.buffer || ''));
+  check('extrude after contour does not union', !/part\s*=\s*part\.add\(/.test(ext.buffer || ''));
+  check('extrude after contour has no starter cube', !/Manifold\.cube\s*\(/.test(ext.buffer || ''));
+
+  const wp = composeHelperInsert('', 'workplane');
+  const afterPlane = composeContourProfile(wp, {
+    face: null,
+    tool: 'circle',
+    params: { radius: 5, segments: 32 },
+  });
+  const extPlane = composeContourExtrude(afterPlane.buffer, {
+    face: null,
+    tool: 'circle',
+    params: { radius: 5, segments: 32 },
+    extrude: { distance: 10, direction: 'normal', sense: 'positive' },
+  });
+  check('workplane then extrude keeps the plane', /construction plane/.test(extPlane.buffer || ''));
+  check('workplane then extrude is a new body', /let\s+part\s*=\s*placeInFrame\s*\(/.test(extPlane.buffer || ''));
+  check('workplane then extrude has no starter cube', !/Manifold\.cube\s*\(/.test(extPlane.buffer || ''));
 }
 
 if (failed) {

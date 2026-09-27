@@ -82,6 +82,10 @@ const irregularFace = {
   check('planar hole → params modal', r1.mode === 'params');
   check('planar hole has through param', r1.item.params.some((p) => p.name === 'through'));
   check('planar hole has usePattern', r1.item.params.some((p) => p.name === 'usePattern'));
+  check('planar hole type dropdown', r1.item.params.some((p) => p.name === 'holeType'));
+  check('planar hole near and far ends',
+    r1.item.params.some((p) => p.name === 'nearEnd')
+    && r1.item.params.some((p) => p.name === 'farEnd'));
   const r2 = resolveFaceModal(holeItem, irregularFace);
   check('irregular → refuse', r2.mode === 'refuse');
   const cubeItem = HELPER_PALETTE_ITEMS.find((h) => h.id === 'cube');
@@ -104,14 +108,16 @@ const irregularFace = {
 // ── Compose planar hole ────────────────────────────────────────
 {
   const face = classifySelectedFace(planarFace);
-  const buf = composeHelperInsert('', 'hole', null, { dia: 6, u: 2, v: -1, through: true }, face);
+  const buf = composeHelperInsert('', 'hole', null, {
+    holeType: 'clearance', size: 'M3', fit: 'normal', u: 2, v: -1, through: true,
+  }, face);
   check('planar hole composes', typeof buf === 'string' && buf.length > 0);
   check('planar hole: facesByNormal', /facesByNormal/.test(buf));
   check('planar hole: workplaneFromFace', /workplaneFromFace/.test(buf));
   check('planar hole: no bare top', !/\btop\b/.test(buf));
   check('planar hole: uses selFace pick', /selFace/.test(buf));
-  check('planar hole: hole call', /hole\(/.test(buf));
-  check('planar hole: u,v', /hole\([^)]*,\s*2,\s*-1,\s*6/.test(buf));
+  check('planar hole: clearanceHole call', /clearanceHole\(/.test(buf));
+  check('planar hole: u,v', /clearanceHole\([^)]*,\s*2,\s*-1,\s*'M3'/.test(buf));
   check('planar hole: single return', (buf.match(/\breturn\s+part\s*;/g) || []).length === 1);
   console.log('\n--- example planar hole ---\n' + buf + '\n---');
 }
@@ -123,10 +129,11 @@ const irregularFace = {
     '',
     'hole',
     null,
-    { dia: 4, usePattern: true, n: 3, m: 2, spacingU: 18, spacingV: 14, through: true },
+    { holeType: 'clearance', size: 'M4', fit: 'normal', usePattern: true, n: 3, m: 2, spacingU: 18, spacingV: 14, through: true },
     face,
   );
   check('pattern uses holePattern', /holePattern/.test(buf));
+  check('pattern dia from fastener', /fastenerClearanceDia\(\s*'M4'\s*,\s*'normal'\s*\)/.test(buf));
   check('pattern n,m,spacing', /n:\s*3/.test(buf) && /m:\s*2/.test(buf) && /spacingU:\s*18/.test(buf));
   check('pattern no illegal top', !/\btop\b/.test(buf));
   console.log('\n--- example planar hole pattern ---\n' + buf + '\n---');
@@ -134,8 +141,9 @@ const irregularFace = {
 
 // ── Without face: palette v2 defaults preserved ────────────────
 {
-  const buf = composeHelperInsert('', 'hole', null, { dia: 8 });
+  const buf = composeHelperInsert('', 'hole', null, { holeType: 'tapDrill', size: 'M5' });
   check('no-face hole uses topFace', /\btopFace\b/.test(buf));
+  check('no-face hole is tap drill', /tapDrillHole\([^)]*'M5'/.test(buf));
   check('no-face hole facesByNormal +Z', /facesByNormal\([^,]+,\s*\[0,\s*0,\s*1\]\)/.test(buf));
   check('no-face cube still works', /let\s+box1\s*=/.test(composeHelperInsert('', 'cube')));
 }
@@ -170,7 +178,7 @@ const irregularFace = {
   const face = classifySelectedFace(cylFace);
   check('cyl params include angleDeg', faceAwareParams('hole', 'cylindrical').some((p) => p.name === 'angleDeg'));
   const buf = composeHelperInsert('', 'hole', null, { dia: 5, angleDeg: 0, axial: 5, through: true }, face);
-  check('cyl hole composes', /hole\(/.test(buf));
+  check('cyl hole composes', /clearanceHole\(/.test(buf));
   check('cyl hole no bare top', !/\btop\b/.test(buf));
 }
 

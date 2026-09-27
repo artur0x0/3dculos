@@ -37,7 +37,12 @@ import {
 } from '../../src/utils/contourMode.js';
 import {
   isFilletEntry,
+  isChamferEntry,
   enterFilletState,
+  enterChamferState,
+  validateChamferAccept,
+  composeChamferCommit,
+  hasChamferModeBlock,
   defaultFilletParams,
   normalizeFilletParams,
   validateFilletAccept,
@@ -326,6 +331,29 @@ const e30 = mk(3, 0);
     }
     check('normalize never yields non-finite/non-positive radius (nit-2 invariant)', hits === 0, `hits=${hits}`);
   }
+}
+
+// ── Chamfer enters the same edge-pick Accept path ─────────────
+{
+  check('Chamfer is a chamfer entry', isChamferEntry('chamferEdges'));
+  check('Fillet is not a chamfer entry', !isChamferEntry('filletEdges'));
+  const entered = enterChamferState(null);
+  check('chamfer enter does not refuse', entered.enterRefuse == null && entered.entry === 'chamferEdges');
+  check('chamfer accept with no edges fails', validateChamferAccept([], {}).ok === false);
+  const commit = composeChamferCommit(starter, {
+    edges: [e01],
+    params: { chamfer: 1.5 },
+  });
+  check('chamfer accept ok', commit.ok === true, commit.message || '');
+  check('chamfer accept writes chamferEdges', /chamferEdges\s*\(/.test(commit.buffer || ''));
+  check('chamfer accept is marked', hasChamferModeBlock(commit.buffer || ''));
+  check('chamfer accept keeps the starter cube', /Manifold\.cube\s*\(/.test(commit.buffer || ''));
+  const again = composeChamferCommit(commit.buffer, {
+    edges: [e12],
+    params: { chamfer: 1 },
+    commitMode: 'append',
+  });
+  check('second chamfer appends', again.ok === true && (again.buffer.match(/chamfer-mode begin/g) || []).length === 2);
 }
 
 if (failed) {

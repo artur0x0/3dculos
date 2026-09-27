@@ -6,7 +6,7 @@ import {
   Donut,
   Hexagon,
   Squircle,
-  Triangle,
+  TriangleRight,
   CircleDot,
   Grid3x3,
   Bolt,
@@ -31,7 +31,7 @@ import { itemsByGroup, paletteRailSections } from '../utils/helperPaletteSnippet
 import { resolveFaceModal } from '../utils/faceFeaturePlacement';
 import { canBuildFilletAlongPath, resolveFilletStrategy } from '../utils/filletAlongPath';
 import { isContourEntry } from '../utils/contourMode';
-import { isFilletEntry } from '../utils/filletMode';
+import { isFilletEntry, isChamferEntry } from '../utils/filletMode';
 import HelperParamModal from './HelperParamModal';
 
 const ICONS = {
@@ -42,7 +42,7 @@ const ICONS = {
   hexPrism: Hexagon,
   roundedBox: Squircle,
   filletEdges: SquareRoundCorner,
-  chamferEdges: Triangle,
+  chamferEdges: TriangleRight,
   hole: CircleDot,
   holePattern: Grid3x3,
   clearanceHole: Bolt,
@@ -134,8 +134,8 @@ const HelperInsertPalette = ({
       return;
     }
     // Slice 27: Fillet enters edge-pick mode even with no prior selection.
-    if (isFilletEntry(item.id) && typeof onEnterFilletMode === 'function') {
-      onEnterFilletMode();
+    if ((isFilletEntry(item.id) || isChamferEntry(item.id)) && typeof onEnterFilletMode === 'function') {
+      onEnterFilletMode({ entry: item.id });
       return;
     }
     // Workplane is a construction plane, not a param sheet and not a host solid.
