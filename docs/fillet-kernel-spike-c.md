@@ -93,3 +93,56 @@ Hard-block Accept; Slice D warn heuristics; spinner/speed; game mode; easy-path 
 - Hard Accept supersedes C2 `filletEdges+relaxPlanar` with `filletAlongPath(..., { variableProfile: true })`: densified path-normal frames, inscribed arc of radius R in the local wall square (side ~2R).
 - Viewport scrap banner is **delta-based** (loft baseline needles no longer false-trigger “zero-area faces”).
 - Easy Prim/boxy path unchanged. Red Hard-edge warn from B stays. Face-offset still out of scope.
+
+
+## Slice C3.3 — Varying cross-section (2026-09-27)
+
+Playtest regression after C3.2: the loft ridge stopped staircasing and started
+**gouging** — a clean cut straight into the smooth part of the wall.
+
+**Root cause.** On the playtest ridge (circle ⌀10 → 20×12 rect loft) the
+dihedral genuinely ramps **161.5° at the circle end → 92.8° at the rect
+corner**. The θ probe was correct all along; all 48 knots matched real mesh
+edges at 0.003–0.16 mm. C3.2's `singleRun` collapsed that ramp to one median
+θ = 109.7°, which sets the wall back 1.39 mm where the geometry wants 0.32 mm.
+
+C3.1 and C3.2 were the same defect: **a constant cross-section swept along a
+path whose cross-section must change.** C3.1 spread the error over 17 steps
+(staircase); C3.2 concentrated it (gouge).
+
+**Why no guard fired.** Measured on that ridge:
+
+| | total removed |
+| --- | ---: |
+| true per-knot integral | 7.202 |
+| C3.2 median θ | 8.556 (1.19×) |
+| C3.3 per-knot | 7.274 (1.01×) |
+
+The error was **distributional, not integral** — per quarter of the path,
+correct is 0.29 / 1.26 / 2.35 / 3.29 and C3.2 produced 3.32 / 2.39 / 1.52 /
+1.32, an inverted ramp with 11× over-cut at the shallow end. Every volume guard
+in `filletAlongPath` integrates, so none of them could see it. That is the real
+lesson of C3.0–C3.2.
+
+**Fix.** `_s23VaryingProfileCutter` builds the cutter mesh directly — one
+profile ring per knot, stitched into a tube (`varyingProfileTubeMesh`) — instead
+of `extrude + warp`, which can only reorient ONE fixed profile. Every θ
+tessellates to the same vertex count, so rings stitch without special-casing.
+Caps are a fan from the rear bumper vertex, valid for every θ because the
+section is a convex wedge minus a convex disk bite and that vertex lies outside
+the bite.
+
+`expectVol` is now the true per-knot integral, which makes the existing volume
+guards meaningful again rather than self-confirming.
+
+**Verified.** Loft ridge quarters 0.324 / 1.302 / 2.371 / 3.278 (within 25% of
+analytic, pad included); constant-θ box edge stays analytically exact within
+2%; closed rim matches the easy path to 0.013 mm³. Scrap on the loft fell below
+baseline (99 vs 218 needles); triangles 42 760 vs C3.2's 49 260.
+
+**Still open (not this slice):** `convexEdges` costs 5.5 s of the 5.6 s runtime
+(per-edge CSG sphere probe; a winding-aware local test measured 5 ms for the
+same answer at a 12–15° gate). The rear pad `e` is a function of `r` only, so on
+shallow edges it is as large as the blend itself — it should scale with the
+local setback `t`. Closed rims over-cut ~34% vs Pappus on **both** easy and
+hard paths, which predates C3.

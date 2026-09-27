@@ -515,3 +515,75 @@ export function expandDihedralCutterContour(contour, radius, theta) {
   }
   return [exterior, face0Out, ...q1, face1Out];
 }
+
+/**
+ * Tube mesh over a sequence of rings that all carry the SAME vertex count.
+ *
+ * This is the varying-cross-section sweep (C3.3): unlike extrude+warp, which
+ * can only reorient ONE fixed profile, each ring may be a different profile —
+ * so a dihedral that ramps along the path (loft ridge: 161° at the smooth end,
+ * 93° at the corner) gets its own correct wedge at every knot.
+ *
+ * Rings must be ordered along +T and each wound CCW about +T (the winding
+ * `_s23DihedralContour` / `expandDihedralCutterContour` already produce in the
+ * (N, B) basis), or the tube comes out inside-out.
+ *
+ * Caps are a triangle fan from vertex 0. That is valid for every θ because the
+ * cutter section is a convex wedge minus a convex disk bite, and vertex 0 is
+ * the rear bumper corner, which lies outside that disk — so the section is
+ * star-shaped from it and no fan triangle can escape the region.
+ *
+ * Pure — no Manifold. Caller feeds the arrays to _meshDataToManifold.
+ *
+ * @param {number[][][]} rings  [ring][vertex][x,y,z]
+ * @param {boolean} [closed]    wrap the last ring back to the first (no caps)
+ * @returns {{ vertProperties: number[], triVerts: number[] }}
+ */
+export function varyingProfileTubeMesh(rings, closed = false) {
+  if (!Array.isArray(rings) || rings.length < 2) {
+    throw new Error('varyingProfileTubeMesh: need ≥ 2 rings');
+  }
+  const m = rings.length;
+  const K = Array.isArray(rings[0]) ? rings[0].length : 0;
+  if (!(K >= 3)) {
+    throw new Error('varyingProfileTubeMesh: rings need ≥ 3 vertices');
+  }
+  const vertProperties = [];
+  for (let i = 0; i < m; i++) {
+    const ring = rings[i];
+    if (!Array.isArray(ring) || ring.length !== K) {
+      throw new Error(
+        `varyingProfileTubeMesh: ring ${i} has ${ring ? ring.length : 0} vertices, expected ${K} `
+        + '— every profile must tessellate identically or the rings cannot be stitched',
+      );
+    }
+    for (let k = 0; k < K; k++) {
+      const p = ring[k];
+      const x = Number(p[0]), y = Number(p[1]), z = Number(p[2]);
+      if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) {
+        throw new Error(`varyingProfileTubeMesh: ring ${i} vertex ${k} is non-finite`);
+      }
+      vertProperties.push(x, y, z);
+    }
+  }
+  const triVerts = [];
+  const spans = closed ? m : m - 1;
+  for (let i = 0; i < spans; i++) {
+    const a = i * K;
+    const b = ((i + 1) % m) * K;
+    for (let k = 0; k < K; k++) {
+      const k1 = (k + 1) % K;
+      // Outward with CCW-about-+T rings advancing along +T.
+      triVerts.push(a + k, a + k1, b + k1);
+      triVerts.push(a + k, b + k1, b + k);
+    }
+  }
+  if (!closed) {
+    const last = (m - 1) * K;
+    for (let k = 1; k < K - 1; k++) {
+      triVerts.push(0, k + 1, k);                    // start cap faces −T
+      triVerts.push(last, last + k, last + k + 1);   // end cap faces +T
+    }
+  }
+  return { vertProperties, triVerts };
+}
