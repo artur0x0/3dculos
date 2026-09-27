@@ -143,6 +143,14 @@ const contourRail = read('../../src/components/ContourModeRail.jsx');
 {
   const css = read('../../src/index.css');
   check('loft uses the pyramid glyph', /makeLoft: Pyramid,/.test(palette));
+  const filletIcon = read('../../src/components/icons/SquareRoundCorner.jsx');
+  check('fillet uses the one-rounded-corner square', /filletEdges: SquareRoundCorner,/.test(palette));
+  check(
+    'the vendored fillet glyph carries lucide\'s own paths',
+    /M21 11a8 8 0 0 0-8-8/.test(filletIcon)
+      && /M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4/.test(filletIcon),
+  );
+  check('the vendored glyph takes lucide\'s size prop', /size = 24/.test(filletIcon));
   check('the retired stacked-layers glyph is gone', !/\bLayers\b/.test(palette));
   check(
     'Pyramid is imported and used once in the helper rail',

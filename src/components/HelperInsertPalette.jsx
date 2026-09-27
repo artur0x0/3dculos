@@ -27,6 +27,7 @@ import {
   Route,
   Spline,
 } from 'lucide-react';
+import SquareRoundCorner from './icons/SquareRoundCorner';
 import { itemsByGroup, paletteRailSections } from '../utils/helperPaletteSnippets';
 import { resolveFaceModal } from '../utils/faceFeaturePlacement';
 import { canBuildFilletAlongPath, resolveFilletStrategy } from '../utils/filletAlongPath';
@@ -41,7 +42,7 @@ const ICONS = {
   tube: Donut,
   hexPrism: Hexagon,
   roundedBox: Squircle,
-  filletEdges: Squircle,
+  filletEdges: SquareRoundCorner,
   chamferEdges: Triangle,
   hole: CircleDot,
   holePattern: Grid3x3,
