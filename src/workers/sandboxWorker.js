@@ -18,6 +18,7 @@ import {
   filletRemovedArea,
   chamferRemovedArea,
   orientFilletFrame,
+  varyingProfileTubeMesh,
   FILLET_ARC_SEGMENTS,
 } from '../utils/filletAlongPath.js';
 import { densifyPathPoints, buildVariableProfileFrames, maxConsecutiveFrameAngleDeg, countThetaRuns, variableProfileDensifyStep, pathPolylineLength, FRAME_DENSIFY_MAX_TURN_DEG } from '../utils/edgeTangencyField.js';
@@ -3478,9 +3479,14 @@ function _s23ProbeKnotNormals(M, part, points, closed) {
 }
 
 /**
- * Shared run-group → sweep union used by #23 and C3 variable-profile cutters.
- * C3.2: opts.singleRun forces one continuous sweep (median θ) so twisting loft
- * ridges do not shatter into θ-tol seams (the playtest saw-tooth).
+ * Shared run-group → sweep union. EASY path only since C3.3.
+ *
+ * opts.singleRun (C3.2) forced one continuous sweep at the MEDIAN θ. It cured
+ * the loft saw-tooth by replacing many small θ errors with one large one, and
+ * gouged instead (see docs/fillet-kernel-spike-c.md § C3.3). The hard path now
+ * uses _s23VaryingProfileCutter, which needs no θ collapse at all. The option
+ * is kept only because this helper still serves the easy dihedral path; do not
+ * reach for it as a loft fix.
  */
 function _s23CuttersFromSegs(M, CrossSection, segs, closed, radius, profileKind, arcSegs, testScale, opts = {}) {
   const singleRun = !!opts.singleRun;
@@ -3528,6 +3534,101 @@ function _s23CuttersFromSegs(M, CrossSection, segs, closed, radius, profileKind,
   return { cutter, expectVol, runCount: runs.length, thetaRunCount, singleRun };
 }
 
+/** Numerical band for a per-knot theta. Outside it the wedge is degenerate. */
+const _S23_THETA_MIN = 0.08;
+const _S23_THETA_MAX = Math.PI - 0.08;
+
+/**
+ * C3.3 hard: VARYING cross-section cutter — one profile per knot.
+ *
+ * C3.1 approximated a ramping dihedral with piecewise-constant theta runs
+ * (staircase); C3.2 replaced that with ONE median-theta run (gouge: on the
+ * playtest loft ridge theta ramps 161.5 deg -> 92.8 deg, so a median 109.7 deg
+ * profile cut 4.3x too deep at the shallow end). Both were the same bug — a
+ * constant section swept along a path whose section must change.
+ *
+ * Volume guards could not see it: the median-theta total landed within 1.2x of
+ * the true integral. The error was distributional, not integral. So expectVol
+ * here is the true per-knot integral, which makes those guards meaningful again.
+ *
+ * Builds the cutter mesh directly (ring per knot, stitched) instead of
+ * extrude+warp, because extrude+warp can only reorient one fixed profile.
+ */
+function _s23VaryingProfileCutter(segs, closed, radius, profileKind, arcSegs, testScale) {
+  if (!Array.isArray(segs) || !segs.length) {
+    throw new Error('filletAlongPath: varying-profile cutter needs ≥ 1 segment');
+  }
+  const place = (contour, origin, N, B) => contour.map(([u, v]) => [
+    origin[0] + u * N[0] + v * B[0],
+    origin[1] + u * N[1] + v * B[1],
+    origin[2] + u * N[2] + v * B[2],
+  ]);
+  const rings = [];
+  const thetas = [];
+  let expectVol = 0;
+  let clampedKnots = 0;
+  for (const seg of segs) {
+    let th = Number(seg.theta);
+    if (!Number.isFinite(th)) th = Math.PI / 2;
+    // Clamp, don't throw: one noisy knot must not kill a 48-knot blend. A
+    // near-flat knot clamps to a near-zero wedge and a knife-edge knot clamps
+    // its setback — both are the conservative answer. Count them; a path that
+    // is mostly clamped fails the volume guards downstream.
+    if (th < _S23_THETA_MIN) { th = _S23_THETA_MIN; clampedKnots++; }
+    else if (th > _S23_THETA_MAX) { th = _S23_THETA_MAX; clampedKnots++; }
+    thetas.push(th);
+    const area = profileKind === 'chamfer'
+      ? chamferRemovedArea(radius, th)
+      : filletRemovedArea(radius, th);
+    expectVol += area * (Number(seg.length) || 0);
+    rings.push(place(
+      _s23DihedralContour(radius, th, profileKind, arcSegs, testScale),
+      seg.p0, seg.N, seg.B,
+    ));
+  }
+  if (!closed) {
+    const tail = segs[segs.length - 1];
+    rings.push(place(
+      _s23DihedralContour(radius, thetas[thetas.length - 1], profileKind, arcSegs, testScale),
+      tail.p1, tail.N, tail.B,
+    ));
+  }
+  const mesh = varyingProfileTubeMesh(rings, closed);
+  let cutter;
+  let repair;
+  try {
+    ({ manifold: cutter, repair } = _meshDataToManifold(mesh.vertProperties, mesh.triVerts));
+  } catch (e) {
+    throw new Error(
+      'filletAlongPath: varying-profile cutter is not a valid solid (rings likely '
+      + `self-intersect — path curves tighter than the blend radius): ${e && e.message ? e.message : e}`,
+    );
+  }
+  // A cutter that needed welding is a warning sign, not a pass: the rings are
+  // built to be watertight by construction, so a weld means two rings collided.
+  if (repair !== 'strict') {
+    throw new Error(
+      `filletAlongPath: varying-profile cutter needed mesh repair (${repair}) — `
+      + 'rings collide along the path. Reduce radius or re-pick edges.',
+    );
+  }
+  const se = _c4StatusError(cutter);
+  if (se) throw new Error(`filletAlongPath: bad cutter (${se})`);
+  const degs = thetas.map((t) => (t * 180) / Math.PI);
+  return {
+    cutter,
+    expectVol,
+    runCount: 1,
+    thetaRunCount: countThetaRuns(segs),
+    singleRun: true,
+    varyingProfile: true,
+    ringCount: rings.length,
+    clampedKnots,
+    thetaMinDeg: +Math.min(...degs).toFixed(2),
+    thetaMaxDeg: +Math.max(...degs).toFixed(2),
+  };
+}
+
 /**
  * C3 hard: per-knot path-normal inscribed-arc frames via buildVariableProfileFrames.
  * Probes wall normals at densified knots, then sweeps with those N/B/theta frames.
@@ -3571,10 +3672,10 @@ function _s23BuildVariableProfileCutter(
       p1,
     });
   }
-  // C3.2: one continuous cutter — θ-group seams were the loft-ridge staircase.
-  const cut = _s23CuttersFromSegs(
-    M, CrossSection, segs, closed, radius, profileKind, arcSegs, testScale, { singleRun: true },
-  );
+  // C3.3: one continuous cutter with a PER-KNOT section. C3.2's single median
+  // θ removed the staircase but gouged wherever the true θ was far from the
+  // median; θ-grouped runs (C3.1) put the same error back as steps.
+  const cut = _s23VaryingProfileCutter(segs, closed, radius, profileKind, arcSegs, testScale);
   _recordVariableProfileMeta({
     usedFrames: true,
     frameCount: frames.length,
@@ -3586,6 +3687,11 @@ function _s23BuildVariableProfileCutter(
       ? built.maxFrameJumpDeg
       : maxConsecutiveFrameAngleDeg(frames),
     singleRunCutter: true,
+    varyingProfile: true,
+    ringCount: cut.ringCount,
+    clampedKnots: cut.clampedKnots,
+    thetaMinDeg: cut.thetaMinDeg,
+    thetaMaxDeg: cut.thetaMaxDeg,
     runCount: cut.runCount,
     thetaRunCount: cut.thetaRunCount,
   });
