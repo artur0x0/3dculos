@@ -20,7 +20,7 @@ import {
   orientFilletFrame,
   FILLET_ARC_SEGMENTS,
 } from '../utils/filletAlongPath.js';
-import { densifyPathPoints, buildVariableProfileFrames, maxConsecutiveFrameAngleDeg } from '../utils/edgeTangencyField.js';
+import { densifyPathPoints, buildVariableProfileFrames, maxConsecutiveFrameAngleDeg, countThetaRuns, variableProfileDensifyStep, pathPolylineLength, FRAME_DENSIFY_MAX_TURN_DEG } from '../utils/edgeTangencyField.js';
 import { indexBoundaryEdges } from '../utils/boundaryEdgeIds.js';
 import { assembleSweepPath } from '../utils/edgeSweepPath.js';
 import { buildMakeLoftSolid, offsetPlaneFrame } from '../utils/makeLoft.js';
@@ -3329,8 +3329,8 @@ function _s23SweepExplicit(Manifold, profile, points, frames, extrudeSegments) {
     const P0 = a[0] + frac * (b[0] - a[0]);
     const P1 = a[1] + frac * (b[1] - a[1]);
     const P2 = a[2] + frac * (b[2] - a[2]);
-    // C3.1: lerp N/B toward the next segment frame when present so the ridge
-    // stays continuous between knots (along-path tangency of the frame field).
+    // C3.1/C3.2: lerp N/B toward next frame, then Gram-Schmidt so the ridge
+    // frame stays orthonormal between knots (linear N+B lerp alone shears).
     const fr0 = frames[i];
     const fr1 = frames[Math.min(i + 1, frames.length - 1)];
     let Nx = fr0.N[0], Ny = fr0.N[1], Nz = fr0.N[2];
@@ -3343,8 +3343,11 @@ function _s23SweepExplicit(Manifold, profile, points, frames, extrudeSegments) {
       By += frac * (fr1.B[1] - fr0.B[1]);
       Bz += frac * (fr1.B[2] - fr0.B[2]);
       const nL = Math.hypot(Nx, Ny, Nz) || 1;
-      const bL = Math.hypot(Bx, By, Bz) || 1;
       Nx /= nL; Ny /= nL; Nz /= nL;
+      // Drop B onto plane ⊥ N, then renorm (preserves handedness via lerp hint).
+      const nb = Nx * Bx + Ny * By + Nz * Bz;
+      Bx -= nb * Nx; By -= nb * Ny; Bz -= nb * Nz;
+      const bL = Math.hypot(Bx, By, Bz) || 1;
       Bx /= bL; By /= bL; Bz /= bL;
     }
     v[0] = P0 + x * Nx + y * Bx;
@@ -3385,7 +3388,7 @@ function _s23SweepRun(Manifold, CrossSection, runGeom, radius, profileKind, arcS
   }
   const contour = _s23DihedralContour(radius, thetaUse, profileKind, arcSegs, testScale);
   const cs = new CrossSection([contour]);
-  const extrudeSegments = Math.min(128, Math.max(24, sweepFrames.length * 2));
+  const extrudeSegments = Math.min(256, Math.max(48, sweepFrames.length * 4));
   return _s23SweepExplicit(Manifold, cs, sweepPts, sweepFrames, extrudeSegments);
 }
 
@@ -3474,13 +3477,25 @@ function _s23ProbeKnotNormals(M, part, points, closed) {
   return { segmentNormals, seedNormals };
 }
 
-/** Shared run-group → sweep union used by #23 and C3 variable-profile cutters. */
-function _s23CuttersFromSegs(M, CrossSection, segs, closed, radius, profileKind, arcSegs, testScale) {
-  const runs = _s23GroupRuns(segs, closed);
+/**
+ * Shared run-group → sweep union used by #23 and C3 variable-profile cutters.
+ * C3.2: opts.singleRun forces one continuous sweep (median θ) so twisting loft
+ * ridges do not shatter into θ-tol seams (the playtest saw-tooth).
+ */
+function _s23CuttersFromSegs(M, CrossSection, segs, closed, radius, profileKind, arcSegs, testScale, opts = {}) {
+  const singleRun = !!opts.singleRun;
+  const thetaRunCount = countThetaRuns(segs);
+  const runs = singleRun
+    ? (segs.length ? [segs] : [])
+    : _s23GroupRuns(segs, closed);
   const cutters = [];
   let expectVol = 0;
   for (const run of runs) {
-    const theta = run[0].theta;
+    let theta = run[0].theta;
+    if (singleRun && run.length > 1) {
+      const ts = run.map((s) => Number(s.theta)).filter((t) => t > 0.05 && t < Math.PI - 0.05).sort((a, b) => a - b);
+      if (ts.length) theta = ts[Math.floor(ts.length / 2)];
+    }
     const area = profileKind === 'chamfer'
       ? chamferRemovedArea(radius, theta)
       : filletRemovedArea(radius, theta);
@@ -3510,7 +3525,7 @@ function _s23CuttersFromSegs(M, CrossSection, segs, closed, radius, profileKind,
     const se = _c4StatusError(cutter);
     if (se) throw new Error(`filletAlongPath: bad cutter (${se})`);
   }
-  return { cutter, expectVol };
+  return { cutter, expectVol, runCount: runs.length, thetaRunCount, singleRun };
 }
 
 /**
@@ -3538,17 +3553,6 @@ function _s23BuildVariableProfileCutter(
       + 'Pass opts.initialNormal, or re-pick edges.',
     );
   }
-  _recordVariableProfileMeta({
-    usedFrames: true,
-    frameCount: frames.length,
-    densifiedPoints: points.length,
-    rawSegCount: Number(rawSegCount) || segCount,
-    strongFrames: strong,
-    alongPathTransport: built.transported !== false,
-    maxFrameJumpDeg: typeof built.maxFrameJumpDeg === 'number'
-      ? built.maxFrameJumpDeg
-      : maxConsecutiveFrameAngleDeg(frames),
-  });
   const segs = [];
   for (let i = 0; i < segCount; i++) {
     const fr = frames[i];
@@ -3567,7 +3571,25 @@ function _s23BuildVariableProfileCutter(
       p1,
     });
   }
-  return _s23CuttersFromSegs(M, CrossSection, segs, closed, radius, profileKind, arcSegs, testScale);
+  // C3.2: one continuous cutter — θ-group seams were the loft-ridge staircase.
+  const cut = _s23CuttersFromSegs(
+    M, CrossSection, segs, closed, radius, profileKind, arcSegs, testScale, { singleRun: true },
+  );
+  _recordVariableProfileMeta({
+    usedFrames: true,
+    frameCount: frames.length,
+    densifiedPoints: points.length,
+    rawSegCount: Number(rawSegCount) || segCount,
+    strongFrames: strong,
+    alongPathTransport: built.transported !== false,
+    maxFrameJumpDeg: typeof built.maxFrameJumpDeg === 'number'
+      ? built.maxFrameJumpDeg
+      : maxConsecutiveFrameAngleDeg(frames),
+    singleRunCutter: true,
+    runCount: cut.runCount,
+    thetaRunCount: cut.thetaRunCount,
+  });
+  return cut;
 }
 
 function _s23BuildDihedralCutter(M, CrossSection, part, points, closed, radius, profileKind, arcSegs, testScale) {
@@ -3614,19 +3636,18 @@ function filletAlongPath(part, path, radius, opts = {}) {
     ? Number(opts._c3RawSegCount)
     : (closed ? points.length : Math.max(0, points.length - 1));
   if (variableProfile && !opts._rawPath) {
-    const step = Math.max(0.75 * Number(radius) || 1, 0.5);
-    const dense = densifyPathPoints(points, closed, step);
+    // C3.2: step from min(0.28R, pathLen/48) + max-turn densify so large-R /
+    // high-curvature loft ridges get enough knots (0.75R alone was too sparse).
+    const plen0 = (typeof length === 'number' && length > 0)
+      ? length
+      : pathPolylineLength(points, closed);
+    const step = variableProfileDensifyStep(radius, plen0);
+    const dense = densifyPathPoints(points, closed, step, {
+      maxTurnDeg: FRAME_DENSIFY_MAX_TURN_DEG,
+    });
     if (dense.length > points.length) {
       points = dense;
-      length = 0;
-      for (let i = 0; i < points.length - 1; i++) {
-        const a = points[i], b = points[i + 1];
-        length += Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
-      }
-      if (closed) {
-        const a = points[points.length - 1], b = points[0];
-        length += Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
-      }
+      length = pathPolylineLength(points, closed);
     }
   }
 

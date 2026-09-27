@@ -39,7 +39,8 @@
         "golden:fillet-kernel-spike-c": "node scripts/golden/smoke_fillet_kernel_spike_c.mjs",
         "golden:fillet-c2-rolling-ball": "node scripts/golden/smoke_fillet_c2_rolling_ball.mjs",
         "golden:fillet-c3-variable-sweep": "node scripts/golden/smoke_fillet_c3_variable_sweep.mjs",
-        "golden:fillet-c3.1-along-path-tangency": "node scripts/golden/smoke_fillet_c3_1_along_path_tangency.mjs"
+        "golden:fillet-c3.1-along-path-tangency": "node scripts/golden/smoke_fillet_c3_1_along_path_tangency.mjs",
+        "golden:fillet-c3.2-tighter-continuity": "node scripts/golden/smoke_fillet_c3_2_tighter_continuity.mjs"
     },
     "dependencies": {
         "@monaco-editor/react": "^4.6.0",
