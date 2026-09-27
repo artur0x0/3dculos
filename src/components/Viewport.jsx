@@ -3525,36 +3525,9 @@ const Viewport = forwardRef(({
 
   return (
     <div ref={containerRef} className="relative w-full h-full bg-gray-900 overflow-hidden">
-      {/* Desktop CAD: floating overlay. Mobile CAD uses the puzzle mid-strip. */}
-      {mode !== 'game' && !isMobile && (
-        <Toolbar
-          mode={mode}
-          variant="overlay"
-          onOpen={onOpen}
-          onSave={onSave}
-          onAccount={onAccount}
-          onDownload={handleDownloadModel}
-          onQuote={onQuote}
-          onUpload={onUpload}
-          onUndo={onUndo}
-          onRedo={onRedo}
-          canUndo={canUndo}
-          canRedo={canRedo}
-          isExecuting={isExecuting}
-          isDownloading={isDownloading}
-          isUploading={isUploading}
-          currentFilename={currentFilename}
-          onStartGame={onStartGame}
-          onExitGame={onExitGame}
-          onRun={onRun}
-          onHint={onHint}
-          onPickPuzzle={onPickPuzzle}
-          gameElapsedMs={gameElapsedMs}
-          gameSuccess={gameSuccess}
-          gameBestTimeMs={gameBestTimeMs}
-        />
-      )}
-      {mode !== 'game' && isMobile && cadToolbarHost && createPortal(
+      {/* CAD chrome lives in the editor mid-strip in BOTH shells (desktop matches
+          phone now): rendered here so download/export busy state stays local. */}
+      {mode !== 'game' && cadToolbarHost && createPortal(
         <Toolbar
           mode="cad"
           variant="strip"
@@ -3588,7 +3561,7 @@ const Viewport = forwardRef(({
       {mode === 'game' && (
         <ViewportTitleChip>{gamePuzzleTitle || 'Puzzle'}</ViewportTitleChip>
       )}
-      {mode !== 'game' && isMobile && (
+      {mode !== 'game' && (
         <ViewportTitleChip>{currentFilename || 'Untitled'}</ViewportTitleChip>
       )}
 
@@ -3680,7 +3653,7 @@ const Viewport = forwardRef(({
               // keep selectedEdges until user clears / face-picks
             }
           }}
-          verticalRail={isMobile}
+          verticalRail
         />
       
       {executionError && (
@@ -3706,7 +3679,7 @@ const Viewport = forwardRef(({
           className={`absolute bg-black/50 text-white p-2 rounded-lg text-xs font-mono z-10 max-w-[14rem] ${
             mode === 'game' || isMobile
               ? 'bottom-4 right-2 lg:right-4'
-              : 'bottom-4 left-16 lg:left-[4.75rem]'
+              : 'bottom-4 left-[4.5rem] lg:left-[5.25rem]'
           }`}
         >
           <div className="font-bold mb-1">
@@ -3864,14 +3837,15 @@ const Viewport = forwardRef(({
         />
       )}
 
-      {/* Slice 12 hotfix: Edge pick chip — visible whenever Edge mode is on */}
-      {pickMode === 'edge' && !contourMode && !filletMode && (
+      {/* Edge pick chip — Edge mode alone is not enough: it stays out of the way
+          until at least one edge is actually selected. */}
+      {pickMode === 'edge' && !contourMode && !filletMode && selectedEdges.length > 0 && (
         <div
           data-edge-selector="standalone"
           className={`absolute bg-amber-950/85 border border-amber-500/70 text-white px-3 py-2 rounded-lg text-xs z-20 shadow-lg max-w-[16rem] ${
             mode === 'game' || isMobile
               ? 'bottom-4 right-2 lg:right-4'
-              : 'bottom-4 left-16 lg:left-[4.75rem]'
+              : 'bottom-4 left-[4.5rem] lg:left-[5.25rem]'
           }`}
         >
           <div className="font-bold font-sans text-amber-200">
@@ -3960,7 +3934,7 @@ const Viewport = forwardRef(({
       {/* Measurement Info Display */}
       {measurementEnabled && measurementFaces.first && (
         <div className={`absolute bottom-4 bg-black/50 backdrop-blur-sm text-white p-3 rounded-lg text-xs font-mono z-10 space-y-1 ${
-          mode === 'game' ? 'left-2 lg:left-4' : 'left-16 lg:left-[4.75rem]'
+          mode === 'game' ? 'left-2 lg:left-4' : 'left-[4.5rem] lg:left-[5.25rem]'
         }`}>
           {measurementFaces.second ? (
             <>

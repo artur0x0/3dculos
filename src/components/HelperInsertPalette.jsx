@@ -101,8 +101,10 @@ const HelperInsertPalette = ({
   layout = 'game',
 }) => {
   const grouped = itemsByGroup();
-  const iconSize = compact ? 16 : 18;
-  const pad = compact ? 'p-1.5' : 'p-2';
+  // Both viewport rails (this one and CrossSectionPanel) share one size so they
+  // read as a matched pair — the larger of the two former sizes, phone included.
+  const iconSize = 20;
+  const pad = 'p-2';
   const [pending, setPending] = useState(null);
   const [bufferSnapshot, setBufferSnapshot] = useState('');
   const [faceSnapshot, setFaceSnapshot] = useState(null);
@@ -194,7 +196,7 @@ const HelperInsertPalette = ({
         className={`absolute left-2 lg:left-4 bottom-4 z-10 flex flex-col gap-1
           bg-white/60 backdrop-blur-sm rounded-lg shadow-lg
           max-h-[min(72%,calc(100%-5.5rem))] overflow-y-auto overflow-x-hidden
-          ${compact ? 'p-1' : 'p-1.5'}`}
+          p-2`}
         role="group"
         aria-label="Helper insert palette"
         data-palette-layout={layout === 'cad' ? 'cad' : 'game'}

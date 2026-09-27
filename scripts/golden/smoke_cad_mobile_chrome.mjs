@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 /**
- * CAD phone chrome uses the puzzle shell:
- * viewport on top, Monaco in the bottom budget, keyboard pin for both modes,
+ * CAD chrome uses the puzzle shell:
+ * viewport on top (phone), Monaco in the bottom budget, keyboard pin for both modes,
  * CAD actions in the mid-strip (not a viewport overlay), right rail vertical.
- * Game strip stays inline in CodeEditor. Desktop CAD keeps the overlay bar.
+ * Game strip stays inline in CodeEditor. Desktop CAD now matches phone: the strip
+ * is portaled above the editor in BOTH shells and no overlay toolbar is left.
  */
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -51,13 +52,13 @@ console.log('cad mobile chrome harmonized to puzzle');
   const toolbar = read('../../src/components/Toolbar.jsx');
   const panel = read('../../src/components/CrossSectionPanel.jsx');
 
-  check('phone right rail is vertical for both modes', /verticalRail=\{isMobile\}/.test(view));
-  check('desktop CAD keeps the overlay toolbar', /variant="overlay"/.test(view));
+  check('right rail is vertical in both shells', /verticalRail\s*\n/.test(view));
+  check('no CAD overlay toolbar is left anywhere', !/variant="overlay"/.test(view));
   // Gate is the call-site, not the createPortal import. The Toolbar prop list
   // between variant="strip" and the host argument is longer than 400 chars.
   check(
-    'mobile CAD portals the strip into the editor host',
-    /mode !== 'game' && isMobile && cadToolbarHost && createPortal\(/.test(view) &&
+    'CAD portals the strip into the editor host in both shells',
+    /mode !== 'game' && cadToolbarHost && createPortal\(/.test(view) &&
     /variant="strip"[\s\S]{0,1200}?cadToolbarHost,?\s*\)/.test(view),
   );
   check('shared title chip', /function ViewportTitleChip/.test(view));
@@ -69,9 +70,9 @@ console.log('cad mobile chrome harmonized to puzzle');
     'game strip still inline in the editor',
     /mode="game"/.test(editor) && /variant="strip"/.test(editor),
   );
-  check('editor hosts the CAD strip only on mobile', /showCadStrip = !isGame && !!isMobile/.test(editor));
+  check('editor hosts the CAD strip in both shells', /showCadStrip = !isGame && typeof onCadToolbarHost/.test(editor));
   check('CAD strip uses the dark mid-strip shell', /data-toolbar-variant="strip"/.test(toolbar));
-  check('CAD strip does not collapse', /!isGame && !isStrip && isCollapsed/.test(toolbar));
+  check('CAD has no collapse chevron at all', !/isCollapsed/.test(toolbar));
   check(
     'vertical rail still has Face and Edge',
     /onPickModeChange\('face'\)/.test(panel) && /onPickModeChange\('edge'\)/.test(panel),
@@ -83,6 +84,10 @@ console.log('cad mobile chrome harmonized to puzzle');
   check(
     'view snaps open inward on the vertical rail',
     /popupAlign=\{verticalRail \? 'end' : 'start'\}/.test(panel),
+  );
+  check(
+    'filename chip shows in both CAD shells (no toolbar carries it now)',
+    /mode !== 'game' && \(\s*<ViewportTitleChip>\{currentFilename \|\| 'Untitled'\}/.test(view),
   );
 }
 

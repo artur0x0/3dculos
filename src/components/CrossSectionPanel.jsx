@@ -1,7 +1,7 @@
 // components/CrossSectionPanel.jsx
 /* eslint-disable react-hooks/exhaustive-deps -- see Viewport note; same ref-backed pattern */
 import React, { useState, useEffect } from 'react';
-import { FlipHorizontal, ChevronDown, ChevronUp, Maximize2, Ruler, Move3d, Frame, BoxSelect, Spline, RectangleHorizontal, SquareDashed } from 'lucide-react';
+import { FlipHorizontal, ChevronDown, ChevronUp, Maximize2, Ruler, Move3d, Frame, Spline, RectangleHorizontal, Layers3, NotebookPen } from 'lucide-react';
 import ViewSnapControl from './ViewSnapControl';
 import { PLANE_PRESETS } from '../utils/crossSection';
 
@@ -26,7 +26,8 @@ const CrossSectionPanel = ({
   showContours = true,
   onShowPlanesChange = null,
   onShowContoursChange = null,
-  /** Phone: stack tools on the right edge (puzzle + CAD). Desktop stays a wrapping row. */
+  /** Stack tools vertically on the right edge. Both shells pass this now — desktop
+   *  matches phone; the wrapping-row fallback is kept for any other caller. */
   verticalRail = false,
 }) => {
   const [isCollapsed, setIsCollapsed] = useState(true);
@@ -205,7 +206,8 @@ const handleButtonClick = () => {
                   aria-label="Face pick mode"
                   aria-pressed={pickMode === 'face'}
                 >
-                  <BoxSelect size={20} />
+                  {/* Skinny rectangle = one flat face. Planes use Layers3, sketches NotebookPen. */}
+                  <RectangleHorizontal size={20} />
                 </button>
                 <button
                   type="button"
@@ -243,7 +245,7 @@ const handleButtonClick = () => {
                   aria-pressed={!!showPlanes}
                   data-overlay-toggle="plane"
                 >
-                  <RectangleHorizontal size={20} />
+                  <Layers3 size={20} />
                 </button>
                 <button
                   type="button"
@@ -254,13 +256,13 @@ const handleButtonClick = () => {
                       : 'text-blue-600 hover:bg-gray-100 active:bg-blue-100'
                   }`}
                   title={showContours
-                    ? 'Contour overlays on — tap to hide saved contours'
-                    : 'Contour overlays off — tap to show saved contours'}
+                    ? 'Sketch overlays on — tap to hide saved contours'
+                    : 'Sketch overlays off — tap to show saved contours'}
                   aria-label="Contour display"
                   aria-pressed={!!showContours}
                   data-overlay-toggle="contour"
                 >
-                  <SquareDashed size={20} />
+                  <NotebookPen size={20} />
                 </button>
               </div>
             </div>

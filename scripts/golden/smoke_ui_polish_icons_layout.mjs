@@ -1,0 +1,142 @@
+#!/usr/bin/env node
+/**
+ * UI polish: distinct selector icons, one orientation menu, quieter edge chip,
+ * and a desktop that matches the phone shell.
+ *
+ * - Face / Plane / Sketch each own one icon: skinny rectangle, three planes,
+ *   pencil-and-paper. No icon does double duty inside the right rail.
+ * - Iso lives inside the view-snap popup; the trigger is a pure toggle and turns
+ *   into an arrow pointing at the menu it just unfurled.
+ * - The standalone edge chip waits for a real selection.
+ * - CAD chrome is the editor mid-strip in BOTH shells, both viewport rails are
+ *   vertical, and the two rails share one size — the larger of the old two.
+ */
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+
+const here = dirname(fileURLToPath(import.meta.url));
+const read = (rel) => readFileSync(join(here, rel), 'utf8');
+
+let failed = 0;
+function check(name, cond, detail = '') {
+  if (cond) console.log(`  ✅ ${name}`);
+  else {
+    failed++;
+    console.log(`  ❌ ${name}${detail ? ' — ' + detail : ''}`);
+  }
+}
+
+console.log('ui polish: icons, view snaps, edge chip, desktop shell');
+
+const panel = read('../../src/components/CrossSectionPanel.jsx');
+const snap = read('../../src/components/ViewSnapControl.jsx');
+const view = read('../../src/components/Viewport.jsx');
+const editor = read('../../src/components/CodeEditor.jsx');
+const toolbar = read('../../src/components/Toolbar.jsx');
+const palette = read('../../src/components/HelperInsertPalette.jsx');
+const contourRail = read('../../src/components/ContourModeRail.jsx');
+
+// ── AC1: one icon per selector, no duplicates in the rail ──
+{
+  check(
+    'face pick uses the skinny rectangle',
+    /aria-label="Face pick mode"[\s\S]{0,300}?<RectangleHorizontal size=\{20\} \/>/.test(panel),
+  );
+  check(
+    'plane display uses the three-planes icon',
+    /data-overlay-toggle="plane"[\s\S]{0,80}?<Layers3 size=\{20\} \/>/.test(panel),
+  );
+  check(
+    'sketch display uses the pencil-and-paper icon',
+    /data-overlay-toggle="contour"[\s\S]{0,80}?<NotebookPen size=\{20\} \/>/.test(panel),
+  );
+  check(
+    'the retired duplicates are gone from the rail',
+    !/BoxSelect/.test(panel) && !/SquareDashed/.test(panel),
+  );
+  // Every <Icon size={20} /> in the collapsed rail must be a different glyph.
+  const railStart = panel.indexOf('if (isCollapsed || !enabled)');
+  const railEnd = panel.indexOf('bg-white/50 backdrop-blur-sm rounded-lg shadow-lg p-3');
+  const rail = panel.slice(railStart, railEnd > railStart ? railEnd : undefined);
+  const glyphs = [...rail.matchAll(/<([A-Z][A-Za-z0-9]*) size=\{20\} \/>/g)].map((m) => m[1]);
+  check(
+    'no icon is used twice in the right rail',
+    glyphs.length > 6 && new Set(glyphs).size === glyphs.length,
+    glyphs.join(','),
+  );
+}
+
+// ── AC2: iso moved into the popup; trigger became a labelled toggle ──
+{
+  check("iso is one of the popup's views", /key: 'iso'/.test(snap));
+  check(
+    "iso is not the trigger's hidden second tap",
+    !/onSnap\?\.\('iso'\)/.test(snap),
+  );
+  check(
+    'the trigger only opens and closes the menu',
+    /onClick=\{\(\) => setOpen\(\(v\) => !v\)\}/.test(snap),
+  );
+  check(
+    'the trigger becomes an arrow toward the open menu',
+    /open \? <ArrowUp size=\{20\} \/> : <Box size=\{20\} \/>/.test(snap),
+  );
+  check(
+    'the popup still unfurls upward, so the arrow points at it',
+    /absolute bottom-full/.test(snap),
+  );
+  check('popup is addressable from tests', /data-view-snap-popup/.test(snap));
+}
+
+// ── AC3: edge chip needs a real selection ──
+{
+  check(
+    'standalone edge chip requires at least one selected edge',
+    /pickMode === 'edge' && !contourMode && !filletMode && selectedEdges\.length > 0 && \(/.test(view),
+  );
+  check('edge chip keeps its test hook', /data-edge-selector="standalone"/.test(view));
+}
+
+// ── AC4: desktop shell matches the phone shell ──
+{
+  check('no CAD overlay toolbar survives', !/variant="overlay"/.test(view));
+  check('Toolbar has no collapse state left', !/isCollapsed/.test(toolbar));
+  check(
+    'CAD strip is portaled in both shells',
+    /mode !== 'game' && cadToolbarHost && createPortal\(/.test(view),
+  );
+  check(
+    'editor hosts the strip in both shells',
+    /showCadStrip = !isGame && typeof onCadToolbarHost === 'function'/.test(editor),
+  );
+  check('right rail is vertical unconditionally', /\n\s+verticalRail\n/.test(view));
+  check(
+    'bottom-left readouts clear the wider left rail',
+    !/left-16 lg:left-\[4\.75rem\]/.test(view)
+      && /left-\[4\.5rem\] lg:left-\[5\.25rem\]/.test(view),
+  );
+}
+
+// ── AC5: both viewport rails are one size, the larger one ──
+{
+  for (const [name, src] of [['helper rail', palette], ['contour rail', contourRail]]) {
+    check(`${name} icon size matches the right rail (20)`, /const iconSize = 20;/.test(src));
+    check(`${name} button padding matches the right rail (p-2)`, /const pad = 'p-2';/.test(src));
+    check(`${name} shell padding matches the right rail (p-2)`, /\n\s+p-2`\}/.test(src));
+    check(
+      `${name} no longer shrinks on phones`,
+      !/compact \? 'p-1/.test(src) && !/compact \? 16/.test(src),
+    );
+  }
+  check(
+    'right rail is still the 20px / p-2 reference the others copy',
+    /size=\{20\}/.test(panel) && /p-2 rounded/.test(panel),
+  );
+}
+
+if (failed) {
+  console.log(`\n${failed} check(s) failed`);
+  process.exit(1);
+}
+console.log('\nAll UI polish checks passed.');

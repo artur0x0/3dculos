@@ -62,7 +62,8 @@ const CodeEditor = forwardRef(({
   /** True while insertAtCursor runs executeEdits (sync onChange must not double-fire). */
   const paletteInsertRef = useRef(false);
   const isGame = mode === 'game';
-  const showCadStrip = !isGame && !!isMobile && typeof onCadToolbarHost === 'function';
+  // Both shells host the CAD strip now — desktop moved its buttons above the editor.
+  const showCadStrip = !isGame && typeof onCadToolbarHost === 'function';
 
   // Expose methods to parent via ref
   useImperativeHandle(ref, () => ({
@@ -410,7 +411,7 @@ const CodeEditor = forwardRef(({
 
   return (
     <div className="relative flex flex-col h-full bg-gray-900">
-      {/* Mid-strip: Select All always. Game actions inline; mobile CAD portals here. */}
+      {/* Mid-strip: Select All always. Game actions inline; CAD portals here (both shells). */}
       <div className={`flex items-center gap-1 px-1 py-0.5 border-b border-gray-700/60 bg-gray-900 shrink-0 ${
         isGame || showCadStrip ? 'justify-between' : 'justify-end'
       }`}>

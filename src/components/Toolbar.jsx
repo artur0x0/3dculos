@@ -1,6 +1,6 @@
-import React, { useRef, useState } from 'react';
+import React, { useRef } from 'react';
 import {
-  FolderOpen, Save, Download, Undo, Redo, ChevronLeft, ChevronRight,
+  FolderOpen, Save, Download, Undo, Redo,
   Truck, Upload, User, ArrowLeft, Play, BookOpen, Puzzle, List
 } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
@@ -8,9 +8,11 @@ import { formatGameTime } from '../utils/gamePuzzle';
 
 /**
  * Shared chrome.
- * - Desktop CAD: floating overlay over the viewport (collapsible).
- * - Mobile CAD + game: action bar in the Monaco mid-strip (variant="strip").
- *   No floating overlay and no collapse chevron (slice 08; CAD mobile matches).
+ * - CAD (both shells): action bar in the Monaco mid-strip, above the editor.
+ *   Desktop used to float a collapsible overlay over the viewport; it now matches
+ *   phone, so there is no overlay and no collapse chevron for CAD at all.
+ * - Game: the same strip, rendered inline by CodeEditor (variant="strip"), with an
+ *   overlay fallback for any non-strip caller.
  */
 const Toolbar = ({
   mode = 'cad',
@@ -40,7 +42,6 @@ const Toolbar = ({
 }) => {
   const fileInputRef = useRef(null);
   const uploadModelRef = useRef(null);
-  const [isCollapsed, setIsCollapsed] = useState(false);
 
   const { isAuthenticated } = useAuth();
   const isGame = mode === 'game';
@@ -76,21 +77,6 @@ const Toolbar = ({
       uploadModelRef.current.value = '';
     }
   };
-
-  // Desktop CAD collapse. Strip variants (game + mobile CAD) never collapse.
-  if (!isGame && !isStrip && isCollapsed) {
-    return (
-      <div className="absolute top-4 right-4 flex items-center gap-2 bg-white/70 backdrop-blur-sm p-2 rounded-lg shadow-lg z-10">
-        <button
-          onClick={() => setIsCollapsed(false)}
-          className="p-2 rounded hover:bg-gray-100 text-gray-600"
-          title="Show Toolbar"
-        >
-          <ChevronLeft size={20} />
-        </button>
-      </div>
-    );
-  }
 
   // ── Game mode: back, undo/redo, run, picker, hint (BookOpen only) ──
   // Slice 08: rendered inline in CodeEditor mid-strip (no absolute overlay,
@@ -204,9 +190,9 @@ const Toolbar = ({
     );
   }
 
-  // Mobile CAD: same mid-strip tokens as the game bar (dark, compact, scroll).
-  // No collapse chevron — the strip is the editor header, not a viewport sheet.
-  if (isStrip) {
+  // CAD (desktop + phone): same mid-strip tokens as the game bar — dark, compact,
+  // horizontally scrollable. The strip IS the editor header, not a viewport sheet.
+  if (!isGame) {
     const btn = 'shrink-0 p-1.5 flex items-center rounded active:opacity-80 hover:bg-gray-700/60';
     const icon = 18;
     const blue = 'text-blue-400';
@@ -328,133 +314,7 @@ const Toolbar = ({
     );
   }
 
-  return (
-    <div className="absolute top-4 left-1/2 -translate-x-1/2 lg:left-auto lg:right-4 lg:translate-x-0 flex gap-1 lg:gap-2 bg-white/60 backdrop-blur-sm p-2 rounded-lg shadow-lg z-10">
-      {/* Account */}
-      <button
-        onClick={onAccount}
-        className={`p-2 rounded hover:bg-gray-100 ${isAuthenticated ? 'text-green-600' : 'text-blue-600'}`}
-        title="Account"
-      >
-        <User size={20} />
-      </button>
-
-      <input
-        type="file"
-        ref={fileInputRef}
-        onChange={handleFileSelect}
-        className="hidden"
-        accept=".js,.txt"
-      />
-
-      <input
-        type="file"
-        ref={uploadModelRef}
-        onChange={handleModelUpload}
-        className="hidden"
-        accept=".stl,.obj,.3mf,.step,.stp"
-      />
-
-      {/* Open */}
-      <button
-        onClick={() => fileInputRef.current?.click()}
-        className="p-2 flex items-center gap-2 text-blue-600 hover:bg-gray-100 rounded"
-        title="Open File"
-      >
-        <FolderOpen size={20} />
-      </button>
-
-      {/* Upload */}
-      <button
-        onClick={() => uploadModelRef.current?.click()}
-        disabled={isUploading || isExecuting}
-        className="p-2 flex items-center gap-2 text-blue-600 hover:bg-gray-100 rounded disabled:opacity-50"
-        title="Upload STEP File"
-      >
-        {isUploading ? (
-          <div className="w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
-        ) : (
-          <Upload size={20} />
-        )}
-      </button>
-
-      <div className="w-px bg-gray-300 mx-1"></div>
-
-      {/* Undo */}
-      <button
-        onClick={onUndo}
-        disabled={!canUndo}
-        className="p-2 flex items-center gap-2 text-blue-600 hover:bg-gray-100 rounded disabled:opacity-30"
-        title="Undo"
-      >
-        <Undo size={20} />
-      </button>
-
-      {/* Redo */}
-      <button
-        onClick={onRedo}
-        disabled={!canRedo}
-        className="p-2 flex items-center gap-2 text-blue-600 hover:bg-gray-100 rounded disabled:opacity-30"
-        title="Redo"
-      >
-        <Redo size={20} />
-      </button>
-
-      <div className="w-px bg-gray-300 mx-1"></div>
-
-      {/* Save */}
-      <button
-        onClick={onSave}
-        className="p-2 flex items-center gap-2 text-blue-600 hover:bg-gray-100 rounded"
-        title={currentFilename ? `Save ${currentFilename}` : 'Save As'}
-      >
-        <Save size={20} />
-      </button>
-
-      {/* Download */}
-      <button
-        onClick={onDownload}
-        disabled={isDownloading || isExecuting}
-        className="p-2 rounded hover:bg-gray-100 text-blue-600 disabled:opacity-50"
-        title="Download Model"
-      >
-        {isDownloading ? (
-          <div className="w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
-        ) : (
-          <Download size={20} />
-        )}
-      </button>
-
-      <div className="w-px bg-gray-300 mx-1"></div>
-
-      {/* Quote */}
-      <button
-        onClick={onQuote}
-        className="p-2 rounded hover:bg-gray-100 text-green-600"
-        title="Get Quote"
-      >
-        <Truck size={20} />
-      </button>
-
-      {/* Start puzzle / game mode — opens picker */}
-      <button
-        onClick={onStartGame}
-        className="p-2 rounded hover:bg-gray-100 text-cyan-700"
-        title="Play match-the-part puzzle"
-      >
-        <Puzzle size={20} />
-      </button>
-
-      {/* Collapse (CAD only) */}
-      <button
-        onClick={() => setIsCollapsed(true)}
-        className="p-2 rounded hover:bg-gray-100 text-gray-600"
-        title="Hide Toolbar"
-      >
-        <ChevronRight size={20} />
-      </button>
-    </div>
-  );
+  return null;
 };
 
 export default Toolbar;
