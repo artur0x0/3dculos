@@ -6,6 +6,8 @@
  *   - Variable-profile hard fillet framing (inscribed arc in the local wall square)
  *   - Along-path frame transport (C3.1): parallel-transport / continuous θ so the
  *     hard variableProfile sweep stays smooth (no staircase ridge)
+ *   - C3.2: tighter damp + curvature-aware densify; variableProfile keeps one
+ *     continuous cutter run (θ-split seams were the loft-ridge staircase)
  *
  * G1 = tangent alignment AND wall-normal continuity. Tessellation zig-zag often
  * passes a loose tangent check but flips / swaps face normals at every step.
@@ -177,7 +179,7 @@ export function propagateTrueTangentEdges(featureEdges, seedEdge, opts = {}) {
  * @param {number} step
  * @returns {number[][]}
  */
-export function densifyPathPoints(points, closed, step) {
+export function densifyPathPoints(points, closed, step, opts = {}) {
   if (!Array.isArray(points) || points.length < 2) return points ? points.map((p) => p.slice()) : [];
   const s = Math.max(1e-3, Number(step) || 1);
   const out = [];
@@ -200,7 +202,94 @@ export function densifyPathPoints(points, closed, step) {
     }
   }
   if (!closed) out.push(points[n - 1].slice());
-  return out;
+  const maxTurnDeg = Number(opts.maxTurnDeg);
+  if (!(maxTurnDeg > 0) || out.length < 3) return out;
+  return densifyPathByMaxTurn(out, closed, maxTurnDeg);
+}
+
+/**
+ * Path length of a polyline (optionally closed).
+ * @param {number[][]} points
+ * @param {boolean} closed
+ */
+export function pathPolylineLength(points, closed) {
+  if (!Array.isArray(points) || points.length < 2) return 0;
+  const n = points.length;
+  const segCount = closed ? n : n - 1;
+  let L = 0;
+  for (let i = 0; i < segCount; i++) {
+    const a = points[i];
+    const b = points[(i + 1) % n];
+    L += Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+  }
+  return L;
+}
+
+/**
+ * C3.2 densify step: chord step from radius AND path length so large-R loft
+ * ridges still get ~48 samples (0.75R alone left playtest R≈200 with ~handful knots).
+ * @param {number} radius
+ * @param {number} pathLength
+ */
+export function variableProfileDensifyStep(radius, pathLength) {
+  const R = Math.max(Number(radius) || 1, 1e-6);
+  const plen = Math.max(Number(pathLength) || 0, 0);
+  const fromR = Math.max(0.28 * R, 0.4);
+  if (!(plen > 1e-6)) return fromR;
+  const fromLen = Math.max(plen / 48, 0.25);
+  return Math.min(fromR, fromLen);
+}
+
+/**
+ * Insert midpoints until consecutive segment turn angles stay under maxTurnDeg.
+ * Chord-only densify misses high-curvature loft polylines where knots are already
+ * shorter than step but turns between them are large.
+ * @param {number[][]} points
+ * @param {boolean} closed
+ * @param {number} maxTurnDeg
+ * @param {number} [maxPasses]
+ */
+export function densifyPathByMaxTurn(points, closed, maxTurnDeg, maxPasses = 8) {
+  if (!Array.isArray(points) || points.length < 3) return points ? points.map((p) => p.slice()) : [];
+  const lim = Math.max(1, Number(maxTurnDeg) || 12) * Math.PI / 180;
+  let cur = points.map((p) => p.slice());
+  for (let pass = 0; pass < maxPasses; pass++) {
+    const n = cur.length;
+    const segCount = closed ? n : n - 1;
+    if (segCount < 2) break;
+    const insertAfter = new Set();
+    for (let i = 0; i < segCount; i++) {
+      const a = cur[i];
+      const b = cur[(i + 1) % n];
+      const c = cur[(i + 2) % n];
+      if (!closed && i + 2 >= n) break;
+      const t0 = _norm(_sub(b, a));
+      const t1 = _norm(_sub(c, b));
+      const turn = Math.acos(Math.min(1, Math.max(-1, _dot(t0, t1))));
+      if (turn > lim) {
+        insertAfter.add(i);
+        insertAfter.add((i + 1) % n);
+      }
+    }
+    if (insertAfter.size === 0) break;
+    const next = [];
+    for (let i = 0; i < segCount; i++) {
+      const a = cur[i];
+      const b = cur[(i + 1) % n];
+      next.push(a.slice());
+      if (insertAfter.has(i)) {
+        next.push([
+          (a[0] + b[0]) / 2,
+          (a[1] + b[1]) / 2,
+          (a[2] + b[2]) / 2,
+        ]);
+      }
+    }
+    if (!closed) next.push(cur[n - 1].slice());
+    if (next.length <= cur.length) break;
+    cur = next;
+  }
+  return cur;
 }
 
 /**
@@ -268,10 +357,13 @@ export function buildInscribedArcFrame(origin, T, n0, n1, radius, prevN = null) 
   };
 }
 
-/** Max consecutive N/B jump (deg) before transport damps toward parallel-transported frame. */
-export const FRAME_TRANSPORT_DAMP_DEG = 28;
+/** Max consecutive N/B jump (deg) before transport damps toward parallel-transported frame.
+ * C3.2: tightened from 28° — soft-blend under 28° still left visible loft-ridge steps. */
+export const FRAME_TRANSPORT_DAMP_DEG = 12;
 /** Soft cap on consecutive θ change (rad) when blending along the path. */
-export const FRAME_TRANSPORT_THETA_JUMP = (8 * Math.PI) / 180;
+export const FRAME_TRANSPORT_THETA_JUMP = (5 * Math.PI) / 180;
+/** Max turn (deg) between consecutive densified chords (C3.2 curvature densify). */
+export const FRAME_DENSIFY_MAX_TURN_DEG = 10;
 
 function _add(a, b) {
   return [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
@@ -345,6 +437,28 @@ export function maxConsecutiveFrameAngleDeg(frames) {
 }
 
 /**
+ * How many θ-runs _s23GroupRuns would emit (3° tol). C3.2 loft pin: twisting
+ * ridges produce many runs; variableProfile must keep a single continuous cutter.
+ * @param {object[]} framesOrSegs — items with .theta (rad)
+ * @param {number} [tolRad]
+ */
+export function countThetaRuns(framesOrSegs, tolRad = (3 * Math.PI) / 180) {
+  const list = Array.isArray(framesOrSegs) ? framesOrSegs : [];
+  if (list.length === 0) return 0;
+  const tol = Number(tolRad) > 0 ? Number(tolRad) : (3 * Math.PI) / 180;
+  let runs = 1;
+  let run0 = Number(list[0].theta);
+  for (let i = 1; i < list.length; i++) {
+    const th = Number(list[i].theta);
+    if (!(Math.abs(th - run0) < tol)) {
+      runs += 1;
+      run0 = th;
+    }
+  }
+  return runs;
+}
+
+/**
  * Smooth along-path transport of inscribed-arc frames.
  * Parallel-transports N via double reflection, flips target if anti-aligned,
  * damps large N/B jumps, and blends θ so run grouping stays continuous.
@@ -388,10 +502,9 @@ export function transportVariableProfileFrames(rawFrames, opts = {}) {
       // Large jump (tessellation flip / wall swap): stay with parallel transport.
       N = Ntrans;
     } else {
-      // Soft blend toward wall target (keeps inscribed-arc tracking).
+      // C3.2: heavier transport weight so soft-blend under damp still tracks smoothly.
       const t = jump < 1e-6 ? 1 : Math.min(1, (dampDeg - jump) / dampDeg);
-      // Heavier weight on target when well-aligned; still mix in transport.
-      const w = 0.35 + 0.65 * t;
+      const w = 0.20 + 0.55 * t; // was 0.35+0.65 — less wall-target pull
       N = _norm(_add(_mul(1 - w, Ntrans), _mul(w, Ntgt)));
       N = _norm(_sub(N, _mul(_dot(N, raw.T), raw.T)));
     }
