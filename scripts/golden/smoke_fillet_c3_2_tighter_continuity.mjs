@@ -82,10 +82,17 @@ console.log('fillet C3.2 tighter continuity — helpers + source pins');
     /variableProfileDensifyStep\s*\(/.test(workerSrc)
       && /maxTurnDeg\s*:\s*FRAME_DENSIFY_MAX_TURN_DEG/.test(workerSrc),
   );
+  // C3.2 pinned a literal `singleRun: true` / `singleRunCutter: true`, because
+  // back then ONE median-θ run was how the ridge stayed continuous. C3.3 removed
+  // the θ collapse entirely (per-knot sections), and C4 makes the run count
+  // meaningful again — one run per SIGN change, since a concave stretch is a
+  // filler, not a cutter. Pin the mechanism that actually has to hold now; the
+  // continuity guarantee itself is still pinned by the WASM `runCount === 1`
+  // checks below and by the distribution net in the C3.3 golden.
   check(
-    'sandboxWorker variableProfile cutter forces singleRun',
-    /_s23BuildVariableProfileCutter[\s\S]{0,1200}singleRun\s*:\s*true/.test(workerSrc)
-      || /singleRunCutter\s*:\s*true/.test(workerSrc),
+    'sandboxWorker variableProfile cutter does not θ-group (routes to varying-profile)',
+    /_s23BuildVariableProfileCutter[\s\S]{0,2000}_s23VaryingProfileCutter\s*\(/.test(workerSrc)
+      && !/_s23BuildVariableProfileCutter[\s\S]{0,2000}_s23CuttersFromSegs\s*\(/.test(workerSrc),
   );
   check(
     'sandboxWorker records singleRunCutter + thetaRunCount meta',

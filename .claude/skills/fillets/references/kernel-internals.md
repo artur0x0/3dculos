@@ -5,6 +5,39 @@ editing any of it. The map, the flow and the invariants are in `../SKILL.md`.
 
 ---
 
+## 0. Finding the edges — `signedFeatureEdges`
+
+Convexity is a **local winding test**, not a CSG query:
+
+```
+convex  ⟺  dot(cross(n0, n1), dir) > 0
+```
+
+`dir` is the edge as wound in the triangle whose normal is `n0`; `e.tris[i]`
+pairs with `e.faces[i]`, so triangle and group always correspond. Winding is
+what carries inside/outside — a dot product alone cannot separate a 90° convex
+edge from a 270° concave one, since both give the same normal angle.
+
+Two normal sources, used for different jobs, and swapping them breaks things:
+
+| job | source | why |
+| --- | --- | --- |
+| sign + feature angle | adjacent **triangles** | a group normal is an area-weighted average; on a fillet sail it points nowhere near the local surface and flips the cross product (2101 false concaves on a filleted box) |
+| returned `n0`/`n1`, coplanarity gate | **face groups** | downstream (`chamferEdges`, the framing) consumes these and rejects a coplanar pair; gating on triangle normals alone hands it coplanar groups — this broke pilot case 94480bca |
+
+Fallbacks, both load-bearing:
+- A **degenerate sliver triangle** has no usable normal → its group normal
+  stands in. Tessellated lofts carry hundreds (218 on the playtest loft).
+- A **zero face-group normal** → the triangle normal stands in. `c4MeshData`
+  sums a group's triangle normals, and on a difference-derived solid a group can
+  cancel to zero: 13 of 17 convex edges on an L-shape, flowing straight into the
+  framing as `n0`/`n1`. Long-standing, found during C4.
+
+`FEATURE_EDGE_MIN_DEG = 18` is the ball probe's threshold made explicit: the old
+`f < 0.45` is exactly `(180 − dihedral)/360 < 0.45`. That probe also failed
+outright on fine meshes — at a ~0.012 mm sphere radius Manifold returns `f = 0.5`
+for 90° edges and negative volumes — so it is not a reference to match.
+
 ## 1. Cross-section math
 
 Shared between UI, worker and goldens from `src/utils/filletAlongPath.js` —
@@ -96,6 +129,27 @@ Gram-Schmidt re-orthonormalized. Linear N+B lerp alone shears the section
    θ-jump tolerance `FRAME_TRANSPORT_THETA_JUMP` = 5°). At least one non-weak
    frame is required or it throws.
 4. **One cutter, one section per knot** — `_s23VaryingProfileCutter`.
+
+### Concave runs (C4)
+
+The path splits into maximal same-**sign** runs. Convex runs build cutters,
+concave runs build fillers, from the *same* `_s23VaryingProfileTube`.
+
+For a concave edge the angle between the two in-face rays already IS the
+empty-side angle, so the contour that carves a convex corner fills a concave
+one. Only two things differ:
+
+1. `inFaceDirsFromNormals(..., convex=false)` negates both rays. The convex
+   orientation points them into the material wedge; on a concave edge that wedge
+   is the reflex one, so the rays end up inside solid rather than along the walls
+   (measured on an L: `f0 = −Y`, `f1 = −X` where the walls run `+Y`, `+X`).
+2. `M.union([out, filler])` instead of `M.difference`.
+
+The two booleans run and are **measured separately** — a single net-volume check
+could pass on a mixed chain while both halves were wrong.
+
+Unpolished: where a chain changes sign the cutter and filler overlap at the
+corner (net +6.4 on a mixed L chain where ideal is ~0).
 
 ### Why not extrude+warp (the C3.0–C3.2 dead end)
 
