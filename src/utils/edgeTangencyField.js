@@ -1,9 +1,11 @@
 /**
- * Slice C3 — shared tangency + face-normal field for Edge pick and Fillet.
+ * Slice C3 / C3.1 — shared tangency + face-normal field for Edge pick and Fillet.
  *
  * One substrate for:
  *   - Tangent-on G1 propagation (true design chains, not #49 tessellation spaghetti)
  *   - Variable-profile hard fillet framing (inscribed arc in the local wall square)
+ *   - Along-path frame transport (C3.1): parallel-transport / continuous θ so the
+ *     hard variableProfile sweep stays smooth (no staircase ridge)
  *
  * G1 = tangent alignment AND wall-normal continuity. Tessellation zig-zag often
  * passes a loose tangent check but flips / swaps face normals at every step.
@@ -266,11 +268,183 @@ export function buildInscribedArcFrame(origin, T, n0, n1, radius, prevN = null) 
   };
 }
 
+/** Max consecutive N/B jump (deg) before transport damps toward parallel-transported frame. */
+export const FRAME_TRANSPORT_DAMP_DEG = 28;
+/** Soft cap on consecutive θ change (rad) when blending along the path. */
+export const FRAME_TRANSPORT_THETA_JUMP = (8 * Math.PI) / 180;
+
+function _add(a, b) {
+  return [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+}
+function _mul(s, v) {
+  return [s * v[0], s * v[1], s * v[2]];
+}
+
+/**
+ * Double-reflection parallel transport of a normal from prevT → nextT
+ * (Wang et al. RMF; same spirit as sandboxWorker sweep frames).
+ * @param {number[]} prevT
+ * @param {number[]} prevN
+ * @param {number[]} nextT
+ * @param {number[]} [chord] — position delta between sample points
+ * @returns {number[]}
+ */
+export function parallelTransportNormal(prevT, prevN, nextT, chord = null) {
+  const Ti = _norm(nextT);
+  const Tp = _norm(prevT);
+  const Np = _norm(prevN);
+  const eps2 = 1e-20;
+  // Prefer chord between sample points; fall back to average tangent.
+  let v1 = (chord && _len(chord) > 1e-12) ? chord.slice() : _add(Tp, Ti);
+  if (_len(v1) < 1e-12) v1 = Tp.slice();
+  const c1 = _dot(v1, v1);
+  if (c1 < eps2) {
+    const proj = _mul(_dot(Np, Ti), Ti);
+    return _norm(_sub(Np, proj));
+  }
+  // First reflection: N and T across v1
+  const NL = _sub(Np, _mul((2 / c1) * _dot(v1, Np), v1));
+  const TL = _sub(Tp, _mul((2 / c1) * _dot(v1, Tp), v1));
+  // Second reflection across v2 = Ti - TL
+  const v2 = _sub(Ti, TL);
+  const c2 = _dot(v2, v2);
+  let Ni = c2 < eps2 ? NL : _sub(NL, _mul((2 / c2) * _dot(v2, NL), v2));
+  Ni = _sub(Ni, _mul(_dot(Ni, Ti), Ti));
+  if (_len(Ni) < 1e-12) {
+    const proj = _mul(_dot(Np, Ti), Ti);
+    Ni = _sub(Np, proj);
+  }
+  return _norm(Ni);
+}
+
+/**
+ * Angle (deg) between two unit vectors; NaN-safe.
+ */
+export function vecAngleDeg(a, b) {
+  if (!a || !b) return 0;
+  return Math.acos(Math.min(1, Math.max(-1, _dot(_norm(a), _norm(b))))) * 180 / Math.PI;
+}
+
+/**
+ * Max consecutive N (or B) jump along a frame list — golden / ridge pin.
+ * @param {object[]} frames
+ * @returns {number}
+ */
+export function maxConsecutiveFrameAngleDeg(frames) {
+  const list = Array.isArray(frames) ? frames : [];
+  let maxA = 0;
+  for (let i = 1; i < list.length; i++) {
+    const a = list[i - 1];
+    const b = list[i];
+    if (!a?.N || !b?.N) continue;
+    const nJump = vecAngleDeg(a.N, b.N);
+    const bJump = (a.B && b.B) ? vecAngleDeg(a.B, b.B) : 0;
+    maxA = Math.max(maxA, nJump, bJump);
+  }
+  return maxA;
+}
+
+/**
+ * Smooth along-path transport of inscribed-arc frames.
+ * Parallel-transports N via double reflection, flips target if anti-aligned,
+ * damps large N/B jumps, and blends θ so run grouping stays continuous.
+ *
+ * @param {object[]} rawFrames
+ * @param {{ dampDeg?: number, thetaJump?: number }} [opts]
+ * @returns {object[]}
+ */
+export function transportVariableProfileFrames(rawFrames, opts = {}) {
+  const list = Array.isArray(rawFrames) ? rawFrames : [];
+  if (list.length === 0) return [];
+  const dampDeg = typeof opts.dampDeg === 'number' ? opts.dampDeg : FRAME_TRANSPORT_DAMP_DEG;
+  const thetaJump = typeof opts.thetaJump === 'number' ? opts.thetaJump : FRAME_TRANSPORT_THETA_JUMP;
+  const out = [];
+  const first = list[0];
+  out.push({
+    ...first,
+    origin: first.origin ? first.origin.slice() : undefined,
+    T: first.T.slice(),
+    N: first.N.slice(),
+    B: first.B.slice(),
+    f0: first.f0 ? first.f0.slice() : first.N.slice(),
+    f1: first.f1 ? first.f1.slice() : first.B.slice(),
+    transported: true,
+  });
+  for (let i = 1; i < list.length; i++) {
+    const prev = out[i - 1];
+    const raw = list[i];
+    const chord = (prev.origin && raw.origin)
+      ? _sub(raw.origin, prev.origin)
+      : null;
+    let Ntrans = parallelTransportNormal(prev.T, prev.N, raw.T, chord);
+    // Prefer target N from inscribed-arc, but flip if anti-aligned with transport.
+    let Ntgt = raw.N.slice();
+    if (_dot(Ntgt, Ntrans) < 0) {
+      Ntgt = [-Ntgt[0], -Ntgt[1], -Ntgt[2]];
+    }
+    const jump = vecAngleDeg(Ntrans, Ntgt);
+    let N;
+    if (jump > dampDeg) {
+      // Large jump (tessellation flip / wall swap): stay with parallel transport.
+      N = Ntrans;
+    } else {
+      // Soft blend toward wall target (keeps inscribed-arc tracking).
+      const t = jump < 1e-6 ? 1 : Math.min(1, (dampDeg - jump) / dampDeg);
+      // Heavier weight on target when well-aligned; still mix in transport.
+      const w = 0.35 + 0.65 * t;
+      N = _norm(_add(_mul(1 - w, Ntrans), _mul(w, Ntgt)));
+      N = _norm(_sub(N, _mul(_dot(N, raw.T), raw.T)));
+    }
+    let B = _norm(_cross(raw.T, N));
+    // Keep B hemisphere continuous with previous.
+    const BprevTrans = parallelTransportNormal(prev.T, prev.B, raw.T, chord);
+    if (_dot(B, BprevTrans) < 0) {
+      N = [-N[0], -N[1], -N[2]];
+      B = [-B[0], -B[1], -B[2]];
+    }
+    // Continuous θ: damp jumps that shatter _s23GroupRuns.
+    let theta = Number(raw.theta);
+    if (!(theta > 0.05) || !(theta < Math.PI - 0.05)) theta = prev.theta;
+    const dTh = theta - prev.theta;
+    if (Math.abs(dTh) > thetaJump) {
+      theta = prev.theta + Math.sign(dTh) * thetaJump;
+    } else {
+      // Mild blend toward raw (still tracks local walls).
+      theta = prev.theta * 0.25 + theta * 0.75;
+    }
+    const r = (raw.squareSide != null ? raw.squareSide / 2 : null)
+      || (raw.setback != null && theta > 1e-6 ? raw.setback * Math.tan(theta / 2) : null)
+      || 1;
+    out.push({
+      ...raw,
+      origin: raw.origin ? raw.origin.slice() : undefined,
+      T: raw.T.slice(),
+      N,
+      B,
+      theta,
+      setback: r / Math.tan(theta / 2),
+      squareSide: 2 * r,
+      f0: raw.f0 ? raw.f0.slice() : N.slice(),
+      f1: raw.f1 ? raw.f1.slice() : B.slice(),
+      transported: true,
+      transportDamped: jump > dampDeg,
+    });
+  }
+  return out;
+}
+
 /**
  * Path-normal frames for a (possibly densified) path.
+ * C3.1: by default applies along-path transport so consecutive N/B/θ stay continuous.
+ *
  * @param {number[][]} points
  * @param {boolean} closed
- * @param {{ radius: number, segmentNormals?: object[], seedNormals?: {n0,n1} }} opts
+ * @param {{
+ *   radius: number,
+ *   segmentNormals?: object[],
+ *   seedNormals?: {n0,n1},
+ *   alongPathTransport?: boolean,
+ * }} opts
  */
 export function buildVariableProfileFrames(points, closed, opts = {}) {
   const pts = Array.isArray(points) ? points : [];
@@ -280,7 +454,7 @@ export function buildVariableProfileFrames(points, closed, opts = {}) {
   const radius = Number(opts.radius) || 1;
   const seed = opts.seedNormals || null;
   const perSeg = opts.segmentNormals || null;
-  const frames = [];
+  const rawFrames = [];
   let prevN = null;
   for (let i = 0; i < segCount; i++) {
     const a = pts[i];
@@ -291,13 +465,13 @@ export function buildVariableProfileFrames(points, closed, opts = {}) {
       ? buildInscribedArcFrame(a, T, nr.n0, nr.n1, radius, prevN)
       : null;
     if (fr) {
-      frames.push(fr);
+      rawFrames.push(fr);
       prevN = fr.N;
     } else {
       const up = Math.abs(T[2]) < 0.9 ? [0, 0, 1] : [1, 0, 0];
       const N = _norm(_cross(T, up));
       const B = _norm(_cross(T, N));
-      frames.push({
+      rawFrames.push({
         origin: a.slice(),
         T,
         N,
@@ -312,5 +486,15 @@ export function buildVariableProfileFrames(points, closed, opts = {}) {
       prevN = N;
     }
   }
-  return { frames, points: pts.map((p) => p.slice()) };
+  // C3.1 default: transport along path. opts.alongPathTransport:false guts it (golden RED).
+  const doTransport = opts.alongPathTransport !== false;
+  const frames = doTransport
+    ? transportVariableProfileFrames(rawFrames, opts)
+    : rawFrames;
+  return {
+    frames,
+    points: pts.map((p) => p.slice()),
+    transported: doTransport,
+    maxFrameJumpDeg: maxConsecutiveFrameAngleDeg(frames),
+  };
 }

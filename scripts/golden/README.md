@@ -34,5 +34,6 @@ requires `test_real_worker.mjs` via `npm run verify` once the harness is present
 | `smoke_fillet_kernel_spike_c.mjs` | Slice C/C2: hard kernel recommendation + production flag; hard Accept emits filletEdges+relaxPlanar; pick-mode restore + selector gap |
 | `smoke_fillet_c2_rolling_ball.mjs` | Slice C2/C3: hard loft Accept path + scrap guard; C3 supersedes rolling-ball with variableProfile; known-scrap relaxPlanar loud-fails /sliver scraps/ |
 | `smoke_fillet_c3_variable_sweep.mjs` | Slice C3: tangency field G1 vs zig-zag; loft Tangent-on human-scale; hard Accept → variableProfile sweep; R≈1.6 no zero-area banner delta; easy cube clean |
+| `smoke_fillet_c3_1_along_path_tangency.mjs` | Slice C3.1: along-path frame transport; gut transport → staircase RED; hard loft WASM transport meta + C3 volume pin |
 | `smoke_cad_palette_overlays.mjs` | CAD Model section promotes Profile/Workplane/Extrude/Revolve/Sweep/Loft (game Advanced rail unchanged); Plane/Contour toggles default on and gate overlay paint and picking |
 | `smoke_cad_mobile_chrome.mjs` | CAD phone shell matches puzzle: viewport top, Monaco bottom budget, keyboard pin, mid-strip actions, vertical right rail |
