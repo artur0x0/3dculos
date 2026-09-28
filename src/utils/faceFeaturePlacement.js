@@ -307,13 +307,6 @@ export function faceAwareParams(id, faceType) {
   }
 
   if (faceType === 'cylindrical') {
-    const cylCommon = [
-      body,
-      { name: 'angleDeg', type: 'number', default: 0, label: 'Angle °', step: 1, slider: true },
-      { name: 'axial', type: 'number', default: 0, label: 'Axial height', step: 0.5, slider: true },
-      through,
-      depth,
-    ];
     if (id === 'hole') {
       return holeFeatureParamDefs({ cylindrical: true, uv: false, through: true });
     }

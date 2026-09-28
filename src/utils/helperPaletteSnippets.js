@@ -16,6 +16,9 @@
  * in extrude markers. When `part` already exists, Confirm unions
  * (`part = part.add(placeInFrame(...))`); an empty script still uses
  * `let part = placeInFrame(...)`.
+ * Script-insert part-binding: locate the live `part` decl/assign, insert AFTER
+ * it (never in the TDZ), and prefer `part = …` / `part.add` over a second
+ * `let part`. Founding Contour solids are kept so Extrude-on-Extrude stacks.
  * Slice 26/hotfix: Revolve Confirm wraps profile + makeRevolve / placeInFrame
  * in revolve markers (same additive rule when `part` already exists).
  * Slice 27: Fillet-in-mode Accept wraps makeSweepPath + filletAlongPath in fillet markers.
@@ -175,6 +178,77 @@ export function declaredNames(buffer) {
   while ((m = re.exec(s))) names.add(m[1]);
   return names;
 }
+
+/**
+ * Offset just after the last top-level `let/const/var part = …` or `part = …`.
+ * Returns 0 when no binding exists. Inserts that read or assign `part` must
+ * land at or after this offset — otherwise the engine hits TDZ
+ * (`Cannot access 'part' before initialization`).
+ */
+export function findLastPartBindingEnd(buffer) {
+  const s = String(buffer || '');
+  if (!s) return 0;
+  const re = /(?:\b(?:const|let|var)\s+part\s*=|(?:^|[\n;])\s*part\s*=)/g;
+  let lastEnd = 0;
+  let m;
+  while ((m = re.exec(s))) {
+    const eq = s.indexOf('=', m.index);
+    if (eq < 0) continue;
+    let i = eq + 1;
+    let depth = 0;
+    let inStr = null;
+    for (; i < s.length; i++) {
+      const ch = s[i];
+      if (inStr) {
+        if (ch === '\\') { i += 1; continue; }
+        if (ch === inStr) inStr = null;
+        continue;
+      }
+      if (ch === '"' || ch === "'" || ch === '`') { inStr = ch; continue; }
+      if (ch === '(' || ch === '[' || ch === '{') { depth += 1; continue; }
+      if (ch === ')' || ch === ']' || ch === '}') {
+        if (depth > 0) depth -= 1;
+        continue;
+      }
+      if (ch === ';' && depth === 0) {
+        i += 1;
+        break;
+      }
+    }
+    lastEnd = i;
+  }
+  return lastEnd;
+}
+
+
+/** Skip trailing whitespace + Contour/Fillet/Chamfer end-marker lines after a binding. */
+function extendPastOwnedEndMarkers(buffer, offset) {
+  const s = String(buffer || '');
+  const endMarkers = [
+    CONTOUR_PROFILE_END,
+    CONTOUR_EXTRUDE_END,
+    CONTOUR_REVOLVE_END,
+    CONTOUR_LOFT_END,
+    CONTOUR_SWEEP_END,
+    FILLET_MODE_END,
+    CHAMFER_MODE_END,
+  ];
+  let i = Math.max(0, Math.min(Number(offset) || 0, s.length));
+  while (i < s.length) {
+    const ws = /^\s*/.exec(s.slice(i));
+    const next = i + (ws ? ws[0].length : 0);
+    if (next >= s.length) return s.length;
+    const nl = s.indexOf('\n', next);
+    const line = s.slice(next, nl < 0 ? s.length : nl).trim();
+    if (endMarkers.some((m) => line === m)) {
+      i = nl < 0 ? s.length : nl + 1;
+      continue;
+    }
+    break;
+  }
+  return i;
+}
+
 
 /**
  * Allocate a unique identifier.
@@ -756,6 +830,18 @@ export function composeHelperInsert(buffer, id, caretOffset = null, params = nul
   let insertAt = caretOffset == null ? strippedBuf.length : caretOffset;
   if (insertAt < 0) insertAt = 0;
   if (insertAt > strippedBuf.length) insertAt = strippedBuf.length;
+
+  // Prefer insert after the live solid binding so `part = part.add(…)` /
+  // facesByNormal(part, …) never land in the TDZ before `let part`.
+  // If the binding sits inside a marked Contour/Fillet/Chamfer region, land
+  // after that region's end marker so we do not split the block.
+  if (filtered.trim() && /\bpart\b/.test(filtered) && declaredNames(strippedBuf).has('part')) {
+    const bindingEnd = extendPastOwnedEndMarkers(
+      strippedBuf,
+      findLastPartBindingEnd(strippedBuf),
+    );
+    if (insertAt < bindingEnd) insertAt = bindingEnd;
+  }
 
   if (!filtered.trim()) {
     const body = strippedBuf.replace(/\s+$/, '');

@@ -1347,7 +1347,8 @@ export function stripContourExtrudeBlock(buffer) {
 /**
  * Confirm → insert or replace in-mode Extrude (profile + makeExtrude + placeInFrame).
  * Empty buffer: `let part = placeInFrame`. Existing part: union via `part.add`.
- * Second Confirm updates the same block only.
+ * Second Confirm updates an additive block (host outside markers). A founding
+ * `let part` Extrude is kept so Extrude-on-Extrude stacks instead of TDZ/wipe.
  *
  * @returns {{ ok: true, buffer: string, run: true } | { ok: false, message: string }}
  */
@@ -1470,7 +1471,7 @@ export function stripContourRevolveBlock(buffer) {
 /**
  * Confirm → insert or replace in-mode Revolve (profile + makeRevolve + placeInFrame).
  * Empty buffer: `let part = placeInFrame`. Existing part: union via `part.add`.
- * Second Confirm updates the same block only.
+ * Second Confirm updates an additive block; founding `let part` solids stack.
  *
  * @returns {{ ok: true, buffer: string, run: true } | { ok: false, message: string }}
  */
@@ -1605,20 +1606,49 @@ export function stripContourLoftBlock(buffer) {
   return before || after;
 }
 
+/**
+ * Drop an Advanced solid marker block only when the live `part` binding survives.
+ * Founding `let part = placeInFrame(…)` blocks are kept so a later Extrude /
+ * Revolve / Loft / Sweep Confirm can union onto them (stack) instead of
+ * wiping the solid or inserting `part = part.add` before a new `let part` (TDZ).
+ * Additive blocks (`part = part.add(…)`) on a host outside the markers still
+ * strip so Second Confirm updates the same feature region.
+ */
+function stripReplaceableContourSolid(buffer, ownedRegion, stripFn) {
+  const owned = ownedRegion(buffer);
+  if (!owned) return buffer;
+  const candidate = stripFn(buffer);
+  if (scriptHasPriorSolid(candidate)) return candidate;
+  // Stripping would drop the only part binding — keep the founding block.
+  if (/(?:let|const|var)\s+part\s*=/.test(owned)) return buffer;
+  return candidate;
+}
+
 function stripContourSiblingBlocks(buffer) {
-  return stripContourSweepBlock(
-    stripContourLoftBlock(
-      stripContourRevolveBlock(
-        stripContourExtrudeBlock(stripContourProfileBlock(buffer)),
+  const withoutProfile = stripContourProfileBlock(buffer);
+  return stripReplaceableContourSolid(
+    stripReplaceableContourSolid(
+      stripReplaceableContourSolid(
+        stripReplaceableContourSolid(
+          withoutProfile,
+          contourExtrudeOwnedRegion,
+          stripContourExtrudeBlock,
+        ),
+        contourRevolveOwnedRegion,
+        stripContourRevolveBlock,
       ),
+      contourLoftOwnedRegion,
+      stripContourLoftBlock,
     ),
+    contourSweepOwnedRegion,
+    stripContourSweepBlock,
   );
 }
 
 /**
  * Confirm → insert or replace in-mode Loft (≥2 profiles + makeLoft + placeInFrame).
  * Empty buffer: `let part = placeInFrame`. Existing part: union via `part.add`.
- * Second Confirm updates the same block only.
+ * Second Confirm updates an additive block; founding `let part` solids stack.
  * v1: same workplane, each profile offset along the plane normal.
  *
  * @returns {{ ok: true, buffer: string, run: true } | { ok: false, message: string }}
@@ -1775,7 +1805,7 @@ export function stripContourSweepBlock(buffer) {
  * Confirm → insert or replace in-mode Sweep
  * (makeCrossSection + makeSweepPath + sweepPoints + placeInFrame).
  * Empty buffer: `let part = placeInFrame`. Existing part: union via `part.add`.
- * Second Confirm updates the same block only.
+ * Second Confirm updates an additive block; founding `let part` solids stack.
  *
  * @returns {{ ok: true, buffer: string, run: true } | { ok: false, message: string }}
  */
