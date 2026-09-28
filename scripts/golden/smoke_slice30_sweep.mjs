@@ -4,7 +4,7 @@
  * - Advanced → Sweep enters contour mode (not a placeholder)
  * - Profile is makeCrossSection; path is makeSweepPath from edges
  * - Confirm composes sweepPoints + frame-only placeInFrame replace
- * - second Confirm replaces the same marked block
+ * - second Confirm on a founding Sweep stacks (part.add); host Sweep still replaces
  * - Back / strip leaves no orphan sweep
  * - loud fail on empty path, disconnected edges, empty profile
  * - Extrude / Revolve / Loft / Fillet / #41 groups stay put
@@ -185,10 +185,15 @@ function sweepPayload(extra = {}) {
     params: { radius: 4, segments: 24 },
   }));
   check('second Confirm ok', second.ok === true, second.message || '');
-  check('second Confirm still one block', (second.buffer.match(/contour-mode sweep begin/g) || []).length === 1);
-  check('second Confirm still one sweepPoints', countSweepPoints(second.buffer) === 1);
-  check('second Confirm updates radius', /profileCircle\(4/.test(second.buffer));
-  check('second Confirm drops old radius', !/profileCircle\(2/.test(second.buffer));
+  // Founding `let part` Sweep is kept — Extrude-on-Extrude-class stack, not wipe/TDZ.
+  check('second Confirm stacks a second sweep block',
+    (second.buffer.match(/contour-mode sweep begin/g) || []).length === 2);
+  check('second Confirm keeps founding let part + part.add',
+    /let\s+part\s*=\s*placeInFrame\(/.test(second.buffer)
+    && /part\s*=\s*part\.add\(\s*placeInFrame\(/.test(second.buffer));
+  check('second Confirm has two sweepPoints', countSweepPoints(second.buffer) === 2);
+  check('second Confirm includes new radius', /profileCircle\(4/.test(second.buffer));
+  check('second Confirm keeps prior radius (stack)', /profileCircle\(2/.test(second.buffer));
 
   const reversed = composeContourSweep('', sweepPayload({ sweep: { reverse: true } }));
   check('reverse emits flag', reversed.ok && /reverse:\s*true/.test(contourSweepOwnedRegion(reversed.buffer)));
