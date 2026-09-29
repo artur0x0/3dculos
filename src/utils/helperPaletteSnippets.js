@@ -1034,6 +1034,37 @@ export const HELPER_PALETTE_ITEMS = [
     },
   },
   {
+    id: 'roundedBox',
+    label: 'Round box',
+    group: 'Primitives',
+    title: 'roundedBox(size, radius, segments?)',
+    bodyBase: 'rbox',
+    params: [
+      { name: 'sx', type: 'number', default: 50, label: 'Size X', min: 0.1, step: 1 },
+      { name: 'sy', type: 'number', default: 30, label: 'Size Y', min: 0.1, step: 1 },
+      { name: 'sz', type: 'number', default: 20, label: 'Size Z', min: 0.1, step: 1 },
+      { name: 'edgeRadius', type: 'number', default: 4, label: 'Edge R', min: 0, step: 0.5 },
+      { name: 'segments', type: 'number', default: 16, label: 'Segments', min: 1, step: 1 },
+    ],
+    build: (empty, p, names) => {
+      const rbox = allocateUniqueName(names, 'rbox');
+      const sx = num(p.sx, 50);
+      const sy = num(p.sy, 30);
+      const sz = num(p.sz, 20);
+      const er = num(p.edgeRadius, 4);
+      const seg = Math.max(1, Math.round(num(p.segments, 16)));
+      const lines = [`let ${rbox} = roundedBox([${sx}, ${sy}, ${sz}], ${er}, ${seg});`];
+      if (empty || !names.has('part')) {
+        const partName = allocateUniqueName(names, 'part');
+        lines.push(partName === 'part' ? `let part = ${rbox};` : `let ${partName} = ${rbox};`);
+        if (partName !== 'part') lines.push(`part = ${partName};`);
+      } else {
+        lines.push(`part = ${rbox};`);
+      }
+      return withReturn(lines, empty);
+    },
+  },
+  {
     id: 'cylinder',
     label: 'Cylinder',
     group: 'Primitives',
@@ -1135,37 +1166,6 @@ export const HELPER_PALETTE_ITEMS = [
         if (partName !== 'part') lines.push(`part = ${partName};`);
       } else {
         lines.push(`part = ${hex};`);
-      }
-      return withReturn(lines, empty);
-    },
-  },
-  {
-    id: 'roundedBox',
-    label: 'Round box',
-    group: 'Primitives',
-    title: 'roundedBox(size, radius, segments?)',
-    bodyBase: 'rbox',
-    params: [
-      { name: 'sx', type: 'number', default: 50, label: 'Size X', min: 0.1, step: 1 },
-      { name: 'sy', type: 'number', default: 30, label: 'Size Y', min: 0.1, step: 1 },
-      { name: 'sz', type: 'number', default: 20, label: 'Size Z', min: 0.1, step: 1 },
-      { name: 'edgeRadius', type: 'number', default: 4, label: 'Edge R', min: 0, step: 0.5 },
-      { name: 'segments', type: 'number', default: 16, label: 'Segments', min: 1, step: 1 },
-    ],
-    build: (empty, p, names) => {
-      const rbox = allocateUniqueName(names, 'rbox');
-      const sx = num(p.sx, 50);
-      const sy = num(p.sy, 30);
-      const sz = num(p.sz, 20);
-      const er = num(p.edgeRadius, 4);
-      const seg = Math.max(1, Math.round(num(p.segments, 16)));
-      const lines = [`let ${rbox} = roundedBox([${sx}, ${sy}, ${sz}], ${er}, ${seg});`];
-      if (empty || !names.has('part')) {
-        const partName = allocateUniqueName(names, 'part');
-        lines.push(partName === 'part' ? `let part = ${rbox};` : `let ${partName} = ${rbox};`);
-        if (partName !== 'part') lines.push(`part = ${partName};`);
-      } else {
-        lines.push(`part = ${rbox};`);
       }
       return withReturn(lines, empty);
     },
