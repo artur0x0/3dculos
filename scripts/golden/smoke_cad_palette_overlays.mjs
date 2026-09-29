@@ -239,6 +239,50 @@ console.log('cad palette + plane/contour toggles');
   );
 }
 
+// ── Shapes APPEND onto the part, they never replace it ──
+// This was a real bug: every primitive emitted `part = <newShape>` when a part
+// already existed, so a second shape silently stranded the first as dead code
+// while Extrude / Revolve / Loft / Sweep were correctly doing `part.add(...)`.
+{
+  const SHAPES = ['cube', 'roundedBox', 'cylinder', 'sphere', 'tube', 'hexPrism'];
+  for (const id of SHAPES) {
+    const first = composeHelperInsert('', id, null, {});
+    check(`${id} on an empty script declares the part`, /let part = /.test(first));
+    const second = composeHelperInsert(first, id === 'cube' ? 'cylinder' : 'cube', null, {});
+    check(`${id} + another shape unions instead of overwriting`,
+      /part = part\.add\(/.test(second));
+    // The first solid must still be reachable, not stranded above a reassign.
+    const reassigned = second.match(/^part = (?!part\.add)/gm) || [];
+    check(`${id} leaves no orphaned solid`, reassigned.length === 0, second);
+    check(`${id} chain stays parseable`, (() => {
+      try { new Function(second); return true; } catch { return false; }
+    })());
+  }
+  // Three shapes deep, every one of them still in the tree.
+  let buf = composeHelperInsert('', 'cube', null, {});
+  buf = composeHelperInsert(buf, 'cylinder', null, {});
+  buf = composeHelperInsert(buf, 'sphere', null, {});
+  check('three shapes compose into two unions',
+    (buf.match(/part = part\.add\(/g) || []).length === 2);
+  check('the one-shot solid entries append too', ['makeExtrude', 'makeRevolve', 'makeLoft']
+    .every((id) => /part = part\.add\(/.test(composeHelperInsert(
+      composeHelperInsert('', 'cube', null, {}), id, null, {},
+    ))));
+}
+
+// ── Hole absorbs Hole grid ──
+{
+  const feats = itemsByGroup().Features;
+  const hole = feats.find((i) => i.id === 'hole');
+  check('Hole has the n×m pattern option',
+    hole.params.some((p) => p.name === 'usePattern')
+      && ['n', 'm', 'spacingU', 'spacingV'].every((n) => hole.params.some((p) => p.name === n)));
+  const railIds = paletteRailSections('cad').flatMap((s) => s.items.map((i) => i.id));
+  check('no separate Hole grid button', !railIds.includes('holePattern'));
+  check('holePattern survives as a hidden item',
+    feats.find((i) => i.id === 'holePattern')?.railHidden === true);
+}
+
 if (failed) {
   console.log(`\n${failed} check(s) failed`);
   process.exit(1);

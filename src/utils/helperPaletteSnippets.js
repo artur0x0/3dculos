@@ -600,7 +600,7 @@ function emitProfileExprFromParams(p) {
     return `profilePolygon([${pts.join(', ')}])`;
   }
   const r = num(p.radius, 5);
-  const seg = Math.max(3, Math.round(num(p.segments, 32)));
+  const seg = Math.max(3, Math.round(num(p.segments, 64)));
   return `profileCircle(${r}, ${seg})`;
 }
 
@@ -1023,13 +1023,10 @@ export const HELPER_PALETTE_ITEMS = [
       const h = num(p.height, 20);
       const c = bool(p.center, true);
       const lines = [`let ${box} = Manifold.cube([${w}, ${d}, ${h}], ${c});`];
-      if (empty || !names.has('part')) {
-        const partName = allocateUniqueName(names, 'part');
-        lines.push(partName === 'part' ? `let part = ${box};` : `let ${partName} = ${box};`);
-        if (partName !== 'part') lines.push(`part = ${partName};`);
-      } else {
-        lines.push(`part = ${box};`);
-      }
+      // Append, never replace: a second shape unions onto the part, the
+      // same rule Extrude / Revolve / Loft / Sweep follow. Overwriting
+      // here used to strand the previous solid as dead code.
+      lines.push(emitPartPlace(names, box, !empty && names.has('part'), true));
       return withReturn(lines, empty);
     },
   },
@@ -1054,13 +1051,10 @@ export const HELPER_PALETTE_ITEMS = [
       const er = num(p.edgeRadius, 4);
       const seg = Math.max(1, Math.round(num(p.segments, 16)));
       const lines = [`let ${rbox} = roundedBox([${sx}, ${sy}, ${sz}], ${er}, ${seg});`];
-      if (empty || !names.has('part')) {
-        const partName = allocateUniqueName(names, 'part');
-        lines.push(partName === 'part' ? `let part = ${rbox};` : `let ${partName} = ${rbox};`);
-        if (partName !== 'part') lines.push(`part = ${partName};`);
-      } else {
-        lines.push(`part = ${rbox};`);
-      }
+      // Append, never replace: a second shape unions onto the part, the
+      // same rule Extrude / Revolve / Loft / Sweep follow. Overwriting
+      // here used to strand the previous solid as dead code.
+      lines.push(emitPartPlace(names, rbox, !empty && names.has('part'), true));
       return withReturn(lines, empty);
     },
   },
@@ -1081,13 +1075,10 @@ export const HELPER_PALETTE_ITEMS = [
       const r = num(p.radius, 10);
       const seg = Math.max(3, Math.round(num(p.segments, 64)));
       const lines = [`let ${cyl} = Manifold.cylinder(${h}, ${r}, ${r}, ${seg});`];
-      if (empty || !names.has('part')) {
-        const partName = allocateUniqueName(names, 'part');
-        lines.push(partName === 'part' ? `let part = ${cyl};` : `let ${partName} = ${cyl};`);
-        if (partName !== 'part') lines.push(`part = ${partName};`);
-      } else {
-        lines.push(`part = ${cyl};`);
-      }
+      // Append, never replace: a second shape unions onto the part, the
+      // same rule Extrude / Revolve / Loft / Sweep follow. Overwriting
+      // here used to strand the previous solid as dead code.
+      lines.push(emitPartPlace(names, cyl, !empty && names.has('part'), true));
       return withReturn(lines, empty);
     },
   },
@@ -1099,20 +1090,17 @@ export const HELPER_PALETTE_ITEMS = [
     bodyBase: 'sphere',
     params: [
       { name: 'radius', type: 'number', default: 15, label: 'Radius', min: 0.1, step: 0.5 },
-      { name: 'segments', type: 'number', default: 32, label: 'Segments', min: 3, step: 1 },
+      { name: 'segments', type: 'number', default: 64, label: 'Segments', min: 3, step: 1, max: 128 },
     ],
     build: (empty, p, names) => {
       const sph = allocateUniqueName(names, 'sphere');
       const r = num(p.radius, 15);
-      const seg = Math.max(3, Math.round(num(p.segments, 32)));
+      const seg = Math.max(3, Math.round(num(p.segments, 64)));
       const lines = [`let ${sph} = Manifold.sphere(${r}, ${seg});`];
-      if (empty || !names.has('part')) {
-        const partName = allocateUniqueName(names, 'part');
-        lines.push(partName === 'part' ? `let part = ${sph};` : `let ${partName} = ${sph};`);
-        if (partName !== 'part') lines.push(`part = ${partName};`);
-      } else {
-        lines.push(`part = ${sph};`);
-      }
+      // Append, never replace: a second shape unions onto the part, the
+      // same rule Extrude / Revolve / Loft / Sweep follow. Overwriting
+      // here used to strand the previous solid as dead code.
+      lines.push(emitPartPlace(names, sph, !empty && names.has('part'), true));
       return withReturn(lines, empty);
     },
   },
@@ -1126,22 +1114,19 @@ export const HELPER_PALETTE_ITEMS = [
       { name: 'outerRadius', type: 'number', default: 15, label: 'Outer R', min: 0.1, step: 0.5 },
       { name: 'innerRadius', type: 'number', default: 10, label: 'Inner R', min: 0, step: 0.5 },
       { name: 'height', type: 'number', default: 40, label: 'Height', min: 0.1, step: 1 },
-      { name: 'segments', type: 'number', default: 32, label: 'Segments', min: 3, step: 1 },
+      { name: 'segments', type: 'number', default: 64, label: 'Segments', min: 3, step: 1, max: 128 },
     ],
     build: (empty, p, names) => {
       const tube = allocateUniqueName(names, 'tube');
       const o = num(p.outerRadius, 15);
       const i = num(p.innerRadius, 10);
       const h = num(p.height, 40);
-      const seg = Math.max(3, Math.round(num(p.segments, 32)));
+      const seg = Math.max(3, Math.round(num(p.segments, 64)));
       const lines = [`let ${tube} = tube(${o}, ${i}, ${h}, ${seg});`];
-      if (empty || !names.has('part')) {
-        const partName = allocateUniqueName(names, 'part');
-        lines.push(partName === 'part' ? `let part = ${tube};` : `let ${partName} = ${tube};`);
-        if (partName !== 'part') lines.push(`part = ${partName};`);
-      } else {
-        lines.push(`part = ${tube};`);
-      }
+      // Append, never replace: a second shape unions onto the part, the
+      // same rule Extrude / Revolve / Loft / Sweep follow. Overwriting
+      // here used to strand the previous solid as dead code.
+      lines.push(emitPartPlace(names, tube, !empty && names.has('part'), true));
       return withReturn(lines, empty);
     },
   },
@@ -1160,13 +1145,10 @@ export const HELPER_PALETTE_ITEMS = [
       const r = num(p.radius, 12);
       const h = num(p.height, 8);
       const lines = [`let ${hex} = hexPrism(${r}, ${h});`];
-      if (empty || !names.has('part')) {
-        const partName = allocateUniqueName(names, 'part');
-        lines.push(partName === 'part' ? `let part = ${hex};` : `let ${partName} = ${hex};`);
-        if (partName !== 'part') lines.push(`part = ${partName};`);
-      } else {
-        lines.push(`part = ${hex};`);
-      }
+      // Append, never replace: a second shape unions onto the part, the
+      // same rule Extrude / Revolve / Loft / Sweep follow. Overwriting
+      // here used to strand the previous solid as dead code.
+      lines.push(emitPartPlace(names, hex, !empty && names.has('part'), true));
       return withReturn(lines, empty);
     },
   },
@@ -1314,7 +1296,7 @@ export const HELPER_PALETTE_ITEMS = [
         options: ['circle', 'rectangle', 'polygon'],
       },
       { name: 'radius', type: 'number', default: 5, label: 'Radius', min: 0.1, step: 0.5, slider: true },
-      { name: 'segments', type: 'number', default: 32, label: 'Segments', min: 3, step: 1 },
+      { name: 'segments', type: 'number', default: 64, label: 'Segments', min: 3, step: 1, max: 128 },
       { name: 'width', type: 'number', default: 20, label: 'Width', min: 0.1, step: 1, slider: true },
       { name: 'height', type: 'number', default: 12, label: 'Height', min: 0.1, step: 1, slider: true },
       { name: 'centered', type: 'bool', default: true, label: 'Centered' },
@@ -1490,8 +1472,12 @@ export const HELPER_PALETTE_ITEMS = [
     id: 'hole',
     label: 'Hole',
     group: 'Features',
-    title: 'Hole — clearance or tap drill, with optional c-bore / c-sink on each end',
-    params: holeFeatureParamDefs({ uv: true }),
+    title: 'Hole — clearance or tap drill, single or n×m pattern, with optional c-bore / c-sink on each end',
+    // `pattern: true` is what retired the separate Hole grid button: tick
+    // "n×m pattern" here and the build emits holePattern() instead of a single
+    // hole (the c-bore / c-sink end fields hide themselves, since a pattern
+    // takes one diameter).
+    params: holeFeatureParamDefs({ uv: true, pattern: true }),
     build: (empty, p, names, buffer, faceCtx = null) => {
       const lines = [...ensurePartPrefix(empty, names)];
       const body = resolveBody(p, names, empty ? lines.join('\n') : buffer);
@@ -1504,6 +1490,9 @@ export const HELPER_PALETTE_ITEMS = [
     id: 'holePattern',
     label: 'Hole grid',
     group: 'Features',
+    // No button: Hole covers this with its n×m pattern option. The entry stays
+    // because its build is still composed programmatically and by the goldens.
+    railHidden: true,
     title: 'holePattern(part, frame, { n, m, spacingU, spacingV, dia })',
     params: [
       { name: 'body', type: 'body', default: 'part', label: 'Body' },
@@ -1819,7 +1808,7 @@ export const HELPER_PALETTE_ITEMS = [
         const bh = num(p.boreHeight, 10);
         const partName = allocateUniqueName(names, 'part');
         return [
-          `const ${bore} = Manifold.cylinder(${bh}, ${br}, ${br}, 32);`,
+          `const ${bore} = Manifold.cylinder(${bh}, ${br}, ${br}, 64);`,
           partName === 'part'
             ? `let part = polarArray(${bore}, ${count}, ${bcr}, '${axis}');`
             : `let ${partName} = polarArray(${bore}, ${count}, ${bcr}, '${axis}');\npart = ${partName};`,
@@ -1907,13 +1896,10 @@ export const HELPER_PALETTE_ITEMS = [
         `const ${xs} = makeCrossSection({ center: [0, 0, 0], normal: [0, 0, 1], x: [1, 0, 0], y: [0, 1, 0] }, profileRectangle(40, 30, true));`,
         `let ${extrude} = makeExtrude(${xs}.contours, ${h});`,
       ];
-      if (empty || !names.has('part')) {
-        const partName = allocateUniqueName(names, 'part');
-        lines.push(partName === 'part' ? `let part = ${extrude};` : `let ${partName} = ${extrude};`);
-        if (partName !== 'part') lines.push(`part = ${partName};`);
-      } else {
-        lines.push(`part = ${extrude};`);
-      }
+      // Append, never replace — same rule this entry's contour-mode Confirm
+      // already follows. The one-shot path used to overwrite `part`, which
+      // stranded the previous solid as dead code.
+      lines.push(emitPartPlace(names, extrude, !empty && names.has('part'), true));
       return withReturn(lines, empty);
     },
   },
@@ -1934,13 +1920,10 @@ export const HELPER_PALETTE_ITEMS = [
         '  [[8, 0], [25, 0], [25, 6], [12, 6], [12, 40], [8, 40]]',
         `], ${seg});`,
       ];
-      if (empty || !names.has('part')) {
-        const partName = allocateUniqueName(names, 'part');
-        lines.push(partName === 'part' ? `let part = ${revolve};` : `let ${partName} = ${revolve};`);
-        if (partName !== 'part') lines.push(`part = ${partName};`);
-      } else {
-        lines.push(`part = ${revolve};`);
-      }
+      // Append, never replace — same rule this entry's contour-mode Confirm
+      // already follows. The one-shot path used to overwrite `part`, which
+      // stranded the previous solid as dead code.
+      lines.push(emitPartPlace(names, revolve, !empty && names.has('part'), true));
       return withReturn(lines, empty);
     },
   },
@@ -1985,17 +1968,14 @@ export const HELPER_PALETTE_ITEMS = [
       const xs1 = allocateUniqueName(names, 'xs');
       const lofted = allocateUniqueName(names, 'lofted');
       const lines = [
-        `const ${xs0} = makeCrossSection({ center: [0, 0, 0], normal: [0, 0, 1], x: [1, 0, 0], y: [0, 1, 0] }, profileCircle(5, 32));`,
-        `const ${xs1} = makeCrossSection({ center: [0, 0, ${h}], normal: [0, 0, 1], x: [1, 0, 0], y: [0, 1, 0] }, profileCircle(8, 32));`,
+        `const ${xs0} = makeCrossSection({ center: [0, 0, 0], normal: [0, 0, 1], x: [1, 0, 0], y: [0, 1, 0] }, profileCircle(5, 64));`,
+        `const ${xs1} = makeCrossSection({ center: [0, 0, ${h}], normal: [0, 0, 1], x: [1, 0, 0], y: [0, 1, 0] }, profileCircle(8, 64));`,
         `let ${lofted} = makeLoft([${xs0}, ${xs1}]);`,
       ];
-      if (empty || !names.has('part')) {
-        const partName = allocateUniqueName(names, 'part');
-        lines.push(partName === 'part' ? `let part = ${lofted};` : `let ${partName} = ${lofted};`);
-        if (partName !== 'part') lines.push(`part = ${partName};`);
-      } else {
-        lines.push(`part = ${lofted};`);
-      }
+      // Append, never replace — same rule this entry's contour-mode Confirm
+      // already follows. The one-shot path used to overwrite `part`, which
+      // stranded the previous solid as dead code.
+      lines.push(emitPartPlace(names, lofted, !empty && names.has('part'), true));
       return withReturn(lines, empty);
     },
   },

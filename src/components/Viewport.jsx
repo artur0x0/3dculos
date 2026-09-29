@@ -3875,6 +3875,15 @@ const Viewport = forwardRef(({
    * Download the current model as 3mf
    * Uses cached mesh data when available to avoid re-execution
    */
+  /**
+   * CAD strip Run. `executeScript()` with no argument already falls back to the
+   * live `currentScript`, which App refreshes on every keystroke, so this runs
+   * exactly what is in the editor right now.
+   */
+  const runCadScript = useCallback(() => {
+    executeScript();
+  }, [executeScript]);
+
   const handleDownloadModel = useCallback(async () => {
     if (!cachedMeshData?.vertProperties) {
       setExecutionError('No model to export');
@@ -3897,7 +3906,8 @@ const Viewport = forwardRef(({
   return (
     <div ref={containerRef} className="viewport-shell relative w-full h-full bg-gray-900 overflow-hidden">
       {/* CAD chrome lives in the editor mid-strip in BOTH shells (desktop matches
-          phone now): rendered here so download/export busy state stays local. */}
+          phone now): rendered here so download/export busy state stays local —
+          and so Run can execute the live buffer without a round trip via App. */}
       {mode !== 'game' && cadToolbarHost && createPortal(
         <Toolbar
           mode="cad"
@@ -3919,6 +3929,7 @@ const Viewport = forwardRef(({
           onStartGame={onStartGame}
           onExitGame={onExitGame}
           onRun={onRun}
+          onRunScript={runCadScript}
           onHint={onHint}
           onPickPuzzle={onPickPuzzle}
           gameElapsedMs={gameElapsedMs}

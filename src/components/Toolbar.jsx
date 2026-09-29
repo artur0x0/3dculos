@@ -34,6 +34,8 @@ const Toolbar = ({
   onStartGame,
   onExitGame,
   onRun,
+  /** CAD strip Run — executes the live editor buffer (game uses onRun). */
+  onRunScript,
   onHint,
   onPickPuzzle,
   gameElapsedMs = 0,
@@ -216,6 +218,32 @@ const Toolbar = ({
           className="hidden"
           accept=".stl,.obj,.3mf,.step,.stp"
         />
+
+        {/* Run is first and sits in its own section: it is the one button you
+            press over and over, and it must not be one slot away from Open or
+            Upload. Green while idle, spinner while the script is executing. */}
+        <button
+          type="button"
+          onClick={onRunScript}
+          disabled={isExecuting}
+          className={`${btn} text-green-400 disabled:opacity-60`}
+          title={isExecuting ? 'Running…' : 'Run script'}
+          aria-label="Run script"
+          aria-busy={isExecuting}
+          data-cad-run={isExecuting ? 'running' : 'idle'}
+        >
+          {isExecuting ? (
+            <span
+              className="w-[18px] h-[18px] border-2 border-green-400 border-t-transparent
+                rounded-full animate-spin"
+              role="status"
+              aria-label="Running"
+            />
+          ) : (
+            <Play size={icon} />
+          )}
+        </button>
+        <div className={divider} />
 
         <button
           type="button"

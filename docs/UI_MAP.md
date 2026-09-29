@@ -100,7 +100,10 @@ Mobile specifics:
   down into `Viewport`, which `createPortal`s a `variant="strip"` Toolbar into it
   (`src/components/Viewport.jsx:3530`). So CAD chrome is **rendered by Viewport
   but displayed in the editor header** — the most surprising wiring in the app,
-  done so download/export busy state can stay in Viewport. Both shells do this.
+  done so download/export busy state can stay in Viewport, and so the green Run
+  button can call Viewport's own `executeScript()` on the live buffer without a
+  round trip through App (`runCadScript`). Game's Run is a different handler
+  (`onRun`); CAD's is `onRunScript`. Both shells do this.
 - The `CrossSectionPanel` cluster is a **vertical** rail (`verticalRail`,
   `src/components/Viewport.jsx:3656`) — in both shells.
 - Overlays still take `compact={isMobile}`, but it no longer changes rail button
@@ -115,7 +118,7 @@ That yields **four** layout combinations; check both flags when editing chrome.
 
 | | `mode === 'cad'` | `mode === 'game'` |
 | --- | --- | --- |
-| Toolbar contents | account/open/upload/undo/save/download/quote/puzzle | back, undo/redo, run, picker, hint (`src/components/Toolbar.jsx:98`+) |
+| Toolbar contents | **run** (green, own section, first) then account/open/upload/undo/save/download/quote/puzzle | back, undo/redo, run, picker, hint (`src/components/Toolbar.jsx:98`+) |
 | Toolbar placement | portaled strip above the editor, both shells | strip inside CodeEditor, both shells |
 | Title chip | always (filename) | always (puzzle title) |
 | Helper rail | `layout="cad"` — advanced tools folded into Model | `layout="game"` — keeps the Advanced group |
@@ -254,6 +257,24 @@ Import `src/utils/importModel.js` (+ `POST /api/convert/step`); export
 
 - **Tailwind only**, no CSS modules. Overlay idiom:
   `absolute … bg-white/60 backdrop-blur-sm rounded-lg shadow-lg z-10`.
+- **Inserting a solid APPENDS, it never replaces.** Every build that creates a
+  new solid — the six Shapes and the one-shot Extrude / Revolve / Loft — goes
+  through `emitPartPlace(names, expr, partDeclared, true)`, which emits
+  `part = part.add(expr)` when a part already exists and `let part = expr` when
+  it does not. Emitting a bare `part = <newSolid>` strands whatever was there as
+  dead code; that was a real bug in all six Shapes until it was fixed. Mutating
+  an existing body (holes, shell, transforms) is different — that keeps
+  `syncPartLines`, which points `part` at the body you edited.
+- **Feature popups all use `src/components/controls/popupUI.jsx`** — one type
+  scale (`POPUP_TEXT`), one set of fields, accents per surface (`cyan` contour,
+  `amber` fillet, `slate` helper sheets). **Every number renders a slider AND a
+  typed box**: `NumberField` never gives you one without the other, so don't
+  hand-roll an `<input type="range">` in a popup. Accent classes are spelled out
+  in `ACCENTS` because Tailwind purges computed class names — extend the map,
+  never interpolate.
+- **Circle segments default to 64** everywhere (palette items, contour profiles,
+  starter snippets). The contour slider goes to 128 so the default is not pinned
+  at the top of its range.
 - **Everything over the 3D view is translucent.** `src/index.css` defines the
   three surfaces: `surface-glass` (panels and modal sheets),
   `surface-glass-chip` (small viewport overlays — supply your own tint, it only
@@ -308,6 +329,7 @@ Import `src/utils/importModel.js` (+ `POST /api/convert/step`); export
   or tap drill, and c-bore / c-sink are the Near end and Far end dropdowns.
   `polarArray` stays the same way: one Array button whose Type param is Grid or
   Polar, and the `array3D` build delegates to `polarArray`'s for Polar.
+  `holePattern` likewise: Hole's "n×m pattern" tick emits `holePattern()`.
   Hide a tool this way rather than deleting an item other code builds with.
 - **Scrolling rails** carry `rail-scroll` alongside `overflow-y-auto`
   (`src/index.css`, bottom). Desktop Chrome's default gutter is square and cuts
