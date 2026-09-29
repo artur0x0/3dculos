@@ -164,6 +164,97 @@ const contourRail = read('../../src/components/ContourModeRail.jsx');
   check('rail-scroll covers Firefox too', /\.rail-scroll \{[\s\S]{0,160}?scrollbar-width: thin/.test(css));
 }
 
+// ── AC7: one preview aesthetic, and it is unlit ──
+{
+  const style = read('../../src/utils/previewStyle.js');
+  check('there is a shared preview recipe', /makePreviewSkinMaterial/.test(style)
+    && /makePreviewOutlineMaterial/.test(style));
+  check('the shared skin is unlit', /new MeshBasicMaterial\(/.test(style)
+    && !/MeshLambertMaterial|MeshStandardMaterial|MeshPhongMaterial/.test(style));
+  // The darkness bug: Extrude was the one preview painted with a lit material.
+  const paints = view.slice(
+    view.indexOf('const paintExtrudePreview'),
+    view.indexOf('const clearFilletBlendPreview'),
+  );
+  check(
+    'no preview paints with a lit material any more',
+    !/MeshLambertMaterial|MeshStandardMaterial|MeshPhongMaterial/.test(paints),
+  );
+  // Skins are the DoubleSide translucent surfaces; point/marker materials are
+  // a different thing and keep their own definitions.
+  const handRolledSkin = /new MeshBasicMaterial\(\{[^}]*side: DoubleSide/.test(paints);
+  check('no preview hand-rolls its own skin material', !handRolledSkin);
+  for (const paint of ['Extrude', 'Revolve', 'Loft', 'Sweep']) {
+    const body = paints.slice(paints.indexOf(`const paint${paint}Preview`));
+    check(`${paint} preview uses the shared skin`, /makePreviewSkinMaterial\(/.test(
+      body.slice(0, body.indexOf('const clear') > 0 ? body.indexOf('const clear') : undefined),
+    ));
+  }
+  check('Extrude gained Loft-style outline rings', /Start and end loops/.test(paints)
+    && /makePreviewOutlineMaterial\(/.test(paints));
+}
+
+// ── AC8: the param popup docks bottom-centre of the viewport, click-through ──
+{
+  const modal = read('../../src/components/HelperParamModal.jsx');
+  check(
+    'popup is positioned against the viewport, not the screen',
+    /absolute inset-0 z-50 flex items-end justify-center/.test(modal)
+      && !/fixed inset-0/.test(modal),
+  );
+  check('popup sits bottom-centre', !/sm:items-center/.test(modal));
+  check('no dimming scrim over the viewport', !/bg-black\/\d+/.test(modal));
+  check('overlay is click-through, panel is not', /pointer-events-none/.test(modal)
+    && (modal.match(/pointer-events-auto/g) || []).length === 2);
+  check(
+    'the dead click-outside handler is gone with the scrim',
+    !/onMouseDown/.test(modal),
+  );
+}
+
+// ── AC9: the editor/viewport seam is draggable in both shells ──
+{
+  const app = read('../../src/App.jsx');
+  const divider = read('../../src/components/SplitDivider.jsx');
+  check('divider uses pointer capture so a drag can leave the element',
+    /setPointerCapture/.test(divider) && /releasePointerCapture/.test(divider));
+  check('divider opts out of touch scrolling', /touch-none/.test(divider));
+  check('divider announces itself to AT', /role="separator"/.test(divider)
+    && /aria-orientation/.test(divider));
+  check('desktop drags left/right', /<SplitDivider orientation="vertical"/.test(app));
+  check('mobile drags up/down', /<SplitDivider orientation="horizontal"/.test(app));
+  check('desktop columns are no longer hard-coded halves',
+    /style=\{\{ width: `\$\{splitPct\}%` \}\}/.test(app) && !/className="w-1\/2/.test(app));
+  check('split is clamped so neither pane can collapse',
+    /Math\.min\(80, Math\.max\(20, pct\)\)/.test(app));
+  check('an open keyboard still wins over a dragged mobile height',
+    /keyboardOpen\s*\?[\s\S]{0,200}mobileEditorPxOverride != null/.test(app));
+}
+
+// ── AC10: rename the part from the title chip ──
+{
+  check('the chip becomes an input on click', /data-title-chip="input"/.test(view)
+    && /data-title-chip="button"/.test(view));
+  check('Enter commits and Escape reverts',
+    /if \(e\.key === 'Enter'\)[\s\S]{0,60}commit\(\)/.test(view)
+      && /if \(e\.key === 'Escape'\)[\s\S]{0,60}setEditing\(false\)/.test(view));
+  check('blur commits too', /onBlur=\{commit\}/.test(view));
+  check('typing does not leak to viewport hotkeys', /e\.stopPropagation\(\)/.test(view));
+  check('names are path-safe and bounded',
+    /function sanitizePartName/.test(view) && /slice\(0, 60\)/.test(view));
+  check('an empty name is not committed', /if \(next && next !== \(value \|\| ''\)\) onRename\(next\)/.test(view));
+}
+
+// ── AC11: view snaps keep clear of the viewport edges ──
+{
+  const css = read('../../src/index.css');
+  check('flyout gap is 10px', /mr-2\.5/.test(snap));
+  check('flyout can wrap rather than overflow', /flex flex-wrap/.test(snap));
+  check('viewport shell is a size container', /\.viewport-shell[\s\S]{0,80}container-type: inline-size/.test(css));
+  check('flyout is clamped to the pane, not the window',
+    /\.view-snap-popup[\s\S]{0,80}max-width: calc\(100cqw - 20px\)/.test(css));
+}
+
 if (failed) {
   console.log(`\n${failed} check(s) failed`);
   process.exit(1);

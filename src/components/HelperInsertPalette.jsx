@@ -7,18 +7,15 @@ import {
   Hexagon,
   Squircle,
   TriangleRight,
-  CircleDot,
   Grid3x3,
   Bolt,
   Drill,
+  PackageOpen,
+  Boxes,
   Cone,
-  BoxSelect,
-  MoveVertical,
   Focus,
   AlignVerticalJustifyCenter,
   FlipHorizontal2,
-  Copy,
-  RotateCw,
   Layers3,
   ArrowUpFromLine,
   Rotate3d,
@@ -27,6 +24,7 @@ import {
   Route,
 } from 'lucide-react';
 import SquareRoundCorner from './icons/SquareRoundCorner';
+import Angle from './icons/Angle';
 import { itemsByGroup, paletteRailSections } from '../utils/helperPaletteSnippets';
 import { resolveFaceModal } from '../utils/faceFeaturePlacement';
 import { canBuildFilletAlongPath, resolveFilletStrategy } from '../utils/filletAlongPath';
@@ -43,19 +41,19 @@ const ICONS = {
   roundedBox: Squircle,
   filletEdges: SquareRoundCorner,
   chamferEdges: TriangleRight,
-  hole: CircleDot,
+  hole: Drill,
   holePattern: Grid3x3,
   clearanceHole: Bolt,
   tapDrillHole: Drill,
   cboreHole: Cylinder,
   cskHole: Cone,
-  shell: BoxSelect,
-  addDraft: MoveVertical,
+  shell: PackageOpen,
+  addDraft: Angle,
   center: Focus,
   align: AlignVerticalJustifyCenter,
   mirror: FlipHorizontal2,
-  array3D: Copy,
-  polarArray: RotateCw,
+  // One Array button; Grid vs Polar is a param inside it.
+  array3D: Boxes,
   // Workplane matches the right rail's plane-visibility toggle (both Layers3),
   // and Create contour matches its sketch-visibility toggle (both NotebookPen):
   // the tool that makes the thing wears the icon that shows the thing.
@@ -70,10 +68,10 @@ const ICONS = {
 
 /** Mobile-first group captions (full names stay on the data model). */
 const GROUP_SHORT_LABEL = {
-  Primitives: 'Prim',
+  Primitives: 'Shapes',
   Advanced: 'Adv',
-  Features: 'Feat',
-  Transforms: 'Xform',
+  Features: 'Polish',
+  Transforms: 'Move',
 };
 
 /**

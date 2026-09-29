@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import CodeEditor from './components/CodeEditor';
 import Viewport from './components/Viewport';
 import PromptInput from './components/PromptInput';
+import SplitDivider from './components/SplitDivider';
 import { saveAs } from 'file-saver';
 import QuoteModal from './components/QuoteModal';
 import OrderModal from './components/OrderModal';
@@ -47,6 +48,9 @@ const App = () => {
   const [isMobile, setIsMobile] = useState(false);
   const [selectedFace, setSelectedFace] = useState(null);
   const [currentFilename, setCurrentFilename] = useState(null);
+  /** Editor column width % (desktop) and editor height px (mobile, null = auto). */
+  const [splitPct, setSplitPct] = useState(50);
+  const [mobileEditorPxOverride, setMobileEditorPx] = useState(null);
   const [showQuoteModal, setShowQuoteModal] = useState(false);
   const [showOrderModal, setShowOrderModal] = useState(false);
   const [orderData, setOrderData] = useState(null);
@@ -957,6 +961,31 @@ const App = () => {
     }
   };
 
+  // --- Draggable editor/viewport split ---
+  // Desktop: percentage width of the editor column. Mobile: an explicit editor
+  // height in px that overrides the computed budget until the keyboard opens
+  // (the keyboard case still wins — see mobileEditorPx).
+  const splitShellRef = useRef(null);
+  const handleSplitDragX = (clientX) => {
+    const rect = splitShellRef.current?.getBoundingClientRect();
+    if (!rect || rect.width <= 0) return;
+    const pct = ((clientX - rect.left) / rect.width) * 100;
+    setSplitPct(Math.min(80, Math.max(20, pct)));
+  };
+  const handleSplitDragY = (clientY) => {
+    const rect = splitShellRef.current?.getBoundingClientRect();
+    if (!rect || rect.height <= 0) return;
+    const px = rect.bottom - clientY;
+    setMobileEditorPx(Math.min(Math.max(px, 120), Math.max(160, rect.height - 160)));
+  };
+
+  // Rename from the viewport title chip. Only app state — the name is read by
+  // save/export and by the OAuth-redirect snapshot, so nothing else to write.
+  const handleRenameFile = (name) => {
+    const next = String(name || '').trim();
+    if (next) setCurrentFilename(next);
+  };
+
   const handleSave = () => {
     try {
       const code = codeEditorRef.current?.getContent();
@@ -1091,7 +1120,11 @@ const App = () => {
   const keyboardOpen = keyboardOverlap > 80;
   const mobileEditorPx = keyboardOpen
     ? Math.round(Math.min(Math.max(vv.height * 0.36, 120), vv.height * 0.42))
-    : Math.round(Math.min(Math.max(vv.height * 0.32, 160), vv.height * 0.38));
+    : (mobileEditorPxOverride != null
+      // A dragged height wins over the default budget, but never so far that
+      // the viewport or the editor collapses.
+      ? Math.round(Math.min(Math.max(mobileEditorPxOverride, 120), Math.max(160, vv.height - 160)))
+      : Math.round(Math.min(Math.max(vv.height * 0.32, 160), vv.height * 0.38)));
 
   if (isMobile) {
     // Keep h-dvh while the keyboard is closed so Monaco can take a real
@@ -1122,6 +1155,7 @@ const App = () => {
               canUndo={canUndo()}
               canRedo={canRedo()}
               currentFilename={currentFilename}
+              onRenameFile={handleRenameFile}
               isUploading={isUploading || gameLoading}
               mode={appMode}
               ghostMeshData={ghostMeshData}
@@ -1145,15 +1179,17 @@ const App = () => {
 
     return (
         <div
+          ref={splitShellRef}
           className={`flex flex-col bg-gray-900 overflow-hidden ${keyboardOpen ? '' : 'h-dvh'}`}
           style={mobileShellStyle}
         >
           {/* Viewport TOP, Monaco BOTTOM — same stack as puzzle (slice 05). */}
-          <div className="flex-1 min-h-0 border-b border-gray-700 overflow-hidden">
+          <div className="flex-1 min-h-0 overflow-hidden">
             {viewportEl}
           </div>
+          <SplitDivider orientation="horizontal" onDrag={(x, y) => handleSplitDragY(y)} />
           <div
-            className="flex-shrink-0 flex flex-col border-t border-gray-700 min-h-0"
+            className="flex-shrink-0 flex flex-col min-h-0"
             style={{ height: mobileEditorPx }}
           >
             <div className="relative flex-1 min-h-0">
@@ -1182,14 +1218,17 @@ const App = () => {
                 />
               </div>
             </div>
+            {/* Hidden, not removed — see the desktop shell. */}
             {appMode !== 'game' && (
-              <PromptInput
-                onCodeGenerated={handleCodeGenerated}
-                currentCode={codeEditorRef.current?.getContent() || ''}
-                selectedFace={selectedFace}
-                onClearFaceSelection={handleClearFaceSelection}
-                isMobile={isMobile}
-              />
+              <div className="hidden" data-ai-prompt-row="hidden">
+                <PromptInput
+                  onCodeGenerated={handleCodeGenerated}
+                  currentCode={codeEditorRef.current?.getContent() || ''}
+                  selectedFace={selectedFace}
+                  onClearFaceSelection={handleClearFaceSelection}
+                  isMobile={isMobile}
+                />
+              </div>
             )}
           </div>
 
@@ -1284,8 +1323,8 @@ const App = () => {
   }
 
   return (
-      <div className="flex h-dvh bg-gray-900">
-        <div className="w-1/2 border-r border-gray-700 flex flex-col">
+      <div ref={splitShellRef} className="flex h-dvh bg-gray-900">
+        <div className="flex flex-col min-w-0" style={{ width: `${splitPct}%` }}>
           <div className="flex-1 min-h-0">
             <CodeEditor 
               ref={codeEditorRef}
@@ -1309,8 +1348,11 @@ const App = () => {
               onCadToolbarHost={setCadToolbarHost}
             />
           </div>
+          {/* AI prompt row is HIDDEN, not removed: it stays mounted (and keeps
+              its state and handlers) while we design a tighter integration
+              into the editor itself. Drop the `hidden` to bring it back. */}
           {appMode !== 'game' && (
-            <div className="flex-shrink-0">
+            <div className="flex-shrink-0 hidden" data-ai-prompt-row="hidden">
               <PromptInput 
                 onCodeGenerated={handleCodeGenerated}
                 currentCode={codeEditorRef.current?.getContent() || ''}
@@ -1321,7 +1363,8 @@ const App = () => {
             </div>
           )}
         </div>
-        <div className="w-1/2">
+        <SplitDivider orientation="vertical" onDrag={(x) => handleSplitDragX(x)} />
+        <div className="flex-1 min-w-0">
           <Viewport 
             ref={viewportRef} 
             onAccount={handleAccount}
@@ -1336,6 +1379,7 @@ const App = () => {
             canUndo={canUndo()}
             canRedo={canRedo()}
             currentFilename={currentFilename}
+            onRenameFile={handleRenameFile}
             isUploading={isUploading || gameLoading}
             mode={appMode}
             ghostMeshData={ghostMeshData}

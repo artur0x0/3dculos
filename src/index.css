@@ -74,3 +74,15 @@ body {
 .rail-scroll::-webkit-scrollbar-thumb:hover {
   background-color: rgba(107, 114, 128, 0.7);
 }
+
+/* View-snap flyout keeps ~10px clear of the viewport edges.
+   The viewport shell is a size container, so the flyout can measure itself
+   against the *pane* (half the window on desktop) rather than the window. If
+   the four snap buttons cannot fit in that width they wrap instead of sliding
+   under the viewport edge. Pairs with the `mr-2.5` gap on the trigger side. */
+.viewport-shell {
+  container-type: inline-size;
+}
+.view-snap-popup {
+  max-width: calc(100cqw - 20px);
+}

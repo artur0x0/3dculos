@@ -28,7 +28,8 @@ one shell you must change the other.
 
 ```
 ┌───────────────────────────────┬───────────────────────────────┐
-│ CodeEditor (w-1/2)            │ Viewport (w-1/2)              │
+│ CodeEditor (splitPct wide)    ║ Viewport (rest)               │
+│                          draggable seam ↑                     │
 │ ┌───────────────────────────┐ │  top-center: ViewportTitleChip│
 │ │ mid-strip: [Toolbar]  [⌗] │ │              (filename)       │
 │ ├───────────────────────────┤ │                               │
@@ -36,11 +37,26 @@ one shell you must change the other.
 │ │  Monaco (vs-dark, 12px)   │ │    HelperInsertPalette        │
 │ │                           │ │    (or ContourModeRail)       │
 │ ├───────────────────────────┤ │  right-4 bottom-4: vertical   │
-│ │ PromptInput (AI row)      │ │    CrossSectionPanel cluster  │
+│ │ PromptInput (AI row, now  │ │    CrossSectionPanel cluster  │
+│ │   hidden — still mounted) │ │                               │
 │ └───────────────────────────┘ │  left-[5.25rem] bottom-4:     │
 │   ↑ portal target             │    info chips                 │
 └───────────────────────────────┴───────────────────────────────┘
 ```
+
+**The seam between the two panes is draggable** in both shells
+(`SplitDivider.jsx`, pointer-capture based): left/right on desktop
+(`splitPct`, clamped 20-80%), up/down on mobile (`mobileEditorPxOverride`,
+clamped so neither pane collapses; an open keyboard still overrides it).
+
+**The AI prompt row is hidden, not deleted** — `PromptInput` stays mounted
+behind `hidden` + `data-ai-prompt-row="hidden"` in both shells while a tighter
+editor integration is designed. Remove the `hidden` class to bring it back.
+
+**The title chip renames the part.** Click it (or the "Untitled" placeholder)
+and it becomes an input: Enter or blur commits, Escape reverts, empty commits
+nothing. Names are sanitised (`sanitizePartName`) because they end up in
+`${name}.js` downloads. Wired through `onRenameFile` → `setCurrentFilename`.
 
 Desktop specifics:
 - **The Toolbar is portaled into the editor mid-strip, exactly like mobile.**
@@ -63,10 +79,10 @@ Desktop specifics:
 │   left-2 bottom-4: helper rail  │  (filename, or puzzle name)
 │   right-2 bottom-4: cluster +   │  ← info chips move RIGHT here
 │                     info chips  │
-├─────────────────────────────────┤
+╞═════════════════════════════════╡  ← draggable seam
 │ mid-strip: [Toolbar strip]  [⌗] │  ← portal target
 │ Monaco (16px font)              │  height = 32–38% of viewport
-│ PromptInput (compact)           │  (36–42% when keyboard is open)
+│ PromptInput (hidden, mounted)   │  (36–42% when keyboard is open)
 └─────────────────────────────────┘
 ```
 
@@ -104,7 +120,7 @@ That yields **four** layout combinations; check both flags when editing chrome.
 | Title chip | always (filename) | always (puzzle title) |
 | Helper rail | `layout="cad"` — advanced tools folded into Model | `layout="game"` — keeps the Advanced group |
 | Info chips | bottom-left on desktop | always bottom-right (dodges the palette) |
-| PromptInput | shown | hidden (`appMode !== 'game'` guards) |
+| PromptInput | mounted but `hidden` (see shells) | not rendered (`appMode !== 'game'` guards) |
 | Extras | — | ghost mesh, timer, confetti, "Match!" banner (`src/components/Viewport.jsx:3595`) |
 
 Game logic: `src/utils/gamePuzzle.js`, `gamePuzzles.js`, `gameWins.js`;
@@ -161,7 +177,7 @@ phones, centered dialog on desktop**.
 | Account | Toolbar → Account, signed in | `AccountModal.jsx` | tabs `info` / `orders` (`:160`) |
 | Quote | Toolbar → Truck | `QuoteModal.jsx` | process / material / infill → `utils/quoting.js` |
 | Order | Quote → Order | `OrderModal.jsx` + `components/order/*` | six steps, `STEPS` at `OrderModal.jsx:13`: Auth → Address → Shipping → Payment → Confirmation → Convert |
-| Helper params | any helper-rail button | `HelperParamModal.jsx` | also serves as the refuse/explain dialog |
+| Helper params | any helper-rail button | `HelperParamModal.jsx` | **not** a full-screen modal: docks bottom-centre *of the viewport* (`absolute inset-0`, click-through overlay, no scrim) so the rails and the live preview stay visible and usable. No click-outside-to-cancel — X / Cancel only. Also serves as the refuse/explain dialog |
 | Puzzle picker | Toolbar → List (game) | `PuzzlePickerModal.jsx` | |
 | Hints | Toolbar → BookOpen (game) | `GameHintsModal.jsx` | |
 | Terms | order flow | `TermsModal.jsx` | |
@@ -242,10 +258,10 @@ Import `src/utils/importModel.js` (+ `POST /api/convert/step`); export
   (phone-tight, desktop-roomy). Match this rather than inventing values.
 - **z-index ladder:** overlays `z-10`; edge chip and success banner `z-20`;
   toasts `z-30`; modals and error banners `z-50`.
-- **Icons** are `lucide-react` only, with exactly one vendored exception:
-  `src/components/icons/SquareRoundCorner.jsx` (lucide's `square-round-corner`,
-  the Fillet glyph) exists because that icon landed in lucide 0.511 and we are
-  pinned to 0.469. Delete it and import from `lucide-react` once the dep moves.
+- **Icons** are `lucide-react` only, with two vendored exceptions in
+  `src/components/icons/`: `SquareRoundCorner.jsx` (Fillet) and `Angle.jsx`
+  (Draft). Both glyphs postdate lucide 0.469, which this project pins. Delete
+  them and import from `lucide-react` once the dep moves.
   Overlay buttons carry `title` *and*
   `aria-label`; toggles carry `aria-pressed`. **No two buttons in the same rail
   share a glyph** — the right rail's selectors are deliberately distinct:
@@ -258,12 +274,26 @@ Import `src/utils/importModel.js` (+ `POST /api/convert/step`); export
   Create contour = `NotebookPen` (= sketch overlays) and Workplane = `Layers3`
   (= plane overlays). The tool that makes a thing wears the icon that shows it;
   the no-duplicates rule is per rail, so this is intended, not a slip.
+- **Rail sections are Shapes / Model / Polish / Move**, in that order
+  (`CAD_RAIL_ORDER` in `helperPaletteSnippets.js` for the order,
+  `GROUP_SHORT_LABEL` in `HelperInsertPalette.jsx` for the captions). The
+  internal group keys are still `Primitives` / `Advanced` / `Features` /
+  `Transforms` — display names only. The order is the modelling order: make a
+  shape, model it, polish it, move it.
+- **Previews all share one recipe** (`src/utils/previewStyle.js`): unlit
+  translucent cyan skin + brighter outline. **Never paint a preview with a lit
+  material** — MeshLambert/MeshStandard take the scene lights, so faces angled
+  away go dark, which is exactly the bug that made Extrude look muddy next to
+  Loft. Add a preview → call `makePreviewSkinMaterial` /
+  `makePreviewOutlineMaterial`.
 - **`railHidden` items** are palette entries with no button:
   `paletteRailSections` filters them, `itemsByGroup` does not. `sweepPath`
   (Path) stays so Sweep can still compose an edge wire. `clearanceHole`,
   `tapDrillHole`, `cboreHole`, and `cskHole` stay so older scripts and goldens
   can still emit them, but the rail shows one Hole button: Type is clearance
   or tap drill, and c-bore / c-sink are the Near end and Far end dropdowns.
+  `polarArray` stays the same way: one Array button whose Type param is Grid or
+  Polar, and the `array3D` build delegates to `polarArray`'s for Polar.
   Hide a tool this way rather than deleting an item other code builds with.
 - **Scrolling rails** carry `rail-scroll` alongside `overflow-y-auto`
   (`src/index.css`, bottom). Desktop Chrome's default gutter is square and cuts

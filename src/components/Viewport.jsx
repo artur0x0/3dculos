@@ -36,6 +36,13 @@ import {
   SpriteMaterial,
   CanvasTexture,
 } from 'three';
+import {
+  makePreviewSkinMaterial,
+  makePreviewOutlineMaterial,
+  PREVIEW_COLORS,
+  PREVIEW_OPACITY,
+  PREVIEW_RENDER_ORDER,
+} from '../utils/previewStyle';
 import { TrackballControls } from 'three/addons/controls/TrackballControls.js';
 import { LineSegments2 } from 'three/addons/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js';
@@ -201,12 +208,81 @@ function disposeEdgeOverlayObject(scene, obj) {
 }
 
 /** Shared top title. Puzzle name in game; filename on mobile CAD. */
-function ViewportTitleChip({ children }) {
+/** Filenames land in `${name}.js` downloads, so keep them path-safe and short. */
+function sanitizePartName(raw) {
+  return String(raw ?? '')
+    .replace(/[/\\:*?"<>|]/g, '')   // path + Windows-illegal characters
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 60);
+}
+
+/**
+ * Title chip. With `onRename` it is also the rename control: click (or Enter /
+ * Space on the focused chip) swaps in an input. Enter or blur commits, Escape
+ * reverts. An empty or all-junk name commits nothing, so the part falls back to
+ * "Untitled" rather than becoming nameless.
+ */
+function ViewportTitleChip({ children, value = null, onRename = null }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const inputRef = useRef(null);
+
+  useEffect(() => {
+    if (editing) inputRef.current?.select();
+  }, [editing]);
+
+  const start = () => {
+    if (!onRename) return;
+    setDraft(value || '');
+    setEditing(true);
+  };
+
+  const commit = () => {
+    if (!editing) return;
+    setEditing(false);
+    const next = sanitizePartName(draft);
+    if (next && next !== (value || '')) onRename(next);
+  };
+
+  const shell = 'text-xs font-medium text-center truncate px-3 py-1.5 rounded-lg shadow'
+    + ' bg-gray-900/85 border border-gray-500/50 text-gray-100';
+
   return (
-    <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10 pointer-events-none max-w-[min(20rem,calc(100%-2rem))]">
-      <div className="text-xs font-medium text-center truncate px-3 py-1.5 rounded-lg shadow bg-gray-900/85 border border-gray-500/50 text-gray-100">
-        {children}
-      </div>
+    <div
+      className={`absolute top-4 left-1/2 -translate-x-1/2 z-10 max-w-[min(20rem,calc(100%-2rem))] ${
+        onRename ? '' : 'pointer-events-none'
+      }`}
+    >
+      {editing ? (
+        <input
+          ref={inputRef}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') { e.preventDefault(); commit(); }
+            if (e.key === 'Escape') { e.preventDefault(); setEditing(false); }
+            e.stopPropagation(); // viewport hotkeys must not eat the typing
+          }}
+          className={`${shell} w-48 outline-none border-blue-400/80 bg-gray-900`}
+          aria-label="Part name"
+          data-title-chip="input"
+        />
+      ) : onRename ? (
+        <button
+          type="button"
+          onClick={start}
+          className={`${shell} hover:border-blue-400/70 hover:text-white cursor-text`}
+          title="Click to rename this part"
+          aria-label={`Part name: ${value || 'Untitled'}. Click to rename.`}
+          data-title-chip="button"
+        >
+          {children}
+        </button>
+      ) : (
+        <div className={shell} data-title-chip="static">{children}</div>
+      )}
     </div>
   );
 }
@@ -230,6 +306,7 @@ const Viewport = forwardRef(({
   canUndo,
   canRedo,
   currentFilename,
+  onRenameFile = null,
   isUploading,
   mode = 'cad',
   ghostMeshData = null,
@@ -763,19 +840,12 @@ const Viewport = forwardRef(({
       bevelEnabled: false,
       curveSegments: 1,
     });
-    const mat = new MeshLambertMaterial({
-      color: 0x22d3ee,
-      transparent: true,
-      opacity: 0.42,
-      depthWrite: false,
-      flatShading: true,
-      side: DoubleSide,
-      emissive: 0x164e63,
-      emissiveIntensity: 0.2,
-    });
+    // Unlit, like every other preview: a lit material turned the faces angled
+    // away from the lights dark and muddy (see utils/previewStyle.js).
+    const mat = makePreviewSkinMaterial();
     const mesh = new ThreeMesh(geom, mat);
     mesh.name = 'contourExtrudePreview';
-    mesh.renderOrder = 8;
+    mesh.renderOrder = PREVIEW_RENDER_ORDER.skin;
     mesh.frustumCulled = false;
     const { plane, w0 } = payload;
     const n = plane.normal;
@@ -792,6 +862,25 @@ const Viewport = forwardRef(({
     const group = new Group();
     group.name = 'contourExtrudePreviewGroup';
     group.add(mesh);
+    // Start and end loops, exactly like Loft's station rings — the skin alone
+    // reads as a smear without them.
+    const outlineMat = makePreviewOutlineMaterial();
+    for (const w of [w0, w0 + Number(payload.distance)]) {
+      if (!Number.isFinite(w)) continue;
+      const pos = new Float32Array((loop.length + 1) * 3);
+      for (let i = 0; i <= loop.length; i++) {
+        const [u, v] = loop[i % loop.length];
+        for (let k = 0; k < 3; k++) {
+          pos[i * 3 + k] = c[k] + u * x[k] + v * y[k] + w * n[k];
+        }
+      }
+      const g = new BufferGeometry();
+      g.setAttribute('position', new BufferAttribute(pos, 3));
+      const line = new Line(g, outlineMat);
+      line.renderOrder = PREVIEW_RENDER_ORDER.outline;
+      line.frustumCulled = false;
+      group.add(line);
+    }
     sceneRef.current.add(group);
     extrudePreviewRef.current = group;
   }, [clearExtrudePreview]);
@@ -858,13 +947,7 @@ const Viewport = forwardRef(({
     geom.setAttribute('position', new BufferAttribute(positions, 3));
     geom.setIndex(indices);
     geom.computeVertexNormals();
-    const mat = new MeshBasicMaterial({
-      color: 0x22d3ee,
-      transparent: true,
-      opacity: 0.4,
-      depthWrite: false,
-      side: DoubleSide,
-    });
+    const mat = makePreviewSkinMaterial();
     const mesh = new ThreeMesh(geom, mat);
     mesh.name = 'contourRevolvePreview';
     mesh.renderOrder = 10;
@@ -898,19 +981,8 @@ const Viewport = forwardRef(({
     if (!payload?.stations?.length || !sceneRef.current) return;
     const group = new Group();
     group.name = 'contourLoftPreviewGroup';
-    const ringMat = new LineBasicMaterial({
-      color: 0x67e8f9,
-      transparent: true,
-      opacity: 0.95,
-      depthTest: false,
-    });
-    const skinMat = new MeshBasicMaterial({
-      color: 0x22d3ee,
-      transparent: true,
-      opacity: 0.38,
-      depthWrite: false,
-      side: DoubleSide,
-    });
+    const ringMat = makePreviewOutlineMaterial();
+    const skinMat = makePreviewSkinMaterial();
     const worldRing = (station) => {
       const plane = station.plane;
       return (station.ring || []).map((uv) => [
@@ -987,19 +1059,8 @@ const Viewport = forwardRef(({
     if (!payload?.stations?.length || !sceneRef.current) return;
     const group = new Group();
     group.name = 'contourSweepPreviewGroup';
-    const ringMat = new LineBasicMaterial({
-      color: 0x67e8f9,
-      transparent: true,
-      opacity: 0.95,
-      depthTest: false,
-    });
-    const skinMat = new MeshBasicMaterial({
-      color: 0x22d3ee,
-      transparent: true,
-      opacity: 0.38,
-      depthWrite: false,
-      side: DoubleSide,
-    });
+    const ringMat = makePreviewOutlineMaterial();
+    const skinMat = makePreviewSkinMaterial();
     const addSkin = (a, b) => {
       const n = Math.min(a?.length || 0, b?.length || 0);
       if (n < 3) return;
@@ -1099,13 +1160,7 @@ const Viewport = forwardRef(({
     const group = new Group();
     group.name = 'contourWorkplane';
     const geom = new PlaneGeometry(size, size);
-    const mat = new MeshBasicMaterial({
-      color: 0x22d3ee,
-      transparent: true,
-      opacity: 0.18,
-      depthWrite: false,
-      side: DoubleSide,
-    });
+    const mat = makePreviewSkinMaterial({ opacity: PREVIEW_OPACITY.ghost });
     const quad = new ThreeMesh(geom, mat);
     quad.position.set(plane.center[0], plane.center[1], plane.center[2]);
     const q = new Quaternion();
@@ -1163,13 +1218,10 @@ const Viewport = forwardRef(({
       const size = 48;
       const geom = new PlaneGeometry(size, size);
       const selected = p.id === activeId;
-      const mat = new MeshBasicMaterial({
-        color: selected ? 0xf59e0b : 0x67e8f9,
-        transparent: true,
-        opacity: selected ? 0.32 : 0.18,
-        depthWrite: false,
-        side: DoubleSide,
-      });
+      // Same translucent recipe as the tool previews, amber when active.
+      const mat = makePreviewSkinMaterial(selected
+        ? { color: PREVIEW_COLORS.selected, opacity: PREVIEW_OPACITY.selected }
+        : { color: PREVIEW_COLORS.outline, opacity: PREVIEW_OPACITY.ghost });
       const quad = new ThreeMesh(geom, mat);
       quad.position.set(plane.center[0], plane.center[1], plane.center[2]);
       const q = new Quaternion();
@@ -1316,13 +1368,7 @@ const Viewport = forwardRef(({
         geom.setAttribute('position', new BufferAttribute(positions, 3));
         geom.setIndex(indices);
         geom.computeVertexNormals();
-        const mat = new MeshBasicMaterial({
-          color: 0xfbbf24,
-          transparent: true,
-          opacity: 0.38,
-          depthWrite: false,
-          side: DoubleSide,
-        });
+        const mat = makePreviewSkinMaterial({ color: PREVIEW_COLORS.blendSkin });
         const mesh = new ThreeMesh(geom, mat);
         mesh.name = 'filletBlendWedge';
         mesh.renderOrder = 10;
@@ -3573,7 +3619,7 @@ const Viewport = forwardRef(({
   }, [cachedMeshData, currentFilename]);
 
   return (
-    <div ref={containerRef} className="relative w-full h-full bg-gray-900 overflow-hidden">
+    <div ref={containerRef} className="viewport-shell relative w-full h-full bg-gray-900 overflow-hidden">
       {/* CAD chrome lives in the editor mid-strip in BOTH shells (desktop matches
           phone now): rendered here so download/export busy state stays local. */}
       {mode !== 'game' && cadToolbarHost && createPortal(
@@ -3611,7 +3657,9 @@ const Viewport = forwardRef(({
         <ViewportTitleChip>{gamePuzzleTitle || 'Puzzle'}</ViewportTitleChip>
       )}
       {mode !== 'game' && (
-        <ViewportTitleChip>{currentFilename || 'Untitled'}</ViewportTitleChip>
+        <ViewportTitleChip value={currentFilename} onRename={onRenameFile}>
+          {currentFilename || 'Untitled'}
+        </ViewportTitleChip>
       )}
 
       {mode === 'game' && gameSuccess && (

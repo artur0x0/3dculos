@@ -175,9 +175,13 @@ return part;
   check('Sweep icon Route (inherited from the retired Path button)', /makeSweep:\s*Route/.test(rail));
   check('Loft icon Pyramid', /makeLoft:\s*Pyramid/.test(rail));
   check('Fillet icon SquareRoundCorner', /filletEdges:\s*SquareRoundCorner/.test(rail));
-  check('compact labels Prim Adv Feat Xform',
-    /Primitives:\s*'Prim'/.test(rail) && /Advanced:\s*'Adv'/.test(rail)
-    && /Features:\s*'Feat'/.test(rail) && /Transforms:\s*'Xform'/.test(rail));
+  check('rail captions Shapes / Polish / Move',
+    /Primitives:\s*'Shapes'/.test(rail) && /Advanced:\s*'Adv'/.test(rail)
+    && /Features:\s*'Polish'/.test(rail) && /Transforms:\s*'Move'/.test(rail));
+  check('Hole icon Drill', /hole:\s*Drill/.test(rail));
+  check('Shell icon PackageOpen', /shell:\s*PackageOpen/.test(rail));
+  check('Array icon Boxes', /array3D:\s*Boxes/.test(rail));
+  check('Draft icon Angle', /addDraft:\s*Angle/.test(rail));
 
   const wp = composeHelperInsert(starter, 'workplane');
   check('workplane emit has no bare top', wp && !/\btop\b/.test(wp.replace(/topFace/g, 'FACE')));

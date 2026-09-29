@@ -15,6 +15,7 @@ import {
   HELPER_PALETTE_GROUPS,
   itemsByGroup,
   paletteRailSections,
+  composeHelperInsert,
 } from '../../src/utils/helperPaletteSnippets.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -57,8 +58,8 @@ console.log('cad palette + plane/contour toggles');
 
   const cad = paletteRailSections('cad', grouped);
   check(
-    'CAD rail is Model then Prim Feat Xform',
-    cad.map((s) => s.key).join('|') === 'Model|Primitives|Features|Transforms',
+    'CAD rail is Shapes, Model, Polish, Move',
+    cad.map((s) => s.key).join('|') === 'Primitives|Model|Features|Transforms',
     cad.map((s) => s.key).join('|'),
   );
   check(
@@ -76,6 +77,40 @@ console.log('cad palette + plane/contour toggles');
     );
   }
   check('sweepPath is still a palette item', grouped.Features.some((i) => i.id === 'sweepPath'));
+
+  // ── One Array button, two patterns ──
+  {
+    const railIds = cad.flatMap((s) => s.items.map((i) => i.id));
+    check('no separate Polar button', !railIds.includes('polarArray') && railIds.includes('array3D'));
+    check(
+      'polarArray survives as a hidden item',
+      grouped.Transforms.find((i) => i.id === 'polarArray')?.railHidden === true,
+    );
+    const array = grouped.Transforms.find((i) => i.id === 'array3D');
+    const typeParam = array.params.find((p) => p.name === 'arrayType');
+    check('Array has a Grid/Polar type param', !!typeParam
+      && typeParam.options.map((o) => o.value).join(',') === 'grid,polar');
+    check(
+      'grid params are hidden under Type=Polar and vice versa',
+      array.params.find((p) => p.name === 'nx').showWhen.values.join() === 'grid'
+        && array.params.find((p) => p.name === 'boltCircleRadius').showWhen.values.join() === 'polar',
+    );
+    const gridBuf = composeHelperInsert('', 'array3D', null, { arrayType: 'grid', nx: 3 });
+    check('Type=Grid emits array3D', /array3D\(/.test(gridBuf) && !/polarArray\(/.test(gridBuf));
+    const polarBuf = composeHelperInsert('', 'array3D', null, { arrayType: 'polar', count: 6 });
+    check('Type=Polar emits polarArray', /polarArray\([^)]*6/.test(polarBuf) && !/array3D\(/.test(polarBuf));
+    check('both Array types stay parseable', [gridBuf, polarBuf].every((b) => {
+      try { new Function(b); return true; } catch { return false; }
+    }));
+  }
+
+  // ── Draft is Polish now, and the rail reads Shapes → Model → Polish → Move ──
+  {
+    const polish = cad.find((s) => s.key === 'Features').items.map((i) => i.id);
+    check('Draft sits in Polish', polish.includes('addDraft'));
+    const move = cad.find((s) => s.key === 'Transforms').items.map((i) => i.id);
+    check('Move no longer carries Draft', !move.includes('addDraft'));
+  }
   check(
     'sweepPath is hidden by the railHidden flag, not by deletion',
     grouped.Features.find((i) => i.id === 'sweepPath').railHidden === true,

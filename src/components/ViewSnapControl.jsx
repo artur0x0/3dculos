@@ -33,7 +33,8 @@ const ViewSnapControl = ({ onSnap }) => {
     <div className="relative flex">
       {open && (
         <div
-          className="absolute right-full top-1/2 -translate-y-1/2 mr-2 flex gap-2
+          className="view-snap-popup absolute right-full top-1/2 -translate-y-1/2 mr-2.5
+            flex flex-wrap justify-end gap-2
             bg-white/60 backdrop-blur-sm p-2 rounded-lg shadow-lg"
           role="group"
           aria-label="Standard view snaps"
