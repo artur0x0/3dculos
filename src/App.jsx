@@ -3,6 +3,7 @@ import CodeEditor from './components/CodeEditor';
 import Viewport from './components/Viewport';
 import PromptInput from './components/PromptInput';
 import SplitDivider from './components/SplitDivider';
+import MobileStageToggle from './components/MobileStageToggle';
 import { saveAs } from 'file-saver';
 import QuoteModal from './components/QuoteModal';
 import OrderModal from './components/OrderModal';
@@ -52,6 +53,20 @@ const App = () => {
   /** Editor column width % (desktop) and editor height px (mobile, null = auto). */
   const [splitPct, setSplitPct] = useState(50);
   const [mobileEditorPxOverride, setMobileEditorPx] = useState(null);
+  /** Mobile CAD only: 'cad' (viewport+rails) vs 'script' (fullscreen editor). Session-sticky. */
+  const [mobileStage, setMobileStage] = useState(() => {
+    try {
+      const s = sessionStorage.getItem('3dculos.mobileStage');
+      return s === 'script' ? 'script' : 'cad';
+    } catch {
+      return 'cad';
+    }
+  });
+  const setMobileStageSticky = (stage) => {
+    const next = stage === 'script' ? 'script' : 'cad';
+    setMobileStage(next);
+    try { sessionStorage.setItem('3dculos.mobileStage', next); } catch { /* private mode */ }
+  };
   const [showQuoteModal, setShowQuoteModal] = useState(false);
   const [showOrderModal, setShowOrderModal] = useState(false);
   const [orderData, setOrderData] = useState(null);
@@ -1175,9 +1190,11 @@ const App = () => {
     );
   }
 
-  // Phone shell (puzzle + CAD): viewport on top, Monaco in a bottom budget.
-  // Keyboard open pins the shell to visualViewport (slice 05). CAD's AI row
-  // sits inside that same budget so the viewport stays the same size as puzzle.
+  // Phone shell:
+  //  - CAD (Slice Mobile A): dual stage — CAD = fullscreen viewport+rails,
+  //    Script = fullscreen editor+toolbar. No cramped Monaco strip.
+  //  - Game: still viewport-on-top + Monaco bottom budget (unchanged).
+  // Keyboard open pins the shell to visualViewport (slice 05).
   const keyboardOverlap = Math.max(0, vv.layoutHeight - vv.height - vv.offsetTop);
   const keyboardOpen = keyboardOverlap > 80;
   const mobileEditorPx = keyboardOpen
@@ -1201,6 +1218,11 @@ const App = () => {
           position: 'fixed',
         }
       : undefined;
+
+    // Stages apply to mobile CAD only. Game keeps the stacked split.
+    const useStages = appMode === 'cad';
+    const isCadStage = !useStages || mobileStage === 'cad';
+    const isScriptStage = useStages && mobileStage === 'script';
 
     const viewportEl = (
             <Viewport 
@@ -1240,23 +1262,7 @@ const App = () => {
             />
     );
 
-    return (
-        <div
-          ref={splitShellRef}
-          className={`flex flex-col bg-gray-900 overflow-hidden ${keyboardOpen ? '' : 'h-dvh'}`}
-          style={mobileShellStyle}
-        >
-          {/* Viewport TOP, Monaco BOTTOM — same stack as puzzle (slice 05). */}
-          <div className="flex-1 min-h-0 overflow-hidden">
-            {viewportEl}
-          </div>
-          <SplitDivider orientation="horizontal" onDrag={(x, y) => handleSplitDragY(y)} />
-          <div
-            className="flex-shrink-0 flex flex-col min-h-0"
-            style={{ height: mobileEditorPx }}
-          >
-            <div className="relative flex-1 min-h-0">
-              <div className="absolute inset-0">
+    const editorEl = (
                 <CodeEditor
                   key={appMode}
                   ref={codeEditorRef}
@@ -1279,10 +1285,9 @@ const App = () => {
                   gameBestTimeMs={gameBestTimeMs}
                   onCadToolbarHost={setCadToolbarHost}
                 />
-              </div>
-            </div>
-            {/* Hidden, not removed — see the desktop shell. */}
-            {appMode !== 'game' && (
+    );
+
+    const aiRow = appMode !== 'game' && (
               <div className="hidden" data-ai-prompt-row="hidden">
                 <PromptInput
                   onCodeGenerated={handleCodeGenerated}
@@ -1292,8 +1297,72 @@ const App = () => {
                   isMobile={isMobile}
                 />
               </div>
-            )}
-          </div>
+    );
+
+    return (
+        <div
+          ref={splitShellRef}
+          className={`relative flex flex-col bg-gray-900 overflow-hidden ${keyboardOpen ? '' : 'h-dvh'}`}
+          style={mobileShellStyle}
+          data-mobile-stage={useStages ? mobileStage : undefined}
+        >
+          {useStages && (
+            <div
+              className="shrink-0 flex items-center justify-end gap-2 px-2 py-1.5 border-b border-gray-700/50 bg-gray-900/95"
+              data-mobile-stage-chrome=""
+            >
+              <MobileStageToggle stage={mobileStage} onChange={setMobileStageSticky} />
+            </div>
+          )}
+
+          {useStages ? (
+            /* CAD dual-stage: both panes stay mounted (WebGL + Monaco + refs).
+               Off-stage pane is invisibly full-size so contexts survive. */
+            <div className="relative flex-1 min-h-0">
+              <div
+                className={`absolute inset-0 overflow-hidden ${
+                  isCadStage ? '' : 'invisible pointer-events-none'
+                }`}
+                data-stage-pane="cad"
+                aria-hidden={!isCadStage}
+              >
+                {viewportEl}
+              </div>
+              <div
+                className={`absolute inset-0 flex flex-col min-h-0 ${
+                  isScriptStage ? 'z-10' : 'invisible pointer-events-none'
+                }`}
+                data-stage-pane="script"
+                aria-hidden={!isScriptStage}
+              >
+                <div className="relative flex-1 min-h-0">
+                  <div className="absolute inset-0">
+                    {editorEl}
+                  </div>
+                </div>
+                {aiRow}
+              </div>
+            </div>
+          ) : (
+            /* Game (and any non-staged mobile): viewport TOP, Monaco BOTTOM. */
+            <>
+              <div className="flex-1 min-h-0 overflow-hidden">
+                {viewportEl}
+              </div>
+              <SplitDivider orientation="horizontal" onDrag={(x, y) => handleSplitDragY(y)} />
+              <div
+                className="flex-shrink-0 flex flex-col min-h-0"
+                style={{ height: mobileEditorPx }}
+              >
+                <div className="relative flex-1 min-h-0">
+                  <div className="absolute inset-0">
+                    {editorEl}
+                  </div>
+                </div>
+                {aiRow}
+              </div>
+            </>
+          )}
 
           {/* Login Modal */}
           {showLoginModal && (
