@@ -39,6 +39,7 @@
         "golden:empty-run-clears": "node scripts/golden/smoke_empty_run_clears.mjs",
         "golden:cad-palette": "node scripts/golden/smoke_cad_palette_overlays.mjs",
         "golden:cad-mobile-chrome": "node scripts/golden/smoke_cad_mobile_chrome.mjs",
+        "golden:mobile-a-stages": "node scripts/golden/smoke_mobile_a_cad_script_stages.mjs",
         "golden:fillet-kernel-spike-c": "node scripts/golden/smoke_fillet_kernel_spike_c.mjs",
         "golden:fillet-c2-rolling-ball": "node scripts/golden/smoke_fillet_c2_rolling_ball.mjs",
         "golden:fillet-c3-variable-sweep": "node scripts/golden/smoke_fillet_c3_variable_sweep.mjs",

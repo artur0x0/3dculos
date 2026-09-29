@@ -71,29 +71,48 @@ Desktop specifics:
 - Title chip shows the filename, same as mobile — no toolbar carries it now.
 - `PromptInput` is passed `isMobile={false}` explicitly (`src/App.jsx:1345`).
 
-### Mobile shell (`src/App.jsx:1090`+) — stacked, viewport on top
+### Mobile shell (`src/App.jsx` mobile branch) — CAD stages + game stack
+
+**CAD (Slice Mobile A):** dual stage, not a cramped split. Default = CAD stage.
+Toggle is session-sticky (`sessionStorage` key `3dculos.mobileStage`).
+
+```
+CAD stage                          Script stage
+┌─────────────────────────────┐   ┌─────────────────────────────┐
+│ top chrome: [CAD|Script]    │   │ top chrome: [CAD|Script]    │
+├─────────────────────────────┤   ├─────────────────────────────┤
+│ Viewport (fullscreen-ish)   │   │ mid-strip: Toolbar (portal) │
+│  rails + Contour/Fillet     │   │ Monaco (fullscreen-ish)     │
+│  title chip                 │   │ PromptInput (hidden)        │
+│  (editor mounted, invisible)│   │ (viewport mounted, invis.)  │
+└─────────────────────────────┘   └─────────────────────────────┘
+```
+
+**Game:** still the old stacked split (viewport on top, Monaco bottom budget +
+draggable seam). Stages do not apply in puzzle mode.
 
 ```
 ┌─────────────────────────────────┐
 │ Viewport (flex-1)               │  top-center: ViewportTitleChip
-│   left-2 bottom-4: helper rail  │  (filename, or puzzle name)
-│   right-2 bottom-4: cluster +   │  ← info chips move RIGHT here
-│                     info chips  │
+│   left-2 bottom-4: helper rail  │  (puzzle name)
+│   right-2 bottom-4: cluster     │
 ╞═════════════════════════════════╡  ← draggable seam
-│ mid-strip: [Toolbar strip]  [⌗] │  ← portal target
+│ mid-strip: [Toolbar strip]      │
 │ Monaco (16px font)              │  height = 32–38% of viewport
-│ PromptInput (hidden, mounted)   │  (36–42% when keyboard is open)
 └─────────────────────────────────┘
 ```
 
 Mobile specifics:
-- **Editor budget** is computed at `src/App.jsx:1086-1088` (`mobileEditorPx`) as
-  a clamped fraction of `visualViewport` height.
-- **Keyboard handling:** `keyboardOverlap` / `keyboardOpen`
-  (`src/App.jsx:1084-1085`). Closed → `h-dvh`. Open → the shell becomes
-  `position: fixed` pinned to `visualViewport` (`mobileShellStyle`,
-  `src/App.jsx:1094`). The comment there explains why: iOS refuses Monaco focus
-  inside a fixed+overflow shell.
+- **Stage toggle:** `MobileStageToggle.jsx`, mounted in `data-mobile-stage-chrome`
+  on the CAD phone shell. Shell exposes `data-mobile-stage="cad"|"script"`.
+- **Both panes stay mounted** across stages (WebGL + Monaco + editor refs /
+  portal host). Off-stage pane is `invisible pointer-events-none`.
+- **Editor budget** (`mobileEditorPx`) still applies to the **game** stack as a
+  clamped fraction of `visualViewport` height.
+- **Keyboard handling:** `keyboardOverlap` / `keyboardOpen`. Closed → `h-dvh`.
+  Open → the shell becomes `position: fixed` pinned to `visualViewport`
+  (`mobileShellStyle`). iOS refuses Monaco focus inside a fixed+overflow shell
+  until the keyboard is already open.
 - **The Toolbar is portaled.** `CodeEditor` renders an empty host div
   (`src/components/CodeEditor.jsx:439`, `data-cad-toolbar-host`) and hands the
   node up via `onCadToolbarHost` → `cadToolbarHost` state (`src/App.jsx:75`) →
