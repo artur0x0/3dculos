@@ -219,9 +219,9 @@ check('declaredNames export', declaredNames('let box1 = 1;').has('box1'));
   );
   const grouped = itemsByGroup();
   check(
-    'Prim contents',
+    'Shapes contents — Round box sits next to Cube, the shape it varies',
     grouped.Primitives.map((i) => i.id).join(',')
-      === 'cube,cylinder,sphere,tube,hexPrism,roundedBox',
+      === 'cube,roundedBox,cylinder,sphere,tube,hexPrism',
   );
   check(
     'Advanced order Profile Workplane Extrude Revolve Sweep Loft',
@@ -267,6 +267,7 @@ check('declaredNames export', declaredNames('let box1 = 1;').has('box1'));
   check('cbore icon is Cylinder', /cboreHole:\s*Cylinder/.test(rail));
   check('Chamfer icon is TriangleRight', /chamferEdges:\s*TriangleRight/.test(rail));
   check('Sweep icon is Route', /makeSweep:\s*Route/.test(rail));
+  check('Tube icon is Torus', /tube:\s*Torus/.test(rail) && !/\bDonut\b/.test(rail));
   check('no glyph is left orphaned by the icon swaps', !/\bSquareDashed\b|\bSpline\b|\bFrame\b/.test(rail));
   check('rail captions Shapes / Polish / Move', /Primitives:\s*'Shapes'/.test(rail) && /Features:\s*'Polish'/.test(rail) && /Transforms:\s*'Move'/.test(rail));
 }
