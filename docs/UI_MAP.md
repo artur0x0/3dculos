@@ -257,6 +257,14 @@ Import `src/utils/importModel.js` (+ `POST /api/convert/step`); export
 
 - **Tailwind only**, no CSS modules. Overlay idiom:
   `absolute … bg-white/60 backdrop-blur-sm rounded-lg shadow-lg z-10`.
+- **Inserting a solid APPENDS, it never replaces.** Every build that creates a
+  new solid — the six Shapes and the one-shot Extrude / Revolve / Loft — goes
+  through `emitPartPlace(names, expr, partDeclared, true)`, which emits
+  `part = part.add(expr)` when a part already exists and `let part = expr` when
+  it does not. Emitting a bare `part = <newSolid>` strands whatever was there as
+  dead code; that was a real bug in all six Shapes until it was fixed. Mutating
+  an existing body (holes, shell, transforms) is different — that keeps
+  `syncPartLines`, which points `part` at the body you edited.
 - **Feature popups all use `src/components/controls/popupUI.jsx`** — one type
   scale (`POPUP_TEXT`), one set of fields, accents per surface (`cyan` contour,
   `amber` fillet, `slate` helper sheets). **Every number renders a slider AND a
@@ -321,6 +329,7 @@ Import `src/utils/importModel.js` (+ `POST /api/convert/step`); export
   or tap drill, and c-bore / c-sink are the Near end and Far end dropdowns.
   `polarArray` stays the same way: one Array button whose Type param is Grid or
   Polar, and the `array3D` build delegates to `polarArray`'s for Polar.
+  `holePattern` likewise: Hole's "n×m pattern" tick emits `holePattern()`.
   Hide a tool this way rather than deleting an item other code builds with.
 - **Scrolling rails** carry `rail-scroll` alongside `overflow-y-auto`
   (`src/index.css`, bottom). Desktop Chrome's default gutter is square and cuts
