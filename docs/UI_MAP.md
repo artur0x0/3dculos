@@ -73,19 +73,20 @@ Desktop specifics:
 
 ### Mobile shell (`src/App.jsx` mobile branch) — CAD stages + game stack
 
-**CAD (Slice Mobile A):** dual stage, not a cramped split. Default = CAD stage.
-Toggle is session-sticky (`sessionStorage` key `3dculos.mobileStage`).
+**CAD (Slice Mobile A + B):** dual stage, not a cramped split. Default = CAD stage.
+Toggle is session-sticky (`sessionStorage` key `3dculos.mobileStage`). Slice B
+replaced the top text chrome with a bottom home-indicator pill + Script feature strip.
 
 ```
 CAD stage                          Script stage
 ┌─────────────────────────────┐   ┌─────────────────────────────┐
-│ top chrome: [CAD|Script]    │   │ top chrome: [CAD|Script]    │
-├─────────────────────────────┤   ├─────────────────────────────┤
-│ Viewport (fullscreen-ish)   │   │ mid-strip: Toolbar (portal) │
-│  rails + Contour/Fillet     │   │ Monaco (fullscreen-ish)     │
-│  title chip                 │   │ PromptInput (hidden)        │
-│  (editor mounted, invisible)│   │ (viewport mounted, invis.)  │
-└─────────────────────────────┘   └─────────────────────────────┘
+│ Viewport (fullscreen-ish)   │   │ feature strip (chips)       │
+│  rails + Contour/Fillet     │   │ mid-strip: Toolbar (portal) │
+│  title chip                 │   │ Monaco (fullscreen-ish)     │
+│  (editor mounted, invisible)│   │ PromptInput (hidden)        │
+│         ( ●  ○ ) pill       │   │ (viewport mounted, invis.)  │
+└─────────────────────────────┘   │         ( ○  ● ) pill       │
+                                  └─────────────────────────────┘
 ```
 
 **Game:** still the old stacked split (viewport on top, Monaco bottom budget +
@@ -103,8 +104,16 @@ draggable seam). Stages do not apply in puzzle mode.
 ```
 
 Mobile specifics:
-- **Stage toggle:** `MobileStageToggle.jsx`, mounted in `data-mobile-stage-chrome`
-  on the CAD phone shell. Shell exposes `data-mobile-stage="cad"|"script"`.
+- **Stage toggle (Slice Mobile B):** `MobileStageToggle.jsx` is a bottom-centered
+  iPhone Home Screen–style glass pill (`data-mobile-stage-home-indicator`,
+  `data-home-indicator-pill`) with two dots (left = CAD, right = Script).
+  Tap left/right half switches stage. Session-sticky via `3dculos.mobileStage`.
+  Top CAD|Script text chrome is gone. Inert `data-ai-prompt-hook` marks a
+  future AI-on-tap site (not wired). Contour/Fillet chips use `bottom-14` on
+  mobile so they clear the pill. Shell exposes `data-mobile-stage="cad"|"script"`.
+- **Feature strip (Slice Mobile B):** `FeatureStrip.jsx` mounts at the top of
+  the Script stage only. Chips come from `parseFeatureMarkers` over Contour /
+  Extrude / Fillet / … begin/end comments; tap → `CodeEditor.revealRange`.
 - **Both panes stay mounted** across stages (WebGL + Monaco + editor refs /
   portal host). Off-stage pane is `invisible pointer-events-none`.
 - **Editor budget** (`mobileEditorPx`) still applies to the **game** stack as a

@@ -170,10 +170,11 @@ const ContourModeChip = ({
           // Bottom-CENTRE of the viewport, between the two rails, so the chip
         // stops covering the right-hand cluster. 10px off the bottom edge like
         // the rest of the viewport chrome.
+        // Mobile B: raise above the home-indicator stage pill (~bottom-12 + safe area).
         compact
             ? ((isLoft || isSweep)
-              ? 'bottom-2.5 left-1/2 -translate-x-1/2 max-w-[min(18rem,calc(100%-9rem))]'
-              : 'bottom-2.5 left-1/2 -translate-x-1/2 max-w-[min(16rem,calc(100%-9rem))]')
+              ? 'bottom-14 left-1/2 -translate-x-1/2 max-w-[min(18rem,calc(100%-9rem))]'
+              : 'bottom-14 left-1/2 -translate-x-1/2 max-w-[min(16rem,calc(100%-9rem))]')
             : ((isLoft || isSweep)
               ? 'bottom-2.5 left-1/2 -translate-x-1/2 max-w-[18rem]'
               : 'bottom-2.5 left-1/2 -translate-x-1/2 max-w-[16rem]')

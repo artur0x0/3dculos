@@ -297,6 +297,36 @@ const CodeEditor = forwardRef(({
       onCodeChange?.(content, message);
       return true;
     },
+
+    /**
+     * Slice Mobile B — jump caret + selection to a marked feature range
+     * (offsets into the full buffer). Used by the Script-stage feature strip.
+     */
+    revealRange: (startOffset, endOffset) => {
+      const ed = editorRef.current;
+      if (!ed) return false;
+      const model = ed.getModel();
+      if (!model) return false;
+      const len = model.getValueLength();
+      const a = Math.max(0, Math.min(len, Number(startOffset) || 0));
+      const b = Math.max(a, Math.min(len, Number(endOffset) || a));
+      try {
+        const start = model.getPositionAt(a);
+        const end = model.getPositionAt(b);
+        const range = {
+          startLineNumber: start.lineNumber,
+          startColumn: start.column,
+          endLineNumber: end.lineNumber,
+          endColumn: end.column,
+        };
+        ed.setSelection(range);
+        ed.revealRangeInCenter(range);
+        ed.focus();
+        return true;
+      } catch {
+        return false;
+      }
+    },
   }));
 
   const handleEditorChange = (newValue) => {
