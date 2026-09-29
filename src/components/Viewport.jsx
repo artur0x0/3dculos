@@ -16,7 +16,6 @@ import {
   PlaneGeometry,
   ExtrudeGeometry,
   Shape,
-  DoubleSide,
   Quaternion,
   BufferGeometry,
   BufferAttribute,
@@ -73,6 +72,8 @@ import {
   buildRevolveSolidPreview,
   buildSweepSolidPreview,
   activeContourFace,
+  contourWorkplaneFace,
+  contourWorkplane,
   applyContourPlaneEdit,
   axisPresetFrame,
   contourHostCenter,
@@ -157,6 +158,15 @@ const EDGE_HOVER_CORE_PX = 2;
 const EDGE_HOVER_HALO_PX = 6;
 /** Selection core opacity. Was 1 (fully opaque orange). */
 const EDGE_SELECT_OPACITY = 0.72;
+
+/** Polyline draft handles: idle cyan, amber under the cursor, orange in hand. */
+const POLYLINE_POINT_COLOR = 0x22d3ee;
+const POLYLINE_POINT_HOVER_COLOR = 0xfbbf24;
+const POLYLINE_POINT_DRAG_COLOR = 0xf97316;
+/** Handle scale targets; the render loop eases toward these (never snaps). */
+const POLYLINE_POINT_SCALE = 1;
+const POLYLINE_POINT_HOVER_SCALE = 1.5;
+const POLYLINE_POINT_DRAG_SCALE = 1.9;
 
 /** Screen-facing f{id} / e{id} chip. depthTest off so it stays readable on the part. */
 function makeFilletIdSprite(text, worldH) {
@@ -401,6 +411,14 @@ const Viewport = forwardRef(({
   const savedContoursRef = useRef([]);
   const savedContourHostPlaneRef = useRef(null);
   const polylineDraftRef = useRef(null);
+  /** Scratch for projecting handles to screen space (no per-frame alloc). */
+  const polylineProjectScratch = useRef(new Vector3());
+  /** Index of the draft point under the cursor (-1 = none). */
+  const polylinePointHoverRef = useRef(-1);
+  /** Live right-drag: { index, plane, moved } while a point is being moved. */
+  const polylinePointDragRef = useRef(null);
+  /** TrackballControls noRotate/noPan saved while a point handle is grabbed. */
+  const polylineControlsLockRef = useRef(null);
   const extrudePreviewRef = useRef(null);
   const revolvePreviewRef = useRef(null);
   const loftPreviewRef = useRef(null);
@@ -469,6 +487,10 @@ const Viewport = forwardRef(({
     showPlane: true
   });
   const [modelBounds, setModelBounds] = useState(null);
+  // Mouse handlers must resolve the workplane against live bounds without
+  // rebinding listeners on every recompute.
+  const modelBoundsRef = useRef(null);
+  modelBoundsRef.current = modelBounds;
   const [cachedMeshData, setCachedMeshData] = useState(null);
   /** Always-current mesh for failed Auto-Run restore (state alone is stale in closures). */
   const cachedMeshDataRef = useRef(null);
@@ -807,10 +829,24 @@ const Viewport = forwardRef(({
     workplaneOverlayRef.current = null;
   }, []);
 
+  /** Restore orbit/pan after a point grab (hover or drag) releases. */
+  const unlockOrbitForPointDrag = useCallback(() => {
+    const saved = polylineControlsLockRef.current;
+    const controls = controlsRef.current;
+    if (saved && controls) {
+      controls.noRotate = saved.noRotate;
+      controls.noPan = saved.noPan;
+    }
+    polylineControlsLockRef.current = null;
+  }, []);
+
   const clearPolylineDraft = useCallback(() => {
     disposeEdgeOverlayObject(sceneRef.current, polylineDraftRef.current);
     polylineDraftRef.current = null;
-  }, []);
+    polylinePointHoverRef.current = -1;
+    polylinePointDragRef.current = null;
+    unlockOrbitForPointDrag();
+  }, [unlockOrbitForPointDrag]);
 
   const clearExtrudePreview = useCallback(() => {
     disposeEdgeOverlayObject(sceneRef.current, extrudePreviewRef.current);
@@ -1241,7 +1277,56 @@ const Viewport = forwardRef(({
     constructionPlaneRef.current = group;
   }, [clearConstructionPlanes]);
 
-  const paintPolylineDraft = useCallback((plane, points) => {
+  /**
+   * Per-frame handle animation: ease every handle toward its state's scale, and
+   * breathe the one under the cursor so it reads as grabbable rather than drawn.
+   * Scale (not colour) is animated here — colour is a state change, not motion.
+   */
+  const animatePolylineHandles = useCallback(() => {
+    const handles = polylineDraftRef.current?.userData?.handles;
+    if (!handles?.length) return;
+    const dragIndex = polylinePointDragRef.current?.index ?? -1;
+    const hoverIndex = polylinePointHoverRef.current;
+    const pulse = 1 + Math.sin(performance.now() / 160) * 0.08;
+    for (let i = 0; i < handles.length; i++) {
+      let target = POLYLINE_POINT_SCALE;
+      if (i === dragIndex) target = POLYLINE_POINT_DRAG_SCALE;
+      else if (i === hoverIndex) target = POLYLINE_POINT_HOVER_SCALE * pulse;
+      const cur = handles[i].scale.x;
+      const next = Math.abs(target - cur) < 0.002 ? target : cur + (target - cur) * 0.25;
+      handles[i].scale.setScalar(next);
+    }
+  }, []);
+
+  /** Recolor handles for the current hover / drag state (scale is animated). */
+  const paintPolylineHandleStates = useCallback(() => {
+    const handles = polylineDraftRef.current?.userData?.handles;
+    if (!handles) return;
+    const dragIndex = polylinePointDragRef.current?.index ?? -1;
+    const hoverIndex = polylinePointHoverRef.current;
+    for (let i = 0; i < handles.length; i++) {
+      const mat = handles[i].material;
+      if (!mat) continue;
+      if (i === dragIndex) mat.color.setHex(POLYLINE_POINT_DRAG_COLOR);
+      else if (i === hoverIndex) mat.color.setHex(POLYLINE_POINT_HOVER_COLOR);
+      else mat.color.setHex(POLYLINE_POINT_COLOR);
+    }
+  }, []);
+
+  /**
+   * Draft polyline: one grab handle per tapped point + the connecting wire.
+   *
+   * Points are kept as individual meshes with their own material and a
+   * `pointIndex`, because they are interactive: hover grows them, right-drag
+   * moves them (see beginPolylinePointDrag). Handle geometry is rebuilt only
+   * when the point list changes — a live drag mutates positions in place so
+   * the wire follows the cursor at frame rate instead of through React.
+   */
+  const paintPolylineDraft = useCallback((plane, points, { wire = true } = {}) => {
+    // A repaint (point added, undone, plane re-picked) rebuilds the handles;
+    // carry the hover across it so the grab target does not flicker back to
+    // idle under a stationary cursor.
+    const keepHover = polylinePointHoverRef.current;
     clearPolylineDraft();
     if (!plane || !points?.length || !sceneRef.current) return;
     const group = new Group();
@@ -1251,21 +1336,27 @@ const Viewport = forwardRef(({
       plane.center[1] + u * plane.x[1] + v * plane.y[1],
       plane.center[2] + u * plane.x[2] + v * plane.y[2],
     ]);
-    const ptMat = new MeshBasicMaterial({
-      color: 0x22d3ee,
-      depthTest: false,
-      depthWrite: false,
-      transparent: true,
-      opacity: 0.95,
-    });
-    for (const p of world) {
-      const s = new ThreeMesh(new SphereGeometry(0.45, 8, 8), ptMat);
+    const handles = [];
+    for (let i = 0; i < world.length; i++) {
+      const p = world[i];
+      // Per-point material: hover / drag tint one handle, not the whole draft.
+      const mat = new MeshBasicMaterial({
+        color: POLYLINE_POINT_COLOR,
+        depthTest: false,
+        depthWrite: false,
+        transparent: true,
+        opacity: 0.95,
+      });
+      const s = new ThreeMesh(new SphereGeometry(0.45, 12, 12), mat);
       s.position.set(p[0], p[1], p[2]);
       s.renderOrder = 16;
       s.frustumCulled = false;
+      s.userData.pointIndex = i;
+      handles.push(s);
       group.add(s);
     }
-    if (world.length >= 2) {
+    let line = null;
+    if (wire && world.length >= 2) {
       const pos = new Float32Array(world.length * 3);
       for (let i = 0; i < world.length; i++) {
         pos[i * 3] = world[i][0];
@@ -1274,8 +1365,8 @@ const Viewport = forwardRef(({
       }
       const g = new BufferGeometry();
       g.setAttribute('position', new BufferAttribute(pos, 3));
-      const line = new Line(g, new LineBasicMaterial({
-        color: 0x22d3ee,
+      line = new Line(g, new LineBasicMaterial({
+        color: POLYLINE_POINT_COLOR,
         depthTest: false,
         depthWrite: false,
         transparent: true,
@@ -1285,9 +1376,81 @@ const Viewport = forwardRef(({
       line.frustumCulled = false;
       group.add(line);
     }
+    group.userData.handles = handles;
+    group.userData.line = line;
+    group.userData.plane = plane;
     sceneRef.current.add(group);
     polylineDraftRef.current = group;
-  }, [clearPolylineDraft]);
+    polylinePointHoverRef.current = keepHover < handles.length ? keepHover : -1;
+    paintPolylineHandleStates();
+  }, [clearPolylineDraft, paintPolylineHandleStates]);
+
+  /** Move one handle (and its wire vertex) without rebuilding the draft. */
+  const movePolylineHandle = useCallback((index, worldPoint) => {
+    const group = polylineDraftRef.current;
+    const handle = group?.userData?.handles?.[index];
+    if (!handle) return;
+    handle.position.set(worldPoint[0], worldPoint[1], worldPoint[2]);
+    const line = group.userData.line;
+    const attr = line?.geometry?.getAttribute('position');
+    if (attr) {
+      attr.setXYZ(index, worldPoint[0], worldPoint[1], worldPoint[2]);
+      attr.needsUpdate = true;
+      line.geometry.computeBoundingSphere?.();
+    }
+  }, []);
+
+  /**
+   * Nearest draft point within the edge-pick slop, in screen space so the
+   * grab target stays finger-sized however far the camera is.
+   * @returns {number} point index, or -1
+   */
+  const pickPolylinePointAtClient = useCallback((clientX, clientY) => {
+    const group = polylineDraftRef.current;
+    const handles = group?.userData?.handles;
+    const camera = cameraRef.current;
+    const canvas = canvasRef.current;
+    if (!handles?.length || !camera || !canvas) return -1;
+    const rect = canvas.getBoundingClientRect();
+    const px = clientX - rect.left;
+    const py = clientY - rect.top;
+    const slop = resolveEdgePickSlopPx();
+    let best = -1;
+    let bestD = slop * slop;
+    for (let i = 0; i < handles.length; i++) {
+      const v = polylineProjectScratch.current.copy(handles[i].position).project(camera);
+      if (v.z > 1) continue; // behind the camera
+      const sx = (v.x * 0.5 + 0.5) * rect.width;
+      const sy = (-v.y * 0.5 + 0.5) * rect.height;
+      const d = (sx - px) ** 2 + (sy - py) ** 2;
+      if (d <= bestD) {
+        bestD = d;
+        best = i;
+      }
+    }
+    return best;
+  }, []);
+
+  /**
+   * Hovering a handle hands the right button to the point, not the camera:
+   * TrackballControls pans on right-drag, which would fight the move.
+   */
+  const setPolylinePointHover = useCallback((index) => {
+    if (polylinePointHoverRef.current === index) return;
+    polylinePointHoverRef.current = index;
+    const controls = controlsRef.current;
+    if (index >= 0 && controls && !polylineControlsLockRef.current) {
+      polylineControlsLockRef.current = { noRotate: controls.noRotate, noPan: controls.noPan };
+      controls.noRotate = true;
+      controls.noPan = true;
+    } else if (index < 0 && !polylinePointDragRef.current) {
+      unlockOrbitForPointDrag();
+    }
+    if (canvasRef.current) {
+      canvasRef.current.style.cursor = index >= 0 ? 'grab' : '';
+    }
+    paintPolylineHandleStates();
+  }, [paintPolylineHandleStates, unlockOrbitForPointDrag]);
 
   const clearFilletBlendPreview = useCallback(() => {
     disposeEdgeOverlayObject(sceneRef.current, filletBlendPreviewRef.current);
@@ -1745,21 +1908,8 @@ const Viewport = forwardRef(({
     }
     // No face pick: snap the default +Z plane to the part top so the live
     // solid sits on the workplane (same intent as facesByNormal on Confirm).
-    let planeFace = contourMode.planeFace;
-    if (!planeFace && modelBounds?.max && Number.isFinite(Number(modelBounds.max[2]))) {
-      planeFace = {
-        type: 'planar',
-        center: [
-          Number(modelBounds.center?.[0]) || 0,
-          Number(modelBounds.center?.[1]) || 0,
-          Number(modelBounds.max[2]),
-        ],
-        normal: [0, 0, 1],
-        area: Math.max(1, (Number(modelBounds.size?.[0]) || 20) * (Number(modelBounds.size?.[1]) || 20)),
-        triangleCount: 2,
-        selectionMode: 'coplanar',
-      };
-    }
+    // Same resolver the polyline hit-test uses — see contourWorkplaneFace.
+    const planeFace = contourWorkplaneFace(contourMode, modelBounds);
     const plane = planeFromContourFace(planeFace);
     if (showPlanes) paintWorkplaneOverlay(plane, planeFace);
     else clearWorkplaneOverlay();
@@ -1780,7 +1930,14 @@ const Viewport = forwardRef(({
       }
       return;
     }
-    clearPolylineDraft();
+    // A closed polyline draws its own outline, but the grab handles must stay
+    // on the points — that is the whole window in which the user wants to nudge
+    // them. Handles only, no duplicate wire.
+    if (contourMode.tool === 'polyline' && Array.isArray(pts) && pts.length) {
+      paintPolylineDraft(plane, pts, { wire: false });
+    } else {
+      clearPolylineDraft();
+    }
     if (isLoftEntry(contourMode.entry)) {
       clearXsPreview();
       clearExtrudePreview();
@@ -2376,12 +2533,91 @@ const Viewport = forwardRef(({
   const handleMouseDown = useCallback((event) => {
     mouseDownPosRef.current = { x: event.clientX, y: event.clientY };
     isDraggingRef.current = false;
+
+    // Right button on a placed point picks it up (left button keeps adding).
+    if (event.button !== 2 || contourModeRef.current?.tool !== 'polyline') return;
+    if (pickModeRef.current === 'edge') return;
+    const index = pickPolylinePointAtClient(event.clientX, event.clientY);
+    if (index < 0) return;
+    event.preventDefault();
+    polylinePointDragRef.current = {
+      index,
+      plane: contourWorkplane(contourModeRef.current, modelBoundsRef.current),
+      moved: false,
+    };
+    setPolylinePointHover(index);
+    if (canvasRef.current) canvasRef.current.style.cursor = 'grabbing';
+    paintPolylineHandleStates();
+  }, [pickPolylinePointAtClient, setPolylinePointHover, paintPolylineHandleStates]);
+
+  /**
+   * Project the cursor onto the draft's workplane.
+   * @returns {{ uv: number[], world: number[] }|null}
+   */
+  const polylinePlanePointAtClient = useCallback((clientX, clientY, plane) => {
+    const canvas = canvasRef.current;
+    const camera = cameraRef.current;
+    if (!canvas || !camera || !plane) return null;
+    const rect = canvas.getBoundingClientRect();
+    mouseRef.current.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+    mouseRef.current.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+    raycasterRef.current.setFromCamera(mouseRef.current, camera);
+    const o = raycasterRef.current.ray.origin;
+    const d = raycasterRef.current.ray.direction;
+    const world = intersectRayPlane([o.x, o.y, o.z], [d.x, d.y, d.z], plane);
+    if (!world) return null;
+    let uv;
+    try {
+      uv = worldToPlaneUV(world, plane);
+    } catch {
+      return null;
+    }
+    if (!uv.every(Number.isFinite)) return null;
+    return { uv, world };
   }, []);
+
+  /** Write the dragged point back into mode state (once, on release). */
+  const commitPolylinePointDrag = useCallback((uv, index) => {
+    setContourMode((prev) => {
+      if (!prev || prev.tool !== 'polyline') return prev;
+      const points = (prev.params?.points || []).map(
+        (pt, i) => (i === index ? [uv[0], uv[1]] : pt),
+      );
+      const next = { ...prev, params: { ...prev.params, points } };
+      return isLoftEntry(prev.entry) ? writeLoftSelected(next, { params: next.params }) : next;
+    });
+  }, []);
+
+  const endPolylinePointDrag = useCallback((event) => {
+    const drag = polylinePointDragRef.current;
+    if (!drag) return;
+    polylinePointDragRef.current = null;
+    if (canvasRef.current) canvasRef.current.style.cursor = '';
+    if (drag.moved && drag.lastUv) commitPolylinePointDrag(drag.lastUv, drag.index);
+    // A release outside the canvas has no meaningful hover.
+    const stillOver = event
+      && pickPolylinePointAtClient(event.clientX, event.clientY) === drag.index;
+    setPolylinePointHover(stillOver ? drag.index : -1);
+    paintPolylineHandleStates();
+  }, [commitPolylinePointDrag, pickPolylinePointAtClient, setPolylinePointHover,
+    paintPolylineHandleStates]);
 
   /**
    * Handle mouse move - detect if dragging
    */
   const handleMouseMove = useCallback((event) => {
+    // Live point drag owns the pointer: move the handle, skip camera/pick work.
+    const drag = polylinePointDragRef.current;
+    if (drag) {
+      const hit = polylinePlanePointAtClient(event.clientX, event.clientY, drag.plane);
+      if (hit) {
+        drag.moved = true;
+        drag.lastUv = hit.uv;
+        movePolylineHandle(drag.index, hit.world);
+      }
+      return;
+    }
+
     if (mouseDownPosRef.current) {
       const dx = event.clientX - mouseDownPosRef.current.x;
       const dy = event.clientY - mouseDownPosRef.current.y;
@@ -2408,12 +2644,28 @@ const Viewport = forwardRef(({
     } else if (pickModeRef.current !== 'edge') {
       clearEdgeHover();
     }
-  }, [selectedEdges, highlightHoverEdge, clearEdgeHover, pickEdgeAtClient]);
+
+    // Teach the grab: handles grow and warm as the cursor reaches them.
+    if (contourModeRef.current?.tool === 'polyline' && pickModeRef.current !== 'edge') {
+      setPolylinePointHover(pickPolylinePointAtClient(event.clientX, event.clientY));
+    } else if (polylinePointHoverRef.current !== -1) {
+      setPolylinePointHover(-1);
+    }
+  }, [selectedEdges, highlightHoverEdge, clearEdgeHover, pickEdgeAtClient,
+    polylinePlanePointAtClient, movePolylineHandle, pickPolylinePointAtClient,
+    setPolylinePointHover]);
 
   /**
    * Handle mouse up - process click only if not dragging
    */
   const handleMouseUp = useCallback((event) => {
+    if (polylinePointDragRef.current) {
+      endPolylinePointDrag(event);
+      return;
+    }
+    // Only the left button places points / picks faces; the right button is
+    // the point-move gesture and must never drop a stray point on release.
+    if (event.button !== 0) return;
     // If user was dragging, don't process as a click
     if (isDraggingRef.current) {
       isDraggingRef.current = false;
@@ -2439,7 +2691,15 @@ const Viewport = forwardRef(({
       }
       clickCountRef.current = 0;
       pendingClickDataRef.current = null;
-      const plane = planeFromContourFace(contourModeRef.current.planeFace);
+      // MUST match the painted overlay (contourWorkplaneFace): resolving a
+      // different fallback here is what put tapped points off-cursor.
+      // Tapping a handle almost always means "grab this", not "stack a second
+      // point on top of it" — say so instead of silently doing the wrong thing.
+      if (pickPolylinePointAtClient(event.clientX, event.clientY) >= 0) {
+        showContourToast('Right-drag this point to move it — tap elsewhere to add one.');
+        return;
+      }
+      const plane = contourWorkplane(contourModeRef.current, modelBoundsRef.current);
       raycasterRef.current.setFromCamera(mouseRef.current, cameraRef.current);
       const origin = raycasterRef.current.ray.origin;
       const dir = raycasterRef.current.ray.direction;
@@ -2607,7 +2867,8 @@ const Viewport = forwardRef(({
       processClick();
     }, MULTI_CLICK_DELAY);
     
-  }, [onFaceSelected, measurementEnabled, clearHighlight, clearEdgeHover, pickEdgeAtClient]);
+  }, [onFaceSelected, measurementEnabled, clearHighlight, clearEdgeHover, pickEdgeAtClient,
+    endPolylinePointDrag, pickPolylinePointAtClient]);
 
 
   /**
@@ -2734,16 +2995,29 @@ const Viewport = forwardRef(({
     const canvas = canvasRef.current;
     if (!canvas) return;
     
+    // Right-drag must not raise the browser menu over the sketch, and a drag
+    // that ends off-canvas still has to release (window-level mouseup).
+    const onContextMenu = (event) => {
+      if (contourModeRef.current?.tool === 'polyline') event.preventDefault();
+    };
+    const onWindowMouseUp = (event) => {
+      if (polylinePointDragRef.current) endPolylinePointDrag(event);
+    };
+
     canvas.addEventListener('mousedown', handleMouseDown);
     canvas.addEventListener('mousemove', handleMouseMove);
     canvas.addEventListener('mouseup', handleMouseUp);
-    
+    canvas.addEventListener('contextmenu', onContextMenu);
+    window.addEventListener('mouseup', onWindowMouseUp);
+
     return () => {
       canvas.removeEventListener('mousedown', handleMouseDown);
       canvas.removeEventListener('mousemove', handleMouseMove);
       canvas.removeEventListener('mouseup', handleMouseUp);
+      canvas.removeEventListener('contextmenu', onContextMenu);
+      window.removeEventListener('mouseup', onWindowMouseUp);
     };
-  }, [handleMouseDown, handleMouseMove, handleMouseUp]);
+  }, [handleMouseDown, handleMouseMove, handleMouseUp, endPolylinePointDrag]);
 
   // Click / toast timer cleanup effect
   useEffect(() => {
@@ -3021,6 +3295,8 @@ const Viewport = forwardRef(({
         if (controlsRef.current) {
           controlsRef.current.update();
         }
+
+        animatePolylineHandles();
         
         if (rendererRef.current && sceneRef.current && cameraRef.current) {
           try {

@@ -66,7 +66,7 @@ export const CONTOUR_TOOLS = [
   { id: 'circle', label: 'Circle', title: 'Circle profile on the workplane' },
   { id: 'rectangle', label: 'Rect', title: 'Rectangle profile on the workplane' },
   { id: 'polygon', label: 'Polygon', title: 'Regular polygon profile on the workplane' },
-  { id: 'polyline', label: 'Polyline', title: 'Tap points on the workplane (closed on Confirm)' },
+  { id: 'polyline', label: 'Polyline', title: 'Tap points on the workplane; right-drag a point to move it (closed on Confirm)' },
 ];
 
 export const CONTOUR_TOOL_IDS = CONTOUR_TOOLS.map((t) => t.id);
@@ -710,12 +710,36 @@ export function defaultContourPlaneFace(center) {
 }
 
 /**
+ * The workplane the user is actually looking at: an edited / picked frame
+ * wins; otherwise the default view-aligned +Z plane snapped to the top of the
+ * part (not a tilted host face).
+ *
+ * ONE resolver for the overlay paint, the polyline hit-test and Confirm. When
+ * the hit-test resolved its own fallback, a part sitting above z=0 put tapped
+ * points on the z=0 plane while the overlay was drawn at the part top, so
+ * every tapped point landed off-cursor by that parallax.
+ */
+export function contourWorkplaneFace(state, bounds) {
+  if (state?.planeFace) return state.planeFace;
+  const face = defaultContourPlaneFace(contourHostCenter(bounds));
+  // Size the overlay quad to the part when we know it (cosmetic only).
+  const w = Number(bounds?.size?.[0]);
+  const d = Number(bounds?.size?.[1]);
+  if (w > 0 && d > 0) face.area = Math.max(1, w * d);
+  return face;
+}
+
+/** contourWorkplaneFace as a plane frame — what rays are intersected against. */
+export function contourWorkplane(state, bounds) {
+  return planeFromContourFace(contourWorkplaneFace(state, bounds));
+}
+
+/**
  * Face Confirm should use. An edited frame wins; otherwise the default
  * view-aligned +Z plane (not a tilted host face).
  */
 export function activeContourFace(state, bounds) {
-  if (state?.planeFace) return state.planeFace;
-  return defaultContourPlaneFace(contourHostCenter(bounds));
+  return contourWorkplaneFace(state, bounds);
 }
 
 /**
