@@ -1,7 +1,7 @@
 import React, { useRef } from 'react';
 import {
   FolderOpen, Save, Download, Undo, Redo,
-  Truck, Upload, User, ArrowLeft, Play, BookOpen, Puzzle, List
+  Truck, Upload, User, ArrowLeft, Play, BookOpen, Puzzle, List, SquareDashedBottomCode
 } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import { formatGameTime } from '../utils/gamePuzzle';
@@ -36,6 +36,8 @@ const Toolbar = ({
   onRun,
   /** CAD strip Run — executes the live editor buffer (game uses onRun). */
   onRunScript,
+  /** CAD strip Select all — drives the editor through App's ref. */
+  onSelectAll,
   onHint,
   onPickPuzzle,
   gameElapsedMs = 0,
@@ -242,6 +244,19 @@ const Toolbar = ({
           ) : (
             <Play size={icon} />
           )}
+        </button>
+        {/* Select all rides in Run's section, at Run's icon size — it is an
+            editor action, not a file/model one, and it used to sit alone at the
+            far end of the strip at a smaller 16px. */}
+        <button
+          type="button"
+          onClick={onSelectAll}
+          className={`${btn} ${blue}`}
+          title="Select all text in the editor"
+          aria-label="Select all text in the editor"
+          data-cad-select-all=""
+        >
+          <SquareDashedBottomCode size={icon} />
         </button>
         <div className={divider} />
 

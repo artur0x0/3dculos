@@ -323,6 +323,8 @@ const Viewport = forwardRef(({
   onStartGame,
   onExitGame,
   onRun,
+  /** CAD strip Select all — App owns the editor ref, so it passes the action. */
+  onSelectAll = null,
   onHint,
   onPickPuzzle,
   gameElapsedMs = 0,
@@ -3930,6 +3932,7 @@ const Viewport = forwardRef(({
           onExitGame={onExitGame}
           onRun={onRun}
           onRunScript={runCadScript}
+          onSelectAll={onSelectAll}
           onHint={onHint}
           onPickPuzzle={onPickPuzzle}
           gameElapsedMs={gameElapsedMs}
