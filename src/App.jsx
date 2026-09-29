@@ -8,6 +8,7 @@ import FeatureStrip from './components/FeatureStrip';
 import FeatureSheet from './components/FeatureSheet';
 import {
   writeFeatureSheetParams,
+  deleteFeatureBlock,
   listFeatureSheetTargets,
   pickDefaultFeatureSheetTarget,
   isFeatureSheetEditable,
@@ -147,6 +148,38 @@ const App = () => {
       }, 0);
     }
   };
+  const handleFeatureSheetDelete = (feature) => {
+    if (!feature) return;
+    const buf = codeEditorRef.current?.getContent?.() || currentScript || '';
+    const live = listFeatureSheetTargets(buf).find((f) => f.id === feature.id)
+      || listFeatureSheetTargets(buf).find(
+        (f) => f.kind === feature.kind && f.index === feature.index,
+      )
+      || feature;
+    const result = deleteFeatureBlock(buf, live);
+    if (!result.ok) {
+      viewportRef.current?.softFailContour?.(result.message);
+      return;
+    }
+    const wrote = codeEditorRef.current?.applyBuffer?.(
+      result.buffer,
+      `Delete ${feature.label || 'feature'}`,
+    );
+    if (!wrote) {
+      viewportRef.current?.softFailContour?.(
+        'Could not delete feature from the editor — try again.',
+      );
+      return;
+    }
+    setFeatureStripActiveId(null);
+    setFeatureSheet(null);
+    // Stay on the current stage (CAD stays CAD; Script stays Script).
+    if (result.run) {
+      setTimeout(() => {
+        handleGameRun();
+      }, 0);
+    }
+  };
   const handleFeatureSheetEditScript = (feature) => {
     if (!feature) return;
     setFeatureSheet(null);
@@ -191,6 +224,12 @@ const App = () => {
       },
       close: () => {
         setFeatureSheet(null);
+        return true;
+      },
+      delete: () => {
+        const st = featureSheet;
+        if (!st || st.mode !== 'edit' || !st.feature) return false;
+        handleFeatureSheetDelete(st.feature);
         return true;
       },
       state: () => featureSheet,
@@ -1496,9 +1535,10 @@ const App = () => {
                 {/* Slice Mobile C.2: CAD feature strip HORIZONTAL under top ribbon. */}
                 {isCadStage && (
                   <div
-                    className="absolute left-2 right-2 top-14 z-20 pointer-events-auto flex justify-center"
+                    className="absolute left-2 right-2 top-20 z-20 pointer-events-auto flex justify-center"
                     data-cad-feature-strip=""
                     data-feature-strip-placement="under-ribbon-horizontal"
+                    data-feature-strip-gap="name-2x"
                   >
                     <FeatureStrip
                       orientation="horizontal"
@@ -1521,14 +1561,16 @@ const App = () => {
                     BELOW the top ribbon (spacer matches ribbon so chips do not
                     overlap Select All / Run). */}
                 <div className="relative flex-1 min-h-0 flex flex-row">
-                  <div className="relative flex-1 min-h-0">
+                  {/* Editor+ribbon stacks above the strip (z-30 > z-10) so Select All / Run
+                      stay clickable if the rail paints into the ribbon band. */}
+                  <div className="relative z-30 flex-1 min-h-0" data-script-editor-stack="">
                     <div className="absolute inset-0">
                       {editorEl}
                     </div>
                   </div>
                   {isScriptStage && (
                     <div
-                      className="flex flex-col shrink-0"
+                      className="relative z-10 flex flex-col shrink-0"
                       data-script-feature-strip=""
                       data-feature-strip-below-ribbon=""
                     >
@@ -1564,6 +1606,7 @@ const App = () => {
                   script={currentScript}
                   onAccept={handleFeatureSheetAccept}
                   onCancel={closeFeatureSheet}
+                  onDelete={handleFeatureSheetDelete}
                   onEditScript={handleFeatureSheetEditScript}
                 />
               )}

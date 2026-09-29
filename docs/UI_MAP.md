@@ -138,7 +138,9 @@ Mobile specifics:
   clears the right rail and home-indicator / CAD|Script dots.
 - **Left ↔ right rail height (C.1):** helper / contour left rail uses the same
   bottom inset as the right cluster (`bottom-2.5`) and
-  `max-h-[min(26rem,calc(100%-5.5rem))]` so its span pairs with the right toolbar;
+  `h-[min(26rem,calc(100%-5.5rem))]` (shared `RAIL_PAIR_HEIGHT_CLASS`) so left/right match pixel-perfect;
+  Edge-pick **Tangent on** (C.3): seed-plane G1 + same-face parallel bridge so a
+  `roundedBox` top rim floods the full coherent loop (not 1 leftover segment).
   overflow scrolls inside (`data-rail-pair="left"|"right"`).
 - **Ribbon / top chrome bg (C.1):** editor mid-strip is `bg-gray-900`
   (`data-ribbon-bg="editor"`), matching the code editor shell.
@@ -374,7 +376,7 @@ Import `src/utils/importModel.js` (+ `POST /api/convert/step`); export
   Create contour = `NotebookPen` (= sketch overlays) and Workplane = `Layers3`
   (= plane overlays). The tool that makes a thing wears the icon that shows it;
   the no-duplicates rule is per rail, so this is intended, not a slip.
-- **Rail sections are Shapes / Model / Polish / Move**, in that order
+- **Rail sections are Block / Model / Polish / Move**, in that order
   (`CAD_RAIL_ORDER` in `helperPaletteSnippets.js` for the order,
   `GROUP_SHORT_LABEL` in `HelperInsertPalette.jsx` for the captions). The
   internal group keys are still `Primitives` / `Advanced` / `Features` /

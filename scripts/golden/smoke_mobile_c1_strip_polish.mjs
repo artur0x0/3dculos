@@ -61,20 +61,24 @@ console.log('mobile C.1: strip polish + UI reorg');
       !/bottom-4 left-\[4\.5rem\]/.test(edgeBlock),
   );
 
-  // C — left matches RIGHT toolbar (not top ribbon)
+  // C — left matches RIGHT toolbar exactly (shared RAIL_PAIR_HEIGHT_CLASS)
+  const railPair = read('../../src/utils/railPair.js');
   check(
-    'C: left palette bottom matches right rail (bottom-2.5) + capped height',
+    'C: left palette bottom matches right rail (bottom-2.5) + exact shared height',
     /bottom-2\.5/.test(palette) &&
-      /max-h-\[min\(26rem,calc\(100%-5\.5rem\)\)\]/.test(palette) &&
+      /RAIL_PAIR_HEIGHT_CLASS/.test(palette) &&
+      /h-\[min\(26rem,calc\(100%-5\.5rem\)\)\]/.test(railPair) &&
       /data-rail-pair="left"/.test(palette) &&
       /data-rail-pair="right"/.test(rightRail) &&
+      /RAIL_PAIR_HEIGHT_CLASS/.test(rightRail) &&
       /bottom-2\.5 right-2\.5/.test(rightRail) &&
-      !/max-h-\[min\(72%/.test(palette),
+      !/max-h-\[min\(72%/.test(palette) &&
+      !/max-h-\[min\(26rem/.test(palette),
   );
   check(
     'C: contour left rail uses the same paired height',
     /data-rail-pair="left"/.test(contourRail) &&
-      /max-h-\[min\(26rem,calc\(100%-5\.5rem\)\)\]/.test(contourRail) &&
+      /RAIL_PAIR_HEIGHT_CLASS/.test(contourRail) &&
       /bottom-2\.5/.test(contourRail),
   );
 

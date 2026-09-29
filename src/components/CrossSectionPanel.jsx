@@ -5,6 +5,7 @@ import { FlipHorizontal, Check, Maximize2, Ruler, Move3d, Frame, Spline, Rectang
 import TrianglesCenterlineDashedVertical from './icons/TrianglesCenterlineDashedVertical';
 import ViewSnapControl from './ViewSnapControl';
 import { PLANE_PRESETS } from '../utils/crossSection';
+import { RAIL_PAIR_HEIGHT_CLASS, RAIL_PAIR_HEIGHT_ATTR } from '../utils/railPair';
 
 const CrossSectionPanel = ({ 
   enabled,
@@ -176,9 +177,10 @@ const handleButtonClick = () => {
     return (
       <div
         data-rail-pair="right"
+        data-rail-height={verticalRail ? RAIL_PAIR_HEIGHT_ATTR : undefined}
         className={`absolute bottom-2.5 right-2.5 bg-white/60 backdrop-blur-sm p-2 rounded-lg shadow-lg z-10 ${
         verticalRail
-          ? 'flex flex-col gap-1'
+          ? `flex flex-col gap-1 ${RAIL_PAIR_HEIGHT_CLASS}`
           : 'flex flex-wrap justify-end gap-2 max-w-[calc(100%-1rem)]'
       }`}>
         <ViewSnapControl onSnap={onSnapView} />

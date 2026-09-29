@@ -552,18 +552,26 @@ export function tangentAlign(t0, t1) {
  * @returns {object[]} seed + G1 chain (deduped by edgeKey)
  */
 export function propagateTangentEdges(featureEdges, seedEdge, opts = {}) {
-  // C3 / Mobile C.2: G1 walk via shared tangency field. Soft-fails to the seed.
+  // C3 / Mobile C.2 / C.3: G1 walk via shared tangency field. Soft-fails to seed.
   // Walker is uncapped so long legitimate wires return whole; callers refuse
   // floods via TANGENT_PROP_FLOOD_MAX (see toggleEdgeSelectionPropagated).
-  // Edge-pick defaults to skipNormals — the coherent pick graph already dropped
-  // tessellation spaghetti; wall-normal continuity on RDP chords falsely broke
-  // circular / fillet rim chains (Artur C.2 regression).
+  // Edge-pick defaults to skipNormals:
+  //   - Smooth tan within tol (circular / RDP chords) — no wall-normal gate (C.2)
+  //   - Collapsed fillet corners (~70–85°) — seed-plane continue (C.3)
+  //   - Spatial endpoint bridging when coherent chains mint fresh vertex ids (C.3)
+  //   - Same-face parallel bridge for fillet top/bottom creases (C.3 roundedBox)
   if (!seedEdge) return [];
   const skipNormals = opts.skipNormals !== false;
   const chain = propagateTrueTangentEdges(featureEdges || [], seedEdge, {
     tolDeg: opts.tolDeg != null ? opts.tolDeg : TANGENCY_PROP_DEG,
     normalAlign: opts.normalAlign != null ? opts.normalAlign : TANGENCY_NORMAL_ALIGN,
     skipNormals,
+    spatialAdjacency: opts.spatialAdjacency,
+    cornerDeg: opts.cornerDeg,
+    cornerSharpDeg: opts.cornerSharpDeg,
+    cornerOutOfPlaneDeg: opts.cornerOutOfPlaneDeg,
+    parallelFaceBridge: opts.parallelFaceBridge,
+    seedPlaneNormal: opts.seedPlaneNormal,
     adj: opts.adj || buildEdgeVertexAdj(featureEdges || []),
     max: 1e9,
   });
@@ -946,9 +954,9 @@ function _segmentsFromKeep(ordered, keep) {
  * A chain that will not simplify under {@link COHERENT_EDGE_MAX} is dropped
  * (empty is better than a zig-zag mesh dump).
  *
- * Closed loops are kept only when they are circular rims. Untagged chains
- * (no #46 boundary id — loft generators the small-face test dropped) are
- * kept when the simplified polyline is a simple open curve or a round rim.
+ * Closed loops: circular rims always; filleted face outlines (rounded-rect)
+ * kept when under TANGENT_PROP_FLOOD_MAX. Untagged open chains (loft generators
+ * the small-face test dropped) kept when the simplified polyline is a spine.
  *
  * @param {object[]} featureEdges
  * @param {{ minDeg?: number }} [opts]
@@ -994,8 +1002,12 @@ export function buildCoherentEdges(featureEdges, opts = {}) {
     if (segs.length > maxSegs) continue;
     if (!tagged) {
       if (ordered.closed) {
-        // Round rims only. A filleted face outline is closed-ish but not circular.
-        if (!roundRim) continue;
+        // Circular rims always keep. Filleted face outlines (rounded-rect) are
+        // closed but not circular — previously dropped, which left only
+        // leftover per-side fragments so Tangent-on selected 1–3 segs of a
+        // roundedBox rim (Artur mobile CAD after #77). Keep them when they
+        // simplify under the flood cap (same budget as circular rims).
+        if (!roundRim && segs.length > TANGENT_PROP_FLOOD_MAX) continue;
       } else {
         // Open recovery (loft generator the small-face test dropped) must be a
         // spine. Blend outlines wander across a whole face and are refused.
@@ -1115,25 +1127,48 @@ export function toggleEdgeSelectionPropagated(selected, edge, opts = {}) {
   const propagate = opts.propagate !== false;
   let toAdd = null;
   let refuseFlood = false;
+  // Mobile C.3: UNION chainId fragment + G1 walk. chainId alone is often just
+  // one RDP-simplified side of a rounded-box rim (3 segs); G1 + spatial
+  // bridging continues around collapsed fillet corners onto neighboring
+  // chainIds. Skipping the walk after a chainId hit was Artur's "1/3 selected
+  // with Tangent on" mobile CAD bug after #77.
   if (propagate && Number.isFinite(edge?.chainId) && opts.featureEdges?.length) {
     const chain = opts.featureEdges.filter((e) => e.chainId === edge.chainId);
-    // Cap → keep seed (never return empty; never re-flood the same spaghetti).
-    // Mobile C.2: allow up to TANGENT_PROP_FLOOD_MAX so 64/128-seg rims chain.
     if (chain.length > TANGENT_PROP_FLOOD_MAX) {
       refuseFlood = true;
     } else if (chain.length > 1) {
       toAdd = chain;
     }
   }
-  if (!toAdd && !refuseFlood && propagate && opts.featureEdges?.length) {
-    toAdd = propagateTangentEdges(opts.featureEdges, edge, { tolDeg: opts.tolDeg });
-    // Hitting the flood max means tessellation spaghetti — keep the seed only.
-    if (toAdd.length > TANGENT_PROP_FLOOD_MAX) {
-      toAdd = null;
+  if (!refuseFlood && propagate && opts.featureEdges?.length) {
+    const walked = propagateTangentEdges(opts.featureEdges, edge, {
+      tolDeg: opts.tolDeg,
+      skipNormals: opts.skipNormals,
+    });
+    if (walked.length > TANGENT_PROP_FLOOD_MAX) {
+      // Tessellation flood — keep chainId fragment if we have one, else seed.
+      if (!toAdd) toAdd = null;
+    } else if (walked.length > 1) {
+      if (!toAdd || toAdd.length <= 1) {
+        toAdd = walked;
+      } else {
+        const have = new Set(toAdd.map((e) => edgeKey(e)));
+        const merged = toAdd.slice();
+        for (const e of walked) {
+          const k = edgeKey(e);
+          if (have.has(k)) continue;
+          merged.push(e);
+          have.add(k);
+        }
+        toAdd = merged;
+      }
     }
   }
   if (!toAdd || toAdd.length <= 1) {
     // Soft-fail: no tangents — just the seed (same as toggleEdgeSelection add).
+    return toggleEdgeSelection(list, edge);
+  }
+  if (toAdd.length > TANGENT_PROP_FLOOD_MAX) {
     return toggleEdgeSelection(list, edge);
   }
   const have = new Set(list.map((e) => edgeKey(e)));

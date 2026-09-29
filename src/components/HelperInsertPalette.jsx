@@ -26,6 +26,7 @@ import {
 import SquareRoundCorner from './icons/SquareRoundCorner';
 import Angle from './icons/Angle';
 import { itemsByGroup, paletteRailSections } from '../utils/helperPaletteSnippets';
+import { RAIL_PAIR_HEIGHT_CLASS, RAIL_PAIR_HEIGHT_ATTR } from '../utils/railPair';
 import { resolveFaceModal } from '../utils/faceFeaturePlacement';
 import { canBuildFilletAlongPath, resolveFilletStrategy } from '../utils/filletAlongPath';
 import { isContourEntry } from '../utils/contourMode';
@@ -68,7 +69,7 @@ const ICONS = {
 
 /** Mobile-first group captions (full names stay on the data model). */
 const GROUP_SHORT_LABEL = {
-  Primitives: 'Shapes',
+  Primitives: 'Block',
   Advanced: 'Adv',
   Features: 'Polish',
   Transforms: 'Move',
@@ -83,7 +84,7 @@ const GROUP_SHORT_LABEL = {
  * Slice 24/25/26/28/30: Extrude / Revolve / Loft / Sweep / Profile call onEnterContourMode.
  * Extrude / Revolve / Loft / Sweep Confirm commits the solid; Profile stays Profile-only.
  * Slice 27: Fillet enters edge-pick mode (no pre-select / no soft-fail).
- * Slice 29: groups Prim / Adv / Feat / Xform on the game rail.
+ * Slice 29: groups Block / Adv / Feat / Xform on the game rail.
  * Advanced Confirm unions onto `part` when a solid is already in the script.
  */
 const HelperInsertPalette = ({
@@ -102,8 +103,8 @@ const HelperInsertPalette = ({
   layout = 'game',
 }) => {
   const grouped = itemsByGroup();
-  // Both viewport rails (this one and CrossSectionPanel) share one size so they
-  // read as a matched pair — the larger of the two former sizes, phone included.
+  // Both viewport rails (this one and CrossSectionPanel) share one *exact*
+  // height via RAIL_PAIR_HEIGHT_CLASS (pixel-perfect pair, not max-h approx).
   const iconSize = 20;
   const pad = 'p-2';
   const [pending, setPending] = useState(null);
@@ -196,11 +197,12 @@ const HelperInsertPalette = ({
       <div
         className={`absolute left-2 lg:left-4 bottom-2.5 z-10 flex flex-col gap-1
           bg-white/60 backdrop-blur-sm rounded-lg shadow-lg
-          max-h-[min(26rem,calc(100%-5.5rem))] overflow-y-auto overflow-x-hidden rail-scroll
+          ${RAIL_PAIR_HEIGHT_CLASS}
           p-2`}
         role="group"
         aria-label="Helper insert palette"
         data-rail-pair="left"
+        data-rail-height={RAIL_PAIR_HEIGHT_ATTR}
         data-palette-layout={layout === 'cad' ? 'cad' : 'game'}
       >
         {sections.map((section, gi) => (

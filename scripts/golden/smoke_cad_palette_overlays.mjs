@@ -58,7 +58,7 @@ console.log('cad palette + plane/contour toggles');
 
   const cad = paletteRailSections('cad', grouped);
   check(
-    'CAD rail is Shapes, Model, Polish, Move',
+    'CAD rail is Block, Model, Polish, Move',
     cad.map((s) => s.key).join('|') === 'Primitives|Model|Features|Transforms',
     cad.map((s) => s.key).join('|'),
   );
@@ -104,7 +104,7 @@ console.log('cad palette + plane/contour toggles');
     }));
   }
 
-  // ── Draft is Polish now, and the rail reads Shapes → Model → Polish → Move ──
+  // ── Draft is Polish now, and the rail reads Block → Model → Polish → Move ──
   {
     const polish = cad.find((s) => s.key === 'Features').items.map((i) => i.id);
     check('Draft sits in Polish', polish.includes('addDraft'));

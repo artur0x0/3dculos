@@ -204,6 +204,36 @@ export function writeFeatureSheetParams(script, feature, params) {
 /**
  * Pick a default feature to open from a long-press (prefer Extrude → Fillet → Revolve → first).
  */
+
+/**
+ * Remove a marked feature block from the script (Delete on the feature sheet).
+ * Surgically drops [startOffset, endOffset) and collapses one bordering blank
+ * line so neighboring features do not leave a hole. Caller Auto-Runs.
+ * @returns {{ ok: true, buffer: string, run: true } | { ok: false, message: string }}
+ */
+export function deleteFeatureBlock(script, feature) {
+  if (!feature || typeof script !== 'string') {
+    return { ok: false, message: 'deleteFeatureBlock: missing feature' };
+  }
+  const a = Math.max(0, feature.startOffset | 0);
+  const b = Math.max(a, feature.endOffset | 0);
+  if (!(b > a) || b > script.length) {
+    return { ok: false, message: 'deleteFeatureBlock: invalid range' };
+  }
+  let before = script.slice(0, a);
+  let after = script.slice(b);
+  // Swallow one bordering newline so we do not leave an extra blank row.
+  if (/(?:\r?\n)[ \t]*$/u.test(before) && /^(?:\r?\n)/u.test(after)) {
+    after = after.replace(/^(?:\r?\n)/u, '');
+  }
+  if (!after) {
+    before = before.replace(/(?:\r?\n){2,}$/u, '\n');
+  } else if (!before) {
+    after = after.replace(/^(?:\r?\n)+/u, '');
+  }
+  return { ok: true, buffer: before + after, run: true };
+}
+
 export function pickDefaultFeatureSheetTarget(script) {
   const features = parseFeatureMarkers(script);
   if (!features.length) return null;
