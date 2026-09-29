@@ -208,12 +208,81 @@ function disposeEdgeOverlayObject(scene, obj) {
 }
 
 /** Shared top title. Puzzle name in game; filename on mobile CAD. */
-function ViewportTitleChip({ children }) {
+/** Filenames land in `${name}.js` downloads, so keep them path-safe and short. */
+function sanitizePartName(raw) {
+  return String(raw ?? '')
+    .replace(/[/\\:*?"<>|]/g, '')   // path + Windows-illegal characters
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 60);
+}
+
+/**
+ * Title chip. With `onRename` it is also the rename control: click (or Enter /
+ * Space on the focused chip) swaps in an input. Enter or blur commits, Escape
+ * reverts. An empty or all-junk name commits nothing, so the part falls back to
+ * "Untitled" rather than becoming nameless.
+ */
+function ViewportTitleChip({ children, value = null, onRename = null }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const inputRef = useRef(null);
+
+  useEffect(() => {
+    if (editing) inputRef.current?.select();
+  }, [editing]);
+
+  const start = () => {
+    if (!onRename) return;
+    setDraft(value || '');
+    setEditing(true);
+  };
+
+  const commit = () => {
+    if (!editing) return;
+    setEditing(false);
+    const next = sanitizePartName(draft);
+    if (next && next !== (value || '')) onRename(next);
+  };
+
+  const shell = 'text-xs font-medium text-center truncate px-3 py-1.5 rounded-lg shadow'
+    + ' bg-gray-900/85 border border-gray-500/50 text-gray-100';
+
   return (
-    <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10 pointer-events-none max-w-[min(20rem,calc(100%-2rem))]">
-      <div className="text-xs font-medium text-center truncate px-3 py-1.5 rounded-lg shadow bg-gray-900/85 border border-gray-500/50 text-gray-100">
-        {children}
-      </div>
+    <div
+      className={`absolute top-4 left-1/2 -translate-x-1/2 z-10 max-w-[min(20rem,calc(100%-2rem))] ${
+        onRename ? '' : 'pointer-events-none'
+      }`}
+    >
+      {editing ? (
+        <input
+          ref={inputRef}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') { e.preventDefault(); commit(); }
+            if (e.key === 'Escape') { e.preventDefault(); setEditing(false); }
+            e.stopPropagation(); // viewport hotkeys must not eat the typing
+          }}
+          className={`${shell} w-48 outline-none border-blue-400/80 bg-gray-900`}
+          aria-label="Part name"
+          data-title-chip="input"
+        />
+      ) : onRename ? (
+        <button
+          type="button"
+          onClick={start}
+          className={`${shell} hover:border-blue-400/70 hover:text-white cursor-text`}
+          title="Click to rename this part"
+          aria-label={`Part name: ${value || 'Untitled'}. Click to rename.`}
+          data-title-chip="button"
+        >
+          {children}
+        </button>
+      ) : (
+        <div className={shell} data-title-chip="static">{children}</div>
+      )}
     </div>
   );
 }
@@ -237,6 +306,7 @@ const Viewport = forwardRef(({
   canUndo,
   canRedo,
   currentFilename,
+  onRenameFile = null,
   isUploading,
   mode = 'cad',
   ghostMeshData = null,
@@ -3549,7 +3619,7 @@ const Viewport = forwardRef(({
   }, [cachedMeshData, currentFilename]);
 
   return (
-    <div ref={containerRef} className="relative w-full h-full bg-gray-900 overflow-hidden">
+    <div ref={containerRef} className="viewport-shell relative w-full h-full bg-gray-900 overflow-hidden">
       {/* CAD chrome lives in the editor mid-strip in BOTH shells (desktop matches
           phone now): rendered here so download/export busy state stays local. */}
       {mode !== 'game' && cadToolbarHost && createPortal(
@@ -3587,7 +3657,9 @@ const Viewport = forwardRef(({
         <ViewportTitleChip>{gamePuzzleTitle || 'Puzzle'}</ViewportTitleChip>
       )}
       {mode !== 'game' && (
-        <ViewportTitleChip>{currentFilename || 'Untitled'}</ViewportTitleChip>
+        <ViewportTitleChip value={currentFilename} onRename={onRenameFile}>
+          {currentFilename || 'Untitled'}
+        </ViewportTitleChip>
       )}
 
       {mode === 'game' && gameSuccess && (

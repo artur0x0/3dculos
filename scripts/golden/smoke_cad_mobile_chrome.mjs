@@ -43,7 +43,13 @@ console.log('cad mobile chrome harmonized to puzzle');
     'game still mounts a blank editor',
     /initialScript=\{appMode === 'game' \? '' : editorInitialScript\}/.test(app),
   );
-  check('AI prompt stays on mobile CAD', /appMode !== 'game' && \(\s*<PromptInput/.test(app));
+  // The AI row is hidden while a tighter editor integration is designed, but it
+  // must stay MOUNTED (state + handlers intact), not deleted.
+  check('AI prompt is still mounted on mobile CAD', /<PromptInput/.test(app));
+  check(
+    'AI prompt is hidden in both shells',
+    (app.match(/data-ai-prompt-row="hidden"/g) || []).length === 2,
+  );
 }
 
 {
@@ -87,7 +93,7 @@ console.log('cad mobile chrome harmonized to puzzle');
   );
   check(
     'filename chip shows in both CAD shells (no toolbar carries it now)',
-    /mode !== 'game' && \(\s*<ViewportTitleChip>\{currentFilename \|\| 'Untitled'\}/.test(view),
+    /mode !== 'game' && \(\s*<ViewportTitleChip value=\{currentFilename\} onRename=\{onRenameFile\}>/.test(view),
   );
 }
 

@@ -28,7 +28,8 @@ one shell you must change the other.
 
 ```
 ┌───────────────────────────────┬───────────────────────────────┐
-│ CodeEditor (w-1/2)            │ Viewport (w-1/2)              │
+│ CodeEditor (splitPct wide)    ║ Viewport (rest)               │
+│                          draggable seam ↑                     │
 │ ┌───────────────────────────┐ │  top-center: ViewportTitleChip│
 │ │ mid-strip: [Toolbar]  [⌗] │ │              (filename)       │
 │ ├───────────────────────────┤ │                               │
@@ -36,11 +37,26 @@ one shell you must change the other.
 │ │  Monaco (vs-dark, 12px)   │ │    HelperInsertPalette        │
 │ │                           │ │    (or ContourModeRail)       │
 │ ├───────────────────────────┤ │  right-4 bottom-4: vertical   │
-│ │ PromptInput (AI row)      │ │    CrossSectionPanel cluster  │
+│ │ PromptInput (AI row, now  │ │    CrossSectionPanel cluster  │
+│ │   hidden — still mounted) │ │                               │
 │ └───────────────────────────┘ │  left-[5.25rem] bottom-4:     │
 │   ↑ portal target             │    info chips                 │
 └───────────────────────────────┴───────────────────────────────┘
 ```
+
+**The seam between the two panes is draggable** in both shells
+(`SplitDivider.jsx`, pointer-capture based): left/right on desktop
+(`splitPct`, clamped 20-80%), up/down on mobile (`mobileEditorPxOverride`,
+clamped so neither pane collapses; an open keyboard still overrides it).
+
+**The AI prompt row is hidden, not deleted** — `PromptInput` stays mounted
+behind `hidden` + `data-ai-prompt-row="hidden"` in both shells while a tighter
+editor integration is designed. Remove the `hidden` class to bring it back.
+
+**The title chip renames the part.** Click it (or the "Untitled" placeholder)
+and it becomes an input: Enter or blur commits, Escape reverts, empty commits
+nothing. Names are sanitised (`sanitizePartName`) because they end up in
+`${name}.js` downloads. Wired through `onRenameFile` → `setCurrentFilename`.
 
 Desktop specifics:
 - **The Toolbar is portaled into the editor mid-strip, exactly like mobile.**
@@ -63,10 +79,10 @@ Desktop specifics:
 │   left-2 bottom-4: helper rail  │  (filename, or puzzle name)
 │   right-2 bottom-4: cluster +   │  ← info chips move RIGHT here
 │                     info chips  │
-├─────────────────────────────────┤
+╞═════════════════════════════════╡  ← draggable seam
 │ mid-strip: [Toolbar strip]  [⌗] │  ← portal target
 │ Monaco (16px font)              │  height = 32–38% of viewport
-│ PromptInput (compact)           │  (36–42% when keyboard is open)
+│ PromptInput (hidden, mounted)   │  (36–42% when keyboard is open)
 └─────────────────────────────────┘
 ```
 
@@ -104,7 +120,7 @@ That yields **four** layout combinations; check both flags when editing chrome.
 | Title chip | always (filename) | always (puzzle title) |
 | Helper rail | `layout="cad"` — advanced tools folded into Model | `layout="game"` — keeps the Advanced group |
 | Info chips | bottom-left on desktop | always bottom-right (dodges the palette) |
-| PromptInput | shown | hidden (`appMode !== 'game'` guards) |
+| PromptInput | mounted but `hidden` (see shells) | not rendered (`appMode !== 'game'` guards) |
 | Extras | — | ghost mesh, timer, confetti, "Match!" banner (`src/components/Viewport.jsx:3595`) |
 
 Game logic: `src/utils/gamePuzzle.js`, `gamePuzzles.js`, `gameWins.js`;
