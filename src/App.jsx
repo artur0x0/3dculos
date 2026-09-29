@@ -4,6 +4,7 @@ import Viewport from './components/Viewport';
 import PromptInput from './components/PromptInput';
 import SplitDivider from './components/SplitDivider';
 import MobileStageToggle from './components/MobileStageToggle';
+import FeatureStrip from './components/FeatureStrip';
 import { saveAs } from 'file-saver';
 import QuoteModal from './components/QuoteModal';
 import OrderModal from './components/OrderModal';
@@ -66,6 +67,13 @@ const App = () => {
     const next = stage === 'script' ? 'script' : 'cad';
     setMobileStage(next);
     try { sessionStorage.setItem('3dculos.mobileStage', next); } catch { /* private mode */ }
+  };
+  /** Script-stage feature strip: which chip is selected (null = none). */
+  const [featureStripActiveId, setFeatureStripActiveId] = useState(null);
+  const handleFeatureStripJump = (feature) => {
+    if (!feature) return;
+    setFeatureStripActiveId(feature.id);
+    codeEditorRef.current?.revealRange?.(feature.startOffset, feature.endOffset);
   };
   const [showQuoteModal, setShowQuoteModal] = useState(false);
   const [showOrderModal, setShowOrderModal] = useState(false);
@@ -1306,18 +1314,10 @@ const App = () => {
           style={mobileShellStyle}
           data-mobile-stage={useStages ? mobileStage : undefined}
         >
-          {useStages && (
-            <div
-              className="shrink-0 flex items-center justify-end gap-2 px-2 py-1.5 border-b border-gray-700/50 bg-gray-900/95"
-              data-mobile-stage-chrome=""
-            >
-              <MobileStageToggle stage={mobileStage} onChange={setMobileStageSticky} />
-            </div>
-          )}
-
           {useStages ? (
             /* CAD dual-stage: both panes stay mounted (WebGL + Monaco + refs).
-               Off-stage pane is invisibly full-size so contexts survive. */
+               Off-stage pane is invisibly full-size so contexts survive.
+               Stage toggle is the bottom home-indicator pill (Slice Mobile B). */
             <div className="relative flex-1 min-h-0">
               <div
                 className={`absolute inset-0 overflow-hidden ${
@@ -1335,12 +1335,28 @@ const App = () => {
                 data-stage-pane="script"
                 aria-hidden={!isScriptStage}
               >
+                {isScriptStage && (
+                  <FeatureStrip
+                    script={currentScript}
+                    activeId={featureStripActiveId}
+                    onJump={handleFeatureStripJump}
+                  />
+                )}
                 <div className="relative flex-1 min-h-0">
                   <div className="absolute inset-0">
                     {editorEl}
                   </div>
                 </div>
                 {aiRow}
+              </div>
+
+              {/* Bottom home-indicator stage pill — clears Contour/Fillet chips via their raised mobile bottom. */}
+              <div
+                className="absolute left-1/2 -translate-x-1/2 z-30"
+                style={{ bottom: 0 }}
+                data-mobile-stage-home-indicator=""
+              >
+                <MobileStageToggle stage={mobileStage} onChange={setMobileStageSticky} />
               </div>
             </div>
           ) : (

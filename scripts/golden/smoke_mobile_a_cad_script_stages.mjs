@@ -4,7 +4,10 @@
  *
  * Narrow viewport gets a fullscreen-ish CAD stage (viewport + rails) and a
  * fullscreen-ish Script stage (editor + toolbar), with a session-sticky
- * one-thumb toggle. Desktop split is untouched. Game keeps the stacked budget.
+ * stage control. Desktop split is untouched. Game keeps the stacked budget.
+ *
+ * Slice Mobile B moved the control from a top text chrome bar to a bottom
+ * home-indicator pill; this golden still asserts dual-stage foundations.
  */
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -51,9 +54,8 @@ console.log('mobile A: CAD / Script stages');
     /invisible pointer-events-none/.test(app),
   );
   check(
-    'MobileStageToggle is mounted in CAD chrome',
-    /<MobileStageToggle stage=\{mobileStage\} onChange=\{setMobileStageSticky\} \/>/.test(app) &&
-      /data-mobile-stage-chrome/.test(app),
+    'MobileStageToggle is mounted on the CAD phone shell',
+    /<MobileStageToggle stage=\{mobileStage\} onChange=\{setMobileStageSticky\} \/>/.test(app),
   );
   check(
     'game branch still has the horizontal SplitDivider + editor budget',
