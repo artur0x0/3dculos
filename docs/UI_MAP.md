@@ -111,10 +111,13 @@ Mobile specifics:
   Top CAD|Script text chrome is gone. Inert `data-ai-prompt-hook` marks a
   future AI-on-tap site (not wired). Contour/Fillet chips use `bottom-14` on
   mobile so they clear the pill. Shell exposes `data-mobile-stage="cad"|"script"`.
-- **Feature strip (Slice Mobile B → B.1 → C → C.1):** `FeatureStrip.jsx` mounts as a
+- **Feature strip (Slice Mobile B → B.1 → C → C.1 → C.4):** `FeatureStrip.jsx` mounts as a
   **vertical right rail** (`data-feature-strip-side="right"`), starting below the
   top ribbon. **Script stage:** icon chips open the under-title feature sheet and
-  jump Monaco caret via `CodeEditor.revealRange`. **CAD stage:** same icons open a
+  jump Monaco caret via `CodeEditor.revealRange`. C.4: editor stack
+  `overflow-hidden`, ribbon spacer `h-11` (`data-feature-strip-ribbon-spacer-h`),
+  strip `z-20` so Contour chips are fully below the ribbon and tappable.
+  **CAD stage:** same icons open a
   **feature sheet** (`hideWhenEmpty`). Per-type index badges (`data-feature-type-badge`,
   1…n per kind) sit bottom-right on each icon. Icons match the CAD toolbar
   (Contour/`NotebookPen`, Extrude/`ArrowUpFromLine`, Revolve/`Rotate3d`,
@@ -141,6 +144,8 @@ Mobile specifics:
   `h-[min(26rem,calc(100%-5.5rem))]` (shared `RAIL_PAIR_HEIGHT_CLASS`) so left/right match pixel-perfect;
   Edge-pick **Tangent on** (C.3): seed-plane G1 + same-face parallel bridge so a
   `roundedBox` top rim floods the full coherent loop (not 1 leftover segment).
+  C.4: `buildCoherentEdges` traces tagged vs untagged sharp pools separately so
+  post-fillet rounded rails (untagged open arcs) stay pickable for Tangent-on.
   overflow scrolls inside (`data-rail-pair="left"|"right"`).
 - **Ribbon / top chrome bg (C.1):** editor mid-strip is `bg-gray-900`
   (`data-ribbon-bg="editor"`), matching the code editor shell.

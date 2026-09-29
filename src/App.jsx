@@ -1557,26 +1557,31 @@ const App = () => {
                 data-stage-pane="script"
                 aria-hidden={!isScriptStage}
               >
-                {/* C.2: vertical feature strip on the RIGHT of Monaco, starting
-                    BELOW the top ribbon (spacer matches ribbon so chips do not
-                    overlap Select All / Run). */}
+                {/* C.2/C.4: vertical feature strip on the RIGHT of Monaco,
+                    starting BELOW the top ribbon. C.4: clip editor overflow so
+                    the ribbon cannot paint over Contour chips; spacer clears
+                    the real ribbon height; strip z stays tappable. */}
                 <div className="relative flex-1 min-h-0 flex flex-row">
-                  {/* Editor+ribbon stacks above the strip (z-30 > z-10) so Select All / Run
-                      stay clickable if the rail paints into the ribbon band. */}
-                  <div className="relative z-30 flex-1 min-h-0" data-script-editor-stack="">
+                  <div
+                    className="relative z-30 flex-1 min-h-0 overflow-hidden"
+                    data-script-editor-stack=""
+                  >
                     <div className="absolute inset-0">
                       {editorEl}
                     </div>
                   </div>
                   {isScriptStage && (
                     <div
-                      className="relative z-10 flex flex-col shrink-0"
+                      className="relative z-20 flex flex-col shrink-0"
                       data-script-feature-strip=""
                       data-feature-strip-below-ribbon=""
                     >
+                      {/* Ribbon is py-0.5 + 18px icon + p-1.5 ≈ 34px; h-11 (44px)
+                          clears it so Contour#1 is fully visible/tappable. */}
                       <div
-                        className="h-9 shrink-0 bg-gray-900 border-l border-b border-gray-700/60"
+                        className="h-11 shrink-0 bg-gray-900 border-l border-b border-gray-700/60"
                         data-feature-strip-ribbon-spacer=""
+                        data-feature-strip-ribbon-spacer-h="11"
                         aria-hidden="true"
                       />
                       <FeatureStrip

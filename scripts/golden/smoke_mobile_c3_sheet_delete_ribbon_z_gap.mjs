@@ -79,13 +79,15 @@ console.log('mobile C.3: sheet delete + ribbon z + CAD gap + Block + rail height
       /data-feature-sheet-cancel/.test(sheet),
   );
 
-  // 2 — Script ribbon above strip
+  // 2 — Script ribbon / strip (C.3 z-order; C.4 overflow clip + taller spacer + strip z-20)
   check(
-    'Script editor stack z-30 > strip z-10; ribbon data-editor-ribbon z-30',
+    'Script editor stack z-30 overflow-hidden; strip z-20 below ribbon spacer',
     /data-script-editor-stack/.test(app) &&
-      /relative z-30 flex-1 min-h-0/.test(app) &&
+      /relative z-30 flex-1 min-h-0 overflow-hidden/.test(app) &&
       /data-script-feature-strip/.test(app) &&
-      /relative z-10 flex flex-col shrink-0/.test(app) &&
+      /relative z-20 flex flex-col shrink-0/.test(app) &&
+      /data-feature-strip-ribbon-spacer/.test(app) &&
+      /data-feature-strip-ribbon-spacer-h="11"/.test(app) &&
       /data-editor-ribbon/.test(editor) &&
       /relative z-30/.test(editor),
   );

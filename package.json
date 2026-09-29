@@ -47,6 +47,7 @@
     "golden:mobile-c2-popup-shift-fillet-tangent": "node scripts/golden/smoke_mobile_c2_popup_shift_fillet_tangent.mjs",
     "golden:mobile-c3-sheet-delete-ribbon-z-gap": "node scripts/golden/smoke_mobile_c3_sheet_delete_ribbon_z_gap.mjs",
     "golden:mobile-c3-roundedbox-fillet-tangent": "node scripts/golden/smoke_mobile_c3_roundedbox_fillet_tangent.mjs",
+    "golden:mobile-c4-strip-z-rounded-edge-pick": "node scripts/golden/smoke_mobile_c4_strip_z_rounded_edge_pick.mjs",
         "golden:fillet-kernel-spike-c": "node scripts/golden/smoke_fillet_kernel_spike_c.mjs",
         "golden:fillet-c2-rolling-ball": "node scripts/golden/smoke_fillet_c2_rolling_ball.mjs",
         "golden:fillet-c3-variable-sweep": "node scripts/golden/smoke_fillet_c3_variable_sweep.mjs",
