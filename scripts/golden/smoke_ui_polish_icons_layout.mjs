@@ -164,6 +164,54 @@ const contourRail = read('../../src/components/ContourModeRail.jsx');
   check('rail-scroll covers Firefox too', /\.rail-scroll \{[\s\S]{0,160}?scrollbar-width: thin/.test(css));
 }
 
+// ── AC7: one preview aesthetic, and it is unlit ──
+{
+  const style = read('../../src/utils/previewStyle.js');
+  check('there is a shared preview recipe', /makePreviewSkinMaterial/.test(style)
+    && /makePreviewOutlineMaterial/.test(style));
+  check('the shared skin is unlit', /new MeshBasicMaterial\(/.test(style)
+    && !/MeshLambertMaterial|MeshStandardMaterial|MeshPhongMaterial/.test(style));
+  // The darkness bug: Extrude was the one preview painted with a lit material.
+  const paints = view.slice(
+    view.indexOf('const paintExtrudePreview'),
+    view.indexOf('const clearFilletBlendPreview'),
+  );
+  check(
+    'no preview paints with a lit material any more',
+    !/MeshLambertMaterial|MeshStandardMaterial|MeshPhongMaterial/.test(paints),
+  );
+  // Skins are the DoubleSide translucent surfaces; point/marker materials are
+  // a different thing and keep their own definitions.
+  const handRolledSkin = /new MeshBasicMaterial\(\{[^}]*side: DoubleSide/.test(paints);
+  check('no preview hand-rolls its own skin material', !handRolledSkin);
+  for (const paint of ['Extrude', 'Revolve', 'Loft', 'Sweep']) {
+    const body = paints.slice(paints.indexOf(`const paint${paint}Preview`));
+    check(`${paint} preview uses the shared skin`, /makePreviewSkinMaterial\(/.test(
+      body.slice(0, body.indexOf('const clear') > 0 ? body.indexOf('const clear') : undefined),
+    ));
+  }
+  check('Extrude gained Loft-style outline rings', /Start and end loops/.test(paints)
+    && /makePreviewOutlineMaterial\(/.test(paints));
+}
+
+// ── AC8: the param popup docks bottom-centre of the viewport, click-through ──
+{
+  const modal = read('../../src/components/HelperParamModal.jsx');
+  check(
+    'popup is positioned against the viewport, not the screen',
+    /absolute inset-0 z-50 flex items-end justify-center/.test(modal)
+      && !/fixed inset-0/.test(modal),
+  );
+  check('popup sits bottom-centre', !/sm:items-center/.test(modal));
+  check('no dimming scrim over the viewport', !/bg-black\/\d+/.test(modal));
+  check('overlay is click-through, panel is not', /pointer-events-none/.test(modal)
+    && (modal.match(/pointer-events-auto/g) || []).length === 2);
+  check(
+    'the dead click-outside handler is gone with the scrim',
+    !/onMouseDown/.test(modal),
+  );
+}
+
 if (failed) {
   console.log(`\n${failed} check(s) failed`);
   process.exit(1);

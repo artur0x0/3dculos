@@ -161,7 +161,7 @@ phones, centered dialog on desktop**.
 | Account | Toolbar → Account, signed in | `AccountModal.jsx` | tabs `info` / `orders` (`:160`) |
 | Quote | Toolbar → Truck | `QuoteModal.jsx` | process / material / infill → `utils/quoting.js` |
 | Order | Quote → Order | `OrderModal.jsx` + `components/order/*` | six steps, `STEPS` at `OrderModal.jsx:13`: Auth → Address → Shipping → Payment → Confirmation → Convert |
-| Helper params | any helper-rail button | `HelperParamModal.jsx` | also serves as the refuse/explain dialog |
+| Helper params | any helper-rail button | `HelperParamModal.jsx` | **not** a full-screen modal: docks bottom-centre *of the viewport* (`absolute inset-0`, click-through overlay, no scrim) so the rails and the live preview stay visible and usable. No click-outside-to-cancel — X / Cancel only. Also serves as the refuse/explain dialog |
 | Puzzle picker | Toolbar → List (game) | `PuzzlePickerModal.jsx` | |
 | Hints | Toolbar → BookOpen (game) | `GameHintsModal.jsx` | |
 | Terms | order flow | `TermsModal.jsx` | |
@@ -242,10 +242,10 @@ Import `src/utils/importModel.js` (+ `POST /api/convert/step`); export
   (phone-tight, desktop-roomy). Match this rather than inventing values.
 - **z-index ladder:** overlays `z-10`; edge chip and success banner `z-20`;
   toasts `z-30`; modals and error banners `z-50`.
-- **Icons** are `lucide-react` only, with exactly one vendored exception:
-  `src/components/icons/SquareRoundCorner.jsx` (lucide's `square-round-corner`,
-  the Fillet glyph) exists because that icon landed in lucide 0.511 and we are
-  pinned to 0.469. Delete it and import from `lucide-react` once the dep moves.
+- **Icons** are `lucide-react` only, with two vendored exceptions in
+  `src/components/icons/`: `SquareRoundCorner.jsx` (Fillet) and `Angle.jsx`
+  (Draft). Both glyphs postdate lucide 0.469, which this project pins. Delete
+  them and import from `lucide-react` once the dep moves.
   Overlay buttons carry `title` *and*
   `aria-label`; toggles carry `aria-pressed`. **No two buttons in the same rail
   share a glyph** — the right rail's selectors are deliberately distinct:
@@ -258,12 +258,26 @@ Import `src/utils/importModel.js` (+ `POST /api/convert/step`); export
   Create contour = `NotebookPen` (= sketch overlays) and Workplane = `Layers3`
   (= plane overlays). The tool that makes a thing wears the icon that shows it;
   the no-duplicates rule is per rail, so this is intended, not a slip.
+- **Rail sections are Shapes / Model / Polish / Move**, in that order
+  (`CAD_RAIL_ORDER` in `helperPaletteSnippets.js` for the order,
+  `GROUP_SHORT_LABEL` in `HelperInsertPalette.jsx` for the captions). The
+  internal group keys are still `Primitives` / `Advanced` / `Features` /
+  `Transforms` — display names only. The order is the modelling order: make a
+  shape, model it, polish it, move it.
+- **Previews all share one recipe** (`src/utils/previewStyle.js`): unlit
+  translucent cyan skin + brighter outline. **Never paint a preview with a lit
+  material** — MeshLambert/MeshStandard take the scene lights, so faces angled
+  away go dark, which is exactly the bug that made Extrude look muddy next to
+  Loft. Add a preview → call `makePreviewSkinMaterial` /
+  `makePreviewOutlineMaterial`.
 - **`railHidden` items** are palette entries with no button:
   `paletteRailSections` filters them, `itemsByGroup` does not. `sweepPath`
   (Path) stays so Sweep can still compose an edge wire. `clearanceHole`,
   `tapDrillHole`, `cboreHole`, and `cskHole` stay so older scripts and goldens
   can still emit them, but the rail shows one Hole button: Type is clearance
   or tap drill, and c-bore / c-sink are the Near end and Far end dropdowns.
+  `polarArray` stays the same way: one Array button whose Type param is Grid or
+  Polar, and the `array3D` build delegates to `polarArray`'s for Polar.
   Hide a tool this way rather than deleting an item other code builds with.
 - **Scrolling rails** carry `rail-scroll` alongside `overflow-y-auto`
   (`src/index.css`, bottom). Desktop Chrome's default gutter is square and cuts

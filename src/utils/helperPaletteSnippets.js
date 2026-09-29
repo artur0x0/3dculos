@@ -1750,17 +1750,34 @@ export const HELPER_PALETTE_ITEMS = [
     id: 'array3D',
     label: 'Array',
     group: 'Transforms',
-    title: 'array3D(manifold, counts, spacing)',
+    title: 'Array — grid (array3D) or polar (polarArray)',
     params: [
       { name: 'body', type: 'body', default: 'part', label: 'Body' },
-      { name: 'nx', type: 'number', default: 2, label: 'Count X', min: 1, step: 1 },
-      { name: 'ny', type: 'number', default: 2, label: 'Count Y', min: 1, step: 1 },
-      { name: 'nz', type: 'number', default: 1, label: 'Count Z', min: 1, step: 1 },
-      { name: 'sx', type: 'number', default: 45, label: 'Spacing X', step: 1 },
-      { name: 'sy', type: 'number', default: 35, label: 'Spacing Y', step: 1 },
-      { name: 'sz', type: 'number', default: 0, label: 'Spacing Z', step: 1 },
+      // One button, two patterns. `arrayType` drives both the visible params
+      // (showWhen) and which helper the build emits.
+      {
+        name: 'arrayType', type: 'select', default: 'grid', label: 'Type',
+        options: [{ value: 'grid', label: 'Grid' }, { value: 'polar', label: 'Polar' }],
+      },
+      { name: 'nx', type: 'number', default: 2, label: 'Count X', min: 1, step: 1, showWhen: { field: 'arrayType', values: ['grid'] } },
+      { name: 'ny', type: 'number', default: 2, label: 'Count Y', min: 1, step: 1, showWhen: { field: 'arrayType', values: ['grid'] } },
+      { name: 'nz', type: 'number', default: 1, label: 'Count Z', min: 1, step: 1, showWhen: { field: 'arrayType', values: ['grid'] } },
+      { name: 'sx', type: 'number', default: 45, label: 'Spacing X', step: 1, showWhen: { field: 'arrayType', values: ['grid'] } },
+      { name: 'sy', type: 'number', default: 35, label: 'Spacing Y', step: 1, showWhen: { field: 'arrayType', values: ['grid'] } },
+      { name: 'sz', type: 'number', default: 0, label: 'Spacing Z', step: 1, showWhen: { field: 'arrayType', values: ['grid'] } },
+      { name: 'count', type: 'number', default: 4, label: 'Count', min: 1, step: 1, showWhen: { field: 'arrayType', values: ['polar'] } },
+      { name: 'boltCircleRadius', type: 'number', default: 20, label: 'Bolt circle R', min: 0, step: 1, showWhen: { field: 'arrayType', values: ['polar'] } },
+      { name: 'axis', type: 'select', default: 'z', label: 'Axis', options: AXIS_OPTIONS, showWhen: { field: 'arrayType', values: ['polar'] } },
+      { name: 'boreRadius', type: 'number', default: 3, label: 'Bore R (empty)', min: 0.1, step: 0.5, showWhen: { field: 'arrayType', values: ['polar'] } },
+      { name: 'boreHeight', type: 'number', default: 10, label: 'Bore H (empty)', min: 0.1, step: 0.5, showWhen: { field: 'arrayType', values: ['polar'] } },
     ],
     build: (empty, p, names, buffer) => {
+      // Type=polar hands off to the polarArray entry, which still owns that
+      // codegen (and is still composable on its own id).
+      if (str(p.arrayType, 'grid') === 'polar') {
+        const polar = HELPER_PALETTE_ITEMS.find((i) => i.id === 'polarArray');
+        return polar.build(empty, p, names, buffer);
+      }
       const lines = [...ensurePartPrefix(empty, names)];
       const body = resolveBody(p, names, empty ? lines.join('\n') : buffer);
       const nx = Math.max(1, Math.round(num(p.nx, 2)));
@@ -1778,6 +1795,8 @@ export const HELPER_PALETTE_ITEMS = [
     id: 'polarArray',
     label: 'Polar',
     group: 'Transforms',
+    // Folded into the Array button (Type=Polar), which delegates to this build.
+    railHidden: true,
     title: "polarArray(manifold, count, radius, axis?)",
     params: [
       { name: 'body', type: 'body', default: 'part', label: 'Body' },
@@ -1815,7 +1834,7 @@ export const HELPER_PALETTE_ITEMS = [
   {
     id: 'addDraft',
     label: 'Draft',
-    group: 'Transforms',
+    group: 'Features',
     title: "addDraft(manifold, draftDeg, axis)",
     params: [
       { name: 'body', type: 'body', default: 'part', label: 'Body' },
@@ -1982,6 +2001,12 @@ export const HELPER_PALETTE_ITEMS = [
 /** Group order for the palette UI (Slice 29): Prim, Advanced, Features, Xforms. */
 export const HELPER_PALETTE_GROUPS = ['Primitives', 'Advanced', 'Features', 'Transforms'];
 
+/**
+ * CAD rail section order — Shapes, Model, Polish, Move. Display names live in
+ * HelperInsertPalette's GROUP_SHORT_LABEL; these stay the internal group keys.
+ */
+export const CAD_RAIL_ORDER = ['Primitives', 'Advanced', 'Features', 'Transforms'];
+
 export function itemsByGroup() {
   const map = Object.fromEntries(HELPER_PALETTE_GROUPS.map((g) => [g, []]));
   for (const item of HELPER_PALETTE_ITEMS) {
@@ -2003,12 +2028,17 @@ export function paletteRailSections(layout, grouped = itemsByGroup()) {
   // data model stays the whole set.
   const shown = (group) => (grouped[group] || []).filter((i) => !i.railHidden);
   if (layout === 'cad') {
+    // Rail order is the modelling order, not the data order: make a shape,
+    // model it, polish it, move it. Advanced is promoted to "Model" and sits
+    // second — Shapes lead because that is where an empty part starts.
     const sections = [];
-    const model = shown('Advanced');
-    if (model.length) sections.push({ key: 'Model', items: model });
-    for (const group of HELPER_PALETTE_GROUPS) {
-      if (group === 'Advanced') continue;
-      sections.push({ key: group, items: shown(group) });
+    for (const group of CAD_RAIL_ORDER) {
+      const items = shown(group);
+      if (group === 'Advanced') {
+        if (items.length) sections.push({ key: 'Model', items });
+        continue;
+      }
+      sections.push({ key: group, items });
     }
     return sections;
   }

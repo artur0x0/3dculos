@@ -249,11 +249,10 @@ check('declaredNames export', declaredNames('let box1 = 1;').has('box1'));
   check('Path stays in Features', feat.includes('sweepPath'));
   const xform = grouped.Transforms.map((i) => i.id);
   check('Workplane moved to Advanced', grouped.Advanced.some((i) => i.id === 'workplane') && !xform.includes('workplane'));
-  check('Draft moved to Transforms', xform.includes('addDraft') && !feat.includes('addDraft'));
+  check('Draft moved to Features (Polish)', feat.includes('addDraft') && !xform.includes('addDraft'));
   check(
-    'Xform mirror then array then draft',
-    xform.indexOf('mirror') < xform.indexOf('array3D')
-      && xform.indexOf('array3D') < xform.indexOf('addDraft'),
+    'Move is center, align, mirror, array',
+    xform.indexOf('mirror') < xform.indexOf('array3D') && !xform.includes('addDraft'),
   );
   check('Extrude left Transforms', !xform.includes('makeExtrude') && !xform.includes('makeLoft'));
   check('Sweep is a contour entry', isContourEntry('makeSweep') && isSweepEntry('makeSweep'));
@@ -269,7 +268,7 @@ check('declaredNames export', declaredNames('let box1 = 1;').has('box1'));
   check('Chamfer icon is TriangleRight', /chamferEdges:\s*TriangleRight/.test(rail));
   check('Sweep icon is Route', /makeSweep:\s*Route/.test(rail));
   check('no glyph is left orphaned by the icon swaps', !/\bSquareDashed\b|\bSpline\b|\bFrame\b/.test(rail));
-  check('compact labels Prim Adv Feat Xform', /Primitives:\s*'Prim'/.test(rail) && /Advanced:\s*'Adv'/.test(rail) && /Features:\s*'Feat'/.test(rail) && /Transforms:\s*'Xform'/.test(rail));
+  check('rail captions Shapes / Polish / Move', /Primitives:\s*'Shapes'/.test(rail) && /Features:\s*'Polish'/.test(rail) && /Transforms:\s*'Move'/.test(rail));
 }
 
 if (failed) {

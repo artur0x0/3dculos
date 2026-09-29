@@ -36,6 +36,13 @@ import {
   SpriteMaterial,
   CanvasTexture,
 } from 'three';
+import {
+  makePreviewSkinMaterial,
+  makePreviewOutlineMaterial,
+  PREVIEW_COLORS,
+  PREVIEW_OPACITY,
+  PREVIEW_RENDER_ORDER,
+} from '../utils/previewStyle';
 import { TrackballControls } from 'three/addons/controls/TrackballControls.js';
 import { LineSegments2 } from 'three/addons/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js';
@@ -763,19 +770,12 @@ const Viewport = forwardRef(({
       bevelEnabled: false,
       curveSegments: 1,
     });
-    const mat = new MeshLambertMaterial({
-      color: 0x22d3ee,
-      transparent: true,
-      opacity: 0.42,
-      depthWrite: false,
-      flatShading: true,
-      side: DoubleSide,
-      emissive: 0x164e63,
-      emissiveIntensity: 0.2,
-    });
+    // Unlit, like every other preview: a lit material turned the faces angled
+    // away from the lights dark and muddy (see utils/previewStyle.js).
+    const mat = makePreviewSkinMaterial();
     const mesh = new ThreeMesh(geom, mat);
     mesh.name = 'contourExtrudePreview';
-    mesh.renderOrder = 8;
+    mesh.renderOrder = PREVIEW_RENDER_ORDER.skin;
     mesh.frustumCulled = false;
     const { plane, w0 } = payload;
     const n = plane.normal;
@@ -792,6 +792,25 @@ const Viewport = forwardRef(({
     const group = new Group();
     group.name = 'contourExtrudePreviewGroup';
     group.add(mesh);
+    // Start and end loops, exactly like Loft's station rings — the skin alone
+    // reads as a smear without them.
+    const outlineMat = makePreviewOutlineMaterial();
+    for (const w of [w0, w0 + Number(payload.distance)]) {
+      if (!Number.isFinite(w)) continue;
+      const pos = new Float32Array((loop.length + 1) * 3);
+      for (let i = 0; i <= loop.length; i++) {
+        const [u, v] = loop[i % loop.length];
+        for (let k = 0; k < 3; k++) {
+          pos[i * 3 + k] = c[k] + u * x[k] + v * y[k] + w * n[k];
+        }
+      }
+      const g = new BufferGeometry();
+      g.setAttribute('position', new BufferAttribute(pos, 3));
+      const line = new Line(g, outlineMat);
+      line.renderOrder = PREVIEW_RENDER_ORDER.outline;
+      line.frustumCulled = false;
+      group.add(line);
+    }
     sceneRef.current.add(group);
     extrudePreviewRef.current = group;
   }, [clearExtrudePreview]);
@@ -858,13 +877,7 @@ const Viewport = forwardRef(({
     geom.setAttribute('position', new BufferAttribute(positions, 3));
     geom.setIndex(indices);
     geom.computeVertexNormals();
-    const mat = new MeshBasicMaterial({
-      color: 0x22d3ee,
-      transparent: true,
-      opacity: 0.4,
-      depthWrite: false,
-      side: DoubleSide,
-    });
+    const mat = makePreviewSkinMaterial();
     const mesh = new ThreeMesh(geom, mat);
     mesh.name = 'contourRevolvePreview';
     mesh.renderOrder = 10;
@@ -898,19 +911,8 @@ const Viewport = forwardRef(({
     if (!payload?.stations?.length || !sceneRef.current) return;
     const group = new Group();
     group.name = 'contourLoftPreviewGroup';
-    const ringMat = new LineBasicMaterial({
-      color: 0x67e8f9,
-      transparent: true,
-      opacity: 0.95,
-      depthTest: false,
-    });
-    const skinMat = new MeshBasicMaterial({
-      color: 0x22d3ee,
-      transparent: true,
-      opacity: 0.38,
-      depthWrite: false,
-      side: DoubleSide,
-    });
+    const ringMat = makePreviewOutlineMaterial();
+    const skinMat = makePreviewSkinMaterial();
     const worldRing = (station) => {
       const plane = station.plane;
       return (station.ring || []).map((uv) => [
@@ -987,19 +989,8 @@ const Viewport = forwardRef(({
     if (!payload?.stations?.length || !sceneRef.current) return;
     const group = new Group();
     group.name = 'contourSweepPreviewGroup';
-    const ringMat = new LineBasicMaterial({
-      color: 0x67e8f9,
-      transparent: true,
-      opacity: 0.95,
-      depthTest: false,
-    });
-    const skinMat = new MeshBasicMaterial({
-      color: 0x22d3ee,
-      transparent: true,
-      opacity: 0.38,
-      depthWrite: false,
-      side: DoubleSide,
-    });
+    const ringMat = makePreviewOutlineMaterial();
+    const skinMat = makePreviewSkinMaterial();
     const addSkin = (a, b) => {
       const n = Math.min(a?.length || 0, b?.length || 0);
       if (n < 3) return;
@@ -1099,13 +1090,7 @@ const Viewport = forwardRef(({
     const group = new Group();
     group.name = 'contourWorkplane';
     const geom = new PlaneGeometry(size, size);
-    const mat = new MeshBasicMaterial({
-      color: 0x22d3ee,
-      transparent: true,
-      opacity: 0.18,
-      depthWrite: false,
-      side: DoubleSide,
-    });
+    const mat = makePreviewSkinMaterial({ opacity: PREVIEW_OPACITY.ghost });
     const quad = new ThreeMesh(geom, mat);
     quad.position.set(plane.center[0], plane.center[1], plane.center[2]);
     const q = new Quaternion();
@@ -1163,13 +1148,10 @@ const Viewport = forwardRef(({
       const size = 48;
       const geom = new PlaneGeometry(size, size);
       const selected = p.id === activeId;
-      const mat = new MeshBasicMaterial({
-        color: selected ? 0xf59e0b : 0x67e8f9,
-        transparent: true,
-        opacity: selected ? 0.32 : 0.18,
-        depthWrite: false,
-        side: DoubleSide,
-      });
+      // Same translucent recipe as the tool previews, amber when active.
+      const mat = makePreviewSkinMaterial(selected
+        ? { color: PREVIEW_COLORS.selected, opacity: PREVIEW_OPACITY.selected }
+        : { color: PREVIEW_COLORS.outline, opacity: PREVIEW_OPACITY.ghost });
       const quad = new ThreeMesh(geom, mat);
       quad.position.set(plane.center[0], plane.center[1], plane.center[2]);
       const q = new Quaternion();
@@ -1316,13 +1298,7 @@ const Viewport = forwardRef(({
         geom.setAttribute('position', new BufferAttribute(positions, 3));
         geom.setIndex(indices);
         geom.computeVertexNormals();
-        const mat = new MeshBasicMaterial({
-          color: 0xfbbf24,
-          transparent: true,
-          opacity: 0.38,
-          depthWrite: false,
-          side: DoubleSide,
-        });
+        const mat = makePreviewSkinMaterial({ color: PREVIEW_COLORS.blendSkin });
         const mesh = new ThreeMesh(geom, mat);
         mesh.name = 'filletBlendWedge';
         mesh.renderOrder = 10;

@@ -60,19 +60,24 @@ const HelperParamModal = ({
     [item?._minEdgeLength, edgeInfo],
   );
 
+  // Both shells dock to the BOTTOM-CENTRE OF THE VIEWPORT, not the screen:
+  // `absolute` resolves against the viewport shell (this modal renders as a
+  // sibling of the helper rail inside it), so the panel lands between the two
+  // bottom rails instead of covering them. The overlay is click-through
+  // (`pointer-events-none`) and undimmed so the part, the rails and the live
+  // preview all stay visible and usable while you tune params — which also
+  // means there is no click-outside-to-cancel any more; the X and Cancel
+  // buttons are the way out.
   if (refuseMessage) {
     return (
       <div
-        className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 p-3"
+        className="absolute inset-0 z-50 flex items-end justify-center p-3 pointer-events-none"
         role="presentation"
-        onMouseDown={(e) => {
-          if (e.target === e.currentTarget) onCancel?.();
-        }}
       >
         <div
           role="alertdialog"
           aria-labelledby="helper-refuse-title"
-          className="w-full max-w-sm max-h-[85dvh] overflow-hidden flex flex-col rounded-lg bg-gray-900 border border-amber-700/60 shadow-xl"
+          className="pointer-events-auto w-full max-w-sm max-h-[70%] mb-1 overflow-hidden flex flex-col rounded-lg bg-gray-900 border border-amber-700/60 shadow-2xl"
         >
           <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-gray-700 shrink-0">
             <div className="min-w-0 flex items-center gap-2">
@@ -218,16 +223,13 @@ const HelperParamModal = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 p-3"
+      className="absolute inset-0 z-50 flex items-end justify-center p-3 pointer-events-none"
       role="presentation"
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onCancel?.();
-      }}
     >
       <div
         role="dialog"
         aria-labelledby="helper-param-title"
-        className="w-full max-w-sm max-h-[85dvh] overflow-hidden flex flex-col rounded-lg bg-gray-900 border border-gray-700 shadow-xl"
+        className="pointer-events-auto w-full max-w-sm max-h-[70%] mb-1 overflow-hidden flex flex-col rounded-lg bg-gray-900 border border-gray-700 shadow-2xl"
       >
         <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-gray-700 shrink-0">
           <div className="min-w-0">
