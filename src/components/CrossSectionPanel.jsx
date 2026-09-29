@@ -1,7 +1,8 @@
 // components/CrossSectionPanel.jsx
 /* eslint-disable react-hooks/exhaustive-deps -- see Viewport note; same ref-backed pattern */
 import React, { useState, useEffect } from 'react';
-import { FlipHorizontal, ChevronDown, ChevronUp, Maximize2, Ruler, Move3d, Frame, Spline, RectangleHorizontal, Layers3, NotebookPen } from 'lucide-react';
+import { FlipHorizontal, Check, Maximize2, Ruler, Move3d, Frame, Spline, RectangleHorizontal, Layers3, NotebookPen } from 'lucide-react';
+import TrianglesCenterlineDashedVertical from './icons/TrianglesCenterlineDashedVertical';
 import ViewSnapControl from './ViewSnapControl';
 import { PLANE_PRESETS } from '../utils/crossSection';
 
@@ -312,13 +313,16 @@ const handleButtonClick = () => {
         >
           <FlipHorizontal size={20} />
         </button>
+        {/* Opens the cross-section options, so it wears a section cut — two
+            arrowheads on a dashed centreline — not a generic chevron. */}
         {enabled && (
           <button
             onClick={handleChevronClick}
             className="p-2 rounded hover:bg-gray-100 text-gray-600"
-            title="Show Options"
+            title="Cross-section options"
+            aria-label="Show cross-section options"
           >
-            <ChevronUp size={20} />
+            <TrianglesCenterlineDashedVertical size={20} />
           </button>
         )}
       </div>
@@ -365,12 +369,14 @@ const handleButtonClick = () => {
         >
           <FlipHorizontal size={20} />
         </button>
+        {/* Closing the options panel is "I'm done here", so: a checkmark. */}
         <button
           onClick={handleChevronClick}
-          className="p-2 rounded hover:bg-gray-100 text-gray-600"
-          title="Hide Options"
+          className="p-2 rounded hover:bg-gray-100 text-green-600"
+          title="Done — close cross-section options"
+          aria-label="Done, close cross-section options"
         >
-          <ChevronDown size={20} />
+          <Check size={20} />
         </button>
       </div>
 

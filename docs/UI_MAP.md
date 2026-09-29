@@ -103,7 +103,9 @@ Mobile specifics:
   done so download/export busy state can stay in Viewport, and so the green Run
   button can call Viewport's own `executeScript()` on the live buffer without a
   round trip through App (`runCadScript`). Game's Run is a different handler
-  (`onRun`); CAD's is `onRunScript`. Both shells do this.
+  (`onRun`); CAD's is `onRunScript`. Select-all sits beside Run at the same
+  18px: the button is in the strip, the editor is in `App`, so it routes
+  `onSelectAll` → `codeEditorRef.current.selectAll()`. Both shells do this.
 - The `CrossSectionPanel` cluster is a **vertical** rail (`verticalRail`,
   `src/components/Viewport.jsx:3656`) — in both shells.
 - Overlays still take `compact={isMobile}`, but it no longer changes rail button
@@ -118,7 +120,7 @@ That yields **four** layout combinations; check both flags when editing chrome.
 
 | | `mode === 'cad'` | `mode === 'game'` |
 | --- | --- | --- |
-| Toolbar contents | **run** (green, own section, first) then account/open/upload/undo/save/download/quote/puzzle | back, undo/redo, run, picker, hint (`src/components/Toolbar.jsx:98`+) |
+| Toolbar contents | **run + select-all** (green run first, own section) then account/open/upload/undo/save/download/quote/puzzle | back, undo/redo, run, picker, hint (`src/components/Toolbar.jsx:98`+) |
 | Toolbar placement | portaled strip above the editor, both shells | strip inside CodeEditor, both shells |
 | Title chip | always (filename) | always (puzzle title) |
 | Helper rail | `layout="cad"` — advanced tools folded into Model | `layout="game"` — keeps the Advanced group |
@@ -284,6 +286,10 @@ Import `src/utils/importModel.js` (+ `POST /api/convert/step`); export
   `bg-gray-900` / `bg-[#1e1e1e]` slab over the viewport. The one exception is
   native `<select>` / `<option>`: the OS renders the option list and a
   translucent one is unreadable.
+- **Cross-section buttons name their action**: the collapsed rail opens the
+  options with the section-cut glyph (`TrianglesCenterlineDashedVertical`), and
+  the expanded panel closes with a green `Check`. No chevrons — they said
+  "up/down", not what would happen.
 - **Bottom-centre is for mode chips and the param popup**; the bottom corners
   belong to the rails. Contour and Fillet chips are
   `bottom-2.5 left-1/2 -translate-x-1/2`, the right-hand cluster is
@@ -293,10 +299,11 @@ Import `src/utils/importModel.js` (+ `POST /api/convert/step`); export
   (phone-tight, desktop-roomy). Match this rather than inventing values.
 - **z-index ladder:** overlays `z-10`; edge chip and success banner `z-20`;
   toasts `z-30`; modals and error banners `z-50`.
-- **Icons** are `lucide-react` only, with two vendored exceptions in
-  `src/components/icons/`: `SquareRoundCorner.jsx` (Fillet) and `Angle.jsx`
-  (Draft). Both glyphs postdate lucide 0.469, which this project pins. Delete
-  them and import from `lucide-react` once the dep moves.
+- **Icons** are `lucide-react` only, with three vendored exceptions in
+  `src/components/icons/`: `SquareRoundCorner.jsx` (Fillet), `Angle.jsx`
+  (Draft) and `TrianglesCenterlineDashedVertical.jsx` (cross-section options).
+  All three postdate lucide 0.469, which this project pins. Delete them and
+  import from `lucide-react` once the dep moves.
   Overlay buttons carry `title` *and*
   `aria-label`; toggles carry `aria-pressed`. **No two buttons in the same rail
   share a glyph** — the right rail's selectors are deliberately distinct:

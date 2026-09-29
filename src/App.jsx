@@ -1036,6 +1036,11 @@ const App = () => {
     setMobileEditorPx(Math.min(Math.max(px, 120), Math.max(160, rect.height - 160)));
   };
 
+  /** CAD strip Select all — the button is in the strip, the editor is here. */
+  const handleSelectAll = () => {
+    codeEditorRef.current?.selectAll?.();
+  };
+
   // Rename from the viewport title chip. Only app state — the name is read by
   // save/export and by the OAuth-redirect snapshot, so nothing else to write.
   const handleRenameFile = (name) => {
@@ -1213,6 +1218,7 @@ const App = () => {
               canRedo={canRedo()}
               currentFilename={currentFilename}
               onRenameFile={handleRenameFile}
+              onSelectAll={handleSelectAll}
               isUploading={isUploading || gameLoading}
               mode={appMode}
               ghostMeshData={ghostMeshData}
@@ -1437,6 +1443,7 @@ const App = () => {
             canRedo={canRedo()}
             currentFilename={currentFilename}
             onRenameFile={handleRenameFile}
+            onSelectAll={handleSelectAll}
             isUploading={isUploading || gameLoading}
             mode={appMode}
             ghostMeshData={ghostMeshData}

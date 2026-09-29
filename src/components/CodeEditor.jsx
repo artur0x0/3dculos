@@ -1,6 +1,5 @@
 import React, { useState, useRef, useEffect, forwardRef, useImperativeHandle } from 'react';
 import Editor from '@monaco-editor/react';
-import { SquareDashedBottomCode } from 'lucide-react';
 import Toolbar from './Toolbar';
 import { composeHelperInsert } from '../utils/helperPaletteSnippets';
 
@@ -68,6 +67,8 @@ const CodeEditor = forwardRef(({
   // Expose methods to parent via ref
   useImperativeHandle(ref, () => ({
     getContent: () => valueRef.current,
+    /** Select-all now lives in the CAD strip next to Run, so App drives it. */
+    selectAll: () => selectAll(),
     
     loadContent: (content, message = 'Content loaded', addToHistory = true) => {
       // Cancel any pending history timeout
@@ -440,16 +441,6 @@ const CodeEditor = forwardRef(({
             data-cad-toolbar-host=""
           />
         )}
-        <button
-          type="button"
-          onClick={selectAll}
-          title="Select all text in the editor"
-          aria-label="Select all text in the editor"
-          className="shrink-0 p-1.5 text-gray-400 hover:text-white hover:bg-gray-700/60 rounded transition-colors"
-        >
-          {/* lucide-react ^0.469.0 exports SquareDashedBottomCode (preferred). */}
-          <SquareDashedBottomCode size={16} />
-        </button>
       </div>
       <div className="flex-1 min-h-0">
         <Editor

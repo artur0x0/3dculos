@@ -355,7 +355,17 @@ const contourRail = read('../../src/components/ContourModeRail.jsx');
   check('Run is the first button in the strip',
     runAt < strip.indexOf('onClick={onAccount}'));
   check('Run is green', /text-green-400 disabled:opacity-60/.test(strip));
-  check('Run has its own section', /data-cad-run[\s\S]{0,700}?<\/button>\s*<div className=\{divider\} \/>/.test(strip));
+  // Run's section now holds Run + Select all (both editor actions), then the
+  // divider before the file/model buttons.
+  check('Run shares its section with Select all, then a divider',
+    /data-cad-run[\s\S]{0,900}?data-cad-select-all[\s\S]{0,300}?<\/button>\s*<div className=\{divider\} \/>/.test(strip));
+  check('Select all is at Run\'s icon size, not its old 16',
+    /data-cad-select-all[\s\S]{0,120}<SquareDashedBottomCode size=\{icon\} \/>/.test(strip));
+  check('Select all left the editor strip',
+    !/SquareDashedBottomCode/.test(read('../../src/components/CodeEditor.jsx')));
+  check('Select all is driven through the editor ref',
+    /selectAll: \(\) => selectAll\(\)/.test(read('../../src/components/CodeEditor.jsx'))
+      && /codeEditorRef\.current\?\.selectAll/.test(read('../../src/App.jsx')));
   check('Run becomes a spinner while executing',
     /isExecuting \? \(\s*<span[\s\S]{0,200}animate-spin/.test(strip));
   check('Run is disabled and marked busy mid-run',
@@ -363,6 +373,21 @@ const contourRail = read('../../src/components/ContourModeRail.jsx');
   check('CAD Run is wired to the live buffer, not the game handler',
     /onRunScript={runCadScript}/.test(view) && /const runCadScript/.test(view));
   check('game Run keeps its own handler', /onRun={onRun}/.test(view));
+}
+
+// ── AC17: cross-section buttons say what they do ──
+{
+  const cut = read('../../src/components/icons/TrianglesCenterlineDashedVertical.jsx');
+  check('the section-cut glyph is vendored', /lucide-triangles-centerline-dashed-vertical/.test(cut)
+    && /M12 14v2/.test(cut) && /M20\.288 16\.703/.test(cut));
+  check('opening the options shows a section cut, not a chevron',
+    /<TrianglesCenterlineDashedVertical size=\{20\} \/>/.test(panel));
+  check('closing the options is a checkmark', /<Check size=\{20\} \/>/.test(panel));
+  check('both chevrons are gone from the cross-section panel',
+    !/ChevronUp|ChevronDown/.test(panel));
+  check('the labels match the new glyphs',
+    /title="Cross-section options"/.test(panel)
+      && /title="Done — close cross-section options"/.test(panel));
 }
 
 if (failed) {
