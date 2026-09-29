@@ -1,5 +1,8 @@
 import React from 'react';
 import { AlertTriangle, Check, X } from 'lucide-react';
+import { NumberField, POPUP_TEXT } from './controls/popupUI';
+
+const ACCENT = 'amber';
 
 /**
  * Slice 27 — Fillet-in-mode chip (Edge-pick pattern).
@@ -61,7 +64,7 @@ const FilletModeChip = ({
     >
       {hard && (
         <div
-          className="mb-1.5 rounded border border-red-400/80 bg-red-950/80 px-2 py-1.5 text-[11px] leading-snug text-red-50"
+          className="mb-1.5 rounded border border-red-400/80 bg-red-950/80 px-2 py-1.5 text-[13px] leading-snug text-red-50"
           role="status"
           data-fillet-warn="hard"
           data-fillet-reason={edgeClass.reason || ''}
@@ -71,7 +74,7 @@ const FilletModeChip = ({
             <div>
               <span className="font-semibold text-red-200">Hard edge</span>
               {edgeClass.reason ? ` · ${edgeClass.reason}` : ''}
-              <div className="text-[10px] text-red-100/95 mt-0.5">
+              <div className="text-[11px] text-red-100/95 mt-0.5">
                 Quality may be poor. Accept still runs.
               </div>
             </div>
@@ -83,7 +86,7 @@ const FilletModeChip = ({
           <div className="font-bold font-sans text-amber-200">
             {title} · {edgeCount} edge{edgeCount === 1 ? '' : 's'}
           </div>
-          <div className="text-[10px] text-amber-100/90 normal-case font-sans mt-0.5">
+          <div className="text-[11px] text-amber-100/90 normal-case font-sans mt-0.5">
             {chamfer
               ? (edgeCount
                 ? 'Accept commits the chamfer and exits'
@@ -106,39 +109,22 @@ const FilletModeChip = ({
         </button>
       </div>
       <div className="mt-1.5 flex flex-col gap-1.5 font-sans">
-        <label className="flex flex-col gap-0.5 min-w-0">
-          <span className="text-[10px] uppercase tracking-wide text-amber-200/80">
-            {chamfer ? 'Size' : 'Radius'}
-          </span>
-          <div className="flex items-center gap-1.5">
-            <input
-              type="range"
-              value={Number.isFinite(sizeNum) ? sizeNum : (chamfer ? 2 : 3)}
-              min={0.1}
-              max={max}
-              step={Math.max(0.5, Math.round((max / 40) * 100) / 100)}
-              onChange={(e) => setSize(e.target.value)}
-              className="flex-1 min-w-0 accent-amber-400"
-              aria-label={chamfer ? 'Size' : 'Radius'}
-            />
-            <input
-              type="number"
-              value={size ?? ''}
-              min={0.01}
-              max={max}
-              step="any"
-              onChange={(e) => setSize(e.target.value)}
-              className="w-14 rounded border border-amber-700/70 bg-amber-950/80 px-1 py-0.5
-                text-[11px] tabular-nums text-white"
-              aria-label={chamfer ? 'Size value' : 'Radius value'}
-            />
-          </div>
-        </label>
+        {/* Same slider + typed box as every other popup (controls/popupUI). */}
+        <NumberField
+          id={chamfer ? 'size' : 'radius'}
+          label={chamfer ? 'Size' : 'Radius'}
+          accent={ACCENT}
+          value={size}
+          onChange={setSize}
+          min={0.1}
+          max={max}
+          step={Math.max(0.5, Math.round((max / 40) * 100) / 100)}
+        />
       </div>
       <div className="mt-1.5 flex items-center gap-3 font-sans flex-wrap">
         <button
           type="button"
-          className={`text-[10px] underline ${tangentOn ? 'text-cyan-300' : 'text-amber-200/70'}`}
+          className={`text-[11px] underline ${tangentOn ? 'text-cyan-300' : 'text-amber-200/70'}`}
           onClick={() => onToggleTangent?.()}
           title="When on, picking one edge adds G1-connected (tangent) edges in the loop"
           aria-pressed={tangentOn}
@@ -147,7 +133,7 @@ const FilletModeChip = ({
         </button>
         <button
           type="button"
-          className="text-[10px] text-amber-200 underline"
+          className="text-[11px] text-amber-200 underline"
           onClick={() => onClear?.()}
           title="Clear all selected edges"
         >
@@ -155,7 +141,7 @@ const FilletModeChip = ({
         </button>
         <button
           type="button"
-          className="text-[10px] text-amber-200 underline"
+          className="text-[11px] text-amber-200 underline"
           onClick={() => onBack?.()}
           title={`Exit ${title} mode without committing`}
         >
@@ -163,13 +149,13 @@ const FilletModeChip = ({
         </button>
       </div>
       <div className="mt-2 flex items-center justify-between gap-2">
-        <span className="text-[10px] text-amber-200/70 leading-tight">
+        <span className="text-[11px] text-amber-200/70 leading-tight">
           {chamfer ? 'Equal-leg chamfer' : 'Strategy · sweep'}
         </span>
         <button
           type="button"
           onClick={() => onAccept?.()}
-          className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium
+          className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[13px] font-medium
             bg-amber-600 hover:bg-amber-500 active:bg-amber-400 text-white shrink-0"
           data-fillet-accept="enabled"
           title={chamfer

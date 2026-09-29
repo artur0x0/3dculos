@@ -600,7 +600,7 @@ function emitProfileExprFromParams(p) {
     return `profilePolygon([${pts.join(', ')}])`;
   }
   const r = num(p.radius, 5);
-  const seg = Math.max(3, Math.round(num(p.segments, 32)));
+  const seg = Math.max(3, Math.round(num(p.segments, 64)));
   return `profileCircle(${r}, ${seg})`;
 }
 
@@ -1099,12 +1099,12 @@ export const HELPER_PALETTE_ITEMS = [
     bodyBase: 'sphere',
     params: [
       { name: 'radius', type: 'number', default: 15, label: 'Radius', min: 0.1, step: 0.5 },
-      { name: 'segments', type: 'number', default: 32, label: 'Segments', min: 3, step: 1 },
+      { name: 'segments', type: 'number', default: 64, label: 'Segments', min: 3, step: 1, max: 128 },
     ],
     build: (empty, p, names) => {
       const sph = allocateUniqueName(names, 'sphere');
       const r = num(p.radius, 15);
-      const seg = Math.max(3, Math.round(num(p.segments, 32)));
+      const seg = Math.max(3, Math.round(num(p.segments, 64)));
       const lines = [`let ${sph} = Manifold.sphere(${r}, ${seg});`];
       if (empty || !names.has('part')) {
         const partName = allocateUniqueName(names, 'part');
@@ -1126,14 +1126,14 @@ export const HELPER_PALETTE_ITEMS = [
       { name: 'outerRadius', type: 'number', default: 15, label: 'Outer R', min: 0.1, step: 0.5 },
       { name: 'innerRadius', type: 'number', default: 10, label: 'Inner R', min: 0, step: 0.5 },
       { name: 'height', type: 'number', default: 40, label: 'Height', min: 0.1, step: 1 },
-      { name: 'segments', type: 'number', default: 32, label: 'Segments', min: 3, step: 1 },
+      { name: 'segments', type: 'number', default: 64, label: 'Segments', min: 3, step: 1, max: 128 },
     ],
     build: (empty, p, names) => {
       const tube = allocateUniqueName(names, 'tube');
       const o = num(p.outerRadius, 15);
       const i = num(p.innerRadius, 10);
       const h = num(p.height, 40);
-      const seg = Math.max(3, Math.round(num(p.segments, 32)));
+      const seg = Math.max(3, Math.round(num(p.segments, 64)));
       const lines = [`let ${tube} = tube(${o}, ${i}, ${h}, ${seg});`];
       if (empty || !names.has('part')) {
         const partName = allocateUniqueName(names, 'part');
@@ -1314,7 +1314,7 @@ export const HELPER_PALETTE_ITEMS = [
         options: ['circle', 'rectangle', 'polygon'],
       },
       { name: 'radius', type: 'number', default: 5, label: 'Radius', min: 0.1, step: 0.5, slider: true },
-      { name: 'segments', type: 'number', default: 32, label: 'Segments', min: 3, step: 1 },
+      { name: 'segments', type: 'number', default: 64, label: 'Segments', min: 3, step: 1, max: 128 },
       { name: 'width', type: 'number', default: 20, label: 'Width', min: 0.1, step: 1, slider: true },
       { name: 'height', type: 'number', default: 12, label: 'Height', min: 0.1, step: 1, slider: true },
       { name: 'centered', type: 'bool', default: true, label: 'Centered' },
@@ -1819,7 +1819,7 @@ export const HELPER_PALETTE_ITEMS = [
         const bh = num(p.boreHeight, 10);
         const partName = allocateUniqueName(names, 'part');
         return [
-          `const ${bore} = Manifold.cylinder(${bh}, ${br}, ${br}, 32);`,
+          `const ${bore} = Manifold.cylinder(${bh}, ${br}, ${br}, 64);`,
           partName === 'part'
             ? `let part = polarArray(${bore}, ${count}, ${bcr}, '${axis}');`
             : `let ${partName} = polarArray(${bore}, ${count}, ${bcr}, '${axis}');\npart = ${partName};`,
@@ -1985,8 +1985,8 @@ export const HELPER_PALETTE_ITEMS = [
       const xs1 = allocateUniqueName(names, 'xs');
       const lofted = allocateUniqueName(names, 'lofted');
       const lines = [
-        `const ${xs0} = makeCrossSection({ center: [0, 0, 0], normal: [0, 0, 1], x: [1, 0, 0], y: [0, 1, 0] }, profileCircle(5, 32));`,
-        `const ${xs1} = makeCrossSection({ center: [0, 0, ${h}], normal: [0, 0, 1], x: [1, 0, 0], y: [0, 1, 0] }, profileCircle(8, 32));`,
+        `const ${xs0} = makeCrossSection({ center: [0, 0, 0], normal: [0, 0, 1], x: [1, 0, 0], y: [0, 1, 0] }, profileCircle(5, 64));`,
+        `const ${xs1} = makeCrossSection({ center: [0, 0, ${h}], normal: [0, 0, 1], x: [1, 0, 0], y: [0, 1, 0] }, profileCircle(8, 64));`,
         `let ${lofted} = makeLoft([${xs0}, ${xs1}]);`,
       ];
       if (empty || !names.has('part')) {

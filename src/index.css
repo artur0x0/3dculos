@@ -84,7 +84,12 @@ body {
   container-type: inline-size;
 }
 .view-snap-popup {
-  max-width: calc(100cqw - 20px);
+  /* Clear the LEFT rail too, not just the pane edge. The rail is a 20px icon
+     in a p-2 button inside a p-2 shell (~52px) at left-2/left-4, so ~5.25rem
+     covers it at either breakpoint; the extra 10px is the same edge padding
+     the flyout keeps everywhere else. Without this the four snap buttons slide
+     underneath the helper palette on a narrow pane instead of wrapping. */
+  max-width: calc(100cqw - 5.25rem - 20px);
 }
 
 /* ── One translucent surface for every panel, sheet, chip and toast ──

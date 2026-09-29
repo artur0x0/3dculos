@@ -9,6 +9,12 @@ import {
   sweepBlendHardMax,
 } from '../utils/selectEdge';
 import { resolveFilletStrategy } from '../utils/filletAlongPath';
+import {
+  NumberField, SelectField, CheckField, PopupButton, POPUP_TEXT,
+} from './controls/popupUI';
+
+/** Helper sheets are neutral; the accent chips own cyan/amber. */
+const ACCENT = 'slate';
 
 /**
  * Slice 10/11/12/21 — param popup for guided helper insert.
@@ -101,14 +107,9 @@ const HelperParamModal = ({
             {refuseMessage}
           </div>
           <div className="flex items-center justify-end gap-2 px-4 py-3 border-t border-gray-700 shrink-0">
-            <button
-              type="button"
-              onClick={() => onCancel?.()}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium
-                bg-gray-700 hover:bg-gray-600 text-white"
-            >
+            <PopupButton accent={ACCENT} onClick={() => onCancel?.()}>
               OK
-            </button>
+            </PopupButton>
           </div>
         </div>
       </div>
@@ -233,10 +234,10 @@ const HelperParamModal = ({
       >
         <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-gray-700 shrink-0">
           <div className="min-w-0">
-            <h2 id="helper-param-title" className="font-semibold text-sm text-white truncate">
+            <h2 id="helper-param-title" className={`${POPUP_TEXT.title} text-white truncate`}>
               {item.label}
             </h2>
-            <p className="text-[11px] text-gray-400 truncate" title={item.title}>
+            <p className={`${POPUP_TEXT.subtitle} text-gray-400 truncate`} title={item.title}>
               {item.title}
             </p>
           </div>
@@ -307,86 +308,69 @@ const HelperParamModal = ({
           {visibleParams.length === 0 && (
             <p className="text-xs text-gray-400">No options — confirm to insert.</p>
           )}
-          {visibleParams.map((p) => (
-            <label key={p.name} className="flex flex-col gap-1">
-              <span className="text-[11px] font-medium uppercase tracking-wide text-gray-400">
-                {p.label}
-              </span>
-              {p.type === 'bool' ? (
-                <input
-                  type="checkbox"
+          {visibleParams.map((p) => {
+            if (p.type === 'bool') {
+              return (
+                <CheckField
+                  key={p.name}
+                  label={p.label}
+                  accent={ACCENT}
                   checked={!!values[p.name]}
-                  onChange={(e) => setField(p.name, e.target.checked, 'bool')}
-                  className="h-4 w-4 rounded border-gray-600 bg-gray-800 text-cyan-500"
+                  onChange={(v) => setField(p.name, v, 'bool')}
                 />
-              ) : p.type === 'select' || p.type === 'body' ? (
-                <select
+              );
+            }
+            if (p.type === 'select' || p.type === 'body') {
+              return (
+                <SelectField
+                  key={p.name}
+                  label={p.label}
+                  accent={ACCENT}
                   value={String(values[p.name] ?? p.default)}
-                  onChange={(e) => setField(p.name, e.target.value, p.type)}
-                  className="rounded-md border border-gray-600 bg-gray-950 px-2 py-1.5 text-sm text-white"
-                >
-                  {(p.type === 'body' ? bodies : p.options || []).map((opt) => (
-                    <option key={String(optionValue(opt))} value={String(optionValue(opt))}>
-                      {optionLabel(opt)}
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <div className="flex flex-col gap-1.5">
-                  {p.slider && (
-                    <input
-                      type="range"
-                      value={Number.isFinite(Number(values[p.name])) ? Number(values[p.name]) : (p.default ?? 0)}
-                      min={p.min ?? (typeof p.default === 'number' && p.default < 0 ? p.default * 2 : 0)}
-                      max={
-                        (p.name === 'radius' || p.name === 'chamfer') && resolvedStrategy === 'sweep'
-                          ? sweepMax
-                          : (p.max ?? Math.max(100, Math.abs(Number(p.default) || 0) * 4, 40))
-                      }
-                      step={
-                        (p.name === 'radius' || p.name === 'chamfer') && resolvedStrategy === 'sweep'
-                          ? Math.max(0.5, Math.round((sweepMax / 40) * 100) / 100)
-                          : (p.step ?? 0.5)
-                      }
-                      onChange={(e) => setField(p.name, e.target.value, 'number')}
-                      className="w-full accent-cyan-500"
-                    />
-                  )}
-                  <input
-                    type="number"
-                    value={values[p.name] ?? ''}
-                    step={p.step ?? 'any'}
-                    min={p.min}
-                    onChange={(e) => setField(p.name, e.target.value, 'number')}
-                    className="rounded-md border border-gray-600 bg-gray-950 px-2 py-1.5 text-sm text-white tabular-nums"
-                  />
-                </div>
-              )}
-            </label>
-          ))}
+                  onChange={(v) => setField(p.name, v, p.type)}
+                  options={(p.type === 'body' ? bodies : p.options || []).map((opt) => ({
+                    value: optionValue(opt),
+                    label: optionLabel(opt),
+                  }))}
+                />
+              );
+            }
+            // Blend sizes re-scale under Strategy=sweep, which has its own max.
+            const isBlend = p.name === 'radius' || p.name === 'chamfer';
+            const sweepScaled = isBlend && resolvedStrategy === 'sweep';
+            return (
+              <NumberField
+                key={p.name}
+                id={p.name}
+                label={p.label}
+                accent={ACCENT}
+                value={values[p.name]}
+                onChange={(v) => setField(p.name, v, 'number')}
+                min={p.min ?? (typeof p.default === 'number' && p.default < 0 ? p.default * 2 : 0)}
+                max={sweepScaled
+                  ? sweepMax
+                  : (p.max ?? Math.max(100, Math.abs(Number(p.default) || 0) * 4, 40))}
+                step={sweepScaled
+                  ? Math.max(0.5, Math.round((sweepMax / 40) * 100) / 100)
+                  : (p.step ?? 0.5)}
+              />
+            );
+          })}
         </div>
 
         <div className="flex items-center justify-end gap-2 px-4 py-3 border-t border-gray-700 shrink-0">
-          <button
-            type="button"
-            onClick={() => onCancel?.()}
-            className="px-3 py-1.5 rounded-md text-sm text-gray-300 hover:bg-gray-800"
-          >
+          <PopupButton accent={ACCENT} onClick={() => onCancel?.()}>
             Cancel
-          </button>
-          <button
-            type="button"
+          </PopupButton>
+          <PopupButton
+            variant="primary"
+            accent={sizeGuardFail ? 'amber' : ACCENT}
             onClick={handleConfirm}
-            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium text-white ${
-              sizeGuardFail
-                ? 'bg-amber-600 hover:bg-amber-500'
-                : 'bg-cyan-600 hover:bg-cyan-500'
-            }`}
             title={sizeGuardFail ? `Clamp to ${safeBlendMax} and insert` : 'Confirm insert'}
           >
             <Check size={16} />
             {sizeGuardFail ? `Clamp & Confirm (${safeBlendMax})` : 'Confirm'}
-          </button>
+          </PopupButton>
         </div>
       </div>
     </div>
