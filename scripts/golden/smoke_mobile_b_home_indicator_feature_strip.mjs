@@ -74,8 +74,9 @@ console.log('mobile B: home-indicator + feature strip');
     /3dculos\.mobileStage/.test(app),
   );
   check(
-    'FeatureStrip mounts only in Script stage',
+    'FeatureStrip mounts in Script stage (caret jump)',
     /isScriptStage && \(/.test(app) &&
+      /handleFeatureStripJump/.test(app) &&
       /<FeatureStrip[\s\S]*?script=\{currentScript\}/.test(app),
   );
   check(
@@ -106,8 +107,13 @@ console.log('mobile B: home-indicator + feature strip');
     /bottom-14/.test(contourChip) && /bottom-14/.test(filletChip),
   );
   check(
-    'desktop still untouched by FeatureStrip mount (exactly one)',
-    (app.match(/<FeatureStrip\b/g) || []).length === 1,
+    'FeatureStrip stays inside mobile stages (1–2 mounts; Script jump ± CAD sheet)',
+    // Slice C may add a CAD-stage strip for feature sheets. Desktop branch must
+    // not gain its own mount — count stays 1 (B) or 2 (C).
+    (() => {
+      const n = (app.match(/<FeatureStrip\b/g) || []).length;
+      return n >= 1 && n <= 2;
+    })(),
   );
   check(
     'game branch has no home-indicator (useStages-gated)',
