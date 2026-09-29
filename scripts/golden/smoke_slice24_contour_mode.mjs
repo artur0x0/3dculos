@@ -2,7 +2,7 @@
 /**
  * Slice 24 — Contour-mode shell (Profile-in-mode only).
  * - Extrude / Revolve / Loft / Profile are contour entries
- * - planar workplane via workplaneFromFace; non-planar loud refuse
+ * - planar workplane as a literal frame on the pick; non-planar loud refuse
  * - circle / rect / polygon / polyline → makeCrossSection preview
  * - Confirm composes Profile only (no makeExtrude)
  * - second Confirm replaces the in-mode block
@@ -45,6 +45,7 @@ import {
   countMakeCrossSection,
   countMakeExtrude,
 } from '../../src/utils/contourMode.js';
+import { listSavedContours } from '../../src/utils/savedContours.js';
 
 let failed = 0;
 function check(name, cond, detail = '') {
@@ -182,7 +183,19 @@ function rFace() {
   check('compose ok', first.ok && typeof first.buffer === 'string');
   check('has makeCrossSection', /makeCrossSection\s*\(/.test(first.buffer));
   check('has profileCircle', /profileCircle\s*\(/.test(first.buffer));
-  check('has workplaneFromFace', /workplaneFromFace/.test(first.buffer));
+  // A picked planar face emits a LITERAL plane frame, not workplaneFromFace:
+  // the host query is opaque to listSavedContours, which then ghosted the
+  // profile on the default +Z top instead of the face the user picked.
+  check('no host workplane query for a picked face', !/workplaneFromFace/.test(first.buffer));
+  check('picked face emits literal frame on the pick',
+    /const fr = \{ center: \[0, 0, 10\], normal: \[0, 0, 1\]/.test(first.buffer));
+  {
+    const read = listSavedContours(first.buffer);
+    check('picked-face profile reads back with its plane',
+      read.length === 1 && read[0].host === false
+      && Math.abs(read[0].plane.center[2] - 10) < 1e-9
+      && Math.abs(read[0].plane.normal[2] - 1) < 1e-9);
+  }
   check('has contour markers', hasContourProfileBlock(first.buffer));
   check('one makeCrossSection', countMakeCrossSection(first.buffer) === 1);
   check('zero makeExtrude', countMakeExtrude(first.buffer) === 0);

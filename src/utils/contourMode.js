@@ -1228,6 +1228,9 @@ export function composeContourProfile(buffer, { face = null, tool = 'circle', pa
     ...toolToProfileParams(tool, params),
     body: params.body || 'part',
     _contourMode: true,
+    // Same literal frame the live preview draws on, so Confirm lands on the
+    // picked face and listSavedContours can read the plane back out.
+    _contourPlane: planar ? planeFromContourFace(planar) : null,
   };
   const composed = composeHelperInsert(
     stripped,

@@ -23,6 +23,7 @@ import {
   restoreEditorState, 
   clearEditorState 
 } from './utils/editorStorage';
+import { saveEditorDraft, loadEditorDraft } from './utils/editorDraft';
 import manifoldContext from './utils/ManifoldWorker';
 import DEFAULT_SCRIPT from './utils/defaultScript';
 import {
@@ -86,6 +87,8 @@ const App = () => {
   // verdict-time validate that the puzzle did not switch mid-run.
   const currentPuzzleRef = useRef(currentPuzzle);
   currentPuzzleRef.current = currentPuzzle;
+  /** False until the editor reports its first buffer (see handleExecute). */
+  const editorLiveRef = useRef(false);
   const appModeRef = useRef(appMode);
   appModeRef.current = appMode;
 
@@ -356,79 +359,129 @@ const App = () => {
 
   // Single initialization effect - runs once when manifold is ready
   useEffect(() => {
-    if (!manifoldReady) return;
+    if (!manifoldReady) return undefined;
+    let cancelled = false;
+
+    const init = async () => {
+      let script = DEFAULT_SCRIPT;
+      let filename = null;
+      let shouldOpenAccount = false;
+      let restoredCheckout = null;
+      let restoredEditor = false;
     
-    let script = DEFAULT_SCRIPT;
-    let filename = null;
-    let shouldOpenAccount = false;
-    let restoredCheckout = null;
+      const params = new URLSearchParams(window.location.search);
+      const isAuthReturn = params.get('auth') === 'success';
+      const isAccountReturn = params.get('account') === 'true';
+      const isCheckoutReturn = hasCheckoutReturnFlag();
     
-    const params = new URLSearchParams(window.location.search);
-    const isAuthReturn = params.get('auth') === 'success';
-    const isAccountReturn = params.get('account') === 'true';
-    const isCheckoutReturn = hasCheckoutReturnFlag();
-    
-    console.log('[App] Initialization check:', {
-      isAuthReturn,
-      isAccountReturn,
-      isCheckoutReturn,
-      hasPendingEditor: hasPendingEditorState(),
-      hasPendingCheckout: hasPendingCheckout(),
-    });
-    
-    // Restore editor state if returning from any OAuth flow
-    if ((isAuthReturn || isAccountReturn || isCheckoutReturn) && hasPendingEditorState()) {
-      const restored = restoreEditorState();
-      console.log('[App] Restored editor state:', {
-        hasScript: !!restored?.currentScript,
-        scriptLength: restored?.currentScript?.length,
+      console.log('[App] Initialization check:', {
+        isAuthReturn,
+        isAccountReturn,
+        isCheckoutReturn,
+        hasPendingEditor: hasPendingEditorState(),
+        hasPendingCheckout: hasPendingCheckout(),
       });
-      if (restored?.currentScript) {
-        script = restored.currentScript;
+    
+      // Restore editor state if returning from any OAuth flow
+      if ((isAuthReturn || isAccountReturn || isCheckoutReturn) && hasPendingEditorState()) {
+        const restored = restoreEditorState();
+        console.log('[App] Restored editor state:', {
+          hasScript: !!restored?.currentScript,
+          scriptLength: restored?.currentScript?.length,
+        });
+        if (restored?.currentScript) {
+          script = restored.currentScript;
+        }
+        if (restored?.currentFilename) {
+          filename = restored.currentFilename;
+        }
+        clearEditorState();
+        restoredEditor = true;
       }
-      if (restored?.currentFilename) {
-        filename = restored.currentFilename;
+
+      // Plain reload / crash / tab eviction: the IndexedDB draft is the buffer
+      // the user last saw. An OAuth hand-off already won above — it is the more
+      // specific intent — so only fill in when nothing was restored yet.
+      if (!restoredEditor) {
+        const draft = await loadEditorDraft();
+        if (draft && typeof draft.script === 'string') {
+          script = draft.script;
+          if (draft.filename) filename = draft.filename;
+        }
       }
-      clearEditorState();
-    }
-    
-    // Handle checkout-specific restoration
-    if (isCheckoutReturn || (isAuthReturn && hasPendingCheckout())) {
-      const checkoutState = restoreCheckoutState();
-      if (checkoutState) {
-        restoredCheckout = {
-          quoteData: checkoutState.quoteData,
-          modelData: checkoutState.modelData,
-          restoredStep: checkoutState.currentStep,
-          restoredAddress: checkoutState.address,
-          restoredGuestEmail: checkoutState.guestEmail,
-        };
+      if (cancelled) return;
+
+      // Handle checkout-specific restoration
+      if (isCheckoutReturn || (isAuthReturn && hasPendingCheckout())) {
+        const checkoutState = restoreCheckoutState();
+        if (checkoutState) {
+          restoredCheckout = {
+            quoteData: checkoutState.quoteData,
+            modelData: checkoutState.modelData,
+            restoredStep: checkoutState.currentStep,
+            restoredAddress: checkoutState.address,
+            restoredGuestEmail: checkoutState.guestEmail,
+          };
+        }
+        clearCheckoutState();
       }
-      clearCheckoutState();
-    }
     
-    // Determine if we should open modals
-    if (isAccountReturn) {
-      shouldOpenAccount = true;
-    }
+      // Determine if we should open modals
+      if (isAccountReturn) {
+        shouldOpenAccount = true;
+      }
     
-    // Clean URL
-    if (isAuthReturn || isAccountReturn || isCheckoutReturn) {
-      clearCheckoutReturnFlag();
-    }
+      // Clean URL
+      if (isAuthReturn || isAccountReturn || isCheckoutReturn) {
+        clearCheckoutReturnFlag();
+      }
     
-    // Set state - order matters for avoiding flicker
-    if (filename) setCurrentFilename(filename);
-    if (restoredCheckout) {
-      setOrderData(restoredCheckout);
-      setShowOrderModal(true);
-    }
-    if (shouldOpenAccount) setShowAccountModal(true);
+      // Set state - order matters for avoiding flicker
+      if (filename) setCurrentFilename(filename);
+      if (restoredCheckout) {
+        setOrderData(restoredCheckout);
+        setShowOrderModal(true);
+      }
+      if (shouldOpenAccount) setShowAccountModal(true);
     
-    // Set editor script last - this enables rendering
-    setEditorInitialScript(script);
-    
+      // Set editor script last - this enables rendering
+      setEditorInitialScript(script);
+    };
+
+    init();
+    return () => { cancelled = true; };
   }, [manifoldReady]);
+
+  // Mirror the live CAD buffer into IndexedDB so a reload restores it.
+  // Debounced: the editor calls onExecute on every keystroke, and the draft
+  // only has to be no older than the last pause in typing.
+  // Game mode is excluded — its buffer is puzzle scratch, and restoring it
+  // into the CAD editor on the next load would clobber the user's model.
+  useEffect(() => {
+    if (!manifoldReady || editorInitialScript === null) return undefined;
+    if (appMode === 'game' || !editorLiveRef.current) return undefined;
+    const timer = setTimeout(() => {
+      saveEditorDraft({ script: currentScript, filename: currentFilename });
+    }, 600);
+    return () => clearTimeout(timer);
+  }, [currentScript, currentFilename, manifoldReady, editorInitialScript, appMode]);
+
+  // A reload can beat the debounce (refresh mid-typing). pagehide covers the
+  // iOS/Safari case where unload never fires.
+  useEffect(() => {
+    if (!manifoldReady || editorInitialScript === null) return undefined;
+    const flush = () => {
+      if (appModeRef.current === 'game' || !editorLiveRef.current) return;
+      const live = codeEditorRef.current?.getContent?.() ?? currentScript;
+      saveEditorDraft({ script: live, filename: currentFilename });
+    };
+    window.addEventListener('pagehide', flush);
+    document.addEventListener('visibilitychange', flush);
+    return () => {
+      window.removeEventListener('pagehide', flush);
+      document.removeEventListener('visibilitychange', flush);
+    };
+  }, [currentScript, currentFilename, manifoldReady, editorInitialScript]);
 
   // Check for mobile layout
   useEffect(() => {
@@ -820,6 +873,10 @@ const App = () => {
   };
 
   const handleExecute = (script, autoExecute=false) => {
+    // The editor has produced a real buffer — the draft autosave may now
+    // treat currentScript as authoritative (before this, '' is just "Monaco
+    // has not mounted yet" and would overwrite a restored draft with nothing).
+    editorLiveRef.current = true;
     setCurrentScript(script);
     // Game mode: never auto-run on Monaco mount/remount (blank-enter / ghost-only).
     if (autoExecute && appModeRef.current !== 'game') {
