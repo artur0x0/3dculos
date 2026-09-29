@@ -80,13 +80,12 @@ replaced the top text chrome with a bottom home-indicator pill + Script feature 
 ```
 CAD stage                          Script stage
 ┌─────────────────────────────┐   ┌─────────────────────────────┐
-│ Viewport (fullscreen-ish)   │   │ feature strip (chips)       │
-│  rails + Contour/Fillet     │   │ mid-strip: Toolbar (portal) │
-│  title chip                 │   │ Monaco (fullscreen-ish)     │
-│  (editor mounted, invisible)│   │ PromptInput (hidden)        │
-│         ( ●  ○ ) pill       │   │ (viewport mounted, invis.)  │
-└─────────────────────────────┘   │         ( ○  ● ) pill       │
-                                  └─────────────────────────────┘
+│ Viewport (fullscreen-ish)   │   ││feat│ mid-strip: Toolbar    │
+│  rails + Contour/Fillet     │   ││strip mid: Monaco (full)   │
+│  title chip                 │   ││icons PromptInput (hidden) │
+│  (editor mounted, invisible)│   ││vert  (viewport mounted)   │
+│         ( ●  ○ ) pill       │   ││      ( ○  ● ) pill        │
+└─────────────────────────────┘   └─────────────────────────────┘
 ```
 
 **Game:** still the old stacked split (viewport on top, Monaco bottom budget +
@@ -111,9 +110,20 @@ Mobile specifics:
   Top CAD|Script text chrome is gone. Inert `data-ai-prompt-hook` marks a
   future AI-on-tap site (not wired). Contour/Fillet chips use `bottom-14` on
   mobile so they clear the pill. Shell exposes `data-mobile-stage="cad"|"script"`.
-- **Feature strip (Slice Mobile B):** `FeatureStrip.jsx` mounts at the top of
-  the Script stage only. Chips come from `parseFeatureMarkers` over Contour /
-  Extrude / Fillet / … begin/end comments; tap → `CodeEditor.revealRange`.
+- **Feature strip (Slice Mobile B → B.1):** `FeatureStrip.jsx` mounts as a
+  **vertical** left rail in the Script stage only. Icon chips reuse the CAD
+  toolbar glyphs (Contour/`NotebookPen`, Extrude/`ArrowUpFromLine`,
+  Revolve/`Rotate3d`, Loft/`Pyramid`, Sweep/`Route`, Fillet/`SquareRoundCorner`,
+  Chamfer/`TriangleRight`). Markers from `parseFeatureMarkers`; tap →
+  `CodeEditor.revealRange`. Bottom padding clears the home-indicator pill +
+  safe-area. Empty-state when no markers. Desktop never mounts the strip.
+- **Face description popup (Slice Mobile B.1):** horizontally centered just
+  below the part-name title chrome (`top-16 left-1/2 -translate-x-1/2`,
+  `data-face-info-popup`) on mobile and desktop — same under-title band as
+  other toasts; not mid-viewport and no longer edge-docked against chrome.
+- **Default view snaps (Slice Mobile B.1):** `VIEW_SNAP_MARGIN = 1.35` (was
+  implicit 1.15) for top / right / front / iso (and other `VIEW_PRESETS`).
+  Zoom-to-Fit keeps `fitView` default 1.15; game puzzle enter keeps 1.55.
 - **Both panes stay mounted** across stages (WebGL + Monaco + editor refs /
   portal host). Off-stage pane is `invisible pointer-events-none`.
 - **Editor budget** (`mobileEditorPx`) still applies to the **game** stack as a

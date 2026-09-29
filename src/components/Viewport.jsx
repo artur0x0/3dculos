@@ -141,7 +141,7 @@ import { selectFaceByID, selectFaceWithTolerance, selectAllConnected } from '../
 import { createCuttingPlaneWidget, updateCuttingPlaneWidget } from '../utils/cuttingPlaneWidget';
 import { AxesHelper } from 'three';
 import { calculateMeasurements, createMeasurementLines, disposeMeasurementLines } from '../utils/measurementTool';
-import { fitView, VIEW_PRESETS } from '../utils/viewCamera';
+import { fitView, VIEW_PRESETS, VIEW_SNAP_MARGIN } from '../utils/viewCamera';
 
 import { validateScript, formatValidationErrors } from '../utils/scriptValidator';
 import manifoldContext from '../utils/ManifoldWorker';
@@ -3145,7 +3145,7 @@ const Viewport = forwardRef(({
             renderer.render(sceneRef.current, cam);
             return ok;
           },
-          stageSnap: (key, margin = 1.15) => {
+          stageSnap: (key, margin = VIEW_SNAP_MARGIN) => {
             const known = Object.prototype.hasOwnProperty.call(VIEW_PRESETS, key) ? key : 'iso';
             const ok = handleViewSnap(known, margin);
             renderer.render(sceneRef.current, cameraRef.current);
@@ -3494,7 +3494,9 @@ const Viewport = forwardRef(({
   }, []);
 
   // Snap to a canonical view (iso / front / right / top) and re-fit in the same gesture.
-  const handleViewSnap = useCallback((key, margin = 1.15) => {
+  // Mobile B.1: default view presets (top/right/front/iso/…) frame with more margin
+  // than Zoom-to-Fit. Game puzzle enter keeps its own 1.55 framing.
+  const handleViewSnap = useCallback((key, margin = VIEW_SNAP_MARGIN) => {
     const preset = VIEW_PRESETS[key] || VIEW_PRESETS.iso;
     if (!resultRef.current?.geometry || !cameraRef.current) return false;
     const ok = fitView({
@@ -4060,14 +4062,15 @@ const Viewport = forwardRef(({
         </div>
       )}
       
-      {/* Face Info Display — Slice 11: show classified type; dodge palette in game mode */}
+      {/* Face Info Display — Slice 11 + Mobile B.1: classified type,
+          horizontally centered just below the part-name title chrome (top-16,
+          same band as other under-title toasts — not mid-viewport). */}
       {selectedFace && !measurementEnabled && !contourMode && !filletMode && (
         <div
-          className={`absolute bg-black/45 surface-glass-chip text-white p-2 rounded-lg text-xs font-mono z-10 max-w-[14rem] ${
-            mode === 'game' || isMobile
-              ? 'bottom-4 right-2 lg:right-4'
-              : 'bottom-4 left-[4.5rem] lg:left-[5.25rem]'
-          }`}
+          className="absolute top-16 left-1/2 -translate-x-1/2
+            bg-black/45 surface-glass-chip text-white p-2 rounded-lg text-xs font-mono z-10
+            max-w-[14rem] pointer-events-none"
+          data-face-info-popup=""
         >
           <div className="font-bold mb-1">
             Selected Face
