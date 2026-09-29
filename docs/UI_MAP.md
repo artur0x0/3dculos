@@ -254,6 +254,20 @@ Import `src/utils/importModel.js` (+ `POST /api/convert/step`); export
 
 - **Tailwind only**, no CSS modules. Overlay idiom:
   `absolute … bg-white/60 backdrop-blur-sm rounded-lg shadow-lg z-10`.
+- **Everything over the 3D view is translucent.** `src/index.css` defines the
+  three surfaces: `surface-glass` (panels and modal sheets),
+  `surface-glass-chip` (small viewport overlays — supply your own tint, it only
+  adds the frosting) and `surface-scrim` (modal backdrops). They share one
+  `--surface-blur` token, and there is an `@supports not (backdrop-filter)`
+  fallback that goes more opaque so text stays legible. Never put a flat
+  `bg-gray-900` / `bg-[#1e1e1e]` slab over the viewport. The one exception is
+  native `<select>` / `<option>`: the OS renders the option list and a
+  translucent one is unreadable.
+- **Bottom-centre is for mode chips and the param popup**; the bottom corners
+  belong to the rails. Contour and Fillet chips are
+  `bottom-2.5 left-1/2 -translate-x-1/2`, the right-hand cluster is
+  `bottom-2.5 right-2.5` (10px off both edges), and the helper rail keeps
+  `left-2 lg:left-4`.
 - **Responsive insets** are written `left-2 lg:left-4` / `right-2 lg:right-4`
   (phone-tight, desktop-roomy). Match this rather than inventing values.
 - **z-index ladder:** overlays `z-10`; edge chip and success banner `z-20`;

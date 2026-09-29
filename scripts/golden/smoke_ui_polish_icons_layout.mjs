@@ -255,6 +255,52 @@ const contourRail = read('../../src/components/ContourModeRail.jsx');
     /\.view-snap-popup[\s\S]{0,80}max-width: calc\(100cqw - 20px\)/.test(css));
 }
 
+// ── AC12: one translucent surface everywhere, nothing opaque over the part ──
+{
+  const css = read('../../src/index.css');
+  check('there is a shared glass surface', /\.surface-glass\b/.test(css)
+    && /\.surface-glass-chip\b/.test(css) && /\.surface-scrim\b/.test(css));
+  check('every layer shares one blur token', /--surface-blur/.test(css));
+  check('there is a no-backdrop-filter fallback',
+    /@supports not \(backdrop-filter/.test(css));
+
+  const panels = [
+    'LoginModal', 'AccountModal', 'QuoteModal', 'OrderModal', 'TermsModal',
+    'PuzzlePickerModal', 'GameHintsModal', 'HelperParamModal',
+  ];
+  for (const name of panels) {
+    const src = read(`../../src/components/${name}.jsx`);
+    check(`${name} panel is glass`, /surface-glass/.test(src));
+    // Panel-level slabs only. Native <select>/<option> keep an opaque
+    // background on purpose — the OS renders the option list, and a
+    // translucent one is unreadable.
+    check(`${name} has no opaque slab left`,
+      !/bg-\[#1e1e1e\] (?:rounded-2xl|rounded-lg shadow-2xl)/.test(src)
+        && !/rounded-(?:lg|2xl) bg-gray-900\b/.test(src));
+  }
+  for (const name of ['ContourModeChip', 'FilletModeChip']) {
+    const src = read(`../../src/components/${name}.jsx`);
+    check(`${name} is frosted`, /surface-glass-chip/.test(src));
+  }
+  check('viewport chips and toasts are frosted',
+    (view.match(/surface-glass-chip/g) || []).length >= 8);
+  check('no fully opaque toast survives in the viewport',
+    !/bg-(?:amber-600|amber-700|cyan-700) text-white/.test(view));
+}
+
+// ── AC13: mode chips are centred; the right cluster clears the edge by 10px ──
+{
+  for (const name of ['ContourModeChip', 'FilletModeChip']) {
+    const src = read(`../../src/components/${name}.jsx`);
+    check(`${name} is bottom-centre, not right-justified`,
+      /bottom-2\.5 left-1\/2 -translate-x-1\/2/.test(src)
+        && !/bottom-4 right-2/.test(src));
+  }
+  check('right-hand cluster sits 10px off both edges',
+    (panel.match(/bottom-2\.5 right-2\.5/g) || []).length === 2
+      && !/right-2 lg:right-4/.test(panel));
+}
+
 if (failed) {
   console.log(`\n${failed} check(s) failed`);
   process.exit(1);

@@ -86,3 +86,46 @@ body {
 .view-snap-popup {
   max-width: calc(100cqw - 20px);
 }
+
+/* ── One translucent surface for every panel, sheet, chip and toast ──
+   The viewport rails established the look (white/60 + blur); these are the
+   dark-side equivalents, so a dialog no longer lands as an opaque slab over
+   the part. `--surface-blur` keeps every layer's blur identical — vary the
+   tint per component (accent chips keep their hue), never the blur.
+
+   Use `surface-glass` for panels/modals, `surface-glass-chip` for the small
+   viewport overlays, and `surface-scrim` for a modal backdrop. Anything that
+   sits over the 3D view should be on one of them, not a flat `bg-*`. */
+@layer components {
+  .surface-glass,
+  .surface-glass-chip,
+  .surface-scrim {
+    -webkit-backdrop-filter: blur(var(--surface-blur, 12px)) saturate(140%);
+    backdrop-filter: blur(var(--surface-blur, 12px)) saturate(140%);
+  }
+  /* Panels and modal sheets. */
+  .surface-glass {
+    background-color: rgb(17 24 39 / 0.82); /* gray-900 */
+  }
+  /* Small viewport overlays. Tint comes from the component (cyan = contour,
+     amber = fillet/edge); this only supplies the frosting. */
+  .surface-glass-chip {
+    --surface-blur: 8px;
+  }
+  /* Modal backdrop: dim enough to focus, sheer enough to keep context. */
+  .surface-scrim {
+    --surface-blur: 4px;
+    background-color: rgb(0 0 0 / 0.45);
+  }
+}
+
+/* Safari < 18 and any browser without backdrop-filter: fall back to a more
+   opaque tint so text stays legible over a busy viewport. */
+@supports not (backdrop-filter: blur(1px)) {
+  .surface-glass {
+    background-color: rgb(17 24 39 / 0.96);
+  }
+  .surface-scrim {
+    background-color: rgb(0 0 0 / 0.7);
+  }
+}

@@ -265,7 +265,10 @@ const planarFace = {
     { dia: 6, placement: 'center', through: true },
     face,
   );
-  check('center hole u,v 0,0', /hole\([^)]*,\s*0,\s*0,\s*6/.test(buf));
+  // Slice 63 made Hole emit the typed helper (clearanceHole / tapDrillHole)
+  // rather than bare hole(). What this guards is the PLACEMENT: Center → u=0,
+  // v=0 — so match any hole-family call, not one signature.
+  check('center hole u,v 0,0', /[Hh]ole\(\s*part,\s*fr,\s*0,\s*0,/.test(buf));
   check('center hole has snap _off', /_off/.test(buf));
   check('center hole no illegal top', !/\btop\b/.test(buf));
   check('center hole facesByNormal', /facesByNormal/.test(buf));
@@ -637,7 +640,7 @@ const planarFace = {
     { dia: 6, placement: 'center', through: true, body: 'part' },
     face, null,
   );
-  check('fillet→hole compose ok', typeof withHole === 'string' && /\bhole\s*\(/.test(withHole));
+  check('fillet→hole compose ok', typeof withHole === 'string' && /[Hh]ole\s*\(/.test(withHole));
   try {
     new Function(withHole);
     check('fillet→hole parseable (Function)', true);

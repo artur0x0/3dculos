@@ -171,15 +171,18 @@ const ContourModeChip = ({
 
   return (
     <div
-      className={`absolute bg-cyan-950/90 border border-cyan-400/70 text-white px-3 py-2
+      className={`absolute bg-cyan-950/80 surface-glass-chip border border-cyan-400/70 text-white px-3 py-2
         rounded-lg text-xs z-20 shadow-lg ${
-          compact
+          // Bottom-CENTRE of the viewport, between the two rails, so the chip
+        // stops covering the right-hand cluster. 10px off the bottom edge like
+        // the rest of the viewport chrome.
+        compact
             ? ((isLoft || isSweep)
-              ? 'bottom-4 right-2 max-w-[min(18rem,calc(100%-5.5rem))]'
-              : 'bottom-4 right-2 max-w-[min(16rem,calc(100%-5.5rem))]')
+              ? 'bottom-2.5 left-1/2 -translate-x-1/2 max-w-[min(18rem,calc(100%-9rem))]'
+              : 'bottom-2.5 left-1/2 -translate-x-1/2 max-w-[min(16rem,calc(100%-9rem))]')
             : ((isLoft || isSweep)
-              ? 'bottom-4 right-2 lg:right-4 max-w-[18rem]'
-              : 'bottom-4 right-2 lg:right-4 max-w-[16rem]')
+              ? 'bottom-2.5 left-1/2 -translate-x-1/2 max-w-[18rem]'
+              : 'bottom-2.5 left-1/2 -translate-x-1/2 max-w-[16rem]')
         }`}
     >
       <div className="font-bold font-sans text-cyan-200">

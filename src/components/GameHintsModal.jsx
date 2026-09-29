@@ -45,11 +45,11 @@ const GameHintsModal = ({ onClose, puzzle = null }) => {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 p-3">
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center surface-scrim p-3">
       <div
         role="dialog"
         aria-labelledby="game-hints-title"
-        className="w-full max-w-lg max-h-[85dvh] overflow-hidden flex flex-col rounded-lg bg-gray-900 border border-gray-700 shadow-xl"
+        className="w-full max-w-lg max-h-[85dvh] overflow-hidden flex flex-col rounded-lg surface-glass border border-gray-700 shadow-xl"
       >
         <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-gray-700 shrink-0">
           <div className="flex items-center gap-2 text-white min-w-0">

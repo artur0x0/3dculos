@@ -246,7 +246,7 @@ function ViewportTitleChip({ children, value = null, onRename = null }) {
   };
 
   const shell = 'text-xs font-medium text-center truncate px-3 py-1.5 rounded-lg shadow'
-    + ' bg-gray-900/85 border border-gray-500/50 text-gray-100';
+    + ' bg-gray-900/80 surface-glass-chip border border-gray-500/50 text-gray-100';
 
   return (
     <div
@@ -3664,7 +3664,7 @@ const Viewport = forwardRef(({
 
       {mode === 'game' && gameSuccess && (
         <div className="absolute inset-0 z-20 flex items-center justify-center pointer-events-none">
-          <div className="bg-emerald-900/90 border border-emerald-400/60 text-white px-5 py-3 rounded-xl shadow-xl text-center">
+          <div className="bg-emerald-900/85 surface-glass-chip border border-emerald-400/60 text-white px-5 py-3 rounded-xl shadow-xl text-center">
             <div className="text-sm font-semibold">Match!</div>
             <div className="text-2xl font-mono tabular-nums mt-1">{formatGameTime(gameElapsedMs)}</div>
             <div className="text-[11px] text-emerald-200/80 mt-1">lower is better</div>
@@ -3754,7 +3754,7 @@ const Viewport = forwardRef(({
         />
       
       {executionError && (
-        <div className="absolute top-16 right-4 bg-red-900/90 text-white p-3 rounded text-xs max-w-md z-10">
+        <div className="absolute top-16 right-4 bg-red-900/85 surface-glass-chip text-white p-3 rounded-lg text-xs max-w-md z-10">
           <div className="flex items-start justify-between gap-2">
             <div>
               <div className="font-bold mb-1">Execution Error</div>
@@ -3773,7 +3773,7 @@ const Viewport = forwardRef(({
       {/* Face Info Display — Slice 11: show classified type; dodge palette in game mode */}
       {selectedFace && !measurementEnabled && !contourMode && !filletMode && (
         <div
-          className={`absolute bg-black/50 text-white p-2 rounded-lg text-xs font-mono z-10 max-w-[14rem] ${
+          className={`absolute bg-black/45 surface-glass-chip text-white p-2 rounded-lg text-xs font-mono z-10 max-w-[14rem] ${
             mode === 'game' || isMobile
               ? 'bottom-4 right-2 lg:right-4'
               : 'bottom-4 left-[4.5rem] lg:left-[5.25rem]'
@@ -3941,7 +3941,7 @@ const Viewport = forwardRef(({
       {pickMode === 'edge' && !contourMode && !filletMode && selectedEdges.length > 0 && (
         <div
           data-edge-selector="standalone"
-          className={`absolute bg-amber-950/85 border border-amber-500/70 text-white px-3 py-2 rounded-lg text-xs z-20 shadow-lg max-w-[16rem] ${
+          className={`absolute bg-amber-950/80 surface-glass-chip border border-amber-500/70 text-white px-3 py-2 rounded-lg text-xs z-20 shadow-lg max-w-[16rem] ${
             mode === 'game' || isMobile
               ? 'bottom-4 right-2 lg:right-4'
               : 'bottom-4 left-[4.5rem] lg:left-[5.25rem]'
@@ -3996,7 +3996,7 @@ const Viewport = forwardRef(({
 
       {edgeModeToast && (
         <div className="absolute top-16 left-1/2 -translate-x-1/2 z-30 pointer-events-none">
-          <div className="bg-amber-600 text-white text-xs font-sans font-medium px-3 py-2 rounded-full shadow-lg">
+          <div className="bg-amber-600/85 surface-glass-chip text-white text-xs font-sans font-medium px-3 py-2 rounded-full shadow-lg">
             {edgeModeToast}
           </div>
         </div>
@@ -4004,7 +4004,7 @@ const Viewport = forwardRef(({
 
       {contourToast && (
         <div className="absolute top-16 left-1/2 -translate-x-1/2 z-30 pointer-events-none max-w-[min(22rem,calc(100%-2rem))]">
-          <div className="bg-cyan-700 text-white text-xs font-sans font-medium px-3 py-2 rounded-full shadow-lg text-center">
+          <div className="bg-cyan-700/85 surface-glass-chip text-white text-xs font-sans font-medium px-3 py-2 rounded-full shadow-lg text-center">
             {contourToast}
           </div>
         </div>
@@ -4013,7 +4013,7 @@ const Viewport = forwardRef(({
       {filletScrapNotice && (
         <div className="absolute top-16 left-1/2 -translate-x-1/2 z-30 pointer-events-none max-w-[min(18rem,calc(100%-2rem))]">
           <div
-            className="bg-red-950/95 border border-red-400/80 text-red-50 text-xs font-sans font-medium px-3 py-2 rounded-lg shadow-lg text-center"
+            className="bg-red-950/85 surface-glass-chip border border-red-400/80 text-red-50 text-xs font-sans font-medium px-3 py-2 rounded-lg shadow-lg text-center"
             role="status"
             data-fillet-scrap="1"
           >
@@ -4024,7 +4024,7 @@ const Viewport = forwardRef(({
 
       {filletToast && (
         <div className="absolute top-16 left-1/2 -translate-x-1/2 z-30 pointer-events-none max-w-[min(22rem,calc(100%-2rem))]">
-          <div className="bg-amber-700 text-white text-xs font-sans font-medium px-3 py-2 rounded-full shadow-lg text-center">
+          <div className="bg-amber-700/85 surface-glass-chip text-white text-xs font-sans font-medium px-3 py-2 rounded-full shadow-lg text-center">
             {filletToast}
           </div>
         </div>
@@ -4032,7 +4032,7 @@ const Viewport = forwardRef(({
 
       {/* Measurement Info Display */}
       {measurementEnabled && measurementFaces.first && (
-        <div className={`absolute bottom-4 bg-black/50 backdrop-blur-sm text-white p-3 rounded-lg text-xs font-mono z-10 space-y-1 ${
+        <div className={`absolute bottom-2.5 bg-black/45 surface-glass-chip text-white p-3 rounded-lg text-xs font-mono z-10 space-y-1 ${
           mode === 'game' ? 'left-2 lg:left-4' : 'left-[4.5rem] lg:left-[5.25rem]'
         }`}>
           {measurementFaces.second ? (
