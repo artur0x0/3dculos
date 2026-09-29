@@ -125,7 +125,7 @@ export function defaultContourParams(tool) {
   if (tool === 'polyline') {
     return { points: [] };
   }
-  return { radius: 5, segments: 32 };
+  return { radius: 5, segments: 64 };
 }
 
 /** Sane mobile defaults: 10 mm along the workplane normal, one-sided out. */

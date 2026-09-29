@@ -251,8 +251,12 @@ const contourRail = read('../../src/components/ContourModeRail.jsx');
   check('flyout gap is 10px', /mr-2\.5/.test(snap));
   check('flyout can wrap rather than overflow', /flex flex-wrap/.test(snap));
   check('viewport shell is a size container', /\.viewport-shell[\s\S]{0,80}container-type: inline-size/.test(css));
+  // The clamp measures the pane (100cqw, not 100vw — the viewport is half the
+  // window on desktop) AND leaves room for the left rail, or the snap buttons
+  // slide underneath the helper palette instead of wrapping.
   check('flyout is clamped to the pane, not the window',
-    /\.view-snap-popup[\s\S]{0,80}max-width: calc\(100cqw - 20px\)/.test(css));
+    /\.view-snap-popup[\s\S]{0,400}max-width: calc\(100cqw - 5\.25rem - 20px\)/.test(css));
+  check('the clamp accounts for the left rail', /Clear the LEFT rail too/.test(css));
 }
 
 // ── AC12: one translucent surface everywhere, nothing opaque over the part ──
@@ -299,6 +303,66 @@ const contourRail = read('../../src/components/ContourModeRail.jsx');
   check('right-hand cluster sits 10px off both edges',
     (panel.match(/bottom-2\.5 right-2\.5/g) || []).length === 2
       && !/right-2 lg:right-4/.test(panel));
+}
+
+// ── AC14: one popup design system; every number has a slider AND a box ──
+{
+  const ui = read('../../src/components/controls/popupUI.jsx');
+  check('there is a shared popup module', /export const NumberField/.test(ui)
+    && /export const SelectField/.test(ui) && /export const PopupButton/.test(ui));
+  check('one type scale for every popup', /export const POPUP_TEXT/.test(ui));
+  // The rule that motivated the module: a slider alone can't hit 12.5, a box
+  // alone can't be nudged. NumberField must render both, unconditionally.
+  const numberField = ui.slice(ui.indexOf('export const NumberField'), ui.indexOf('export const ChoiceRow'));
+  check('NumberField always renders a slider', /type="range"/.test(numberField));
+  check('NumberField always renders a typed box', /type="number"/.test(numberField));
+  check('neither input is behind a condition',
+    !/\{\s*\w+\s*&&\s*\(?\s*<input/.test(numberField));
+  check('accent classes are written out, not interpolated',
+    !/bg-\$\{/.test(ui) && /export const ACCENTS/.test(ui));
+
+  for (const name of ['ContourModeChip', 'FilletModeChip', 'HelperParamModal']) {
+    const src = read(`../../src/components/${name}.jsx`);
+    check(`${name} uses the shared fields`, /from '\.\/controls\/popupUI'/.test(src));
+    check(`${name} hand-rolls no range input`, !/type="range"/.test(src));
+  }
+  // Helper sheets used to show a slider only when an item set `slider: true`.
+  const modal = read('../../src/components/HelperParamModal.jsx');
+  check('no param can opt out of its slider any more', !/p\.slider/.test(modal));
+  check('popup text is a notch bigger', !/text-\[10px\]/.test(read('../../src/components/ContourModeChip.jsx')));
+}
+
+// ── AC15: 64 segments is the default everywhere ──
+{
+  const snippets = read('../../src/utils/helperPaletteSnippets.js');
+  const contour = read('../../src/utils/contourMode.js');
+  check('no palette item still defaults to 32 segments',
+    !/name: 'segments'[^}]*default: 32/.test(snippets));
+  check('no build falls back to 32 segments', !/num\(p\.segments, 32\)/.test(snippets));
+  check('contour profile defaults to 64', /radius: 5, segments: 64/.test(contour));
+  check('starter snippets emit 64 too',
+    !/profileCircle\(\d+, 32\)/.test(snippets) && !/Manifold\.cylinder\([^)]*, 32\)/.test(snippets));
+  check('the segments slider can reach past the new default',
+    /'Segments', \{ min: 3, step: 1, max: 128 \}/.test(read('../../src/components/ContourModeChip.jsx')));
+}
+
+// ── AC16: the CAD strip has a green Run, first, in its own section ──
+{
+  const strip = toolbar.slice(toolbar.indexOf("data-toolbar-variant=\"strip\""));
+  const runAt = strip.indexOf('data-cad-run');
+  check('CAD strip has a Run button', runAt > 0);
+  // First means first: no other button may open before it.
+  check('Run is the first button in the strip',
+    runAt < strip.indexOf('onClick={onAccount}'));
+  check('Run is green', /text-green-400 disabled:opacity-60/.test(strip));
+  check('Run has its own section', /data-cad-run[\s\S]{0,700}?<\/button>\s*<div className=\{divider\} \/>/.test(strip));
+  check('Run becomes a spinner while executing',
+    /isExecuting \? \(\s*<span[\s\S]{0,200}animate-spin/.test(strip));
+  check('Run is disabled and marked busy mid-run',
+    /disabled=\{isExecuting\}/.test(strip) && /aria-busy=\{isExecuting\}/.test(strip));
+  check('CAD Run is wired to the live buffer, not the game handler',
+    /onRunScript={runCadScript}/.test(view) && /const runCadScript/.test(view));
+  check('game Run keeps its own handler', /onRun={onRun}/.test(view));
 }
 
 if (failed) {
