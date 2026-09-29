@@ -9,6 +9,7 @@ import {
   Code2,
   X,
   Check,
+  Trash2,
 } from 'lucide-react';
 import SquareRoundCorner from './icons/SquareRoundCorner';
 import {
@@ -95,6 +96,7 @@ export default function FeatureSheet({
   script = '',
   onAccept,
   onCancel,
+  onDelete,
   onEditScript,
   onPickFeature,
 }) {
@@ -293,6 +295,19 @@ export default function FeatureSheet({
               Accept
             </PopupButton>
           )}
+          <button
+            type="button"
+            aria-label="Delete feature"
+            data-feature-sheet-delete=""
+            title="Delete this feature from the script"
+            onClick={() => onDelete?.(feature)}
+            className="inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-[13px]
+              font-medium text-red-200 border border-red-700/60 bg-red-950/50
+              hover:bg-red-900/70 hover:text-white"
+          >
+            <Trash2 size={14} aria-hidden="true" />
+            Delete
+          </button>
           <button
             type="button"
             aria-label="Cancel"

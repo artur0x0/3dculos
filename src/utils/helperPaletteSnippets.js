@@ -1985,7 +1985,7 @@ export const HELPER_PALETTE_ITEMS = [
 export const HELPER_PALETTE_GROUPS = ['Primitives', 'Advanced', 'Features', 'Transforms'];
 
 /**
- * CAD rail section order — Shapes, Model, Polish, Move. Display names live in
+ * CAD rail section order — Block, Model, Polish, Move. Display names live in
  * HelperInsertPalette's GROUP_SHORT_LABEL; these stay the internal group keys.
  */
 export const CAD_RAIL_ORDER = ['Primitives', 'Advanced', 'Features', 'Transforms'];
@@ -2013,7 +2013,7 @@ export function paletteRailSections(layout, grouped = itemsByGroup()) {
   if (layout === 'cad') {
     // Rail order is the modelling order, not the data order: make a shape,
     // model it, polish it, move it. Advanced is promoted to "Model" and sits
-    // second — Shapes lead because that is where an empty part starts.
+    // second — Block leads because that is where an empty part starts.
     const sections = [];
     for (const group of CAD_RAIL_ORDER) {
       const items = shown(group);

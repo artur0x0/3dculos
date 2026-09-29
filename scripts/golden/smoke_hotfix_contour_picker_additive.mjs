@@ -175,8 +175,8 @@ return part;
   check('Sweep icon Route (inherited from the retired Path button)', /makeSweep:\s*Route/.test(rail));
   check('Loft icon Pyramid', /makeLoft:\s*Pyramid/.test(rail));
   check('Fillet icon SquareRoundCorner', /filletEdges:\s*SquareRoundCorner/.test(rail));
-  check('rail captions Shapes / Polish / Move',
-    /Primitives:\s*'Shapes'/.test(rail) && /Advanced:\s*'Adv'/.test(rail)
+  check('rail captions Block / Polish / Move',
+    /Primitives:\s*'Block'/.test(rail) && /Advanced:\s*'Adv'/.test(rail)
     && /Features:\s*'Polish'/.test(rail) && /Transforms:\s*'Move'/.test(rail));
   check('Hole icon Drill', /hole:\s*Drill/.test(rail));
   check('Shell icon PackageOpen', /shell:\s*PackageOpen/.test(rail));

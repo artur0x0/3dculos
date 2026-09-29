@@ -7,6 +7,7 @@ import {
   ArrowLeft,
 } from 'lucide-react';
 import { CONTOUR_TOOLS } from '../utils/contourMode';
+import { RAIL_PAIR_HEIGHT_CLASS, RAIL_PAIR_HEIGHT_ATTR } from '../utils/railPair';
 
 const ICONS = {
   circle: Circle,
@@ -26,8 +27,7 @@ const ContourModeRail = ({
   onBack,
   compact = false,
 }) => {
-  // Both viewport rails (this one and CrossSectionPanel) share one size so they
-  // read as a matched pair — the larger of the two former sizes, phone included.
+  // Same exact height as CrossSectionPanel via RAIL_PAIR_HEIGHT_CLASS.
   const iconSize = 20;
   const pad = 'p-2';
 
@@ -35,11 +35,12 @@ const ContourModeRail = ({
     <div
       className={`absolute left-2 lg:left-4 bottom-2.5 z-10 flex flex-col gap-1
         bg-white/60 backdrop-blur-sm rounded-lg shadow-lg
-        max-h-[min(26rem,calc(100%-5.5rem))] overflow-y-auto overflow-x-hidden rail-scroll
+        ${RAIL_PAIR_HEIGHT_CLASS}
         p-2`}
       role="group"
       aria-label="Contour tools"
       data-rail-pair="left"
+      data-rail-height={RAIL_PAIR_HEIGHT_ATTR}
     >
       <div
         className={`text-[9px] font-semibold uppercase tracking-wide text-cyan-800 px-1 ${

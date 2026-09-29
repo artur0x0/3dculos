@@ -269,7 +269,7 @@ check('declaredNames export', declaredNames('let box1 = 1;').has('box1'));
   check('Sweep icon is Route', /makeSweep:\s*Route/.test(rail));
   check('Tube icon is Torus', /tube:\s*Torus/.test(rail) && !/\bDonut\b/.test(rail));
   check('no glyph is left orphaned by the icon swaps', !/\bSquareDashed\b|\bSpline\b|\bFrame\b/.test(rail));
-  check('rail captions Shapes / Polish / Move', /Primitives:\s*'Shapes'/.test(rail) && /Features:\s*'Polish'/.test(rail) && /Transforms:\s*'Move'/.test(rail));
+  check('rail captions Block / Polish / Move', /Primitives:\s*'Block'/.test(rail) && /Features:\s*'Polish'/.test(rail) && /Transforms:\s*'Move'/.test(rail));
 }
 
 if (failed) {

@@ -103,22 +103,62 @@ export function wallNormalContinuity(n0a, n1a, n0b, n1b) {
 }
 
 /**
+ * Prefer the more axis-aligned wall normal of an edge frame (rim plane).
+ * Slight |Nz| bias so top/bottom rims of axis-aligned CAD parts win over
+ * shallow blend diagonals when n0/n1 score nearly equal (roundedBox).
+ */
+export function preferredPlaneNormal(frame) {
+  if (!frame) return null;
+  const { T, n0, n1 } = frame;
+  if (!n0 && !n1) return null;
+  if (!n0) return n1;
+  if (!n1) return n0;
+  const score = (n) => {
+    const ax = Math.abs(n[0]);
+    const ay = Math.abs(n[1]);
+    const az = Math.abs(n[2]);
+    const dom = Math.max(ax, ay, az);
+    const inP = T ? 1 - Math.abs(_dot(T, n)) : 1;
+    return dom * 10 + inP + az * 0.02 + ay * 0.01;
+  };
+  return score(n0) >= score(n1) ? n0 : n1;
+}
+
+/**
  * True G1 between two feature/coherent edges.
  * @param {object} a
  * @param {object} b
- * @param {{ tolDeg?: number, normalAlign?: number }} [opts]
+ * @param {{ tolDeg?: number, normalAlign?: number, skipNormals?: boolean,
+ *           cornerDeg?: number, cornerSharpDeg?: number,
+ *           cornerOutOfPlaneDeg?: number, seedPlaneNormal?: number[] }} [opts]
  */
 export function isTrueG1(a, b, opts = {}) {
   const tolDeg = typeof opts.tolDeg === 'number' ? opts.tolDeg : TANGENCY_PROP_DEG;
   const cosTol = Math.cos((tolDeg * Math.PI) / 180);
   const fa = edgeTangencyFrame(a);
   const fb = edgeTangencyFrame(b);
-  if (_tangentAlign(fa.T, fb.T) < cosTol) return false;
-  // Mobile C.2: edge-pick propagation on the coherent graph skips wall-normal
-  // continuity — nearest-source normals on RDP-simplified chords break G1 walks
-  // even when tangents align (circular rims / split chainIds). Fillet framing
-  // still uses the full true-G1 gate (default).
-  if (opts.skipNormals) return true;
+  const tan = _tangentAlign(fa.T, fb.T);
+
+  if (opts.skipNormals) {
+    // Smooth G1 — skip wall normals on RDP chords (C.2 circular / split chainIds).
+    if (tan >= cosTol) return true;
+    // Collapsed fillet corners turn ~70–85°. Reject sharp ~90° cube corners
+    // (cornerSharpDeg) and require both tangents to lie in the seed rim plane
+    // so vertical T-junctions off a roundedBox rim do not flood.
+    const cornerDeg = typeof opts.cornerDeg === 'number' ? opts.cornerDeg : 95;
+    const sharpDeg = typeof opts.cornerSharpDeg === 'number' ? opts.cornerSharpDeg : 85;
+    if (tan < Math.cos((cornerDeg * Math.PI) / 180)) return false;
+    if (tan <= Math.cos((sharpDeg * Math.PI) / 180)) return false;
+    const N = Array.isArray(opts.seedPlaneNormal) && opts.seedPlaneNormal.length >= 3
+      ? opts.seedPlaneNormal
+      : preferredPlaneNormal(fa);
+    if (!N) return false;
+    const outOfPlane = Math.sin(((opts.cornerOutOfPlaneDeg ?? 30) * Math.PI) / 180);
+    return Math.abs(_dot(fa.T, N)) <= outOfPlane
+      && Math.abs(_dot(fb.T, N)) <= outOfPlane;
+  }
+
+  if (tan < cosTol) return false;
   const normalAlign = typeof opts.normalAlign === 'number' ? opts.normalAlign : TANGENCY_NORMAL_ALIGN;
   if (fa.n0 && fa.n1 && fb.n0 && fb.n1) {
     if (wallNormalContinuity(fa.n0, fa.n1, fb.n0, fb.n1) < normalAlign) return false;
@@ -133,45 +173,151 @@ export function isTrueG1(a, b, opts = {}) {
  * @param {{ tolDeg?: number, adj?: Map, max?: number }} [opts]
  * @returns {object[]}
  */
+/** Endpoint positions within this distance count as the same corner (split chainIds). */
+const SPATIAL_VERT_EPS = 0.08;
+
+function _near3(a, b, eps = SPATIAL_VERT_EPS) {
+  if (!a || !b) return false;
+  return Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) < eps;
+}
+
+/**
+ * Neighbors of `cur` by vertex-id adjacency, plus edges whose endpoints
+ * coincide in space (coherent chains often mint fresh vertex ids per chain).
+ */
+function _neighborsOf(cur, featureEdges, adj, useSpatial) {
+  const out = new Map();
+  for (const v of [cur.a, cur.b]) {
+    for (const nbr of adj.get(v) || []) {
+      out.set(_edgeKey(nbr), nbr);
+    }
+  }
+  if (!useSpatial) return out;
+  // Only bridge from dead-end endpoints (no other incident edge in adj).
+  // Full spatial linking at fillet corners over-floods into verticals.
+  for (const [v, p] of [[cur.a, cur.va], [cur.b, cur.vb]]) {
+    const incident = adj.get(v) || [];
+    if (incident.length > 1) continue; // not a dead end in the id graph
+    for (const nbr of featureEdges || []) {
+      const nk = _edgeKey(nbr);
+      if (out.has(nk) || nk === _edgeKey(cur)) continue;
+      if (_near3(p, nbr.va) || _near3(p, nbr.vb)) {
+        out.set(nk, nbr);
+      }
+    }
+  }
+  return out;
+}
+
+function _mid3(e) {
+  if (Array.isArray(e?.mid) && e.mid.length >= 3) return e.mid;
+  if (e?.va && e?.vb) {
+    return [
+      (e.va[0] + e.vb[0]) / 2,
+      (e.va[1] + e.vb[1]) / 2,
+      (e.va[2] + e.vb[2]) / 2,
+    ];
+  }
+  return null;
+}
+
+function _copyEdge(edge, key) {
+  return {
+    ...edge,
+    key,
+    va: edge.va ? edge.va.slice() : undefined,
+    vb: edge.vb ? edge.vb.slice() : undefined,
+    mid: edge.mid ? edge.mid.slice() : undefined,
+    tangent: edge.tangent ? edge.tangent.slice() : undefined,
+    n0: edge.n0 ? edge.n0.slice() : undefined,
+    n1: edge.n1 ? edge.n1.slice() : undefined,
+  };
+}
+
+/**
+ * Same-face near-parallel crease (fillet top/bottom of one blend). Bridges
+ * isolated length-1 coherent leftovers like roundedBox coh-18 ↔ coh-17 so
+ * Tangent-on can reach the outer rim. Band-limited so cube opposite edges
+ * are not pulled in.
+ */
+function _parallelFaceBridge(seed, list, planeN) {
+  if (!seed || !list?.length) return null;
+  const faces = [seed.faceA, seed.faceB].filter(Number.isFinite);
+  if (!faces.length) return null;
+  const sf = edgeTangencyFrame(seed);
+  const cosTol = Math.cos((TANGENCY_PROP_DEG * Math.PI) / 180);
+  const band = Math.max((seed.length || 0) * 0.25, 5);
+  const sm = _mid3(seed);
+  if (!sm) return null;
+  let best = null;
+  let bestD = Infinity;
+  let bestH = -Infinity;
+  for (const e of list) {
+    if (_edgeKey(e) === _edgeKey(seed)) continue;
+    if (!faces.includes(e.faceA) && !faces.includes(e.faceB)) continue;
+    const ef = edgeTangencyFrame(e);
+    if (_tangentAlign(sf.T, ef.T) < cosTol) continue;
+    const em = _mid3(e);
+    if (!em) continue;
+    const d = Math.hypot(sm[0] - em[0], sm[1] - em[1], sm[2] - em[2]);
+    if (d > band) continue;
+    const h = planeN ? Math.abs(_dot(em, planeN)) : 0;
+    // Prefer the outer/higher rim when distances tie (18↔17 vs 18↔12).
+    if (h > bestH + 0.3 || (Math.abs(h - bestH) <= 0.3 && d < bestD)) {
+      bestH = h;
+      bestD = d;
+      best = e;
+    }
+  }
+  return best;
+}
+
 export function propagateTrueTangentEdges(featureEdges, seedEdge, opts = {}) {
   if (!seedEdge) return [];
   const max = typeof opts.max === 'number' ? opts.max : TANGENCY_CHAIN_MAX;
-  const adj = opts.adj || _buildAdj(featureEdges || []);
-  const seedKey = _edgeKey(seedEdge);
+  const list = featureEdges || [];
+  const adj = opts.adj || _buildAdj(list);
+  // Edge-pick (skipNormals): also bridge split chainIds that meet in space.
+  const useSpatial = opts.spatialAdjacency !== false && opts.skipNormals === true;
+  const seedFrame = edgeTangencyFrame(seedEdge);
+  let seedPlaneNormal = Array.isArray(opts.seedPlaneNormal) && opts.seedPlaneNormal.length >= 3
+    ? opts.seedPlaneNormal
+    : preferredPlaneNormal(seedFrame);
+
   const out = new Map();
-  const seedCopy = {
-    ...seedEdge,
-    key: seedKey,
-    va: seedEdge.va ? seedEdge.va.slice() : undefined,
-    vb: seedEdge.vb ? seedEdge.vb.slice() : undefined,
-    mid: seedEdge.mid ? seedEdge.mid.slice() : undefined,
-    tangent: seedEdge.tangent ? seedEdge.tangent.slice() : undefined,
-    n0: seedEdge.n0 ? seedEdge.n0.slice() : undefined,
-    n1: seedEdge.n1 ? seedEdge.n1.slice() : undefined,
+  const queue = [];
+  const enqueue = (edge) => {
+    const nk = _edgeKey(edge);
+    if (out.has(nk)) return;
+    if (out.size >= max) return;
+    const copy = _copyEdge(edge, nk);
+    out.set(nk, copy);
+    queue.push(copy);
   };
-  out.set(seedKey, seedCopy);
-  const queue = [seedCopy];
+  enqueue(seedEdge);
+
+  // Parallel same-face bridge before the walk (roundedBox lower crease → outer rim).
+  if (opts.skipNormals && opts.parallelFaceBridge !== false) {
+    const bridge = _parallelFaceBridge(seedEdge, list, seedPlaneNormal);
+    if (bridge) {
+      const bf = preferredPlaneNormal(edgeTangencyFrame(bridge));
+      // Prefer the bridge plane when it is more face-like along Z (top rim).
+      if (bf && (!seedPlaneNormal || Math.abs(bf[2]) > Math.abs(seedPlaneNormal[2]))) {
+        seedPlaneNormal = bf;
+      }
+      enqueue(bridge);
+    }
+  }
+
+  const g1Opts = { ...opts, seedPlaneNormal };
   while (queue.length) {
     const cur = queue.shift();
-    for (const v of [cur.a, cur.b]) {
-      for (const nbr of adj.get(v) || []) {
-        const nk = _edgeKey(nbr);
-        if (out.has(nk)) continue;
-        if (!isTrueG1(cur, nbr, opts)) continue;
-        if (out.size >= max) return [...out.values()];
-        const copy = {
-          ...nbr,
-          key: nk,
-          va: nbr.va ? nbr.va.slice() : undefined,
-          vb: nbr.vb ? nbr.vb.slice() : undefined,
-          mid: nbr.mid ? nbr.mid.slice() : undefined,
-          tangent: nbr.tangent ? nbr.tangent.slice() : undefined,
-          n0: nbr.n0 ? nbr.n0.slice() : undefined,
-          n1: nbr.n1 ? nbr.n1.slice() : undefined,
-        };
-        out.set(nk, copy);
-        queue.push(copy);
-      }
+    for (const nbr of _neighborsOf(cur, list, adj, useSpatial).values()) {
+      const nk = _edgeKey(nbr);
+      if (out.has(nk)) continue;
+      if (!isTrueG1(cur, nbr, g1Opts)) continue;
+      if (out.size >= max) return [...out.values()];
+      enqueue(nbr);
     }
   }
   return [...out.values()];
