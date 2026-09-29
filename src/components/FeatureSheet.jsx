@@ -29,6 +29,9 @@ import {
  *
  * Replaces the Mobile C bottom-sheet chrome. Params + Accept / Cancel / Edit
  * script stay. Mounts on CAD and Script stages. Desktop never mounts this.
+ *
+ * Layout: title/actions row on top; params scroll horizontally underneath so
+ * narrow phones keep Accept visible without hiding Distance / Sense.
  */
 
 const FEATURE_ICONS = Object.freeze({
@@ -43,14 +46,14 @@ const FEATURE_ICONS = Object.freeze({
 
 const ACCENT = 'cyan';
 
-function snippetPreview(text, maxLines = 3) {
+function snippetPreview(text, maxLines = 2) {
   const lines = String(text || '').split(/\r?\n/);
   if (lines.length <= maxLines) return lines.join('\n');
   return `${lines.slice(0, maxLines - 1).join('\n')}\n…`;
 }
 
-/** Shared outer shell: full-width under title (top-14), horizontal scroll. */
-function SheetShell({ children, scroll = true, ...attrs }) {
+/** Shared outer shell: full-width under title (top-14). */
+function SheetShell({ children, ...attrs }) {
   const a = accentOf(ACCENT);
   return (
     <div
@@ -63,13 +66,26 @@ function SheetShell({ children, scroll = true, ...attrs }) {
     >
       <div
         className={`w-full rounded-xl border shadow-xl surface-glass-chip
-          ${a.panel} px-3 py-2 ${
-          scroll ? 'overflow-x-auto overflow-y-hidden no-scrollbar' : 'overflow-hidden'
-        }`}
+          ${a.panel} px-3 py-2 overflow-hidden`}
       >
         {children}
       </div>
     </div>
+  );
+}
+
+function TypeBadge({ index }) {
+  if (!index) return null;
+  return (
+    <span
+      className="absolute -bottom-1 -right-1 min-w-[0.85rem] h-[0.85rem] px-0.5
+        rounded-full bg-cyan-500 text-[8px] leading-[0.85rem] text-center
+        font-bold text-white"
+      data-feature-type-badge={index}
+      aria-hidden="true"
+    >
+      {index}
+    </span>
   );
 }
 
@@ -129,15 +145,7 @@ export default function FeatureSheet({
                 >
                   <span className="relative inline-flex">
                     <Icon size={16} strokeWidth={2} aria-hidden="true" />
-                    <span
-                      className="absolute -bottom-1 -right-1 min-w-[0.85rem] h-[0.85rem] px-0.5
-                        rounded-full bg-cyan-500 text-[8px] leading-[0.85rem] text-center
-                        font-bold text-white"
-                      data-feature-type-badge={typeIndex}
-                      aria-hidden="true"
-                    >
-                      {typeIndex}
-                    </span>
+                    <TypeBadge index={typeIndex} />
                   </span>
                   <span className={`${POPUP_TEXT.value} font-medium whitespace-nowrap`}>{f.chipLabel}</span>
                   {!editable && (
@@ -182,7 +190,7 @@ export default function FeatureSheet({
   if (editable && feature.kind === 'extrude') {
     fields = (
       <>
-        <div className="shrink-0 min-w-[9rem]">
+        <div className="shrink-0 min-w-[10rem]">
           <NumberField
             id="sheet-extrude-distance"
             label="Distance"
@@ -211,7 +219,7 @@ export default function FeatureSheet({
     );
   } else if (editable && feature.kind === 'fillet') {
     fields = (
-      <div className="shrink-0 min-w-[9rem]">
+      <div className="shrink-0 min-w-[10rem]">
         <NumberField
           id="sheet-fillet-radius"
           label="Radius"
@@ -226,7 +234,7 @@ export default function FeatureSheet({
     );
   } else if (editable && feature.kind === 'revolve') {
     fields = (
-      <div className="shrink-0 min-w-[9rem]">
+      <div className="shrink-0 min-w-[10rem]">
         <NumberField
           id="sheet-revolve-angle"
           label="Angle"
@@ -241,7 +249,7 @@ export default function FeatureSheet({
     );
   } else {
     fields = (
-      <p className={`${POPUP_TEXT.note} ${a.muted} shrink-0 max-w-[14rem]`} data-feature-sheet-stub="">
+      <p className={`${POPUP_TEXT.note} ${a.muted} shrink-0 max-w-[16rem]`} data-feature-sheet-stub="">
         Params for {feature.label} aren’t editable here yet. Use Edit script.
       </p>
     );
@@ -249,45 +257,21 @@ export default function FeatureSheet({
 
   return (
     <SheetShell
-      scroll={false}
       data-feature-sheet-kind={feature.kind}
       data-feature-sheet-id={feature.id}
       data-feature-sheet-editable={editable ? 'true' : 'false'}
       aria-label={`${feature.chipLabel} feature sheet`}
     >
+      {/* Row 1: identity + actions (always visible on narrow phones). */}
       <div className="flex flex-row items-center gap-2 w-full min-w-0">
         <span className="relative inline-flex items-center justify-center rounded-lg bg-cyan-900/70 p-1.5 border border-cyan-500/40 shrink-0">
           <Icon size={18} strokeWidth={2} aria-hidden="true" />
-          <span
-            className="absolute -bottom-1 -right-1 min-w-[0.85rem] h-[0.85rem] px-0.5
-              rounded-full bg-cyan-500 text-[8px] leading-[0.85rem] text-center
-              font-bold text-white"
-            data-feature-type-badge={typeIndex}
-            aria-hidden="true"
-          >
-            {typeIndex}
-          </span>
+          <TypeBadge index={typeIndex} />
         </span>
-        <div className="shrink-0 min-w-0 max-w-[6.5rem]">
+        <div className="shrink-0 min-w-0 flex-1">
           <div className={`${POPUP_TEXT.title} text-white truncate`}>{feature.chipLabel}</div>
           <div className={`${POPUP_TEXT.subtitle} text-cyan-100/80`}>Feature sheet</div>
         </div>
-
-        <div
-          className="flex flex-row items-start gap-3 font-sans flex-1 min-w-0 overflow-x-auto no-scrollbar"
-          data-feature-sheet-params=""
-        >
-          {fields}
-          <div
-            className="shrink-0 rounded-md border border-cyan-800/60 bg-black/35 px-2 py-1
-              font-mono text-[10px] leading-snug text-cyan-100/85 max-w-[8rem] max-h-14 overflow-hidden"
-            data-feature-sheet-snippet=""
-            aria-hidden="true"
-          >
-            <pre className="whitespace-pre-wrap break-all m-0">{snippetPreview(block)}</pre>
-          </div>
-        </div>
-
         <div className="flex items-center gap-1.5 shrink-0">
           <PopupButton
             variant="ghost"
@@ -318,6 +302,22 @@ export default function FeatureSheet({
           >
             <X size={16} />
           </button>
+        </div>
+      </div>
+
+      {/* Row 2: params scroll horizontally when they don’t fit. */}
+      <div
+        className="mt-2 flex flex-row items-start gap-3 font-sans overflow-x-auto no-scrollbar"
+        data-feature-sheet-params=""
+      >
+        {fields}
+        <div
+          className="shrink-0 rounded-md border border-cyan-800/60 bg-black/35 px-2 py-1
+            font-mono text-[10px] leading-snug text-cyan-100/85 max-w-[10rem] max-h-12 overflow-hidden"
+          data-feature-sheet-snippet=""
+          aria-hidden="true"
+        >
+          <pre className="whitespace-pre-wrap break-all m-0">{snippetPreview(block)}</pre>
         </div>
       </div>
     </SheetShell>
