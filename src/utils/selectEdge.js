@@ -552,14 +552,18 @@ export function tangentAlign(t0, t1) {
  * @returns {object[]} seed + G1 chain (deduped by edgeKey)
  */
 export function propagateTangentEdges(featureEdges, seedEdge, opts = {}) {
-  // C3: true G1 (tangent + wall-normal continuity) via shared tangency field.
-  // Soft-fails to the seed. Walker is uncapped so long legitimate G1 wires
-  // (playtest ~98) return whole; callers refuse over-cap floods via
-  // COHERENT_EDGE_MAX (see toggleEdgeSelectionPropagated).
+  // C3 / Mobile C.2: G1 walk via shared tangency field. Soft-fails to the seed.
+  // Walker is uncapped so long legitimate wires return whole; callers refuse
+  // floods via TANGENT_PROP_FLOOD_MAX (see toggleEdgeSelectionPropagated).
+  // Edge-pick defaults to skipNormals — the coherent pick graph already dropped
+  // tessellation spaghetti; wall-normal continuity on RDP chords falsely broke
+  // circular / fillet rim chains (Artur C.2 regression).
   if (!seedEdge) return [];
+  const skipNormals = opts.skipNormals !== false;
   const chain = propagateTrueTangentEdges(featureEdges || [], seedEdge, {
     tolDeg: opts.tolDeg != null ? opts.tolDeg : TANGENCY_PROP_DEG,
     normalAlign: opts.normalAlign != null ? opts.normalAlign : TANGENCY_NORMAL_ALIGN,
+    skipNormals,
     adj: opts.adj || buildEdgeVertexAdj(featureEdges || []),
     max: 1e9,
   });
@@ -580,6 +584,16 @@ export function edgeDihedralDeg(edge) {
  * a tessellation flood (~160 zig-zag segments) does not — refuse it.
  */
 export const COHERENT_EDGE_MAX = 36;
+
+/**
+ * Mobile C.2 — refuse threshold for Tangent-on G1 walks on the *coherent* pick
+ * graph. Separate from {@link COHERENT_EDGE_MAX} (silhouette simplify cap).
+ * Covers default/max circular segments (64 / 128) while still refusing
+ * tessellation floods (~160). #68 raised segments 32→64; the old reuse of
+ * COHERENT_EDGE_MAX (=36) refused legitimate 64-seg rim walks when chainId
+ * fast-path was not taken.
+ */
+export const TANGENT_PROP_FLOOD_MAX = 128;
 
 const COLLINEAR_DEG = 6;
 const LINE_OFFSET_EPS = 0.45;
@@ -970,13 +984,18 @@ export function buildCoherentEdges(featureEdges, opts = {}) {
     const keep = _simplifyPolyline(ordered.pts, ordered.closed);
     if (!keep) continue;
     const segs = _segmentsFromKeep(ordered, keep);
-    if (!segs.length || segs.length > COHERENT_EDGE_MAX) continue;
+    if (!segs.length) continue;
     const boundaryId = _uniqueFinite(chain, 'boundaryId');
     const tagged = Number.isFinite(boundaryId);
+    const roundRim = ordered.closed && _radialCv(ordered.pts) <= RIM_RADIAL_CV;
+    // Mobile C.2: closed circular rims may keep more RDP points on large radii;
+    // allow up to TANGENT_PROP_FLOOD_MAX so 64-seg defaults are not dropped.
+    const maxSegs = roundRim ? TANGENT_PROP_FLOOD_MAX : COHERENT_EDGE_MAX;
+    if (segs.length > maxSegs) continue;
     if (!tagged) {
       if (ordered.closed) {
         // Round rims only. A filleted face outline is closed-ish but not circular.
-        if (_radialCv(ordered.pts) > RIM_RADIAL_CV) continue;
+        if (!roundRim) continue;
       } else {
         // Open recovery (loft generator the small-face test dropped) must be a
         // spine. Blend outlines wander across a whole face and are refused.
@@ -1099,7 +1118,8 @@ export function toggleEdgeSelectionPropagated(selected, edge, opts = {}) {
   if (propagate && Number.isFinite(edge?.chainId) && opts.featureEdges?.length) {
     const chain = opts.featureEdges.filter((e) => e.chainId === edge.chainId);
     // Cap → keep seed (never return empty; never re-flood the same spaghetti).
-    if (chain.length > COHERENT_EDGE_MAX) {
+    // Mobile C.2: allow up to TANGENT_PROP_FLOOD_MAX so 64/128-seg rims chain.
+    if (chain.length > TANGENT_PROP_FLOOD_MAX) {
       refuseFlood = true;
     } else if (chain.length > 1) {
       toAdd = chain;
@@ -1107,8 +1127,8 @@ export function toggleEdgeSelectionPropagated(selected, edge, opts = {}) {
   }
   if (!toAdd && !refuseFlood && propagate && opts.featureEdges?.length) {
     toAdd = propagateTangentEdges(opts.featureEdges, edge, { tolDeg: opts.tolDeg });
-    // Hitting the cap means tessellation flood — keep the seed only.
-    if (toAdd.length >= COHERENT_EDGE_MAX) {
+    // Hitting the flood max means tessellation spaghetti — keep the seed only.
+    if (toAdd.length > TANGENT_PROP_FLOOD_MAX) {
       toAdd = null;
     }
   }

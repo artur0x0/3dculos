@@ -114,6 +114,11 @@ export function isTrueG1(a, b, opts = {}) {
   const fa = edgeTangencyFrame(a);
   const fb = edgeTangencyFrame(b);
   if (_tangentAlign(fa.T, fb.T) < cosTol) return false;
+  // Mobile C.2: edge-pick propagation on the coherent graph skips wall-normal
+  // continuity — nearest-source normals on RDP-simplified chords break G1 walks
+  // even when tangents align (circular rims / split chainIds). Fillet framing
+  // still uses the full true-G1 gate (default).
+  if (opts.skipNormals) return true;
   const normalAlign = typeof opts.normalAlign === 'number' ? opts.normalAlign : TANGENCY_NORMAL_ALIGN;
   if (fa.n0 && fa.n1 && fb.n0 && fb.n1) {
     if (wallNormalContinuity(fa.n0, fa.n1, fb.n0, fb.n1) < normalAlign) return false;

@@ -19,6 +19,7 @@ import {
   buildCoherentEdges,
   toggleEdgeSelectionPropagated,
   COHERENT_EDGE_MAX,
+  TANGENT_PROP_FLOOD_MAX,
 } from '../../src/utils/selectEdge.js';
 import {
   annotateFeatureEdges,
@@ -260,8 +261,9 @@ console.log('fillet C3 — loft Tangent-on + hard variable-profile WASM');
   check('some loft chain selects >0 with Tangent on', anyPick >= 1);
 
   // Over-cap flood still soft-fails to seed (not empty).
+  // Mobile C.2: refuse uses TANGENT_PROP_FLOOD_MAX (128), not COHERENT_EDGE_MAX.
   const flood = [];
-  for (let i = 0; i < 48; i++) {
+  for (let i = 0; i < TANGENT_PROP_FLOOD_MAX + 32; i++) {
     flood.push({
       key: `f-${i}`, a: i, b: i + 1,
       va: [i * 0.4, 0, 0], vb: [(i + 1) * 0.4, 0, 0],

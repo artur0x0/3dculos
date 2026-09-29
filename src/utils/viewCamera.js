@@ -125,3 +125,52 @@ export function fitView({ camera, controls, geometry, dir, up, margin = 1.15 }) 
   }
   return true;
 }
+
+/**
+ * Mobile C.2 — vertical pan of camera + OrbitControls target by an NDC-Y delta
+ * (full viewport height = 2 in NDC). Same world delta on both keeps look direction.
+ * Positive ndcY moves the view content DOWN on screen (camera/target pan UP along
+ * the camera's up) — used when an under-title feature sheet covers the top.
+ *
+ * @param {Object} o
+ * @param {import('three').PerspectiveCamera} o.camera
+ * @param {{ target: import('three').Vector3, update?: Function }} o.controls
+ * @param {number} o.ndcY  delta in NDC-Y units (0 = no move; ~0.2–0.5 typical)
+ * @returns {boolean}
+ */
+export function panViewByNdcY({ camera, controls, ndcY }) {
+  if (!camera || !controls?.target || !Number.isFinite(ndcY) || ndcY === 0) return false;
+  const dist = camera.position.distanceTo(controls.target);
+  if (!(dist > EPS)) return false;
+  const fovY = ((camera.fov || 45) * DEG2RAD);
+  const tanY = Math.tan(fovY / 2) || 1e-6;
+  // NDC Y spans [-1, 1] = full height → world units per NDC = dist * tanY
+  const world = ndcY * dist * tanY;
+  if (!Number.isFinite(world) || world === 0) return false;
+
+  // Camera up, re-squared against the view axis (same as fitView).
+  const d = camera.position.clone().sub(controls.target);
+  if (d.lengthSq() < EPS) return false;
+  d.normalize();
+  let u = camera.up.clone();
+  if (u.lengthSq() < EPS) u.set(0, 0, 1);
+  if (Math.abs(u.dot(d)) > 1 - 1e-6) {
+    const axes = [new Vector3(1, 0, 0), new Vector3(0, 1, 0), new Vector3(0, 0, 1)];
+    u = axes.reduce((best, a) => (Math.abs(a.dot(d)) < Math.abs(best.dot(d)) ? a : best), axes[0]).clone();
+  }
+  u.sub(d.clone().multiplyScalar(u.dot(d))).normalize();
+
+  camera.position.addScaledVector(u, world);
+  controls.target.addScaledVector(u, world);
+  if (typeof controls.update === 'function') controls.update();
+  return true;
+}
+
+/**
+ * Ease in-out cubic for sheet lift tweens.
+ * @param {number} t 0..1
+ */
+export function easeInOutCubic(t) {
+  const x = Math.min(1, Math.max(0, t));
+  return x < 0.5 ? 4 * x * x * x : 1 - ((-2 * x + 2) ** 3) / 2;
+}
