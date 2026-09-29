@@ -5,6 +5,13 @@ import PromptInput from './components/PromptInput';
 import SplitDivider from './components/SplitDivider';
 import MobileStageToggle from './components/MobileStageToggle';
 import FeatureStrip from './components/FeatureStrip';
+import FeatureSheet from './components/FeatureSheet';
+import {
+  writeFeatureSheetParams,
+  listFeatureSheetTargets,
+  pickDefaultFeatureSheetTarget,
+  isFeatureSheetEditable,
+} from './utils/featureSheetWriteback';
 import { saveAs } from 'file-saver';
 import QuoteModal from './components/QuoteModal';
 import OrderModal from './components/OrderModal';
@@ -75,6 +82,124 @@ const App = () => {
     setFeatureStripActiveId(feature.id);
     codeEditorRef.current?.revealRange?.(feature.startOffset, feature.endOffset);
   };
+  /**
+   * Slice Mobile C — CAD-stage feature sheet.
+   * null | { mode: 'picker' } | { mode: 'edit', feature }
+   * Desktop / game never open this.
+   */
+  const [featureSheet, setFeatureSheet] = useState(null);
+  const closeFeatureSheet = () => setFeatureSheet(null);
+  const openFeatureSheetFor = (feature) => {
+    if (!feature) return;
+    setFeatureStripActiveId(feature.id);
+    setFeatureSheet({ mode: 'edit', feature });
+  };
+  const openFeatureSheetFromCad = () => {
+    const buf = codeEditorRef.current?.getContent?.() || currentScript || '';
+    const features = listFeatureSheetTargets(buf);
+    if (!features.length) {
+      viewportRef.current?.softFailContour?.(
+        'No marked features yet — Extrude / Fillet / Revolve first, then long-press to edit.',
+      );
+      return;
+    }
+    if (features.length === 1) {
+      openFeatureSheetFor(features[0]);
+      return;
+    }
+    // Prefer a default editable target; still allow picker via strip.
+    const preferred = pickDefaultFeatureSheetTarget(buf);
+    if (preferred && isFeatureSheetEditable(preferred.kind)) {
+      openFeatureSheetFor(preferred);
+      return;
+    }
+    setFeatureSheet({ mode: 'picker' });
+  };
+  const handleFeatureSheetAccept = (feature, params) => {
+    if (!feature) return;
+    const buf = codeEditorRef.current?.getContent?.() || currentScript || '';
+    // Re-parse markers against live buffer so offsets stay valid after prior edits.
+    const live = listFeatureSheetTargets(buf).find((f) => f.id === feature.id)
+      || listFeatureSheetTargets(buf).find(
+        (f) => f.kind === feature.kind && f.index === feature.index,
+      )
+      || feature;
+    const result = writeFeatureSheetParams(buf, live, params || {});
+    if (!result.ok) {
+      viewportRef.current?.softFailContour?.(result.message);
+      return;
+    }
+    const wrote = codeEditorRef.current?.applyBuffer?.(
+      result.buffer,
+      `${feature.label || 'Feature'} sheet`,
+    );
+    if (!wrote) {
+      viewportRef.current?.softFailContour?.(
+        'Could not write feature params into the editor — try again.',
+      );
+      return;
+    }
+    setFeatureSheet(null);
+    if (result.run) {
+      setTimeout(() => {
+        handleGameRun();
+      }, 0);
+    }
+  };
+  const handleFeatureSheetEditScript = (feature) => {
+    if (!feature) return;
+    setFeatureSheet(null);
+    setFeatureStripActiveId(feature.id);
+    setMobileStageSticky('script');
+    // Defer reveal until Script pane is interactive.
+    setTimeout(() => {
+      const buf = codeEditorRef.current?.getContent?.() || currentScript || '';
+      const live = listFeatureSheetTargets(buf).find((f) => f.id === feature.id)
+        || listFeatureSheetTargets(buf).find(
+          (f) => f.kind === feature.kind && f.index === feature.index,
+        )
+        || feature;
+      codeEditorRef.current?.revealRange?.(live.startOffset, live.endOffset);
+    }, 50);
+  };
+
+  // Dev/playtest bridge for Slice Mobile C feature sheets.
+  useEffect(() => {
+    if (!import.meta.env?.DEV || typeof window === 'undefined') return undefined;
+    window.__FEATURE_SHEET__ = {
+      open: (idOrKind) => {
+        const buf = codeEditorRef.current?.getContent?.() || currentScript || '';
+        const features = listFeatureSheetTargets(buf);
+        if (!features.length) return false;
+        if (!idOrKind) {
+          openFeatureSheetFromCad();
+          return true;
+        }
+        const hit = features.find((f) => f.id === idOrKind)
+          || features.find((f) => f.kind === idOrKind);
+        if (!hit) return false;
+        openFeatureSheetFor(hit);
+        return true;
+      },
+      openPicker: () => {
+        const buf = codeEditorRef.current?.getContent?.() || currentScript || '';
+        if (!listFeatureSheetTargets(buf).length) return false;
+        setFeatureSheet({ mode: 'picker' });
+        return true;
+      },
+      close: () => {
+        setFeatureSheet(null);
+        return true;
+      },
+      state: () => featureSheet,
+    };
+    return () => {
+      try { delete window.__FEATURE_SHEET__; } catch { /* ignore */ }
+    };
+    // Playtest bridge; open helpers close over latest render via refs-in-effect body.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [featureSheet, currentScript]);
+
   const [showQuoteModal, setShowQuoteModal] = useState(false);
   const [showOrderModal, setShowOrderModal] = useState(false);
   const [orderData, setOrderData] = useState(null);
@@ -1267,6 +1392,8 @@ const App = () => {
               onCommitFillet={handleCommitFillet}
               getHelperBuffer={() => codeEditorRef.current?.getContent?.() || ''}
               cadToolbarHost={cadToolbarHost}
+              featureSheetEnabled={useStages && isCadStage && !featureSheet}
+              onFeatureLongPress={openFeatureSheetFromCad}
             />
     );
 
@@ -1327,6 +1454,38 @@ const App = () => {
                 aria-hidden={!isCadStage}
               >
                 {viewportEl}
+                {/* Slice Mobile C: CAD-stage feature strip opens sheets (not Monaco).
+                    Sits under the title, above the helper rail / home pill. */}
+                {isCadStage && (
+                  <div
+                    className="absolute left-0 top-16 bottom-36 z-20 pointer-events-auto"
+                    data-cad-feature-strip=""
+                  >
+                    <FeatureStrip
+                      script={currentScript}
+                      activeId={featureSheet?.feature?.id || featureStripActiveId}
+                      hideWhenEmpty
+                      onJump={(f) => openFeatureSheetFor(f)}
+                    />
+                  </div>
+                )}
+                {isCadStage && featureSheet?.mode === 'picker' && (
+                  <FeatureSheet
+                    features={listFeatureSheetTargets(currentScript)}
+                    script={currentScript}
+                    onCancel={closeFeatureSheet}
+                    onPickFeature={(f) => openFeatureSheetFor(f)}
+                  />
+                )}
+                {isCadStage && featureSheet?.mode === 'edit' && featureSheet.feature && (
+                  <FeatureSheet
+                    feature={featureSheet.feature}
+                    script={currentScript}
+                    onAccept={handleFeatureSheetAccept}
+                    onCancel={closeFeatureSheet}
+                    onEditScript={handleFeatureSheetEditScript}
+                  />
+                )}
               </div>
               <div
                 className={`absolute inset-0 flex flex-col min-h-0 ${

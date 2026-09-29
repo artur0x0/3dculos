@@ -69,11 +69,16 @@ console.log('mobile B.1: vertical strip icons + face popup under title + view zo
       /pb-\[max\(3\.5rem/.test(strip),
   );
   check(
-    'App mounts strip as left rail beside Monaco (flex-row), Script-stage only',
+    'App mounts strip as left rail beside Monaco (flex-row), Script-stage jump intact',
     /flex flex-row/.test(app) &&
       /isScriptStage && \(/.test(app) &&
+      /handleFeatureStripJump/.test(app) &&
       /<FeatureStrip[\s\S]*?script=\{currentScript\}/.test(app) &&
-      (app.match(/<FeatureStrip\b/g) || []).length === 1,
+      // Slice C may also mount a CAD-stage strip for feature sheets (≤2 total).
+      (() => {
+        const n = (app.match(/<FeatureStrip\b/g) || []).length;
+        return n >= 1 && n <= 2;
+      })(),
   );
   // Face description only — edge-pick chip stays edge-docked (interactive controls).
   // Placement: horizontally centered just below title chrome (top-16), NOT mid-viewport.

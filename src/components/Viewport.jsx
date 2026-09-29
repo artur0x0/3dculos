@@ -338,6 +338,9 @@ const Viewport = forwardRef(({
   getHelperBuffer = null,
   /** Mobile CAD mid-strip host (CodeEditor). Null on desktop and in game. */
   cadToolbarHost = null,
+  /** Slice Mobile C: long-press on body opens feature sheet (mobile CAD only). */
+  featureSheetEnabled = false,
+  onFeatureLongPress = null,
 }, ref) => {
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
@@ -363,6 +366,14 @@ const Viewport = forwardRef(({
   const pendingClickDataRef = useRef(null);
   const mouseDownPosRef = useRef({ x: 0, y: 0 });
   const isDraggingRef = useRef(false);
+  /** Slice Mobile C: pointer-hold opens feature sheet without conflicting with orbit. */
+  const featureLongPressTimerRef = useRef(null);
+  const featureLongPressOriginRef = useRef(null);
+  const featureLongPressFiredRef = useRef(false);
+  const featureSheetEnabledRef = useRef(featureSheetEnabled);
+  featureSheetEnabledRef.current = featureSheetEnabled;
+  const onFeatureLongPressRef = useRef(onFeatureLongPress);
+  onFeatureLongPressRef.current = onFeatureLongPress;
   const measurementLinesRef = useRef(null); 
 
   // Configuration for click detection
@@ -2668,6 +2679,12 @@ const Viewport = forwardRef(({
     // Only the left button places points / picks faces; the right button is
     // the point-move gesture and must never drop a stray point on release.
     if (event.button !== 0) return;
+    // Slice Mobile C: long-press already opened the sheet — suppress the click.
+    if (featureLongPressFiredRef.current) {
+      featureLongPressFiredRef.current = false;
+      isDraggingRef.current = false;
+      return;
+    }
     // If user was dragging, don't process as a click
     if (isDraggingRef.current) {
       isDraggingRef.current = false;
@@ -2991,6 +3008,68 @@ const Viewport = forwardRef(({
       console.log('[Measurement] Restarted with new first face');
     }
   }, [measurementFaces, clearHighlight, highlightFace, clearMeasurementLines, updateMeasurementVisualization]);
+
+  // Slice Mobile C: long-press (~450ms, no drag) on the part opens a feature sheet.
+  // Pointer events cover touch + mouse; cancelled on move past drag threshold or when
+  // Contour/Fillet/measure modes own the canvas. Desktop leaves featureSheetEnabled false.
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const CLEAR_LP = () => {
+      if (featureLongPressTimerRef.current) {
+        clearTimeout(featureLongPressTimerRef.current);
+        featureLongPressTimerRef.current = null;
+      }
+      featureLongPressOriginRef.current = null;
+    };
+
+    const onPointerDown = (event) => {
+      if (!featureSheetEnabledRef.current) return;
+      if (event.button != null && event.button !== 0) return;
+      if (contourModeRef.current || filletModeRef.current) return;
+      if (measurementEnabled) return;
+      CLEAR_LP();
+      featureLongPressFiredRef.current = false;
+      featureLongPressOriginRef.current = { x: event.clientX, y: event.clientY };
+      featureLongPressTimerRef.current = setTimeout(() => {
+        featureLongPressTimerRef.current = null;
+        const origin = featureLongPressOriginRef.current;
+        featureLongPressOriginRef.current = null;
+        if (!origin || !featureSheetEnabledRef.current) return;
+        if (contourModeRef.current || filletModeRef.current) return;
+        featureLongPressFiredRef.current = true;
+        onFeatureLongPressRef.current?.({ clientX: origin.x, clientY: origin.y });
+      }, 450);
+    };
+
+    const onPointerMove = (event) => {
+      const origin = featureLongPressOriginRef.current;
+      if (!origin) return;
+      const dx = event.clientX - origin.x;
+      const dy = event.clientY - origin.y;
+      if (Math.hypot(dx, dy) > 10) CLEAR_LP();
+    };
+
+    const onPointerEnd = () => {
+      CLEAR_LP();
+    };
+
+    canvas.addEventListener('pointerdown', onPointerDown);
+    canvas.addEventListener('pointermove', onPointerMove);
+    canvas.addEventListener('pointerup', onPointerEnd);
+    canvas.addEventListener('pointercancel', onPointerEnd);
+    canvas.addEventListener('pointerleave', onPointerEnd);
+
+    return () => {
+      CLEAR_LP();
+      canvas.removeEventListener('pointerdown', onPointerDown);
+      canvas.removeEventListener('pointermove', onPointerMove);
+      canvas.removeEventListener('pointerup', onPointerEnd);
+      canvas.removeEventListener('pointercancel', onPointerEnd);
+      canvas.removeEventListener('pointerleave', onPointerEnd);
+    };
+  }, [measurementEnabled]);
 
   // --- Event listener setup ---
   useEffect(() => {

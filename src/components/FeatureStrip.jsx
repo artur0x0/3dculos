@@ -32,10 +32,11 @@ const FEATURE_ICONS = Object.freeze({
   chamfer: TriangleRight,     // chamferEdges
 });
 
-export default function FeatureStrip({ script = '', activeId = null, onJump }) {
+export default function FeatureStrip({ script = '', activeId = null, onJump, hideWhenEmpty = false }) {
   const features = useMemo(() => parseFeatureMarkers(script), [script]);
 
   if (features.length === 0) {
+    if (hideWhenEmpty) return null;
     return (
       <div
         className="shrink-0 flex flex-col items-center justify-start gap-1

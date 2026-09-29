@@ -73,17 +73,18 @@ Desktop specifics:
 
 ### Mobile shell (`src/App.jsx` mobile branch) — CAD stages + game stack
 
-**CAD (Slice Mobile A + B):** dual stage, not a cramped split. Default = CAD stage.
+**CAD (Slice Mobile A + B + C):** dual stage, not a cramped split. Default = CAD stage.
 Toggle is session-sticky (`sessionStorage` key `3dculos.mobileStage`). Slice B
 replaced the top text chrome with a bottom home-indicator pill + Script feature strip.
+Slice C adds CAD-stage feature sheets (default edit path without Monaco).
 
 ```
 CAD stage                          Script stage
 ┌─────────────────────────────┐   ┌─────────────────────────────┐
-│ Viewport (fullscreen-ish)   │   ││feat│ mid-strip: Toolbar    │
-│  rails + Contour/Fillet     │   ││strip mid: Monaco (full)   │
-│  title chip                 │   ││icons PromptInput (hidden) │
-│  (editor mounted, invisible)│   ││vert  (viewport mounted)   │
+││feat│ Viewport + rails      │   ││feat│ mid-strip: Toolbar    │
+││strip Contour/Fillet chips  │   ││strip mid: Monaco (full)   │
+││(edit) title chip           │   ││icons PromptInput (hidden) │
+││      feature sheet (glass) │   ││vert  (viewport mounted)   │
 │         ( ●  ○ ) pill       │   ││      ( ○  ● ) pill        │
 └─────────────────────────────┘   └─────────────────────────────┘
 ```
@@ -110,13 +111,22 @@ Mobile specifics:
   Top CAD|Script text chrome is gone. Inert `data-ai-prompt-hook` marks a
   future AI-on-tap site (not wired). Contour/Fillet chips use `bottom-14` on
   mobile so they clear the pill. Shell exposes `data-mobile-stage="cad"|"script"`.
-- **Feature strip (Slice Mobile B → B.1):** `FeatureStrip.jsx` mounts as a
-  **vertical** left rail in the Script stage only. Icon chips reuse the CAD
-  toolbar glyphs (Contour/`NotebookPen`, Extrude/`ArrowUpFromLine`,
-  Revolve/`Rotate3d`, Loft/`Pyramid`, Sweep/`Route`, Fillet/`SquareRoundCorner`,
-  Chamfer/`TriangleRight`). Markers from `parseFeatureMarkers`; tap →
-  `CodeEditor.revealRange`. Bottom padding clears the home-indicator pill +
-  safe-area. Empty-state when no markers. Desktop never mounts the strip.
+- **Feature strip (Slice Mobile B → B.1 → C):** `FeatureStrip.jsx` mounts as a
+  **vertical** left rail. **Script stage:** icon chips jump Monaco caret via
+  `CodeEditor.revealRange` (unchanged). **CAD stage (Slice C):** same icons open a
+  **feature sheet** (`hideWhenEmpty`). Icons match the CAD toolbar
+  (Contour/`NotebookPen`, Extrude/`ArrowUpFromLine`, Revolve/`Rotate3d`,
+  Loft/`Pyramid`, Sweep/`Route`, Fillet/`SquareRoundCorner`,
+  Chamfer/`TriangleRight`). Markers from `parseFeatureMarkers`. Desktop never
+  mounts the strip.
+- **Feature sheets (Slice Mobile C):** `FeatureSheet.jsx` — bottom glass sheet on
+  CAD stage only. Open via long-press (~450ms, no drag) on the viewport or CAD
+  strip tap. Real param writeback for **Extrude** (distance/sense), **Fillet**
+  (radius), **Revolve** (angle) via `featureSheetWriteback.js` into the marked
+  block + Auto-Run; other kinds stub → Edit script. Accept stays on CAD; Cancel
+  writes nothing; **Edit script** → Script stage + `revealRange`. Reuses
+  `popupUI` NumberField/ChoiceRow. Desktop/game sheets off
+  (`featureSheetEnabled` false).
 - **Face description popup (Slice Mobile B.1):** horizontally centered just
   below the part-name title chrome (`top-16 left-1/2 -translate-x-1/2`,
   `data-face-info-popup`) on mobile and desktop — same under-title band as
