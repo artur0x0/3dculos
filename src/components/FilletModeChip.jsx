@@ -96,7 +96,7 @@ const FilletModeChip = ({
                 ? 'Sweep blend preview · Accept commits and exits'
                 : edgeCount
                   ? 'Path not ready — pick a contiguous chain (Tangent on)'
-                  : 'Tap sharp edges — blend strips are not pickable')}
+                  : 'Tap edges — shallow blend tessellation is not pickable')}
           </div>
         </div>
         <button

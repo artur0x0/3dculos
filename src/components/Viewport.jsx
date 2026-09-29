@@ -2298,7 +2298,7 @@ const Viewport = forwardRef(({
     }
     const targets = filletOverlayTargets(topo);
     if (!targets.edges.length) {
-      note('No sharp edges on this solid. Blend strips and shallow tessellation are not pickable.');
+      note('No pickable edges on this solid. Shallow blend tessellation stays out of the pick graph.');
     }
     const dims = modelBounds?.size;
     const span = dims ? Math.max(dims[0], dims[1], dims[2]) : 40;

@@ -956,7 +956,11 @@ function _segmentsFromKeep(ordered, keep) {
  *
  * Closed loops: circular rims always; filleted face outlines (rounded-rect)
  * kept when under TANGENT_PROP_FLOOD_MAX. Untagged open chains (loft generators
- * the small-face test dropped) kept when the simplified polyline is a spine.
+ * / post-fillet rails the small-face test dropped) kept when the simplified
+ * polyline is a spine.
+ *
+ * Mobile C.4: tagged (#46) and untagged sharp pools are traced separately so
+ * post-fillet rounded rails are not glued to residual sharp edges and refused.
  *
  * @param {object[]} featureEdges
  * @param {{ minDeg?: number }} [opts]
@@ -971,8 +975,15 @@ export function buildCoherentEdges(featureEdges, opts = {}) {
     sharp.push(e);
   }
   if (!sharp.length) return [];
-  const merged = mergeCollinearEdges(sharp);
-  const chains = _traceChains(merged);
+  // Mobile C.4: process tagged (#46 boundary) and untagged sharp edges in
+  // separate graphs. Post-fillet rounded rails (large face ↔ blend facet) lose
+  // boundaryId under BOUNDARY_SMALL_FACE_FRAC (minFaceArea of the blend facet)
+  // and share vertices with residual sharp cube edges. Tracing them together
+  // glues rail+sharp into a wandering chain the spine test refuses — so the
+  // rail never becomes pickable and Tangent-on never starts. Untagged alone
+  // forms clean open arcs (quarter-circle rails) / closed rims that pass.
+  const taggedSharp = sharp.filter((e) => Number.isFinite(e.boundaryId));
+  const untaggedSharp = sharp.filter((e) => !Number.isFinite(e.boundaryId));
   const out = [];
   let chainSeq = 0;
   const consumedIds = new Set();
@@ -986,42 +997,7 @@ export function buildCoherentEdges(featureEdges, opts = {}) {
       }
     }
   };
-  for (const chain of chains) {
-    const ordered = _orderChain(chain);
-    if (!ordered || ordered.pts.length < 2) continue;
-    const keep = _simplifyPolyline(ordered.pts, ordered.closed);
-    if (!keep) continue;
-    const segs = _segmentsFromKeep(ordered, keep);
-    if (!segs.length) continue;
-    const boundaryId = _uniqueFinite(chain, 'boundaryId');
-    const tagged = Number.isFinite(boundaryId);
-    const roundRim = ordered.closed && _radialCv(ordered.pts) <= RIM_RADIAL_CV;
-    // Mobile C.2: closed circular rims may keep more RDP points on large radii;
-    // allow up to TANGENT_PROP_FLOOD_MAX so 64-seg defaults are not dropped.
-    const maxSegs = roundRim ? TANGENT_PROP_FLOOD_MAX : COHERENT_EDGE_MAX;
-    if (segs.length > maxSegs) continue;
-    if (!tagged) {
-      if (ordered.closed) {
-        // Circular rims always keep. Filleted face outlines (rounded-rect) are
-        // closed but not circular — previously dropped, which left only
-        // leftover per-side fragments so Tangent-on selected 1–3 segs of a
-        // roundedBox rim (Artur mobile CAD after #77). Keep them when they
-        // simplify under the flood cap (same budget as circular rims).
-        if (!roundRim && segs.length > TANGENT_PROP_FLOOD_MAX) continue;
-      } else {
-        // Open recovery (loft generator the small-face test dropped) must be a
-        // spine. Blend outlines wander across a whole face and are refused.
-        const a = ordered.pts[0];
-        const b = ordered.pts[ordered.pts.length - 1];
-        const chord = _dist3(a, b);
-        let dev = 0;
-        for (let i = 1; i < ordered.pts.length - 1; i++) {
-          dev = Math.max(dev, _pointSegDist(ordered.pts[i], a, b));
-        }
-        if (dev > Math.max(1.25, 0.3 * chord)) continue;
-      }
-    }
-    noteIds(chain);
+  const emitChainSegs = (chain, segs, boundaryId) => {
     const id = chainSeq;
     chainSeq += 1;
     const faceA = _uniqueFinite(chain, 'faceA');
@@ -1053,7 +1029,53 @@ export function buildCoherentEdges(featureEdges, opts = {}) {
         n1: n1 ? n1.slice() : undefined,
       });
     });
-  }
+  };
+  const emitFromPool = (pool) => {
+    if (!pool.length) return;
+    const merged = mergeCollinearEdges(pool);
+    const chains = _traceChains(merged);
+    for (const chain of chains) {
+      const ordered = _orderChain(chain);
+      if (!ordered || ordered.pts.length < 2) continue;
+      const keep = _simplifyPolyline(ordered.pts, ordered.closed);
+      if (!keep) continue;
+      const segs = _segmentsFromKeep(ordered, keep);
+      if (!segs.length) continue;
+      const boundaryId = _uniqueFinite(chain, 'boundaryId');
+      const tagged = Number.isFinite(boundaryId);
+      const roundRim = ordered.closed && _radialCv(ordered.pts) <= RIM_RADIAL_CV;
+      // Mobile C.2: closed circular rims may keep more RDP points on large radii;
+      // allow up to TANGENT_PROP_FLOOD_MAX so 64-seg defaults are not dropped.
+      const maxSegs = roundRim ? TANGENT_PROP_FLOOD_MAX : COHERENT_EDGE_MAX;
+      if (segs.length > maxSegs) continue;
+      if (!tagged) {
+        if (ordered.closed) {
+          // Circular rims always keep. Filleted face outlines (rounded-rect) are
+          // closed but not circular — previously dropped, which left only
+          // leftover per-side fragments so Tangent-on selected 1–3 segs of a
+          // roundedBox rim (Artur mobile CAD after #77). Keep them when they
+          // simplify under the flood cap (same budget as circular rims).
+          if (!roundRim && segs.length > TANGENT_PROP_FLOOD_MAX) continue;
+        } else {
+          // Open recovery (loft generator / post-fillet rails the small-face
+          // test dropped) must be a spine. Blend outlines wander across a
+          // whole face and are refused.
+          const a = ordered.pts[0];
+          const b = ordered.pts[ordered.pts.length - 1];
+          const chord = _dist3(a, b);
+          let dev = 0;
+          for (let i = 1; i < ordered.pts.length - 1; i++) {
+            dev = Math.max(dev, _pointSegDist(ordered.pts[i], a, b));
+          }
+          if (dev > Math.max(1.25, 0.3 * chord)) continue;
+        }
+      }
+      noteIds(chain);
+      emitChainSegs(chain, segs, boundaryId);
+    }
+  };
+  emitFromPool(taggedSharp);
+  emitFromPool(untaggedSharp);
   // #46 edges must survive even when a tangent walk dragged them into a
   // chain that was refused as a blend outline.
   const leftover = new Map();
@@ -1072,50 +1094,13 @@ export function buildCoherentEdges(featureEdges, opts = {}) {
       if (!keep) continue;
       const segs = _segmentsFromKeep(ordered, keep);
       if (!segs.length || segs.length > COHERENT_EDGE_MAX) continue;
-      const id = chainSeq;
-      chainSeq += 1;
       const boundaryId = _uniqueFinite(chain, 'boundaryId');
-      const faceA = _uniqueFinite(chain, 'faceA');
-      const faceB = _uniqueFinite(chain, 'faceB');
-      const pairCount = _uniqueFinite(chain, 'pairCount');
-      segs.forEach((seg, i) => {
-        let best = null;
-        let bestD = Infinity;
-        for (const src of chain) {
-          if (!src?.n0 || !src?.n1 || !src.mid) continue;
-          const d = _dist3(seg.mid, src.mid);
-          if (d < bestD) {
-            bestD = d;
-            best = src;
-          }
-        }
-        const n0 = best?.n0 || chain.find((e) => e.n0)?.n0;
-        const n1 = best?.n1 || chain.find((e) => e.n1)?.n1;
-        out.push({
-          ...seg,
-          key: `coh-${id}-${i}`,
-          chainId: id,
-          boundaryId,
-          faceA,
-          faceB,
-          pairCount,
-          n0: n0 ? n0.slice() : undefined,
-          n1: n1 ? n1.slice() : undefined,
-        });
-      });
+      emitChainSegs(chain, segs, boundaryId);
     }
   }
   return out;
 }
 
-/**
- * Add seed (+ optional G1 chain) to selection, or remove seed if already selected.
- * When removing, only the tapped edge is removed (chain stays unless toggled off).
- *
- * @param {object[]} selected
- * @param {object} edge
- * @param {{ propagate?: boolean, featureEdges?: object[], tolDeg?: number }} [opts]
- */
 export function toggleEdgeSelectionPropagated(selected, edge, opts = {}) {
   const key = edgeKey(edge);
   const list = Array.isArray(selected) ? [...selected] : [];
