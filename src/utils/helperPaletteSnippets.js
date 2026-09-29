@@ -1329,18 +1329,21 @@ export const HELPER_PALETTE_ITEMS = [
       const isNewBodySolid = !!(p._contourRevolve || p._contourExtrude || p._contourLoft || p._contourSweep);
       // Capture before resolveBody, which always touches `part` in the names set.
       const partDeclared = names.has('part');
+      // Planar face → selected workplane; else default +Z top face.
+      const planarCtx = faceCtx && faceCtx.type === 'planar' ? faceCtx : null;
       // Profile Confirm on a script with no solid must not invent the 40×30×20
       // host cube. That cube declares `part`, so the following Extrude unions
       // onto it instead of emitting `let part = placeInFrame`.
-      const frameOnlyProfile = !!p._contourMode && !partDeclared;
+      // A picked planar face is a literal frame too: workplaneFromFace is
+      // opaque to listSavedContours, so a host-query profile read back
+      // plane-less and ghosted on the default +Z top instead of the pick.
+      const frameOnlyProfile = !!p._contourMode && (!partDeclared || !!planarCtx);
       const lines = (isNewBodySolid || frameOnlyProfile) ? [] : [...ensurePartPrefix(empty, names)];
       const body = resolveBody(p, names, empty ? lines.join('\n') : buffer);
-      // Planar face → selected workplane; else default +Z top face.
-      const planarCtx = faceCtx && faceCtx.type === 'planar' ? faceCtx : null;
       let wp;
       if (isNewBodySolid || frameOnlyProfile) {
         const plane = frameOnlyProfile
-          ? literalPlaneFromFace(planarCtx)
+          ? (p._contourPlane || literalPlaneFromFace(planarCtx))
           : (p._contourRevolve?.plane
           || p._contourExtrude?.plane
           || p._contourLoft?.plane
