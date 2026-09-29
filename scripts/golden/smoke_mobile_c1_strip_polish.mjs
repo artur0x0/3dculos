@@ -110,9 +110,9 @@ console.log('mobile C.1: strip polish + UI reorg');
       /typeIndex/.test(markers),
   );
   check(
-    'E: feature strip on the right below top ribbon',
+    'E: feature strip still exposes vertical/right attrs (Script rail; CAD horizontal is C.2)',
     /data-feature-strip-side="right"/.test(strip) &&
-      /right-0 top-14/.test(app) &&
+      /data-feature-strip-orientation="vertical"/.test(strip) &&
       /data-cad-feature-strip/.test(app) &&
       /border-l border-gray-700\/40/.test(strip),
   );

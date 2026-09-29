@@ -55,8 +55,9 @@ check('coherent cap is human-scale', COHERENT_EDGE_MAX <= 36 && COHERENT_EDGE_MA
   check('160 collinear copies collapse to one chain', chains.size === 1, `chains=${chains.size} segs=${collapsed.length}`);
   check('collapsed side is a single segment', collapsed.length === 1, `n=${collapsed.length}`);
 
+  // Mobile C.2: pick-graph flood refuse uses TANGENT_PROP_FLOOD_MAX (128), not 36.
   const flood = [];
-  for (let i = 0; i < 48; i++) {
+  for (let i = 0; i < 160; i++) {
     flood.push({
       key: `f-${i}`,
       a: i,

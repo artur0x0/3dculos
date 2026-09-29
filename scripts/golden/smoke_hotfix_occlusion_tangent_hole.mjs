@@ -212,6 +212,14 @@ const makeRing = (N) => {
   check('toggle propagated adds full 16-loop', added.length === 16, `got ${added.length}`);
   const off = toggleEdgeSelectionPropagated([], ring16[0], { propagate: false, featureEdges: ring16 });
   check('toggle propagate:false adds seed only', off.length === 1);
+
+  // Mobile C.2 / #68: default circular segments are 64. Tangent-on must still
+  // chain the full rim (COHERENT_EDGE_MAX=36 used to refuse these).
+  const ring64 = makeRing(64);
+  const loop64 = propagateTangentEdges(ring64, ring64[0]);
+  check('64-gon (current default) loop fully propagates', loop64.length === 64, `got ${loop64.length}`);
+  const added64 = toggleEdgeSelectionPropagated([], ring64[0], { propagate: true, featureEdges: ring64 });
+  check('toggle propagated adds full 64-loop', added64.length === 64, `got ${added64.length}`);
 }
 
 // ── Hole emit: wider tol + clearer miss message ────────────────

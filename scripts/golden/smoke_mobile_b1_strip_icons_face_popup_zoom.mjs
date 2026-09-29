@@ -35,10 +35,9 @@ console.log('mobile B.1: vertical strip icons + face popup under title + view zo
   const palette = read('../../src/components/HelperInsertPalette.jsx');
 
   check(
-    'FeatureStrip is vertical (orientation attr + flex-col, not horizontal chip row)',
+    'FeatureStrip keeps vertical orientation (C.2 also adds horizontal for CAD)',
     /data-feature-strip-orientation="vertical"/.test(strip) &&
-      /flex flex-col/.test(strip) &&
-      !/overflow-x-auto/.test(strip),
+      /flex flex-col/.test(strip),
   );
   check(
     'FeatureStrip chips use toolbar-matching icons (same set as HelperInsertPalette)',

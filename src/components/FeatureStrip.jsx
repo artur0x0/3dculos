@@ -11,12 +11,14 @@ import SquareRoundCorner from './icons/SquareRoundCorner';
 import { parseFeatureMarkers } from '../utils/featureMarkers';
 
 /**
- * Slice Mobile B.1 → C.1 — feature strip (vertical + toolbar icons + per-type badges).
+ * Slice Mobile B.1 → C.2 — feature strip.
  *
- * Vertical rail of icon chips over marked Contour / Extrude / Fillet / …
- * blocks. Icons match the CAD toolbar tools. C.1: per-type index badges
- * (1, 2, 3… per icon kind) bottom-right; strip mounts on the **right**,
- * starting below the top ribbon. Script: jump caret. CAD: open feature sheet.
+ * C.2:
+ *   - CAD: horizontal left-to-right under the top ribbon.
+ *   - Script: vertical on the right, starting below the ribbon (no overlap).
+ *
+ * Icons match CAD toolbar tools. Per-type index badges (C.1). Script: jump
+ * caret. CAD: open feature sheet.
  */
 
 /** Same glyphs as HelperInsertPalette for Contour/Extrude/…/Fillet/Chamfer. */
@@ -45,16 +47,42 @@ function TypeBadge({ index }) {
   );
 }
 
-export default function FeatureStrip({ script = '', activeId = null, onJump, hideWhenEmpty = false }) {
+export default function FeatureStrip({
+  script = '',
+  activeId = null,
+  onJump,
+  hideWhenEmpty = false,
+  /** 'vertical' (Script right rail) | 'horizontal' (CAD under-ribbon). */
+  orientation = 'vertical',
+}) {
   const features = useMemo(() => parseFeatureMarkers(script), [script]);
+  const horizontal = orientation === 'horizontal';
 
   if (features.length === 0) {
     if (hideWhenEmpty) return null;
+    if (horizontal) {
+      return (
+        <div
+          className="flex flex-row items-center gap-1.5 overflow-x-auto
+            border border-gray-700/40 bg-gray-900/70 surface-glass-chip
+            rounded-lg px-2 py-1.5 max-w-full"
+          data-feature-strip=""
+          data-feature-strip-empty=""
+          data-feature-strip-orientation="horizontal"
+          data-feature-strip-side="top"
+          title="No marked features yet"
+        >
+          <div className="text-[9px] text-gray-400 font-sans whitespace-nowrap px-1">
+            No features
+          </div>
+        </div>
+      );
+    }
     return (
       <div
         className="shrink-0 flex flex-col items-center justify-start gap-1
           border-l border-gray-700/40 bg-gray-900/70 surface-glass-chip
-          px-1.5 py-2 w-11
+          px-1.5 py-2 w-11 flex-1 min-h-0
           pb-[max(0.5rem,env(safe-area-inset-bottom,0px))]"
         data-feature-strip=""
         data-feature-strip-empty=""
@@ -72,11 +100,54 @@ export default function FeatureStrip({ script = '', activeId = null, onJump, hid
     );
   }
 
+  if (horizontal) {
+    return (
+      <div
+        className="flex flex-row items-center gap-1.5 overflow-x-auto no-scrollbar
+          border border-gray-700/40 bg-gray-900/70 surface-glass-chip
+          rounded-lg px-2 py-1.5 max-w-full"
+        data-feature-strip=""
+        data-feature-strip-orientation="horizontal"
+        data-feature-strip-side="top"
+        role="navigation"
+        aria-label="Modeling features"
+      >
+        {features.map((f) => {
+          const active = activeId === f.id;
+          const Icon = FEATURE_ICONS[f.kind] || NotebookPen;
+          const typeIndex = f.typeIndex || 1;
+          return (
+            <button
+              key={f.id}
+              type="button"
+              data-feature-chip={f.kind}
+              data-feature-id={f.id}
+              data-feature-type-index={typeIndex}
+              aria-pressed={active}
+              aria-label={f.chipLabel}
+              title={f.chipLabel}
+              onClick={() => onJump?.(f)}
+              className={`relative shrink-0 rounded-lg p-1.5 flex items-center justify-center
+                border transition-colors active:opacity-80 ${
+                active
+                  ? 'bg-cyan-600 text-white border-cyan-400/70 shadow'
+                  : 'bg-gray-800/70 text-gray-200 border-gray-500/40 hover:text-white'
+              }`}
+            >
+              <Icon size={16} strokeWidth={2} aria-hidden="true" />
+              <TypeBadge index={typeIndex} />
+            </button>
+          );
+        })}
+      </div>
+    );
+  }
+
   return (
     <div
       className="shrink-0 flex flex-col items-center gap-1.5 overflow-y-auto overflow-x-hidden
         border-l border-gray-700/40 bg-gray-900/70 surface-glass-chip
-        px-1.5 pt-2 w-11 no-scrollbar
+        px-1.5 pt-2 w-11 no-scrollbar flex-1 min-h-0
         pb-[max(3.5rem,calc(env(safe-area-inset-bottom,0px)+3.25rem))]"
       data-feature-strip=""
       data-feature-strip-orientation="vertical"

@@ -140,7 +140,7 @@ import { selectFaceByID, selectFaceWithTolerance, selectAllConnected } from '../
 import { createCuttingPlaneWidget, updateCuttingPlaneWidget } from '../utils/cuttingPlaneWidget';
 import { AxesHelper } from 'three';
 import { calculateMeasurements, createMeasurementLines, disposeMeasurementLines } from '../utils/measurementTool';
-import { fitView, VIEW_PRESETS, VIEW_SNAP_MARGIN } from '../utils/viewCamera';
+import { fitView, VIEW_PRESETS, VIEW_SNAP_MARGIN, panViewByNdcY, easeInOutCubic } from '../utils/viewCamera';
 
 import { validateScript, formatValidationErrors } from '../utils/scriptValidator';
 import manifoldContext from '../utils/ManifoldWorker';
@@ -456,6 +456,9 @@ const Viewport = forwardRef(({
   /** G1 tangent chain propagation for Edge pick — ON by default (circular / fillet loops). */
   const [tangentProp, setTangentProp] = useState(true);
   const tangentPropRef = useRef(true);
+  /** Mobile C.2 — current feature-sheet camera lift in NDC-Y (0 = none). */
+  const sheetLiftNdcRef = useRef(0);
+  const sheetLiftTweenRef = useRef(null);
 
   const armEdgeModeToastClear = () => {
     if (edgeModeToastTimerRef.current) clearTimeout(edgeModeToastTimerRef.current);
@@ -624,7 +627,50 @@ const Viewport = forwardRef(({
       return await calculateQuote(currentScript, options);
     },
     zoomToFit: handleZoomToFit,
-    getCurrentMeshData: () => cachedMeshData
+    getCurrentMeshData: () => cachedMeshData,
+    /**
+     * Mobile C.2 — tween the part away from an open under-title feature sheet.
+     * `ndcY` is the target lift in NDC-Y units (positive → part moves DOWN on
+     * screen, clear of a top sheet). Pass 0 to return. Edge-pick chips must
+     * NOT call this. Desktop no-ops when camera/controls missing.
+     */
+    setFeatureSheetLift: (ndcY, opts = {}) => {
+      const camera = cameraRef.current;
+      const controls = controlsRef.current;
+      if (!camera || !controls?.target) return false;
+      const target = Number(ndcY) || 0;
+      const from = sheetLiftNdcRef.current;
+      const delta = target - from;
+      if (Math.abs(delta) < 1e-6) {
+        sheetLiftNdcRef.current = target;
+        return true;
+      }
+      if (sheetLiftTweenRef.current) {
+        cancelAnimationFrame(sheetLiftTweenRef.current);
+        sheetLiftTweenRef.current = null;
+      }
+      const ms = Math.max(120, Number(opts.ms) || 280);
+      const t0 = performance.now();
+      let applied = 0;
+      const step = (now) => {
+        const t = Math.min(1, (now - t0) / ms);
+        const eased = easeInOutCubic(t);
+        const want = delta * eased;
+        const slice = want - applied;
+        if (Math.abs(slice) > 1e-8) {
+          panViewByNdcY({ camera, controls, ndcY: slice });
+          applied = want;
+        }
+        if (t < 1) {
+          sheetLiftTweenRef.current = requestAnimationFrame(step);
+        } else {
+          sheetLiftTweenRef.current = null;
+          sheetLiftNdcRef.current = target;
+        }
+      };
+      sheetLiftTweenRef.current = requestAnimationFrame(step);
+      return true;
+    },
   }));
 
   // Clear face highlight
@@ -3355,6 +3401,45 @@ const Viewport = forwardRef(({
             return true;
           },
           setAxes: (on) => { setAxisHelperEnabled(!!on); return true; },
+          /** Mobile C.2 — same tween as the imperative handle (playtest). */
+          setFeatureSheetLift: (ndcY, opts = {}) => {
+            const camera = cameraRef.current;
+            const controls = controlsRef.current;
+            if (!camera || !controls?.target) return false;
+            const target = Number(ndcY) || 0;
+            const from = sheetLiftNdcRef.current;
+            const delta = target - from;
+            if (Math.abs(delta) < 1e-6) {
+              sheetLiftNdcRef.current = target;
+              return true;
+            }
+            if (sheetLiftTweenRef.current) {
+              cancelAnimationFrame(sheetLiftTweenRef.current);
+              sheetLiftTweenRef.current = null;
+            }
+            const ms = Math.max(120, Number(opts.ms) || 280);
+            const t0 = performance.now();
+            let applied = 0;
+            const step = (now) => {
+              const t = Math.min(1, (now - t0) / ms);
+              const eased = easeInOutCubic(t);
+              const want = delta * eased;
+              const slice = want - applied;
+              if (Math.abs(slice) > 1e-8) {
+                panViewByNdcY({ camera, controls, ndcY: slice });
+                applied = want;
+              }
+              if (t < 1) {
+                sheetLiftTweenRef.current = requestAnimationFrame(step);
+              } else {
+                sheetLiftTweenRef.current = null;
+                sheetLiftNdcRef.current = target;
+              }
+            };
+            sheetLiftTweenRef.current = requestAnimationFrame(step);
+            return true;
+          },
+          sheetLiftNdc: () => sheetLiftNdcRef.current,
         };
       }
 

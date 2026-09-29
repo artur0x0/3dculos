@@ -165,6 +165,7 @@ const App = () => {
   };
 
   // Dev/playtest bridge for Slice Mobile C feature sheets.
+
   useEffect(() => {
     if (!import.meta.env?.DEV || typeof window === 'undefined') return undefined;
     window.__FEATURE_SHEET__ = {
@@ -232,6 +233,43 @@ const App = () => {
   const { user, isAuthenticated, checkAuth } = useAuth();
 
   const viewportRef = useRef(null);
+
+  // Mobile C.2 — when a large under-title feature sheet opens, tween the part
+  // clear of the sheet (DOWN on screen for top chrome). Reverse on close.
+  // Edge-pick chips (FilletModeChip / standalone edge selector) do NOT lift.
+  useEffect(() => {
+    if (!isMobile || appMode === 'game') {
+      viewportRef.current?.setFeatureSheetLift?.(0, { ms: 160 });
+      return undefined;
+    }
+    const open = featureSheet?.mode === 'edit' || featureSheet?.mode === 'picker';
+    if (!open) {
+      viewportRef.current?.setFeatureSheetLift?.(0);
+      return undefined;
+    }
+    let cancelled = false;
+    const id = requestAnimationFrame(() => {
+      if (cancelled) return;
+      const sheet = document.querySelector('[data-feature-sheet]');
+      const pane = document.querySelector('[data-stage-pane="cad"]')
+        || document.querySelector('[data-stage-pane="script"]');
+      let ndcY = 0.28; // fallback ~14% of viewport height (NDC half-span = 1)
+      if (sheet && pane) {
+        const sh = sheet.getBoundingClientRect().height;
+        const ph = pane.getBoundingClientRect().height || 1;
+        // Sheet covers the top — shift part down by ~half the sheet fraction.
+        // NDC full height = 2, so frac of viewport → ndc = 2 * frac * 0.55.
+        const frac = Math.min(0.45, Math.max(0.08, sh / ph));
+        ndcY = 2 * frac * 0.55;
+      }
+      viewportRef.current?.setFeatureSheetLift?.(ndcY);
+    });
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(id);
+    };
+  }, [featureSheet, isMobile, appMode]);
+
   const codeEditorRef = useRef(null);
   const gameTimerStartRef = useRef(0);
   const successClearTimerRef = useRef(null);
@@ -1455,13 +1493,15 @@ const App = () => {
                 aria-hidden={!isCadStage}
               >
                 {viewportEl}
-                {/* Slice Mobile C.1: CAD feature strip on the RIGHT, below top ribbon. */}
+                {/* Slice Mobile C.2: CAD feature strip HORIZONTAL under top ribbon. */}
                 {isCadStage && (
                   <div
-                    className="absolute right-0 top-14 bottom-36 z-20 pointer-events-auto"
+                    className="absolute left-2 right-2 top-14 z-20 pointer-events-auto flex justify-center"
                     data-cad-feature-strip=""
+                    data-feature-strip-placement="under-ribbon-horizontal"
                   >
                     <FeatureStrip
+                      orientation="horizontal"
                       script={currentScript}
                       activeId={featureSheet?.feature?.id || featureStripActiveId}
                       hideWhenEmpty
@@ -1477,8 +1517,9 @@ const App = () => {
                 data-stage-pane="script"
                 aria-hidden={!isScriptStage}
               >
-                {/* C.1: vertical feature strip on the RIGHT of Monaco, below ribbon;
-                    bottom padding clears the home-indicator pill. */}
+                {/* C.2: vertical feature strip on the RIGHT of Monaco, starting
+                    BELOW the top ribbon (spacer matches ribbon so chips do not
+                    overlap Select All / Run). */}
                 <div className="relative flex-1 min-h-0 flex flex-row">
                   <div className="relative flex-1 min-h-0">
                     <div className="absolute inset-0">
@@ -1486,11 +1527,23 @@ const App = () => {
                     </div>
                   </div>
                   {isScriptStage && (
-                    <FeatureStrip
-                      script={currentScript}
-                      activeId={featureSheet?.feature?.id || featureStripActiveId}
-                      onJump={handleFeatureStripJump}
-                    />
+                    <div
+                      className="flex flex-col shrink-0"
+                      data-script-feature-strip=""
+                      data-feature-strip-below-ribbon=""
+                    >
+                      <div
+                        className="h-9 shrink-0 bg-gray-900 border-l border-b border-gray-700/60"
+                        data-feature-strip-ribbon-spacer=""
+                        aria-hidden="true"
+                      />
+                      <FeatureStrip
+                        orientation="vertical"
+                        script={currentScript}
+                        activeId={featureSheet?.feature?.id || featureStripActiveId}
+                        onJump={handleFeatureStripJump}
+                      />
+                    </div>
                   )}
                 </div>
                 {aiRow}
