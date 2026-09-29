@@ -4,8 +4,8 @@ import { X, FileText } from 'lucide-react';
 
 const TermsModal = ({ onClose, onAccept }) => {
   return (
-    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[60] p-4">
-      <div className="bg-[#1e1e1e] rounded-2xl shadow-2xl max-w-2xl w-full max-h-[85vh] overflow-hidden flex flex-col border border-gray-700/50">
+    <div className="fixed inset-0 surface-scrim flex items-center justify-center z-[60] p-4">
+      <div className="surface-glass rounded-2xl shadow-2xl max-w-2xl w-full max-h-[85vh] overflow-hidden flex flex-col border border-gray-700/50">
         {/* Header */}
         <div className="flex items-center justify-between p-5 border-b border-gray-700/50">
           <div className="flex items-center gap-3">

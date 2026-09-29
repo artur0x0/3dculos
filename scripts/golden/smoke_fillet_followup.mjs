@@ -41,7 +41,9 @@ console.log('fillet follow-up — Accept chrome + blend loud-fail');
 {
   const chip = readFileSync(new URL('../../src/components/FilletModeChip.jsx', import.meta.url), 'utf8');
   const view = readFileSync(new URL('../../src/components/Viewport.jsx', import.meta.url), 'utf8');
-  check('chip has X dismiss without committing', /Dismiss Fillet mode without committing/.test(chip));
+  // The label is built from `title` (Fillet | Chamfer) — match the template,
+  // not the old hard-coded string.
+  check('chip has X dismiss without committing', /Dismiss \$\{title\} mode without committing/.test(chip));
   check('Accept leaves Fillet mode', /exitFilletMode\(\)/.test(view) && /commitMode:/.test(view));
   check('Back is still an exit', /onBack=\{exitFilletMode\}/.test(view));
   check(

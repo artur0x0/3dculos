@@ -173,7 +173,7 @@ const handleButtonClick = () => {
 
   if (isCollapsed || !enabled) {
     return (
-      <div className={`absolute bottom-4 right-2 lg:right-4 bg-white/60 backdrop-blur-sm p-2 rounded-lg shadow-lg z-10 ${
+      <div className={`absolute bottom-2.5 right-2.5 bg-white/60 backdrop-blur-sm p-2 rounded-lg shadow-lg z-10 ${
         verticalRail
           ? 'flex flex-col gap-1'
           : 'flex flex-wrap justify-end gap-2 max-w-[calc(100%-1rem)]'
@@ -326,7 +326,7 @@ const handleButtonClick = () => {
   }
 
   return (
-    <div className="absolute bottom-4 right-2 lg:right-4 bg-white/50 backdrop-blur-sm rounded-lg shadow-lg p-3 z-10 w-72">
+    <div className="absolute bottom-2.5 right-2.5 bg-white/50 backdrop-blur-sm rounded-lg shadow-lg p-3 z-10 w-72">
       {/* Header */}
       <div className="flex items-center justify-between mb-3">
         <ViewSnapControl onSnap={onSnapView} />

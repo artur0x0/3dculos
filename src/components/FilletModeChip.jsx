@@ -47,9 +47,12 @@ const FilletModeChip = ({
 
   return (
     <div
-      className={`absolute bg-amber-950/90 border border-amber-400/70 text-white px-3 py-2
+      className={`absolute bg-amber-950/80 surface-glass-chip border border-amber-400/70 text-white px-3 py-2
         rounded-lg text-xs z-20 shadow-lg ${
-          compact ? 'bottom-4 right-2 max-w-[min(16rem,calc(100%-5.5rem))]' : 'bottom-4 right-2 lg:right-4 max-w-[16rem]'
+          // Bottom-centre, like the contour chip — see ContourModeChip.
+          compact
+            ? 'bottom-2.5 left-1/2 -translate-x-1/2 max-w-[min(16rem,calc(100%-9rem))]'
+            : 'bottom-2.5 left-1/2 -translate-x-1/2 max-w-[16rem]'
         }`}
       role="group"
       aria-label={chamfer ? 'Chamfer edge pick' : 'Fillet edge pick'}

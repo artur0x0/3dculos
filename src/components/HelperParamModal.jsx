@@ -77,7 +77,7 @@ const HelperParamModal = ({
         <div
           role="alertdialog"
           aria-labelledby="helper-refuse-title"
-          className="pointer-events-auto w-full max-w-sm max-h-[70%] mb-1 overflow-hidden flex flex-col rounded-lg bg-gray-900 border border-amber-700/60 shadow-2xl"
+          className="pointer-events-auto w-full max-w-sm max-h-[70%] mb-1 overflow-hidden flex flex-col rounded-lg surface-glass border border-amber-700/60 shadow-2xl"
         >
           <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-gray-700 shrink-0">
             <div className="min-w-0 flex items-center gap-2">
@@ -229,7 +229,7 @@ const HelperParamModal = ({
       <div
         role="dialog"
         aria-labelledby="helper-param-title"
-        className="pointer-events-auto w-full max-w-sm max-h-[70%] mb-1 overflow-hidden flex flex-col rounded-lg bg-gray-900 border border-gray-700 shadow-2xl"
+        className="pointer-events-auto w-full max-w-sm max-h-[70%] mb-1 overflow-hidden flex flex-col rounded-lg surface-glass border border-gray-700 shadow-2xl"
       >
         <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-gray-700 shrink-0">
           <div className="min-w-0">
