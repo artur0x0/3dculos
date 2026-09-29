@@ -35,6 +35,7 @@
         "golden:hotfix-contour-picker": "node scripts/golden/smoke_hotfix_contour_picker_additive.mjs",
         "golden:polish-adv-ux": "node scripts/golden/smoke_polish_adv_ux.mjs",
         "golden:editor-draft": "node scripts/golden/smoke_editor_draft_persist.mjs",
+        "golden:polyline-points": "node scripts/golden/smoke_polyline_point_drag.mjs",
         "golden:empty-run-clears": "node scripts/golden/smoke_empty_run_clears.mjs",
         "golden:cad-palette": "node scripts/golden/smoke_cad_palette_overlays.mjs",
         "golden:cad-mobile-chrome": "node scripts/golden/smoke_cad_mobile_chrome.mjs",

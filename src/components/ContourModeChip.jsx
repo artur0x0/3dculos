@@ -138,7 +138,9 @@ const ContourModeChip = ({
     const n = Array.isArray(params.points) ? params.points.length : 0;
     fields = (
       <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-[13px] text-cyan-100">{n} pt{n === 1 ? '' : 's'} · tap plane</span>
+        <span className="text-[13px] text-cyan-100">
+          {n} pt{n === 1 ? '' : 's'} · tap plane{n > 0 ? ' · right-drag to move' : ''}
+        </span>
         {n > 0 && (
           <>
             <button
