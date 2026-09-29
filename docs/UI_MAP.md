@@ -111,26 +111,37 @@ Mobile specifics:
   Top CAD|Script text chrome is gone. Inert `data-ai-prompt-hook` marks a
   future AI-on-tap site (not wired). Contour/Fillet chips use `bottom-14` on
   mobile so they clear the pill. Shell exposes `data-mobile-stage="cad"|"script"`.
-- **Feature strip (Slice Mobile B → B.1 → C):** `FeatureStrip.jsx` mounts as a
-  **vertical** left rail. **Script stage:** icon chips jump Monaco caret via
-  `CodeEditor.revealRange` (unchanged). **CAD stage (Slice C):** same icons open a
-  **feature sheet** (`hideWhenEmpty`). Icons match the CAD toolbar
+- **Feature strip (Slice Mobile B → B.1 → C → C.1):** `FeatureStrip.jsx` mounts as a
+  **vertical right rail** (`data-feature-strip-side="right"`), starting below the
+  top ribbon. **Script stage:** icon chips open the under-title feature sheet and
+  jump Monaco caret via `CodeEditor.revealRange`. **CAD stage:** same icons open a
+  **feature sheet** (`hideWhenEmpty`). Per-type index badges (`data-feature-type-badge`,
+  1…n per kind) sit bottom-right on each icon. Icons match the CAD toolbar
   (Contour/`NotebookPen`, Extrude/`ArrowUpFromLine`, Revolve/`Rotate3d`,
   Loft/`Pyramid`, Sweep/`Route`, Fillet/`SquareRoundCorner`,
-  Chamfer/`TriangleRight`). Markers from `parseFeatureMarkers`. Desktop never
-  mounts the strip.
-- **Feature sheets (Slice Mobile C):** `FeatureSheet.jsx` — bottom glass sheet on
-  CAD stage only. Open via long-press (~450ms, no drag) on the viewport or CAD
-  strip tap. Real param writeback for **Extrude** (distance/sense), **Fillet**
-  (radius), **Revolve** (angle) via `featureSheetWriteback.js` into the marked
-  block + Auto-Run; other kinds stub → Edit script. Accept stays on CAD; Cancel
-  writes nothing; **Edit script** → Script stage + `revealRange`. Reuses
-  `popupUI` NumberField/ChoiceRow. Desktop/game sheets off
+  Chamfer/`TriangleRight`). Markers from `parseFeatureMarkers` (`typeIndex`).
+  Desktop never mounts the strip.
+- **Feature sheets (Slice Mobile C → C.1):** `FeatureSheet.jsx` — full-width
+  **horizontal** glass bar just below the part name (`top-14`,
+  `data-feature-sheet-layout="under-title-horizontal"`) on **CAD and Script**
+  stages. Horizontal scroll when params overflow. Open via long-press (~450ms)
+  on the viewport or strip tap. Real param writeback for **Extrude**
+  (distance/sense), **Fillet** (radius), **Revolve** (angle) via
+  `featureSheetWriteback.js` into the marked block + Auto-Run; other kinds stub
+  → Edit script. Accept / Cancel / Edit script stay. Desktop/game sheets off
   (`featureSheetEnabled` false).
-- **Face description popup (Slice Mobile B.1):** horizontally centered just
-  below the part-name title chrome (`top-16 left-1/2 -translate-x-1/2`,
-  `data-face-info-popup`) on mobile and desktop — same under-title band as
-  other toasts; not mid-viewport and no longer edge-docked against chrome.
+- **Face description popup:** removed in Slice Mobile C.1 (was under-title B.1
+  `data-face-info-popup`). Selection still drives the left palette / PromptInput;
+  no empty reserved band.
+- **Edge-pick chip (C.1):** horizontally centered + raised
+  (`left-1/2 -translate-x-1/2`, `bottom-20` mobile / `bottom-14` desktop) so it
+  clears the right rail and home-indicator / CAD|Script dots.
+- **Left ↔ right rail height (C.1):** helper / contour left rail uses the same
+  bottom inset as the right cluster (`bottom-2.5`) and
+  `max-h-[min(26rem,calc(100%-5.5rem))]` so its span pairs with the right toolbar;
+  overflow scrolls inside (`data-rail-pair="left"|"right"`).
+- **Ribbon / top chrome bg (C.1):** editor mid-strip is `bg-gray-900`
+  (`data-ribbon-bg="editor"`), matching the code editor shell.
 - **Default view snaps (Slice Mobile B.1):** `VIEW_SNAP_MARGIN = 1.35` (was
   implicit 1.15) for top / right / front / iso (and other `VIEW_PRESETS`).
   Zoom-to-Fit keeps `fitView` default 1.15; game puzzle enter keeps 1.55.
@@ -192,22 +203,21 @@ All of these are absolutely positioned inside the shell at
 | *editor header* (portal) | Toolbar, all CAD | `Toolbar.jsx` `variant="strip"` | `:3530` |
 | top-center | title chip | `ViewportTitleChip` (local, `:201`) | `:3588` |
 | centered | "Match!" success banner | inline | `:3595` |
-| left-2/4 bottom-4 | helper insert rail | `HelperInsertPalette.jsx:194` | `:3606` |
-| left-2/4 bottom-4 | contour tool rail (replaces the helper rail) | `ContourModeRail.jsx:34` | `:3631` |
+| left-2/4 bottom-2.5 | helper insert rail (height paired to right) | `HelperInsertPalette.jsx` | Viewport |
+| left-2/4 bottom-2.5 | contour tool rail (replaces the helper rail) | `ContourModeRail.jsx` | Viewport |
 | right-2/4 bottom-4 | view / pick / cross-section cluster | `CrossSectionPanel.jsx:175` collapsed, `:327` expanded | `:3641` |
 | inside that cluster | Front/Right/Top/**Iso** snap popup | `ViewSnapControl.jsx` | `CrossSectionPanel.jsx:181` |
 | top-16 right-4 | execution error card | inline | `:3686` |
-| bottom-left (desktop) / bottom-right | Selected Face readout | inline | `:3704` |
+| *(removed C.1)* | Selected Face readout | — | — |
 | bottom-4 right-2/4 | contour param chip | `ContourModeChip.jsx:176` | `:3733` |
 | bottom-4 right-2/4 | fillet param chip | `FilletModeChip.jsx:43` | `:3835` |
-| bottom-left / bottom-right | Edge-pick chip (`data-edge-selector`) | inline | `:3868` |
+| bottom-center (raised) | Edge-pick chip (`data-edge-selector`) | inline | Viewport |
 | top-16 center | toasts: edge-mode, contour, fillet-scrap, fillet | inline, four blocks | `:3924`, `:3932`, `:3940`, `:3952` |
 | bottom-left | measurement readout | inline | `:3961` |
 | fills the pane | WebGL canvas | `<canvas ref={canvasRef}>` | `:3985` |
 
 **Mutual-exclusion rules.** The helper rail hides while `contourMode` or
-`filletMode` is set; the Selected-Face chip hides during measurement or either
-mode; the Edge-pick chip needs `pickMode === 'edge'`, no active mode, **and at
+`filletMode` is set; the Edge-pick chip needs `pickMode === 'edge'`, no active mode, **and at
 least one selected edge**. Break these and overlays stack in the same corner.
 
 **View snaps.** `ViewSnapControl`'s button only opens and closes its popup —

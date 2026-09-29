@@ -1,0 +1,149 @@
+#!/usr/bin/env node
+/**
+ * Slice Mobile C.1 — UI reorg + strip polish.
+ *
+ * A: face-selected popup gone.
+ * B: edge-pick chip centered + raised (clear of right rail / home-indicator).
+ * C: left palette height paired to right toolbar (bottom-2.5 + max-h 26rem).
+ * D: feature sheets full-width horizontal under part name (CAD + Script).
+ * E: per-type index badges; strip on right below ribbon; ribbon bg = editor.
+ *
+ * Non-goals: PWA (D), Fillet D/speed, AI-on-pill, Monaco replace.
+ */
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+import { parseFeatureMarkers } from '../../src/utils/featureMarkers.js';
+
+const here = dirname(fileURLToPath(import.meta.url));
+const read = (rel) => readFileSync(join(here, rel), 'utf8');
+
+let failed = 0;
+function check(name, cond, detail = '') {
+  if (cond) console.log(`  ✅ ${name}`);
+  else {
+    failed++;
+    console.log(`  ❌ ${name}${detail ? ' — ' + detail : ''}`);
+  }
+}
+
+console.log('mobile C.1: strip polish + UI reorg');
+
+{
+  const app = read('../../src/App.jsx');
+  const sheet = read('../../src/components/FeatureSheet.jsx');
+  const strip = read('../../src/components/FeatureStrip.jsx');
+  const viewport = read('../../src/components/Viewport.jsx');
+  const palette = read('../../src/components/HelperInsertPalette.jsx');
+  const contourRail = read('../../src/components/ContourModeRail.jsx');
+  const rightRail = read('../../src/components/CrossSectionPanel.jsx');
+  const editor = read('../../src/components/CodeEditor.jsx');
+  const markers = read('../../src/utils/featureMarkers.js');
+
+  // A
+  check(
+    'A: face-selected popup removed (no data-face-info-popup / Selected Face chrome)',
+    !/data-face-info-popup/.test(viewport) &&
+      !/Selected Face/.test(viewport),
+  );
+
+  // B
+  const edgeBlock = (() => {
+    const i = viewport.indexOf('data-edge-selector="standalone"');
+    return i < 0 ? '' : viewport.slice(i, i + 450);
+  })();
+  check(
+    'B: edge-pick chip horizontally centered + raised',
+    /data-edge-selector="standalone"/.test(viewport) &&
+      /left-1\/2 -translate-x-1\/2/.test(edgeBlock) &&
+      /bottom-20/.test(edgeBlock) &&
+      !/bottom-4 right-2/.test(edgeBlock) &&
+      !/bottom-4 left-\[4\.5rem\]/.test(edgeBlock),
+  );
+
+  // C — left matches RIGHT toolbar (not top ribbon)
+  check(
+    'C: left palette bottom matches right rail (bottom-2.5) + capped height',
+    /bottom-2\.5/.test(palette) &&
+      /max-h-\[min\(26rem,calc\(100%-5\.5rem\)\)\]/.test(palette) &&
+      /data-rail-pair="left"/.test(palette) &&
+      /data-rail-pair="right"/.test(rightRail) &&
+      /bottom-2\.5 right-2\.5/.test(rightRail) &&
+      !/max-h-\[min\(72%/.test(palette),
+  );
+  check(
+    'C: contour left rail uses the same paired height',
+    /data-rail-pair="left"/.test(contourRail) &&
+      /max-h-\[min\(26rem,calc\(100%-5\.5rem\)\)\]/.test(contourRail) &&
+      /bottom-2\.5/.test(contourRail),
+  );
+
+  // D
+  check(
+    'D: feature sheet under-title horizontal full-width (CAD + Script)',
+    /data-feature-sheet-layout="under-title-horizontal"/.test(sheet) &&
+      /top-14/.test(sheet) &&
+      /overflow-x-auto/.test(sheet) &&
+      /inset-x-0/.test(sheet) &&
+      !/rounded-t-2xl/.test(sheet) &&
+      !/bottom-0 z-40/.test(sheet),
+  );
+  check(
+    'D: App mounts sheets shared across stages (not CAD-only)',
+    /featureSheet\?\.mode === 'edit'/.test(app) &&
+      /featureSheet\?\.mode === 'picker'/.test(app) &&
+      !/isCadStage && featureSheet\?\.mode === 'edit'/.test(app) &&
+      (app.match(/<FeatureSheet\b/g) || []).length >= 2,
+  );
+  check(
+    'D: Accept / Cancel / Edit script still present',
+    /data-feature-sheet-accept/.test(sheet) &&
+      /data-feature-sheet-cancel/.test(sheet) &&
+      /data-feature-sheet-edit-script/.test(sheet),
+  );
+
+  // E
+  check(
+    'E: per-type index badges on FeatureStrip icons',
+    /data-feature-type-badge/.test(strip) &&
+      /data-feature-type-index/.test(strip) &&
+      /typeIndex/.test(markers),
+  );
+  check(
+    'E: feature strip on the right below top ribbon',
+    /data-feature-strip-side="right"/.test(strip) &&
+      /right-0 top-14/.test(app) &&
+      /data-cad-feature-strip/.test(app) &&
+      /border-l border-gray-700\/40/.test(strip),
+  );
+  check(
+    'E: ribbon / top chrome bg matches code editor (bg-gray-900)',
+    /data-ribbon-bg="editor"/.test(editor) &&
+      /bg-gray-900/.test(editor) &&
+      /data-ribbon-bg="editor"[\s\S]{0,200}?bg-gray-900/.test(editor),
+  );
+}
+
+{
+  const script = `// --- contour-mode extrude begin ---
+let part = placeInFrame(xs.plane, makeExtrude(xs.contours, 12), [0, 0, 0]);
+// --- contour-mode extrude end ---
+// --- contour-mode extrude begin ---
+part = placeInFrame(xs.plane, makeExtrude(xs.contours, 5), [0, 0, 0]);
+// --- contour-mode extrude end ---
+// --- fillet-mode begin ---
+part = filletAlongPath(part, path, 2);
+// --- fillet-mode end ---
+`;
+  const features = parseFeatureMarkers(script);
+  const extrudes = features.filter((f) => f.kind === 'extrude');
+  const fillets = features.filter((f) => f.kind === 'fillet');
+  check('typeIndex: two Extrudes are 1 then 2', extrudes[0]?.typeIndex === 1 && extrudes[1]?.typeIndex === 2);
+  check('typeIndex: Fillet restarts at 1', fillets[0]?.typeIndex === 1);
+}
+
+if (failed) {
+  console.log(`\n${failed} check(s) failed`);
+  process.exit(1);
+}
+console.log('\nAll mobile C.1 strip polish checks passed.');

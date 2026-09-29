@@ -194,12 +194,13 @@ const HelperInsertPalette = ({
   return (
     <>
       <div
-        className={`absolute left-2 lg:left-4 bottom-4 z-10 flex flex-col gap-1
+        className={`absolute left-2 lg:left-4 bottom-2.5 z-10 flex flex-col gap-1
           bg-white/60 backdrop-blur-sm rounded-lg shadow-lg
-          max-h-[min(72%,calc(100%-5.5rem))] overflow-y-auto overflow-x-hidden rail-scroll
+          max-h-[min(26rem,calc(100%-5.5rem))] overflow-y-auto overflow-x-hidden rail-scroll
           p-2`}
         role="group"
         aria-label="Helper insert palette"
+        data-rail-pair="left"
         data-palette-layout={layout === 'cad' ? 'cad' : 'game'}
       >
         {sections.map((section, gi) => (

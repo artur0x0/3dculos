@@ -174,7 +174,9 @@ const handleButtonClick = () => {
 
   if (isCollapsed || !enabled) {
     return (
-      <div className={`absolute bottom-2.5 right-2.5 bg-white/60 backdrop-blur-sm p-2 rounded-lg shadow-lg z-10 ${
+      <div
+        data-rail-pair="right"
+        className={`absolute bottom-2.5 right-2.5 bg-white/60 backdrop-blur-sm p-2 rounded-lg shadow-lg z-10 ${
         verticalRail
           ? 'flex flex-col gap-1'
           : 'flex flex-wrap justify-end gap-2 max-w-[calc(100%-1rem)]'

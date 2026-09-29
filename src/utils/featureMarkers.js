@@ -37,7 +37,7 @@ export const FEATURE_MARKER_KINDS = Object.freeze([
 /**
  * Scan `script` for every complete begin…end marker pair.
  * Returns blocks sorted by start offset:
- *   { id, kind, label, chipLabel, startOffset, endOffset, index }
+ *   { id, kind, label, chipLabel, startOffset, endOffset, index, typeIndex }
  */
 export function parseFeatureMarkers(script) {
   if (typeof script !== 'string' || script.length === 0) return [];
@@ -68,8 +68,9 @@ export function parseFeatureMarkers(script) {
   const kindSeen = Object.create(null);
   return hits.map((h, index) => {
     kindSeen[h.kind] = (kindSeen[h.kind] || 0) + 1;
+    const typeIndex = kindSeen[h.kind];
     const chipLabel = kindTotals[h.kind] > 1
-      ? `${h.label} ${kindSeen[h.kind]}`
+      ? `${h.label} ${typeIndex}`
       : h.label;
     return {
       id: `${h.kind}-${index}`,
@@ -79,6 +80,8 @@ export function parseFeatureMarkers(script) {
       startOffset: h.startOffset,
       endOffset: h.endOffset,
       index,
+      /** 1-based index within this kind (badge on strip / sheet icons). */
+      typeIndex,
     };
   });
 }

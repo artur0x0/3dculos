@@ -80,10 +80,11 @@ const App = () => {
   const handleFeatureStripJump = (feature) => {
     if (!feature) return;
     setFeatureStripActiveId(feature.id);
+    setFeatureSheet({ mode: 'edit', feature });
     codeEditorRef.current?.revealRange?.(feature.startOffset, feature.endOffset);
   };
   /**
-   * Slice Mobile C — CAD-stage feature sheet.
+   * Slice Mobile C.1 — feature sheet (CAD + Script stages, under-title horizontal).
    * null | { mode: 'picker' } | { mode: 'edit', feature }
    * Desktop / game never open this.
    */
@@ -1454,11 +1455,10 @@ const App = () => {
                 aria-hidden={!isCadStage}
               >
                 {viewportEl}
-                {/* Slice Mobile C: CAD-stage feature strip opens sheets (not Monaco).
-                    Sits under the title, above the helper rail / home pill. */}
+                {/* Slice Mobile C.1: CAD feature strip on the RIGHT, below top ribbon. */}
                 {isCadStage && (
                   <div
-                    className="absolute left-0 top-16 bottom-36 z-20 pointer-events-auto"
+                    className="absolute right-0 top-14 bottom-36 z-20 pointer-events-auto"
                     data-cad-feature-strip=""
                   >
                     <FeatureStrip
@@ -1469,23 +1469,6 @@ const App = () => {
                     />
                   </div>
                 )}
-                {isCadStage && featureSheet?.mode === 'picker' && (
-                  <FeatureSheet
-                    features={listFeatureSheetTargets(currentScript)}
-                    script={currentScript}
-                    onCancel={closeFeatureSheet}
-                    onPickFeature={(f) => openFeatureSheetFor(f)}
-                  />
-                )}
-                {isCadStage && featureSheet?.mode === 'edit' && featureSheet.feature && (
-                  <FeatureSheet
-                    feature={featureSheet.feature}
-                    script={currentScript}
-                    onAccept={handleFeatureSheetAccept}
-                    onCancel={closeFeatureSheet}
-                    onEditScript={handleFeatureSheetEditScript}
-                  />
-                )}
               </div>
               <div
                 className={`absolute inset-0 flex flex-col min-h-0 ${
@@ -1494,24 +1477,43 @@ const App = () => {
                 data-stage-pane="script"
                 aria-hidden={!isScriptStage}
               >
-                {/* B.1: vertical feature strip (toolbar icons) sits left of Monaco;
+                {/* C.1: vertical feature strip on the RIGHT of Monaco, below ribbon;
                     bottom padding clears the home-indicator pill. */}
                 <div className="relative flex-1 min-h-0 flex flex-row">
-                  {isScriptStage && (
-                    <FeatureStrip
-                      script={currentScript}
-                      activeId={featureStripActiveId}
-                      onJump={handleFeatureStripJump}
-                    />
-                  )}
                   <div className="relative flex-1 min-h-0">
                     <div className="absolute inset-0">
                       {editorEl}
                     </div>
                   </div>
+                  {isScriptStage && (
+                    <FeatureStrip
+                      script={currentScript}
+                      activeId={featureSheet?.feature?.id || featureStripActiveId}
+                      onJump={handleFeatureStripJump}
+                    />
+                  )}
                 </div>
                 {aiRow}
               </div>
+
+              {/* C.1: feature sheets — full-width under-title, CAD + Script stages. */}
+              {featureSheet?.mode === 'picker' && (
+                <FeatureSheet
+                  features={listFeatureSheetTargets(currentScript)}
+                  script={currentScript}
+                  onCancel={closeFeatureSheet}
+                  onPickFeature={(f) => openFeatureSheetFor(f)}
+                />
+              )}
+              {featureSheet?.mode === 'edit' && featureSheet.feature && (
+                <FeatureSheet
+                  feature={featureSheet.feature}
+                  script={currentScript}
+                  onAccept={handleFeatureSheetAccept}
+                  onCancel={closeFeatureSheet}
+                  onEditScript={handleFeatureSheetEditScript}
+                />
+              )}
 
               {/* Bottom home-indicator stage pill — clears Contour/Fillet chips via their raised mobile bottom. */}
               <div
