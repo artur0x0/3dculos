@@ -443,7 +443,9 @@ const CodeEditor = forwardRef(({
   return (
     <div className="relative flex flex-col h-full bg-gray-900">
       {/* Mid-strip: Select All always. Game actions inline; CAD portals here (both shells). */}
-      <div className={`flex items-center gap-1 px-1 py-0.5 border-b border-gray-700/60 bg-gray-900 shrink-0 ${
+      <div
+        data-ribbon-bg="editor"
+        className={`flex items-center gap-1 px-1 py-0.5 border-b border-gray-700/60 bg-gray-900 shrink-0 ${
         isGame || showCadStrip ? 'justify-between' : 'justify-end'
       }`}>
         {isGame && (

@@ -55,6 +55,14 @@ console.log('mobile C: feature sheets');
       /Edit script/.test(sheet),
   );
   check(
+    'FeatureSheet is under-title horizontal (C.1), not bottom sheet',
+    /data-feature-sheet-layout="under-title-horizontal"/.test(sheet) &&
+      /top-14/.test(sheet) &&
+      /overflow-x-auto/.test(sheet) &&
+      !/bottom-0 z-40/.test(sheet) &&
+      !/rounded-t-2xl/.test(sheet),
+  );
+  check(
     'FeatureSheet reuses popupUI NumberField / ChoiceRow / PopupButton',
     /NumberField/.test(sheet) &&
       /ChoiceRow/.test(sheet) &&
@@ -72,10 +80,11 @@ console.log('mobile C: feature sheets');
       /rewriteRevolveBlock|kind === 'revolve'/.test(writeback),
   );
   check(
-    'App mounts FeatureSheet on CAD stage only (picker + edit)',
-    /isCadStage && featureSheet\?\.mode === 'edit'/.test(app) &&
-      /isCadStage && featureSheet\?\.mode === 'picker'/.test(app) &&
-      /<FeatureSheet/.test(app),
+    'App mounts FeatureSheet on CAD + Script stages (shared under-title chrome)',
+    /featureSheet\?\.mode === 'edit'/.test(app) &&
+      /featureSheet\?\.mode === 'picker'/.test(app) &&
+      !/isCadStage && featureSheet\?\.mode === 'edit'/.test(app) &&
+      (app.match(/<FeatureSheet\b/g) || []).length >= 2,
   );
   check(
     'CAD-stage FeatureStrip opens sheets (hideWhenEmpty)',

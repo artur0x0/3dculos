@@ -4,7 +4,7 @@
  * default-view zoom-out.
  *
  * Builds on Mobile B (#73). Strip is vertical with toolbar-matching icons;
- * face info popup is horizontally centered just below the title chrome;
+ * face info popup removed by C.1;
  * view snaps use
  * VIEW_SNAP_MARGIN (1.35) so top/right/front/iso frame with more margin.
  * Non-goals: feature sheets (C), PWA (D), AI-on-pill, geometry highlight.
@@ -80,20 +80,11 @@ console.log('mobile B.1: vertical strip icons + face popup under title + view zo
         return n >= 1 && n <= 2;
       })(),
   );
-  // Face description only — edge-pick chip stays edge-docked (interactive controls).
-  // Placement: horizontally centered just below title chrome (top-16), NOT mid-viewport.
-  const facePopupBlock = (() => {
-    const i = viewport.indexOf('data-face-info-popup');
-    return i < 0 ? '' : viewport.slice(Math.max(0, i - 320), i + 120);
-  })();
+  // Slice Mobile C.1 removed the face-selected info popup (no empty reserved band).
   check(
-    'face info popup horizontally centered just below title chrome',
-    /data-face-info-popup/.test(viewport) &&
-      /top-16 left-1\/2 -translate-x-1\/2/.test(facePopupBlock) &&
-      !/top-1\/2/.test(facePopupBlock) &&
-      !/-translate-y-1\/2/.test(facePopupBlock) &&
-      !/bottom-4 right-2/.test(facePopupBlock) &&
-      !/bottom-4 left-\[4\.5rem\]/.test(facePopupBlock),
+    'face info popup removed (C.1)',
+    !/data-face-info-popup/.test(viewport) &&
+      !/Selected Face/.test(viewport),
   );
   check(
     'VIEW_SNAP_MARGIN exported and > Zoom-to-Fit default 1.15',

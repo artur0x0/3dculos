@@ -53,7 +53,6 @@ import HelperInsertPalette from './HelperInsertPalette';
 import ContourModeRail from './ContourModeRail';
 import ContourModeChip from './ContourModeChip';
 import FilletModeChip from './FilletModeChip';
-import { classifySelectedFace } from '../utils/faceFeaturePlacement';
 import { buildCrossSectionPreview, defaultTopPlaneFrame } from '../utils/crossSectionSubstrate';
 import {
   applySavedContour,
@@ -4141,35 +4140,8 @@ const Viewport = forwardRef(({
         </div>
       )}
       
-      {/* Face Info Display — Slice 11 + Mobile B.1: classified type,
-          horizontally centered just below the part-name title chrome (top-16,
-          same band as other under-title toasts — not mid-viewport). */}
-      {selectedFace && !measurementEnabled && !contourMode && !filletMode && (
-        <div
-          className="absolute top-16 left-1/2 -translate-x-1/2
-            bg-black/45 surface-glass-chip text-white p-2 rounded-lg text-xs font-mono z-10
-            max-w-[14rem] pointer-events-none"
-          data-face-info-popup=""
-        >
-          <div className="font-bold mb-1">
-            Selected Face
-            {(() => {
-              const c = classifySelectedFace(selectedFace);
-              return c ? (
-                <span className="ml-1 font-normal text-cyan-300">({c.type})</span>
-              ) : null;
-            })()}
-          </div>
-          <div>Center: [{selectedFace.center.map(v => v.toFixed(1)).join(', ')}]</div>
-          <div>Normal: [{selectedFace.normal.map(v => v.toFixed(2)).join(', ')}]</div>
-          <div>Area: {selectedFace.area.toFixed(1)} mm²</div>
-          {mode === 'game' && (
-            <div className="mt-1 text-[10px] text-gray-300 normal-case font-sans">
-              Tap Hole / Clearance / … on the left to place on this face
-            </div>
-          )}
-        </div>
-      )}
+      {/* Slice Mobile C.1: face-selected info popup removed (was under-title B.1).
+          Selection still drives the left palette / PromptInput; no empty reserved band. */}
 
       {/* Slice 24: contour chip — plane + profile params (Edge-pick pattern). */}
       {contourMode && (
@@ -4310,13 +4282,14 @@ const Viewport = forwardRef(({
 
       {/* Edge pick chip — Edge mode alone is not enough: it stays out of the way
           until at least one edge is actually selected. */}
+      {/* Slice Mobile C.1: center + raise — clear of right rail and home-indicator / CAD|Script dots. */}
       {pickMode === 'edge' && !contourMode && !filletMode && selectedEdges.length > 0 && (
         <div
           data-edge-selector="standalone"
-          className={`absolute bg-amber-950/80 surface-glass-chip border border-amber-500/70 text-white px-3 py-2 rounded-lg text-xs z-20 shadow-lg max-w-[16rem] ${
+          className={`absolute bg-amber-950/80 surface-glass-chip border border-amber-500/70 text-white px-3 py-2 rounded-lg text-xs z-20 shadow-lg max-w-[min(16rem,calc(100%-3rem))] left-1/2 -translate-x-1/2 ${
             mode === 'game' || isMobile
-              ? 'bottom-4 right-2 lg:right-4'
-              : 'bottom-4 left-[4.5rem] lg:left-[5.25rem]'
+              ? 'bottom-20'
+              : 'bottom-14'
           }`}
         >
           <div className="font-bold font-sans text-amber-200">
