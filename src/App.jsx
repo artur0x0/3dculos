@@ -1335,16 +1335,20 @@ const App = () => {
                 data-stage-pane="script"
                 aria-hidden={!isScriptStage}
               >
-                {isScriptStage && (
-                  <FeatureStrip
-                    script={currentScript}
-                    activeId={featureStripActiveId}
-                    onJump={handleFeatureStripJump}
-                  />
-                )}
-                <div className="relative flex-1 min-h-0">
-                  <div className="absolute inset-0">
-                    {editorEl}
+                {/* B.1: vertical feature strip (toolbar icons) sits left of Monaco;
+                    bottom padding clears the home-indicator pill. */}
+                <div className="relative flex-1 min-h-0 flex flex-row">
+                  {isScriptStage && (
+                    <FeatureStrip
+                      script={currentScript}
+                      activeId={featureStripActiveId}
+                      onJump={handleFeatureStripJump}
+                    />
+                  )}
+                  <div className="relative flex-1 min-h-0">
+                    <div className="absolute inset-0">
+                      {editorEl}
+                    </div>
                   </div>
                 </div>
                 {aiRow}

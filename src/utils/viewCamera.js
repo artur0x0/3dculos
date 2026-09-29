@@ -23,6 +23,13 @@ export const VIEW_PRESETS = {
   bottom: { dir: [0, 0, -1], up: [0, 1, 0], label: 'Bottom' },
 };
 
+/**
+ * Mobile B.1 — default margin for view-snap presets (top / right / front / iso / …).
+ * Larger than fitView's Zoom-to-Fit default (1.15) so the part has more breathing
+ * room. Game puzzle enter/switch keeps its own explicit 1.55 framing.
+ */
+export const VIEW_SNAP_MARGIN = 1.35;
+
 const EPS = 1e-9;
 
 /**
