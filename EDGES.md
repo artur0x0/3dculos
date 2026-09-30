@@ -71,6 +71,13 @@ coplanar-but-DISCONNECTED regions into one faceID". This is the script API's
 backing store — it is what `edgesBetween(part, 3, 5)` in Artur's own script
 resolves against.
 
+**But it is neither stored nor cached.** `c4MeshData` is called fresh at seven
+call sites (`:1323, :1336, :1354, :1377, :1617, :1714`) and rebuilds the whole
+union-find every time; the single `laz()` memo at `:1617` is local to one
+helper. So "solve once at render and keep it in state" is a real change, not
+just a relocation — today the graph is rebuilt several times per script run and
+then thrown away.
+
 **The UI ignores all of it.** `Viewport.syncFeatureEdges` re-derives everything
 from the three.js `BufferGeometry`: `buildFeatureEdges` (O(tris) dihedral scan)
 → `annotateFeatureEdges` → `buildCoherentEdges` (merge → trace → order → RDP).
@@ -283,6 +290,37 @@ PR 1 is hours and fixes the reported bug on its own. PR 2 is the one with real
 technical risk (the tangent-junction merge rule) and is deliberately shipped
 behind an overlay so we find out *visually* whether the segmentation is right
 before anything depends on it.
+
+### What lands where — read this before assuming PR 1 does more than it does
+
+**PR 1 changes no architecture.** Both implementations stay exactly where they
+are; it only removes the dishonest bridge and decouples the two turn thresholds.
+It is the unblock, not the fix.
+
+**The two parallel implementations die in PR 5**, when the UI starts reading the
+graph and `buildFeatureEdges` / `buildCoherentEdges` / `selectFace`'s per-click
+floods are deleted. `faces` becomes *correct* (rather than merely present) in
+PR 2; edges-inferred-from-face-joints arrives in PR 4. So the arc is
+1 → unblock, 2 → faces right, 4 → edges as their dual, 5 → one implementation.
+
+**PR 1 risk and fallback.** The proximity bridge was added in #78 specifically
+to make roundedBox rims chain, so deleting it may regress those cases.
+`golden:mobile-c3-roundedbox-fillet-tangent` is the arbiter. If it goes red, the
+fallback is to **node-gate** rather than delete: require a shared topological
+node instead of 5 mm proximity. Same honest result, smaller blast radius, and it
+is the same shape the bridge takes in the target architecture anyway.
+
+### Sequencing choice
+
+- **(a) PR 1 first.** Hours, low risk, Artur unblocked immediately, architecture
+  untouched. The code it deletes is code PR 5 deletes anyway, so nothing is
+  wasted.
+- **(b) Straight to the unified path.** No interim work at all, but nothing
+  playtestable for a while and PR 2's merge rule — the unproven part — gates
+  everything behind it.
+
+**Recommendation: (a)**, so the CAD work moves while the segmentation gets the
+scrutiny it actually needs.
 
 ---
 
