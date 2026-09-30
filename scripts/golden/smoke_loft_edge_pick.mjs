@@ -19,6 +19,14 @@ import {
   indexBoundaryEdges,
   annotateFeatureEdges,
 } from '../../src/utils/boundaryEdgeIds.js';
+import {
+  isTrueG1,
+  edgeTangencyFrame,
+  preferredPlaneNormal,
+  wallNormalContinuity,
+  TANGENCY_PROP_DEG,
+  TANGENCY_CORNER_WALL_CONT,
+} from '../../src/utils/edgeTangencyField.js';
 
 let failed = 0;
 function check(name, cond, detail = '') {
@@ -174,6 +182,42 @@ return placeInFrame(fr, makeLoft([xs0, xs1]));
     });
     check('tangent-on side generator does not explode', picked.length === 1, `n=${picked.length}`);
   }
+
+  // #78 opened the skipNormals corner-continue window to ~70–85° so roundedBox
+  // collapsed fillet corners chain. A loft corner generator turns 74.2° onto
+  // the top rim at the same angle, so angle alone cannot separate them: the
+  // wall pair does. Pin the gate directly, not just the emergent count.
+  {
+    const cornerish = [];
+    for (const a of coherent) {
+      for (const b of coherent) {
+        if (a.key === b.key) continue;
+        if (a.a !== b.a && a.a !== b.b && a.b !== b.a && a.b !== b.b) continue;
+        const fa = edgeTangencyFrame(a);
+        const fb = edgeTangencyFrame(b);
+        const tan = Math.abs(
+          fa.T[0] * fb.T[0] + fa.T[1] * fb.T[1] + fa.T[2] * fb.T[2],
+        );
+        if (tan >= Math.cos((TANGENCY_PROP_DEG * Math.PI) / 180)) continue;
+        cornerish.push([a, b, fa, fb]);
+      }
+    }
+    check('loft has corner-angle neighbor pairs to test', cornerish.length > 0, `n=${cornerish.length}`);
+    const chained = cornerish.filter(([a, b, fa]) =>
+      isTrueG1(a, b, { skipNormals: true, seedPlaneNormal: preferredPlaneNormal(fa) }));
+    check(
+      'no loft model corner chains through the corner-continue window',
+      chained.length === 0,
+      chained.map(([a, b]) => `${a.key}->${b.key}`).join(','),
+    );
+    check(
+      'loft corner pairs all fail the wall-continuity floor',
+      cornerish.every(([, , fa, fb]) =>
+        wallNormalContinuity(fa.n0, fa.n1, fb.n0, fb.n1) < TANGENCY_CORNER_WALL_CONT),
+      'a loft corner kept its wall pair',
+    );
+  }
+
   const rim = chains.find((c) => c.length > 4);
   check('round rim is one chain under two dozen', rim && rim.length <= 24, rim ? `n=${rim.length}` : 'missing');
   if (rim) {

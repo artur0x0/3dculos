@@ -20,6 +20,18 @@
 export const TANGENCY_PROP_DEG = 25;
 /** Min wall-normal continuity (cos) for true G1. */
 export const TANGENCY_NORMAL_ALIGN = Math.cos((28 * Math.PI) / 180);
+/**
+ * Min wall-normal continuity (cos 60°) for the skipNormals *corner-continue*
+ * branch (#78). That branch exists to hop a collapsed fillet corner, where the
+ * SAME two walls continue across the turn — so the wall pair must persist even
+ * though the tangent swings ~70–85°. Without this floor the window also
+ * accepted genuine model corners at the same angle: a circle→rect loft corner
+ * generator turns 74.2° onto the top rim and chained 3 unrelated edges
+ * (smoke_loft_edge_pick "tangent-on side generator does not explode").
+ * Measured separation is wide — loft corners score ≤ 0.000, roundedBox rim
+ * corners ≥ 0.877 — so 0.5 sits far from both populations.
+ */
+export const TANGENCY_CORNER_WALL_CONT = Math.cos((60 * Math.PI) / 180);
 /** Human-scale chain cap — matches selectEdge.COHERENT_EDGE_MAX. */
 export const TANGENCY_CHAIN_MAX = 36;
 
@@ -130,7 +142,8 @@ export function preferredPlaneNormal(frame) {
  * @param {object} b
  * @param {{ tolDeg?: number, normalAlign?: number, skipNormals?: boolean,
  *           cornerDeg?: number, cornerSharpDeg?: number,
- *           cornerOutOfPlaneDeg?: number, seedPlaneNormal?: number[] }} [opts]
+ *           cornerOutOfPlaneDeg?: number, cornerWallCont?: number,
+ *           seedPlaneNormal?: number[] }} [opts]
  */
 export function isTrueG1(a, b, opts = {}) {
   const tolDeg = typeof opts.tolDeg === 'number' ? opts.tolDeg : TANGENCY_PROP_DEG;
@@ -149,6 +162,13 @@ export function isTrueG1(a, b, opts = {}) {
     const sharpDeg = typeof opts.cornerSharpDeg === 'number' ? opts.cornerSharpDeg : 85;
     if (tan < Math.cos((cornerDeg * Math.PI) / 180)) return false;
     if (tan <= Math.cos((sharpDeg * Math.PI) / 180)) return false;
+    // A collapsed fillet corner keeps its wall pair; a real model corner swaps
+    // one wall. Fails open when either edge lacks normals (wallNormalContinuity
+    // returns 1), so untagged meshes behave as before.
+    const cornerWallCont = typeof opts.cornerWallCont === 'number'
+      ? opts.cornerWallCont
+      : TANGENCY_CORNER_WALL_CONT;
+    if (wallNormalContinuity(fa.n0, fa.n1, fb.n0, fb.n1) < cornerWallCont) return false;
     const N = Array.isArray(opts.seedPlaneNormal) && opts.seedPlaneNormal.length >= 3
       ? opts.seedPlaneNormal
       : preferredPlaneNormal(fa);
