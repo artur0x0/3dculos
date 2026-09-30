@@ -285,6 +285,7 @@ Artur to try. Goldens on every one.
 | **5. Edge pick + propagation read the graph** | Delete the six heuristics. | All the fillet tangent cases: loft, roundedBox, shelled box, concave edges. |
 | **6. Visibility** | BVH + occlusion filter on pick and propagate. | Orbit and try to pick through walls. |
 | **7. Cleanup** | `makeSweepPath` consumes `Curve.polyline`; remove dead paths. | Fillet Accept end-to-end. |
+| **8. F2 slivers** | Kernel/cutter fix for the sliver population the architecture does *not* remove (the long needles from boolean re-triangulation). Scope set by re-measuring F2 after PR 5. | F2 at r=1.5 and r=2.5: smooth second fillet, degenerate delta ≈ 0 vs the post-fillet-1 baseline. |
 
 PR 1 is hours and fixes the reported bug on its own. PR 2 is the one with real
 technical risk (the tangent-junction merge rule) and is deliberately shipped
@@ -354,7 +355,11 @@ Measured today: the pick graph resolves that edge as `coh-16-0`, `L=19.785`,
 | Tangent **off** → exactly 1 edge | ✅ 1 |
 | Tangent **on** → exactly 1 edge (both ends are real corners: 106° and 16.8°) | ❌ **3** |
 | hard variable-profile fillet r=1.98 succeeds | ✅ 34 418 tris |
-| resulting surface is smooth — no facet ridge, no gouge | eyeball |
+| resulting surface is smooth — no facet ridge, no gouge | ✅ Artur: "fillet looks good" |
+
+**Artur confirmed the requirement: that pick must yield a single edge.** One
+edge is the correct answer, not a tolerated approximation — so "Tangent-on → 1"
+is a hard acceptance criterion, not a preference.
 
 **The Tangent-on row is red on `main` today**, and it is the same failure
 `golden:loft-edge-pick` reports as *"tangent-on side generator does not explode
@@ -387,7 +392,7 @@ The chain is the wrap PR #84 produces: `coh-9-0` (vertical, L=16) → `coh-11-3.
 | Tangent-on wraps the whole round onto the tangent top edge | ✅ 6 edges |
 | second fillet succeeds at r=1.5 | ✅ 2 268 tris |
 | second fillet succeeds at r=2.5 | ✅ 1 854 tris |
-| **no dangling surface slivers** | ❌ **61 degenerate tris @ r=1.5, 38 @ r=2.5** (baseline after fillet 1: **0**) |
+| **no dangling surface slivers** | ❌ **61 degenerate tris @ r=1.5, 38 @ r=2.5** (baseline after fillet 1: **0**) — 41 by needle/aspect count, split 15 collapsed + 26 needles (below) |
 
 **This fails Artur's stated requirement today while passing the automated
 guard.** `filletSliverGuard` allows up to 80 absolute / 6% fractional; 61 of
@@ -396,9 +401,33 @@ skill warns about — *"volume guards cannot see a distribution error"*. The
 acceptance criterion here must therefore be **degenerate-triangle delta ≈ 0
 against the post-fillet-1 baseline**, not "under the guard".
 
-Fixing F2 is **not** in PR 1–7 scope as written — it is a kernel/cutter concern,
-not a selection one. It is captured here so that (a) it does not get worse, and
-(b) it is on the record as a known-open defect with a number attached.
+**Artur: this must pass.** In scope — see PR 8.
+
+#### Where the slivers actually are
+
+Control first: **fillet 1 alone produces zero** needle/degenerate triangles
+(108 tris, 0 bad). So every sliver is introduced by the *second* fillet. They
+split into two populations with different causes:
+
+| n | where | signature | diagnosis |
+| --- | --- | --- | --- |
+| **15** | `x > 19`, the fillet-1/fillet-2 hand-off corner | `area = 0.0`, `longest = 0.0` — fully collapsed, all three vertices coincident | they sit **exactly on the RDP chord vertices** of the wrap chain: `y=14.79,z=7.29` and `y=13.83,z=8.83` are the `coh-11-*` endpoints. The swept cutter produces a degenerate section wherever the path has a corner. |
+| **26** | interior, along the fillet-1 band | `area ≈ 6e-2` but `longest ≈ 38.6` on a 40 mm box — long thin needles | far from fillet-2's region (centroid `x≈5.7`). Looks like boolean re-triangulation of the large fillet-1 band surface when the second cutter subtracts. |
+
+**The first population is caused by the architecture problem this document is
+about.** The wrap chain reaches the kernel as RDP chords with ~20° corners, and
+a sweep through a cornered polyline degenerates at the corners. Critically,
+**densification cannot fix it**: `densifyPathByMaxTurn` adds points *along the
+straight chords* and leaves the corners exactly as sharp — curvature lost to RDP
+is not recoverable downstream. Only feeding the kernel `Curve.polyline` at full
+resolution removes it, which is what PR 4 → 5 → 7 do.
+
+So the honest sequencing is: **do not hand-fix what the architecture fixes for
+free.** Re-measure F2 after PR 5, expect the 15 collapsed triangles to go, then
+fix whatever remains.
+
+The second population is a genuine kernel/boolean concern and is not touched by
+any of PR 1–7. That is PR 8's job.
 
 ### Gate per PR
 
@@ -410,7 +439,8 @@ not a selection one. It is captured here so that (a) it does not get worse, and
 | **4. Edge graph** | L1, F2 | Goldens only; assert L1's corner generator has **no** tangent link across either end. |
 | **5. Propagation reads graph** | L1, F2 | Full matrix: loft corner (1 edge), roundedBox rim (wraps), shelled box (outer only), F2 wrap (6 edges), concave edges. |
 | **6. Visibility** | L1, F2 | Orbit the shelled box; confirm no pick through walls, and that an already-selected chain survives orbiting. |
-| **7. Cleanup** | L1, F2 | Both end-to-end through Fillet Accept, script emitted and re-run. |
+| **7. Cleanup** | L1, F2 | Both end-to-end through Fillet Accept, script emitted and re-run. **Re-measure F2's sliver split here** — this is where the path finally reaches the kernel at full resolution. |
+| **8. F2 slivers** | L1, F2 | F2 must reach degenerate delta ≈ 0 at both radii. This is the PR that closes Artur's "make it pass". |
 
 Every PR re-runs `npm run verify` plus the full fillet golden suite; the table
 above is what a human has to look at on top of that.
