@@ -1,6 +1,6 @@
 import React from 'react';
 import { AlertTriangle, Check, X } from 'lucide-react';
-import { NumberField, POPUP_TEXT } from './controls/popupUI';
+import { NumberField } from './controls/popupUI';
 
 const ACCENT = 'amber';
 
