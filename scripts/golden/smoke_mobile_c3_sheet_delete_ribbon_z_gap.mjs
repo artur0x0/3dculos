@@ -119,10 +119,10 @@ console.log('mobile C.3: sheet delete + ribbon z + CAD gap + Block + rail height
       RAIL_PAIR_HEIGHT_CLASS.includes('h-[min(26rem'),
   );
   check(
-    'Left + right + contour rails use RAIL_PAIR_HEIGHT_CLASS',
+    'Left + contour rails use RAIL_PAIR_HEIGHT_CLASS (right is content-height)',
     /RAIL_PAIR_HEIGHT_CLASS/.test(palette) &&
       /RAIL_PAIR_HEIGHT_CLASS/.test(contourRail) &&
-      /RAIL_PAIR_HEIGHT_CLASS/.test(rightRail) &&
+      !/RAIL_PAIR_HEIGHT_CLASS/.test(rightRail) &&
       /data-rail-height/.test(palette) &&
       /data-rail-height/.test(rightRail),
   );

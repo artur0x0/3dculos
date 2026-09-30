@@ -260,7 +260,12 @@ const contourRail = read('../../src/components/ContourModeRail.jsx');
 {
   const css = read('../../src/index.css');
   check('flyout gap is 10px', /mr-2\.5/.test(snap));
-  check('flyout can wrap rather than overflow', /flex flex-wrap/.test(snap));
+  // It must NOT wrap: with only `right` set inside a ~36px parent, shrink-to-fit
+  // is near zero, so flex-wrap collapses the row into a vertical stack.
+  const popupClass = snap.slice(snap.indexOf('className="view-snap-popup'));
+  check('flyout stays one horizontal row',
+    /flex w-max flex-nowrap/.test(popupClass)
+      && !/flex-wrap/.test(popupClass.slice(0, popupClass.indexOf('"', 12))));
   check('viewport shell is a size container', /\.viewport-shell[\s\S]{0,80}container-type: inline-size/.test(css));
   // The clamp measures the pane (100cqw, not 100vw — the viewport is half the
   // window on desktop) AND leaves room for the left rail, or the snap buttons

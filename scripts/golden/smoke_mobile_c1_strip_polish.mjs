@@ -70,7 +70,10 @@ console.log('mobile C.1: strip polish + UI reorg');
       /h-\[min\(26rem,calc\(100%-5\.5rem\)\)\]/.test(railPair) &&
       /data-rail-pair="left"/.test(palette) &&
       /data-rail-pair="right"/.test(rightRail) &&
-      /RAIL_PAIR_HEIGHT_CLASS/.test(rightRail) &&
+      // The right rail is content-height now: 10 tools (~422px) did not fit
+      // the shared 26rem cap, so Cross-section was cropped off the bottom.
+      !/RAIL_PAIR_HEIGHT_CLASS/.test(rightRail) &&
+      /max-h-\[calc\(100%-1\.25rem\)\]/.test(rightRail) &&
       /bottom-2\.5 right-2\.5/.test(rightRail) &&
       !/max-h-\[min\(72%/.test(palette) &&
       !/max-h-\[min\(26rem/.test(palette),

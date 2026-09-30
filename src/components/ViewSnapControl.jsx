@@ -31,10 +31,14 @@ const ViewSnapControl = ({ onSnap }) => {
 
   return (
     <div className="relative flex">
+      {/* `w-max` + no wrapping keeps the flyout a single horizontal row. It is
+          absolutely positioned with only `right` set, inside a ~36px-wide
+          parent, so its shrink-to-fit width is near zero — add `flex-wrap` and
+          it collapses into a vertical stack, which is exactly what happened. */}
       {open && (
         <div
           className="view-snap-popup absolute right-full top-1/2 -translate-y-1/2 mr-2.5
-            flex flex-wrap justify-end gap-2
+            flex w-max flex-nowrap items-center gap-2
             bg-white/60 backdrop-blur-sm p-2 rounded-lg shadow-lg"
           role="group"
           aria-label="Standard view snaps"
