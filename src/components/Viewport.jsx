@@ -363,6 +363,11 @@ const Viewport = forwardRef(({
   const clickTimerRef = useRef(null);
   const lastClickTimeRef = useRef(0);
   const pendingClickDataRef = useRef(null);
+  // Multi-face pick (shift-click): every face picked since the last deselect,
+  // oldest first, plus the union of their triangles for the highlight. Shell
+  // and Draft read the list off selectedFace.group; every other feature keeps
+  // using the LAST pick, so single-face flows are untouched.
+  const facePickGroupRef = useRef(null);
   const mouseDownPosRef = useRef({ x: 0, y: 0 });
   const isDraggingRef = useRef(false);
   /** Slice Mobile C: pointer-hold opens feature sheet without conflicting with orbit. */
@@ -690,6 +695,10 @@ const Viewport = forwardRef(({
         highlightMeshRef.current = null;
       }
     }
+    // Losing the highlight IS losing the face selection — drop the accumulated
+    // multi-pick with it (processClick reads the group before calling this, so
+    // an additive click still sees the previous picks).
+    facePickGroupRef.current = null;
   }, []);
 
   const clearEdgeHighlight = useCallback(() => {
@@ -2909,7 +2918,9 @@ const Viewport = forwardRef(({
       geometry,
       positions,
       index,
-      faceNormal: [clickedFace.normal.x, clickedFace.normal.y, clickedFace.normal.z]
+      faceNormal: [clickedFace.normal.x, clickedFace.normal.y, clickedFace.normal.z],
+      // Shift (or ⌘/Ctrl) adds this face to the pick instead of replacing it.
+      additive: !!(event.shiftKey || event.metaKey || event.ctrlKey),
     };
     
     // Multi-click detection
@@ -2943,7 +2954,7 @@ const Viewport = forwardRef(({
     const clickData = pendingClickDataRef.current;
     if (!clickData) return;
     
-    const { clickedFace, seedFaceIndex, geometry, positions, index, faceNormal } = clickData;
+    const { clickedFace, seedFaceIndex, geometry, positions, index, faceNormal, additive } = clickData;
     const clickCount = clickCountRef.current;
     
     // Reset click tracking
@@ -3010,10 +3021,22 @@ const Viewport = forwardRef(({
       // Normal face selection mode — clear edges so modes do not fight
       clearEdgeHighlight();
       setSelectedEdges([]);
-      setSelectedFace(faceData);
-      onFaceSelected?.(faceData);
+      // Read the accumulated multi-pick BEFORE clearHighlight() drops it.
+      const prev = additive ? facePickGroupRef.current : null;
+      const picks = [
+        ...(prev?.picks || []),
+        { center: faceData.center, normal: faceData.normal },
+      ];
+      const shown = prev ? [...new Set([...prev.indices, ...faceIndices])] : faceIndices;
+      const payload = picks.length > 1 ? { ...faceData, group: picks } : faceData;
+      setSelectedFace(payload);
+      onFaceSelected?.(payload);
       clearHighlight();
-      highlightFace(faceIndices, geometry, positions, index, 0xffff00);
+      facePickGroupRef.current = { picks, indices: shown };
+      highlightFace(shown, geometry, positions, index, 0xffff00);
+      if (picks.length > 1) {
+        console.log(`[Face Selection] ${picks.length} faces picked (shift-click to add more)`);
+      }
     }
     
   }, [measurementEnabled, measurementFaces, onFaceSelected, clearHighlight, clearEdgeHighlight, highlightFace]);

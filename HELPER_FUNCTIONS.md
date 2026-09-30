@@ -17,7 +17,7 @@ comparable and train-able.
 | `tapDrillHole(part, frame, u, v, size, span?)` | Tap-drill hole by fastener size |
 | `cboreHole` / `cskHole` | Counterbore / countersink |
 | `convexEdges` / `facesByNormal` / `workplaneFromFace` / `planarFaceAt` / `edgesByOrientation` / `placeInFrame` / `transformByFrame` | Selection / frame |
-| `shell`, `addDraft`, `tube`, `hexPrism`, `roundedBox`, `mirror`, `array3D`, `polarArray`, `center`, `align` | Solids / layout |
+| `shell`, `hollow`, `addDraft`, `draftFaces`, `tube`, `rectTube`, `hexPrism`, `roundedBox`, `mirror`, `array3D`, `polarArray`, `center`, `align` | Solids / layout |
 | `loft`, `makeLoft`, `offsetPlaneFrame`, `sweep`, `sweepPoints`, `makeExtrude`, `makeRevolve` | Profiles / paths |
 | `profileCircle` / `profileRectangle` / `profilePolygon` / `makeCrossSection` | Cross-section substrate (Slice 21) |
 | `makeSweepPath(edges, opts?)` | Ordered sweep path / wire from edges (Slice 22) |
@@ -137,50 +137,105 @@ All standard Manifold functions are available:
 
 ## Extended Helper Functions
 
-### shell(manifold, thickness, axis)
+### hollow(manifold, thickness, opening) / shell(manifold, thickness, opening)
 
-Creates a hollow shell tool for subtraction. The shell is scaled uniformly and aligned to one side.
+Hollows a solid out to a **uniform wall thickness**, leaving an opening at the
+face you choose. `hollow()` returns the finished walls; `shell()` returns the
+cavity so the older `part.subtract(shell(part, 2, 'z'))` still works.
+
+Every boundary vertex is placed on the inward offset of each face meeting it, so
+the wall measures `thickness` perpendicular to every face and corners stay sharp.
+(The pre-2026 version scaled the solid by one ratio, which gave a 60x20 box a
+2.5mm wall on Y and a 7.5mm wall on X.)
 
 ```javascript
-// Create a hollow box with 2mm walls, open on Z-min side
-const box = Manifold.cube([50, 50, 50], true);
-const innerTool = shell(box, 2, 'z');
-const hollowBox = box.subtract(innerTool);
-return hollowBox;
+// Uniform 2mm wall, open at the top
+const box = Manifold.cube([50, 30, 40], true);
+return hollow(box, 2, 'z');
+
+// Opening on a face you picked in the viewport, or queried
+let part = Manifold.cylinder(40, 20, 20, 64);
+part = hollow(part, 2.5, facesByNormal(part, [0, 0, 1])[0]);
+
+// Closed hollow (a sealed void), and two openings at once
+const sealed = hollow(Manifold.cube([30, 30, 30], true), 3, 'none');
+const openBoth = hollow(Manifold.cube([30, 30, 30], true), 3, ['z', '-z']);
 ```
 
 **Parameters:**
 - `manifold` - The input manifold
 - `thickness` - Wall thickness in mm
-- `axis` - Alignment axis: 'x', 'y', or 'z' (default: 'z')
+- `opening` - which face(s) the cavity breaks through (default `'z'`, the +Z face):
+  - a signed axis: `'z'`, `'-z'`, `'x'`, `'-x'`, `'y'`, `'-y'`
+  - `'none'` for a fully closed hollow
+  - a face object from `facesByNormal()` / `planarFaceAt()`
+  - a viewport face pick: `{ center: [...], normal: [...] }`
+  - an array mixing any of the above
 
-**Returns:** The inner tool manifold for subtraction
+**Returns:** `hollow()` the shelled solid; `shell()` the cavity to subtract
+
+**Notes:**
+- Picking a face that is no longer on the body throws and tells you to re-pick,
+  rather than silently shelling the wrong side.
+- A thickness the body cannot take throws instead of returning a fold.
+- Curved and lofted walls are supported; the offset follows the tessellation.
 
 ---
 
-### addDraft(manifold, draftDeg, axis)
+### draftFaces(manifold, faces, angleDeg, opts) / addDraft(manifold, draftDeg, axis)
 
-Adds a draft angle (linear taper) to a manifold. Essential for injection molding 
-and casting where parts need to release from molds.
+Tilts the faces you select by a **true constant angle**, pivoting about where
+each face meets a reference plane. Essential for injection moulding and casting,
+where parts must release from the mould.
+
+`addDraft` is the whole-part form (every side wall, bottom stays put);
+`draftFaces` lets you name the faces, the pull direction, the reference plane and
+the sign. The angle now comes out the same on every wall — the pre-2026 taper
+scaled perpendicular coordinates, so only the narrowest wall hit the requested
+angle.
+
 ```javascript
-// Add 2° draft to a shelled box
-const box = Manifold.cube([50, 50, 30], true);
-const hollowed = box.subtract(shell(box, 2, 'z'));
-const drafted = addDraft(hollowed, 2, 'z');
-return drafted;
+// Whole part: 2° on every side wall, bottom fixed
+const box = Manifold.cube([60, 20, 30], false);
+return addDraft(hollow(box, 2, 'z'), 2, 'z');
+
+// One picked face, pivoting about the top instead of the bottom
+let part = Manifold.cube([60, 20, 30], false);
+part = draftFaces(part, facesByNormal(part, [1, 0, 0])[0], 3,
+  { pull: 'z', reference: 'max' });
+
+// Several faces at once (what a shift-click multi-pick emits), flaring outward
+part = draftFaces(part, [
+  { center: [60, 10, 15], normal: [1, 0, 0] },
+  { center: [0, 10, 15], normal: [-1, 0, 0] },
+], -3, { pull: 'z', reference: 'min' });
 ```
 
 **Parameters:**
-- `manifold` - The manifold to add draft to
-- `draftDeg` - Draft angle in degrees (typically 1-3° for injection molding)
-- `axis` - The pull direction axis: 'x', 'y', or 'z' (default: 'z')
+- `manifold` - The manifold to draft
+- `faces` - which faces tilt: a viewport pick `{center, normal}`, a face from
+  `facesByNormal()`, a signed axis like `'-x'`, `'sides'` for every side wall, or
+  an array mixing those
+- `angleDeg` - **signed** draft angle in degrees. Positive tapers inward going
+  along the pull (the usual mould-release sense); negative flares outward.
+  Typical: 1-2° for smooth surfaces, 3-5° for textured.
+- `opts.pull` - pull / draw direction (default `'z'`; accepts `'-z'`, `[x,y,z]`)
+- `opts.reference` - the neutral plane that does not move: `'min'` (default),
+  `'mid'`, `'max'` along the pull, a number (coordinate along pull), or a
+  face / plane whose center defines it
+- `opts.sense` - `'taper'` makes every selected wall lean the same way round the
+  pull axis, so a hollow part keeps its wall thickness; `'face'` honours each
+  face's own outward normal, which is the mould-core sense on a cavity wall.
+  Defaults to `'taper'` for `'sides'` and `'face'` for named faces.
 
-**Returns:** The drafted manifold, tapered toward the max end of the axis
+**Returns:** The drafted manifold
 
 **Notes:**
-- The manifold tapers inward as you move from min to max along the axis
-- Draft is applied symmetrically to perpendicular dimensions
-- Typical draft angles: 1-2° for smooth surfaces, 3-5° for textured surfaces
+- Drafting a face perpendicular to the pull (a cap) throws — it has no direction
+  to tilt in. Pick the side walls, or change `opts.pull`.
+- Vertices shared by two selected faces are solved once against both, so drafted
+  corners stay sharp instead of doubling up.
+- An angle the body cannot take throws instead of returning a folded solid.
 
 ---
 
@@ -292,21 +347,40 @@ const offsetPoint = vecAdd(point, vecMul(5, normal));
 
 ---
 
-### tube(outerRadius, innerRadius, height, segments)
+### tube(outerRadius, innerRadius, height, segments) / rectTube(outer, inner, height, opts)
 
-Creates a tube/pipe shape (hollow cylinder).
+Creates a tube/pipe shape — round or **rectangular**. Passing an array as the
+first argument switches to the rectangular form (and the 4th argument becomes its
+options object rather than a segment count).
 
 ```javascript
-// Create a tube with 10mm outer radius, 8mm inner radius, 30mm tall
+// Round: 10mm outer radius, 8mm inner radius, 30mm tall
 const pipe = tube(10, 8, 30, 32);
-return pipe;
+
+// Rectangular 40 x 20, uniform 2.5mm wall, 60mm tall
+const box = tube([40, 20], 2.5, 60);
+
+// Explicit inner size, and rounded corners (the wall stays uniform round them)
+const a = tube([40, 20], [30, 10], 60);
+const b = tube([40, 20], 2.5, 60, { cornerRadius: 4 });
+
+// Square tube, 3mm wall
+const sq = rectTube(30, 3, 20);
 ```
 
 **Parameters:**
-- `outerRadius` - Outer radius
-- `innerRadius` - Inner radius (hole)
-- `height` - Height of the tube
-- `segments` - Number of circular segments (default: 32)
+- `outerRadius` - Outer radius, or `[width, depth]` for a rectangle (a single
+  number in `rectTube` means a square)
+- `innerRadius` - Inner radius. For a rectangle: a **number** is read as a
+  uniform wall thickness, `[width, depth]` as an explicit inner size.
+- `height` - Height of the tube (z = 0 .. height)
+- `segments` - Number of circular segments (default: 32). For a rectangle this
+  slot is the options object instead:
+  - `cornerRadius` - outer corner radius (default 0, i.e. sharp)
+  - `innerCornerRadius` - defaults to `cornerRadius - wall`, keeping the wall
+    uniform around the corner
+  - `segments` - segments per full circle for the corner arcs (default 32)
+  - `center` - center the extrusion on z instead of starting at z = 0
 
 ---
 
@@ -453,7 +527,10 @@ console.log(dims.max);    // [20, 30, 10]
 
 ### getScaleRatio(manifold, axis, thickness)
 
-Helper function used by `shell()`. Computes the uniform scale ratio needed to create a shell of the given thickness.
+Legacy. Computes the uniform scale ratio the old scale-based `shell()` used.
+Nothing calls it any more — `shell()` offsets each face instead, because one
+scale ratio cannot give a non-cubic part a uniform wall. Kept so existing
+scripts that call it still run.
 
 **Parameters:**
 - `manifold` - The input manifold

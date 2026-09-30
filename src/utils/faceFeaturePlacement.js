@@ -51,6 +51,9 @@ export const FACE_FEATURE_IDS = new Set([
   'chamferEdges',
   'crossSection',
   'sweepPath',
+  // Shell / Draft: the pick is the opening face / the face(s) being drafted.
+  'shell',
+  'addDraft',
 ]);
 
 /** Features that require a planar face when one is selected (Slice 21). */
@@ -117,6 +120,22 @@ export function classifySelectedFace(faceData) {
     triangleCount,
     selectionMode: mode,
   };
+  // Multi-face pick (shift-click in the viewport): every accumulated face,
+  // oldest first, this one last. Shell/Draft read it; every other feature keeps
+  // using `center`/`normal` and so keeps behaving as a single-face pick.
+  if (Array.isArray(faceData.group) && faceData.group.length > 1) {
+    const group = faceData.group
+      .map((g) => {
+        if (!g || !Array.isArray(g.center) || !Array.isArray(g.normal)) return null;
+        const n = g.normal.map(Number);
+        const c = g.center.map(Number);
+        if (n.some((v) => !Number.isFinite(v)) || c.some((v) => !Number.isFinite(v))) return null;
+        const l = Math.hypot(n[0], n[1], n[2]) || 1;
+        return { center: c, normal: [n[0] / l, n[1] / l, n[2] / l] };
+      })
+      .filter(Boolean);
+    if (group.length > 1) out.group = group;
+  }
   if (type === 'irregular') {
     out.refuseMessage =
       'Selected face is irregular (multi-region / non-developable). ' +
@@ -277,6 +296,51 @@ export function faceAwareParams(id, faceType) {
   const depth = {
     name: 'depth', type: 'number', default: 12, label: 'Depth', min: 0.1, step: 0.5, slider: true,
   };
+
+  // Shell: the pick is the OPENING. Any face type works — the wall is offset
+  // from each face, so a cylindrical wall shells as happily as a planar one.
+  if (id === 'shell') {
+    return [
+      body,
+      { name: 'wall', type: 'number', default: 2.5, label: 'Wall', min: 0.1, step: 0.25, slider: true },
+      {
+        name: 'openScope',
+        type: 'select',
+        default: 'selected',
+        label: 'Opening',
+        options: [{ value: 'selected', label: 'selected face' }, ...SHELL_OPENING_OPTIONS],
+      },
+    ];
+  }
+  // Draft: the pick is the face (or faces) that tilt. `pull` is the draw
+  // direction and `reference` names the plane that stays put.
+  if (id === 'addDraft') {
+    return [
+      body,
+      {
+        name: 'draftDeg', type: 'number', default: 2, label: 'Draft °',
+        min: -45, max: 45, step: 0.5, slider: true,
+      },
+      {
+        name: 'faceScope',
+        type: 'select',
+        default: 'selected',
+        label: 'Faces',
+        options: [
+          { value: 'selected', label: 'selected face(s)' },
+          { value: 'sides', label: 'all side walls' },
+        ],
+      },
+      { name: 'pull', type: 'select', default: 'z', label: 'Pull', options: DRAFT_PULL_OPTIONS },
+      {
+        name: 'reference',
+        type: 'select',
+        default: 'min',
+        label: 'Reference plane',
+        options: DRAFT_REFERENCE_OPTIONS,
+      },
+    ];
+  }
 
   if (id === 'filletEdges') {
     return [
@@ -486,8 +550,96 @@ export function seedFaceParams(id, face) {
     base.u = 0;
     base.v = 0;
   }
+  // Draft: open the sheet on a pull the picked face can actually tilt about,
+  // so the first Accept is not the "a cap cannot be drafted" refusal.
+  if (id === 'addDraft') {
+    base.pull = draftPullForFace(face, 'z');
+  }
   void id;
   return base;
+}
+
+/**
+ * One face pick as a literal the kernel can resolve: `{ center: [...], normal: [...] }`.
+ * shell()/hollow()/draftFaces() take this shape directly and fail loudly when it
+ * no longer names a face on the body — so no resolver IIFE is needed here.
+ * @param {{center: number[], normal: number[]}} face
+ * @returns {string}
+ */
+export function facePickLiteral(face) {
+  return `{ center: ${formatVec3(face.center)}, normal: ${formatVec3(face.normal)} }`;
+}
+
+/** Every face in a multi-pick (or just the one), as literals. */
+export function facePickLiterals(face) {
+  const list = Array.isArray(face?.group) && face.group.length > 1 ? face.group : [face];
+  return list.map(facePickLiteral);
+}
+
+/** Axes the Shell / Draft sheets offer when no face is picked. */
+export const SHELL_OPENING_OPTIONS = [
+  { value: 'z', label: '+Z (top)' },
+  { value: '-z', label: '−Z (bottom)' },
+  { value: 'x', label: '+X' },
+  { value: '-x', label: '−X' },
+  { value: 'y', label: '+Y' },
+  { value: '-y', label: '−Y' },
+  { value: 'none', label: 'closed (no opening)' },
+];
+
+/** Draw direction for Draft. */
+export const DRAFT_PULL_OPTIONS = [
+  { value: 'z', label: '+Z' },
+  { value: '-z', label: '−Z' },
+  { value: 'x', label: '+X' },
+  { value: '-x', label: '−X' },
+  { value: 'y', label: '+Y' },
+  { value: '-y', label: '−Y' },
+];
+
+/** The plane a Draft pivots about (measured along the pull direction). */
+export const DRAFT_REFERENCE_OPTIONS = [
+  { value: 'min', label: 'start of pull (stays put)' },
+  { value: 'mid', label: 'middle' },
+  { value: 'max', label: 'end of pull' },
+];
+
+/**
+ * The `opening` / `faces` argument for a face-driven Shell or Draft.
+ *
+ * scope 'selected'  -> the picked face(s), as literals
+ * scope 'sides'     -> 'sides' (every wall off the pull axis) — Draft only
+ * scope 'none'      -> 'none' (closed)  — Shell only
+ * anything else     -> treated as an axis string
+ *
+ * @param {FaceClassification|null} face
+ * @param {string} scope
+ * @returns {string} a JS expression
+ */
+export function emitFaceSelectionExpr(face, scope) {
+  if (scope === 'selected' && face) {
+    const lits = facePickLiterals(face);
+    return lits.length > 1 ? `[${lits.join(', ')}]` : lits[0];
+  }
+  if (scope === 'sides' || scope === 'none' || scope === 'all') return `'${scope}'`;
+  return `'${scope}'`;
+}
+
+/**
+ * Default pull direction for drafting the PICKED face: a face can only tilt
+ * about a line in its own plane, so the pull must be (nearly) in-plane with it —
+ * the world axis with the smallest |n·axis|. Z wins ties, since a mould is
+ * almost always drawn along Z.
+ * @param {FaceClassification|null} face
+ * @param {string} [fallback='z']
+ * @returns {'x'|'y'|'z'|string}
+ */
+export function draftPullForFace(face, fallback = 'z') {
+  if (!face || !Array.isArray(face.normal)) return fallback;
+  const n = face.normal;
+  const axes = [['z', Math.abs(n[2])], ['x', Math.abs(n[0])], ['y', Math.abs(n[1])]];
+  axes.sort((a, b) => a[1] - b[1]);
+  return axes[0][1] < 0.9 ? axes[0][0] : fallback;
 }
 
 /**
@@ -993,7 +1145,9 @@ export function resolveFaceModal(paletteItem, selectedFace, selectedEdges = null
       params: mergedParams,
       title: hasEdges && isEdgeFeature
         ? `${paletteItem.title} — ${selectedEdges.length} edge${selectedEdges.length === 1 ? '' : 's'}`
-        : `${paletteItem.title} — on ${face.type} face`,
+        : (face.group
+          ? `${paletteItem.title} — on ${face.group.length} picked faces`
+          : `${paletteItem.title} — on ${face.type} face`),
       _facePlacement: true,
       _edgePlacement: hasEdges && isEdgeFeature,
       _minEdgeLength: minL,
