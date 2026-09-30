@@ -323,6 +323,9 @@ is the same shape the bridge takes in the target architecture anyway.
 **Recommendation: (a)**, so the CAD work moves while the segmentation gets the
 scrutiny it actually needs.
 
+> **DECIDED: (a).** Artur, this round. PR 1 goes first; the rest follows in
+> order. F2 is in scope and closes at PR 8.
+
 ---
 
 ## 6. Validation corpus — the cases that must not regress
