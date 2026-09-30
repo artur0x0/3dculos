@@ -608,6 +608,22 @@ const LINE_OFFSET_EPS = 0.45;
 const LINE_GAP_EPS = 0.75;
 /** RDP tolerance. Keeps a mild loft generator; collapses a straight side to one segment. */
 const CHAIN_SIMPLIFY_EPS = 0.35;
+/**
+ * Max turn (deg) a single simplified chord may span.
+ *
+ * RDP alone is a *distance* test, so on a tight arc it is scale-blind: a
+ * fillet's r=4 quarter-round sits only 0.30 mm off its own 45° chord, under
+ * CHAIN_SIMPLIFY_EPS, so a 24-segment blend end-cap collapsed to TWO chords
+ * turning 45° each. That broke Tangent-on twice over: the highlight was a
+ * 2-chord polyline instead of a curve, and 45° blows past TANGENT_PROP_DEG
+ * (25°), so the G1 walk died one chord into the round (Artur: "only makes it
+ * half-way up the fillet and does not actually track the curve").
+ *
+ * Capping the angular span keeps every kept chord G1-walkable by construction.
+ * 20° leaves margin under the 25° walk tolerance; straight runs turn 0° and
+ * still collapse to one segment.
+ */
+const CHAIN_MAX_TURN_DEG = 20;
 /** Closed loops kept only when they are circular rims, not a face outline. */
 const RIM_RADIAL_CV = 0.12;
 
@@ -850,7 +866,22 @@ function _orderChain(chain) {
   return { pts, idxs, closed };
 }
 
-function _rdpKeep(pts, eps) {
+/**
+ * Turn (deg) the original polyline accumulates across span [i,j]: the angle
+ * between its first and last segment direction. 0 on a straight run.
+ */
+function _spanTurnDeg(pts, i, j) {
+  if (j - i < 2) return 0;
+  const first = _sub3(pts[i + 1], pts[i]);
+  const last = _sub3(pts[j], pts[j - 1]);
+  const la = _len3(first);
+  const lb = _len3(last);
+  if (!(la > 1e-9) || !(lb > 1e-9)) return 0;
+  const c = _dot3(first, last) / (la * lb);
+  return (Math.acos(Math.min(1, Math.max(-1, c))) * 180) / Math.PI;
+}
+
+function _rdpKeep(pts, eps, maxTurnDeg = CHAIN_MAX_TURN_DEG) {
   const n = pts.length;
   if (n <= 2) return pts.map((_, i) => i);
   const keep = new Array(n).fill(false);
@@ -870,7 +901,11 @@ function _rdpKeep(pts, eps) {
         maxK = k;
       }
     }
-    if (maxK >= 0 && maxD > eps) {
+    // Split on distance OR on angular span: RDP's distance test is scale-blind
+    // on tight arcs (see CHAIN_MAX_TURN_DEG). When only the turn is over, the
+    // farthest point is still the right place to cut — on an arc it is the
+    // mid-vertex, which halves the span.
+    if (maxK >= 0 && (maxD > eps || _spanTurnDeg(pts, i, j) > maxTurnDeg)) {
       keep[maxK] = true;
       stack.push([i, maxK], [maxK, j]);
     }
