@@ -324,7 +324,100 @@ scrutiny it actually needs.
 
 ---
 
-## 6. Risks and open questions
+## 6. Validation corpus — the cases that must not regress
+
+Two hard-won cases, captured as runnable scripts with measured baselines. Every
+PR is gated on them. Both are **already instrumented below** — the numbers are
+what `main` @ 324b1a6 produces today, so "no regression" is checkable rather
+than a matter of opinion.
+
+### L1 — Loft corner fillet (hard-won; do not break)
+
+```js
+const fr = { center: [0, 0, 10], normal: [0, 0, 1], x: [1, 0, 0], y: [0, 1, 0] };
+const xs2 = makeCrossSection(fr, profileCircle(5, 64));
+const xs3 = makeCrossSection(offsetPlaneFrame(fr, 20), profileRectangle(20, 12, true));
+let part = placeInFrame(fr, makeLoft([xs2, xs3]));
+const selEdges = [{ a: 9289, b: 11649, va: [4.634159, -2.780495, 11.230769],
+  vb: [10, -6, 30], length: 19.78488, key: "coh-16-0",
+  n0: [0.664914, -0.680959, -0.306894], n1: [0.850071, -0.421803, -0.315374] }];
+const path = makeSweepPath(selEdges);
+part = filletAlongPath(part, path, 1.98, { variableProfile: true });
+```
+
+Measured today: the pick graph resolves that edge as `coh-16-0`, `L=19.785`,
+`dih=18.3°`; the hard variable-profile fillet succeeds at **34 418 tris**.
+
+| must hold | today |
+| --- | --- |
+| the corner generator is one coherent edge, `L≈19.785` | ✅ |
+| Tangent **off** → exactly 1 edge | ✅ 1 |
+| Tangent **on** → exactly 1 edge (both ends are real corners: 106° and 16.8°) | ❌ **3** |
+| hard variable-profile fillet r=1.98 succeeds | ✅ 34 418 tris |
+| resulting surface is smooth — no facet ridge, no gouge | eyeball |
+
+**The Tangent-on row is red on `main` today**, and it is the same failure
+`golden:loft-edge-pick` reports as *"tangent-on side generator does not explode
+— n=3"*. That golden is guarding **this** case. The saved script is safe because
+it hard-codes the edge; the risk is on **re-authoring** — pick that edge with
+Tangent on today and you get three edges and a different fillet. PR 1 or PR 5
+must turn it green.
+
+Why three: the walk crosses a genuine model corner onto the top rect rim and
+down the opposite corner generator. In the target architecture this is fixed
+structurally — the patch pair changes at that corner, so no tangent link is
+created — which is the honest version of the wall-continuity heuristic I tried
+and reverted earlier.
+
+### F2 — Fillet-on-fillet, second wrapping the first's tangent chain
+
+```js
+let part = Manifold.cube([40, 30, 20], true);
+part = filletAlongPath(part, makeSweepPath(edgesBetween(part, 3, 5)), 4);
+// then: tap the vertical end-cap edge, Tangent on -> 6 edges
+//       (vertical -> 4 round chords -> tangent top edge), fillet that chain
+part = filletAlongPath(part, makeSweepPath(selEdges), 1.5, { variableProfile: true });
+```
+
+The chain is the wrap PR #84 produces: `coh-9-0` (vertical, L=16) → `coh-11-3..0`
+(the round) → `coh-10-0` (tangent top edge, L=26). Six edges.
+
+| must hold | today |
+| --- | --- |
+| Tangent-on wraps the whole round onto the tangent top edge | ✅ 6 edges |
+| second fillet succeeds at r=1.5 | ✅ 2 268 tris |
+| second fillet succeeds at r=2.5 | ✅ 1 854 tris |
+| **no dangling surface slivers** | ❌ **61 degenerate tris @ r=1.5, 38 @ r=2.5** (baseline after fillet 1: **0**) |
+
+**This fails Artur's stated requirement today while passing the automated
+guard.** `filletSliverGuard` allows up to 80 absolute / 6% fractional; 61 of
+2 268 is 2.7%, so the guard stays quiet. This is the exact blind spot the fillets
+skill warns about — *"volume guards cannot see a distribution error"*. The
+acceptance criterion here must therefore be **degenerate-triangle delta ≈ 0
+against the post-fillet-1 baseline**, not "under the guard".
+
+Fixing F2 is **not** in PR 1–7 scope as written — it is a kernel/cutter concern,
+not a selection one. It is captured here so that (a) it does not get worse, and
+(b) it is on the record as a known-open defect with a number attached.
+
+### Gate per PR
+
+| PR | Re-run | Extra |
+| --- | --- | --- |
+| **1. Stop the bleeding** | L1, F2 | L1 Tangent-on **must go 3 → 1**. F2 chain must stay 6 edges and slivers must not exceed 61/38. Plus `golden:mobile-c3-roundedbox-fillet-tangent` (the bridge's origin). |
+| **2. Patch segmentation** | L1, F2 | Overlay eyeball: loft wall, each blend, each flat face exactly one colour. Blend must **not** merge into its neighbouring flats (the tangent-junction trap). |
+| **3. Face pick** | L1, F2 | Single tap selects the whole loft wall, and the whole fillet band, first try. No double-click. |
+| **4. Edge graph** | L1, F2 | Goldens only; assert L1's corner generator has **no** tangent link across either end. |
+| **5. Propagation reads graph** | L1, F2 | Full matrix: loft corner (1 edge), roundedBox rim (wraps), shelled box (outer only), F2 wrap (6 edges), concave edges. |
+| **6. Visibility** | L1, F2 | Orbit the shelled box; confirm no pick through walls, and that an already-selected chain survives orbiting. |
+| **7. Cleanup** | L1, F2 | Both end-to-end through Fillet Accept, script emitted and re-run. |
+
+Every PR re-runs `npm run verify` plus the full fillet golden suite; the table
+above is what a human has to look at on top of that.
+
+---
+
+## 7. Risks and open questions
 
 1. **The merge rule is the whole ballgame.** If curvature-consistent merging
    mis-segments — swallowing a face into a blend, or shredding a cylinder —
@@ -346,7 +439,7 @@ scrutiny it actually needs.
 
 ---
 
-## 7. Non-goals
+## 8. Non-goals
 
 - The blend kernels. `filletAlongPath`, the easy/hard split and the cutter math
   are untouched; only what gets handed to them changes.
