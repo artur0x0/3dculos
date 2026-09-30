@@ -265,7 +265,10 @@ export default function FeatureSheet({
       aria-label={`${feature.chipLabel} feature sheet`}
     >
       {/* Row 1: identity + actions (always visible on narrow phones). */}
-      <div className="flex flex-row items-center gap-2 w-full min-w-0">
+      <div
+        className="flex flex-row flex-wrap items-center gap-x-2 gap-y-1.5 w-full min-w-0"
+        data-feature-sheet-row="identity"
+      >
         <span className="relative inline-flex items-center justify-center rounded-lg bg-cyan-900/70 p-1.5 border border-cyan-500/40 shrink-0">
           <Icon size={18} strokeWidth={2} aria-hidden="true" />
           <TypeBadge index={typeIndex} />
@@ -278,7 +281,11 @@ export default function FeatureSheet({
           <div className={`${POPUP_TEXT.title} text-white truncate`}>{feature.chipLabel}</div>
           <div className={`${POPUP_TEXT.subtitle} text-cyan-100/80 truncate`}>Feature sheet</div>
         </div>
-        <div className="flex items-center gap-1.5 shrink-0">
+        {/* The four actions are ~315px on their own, which is more than a 360px
+            phone has left after the icon — so the cluster wraps to its own line
+            instead of colliding with the title or being clipped by the shell's
+            overflow-hidden. `ml-auto` keeps it right-aligned either way. */}
+        <div className="flex items-center gap-1.5 shrink-0 ml-auto">
           <PopupButton
             variant="ghost"
             accent={ACCENT}

@@ -87,7 +87,9 @@ console.log('mobile C.3: sheet delete + ribbon z + CAD gap + Block + rail height
       /data-script-feature-strip/.test(app) &&
       /relative z-20 flex flex-col shrink-0/.test(app) &&
       /data-feature-strip-ribbon-spacer/.test(app) &&
-      /data-feature-strip-ribbon-spacer-h="11"/.test(app) &&
+      // The spacer is measured from the ribbon now, not a hard-coded h-11.
+      /data-feature-strip-ribbon-spacer-h="measured"/.test(app) &&
+      /style=\{\{ height: ribbonPx \}\}/.test(app) &&
       /data-editor-ribbon/.test(editor) &&
       /relative z-30/.test(editor),
   );
