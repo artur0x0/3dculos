@@ -129,6 +129,12 @@ function _c4RequireValidSolid(out, fn) {
 
 /**
  * Helper to compute uniform scale ratio based on min perpendicular dimension
+ *
+ * LEGACY: this is the math the pre-uniform-wall `shell()` used. Kept because it
+ * is part of HELPER_FUNCTIONS (user scripts may call it), but nothing in this
+ * module uses it any more — a uniform SCALE cannot produce a uniform WALL:
+ * scaling a 60x20 box by one ratio leaves a 3x thicker wall on the long axis
+ * than on the short one. See `shell()` for the offset-based replacement.
  */
 function getScaleRatio(manifold, axis, thickness) {
   const bbox = manifold.boundingBox();
@@ -147,100 +153,508 @@ function getScaleRatio(manifold, axis, thickness) {
   return (minPerpSize - 2 * thickness) / minPerpSize;
 }
 
-/**
- * Shell function - creates a hollow version of a manifold
- * @param {Manifold} manifold - The input manifold to shell
- * @param {number} thickness - Wall thickness
- * @param {string} axis - Axis for shell alignment ('x', 'y', or 'z')
- * @returns {Manifold} The inner tool for subtraction (use manifold.subtract(shell(...)))
- */
-function shell(manifold, thickness, axis = "z") {
-  let axisIndex;
-  switch (axis.toLowerCase()) {
-    case "x": axisIndex = 0; break;
-    case "y": axisIndex = 1; break;
-    case "z": axisIndex = 2; break;
-    default: throw new Error('Axis must be "x", "y", or "z"');
+// ============================================================================
+// SHELL / DRAFT — face-driven, uniform wall
+// ----------------------------------------------------------------------------
+// Both features used to be bounding-box tricks:
+//   shell    = scale the solid down by ONE ratio and subtract -> wall thickness
+//              differed per axis (a 60x20x20 box got a 2.5mm wall on Y and a
+//              7.5mm wall on X), and the "axis" argument was the only way to
+//              say where the opening goes.
+//   addDraft = taper by scaling every perpendicular coordinate -> the requested
+//              angle was only achieved on the SMALLEST perpendicular dimension;
+//              every wider wall came out shallower.
+// Both are now built from the real face set (c4MeshData) so thickness and angle
+// are honoured per face, and both accept a face SELECTION (what the Viewport
+// face pick hands over) instead of only an axis letter.
+// ============================================================================
+
+const _C4_SIDE_FACE_COS = Math.cos((25 * Math.PI) / 180); // |n·pull| above this = cap, not side
+
+/** 'z' | '+z' | '-y' | [x,y,z] | {normal} -> unit vector. */
+function _c4DirVec(spec, label = 'direction') {
+  if (Array.isArray(spec) && spec.length === 3 && spec.every((n) => typeof n === 'number')) {
+    if (_c4Len(spec) < 1e-12) throw new Error(`${label}: zero-length vector`);
+    return _c4Norm(spec);
   }
-  const scaleRatio = getScaleRatio(manifold, axisIndex, thickness);
-  
-  // Create inner scaled version
-  const inner = manifold.scale([scaleRatio, scaleRatio, scaleRatio]);
-  
-  // Get bounding boxes
-  const bboxOuter = manifold.boundingBox();
-  const bboxInner = inner.boundingBox();
-  
-  // Translate inner to coincide on the min side along axis
-  const trans = [0, 0, 0];
-  trans[axisIndex] = bboxOuter.min[axisIndex] - bboxInner.min[axisIndex];
-  const innerTranslated = inner.translate(trans);
-  
-  return innerTranslated;  // Return tool for subtraction
+  if (spec && typeof spec === 'object' && Array.isArray(spec.normal)) return _c4Norm(spec.normal);
+  if (typeof spec === 'string') {
+    const s = spec.trim().toLowerCase();
+    const sign = s.startsWith('-') ? -1 : 1;
+    const ax = { x: 0, y: 1, z: 2 }[s.replace(/^[+-]/, '')];
+    if (ax === undefined) {
+      throw new Error(`${label}: expected 'x'|'y'|'z' (optionally signed) or [x,y,z], got '${spec}'`);
+    }
+    const v = [0, 0, 0];
+    v[ax] = sign;
+    return v;
+  }
+  throw new Error(`${label}: expected 'x'|'y'|'z', a signed axis like '-z', or [x,y,z]`);
+}
+
+/** Unique vertex indices of a face, in first-seen order. */
+function _c4FaceVertIndices(md, face) {
+  const seen = new Set();
+  const out = [];
+  for (const t of face.tris) {
+    for (let k = 0; k < 3; k++) {
+      const vi = md.T[t * 3 + k];
+      if (!seen.has(vi)) { seen.add(vi); out.push(vi); }
+    }
+  }
+  return out;
 }
 
 /**
- * Add draft angle to a manifold (tapers from bottom to top)
- * 
- * Applies a linear taper along the specified axis, commonly used in 
- * injection molding to allow parts to release from molds.
- * 
- * @param {Manifold} manifold - The manifold to add draft to
- * @param {number} draftDeg - Draft angle in degrees (typically 1-3° for molding)
- * @param {string} [axis='z'] - The pull/draft direction axis: 'x', 'y', or 'z'
- * @returns {Manifold} The drafted manifold (tapered toward max along axis)
- * @throws {Error} If axis is not 'x', 'y', or 'z'
- * 
+ * Resolve a face SELECTION to a Set of face indices into md.faces.
+ *
+ * Accepted specs (arrays mix freely):
+ *   null | false | 'none' | []      -> {} (nothing)
+ *   'all'                           -> every face
+ *   'sides'                         -> faces more than 25° off ±opts.pull
+ *   'z' | '-z' | [0,0,1]            -> every face whose normal is within tolDeg
+ *   a face from facesByNormal()     -> that one face
+ *   a Viewport face pick {center, normal} / a PlaneFrame -> the face it names
+ *
+ * Fails loudly when a named face is not on this body: a silently-empty
+ * selection would make shell()/draftFaces() a no-op that looks like a kernel bug.
+ */
+function _c4ResolveFaceSelection(md, spec, opts = {}) {
+  const { tolDeg = 8, planeTol = 0.05, label = 'faces', pull = null } = opts;
+  const out = new Set();
+  const add = (s) => {
+    if (s === null || s === undefined || s === false || s === 'none') return;
+    if (s === 'all') { md.faces.forEach((_, i) => out.add(i)); return; }
+    if (s === 'sides') {
+      if (!pull) throw new Error(`${label}: 'sides' needs a pull direction`);
+      md.faces.forEach((f, i) => {
+        if (Math.abs(_c4Dot(f.normal, pull)) < _C4_SIDE_FACE_COS) out.add(i);
+      });
+      return;
+    }
+    if (Array.isArray(s) && !(s.length === 3 && s.every((n) => typeof n === 'number'))) {
+      s.forEach(add);
+      return;
+    }
+    // A face object (it carries a center) names ONE face; a bare direction
+    // names every face pointing that way.
+    const named = s && typeof s === 'object' && Array.isArray(s.center);
+    const dir = _c4DirVec(s, label);
+    const cosT = Math.cos((tolDeg * Math.PI) / 180);
+    const cands = [];
+    md.faces.forEach((f, i) => { if (_c4Dot(f.normal, dir) >= cosT) cands.push(i); });
+    if (!cands.length) {
+      throw new Error(
+        `${label}: no face on this body points along [${dir.map((n) => n.toFixed(3))}] `
+        + `(within ${tolDeg}°) — re-pick the face after the edit that changed it`,
+      );
+    }
+    if (!named) { cands.forEach((i) => out.add(i)); return; }
+    const c = s.center;
+    const scored = cands.map((i) => ({
+      i,
+      off: Math.abs(_c4Dot(_c4Sub(c, md.faces[i].center), md.faces[i].normal)),
+      d: _c4Len(_c4Sub(c, md.faces[i].center)),
+    }));
+    const onPlane = scored.filter((x) => x.off <= planeTol);
+    const pick = (onPlane.length ? onPlane : scored).sort((a, b) => a.d - b.d)[0];
+    if (!onPlane.length && pick.off > 1) {
+      throw new Error(
+        `${label}: the picked face is ${pick.off.toFixed(3)}mm off every matching `
+        + 'plane on this body — it belongs to an earlier version of the part; re-pick it',
+      );
+    }
+    out.add(pick.i);
+  };
+  add(spec);
+  return out;
+}
+
+/**
+ * Rebuild a Manifold from md's triangles with new vertex positions.
+ *
+ * NOT `warp()`: getMesh() reports float32 vertices while warp() hands the
+ * callback Manifold's own double-precision positions, so keying displacements
+ * by coordinate silently missed every vertex whose value is not exact in
+ * float32 — a shelled cube came out right and a shelled cylinder came out 0.1mm
+ * thick. Going through the mesh keeps positions and indices in lockstep.
+ */
+function _c4RebuildWithVerts(md, verts, label) {
+  const { Manifold, Mesh } = manifoldModule;
+  const vp = new Float32Array(verts.length * 3);
+  for (let i = 0; i < verts.length; i++) {
+    vp[i * 3] = verts[i][0];
+    vp[i * 3 + 1] = verts[i][1];
+    vp[i * 3 + 2] = verts[i][2];
+  }
+  const out = new Manifold(new Mesh({
+    numProp: 3,
+    vertProperties: vp,
+    triVerts: new Uint32Array(md.T),
+  }));
+  const se = _c4StatusError(out);
+  if (se) {
+    throw new Error(
+      `${label}: the offset surface folds in on itself (${se}) — use a smaller value`,
+    );
+  }
+  return out;
+}
+
+/** 3x3 solve (Cramer). Returns null when the matrix is effectively singular. */
+function _c4Solve3(A, b) {
+  const [a0, a1, a2] = A;
+  const det = a0[0] * (a1[1] * a2[2] - a1[2] * a2[1])
+    - a0[1] * (a1[0] * a2[2] - a1[2] * a2[0])
+    + a0[2] * (a1[0] * a2[1] - a1[1] * a2[0]);
+  if (!Number.isFinite(det) || Math.abs(det) < 1e-18) return null;
+  const d = (m) => (
+    m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
+    - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+    + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0])
+  );
+  const sub = (k) => A.map((row, i) => row.map((v, j) => (j === k ? b[i] : v)));
+  return [d(sub(0)) / det, d(sub(1)) / det, d(sub(2)) / det];
+}
+
+/**
+ * The one displacement that satisfies `d·nᵢ = rᵢ` for every plane meeting a
+ * vertex, in the least-squares sense. This single solve is what makes both
+ * shell walls and draft angles come out right, because it distinguishes
+ * "several facets of ONE curved surface" from "several DISTINCT planes":
+ *   one plane        -> d = r·n                    (flat wall)
+ *   two              -> the intersection of the two moved planes (a box edge
+ *                       gives d = -t(n₁+n₂), so the corner is not pinched)
+ *   three            -> the corner of three moved planes
+ *   many, near-parallel -> their common value, i.e. the smooth-surface answer
+ *                       for a sphere, a tessellated cylinder or a lofted wall
+ * SUMMING per-face displacements instead would be right for the box corner and
+ * badly wrong for the loft — it multiplied a lofted cup's draft by its facet
+ * count and collapsed the solid. A small Tikhonov term keeps the 3x3 well
+ * conditioned at every rank so one code path covers all of the above.
+ *
+ * @param {number[][]} normals distinct unit plane normals
+ * @param {number[]} rhs signed distance to move each plane along its normal
+ * @returns {number[]}
+ */
+function _c4SolvePlaneMoves(normals, rhs) {
+  if (!normals.length) return [0, 0, 0];
+  if (normals.length === 1) return _c4Mul(rhs[0], normals[0]);
+  const A = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
+  const b = [0, 0, 0];
+  for (let k = 0; k < normals.length; k++) {
+    const n = normals[k];
+    for (let i = 0; i < 3; i++) {
+      for (let j = 0; j < 3; j++) A[i][j] += n[i] * n[j];
+      b[i] += rhs[k] * n[i];
+    }
+  }
+  const lam = 1e-6 * normals.length;
+  for (let i = 0; i < 3; i++) A[i][i] += lam;
+  const sol = _c4Solve3(A, b);
+  if (sol) return sol;
+  // Singular even with the regulariser: every normal points the same way, so
+  // the average direction and the mean distance are the answer.
+  const avg = _c4Norm(normals.reduce(_c4Add, [0, 0, 0]));
+  return _c4Mul(rhs.reduce((x, y) => x + y, 0) / rhs.length, avg);
+}
+
+/** Append `n` to `list` unless a direction within 1e-6 is already there. */
+function _c4PushDistinct(list, n) {
+  for (const m of list) {
+    if (Math.abs(m[0] - n[0]) < 1e-6 && Math.abs(m[1] - n[1]) < 1e-6 && Math.abs(m[2] - n[2]) < 1e-6) return;
+  }
+  list.push(n);
+}
+
+/**
+ * Reject an offset/draft that turns the surface inside out.
+ *
+ * A fold is still a closed mesh, so volume alone does not catch it — but a
+ * folded facet has its normal REVERSED. Weigh flips BY AREA and judge the
+ * surface as a whole: a dense loft or sweep always has a few slivers that
+ * invert under any offset (the boolean absorbs them), while a genuinely
+ * over-thick wall or over-steep draft turns the whole surface inside out.
+ */
+function _c4RequireNoFold(md, out, label, amount) {
+  let flipped = 0;
+  let total = 0;
+  for (let t = 0; t < md.numTri; t++) {
+    const i0 = md.T[t * 3], i1 = md.T[t * 3 + 1], i2 = md.T[t * 3 + 2];
+    const before = _c4Cross(_c4Sub(md.V[i1], md.V[i0]), _c4Sub(md.V[i2], md.V[i0]));
+    const a = _c4Len(before);
+    if (a < 1e-9) continue; // already degenerate: carries no normal
+    total += a;
+    const after = _c4Cross(_c4Sub(out[i1], out[i0]), _c4Sub(out[i2], out[i0]));
+    if (_c4Dot(before, after) < 0) flipped += a;
+  }
+  if (total > 0 && flipped / total > 0.25) {
+    throw new Error(
+      `${label}: ${amount} is too large for this body — ${Math.round((flipped / total) * 100)}% `
+      + 'of the surface folds through itself; use a smaller value',
+    );
+  }
+}
+
+/**
+ * Displacement that puts a vertex on the inward offset of every face meeting it.
+ * `openNormals` are faces the cavity must break THROUGH: the vertex is pushed
+ * out along them by t instead of in, so the cavity pokes past the outer surface
+ * and the subtraction opens the face.
+ */
+function _c4VertexOffset(closedNormals, openNormals, t) {
+  let d = _c4SolvePlaneMoves(closedNormals, closedNormals.map(() => -t));
+  if (openNormals.length) {
+    const avg = _c4Norm(openNormals.reduce(_c4Add, [0, 0, 0]));
+    d = _c4Add(d, _c4Mul(t, avg));
+  }
+  return d;
+}
+
+/**
+ * The CAVITY of a uniform-thickness shell: the whole boundary offset inward by
+ * `thickness`, as one warp of the solid (O(vertices), no per-facet booleans).
+ *
+ * Faces in `openSet` are pushed OUT instead of in, so the cavity overshoots the
+ * outer surface there and subtracting it opens that face.
+ *
+ * Why not prisms: sweeping each facet inward and unioning is exact, but a
+ * lofted wall is tens of thousands of facets — the default Solo Cup script took
+ * 83s and produced a 968k-triangle skin. This keeps the original topology.
+ */
+function _c4OffsetCavity(md, thickness, openSet, label) {
+  const nV = md.V.length;
+  // Per-vertex distinct adjacent facet normals, split by open / closed.
+  const closed = Array.from({ length: nV }, () => []);
+  const open = Array.from({ length: nV }, () => []);
+  const isOpenTri = new Uint8Array(md.numTri);
+  for (const fi of openSet) {
+    for (const t of md.faces[fi].tris) isOpenTri[t] = 1;
+  }
+  for (let t = 0; t < md.numTri; t++) {
+    const i0 = md.T[t * 3], i1 = md.T[t * 3 + 1], i2 = md.T[t * 3 + 2];
+    const cx = _c4Cross(_c4Sub(md.V[i1], md.V[i0]), _c4Sub(md.V[i2], md.V[i0]));
+    if (_c4Len(cx) < 1e-12) continue; // zero-area facet carries no plane
+    const n = _c4Norm(cx);
+    const bucket = isOpenTri[t] ? open : closed;
+    _c4PushDistinct(bucket[i0], n);
+    _c4PushDistinct(bucket[i1], n);
+    _c4PushDistinct(bucket[i2], n);
+  }
+  let moved = 0;
+  const out = md.V.map((v) => v.slice());
+  for (let vi = 0; vi < nV; vi++) {
+    if (!closed[vi].length && !open[vi].length) continue;
+    const d = _c4VertexOffset(closed[vi], open[vi], thickness);
+    if (!Number.isFinite(d[0] + d[1] + d[2])) {
+      throw new Error(`${label}: offset blew up at a degenerate vertex — check the mesh for slivers`);
+    }
+    if (_c4Len(d) < 1e-12) continue;
+    moved++;
+    out[vi] = _c4Add(md.V[vi], d);
+  }
+  if (!moved) throw new Error(`${label}: nothing to offset — the body has no faces`);
+  _c4RequireNoFold(md, out, label, thickness);
+  return _c4RebuildWithVerts(md, out, label);
+}
+
+/**
+ * shell(manifold, thickness, opening) — the CAVITY tool.
+ *
+ * Returns the material to remove, so the historical call site still reads
+ *   part = part.subtract(shell(part, 2.5, 'z'));
+ * `hollow(part, 2.5, 'z')` is the same thing with the subtraction done for you.
+ *
+ * Wall thickness is uniform on every face: each boundary vertex lands on the
+ * inward offset of every face meeting it, instead of the old single-ratio scale
+ * that gave a 60x20 box a 2.5mm wall on Y and 7.5mm on X.
+ *
+ * @param {Manifold} manifold
+ * @param {number} thickness wall thickness, mm
+ * @param {*} [opening='z'] which face(s) open into the cavity: 'z' (default,
+ *        the +Z face — what the old axis argument meant), '-z', 'x'…; 'none'
+ *        for a closed hollow; a face from facesByNormal()/planarFaceAt(); a
+ *        Viewport face pick {center, normal}; or an array of those.
+ * @returns {Manifold} the cavity — subtract it from `manifold`
+ */
+function shell(manifold, thickness, opening = 'z') {
+  if (!manifoldModule) throw new Error('Manifold not initialized');
+  _c4RequirePositive('shell', 'thickness', thickness);
+  const md = c4MeshData(manifold);
+  const openSet = _c4ResolveFaceSelection(md, opening, { label: 'shell: opening' });
+  const cavity = _c4OffsetCavity(md, thickness, openSet, 'shell');
+  const cv = cavity.volume();
+  if (cv <= 1e-9) {
+    throw new Error(
+      `shell: wall thickness ${thickness} leaves no cavity — the part is thinner than 2x the wall`,
+    );
+  }
+  return cavity;
+}
+
+/**
+ * hollow(manifold, thickness, opening) — the shelled SOLID (walls only).
+ * @see shell for the `opening` forms.
+ */
+function hollow(manifold, thickness, opening = 'z') {
+  const out = _c4RequireValidSolid(manifold.subtract(shell(manifold, thickness, opening)), 'hollow');
+  // A wall thicker than half the part can leave the solid untouched — a silent
+  // no-op that reads as a kernel bug. Say it instead.
+  if (out.volume() >= manifold.volume() - 1e-9) {
+    throw new Error(
+      `hollow: wall thickness ${thickness} leaves no cavity — the part is thinner than 2x the wall`,
+    );
+  }
+  return out;
+}
+
+/**
+ * draftFaces(manifold, faces, angleDeg, opts) — tilt the selected faces by a
+ * true constant angle about their intersection with a reference plane.
+ *
+ * Each selected face rotates about the line where it meets the reference plane,
+ * so the achieved angle is `angleDeg` on EVERY selected wall regardless of its
+ * width (the old scale-based taper only hit the angle on the narrowest one).
+ * Vertices shared by two selected faces get both displacements summed, which is
+ * what keeps a drafted corner sharp.
+ *
+ * Sign: positive tapers the face INWARD going along the pull direction (the
+ * usual mould-release sense — the section shrinks toward the pull); negative
+ * flares it outward. Inner (cavity) faces read their own outward normal, so a
+ * negative angle on them widens the cavity toward the pull, which is what a
+ * core needs.
+ *
+ * @param {Manifold} manifold
+ * @param {*} faces face selection: a Viewport face pick, a face from
+ *        facesByNormal(), an axis like '-x', 'sides' for every side wall, or an
+ *        array mixing those.
+ * @param {number} angleDeg signed draft angle in degrees
+ * @param {object} [opts]
+ * @param {*} [opts.pull='z'] pull/draw direction ('z', '-z', [x,y,z]…)
+ * @param {*} [opts.reference='min'] the neutral plane that does not move:
+ *        'min' | 'max' | 'mid' along the pull axis, a number (coordinate along
+ *        pull), or a face / PlaneFrame / face pick whose center defines it.
+ * @returns {Manifold}
+ */
+function draftFaces(manifold, faces, angleDeg, opts = {}) {
+  if (!manifoldModule) throw new Error('Manifold not initialized');
+  if (typeof angleDeg !== 'number' || !Number.isFinite(angleDeg)) {
+    throw new Error(`draftFaces: angleDeg must be a finite number (got ${angleDeg})`);
+  }
+  if (Math.abs(angleDeg) >= 89) throw new Error(`draftFaces: angleDeg ${angleDeg} is past vertical`);
+  const pull = _c4DirVec(opts.pull ?? 'z', 'draftFaces: pull');
+  const md = c4MeshData(manifold);
+  const sel = _c4ResolveFaceSelection(md, faces, { label: 'draftFaces: faces', pull });
+  if (!sel.size) throw new Error('draftFaces: face selection is empty — nothing to draft');
+
+  // Reference ("neutral") plane level, measured along pull.
+  const bb = manifold.boundingBox();
+  const proj = [];
+  for (const x of [bb.min[0], bb.max[0]]) {
+    for (const y of [bb.min[1], bb.max[1]]) {
+      for (const z of [bb.min[2], bb.max[2]]) proj.push(_c4Dot([x, y, z], pull));
+    }
+  }
+  const lo = Math.min(...proj), hi = Math.max(...proj);
+  const refSpec = opts.reference ?? 'min';
+  let t0;
+  if (typeof refSpec === 'number') t0 = refSpec;
+  else if (refSpec === 'min') t0 = lo;
+  else if (refSpec === 'max') t0 = hi;
+  else if (refSpec === 'mid') t0 = (lo + hi) / 2;
+  else if (refSpec && typeof refSpec === 'object' && Array.isArray(refSpec.center)) {
+    t0 = _c4Dot(refSpec.center, pull);
+  } else {
+    throw new Error(
+      `draftFaces: reference must be 'min'|'max'|'mid', a number, or a face/plane (got ${refSpec})`,
+    );
+  }
+
+  const tan = Math.tan((angleDeg * Math.PI) / 180);
+  // Per vertex, the DISTINCT slide directions of the selected faces meeting it.
+  // Distinct is the operative word: a tessellated wall contributes one direction
+  // many times over (solve once), while two walls of a box corner contribute two
+  // (solve together, so the corner stays sharp).
+  const dirs = new Map(); // vertex index -> unit in-plane directions
+  // 'taper' makes every selected wall lean the same way round the pull axis, so
+  // a HOLLOW part keeps its wall: the cavity wall's own normal points at the
+  // axis, and honouring it would drive the inner and outer walls INTO each other
+  // (a 1° draft closed the 2mm wall of the 125mm Solo Cup and left 11% of it).
+  // 'face' honours each face's own normal — right for a picked face, and the
+  // mould-core sense on a cavity wall.
+  const sense = opts.sense ?? (faces === 'sides' ? 'taper' : 'face');
+  if (sense !== 'taper' && sense !== 'face') {
+    throw new Error(`draftFaces: sense must be 'taper' or 'face' (got ${sense})`);
+  }
+  // Pull axis for 'taper': the body's centre line along the pull direction.
+  const axisPt = [
+    (bb.min[0] + bb.max[0]) / 2,
+    (bb.min[1] + bb.max[1]) / 2,
+    (bb.min[2] + bb.max[2]) / 2,
+  ];
+  let drafted = 0;
+  for (const fi of sel) {
+    const f = md.faces[fi];
+    // In-plane part of the face normal: the direction the face slides. A face
+    // perpendicular to pull (a cap) has none — it cannot be drafted.
+    const nIn = _c4Sub(f.normal, _c4Mul(_c4Dot(f.normal, pull), pull));
+    if (_c4Len(nIn) < 1e-6) continue;
+    let u = _c4Norm(nIn);
+    if (sense === 'taper') {
+      const r = _c4Sub(f.center, axisPt);
+      const rIn = _c4Sub(r, _c4Mul(_c4Dot(r, pull), pull));
+      // Point the slide direction away from the axis, whichever side of the
+      // wall this face is. (A face centred on the axis keeps its own normal.)
+      if (_c4Len(rIn) > 1e-9 && _c4Dot(u, rIn) < 0) u = _c4Mul(-1, u);
+    }
+    drafted++;
+    for (const vi of _c4FaceVertIndices(md, f)) {
+      let list = dirs.get(vi);
+      if (!list) { list = []; dirs.set(vi, list); }
+      _c4PushDistinct(list, u);
+    }
+  }
+  if (!drafted) {
+    throw new Error(
+      'draftFaces: every selected face is perpendicular to the pull direction — '
+      + 'a cap cannot be drafted; pick the side walls or change opts.pull',
+    );
+  }
+  if (!dirs.size) return manifold;
+
+  // Rebuild rather than warp(): warp() is fed Manifold's double-precision
+  // positions while our vertex indices came from the float32 getMesh(), so a
+  // coordinate-keyed lookup misses every non-exact vertex (see
+  // _c4RebuildWithVerts).
+  const moved = md.V.map((v) => v.slice());
+  for (const [vi, us] of dirs) {
+    // The drafted plane of each selected face moves by tan(angle) x the vertex's
+    // distance from the reference plane — one scalar, every direction.
+    const dist = -tan * (_c4Dot(md.V[vi], pull) - t0);
+    moved[vi] = _c4Add(md.V[vi], _c4SolvePlaneMoves(us, us.map(() => dist)));
+  }
+  _c4RequireNoFold(md, moved, 'draftFaces', `${angleDeg}°`);
+  return _c4RequireValidSolid(_c4RebuildWithVerts(md, moved, 'draftFaces'), 'draftFaces');
+}
+
+/**
+ * Add draft angle to a manifold — every side wall, true constant angle.
+ *
+ * Back-compatible wrapper over `draftFaces`: the bottom (min along `axis`) stays
+ * put and every wall tilts in by `draftDeg`. Unlike the old scale-based taper, a
+ * 60x20 box now gets the SAME angle on its long and short walls.
+ *
+ * @param {Manifold} manifold
+ * @param {number} draftDeg draft angle in degrees (positive tapers toward +axis)
+ * @param {string} [axis='z'] pull direction: 'x', 'y', 'z' (or signed, '-z')
+ * @returns {Manifold}
+ *
  * @example
- * // Add 2° draft to a shelled box for injection molding
  * const box = Manifold.cube([50, 50, 30], true);
- * const hollowed = box.subtract(shell(box, 2, 'z'));
- * const drafted = addDraft(hollowed, 2, 'z');
- * return drafted;
+ * return addDraft(hollow(box, 2, 'z'), 2, 'z');
  */
 function addDraft(manifold, draftDeg, axis = "z") {
-  let axisIndex;
-  switch (axis.toLowerCase()) {
-    case "x": axisIndex = 0; break;
-    case "y": axisIndex = 1; break;
-    case "z": axisIndex = 2; break;
-    default: throw new Error('Axis must be "x", "y", or "z"');
-  }
-  
-  const bbox = manifold.boundingBox();
-  const minCoord = bbox.min[axisIndex];
-  const maxCoord = bbox.max[axisIndex];
-  const H = maxCoord - minCoord;
-  
-  const sizes = [
-    bbox.max[0] - bbox.min[0],
-    bbox.max[1] - bbox.min[1],
-    bbox.max[2] - bbox.min[2]
-  ];
-  
-  const perpAxes = [0, 1, 2].filter(i => i !== axisIndex);
-  const minPerpSize = Math.min(sizes[perpAxes[0]], sizes[perpAxes[1]]);
-  
-  const tanDraft = Math.tan(draftDeg * Math.PI / 180);
-  const taper = H * tanDraft;
-  const topScale = (minPerpSize - 2 * taper) / minPerpSize;
-  
-  // Centers in perp directions
-  const centers = [0, 0, 0];
-  centers[perpAxes[0]] = (bbox.min[perpAxes[0]] + bbox.max[perpAxes[0]]) / 2;
-  centers[perpAxes[1]] = (bbox.min[perpAxes[1]] + bbox.max[perpAxes[1]]) / 2;
-  
-  const warp = (v) => {
-    const coord = v[axisIndex];
-    const t = (coord - minCoord) / H;
-    const scale = 1 + t * (topScale - 1);
-    const p1 = perpAxes[0];
-    const p2 = perpAxes[1];
-    v[p1] = (v[p1] - centers[p1]) * scale + centers[p1];
-    v[p2] = (v[p2] - centers[p2]) * scale + centers[p2];
-  };
-  
-  return manifold.warp(warp);
+  return draftFaces(manifold, 'sides', draftDeg, { pull: axis, reference: 'min' });
 }
 
 // Helpers for a loft function
@@ -828,23 +1242,111 @@ function roundedBox(size, radius, segments = 16) {
 }
 
 /**
- * Create a tube/pipe shape
- * @param {number} outerRadius - Outer radius
- * @param {number} innerRadius - Inner radius (hole)
- * @param {number} height - Height of the tube
- * @param {number} segments - Number of circular segments
+ * Rounded-rectangle 2D profile as a CrossSection, centered on the origin.
+ * r = 0 gives a plain rectangle. r is clamped to half the shorter side.
+ */
+function _c4RectProfile(w, d, r, segments) {
+  const { CrossSection } = manifoldModule;
+  const rr = Math.min(Math.max(r || 0, 0), Math.min(w, d) / 2 - 1e-9);
+  if (!(rr > 1e-9)) return CrossSection.square([w, d], true);
+  // Offset an inset rectangle outward: exact rounded corners, no hand-rolled arcs.
+  return CrossSection.square([w - 2 * rr, d - 2 * rr], true)
+    .offset(rr, 'Round', 2, Math.max(8, segments || 32));
+}
+
+/**
+ * rectTube(outer, inner, height, opts) — rectangular (square) tube.
+ *
+ * @param {number|number[]} outer outer size: [w, d], or a number for a square
+ * @param {number|number[]} inner inner size [w, d]; a NUMBER is read as a
+ *        uniform wall thickness (inner = outer - 2*wall), which is how you
+ *        usually want to specify a rectangular tube
+ * @param {number} height extruded height (z = 0 .. height, like Manifold.cylinder)
+ * @param {object} [opts]
+ * @param {number} [opts.cornerRadius=0] outer corner radius
+ * @param {number} [opts.innerCornerRadius] inner corner radius; defaults to
+ *        cornerRadius - wall (>= 0), which keeps the wall uniform round the corner
+ * @param {number} [opts.segments=32] segments per full circle for the corner arcs
+ * @param {boolean} [opts.center=false] center the extrusion on z instead of z=0..h
+ * @returns {Manifold}
+ *
+ * @example
+ * rectTube([40, 20], 2.5, 60);                        // 2.5mm wall, sharp corners
+ * rectTube([40, 20], [30, 10], 60, { cornerRadius: 4 });
+ */
+function rectTube(outer, inner, height, opts = {}) {
+  if (!manifoldModule) throw new Error('Manifold not initialized');
+  const size = (v, label) => {
+    if (Array.isArray(v)) {
+      if (v.length !== 2) throw new Error(`rectTube: ${label} must be [w, d] or a number`);
+      return [v[0], v[1]];
+    }
+    return [v, v];
+  };
+  const [ow, od] = size(outer, 'outer');
+  _c4RequirePositive('rectTube', 'outer width', ow);
+  _c4RequirePositive('rectTube', 'outer depth', od);
+  _c4RequirePositive('rectTube', 'height', height);
+  let iw, id, wall;
+  if (typeof inner === 'number') {
+    wall = inner;
+    _c4RequirePositive('rectTube', 'wall', wall);
+    iw = ow - 2 * wall;
+    id = od - 2 * wall;
+    if (!(iw > 0) || !(id > 0)) {
+      throw new Error(
+        `rectTube: wall ${wall} is too thick for a ${ow}x${od} tube (needs < ${(Math.min(ow, od) / 2).toFixed(3)})`,
+      );
+    }
+  } else {
+    [iw, id] = size(inner, 'inner');
+    _c4RequirePositive('rectTube', 'inner width', iw);
+    _c4RequirePositive('rectTube', 'inner depth', id);
+    if (iw >= ow || id >= od) {
+      throw new Error(`rectTube: inner ${iw}x${id} must be smaller than outer ${ow}x${od}`);
+    }
+    wall = Math.min(ow - iw, od - id) / 2;
+  }
+  const segments = opts.segments ?? 32;
+  const rOut = opts.cornerRadius ?? 0;
+  const rIn = opts.innerCornerRadius ?? Math.max(0, rOut - wall);
+  const profile = _c4RectProfile(ow, od, rOut, segments)
+    .subtract(_c4RectProfile(iw, id, rIn, segments));
+  const out = profile.extrude(height, 0, 0, [1, 1], !!opts.center);
+  return _c4RequireValidSolid(out, 'rectTube');
+}
+
+/**
+ * Create a tube/pipe shape — round or rectangular.
+ *
+ * Round:       tube(outerRadius, innerRadius, height, segments?)
+ * Rectangular: tube([w, d], wall, height, opts?)  /  tube([w, d], [iw, id], height, opts?)
+ *
+ * Passing an array as the first argument hands off to `rectTube`, so the 4th
+ * argument is then its options object ({ cornerRadius, segments, center }) and
+ * not a segment count.
+ *
+ * @param {number|number[]} outerRadius outer radius, or [w, d] for a rectangle
+ * @param {number|number[]} innerRadius inner radius; for a rectangle, a wall
+ *        thickness or [iw, id]
+ * @param {number} height Height of the tube
+ * @param {number|object} [segments=32] segments (round) or opts (rectangular)
  */
 function tube(outerRadius, innerRadius, height, segments = 32) {
   if (!manifoldModule) throw new Error('Manifold not initialized');
   const { Manifold } = manifoldModule;
-  
+
+  if (Array.isArray(outerRadius)) {
+    return rectTube(outerRadius, innerRadius, height, typeof segments === 'object' ? segments : {});
+  }
+
   if (innerRadius >= outerRadius) {
     throw new Error('Inner radius must be smaller than outer radius');
   }
-  
+
   const outer = Manifold.cylinder(height, outerRadius, outerRadius, segments);
   const inner = Manifold.cylinder(height, innerRadius, innerRadius, segments);
-  
+
   return outer.subtract(inner);
 }
 
@@ -1307,7 +1809,10 @@ function c4MeshData(m) {
     tangent = _c4Norm(tangent);
     edges.push({ a, b, va: V[a], vb: V[b], tris: e.tris, tangent, faces: [f0, f1] });
   }
-  return { V, faces, edges, faceIdxById };
+  // T/numTri expose the welded triangle table so callers that need per-triangle
+  // vertices (shell skin prisms, draftFaces vertex sets) do not have to call
+  // getMesh() again and risk a DIFFERENT welding than the faces above.
+  return { V, faces, edges, faceIdxById, T: mesh.triVerts, numTri: mesh.numTri };
 }
 
 // ---------------------------------------------------------------- selectors
@@ -4367,9 +4872,11 @@ function boundaryEdges(part) {
 // Collection of all helper functions to inject
 const HELPER_FUNCTIONS = {
   shell,
+  hollow,
   getScaleRatio,
   roundedBox,
   tube,
+  rectTube,
   hexPrism,
   mirror,
   array3D,
@@ -4378,6 +4885,7 @@ const HELPER_FUNCTIONS = {
   align,
   getDimensions,
   addDraft,
+  draftFaces,
   loft,
   //loft helpers
   sumSqDist,

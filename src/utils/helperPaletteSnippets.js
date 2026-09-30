@@ -47,6 +47,10 @@ import {
   roundFaceNum,
   resolveHoleUV,
   holeFeatureParamDefs,
+  emitFaceSelectionExpr,
+  SHELL_OPENING_OPTIONS,
+  DRAFT_PULL_OPTIONS,
+  DRAFT_REFERENCE_OPTIONS,
 } from './faceFeaturePlacement.js';
 import { resolveFilletStrategy } from './filletAlongPath.js';
 import { planeFrameFromFaceData } from './crossSectionSubstrate.js';
@@ -319,7 +323,7 @@ export function listBodyNames(buffer) {
   // Fallback only when part is mutable (or undeclared).
   if (!constNames.has('part')) names.add('part');
   // Also catch `part = …` / `box1 = …` mutations without fresh decl.
-  const assign = /\b([A-Za-z_$][\w$]*)\s*=\s*(?:Manifold\.|tube\(|hexPrism\(|roundedBox\(|makeExtrude\(|makeRevolve\(|makeLoft\(|filletEdges\(|filletAlongPath\(|chamferEdges\(|hole\(|clearanceHole\(|tapDrillHole\(|cboreHole\(|cskHole\(|holePattern\(|shell\(|addDraft\(|center\(|align\(|mirror\(|array3D\(|polarArray\()/g;
+  const assign = /\b([A-Za-z_$][\w$]*)\s*=\s*(?:Manifold\.|tube\(|hexPrism\(|roundedBox\(|makeExtrude\(|makeRevolve\(|makeLoft\(|filletEdges\(|filletAlongPath\(|chamferEdges\(|hole\(|clearanceHole\(|tapDrillHole\(|cboreHole\(|cskHole\(|holePattern\(|shell\(|hollow\(|addDraft\(|draftFaces\(|rectTube\(|center\(|align\(|mirror\(|array3D\(|polarArray\()/g;
   while ((m = assign.exec(s))) {
     const n = m[1];
     if (constNames.has(n)) continue;
@@ -1108,21 +1112,61 @@ export const HELPER_PALETTE_ITEMS = [
     id: 'tube',
     label: 'Tube',
     group: 'Primitives',
-    title: 'tube(outerRadius, innerRadius, height, segments?)',
+    title: 'tube(outerRadius, innerRadius, height, segments?) — round or rectangular',
     bodyBase: 'tube',
     params: [
-      { name: 'outerRadius', type: 'number', default: 15, label: 'Outer R', min: 0.1, step: 0.5 },
-      { name: 'innerRadius', type: 'number', default: 10, label: 'Inner R', min: 0, step: 0.5 },
+      {
+        name: 'section', type: 'select', default: 'round', label: 'Section',
+        options: [{ value: 'round', label: 'round' }, { value: 'rect', label: 'rectangular' }],
+      },
+      {
+        name: 'outerRadius', type: 'number', default: 15, label: 'Outer R', min: 0.1, step: 0.5,
+        showWhen: { field: 'section', values: ['round'] },
+      },
+      {
+        name: 'innerRadius', type: 'number', default: 10, label: 'Inner R', min: 0, step: 0.5,
+        showWhen: { field: 'section', values: ['round'] },
+      },
       { name: 'height', type: 'number', default: 40, label: 'Height', min: 0.1, step: 1 },
-      { name: 'segments', type: 'number', default: 64, label: 'Segments', min: 3, step: 1, max: 128 },
+      {
+        name: 'segments', type: 'number', default: 64, label: 'Segments', min: 3, step: 1, max: 128,
+        showWhen: { field: 'section', values: ['round'] },
+      },
+      // Rectangular section: outer w x d plus a uniform wall, corners optional.
+      {
+        name: 'width', type: 'number', default: 40, label: 'Width', min: 0.1, step: 1,
+        showWhen: { field: 'section', values: ['rect'] },
+      },
+      {
+        name: 'depth', type: 'number', default: 20, label: 'Depth', min: 0.1, step: 1,
+        showWhen: { field: 'section', values: ['rect'] },
+      },
+      {
+        name: 'wall', type: 'number', default: 2.5, label: 'Wall', min: 0.1, step: 0.25,
+        showWhen: { field: 'section', values: ['rect'] },
+      },
+      {
+        name: 'cornerRadius', type: 'number', default: 0, label: 'Corner R', min: 0, step: 0.5,
+        showWhen: { field: 'section', values: ['rect'] },
+      },
     ],
     build: (empty, p, names) => {
       const tube = allocateUniqueName(names, 'tube');
-      const o = num(p.outerRadius, 15);
-      const i = num(p.innerRadius, 10);
       const h = num(p.height, 40);
-      const seg = Math.max(3, Math.round(num(p.segments, 64)));
-      const lines = [`let ${tube} = tube(${o}, ${i}, ${h}, ${seg});`];
+      const lines = [];
+      if (str(p.section, 'round') === 'rect') {
+        const w = num(p.width, 40);
+        const d = num(p.depth, 20);
+        const wall = num(p.wall, 2.5);
+        const cr = num(p.cornerRadius, 0);
+        const opts = cr > 0 ? `, { cornerRadius: ${cr} }` : '';
+        lines.push(`let ${tube} = tube([${w}, ${d}], ${wall}, ${h}${opts});`);
+      } else {
+        const o = num(p.outerRadius, 15);
+        const i = num(p.innerRadius, 10);
+        const seg = Math.max(3, Math.round(num(p.segments, 64)));
+        lines.push(`let ${tube} = tube(${o}, ${i}, ${h}, ${seg});`);
+      }
       // Append, never replace: a second shape unions onto the part, the
       // same rule Extrude / Revolve / Loft / Sweep follow. Overwriting
       // here used to strand the previous solid as dead code.
@@ -1662,18 +1706,25 @@ export const HELPER_PALETTE_ITEMS = [
     id: 'shell',
     label: 'Shell',
     group: 'Features',
-    title: "shell(manifold, thickness, axis) — subtract the tool",
+    title: "hollow(manifold, wall, opening) — uniform wall, opening at a picked face",
     params: [
       { name: 'body', type: 'body', default: 'part', label: 'Body' },
-      { name: 'wall', type: 'number', default: 2.5, label: 'Wall', min: 0.1, step: 0.5 },
-      { name: 'axis', type: 'select', default: 'z', label: 'Axis', options: AXIS_OPTIONS },
+      { name: 'wall', type: 'number', default: 2.5, label: 'Wall', min: 0.1, step: 0.25, slider: true },
+      {
+        name: 'openScope', type: 'select', default: 'z', label: 'Opening',
+        options: SHELL_OPENING_OPTIONS,
+      },
     ],
-    build: (empty, p, names, buffer) => {
+    build: (empty, p, names, buffer, faceCtx = null) => {
       const lines = [...ensurePartPrefix(empty, names)];
       const body = resolveBody(p, names, empty ? lines.join('\n') : buffer);
       const wall = num(p.wall, 2.5);
-      const axis = str(p.axis, 'z');
-      lines.push(`${body} = ${body}.subtract(shell(${body}, ${wall}, '${axis}'));`);
+      const face = faceCtx && faceCtx.type ? faceCtx : (faceCtx ? classifySelectedFace(faceCtx) : null);
+      // Legacy sheets sent `axis`; the face-aware sheet sends `openScope`.
+      const scope = str(p.openScope, str(p.axis, 'z'));
+      const opening = emitFaceSelectionExpr(face, scope);
+      // hollow() is subtract(shell(...)) in one boolean — same uniform wall.
+      lines.push(`${body} = hollow(${body}, ${wall}, ${opening});`);
       lines.push(...syncPartLines(body, names, /(?:let|const|var)\s+part\b/.test(lines.join('\n')) || !empty));
       return withReturn(lines, empty);
     },
@@ -1827,18 +1878,36 @@ export const HELPER_PALETTE_ITEMS = [
     id: 'addDraft',
     label: 'Draft',
     group: 'Features',
-    title: "addDraft(manifold, draftDeg, axis)",
+    title: "draftFaces(manifold, faces, deg, { pull, reference }) — signed, per face",
     params: [
       { name: 'body', type: 'body', default: 'part', label: 'Body' },
-      { name: 'draftDeg', type: 'number', default: 2, label: 'Draft °', min: 0, step: 0.5 },
-      { name: 'axis', type: 'select', default: 'z', label: 'Axis', options: AXIS_OPTIONS },
+      {
+        name: 'draftDeg', type: 'number', default: 2, label: 'Draft °',
+        min: -45, max: 45, step: 0.5, slider: true,
+      },
+      {
+        name: 'faceScope', type: 'select', default: 'sides', label: 'Faces',
+        options: [{ value: 'sides', label: 'all side walls' }],
+      },
+      { name: 'pull', type: 'select', default: 'z', label: 'Pull', options: DRAFT_PULL_OPTIONS },
+      {
+        name: 'reference', type: 'select', default: 'min', label: 'Reference plane',
+        options: DRAFT_REFERENCE_OPTIONS,
+      },
     ],
-    build: (empty, p, names, buffer) => {
+    build: (empty, p, names, buffer, faceCtx = null) => {
       const lines = [...ensurePartPrefix(empty, names)];
       const body = resolveBody(p, names, empty ? lines.join('\n') : buffer);
       const deg = num(p.draftDeg, 2);
-      const axis = str(p.axis, 'z');
-      lines.push(`${body} = addDraft(${body}, ${deg}, '${axis}');`);
+      const face = faceCtx && faceCtx.type ? faceCtx : (faceCtx ? classifySelectedFace(faceCtx) : null);
+      // Legacy sheets sent `axis`; the face-aware sheet sends pull + reference.
+      const pull = str(p.pull, str(p.axis, 'z'));
+      const reference = str(p.reference, 'min');
+      const scope = str(p.faceScope, 'sides');
+      const faces = emitFaceSelectionExpr(face, scope);
+      lines.push(
+        `${body} = draftFaces(${body}, ${faces}, ${deg}, { pull: '${pull}', reference: '${reference}' });`,
+      );
       lines.push(...syncPartLines(body, names, /(?:let|const|var)\s+part\b/.test(lines.join('\n')) || !empty));
       return withReturn(lines, empty);
     },
