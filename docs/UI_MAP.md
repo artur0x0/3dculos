@@ -403,6 +403,14 @@ Import `src/utils/importModel.js` (+ `POST /api/convert/step`); export
   Polar, and the `array3D` build delegates to `polarArray`'s for Polar.
   `holePattern` likewise: Hole's "n×m pattern" tick emits `holePattern()`.
   Hide a tool this way rather than deleting an item other code builds with.
+- **The right rail is content-height**, not paired: it carries 10 tools (~422px)
+  and the shared 26rem cap cropped the last one (Cross-section) off the bottom,
+  where — being bottom-anchored 10px above the viewport edge — it was out of
+  reach. It keeps `overflow-visible` plus a `max-h` that respects the pane.
+- **The view-snap flyout must never `flex-wrap`.** It is absolutely positioned
+  with only `right` set inside a ~36px-wide parent, so its shrink-to-fit width
+  is near zero; wrapping collapses the row into a vertical stack. `w-max` +
+  `flex-nowrap` keep it the horizontal row it is meant to be.
 - **Rail height and rail scrolling are separate classes** (`utils/railPair.js`).
   Both rails share `RAIL_PAIR_HEIGHT_CLASS` so they match pixel-perfect; only
   the LEFT rails add `RAIL_SCROLL_CLASS`. The right rail takes

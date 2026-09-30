@@ -5,7 +5,7 @@ import { FlipHorizontal, Check, Maximize2, Ruler, Move3d, Frame, Spline, Rectang
 import TrianglesCenterlineDashedVertical from './icons/TrianglesCenterlineDashedVertical';
 import ViewSnapControl from './ViewSnapControl';
 import { PLANE_PRESETS } from '../utils/crossSection';
-import { RAIL_PAIR_HEIGHT_CLASS, RAIL_NO_CLIP_CLASS, RAIL_PAIR_HEIGHT_ATTR } from '../utils/railPair';
+import { RAIL_NO_CLIP_CLASS, RAIL_PAIR_HEIGHT_ATTR } from '../utils/railPair';
 
 const CrossSectionPanel = ({ 
   enabled,
@@ -180,7 +180,12 @@ const handleButtonClick = () => {
         data-rail-height={verticalRail ? RAIL_PAIR_HEIGHT_ATTR : undefined}
         className={`absolute bottom-2.5 right-2.5 bg-white/60 backdrop-blur-sm p-2 rounded-lg shadow-lg z-10 ${
         verticalRail
-          ? `flex flex-col gap-1 ${RAIL_PAIR_HEIGHT_CLASS} ${RAIL_NO_CLIP_CLASS}`
+          // Content height, NOT the paired 26rem: this rail holds 10 tools
+          // (~422px) and the cap is 416px, so the last one — Cross-section —
+          // was cropped off the bottom and, being bottom-anchored 10px above
+          // the viewport edge, spilled out of reach. It grows upward, so its
+          // natural height is the correct one.
+          ? `flex flex-col gap-1 ${RAIL_NO_CLIP_CLASS} max-h-[calc(100%-1.25rem)]`
           : 'flex flex-wrap justify-end gap-2 max-w-[calc(100%-1rem)]'
       }`}>
         <ViewSnapControl onSnap={onSnapView} />
