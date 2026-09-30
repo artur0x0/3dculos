@@ -508,10 +508,11 @@ export function pickNearestEdgeScreen(
   return best;
 }
 
-/** Default G1 (tangent) propagation threshold in degrees.
- * 25° covers production 16-seg circles (22.5° turn, cos=0.9239 < cos(22°))
- * while still breaking genuine hard corners (≥45°). N=12 (30°) stays seed-only. */
-/** Matches edgeTangencyField.TANGENCY_PROP_DEG (true-G1 default). */
+/**
+ * G1 walk tolerance *between adjacent pick chords* (degrees).
+ * Re-export of edgeTangencyField.TANGENCY_PROP_DEG. Decoupled from
+ * `CHAIN_MAX_TURN_DEG` (within-one-RDP-chord span) — see that constant.
+ */
 export const TANGENT_PROP_DEG = TANGENCY_PROP_DEG;
 
 /**
@@ -559,7 +560,7 @@ export function propagateTangentEdges(featureEdges, seedEdge, opts = {}) {
   //   - Smooth tan within tol (circular / RDP chords) — no wall-normal gate (C.2)
   //   - Collapsed fillet corners (~70–85°) — seed-plane continue (C.3)
   //   - Spatial endpoint bridging when coherent chains mint fresh vertex ids (C.3)
-  //   - Same-face parallel bridge for fillet top/bottom creases (C.3 roundedBox)
+  //   - Same-face parallel bridge, node-gated on corresponding endpoints (C.3 / EDGES PR1)
   if (!seedEdge) return [];
   const skipNormals = opts.skipNormals !== false;
   const chain = propagateTrueTangentEdges(featureEdges || [], seedEdge, {
@@ -609,19 +610,20 @@ const LINE_GAP_EPS = 0.75;
 /** RDP tolerance. Keeps a mild loft generator; collapses a straight side to one segment. */
 const CHAIN_SIMPLIFY_EPS = 0.35;
 /**
- * Max turn (deg) a single simplified chord may span.
+ * Max turn (deg) a single simplified chord may span *internally* (RDP).
  *
  * RDP alone is a *distance* test, so on a tight arc it is scale-blind: a
  * fillet's r=4 quarter-round sits only 0.30 mm off its own 45° chord, under
  * CHAIN_SIMPLIFY_EPS, so a 24-segment blend end-cap collapsed to TWO chords
  * turning 45° each. That broke Tangent-on twice over: the highlight was a
- * 2-chord polyline instead of a curve, and 45° blows past TANGENT_PROP_DEG
- * (25°), so the G1 walk died one chord into the round (Artur: "only makes it
- * half-way up the fillet and does not actually track the curve").
+ * 2-chord polyline instead of a curve, and 45° blows past the between-chord
+ * walk tolerance, so the G1 walk died one chord into the round.
  *
- * Capping the angular span keeps every kept chord G1-walkable by construction.
- * 20° leaves margin under the 25° walk tolerance; straight runs turn 0° and
- * still collapse to one segment.
+ * This caps the angular span *within* one kept chord. It does **not** bound
+ * the turn *between* adjacent chords — that is {@link TANGENT_PROP_DEG}
+ * (EDGES.md PR 1). Adjacent chords can still turn ~26° on a shelled fillet
+ * arc when each internal span is ≤20°, so the walk tol must be set separately.
+ * Straight runs turn 0° and still collapse to one segment.
  */
 const CHAIN_MAX_TURN_DEG = 20;
 /** Closed loops kept only when they are circular rims, not a face outline. */

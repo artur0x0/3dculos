@@ -16,8 +16,15 @@
  * the G1 helpers below).
  */
 
-/** Default G1 tangent tol — matches selectEdge.TANGENT_PROP_DEG. */
-export const TANGENCY_PROP_DEG = 25;
+/**
+ * Default G1 tangent tol between *adjacent* pick chords (degrees).
+ * Decoupled from selectEdge's CHAIN_MAX_TURN_DEG (within-one-RDP-chord span).
+ * RDP can emit adjacent chords that turn ~26° on a shelled fillet arc even when
+ * each chord's internal span is ≤20° — so this must sit above that between-chord
+ * turn, not merely "CHAIN + margin". 28° clears the shelled outer round without
+ * opening sharp cube corners (≥45°) or roundedBox 90° face outlines.
+ */
+export const TANGENCY_PROP_DEG = 28;
 /** Min wall-normal continuity (cos) for true G1. */
 export const TANGENCY_NORMAL_ALIGN = Math.cos((28 * Math.PI) / 180);
 /** Human-scale chain cap — matches selectEdge.COHERENT_EDGE_MAX. */
@@ -154,8 +161,17 @@ export function isTrueG1(a, b, opts = {}) {
       : preferredPlaneNormal(fa);
     if (!N) return false;
     const outOfPlane = Math.sin(((opts.cornerOutOfPlaneDeg ?? 30) * Math.PI) / 180);
-    return Math.abs(_dot(fa.T, N)) <= outOfPlane
-      && Math.abs(_dot(fb.T, N)) <= outOfPlane;
+    if (Math.abs(_dot(fa.T, N)) > outOfPlane || Math.abs(_dot(fb.T, N)) > outOfPlane) {
+      return false;
+    }
+    // Corner continue also needs wall-normal continuity when both sides carry
+    // real normals. Loft generators meet the top rim at ~74° in-plane but the
+    // wall pair changes (L1 3→1). RoundedBox collapsed rim corners keep the
+    // top-face normal and pass. Incomplete/zero normals refuse the corner path
+    // (smooth G1 above still applies).
+    if (!_nOk(fa.n0) || !_nOk(fa.n1) || !_nOk(fb.n0) || !_nOk(fb.n1)) return false;
+    const normalAlign = typeof opts.normalAlign === 'number' ? opts.normalAlign : TANGENCY_NORMAL_ALIGN;
+    return wallNormalContinuity(fa.n0, fa.n1, fb.n0, fb.n1) >= normalAlign;
   }
 
   if (tan < cosTol) return false;
@@ -235,34 +251,56 @@ function _copyEdge(edge, key) {
 }
 
 /**
- * Same-face near-parallel crease (fillet top/bottom of one blend). Bridges
- * isolated length-1 coherent leftovers like roundedBox coh-18 ↔ coh-17 so
- * Tangent-on can reach the outer rim. Band-limited so cube opposite edges
- * are not pulled in.
+ * Max corresponding-endpoint separation (mm) for the parallel-face bridge.
+ * Fillet top/bottom creases on roundedBox meet via short connectors (~1.6 mm at
+ * r=4). A 5 mm *midpoint* band (pre-PR1) reached through a 2.5 mm shell wall;
+ * gating on both endpoint pairs under this cap keeps the roundedBox rim link
+ * and rejects through-wall pairs (endpoint gaps ≥ ~3.5 mm on the shelled box).
+ */
+const PARALLEL_BRIDGE_NODE_EPS = 2.5;
+
+function _nOk(n) {
+  return Array.isArray(n) && n.length >= 3 && _len(n) > 0.1;
+}
+
+/**
+ * Same-face near-parallel crease bridge — node-gated (EDGES.md PR 1 fallback).
+ *
+ * Prefer delete of proximity bridging; roundedBox lower crease → top rim still
+ * needs a link, and those creases share a face with corresponding endpoints
+ * joined by a short topological connector. Require that honest node shape
+ * instead of a 5 mm midpoint proximity band that reaches through walls.
  */
 function _parallelFaceBridge(seed, list, planeN) {
   if (!seed || !list?.length) return null;
   const faces = [seed.faceA, seed.faceB].filter(Number.isFinite);
   if (!faces.length) return null;
+  if (!seed.va || !seed.vb) return null;
   const sf = edgeTangencyFrame(seed);
   const cosTol = Math.cos((TANGENCY_PROP_DEG * Math.PI) / 180);
-  const band = Math.max((seed.length || 0) * 0.25, 5);
-  const sm = _mid3(seed);
-  if (!sm) return null;
   let best = null;
   let bestD = Infinity;
   let bestH = -Infinity;
   for (const e of list) {
     if (_edgeKey(e) === _edgeKey(seed)) continue;
     if (!faces.includes(e.faceA) && !faces.includes(e.faceB)) continue;
+    if (!e.va || !e.vb) continue;
     const ef = edgeTangencyFrame(e);
     if (_tangentAlign(sf.T, ef.T) < cosTol) continue;
+    // Node gate: both corresponding endpoint pairs must be within eps
+    // (same-direction va↔va/vb↔vb or flipped va↔vb/vb↔va).
+    const d00 = Math.hypot(seed.va[0] - e.va[0], seed.va[1] - e.va[1], seed.va[2] - e.va[2]);
+    const d11 = Math.hypot(seed.vb[0] - e.vb[0], seed.vb[1] - e.vb[1], seed.vb[2] - e.vb[2]);
+    const d01 = Math.hypot(seed.va[0] - e.vb[0], seed.va[1] - e.vb[1], seed.va[2] - e.vb[2]);
+    const d10 = Math.hypot(seed.vb[0] - e.va[0], seed.vb[1] - e.va[1], seed.vb[2] - e.va[2]);
+    const sameDir = d00 <= PARALLEL_BRIDGE_NODE_EPS && d11 <= PARALLEL_BRIDGE_NODE_EPS;
+    const flipDir = d01 <= PARALLEL_BRIDGE_NODE_EPS && d10 <= PARALLEL_BRIDGE_NODE_EPS;
+    if (!sameDir && !flipDir) continue;
+    const d = sameDir ? (d00 + d11) / 2 : (d01 + d10) / 2;
     const em = _mid3(e);
     if (!em) continue;
-    const d = Math.hypot(sm[0] - em[0], sm[1] - em[1], sm[2] - em[2]);
-    if (d > band) continue;
     const h = planeN ? Math.abs(_dot(em, planeN)) : 0;
-    // Prefer the outer/higher rim when distances tie (18↔17 vs 18↔12).
+    // Prefer the outer/higher rim when distances tie.
     if (h > bestH + 0.3 || (Math.abs(h - bestH) <= 0.3 && d < bestD)) {
       bestH = h;
       bestD = d;
