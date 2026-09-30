@@ -403,6 +403,13 @@ Import `src/utils/importModel.js` (+ `POST /api/convert/step`); export
   Polar, and the `array3D` build delegates to `polarArray`'s for Polar.
   `holePattern` likewise: Hole's "n×m pattern" tick emits `holePattern()`.
   Hide a tool this way rather than deleting an item other code builds with.
+- **Rail height and rail scrolling are separate classes** (`utils/railPair.js`).
+  Both rails share `RAIL_PAIR_HEIGHT_CLASS` so they match pixel-perfect; only
+  the LEFT rails add `RAIL_SCROLL_CLASS`. The right rail takes
+  `RAIL_NO_CLIP_CLASS` (`overflow-visible`) because the view-snap flyout is
+  positioned **outside** the rail box (`absolute right-full`) — any `overflow`
+  on that rail deletes the flyout from the screen and adds a scrollbar it does
+  not need. Merging the two classes caused exactly that regression once.
 - **Scrolling rails** carry `rail-scroll` alongside `overflow-y-auto`
   (`src/index.css`, bottom). Desktop Chrome's default gutter is square and cuts
   the corners off the rail's `rounded-lg` shell; `rail-scroll` gives a thin

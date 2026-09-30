@@ -156,9 +156,20 @@ const contourRail = read('../../src/components/ContourModeRail.jsx');
     'Pyramid is imported and used once in the helper rail',
     (palette.match(/\bPyramid\b/g) || []).length === 2,
   );
+  // Scrolling now comes from RAIL_SCROLL_CLASS (left rails only) — the right
+  // rail must NOT take it, or its overflow box clips the view-snap flyout.
+  const railPair = read('../../src/utils/railPair.js');
+  check('the rounded gutter lives in RAIL_SCROLL_CLASS',
+    /RAIL_SCROLL_CLASS = 'overflow-y-auto overflow-x-hidden rail-scroll'/.test(railPair));
   for (const [name, src] of [['helper rail', palette], ['contour rail', contourRail]]) {
-    check(`${name} scroll gutter is the rounded one`, /overflow-y-auto overflow-x-hidden rail-scroll/.test(src));
+    check(`${name} takes the scroll class`, /RAIL_SCROLL_CLASS/.test(src));
   }
+  check('the right rail never scrolls', !/RAIL_SCROLL_CLASS/.test(panel)
+    && /RAIL_NO_CLIP_CLASS/.test(panel));
+  check('height and scrolling are separate concerns',
+    /RAIL_PAIR_HEIGHT_CLASS = 'h-\[min\(26rem,calc\(100%-5\.5rem\)\)\]'/.test(railPair));
+  check('the no-clip class is overflow-visible',
+    /RAIL_NO_CLIP_CLASS = 'overflow-visible'/.test(railPair));
   check('rail-scroll gives the thumb a pill radius', /\.rail-scroll::-webkit-scrollbar-thumb[\s\S]{0,200}?border-radius: 9999px/.test(css));
   check('rail-scroll leaves the track transparent', /\.rail-scroll::-webkit-scrollbar-track[\s\S]{0,160}?background: transparent/.test(css));
   check('rail-scroll covers Firefox too', /\.rail-scroll \{[\s\S]{0,160}?scrollbar-width: thin/.test(css));
@@ -388,6 +399,38 @@ const contourRail = read('../../src/components/ContourModeRail.jsx');
   check('the labels match the new glyphs',
     /title="Cross-section options"/.test(panel)
       && /title="Done — close cross-section options"/.test(panel));
+}
+
+// ── AC19: the feature sheet header survives a narrow phone ──
+{
+  const sheet = read('../../src/components/FeatureSheet.jsx');
+  const row = sheet.slice(sheet.indexOf('data-feature-sheet-row="identity"'));
+  const header = row.slice(0, row.indexOf('data-feature-sheet-params'));
+  check('the title block may shrink so truncate can fire',
+    /<div className="min-w-0 flex-1">/.test(header) && !/shrink-0 min-w-0 flex-1/.test(header));
+  check('both title lines truncate', (header.match(/truncate/g) || []).length >= 2);
+  check('the header wraps rather than colliding',
+    /flex-row flex-wrap items-center/.test(sheet));
+  check('the action cluster stays right-aligned when it wraps',
+    /gap-1\.5 shrink-0 ml-auto/.test(header));
+}
+
+// ── AC18: nothing between the flyout and the viewport may clip it ──
+// Regression guard. The view-snap popup is positioned OUTSIDE the rail box
+// (`absolute right-full`), so any `overflow` on an ancestor rail erases it.
+// That is exactly what happened when the paired-height class carried
+// `overflow-y-auto`: the flyout stopped appearing and the rail grew a
+// scrollbar it never needed.
+{
+  const railPair = read('../../src/utils/railPair.js');
+  check('the shared height class carries no overflow',
+    !/overflow/.test(railPair.split('RAIL_PAIR_HEIGHT_CLASS =')[1].split('\n')[0]));
+  const collapsed = panel.slice(panel.indexOf('if (isCollapsed || !enabled)'));
+  const railDiv = collapsed.slice(0, collapsed.indexOf('<ViewSnapControl'));
+  check('the rail that hosts the flyout does not scroll',
+    !/overflow-y-auto|overflow-hidden/.test(railDiv), railDiv.slice(-200));
+  check('the flyout still escapes to the left of its trigger',
+    /absolute right-full/.test(snap));
 }
 
 if (failed) {
