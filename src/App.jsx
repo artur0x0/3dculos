@@ -78,6 +78,25 @@ const App = () => {
   };
   /** Script-stage feature strip: which chip is selected (null = none). */
   const [featureStripActiveId, setFeatureStripActiveId] = useState(null);
+  /**
+   * Height of the editor ribbon, MEASURED. The Script-stage feature strip sits
+   * in a column beside Monaco, so it needs a spacer to start below the ribbon —
+   * and that spacer used to be a hard-coded h-11 (44px) guess against a bar
+   * that actually renders ~34px, which is why the strip started low instead of
+   * flush. ResizeObserver keeps it exact as the ribbon's contents change.
+   */
+  const [ribbonPx, setRibbonPx] = useState(44);
+  useEffect(() => {
+    const ribbon = cadToolbarHost?.closest?.('[data-editor-ribbon]');
+    if (!ribbon) return undefined;
+    const sync = () => setRibbonPx(Math.round(ribbon.getBoundingClientRect().height));
+    sync();
+    if (typeof ResizeObserver === 'undefined') return undefined;
+    const ro = new ResizeObserver(sync);
+    ro.observe(ribbon);
+    return () => ro.disconnect();
+  }, [cadToolbarHost]);
+
   const handleFeatureStripJump = (feature) => {
     if (!feature) return;
     setFeatureStripActiveId(feature.id);
@@ -1576,12 +1595,13 @@ const App = () => {
                       data-script-feature-strip=""
                       data-feature-strip-below-ribbon=""
                     >
-                      {/* Ribbon is py-0.5 + 18px icon + p-1.5 ≈ 34px; h-11 (44px)
-                          clears it so Contour#1 is fully visible/tappable. */}
+                      {/* Exactly the ribbon's measured height, so the strip
+                          starts flush under it rather than 10px low. */}
                       <div
-                        className="h-11 shrink-0 bg-gray-900 border-l border-b border-gray-700/60"
+                        className="shrink-0 bg-gray-900 border-l border-b border-gray-700/60"
+                        style={{ height: ribbonPx }}
                         data-feature-strip-ribbon-spacer=""
-                        data-feature-strip-ribbon-spacer-h="11"
+                        data-feature-strip-ribbon-spacer-h="measured"
                         aria-hidden="true"
                       />
                       <FeatureStrip

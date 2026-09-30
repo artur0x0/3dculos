@@ -270,9 +270,13 @@ export default function FeatureSheet({
           <Icon size={18} strokeWidth={2} aria-hidden="true" />
           <TypeBadge index={typeIndex} />
         </span>
-        <div className="shrink-0 min-w-0 flex-1">
+        {/* `shrink-0` here fought `flex-1` and won, so the title block kept its
+            full content width and pushed itself under the actions on a phone —
+            `truncate` never got the chance to fire. It must be allowed to
+            shrink; the action buttons are the ones that hold their size. */}
+        <div className="min-w-0 flex-1">
           <div className={`${POPUP_TEXT.title} text-white truncate`}>{feature.chipLabel}</div>
-          <div className={`${POPUP_TEXT.subtitle} text-cyan-100/80`}>Feature sheet</div>
+          <div className={`${POPUP_TEXT.subtitle} text-cyan-100/80 truncate`}>Feature sheet</div>
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
           <PopupButton

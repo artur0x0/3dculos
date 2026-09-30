@@ -7,7 +7,7 @@ import {
   ArrowLeft,
 } from 'lucide-react';
 import { CONTOUR_TOOLS } from '../utils/contourMode';
-import { RAIL_PAIR_HEIGHT_CLASS, RAIL_PAIR_HEIGHT_ATTR } from '../utils/railPair';
+import { RAIL_PAIR_HEIGHT_CLASS, RAIL_SCROLL_CLASS, RAIL_PAIR_HEIGHT_ATTR } from '../utils/railPair';
 
 const ICONS = {
   circle: Circle,
@@ -35,7 +35,7 @@ const ContourModeRail = ({
     <div
       className={`absolute left-2 lg:left-4 bottom-2.5 z-10 flex flex-col gap-1
         bg-white/60 backdrop-blur-sm rounded-lg shadow-lg
-        ${RAIL_PAIR_HEIGHT_CLASS}
+        ${RAIL_PAIR_HEIGHT_CLASS} ${RAIL_SCROLL_CLASS}
         p-2`}
       role="group"
       aria-label="Contour tools"
