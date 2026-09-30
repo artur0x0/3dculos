@@ -86,17 +86,6 @@ const App = () => {
    * flush. ResizeObserver keeps it exact as the ribbon's contents change.
    */
   const [ribbonPx, setRibbonPx] = useState(44);
-  useEffect(() => {
-    const ribbon = cadToolbarHost?.closest?.('[data-editor-ribbon]');
-    if (!ribbon) return undefined;
-    const sync = () => setRibbonPx(Math.round(ribbon.getBoundingClientRect().height));
-    sync();
-    if (typeof ResizeObserver === 'undefined') return undefined;
-    const ro = new ResizeObserver(sync);
-    ro.observe(ribbon);
-    return () => ro.disconnect();
-  }, [cadToolbarHost]);
-
   const handleFeatureStripJump = (feature) => {
     if (!feature) return;
     setFeatureStripActiveId(feature.id);
@@ -287,6 +276,21 @@ const App = () => {
   const [gameRunBusy, setGameRunBusy] = useState(false);
   // Mobile CAD mid-strip portal target (CodeEditor header).
   const [cadToolbarHost, setCadToolbarHost] = useState(null);
+
+  // MUST stay below `cadToolbarHost`: a dependency array is evaluated during
+  // render, so reading that binding from above its `const` throws a TDZ
+  // ReferenceError and React renders nothing at all (blank screen).
+  useEffect(() => {
+    const ribbon = cadToolbarHost?.closest?.('[data-editor-ribbon]');
+    if (!ribbon) return undefined;
+    const sync = () => setRibbonPx(Math.round(ribbon.getBoundingClientRect().height));
+    sync();
+    if (typeof ResizeObserver === 'undefined') return undefined;
+    const ro = new ResizeObserver(sync);
+    ro.observe(ribbon);
+    return () => ro.disconnect();
+  }, [cadToolbarHost]);
+
 
   const { user, isAuthenticated, checkAuth } = useAuth();
 

@@ -1,8 +1,6 @@
 import React from 'react';
 import { Check } from 'lucide-react';
-import {
-  NumberField, SelectField, CheckField, PopupSection, POPUP_TEXT, accentOf,
-} from './controls/popupUI';
+import { NumberField } from './controls/popupUI';
 
 const ACCENT = 'cyan';
 
