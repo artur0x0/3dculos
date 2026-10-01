@@ -121,9 +121,11 @@ Mobile specifics:
   **feature sheet** (`hideWhenEmpty`). Strip scroll uses `rail-scroll` (visible thin
   thumb; horizontal CAD strip shows a bottom bar on overflow) and auto-scrolls to the
   **last** chip when the feature list grows. Chip highlight (`featureStripActiveId`)
-  clears on sheet cancel/accept/delete (and after script jump). C.4: editor stack
-  `overflow-hidden`, ribbon spacer measured (`data-feature-strip-ribbon-spacer-h`),
-  strip `z-20` so Contour chips are fully below the ribbon and tappable.
+  clears on sheet cancel/accept/delete (and after script jump). C.4+: Script-stage
+  editor stack is full-bleed (`absolute inset-0`) so the top ribbon
+  (`data-editor-ribbon`, `w-full`) spans the viewport; the vertical strip overlays
+  `right-0` with `top: ribbonPx` (`data-feature-strip-ribbon-spacer-h="measured"`),
+  `z-20`, and Monaco uses `pr-11` so chips stay below the ribbon without covering code.
   Per-type index badges (`data-feature-type-badge`,
   1…n per kind) sit bottom-right on each icon. Icons match the CAD toolbar
   (Contour/`NotebookPen`, Extrude/`ArrowUpFromLine`, Revolve/`Rotate3d`,
@@ -375,7 +377,13 @@ Import `src/utils/importModel.js` (+ `POST /api/convert/step`); export
 - **Responsive insets** are written `left-2 lg:left-4` / `right-2 lg:right-4`
   (phone-tight, desktop-roomy). Match this rather than inventing values.
 - **z-index ladder:** overlays `z-10`; edge chip and success banner `z-20`;
-  toasts `z-30`; modals and error banners `z-50`.
+  toasts + mobile stage pill `z-30`; **cross-section panel/popup `z-40`** (above
+  the CAD↔Script home-indicator so expanded options win); modals and error
+  banners `z-50`. Cross-section **Disable** (FlipHorizontal in the expanded
+  popup) is red (`text-red-600`) as dismiss/cancel; Check stays green Done.
+- **Feature-entry toasts:** Contour / Extrude / Revolve / Loft / Sweep / Fillet /
+  Chamfer open **without** an informational toast. Soft-fail / enterRefuse /
+  validation / workplane-miss toasts stay.
 - **Icons** are `lucide-react` only, with three vendored exceptions in
   `src/components/icons/`: `SquareRoundCorner.jsx` (Fillet), `Angle.jsx`
   (Draft) and `TrianglesCenterlineDashedVertical.jsx` (cross-section options).
