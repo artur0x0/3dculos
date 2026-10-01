@@ -1,7 +1,7 @@
 // components/CrossSectionPanel.jsx
 /* eslint-disable react-hooks/exhaustive-deps -- see Viewport note; same ref-backed pattern */
 import React, { useState, useEffect } from 'react';
-import { FlipHorizontal, Check, Maximize2, Ruler, Move3d, Frame, Spline, RectangleHorizontal, Layers3, NotebookPen } from 'lucide-react';
+import { FlipHorizontal, Check, Maximize2, Ruler, Move3d, Frame, Spline, RectangleHorizontal, Layers3, NotebookPen, X } from 'lucide-react';
 import TrianglesCenterlineDashedVertical from './icons/TrianglesCenterlineDashedVertical';
 import ViewSnapControl from './ViewSnapControl';
 import { PLANE_PRESETS } from '../utils/crossSection';
@@ -373,12 +373,12 @@ const handleButtonClick = () => {
         </button>
         <button
           onClick={handleButtonClick}
-          className="p-2 rounded text-red-600 hover:bg-red-100 active:bg-red-200"
+          className="p-2 rounded text-gray-700 hover:bg-gray-200 active:bg-gray-300"
           title="Dismiss — turn off cross section"
           aria-label="Dismiss cross section"
           data-cross-section-dismiss=""
         >
-          <FlipHorizontal size={20} />
+          <X size={20} />
         </button>
         {/* Closing the options panel is "I'm done here", so: a checkmark. */}
         <button

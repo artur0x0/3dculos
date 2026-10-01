@@ -26,7 +26,12 @@ import {
 import SquareRoundCorner from './icons/SquareRoundCorner';
 import Angle from './icons/Angle';
 import { itemsByGroup, paletteRailSections } from '../utils/helperPaletteSnippets';
-import { RAIL_PAIR_HEIGHT_CLASS, RAIL_SCROLL_CLASS, RAIL_PAIR_HEIGHT_ATTR } from '../utils/railPair';
+import {
+  RAIL_PAIR_HEIGHT_CLASS,
+  RAIL_PAIR_WIDTH_CLASS,
+  RAIL_SCROLL_CLASS,
+  RAIL_PAIR_HEIGHT_ATTR,
+} from '../utils/railPair';
 import { resolveFaceModal } from '../utils/faceFeaturePlacement';
 import { canBuildFilletAlongPath, resolveFilletStrategy } from '../utils/filletAlongPath';
 import { isContourEntry } from '../utils/contourMode';
@@ -197,7 +202,7 @@ const HelperInsertPalette = ({
       <div
         className={`absolute left-2 lg:left-4 bottom-2.5 z-10 flex flex-col gap-1
           bg-white/60 backdrop-blur-sm rounded-lg shadow-lg
-          ${RAIL_PAIR_HEIGHT_CLASS} ${RAIL_SCROLL_CLASS}
+          ${RAIL_PAIR_WIDTH_CLASS} ${RAIL_PAIR_HEIGHT_CLASS} ${RAIL_SCROLL_CLASS}
           p-2`}
         role="group"
         aria-label="Helper insert palette"
@@ -215,7 +220,7 @@ const HelperInsertPalette = ({
               <div className="border-t border-gray-300/70 my-0.5 mx-0.5" aria-hidden />
             )}
             <div
-              className={`text-[9px] font-semibold uppercase tracking-wide text-gray-500 px-1 ${
+              className={`text-[9px] font-semibold uppercase tracking-wide text-gray-500 px-1 truncate ${
                 compact ? 'leading-3' : 'leading-4'
               }`}
             >
