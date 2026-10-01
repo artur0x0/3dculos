@@ -175,12 +175,8 @@ console.log('cad palette + plane/contour toggles');
     /aria-label="Contour display"/.test(panel) && /data-overlay-toggle="contour"/.test(panel),
   );
   check(
-    'Patch overlay toggle in the right rail',
-    /aria-label="Patch colour overlay"/.test(panel) && /data-overlay-toggle="patches"/.test(panel),
-  );
-  check(
     'toggles sit with Face/Edge',
-    /aria-label="Pick mode"/.test(panel) && /aria-label="Plane, contour, and patch display"/.test(panel),
+    /aria-label="Pick mode"/.test(panel) && /aria-label="Plane and contour display"/.test(panel),
   );
   check(
     'toggles report pressed when on',
