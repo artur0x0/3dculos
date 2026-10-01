@@ -1,7 +1,7 @@
 // components/CrossSectionPanel.jsx
 /* eslint-disable react-hooks/exhaustive-deps -- see Viewport note; same ref-backed pattern */
 import React, { useState, useEffect } from 'react';
-import { FlipHorizontal, Check, Maximize2, Ruler, Move3d, Frame, Spline, RectangleHorizontal, Layers3, NotebookPen, Palette } from 'lucide-react';
+import { FlipHorizontal, Check, Maximize2, Ruler, Move3d, Frame, Spline, RectangleHorizontal, Layers3, NotebookPen } from 'lucide-react';
 import TrianglesCenterlineDashedVertical from './icons/TrianglesCenterlineDashedVertical';
 import ViewSnapControl from './ViewSnapControl';
 import { PLANE_PRESETS } from '../utils/crossSection';
@@ -28,9 +28,6 @@ const CrossSectionPanel = ({
   showContours = true,
   onShowPlanesChange = null,
   onShowContoursChange = null,
-  /** Edges PR2: patch-colour debug overlay. Session only; default off. */
-  showPatchOverlay = false,
-  onShowPatchOverlayChange = null,
   /** Stack tools vertically on the right edge. Both shells pass this now — desktop
    *  matches phone; the wrapping-row fallback is kept for any other caller. */
   verticalRail = false,
@@ -240,7 +237,7 @@ const handleButtonClick = () => {
               <div
                 className={`flex gap-1 ${verticalRail ? 'flex-col' : 'flex-row'}`}
                 role="group"
-                aria-label="Plane, contour, and patch display"
+                aria-label="Plane and contour display"
                 data-selector-group="plane-contour"
               >
                 <button
@@ -276,23 +273,6 @@ const handleButtonClick = () => {
                   data-overlay-toggle="contour"
                 >
                   <NotebookPen size={20} />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onShowPatchOverlayChange?.(!showPatchOverlay)}
-                  className={`p-2 rounded ${
-                    showPatchOverlay
-                      ? 'text-green-600 bg-green-100'
-                      : 'text-blue-600 hover:bg-gray-100 active:bg-blue-100'
-                  }`}
-                  title={showPatchOverlay
-                    ? 'Patch colours on — each segmented face one colour (Edges PR2 debug)'
-                    : 'Patch colours off — tap to eyeball PartGraph patches'}
-                  aria-label="Patch colour overlay"
-                  aria-pressed={!!showPatchOverlay}
-                  data-overlay-toggle="patches"
-                >
-                  <Palette size={20} />
                 </button>
               </div>
             </div>
