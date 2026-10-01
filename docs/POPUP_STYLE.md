@@ -11,6 +11,9 @@ over inventing a new modal layout.
   use the compact mobile max-height + internal scroll described below.
 - **`FilletModeChip.jsx`** — amber glass card; same placement and scroll rules,
   edge-pick Accept / Back / grey X dismiss.
+- **`ShellModeChip.jsx`** — cyan glass card (same shell as Contour / Loft /
+  Workplane); face-pick opening + Wall `NumberField` + Face/Closed segmented
+  control; Confirm writes `hollow()`; grey X exits with no write.
 
 ## Placement
 

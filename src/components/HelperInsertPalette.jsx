@@ -89,6 +89,7 @@ const GROUP_SHORT_LABEL = {
  * Slice 24/25/26/28/30: Extrude / Revolve / Loft / Sweep / Profile call onEnterContourMode.
  * Extrude / Revolve / Loft / Sweep Confirm commits the solid; Profile stays Profile-only.
  * Slice 27: Fillet enters edge-pick mode (no pre-select / no soft-fail).
+ * Shell: face-pick mode (opening face + wall); not the axis Opening sheet.
  * Slice 29: groups Block / Adv / Feat / Xform on the game rail.
  * Advanced Confirm unions onto `part` when a solid is already in the script.
  */
@@ -103,6 +104,7 @@ const HelperInsertPalette = ({
   onPathPreview = null,
   onEnterContourMode = null,
   onEnterFilletMode = null,
+  onEnterShellMode = null,
   compact = false,
   /** 'game' keeps Advanced. 'cad' promotes that set into Model. */
   layout = 'game',
@@ -140,6 +142,12 @@ const HelperInsertPalette = ({
     // Slice 27: Fillet enters edge-pick mode even with no prior selection.
     if ((isFilletEntry(item.id) || isChamferEntry(item.id)) && typeof onEnterFilletMode === 'function') {
       onEnterFilletMode({ entry: item.id });
+      return;
+    }
+    // Shell enters face-pick mode (opening face + wall). Axis Opening select
+    // was confusing — face pick maps to hollow(..., { center, normal }).
+    if (item.id === 'shell' && typeof onEnterShellMode === 'function') {
+      onEnterShellMode({ entry: 'shell' });
       return;
     }
     // Workplane enters plane-only contour mode (Face / construction plane +
