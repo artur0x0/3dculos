@@ -60,7 +60,8 @@
         "golden:hook-dep-tdz": "node scripts/golden/smoke_hook_dep_tdz.mjs",
         "golden:ui-polish": "node scripts/golden/smoke_ui_polish_icons_layout.mjs",
         "golden:script-insert-part-binding": "node scripts/golden/smoke_script_insert_part_binding.mjs",
-        "golden:shell-draft-tube": "node scripts/golden/smoke_shell_draft_tube.mjs"
+        "golden:shell-draft-tube": "node scripts/golden/smoke_shell_draft_tube.mjs",
+        "golden:edges-pr2-patches": "node scripts/golden/smoke_edges_pr2_patches.mjs"
     },
     "dependencies": {
         "@monaco-editor/react": "^4.6.0",

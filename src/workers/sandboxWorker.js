@@ -25,6 +25,7 @@ import { densifyPathPoints, buildVariableProfileFrames, maxConsecutiveFrameAngle
 import { indexBoundaryEdges } from '../utils/boundaryEdgeIds.js';
 import { assembleSweepPath } from '../utils/edgeSweepPath.js';
 import { buildMakeLoftSolid, offsetPlaneFrame } from '../utils/makeLoft.js';
+import { buildPartGraphPatches } from '../utils/partGraphPatches.js';
 
 /**
  * List of globals to block/remove in the worker context
@@ -5070,15 +5071,56 @@ const serializeResult = (manifold) => {
   }
   
   const mesh = manifold.getMesh();
-  
+  const faceID = mesh.faceID ? Array.from(mesh.faceID) : null;
+  const vertProperties = Array.from(mesh.vertProperties);
+  const triVerts = Array.from(mesh.triVerts);
+
+  // Edges PR2 — Layer 1 patch segmentation (shipped; unused by pick/propagate).
+  let partGraph = null;
+  try {
+    const np = mesh.numProp || 3;
+    const nVert = Math.floor(vertProperties.length / np);
+    const positions = new Float32Array(nVert * 3);
+    for (let i = 0; i < nVert; i++) {
+      positions[i * 3] = vertProperties[i * np];
+      positions[i * 3 + 1] = vertProperties[i * np + 1];
+      positions[i * 3 + 2] = vertProperties[i * np + 2];
+    }
+    const built = buildPartGraphPatches({
+      positions,
+      indices: triVerts,
+      faceIDs: faceID,
+    });
+    partGraph = {
+      version: built.version,
+      atomCount: built.atomCount,
+      triPatch: Array.from(built.triPatch),
+      patches: built.patches.map((p) => ({
+        id: p.id,
+        normal: p.normal,
+        center: p.center,
+        area: p.area,
+        kind: p.kind,
+        curvature: p.curvature,
+        atomCount: p.atomCount,
+        faceIds: p.faceIds,
+        triCount: p.tris.length,
+      })),
+    };
+  } catch (e) {
+    console.warn('[partGraph] segmentation failed:', e?.message || e);
+    partGraph = null;
+  }
+
   return {
     numProp: mesh.numProp,
-    vertProperties: Array.from(mesh.vertProperties),
-    triVerts: Array.from(mesh.triVerts),
+    vertProperties,
+    triVerts,
     numRun: mesh.numRun,
     runIndex: Array.from(mesh.runIndex),
     runOriginalID: Array.from(mesh.runOriginalID),
-    faceID: mesh.faceID ? Array.from(mesh.faceID) : null,
+    faceID,
+    partGraph,
   };
 };
 
