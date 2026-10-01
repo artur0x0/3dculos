@@ -118,7 +118,9 @@ console.log('mobile C.1: strip polish + UI reorg');
   );
   check(
     'E: feature strip still exposes vertical/right attrs (Script rail; CAD horizontal is C.2)',
-    /data-feature-strip-side="right"/.test(strip) &&
+    // Desktop seam uses side={stripSide}; Script default remains 'right'.
+    /data-feature-strip-side=\{stripSide\}/.test(strip) &&
+      /'right'/.test(strip) &&
       /data-feature-strip-orientation="vertical"/.test(strip) &&
       /data-cad-feature-strip/.test(app) &&
       /border-l border-gray-700\/40/.test(strip),

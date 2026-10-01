@@ -27,14 +27,15 @@ import Angle from './icons/Angle';
 import { parseFeatureMarkers } from '../utils/featureMarkers';
 
 /**
- * Slice Mobile B.1 → C.2 — feature strip.
+ * Slice Mobile B.1 → C.2 — feature strip (+ desktop seam).
  *
  * C.2:
- *   - CAD: horizontal left-to-right under the top ribbon.
- *   - Script: vertical on the right, starting below the ribbon (no overlap).
+ *   - CAD (mobile): horizontal left-to-right under the top ribbon.
+ *   - Script (mobile): vertical on the right, starting below the ribbon.
+ *   - Desktop: vertical between editor and viewer (`side="between"`).
  *
- * Icons match CAD toolbar tools. Per-type index badges (C.1). Script: jump
- * caret. CAD: open feature sheet.
+ * Icons match CAD toolbar tools. Per-type index badges (C.1). Script/desktop:
+ * jump caret. CAD mobile: open feature sheet.
  *
  * Slice A: strip covers every left-rail insertable that creates a feature
  * (Block / Model / Polish / Move), not only Contour/Fillet markers.
@@ -90,11 +91,18 @@ export default function FeatureStrip({
   activeId = null,
   onJump,
   hideWhenEmpty = false,
-  /** 'vertical' (Script right rail) | 'horizontal' (CAD under-ribbon). */
+  /** 'vertical' (Script/desktop) | 'horizontal' (CAD under-ribbon). */
   orientation = 'vertical',
+  /**
+   * Placement chrome: 'top' (horizontal CAD), 'right' (Script rail),
+   * 'between' (desktop seam between editor and viewer). Defaults from orientation.
+   */
+  side,
 }) {
   const features = useMemo(() => parseFeatureMarkers(script), [script]);
   const horizontal = orientation === 'horizontal';
+  const stripSide = side || (horizontal ? 'top' : 'right');
+  const between = stripSide === 'between';
 
   if (features.length === 0) {
     if (hideWhenEmpty) return null;
@@ -118,14 +126,19 @@ export default function FeatureStrip({
     }
     return (
       <div
-        className="shrink-0 flex flex-col items-center justify-start gap-1
-          border-l border-gray-700/40 bg-gray-900/70 surface-glass-chip
-          px-1.5 py-2 w-11 flex-1 min-h-0
-          pb-[max(0.5rem,env(safe-area-inset-bottom,0px))]"
+        className={between
+          ? `shrink-0 flex flex-col items-center justify-start gap-1
+            border-x border-gray-700/50 bg-gray-900/80 surface-glass-chip
+            px-1.5 py-2 w-11 h-full min-h-0`
+          : `shrink-0 flex flex-col items-center justify-start gap-1
+            border-l border-gray-700/40 bg-gray-900/70 surface-glass-chip
+            px-1.5 py-2 w-11 flex-1 min-h-0
+            pb-[max(0.5rem,env(safe-area-inset-bottom,0px))]`}
         data-feature-strip=""
         data-feature-strip-empty=""
         data-feature-strip-orientation="vertical"
-        data-feature-strip-side="right"
+        data-feature-strip-side={stripSide}
+        data-feature-strip-placement={between ? 'desktop-seam' : undefined}
         title="No marked features yet"
       >
         <div
@@ -183,13 +196,18 @@ export default function FeatureStrip({
 
   return (
     <div
-      className="shrink-0 flex flex-col items-center gap-1.5 overflow-y-auto overflow-x-hidden
-        border-l border-gray-700/40 bg-gray-900/70 surface-glass-chip
-        px-1.5 pt-2 w-11 no-scrollbar flex-1 min-h-0
-        pb-[max(3.5rem,calc(env(safe-area-inset-bottom,0px)+3.25rem))]"
+      className={between
+        ? `shrink-0 flex flex-col items-center gap-1.5 overflow-y-auto overflow-x-hidden
+          border-x border-gray-700/50 bg-gray-900/80 surface-glass-chip
+          px-1.5 py-2 w-11 no-scrollbar h-full min-h-0`
+        : `shrink-0 flex flex-col items-center gap-1.5 overflow-y-auto overflow-x-hidden
+          border-l border-gray-700/40 bg-gray-900/70 surface-glass-chip
+          px-1.5 pt-2 w-11 no-scrollbar flex-1 min-h-0
+          pb-[max(3.5rem,calc(env(safe-area-inset-bottom,0px)+3.25rem))]`}
       data-feature-strip=""
       data-feature-strip-orientation="vertical"
-      data-feature-strip-side="right"
+      data-feature-strip-side={stripSide}
+      data-feature-strip-placement={between ? 'desktop-seam' : undefined}
       role="navigation"
       aria-label="Modeling features"
     >

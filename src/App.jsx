@@ -92,6 +92,12 @@ const App = () => {
     setFeatureSheet({ mode: 'edit', feature });
     codeEditorRef.current?.revealRange?.(feature.startOffset, feature.endOffset);
   };
+  /** Desktop seam strip: jump caret only (feature sheets stay mobile-only). */
+  const handleDesktopFeatureStripJump = (feature) => {
+    if (!feature) return;
+    setFeatureStripActiveId(feature.id);
+    codeEditorRef.current?.revealRange?.(feature.startOffset, feature.endOffset);
+  };
   /**
    * Slice Mobile C.1 — feature sheet (CAD + Script stages, under-title horizontal).
    * null | { mode: 'picker' } | { mode: 'edit', feature }
@@ -1801,6 +1807,22 @@ const App = () => {
             </div>
           )}
         </div>
+        {/* Desktop feature strip: vertical chips in the seam between editor and viewer. */}
+        {appMode !== 'game' && (
+          <div
+            className="shrink-0 flex flex-col self-stretch h-full min-h-0"
+            data-desktop-feature-strip=""
+            data-feature-strip-placement="desktop-seam"
+          >
+            <FeatureStrip
+              orientation="vertical"
+              side="between"
+              script={currentScript}
+              activeId={featureStripActiveId}
+              onJump={handleDesktopFeatureStripJump}
+            />
+          </div>
+        )}
         <SplitDivider orientation="vertical" onDrag={(x) => handleSplitDragX(x)} />
         <div className="flex-1 min-w-0">
           <Viewport 

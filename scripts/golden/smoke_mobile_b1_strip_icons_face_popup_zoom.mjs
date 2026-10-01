@@ -73,10 +73,10 @@ console.log('mobile B.1: vertical strip icons + face popup under title + view zo
       /isScriptStage && \(/.test(app) &&
       /handleFeatureStripJump/.test(app) &&
       /<FeatureStrip[\s\S]*?script=\{currentScript\}/.test(app) &&
-      // Slice C may also mount a CAD-stage strip for feature sheets (≤2 total).
+      // Slice C: CAD + Script. Desktop seam may add a 3rd mount.
       (() => {
         const n = (app.match(/<FeatureStrip\b/g) || []).length;
-        return n >= 1 && n <= 2;
+        return n >= 2 && n <= 3 && /data-cad-feature-strip/.test(app);
       })(),
   );
   // Slice Mobile C.1 removed the face-selected info popup (no empty reserved band).
