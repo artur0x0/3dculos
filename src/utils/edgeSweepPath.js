@@ -99,6 +99,55 @@ function pickPathComponent(unique, adj) {
   return { edges: null, recovered: false, comps };
 }
 
+/**
+ * Split a selection into connected edge components for independent fillets.
+ * Unlike orderEdgePath / assembleSweepPath (single path, may drop strays),
+ * every component is kept. Each must be a simple open chain or closed loop;
+ * a Y/T branch inside any component still refuses.
+ *
+ * @param {object[]} selectedEdges
+ * @returns {{
+ *   ok: true,
+ *   components: object[][],
+ * } | {
+ *   ok: false,
+ *   code: 'empty'|'branch'|'invalid',
+ *   message: string,
+ * }}
+ */
+export function splitEdgePathComponents(selectedEdges) {
+  const raw = Array.isArray(selectedEdges) ? selectedEdges : [];
+  const uniq = new Map();
+  for (const e of raw) {
+    if (!e) continue;
+    if (!Number.isFinite(e.a) || !Number.isFinite(e.b)) continue;
+    const n = normalizePathEdge(e);
+    if (!n) continue;
+    // Preserve caller fields (n0/n1, boundaryId, blendStrip, …) for fillet emit/preview.
+    if (!uniq.has(n.key)) uniq.set(n.key, { ...e, ...n });
+  }
+  const unique = [...uniq.values()];
+  if (!unique.length) {
+    return { ok: false, code: 'empty', message: SWEEP_PATH_EMPTY };
+  }
+
+  const adj = buildEdgeVertexAdj(unique);
+  const comps = edgeComponents(unique, adj);
+  for (const comp of comps) {
+    if (!isSimpleChainOrLoop(comp)) {
+      return { ok: false, code: 'branch', message: SWEEP_PATH_BRANCH };
+    }
+  }
+  // Stable order: selection order of each component's first-seen edge.
+  const orderIndex = new Map(unique.map((e, i) => [e.key, i]));
+  const sorted = comps.slice().sort((a, b) => {
+    const ia = Math.min(...a.map((e) => orderIndex.get(e.key) ?? 0));
+    const ib = Math.min(...b.map((e) => orderIndex.get(e.key) ?? 0));
+    return ia - ib;
+  });
+  return { ok: true, components: sorted };
+}
+
 function _dist(a, b) {
   return Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 }

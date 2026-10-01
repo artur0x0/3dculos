@@ -310,7 +310,10 @@ Contour / Extrude / Revolve / Loft / Sweep: `src/utils/contourMode.js` +
 Fillet / Chamfer: `src/utils/filletMode.js` + `FilletModeChip.jsx` (same
 edge-pick chip; Chamfer commits `chamferEdges`, Fillet commits the sweep).
 Enter/exit/accept at `src/components/Viewport.jsx` `enterFilletMode` /
-`acceptFillet`. Kernels in `src/utils/fillet*.js` and
+`acceptFillet`. Disjoint edge picks split via `splitEdgePathComponents` and
+Accept emits one `makeSweepPath` + `filletAlongPath` pair per contiguous
+component inside the same `FILLET_MODE` markers (connected chains unchanged).
+Kernels in `src/utils/fillet*.js` and
 `src/utils/edgeSweepPath.js` — read `.claude/skills/fillets/SKILL.md` first.
 A Create-contour Confirm on a script with no `part` writes a plane literal
 and does not insert the starter cube, so the following Extrude is

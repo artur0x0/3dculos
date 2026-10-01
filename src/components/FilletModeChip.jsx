@@ -16,6 +16,7 @@ const FilletModeChip = ({
   tangentOn = true,
   params = {},
   pathOk = false,
+  componentCount = 0,
   edgeClass = null,
   compact = false,
   onToggleTangent,
@@ -93,9 +94,11 @@ const FilletModeChip = ({
                 ? 'Accept commits the chamfer and exits'
                 : 'Tap edges, then Accept')
               : (pathOk
-                ? 'Sweep blend preview · Accept commits and exits'
+                ? (componentCount > 1
+                  ? `${componentCount} independent fillets · Accept commits and exits`
+                  : 'Sweep blend preview · Accept commits and exits')
                 : edgeCount
-                  ? 'Path not ready — pick a contiguous chain (Tangent on)'
+                  ? 'Path not ready — branched picks need a simple chain (Tangent on)'
                   : 'Tap edges — shallow blend tessellation is not pickable')}
           </div>
         </div>
@@ -161,7 +164,7 @@ const FilletModeChip = ({
           data-fillet-accept="enabled"
           title={chamfer
             ? 'Commit this chamfer (chamferEdges) and leave Chamfer mode.'
-            : 'Commit this fillet (makeSweepPath + filletAlongPath) and leave Fillet mode.'}
+            : 'Commit this fillet (makeSweepPath + filletAlongPath per contiguous component) and leave Fillet mode.'}
         >
           <Check size={14} />
           Accept

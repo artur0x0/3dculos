@@ -7,7 +7,8 @@
  * - Accept writes makeSweepPath + filletAlongPath in a marked block + Auto-Run
  * - second Accept replaces the same block (no duplicate stack)
  * - Back = no commit
- * - disconnected path stays visible (loud fail, not a wrong solid)
+ * - disconnected (disjoint simple) picks Accept as independent fillets
+ * - branched path stays visible (loud fail, not a wrong solid)
  * - #27–#30 fillet/sweep stack preserved (Strategy=sweep default)
  */
 import {
@@ -133,8 +134,8 @@ const e30 = mk(3, 0);
   check('Accept open chain ok', ok.ok === true && ok.normalized.strategy === 'sweep');
 
   const disc = validateFilletAccept([e01, e23], p);
-  check('Accept disconnected fails', disc.ok === false);
-  check('disconnected Accept mentions disconnect', /disconnect/i.test(disc.message || ''));
+  check('Accept disconnected ok (independent fillets)', disc.ok === true);
+  check('disconnected Accept yields 2 components', (disc.components || []).length === 2);
 }
 
 // ── Live preview grows with selection ──────────────────────────
@@ -166,12 +167,16 @@ const e30 = mk(3, 0);
   check('preview closed has wedge rings', (loop.rings?.length || 0) >= 3);
 
   const disc = buildFilletBlendPreview([e01, e23], { strategy: 'sweep', radius: 3 });
-  check('preview disconnected not ok', disc.ok === false);
+  check('preview disconnected ok (independent)', disc.ok === true);
+  check('preview disconnected componentCount 2', disc.componentCount === 2);
   check('preview disconnected keeps polylines', (disc.polylines?.length || 0) >= 2);
-  check('preview disconnected no invented path', disc.path == null);
-  check('preview disconnected no rings (no wrong solid)', !disc.rings);
+  check('preview disconnected no invented single path', disc.path == null);
+  check('preview disconnected top-level rings null (per-component)', !disc.rings);
+  check('preview disconnected each component has rings',
+    (disc.components || []).length === 2
+    && disc.components.every((c) => (c.rings?.length || 0) >= 2));
   const vis = disconnectedPathPolylines([e01, e23]);
-  check('disconnected polylines visible', vis.length === 2 && vis[0].length === 2);
+  check('disconnected polylines helper still works', vis.length === 2 && vis[0].length === 2);
 }
 
 // ── Accept compose ─────────────────────────────────────────────
@@ -225,9 +230,46 @@ const e30 = mk(3, 0);
     edges: [e01, e23],
     params: { strategy: 'sweep', radius: 3 },
   });
-  check('disconnected Accept does not write', disc.ok === false && disc.buffer == null);
+  check('disconnected Accept writes', disc.ok === true && typeof disc.buffer === 'string');
+  check('disconnected Accept one fillet-mode block',
+    (disc.buffer.match(/fillet-mode begin/g) || []).length === 1);
+  check('disconnected Accept two makeSweepPath', countMakeSweepPath(disc.buffer) === 2);
+  check('disconnected Accept two filletAlongPath', countFilletAlongPath(disc.buffer) === 2);
   const stay = buildFilletBlendPreview([e01, e23], { strategy: 'sweep', radius: 3 });
-  check('disconnected path stays visible after failed Accept', (stay.polylines?.length || 0) >= 2);
+  check('disconnected preview stays visible after Accept compose', (stay.polylines?.length || 0) >= 2);
+}
+
+// ── Disjoint edges → independent fillets (2+ components) ───────
+{
+  // Opposite box edges (no shared vertex) → two 1-edge components.
+  const gate = validateFilletAccept([e01, e23], { strategy: 'sweep', radius: 2 });
+  check('2 disjoint edges → 2 components', gate.ok && (gate.components || []).length === 2);
+  const twoAlone = composeFilletCommit(starter, {
+    edges: [e01, e23],
+    params: { strategy: 'sweep', radius: 2 },
+  });
+  check('2 disjoint edges Accept ok', twoAlone.ok === true);
+  check('2 disjoint edges two pairs inside markers',
+    hasFilletModeBlock(twoAlone.buffer)
+    && countMakeSweepPath(filletModeOwnedRegion(twoAlone.buffer)) === 2
+    && countFilletAlongPath(filletModeOwnedRegion(twoAlone.buffer)) === 2);
+
+  // Other opposite pair + one contiguous chain still one component when connected.
+  const chain = validateFilletAccept([e01, e12], { strategy: 'sweep', radius: 2 });
+  check('contiguous chain stays 1 component', chain.ok && (chain.components || []).length === 1);
+  const bothPairs = validateFilletAccept([e01, e23, e12, e30], { strategy: 'sweep', radius: 2 });
+  // Full loop is one closed component.
+  check('closed loop stays 1 component', bothPairs.ok && (bothPairs.components || []).length === 1);
+
+  // Two opposite pairs → two disconnected 2-edge? No — e01+e12+e23+e30 is connected.
+  // Two opposite single edges already covered; add e12+e30 as second disjoint set
+  // alongside nothing else: just confirm 2-edge opposite also splits.
+  const otherOpp = composeFilletCommit(starter, {
+    edges: [e12, e30],
+    params: { strategy: 'sweep', radius: 2.5 },
+  });
+  check('other opposite pair Accept ok', otherOpp.ok === true);
+  check('other opposite pair two filletAlongPath', countFilletAlongPath(otherOpp.buffer) === 2);
 }
 
 // ── One-shot palette Confirm still unmarked (prior goldens) ────
@@ -273,7 +315,7 @@ const e30 = mk(3, 0);
   check('#27 size-neutral pad: Q1 extent stays r', Math.abs(q1max - 2) < 1e-9);
   const e = filletSweepCutterExpand(2);
   check('#30 rear pad ≥ min', e >= FILLET_SWEEP_EXPAND_MIN);
-  check('canBuild still gates disconnect', !canBuildFilletAlongPath([e01, e23]).ok);
+  check('canBuild (single-path) still gates disconnect', !canBuildFilletAlongPath([e01, e23]).ok);
 }
 
 // ── Follow-up #34 nit-1: preview radius == committed radius (no preview≠commit divergence)
