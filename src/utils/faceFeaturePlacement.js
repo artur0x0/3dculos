@@ -860,8 +860,18 @@ export function emitSelectedEdgeLiteralLines(_body, selectedEdges, names, alloca
     if (Array.isArray(e.n0) && e.n0.length >= 3 && Array.isArray(e.n1) && e.n1.length >= 3) {
       normals = `, n0: ${formatVec3(e.n0, 6)}, n1: ${formatVec3(e.n1, 6)}`;
     }
+    // Slice B+C: emit dense pts when present so re-run makeSweepPath keeps
+    // curvature (va/vb alone are RDP chords → faceted fillet corners).
+    let ptsLit = '';
+    if (Array.isArray(e.pts) && e.pts.length >= 2) {
+      const body = e.pts
+        .filter((p) => Array.isArray(p) && p.length >= 3)
+        .map((p) => formatVec3(p, 6))
+        .join(', ');
+      if (body) ptsLit = `, pts: [${body}]`;
+    }
     lits.push(
-      `{ a: ${e.a}, b: ${e.b}, va: ${va}, vb: ${vb}, length: ${+length.toFixed(6)}${key}${normals} }`,
+      `{ a: ${e.a}, b: ${e.b}, va: ${va}, vb: ${vb}, length: ${+length.toFixed(6)}${key}${normals}${ptsLit} }`,
     );
   }
   if (!lits.length) {
