@@ -28,6 +28,7 @@ const ICONS = {
  */
 const ContourModeRail = ({
   tool = 'circle',
+  entry = 'crossSection',
   onSelectTool,
   onBack,
   compact = false,
@@ -35,6 +36,7 @@ const ContourModeRail = ({
   // Same exact height as CrossSectionPanel via RAIL_PAIR_HEIGHT_CLASS.
   const iconSize = 20;
   const pad = 'p-2';
+  const workplaneOnly = entry === 'workplane';
 
   return (
     <div
@@ -43,7 +45,7 @@ const ContourModeRail = ({
         ${RAIL_PAIR_WIDTH_CLASS} ${RAIL_PAIR_HEIGHT_CLASS} ${RAIL_SCROLL_CLASS}
         p-2`}
       role="group"
-      aria-label="Contour tools"
+      aria-label={workplaneOnly ? 'Workplane tools' : 'Contour tools'}
       data-rail-pair="left"
       data-rail-height={RAIL_PAIR_HEIGHT_ATTR}
     >
@@ -52,9 +54,9 @@ const ContourModeRail = ({
           compact ? 'leading-3' : 'leading-4'
         }`}
       >
-        Contour
+        {workplaneOnly ? 'Plane' : 'Contour'}
       </div>
-      {CONTOUR_TOOLS.map((item) => {
+      {!workplaneOnly && CONTOUR_TOOLS.map((item) => {
         const Icon = ICONS[item.id] || Circle;
         const active = tool === item.id;
         return (
@@ -74,12 +76,18 @@ const ContourModeRail = ({
           </button>
         );
       })}
-      <div className="border-t border-gray-300/70 my-0.5 mx-0.5" aria-hidden />
+      {!workplaneOnly && (
+        <div className="border-t border-gray-300/70 my-0.5 mx-0.5" aria-hidden />
+      )}
       <button
         type="button"
         onClick={() => onBack?.()}
-        title="Dismiss — exit contour mode (no additional solid write)"
-        aria-label="Dismiss contour mode without committing a solid"
+        title={workplaneOnly
+          ? 'Dismiss — exit workplane mode without writing'
+          : 'Dismiss — exit contour mode (no additional solid write)'}
+        aria-label={workplaneOnly
+          ? 'Dismiss workplane mode without committing'
+          : 'Dismiss contour mode without committing a solid'}
         className={`${pad} rounded text-gray-700 hover:bg-gray-200 active:bg-gray-300
           flex items-center justify-center transition-colors`}
       >

@@ -21,6 +21,7 @@ import {
   AlignVerticalJustifyCenter,
   FlipHorizontal2,
   Boxes,
+  Layers3,
 } from 'lucide-react';
 import SquareRoundCorner from './icons/SquareRoundCorner';
 import Angle from './icons/Angle';
@@ -69,6 +70,7 @@ const FEATURE_ICONS = Object.freeze({
   mirror: FlipHorizontal2,
   array: Boxes,
   polarArray: Boxes,
+  workplane: Layers3,
 });
 
 function TypeBadge({ index }) {

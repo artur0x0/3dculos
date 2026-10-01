@@ -107,6 +107,7 @@ console.log('slice A: feature ribbon completeness');
     ['shell', 'shell', SHELL_BEGIN],
     ['addDraft', 'draft', DRAFT_BEGIN],
     ['makeExtrude', 'extrude', CONTOUR_EXTRUDE_BEGIN],
+    ['workplane', 'workplane', null],
     ['roundedBox', 'roundedBox', null],
     ['center', 'center', null],
   ];

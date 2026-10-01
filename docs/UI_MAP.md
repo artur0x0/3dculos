@@ -346,6 +346,10 @@ Import `src/utils/importModel.js` (+ `POST /api/convert/step`); export
   dead code; that was a real bug in all six Shapes until it was fixed. Mutating
   an existing body (holes, shell, transforms) is different — that keeps
   `syncPartLines`, which points `part` at the body you edited.
+- **Mode-chip popup style** (placement, cyan/amber glass, mobile
+  `max-h-[calc(100dvh-12rem)]` + `rail-scroll`, Confirm/X): see
+  [`docs/POPUP_STYLE.md`](./POPUP_STYLE.md). References: `ContourModeChip` (incl.
+  Loft / Workplane), `FilletModeChip`.
 - **Feature popups all use `src/components/controls/popupUI.jsx`** — one type
   scale (`POPUP_TEXT`), one set of fields, accents per surface (`cyan` contour,
   `amber` fillet, `slate` helper sheets). **Every number renders a slider AND a

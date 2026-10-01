@@ -7,7 +7,8 @@ const ACCENT = 'cyan';
 /**
  * Slice 24/25/26/28/30 — contour-mode chip (Edge-pick pattern).
  * Plane + profile params; Extrude / Revolve / Loft / Sweep entries also edit
- * solid params and Confirm commits the solid. Mobile-first compact card.
+ * solid params and Confirm commits the solid. Workplane entry is plane-only
+ * (Face / construction plane + offset + rotate). Mobile-first compact card.
  */
 const ContourModeChip = ({
   tool = 'circle',
@@ -44,6 +45,8 @@ const ContourModeChip = ({
   onPlaneAngles,
   onPickWorkplane,
   onPickFace,
+  planeOffset = 0,
+  onPlaneOffset,
   tangentOn = false,
   edgeCount = 0,
   onToggleTangent,
@@ -55,7 +58,10 @@ const ContourModeChip = ({
   const isRevolve = entry === 'makeRevolve';
   const isLoft = entry === 'makeLoft';
   const isSweep = entry === 'makeSweep';
-  const commitName = isSweep ? 'Sweep' : isLoft ? 'Loft' : isRevolve ? 'Revolve' : isExtrude ? 'Extrude' : null;
+  const isWorkplane = entry === 'workplane';
+  const commitName = isWorkplane
+    ? 'Workplane'
+    : isSweep ? 'Sweep' : isLoft ? 'Loft' : isRevolve ? 'Revolve' : isExtrude ? 'Extrude' : null;
   const loftProfiles = Array.isArray(loft.profiles) ? loft.profiles : [];
   const loftSelected = Number.isInteger(loft.selected) ? loft.selected : 0;
   const loftOffset = Number(loftProfiles[loftSelected]?.offset);
@@ -174,17 +180,17 @@ const ContourModeChip = ({
         // the rest of the viewport chrome.
         // Mobile B: raise above the home-indicator stage pill (~bottom-12 + safe area).
         compact
-            ? ((isLoft || isSweep)
+            ? ((isLoft || isSweep || isWorkplane)
               ? `bottom-14 left-1/2 -translate-x-1/2 max-w-[min(18rem,calc(100%-9rem))] ${mobileMaxH}`
               : `bottom-14 left-1/2 -translate-x-1/2 max-w-[min(16rem,calc(100%-9rem))] ${mobileMaxH}`)
-            : ((isLoft || isSweep)
+            : ((isLoft || isSweep || isWorkplane)
               ? 'bottom-2.5 left-1/2 -translate-x-1/2 max-w-[18rem]'
               : 'bottom-2.5 left-1/2 -translate-x-1/2 max-w-[16rem]')
         }`}
       data-contour-chip=""
     >
       <div className="font-bold font-sans text-cyan-200 shrink-0">
-        Contour · {tool}
+        {isWorkplane ? 'Workplane' : `Contour · ${tool}`}
       </div>
       <div className="text-[11px] text-cyan-100/90 normal-case font-sans mt-0.5 shrink-0">
         Plane · {planeLabel}
@@ -265,7 +271,29 @@ const ContourModeChip = ({
             />
           );
         })}
+        {isWorkplane && (
+          <NumberField
+            id="workplane-offset"
+            label="Offset"
+            accent={ACCENT}
+            value={Number.isFinite(Number(planeOffset)) ? Number(planeOffset) : 0}
+            onChange={(v) => {
+              if (v === '' || v === '-' || v === '.') {
+                onPlaneOffset?.(v);
+                return;
+              }
+              const n = Number(v);
+              onPlaneOffset?.(Number.isFinite(n) ? n : 0);
+            }}
+            min={-80}
+            max={80}
+            step={0.5}
+            className="mt-1"
+          />
+        )}
       </div>
+      {!isWorkplane && (
+      <>
       <div className="mt-1.5 font-sans" role="group" aria-label="Saved contours">
         <div className="text-[11px] uppercase tracking-wide text-cyan-200/80">
           Saved · {savedContours.length}
@@ -567,12 +595,16 @@ const ContourModeChip = ({
           </div>
         </div>
       )}
+      </>
+      )}
       </div>
       <div className="mt-2 flex items-center justify-between gap-2 shrink-0">
         <span className="text-[11px] text-cyan-200/70 leading-tight">
-          {commitName
-            ? `Confirm writes ${commitName} (adds if part exists)`
-            : 'Confirm writes Profile only'}
+          {isWorkplane
+            ? 'Confirm writes a construction plane'
+            : commitName
+              ? `Confirm writes ${commitName} (adds if part exists)`
+              : 'Confirm writes Profile only'}
         </span>
         <button
           type="button"
@@ -580,9 +612,11 @@ const ContourModeChip = ({
           className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[13px] font-medium
             bg-cyan-600 hover:bg-cyan-500 active:bg-cyan-400 text-white shrink-0"
           title={
-            commitName
-              ? `Commit or update ${commitName}. Second Confirm updates the same block.`
-              : 'Commit or update in-mode Profile (makeCrossSection). Does not Extrude, Revolve, Loft, or Sweep.'
+            isWorkplane
+              ? 'Commit a marked construction plane (literal PlaneFrame). Pickable when Plane overlay is on.'
+              : commitName
+                ? `Commit or update ${commitName}. Second Confirm updates the same block.`
+                : 'Commit or update in-mode Profile (makeCrossSection). Does not Extrude, Revolve, Loft, or Sweep.'
           }
         >
           <Check size={14} />

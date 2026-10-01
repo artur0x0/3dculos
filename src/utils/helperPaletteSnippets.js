@@ -130,6 +130,8 @@ export const ARRAY_BEGIN = '// --- array begin ---';
 export const ARRAY_END = '// --- array end ---';
 export const POLAR_ARRAY_BEGIN = '// --- polarArray begin ---';
 export const POLAR_ARRAY_END = '// --- polarArray end ---';
+export const WORKPLANE_BEGIN = '// --- workplane begin ---';
+export const WORKPLANE_END = '// --- workplane end ---';
 
 /** All feature end-markers — inserts after a live `part` binding skip past these. */
 export const FEATURE_BLOCK_END_MARKERS = Object.freeze([
@@ -159,6 +161,7 @@ export const FEATURE_BLOCK_END_MARKERS = Object.freeze([
   MIRROR_END,
   ARRAY_END,
   POLAR_ARRAY_END,
+  WORKPLANE_END,
 ]);
 
 /** Wrap body lines in begin…end strip markers (Slice A). */
@@ -2028,7 +2031,12 @@ export const HELPER_PALETTE_ITEMS = [
           }
         }
       }
-      return `const ${fr} = ${emitPlaneFrameLiteral(plane)}; // construction plane\n`;
+      // Prefer a literal PlaneFrame so listConstructionPlanes can pick it
+      // (savedContours expects center/normal/x/y literals, not host queries).
+      const lines = wrapFeatureBlock(WORKPLANE_BEGIN, WORKPLANE_END, [
+        `const ${fr} = ${emitPlaneFrameLiteral(plane)}; // construction plane`,
+      ]);
+      return `${lines.join('\n')}\n`;
     },
   },
   {

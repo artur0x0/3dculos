@@ -63,6 +63,8 @@ import {
   ARRAY_END,
   POLAR_ARRAY_BEGIN,
   POLAR_ARRAY_END,
+  WORKPLANE_BEGIN,
+  WORKPLANE_END,
 } from './helperPaletteSnippets.js';
 
 /** Ordered kinds the strip cares about (label is the chip text). */
@@ -93,6 +95,7 @@ export const FEATURE_MARKER_KINDS = Object.freeze([
   { begin: MIRROR_BEGIN, end: MIRROR_END, kind: 'mirror', label: 'Mirror' },
   { begin: ARRAY_BEGIN, end: ARRAY_END, kind: 'array', label: 'Array' },
   { begin: POLAR_ARRAY_BEGIN, end: POLAR_ARRAY_END, kind: 'polarArray', label: 'Polar' },
+  { begin: WORKPLANE_BEGIN, end: WORKPLANE_END, kind: 'workplane', label: 'Workplane' },
 ]);
 
 /**
