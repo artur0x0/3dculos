@@ -1,189 +1,59 @@
 // utils/defaultScript.js - Default CAD script for new users
 
-export const DEFAULT_SCRIPT = `// ============================================================================
-// Solo Cup
-// Demonstrates: loft, shell, addDraft, sweep, getDimensions (sketch relations)
-// ============================================================================
-
-const topRadius = 46;       // Round top
-const baseSize = 57;        // Square base
-const cupHeight = 125;      // Cup height
-const wallThickness = 2;    // Shell wall thickness
-const draftAngle = 5;       // Draft angle in degrees
-const beadRadius = 2;       // Rim bead radius
-const segments = 128;       // Resolution
-
-// Make cross sections for the loft 
-const topFace = CrossSection.circle(topRadius, segments);
-const bottomFace = CrossSection.square([baseSize, baseSize], true);
-
-let cup = loft({
-  topCS: bottomFace,
-  bottomCS: topFace, 
-  height: cupHeight,
-  twistDeg: 0,
-  topScale: 1.0,
-  align: true,
-  resolution: segments
-});
-
-// Shell it
-const innerTool = shell(cup, wallThickness, 'z');
-cup = cup.subtract(innerTool);
-
-// Add draft angle
-cup = addDraft(cup, draftAngle, 'z');
-
-// Sweep a bead around the rim
-// Get cup dimensions after all transformations
-const dims = getDimensions(cup);
-const rimZ = dims.max[2];
-
-// Calculate rim radius
-const rimOuterRadius = Math.max(dims.max[0], dims.max[1]) - wallThickness / 2;
-
-// Create rim ross-section
-const beadProfile = CrossSection.circle(beadRadius, 24);
-
-// Circular path for the rim - positioned at outer edge
-const rimPath = {
-  position: (t) => {
-    const angle = t * 2 * Math.PI;
-    return [
-      rimOuterRadius * Math.cos(angle),
-      rimOuterRadius * Math.sin(angle),
-      rimZ - beadRadius * 0.3  // Slightly embed in the cup
-    ];
-  },
-  derivative: (t) => {
-    const angle = t * 2 * Math.PI;
-    const twoPi = 2 * Math.PI;
-    return [
-      -rimOuterRadius * twoPi * Math.sin(angle),
-      rimOuterRadius * twoPi * Math.cos(angle),
-      0
-    ];
-  },
-  tMin: 0,
-  tMax: 0.9999  // Tiny gap to prevent self-intersection on closed loop
-};
-
-const rim = sweep(beadProfile, rimPath, {
-  arcSamples: 500,
-  extrudeSegments: 128,
-  initialNormal: [0, 0, 1]  // Start with upward-facing normal
-}).translate([0, 0, - cupHeight]);
-
-// Combine rim and cup
-cup = cup.add(rim);
-
-const { sphere, union } = Manifold;
-const ball = sphere(20, segments);
-const result = union([ball, cup]);
-
-// Return the final result
-return result;`;
-
-export const DEFAULT_SCRIPT_2 = `// Modify CAD script directly or use the AI assistant to code for you
-// It's helpful to use the assistant to get started and edit from there
-// Assistant is good at iterating on an object, similar to how you would use a CAD program
-// You can click on faces to guide the assistant
-// When coding directly, use javascript syntax and return a single manifold object
-
-const {cube, cylinder, union, subtract} = Manifold;
-
-// Control the roundness of circular features
-// Higher smoother but slows down execution and makes round feature selection harder
-const n = 64;
-
-// Create a flat plate 90 mm x 35 mm x 5 mm thick
-const plateThickness = 5;
-const plateLength = 35;
-const plateWidth = 35;
-var plate = cube([plateLength, plateWidth, plateThickness], true);
-
-// Here is an example of how to add bosses to a plate
-// Define boss properties
-const bossDiameter = 12.5;
-const bossHeight = 22;
-const bossSeparation = 22;
-
-// Create two bosses
-const boss1 = cylinder(bossHeight, bossDiameter / 2, bossDiameter / 2, n, true)
-  .translate([-bossSeparation / 2, 0, bossHeight / 2 + plateThickness/2]); 
-
-const boss2 = cylinder(bossHeight, bossDiameter / 2, bossDiameter / 2, n, true)
-    .translate([bossSeparation / 2, 0, bossHeight / 2 + plateThickness/2]); 
-
-// Here is an example of how to cut holes in bosses
-// Create holes
-const holeDiameter = 4;
-const holeDepth = bossHeight + plateThickness;
-const hole1 = cylinder(holeDepth, holeDiameter / 2, holeDiameter / 2, n, true)
-  .translate([-bossSeparation / 2, 0, holeDepth / 2]);
-
-const hole2 = cylinder(holeDepth, holeDiameter / 2, holeDiameter / 2, n, true)
-  .translate([bossSeparation / 2, 0, holeDepth / 2]);
-
-// Cut them from the shape
-const modifiedBoss1 = boss1.subtract(hole1);
-const modifiedBoss2 = boss2.subtract(hole2);
-plate = plate.subtract(hole1);
-plate = plate.subtract(hole2);
-
-// Here is an example of how to create a slot shape
-// Create slot shape
-const slotWidth = 9;
-const slotLength = 15;
-const slotCube = cube([slotWidth, slotLength, plateThickness], true);
-const slotCyl1 = cylinder(plateThickness, slotWidth / 2, slotWidth / 2, n, true).translate([0, slotLength/2, 0]);
-const slotCyl2 = cylinder(plateThickness, slotWidth / 2, slotWidth / 2, n, true).translate([0, -slotLength/2, 0]);
-
-// Cut the slot from the plate
-plate = plate.subtract(union([slotCube, slotCyl1, slotCyl2]));
-
-// Here is an example of how to round the corners of a plate, or "fillet" the corners 
-const filletRad = 2.5
-// First remove material from corners using cubes
-const cornerCube1 = cube([filletRad * 2, filletRad * 2, plateThickness], true).translate([-plateLength / 2, plateWidth/2, 0]);
-const cornerCube2 = cube([filletRad * 2, filletRad * 2, plateThickness], true).translate([plateLength / 2, plateWidth/2, 0]);
-const cornerCube3 = cube([filletRad * 2, filletRad * 2, plateThickness], true).translate([-plateLength / 2, -plateWidth/2, 0]);
-const cornerCube4 = cube([filletRad * 2, filletRad * 2, plateThickness], true).translate([plateLength / 2, -plateWidth/2, 0]);
-plate = plate.subtract(union([cornerCube1, cornerCube2, cornerCube3, cornerCube4]));
-
-// Then rebuild corners using cylinders
-const cornerCyl1 = cylinder(plateThickness, filletRad, filletRad, n, true).translate([-plateLength / 2 + filletRad, plateWidth/2-filletRad, 0]);
-const cornerCyl2 = cylinder(plateThickness, filletRad, filletRad, n, true).translate([plateLength / 2 - filletRad, plateWidth/2-filletRad, 0]);
-const cornerCyl3 = cylinder(plateThickness, filletRad, filletRad, n, true).translate([-plateLength / 2 + filletRad, -plateWidth/2+filletRad, 0]);
-const cornerCyl4 = cylinder(plateThickness, filletRad, filletRad, n, true).translate([plateLength / 2 - filletRad, -plateWidth/2+filletRad, 0]);
-
-// Combine the shapes
-plate = union([plate, cornerCyl1, cornerCyl2, cornerCyl3, cornerCyl4]);
-// Fillet is complete
-
-// Here is an example of how to combine multiple shapes in to one object
-var plateWithBosses = union([plate, modifiedBoss1, modifiedBoss2])
-
-// Here is an example of how to cut a flat in a boss
-// Create a flat cube features between the bosses
-const flat = cube([12, 30, 22], true).translate([0, 0, (11+plateThickness/2)]);
-
-// Cut it from the shape
-var plateWithBosses = plateWithBosses.subtract(flat);
-
-// Here is an example of how to create counter bores in bosses
-const cboreDiameter = 7;
-const webLeft = 2;
-const cboreDepth = bossHeight + plateThickness - webLeft;
-const cbore1 = cylinder(cboreDepth, cboreDiameter / 2, cboreDiameter / 2, n, true)
-    .translate([bossSeparation / 2, 0, cboreDepth / 2 - plateThickness]);
-const cbore2 = cylinder(cboreDepth, cboreDiameter / 2, cboreDiameter / 2, n, true)
-    .translate([-bossSeparation / 2, 0, cboreDepth / 2 - plateThickness]);
-
-var result = plateWithBosses.subtract(cbore1);
-result = result.subtract(cbore2);
-
-return result;`;
+export const DEFAULT_SCRIPT = `// --- cube begin ---
+let box1 = Manifold.cube([40, 30, 20], true);
+let part = box1;
+// --- cube end ---
+// --- fillet-mode begin ---
+const selEdges = edgesBetween(part, 3, 5); // boundary edge 9
+const path = makeSweepPath(selEdges); // edge→sweep path
+part = filletAlongPath(part, path, 4); // sweep fillet wedge
+// --- fillet-mode end ---
+// --- fillet-mode begin ---
+const selEdges2 = [{ a: 30, b: 32, va: [20, 15, -10], vb: [20, 15, 6], length: 16, key: "coh-9-0", n0: [0, 1, 0], n1: [1, 0, 0], pts: [[20, 15, -10], [20, 15, 6]] }, { a: 37, b: 32, va: [20, 14.787721, 7.285758], vb: [20, 15, 6], length: 1.307362, key: "coh-11-3", n0: [1, 0, 0], n1: [0, 0.986644, 0.162894], pts: [[20, 14.787721, 7.285758], [20, 14.965779, 6.522105], [20, 15, 6]] }, { a: 55, b: 37, va: [20, 13.828427, 8.828427], vb: [20, 14.787721, 7.285758], length: 1.830587, key: "coh-11-2", n0: [1, 0, 0], n1: [0, 0.812847, 0.582477], pts: [[20, 13.828427, 8.828427], [20, 14.173413, 8.435045], [20, 14.464102, 8], [20, 14.787721, 7.285758]] }, { a: 44, b: 55, va: [20, 12.769155, 9.587491], vb: [20, 13.828427, 8.828427], length: 1.307362, key: "coh-11-1", n0: [1, 0, 0], n1: [0, 0.582477, 0.812847], pts: [[20, 12.769155, 9.587491], [20, 13.222281, 9.325878], [20, 13.828427, 8.828427]] }, { a: 31, b: 44, va: [20, 11, 10], vb: [20, 12.769155, 9.587491], length: 1.830587, key: "coh-11-0", n0: [1, 0, 0], n1: [0, 0.162894, 0.986644], pts: [[20, 11, 10], [20, 11.522105, 9.965779], [20, 12.035276, 9.863704], [20, 12.769155, 9.587491]] }, { a: 29, b: 31, va: [20, -15, 10], vb: [20, 11, 10], length: 26, key: "coh-10-0", n0: [0, 0, 1], n1: [1, 0, 0], pts: [[20, -15, 10], [20, 11, 10]] }];
+const path2 = makeSweepPath(selEdges2); // edge→sweep path
+part = filletAlongPath(part, path2, 4.83, { variableProfile: true }); // hard: variable-profile inscribed-arc sweep (C3)
+// --- fillet-mode end ---
+// --- contour-mode loft begin ---
+const fr = { center: [0, 0, 10], normal: [0, 0, 1], x: [1, 0, 0], y: [0, 1, 0] };
+const xs2 = makeCrossSection(fr, profileCircle(5, 64));
+const xs3 = makeCrossSection(offsetPlaneFrame(fr, 20), profileRectangle(20, 12, true));
+part = part.add(placeInFrame(fr, makeLoft([xs2, xs3])));
+// --- contour-mode loft end ---
+// --- fillet-mode begin ---
+const selEdges3 = [{ a: 12908, b: 16964, va: [4.634159, 2.780495, 11.230769], vb: [10, 6, 30], length: 19.78488, key: "coh-54-0", n0: [0.694953, 0.648815, -0.309968], n1: [0.857619, 0.406588, -0.314922], pts: [[4.634159, 2.780495, 11.230769], [10, 6, 30]] }];
+const path3 = makeSweepPath(selEdges3); // edge→sweep path
+part = filletAlongPath(part, path3, 1.98, { variableProfile: true }); // hard: variable-profile inscribed-arc sweep (C3)
+// --- fillet-mode end ---
+// --- fillet-mode begin ---
+const selEdges4 = [{ a: 4028, b: 4037, va: [-20, 15, -10], vb: [-20, 15, 6], length: 16, key: "coh-4-0", n0: [-1, 0, 0], n1: [0, 1, 0], pts: [[-20, 15, -10], [-20, 15, 6]] }, { a: 4037, b: 4052, va: [-20, 15, 6], vb: [-20, 14.695518, 7.530734], length: 1.569675, key: "coh-9-0", n0: [-1, 0, 0], n1: [0, 0.986644, 0.162894], pts: [[-20, 15, 6], [-20, 14.965779, 6.522105], [-20, 14.863704, 7.035276], [-20, 14.695518, 7.530734]] }, { a: 4052, b: 4046, va: [-20, 14.695518, 7.530734], vb: [-20, 13.637383, 9.00736], length: 1.830027, key: "coh-9-1", n0: [-1, 0, 0], n1: [0, 0.812847, 0.582477], pts: [[-20, 14.695518, 7.530734], [-20, 14.325878, 8.222281], [-20, 14.173413, 8.435045], [-20, 13.637383, 9.00736]] }, { a: 4046, b: 4034, va: [-20, 13.637383, 9.00736], vb: [-20, 12.530734, 9.695518], length: 1.308203, key: "coh-9-2", n0: [-1, 0, 0], n1: [0, 0.52807, 0.849201], pts: [[-20, 13.637383, 9.00736], [-20, 13.435045, 9.173413], [-20, 13, 9.464102], [-20, 12.530734, 9.695518]] }, { a: 4034, b: 4066, va: [-20, 12.530734, 9.695518], vb: [-20, 11, 10], length: 1.569675, key: "coh-9-3", n0: [-1, 0, 0], n1: [0, 0.162894, 0.986644], pts: [[-20, 12.530734, 9.695518], [-20, 12.035276, 9.863704], [-20, 11.522105, 9.965779], [-20, 11, 10]] }, { a: 1, b: 4066, va: [-20, -15, 10], vb: [-20, 11, 10], length: 26, key: "coh-6-0", n0: [0, 0, 1], n1: [-1, 0, 0], pts: [[-20, -15, 10], [-20, 11, 10]] }];
+const path4 = makeSweepPath(selEdges4); // edge→sweep path
+part = filletAlongPath(part, path4, 4.83, { variableProfile: true }); // hard: variable-profile inscribed-arc sweep (C3)
+// --- fillet-mode end ---
+// --- hole begin ---
+const selFace = (() => {
+  const _c = [0, 15, -2];
+  let _cands = facesByNormal(part, [0, 1, 0], 25);
+  if (!_cands.length) _cands = facesByNormal(part, [0, 1, 0], 45);
+  if (!_cands.length) throw new Error('Selected face not found on body after geometry changes — re-pick the planar face, then Hole/Clearance (normal [0, 1, 0])');
+  let _best = _cands[0], _bd = Infinity;
+  for (const _f of _cands) {
+    const _d = (_f.center[0]-_c[0])**2 + (_f.center[1]-_c[1])**2 + (_f.center[2]-_c[2])**2;
+    if (_d < _bd) { _bd = _d; _best = _f; }
+  }
+  return _best;
+})();
+const fr2 = workplaneFromFace(part, selFace);
+// Snap origin to selected face center (projected onto plane) so Center → u=0,v=0 hits pick.
+(() => {
+  const _pc = [0, 15, -2];
+  const _off = (_pc[0]-fr2.center[0])*fr2.normal[0] + (_pc[1]-fr2.center[1])*fr2.normal[1] + (_pc[2]-fr2.center[2])*fr2.normal[2];
+  fr2.center = [_pc[0]-_off*fr2.normal[0], _pc[1]-_off*fr2.normal[1], _pc[2]-_off*fr2.normal[2]];
+})();
+const span = holeSpan(part, fr2);
+part = clearanceHole(part, fr2, 0, 0, 'M3', span, 'normal');
+// --- hole end ---
+return part;
+`;
 
 export default DEFAULT_SCRIPT;
- 
