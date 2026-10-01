@@ -52,6 +52,8 @@ const CodeEditor = forwardRef(({
   gameSuccess = false,
   gameBestTimeMs = null,
   onCadToolbarHost = null,
+  /** Right padding on Monaco only (Script-stage strip overlay); ribbon stays w-full. */
+  monacoEndPadClassName = '',
 }, ref) => {
   const [editorValue, setEditorValue] = useState(initialScript);
   const editorRef = useRef(null);
@@ -446,7 +448,7 @@ const CodeEditor = forwardRef(({
       <div
         data-ribbon-bg="editor"
         data-editor-ribbon=""
-        className={`relative z-30 flex items-center gap-1 px-1 py-0.5 border-b border-gray-700/60 bg-gray-900 shrink-0 ${
+        className={`relative z-30 w-full flex items-center gap-1 px-1 py-0.5 border-b border-gray-700/60 bg-gray-900 shrink-0 ${
         isGame || showCadStrip ? 'justify-between' : 'justify-end'
       }`}>
         {isGame && (
@@ -475,7 +477,7 @@ const CodeEditor = forwardRef(({
           />
         )}
       </div>
-      <div className="flex-1 min-h-0">
+      <div className={`flex-1 min-h-0 ${monacoEndPadClassName || ''}`.trim()}>
         <Editor
           width="100%"
           height="100%"

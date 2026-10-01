@@ -82,7 +82,6 @@ import {
   isExtrudeEntry,
   isLoftEntry,
   isRevolveEntry,
-  isSolidContourEntry,
   isSweepEntry,
   planeFromContourFace,
   removeLoftProfile,
@@ -1723,18 +1722,10 @@ const Viewport = forwardRef(({
     const armed = saved.find((c) => c.id === armedContourId);
     next = armed ? applySavedContour(next, armed) : withAutoPickedContour(next, saved);
     setContourMode(next);
+    // Soft-fail / refuse only — no informational toast on successful feature UI open.
     if (next.enterRefuse) showContourToast(next.enterRefuse);
-    else if (isSweepEntry(entry)) {
-      showContourToast(
-        selectedEdges?.length
-          ? 'Sweep — profile on the plane, path from the selected edges. Confirm adds when part exists.'
-          : 'Sweep — draw a profile, then Path to pick a contiguous edge chain.',
-      );
-    } else if (isSolidContourEntry(entry) && saved.length) {
-      showContourToast(`Using ${saved[saved.length - 1].label}. Draw a new profile anytime.`);
-    }
     applyContourPartGhost(true);
-  }, [selectedFace, selectedEdges, selectedPlaneId, armedContourId, applyContourPartGhost, clearFilletBlendPreview, getHelperBuffer, currentScript]);
+  }, [selectedFace, selectedPlaneId, armedContourId, applyContourPartGhost, clearFilletBlendPreview, getHelperBuffer, currentScript]);
 
   const confirmContourProfile = useCallback(() => {
     const state = contourModeRef.current;
@@ -1841,12 +1832,7 @@ const Viewport = forwardRef(({
     setFilletMode(next);
     filletModeRef.current = next;
     setTangentProp(true);
-    const noun = entry === 'chamferEdges' ? 'Chamfer' : 'Fillet';
-    showFilletToast(
-      selectedEdges?.length
-        ? `${noun} mode — Accept commits and exits. X or Back leaves with no commit.`
-        : `${noun} mode — tap edges${entry === 'chamferEdges' ? '' : ' (Tangent on)'}. Accept commits and exits; X or Back does not.`,
-    );
+    // No informational toast on successful Fillet/Chamfer UI open — soft-fail/accept gates still toast.
   }, [exitContourMode, onFaceSelected, selectedEdges, clearHighlight]);
 
   const acceptFillet = useCallback(() => {
@@ -2433,7 +2419,7 @@ const Viewport = forwardRef(({
     onFaceSelected?.(null);
     rebuildFeatureEdges();
     setTangentProp(true);
-    showContourToast('Sweep path — tap a contiguous chain (Tangent on). Plane returns to the profile.');
+    // Path-pick is visible via Edge mode + rail; skip instructional toast.
   }, [onFaceSelected, rebuildFeatureEdges, clearHighlight]);
 
   const pickSweepPlane = useCallback(() => {

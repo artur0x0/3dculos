@@ -79,11 +79,9 @@ const App = () => {
   /** Script-stage feature strip: which chip is selected (null = none). */
   const [featureStripActiveId, setFeatureStripActiveId] = useState(null);
   /**
-   * Height of the editor ribbon, MEASURED. The Script-stage feature strip sits
-   * in a column beside Monaco, so it needs a spacer to start below the ribbon —
-   * and that spacer used to be a hard-coded h-11 (44px) guess against a bar
-   * that actually renders ~34px, which is why the strip started low instead of
-   * flush. ResizeObserver keeps it exact as the ribbon's contents change.
+   * Height of the editor ribbon, MEASURED. Script-stage feature strip overlays
+   * with `top: ribbonPx` so chips start flush under the full-width ribbon.
+   * ResizeObserver keeps it exact as the ribbon's contents change.
    */
   const [ribbonPx, setRibbonPx] = useState(44);
   /** Script-stage strip: caret jump only (no FeatureSheet — CAD strip / long-press keep the sheet). */
@@ -1535,6 +1533,7 @@ const App = () => {
                   gameSuccess={gameSuccess}
                   gameBestTimeMs={gameBestTimeMs}
                   onCadToolbarHost={setCadToolbarHost}
+                  monacoEndPadClassName={isScriptStage ? 'pr-11' : ''}
                 />
     );
 
@@ -1595,13 +1594,14 @@ const App = () => {
                 data-stage-pane="script"
                 aria-hidden={!isScriptStage}
               >
-                {/* C.2/C.4: vertical feature strip on the RIGHT of Monaco,
-                    starting BELOW the top ribbon. C.4: clip editor overflow so
-                    the ribbon cannot paint over Contour chips; spacer clears
-                    the real ribbon height; strip z stays tappable. */}
-                <div className="relative flex-1 min-h-0 flex flex-row">
+                {/* Script ribbon is full viewport width: editor stack is
+                    absolute inset-0 so [data-editor-ribbon] spans the pane.
+                    Vertical feature strip overlays on the right, starting
+                    BELOW the measured ribbon (no side-by-side shrink). Monaco
+                    keeps a w-11 end gutter so chips don't cover code. */}
+                <div className="relative flex-1 min-h-0" data-script-stage-body="">
                   <div
-                    className="relative z-30 flex-1 min-h-0 overflow-hidden"
+                    className="absolute inset-0 z-10 overflow-hidden"
                     data-script-editor-stack=""
                   >
                     <div className="absolute inset-0">
@@ -1610,25 +1610,20 @@ const App = () => {
                   </div>
                   {isScriptStage && (
                     <div
-                      className="relative z-20 flex flex-col shrink-0"
+                      className="absolute right-0 bottom-0 z-20 flex flex-col pointer-events-none"
+                      style={{ top: ribbonPx }}
                       data-script-feature-strip=""
                       data-feature-strip-below-ribbon=""
+                      data-feature-strip-ribbon-spacer-h="measured"
                     >
-                      {/* Exactly the ribbon's measured height, so the strip
-                          starts flush under it rather than 10px low. */}
-                      <div
-                        className="shrink-0 bg-gray-900 border-l border-b border-gray-700/60"
-                        style={{ height: ribbonPx }}
-                        data-feature-strip-ribbon-spacer=""
-                        data-feature-strip-ribbon-spacer-h="measured"
-                        aria-hidden="true"
-                      />
-                      <FeatureStrip
-                        orientation="vertical"
-                        script={currentScript}
-                        activeId={featureSheet?.feature?.id || featureStripActiveId}
-                        onJump={handleFeatureStripJump}
-                      />
+                      <div className="pointer-events-auto flex-1 min-h-0 flex flex-col">
+                        <FeatureStrip
+                          orientation="vertical"
+                          script={currentScript}
+                          activeId={featureSheet?.feature?.id || featureStripActiveId}
+                          onJump={handleFeatureStripJump}
+                        />
+                      </div>
                     </div>
                   )}
                 </div>

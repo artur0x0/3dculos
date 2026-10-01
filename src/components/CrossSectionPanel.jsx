@@ -178,7 +178,7 @@ const handleButtonClick = () => {
       <div
         data-rail-pair="right"
         data-rail-height={verticalRail ? RAIL_PAIR_HEIGHT_ATTR : undefined}
-        className={`absolute bottom-2.5 right-2.5 bg-white/60 backdrop-blur-sm p-2 rounded-lg shadow-lg z-10 ${
+        className={`absolute bottom-2.5 right-2.5 bg-white/60 backdrop-blur-sm p-2 rounded-lg shadow-lg z-40 ${
         verticalRail
           // Content height, NOT the paired 26rem: this rail holds 10 tools
           // (~422px) and the cap is 416px, so the last one — Cross-section —
@@ -339,7 +339,7 @@ const handleButtonClick = () => {
   }
 
   return (
-    <div className="absolute bottom-2.5 right-2.5 bg-white/50 backdrop-blur-sm rounded-lg shadow-lg p-3 z-10 w-72">
+    <div className="absolute bottom-2.5 right-2.5 bg-white/50 backdrop-blur-sm rounded-lg shadow-lg p-3 z-40 w-72" data-cross-section-popup="">
       {/* Header */}
       <div className="flex items-center justify-between mb-3">
         <ViewSnapControl onSnap={onSnapView} />
@@ -373,8 +373,10 @@ const handleButtonClick = () => {
         </button>
         <button
           onClick={handleButtonClick}
-          className="p-2 rounded text-green-600 hover:bg-gray-100"
-          title="Disable Cross Section"
+          className="p-2 rounded text-red-600 hover:bg-red-100 active:bg-red-200"
+          title="Dismiss — turn off cross section"
+          aria-label="Dismiss cross section"
+          data-cross-section-dismiss=""
         >
           <FlipHorizontal size={20} />
         </button>
