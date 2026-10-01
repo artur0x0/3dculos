@@ -86,11 +86,15 @@ const App = () => {
    * flush. ResizeObserver keeps it exact as the ribbon's contents change.
    */
   const [ribbonPx, setRibbonPx] = useState(44);
+  /** Script-stage strip: caret jump only (no FeatureSheet — CAD strip / long-press keep the sheet). */
   const handleFeatureStripJump = (feature) => {
     if (!feature) return;
     setFeatureStripActiveId(feature.id);
-    setFeatureSheet({ mode: 'edit', feature });
     codeEditorRef.current?.revealRange?.(feature.startOffset, feature.endOffset);
+    // Jump-only: clear highlight so the chip does not stay stuck cyan.
+    setTimeout(() => {
+      setFeatureStripActiveId((cur) => (cur === feature.id ? null : cur));
+    }, 400);
   };
   /** Desktop seam strip: jump caret only (feature sheets stay mobile-only). */
   const handleDesktopFeatureStripJump = (feature) => {
@@ -104,7 +108,10 @@ const App = () => {
    * Desktop / game never open this.
    */
   const [featureSheet, setFeatureSheet] = useState(null);
-  const closeFeatureSheet = () => setFeatureSheet(null);
+  const closeFeatureSheet = () => {
+    setFeatureSheet(null);
+    setFeatureStripActiveId(null);
+  };
   const openFeatureSheetFor = (feature) => {
     if (!feature) return;
     setFeatureStripActiveId(feature.id);
@@ -156,6 +163,7 @@ const App = () => {
       return;
     }
     setFeatureSheet(null);
+    setFeatureStripActiveId(null);
     if (result.run) {
       setTimeout(() => {
         handleGameRun();
@@ -199,7 +207,7 @@ const App = () => {
     setFeatureSheet(null);
     setFeatureStripActiveId(feature.id);
     setMobileStageSticky('script');
-    // Defer reveal until Script pane is interactive.
+    // Defer reveal until Script pane is interactive; then clear highlight.
     setTimeout(() => {
       const buf = codeEditorRef.current?.getContent?.() || currentScript || '';
       const live = listFeatureSheetTargets(buf).find((f) => f.id === feature.id)
@@ -208,6 +216,7 @@ const App = () => {
         )
         || feature;
       codeEditorRef.current?.revealRange?.(live.startOffset, live.endOffset);
+      setFeatureStripActiveId((cur) => (cur === feature.id ? null : cur));
     }, 50);
   };
 

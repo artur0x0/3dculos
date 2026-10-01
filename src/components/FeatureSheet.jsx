@@ -88,7 +88,8 @@ function snippetPreview(text, maxLines = 2) {
   return `${lines.slice(0, maxLines - 1).join('\n')}\n…`;
 }
 
-/** Shared outer shell: full-width under title (top-14). */
+/** Shared outer shell: full-width under title (top-14).
+ *  Mobile: cap height below feature strip + finger clearance; body scrolls. */
 function SheetShell({ children, ...attrs }) {
   const a = accentOf(ACCENT);
   return (
@@ -102,9 +103,13 @@ function SheetShell({ children, ...attrs }) {
     >
       <div
         className={`w-full rounded-xl border shadow-xl surface-glass-chip
-          ${a.panel} px-3 py-2 overflow-hidden`}
+          ${a.panel} px-3 py-2 overflow-hidden flex flex-col min-h-0
+          max-h-[calc(100dvh-10rem)]`}
+        data-feature-sheet-panel=""
       >
-        {children}
+        <div className="min-h-0 overflow-y-auto rail-scroll" data-feature-sheet-scroll="">
+          {children}
+        </div>
       </div>
     </div>
   );
@@ -162,7 +167,7 @@ export default function FeatureSheet({
       >
         <div className="flex items-center gap-2 min-w-0">
           <div className={`${POPUP_TEXT.title} text-white shrink-0`}>Edit feature</div>
-          <div className="flex flex-row gap-1.5 overflow-x-auto no-scrollbar flex-1 min-w-0">
+          <div className="flex flex-row gap-1.5 overflow-x-auto rail-scroll flex-1 min-w-0">
             {features.map((f) => {
               const Icon = FEATURE_ICONS[f.kind] || NotebookPen;
               const editable = isFeatureSheetEditable(f.kind);
@@ -368,7 +373,7 @@ export default function FeatureSheet({
 
       {/* Row 2: params scroll horizontally when they don’t fit. */}
       <div
-        className="mt-2 flex flex-row items-start gap-3 font-sans overflow-x-auto no-scrollbar"
+        className="mt-2 flex flex-row items-start gap-3 font-sans overflow-x-auto rail-scroll"
         data-feature-sheet-params=""
       >
         {fields}

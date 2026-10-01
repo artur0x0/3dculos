@@ -34,6 +34,7 @@ import {
   Sprite,
   SpriteMaterial,
   CanvasTexture,
+  Color,
 } from 'three';
 import {
   makePreviewSkinMaterial,
@@ -3278,6 +3279,8 @@ const Viewport = forwardRef(({
       initialized = true;
 
       const scene = new Scene();
+      // Match Monaco / body (#1e1e1e) — not Tailwind gray-900 (#111827).
+      scene.background = new Color(0x1e1e1e);
       const camera = new PerspectiveCamera(45, width / height, 0.1, 2000);
       camera.position.set(300, 300, 300);
       camera.lookAt(0, 0, 0);
@@ -3296,6 +3299,7 @@ const Viewport = forwardRef(({
 
       renderer.setSize(width, height);
       renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      renderer.setClearColor(0x1e1e1e, 1);
       rendererRef.current = renderer;
 
       // Dev/automation hook used by headless review tooling (harness/stage_shot.mjs).
@@ -4155,7 +4159,7 @@ const Viewport = forwardRef(({
   }, [cachedMeshData, currentFilename]);
 
   return (
-    <div ref={containerRef} className="viewport-shell relative w-full h-full bg-gray-900 overflow-hidden">
+    <div ref={containerRef} className="viewport-shell relative w-full h-full bg-[#1e1e1e] overflow-hidden">
       {/* CAD chrome lives in the editor mid-strip in BOTH shells (desktop matches
           phone now): rendered here so download/export busy state stays local —
           and so Run can execute the live buffer without a round trip via App. */}
