@@ -161,29 +161,38 @@ const ContourModeChip = ({
     );
   }
 
+  // Mobile: stay below feature strip + leave finger room to pick faces in the
+  // viewport. ~top-20 strip + strip height + ~3–4rem clearance ≈ 12rem reserved.
+  const mobileMaxH = 'max-h-[calc(100dvh-12rem)]';
+
   return (
     <div
       className={`absolute bg-cyan-950/80 surface-glass-chip border border-cyan-400/70 text-white px-3 py-2
-        rounded-lg text-xs z-20 shadow-lg ${
+        rounded-lg text-xs z-20 shadow-lg flex flex-col min-h-0 ${
           // Bottom-CENTRE of the viewport, between the two rails, so the chip
         // stops covering the right-hand cluster. 10px off the bottom edge like
         // the rest of the viewport chrome.
         // Mobile B: raise above the home-indicator stage pill (~bottom-12 + safe area).
         compact
             ? ((isLoft || isSweep)
-              ? 'bottom-14 left-1/2 -translate-x-1/2 max-w-[min(18rem,calc(100%-9rem))]'
-              : 'bottom-14 left-1/2 -translate-x-1/2 max-w-[min(16rem,calc(100%-9rem))]')
+              ? `bottom-14 left-1/2 -translate-x-1/2 max-w-[min(18rem,calc(100%-9rem))] ${mobileMaxH}`
+              : `bottom-14 left-1/2 -translate-x-1/2 max-w-[min(16rem,calc(100%-9rem))] ${mobileMaxH}`)
             : ((isLoft || isSweep)
               ? 'bottom-2.5 left-1/2 -translate-x-1/2 max-w-[18rem]'
               : 'bottom-2.5 left-1/2 -translate-x-1/2 max-w-[16rem]')
         }`}
+      data-contour-chip=""
     >
-      <div className="font-bold font-sans text-cyan-200">
+      <div className="font-bold font-sans text-cyan-200 shrink-0">
         Contour · {tool}
       </div>
-      <div className="text-[11px] text-cyan-100/90 normal-case font-sans mt-0.5">
+      <div className="text-[11px] text-cyan-100/90 normal-case font-sans mt-0.5 shrink-0">
         Plane · {planeLabel}
       </div>
+      <div
+        className={compact ? 'mt-0 min-h-0 flex-1 overflow-y-auto rail-scroll' : undefined}
+        data-contour-chip-scroll=""
+      >
       <div className="mt-1.5 font-sans" data-plane-editor="1" role="group" aria-label="Contour plane">
         <div className="flex gap-1 flex-wrap">
           {['x', 'y', 'z'].map((axis) => {
@@ -558,7 +567,8 @@ const ContourModeChip = ({
           </div>
         </div>
       )}
-      <div className="mt-2 flex items-center justify-between gap-2">
+      </div>
+      <div className="mt-2 flex items-center justify-between gap-2 shrink-0">
         <span className="text-[11px] text-cyan-200/70 leading-tight">
           {commitName
             ? `Confirm writes ${commitName} (adds if part exists)`

@@ -60,6 +60,7 @@
         "golden:app-loads": "npm run build && node scripts/golden/smoke_app_loads.mjs",
         "golden:hook-dep-tdz": "node scripts/golden/smoke_hook_dep_tdz.mjs",
         "golden:ui-polish": "node scripts/golden/smoke_ui_polish_icons_layout.mjs",
+    "golden:ui-six-tweaks": "node scripts/golden/smoke_ui_six_tweaks_strip_viewport.mjs",
         "golden:script-insert-part-binding": "node scripts/golden/smoke_script_insert_part_binding.mjs",
         "golden:shell-draft-tube": "node scripts/golden/smoke_shell_draft_tube.mjs",
         "golden:slice-a-feature-ribbon": "node scripts/golden/smoke_slice_a_feature_ribbon.mjs",

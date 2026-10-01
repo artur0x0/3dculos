@@ -99,6 +99,15 @@ console.log('mobile C: feature sheets');
       /revealRange\?\.\(feature\.startOffset, feature\.endOffset\)/.test(app),
   );
   check(
+    'Script-stage strip does not open FeatureSheet',
+    (() => {
+      const m = app.match(
+        /const handleFeatureStripJump = \(feature\) => \{[\s\S]*?\n {2}\};/,
+      );
+      return m && /revealRange/.test(m[0]) && !/setFeatureSheet/.test(m[0]);
+    })(),
+  );
+  check(
     'Edit script switches to Script stage + revealRange',
     /handleFeatureSheetEditScript/.test(app) &&
       /setMobileStageSticky\('script'\)/.test(app),

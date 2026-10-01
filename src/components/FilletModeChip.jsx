@@ -55,7 +55,7 @@ const FilletModeChip = ({
           // Bottom-centre, like the contour chip — see ContourModeChip.
           // Mobile B: raise above the home-indicator stage pill.
           compact
-            ? 'bottom-14 left-1/2 -translate-x-1/2 max-w-[min(16rem,calc(100%-9rem))]'
+            ? 'bottom-14 left-1/2 -translate-x-1/2 max-w-[min(16rem,calc(100%-9rem))] max-h-[calc(100dvh-12rem)] overflow-y-auto rail-scroll'
             : 'bottom-2.5 left-1/2 -translate-x-1/2 max-w-[16rem]'
         }`}
       role="group"

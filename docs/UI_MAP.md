@@ -114,14 +114,17 @@ Mobile specifics:
   Top CAD|Script text chrome is gone. Inert `data-ai-prompt-hook` marks a
   future AI-on-tap site (not wired). Contour/Fillet chips use `bottom-14` on
   mobile so they clear the pill. Shell exposes `data-mobile-stage="cad"|"script"`.
-- **Feature strip (Slice Mobile B → B.1 → C → C.1 → C.4):** `FeatureStrip.jsx` mounts as a
+- **Feature strip (Slice Mobile B → B.1 → C → C.1 → C.4 + UI polish):** `FeatureStrip.jsx` mounts as a
   **vertical right rail** (`data-feature-strip-side="right"`), starting below the
-  top ribbon. **Script stage:** icon chips open the under-title feature sheet and
-  jump Monaco caret via `CodeEditor.revealRange`. C.4: editor stack
-  `overflow-hidden`, ribbon spacer `h-11` (`data-feature-strip-ribbon-spacer-h`),
+  top ribbon. **Script stage:** icon chips **jump caret only** (`handleFeatureStripJump`
+  → `revealRange`; no FeatureSheet). **CAD stage:** strip taps / long-press open a
+  **feature sheet** (`hideWhenEmpty`). Strip scroll uses `rail-scroll` (visible thin
+  thumb; horizontal CAD strip shows a bottom bar on overflow) and auto-scrolls to the
+  **last** chip when the feature list grows. Chip highlight (`featureStripActiveId`)
+  clears on sheet cancel/accept/delete (and after script jump). C.4: editor stack
+  `overflow-hidden`, ribbon spacer measured (`data-feature-strip-ribbon-spacer-h`),
   strip `z-20` so Contour chips are fully below the ribbon and tappable.
-  **CAD stage:** same icons open a
-  **feature sheet** (`hideWhenEmpty`). Per-type index badges (`data-feature-type-badge`,
+  Per-type index badges (`data-feature-type-badge`,
   1…n per kind) sit bottom-right on each icon. Icons match the CAD toolbar
   (Contour/`NotebookPen`, Extrude/`ArrowUpFromLine`, Revolve/`Rotate3d`,
   Loft/`Pyramid`, Sweep/`Route`, Fillet/`SquareRoundCorner`,
@@ -131,12 +134,17 @@ Mobile specifics:
 - **Feature sheets (Slice Mobile C → C.1):** `FeatureSheet.jsx` — full-width
   **horizontal** glass bar just below the part name (`top-14`,
   `data-feature-sheet-layout="under-title-horizontal"`) on **CAD and Script**
-  stages. Horizontal scroll when params overflow. Open via long-press (~450ms)
-  on the viewport or strip tap. Real param writeback for **Extrude**
+  stages. Caps at `max-h-[calc(100dvh-10rem)]` with internal `rail-scroll` so
+  mobile popups stay below the feature strip with finger clearance for viewport
+  picks (Contour/Fillet chips use `max-h-[calc(100dvh-12rem)]` similarly).
+  Horizontal scroll when params overflow. Open via long-press (~450ms)
+  on the viewport or CAD strip tap. Real param writeback for **Extrude**
   (distance/sense), **Fillet** (radius), **Revolve** (angle) via
   `featureSheetWriteback.js` into the marked block + Auto-Run; other kinds stub
   → Edit script. Accept / Cancel / Edit script stay. Desktop/game sheets off
   (`featureSheetEnabled` false).
+- **Viewport backdrop:** `viewport-shell` + Three.js clear/background use Monaco
+  gray `#1e1e1e` (not Tailwind `gray-900` / `#111827`).
 - **Face description popup:** removed in Slice Mobile C.1 (was under-title B.1
   `data-face-info-popup`). Selection still drives the left palette / PromptInput;
   no empty reserved band.

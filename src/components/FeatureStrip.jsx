@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 import {
   ArrowUpFromLine,
   Rotate3d,
@@ -103,6 +103,23 @@ export default function FeatureStrip({
   const horizontal = orientation === 'horizontal';
   const stripSide = side || (horizontal ? 'top' : 'right');
   const between = stripSide === 'between';
+  const scrollRef = useRef(null);
+  const lastFeatureId = features.length ? features[features.length - 1].id : null;
+
+  // When the feature list grows/changes, scroll so the last chip is visible.
+  // Key off length + last id so unrelated re-renders don't yank mid-scroll.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || !lastFeatureId) return;
+    const chips = el.querySelectorAll('[data-feature-id]');
+    const lastChip = chips.length ? chips[chips.length - 1] : null;
+    if (lastChip && typeof lastChip.scrollIntoView === 'function') {
+      lastChip.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+      return;
+    }
+    if (horizontal) el.scrollLeft = el.scrollWidth;
+    else el.scrollTop = el.scrollHeight;
+  }, [features.length, lastFeatureId, horizontal]);
 
   if (features.length === 0) {
     if (hideWhenEmpty) return null;
@@ -154,7 +171,8 @@ export default function FeatureStrip({
   if (horizontal) {
     return (
       <div
-        className="flex flex-row items-center gap-1.5 overflow-x-auto no-scrollbar
+        ref={scrollRef}
+        className="flex flex-row items-center gap-1.5 overflow-x-auto rail-scroll
           border border-gray-700/40 bg-gray-900/70 surface-glass-chip
           rounded-lg px-2 py-1.5 max-w-full"
         data-feature-strip=""
@@ -196,13 +214,14 @@ export default function FeatureStrip({
 
   return (
     <div
+      ref={scrollRef}
       className={between
         ? `shrink-0 flex flex-col items-center gap-1.5 overflow-y-auto overflow-x-hidden
           border-x border-gray-700/50 bg-gray-900/80 surface-glass-chip
-          px-1.5 py-2 w-11 no-scrollbar h-full min-h-0`
+          px-1.5 py-2 w-11 rail-scroll h-full min-h-0`
         : `shrink-0 flex flex-col items-center gap-1.5 overflow-y-auto overflow-x-hidden
           border-l border-gray-700/40 bg-gray-900/70 surface-glass-chip
-          px-1.5 pt-2 w-11 no-scrollbar flex-1 min-h-0
+          px-1.5 pt-2 w-11 rail-scroll flex-1 min-h-0
           pb-[max(3.5rem,calc(env(safe-area-inset-bottom,0px)+3.25rem))]`}
       data-feature-strip=""
       data-feature-strip-orientation="vertical"
