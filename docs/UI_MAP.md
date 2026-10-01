@@ -379,8 +379,10 @@ Import `src/utils/importModel.js` (+ `POST /api/convert/step`); export
 - **z-index ladder:** overlays `z-10`; edge chip and success banner `z-20`;
   toasts + mobile stage pill `z-30`; **cross-section panel/popup `z-40`** (above
   the CAD↔Script home-indicator so expanded options win); modals and error
-  banners `z-50`. Cross-section **Disable** (FlipHorizontal in the expanded
-  popup) is red (`text-red-600`) as dismiss/cancel; Check stays green Done.
+  banners `z-50`. Cross-section popup **Dismiss** is a grey lucide `X` (not the
+  red FlipHorizontal); the collapsed rail still uses FlipHorizontal to
+  enable/disable. Contour-mode rail dismiss is the same grey `X`. Check stays
+  green Done.
 - **Feature-entry toasts:** Contour / Extrude / Revolve / Loft / Sweep / Fillet /
   Chamfer open **without** an informational toast. Soft-fail / enterRefuse /
   validation / workplane-miss toasts stay.
@@ -445,8 +447,10 @@ Import `src/utils/importModel.js` (+ `POST /api/convert/step`); export
   any new rail that scrolls.
 - **Rail size is shared.** `HelperInsertPalette`, `ContourModeRail` and
   `CrossSectionPanel` all use 20px icons, `p-2` buttons and a `p-2` shell, in
-  both shells. If you change one, change all three (`golden:ui-polish` fails
-  otherwise) and re-check the bottom-left chip insets that clear the left rail.
+  both shells. Left rails also share `RAIL_PAIR_WIDTH_CLASS` (`w-16`) so the
+  Contour caption cannot widen ContourModeRail past the helper rail. If you
+  change one, change all three (`golden:ui-polish` fails otherwise) and
+  re-check the bottom-left chip insets that clear the left rail.
 - **Test hooks** — golden smoke tests select by data attributes:
   `data-toolbar-variant`, `data-cad-toolbar-host`, `data-palette-layout`,
   `data-palette-section`, `data-selector-group`, `data-edge-selector`,

@@ -4,10 +4,15 @@ import {
   Square,
   Hexagon,
   Spline,
-  ArrowLeft,
+  X,
 } from 'lucide-react';
 import { CONTOUR_TOOLS } from '../utils/contourMode';
-import { RAIL_PAIR_HEIGHT_CLASS, RAIL_SCROLL_CLASS, RAIL_PAIR_HEIGHT_ATTR } from '../utils/railPair';
+import {
+  RAIL_PAIR_HEIGHT_CLASS,
+  RAIL_PAIR_WIDTH_CLASS,
+  RAIL_SCROLL_CLASS,
+  RAIL_PAIR_HEIGHT_ATTR,
+} from '../utils/railPair';
 
 const ICONS = {
   circle: Circle,
@@ -18,8 +23,8 @@ const ICONS = {
 
 /**
  * Slice 24 — left rail while contour mode is active.
- * Replaces the FEAT palette: contour tools + Back (cancel, no solid commit).
- * Mobile-first: same chrome as HelperInsertPalette (compact on phone).
+ * Replaces the FEAT palette: contour tools + grey X dismiss (cancel, no solid commit).
+ * Mobile-first: same chrome/width as HelperInsertPalette (compact on phone).
  */
 const ContourModeRail = ({
   tool = 'circle',
@@ -35,7 +40,7 @@ const ContourModeRail = ({
     <div
       className={`absolute left-2 lg:left-4 bottom-2.5 z-10 flex flex-col gap-1
         bg-white/60 backdrop-blur-sm rounded-lg shadow-lg
-        ${RAIL_PAIR_HEIGHT_CLASS} ${RAIL_SCROLL_CLASS}
+        ${RAIL_PAIR_WIDTH_CLASS} ${RAIL_PAIR_HEIGHT_CLASS} ${RAIL_SCROLL_CLASS}
         p-2`}
       role="group"
       aria-label="Contour tools"
@@ -43,7 +48,7 @@ const ContourModeRail = ({
       data-rail-height={RAIL_PAIR_HEIGHT_ATTR}
     >
       <div
-        className={`text-[9px] font-semibold uppercase tracking-wide text-cyan-800 px-1 ${
+        className={`text-[9px] font-semibold uppercase tracking-wide text-cyan-800 px-1 truncate ${
           compact ? 'leading-3' : 'leading-4'
         }`}
       >
@@ -73,12 +78,12 @@ const ContourModeRail = ({
       <button
         type="button"
         onClick={() => onBack?.()}
-        title="Back — exit contour mode (no additional solid write)"
-        aria-label="Back — exit contour mode without committing a solid"
+        title="Dismiss — exit contour mode (no additional solid write)"
+        aria-label="Dismiss contour mode without committing a solid"
         className={`${pad} rounded text-gray-700 hover:bg-gray-200 active:bg-gray-300
           flex items-center justify-center transition-colors`}
       >
-        <ArrowLeft size={iconSize} strokeWidth={2} />
+        <X size={iconSize} strokeWidth={2} />
       </button>
     </div>
   );

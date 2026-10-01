@@ -12,6 +12,13 @@
  */
 export const RAIL_PAIR_HEIGHT_CLASS = 'h-[min(26rem,calc(100%-5.5rem))]';
 
+/**
+ * Left rails share one width so ContourModeRail matches HelperInsertPalette
+ * (the Contour caption is longer than Block/Model/Polish/Move and used to
+ * widen the contour rail past the parent).
+ */
+export const RAIL_PAIR_WIDTH_CLASS = 'w-16';
+
 /** Left rails only — they hold the whole tool list and genuinely overflow. */
 export const RAIL_SCROLL_CLASS = 'overflow-y-auto overflow-x-hidden rail-scroll';
 
