@@ -247,6 +247,9 @@ function _copyEdge(edge, key) {
     tangent: edge.tangent ? edge.tangent.slice() : undefined,
     n0: edge.n0 ? edge.n0.slice() : undefined,
     n1: edge.n1 ? edge.n1.slice() : undefined,
+    pts: Array.isArray(edge.pts) && edge.pts.length >= 2
+      ? edge.pts.map((p) => p.slice())
+      : edge.pts,
   };
 }
 

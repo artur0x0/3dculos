@@ -61,7 +61,8 @@
         "golden:ui-polish": "node scripts/golden/smoke_ui_polish_icons_layout.mjs",
         "golden:script-insert-part-binding": "node scripts/golden/smoke_script_insert_part_binding.mjs",
         "golden:shell-draft-tube": "node scripts/golden/smoke_shell_draft_tube.mjs",
-        "golden:slice-a-feature-ribbon": "node scripts/golden/smoke_slice_a_feature_ribbon.mjs"
+        "golden:slice-a-feature-ribbon": "node scripts/golden/smoke_slice_a_feature_ribbon.mjs",
+        "golden:slice-bc-edge-chip-tracking": "node scripts/golden/smoke_slice_bc_edge_chip_tracking.mjs"
     },
     "dependencies": {
         "@monaco-editor/react": "^4.6.0",

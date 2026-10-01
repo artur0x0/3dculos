@@ -151,6 +151,10 @@ function copyPickEdge(edge, key) {
     boundaryId: Number.isFinite(edge.boundaryId) ? edge.boundaryId : undefined,
     pairCount: Number.isFinite(edge.pairCount) ? edge.pairCount : undefined,
     chainId: Number.isFinite(edge.chainId) ? edge.chainId : undefined,
+    // Slice B+C: dense pre-RDP polyline for chip tracking + makeSweepPath fidelity.
+    pts: Array.isArray(edge.pts) && edge.pts.length >= 2
+      ? edge.pts.map((p) => p.slice())
+      : undefined,
   };
 }
 
@@ -958,6 +962,102 @@ function _radialCv(pts) {
   return dev / mean;
 }
 
+/**
+ * Dense original polyline spanning keep indices [i0 → i1] (closed wrap OK).
+ * RDP chords alone shortcut curves — chips and fillet paths need these pts.
+ */
+function _sliceOrderedPts(pts, i0, i1) {
+  if (!pts?.length) return [];
+  if (i0 === i1) return [pts[i0].slice()];
+  if (i0 < i1) return pts.slice(i0, i1 + 1).map((p) => p.slice());
+  // Closed wrap: i0 → end, then 0 → i1
+  return pts.slice(i0).concat(pts.slice(0, i1 + 1)).map((p) => p.slice());
+}
+
+/** Arc-length midpoint on a dense polyline (on-geometry track for chips). */
+function _arcLengthMidpoint(poly) {
+  if (!poly?.length) return null;
+  if (poly.length === 1) return poly[0].slice();
+  let total = 0;
+  const lens = [];
+  for (let i = 1; i < poly.length; i++) {
+    const L = _dist3(poly[i - 1], poly[i]);
+    lens.push(L);
+    total += L;
+  }
+  if (!(total > 1e-12)) return poly[0].slice();
+  let target = total * 0.5;
+  for (let i = 0; i < lens.length; i++) {
+    const L = lens[i];
+    if (target <= L + 1e-12) {
+      const t = L > 1e-12 ? target / L : 0;
+      const a = poly[i];
+      const b = poly[i + 1];
+      return [
+        a[0] + t * (b[0] - a[0]),
+        a[1] + t * (b[1] - a[1]),
+        a[2] + t * (b[2] - a[2]),
+      ];
+    }
+    target -= L;
+  }
+  return poly[poly.length - 1].slice();
+}
+
+/**
+ * On-geometry track point for HTML edge chips / overlays.
+ * Prefers dense `pts` arc mid; falls back to chord mid / endpoint average.
+ */
+export function edgeTrackPoint(edge) {
+  if (!edge) return null;
+  if (Array.isArray(edge.pts) && edge.pts.length >= 2) {
+    const mid = _arcLengthMidpoint(edge.pts);
+    if (mid) return mid;
+  }
+  if (Array.isArray(edge.mid) && edge.mid.length >= 3) {
+    return [Number(edge.mid[0]), Number(edge.mid[1]), Number(edge.mid[2])];
+  }
+  if (Array.isArray(edge.va) && Array.isArray(edge.vb)) {
+    return [
+      (edge.va[0] + edge.vb[0]) / 2,
+      (edge.va[1] + edge.vb[1]) / 2,
+      (edge.va[2] + edge.vb[2]) / 2,
+    ];
+  }
+  return null;
+}
+
+/**
+ * Oriented dense polyline for an edge (va→vb). Used by highlight + makeSweepPath.
+ * @returns {number[][]|null}
+ */
+export function edgePolyline(edge) {
+  if (!edge) return null;
+  if (Array.isArray(edge.pts) && edge.pts.length >= 2) {
+    return edge.pts.map((p) => p.slice());
+  }
+  if (Array.isArray(edge.va) && Array.isArray(edge.vb)) {
+    return [edge.va.slice(), edge.vb.slice()];
+  }
+  return null;
+}
+
+/**
+ * Chord-mid vs on-geometry track distance — goldens pin that RDP chords
+ * no longer float chips inside rounded corners.
+ */
+export function edgeChordFloatError(edge) {
+  if (!edge || !Array.isArray(edge.pts) || edge.pts.length < 3) return 0;
+  const chordMid = [
+    (edge.va[0] + edge.vb[0]) / 2,
+    (edge.va[1] + edge.vb[1]) / 2,
+    (edge.va[2] + edge.vb[2]) / 2,
+  ];
+  const track = edgeTrackPoint(edge);
+  if (!track) return 0;
+  return _dist3(chordMid, track);
+}
+
 function _segmentsFromKeep(ordered, keep) {
   const { pts, idxs, closed } = ordered;
   const segs = [];
@@ -971,14 +1071,23 @@ function _segmentsFromKeep(ordered, keep) {
     const delta = _sub3(vb, va);
     const L = _len3(delta);
     if (!(L > 1e-8)) continue;
+    // Slice B+C: keep the pre-RDP polyline under each chord so chips sit on
+    // the real edge and makeSweepPath / fillet recover curvature (RDP chords
+    // alone shortcut arcs — mid floats inside; densify-along-chord cannot
+    // restore corners lost to simplification).
+    const dense = _sliceOrderedPts(pts, i0, i1);
+    const track = dense.length >= 2 ? _arcLengthMidpoint(dense) : null;
+    let arcLen = 0;
+    for (let k = 1; k < dense.length; k++) arcLen += _dist3(dense[k - 1], dense[k]);
     segs.push({
       a: idxs[i0],
       b: idxs[i1],
       va: va.slice(),
       vb: vb.slice(),
-      mid: [(va[0] + vb[0]) / 2, (va[1] + vb[1]) / 2, (va[2] + vb[2]) / 2],
-      length: L,
+      mid: track || [(va[0] + vb[0]) / 2, (va[1] + vb[1]) / 2, (va[2] + vb[2]) / 2],
+      length: arcLen > 1e-8 ? arcLen : L,
       tangent: [delta[0] / L, delta[1] / L, delta[2] / L],
+      pts: dense.length >= 2 ? dense : undefined,
     });
   }
   return segs;

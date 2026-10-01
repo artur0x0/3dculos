@@ -144,6 +144,14 @@ export function normalizePathEdge(edge) {
   let length = Number(edge.length);
   if (!(length > 0)) length = _dist(va, vb);
   if (!(length > 1e-12)) return null;
+  // Slice B+C: preserve dense pre-RDP polyline when present (fillet path fidelity).
+  let pts;
+  if (Array.isArray(edge.pts) && edge.pts.length >= 2) {
+    pts = edge.pts
+      .filter((p) => Array.isArray(p) && p.length >= 3)
+      .map((p) => [Number(p[0]), Number(p[1]), Number(p[2])]);
+    if (pts.length < 2) pts = undefined;
+  }
   return {
     key,
     a,
@@ -155,6 +163,7 @@ export function normalizePathEdge(edge) {
       : _mid(va, vb),
     length,
     tangent: edge.tangent ? edge.tangent.slice() : undefined,
+    pts,
   };
 }
 
@@ -170,6 +179,7 @@ function orientFromVert(edge, fromVert) {
       mid: edge.mid ? edge.mid.slice() : _mid(edge.va, edge.vb),
       length: edge.length,
       tangent: edge.tangent ? edge.tangent.slice() : undefined,
+      pts: Array.isArray(edge.pts) ? edge.pts.map((p) => p.slice()) : undefined,
     };
   }
   return {
@@ -182,6 +192,10 @@ function orientFromVert(edge, fromVert) {
     length: edge.length,
     tangent: edge.tangent
       ? [-edge.tangent[0], -edge.tangent[1], -edge.tangent[2]]
+      : undefined,
+    // Flip dense polyline with the endpoints so makeSweepPath stays coherent.
+    pts: Array.isArray(edge.pts)
+      ? edge.pts.map((p) => p.slice()).reverse()
       : undefined,
   };
 }
@@ -283,11 +297,28 @@ export function orderEdgePath(selectedEdges) {
     return { ok: false, code: 'invalid', message: SWEEP_PATH_INVALID };
   }
 
-  const points = [ordered[0].va.slice()];
-  for (const e of ordered) points.push(e.vb.slice());
+  // Slice B+C: expand dense pre-RDP polylines so fillet/sweep see the real
+  // curve, not RDP chords (chord corners → faceted/wedge blends).
+  const points = [];
+  for (let i = 0; i < ordered.length; i++) {
+    const e = ordered[i];
+    const poly = Array.isArray(e.pts) && e.pts.length >= 2
+      ? e.pts
+      : [e.va, e.vb];
+    if (i === 0) {
+      for (const p of poly) points.push(p.slice());
+    } else {
+      // Skip duplicate shared endpoint with previous edge.
+      for (let k = 1; k < poly.length; k++) points.push(poly[k].slice());
+    }
+  }
 
   let length = 0;
-  for (const e of ordered) length += e.length;
+  for (let i = 1; i < points.length; i++) length += _dist(points[i - 1], points[i]);
+  if (!(length > 0)) {
+    length = 0;
+    for (const e of ordered) length += e.length;
+  }
 
   return {
     ok: true,
@@ -297,6 +328,95 @@ export function orderEdgePath(selectedEdges) {
     length,
     recovered: !!picked.recovered,
   };
+}
+
+/**
+ * Slice B+C — tiny Accept densify: round RDP-scale corners that densify-along-
+ * chord cannot fix. At each vertex whose turn exceeds maxTurnDeg, replace the
+ * sharp joint with quadratic Bézier samples (prev → corner → next). Chips and
+ * highlight still use on-geometry `pts`/`mid`; this only smooths the path
+ * handed to filletAlongPath / makeSweepPath.
+ *
+ * @param {number[][]} points
+ * @param {boolean} closed
+ * @param {{ maxTurnDeg?: number, samples?: number }} [opts]
+ * @returns {number[][]}
+ */
+export function smoothPathCorners(points, closed, opts = {}) {
+  const pts = Array.isArray(points) ? points : [];
+  if (pts.length < 3) return pts.map((p) => p.slice());
+  // Default 40°: catch RDP-collapsed round corners (~90–110°) without touching
+  // circular-rim tessellation (~12–25°/facet) or long cube side miters smoothed
+  // by the short-seg gate below.
+  const maxTurnDeg = typeof opts.maxTurnDeg === 'number' ? opts.maxTurnDeg : 40;
+  const samples = Math.max(2, Math.round(opts.samples || 6));
+  const maxSegFrac = typeof opts.maxSegFrac === 'number' ? opts.maxSegFrac : 0.18;
+  const cosTol = Math.cos((maxTurnDeg * Math.PI) / 180);
+  const n = pts.length;
+  const out = [];
+
+  let pathLen = 0;
+  for (let i = 1; i < n; i++) pathLen += _dist(pts[i - 1], pts[i]);
+  if (closed) pathLen += _dist(pts[n - 1], pts[0]);
+  const maxSeg = pathLen > 1e-9 ? pathLen * maxSegFrac : Infinity;
+
+  const at = (i) => pts[(i + n) % n];
+  const segLen = (i0, i1) => _dist(at(i0), at(i1));
+  const turnAlign = (i) => {
+    const a = at(i - 1);
+    const b = at(i);
+    const c = at(i + 1);
+    const ab = _sub(b, a);
+    const bc = _sub(c, b);
+    const lab = _len(ab);
+    const lbc = _len(bc);
+    if (!(lab > 1e-9) || !(lbc > 1e-9)) return 1;
+    return (ab[0] * bc[0] + ab[1] * bc[1] + ab[2] * bc[2]) / (lab * lbc);
+  };
+
+  /** RDP-spike corner: sharp turn between two *short* similar chords. */
+  const isRdpSpike = (i) => {
+    const align = turnAlign(i);
+    if (align >= cosTol - 1e-12) return false;
+    const lab = segLen(i - 1, i);
+    const lbc = segLen(i, i + 1);
+    if (!(lab > 1e-9) || !(lbc > 1e-9)) return false;
+    if (lab > maxSeg || lbc > maxSeg) return false; // long cube sides
+    const ratio = lab > lbc ? lab / lbc : lbc / lab;
+    if (ratio > 2.5) return false; // mismatched — not a collapsed arc pair
+    return true;
+  };
+
+  for (let i = 0; i < n; i++) {
+    if (!closed && (i === 0 || i === n - 1)) {
+      out.push(pts[i].slice());
+      continue;
+    }
+    if (!isRdpSpike(i)) {
+      out.push(at(i).slice());
+      continue;
+    }
+    // Sharp RDP spike: quadratic Bézier samples (prev → corner → next),
+    // dropping the chord corner that produced faceted fillet wedges.
+    const a = at(i - 1);
+    const b = at(i);
+    const c = at(i + 1);
+    for (let s = 1; s <= samples; s++) {
+      const t = s / (samples + 1);
+      const u = 1 - t;
+      out.push([
+        u * u * a[0] + 2 * u * t * b[0] + t * t * c[0],
+        u * u * a[1] + 2 * u * t * b[1] + t * t * c[1],
+        u * u * a[2] + 2 * u * t * b[2] + t * t * c[2],
+      ]);
+    }
+  }
+  if (closed && out.length > 1) {
+    const a = out[0];
+    const b = out[out.length - 1];
+    if (_dist(a, b) < 1e-5) out.pop();
+  }
+  return out;
 }
 
 /**
@@ -319,6 +439,7 @@ export function assembleSweepPath(selectedEdges, opts = {}) {
     vb: e.vb.slice(),
     mid: e.mid ? e.mid.slice() : _mid(e.va, e.vb),
     length: e.length,
+    pts: Array.isArray(e.pts) ? e.pts.map((p) => p.slice()) : undefined,
   }));
 
   // Closed: drop duplicated closing vertex (sweepPoints uses closed:true).
@@ -326,6 +447,15 @@ export function assembleSweepPath(selectedEdges, opts = {}) {
     const a = pts[0];
     const b = pts[pts.length - 1];
     if (_dist(a, b) < 1e-5) pts = pts.slice(0, -1);
+  }
+
+  // Slice B+C: round RDP-scale corners before fillet/sweep consume the path.
+  // Skip when caller asks for raw chords (opts.smoothCorners === false).
+  if (opts.smoothCorners !== false && pts.length >= 3) {
+    pts = smoothPathCorners(pts, ordered.closed, {
+      maxTurnDeg: opts.maxTurnDeg,
+      samples: opts.cornerSamples,
+    });
   }
 
   if (opts.reverse) {
@@ -339,8 +469,14 @@ export function assembleSweepPath(selectedEdges, opts = {}) {
         b: e.a,
         va: e.vb.slice(),
         vb: e.va.slice(),
+        pts: Array.isArray(e.pts) ? e.pts.map((p) => p.slice()).reverse() : undefined,
       }));
   }
+
+  let length = 0;
+  for (let i = 1; i < pts.length; i++) length += _dist(pts[i - 1], pts[i]);
+  if (ordered.closed && pts.length > 1) length += _dist(pts[pts.length - 1], pts[0]);
+  if (!(length > 0)) length = ordered.length;
 
   return {
     ok: true,
@@ -348,7 +484,7 @@ export function assembleSweepPath(selectedEdges, opts = {}) {
       kind: 'sweepPath',
       closed: ordered.closed,
       points: pts,
-      length: ordered.length,
+      length,
       edgeCount: edges.length,
     },
     orderedEdges: edges,

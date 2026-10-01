@@ -125,6 +125,9 @@ import {
   edgeKey,
   pathLengthFromEdges,
   sweepBlendHardMax,
+  projectWorldToCanvas,
+  edgeTrackPoint,
+  edgePolyline,
 } from '../utils/selectEdge';
 import {
   annotateFeatureEdges,
@@ -395,6 +398,11 @@ const Viewport = forwardRef(({
   const [showPlanes, setShowPlanes] = useState(true);
   const [showContours, setShowContours] = useState(true);
   const [selectedEdges, setSelectedEdges] = useState([]);
+  /** Slice B+C: latest selection for orbit-synced HTML edge chips (animate loop). */
+  const selectedEdgesRef = useRef([]);
+  selectedEdgesRef.current = selectedEdges;
+  const edgeChipElsRef = useRef(new Map());
+  const edgeChipProjectTmpRef = useRef(new Vector3());
   const featureEdgesRef = useRef([]);
   /** Geometry identity that featureEdgesRef was built from — invalidate on replace. */
   const featureEdgesSourceRef = useRef(null);
@@ -711,6 +719,45 @@ const Viewport = forwardRef(({
     edgeHoverRef.current = null;
   }, []);
 
+  /**
+   * Slice B+C: project on-geometry track points to canvas so numbered edge
+   * chips stick to the selected edge under orbit (not world-floating).
+   */
+  const updateEdgeChips = useCallback(() => {
+    const cam = cameraRef.current;
+    const container = containerRef.current;
+    const map = edgeChipElsRef.current;
+    if (!cam || !container || !map.size) return;
+    const w = container.clientWidth || 1;
+    const h = container.clientHeight || 1;
+    const tmp = edgeChipProjectTmpRef.current;
+    const edges = selectedEdgesRef.current || [];
+    const live = new Set();
+    for (let i = 0; i < edges.length; i++) {
+      const e = edges[i];
+      const key = edgeKey(e);
+      live.add(key);
+      const el = map.get(key);
+      if (!el) continue;
+      const track = edgeTrackPoint(e);
+      if (!track) {
+        el.style.visibility = 'hidden';
+        continue;
+      }
+      const scr = projectWorldToCanvas(cam, track, w, h, tmp);
+      if (!scr) {
+        el.style.visibility = 'hidden';
+        continue;
+      }
+      el.style.visibility = 'visible';
+      el.style.left = `${scr.x}px`;
+      el.style.top = `${scr.y}px`;
+    }
+    for (const [key, el] of map) {
+      if (!live.has(key) && el) el.style.visibility = 'hidden';
+    }
+  }, []);
+
   const edgeLineResolution = useCallback(() => {
     const r = rendererRef.current;
     if (r) {
@@ -732,8 +779,19 @@ const Viewport = forwardRef(({
     if (!edges?.length || !sceneRef.current) return null;
     const positions = [];
     for (const e of edges) {
-      if (!e.va || !e.vb) continue;
-      positions.push(e.va[0], e.va[1], e.va[2], e.vb[0], e.vb[1], e.vb[2]);
+      // Slice B+C: draw the dense pre-RDP polyline so the halo sticks to the
+      // real edge instead of floating on chord shortcuts through air.
+      const poly = edgePolyline(e);
+      if (!poly || poly.length < 2) {
+        if (!e.va || !e.vb) continue;
+        positions.push(e.va[0], e.va[1], e.va[2], e.vb[0], e.vb[1], e.vb[2]);
+        continue;
+      }
+      for (let i = 1; i < poly.length; i++) {
+        const a = poly[i - 1];
+        const b = poly[i];
+        positions.push(a[0], a[1], a[2], b[0], b[1], b[2]);
+      }
     }
     if (!positions.length) return null;
     const res = edgeLineResolution();
@@ -2256,7 +2314,9 @@ const Viewport = forwardRef(({
   // Paint edge selection highlight when selectedEdges changes (idempotent: clear then draw).
   useEffect(() => {
     highlightSelectedEdges(selectedEdges);
-  }, [selectedEdges, highlightSelectedEdges]);
+    // Chips re-bind via refs on render; project once so they appear before the next frame.
+    requestAnimationFrame(() => updateEdgeChips());
+  }, [selectedEdges, highlightSelectedEdges, updateEdgeChips]);
 
   /**
    * Pick graph for Edge, Fillet, and Sweep path.
@@ -3485,6 +3545,7 @@ const Viewport = forwardRef(({
         }
 
         animatePolylineHandles();
+        updateEdgeChips();
         
         if (rendererRef.current && sceneRef.current && cameraRef.current) {
           try {
@@ -4386,6 +4447,42 @@ const Viewport = forwardRef(({
               : prev
           ))}
         />
+      )}
+
+      {/* Slice B+C: numbered edge-selector chips anchored to on-geometry track
+          points; left/top updated every frame via updateEdgeChips (orbit-safe). */}
+      {(pickMode === 'edge' || !!filletMode || !!contourMode) && selectedEdges.length > 0 && (
+        <div
+          className="absolute inset-0 z-[15] pointer-events-none overflow-hidden"
+          data-edge-chip-layer=""
+          aria-hidden="true"
+        >
+          {selectedEdges.map((e, i) => {
+            const key = edgeKey(e);
+            return (
+              <div
+                key={key}
+                ref={(el) => {
+                  const map = edgeChipElsRef.current;
+                  if (el) map.set(key, el);
+                  else map.delete(key);
+                }}
+                data-edge-chip={i + 1}
+                data-edge-chip-key={key}
+                className="absolute -translate-x-1/2 -translate-y-1/2
+                  min-w-[1.25rem] h-5 px-1.5 rounded-md
+                  bg-amber-950/90 border border-amber-400/80
+                  text-amber-100 text-[10px] font-bold font-sans
+                  flex items-center justify-center shadow-lg
+                  surface-glass-chip"
+                style={{ left: 0, top: 0, visibility: 'hidden' }}
+                title={`Selected edge ${i + 1}`}
+              >
+                {i + 1}
+              </div>
+            );
+          })}
+        </div>
       )}
 
       {/* Edge pick chip — Edge mode alone is not enough: it stays out of the way
