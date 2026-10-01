@@ -349,7 +349,8 @@ Import `src/utils/importModel.js` (+ `POST /api/convert/step`); export
 - **Mode-chip popup style** (placement, cyan/amber glass, mobile
   `max-h-[calc(100dvh-12rem)]` + `rail-scroll`, Confirm/X): see
   [`docs/POPUP_STYLE.md`](./POPUP_STYLE.md). References: `ContourModeChip` (incl.
-  Loft / Workplane), `FilletModeChip`.
+  Loft / Workplane), `FilletModeChip`, `ShellModeChip` (face-pick opening —
+  not axis X/Y/Z).
 - **Feature popups all use `src/components/controls/popupUI.jsx`** — one type
   scale (`POPUP_TEXT`), one set of fields, accents per surface (`cyan` contour,
   `amber` fillet, `slate` helper sheets). **Every number renders a slider AND a
@@ -388,7 +389,7 @@ Import `src/utils/importModel.js` (+ `POST /api/convert/step`); export
   enable/disable. Contour-mode rail dismiss is the same grey `X`. Check stays
   green Done.
 - **Feature-entry toasts:** Contour / Extrude / Revolve / Loft / Sweep / Fillet /
-  Chamfer open **without** an informational toast. Soft-fail / enterRefuse /
+  Chamfer / Shell open **without** an informational toast. Soft-fail / enterRefuse /
   validation / workplane-miss toasts stay.
 - **Icons** are `lucide-react` only, with three vendored exceptions in
   `src/components/icons/`: `SquareRoundCorner.jsx` (Fillet), `Angle.jsx`

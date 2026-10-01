@@ -53,6 +53,7 @@ import PuzzlePickerModal from './components/PuzzlePickerModal';
 import GameConfetti from './components/GameConfetti';
 import { composeContourCommit } from './utils/contourMode';
 import { composeFilletCommit, composeChamferCommit } from './utils/filletMode';
+import { composeShellCommit } from './utils/shellMode';
 
 const App = () => {
   const [currentScript, setCurrentScript] = useState('');
@@ -1144,6 +1145,29 @@ const App = () => {
     return true;
   };
 
+  /** Shell face-pick Confirm — hollow() + SHELL markers; Auto-Run. */
+  const handleCommitShell = (payload) => {
+    const buf = codeEditorRef.current?.getContent?.() || '';
+    const result = composeShellCommit(buf, payload || {});
+    if (!result.ok) {
+      viewportRef.current?.softFailShell?.(result.message);
+      return false;
+    }
+    const wrote = codeEditorRef.current?.applyBuffer?.(result.buffer, 'Shell');
+    if (!wrote) {
+      viewportRef.current?.softFailShell?.(
+        'Could not write Shell into the editor — try again.',
+      );
+      return false;
+    }
+    if (result.run) {
+      setTimeout(() => {
+        handleGameRun();
+      }, 0);
+    }
+    return true;
+  };
+
   const handleExecute = (script, autoExecute=false) => {
     // The editor has produced a real buffer — the draft autosave may now
     // treat currentScript as authoritative (before this, '' is just "Monaco
@@ -1510,6 +1534,7 @@ const App = () => {
               onInsertHelper={handleInsertHelper}
               onCommitContourProfile={handleCommitContourProfile}
               onCommitFillet={handleCommitFillet}
+              onCommitShell={handleCommitShell}
               getHelperBuffer={() => codeEditorRef.current?.getContent?.() || ''}
               cadToolbarHost={cadToolbarHost}
               featureSheetEnabled={useStages && isCadStage && !featureSheet}
@@ -1867,6 +1892,7 @@ const App = () => {
             onInsertHelper={handleInsertHelper}
             onCommitContourProfile={handleCommitContourProfile}
             onCommitFillet={handleCommitFillet}
+              onCommitShell={handleCommitShell}
             getHelperBuffer={() => codeEditorRef.current?.getContent?.() || ''}
             cadToolbarHost={cadToolbarHost}
           />

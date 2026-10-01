@@ -54,6 +54,7 @@ import HelperInsertPalette from './HelperInsertPalette';
 import ContourModeRail from './ContourModeRail';
 import ContourModeChip from './ContourModeChip';
 import FilletModeChip from './FilletModeChip';
+import ShellModeChip from './ShellModeChip';
 import { buildCrossSectionPreview, defaultTopPlaneFrame } from '../utils/crossSectionSubstrate';
 import {
   applySavedContour,
@@ -115,6 +116,13 @@ import {
   hasFilletModeBlock,
   hasChamferModeBlock,
 } from '../utils/filletMode';
+import {
+  enterShellState,
+  validateShellAccept,
+  hasShellBlock,
+  normalizeShellParams,
+} from '../utils/shellMode';
+import { classifySelectedFace } from '../utils/faceFeaturePlacement';
 import { classifyFilletEdges, countDegenerateTriangles } from '../utils/filletEdgeClass';
 import {
   buildFeatureEdges,
@@ -338,6 +346,7 @@ const Viewport = forwardRef(({
   onInsertHelper = null,
   onCommitContourProfile = null,
   onCommitFillet = null,
+  onCommitShell = null,
   getHelperBuffer = null,
   /** Mobile CAD mid-strip host (CodeEditor). Null on desktop and in game. */
   cadToolbarHost = null,
@@ -455,6 +464,10 @@ const Viewport = forwardRef(({
   /** Slice 27: Fillet-in-mode (enter without edges; Accept commits sweep fillet). */
   const [filletMode, setFilletMode] = useState(null);
   const filletModeRef = useRef(null);
+  const [shellMode, setShellMode] = useState(null);
+  const shellModeRef = useRef(null);
+  const [shellToast, setShellToast] = useState(null);
+  const shellToastTimerRef = useRef(null);
   /** Slice C: restore Face/Edge after Fillet Accept / exit (do not snap to default). */
   const filletPriorPickModeRef = useRef('face');
   const filletBlendPreviewRef = useRef(null);
@@ -503,6 +516,17 @@ const Viewport = forwardRef(({
     setFilletToast(msg);
     armFilletToastClear();
   };
+  const armShellToastClear = () => {
+    if (shellToastTimerRef.current) clearTimeout(shellToastTimerRef.current);
+    shellToastTimerRef.current = setTimeout(() => {
+      shellToastTimerRef.current = null;
+      setShellToast(null);
+    }, 3200);
+  };
+  const showShellToast = (msg) => {
+    setShellToast(msg);
+    armShellToastClear();
+  };
   const [materials, setMaterials] = useState([]);
   const [isExecuting, setIsExecuting] = useState(false);
   const [executionError, setExecutionError] = useState(null);
@@ -538,6 +562,7 @@ const Viewport = forwardRef(({
   cachedMeshDataRef.current = cachedMeshData;
   contourModeRef.current = contourMode;
   filletModeRef.current = filletMode;
+  shellModeRef.current = shellMode;
 
   useImperativeHandle(ref, () => ({
     executeScript,
@@ -570,8 +595,11 @@ const Viewport = forwardRef(({
       contourModeRef.current = null;
       setFilletMode(null);
       filletModeRef.current = null;
+      setShellMode(null);
+      shellModeRef.current = null;
       setContourToast(null);
       setFilletToast(null);
+      setShellToast(null);
       setSelectedFace(null);
       setSelectedEdges([]);
       onFaceSelected?.(null);
@@ -629,6 +657,9 @@ const Viewport = forwardRef(({
     /** Slice 27: loud-fail toast — keep the path visible (do not clear edges). */
     softFailFillet: (msg) => {
       showFilletToast(msg || 'Fillet refused — pick a contiguous chain, then Accept.');
+    },
+    softFailShell: (msg) => {
+      showShellToast(msg || 'Shell refused — tap a face or choose Closed, then Confirm.');
     },
     // Updated to use cached mesh when available
     export3MF: async () => {
@@ -1698,6 +1729,8 @@ const Viewport = forwardRef(({
     setFilletMode(null);
     filletModeRef.current = null;
     clearFilletBlendPreview();
+    setShellMode(null);
+    shellModeRef.current = null;
     setPickMode('face');
     disposeEdgeOverlayObject(sceneRef.current, pathPreviewRef.current);
     pathPreviewRef.current = null;
@@ -1825,6 +1858,8 @@ const Viewport = forwardRef(({
     // Snapshot before exitContourMode, which forces face pick.
     filletPriorPickModeRef.current = pickModeRef.current === 'edge' ? 'edge' : 'face';
     exitContourMode();
+    setShellMode(null);
+    shellModeRef.current = null;
     setPickMode('edge');
     clearHighlight();
     setSelectedFace(null);
@@ -1896,6 +1931,72 @@ const Viewport = forwardRef(({
       exitFilletMode();
     }
   }, [onCommitFillet, selectedEdges, getHelperBuffer, exitFilletMode, clearEdgeHover, clearEdgeHighlight]);
+
+  const exitShellMode = useCallback(() => {
+    setShellMode(null);
+    shellModeRef.current = null;
+    if (shellToastTimerRef.current) {
+      clearTimeout(shellToastTimerRef.current);
+      shellToastTimerRef.current = null;
+    }
+    setShellToast(null);
+  }, []);
+
+  const enterShellMode = useCallback((opts = {}) => {
+    exitContourMode();
+    setFilletMode(null);
+    filletModeRef.current = null;
+    clearFilletBlendPreview();
+    setPickMode('face');
+    clearEdgeHover();
+    clearEdgeHighlight();
+    setSelectedEdges([]);
+    const next = enterShellState(selectedFace);
+    setShellMode(next);
+    shellModeRef.current = next;
+  }, [exitContourMode, selectedFace, clearFilletBlendPreview, clearEdgeHover, clearEdgeHighlight]);
+
+  const acceptShell = useCallback(() => {
+    const state = shellModeRef.current;
+    if (!state) return;
+    const liveFace = selectedFace
+      ? (selectedFace.type ? selectedFace : classifySelectedFace(selectedFace))
+      : null;
+    const face = liveFace || state.lastFace || null;
+    const gate = validateShellAccept(face, state.params);
+    if (!gate.ok) {
+      showShellToast(gate.message);
+      return;
+    }
+    const buf = (typeof getHelperBuffer === 'function' ? getHelperBuffer() : '') || '';
+    const ok = onCommitShell?.({
+      face: gate.face,
+      params: gate.normalized,
+      commitMode: hasShellBlock(buf) ? 'append' : 'replace',
+    });
+    if (ok) {
+      clearHighlight();
+      setSelectedFace(null);
+      onFaceSelected?.(null);
+      exitShellMode();
+    }
+  }, [onCommitShell, selectedFace, getHelperBuffer, exitShellMode, onFaceSelected, clearHighlight]);
+
+  // Keep lastFace in sync while the user picks opening faces in Shell mode.
+  useEffect(() => {
+    if (!shellMode) return;
+    if (!selectedFace) return;
+    const classified = selectedFace.type
+      ? selectedFace
+      : classifySelectedFace(selectedFace);
+    if (!classified) return;
+    setShellMode((prev) => {
+      if (!prev) return prev;
+      const next = { ...prev, lastFace: classified };
+      shellModeRef.current = next;
+      return next;
+    });
+  }, [shellMode, selectedFace]);
 
   // Live sweep-fillet blend as edges accumulate. The payload is memoized so the
   // chip's pathOk flag and the painter share ONE build per input (Slice 27 nit:
@@ -3156,7 +3257,7 @@ const Viewport = forwardRef(({
     const onPointerDown = (event) => {
       if (!featureSheetEnabledRef.current) return;
       if (event.button != null && event.button !== 0) return;
-      if (contourModeRef.current || filletModeRef.current) return;
+      if (contourModeRef.current || filletModeRef.current || shellModeRef.current) return;
       if (measurementEnabled) return;
       CLEAR_LP();
       featureLongPressFiredRef.current = false;
@@ -3166,7 +3267,7 @@ const Viewport = forwardRef(({
         const origin = featureLongPressOriginRef.current;
         featureLongPressOriginRef.current = null;
         if (!origin || !featureSheetEnabledRef.current) return;
-        if (contourModeRef.current || filletModeRef.current) return;
+        if (contourModeRef.current || filletModeRef.current || shellModeRef.current) return;
         featureLongPressFiredRef.current = true;
         onFeatureLongPressRef.current?.({ clientX: origin.x, clientY: origin.y });
       }, 450);
@@ -4216,7 +4317,7 @@ const Viewport = forwardRef(({
       )}
       
       {/* Left helper rail. Game keeps Advanced; CAD promotes those tools into Model. */}
-      {onInsertHelper && !contourMode && !filletMode && (
+      {onInsertHelper && !contourMode && !filletMode && !shellMode && (
         <HelperInsertPalette
           layout={mode === 'game' ? 'game' : 'cad'}
           onInsert={onInsertHelper}
@@ -4236,6 +4337,7 @@ const Viewport = forwardRef(({
           onPathPreview={setPathPreview}
           onEnterContourMode={enterContourMode}
           onEnterFilletMode={enterFilletMode}
+          onEnterShellMode={enterShellMode}
           compact={isMobile}
         />
       )}
@@ -4469,6 +4571,37 @@ const Viewport = forwardRef(({
         />
       )}
 
+      
+      {/* Shell face-pick chip — opening face + wall; Confirm writes hollow(). */}
+      {shellMode && (
+        <ShellModeChip
+          face={selectedFace
+            ? (selectedFace.type ? selectedFace : classifySelectedFace(selectedFace))
+            : (shellMode.lastFace || null)}
+          params={normalizeShellParams(shellMode.params || {})}
+          compact={isMobile}
+          onParamChange={(next) => setShellMode((prev) => {
+            if (!prev) return prev;
+            const updated = { ...prev, params: { ...prev.params, ...next } };
+            shellModeRef.current = updated;
+            return updated;
+          })}
+          onClearFace={() => {
+            clearHighlight();
+            setSelectedFace(null);
+            onFaceSelected?.(null);
+            setShellMode((prev) => {
+              if (!prev) return prev;
+              const updated = { ...prev, lastFace: null };
+              shellModeRef.current = updated;
+              return updated;
+            });
+          }}
+          onConfirm={acceptShell}
+          onDismiss={exitShellMode}
+        />
+      )}
+
       {/* Slice B+C: numbered edge-selector chips anchored to on-geometry track
           points; left/top updated every frame via updateEdgeChips (orbit-safe). */}
       {(pickMode === 'edge' || !!filletMode || !!contourMode) && selectedEdges.length > 0 && (
@@ -4596,6 +4729,14 @@ const Viewport = forwardRef(({
         <div className="absolute top-16 left-1/2 -translate-x-1/2 z-30 pointer-events-none max-w-[min(22rem,calc(100%-2rem))]">
           <div className="bg-amber-700/85 surface-glass-chip text-white text-xs font-sans font-medium px-3 py-2 rounded-full shadow-lg text-center">
             {filletToast}
+          </div>
+        </div>
+      )}
+
+      {shellToast && (
+        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-30 pointer-events-none max-w-[min(22rem,calc(100%-2rem))]">
+          <div className="bg-cyan-700/85 surface-glass-chip text-white text-xs font-sans font-medium px-3 py-2 rounded-full shadow-lg text-center">
+            {shellToast}
           </div>
         </div>
       )}

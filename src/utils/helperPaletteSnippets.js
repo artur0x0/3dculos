@@ -1778,7 +1778,7 @@ export const HELPER_PALETTE_ITEMS = [
     id: 'shell',
     label: 'Shell',
     group: 'Features',
-    title: "hollow(manifold, wall, opening) — uniform wall, opening at a picked face",
+    title: "hollow(manifold, wall, opening) — face-pick opening (or Closed); uniform wall",
     params: [
       { name: 'body', type: 'body', default: 'part', label: 'Body' },
       { name: 'wall', type: 'number', default: 2.5, label: 'Wall', min: 0.1, step: 0.25, slider: true },
