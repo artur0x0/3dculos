@@ -21,7 +21,8 @@
  * `let part`. Founding Contour solids are kept so Extrude-on-Extrude stacks.
  * Slice 26/hotfix: Revolve Confirm wraps profile + makeRevolve / placeInFrame
  * in revolve markers (same additive rule when `part` already exists).
- * Slice 27: Fillet-in-mode Accept wraps makeSweepPath + filletAlongPath in fillet markers.
+ * Slice 27: Fillet-in-mode Accept wraps makeSweepPath + filletAlongPath in fillet markers
+ * (one pair per contiguous component when the edge pick is disconnected).
  * Slice 28/hotfix: Loft Confirm wraps ≥2 makeCrossSection + makeLoft / placeInFrame
  * in loft markers (additive when `part` already exists).
  * Slice 29: rail groups Prim / Advanced / Features / Xforms. Profile, Workplane,
@@ -57,6 +58,7 @@ import {
   DRAFT_REFERENCE_OPTIONS,
 } from './faceFeaturePlacement.js';
 import { resolveFilletStrategy } from './filletAlongPath.js';
+import { splitEdgePathComponents } from './edgeSweepPath.js';
 import { planeFrameFromFaceData } from './crossSectionSubstrate.js';
 
 /** Slice 24 — in-mode Profile region so Confirm can replace without appending. */
@@ -1306,11 +1308,13 @@ export const HELPER_PALETTE_ITEMS = [
       // variableProfile:true (densified path-normal inscribed-arc frames).
       const hardVariable = !!p._hardVariableProfile;
       if (strategy === 'sweep' || hardVariable) {
-        const edge = emitFilletBoundaryLines(body, edgeCtx || [], names, allocateUniqueName)
-          || emitSelectedEdgeLiteralLines(body, edgeCtx || [], names, allocateUniqueName);
-        if (!edge.ok) return null;
-        feat.push(...edge.lines);
-        const path = allocateUniqueName(names, 'path');
+        // Disjoint picks → one makeSweepPath + filletAlongPath per contiguous
+        // component (connected chains still emit a single pair). Branch/Y
+        // junctions still soft-fail (null → no broken JS).
+        const split = splitEdgePathComponents(edgeCtx || []);
+        if (!split.ok) return null;
+        const comps = split.components;
+        if (!comps.length || !comps.some((c) => Array.isArray(c) && c.length)) return null;
         const rev = bool(p.reverse, false);
         const optsPath = rev ? ', { reverse: true }' : '';
         const profile = str(p.profile, 'fillet');
@@ -1321,10 +1325,19 @@ export const HELPER_PALETTE_ITEMS = [
         const sweepNote = hardVariable
           ? ' // hard: variable-profile inscribed-arc sweep (C3)'
           : ' // sweep fillet wedge';
-        feat.push(`const ${path} = makeSweepPath(${edge.edgesExpr}${optsPath}); // edge→sweep path`);
-        feat.push(
-          `${body} = filletAlongPath(${body}, ${path}, ${r}${sweepOpts});${sweepNote}`,
-        );
+        for (const comp of comps) {
+          if (!Array.isArray(comp) || !comp.length) continue;
+          const edge = emitFilletBoundaryLines(body, comp, names, allocateUniqueName)
+            || emitSelectedEdgeLiteralLines(body, comp, names, allocateUniqueName);
+          if (!edge || !edge.ok) return null;
+          feat.push(...edge.lines);
+          const path = allocateUniqueName(names, 'path');
+          feat.push(`const ${path} = makeSweepPath(${edge.edgesExpr}${optsPath}); // edge→sweep path`);
+          feat.push(
+            `${body} = filletAlongPath(${body}, ${path}, ${r}${sweepOpts});${sweepNote}`,
+          );
+        }
+        if (!feat.some((ln) => /filletAlongPath\s*\(/.test(ln))) return null;
         feat.push(...syncPartLines(body, names, hasPartDecl([...lines, ...feat], empty)));
       } else {
         const sc = bool(p.sphericalCorners, true);

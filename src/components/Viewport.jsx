@@ -656,7 +656,7 @@ const Viewport = forwardRef(({
     },
     /** Slice 27: loud-fail toast — keep the path visible (do not clear edges). */
     softFailFillet: (msg) => {
-      showFilletToast(msg || 'Fillet refused — pick a contiguous chain, then Accept.');
+      showFilletToast(msg || 'Fillet refused — pick edges (disjoint sets fillet independently), then Accept.');
     },
     softFailShell: (msg) => {
       showShellToast(msg || 'Shell refused — tap a face or choose Closed, then Confirm.');
@@ -1615,8 +1615,9 @@ const Viewport = forwardRef(({
   }, []);
 
   /**
-   * Slice 27: live sweep-fillet blend (path + swept wedge). Disconnected
-   * selections keep their polylines visible — loud fail, not a wrong solid.
+   * Slice 27: live sweep-fillet blend (path + swept wedge). Branched
+   * selections keep their polylines visible. Disjoint simple components each
+   * get their own wedge rings (independent fillets).
    */
   const paintFilletBlendPreview = useCallback((payload) => {
     clearFilletBlendPreview();
@@ -1646,55 +1647,69 @@ const Viewport = forwardRef(({
       group.add(line);
     };
 
-    if (payload.preview?.points?.length) {
-      addPolyline(payload.preview.points, payload.ok ? 0x22c55e : 0xf97316, 0.98);
-    } else {
-      for (const poly of payload.polylines || []) addPolyline(poly, 0xf97316, 0.9);
-    }
-
-    const rings = payload.rings;
-    if (payload.ok && rings?.length >= 2) {
+    const addWedgeMesh = (rings, closed) => {
+      if (!rings || rings.length < 2) return;
       const n = rings[0].length;
-      if (n >= 3) {
-        const positions = new Float32Array(rings.length * n * 3);
-        let w = 0;
-        for (const ring of rings) {
-          for (let i = 0; i < n; i++) {
-            const p = ring[i] || ring[0];
-            positions[w++] = p[0];
-            positions[w++] = p[1];
-            positions[w++] = p[2];
-          }
+      if (n < 3) return;
+      const positions = new Float32Array(rings.length * n * 3);
+      let w = 0;
+      for (const ring of rings) {
+        for (let i = 0; i < n; i++) {
+          const p = ring[i] || ring[0];
+          positions[w++] = p[0];
+          positions[w++] = p[1];
+          positions[w++] = p[2];
         }
-        const indices = [];
-        for (let j = 0; j < rings.length - 1; j++) {
-          for (let i = 0; i < n; i++) {
-            const i1 = (i + 1) % n;
-            const a = j * n + i;
-            const b = a + n;
-            indices.push(a, b, j * n + i1, b, b + i1 - i, j * n + i1);
-          }
-        }
-        if (payload.closed && rings.length > 2) {
-          const last = rings.length - 1;
-          for (let i = 0; i < n; i++) {
-            const i1 = (i + 1) % n;
-            const a = last * n + i;
-            const b = i;
-            indices.push(a, b, last * n + i1, b, i1, last * n + i1);
-          }
-        }
-        const geom = new BufferGeometry();
-        geom.setAttribute('position', new BufferAttribute(positions, 3));
-        geom.setIndex(indices);
-        geom.computeVertexNormals();
-        const mat = makePreviewSkinMaterial({ color: PREVIEW_COLORS.blendSkin });
-        const mesh = new ThreeMesh(geom, mat);
-        mesh.name = 'filletBlendWedge';
-        mesh.renderOrder = 10;
-        mesh.frustumCulled = false;
-        group.add(mesh);
       }
+      const indices = [];
+      for (let j = 0; j < rings.length - 1; j++) {
+        for (let i = 0; i < n; i++) {
+          const i1 = (i + 1) % n;
+          const a = j * n + i;
+          const b = a + n;
+          indices.push(a, b, j * n + i1, b, b + i1 - i, j * n + i1);
+        }
+      }
+      if (closed && rings.length > 2) {
+        const last = rings.length - 1;
+        for (let i = 0; i < n; i++) {
+          const i1 = (i + 1) % n;
+          const a = last * n + i;
+          const b = i;
+          indices.push(a, b, last * n + i1, b, i1, last * n + i1);
+        }
+      }
+      const geom = new BufferGeometry();
+      geom.setAttribute('position', new BufferAttribute(positions, 3));
+      geom.setIndex(indices);
+      geom.computeVertexNormals();
+      const mat = makePreviewSkinMaterial({ color: PREVIEW_COLORS.blendSkin });
+      const mesh = new ThreeMesh(geom, mat);
+      mesh.name = 'filletBlendWedge';
+      mesh.renderOrder = 10;
+      mesh.frustumCulled = false;
+      group.add(mesh);
+    };
+
+    const multi = Array.isArray(payload.components) && payload.components.length > 1;
+    if (multi) {
+      for (const part of payload.components) {
+        if (part?.preview?.points?.length) {
+          addPolyline(part.preview.points, part.ok ? 0x22c55e : 0xf97316, 0.98);
+        } else {
+          for (const poly of part?.polylines || []) {
+            addPolyline(poly, part?.ok ? 0x22c55e : 0xf97316, 0.9);
+          }
+        }
+        if (payload.ok && part?.ok) addWedgeMesh(part.rings, part.closed);
+      }
+    } else {
+      if (payload.preview?.points?.length) {
+        addPolyline(payload.preview.points, payload.ok ? 0x22c55e : 0xf97316, 0.98);
+      } else {
+        for (const poly of payload.polylines || []) addPolyline(poly, 0xf97316, 0.9);
+      }
+      if (payload.ok) addWedgeMesh(payload.rings, payload.closed);
     }
 
     if (group.children.length) {
@@ -4544,9 +4559,12 @@ const Viewport = forwardRef(({
           tangentOn={tangentProp}
           params={{
             ...filletMode.params,
-            _sweepMax: sweepBlendHardMax(pathLengthFromEdges(selectedEdges)),
+            _sweepMax: (filletBlendPayload?.sweepMax > 0
+              ? filletBlendPayload.sweepMax
+              : sweepBlendHardMax(pathLengthFromEdges(selectedEdges))),
           }}
           pathOk={filletBlendPayload?.ok === true}
+          componentCount={filletBlendPayload?.componentCount || 0}
           edgeClass={filletEdgeClass}
           compact={isMobile}
           onToggleTangent={() => setTangentProp((v) => !v)}

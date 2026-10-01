@@ -4,11 +4,13 @@
  *
  * Locked UX: tapping Fillet never soft-fails for empty selection. Edge-pick
  * chip (Tangent / Clear / Accept / Back / X) owns the session. Accept writes
- * a marked block, Auto-Runs, and exits. A later Fillet on a different sharp
- * edge appends another block (commitMode 'append') so edge() runs on the
- * already-filleted solid. Replace stays the default for an in-place update
- * of the same block. Back and X exit with no commit. Strategy default stays
- * sweep (#30).
+ * a marked block, Auto-Runs, and exits. Disconnected picks split into
+ * contiguous components and each gets its own makeSweepPath + filletAlongPath
+ * inside the same FILLET_MODE markers (connected chains keep single-path
+ * behavior). A later Fillet on a different sharp edge appends another block
+ * (commitMode 'append') so edge() runs on the already-filleted solid. Replace
+ * stays the default for an in-place update of the same block. Back and X exit
+ * with no commit. Strategy default stays sweep (#30).
  *
  * Reuses Slice 22/23: makeSweepPath / filletAlongPath / canBuildFilletAlongPath.
  * Does not change Extrude / Revolve / Profile / Loft.
@@ -32,7 +34,11 @@ import {
   FILLET_SWEEP_BRANCH,
   FILLET_ARC_SEGMENTS,
 } from './filletAlongPath.js';
-import { assembleSweepPath, buildSweepPathPreview } from './edgeSweepPath.js';
+import {
+  assembleSweepPath,
+  buildSweepPathPreview,
+  splitEdgePathComponents,
+} from './edgeSweepPath.js';
 import {
   defaultSweepBlendSize,
   defaultEdgeBlendSize,
@@ -203,24 +209,39 @@ export function validateFilletAccept(edges, params = {}) {
   if (list.every((edge) => edge && edge.blendStrip === true)) {
     return { ok: false, message: FILLET_BLEND_ONLY };
   }
-  const n = normalizeFilletParams(params, list);
-  // nit: dropped the `!(n.radius > 0)` arm here — normalizeFilletParams is the
-  // single normaliser and already guarantees a finite radius > 0 (bad input seeds
-  // the default; sweep additionally clamps to sweepBlendHardMax). 0/3076 probes
-  // ever reached the old arm, so it was a pin on unreachable code. No behaviour
-  // change; the empty-selection and connectivity gates above/below are the live ones.
-  if (n.strategy === 'sweep') {
-    const gate = canBuildFilletAlongPath(list);
-    if (!gate.ok) {
-      const msg = gate.message || FILLET_MODE_EMPTY;
-      if (/disconnect/i.test(msg)) {
-        return { ok: false, message: msg.includes('disconnected') ? msg : FILLET_SWEEP_DISCONNECTED };
+  let components = [list];
+  if (resolveFilletStrategy(params.strategy) === 'sweep') {
+    const split = splitEdgePathComponents(list);
+    if (!split.ok) {
+      if (split.code === 'branch') return { ok: false, message: FILLET_SWEEP_BRANCH };
+      return { ok: false, message: split.message || FILLET_MODE_EMPTY };
+    }
+    components = split.components;
+    for (const comp of components) {
+      const gate = canBuildFilletAlongPath(comp);
+      if (!gate.ok) {
+        const msg = gate.message || FILLET_MODE_EMPTY;
+        if (/branch/i.test(msg)) return { ok: false, message: FILLET_SWEEP_BRANCH };
+        if (/disconnect/i.test(msg)) {
+          return { ok: false, message: msg.includes('disconnected') ? msg : FILLET_SWEEP_DISCONNECTED };
+        }
+        return { ok: false, message: msg };
       }
-      if (/branch/i.test(msg)) return { ok: false, message: FILLET_SWEEP_BRANCH };
-      return { ok: false, message: msg };
     }
   }
-  return { ok: true, normalized: n };
+  // Clamp shared radius to the tightest per-component sweep hard-max so one
+  // Accept radius is safe for every independent filletAlongPath.
+  const n = normalizeFilletParams(params, list);
+  if (n.strategy === 'sweep' && components.length > 1) {
+    let hard = Infinity;
+    for (const comp of components) {
+      hard = Math.min(hard, sweepBlendHardMax(pathLengthFromEdges(comp)));
+    }
+    if (Number.isFinite(hard) && hard > 0) {
+      n.radius = Math.min(n.radius, hard);
+    }
+  }
+  return { ok: true, normalized: n, components };
 }
 
 function _sub(a, b) {
@@ -290,8 +311,9 @@ function lookupNormals(edges) {
 }
 
 /**
- * Visible polylines when the selection is disconnected / branched.
- * Loud-fail Accept; do not invent a single path (wrong solid).
+ * Visible polylines for branched / invalid selections (or as a fallback).
+ * Disjoint-but-simple components now preview and Accept independently —
+ * this helper stays for the branch / invalid path painter.
  */
 export function disconnectedPathPolylines(edges) {
   const list = Array.isArray(edges) ? edges : [];
@@ -324,10 +346,10 @@ function ringsFromFrames(frames) {
 /**
  * Live blend preview (sweep / filletAlongPath intent).
  * Valid chain → path + swept wedge rings.
- * Disconnected / empty → ok:false, but polylines stay so the path stays visible.
+ * Disjoint simple components → ok:true with per-component rings (independent fillets).
+ * Branched / empty → ok:false; polylines stay visible when possible.
  */
-export function buildFilletBlendPreview(edges, params = {}) {
-  const list = Array.isArray(edges) ? edges : [];
+function buildSingleFilletBlendPreview(list, params = {}) {
   const n = normalizeFilletParams(params, list);
   const sweepMax = sweepBlendHardMax(pathLengthFromEdges(list));
   const radius = Math.min(n.radius, sweepMax);
@@ -430,6 +452,89 @@ export function buildFilletBlendPreview(edges, params = {}) {
   };
 }
 
+export function buildFilletBlendPreview(edges, params = {}) {
+  const list = Array.isArray(edges) ? edges : [];
+  const n = normalizeFilletParams(params, list);
+  const sweepMax = sweepBlendHardMax(pathLengthFromEdges(list));
+  const radius = Math.min(n.radius, sweepMax);
+  const base = {
+    strategy: n.strategy,
+    profile: n.profile,
+    reverse: n.reverse,
+    radius,
+    sweepMax,
+    edgeCount: list.length,
+  };
+
+  if (!list.length) {
+    return {
+      ...base,
+      ok: false,
+      message: FILLET_MODE_EMPTY,
+      path: null,
+      preview: null,
+      rings: null,
+      polylines: [],
+      componentCount: 0,
+    };
+  }
+
+  if (n.strategy === 'sweep') {
+    const split = splitEdgePathComponents(list);
+    if (!split.ok) {
+      return {
+        ...base,
+        ok: false,
+        message: split.message,
+        code: split.code,
+        path: null,
+        preview: null,
+        rings: null,
+        polylines: disconnectedPathPolylines(list),
+        componentCount: 0,
+      };
+    }
+    if (split.components.length > 1) {
+      let hard = Infinity;
+      for (const comp of split.components) {
+        hard = Math.min(hard, sweepBlendHardMax(pathLengthFromEdges(comp)));
+      }
+      const sharedR = Math.min(radius, Number.isFinite(hard) ? hard : radius);
+      const parts = split.components.map((comp) => buildSingleFilletBlendPreview(comp, {
+        ...params,
+        strategy: 'sweep',
+        radius: sharedR,
+      }));
+      const allOk = parts.every((p) => p.ok);
+      const polylines = [];
+      for (const p of parts) {
+        if (p.preview?.points?.length) polylines.push(p.preview.points);
+        else if (p.polylines?.length) polylines.push(...p.polylines);
+      }
+      return {
+        ...base,
+        radius: sharedR,
+        sweepMax: Number.isFinite(hard) ? hard : sweepMax,
+        ok: allOk,
+        message: allOk ? undefined : (parts.find((p) => !p.ok)?.message || FILLET_MODE_EMPTY),
+        path: null,
+        preview: null,
+        rings: null,
+        components: parts,
+        componentCount: parts.length,
+        polylines,
+        closed: false,
+        length: parts.reduce((s, p) => s + (Number(p.length) || 0), 0),
+      };
+    }
+    const one = buildSingleFilletBlendPreview(split.components[0], params);
+    return { ...one, componentCount: 1, components: [one] };
+  }
+
+  const one = buildSingleFilletBlendPreview(list, params);
+  return { ...one, componentCount: 1, components: [one] };
+}
+
 export function hasFilletModeBlock(buffer) {
   const t = String(buffer || '');
   return t.includes(FILLET_MODE_BEGIN) && t.includes(FILLET_MODE_END);
@@ -477,7 +582,8 @@ export function countMakeSweepPath(buffer) {
 
 /**
  * Accept → insert, replace, or append in-mode Fillet.
- * Easy / default: makeSweepPath + filletAlongPath.
+ * Easy / default: makeSweepPath + filletAlongPath (one pair per contiguous
+ * component when the pick is disconnected).
  * Hard (C3, production flag on): makeSweepPath + filletAlongPath({ variableProfile }).
  * commitMode 'replace' (default) updates the last marked block.
  * commitMode 'append' keeps that block and adds another, so a second sharp
@@ -540,17 +646,26 @@ export function composeFilletCommit(buffer, {
     };
   }
   const owned = filletModeOwnedRegion(composed);
+  const expectedComps = Array.isArray(gate.components) ? gate.components.length : 1;
   if (hardVariable || gate.normalized.strategy === 'sweep') {
-    if (!/makeSweepPath\s*\(/.test(owned)) {
+    const pathCount = countMakeSweepPath(owned);
+    const filletCount = countFilletAlongPath(owned);
+    if (pathCount < 1) {
       return {
         ok: false,
         message: 'composeFilletCommit: makeSweepPath missing — refusing silent no-op.',
       };
     }
-    if (!/filletAlongPath\s*\(/.test(owned)) {
+    if (filletCount < 1) {
       return {
         ok: false,
         message: 'composeFilletCommit: filletAlongPath missing — refusing silent no-op.',
+      };
+    }
+    if (pathCount !== expectedComps || filletCount !== expectedComps) {
+      return {
+        ok: false,
+        message: `composeFilletCommit: expected ${expectedComps} makeSweepPath/filletAlongPath pair(s), got ${pathCount}/${filletCount}.`,
       };
     }
     if (hardVariable && !/variableProfile:\s*true/.test(owned)) {
