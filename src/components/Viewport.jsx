@@ -137,6 +137,7 @@ import { downloadModelFromMesh, get3MFBase64FromMesh } from '../utils/exportMode
 import { parseImportedModels, loadCachedModel } from '../utils/importModel';
 import { calculateQuote } from '../utils/quoting';
 import { selectFaceByID, selectFaceWithTolerance, selectAllConnected } from '../utils/selectFace';
+import { buildPatchOverlayArrays } from '../utils/partGraphPatches';
 import { createCuttingPlaneWidget, updateCuttingPlaneWidget } from '../utils/cuttingPlaneWidget';
 import { AxesHelper } from 'three';
 import { calculateMeasurements, createMeasurementLines, disposeMeasurementLines } from '../utils/measurementTool';
@@ -394,12 +395,18 @@ const Viewport = forwardRef(({
    */
   const [showPlanes, setShowPlanes] = useState(true);
   const [showContours, setShowContours] = useState(true);
+  /** Edges PR2: patch-colour debug overlay (PartGraph). Default off. */
+  const [showPatchOverlay, setShowPatchOverlay] = useState(false);
   const [selectedEdges, setSelectedEdges] = useState([]);
   const featureEdgesRef = useRef([]);
   /** Geometry identity that featureEdgesRef was built from — invalidate on replace. */
   const featureEdgesSourceRef = useRef(null);
   /** Per-triangle Manifold faceID from the last worker mesh (not a per-vertex attribute). */
   const faceIDsRef = useRef(null);
+  /** Edges PR2: worker PartGraph patches (triPatch + patch meta). Not used for pick yet. */
+  const partGraphRef = useRef(null);
+  const patchOverlayMatRef = useRef(null);
+  const preOverlayMaterialRef = useRef(null);
   const boundaryTopoRef = useRef(null);
   const idLabelGroupRef = useRef(null);
   const edgeHighlightRef = useRef(null);
@@ -3732,6 +3739,94 @@ const Viewport = forwardRef(({
     });
   };
 
+  // Edges PR2 — apply PartGraph patch colours when the debug toggle is on.
+  // Swaps the result mesh to a non-indexed vertex-coloured copy; restores the
+  // base mesh from cachedMeshData on toggle-off. Pick/propagate stay on the
+  // non-overlay geometry path (behaviour unchanged).
+  useEffect(() => {
+    const mesh = resultRef.current;
+    if (!mesh) return undefined;
+
+    const restoreBaseMesh = () => {
+      if (patchOverlayMatRef.current) {
+        patchOverlayMatRef.current.dispose();
+        patchOverlayMatRef.current = null;
+      }
+      if (preOverlayMaterialRef.current) {
+        mesh.material = preOverlayMaterialRef.current;
+        preOverlayMaterialRef.current = null;
+      }
+      const cached = cachedMeshDataRef.current;
+      if (cached?.vertProperties && cached?.triVerts) {
+        const geometry = new BufferGeometry();
+        const vertProperties = new Float32Array(cached.vertProperties);
+        const triVerts = new Uint32Array(cached.triVerts);
+        geometry.setAttribute('position', new BufferAttribute(vertProperties, 3));
+        geometry.setIndex(new BufferAttribute(triVerts, 1));
+        if (cached.faceID?.length) {
+          geometry.setAttribute('faceID', new BufferAttribute(new Float32Array(cached.faceID), 1));
+        }
+        geometry.computeVertexNormals();
+        mesh.geometry?.dispose();
+        mesh.geometry = geometry;
+      }
+    };
+
+    const paint = () => {
+      const renderer = rendererRef.current;
+      const scene = sceneRef.current;
+      const camera = cameraRef.current;
+      if (renderer && scene && camera) renderer.render(scene, camera);
+    };
+
+    if (!showPatchOverlay) {
+      restoreBaseMesh();
+      paint();
+      return undefined;
+    }
+
+    const pg = partGraphRef.current;
+    const cached = cachedMeshDataRef.current;
+    if (!pg?.triPatch || !cached?.vertProperties || !cached?.triVerts) {
+      restoreBaseMesh();
+      paint();
+      return undefined;
+    }
+
+    const np = cached.numProp || 3;
+    const src = cached.vertProperties;
+    const nVert = Math.floor(src.length / np);
+    const positions = new Float32Array(nVert * 3);
+    for (let i = 0; i < nVert; i++) {
+      positions[i * 3] = src[i * np];
+      positions[i * 3 + 1] = src[i * np + 1];
+      positions[i * 3 + 2] = src[i * np + 2];
+    }
+    const { positions: oPos, colors } = buildPatchOverlayArrays(
+      { positions, indices: cached.triVerts },
+      pg.triPatch,
+    );
+    const geom = new BufferGeometry();
+    geom.setAttribute('position', new BufferAttribute(oPos, 3));
+    geom.setAttribute('color', new BufferAttribute(colors, 3));
+    geom.computeVertexNormals();
+
+    if (!preOverlayMaterialRef.current) {
+      preOverlayMaterialRef.current = mesh.material;
+    }
+    mesh.geometry?.dispose();
+    mesh.geometry = geom;
+    if (patchOverlayMatRef.current) patchOverlayMatRef.current.dispose();
+    patchOverlayMatRef.current = new MeshLambertMaterial({
+      vertexColors: true,
+      flatShading: true,
+      side: 2,
+    });
+    mesh.material = patchOverlayMatRef.current;
+    paint();
+    return undefined;
+  }, [showPatchOverlay, cachedMeshData]);
+
   // Helper to render mesh data from the worker
   const renderMeshData = useCallback((meshData) => {
     if (!meshData || !resultRef.current) return;
@@ -3749,6 +3844,9 @@ const Viewport = forwardRef(({
     if (faceIDsRef.current) {
       geometry.setAttribute('faceID', new BufferAttribute(new Float32Array(meshData.faceID), 1));
     }
+    partGraphRef.current = meshData.partGraph && meshData.partGraph.triPatch
+      ? meshData.partGraph
+      : null;
 
     // Set up material groups
     if (meshData.runIndex) {
@@ -3839,6 +3937,7 @@ const Viewport = forwardRef(({
       featureEdgesRef.current = [];
       featureEdgesSourceRef.current = null;
       faceIDsRef.current = null;
+      partGraphRef.current = null;
       boundaryTopoRef.current = null;
       // Overlays drawn from that solid (cut plane, section/path previews, the
       // fillet blend ghost, f#/e# labels) must not outlive it on screen.
@@ -4204,6 +4303,8 @@ const Viewport = forwardRef(({
           showContours={showContours}
           onShowPlanesChange={setShowPlanes}
           onShowContoursChange={setShowContours}
+          showPatchOverlay={showPatchOverlay}
+          onShowPatchOverlayChange={setShowPatchOverlay}
           onPickModeChange={(mode) => {
             const next = mode === 'edge' ? 'edge' : 'face';
             setPickMode(next);
