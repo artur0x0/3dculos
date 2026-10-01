@@ -142,8 +142,13 @@ const HelperInsertPalette = ({
       onEnterFilletMode({ entry: item.id });
       return;
     }
-    // Workplane is a construction plane, not a param sheet and not a host solid.
+    // Workplane enters plane-only contour mode (Face / construction plane +
+    // offset + rotate). Fallback one-shot still wraps strip markers.
     if (item.id === 'workplane') {
+      if (typeof onEnterContourMode === 'function') {
+        onEnterContourMode({ entry: 'workplane' });
+        return;
+      }
       onInsert?.('workplane', {}, selectedFace, null);
       return;
     }

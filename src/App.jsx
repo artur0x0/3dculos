@@ -1081,18 +1081,24 @@ const App = () => {
         : entry === 'makeRevolve'
           ? 'revolve'
           : 'extrude';
-    const msg = result.run ? `Contour ${solidLabel}` : 'Contour profile';
+    const msg = entry === 'workplane'
+      ? 'Workplane'
+      : result.run
+        ? `Contour ${solidLabel}`
+        : 'Contour profile';
     const wrote = codeEditorRef.current?.applyBuffer?.(result.buffer, msg);
     if (!wrote) {
-      const writeName = entry === 'makeSweep'
-        ? 'Sweep'
-        : entry === 'makeLoft'
-          ? 'Loft'
-          : entry === 'makeRevolve'
-            ? 'Revolve'
-            : result.run
-              ? 'Extrude'
-              : 'Contour';
+      const writeName = entry === 'workplane'
+        ? 'Workplane'
+        : entry === 'makeSweep'
+          ? 'Sweep'
+          : entry === 'makeLoft'
+            ? 'Loft'
+            : entry === 'makeRevolve'
+              ? 'Revolve'
+              : result.run
+                ? 'Extrude'
+                : 'Contour';
       viewportRef.current?.softFailContour?.(
         `Could not write ${writeName} into the editor — try again.`,
       );

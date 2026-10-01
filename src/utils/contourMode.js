@@ -1,5 +1,6 @@
 /**
  * Slice 24/25/26/28 — Contour-mode shell + Extrude / Revolve / Loft solid commit.
+ * Workplane entry: plane-only mode (Face / construction plane + offset + rotate).
  *
  * Shared mode Extrude / Revolve / Loft own. Fillet-without-edges is Slice 27
  * (its own edge-pick mode — not a contour entry).
@@ -60,6 +61,7 @@ export const CONTOUR_ENTRY_IDS = new Set([
   'makeLoft',
   'makeSweep',
   'crossSection',
+  'workplane',
 ]);
 
 export const CONTOUR_TOOLS = [
@@ -104,6 +106,10 @@ export function isLoftEntry(id) {
 
 export function isSweepEntry(id) {
   return id === 'makeSweep';
+}
+
+export function isWorkplaneEntry(id) {
+  return id === 'workplane';
 }
 
 /** Extrude / Revolve / Sweep / Loft — solid Confirm, not Profile-only. */
@@ -489,6 +495,7 @@ export function enterContourState(entry, faceData = null) {
     planePreset: resolved.source === 'face' ? 'face' : 'z',
     planeAngles: { x: 0, y: 0, z: 0 },
     planeBase: resolved.source === 'face' ? resolved.plane : null,
+    planeOffset: 0,
     enterRefuse: resolved.ok ? null : resolved.message,
   };
 }
@@ -768,12 +775,23 @@ export function applyContourPlaneEdit(state, edit = {}) {
     }
   }
   if (!base) base = axisPresetFrame('z', state.planeFace?.center || [0, 0, 0]);
-  const frame = orientPlaneFrame(base, angles);
+  let frame = orientPlaneFrame(base, angles);
+  const offsetRaw = edit.offset !== undefined ? edit.offset : state.planeOffset;
+  const offset = Number(offsetRaw);
+  const planeOffset = Number.isFinite(offset) ? offset : 0;
+  if (planeOffset !== 0) {
+    try {
+      frame = offsetPlaneFrame(frame, planeOffset);
+    } catch {
+      // Keep oriented frame if offset fails (bad frame).
+    }
+  }
   return {
     ...state,
     planePreset: preset,
     planeAngles: angles,
     planeBase: base,
+    planeOffset,
     planeFace: _faceFromFrame(frame),
   };
 }
@@ -1938,8 +1956,24 @@ export function composeContourSweep(buffer, {
 /**
  * Confirm router: Extrude / Revolve / Loft / Sweep entry → solid; Profile stays Profile-only.
  */
+/**
+ * Workplane Confirm — marked PlaneFrame literal (construction plane).
+ * Face / preset / angles / offset are already baked into payload.face.planeFrame.
+ */
+export function composeContourWorkplane(buffer, payload = {}) {
+  const face = payload.face || null;
+  const composed = composeHelperInsert(buffer || '', 'workplane', null, {}, face);
+  if (composed == null) {
+    return { ok: false, message: 'composeContourWorkplane: insert refused' };
+  }
+  return { ok: true, buffer: composed, run: false };
+}
+
 export function composeContourCommit(buffer, payload = {}) {
   const entry = payload.entry || 'crossSection';
+  if (isWorkplaneEntry(entry)) {
+    return composeContourWorkplane(buffer, payload);
+  }
   if (isExtrudeEntry(entry)) {
     return composeContourExtrude(buffer, payload);
   }

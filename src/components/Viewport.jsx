@@ -83,6 +83,7 @@ import {
   isLoftEntry,
   isRevolveEntry,
   isSweepEntry,
+  isWorkplaneEntry,
   planeFromContourFace,
   removeLoftProfile,
   resolveContourWorkplane,
@@ -1730,10 +1731,12 @@ const Viewport = forwardRef(({
   const confirmContourProfile = useCallback(() => {
     const state = contourModeRef.current;
     if (!state) return;
-    const gate = validateContourProfile(state.tool, state.params);
-    if (!gate.ok) {
-      showContourToast(gate.message);
-      return;
+    if (!isWorkplaneEntry(state.entry)) {
+      const gate = validateContourProfile(state.tool, state.params);
+      if (!gate.ok) {
+        showContourToast(gate.message);
+        return;
+      }
     }
     const commitFace = activeContourFace(state, modelBounds);
     if (isExtrudeEntry(state.entry)) {
@@ -2023,9 +2026,20 @@ const Viewport = forwardRef(({
     // Same resolver the polyline hit-test uses — see contourWorkplaneFace.
     const planeFace = contourWorkplaneFace(contourMode, modelBounds);
     const plane = planeFromContourFace(planeFace);
-    if (showPlanes) paintWorkplaneOverlay(plane, planeFace);
+    // Workplane mode always shows a live plane preview; other entries follow
+    // the Plane overlay toggle.
+    if (showPlanes || isWorkplaneEntry(contourMode.entry)) paintWorkplaneOverlay(plane, planeFace);
     else clearWorkplaneOverlay();
     applyContourPartGhost(true);
+    if (isWorkplaneEntry(contourMode.entry)) {
+      clearXsPreview();
+      clearPolylineDraft();
+      clearExtrudePreview();
+      clearRevolvePreview();
+      clearLoftPreview();
+      clearSweepPreview();
+      return;
+    }
     const pts = contourMode.params?.points;
     if (contourMode.tool === 'polyline' && (!Array.isArray(pts) || pts.length < 3)) {
       clearXsPreview();
@@ -4230,6 +4244,7 @@ const Viewport = forwardRef(({
       {contourMode && (
         <ContourModeRail
           tool={contourMode.tool}
+          entry={contourMode.entry}
           compact={isMobile}
           onSelectTool={(id) => setContourMode((prev) => (prev ? switchContourTool(prev, id) : prev))}
           onBack={exitContourMode}
@@ -4359,6 +4374,21 @@ const Viewport = forwardRef(({
             setPickMode('face');
             setContourMode((prev) => (prev ? { ...prev, planePreset: 'face' } : prev));
           }}
+          planeOffset={contourMode.planeOffset ?? 0}
+          onPlaneOffset={(offset) => setContourMode((prev) => {
+            if (!prev) return prev;
+            const center = prev.planeBase?.center
+              || prev.planeFace?.center
+              || contourHostCenter(modelBounds);
+            const base = prev.planeBase || axisPresetFrame(prev.planePreset || 'z', center);
+            return applyContourPlaneEdit(prev, {
+              offset,
+              base,
+              angles: prev.planeAngles || { x: 0, y: 0, z: 0 },
+              preset: prev.planePreset,
+              keepAngles: true,
+            });
+          })}
           tangentOn={tangentProp}
           edgeCount={selectedEdges.length}
           onToggleTangent={() => setTangentProp((v) => !v)}

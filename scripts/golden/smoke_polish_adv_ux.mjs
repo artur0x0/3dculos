@@ -233,8 +233,9 @@ const { Manifold, CrossSection } = wasm;
   check('plane editor exposes X/Y/Z and angle sliders', /data-plane-editor="1"/.test(chip) && /Plane angle/.test(chip));
   const palette = readFileSync(join(here, '../../src/components/HelperInsertPalette.jsx'), 'utf8');
   check(
-    'Workplane tap inserts a plane without a param popup',
-    /item\.id === 'workplane'/.test(palette) && /onInsert\?\.\('workplane'/.test(palette),
+    'Workplane tap enters plane-only mode (no param popup)',
+    /item\.id === 'workplane'/.test(palette)
+      && /onEnterContourMode\(\{\s*entry:\s*'workplane'\s*\}\)/.test(palette),
   );
   check(
     'blank script short-circuits before the worker',
