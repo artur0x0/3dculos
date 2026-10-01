@@ -107,12 +107,13 @@ console.log('mobile B: home-indicator + feature strip');
     /bottom-14/.test(contourChip) && /bottom-14/.test(filletChip),
   );
   check(
-    'FeatureStrip stays inside mobile stages (1–2 mounts; Script jump ± CAD sheet)',
-    // Slice C may add a CAD-stage strip for feature sheets. Desktop branch must
-    // not gain its own mount — count stays 1 (B) or 2 (C).
+    'FeatureStrip mobile mounts intact (2 stage mounts + optional desktop seam)',
+    // Slice C: CAD + Script = 2. Desktop seam may add a 3rd mount outside mobile.
     (() => {
       const n = (app.match(/<FeatureStrip\b/g) || []).length;
-      return n >= 1 && n <= 2;
+      const hasMobileCad = /data-cad-feature-strip/.test(app);
+      const hasMobileScript = /data-script-feature-strip/.test(app);
+      return n >= 2 && n <= 3 && hasMobileCad && hasMobileScript;
     })(),
   );
   check(

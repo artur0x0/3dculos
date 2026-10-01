@@ -27,21 +27,17 @@ one shell you must change the other.
 ### Desktop shell (`src/App.jsx:1280`+) — side by side
 
 ```
-┌───────────────────────────────┬───────────────────────────────┐
-│ CodeEditor (splitPct wide)    ║ Viewport (rest)               │
-│                          draggable seam ↑                     │
-│ ┌───────────────────────────┐ │  top-center: ViewportTitleChip│
-│ │ mid-strip: [Toolbar]  [⌗] │ │              (filename)       │
-│ ├───────────────────────────┤ │                               │
-│ │                           │ │  left-4 bottom-4:  vertical   │
-│ │  Monaco (vs-dark, 12px)   │ │    HelperInsertPalette        │
-│ │                           │ │    (or ContourModeRail)       │
-│ ├───────────────────────────┤ │  right-4 bottom-4: vertical   │
-│ │ PromptInput (AI row, now  │ │    CrossSectionPanel cluster  │
-│ │   hidden — still mounted) │ │                               │
-│ └───────────────────────────┘ │  left-[5.25rem] bottom-4:     │
-│   ↑ portal target             │    info chips                 │
-└───────────────────────────────┴───────────────────────────────┘
+┌────────────────────────────┬───┬──────────────────────────────┐
+│ CodeEditor (splitPct)      │▓▓▓│ Viewport (rest)              │
+│                            │ ║ │   ↑ FeatureStrip (vertical   │
+│ ┌────────────────────────┐ │ ║ │     seam) + SplitDivider     │
+│ │ mid-strip: [Toolbar]   │ │ ║ │  top-center: title chip      │
+│ ├────────────────────────┤ │ ║ │                              │
+│ │ Monaco (vs-dark, 12px) │ │ ║ │  left: HelperInsertPalette   │
+│ ├────────────────────────┤ │ ║ │  right: CrossSection cluster │
+│ │ PromptInput (hidden)   │ │ ║ │  info chips bottom-left      │
+│ └────────────────────────┘ │ ║ │                              │
+└────────────────────────────┴───┴──────────────────────────────┘
 ```
 
 **The seam between the two panes is draggable** in both shells
@@ -59,6 +55,13 @@ nothing. Names are sanitised (`sanitizePartName`) because they end up in
 `${name}.js` downloads. Wired through `onRenameFile` → `setCurrentFilename`.
 
 Desktop specifics:
+- **Feature strip (desktop seam):** `FeatureStrip.jsx` mounts **between** the
+  editor column and the viewport (`data-desktop-feature-strip`,
+  `data-feature-strip-placement="desktop-seam"`, `side="between"`). Vertical
+  chips match mobile (cube / fillet / … from `parseFeatureMarkers`); tap jumps
+  Monaco caret via `handleDesktopFeatureStripJump` (no feature sheet — sheets
+  stay mobile-only). Hidden in game mode. SplitDivider stays immediately to the
+  right of the strip.
 - **The Toolbar is portaled into the editor mid-strip, exactly like mobile.**
   There is no floating overlay bar and no collapse chevron for CAD any more;
   `Toolbar.jsx` renders only the dark `variant="strip"` markup for CAD.
@@ -123,7 +126,8 @@ Mobile specifics:
   (Contour/`NotebookPen`, Extrude/`ArrowUpFromLine`, Revolve/`Rotate3d`,
   Loft/`Pyramid`, Sweep/`Route`, Fillet/`SquareRoundCorner`,
   Chamfer/`TriangleRight`). Markers from `parseFeatureMarkers` (`typeIndex`).
-  Desktop never mounts the strip.
+  Desktop mounts its own vertical strip in the editor↔viewer seam (see Desktop
+  specifics above); mobile CAD/Script mounts stay as documented here.
 - **Feature sheets (Slice Mobile C → C.1):** `FeatureSheet.jsx` — full-width
   **horizontal** glass bar just below the part name (`top-14`,
   `data-feature-sheet-layout="under-title-horizontal"`) on **CAD and Script**
