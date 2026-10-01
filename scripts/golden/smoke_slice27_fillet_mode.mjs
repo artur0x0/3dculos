@@ -241,7 +241,8 @@ const e30 = mk(3, 0);
   }, null, [e01, e12]);
   check('one-shot compose still emits filletAlongPath or filletEdges',
     /filletAlongPath\s*\(|filletEdges\s*\(/.test(buf || ''));
-  check('one-shot compose has no fillet-mode markers', !hasFilletModeBlock(buf || ''));
+  // Slice A: one-shot Confirm also wraps fillet markers so the strip chip appears.
+  check('one-shot compose has fillet-mode markers (Slice A ribbon)', hasFilletModeBlock(buf || ''));
 }
 
 // ── resolveFaceModal refuse path unchanged (slice-12 golden) ───

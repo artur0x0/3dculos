@@ -31,6 +31,10 @@
  * Slice 30: Sweep Confirm wraps makeCrossSection + makeSweepPath + sweepPoints
  * / placeInFrame in sweep markers (additive when `part` already exists).
  *
+ * Slice A: every left-rail insertable that creates a feature wraps begin/end
+ * markers (primitives, polish, moves, one-shot Model fallbacks) so FeatureStrip
+ * chips appear with per-type badges — same pattern as Fillet.
+ *
  * Sequential taps compose via composeHelperInsert:
  * strip one trailing `return part;`, insert body, re-append exactly one `return part;`.
  */
@@ -82,6 +86,85 @@ export const FILLET_MODE_END = '// --- fillet-mode end ---';
 /** In-mode Chamfer region (chamferEdges on the picked set). Second Accept replaces this block. */
 export const CHAMFER_MODE_BEGIN = '// --- chamfer-mode begin ---';
 export const CHAMFER_MODE_END = '// --- chamfer-mode end ---';
+
+/**
+ * Slice A — feature-strip markers for every left-rail insertable that creates
+ * a feature (primitives, polish, moves, and one-shot Model fallbacks). Contour /
+ * Fillet / Chamfer mode markers above stay the source of truth for those kinds.
+ */
+export const CUBE_BEGIN = '// --- cube begin ---';
+export const CUBE_END = '// --- cube end ---';
+export const ROUNDED_BOX_BEGIN = '// --- roundedBox begin ---';
+export const ROUNDED_BOX_END = '// --- roundedBox end ---';
+export const CYLINDER_BEGIN = '// --- cylinder begin ---';
+export const CYLINDER_END = '// --- cylinder end ---';
+export const SPHERE_BEGIN = '// --- sphere begin ---';
+export const SPHERE_END = '// --- sphere end ---';
+export const TUBE_BEGIN = '// --- tube begin ---';
+export const TUBE_END = '// --- tube end ---';
+export const HEX_PRISM_BEGIN = '// --- hexPrism begin ---';
+export const HEX_PRISM_END = '// --- hexPrism end ---';
+export const HOLE_BEGIN = '// --- hole begin ---';
+export const HOLE_END = '// --- hole end ---';
+export const HOLE_PATTERN_BEGIN = '// --- holePattern begin ---';
+export const HOLE_PATTERN_END = '// --- holePattern end ---';
+export const CLEARANCE_HOLE_BEGIN = '// --- clearanceHole begin ---';
+export const CLEARANCE_HOLE_END = '// --- clearanceHole end ---';
+export const TAP_DRILL_HOLE_BEGIN = '// --- tapDrillHole begin ---';
+export const TAP_DRILL_HOLE_END = '// --- tapDrillHole end ---';
+export const CBORE_HOLE_BEGIN = '// --- cboreHole begin ---';
+export const CBORE_HOLE_END = '// --- cboreHole end ---';
+export const CSK_HOLE_BEGIN = '// --- cskHole begin ---';
+export const CSK_HOLE_END = '// --- cskHole end ---';
+export const SHELL_BEGIN = '// --- shell begin ---';
+export const SHELL_END = '// --- shell end ---';
+export const DRAFT_BEGIN = '// --- draft begin ---';
+export const DRAFT_END = '// --- draft end ---';
+export const CENTER_BEGIN = '// --- center begin ---';
+export const CENTER_END = '// --- center end ---';
+export const ALIGN_BEGIN = '// --- align begin ---';
+export const ALIGN_END = '// --- align end ---';
+export const MIRROR_BEGIN = '// --- mirror begin ---';
+export const MIRROR_END = '// --- mirror end ---';
+export const ARRAY_BEGIN = '// --- array begin ---';
+export const ARRAY_END = '// --- array end ---';
+export const POLAR_ARRAY_BEGIN = '// --- polarArray begin ---';
+export const POLAR_ARRAY_END = '// --- polarArray end ---';
+
+/** All feature end-markers — inserts after a live `part` binding skip past these. */
+export const FEATURE_BLOCK_END_MARKERS = Object.freeze([
+  CONTOUR_PROFILE_END,
+  CONTOUR_EXTRUDE_END,
+  CONTOUR_REVOLVE_END,
+  CONTOUR_LOFT_END,
+  CONTOUR_SWEEP_END,
+  FILLET_MODE_END,
+  CHAMFER_MODE_END,
+  CUBE_END,
+  ROUNDED_BOX_END,
+  CYLINDER_END,
+  SPHERE_END,
+  TUBE_END,
+  HEX_PRISM_END,
+  HOLE_END,
+  HOLE_PATTERN_END,
+  CLEARANCE_HOLE_END,
+  TAP_DRILL_HOLE_END,
+  CBORE_HOLE_END,
+  CSK_HOLE_END,
+  SHELL_END,
+  DRAFT_END,
+  CENTER_END,
+  ALIGN_END,
+  MIRROR_END,
+  ARRAY_END,
+  POLAR_ARRAY_END,
+]);
+
+/** Wrap body lines in begin…end strip markers (Slice A). */
+export function wrapFeatureBlock(begin, end, bodyLines) {
+  return [begin, ...bodyLines, end];
+}
 
 /** Metric fastener sizes commonly used in puzzles / hints. */
 export const FASTENER_SIZE_OPTIONS = [
@@ -228,15 +311,7 @@ export function findLastPartBindingEnd(buffer) {
 /** Skip trailing whitespace + Contour/Fillet/Chamfer end-marker lines after a binding. */
 function extendPastOwnedEndMarkers(buffer, offset) {
   const s = String(buffer || '');
-  const endMarkers = [
-    CONTOUR_PROFILE_END,
-    CONTOUR_EXTRUDE_END,
-    CONTOUR_REVOLVE_END,
-    CONTOUR_LOFT_END,
-    CONTOUR_SWEEP_END,
-    FILLET_MODE_END,
-    CHAMFER_MODE_END,
-  ];
+  const endMarkers = FEATURE_BLOCK_END_MARKERS;
   let i = Math.max(0, Math.min(Number(offset) || 0, s.length));
   while (i < s.length) {
     const ws = /^\s*/.exec(s.slice(i));
@@ -490,7 +565,7 @@ function ensurePartPrefix(empty, names) {
   const h = allocateUniqueName(names, 'height');
   const box = allocateUniqueName(names, 'box');
   const partName = allocateUniqueName(names, 'part');
-  return [
+  return wrapFeatureBlock(CUBE_BEGIN, CUBE_END, [
     `const ${w} = 40;`,
     `const ${d} = 30;`,
     `const ${h} = 20;`,
@@ -498,7 +573,7 @@ function ensurePartPrefix(empty, names) {
     partName === 'part'
       ? `let part = ${box};`
       : `let ${partName} = ${box};\npart = ${partName};`,
-  ];
+  ]);
 }
 
 /** After mutating a non-part body, keep `part` in sync when it already exists. */
@@ -1026,11 +1101,13 @@ export const HELPER_PALETTE_ITEMS = [
       const d = num(p.depth, 30);
       const h = num(p.height, 20);
       const c = bool(p.center, true);
-      const lines = [`let ${box} = Manifold.cube([${w}, ${d}, ${h}], ${c});`];
-      // Append, never replace: a second shape unions onto the part, the
-      // same rule Extrude / Revolve / Loft / Sweep follow. Overwriting
-      // here used to strand the previous solid as dead code.
-      lines.push(emitPartPlace(names, box, !empty && names.has('part'), true));
+      const lines = wrapFeatureBlock(CUBE_BEGIN, CUBE_END, [
+        `let ${box} = Manifold.cube([${w}, ${d}, ${h}], ${c});`,
+        // Append, never replace: a second shape unions onto the part, the
+        // same rule Extrude / Revolve / Loft / Sweep follow. Overwriting
+        // here used to strand the previous solid as dead code.
+        emitPartPlace(names, box, !empty && names.has('part'), true),
+      ]);
       return withReturn(lines, empty);
     },
   },
@@ -1054,11 +1131,10 @@ export const HELPER_PALETTE_ITEMS = [
       const sz = num(p.sz, 20);
       const er = num(p.edgeRadius, 4);
       const seg = Math.max(1, Math.round(num(p.segments, 16)));
-      const lines = [`let ${rbox} = roundedBox([${sx}, ${sy}, ${sz}], ${er}, ${seg});`];
-      // Append, never replace: a second shape unions onto the part, the
-      // same rule Extrude / Revolve / Loft / Sweep follow. Overwriting
-      // here used to strand the previous solid as dead code.
-      lines.push(emitPartPlace(names, rbox, !empty && names.has('part'), true));
+      const lines = wrapFeatureBlock(ROUNDED_BOX_BEGIN, ROUNDED_BOX_END, [
+        `let ${rbox} = roundedBox([${sx}, ${sy}, ${sz}], ${er}, ${seg});`,
+        emitPartPlace(names, rbox, !empty && names.has('part'), true),
+      ]);
       return withReturn(lines, empty);
     },
   },
@@ -1078,11 +1154,10 @@ export const HELPER_PALETTE_ITEMS = [
       const h = num(p.height, 20);
       const r = num(p.radius, 10);
       const seg = Math.max(3, Math.round(num(p.segments, 64)));
-      const lines = [`let ${cyl} = Manifold.cylinder(${h}, ${r}, ${r}, ${seg});`];
-      // Append, never replace: a second shape unions onto the part, the
-      // same rule Extrude / Revolve / Loft / Sweep follow. Overwriting
-      // here used to strand the previous solid as dead code.
-      lines.push(emitPartPlace(names, cyl, !empty && names.has('part'), true));
+      const lines = wrapFeatureBlock(CYLINDER_BEGIN, CYLINDER_END, [
+        `let ${cyl} = Manifold.cylinder(${h}, ${r}, ${r}, ${seg});`,
+        emitPartPlace(names, cyl, !empty && names.has('part'), true),
+      ]);
       return withReturn(lines, empty);
     },
   },
@@ -1100,11 +1175,10 @@ export const HELPER_PALETTE_ITEMS = [
       const sph = allocateUniqueName(names, 'sphere');
       const r = num(p.radius, 15);
       const seg = Math.max(3, Math.round(num(p.segments, 64)));
-      const lines = [`let ${sph} = Manifold.sphere(${r}, ${seg});`];
-      // Append, never replace: a second shape unions onto the part, the
-      // same rule Extrude / Revolve / Loft / Sweep follow. Overwriting
-      // here used to strand the previous solid as dead code.
-      lines.push(emitPartPlace(names, sph, !empty && names.has('part'), true));
+      const lines = wrapFeatureBlock(SPHERE_BEGIN, SPHERE_END, [
+        `let ${sph} = Manifold.sphere(${r}, ${seg});`,
+        emitPartPlace(names, sph, !empty && names.has('part'), true),
+      ]);
       return withReturn(lines, empty);
     },
   },
@@ -1167,11 +1241,8 @@ export const HELPER_PALETTE_ITEMS = [
         const seg = Math.max(3, Math.round(num(p.segments, 64)));
         lines.push(`let ${tube} = tube(${o}, ${i}, ${h}, ${seg});`);
       }
-      // Append, never replace: a second shape unions onto the part, the
-      // same rule Extrude / Revolve / Loft / Sweep follow. Overwriting
-      // here used to strand the previous solid as dead code.
       lines.push(emitPartPlace(names, tube, !empty && names.has('part'), true));
-      return withReturn(lines, empty);
+      return withReturn(wrapFeatureBlock(TUBE_BEGIN, TUBE_END, lines), empty);
     },
   },
   {
@@ -1188,11 +1259,10 @@ export const HELPER_PALETTE_ITEMS = [
       const hex = allocateUniqueName(names, 'hex');
       const r = num(p.radius, 12);
       const h = num(p.height, 8);
-      const lines = [`let ${hex} = hexPrism(${r}, ${h});`];
-      // Append, never replace: a second shape unions onto the part, the
-      // same rule Extrude / Revolve / Loft / Sweep follow. Overwriting
-      // here used to strand the previous solid as dead code.
-      lines.push(emitPartPlace(names, hex, !empty && names.has('part'), true));
+      const lines = wrapFeatureBlock(HEX_PRISM_BEGIN, HEX_PRISM_END, [
+        `let ${hex} = hexPrism(${r}, ${h});`,
+        emitPartPlace(names, hex, !empty && names.has('part'), true),
+      ]);
       return withReturn(lines, empty);
     },
   },
@@ -1275,15 +1345,9 @@ export const HELPER_PALETTE_ITEMS = [
         );
         feat.push(...syncPartLines(body, names, hasPartDecl([...lines, ...feat], empty)));
       }
-      // Slice 27: in-mode Accept wraps the same sweep/planar emit so second Accept
-      // can replace the marked block. One-shot palette Confirm is unchanged.
-      if (p._filletMode) {
-        lines.push(FILLET_MODE_BEGIN);
-        lines.push(...feat);
-        lines.push(FILLET_MODE_END);
-      } else {
-        lines.push(...feat);
-      }
+      // Slice 27 + Slice A: always wrap so the feature strip shows Fillet chips
+      // for both in-mode Accept and one-shot palette Confirm.
+      lines.push(...wrapFeatureBlock(FILLET_MODE_BEGIN, FILLET_MODE_END, feat));
       return withReturn(lines, empty);
     },
   },
@@ -1317,13 +1381,8 @@ export const HELPER_PALETTE_ITEMS = [
       }
       feat.push(`${body} = chamferEdges(${body}, ${edgesExpr}, ${c});`);
       feat.push(...syncPartLines(body, names, hasPartDecl([...lines, ...feat], empty)));
-      if (p._chamferMode) {
-        lines.push(CHAMFER_MODE_BEGIN);
-        lines.push(...feat);
-        lines.push(CHAMFER_MODE_END);
-      } else {
-        lines.push(...feat);
-      }
+      // Slice A: always wrap so Chamfer chips appear for mode + one-shot.
+      lines.push(...wrapFeatureBlock(CHAMFER_MODE_BEGIN, CHAMFER_MODE_END, feat));
       return withReturn(lines, empty);
     },
   },
@@ -1476,8 +1535,11 @@ export const HELPER_PALETTE_ITEMS = [
         lines.push(profileLine);
         lines.push(CONTOUR_PROFILE_END);
       } else {
-        lines.push(...wp.lines);
-        lines.push(profileLine);
+        // Slice A: one-shot Create contour still gets a Profile strip chip.
+        lines.push(...wrapFeatureBlock(CONTOUR_PROFILE_BEGIN, CONTOUR_PROFILE_END, [
+          ...wp.lines,
+          profileLine,
+        ]));
       }
       return withReturn(lines, empty);
     },
@@ -1525,8 +1587,10 @@ export const HELPER_PALETTE_ITEMS = [
     build: (empty, p, names, buffer, faceCtx = null) => {
       const lines = [...ensurePartPrefix(empty, names)];
       const body = resolveBody(p, names, empty ? lines.join('\n') : buffer);
-      emitUnifiedHole(lines, body, p, names, faceCtx);
-      lines.push(...syncPartLines(body, names, hasPartDecl(lines, empty)));
+      const feat = [];
+      emitUnifiedHole(feat, body, p, names, faceCtx);
+      feat.push(...syncPartLines(body, names, hasPartDecl([...lines, ...feat], empty)));
+      lines.push(...wrapFeatureBlock(HOLE_BEGIN, HOLE_END, feat));
       return withReturn(lines, empty);
     },
   },
@@ -1555,11 +1619,12 @@ export const HELPER_PALETTE_ITEMS = [
       const sv = num(p.spacingV, 14);
       const dia = num(p.dia, 4);
       const wp = resolveFeatureWorkplane(body, p, names, faceCtx);
-      lines.push(...wp.lines);
-      lines.push(
+      const feat = [
+        ...wp.lines,
         `${body} = holePattern(${body}, ${wp.frVar}, { n: ${n}, m: ${m}, spacingU: ${su}, spacingV: ${sv}, dia: ${dia} });`,
-      );
-      lines.push(...syncPartLines(body, names, hasPartDecl(lines, empty)));
+        ...syncPartLines(body, names, hasPartDecl([...lines, ...wp.lines], empty)),
+      ];
+      lines.push(...wrapFeatureBlock(HOLE_PATTERN_BEGIN, HOLE_PATTERN_END, feat));
       return withReturn(lines, empty);
     },
   },
@@ -1582,7 +1647,7 @@ export const HELPER_PALETTE_ITEMS = [
       const size = str(p.size, 'M3');
       const fit = str(p.fit, 'normal');
       const wp = resolveFeatureWorkplane(body, p, names, faceCtx);
-      lines.push(...wp.lines);
+      const feat = [...wp.lines];
       const fr = wp.frVar;
       const usePattern = faceCtx && faceCtx.type === 'planar' && bool(p.usePattern, false);
       if (usePattern) {
@@ -1591,17 +1656,18 @@ export const HELPER_PALETTE_ITEMS = [
         const su = num(p.spacingU, 18);
         const sv = num(p.spacingV, 14);
         const cdVar = allocateUniqueName(names, '_cd');
-        lines.push(`const ${cdVar} = fastenerClearanceDia('${size}', '${fit}');`);
-        lines.push(
+        feat.push(`const ${cdVar} = fastenerClearanceDia('${size}', '${fit}');`);
+        feat.push(
           `${body} = holePattern(${body}, ${fr}, { n: ${n}, m: ${m}, spacingU: ${su}, spacingV: ${sv}, dia: ${cdVar} });`,
         );
       } else {
         const { u, v } = faceCtx ? uvForFace(p, faceCtx) : { u: num(p.u, 0), v: num(p.v, 0) };
         const span = emitSpanExpr(body, fr, faceCtx ? p : { through: true }, names, allocateUniqueName, num);
-        lines.push(...span.lines);
-        lines.push(`${body} = clearanceHole(${body}, ${fr}, ${u}, ${v}, '${size}', ${span.spanExpr}, '${fit}');`);
+        feat.push(...span.lines);
+        feat.push(`${body} = clearanceHole(${body}, ${fr}, ${u}, ${v}, '${size}', ${span.spanExpr}, '${fit}');`);
       }
-      lines.push(...syncPartLines(body, names, hasPartDecl(lines, empty)));
+      feat.push(...syncPartLines(body, names, hasPartDecl([...lines, ...feat], empty)));
+      lines.push(...wrapFeatureBlock(CLEARANCE_HOLE_BEGIN, CLEARANCE_HOLE_END, feat));
       return withReturn(lines, empty);
     },
   },
@@ -1623,16 +1689,17 @@ export const HELPER_PALETTE_ITEMS = [
       const size = str(p.size, 'M3');
       const { u, v } = faceCtx ? uvForFace(p, faceCtx) : { u: num(p.u, 0), v: num(p.v, 0) };
       const wp = resolveFeatureWorkplane(body, p, names, faceCtx);
-      lines.push(...wp.lines);
+      const feat = [...wp.lines];
       const fr = wp.frVar;
       if (faceCtx && p.through === false) {
         const span = emitSpanExpr(body, fr, p, names, allocateUniqueName, num);
-        lines.push(...span.lines);
-        lines.push(`${body} = tapDrillHole(${body}, ${fr}, ${u}, ${v}, '${size}', ${span.spanExpr});`);
+        feat.push(...span.lines);
+        feat.push(`${body} = tapDrillHole(${body}, ${fr}, ${u}, ${v}, '${size}', ${span.spanExpr});`);
       } else {
-        lines.push(`${body} = tapDrillHole(${body}, ${fr}, ${u}, ${v}, '${size}');`);
+        feat.push(`${body} = tapDrillHole(${body}, ${fr}, ${u}, ${v}, '${size}');`);
       }
-      lines.push(...syncPartLines(body, names, hasPartDecl(lines, empty)));
+      feat.push(...syncPartLines(body, names, hasPartDecl([...lines, ...feat], empty)));
+      lines.push(...wrapFeatureBlock(TAP_DRILL_HOLE_BEGIN, TAP_DRILL_HOLE_END, feat));
       return withReturn(lines, empty);
     },
   },
@@ -1658,14 +1725,15 @@ export const HELPER_PALETTE_ITEMS = [
       const cboreDepth = num(p.cboreDepth, 4);
       const { u, v } = faceCtx ? uvForFace(p, faceCtx) : { u: num(p.u, 0), v: num(p.v, 0) };
       const wp = resolveFeatureWorkplane(body, p, names, faceCtx);
-      lines.push(...wp.lines);
       const fr = wp.frVar;
       const span = emitSpanExpr(body, fr, faceCtx ? p : { through: true }, names, allocateUniqueName, num);
-      lines.push(...span.lines);
-      lines.push(
+      const feat = [
+        ...wp.lines,
+        ...span.lines,
         `${body} = cboreHole(${body}, ${fr}, ${u}, ${v}, ${diaThru}, ${diaCbore}, ${cboreDepth}, ${span.spanExpr});`,
-      );
-      lines.push(...syncPartLines(body, names, hasPartDecl(lines, empty)));
+        ...syncPartLines(body, names, hasPartDecl([...lines, ...wp.lines, ...span.lines], empty)),
+      ];
+      lines.push(...wrapFeatureBlock(CBORE_HOLE_BEGIN, CBORE_HOLE_END, feat));
       return withReturn(lines, empty);
     },
   },
@@ -1691,14 +1759,15 @@ export const HELPER_PALETTE_ITEMS = [
       const cskDepth = num(p.cskDepth, 2);
       const { u, v } = faceCtx ? uvForFace(p, faceCtx) : { u: num(p.u, 0), v: num(p.v, 0) };
       const wp = resolveFeatureWorkplane(body, p, names, faceCtx);
-      lines.push(...wp.lines);
       const fr = wp.frVar;
       const span = emitSpanExpr(body, fr, faceCtx ? p : { through: true }, names, allocateUniqueName, num);
-      lines.push(...span.lines);
-      lines.push(
+      const feat = [
+        ...wp.lines,
+        ...span.lines,
         `${body} = cskHole(${body}, ${fr}, ${u}, ${v}, ${diaThru}, ${diaCsk}, ${cskDepth}, ${span.spanExpr});`,
-      );
-      lines.push(...syncPartLines(body, names, hasPartDecl(lines, empty)));
+        ...syncPartLines(body, names, hasPartDecl([...lines, ...wp.lines, ...span.lines], empty)),
+      ];
+      lines.push(...wrapFeatureBlock(CSK_HOLE_BEGIN, CSK_HOLE_END, feat));
       return withReturn(lines, empty);
     },
   },
@@ -1724,8 +1793,11 @@ export const HELPER_PALETTE_ITEMS = [
       const scope = str(p.openScope, str(p.axis, 'z'));
       const opening = emitFaceSelectionExpr(face, scope);
       // hollow() is subtract(shell(...)) in one boolean — same uniform wall.
-      lines.push(`${body} = hollow(${body}, ${wall}, ${opening});`);
-      lines.push(...syncPartLines(body, names, /(?:let|const|var)\s+part\b/.test(lines.join('\n')) || !empty));
+      const feat = [
+        `${body} = hollow(${body}, ${wall}, ${opening});`,
+        ...syncPartLines(body, names, /(?:let|const|var)\s+part\b/.test(lines.join('\n')) || !empty),
+      ];
+      lines.push(...wrapFeatureBlock(SHELL_BEGIN, SHELL_END, feat));
       return withReturn(lines, empty);
     },
   },
@@ -1748,8 +1820,11 @@ export const HELPER_PALETTE_ITEMS = [
       const cx = bool(p.cx, true);
       const cy = bool(p.cy, true);
       const cz = bool(p.cz, false);
-      lines.push(`${body} = center(${body}, [${cx}, ${cy}, ${cz}]);`);
-      lines.push(...syncPartLines(body, names, /(?:let|const|var)\s+part\b/.test(lines.join('\n')) || !empty));
+      const feat = [
+        `${body} = center(${body}, [${cx}, ${cy}, ${cz}]);`,
+        ...syncPartLines(body, names, /(?:let|const|var)\s+part\b/.test(lines.join('\n')) || !empty),
+      ];
+      lines.push(...wrapFeatureBlock(CENTER_BEGIN, CENTER_END, feat));
       return withReturn(lines, empty);
     },
   },
@@ -1764,8 +1839,11 @@ export const HELPER_PALETTE_ITEMS = [
     build: (empty, p, names, buffer) => {
       const lines = [...ensurePartPrefix(empty, names)];
       const body = resolveBody(p, names, empty ? lines.join('\n') : buffer);
-      lines.push(`${body} = align(${body}, { min: [undefined, undefined, 0] });`);
-      lines.push(...syncPartLines(body, names, /(?:let|const|var)\s+part\b/.test(lines.join('\n')) || !empty));
+      const feat = [
+        `${body} = align(${body}, { min: [undefined, undefined, 0] });`,
+        ...syncPartLines(body, names, /(?:let|const|var)\s+part\b/.test(lines.join('\n')) || !empty),
+      ];
+      lines.push(...wrapFeatureBlock(ALIGN_BEGIN, ALIGN_END, feat));
       return withReturn(lines, empty);
     },
   },
@@ -1784,8 +1862,11 @@ export const HELPER_PALETTE_ITEMS = [
       const body = resolveBody(p, names, empty ? lines.join('\n') : buffer);
       const plane = str(p.plane, 'yz');
       const keep = bool(p.keepOriginal, true);
-      lines.push(`${body} = mirror(${body}, '${plane}', ${keep});`);
-      lines.push(...syncPartLines(body, names, /(?:let|const|var)\s+part\b/.test(lines.join('\n')) || !empty));
+      const feat = [
+        `${body} = mirror(${body}, '${plane}', ${keep});`,
+        ...syncPartLines(body, names, /(?:let|const|var)\s+part\b/.test(lines.join('\n')) || !empty),
+      ];
+      lines.push(...wrapFeatureBlock(MIRROR_BEGIN, MIRROR_END, feat));
       return withReturn(lines, empty);
     },
   },
@@ -1829,8 +1910,11 @@ export const HELPER_PALETTE_ITEMS = [
       const sx = num(p.sx, 45);
       const sy = num(p.sy, 35);
       const sz = num(p.sz, 0);
-      lines.push(`${body} = array3D(${body}, [${nx}, ${ny}, ${nz}], [${sx}, ${sy}, ${sz}]);`);
-      lines.push(...syncPartLines(body, names, /(?:let|const|var)\s+part\b/.test(lines.join('\n')) || !empty));
+      const feat = [
+        `${body} = array3D(${body}, [${nx}, ${ny}, ${nz}], [${sx}, ${sy}, ${sz}]);`,
+        ...syncPartLines(body, names, /(?:let|const|var)\s+part\b/.test(lines.join('\n')) || !empty),
+      ];
+      lines.push(...wrapFeatureBlock(ARRAY_BEGIN, ARRAY_END, feat));
       return withReturn(lines, empty);
     },
   },
@@ -1858,20 +1942,20 @@ export const HELPER_PALETTE_ITEMS = [
         const br = num(p.boreRadius, 3);
         const bh = num(p.boreHeight, 10);
         const partName = allocateUniqueName(names, 'part');
-        return [
+        const body = [
           `const ${bore} = Manifold.cylinder(${bh}, ${br}, ${br}, 64);`,
           partName === 'part'
             ? `let part = polarArray(${bore}, ${count}, ${bcr}, '${axis}');`
             : `let ${partName} = polarArray(${bore}, ${count}, ${bcr}, '${axis}');\npart = ${partName};`,
-          'return part;',
-          '',
-        ].join('\n');
+        ];
+        return withReturn(wrapFeatureBlock(POLAR_ARRAY_BEGIN, POLAR_ARRAY_END, body), true);
       }
-      const lines = [];
       const body = resolveBody(p, names, buffer);
-      lines.push(`${body} = polarArray(${body}, ${count}, ${bcr}, '${axis}');`);
-      lines.push(...syncPartLines(body, names, true));
-      return `${lines.join('\n')}\n`;
+      const feat = [
+        `${body} = polarArray(${body}, ${count}, ${bcr}, '${axis}');`,
+        ...syncPartLines(body, names, true),
+      ];
+      return withReturn(wrapFeatureBlock(POLAR_ARRAY_BEGIN, POLAR_ARRAY_END, feat), false);
     },
   },
   {
@@ -1905,10 +1989,11 @@ export const HELPER_PALETTE_ITEMS = [
       const reference = str(p.reference, 'min');
       const scope = str(p.faceScope, 'sides');
       const faces = emitFaceSelectionExpr(face, scope);
-      lines.push(
+      const feat = [
         `${body} = draftFaces(${body}, ${faces}, ${deg}, { pull: '${pull}', reference: '${reference}' });`,
-      );
-      lines.push(...syncPartLines(body, names, /(?:let|const|var)\s+part\b/.test(lines.join('\n')) || !empty));
+        ...syncPartLines(body, names, /(?:let|const|var)\s+part\b/.test(lines.join('\n')) || !empty),
+      ];
+      lines.push(...wrapFeatureBlock(DRAFT_BEGIN, DRAFT_END, feat));
       return withReturn(lines, empty);
     },
   },
@@ -1961,14 +2046,14 @@ export const HELPER_PALETTE_ITEMS = [
       const h = num(p.height, 10);
       const xs = allocateUniqueName(names, 'xs');
       const extrude = allocateUniqueName(names, 'extrude');
-      const lines = [
+      const lines = wrapFeatureBlock(CONTOUR_EXTRUDE_BEGIN, CONTOUR_EXTRUDE_END, [
         `const ${xs} = makeCrossSection({ center: [0, 0, 0], normal: [0, 0, 1], x: [1, 0, 0], y: [0, 1, 0] }, profileRectangle(40, 30, true));`,
         `let ${extrude} = makeExtrude(${xs}.contours, ${h});`,
-      ];
-      // Append, never replace — same rule this entry's contour-mode Confirm
-      // already follows. The one-shot path used to overwrite `part`, which
-      // stranded the previous solid as dead code.
-      lines.push(emitPartPlace(names, extrude, !empty && names.has('part'), true));
+        // Append, never replace — same rule this entry's contour-mode Confirm
+        // already follows. The one-shot path used to overwrite `part`, which
+        // stranded the previous solid as dead code.
+        emitPartPlace(names, extrude, !empty && names.has('part'), true),
+      ]);
       return withReturn(lines, empty);
     },
   },
@@ -1984,15 +2069,12 @@ export const HELPER_PALETTE_ITEMS = [
     build: (empty, p, names) => {
       const revolve = allocateUniqueName(names, 'revolve');
       const seg = Math.max(3, Math.round(num(p.segments, 64)));
-      const lines = [
+      const lines = wrapFeatureBlock(CONTOUR_REVOLVE_BEGIN, CONTOUR_REVOLVE_END, [
         `let ${revolve} = makeRevolve([`,
         '  [[8, 0], [25, 0], [25, 6], [12, 6], [12, 40], [8, 40]]',
         `], ${seg});`,
-      ];
-      // Append, never replace — same rule this entry's contour-mode Confirm
-      // already follows. The one-shot path used to overwrite `part`, which
-      // stranded the previous solid as dead code.
-      lines.push(emitPartPlace(names, revolve, !empty && names.has('part'), true));
+        emitPartPlace(names, revolve, !empty && names.has('part'), true),
+      ]);
       return withReturn(lines, empty);
     },
   },
@@ -2011,12 +2093,12 @@ export const HELPER_PALETTE_ITEMS = [
       const xs = allocateUniqueName(names, 'xs');
       const edges = allocateUniqueName(names, 'selEdges');
       const path = allocateUniqueName(names, 'path');
-      const lines = [
+      const lines = wrapFeatureBlock(CONTOUR_SWEEP_BEGIN, CONTOUR_SWEEP_END, [
         `const ${xs} = makeCrossSection({ center: [0, 0, 0], normal: [0, 0, 1], x: [1, 0, 0], y: [0, 1, 0] }, profileCircle(2, 16));`,
         `const ${edges} = [{ a: 0, b: 1, va: [0, 0, 0], vb: [0, 0, 20], length: 20, key: 'sweep-fallback' }];`,
         `const ${path} = makeSweepPath(${edges}); // edge→sweep path`,
         ...emitSweepSolidTail(names, xs, path, partDeclared),
-      ];
+      ]);
       return withReturn(lines, empty);
     },
   },
@@ -2036,15 +2118,12 @@ export const HELPER_PALETTE_ITEMS = [
       const xs0 = allocateUniqueName(names, 'xs');
       const xs1 = allocateUniqueName(names, 'xs');
       const lofted = allocateUniqueName(names, 'lofted');
-      const lines = [
+      const lines = wrapFeatureBlock(CONTOUR_LOFT_BEGIN, CONTOUR_LOFT_END, [
         `const ${xs0} = makeCrossSection({ center: [0, 0, 0], normal: [0, 0, 1], x: [1, 0, 0], y: [0, 1, 0] }, profileCircle(5, 64));`,
         `const ${xs1} = makeCrossSection({ center: [0, 0, ${h}], normal: [0, 0, 1], x: [1, 0, 0], y: [0, 1, 0] }, profileCircle(8, 64));`,
         `let ${lofted} = makeLoft([${xs0}, ${xs1}]);`,
-      ];
-      // Append, never replace — same rule this entry's contour-mode Confirm
-      // already follows. The one-shot path used to overwrite `part`, which
-      // stranded the previous solid as dead code.
-      lines.push(emitPartPlace(names, lofted, !empty && names.has('part'), true));
+        emitPartPlace(names, lofted, !empty && names.has('part'), true),
+      ]);
       return withReturn(lines, empty);
     },
   },

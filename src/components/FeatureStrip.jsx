@@ -6,8 +6,24 @@ import {
   Route,
   NotebookPen,
   TriangleRight,
+  Box,
+  Cylinder,
+  Circle,
+  Torus,
+  Hexagon,
+  Squircle,
+  Drill,
+  Grid3x3,
+  Bolt,
+  Cone,
+  PackageOpen,
+  Focus,
+  AlignVerticalJustifyCenter,
+  FlipHorizontal2,
+  Boxes,
 } from 'lucide-react';
 import SquareRoundCorner from './icons/SquareRoundCorner';
+import Angle from './icons/Angle';
 import { parseFeatureMarkers } from '../utils/featureMarkers';
 
 /**
@@ -19,9 +35,12 @@ import { parseFeatureMarkers } from '../utils/featureMarkers';
  *
  * Icons match CAD toolbar tools. Per-type index badges (C.1). Script: jump
  * caret. CAD: open feature sheet.
+ *
+ * Slice A: strip covers every left-rail insertable that creates a feature
+ * (Block / Model / Polish / Move), not only Contour/Fillet markers.
  */
 
-/** Same glyphs as HelperInsertPalette for Contour/Extrude/…/Fillet/Chamfer. */
+/** Same glyphs as HelperInsertPalette for every left-rail insertable. */
 const FEATURE_ICONS = Object.freeze({
   profile: NotebookPen,       // Create contour / crossSection
   extrude: ArrowUpFromLine,   // makeExtrude
@@ -30,6 +49,25 @@ const FEATURE_ICONS = Object.freeze({
   sweep: Route,               // makeSweep
   fillet: SquareRoundCorner,  // filletEdges
   chamfer: TriangleRight,     // chamferEdges
+  cube: Box,
+  roundedBox: Squircle,
+  cylinder: Cylinder,
+  sphere: Circle,
+  tube: Torus,
+  hexPrism: Hexagon,
+  hole: Drill,
+  holePattern: Grid3x3,
+  clearanceHole: Bolt,
+  tapDrillHole: Drill,
+  cboreHole: Cylinder,
+  cskHole: Cone,
+  shell: PackageOpen,
+  draft: Angle,
+  center: Focus,
+  align: AlignVerticalJustifyCenter,
+  mirror: FlipHorizontal2,
+  array: Boxes,
+  polarArray: Boxes,
 });
 
 function TypeBadge({ index }) {
