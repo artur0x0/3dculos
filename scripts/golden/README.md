@@ -40,3 +40,5 @@ requires `test_real_worker.mjs` via `npm run verify` once the harness is present
 | `smoke_fillet_c4_signed_concave.mjs` | Slice C4: signed local convexity (no per-edge CSG ball probe), per-knot sign, concave = material-ADD filler; mixed-sign chain splits into cutter + filler runs; zero face-group normal fallback |
 | `smoke_cad_palette_overlays.mjs` | CAD Model section promotes Profile/Workplane/Extrude/Revolve/Sweep/Loft (game Advanced rail unchanged); Plane/Contour toggles default on and gate overlay paint and picking |
 | `smoke_cad_mobile_chrome.mjs` | CAD phone shell matches puzzle: viewport top, Monaco bottom budget, keyboard pin, mid-strip actions, vertical right rail |
+
+| `smoke_fillet_chamfer_rounded_wrap.mjs` | Fillet-on-fillet rounded-rect wrap + path chamfer quality |

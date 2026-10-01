@@ -85,7 +85,7 @@ export const CONTOUR_SWEEP_END = '// --- contour-mode sweep end ---';
 export const FILLET_MODE_BEGIN = '// --- fillet-mode begin ---';
 export const FILLET_MODE_END = '// --- fillet-mode end ---';
 
-/** In-mode Chamfer region (chamferEdges on the picked set). Second Accept replaces this block. */
+/** In-mode Chamfer region (path chamfer via filletAlongPath). Second Accept replaces this block. */
 export const CHAMFER_MODE_BEGIN = '// --- chamfer-mode begin ---';
 export const CHAMFER_MODE_END = '// --- chamfer-mode end ---';
 
@@ -1371,7 +1371,7 @@ export const HELPER_PALETTE_ITEMS = [
     id: 'chamferEdges',
     label: 'Chamfer',
     group: 'Features',
-    title: 'chamferEdges(part, edges, c)',
+    title: 'chamferEdges / filletAlongPath(profile:chamfer) — equal-leg bevel',
     params: [
       { name: 'body', type: 'body', default: 'part', label: 'Body' },
       { name: 'chamfer', type: 'number', default: 2, label: 'Chamfer', min: 0.01, step: 0.5 },
@@ -1381,22 +1381,42 @@ export const HELPER_PALETTE_ITEMS = [
       const body = resolveBody(p, names, empty ? lines.join('\n') : buffer);
       const c = num(p.chamfer, 2);
       const feat = [];
-      let edgesExpr = `convexEdges(${body})`;
-      const scope = p.edgeScope || (edgeCtx && edgeCtx.length ? 'selected' : (faceCtx ? 'face' : 'allConvex'));
-      if (scope === 'selected' || (edgeCtx && edgeCtx.length && scope !== 'face' && scope !== 'allConvex')) {
-        const edge = emitSelectedEdgeLines(body, edgeCtx || [], names, allocateUniqueName);
-        if (!edge.ok) return null;
-        feat.push(...edge.lines);
-        edgesExpr = edge.edgesExpr;
-      } else if (faceCtx && faceCtx.type !== 'irregular' && scope !== 'allConvex') {
-        const edge = emitFaceEdgeLines(body, faceCtx, { ...p, edgeScope: 'face' }, names, allocateUniqueName);
-        feat.push(...edge.lines);
-        edgesExpr = edge.edgesExpr;
-      } else if (scope === 'allConvex') {
-        edgesExpr = `convexEdges(${body})`;
+      const hasPicked = Array.isArray(edgeCtx) && edgeCtx.length > 0;
+      const scope = p.edgeScope || (hasPicked ? 'selected' : (faceCtx ? 'face' : 'allConvex'));
+      // In-mode / selected wire → path chamfer (continuous bevel, disjoint
+      // components OK). Script-style allConvex / face scope keeps classic
+      // chamferEdges for bulk planar edges.
+      if (scope === 'selected' || (hasPicked && scope !== 'face' && scope !== 'allConvex')) {
+        const split = splitEdgePathComponents(edgeCtx || []);
+        if (!split.ok) return null;
+        const comps = split.components;
+        if (!comps.length || !comps.some((comp) => Array.isArray(comp) && comp.length)) return null;
+        for (const comp of comps) {
+          if (!Array.isArray(comp) || !comp.length) continue;
+          const edge = emitFilletBoundaryLines(body, comp, names, allocateUniqueName)
+            || emitSelectedEdgeLiteralLines(body, comp, names, allocateUniqueName);
+          if (!edge || !edge.ok) return null;
+          feat.push(...edge.lines);
+          const path = allocateUniqueName(names, 'path');
+          feat.push(`const ${path} = makeSweepPath(${edge.edgesExpr}); // edge→sweep path`);
+          feat.push(
+            `${body} = filletAlongPath(${body}, ${path}, ${c}, { profile: 'chamfer' }); // sweep chamfer wedge`,
+          );
+        }
+        if (!feat.some((ln) => /filletAlongPath\s*\(/.test(ln))) return null;
+        feat.push(...syncPartLines(body, names, hasPartDecl([...lines, ...feat], empty)));
+      } else {
+        let edgesExpr = `convexEdges(${body})`;
+        if (faceCtx && faceCtx.type !== 'irregular' && scope !== 'allConvex') {
+          const edge = emitFaceEdgeLines(body, faceCtx, { ...p, edgeScope: 'face' }, names, allocateUniqueName);
+          feat.push(...edge.lines);
+          edgesExpr = edge.edgesExpr;
+        } else if (scope === 'allConvex') {
+          edgesExpr = `convexEdges(${body})`;
+        }
+        feat.push(`${body} = chamferEdges(${body}, ${edgesExpr}, ${c});`);
+        feat.push(...syncPartLines(body, names, hasPartDecl([...lines, ...feat], empty)));
       }
-      feat.push(`${body} = chamferEdges(${body}, ${edgesExpr}, ${c});`);
-      feat.push(...syncPartLines(body, names, hasPartDecl([...lines, ...feat], empty)));
       // Slice A: always wrap so Chamfer chips appear for mode + one-shot.
       lines.push(...wrapFeatureBlock(CHAMFER_MODE_BEGIN, CHAMFER_MODE_END, feat));
       return withReturn(lines, empty);

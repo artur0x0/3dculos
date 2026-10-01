@@ -656,7 +656,9 @@ const Viewport = forwardRef(({
     },
     /** Slice 27: loud-fail toast — keep the path visible (do not clear edges). */
     softFailFillet: (msg) => {
-      showFilletToast(msg || 'Fillet refused — pick edges (disjoint sets fillet independently), then Accept.');
+      showFilletToast(msg || (filletModeRef.current?.entry === 'chamferEdges'
+        ? 'Chamfer refused — pick edges (disjoint sets chamfer independently), then Accept.'
+        : 'Fillet refused — pick edges (disjoint sets fillet independently), then Accept.'));
     },
     softFailShell: (msg) => {
       showShellToast(msg || 'Shell refused — tap a face or choose Closed, then Confirm.');
@@ -2025,15 +2027,25 @@ const Viewport = forwardRef(({
     });
   }, [filletMode, selectedEdges, meshEpoch]);
 
-  const filletBlendPayload = useMemo(
-    () => (filletMode && filletMode.entry !== 'chamferEdges'
-      ? buildFilletBlendPreview(selectedEdges, filletMode.params)
-      : null),
-    [filletMode, selectedEdges],
-  );
+  const filletBlendPayload = useMemo(() => {
+    if (!filletMode) return null;
+    if (filletMode.entry === 'chamferEdges') {
+      return buildFilletBlendPreview(selectedEdges, {
+        ...(filletMode.params || {}),
+        strategy: 'sweep',
+        profile: 'chamfer',
+        radius: filletMode.params?.chamfer,
+      });
+    }
+    return buildFilletBlendPreview(selectedEdges, filletMode.params);
+  }, [filletMode, selectedEdges]);
   useEffect(() => {
-    if (!filletMode || filletMode.entry === 'chamferEdges') {
+    if (!filletMode) {
       clearFilletBlendPreview();
+      return;
+    }
+    if (filletMode.entry === 'chamferEdges') {
+      paintFilletBlendPreview(filletBlendPayload);
       return;
     }
     if (!filletMode.radiusTouched) {

@@ -3750,12 +3750,22 @@ function _s23ProbeSegments(part, points, closed) {
     const T = _s23Norm(_s23Sub(p1, p0));
     const mid = [(p0[0] + p1[0]) / 2, (p0[1] + p1[1]) / 2, (p0[2] + p1[2]) / 2];
     let best = null;
+    let bestScore = Infinity;
     let bestD = Infinity;
     for (const e of edges) {
       if (!e || !Array.isArray(e.va) || !Array.isArray(e.vb)) continue;
       const em = [(e.va[0] + e.vb[0]) / 2, (e.va[1] + e.vb[1]) / 2, (e.va[2] + e.vb[2]) / 2];
       const d = Math.hypot(em[0] - mid[0], em[1] - mid[1], em[2] - mid[2]);
-      if (d < bestD) {
+      // Prefer edges whose chord aligns with the path tangent. On a fillet-on-
+      // fillet wrap, dense path samples sit near prior-blend seams whose mids
+      // can be closer than the true rim edge but run the wrong direction —
+      // matching those left vertical fin-slivers at rounded corners.
+      const eT = _s23Norm(_s23Sub(e.vb, e.va));
+      const align = Math.abs(_s23Dot(eT, T)); // 1 = parallel, 0 = perpendicular
+      // Distance primary; misalignment adds a penalty in mm-equivalent units.
+      const score = d + (1 - align) * Math.max(0.55, 0.35 * (segL || 1));
+      if (score < bestScore - 1e-12 || (Math.abs(score - bestScore) <= 1e-12 && d < bestD)) {
+        bestScore = score;
         bestD = d;
         best = e;
       }

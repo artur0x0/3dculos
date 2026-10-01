@@ -12,6 +12,10 @@
  * stays the default for an in-place update of the same block. Back and X exit
  * with no commit. Strategy default stays sweep (#30).
  *
+ * Chamfer mode mirrors Fillet: enter without edges, pick disjoint components,
+ * Accept emits makeSweepPath + filletAlongPath(..., { profile: 'chamfer' })
+ * (not per-edge chamferEdges hulls — those rib around rounded corners).
+ *
  * Reuses Slice 22/23: makeSweepPath / filletAlongPath / canBuildFilletAlongPath.
  * Does not change Extrude / Revolve / Profile / Loft.
  */
@@ -81,16 +85,53 @@ export function enterChamferState(edges = null) {
   };
 }
 
+export const CHAMFER_MODE_EMPTY =
+  'Pick edges in Chamfer mode, then Accept. Tangent-on chains work for circular rims.';
+
 export function validateChamferAccept(edges, params = {}) {
   const list = Array.isArray(edges) ? edges : [];
   if (!list.length) {
-    return { ok: false, message: 'Pick edges in Chamfer mode, then Accept.' };
+    return { ok: false, message: CHAMFER_MODE_EMPTY };
+  }
+  const split = splitEdgePathComponents(list);
+  if (!split.ok) {
+    if (split.code === 'branch') return { ok: false, message: FILLET_SWEEP_BRANCH };
+    return { ok: false, message: split.message || CHAMFER_MODE_EMPTY };
+  }
+  const components = split.components;
+  for (const comp of components) {
+    const gate = canBuildFilletAlongPath(comp);
+    if (!gate.ok) {
+      const msg = gate.message || CHAMFER_MODE_EMPTY;
+      if (/branch/i.test(msg)) return { ok: false, message: FILLET_SWEEP_BRANCH };
+      if (/disconnect/i.test(msg)) {
+        return { ok: false, message: msg.includes('disconnected') ? msg : FILLET_SWEEP_DISCONNECTED };
+      }
+      return { ok: false, message: msg };
+    }
   }
   const raw = Number(params.chamfer);
-  const chamfer = Number.isFinite(raw) && raw > 0 ? raw : 2;
+  let chamfer = Number.isFinite(raw) && raw > 0 ? raw : 2;
+  // Clamp shared size to the tightest per-component sweep hard-max (same as fillet).
+  if (components.length >= 1) {
+    let hard = Infinity;
+    for (const comp of components) {
+      hard = Math.min(hard, sweepBlendHardMax(pathLengthFromEdges(comp)));
+    }
+    if (Number.isFinite(hard) && hard > 0) {
+      chamfer = Math.min(chamfer, hard);
+    }
+  }
   return {
     ok: true,
-    normalized: { body: params.body || 'part', chamfer, edgeScope: 'selected' },
+    normalized: {
+      body: params.body || 'part',
+      chamfer,
+      edgeScope: 'selected',
+      profile: 'chamfer',
+      strategy: 'sweep',
+    },
+    components,
   };
 }
 
@@ -112,7 +153,8 @@ export function stripChamferModeBlock(buffer) {
 }
 
 /**
- * Accept → chamferEdges on the picked set, wrapped in chamfer-mode markers.
+ * Accept → makeSweepPath + filletAlongPath(profile:chamfer) per contiguous
+ * component, wrapped in chamfer-mode markers (mirrors Fillet Accept).
  * commitMode 'append' keeps a previous block so a second chain cuts the
  * already-chamfered solid.
  */
@@ -134,20 +176,38 @@ export function composeChamferCommit(buffer, {
     edges,
   );
   if (typeof composed !== 'string') {
-    return { ok: false, message: gate.message || 'Pick edges in Chamfer mode, then Accept.' };
+    return { ok: false, message: gate.message || CHAMFER_MODE_EMPTY };
   }
   const ownedStart = composed.lastIndexOf(CHAMFER_MODE_BEGIN);
   const ownedEnd = composed.indexOf(CHAMFER_MODE_END, ownedStart < 0 ? 0 : ownedStart);
   const owned = ownedStart < 0 || ownedEnd < 0
     ? ''
     : composed.slice(ownedStart, ownedEnd + CHAMFER_MODE_END.length);
-  if (!/chamferEdges\s*\(/.test(owned)) {
-    return { ok: false, message: 'composeChamferCommit: chamferEdges missing — refusing silent no-op.' };
+  const expectedComps = Array.isArray(gate.components) ? gate.components.length : 1;
+  const pathCount = (owned.match(/makeSweepPath\s*\(/g) || []).length;
+  const alongCount = (owned.match(/filletAlongPath\s*\(/g) || []).length;
+  if (pathCount < 1 || alongCount < 1) {
+    return {
+      ok: false,
+      message: 'composeChamferCommit: makeSweepPath/filletAlongPath missing — refusing silent no-op.',
+    };
+  }
+  if (pathCount !== expectedComps || alongCount !== expectedComps) {
+    return {
+      ok: false,
+      message: `composeChamferCommit: expected ${expectedComps} makeSweepPath/filletAlongPath pair(s), got ${pathCount}/${alongCount}.`,
+    };
+  }
+  if (!/profile:\s*'chamfer'/.test(owned)) {
+    return {
+      ok: false,
+      message: 'composeChamferCommit: profile:chamfer missing — refusing silent no-op.',
+    };
   }
   if (!owned.includes(CHAMFER_MODE_BEGIN) || !owned.includes(CHAMFER_MODE_END)) {
     return { ok: false, message: 'composeChamferCommit: chamfer markers missing — refusing unscoped insert.' };
   }
-  return { ok: true, buffer: composed, run: true };
+  return { ok: true, buffer: composed, run: true, kernel: 'sweep-chamfer' };
 }
 
 export function defaultFilletParams(edges = null) {

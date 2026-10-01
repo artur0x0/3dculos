@@ -33,6 +33,9 @@ export const SWEEP_PATH_INVALID =
 /** Recover a dominant simple chain when strays are a small leftover (not a tie). */
 export const SWEEP_PATH_RECOVER_MIN_FRAC = 0.75;
 
+/** Min path sample spacing after pts expansion (mm). See thinSweepPathPoints. */
+export const SWEEP_PATH_MIN_SEG = 1.2;
+
 function disconnectedMessage(compSizes, total) {
   const sizes = compSizes.slice().sort((a, b) => b - a);
   const n = sizes.length;
@@ -379,6 +382,55 @@ export function orderEdgePath(selectedEdges) {
   };
 }
 
+
+/**
+ * Cap path sample density after pts expansion.
+ *
+ * Slice B+C expands pre-RDP `pts` so fillets follow real curvature instead of
+ * faceted RDP chords. Full tessellation density on prior-fillet arcs, however,
+ * leaves vertical fin-slivers when a later wrap fillet meets those blends
+ * (Artur cube playtest: 50+ zero-area fins on the side faces). Thinning to a
+ * ~1.2 mm floor keeps arc fidelity for smooth wedges while dropping the
+ * micro-cluster samples that poison the dihedral sweep boolean.
+ *
+ * Long straight edges are unchanged (already one segment). Closed paths keep
+ * first ≠ last.
+ *
+ * @param {number[][]} points
+ * @param {boolean} closed
+ * @param {{ minSeg?: number }} [opts]
+ * @returns {number[][]}
+ */
+export function thinSweepPathPoints(points, closed, opts = {}) {
+  const pts = Array.isArray(points) ? points : [];
+  if (pts.length < 3) return pts.map((p) => p.slice());
+  const minSeg = typeof opts.minSeg === 'number' ? opts.minSeg : SWEEP_PATH_MIN_SEG;
+  if (!(minSeg > 0)) return pts.map((p) => p.slice());
+
+  const out = [pts[0].slice()];
+  for (let i = 1; i < pts.length; i++) {
+    const last = out[out.length - 1];
+    const d = _dist(pts[i], last);
+    const isLast = i === pts.length - 1;
+    if (d >= minSeg || isLast) out.push(pts[i].slice());
+  }
+  if (closed && out.length > 2) {
+    const a = out[0];
+    const b = out[out.length - 1];
+    if (_dist(a, b) < 1e-5) out.pop();
+  }
+  // If the forced endpoint is too close to the previous kept sample, drop the
+  // previous (keep the true end) so we do not reintroduce a micro segment.
+  if (out.length >= 3) {
+    const dEnd = _dist(out[out.length - 1], out[out.length - 2]);
+    if (dEnd < minSeg * 0.35) {
+      out.splice(out.length - 2, 1);
+    }
+  }
+  if (out.length < 2) return pts.map((p) => p.slice());
+  return out;
+}
+
 /**
  * Slice B+C — tiny Accept densify: round RDP-scale corners that densify-along-
  * chord cannot fix. At each vertex whose turn exceeds maxTurnDeg, replace the
@@ -473,7 +525,7 @@ export function smoothPathCorners(points, closed, opts = {}) {
  * Soft-fail shape when selection cannot form a path (ok:false).
  *
  * @param {object[]} selectedEdges
- * @param {{ reverse?: boolean }} [opts]
+ * @param {{ reverse?: boolean, smoothCorners?: boolean, thinPath?: boolean, minSeg?: number }} [opts]
  */
 export function assembleSweepPath(selectedEdges, opts = {}) {
   const ordered = orderEdgePath(selectedEdges);
@@ -496,6 +548,14 @@ export function assembleSweepPath(selectedEdges, opts = {}) {
     const a = pts[0];
     const b = pts[pts.length - 1];
     if (_dist(a, b) < 1e-5) pts = pts.slice(0, -1);
+  }
+
+  // Density cap on expanded pre-RDP pts BEFORE corner smooth — thinning after
+  // smoothPathCorners would wipe the Bézier samples that remove RDP spikes.
+  if (opts.thinPath !== false && pts.length >= 3) {
+    pts = thinSweepPathPoints(pts, ordered.closed, {
+      minSeg: opts.minSeg,
+    });
   }
 
   // Slice B+C: round RDP-scale corners before fillet/sweep consume the path.
