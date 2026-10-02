@@ -11,13 +11,15 @@
  * #107's sphere-cap post-pass consumed the cusp but left TWO hemispherical
  * bulges with a flat strip between them (playtest fail) — that path is gone.
  *
- * FIX: same-r arcs on the sweep path are split into two semi-arcs; each
- * semi-arc (and each straight) is an independent cutter (union-batched into
- * one subtract) via `planFilletSweepPath` → mode:'runs'. Turn densify
- * tightened (FRAME_DENSIFY_MAX_TURN_DEG 10→5). No sphere-cap post-pass.
+ * FIX: corner arcs on the sweep path are split into two semi-arcs (path R
+ * may differ from cutter r — chamfer-along-prior-fillet); each semi-arc
+ * (and each straight) is an independent cutter (union-batched into one
+ * subtract) via `planFilletSweepPath` → mode:'runs'. Turn densify tightened
+ * (FRAME_DENSIFY_MAX_TURN_DEG 10→5). No sphere-cap post-pass.
  *
- * Asserts: no junction cusp verts, no visible inward wedges, no twin
- * sphere-cap bulge signature, long-fin ceilings for the open-run tradeoff.
+ * Asserts: no top/bottom junction cusp verts, no visible inward wedges, no
+ * twin sphere-cap bulge signature, long-fin ceilings for the open-run
+ * tradeoff; planner unit covers R≠cutter chamfer split.
  */
 import { register } from 'node:module';
 import { readFileSync } from 'node:fs';
@@ -74,7 +76,7 @@ function analyze(mesh) {
       mesh.vertProperties[i * np + 2],
     ]);
   }
-  let tiny = 0, fins = 0, inward = 0, inwardVis = 0, sharpCorner = 0;
+  let tiny = 0, fins = 0, inward = 0, inwardVis = 0, sharpCorner = 0, sharpCornerBottom = 0;
   const centers = [[14, 9, 4], [14, 9, -4], [-14, 9, 4], [-14, 9, -4]];
   let maxOver = 0;
   for (let t = 0; t < mesh.triVerts.length / 3; t++) {
@@ -110,11 +112,17 @@ function analyze(mesh) {
     if ((area < 1e-6 || asp < 1e-4) && L > 1) fins++;
   }
   for (const v of V) {
-    // Leftover cusp marker: verts at the prior-fillet/top-rim junction, outside sphere.
+    // Leftover cusp marker: verts at the prior-fillet/top-rim junction.
     if (Math.abs(Math.abs(v[0]) - 14) < 0.2
         && Math.abs(v[1] - 15) < 0.2
         && Math.abs(Math.abs(v[2]) - 10) < 0.2) {
       sharpCorner++;
+    }
+    // Bottom chamfer × vertical fillet junction (mirror of top band).
+    if (Math.abs(Math.abs(v[0]) - 14) < 0.2
+        && Math.abs(v[1] + 15) < 0.2
+        && Math.abs(Math.abs(v[2]) - 10) < 0.2) {
+      sharpCornerBottom++;
     }
     if (v[1] < 8 || Math.abs(v[0]) < 12 || Math.abs(v[2]) < 2) continue;
     let best = Infinity;
@@ -148,6 +156,7 @@ function analyze(mesh) {
     inward,
     inwardVis,
     sharpCorner,
+    sharpCornerBottom,
     maxOver,
     sphereBulge,
     dirty: isFilletSliverDirty(tiny, mesh.triVerts.length / 3),
@@ -157,11 +166,11 @@ function analyze(mesh) {
 const here = dirname(fileURLToPath(import.meta.url));
 const full = readFileSync(join(here, 'fixtures', 'artur_playtest_box_stack_sliver.txt'), 'utf8');
 
-console.log('Artur playtest — box stack same-r semi-arc split (r=6 / chamfer r=2)');
+console.log('Artur playtest — box stack corner-arc semi-arc split (r=6 / chamfer r=2)');
 
-// Planner unit check: same-r quarter-arcs → semi-arc runs (not sphere caps)
+// Planner unit check: corner quarter-arcs → semi-arc runs (same-r and R≠cutter)
 {
-  const r = 6;
+  const arcR = 6;
   const quarter = (C, axisFrom, axisTo, n = 8) => {
     const pts = [];
     for (let i = 0; i <= n; i++) {
@@ -169,24 +178,28 @@ console.log('Artur playtest — box stack same-r semi-arc split (r=6 / chamfer r
       const c = Math.cos(t);
       const s = Math.sin(t);
       pts.push([
-        C[0] + r * (axisFrom[0] * c + axisTo[0] * s),
+        C[0] + arcR * (axisFrom[0] * c + axisTo[0] * s),
         C[1],
-        C[2] + r * (axisFrom[1] * c + axisTo[1] * s),
+        C[2] + arcR * (axisFrom[1] * c + axisTo[1] * s),
       ]);
     }
     return pts;
   };
-  const path = [];
-  path.push([14, 15, -10], [-14, 15, -10]);
-  path.push(...quarter([-14, 15, -4], [0, -1], [-1, 0]).slice(1));
-  path.push([-20, 15, 4]);
-  path.push(...quarter([-14, 15, 4], [-1, 0], [0, 1]).slice(1));
-  path.push([14, 15, 10]);
-  path.push(...quarter([14, 15, 4], [0, 1], [1, 0]).slice(1));
-  path.push([20, 15, -4]);
-  path.push(...quarter([14, 15, -4], [1, 0], [0, -1]).slice(1));
+  const mkRim = (y) => {
+    const path = [];
+    path.push([14, y, -10], [-14, y, -10]);
+    path.push(...quarter([-14, y, -4], [0, -1], [-1, 0]).slice(1));
+    path.push([-20, y, 4]);
+    path.push(...quarter([-14, y, 4], [-1, 0], [0, 1]).slice(1));
+    path.push([14, y, 10]);
+    path.push(...quarter([14, y, 4], [0, 1], [1, 0]).slice(1));
+    path.push([20, y, -4]);
+    path.push(...quarter([14, y, -4], [1, 0], [0, -1]).slice(1));
+    return path;
+  };
+  const path = mkRim(15);
   const sites = detectSameRadiusArcSites(path, true, 6);
-  check('detectSameRadiusArcSites finds 4 corner arcs', sites.length === 4, `n=${sites.length}`);
+  check('detectSameRadiusArcSites finds 4 corner arcs (same-r)', sites.length === 4, `n=${sites.length}`);
   const runs = splitSameRadiusArcsIntoSemiArcRuns(path, true, 6, { arcsOnly: false });
   check(
     'semi-arc path split yields ≥8 runs (straights + halves)',
@@ -196,6 +209,24 @@ console.log('Artur playtest — box stack same-r semi-arc split (r=6 / chamfer r
   check('each run has ≥2 points', runs.every((r) => r.length >= 2));
   const plan = planFilletSweepPath(path, true, 6);
   check('same-r wrap plan returns mode runs', plan.mode === 'runs', `mode=${plan.mode}`);
+  // Chamfer-along-prior-fillet: path arcs R=6, cutter r=2 must still split.
+  const bottom = mkRim(-15);
+  const sitesCh = detectSameRadiusArcSites(bottom, true, 2);
+  check(
+    'chamfer r=2 still finds 4 path arcs (R=6 ≠ cutter)',
+    sitesCh.length === 4,
+    `n=${sitesCh.length}`,
+  );
+  const planCh = planFilletSweepPath(bottom, true, 2, { profile: 'chamfer' });
+  check(
+    'chamfer R≠cutter plan returns mode runs with ≥8 runs',
+    planCh.mode === 'runs' && Array.isArray(planCh.runs) && planCh.runs.length >= 8,
+    `mode=${planCh.mode} n=${planCh.runs?.length}`,
+  );
+  check(
+    'fillet profile keeps R≠cutter as-is (no wrap fin spike)',
+    planFilletSweepPath(bottom, true, 2).mode === 'as-is',
+  );
   const unitRim = [];
   for (let i = 0; i < 12; i++) {
     const ang = (i / 12) * Math.PI * 2;
@@ -219,7 +250,7 @@ for (const [label, src] of stages) {
     console.log(
       `      ${label.padEnd(22)} vol=${p.volume.toFixed(1)} tris=${s.nTri} `
       + `fins=${s.fins} inwardVis=${s.inwardVis} sharpCorner=${s.sharpCorner} `
-      + `maxOver=${s.maxOver.toFixed(2)} bulge=${s.sphereBulge}`,
+      + `sharpBot=${s.sharpCornerBottom} maxOver=${s.maxOver.toFixed(2)} bulge=${s.sphereBulge}`,
     );
   } catch (e) {
     check(`${label} builds`, false, e.message);
@@ -267,9 +298,14 @@ check(
 check('full stack (bottom chamfer) builds', !!fullS && fullS.vol > 0, `vol=${fullS?.vol}`);
 check('full stack not sliver-dirty', fullS && !fullS.dirty, `tiny=${fullS?.tiny}/${fullS?.nTri}`);
 check(
-  'full stack keeps junction cusps consumed',
+  'full stack keeps top junction cusps consumed',
   fullS && fullS.sharpCorner === 0,
   `sharpCorner=${fullS?.sharpCorner}`,
+);
+check(
+  'full stack has NO bottom chamfer junction cusp verts (±14,-15,±10)',
+  fullS && fullS.sharpCornerBottom === 0,
+  `sharpCornerBottom=${fullS?.sharpCornerBottom}`,
 );
 check(
   'full stack visible-area inward triangles do not regress',
@@ -281,9 +317,13 @@ check(
   fullS && fullS.sphereBulge === 0,
   `sphereBulge=${fullS?.sphereBulge}`,
 );
+// Measured baseline after R≠cutter chamfer semi-arc split: fins≈600
+// (was ≤288 on continuous as-is chamfer, which left junction cusps / inward
+ // wedges). Open semi-arc endcaps trade fins for clean corners — same class
+// of tradeoff as the top-rim split (ceiling 260). Headroom to 650.
 check(
   'full stack long-fin count does not regress',
-  fullS && fullS.fins <= 360,
+  fullS && fullS.fins <= 650,
   `fins=${fullS?.fins}`,
 );
 
@@ -291,4 +331,4 @@ if (failed) {
   console.error(`\nFAILED: ${failed} check(s)`);
   process.exit(1);
 }
-console.log('\nAll Artur box-stack semi-arc-split checks passed.');
+console.log('\nAll Artur box-stack corner-arc semi-arc-split checks passed.');
