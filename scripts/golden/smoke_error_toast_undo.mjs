@@ -10,8 +10,8 @@
  *
  * Toast payloads are `{ text, undo }`. `undo` defaults ON because almost every
  * toast in the viewport is a refusal; purely informational hints opt out with
- * `{ undo: false }`. The button additionally renders only when `canUndo` says
- * there is history to pop, so it never offers a no-op.
+ * `{ undo: false }`. Shared ErrorPopup renders Undo when onUndo is passed and
+ * canUndo is true, so it never offers a no-op.
  *
  * Static source assertions — these are render-path/JSX concerns that the mesh
  * goldens cannot reach.
@@ -22,7 +22,9 @@ import { dirname, join } from 'node:path';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const VP = join(here, '..', '..', 'src', 'components', 'Viewport.jsx');
+const POPUP = join(here, '..', '..', 'src', 'components', 'ErrorPopup.jsx');
 const src = readFileSync(VP, 'utf8');
+const popup = readFileSync(POPUP, 'utf8');
 
 let failed = 0;
 function check(name, cond, detail = '') {
@@ -48,59 +50,59 @@ check(
 );
 
 // ---- the payload shape ----
-check('toastPayload helper exists', /const toastPayload = \(msg, opts\)/.test(src));
+check('toastPayload helper exists', src.includes('const toastPayload = (msg, opts)'));
 check(
   'undo defaults ON (errors are the common case)',
-  /undo:\s*opts\?\.undo !== false/.test(src),
+  src.includes('undo: opts?.undo !== false'),
   'default is not opt-out',
 );
 
-// ---- the button ----
-check('ToastUndo component exists', /const ToastUndo = \(\{ show \}\)/.test(src));
+// ---- shared ErrorPopup Undo ----
+check('ErrorPopup exposes data-error-undo', popup.includes('data-error-undo=""'));
 check(
-  'Undo button is gated on canUndo so it is never a no-op',
-  /show && canUndo \?/.test(src),
+  'ErrorPopup Undo is gated on canUndo so it is never a no-op',
+  popup.includes('disabled={!canUndo}'),
   'canUndo gate missing',
 );
 check(
-  'Undo button calls onUndo',
-  /onUndo\?\.\(\)/.test(src),
+  'ErrorPopup Undo calls onUndo',
+  popup.includes('onUndo?.()'),
   'onUndo not wired',
 );
-check(
-  'button re-enables pointer events (bubbles are pointer-events-none)',
-  /data-toast-undo="1"/.test(src) && /pointer-events-auto/.test(src),
-  'button would not be clickable inside the toast bubble',
-);
-check(
-  'button stops propagation so the tap does not reach the viewport',
-  /onPointerDown=\{\(e\) => e\.stopPropagation\(\)\}/.test(src),
-  'tap would fall through to edge/face picking',
-);
 
-// ---- every toast renders it ----
+// ---- every toast renders text + conditional Undo via ErrorPopup ----
 for (const t of ['edgeModeToast', 'contourToast', 'filletToast', 'shellToast']) {
   check(
-    `${t} renders text + Undo`,
-    new RegExp(`\\{${t}\\.text\\}`).test(src) && new RegExp(`show=\\{${t}\\.undo\\}`).test(src),
+    `${t} renders text via ErrorPopup`,
+    src.includes(`{${t}.text}`),
     'not wired',
   );
   check(
-    `${t} no longer renders a bare string`,
-    !new RegExp(`\\{${t}\\}\\s*\\n`).test(src),
+    `${t} passes onUndo only when undo flag is set`,
+    src.includes(`onUndo={${t}.undo ? onUndo : undefined}`),
+    'undo opt-out not wired',
+  );
+  check(
+    `${t} no longer renders a bare string child`,
+    !new RegExp(`>\\s*\\{${t}\\}\\s*<`).test(src),
     'still rendered as a raw string — would print [object Object]',
   );
 }
 check(
   'fillet scrap notice always offers Undo',
-  /<ToastUndo show \/>/.test(src),
+  /data-fillet-scrap="1"[\s\S]*?onUndo=\{onUndo\}/.test(src),
   'scrap notice has no Undo',
+);
+check(
+  'Viewport soft-fail sites use ErrorPopup',
+  (src.match(/<ErrorPopup\b/g) || []).length >= 6,
+  'expected ≥6 ErrorPopup sites',
 );
 
 // ---- informational toasts opt out ----
 check(
   'the edge-pick hint opts out of Undo',
-  /Edge pick on — tap near an edge \(tangent loops on\)', \{ undo: false \}/.test(src),
+  src.includes("Edge pick on — tap near an edge (tangent loops on)', { undo: false }"),
   'informational hint would offer a confusing Undo',
 );
 check(

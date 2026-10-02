@@ -5,6 +5,7 @@ import PromptInput from './components/PromptInput';
 import SplitDivider from './components/SplitDivider';
 import MobileStageToggle from './components/MobileStageToggle';
 import FeatureStrip from './components/FeatureStrip';
+import ErrorPopup from './components/ErrorPopup';
 import FeatureSheet from './components/FeatureSheet';
 import {
   writeFeatureSheetParams,
@@ -80,9 +81,10 @@ const App = () => {
   /** Script-stage feature strip: which chip is selected (null = none). */
   const [featureStripActiveId, setFeatureStripActiveId] = useState(null);
   /**
-   * Height of the editor ribbon, MEASURED. Script-stage feature strip overlays
-   * with `top: ribbonPx` so chips start flush under the full-width ribbon.
-   * ResizeObserver keeps it exact as the ribbon's contents change.
+   * Height of the editor ribbon, MEASURED. Mobile Script-stage strip overlays
+   * with `top: ribbonPx`; desktop seam strip uses a matching spacer so chips
+   * start flush under the ribbon (not overlapping). ResizeObserver keeps it
+   * exact as the ribbon's contents change.
    */
   const [ribbonPx, setRibbonPx] = useState(44);
   /** Script-stage strip: caret jump only (no FeatureSheet — CAD strip / long-press keep the sheet). */
@@ -1784,29 +1786,29 @@ const App = () => {
           )}
           {showConfetti && <GameConfetti durationMs={SUCCESS_CLEAR_MS} />}
           {gameError && (
-            <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-red-900/90 text-white px-4 py-2 rounded shadow-lg z-50 max-w-md">
-              <div className="flex items-center gap-2">
-                <span>{gameError}</span>
-                <button 
-                  onClick={() => setGameError(null)}
-                  className="ml-2 text-white hover:text-gray-200"
-                >
-                  ×
-                </button>
-              </div>
+            <div className="absolute top-4 left-1/2 transform -translate-x-1/2 z-50 max-w-md">
+              <ErrorPopup
+                tone="banner"
+                onDismiss={() => setGameError(null)}
+                onUndo={handleUndo}
+                canUndo={canUndo()}
+                className="px-4 py-2"
+              >
+                {gameError}
+              </ErrorPopup>
             </div>
           )}
           {uploadError && (
-            <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-red-900/90 text-white px-4 py-2 rounded shadow-lg z-50 max-w-md">
-              <div className="flex items-center gap-2">
-                <span>Upload Error: {uploadError}</span>
-                <button 
-                  onClick={() => setUploadError(null)}
-                  className="ml-2 text-white hover:text-gray-200"
-                >
-                  ×
-                </button>
-              </div>
+            <div className="absolute top-4 left-1/2 transform -translate-x-1/2 z-50 max-w-md">
+              <ErrorPopup
+                tone="banner"
+                onDismiss={() => setUploadError(null)}
+                onUndo={handleUndo}
+                canUndo={canUndo()}
+                className="px-4 py-2"
+              >
+                Upload Error: {uploadError}
+              </ErrorPopup>
             </div>
           )}
         </div>
@@ -1854,20 +1856,31 @@ const App = () => {
             </div>
           )}
         </div>
-        {/* Desktop feature strip: vertical chips in the seam between editor and viewer. */}
+        {/* Desktop feature strip: vertical chips in the seam, starting BELOW the
+            measured editor ribbon (same spacer pattern as mobile Script stage). */}
         {appMode !== 'game' && (
           <div
             className="shrink-0 flex flex-col self-stretch h-full min-h-0"
             data-desktop-feature-strip=""
             data-feature-strip-placement="desktop-seam"
+            data-feature-strip-below-ribbon=""
           >
-            <FeatureStrip
-              orientation="vertical"
-              side="between"
-              script={currentScript}
-              activeId={featureStripActiveId}
-              onJump={handleDesktopFeatureStripJump}
+            <div
+              className="shrink-0 w-full"
+              style={{ height: ribbonPx }}
+              data-feature-strip-ribbon-spacer=""
+              data-feature-strip-ribbon-spacer-h="measured"
+              aria-hidden="true"
             />
+            <div className="flex-1 min-h-0 flex flex-col">
+              <FeatureStrip
+                orientation="vertical"
+                side="between"
+                script={currentScript}
+                activeId={featureStripActiveId}
+                onJump={handleDesktopFeatureStripJump}
+              />
+            </div>
           </div>
         )}
         <SplitDivider orientation="vertical" onDrag={(x) => handleSplitDragX(x)} />
@@ -1985,31 +1998,31 @@ const App = () => {
           )}
           {showConfetti && <GameConfetti durationMs={SUCCESS_CLEAR_MS} />}
         {gameError && (
-          <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-red-900/90 text-white px-4 py-2 rounded shadow-lg z-50 max-w-md">
-            <div className="flex items-center gap-2">
-              <span>{gameError}</span>
-              <button 
-                onClick={() => setGameError(null)}
-                className="ml-2 text-white hover:text-gray-200"
+            <div className="absolute top-4 left-1/2 transform -translate-x-1/2 z-50 max-w-md">
+              <ErrorPopup
+                tone="banner"
+                onDismiss={() => setGameError(null)}
+                onUndo={handleUndo}
+                canUndo={canUndo()}
+                className="px-4 py-2"
               >
-                ×
-              </button>
+                {gameError}
+              </ErrorPopup>
             </div>
-          </div>
-        )}
+          )}
         {uploadError && (
-          <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-red-900/90 text-white px-4 py-2 rounded shadow-lg z-50 max-w-md">
-            <div className="flex items-center gap-2">
-              <span>Upload Error: {uploadError}</span>
-              <button 
-                onClick={() => setUploadError(null)}
-                className="ml-2 text-white hover:text-gray-200"
+            <div className="absolute top-4 left-1/2 transform -translate-x-1/2 z-50 max-w-md">
+              <ErrorPopup
+                tone="banner"
+                onDismiss={() => setUploadError(null)}
+                onUndo={handleUndo}
+                canUndo={canUndo()}
+                className="px-4 py-2"
               >
-                ×
-              </button>
+                Upload Error: {uploadError}
+              </ErrorPopup>
             </div>
-          </div>
-        )}
+          )}
       </div>
   );
 };

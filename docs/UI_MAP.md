@@ -57,7 +57,9 @@ nothing. Names are sanitised (`sanitizePartName`) because they end up in
 Desktop specifics:
 - **Feature strip (desktop seam):** `FeatureStrip.jsx` mounts **between** the
   editor column and the viewport (`data-desktop-feature-strip`,
-  `data-feature-strip-placement="desktop-seam"`, `side="between"`). Vertical
+  `data-feature-strip-placement="desktop-seam"`, `side="between"`). Starts
+  **below the measured editor ribbon** (`data-feature-strip-below-ribbon`,
+  spacer `height: ribbonPx`) so chips do not overlap the top toolbar. Vertical
   chips match mobile (cube / fillet / … from `parseFeatureMarkers`); tap jumps
   Monaco caret via `handleDesktopFeatureStripJump` (no feature sheet — sheets
   stay mobile-only). Hidden in game mode. SplitDivider stays immediately to the
@@ -153,14 +155,16 @@ Mobile specifics:
 - **Edge-pick chip (C.1):** horizontally centered + raised
   (`left-1/2 -translate-x-1/2`, `bottom-20` mobile / `bottom-14` desktop) so it
   clears the right rail and home-indicator / CAD|Script dots.
-- **Left ↔ right rail height (C.1):** helper / contour left rail uses the same
-  bottom inset as the right cluster (`bottom-2.5`) and
-  `h-[min(26rem,calc(100%-5.5rem))]` (shared `RAIL_PAIR_HEIGHT_CLASS`) so left/right match pixel-perfect;
+- **Left ↔ right rail height (C.1 → content-max):** helper / contour left rail
+  uses the same bottom inset as the right cluster (`bottom-2.5`) and
+  `max-h-[min(26rem,calc(100%-5.5rem))]` (shared `RAIL_PAIR_HEIGHT_CLASS`) —
+  content-height up to just below the part-name chip; scrolls when the window
+  is too short; when buttons fit, width yields to `w-14` (`data-rail-fit`).
   Edge-pick **Tangent on** (C.3): seed-plane G1 + same-face parallel bridge so a
   `roundedBox` top rim floods the full coherent loop (not 1 leftover segment).
   C.4: `buildCoherentEdges` traces tagged vs untagged sharp pools separately so
   post-fillet rounded rails (untagged open arcs) stay pickable for Tangent-on.
-  overflow scrolls inside (`data-rail-pair="left"|"right"`).
+  Overflow scrolls inside (`data-rail-pair="left"|"right"`).
 - **Ribbon / top chrome bg (C.1):** editor mid-strip is `bg-gray-900`
   (`data-ribbon-bg="editor"`), matching the code editor shell.
 - **Default view snaps (Slice Mobile B.1):** `VIEW_SNAP_MARGIN = 1.35` (was
@@ -228,7 +232,7 @@ All of these are absolutely positioned inside the shell at
 | left-2/4 bottom-2.5 | contour tool rail (replaces the helper rail) | `ContourModeRail.jsx` | Viewport |
 | right-2/4 bottom-4 | view / pick / cross-section cluster | `CrossSectionPanel.jsx:175` collapsed, `:327` expanded | `:3641` |
 | inside that cluster | Front/Right/Top/**Iso** snap popup | `ViewSnapControl.jsx` | `CrossSectionPanel.jsx:181` |
-| top-16 right-4 | execution error card | inline | `:3686` |
+| top-16 right-4 | execution error card (`ErrorPopup` + Undo) | `ErrorPopup.jsx` | Viewport |
 | *(removed C.1)* | Selected Face readout | — | — |
 | bottom-4 right-2/4 | contour param chip | `ContourModeChip.jsx:176` | `:3733` |
 | bottom-4 right-2/4 | fillet param chip | `FilletModeChip.jsx:43` | `:3835` |
@@ -267,8 +271,10 @@ phones, centered dialog on desktop**.
 | Terms | order flow | `TermsModal.jsx` | |
 | Confetti | puzzle win | `GameConfetti.jsx` | full-viewport canvas, not a modal |
 
-Error banners (`gameError`, `uploadError`) are inline at
-`absolute top-4 left-1/2 … z-50`, duplicated in both shells.
+Error banners (`gameError`, `uploadError`) and viewport soft-fail / scrap /
+execution cards all use `ErrorPopup.jsx` (always includes an **Undo** button
+wired to App undo history). App banners sit at `absolute top-4 left-1/2 …
+z-50`, duplicated in both shells.
 
 ---
 
@@ -443,8 +449,10 @@ Import `src/utils/importModel.js` (+ `POST /api/convert/step`); export
   is near zero; wrapping collapses the row into a vertical stack. `w-max` +
   `flex-nowrap` keep it the horizontal row it is meant to be.
 - **Rail height and rail scrolling are separate classes** (`utils/railPair.js`).
-  Both rails share `RAIL_PAIR_HEIGHT_CLASS` so they match pixel-perfect; only
-  the LEFT rails add `RAIL_SCROLL_CLASS`. The right rail takes
+  Left rails share `RAIL_PAIR_HEIGHT_CLASS` as a **max-height** (content-sized,
+  capped just below the part name); only the LEFT rails add `RAIL_SCROLL_CLASS`.
+  When buttons fit without scroll, `useLeftRailFit` switches to
+  `RAIL_PAIR_WIDTH_FIT_CLASS` (`w-14`). The right rail takes
   `RAIL_NO_CLIP_CLASS` (`overflow-visible`) because the view-snap flyout is
   positioned **outside** the rail box (`absolute right-full`) — any `overflow`
   on that rail deletes the flyout from the screen and adds a scrollbar it does

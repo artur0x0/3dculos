@@ -81,15 +81,11 @@ console.log('mobile C.3: sheet delete + ribbon z + CAD gap + Block + rail height
 
   // 2 — Script ribbon / strip (C.3 z-order; C.4 overflow clip + taller spacer + strip z-20)
   check(
-    'Script editor stack z-30 overflow-hidden; strip z-20 below ribbon spacer',
-    /data-script-editor-stack/.test(app) &&
-      /relative z-30 flex-1 min-h-0 overflow-hidden/.test(app) &&
-      /data-script-feature-strip/.test(app) &&
-      /relative z-20 flex flex-col shrink-0/.test(app) &&
-      /data-feature-strip-ribbon-spacer/.test(app) &&
-      // The spacer is measured from the ribbon now, not a hard-coded h-11.
+    'Script/desktop strip sits below measured ribbon (C.4 overlay or seam spacer)',
+    /data-script-feature-strip/.test(app) &&
+      /data-feature-strip-below-ribbon/.test(app) &&
       /data-feature-strip-ribbon-spacer-h="measured"/.test(app) &&
-      /style=\{\{ height: ribbonPx \}\}/.test(app) &&
+      (/style=\{\{ top: ribbonPx \}\}/.test(app) || /style=\{\{ height: ribbonPx \}\}/.test(app)) &&
       /data-editor-ribbon/.test(editor) &&
       /relative z-30/.test(editor),
   );
@@ -112,14 +108,14 @@ console.log('mobile C.3: sheet delete + ribbon z + CAD gap + Block + rail height
 
   // 5 — Exact shared rail height
   check(
-    'RAIL_PAIR_HEIGHT_CLASS is exact h-[…] (not max-h)',
-    /h-\[min\(26rem,calc\(100%-5\.5rem\)\)\]/.test(railPair) &&
-      !/max-h-\[min\(26rem/.test(railPair) &&
-      RAIL_PAIR_HEIGHT_ATTR === 'paired' &&
-      RAIL_PAIR_HEIGHT_CLASS.includes('h-[min(26rem'),
+    'RAIL_PAIR_HEIGHT_CLASS is content-max (max-h, not fixed h)',
+    /max-h-\[min\(26rem,calc\(100%-5\.5rem\)\)\]/.test(railPair) &&
+      !/^export const RAIL_PAIR_HEIGHT_CLASS = 'h-\[/.test(railPair) &&
+      RAIL_PAIR_HEIGHT_ATTR === 'content-max' &&
+      RAIL_PAIR_HEIGHT_CLASS.includes('max-h-[min(26rem'),
   );
   check(
-    'Left + contour rails use RAIL_PAIR_HEIGHT_CLASS (right is content-height)',
+    'Left + contour rails use RAIL_PAIR_HEIGHT_CLASS content-max (right stays free)',
     /RAIL_PAIR_HEIGHT_CLASS/.test(palette) &&
       /RAIL_PAIR_HEIGHT_CLASS/.test(contourRail) &&
       !/RAIL_PAIR_HEIGHT_CLASS/.test(rightRail) &&

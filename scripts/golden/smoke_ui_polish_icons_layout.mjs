@@ -167,7 +167,7 @@ const contourRail = read('../../src/components/ContourModeRail.jsx');
   check('the right rail never scrolls', !/RAIL_SCROLL_CLASS/.test(panel)
     && /RAIL_NO_CLIP_CLASS/.test(panel));
   check('height and scrolling are separate concerns',
-    /RAIL_PAIR_HEIGHT_CLASS = 'h-\[min\(26rem,calc\(100%-5\.5rem\)\)\]'/.test(railPair));
+    /RAIL_PAIR_HEIGHT_CLASS = 'max-h-\[min\(26rem,calc\(100%-5\.5rem\)\)\]'/.test(railPair));
   check('the no-clip class is overflow-visible',
     /RAIL_NO_CLIP_CLASS = 'overflow-visible'/.test(railPair));
   check('rail-scroll gives the thumb a pill radius', /\.rail-scroll::-webkit-scrollbar-thumb[\s\S]{0,200}?border-radius: 9999px/.test(css));
@@ -302,8 +302,13 @@ const contourRail = read('../../src/components/ContourModeRail.jsx');
     const src = read(`../../src/components/${name}.jsx`);
     check(`${name} is frosted`, /surface-glass-chip/.test(src));
   }
+  const errorPopup = read('../../src/components/ErrorPopup.jsx');
+  // ErrorPopup consolidates execution/soft-fail/scrap toast frosting (was ≥8
+  // inline surface-glass-chip hits in Viewport alone).
   check('viewport chips and toasts are frosted',
-    (view.match(/surface-glass-chip/g) || []).length >= 8);
+    /surface-glass-chip/.test(errorPopup) &&
+      ((view.match(/surface-glass-chip/g) || []).length
+        + (errorPopup.match(/surface-glass-chip/g) || []).length) >= 6);
   check('no fully opaque toast survives in the viewport',
     !/bg-(?:amber-600|amber-700|cyan-700) text-white/.test(view));
 }
@@ -438,17 +443,25 @@ const contourRail = read('../../src/components/ContourModeRail.jsx');
     /absolute right-full/.test(snap));
 }
 
-// ── AC20: desktop left rail runs the height of the viewer ──
+// ── AC20: left rail content-max height; narrows when buttons fit ──
+// Supersedes the earlier full-length desktop rail: content-sized max-h yields
+// viewport space, and useLeftRailFit switches to w-14 when nothing scrolls.
 {
   const railPair = read('../../src/utils/railPair.js');
-  check('there is a full-length class anchored top AND bottom',
-    /RAIL_FULL_LENGTH_CLASS = 'top-14 bottom-2\.5'/.test(railPair));
+  check('left rail height is content-max (max-h)',
+    /max-h-\[min\(26rem,calc\(100%-5\.5rem\)\)\]/.test(railPair)
+      && /RAIL_PAIR_HEIGHT_ATTR = 'content-max'/.test(railPair));
+  check('fit hook narrows width when buttons fit',
+    /useLeftRailFit/.test(railPair)
+      && /RAIL_PAIR_WIDTH_FIT_CLASS = 'w-14'/.test(railPair));
   for (const [name, src] of [['helper rail', palette], ['contour rail', contourRail]]) {
-    check(`${name} is full-length on desktop, boxed on phones`,
-      /\$\{compact \? `bottom-2\.5 \$\{RAIL_PAIR_HEIGHT_CLASS\}` : RAIL_FULL_LENGTH_CLASS\}/.test(src));
+    check(`${name} uses fit hook + content-max height`,
+      /useLeftRailFit/.test(src)
+        && /RAIL_PAIR_HEIGHT_CLASS/.test(src)
+        && /data-rail-fit=\{fits \? 'fits' : 'scroll'\}/.test(src));
     check(`${name} still scrolls when the tools overflow`, /RAIL_SCROLL_CLASS/.test(src));
   }
-  // top-14 clears the part-name chip, which sits at top-4 and is ~30px tall.
+  // Part-name chip sits at top-4; content-max caps below it via calc(100%-5.5rem).
   check('the rail stops below the part-name chip, not over it',
     /top-4 left-1\/2 -translate-x-1\/2/.test(view));
 }

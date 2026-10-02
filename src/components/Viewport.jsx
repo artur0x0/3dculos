@@ -51,6 +51,7 @@ import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import Toolbar from './Toolbar';
 import CrossSectionPanel from './CrossSectionPanel';
 import HelperInsertPalette from './HelperInsertPalette';
+import ErrorPopup from './ErrorPopup';
 import ContourModeRail from './ContourModeRail';
 import ContourModeChip from './ContourModeChip';
 import FilletModeChip from './FilletModeChip';
@@ -144,7 +145,6 @@ import {
   stampBoundaryOnSelection,
   filletOverlayTargets,
 } from '../utils/boundaryEdgeIds';
-import { X } from 'lucide-react';
 import { downloadModelFromMesh, get3MFBase64FromMesh } from '../utils/exportModel';
 import { parseImportedModels, loadCachedModel } from '../utils/importModel';
 import { calculateQuote } from '../utils/quoting';
@@ -498,25 +498,6 @@ const Viewport = forwardRef(({
    */
   const toastPayload = (msg, opts) => (
     msg == null ? null : { text: String(msg), undo: opts?.undo !== false }
-  );
-
-  /**
-   * Undo affordance inside an error toast. The bubble itself is
-   * pointer-events-none so it never eats viewport taps, so the button has to
-   * re-enable them for itself.
-   */
-  const ToastUndo = ({ show }) => (
-    show && canUndo ? (
-      <button
-        type="button"
-        data-toast-undo="1"
-        onPointerDown={(e) => e.stopPropagation()}
-        onClick={(e) => { e.stopPropagation(); onUndo?.(); }}
-        className="pointer-events-auto ml-2 shrink-0 rounded-full border border-white/50 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide hover:bg-white/20 active:bg-white/30"
-      >
-        Undo
-      </button>
-    ) : null
   );
 
   const armEdgeModeToastClear = () => {
@@ -4459,19 +4440,17 @@ const Viewport = forwardRef(({
         />
       
       {executionError && (
-        <div className="absolute top-16 right-4 bg-red-900/85 surface-glass-chip text-white p-3 rounded-lg text-xs max-w-md z-10">
-          <div className="flex items-start justify-between gap-2">
-            <div>
-              <div className="font-bold mb-1">Execution Error</div>
-              <div>{executionError}</div>
-            </div>
-            <button
-              onClick={() => setExecutionError(null)}
-              className="text-red-200 hover:text-white"
-            >
-              <X size={14} />
-            </button>
-          </div>
+        <div className="absolute top-16 right-4 max-w-md z-10">
+          <ErrorPopup
+            tone="error"
+            title="Execution Error"
+            onDismiss={() => setExecutionError(null)}
+            onUndo={onUndo}
+            canUndo={canUndo}
+            className="p-3"
+          >
+            {executionError}
+          </ErrorPopup>
         </div>
       )}
       
@@ -4760,51 +4739,78 @@ const Viewport = forwardRef(({
       )}
 
       {edgeModeToast && (
-        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-30 pointer-events-none">
-          <div className="bg-amber-600/85 surface-glass-chip text-white text-xs font-sans font-medium px-3 py-2 rounded-full shadow-lg flex items-center">
-            <span>{edgeModeToast.text}</span>
-            <ToastUndo show={edgeModeToast.undo} />
-          </div>
+        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-30 pointer-events-none max-w-[min(22rem,calc(100%-2rem))]">
+          <ErrorPopup
+            tone="amber"
+            rounded="rounded-full"
+            onDismiss={() => setEdgeModeToast(null)}
+            onUndo={edgeModeToast.undo ? onUndo : undefined}
+            canUndo={canUndo}
+            className="px-3 py-2 pointer-events-auto"
+          >
+            {edgeModeToast.text}
+          </ErrorPopup>
         </div>
       )}
 
       {contourToast && (
         <div className="absolute top-16 left-1/2 -translate-x-1/2 z-30 pointer-events-none max-w-[min(22rem,calc(100%-2rem))]">
-          <div className="bg-cyan-700/85 surface-glass-chip text-white text-xs font-sans font-medium px-3 py-2 rounded-full shadow-lg text-center flex items-center justify-center">
-            <span>{contourToast.text}</span>
-            <ToastUndo show={contourToast.undo} />
-          </div>
+          <ErrorPopup
+            tone="cyan"
+            rounded="rounded-full"
+            onDismiss={() => setContourToast(null)}
+            onUndo={contourToast.undo ? onUndo : undefined}
+            canUndo={canUndo}
+            className="px-3 py-2 pointer-events-auto"
+          >
+            {contourToast.text}
+          </ErrorPopup>
         </div>
       )}
 
       {filletScrapNotice && (
         <div className="absolute top-16 left-1/2 -translate-x-1/2 z-30 pointer-events-none max-w-[min(18rem,calc(100%-2rem))]">
-          <div
-            className="bg-red-950/85 surface-glass-chip border border-red-400/80 text-red-50 text-xs font-sans font-medium px-3 py-2 rounded-lg shadow-lg text-center flex items-center justify-center"
+          <ErrorPopup
+            tone="scrap"
             role="status"
             data-fillet-scrap="1"
+            onDismiss={() => setFilletScrapNotice(null)}
+            onUndo={onUndo}
+            canUndo={canUndo}
+            className="px-3 py-2 pointer-events-auto"
           >
-            <span>{filletScrapNotice}</span>
-            <ToastUndo show />
-          </div>
+            {filletScrapNotice}
+          </ErrorPopup>
         </div>
       )}
 
       {filletToast && (
         <div className="absolute top-16 left-1/2 -translate-x-1/2 z-30 pointer-events-none max-w-[min(22rem,calc(100%-2rem))]">
-          <div className="bg-amber-700/85 surface-glass-chip text-white text-xs font-sans font-medium px-3 py-2 rounded-full shadow-lg text-center flex items-center justify-center">
-            <span>{filletToast.text}</span>
-            <ToastUndo show={filletToast.undo} />
-          </div>
+          <ErrorPopup
+            tone="warn"
+            rounded="rounded-full"
+            onDismiss={() => setFilletToast(null)}
+            onUndo={filletToast.undo ? onUndo : undefined}
+            canUndo={canUndo}
+            className="px-3 py-2 pointer-events-auto"
+          >
+            {filletToast.text}
+          </ErrorPopup>
         </div>
       )}
 
       {shellToast && (
         <div className="absolute top-16 left-1/2 -translate-x-1/2 z-30 pointer-events-none max-w-[min(22rem,calc(100%-2rem))]">
-          <div className="bg-cyan-700/85 surface-glass-chip text-white text-xs font-sans font-medium px-3 py-2 rounded-full shadow-lg text-center flex items-center justify-center">
-            <span>{shellToast.text}</span>
-            <ToastUndo show={shellToast.undo} />
-          </div>
+          <ErrorPopup
+            tone="cyan"
+            rounded="rounded-full"
+            onDismiss={() => setShellToast(null)}
+            onUndo={shellToast.undo ? onUndo : undefined}
+            canUndo={canUndo}
+            className="px-3 py-2 pointer-events-auto"
+          >
+            {shellToast.text}
+          </ErrorPopup>
         </div>
       )}
 
