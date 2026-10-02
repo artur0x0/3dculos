@@ -12,31 +12,40 @@
  *   (a) a dark surface sliver on the wrap fillet
  *   (b) ribbed/comb-tooth chamfer around the rounded corners
  *
- * MEASURED ROOT CAUSE of (a) — the fins are *coplanar boolean slivers*, not
- * bad geometry. Running the fixture stage by stage, the part is clean through
- * three fillets and the wrap step alone introduces them:
+ * MEASURED ROOT CAUSE of (a): sweeping one cross-section straight through a
+ * sharp PATH CORNER. The sweep path for a face-perimeter wrap on a plain
+ * 40x30x20 cube is FOUR points with a 90 deg turn at every one, and theta is
+ * 90 deg everywhere, so theta-grouping put all four legs in ONE run and swept
+ * them as a single piece. Across a 90 deg turn the consecutive cross-sections
+ * cross each other on the INSIDE of the bend: the cutter self-intersects, and
+ * the boolean resolves the crossing into inward-facing facets. Inward normals
+ * render dark -- that is the wedge in the screenshot.
  *
- *   cube                      12 tris    0 fins
- *   + fillet r=3             108 tris    1 fin
- *   + 3x fillet r=6 varProf  396 tris    0 fins
- *   + WRAP r=2.88           6176 tris  143 fins   <-- here
- *   + chamfer c=2           6588 tris  196 fins
+ * Isolated on a CLEAN cube (no prior fillets needed): 13 inverted triangles,
+ * 7 with visible area, sitting exactly on the four rectangle corners.
  *
- * and every fin lies exactly in one of three planes:
+ * densifyPathByMaxTurn cannot prevent it -- densifying splits SEGMENTS, and a
+ * corner is a vertex, not an arc, so splitting the legs leaves the turn at the
+ * vertex untouched.
  *
- *   56  y=12.12   == 15 - 2.88, the fillet SETBACK plane (the cutter flank)
- *   53  y=15.00   the face being filleted
- *   28  z=10.00   the adjacent top face
+ * It was also removing far too little material, because a self-intersecting
+ * cutter loses volume to its own overlap:
  *
- * So the cutter's planar flanks are exactly coplanar with the part's faces and
- * Manifold re-triangulates the coplanar contact into long needles. The fix is
- * to keep cutter flanks off exact coplanarity (cf. the rear `(-e,-e)` bumper,
- * which is not covering the setback plane on this geometry) — NOT to drop path
- * samples, and NOT to loosen the sliver guard.
+ *   wrap r=2.88   removed 133.1 mm3 -> 205.0 mm3   (analytic 213.6)
+ *   wrap r=6      removed 534.2 mm3 -> 846.3 mm3   (analytic 927.1)
  *
- * This golden LOCKS the current numbers so the defect cannot silently worsen,
- * and so the fix shows up as the counts going to ~0. Thresholds are ceilings:
- * tighten them when the cutter fix lands.
+ * The residual shortfall is real corner overlap between the two legs and is
+ * correct. Fix: _s23SplitRunsAtCorners breaks theta-runs at sharp direction
+ * changes so each straight leg is its own swept piece and M.union resolves the
+ * corner. Smooth runs (tessellated rims, loft ridges) stay in one piece.
+ *
+ * NOTE the earlier hypothesis -- coplanar cutter flanks on the setback plane
+ * y = 15 - 2.88 = 12.12 -- was a SYMPTOM, not the cause. Those fins were a
+ * by-product of the self-intersecting cutter; with the corner fix the setback
+ * plane is no longer a sliver plane at all. Needles are invisible anyway
+ * (coplanar with the face they sit in); only INVERTED normals render dark, so
+ * the inward-facing count below is the check that actually tracks the bug.
+ * isFilletSliverDirty never fired here either way.
  */
 import { register } from 'node:module';
 import { readFileSync } from 'node:fs';
@@ -176,8 +185,8 @@ check(
 );
 
 // Ceilings on the known defect. Lower these when the cutter fix lands.
-const WRAP_FIN_CEILING = 143;
-const FULL_FIN_CEILING = 196;
+const WRAP_FIN_CEILING = 138;
+const FULL_FIN_CEILING = 190;
 const wrap = by['+ top-loop wrap r=2.88'];
 const whole = by['+ chamfer c=2'];
 check(
@@ -202,11 +211,16 @@ if (wrap) {
     planar >= wrap.fins * 0.9,
     `${planar}/${wrap.fins} lie in an axis plane`,
   );
-  const hasSetback = [...wrap.planes.keys()].some((k) => k.startsWith('y=12.1'));
+  // The corner fix moved the cause: the setback plane y = 15 - 2.88 = 12.12 is
+  // no longer a concentration of slivers. If it comes back as a dominant
+  // plane, the self-intersecting-cutter regression is back.
+  const setback = [...wrap.planes.entries()]
+    .filter(([k]) => k.startsWith('y=12.1'))
+    .reduce((a, [, v]) => a + v, 0);
   check(
-    'setback plane y=15-2.88 is among the sliver planes (root cause marker)',
-    hasSetback,
-    [...wrap.planes.keys()].join(' '),
+    'setback plane is no longer a sliver concentration (corner fix held)',
+    setback <= 2,
+    `${setback} fins still on y=12.1x`,
   );
   console.log('      wrap fin planes: ' + [...wrap.planes.entries()]
     .sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k}×${v}`).join('  '));
@@ -262,15 +276,15 @@ if (wrap) {
     }
   }
   console.log(`      wrap stage: ${inward} inward-facing triangles, ${inwardVisible} with visible area (>0.5mm²)`);
-  const INWARD_CEILING = 51;
-  const INWARD_VISIBLE_CEILING = 3;
+  const INWARD_CEILING = 11;
+  const INWARD_VISIBLE_CEILING = 0;
   check(
     'inward-facing triangle count does not regress',
     inward <= INWARD_CEILING,
     `${inward} > ceiling ${INWARD_CEILING}`,
   );
   check(
-    'visible-area inward triangles do not regress (this IS the dark wedge)',
+    'NO visible-area inward triangles — the dark wedge is gone',
     inwardVisible <= INWARD_VISIBLE_CEILING,
     `${inwardVisible} > ceiling ${INWARD_VISIBLE_CEILING}`,
   );

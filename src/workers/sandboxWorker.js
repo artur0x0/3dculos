@@ -4092,12 +4092,68 @@ function _s23ProbeKnotNormals(part, points, closed) {
  * is kept only because this helper still serves the easy dihedral path; do not
  * reach for it as a loft fix.
  */
+/**
+ * Break θ-runs at sharp direction changes.
+ *
+ * θ-grouping only looks at the dihedral, so a face-perimeter wrap — every
+ * corner 90°, every θ exactly 90° — grouped into ONE run and was swept as a
+ * single piece straight through the corners. Sweeping one section through a
+ * 90° turn makes consecutive cross-sections cross on the INSIDE of the bend:
+ * the cutter self-intersects, and the boolean resolves the crossing into
+ * inward-facing facets. Those render dark — Artur's wrap-fillet surface
+ * sliver. Measured on a plain 40×30×20 cube with nothing but the wrap: the
+ * sweep path is 4 points, all four turning 90°, and the result carries 13
+ * inverted triangles (7 with visible area) sitting exactly on those corners.
+ *
+ * densifyPathByMaxTurn cannot prevent this: densifying splits SEGMENTS, and a
+ * corner is a vertex, not an arc, so splitting the legs leaves the turn at the
+ * vertex untouched.
+ *
+ * Splitting gives each straight leg its own swept piece; `M.union` then
+ * resolves the corner overlap properly instead of a self-intersecting single
+ * solid. Smooth runs (tessellated rims, loft ridges) stay in one piece — the
+ * gate is well above their per-segment turn.
+ */
+const _S23_RUN_CORNER_DEG = 25;
+
+function _s23SplitRunsAtCorners(runs) {
+  if (!Array.isArray(runs) || !runs.length) return runs;
+  const cosGate = Math.cos((_S23_RUN_CORNER_DEG * Math.PI) / 180);
+  const dirOf = (s) => {
+    if (!s?.p0 || !s?.p1) return null;
+    const d = [s.p1[0] - s.p0[0], s.p1[1] - s.p0[1], s.p1[2] - s.p0[2]];
+    const L = Math.hypot(d[0], d[1], d[2]);
+    return L > 1e-12 ? [d[0] / L, d[1] / L, d[2] / L] : null;
+  };
+  const out = [];
+  for (const run of runs) {
+    if (!Array.isArray(run) || run.length < 2) {
+      if (run?.length) out.push(run);
+      continue;
+    }
+    let cur = [run[0]];
+    for (let i = 1; i < run.length; i++) {
+      const a = dirOf(run[i - 1]);
+      const b = dirOf(run[i]);
+      const sharp = a && b && _c4Dot(a, b) < cosGate;
+      if (sharp) {
+        out.push(cur);
+        cur = [run[i]];
+      } else {
+        cur.push(run[i]);
+      }
+    }
+    if (cur.length) out.push(cur);
+  }
+  return out;
+}
+
 function _s23CuttersFromSegs(M, CrossSection, segs, closed, radius, profileKind, arcSegs, testScale, opts = {}) {
   const singleRun = !!opts.singleRun;
   const thetaRunCount = countThetaRuns(segs);
   const runs = singleRun
     ? (segs.length ? [segs] : [])
-    : _s23GroupRuns(segs, closed);
+    : _s23SplitRunsAtCorners(_s23GroupRuns(segs, closed));
   const cutters = [];
   let expectVol = 0;
   for (const run of runs) {
