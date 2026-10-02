@@ -95,10 +95,22 @@ const App = () => {
       setFeatureStripActiveId((cur) => (cur === feature.id ? null : cur));
     }, 400);
   };
-  /** Desktop seam strip: jump caret only (feature sheets stay mobile-only). */
+  /**
+   * Desktop seam strip: jump the caret AND open the feature sheet in the
+   * viewer. Both panes are on screen here, so editing the feature and seeing
+   * the code it owns are not a trade-off the way they are on a phone.
+   */
   const handleDesktopFeatureStripJump = (feature) => {
     if (!feature) return;
     setFeatureStripActiveId(feature.id);
+    codeEditorRef.current?.revealRange?.(feature.startOffset, feature.endOffset);
+    setFeatureSheet({ mode: 'edit', feature });
+  };
+  /** Desktop "Edit script": the editor is already visible — just reveal it. */
+  const handleDesktopFeatureSheetEditScript = (feature) => {
+    if (!feature) return;
+    setFeatureSheet(null);
+    // revealRange already selects, scrolls and focuses the editor.
     codeEditorRef.current?.revealRange?.(feature.startOffset, feature.endOffset);
   };
   /**
@@ -1859,7 +1871,7 @@ const App = () => {
           </div>
         )}
         <SplitDivider orientation="vertical" onDrag={(x) => handleSplitDragX(x)} />
-        <div className="flex-1 min-w-0">
+        <div className="relative flex-1 min-w-0">
           <Viewport 
             ref={viewportRef} 
             onAccount={handleAccount}
@@ -1896,6 +1908,20 @@ const App = () => {
             getHelperBuffer={() => codeEditorRef.current?.getContent?.() || ''}
             cadToolbarHost={cadToolbarHost}
           />
+          {/* Feature sheets live INSIDE the viewer on desktop: the seam strip
+              stays put, and editing a feature happens over the model it
+              changes rather than over the script. */}
+          {appMode !== 'game' && featureSheet?.mode === 'edit' && featureSheet.feature && (
+            <FeatureSheet
+              placement="viewport"
+              feature={featureSheet.feature}
+              script={currentScript}
+              onAccept={handleFeatureSheetAccept}
+              onCancel={closeFeatureSheet}
+              onDelete={handleFeatureSheetDelete}
+              onEditScript={handleDesktopFeatureSheetEditScript}
+            />
+          )}
         </div>
 
         {/* Login Modal */}

@@ -9,6 +9,7 @@ import {
 import { CONTOUR_TOOLS } from '../utils/contourMode';
 import {
   RAIL_PAIR_HEIGHT_CLASS,
+  RAIL_FULL_LENGTH_CLASS,
   RAIL_PAIR_WIDTH_CLASS,
   RAIL_SCROLL_CLASS,
   RAIL_PAIR_HEIGHT_ATTR,
@@ -40,14 +41,15 @@ const ContourModeRail = ({
 
   return (
     <div
-      className={`absolute left-2 lg:left-4 bottom-2.5 z-10 flex flex-col gap-1
+      className={`absolute left-2 lg:left-4 z-10 flex flex-col gap-1
         bg-white/60 backdrop-blur-sm rounded-lg shadow-lg
-        ${RAIL_PAIR_WIDTH_CLASS} ${RAIL_PAIR_HEIGHT_CLASS} ${RAIL_SCROLL_CLASS}
+        ${RAIL_PAIR_WIDTH_CLASS} ${RAIL_SCROLL_CLASS}
+        ${compact ? `bottom-2.5 ${RAIL_PAIR_HEIGHT_CLASS}` : RAIL_FULL_LENGTH_CLASS}
         p-2`}
       role="group"
       aria-label={workplaneOnly ? 'Workplane tools' : 'Contour tools'}
       data-rail-pair="left"
-      data-rail-height={RAIL_PAIR_HEIGHT_ATTR}
+      data-rail-height={compact ? RAIL_PAIR_HEIGHT_ATTR : 'full-length'}
     >
       <div
         className={`text-[9px] font-semibold uppercase tracking-wide text-cyan-800 px-1 truncate ${

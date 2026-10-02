@@ -438,6 +438,21 @@ const contourRail = read('../../src/components/ContourModeRail.jsx');
     /absolute right-full/.test(snap));
 }
 
+// ── AC20: desktop left rail runs the height of the viewer ──
+{
+  const railPair = read('../../src/utils/railPair.js');
+  check('there is a full-length class anchored top AND bottom',
+    /RAIL_FULL_LENGTH_CLASS = 'top-14 bottom-2\.5'/.test(railPair));
+  for (const [name, src] of [['helper rail', palette], ['contour rail', contourRail]]) {
+    check(`${name} is full-length on desktop, boxed on phones`,
+      /\$\{compact \? `bottom-2\.5 \$\{RAIL_PAIR_HEIGHT_CLASS\}` : RAIL_FULL_LENGTH_CLASS\}/.test(src));
+    check(`${name} still scrolls when the tools overflow`, /RAIL_SCROLL_CLASS/.test(src));
+  }
+  // top-14 clears the part-name chip, which sits at top-4 and is ~30px tall.
+  check('the rail stops below the part-name chip, not over it',
+    /top-4 left-1\/2 -translate-x-1\/2/.test(view));
+}
+
 if (failed) {
   console.log(`\n${failed} check(s) failed`);
   process.exit(1);
