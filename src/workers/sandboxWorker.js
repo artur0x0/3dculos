@@ -435,11 +435,12 @@ function _c4VertexOffset(closedNormals, openNormals, t) {
  */
 function _c4OffsetCavity(md, thickness, openSet, label) {
   const nV = md.V.length;
-  // Cluster facet normals within ~15°. Tessellated fillets / cylinders put
+  // Cluster facet normals within ~10°. Tessellated fillets / cylinders put
   // many near-parallel planes on one vertex; treating each as distinct makes
   // `_c4SolvePlaneMoves` shoot vertices hundreds of mm (cavity vol → 0/neg).
-  // 15° still keeps real sharp edges (≥~20° dihedral from 90° walls, etc.).
-  const COS_CLUSTER = Math.cos((15 * Math.PI) / 180);
+  // 10° still keeps real sharp edges; tighter than 15° so trihedral fillet
+  // junctions keep distinct dihedral planes instead of over-merging.
+  const COS_CLUSTER = Math.cos((10 * Math.PI) / 180);
   // Per-vertex distinct adjacent facet normals, split by open / closed.
   const closed = Array.from({ length: nV }, () => []);
   const open = Array.from({ length: nV }, () => []);
@@ -457,32 +458,68 @@ function _c4OffsetCavity(md, thickness, openSet, label) {
     _c4PushDistinct(bucket[i1], n, COS_CLUSTER);
     _c4PushDistinct(bucket[i2], n, COS_CLUSTER);
   }
+  // Bbox centre = outward reference for hemisphere filtering. Fillet boolean
+  // scraps / opposite-sheet facets park nearly-antiparallel normals on one
+  // vertex; averaging them cancels and the old fallback then shoved the vert
+  // OUT through the wall (visible punch-through at vertical×rim junctions).
+  let bbMin = [Infinity, Infinity, Infinity];
+  let bbMax = [-Infinity, -Infinity, -Infinity];
+  for (let vi = 0; vi < nV; vi++) {
+    const v = md.V[vi];
+    for (let k = 0; k < 3; k++) {
+      if (v[k] < bbMin[k]) bbMin[k] = v[k];
+      if (v[k] > bbMax[k]) bbMax[k] = v[k];
+    }
+  }
+  const center = [
+    0.5 * (bbMin[0] + bbMax[0]),
+    0.5 * (bbMin[1] + bbMax[1]),
+    0.5 * (bbMin[2] + bbMax[2]),
+  ];
+  const COS_HEMI = Math.cos((85 * Math.PI) / 180); // keep ~outward vs centre
+  const filterHemi = (normals, vert) => {
+    if (!normals.length) return normals;
+    const ref = _c4Sub(vert, center);
+    const rLen = _c4Len(ref);
+    if (rLen < 1e-12) return normals;
+    const r = _c4Mul(1 / rLen, ref);
+    const kept = normals.filter((n) => _c4Dot(n, r) >= COS_HEMI);
+    // Spurious-only set (e.g. a lone inward normal on the opposite side):
+    // replace with geometric outward so we still inset instead of punching out.
+    return kept.length ? kept : [r];
+  };
   // A vertex on N unit planes offset by t moves at most t*sqrt(N) in the
   // orthogonal case (box corner: t√3). Anything far beyond that is a blown
-  // solve — fall back to smooth (area-free avg normal) offset.
+  // solve — clamp magnitude along the LS direction (do NOT avg-cancel).
   const dCap = thickness * 4;
   let moved = 0;
   const out = md.V.map((v) => v.slice());
   for (let vi = 0; vi < nV; vi++) {
     if (!closed[vi].length && !open[vi].length) continue;
-    let d = _c4VertexOffset(closed[vi], open[vi], thickness);
+    const closedF = filterHemi(closed[vi], md.V[vi]);
+    // Open faces intentionally overshoot outward; do not hemisphere-filter them
+    // against centre (the open rim would lose its -Y push).
+    let d = _c4VertexOffset(closedF, open[vi], thickness);
     if (!Number.isFinite(d[0] + d[1] + d[2])) {
       throw new Error(`${label}: offset blew up at a degenerate vertex — check the mesh for slivers`);
     }
-    if (_c4Len(d) > dCap) {
-      // Smooth-surface fallback: one inward (and optional open) step.
-      const cn = closed[vi].length
-        ? _c4Norm(closed[vi].reduce(_c4Add, [0, 0, 0]))
-        : [0, 0, 0];
-      d = closed[vi].length ? _c4Mul(-thickness, cn) : [0, 0, 0];
-      if (open[vi].length) {
-        const on = _c4Norm(open[vi].reduce(_c4Add, [0, 0, 0]));
-        d = _c4Add(d, _c4Mul(thickness, on));
-      }
+    const dLen = _c4Len(d);
+    if (dLen > dCap) {
+      d = _c4Mul(dCap / dLen, d);
     }
     if (_c4Len(d) < 1e-12) continue;
     moved++;
-    out[vi] = _c4Add(md.V[vi], d);
+    let nv = _c4Add(md.V[vi], d);
+    // Closed-only verts must not leave the solid AABB — any outward leftover
+    // still punches a hole when the cavity is subtracted.
+    if (!open[vi].length) {
+      nv = [
+        Math.min(bbMax[0], Math.max(bbMin[0], nv[0])),
+        Math.min(bbMax[1], Math.max(bbMin[1], nv[1])),
+        Math.min(bbMax[2], Math.max(bbMin[2], nv[2])),
+      ];
+    }
+    out[vi] = nv;
   }
   if (!moved) throw new Error(`${label}: nothing to offset — the body has no faces`);
   _c4RequireNoFold(md, out, label, thickness);
