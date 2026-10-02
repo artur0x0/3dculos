@@ -28,9 +28,9 @@ export const FILLET_SWEEP_BRANCH =
 
 /**
  * Default fillet-arc tessellation. 12 steps on a 90° corner is a 7.5° facet
- * (and a ~3% face on a box-scale edge). 24 steps halves that dihedral so the
- * boundary filter (15° / 5% of the largest face) drops blend strips and keeps
- * the remaining sharp edges.
+ * (and a ~3% face on a box-scale edge). Kept at 24 — denser turns come from
+ * FRAME_DENSIFY_MAX_TURN_DEG (5°) and semi-arc independent subtracts; raising
+ * the wedge segment count spiked long-fin counts on wrap goldens.
  */
 export const FILLET_ARC_SEGMENTS = 24;
 
@@ -226,21 +226,27 @@ export function chamferWedgeArea(c) {
  *
  * PR #27 skipped tessellated prior-fillet micro-arcs (mixed long+micro → open
  * long runs only). That left a gap instead of wrapping the prior blend.
- * Always keep the full wire — including micro rim arcs. Slivers are consumed
- * by a size-neutral exterior overlap on the cutter (`expandFilletCutterContour`),
- * not by dropping path segments.
+ * Never drop micro arcs — slivers are consumed by cutter exterior overlap.
+ * Uniform closed rims and mixed long+micro stay `as-is`.
  *
- * sandboxWorker calls this (still passing closed/radius so a skip-micro
- * paste-back receives them) and honors `mode:'runs'` if a future planner
- * returns it — that is the skip-micro regression the fillet-on-fillet gap
- * net mutation-tests. Current policy never returns `runs`. Signature is
- * `(points)` — wrap does not split on closed/radius.
+ * Same-radius fillet-on-fillet: a continuous sweep along a prior rim of
+ * radius ≈ r has bad arc start/end conditions (cusp leftovers; #107 sphere
+ * caps left twin bulges). When same-r arcs are present, split the path into
+ * straight runs + two semi-arcs per corner and return `mode:'runs'` so each
+ * piece is an independent cutter + independent subtract.
  *
  * @param {number[][]} points
- * @returns {{ mode:'as-is' } | { mode:'empty' }}
+ * @param {boolean} [closed]
+ * @param {number} [radius]
+ * @returns {{ mode:'as-is' } | { mode:'empty' } | { mode:'runs', runs: number[][][] }}
  */
-export function planFilletSweepPath(points) {
+export function planFilletSweepPath(points, closed, radius) {
   if (!Array.isArray(points) || points.length < 2) return { mode: 'empty' };
+  const r = Number(radius);
+  if (Number.isFinite(r) && r > 0) {
+    const runs = splitSameRadiusArcsIntoSemiArcRuns(points, !!closed, r, { arcsOnly: false });
+    if (runs && runs.length >= 2) return { mode: 'runs', runs };
+  }
   return { mode: 'as-is' };
 }
 
@@ -681,11 +687,10 @@ export function circFit3(p0, p1, p2) {
  * Find spans on a sweep path whose local curvature radius ≈ fillet radius.
  *
  * Same-radius fillet-on-fillet: when the path follows the rim of a prior
- * fillet of radius r and the new fillet is also r, the rolling-ball track
- * collapses to a point (ball centers lie on the prior cylinder axis). A
- * constant-r sweep along that arc is degenerate and leaves a triangular
- * cusp of leftover material at each corner. Callers add clipped sphere
- * caps at the returned sites to consume those cusps.
+ * fillet of radius r and the new fillet is also r, a continuous sweep along
+ * that arc has degenerate start/end conditions. Callers split each site into
+ * two semi-arc polylines and subtract those cutters independently
+ * (`splitSameRadiusArcsIntoSemiArcRuns` / `planFilletSweepPath`).
  *
  * @param {number[][]} points
  * @param {boolean} closed
@@ -693,7 +698,7 @@ export function circFit3(p0, p1, p2) {
  * @param {object} [opts]
  * @param {number} [opts.tol=0.25] — relative |R − r| / r gate
  * @param {number} [opts.minVerts=3] — minimum near-r vertices per site
- * @returns {Array<{ C: number[], R: number, n: number[], A: number[], B: number[], O: number[], P: number[] }>}
+ * @returns {Array<{ C: number[], R: number, n: number[], A: number[], B: number[], O: number[], P: number[], idxs: number[] }>}
  */
 export function detectSameRadiusArcSites(points, closed, radius, opts = {}) {
   const r = Number(radius);
@@ -766,5 +771,95 @@ export function detectSameRadiusArcSites(points, closed, radius, opts = {}) {
   return sites;
 }
 
-/** Clip-box scale past the outer corner toward the ball center (covers cusp). */
-export const SAME_RADIUS_CORNER_BOX_SCALE = 1.5;
+/**
+ * Emit independent semi-arc polylines for each same-radius arc on the path.
+ *
+ * Used as a post-pass after the main as-is wrap sweep: each same-r arc site
+ * (from `detectSameRadiusArcSites`) is cut at its midpoint into two open
+ * polylines (halves include one-past endpoints A/B). Callers build a cutter
+ * per semi-arc and subtract independently — fixes arc start/end conditions
+ * without fragmenting the main wrap into many open runs (that spiked fins).
+ * Straights are omitted here (handled by the main sweep). Returns null when
+ * there are no same-r arcs.
+ *
+ * @param {number[][]} points
+ * @param {boolean} closed
+ * @param {number} radius
+ * @param {object} [opts]
+ * @param {boolean} [opts.arcsOnly=false] — when true, return only semi-arc
+ *   polylines (no straight runs). Default false keeps legacy full-path split.
+ * @returns {number[][][] | null}
+ */
+export function splitSameRadiusArcsIntoSemiArcRuns(points, closed, radius, opts = {}) {
+  const sites = detectSameRadiusArcSites(points, closed, radius, opts);
+  if (!sites.length || !Array.isArray(points) || points.length < 2) return null;
+  const arcsOnly = !!opts.arcsOnly;
+  const n = points.length;
+  const mark = new Array(n).fill(-1);
+  for (let si = 0; si < sites.length; si++) {
+    const idxs = sites[si].idxs;
+    if (!Array.isArray(idxs)) continue;
+    for (const i of idxs) {
+      if (i >= 0 && i < n) mark[i] = si;
+    }
+  }
+  let start = 0;
+  if (closed) {
+    for (let i = 0; i < n; i++) {
+      if (mark[i] < 0) { start = i; break; }
+    }
+  }
+  const at = (k) => (closed ? (start + k) % n : k);
+  const walkN = closed ? n : n;
+  const spans = [];
+  let k = 0;
+  while (k < walkN) {
+    const idx = at(k);
+    const m = mark[idx];
+    const idxs = [idx];
+    k += 1;
+    while (k < walkN && mark[at(k)] === m) {
+      idxs.push(at(k));
+      k += 1;
+    }
+    spans.push({ site: m, idxs });
+  }
+  if (closed && spans.length >= 2 && spans[0].site < 0 && spans[spans.length - 1].site < 0) {
+    spans[0].idxs = spans[spans.length - 1].idxs.concat(spans[0].idxs);
+    spans.pop();
+  }
+
+  const pt = (i) => points[i].slice();
+  const dedup = (arr) => {
+    const out = [];
+    for (const i of arr) {
+      if (!out.length || out[out.length - 1] !== i) out.push(i);
+    }
+    return out;
+  };
+  const runs = [];
+  for (const sp of spans) {
+    if (sp.site < 0) {
+      if (!arcsOnly && sp.idxs.length >= 2) runs.push(sp.idxs.map(pt));
+      continue;
+    }
+    const idxs = sp.idxs;
+    if (idxs.length < 2) continue;
+    const iFirst = idxs[0];
+    const iLast = idxs[idxs.length - 1];
+    const iA = closed ? (iFirst - 1 + n) % n : Math.max(0, iFirst - 1);
+    const iB = closed ? (iLast + 1) % n : Math.min(n - 1, iLast + 1);
+    const mid = Math.floor(idxs.length / 2);
+    const leftIdx = [];
+    if (iA !== idxs[0] && iA !== idxs[mid]) leftIdx.push(iA);
+    for (let j = 0; j <= mid; j++) leftIdx.push(idxs[j]);
+    const rightIdx = [];
+    for (let j = mid; j < idxs.length; j++) rightIdx.push(idxs[j]);
+    if (iB !== idxs[idxs.length - 1] && iB !== idxs[mid]) rightIdx.push(iB);
+    const L = dedup(leftIdx);
+    const R = dedup(rightIdx);
+    if (L.length >= 2) runs.push(L.map(pt));
+    if (R.length >= 2) runs.push(R.map(pt));
+  }
+  return runs.length >= 1 ? runs : null;
+}

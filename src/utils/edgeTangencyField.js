@@ -565,8 +565,9 @@ export function buildInscribedArcFrame(origin, T, n0, n1, radius, prevN = null, 
 export const FRAME_TRANSPORT_DAMP_DEG = 12;
 /** Soft cap on consecutive θ change (rad) when blending along the path. */
 export const FRAME_TRANSPORT_THETA_JUMP = (5 * Math.PI) / 180;
-/** Max turn (deg) between consecutive densified chords (C3.2 curvature densify). */
-export const FRAME_DENSIFY_MAX_TURN_DEG = 10;
+/** Max turn (deg) between consecutive densified chords (C3.2 curvature densify).
+ * Tightened 10→5 so wrap/turn facets read smoother (Artur playtest). */
+export const FRAME_DENSIFY_MAX_TURN_DEG = 5;
 
 function _add(a, b) {
   return [a[0] + b[0], a[1] + b[1], a[2] + b[2]];

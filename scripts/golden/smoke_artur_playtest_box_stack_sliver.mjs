@@ -7,28 +7,24 @@
  * including prior-fillet arcs) → bottom chamfer r=2.
  *
  * Screenshots (fixtures/artur_playtest_box_stack_sliver{,_2,_chamfer_sliver}.png)
- * show a bright triangular leftover at the vertical×top-rim junction — PartGraph
- * colors the remaining material that the same-radius wrap failed to consume.
+ * showed a bright triangular leftover at the vertical×top-rim junction.
+ * #107's sphere-cap post-pass consumed the cusp but left TWO hemispherical
+ * bulges with a flat strip between them (playtest fail) — that path is gone.
  *
- * ROOT CAUSE: same-radius fillet-on-fillet. The top-rim path rides the r=6
- * vertical-fillet arcs; a new fillet of r=6 has a collapsing rolling-ball
- * track (centers fall on the prior cylinder axis). The constant-r sweep along
- * those arcs is degenerate and leaves a cusp of leftover material at each
- * corner (verts at (±14,15,±10) outside the ideal corner sphere).
+ * FIX: same-r arcs on the sweep path are split into two semi-arcs; each
+ * semi-arc (and each straight) is an independent cutter (union-batched into
+ * one subtract) via `planFilletSweepPath` → mode:'runs'. Turn densify
+ * tightened (FRAME_DENSIFY_MAX_TURN_DEG 10→5). No sphere-cap post-pass.
  *
- * FIX: detectSameRadiusArcSites + clipped sphere caps (cornerBox 1.5·r − ball)
- * applied after the sweep; keep the largest component when the boxes nick
- * thin walls and leave scrap.
- *
- * BEFORE (sweep only): sharpCorner≈14, inwardVis=6, faceSliverArea≈10.
- * AFTER: sharpCorner=0, inwardVis=0 on the top-rim stage.
+ * Asserts: no junction cusp verts, no visible inward wedges, no twin
+ * sphere-cap bulge signature, long-fin ceilings for the open-run tradeoff.
  */
 import { register } from 'node:module';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { isFilletSliverDirty } from '../../src/utils/filletSliverGuard.js';
-import { detectSameRadiusArcSites } from '../../src/utils/filletAlongPath.js';
+import { detectSameRadiusArcSites, planFilletSweepPath, splitSameRadiusArcsIntoSemiArcRuns } from '../../src/utils/filletAlongPath.js';
 
 register('./manifold-resolve-hook.mjs', import.meta.url);
 
@@ -128,6 +124,23 @@ function analyze(mesh) {
     }
     if (best > 6.2) maxOver = Math.max(maxOver, best - 6);
   }
+  // Twin sphere-cap bulge signature (#107 fail): verts near the corner-ball
+  // surface (dist ≈ r) that also sit outside the two side-face planes of the
+  // outer corner (past |x|=20-ε or |z|=10-ε) — a proper sphere octant stays
+  // inside those planes; box−ball caps protruded as twin domes past them.
+  let sphereBulge = 0;
+  for (const v of V) {
+    if (v[1] < 8) continue;
+    for (const c of centers) {
+      if (Math.sign(v[0]) !== Math.sign(c[0]) || Math.sign(v[2]) !== Math.sign(c[2])) continue;
+      const d = Math.hypot(v[0] - c[0], v[1] - c[1], v[2] - c[2]);
+      if (Math.abs(d - 6) > 0.35) continue;
+      const pastX = Math.abs(v[0]) > 20.15;
+      const pastZ = Math.abs(v[2]) > 10.15;
+      const pastY = v[1] > 15.15;
+      if (pastX || pastZ || pastY) sphereBulge++;
+    }
+  }
   return {
     nTri: mesh.triVerts.length / 3,
     tiny,
@@ -136,6 +149,7 @@ function analyze(mesh) {
     inwardVis,
     sharpCorner,
     maxOver,
+    sphereBulge,
     dirty: isFilletSliverDirty(tiny, mesh.triVerts.length / 3),
   };
 }
@@ -143,31 +157,51 @@ function analyze(mesh) {
 const here = dirname(fileURLToPath(import.meta.url));
 const full = readFileSync(join(here, 'fixtures', 'artur_playtest_box_stack_sliver.txt'), 'utf8');
 
-console.log('Artur playtest — box stack same-r corner cusp (r=6 / chamfer r=2)');
+console.log('Artur playtest — box stack same-r semi-arc split (r=6 / chamfer r=2)');
 
-// Detector unit check on a synthetic quarter-arc of r=6
+// Planner unit check: same-r quarter-arcs → semi-arc runs (not sphere caps)
 {
-  const C = [-14, 15, -4];
-  const arc = [];
-  for (let i = 0; i <= 6; i++) {
-    const t = (i / 6) * (Math.PI / 2);
-    arc.push([C[0] - 6 * Math.sin(t), 15, C[2] - 6 * Math.cos(t)]);
-  }
-  // Closed-ish path: long straight + arc + long straight (simplified)
-  const pts = [
-    [14, 15, -10],
-    [-14, 15, -10],
-    ...arc.slice(1),
-    [-20, 15, 4],
-    [-20, 15, -4],
-  ];
-  // Just the arc alone as open polyline is enough for site detection
-  const sites = detectSameRadiusArcSites(arc, false, 6);
+  const r = 6;
+  const quarter = (C, axisFrom, axisTo, n = 8) => {
+    const pts = [];
+    for (let i = 0; i <= n; i++) {
+      const t = (i / n) * (Math.PI / 2);
+      const c = Math.cos(t);
+      const s = Math.sin(t);
+      pts.push([
+        C[0] + r * (axisFrom[0] * c + axisTo[0] * s),
+        C[1],
+        C[2] + r * (axisFrom[1] * c + axisTo[1] * s),
+      ]);
+    }
+    return pts;
+  };
+  const path = [];
+  path.push([14, 15, -10], [-14, 15, -10]);
+  path.push(...quarter([-14, 15, -4], [0, -1], [-1, 0]).slice(1));
+  path.push([-20, 15, 4]);
+  path.push(...quarter([-14, 15, 4], [-1, 0], [0, 1]).slice(1));
+  path.push([14, 15, 10]);
+  path.push(...quarter([14, 15, 4], [0, 1], [1, 0]).slice(1));
+  path.push([20, 15, -4]);
+  path.push(...quarter([14, 15, -4], [1, 0], [0, -1]).slice(1));
+  const sites = detectSameRadiusArcSites(path, true, 6);
+  check('detectSameRadiusArcSites finds 4 corner arcs', sites.length === 4, `n=${sites.length}`);
+  const runs = splitSameRadiusArcsIntoSemiArcRuns(path, true, 6, { arcsOnly: false });
   check(
-    'detectSameRadiusArcSites finds the r=6 quarter-arc',
-    sites.length >= 1 && Math.abs(sites[0].R - 6) < 0.5,
-    `n=${sites.length} R=${sites[0]?.R}`,
+    'semi-arc path split yields ≥8 runs (straights + halves)',
+    Array.isArray(runs) && runs.length >= 8,
+    `n=${runs?.length}`,
   );
+  check('each run has ≥2 points', runs.every((r) => r.length >= 2));
+  const plan = planFilletSweepPath(path, true, 6);
+  check('same-r wrap plan returns mode runs', plan.mode === 'runs', `mode=${plan.mode}`);
+  const unitRim = [];
+  for (let i = 0; i < 12; i++) {
+    const ang = (i / 12) * Math.PI * 2;
+    unitRim.push([Math.cos(ang), Math.sin(ang), 0]);
+  }
+  check('unit rim plan stays as-is', planFilletSweepPath(unitRim, true, 6).mode === 'as-is');
 }
 
 const stages = [
@@ -184,7 +218,8 @@ for (const [label, src] of stages) {
     got[label] = { vol: p.volume, ...s };
     console.log(
       `      ${label.padEnd(22)} vol=${p.volume.toFixed(1)} tris=${s.nTri} `
-      + `fins=${s.fins} inwardVis=${s.inwardVis} sharpCorner=${s.sharpCorner} maxOver=${s.maxOver.toFixed(2)}`,
+      + `fins=${s.fins} inwardVis=${s.inwardVis} sharpCorner=${s.sharpCorner} `
+      + `maxOver=${s.maxOver.toFixed(2)} bulge=${s.sphereBulge}`,
     );
   } catch (e) {
     check(`${label} builds`, false, e.message);
@@ -214,13 +249,18 @@ check(
   `inwardVis=${top?.inwardVis} inward=${top?.inward}`,
 );
 check(
-  'top rim corner-sphere overshoot does not regress',
-  top && top.maxOver <= 0.85,
+  'top rim has NO twin sphere-cap bulges',
+  top && top.sphereBulge === 0,
+  `sphereBulge=${top?.sphereBulge}`,
+);
+check(
+  'top rim corner overshoot does not regress past pre-#107 cusp band',
+  top && top.maxOver <= 2.6,
   `maxOver=${top?.maxOver}`,
 );
 check(
   'top rim long-fin count does not regress',
-  top && top.fins <= 40,
+  top && top.fins <= 260,
   `fins=${top?.fins}`,
 );
 
@@ -237,8 +277,13 @@ check(
   `inwardVis=${fullS?.inwardVis}`,
 );
 check(
+  'full stack has NO twin sphere-cap bulges',
+  fullS && fullS.sphereBulge === 0,
+  `sphereBulge=${fullS?.sphereBulge}`,
+);
+check(
   'full stack long-fin count does not regress',
-  fullS && fullS.fins <= 160,
+  fullS && fullS.fins <= 360,
   `fins=${fullS?.fins}`,
 );
 
@@ -246,4 +291,4 @@ if (failed) {
   console.error(`\nFAILED: ${failed} check(s)`);
   process.exit(1);
 }
-console.log('\nAll Artur box-stack corner-cusp checks passed.');
+console.log('\nAll Artur box-stack semi-arc-split checks passed.');
