@@ -359,10 +359,21 @@ function _c4SolvePlaneMoves(normals, rhs) {
   return _c4Mul(rhs.reduce((x, y) => x + y, 0) / rhs.length, avg);
 }
 
-/** Append `n` to `list` unless a direction within 1e-6 is already there. */
-function _c4PushDistinct(list, n) {
-  for (const m of list) {
-    if (Math.abs(m[0] - n[0]) < 1e-6 && Math.abs(m[1] - n[1]) < 1e-6 && Math.abs(m[2] - n[2]) < 1e-6) return;
+/**
+ * Append unit direction `n` to `list` unless one within angular tolerance is
+ * already there. Default cosTol≈1 (1e-6 component match) keeps draftFaces'
+ * sharp-corner behaviour; shell offset passes a looser cosTol so tessellated
+ * fillet/cylinder facets collapse to one plane per vertex.
+ */
+function _c4PushDistinct(list, n, cosTol = null) {
+  if (cosTol == null) {
+    for (const m of list) {
+      if (Math.abs(m[0] - n[0]) < 1e-6 && Math.abs(m[1] - n[1]) < 1e-6 && Math.abs(m[2] - n[2]) < 1e-6) return;
+    }
+  } else {
+    for (const m of list) {
+      if (_c4Dot(m, n) >= cosTol) return;
+    }
   }
   list.push(n);
 }
@@ -424,6 +435,11 @@ function _c4VertexOffset(closedNormals, openNormals, t) {
  */
 function _c4OffsetCavity(md, thickness, openSet, label) {
   const nV = md.V.length;
+  // Cluster facet normals within ~15°. Tessellated fillets / cylinders put
+  // many near-parallel planes on one vertex; treating each as distinct makes
+  // `_c4SolvePlaneMoves` shoot vertices hundreds of mm (cavity vol → 0/neg).
+  // 15° still keeps real sharp edges (≥~20° dihedral from 90° walls, etc.).
+  const COS_CLUSTER = Math.cos((15 * Math.PI) / 180);
   // Per-vertex distinct adjacent facet normals, split by open / closed.
   const closed = Array.from({ length: nV }, () => []);
   const open = Array.from({ length: nV }, () => []);
@@ -437,17 +453,32 @@ function _c4OffsetCavity(md, thickness, openSet, label) {
     if (_c4Len(cx) < 1e-12) continue; // zero-area facet carries no plane
     const n = _c4Norm(cx);
     const bucket = isOpenTri[t] ? open : closed;
-    _c4PushDistinct(bucket[i0], n);
-    _c4PushDistinct(bucket[i1], n);
-    _c4PushDistinct(bucket[i2], n);
+    _c4PushDistinct(bucket[i0], n, COS_CLUSTER);
+    _c4PushDistinct(bucket[i1], n, COS_CLUSTER);
+    _c4PushDistinct(bucket[i2], n, COS_CLUSTER);
   }
+  // A vertex on N unit planes offset by t moves at most t*sqrt(N) in the
+  // orthogonal case (box corner: t√3). Anything far beyond that is a blown
+  // solve — fall back to smooth (area-free avg normal) offset.
+  const dCap = thickness * 4;
   let moved = 0;
   const out = md.V.map((v) => v.slice());
   for (let vi = 0; vi < nV; vi++) {
     if (!closed[vi].length && !open[vi].length) continue;
-    const d = _c4VertexOffset(closed[vi], open[vi], thickness);
+    let d = _c4VertexOffset(closed[vi], open[vi], thickness);
     if (!Number.isFinite(d[0] + d[1] + d[2])) {
       throw new Error(`${label}: offset blew up at a degenerate vertex — check the mesh for slivers`);
+    }
+    if (_c4Len(d) > dCap) {
+      // Smooth-surface fallback: one inward (and optional open) step.
+      const cn = closed[vi].length
+        ? _c4Norm(closed[vi].reduce(_c4Add, [0, 0, 0]))
+        : [0, 0, 0];
+      d = closed[vi].length ? _c4Mul(-thickness, cn) : [0, 0, 0];
+      if (open[vi].length) {
+        const on = _c4Norm(open[vi].reduce(_c4Add, [0, 0, 0]));
+        d = _c4Add(d, _c4Mul(thickness, on));
+      }
     }
     if (_c4Len(d) < 1e-12) continue;
     moved++;
@@ -486,7 +517,9 @@ function shell(manifold, thickness, opening = 'z') {
   const cv = cavity.volume();
   if (cv <= 1e-9) {
     throw new Error(
-      `shell: wall thickness ${thickness} leaves no cavity — the part is thinner than 2x the wall`,
+      cv < -1e-9
+        ? `shell: wall thickness ${thickness} folded the offset surface (cavity volume ${cv.toFixed(3)}) — try a smaller wall or simplify the body`
+        : `shell: wall thickness ${thickness} leaves no cavity — the part is thinner than 2x the wall`,
     );
   }
   return cavity;
