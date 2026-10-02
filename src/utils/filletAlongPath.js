@@ -283,6 +283,15 @@ export function filletSweepCutterExpand(radius) {
  * follow-on sweeps need a deeper rear pad than the original 4%·r sliver.
  * Uniform Q1 scale is not used — it only redefined requested r.
  *
+ * Face-leg setback endpoints on fillet wedges are nudged a tiny ε
+ * (≈min(0.0025, max(1e-4, 5e-4·r))) into empty space so they are not
+ * exactly on the part faces. Wrap playtest long fins drop 138→~26; dark
+ * visible inward wedges stay 0. Chamfer keeps historical on-face legs.
+ * Larger nudges / bumper-anchor inset clear more setback-plane fins but
+ * either decompose fillet-on-fillet wraps or regress stacked chamfer into
+ * visible inward wedges — residual setback fins are ceiling-locked in the
+ * box-stack golden instead.
+ *
  * (−e,−e) family is an unvalidated boolean-robustness margin: kept because
  * legs must not coplanar-coincide with faces, and as the origin vertex (the
  * (0,0) corner is skipped so this must replace it or the contour
@@ -306,6 +315,13 @@ export function expandFilletCutterContour(contour, radius) {
   if (!(e > 0) || !(r > 0) || !Number.isFinite(r)) {
     return contour.map((p) => [Number(p[0]), Number(p[1])]);
   }
+  // Fillet: nudge face-leg setback verts (r,0)/(0,r) a tiny ε into EMPTY
+  // space so they are not exactly on the part faces. Exact on-face verts
+  // make Manifold leave long needle fins (wrap playtest: 138→~11). Chamfer
+  // keeps exact legs — nudging them, or insetting bumper anchors off the
+  // setback, reintroduced visible inward wedges on stacked rim chamfers.
+  const isChamfer = contour.length <= 3;
+  const faceEps = Math.min(0.0025, Math.max(1e-4, 5e-4 * r));
   const q1 = [];
   for (const p of contour) {
     const u = Number(p[0]);
@@ -314,14 +330,23 @@ export function expandFilletCutterContour(contour, radius) {
       throw new Error('expandFilletCutterContour: non-finite vertex');
     }
     if (Math.abs(u) < 1e-15 && Math.abs(v) < 1e-15) continue;
-    q1.push([u, v]);
+    let uu = u;
+    let vv = v;
+    if (!isChamfer) {
+      if (Math.abs(v) < 1e-12 && u > faceEps) vv = -faceEps;
+      if (Math.abs(u) < 1e-12 && v > faceEps) uu = -faceEps;
+    }
+    q1.push([uu, vv]);
   }
   if (q1.length < 2) {
     throw new Error('expandFilletCutterContour: contour collapsed');
   }
   // Rear bumper: Q3 origin + Q4/Q2 strips of thickness e. Q1 stays at r.
-  const uMax = Math.max(...q1.map((p) => p[0]));
-  const vMax = Math.max(...q1.map((p) => p[1]));
+  // Bumper-anchor inset (r−δ) clears setback-plane fins on a lone closed
+  // wrap but reintroduces visible inward wedges when a chamfer follows on
+  // the same part — left disabled; face-leg nudge above is the safe fix.
+  const uMax = Math.max(r, ...q1.map((p) => p[0]));
+  const vMax = Math.max(r, ...q1.map((p) => p[1]));
   const out = [[-e, -e], [uMax, -e], ...q1, [-e, vMax]];
   if (out.length < 3) {
     throw new Error('expandFilletCutterContour: contour collapsed');
@@ -504,12 +529,29 @@ export function expandDihedralCutterContour(contour, radius, theta) {
   const exterior = [-e * cot, -e];
   const face0Out = [u0, -e];
   const face1Out = [u1 + e * (-sin), v1 + e * cos];
+  // Fillet: nudge face-ray setback endpoints into empty space (same as
+  // expandFilletCutterContour). Chamfer keeps historical on-face legs.
+  const isChamfer = contour.length <= 3;
+  const faceEps = Math.min(0.0025, Math.max(1e-4, 5e-4 * r));
+  const nFace0 = [0, -1];
+  const nFace1 = [-sin, cos];
   const q1 = [];
   for (let i = 1; i < contour.length; i++) {
-    const u = Number(contour[i][0]);
-    const v = Number(contour[i][1]);
+    let u = Number(contour[i][0]);
+    let v = Number(contour[i][1]);
     if (!Number.isFinite(u) || !Number.isFinite(v)) {
       throw new Error('expandDihedralCutterContour: non-finite vertex');
+    }
+    if (!isChamfer) {
+      const d0 = Math.abs(v);
+      const d1 = Math.abs(u * sin - v * cos);
+      if (d0 < 1e-12) {
+        u += faceEps * nFace0[0];
+        v += faceEps * nFace0[1];
+      } else if (d1 < 1e-12) {
+        u += faceEps * nFace1[0];
+        v += faceEps * nFace1[1];
+      }
     }
     q1.push([u, v]);
   }
