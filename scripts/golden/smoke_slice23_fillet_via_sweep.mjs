@@ -555,11 +555,14 @@ console.log('slice-23 fillet via sweep smoke');
     check('rear bumper has (−e,r)',
       ex.some((p) => Math.abs(p[0] + e6) < 1e-12 && Math.abs(p[1] - 6) < 1e-9),
       `last=${ex[ex.length - 1]}`);
+    // Face-leg nudge pushes setback endpoints a tiny ε into empty space
+    // (coplanarity fix). Extent along the face stays at r; the off-axis
+    // component is ≪ expand bumper.
     check('expanded wedge (r,0) leg stays at requested r',
-      ex.some((p) => Math.abs(p[1]) < 1e-9 && Math.abs(p[0] - 6) < 1e-9),
+      ex.some((p) => Math.abs(p[0] - 6) < 1e-6 && Math.abs(p[1]) < 0.05),
       `pts=${JSON.stringify(ex.slice(0, 4))}`);
     check('expanded wedge (0,r) leg stays at requested r',
-      ex.some((p) => Math.abs(p[0]) < 1e-9 && Math.abs(p[1] - 6) < 1e-9),
+      ex.some((p) => Math.abs(p[1] - 6) < 1e-6 && Math.abs(p[0]) < 0.05),
       `pts=${JSON.stringify(ex.slice(-3))}`);
     const ext6 = Math.max(...ex.map((p) => Math.max(p[0], p[1])));
     check('realised blend within 5% of requested r=6', ext6 <= 6 * 1.05, `ext=${ext6}`);
