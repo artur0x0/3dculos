@@ -19,8 +19,6 @@ import {
   chamferRemovedArea,
   orientFilletFrame,
   varyingProfileTubeMesh,
-  detectSameRadiusArcSites,
-  SAME_RADIUS_CORNER_BOX_SCALE,
   FILLET_ARC_SEGMENTS,
 } from '../utils/filletAlongPath.js';
 import { densifyPathPoints, buildVariableProfileFrames, maxConsecutiveFrameAngleDeg, countThetaRuns, variableProfileDensifyStep, pathPolylineLength, FRAME_DENSIFY_MAX_TURN_DEG } from '../utils/edgeTangencyField.js';
@@ -4476,96 +4474,6 @@ function _s23BuildDihedralCutter(M, CrossSection, part, points, closed, radius, 
  *   path-normal inscribed-arc frames (adapts to loft twist)
  */
 
-/**
- * Same-radius fillet-on-fillet corner caps.
- *
- * When the sweep path rides a prior fillet rim of radius ≈ the new r, the
- * rolling-ball track collapses and the constant-r sweep leaves a triangular
- * cusp of leftover material at each corner (Artur box-stack playtest:
- * vertical r=6 → top rim r=6). Each detected same-r arc yields a clipped
- * sphere cap: cornerBox(1.5·r from the outer corner) − ball(r at incenter).
- * Unioned into the main cutter before subtract.
- *
- * Ball-center side of the arc plane is chosen by probing the part: the true
- * incenter lies IN the solid (equidistant r from the three faces). Plane-
- * normal sign from path centroid alone is ambiguous when the arc and the
- * path centroid are coplanar (top-rim wrap).
- */
-function _s23SameRadiusCornerCaps(M, part, points, closed, radius) {
-  const r = Number(radius);
-  if (!(r > 0) || !Number.isFinite(r)) return [];
-  const sites = detectSameRadiusArcSites(points, closed, r);
-  if (!sites.length) return [];
-  const ext = SAME_RADIUS_CORNER_BOX_SCALE * r;
-  const caps = [];
-  const fillAt = (O) => {
-    try {
-      const sp = M.sphere(Math.min(0.35 * r, 1.5), 12, 6).transform(
-        [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, O[0], O[1], O[2], 1],
-      );
-      const spVol = sp.volume();
-      if (!(spVol > 1e-12)) return 0;
-      return M.intersection(part, sp).volume() / spVol;
-    } catch (_) {
-      return 0;
-    }
-  };
-  const snapUnit = (d) => {
-    const ax = Math.abs(d[0]), ay = Math.abs(d[1]), az = Math.abs(d[2]);
-    if (ax >= ay && ax >= az) return [Math.sign(d[0]) || 0, 0, 0];
-    if (ay >= ax && ay >= az) return [0, Math.sign(d[1]) || 0, 0];
-    return [0, 0, Math.sign(d[2]) || 0];
-  };
-  for (const site of sites) {
-    const { C, n, A, B, R: arcR } = site;
-    if (!C || !n || !A || !B) continue;
-    // Two candidate incenters: C ± r·n. Pick the one inside the solid.
-    const Oa = [C[0] + r * n[0], C[1] + r * n[1], C[2] + r * n[2]];
-    const Ob = [C[0] - r * n[0], C[1] - r * n[1], C[2] - r * n[2]];
-    const fa = fillAt(Oa);
-    const fb = fillAt(Ob);
-    // Need a clear inside hit; skip ambiguous / outside-only sites.
-    if (Math.max(fa, fb) < 0.35) continue;
-    const O = fa >= fb ? Oa : Ob;
-    // Outer corner: from arc center, step R along the two face-axis directions
-    // of the arc endpoints (snapped). Avoids A+B−C drift when densify points
-    // sit slightly past the true 90° arc ends (that drift punched through on
-    // one Artur corner).
-    const RR = Number.isFinite(arcR) && arcR > 0 ? arcR : r;
-    const ua = snapUnit([A[0] - C[0], A[1] - C[1], A[2] - C[2]]);
-    const ub = snapUnit([B[0] - C[0], B[1] - C[1], B[2] - C[2]]);
-    if (Math.hypot(ua[0] + ub[0], ua[1] + ub[1], ua[2] + ub[2]) < 0.5) continue;
-    const P = [
-      C[0] + RR * ua[0] + RR * ub[0],
-      C[1] + RR * ua[1] + RR * ub[1],
-      C[2] + RR * ua[2] + RR * ub[2],
-    ];
-    const sx = Math.sign(P[0] - O[0]) || 1;
-    const sy = Math.sign(P[1] - O[1]) || 1;
-    const sz = Math.sign(P[2] - O[2]) || 1;
-    const box = M.cube([ext, ext, ext], false).translate([
-      sx > 0 ? P[0] - ext : P[0],
-      sy > 0 ? P[1] - ext : P[1],
-      sz > 0 ? P[2] - ext : P[2],
-    ]);
-    const ball = M.sphere(r, 64).transform(
-      [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, O[0], O[1], O[2], 1],
-    );
-    let cap;
-    try {
-      cap = M.difference(box, ball);
-    } catch (_) {
-      continue;
-    }
-    const se = _c4StatusError(cap);
-    if (se) continue;
-    const vol = typeof cap.volume === 'function' ? cap.volume() : 0;
-    if (!(vol > 1e-6)) continue;
-    caps.push(cap);
-  }
-  return caps;
-}
-
 function filletAlongPath(part, path, radius, opts = {}) {
   const M = manifoldModule.Manifold;
   const { CrossSection } = manifoldModule;
@@ -4608,16 +4516,107 @@ function filletAlongPath(part, path, radius, opts = {}) {
     }
   }
 
-  // Sweep-path policy seam (planFilletSweepPath): keep the full wire.
-  // If a future planner returns mode:'runs' (PR #27 skip-micro), honor it so
-  // the fillet-on-fillet gap net still mutation-tests that regression.
+  // Sweep-path policy seam (planFilletSweepPath): keep the full wire by
+  // default (never skip-micro). Same-r arcs return mode:'runs' — each
+  // straight / semi-arc is an independent cutter + independent subtract.
+
   if (!opts._rawPath) {
     const plan = planFilletSweepPath(points, closed, radius);
     if (plan.mode === 'runs') {
-      let out = part;
-      const subOpts = { ...opts, _rawPath: true, _c3RawSegCount: rawSegCount };
-      for (const run of plan.runs) {
-        out = filletAlongPath(out, { kind: 'sweepPath', points: run, closed: false }, radius, subOpts);
+      // Build each straight / semi-arc cutter independently against the ORIGINAL
+      // part (so probes see pre-fillet faces), union, then ONE subtract.
+      // Equivalent to independent subtracts but avoids stacking open-run endcap
+      // seams that spiked long-fin counts on the Artur box-stack wrap.
+      const scale = 1;
+      const cutters = [];
+      let expectVolSum = 0;
+      const closedRuns = Array.isArray(plan.closedRuns) ? plan.closedRuns : null;
+      for (let ri = 0; ri < plan.runs.length; ri++) {
+        const run = plan.runs[ri];
+        if (!Array.isArray(run) || run.length < 2) continue;
+        const runClosed = closedRuns ? !!closedRuns[ri] : false;
+        let built;
+        try {
+          built = variableProfile
+            ? _s23BuildVariableProfileCutter(
+              M, CrossSection, part, run, runClosed, radius, profileKind, arcSegs, scale, rawSegCount,
+            )
+            : _s23BuildDihedralCutter(
+              M, CrossSection, part, run, runClosed, radius, profileKind, arcSegs, scale,
+            );
+        } catch (_) {
+          continue;
+        }
+        if (built?.cutter) {
+          cutters.push(built.cutter);
+          if (Number.isFinite(built.expectVol)) expectVolSum += built.expectVol;
+        }
+        if (built?.filler) {
+          // Concave filler runs: apply as union into part after the subtract batch.
+          // Rare on same-r wrap; keep sequential for fillers.
+          try {
+            part = M.union([part, built.filler]);
+          } catch (_) { /* keep */ }
+        }
+      }
+      if (!cutters.length) {
+        throw new Error('filletAlongPath: same-r semi-arc split produced no valid cutters');
+      }
+      let tool = cutters[0];
+      for (let i = 1; i < cutters.length; i++) {
+        try {
+          tool = M.union([tool, cutters[i]]);
+        } catch (e) {
+          throw new Error(`filletAlongPath: semi-arc cutter union failed — ${e && e.message ? e.message : e}`);
+        }
+      }
+      const seTool = _c4StatusError(tool);
+      if (seTool) throw new Error(`filletAlongPath: bad semi-arc cutter union (${seTool})`);
+      let out;
+      try {
+        out = M.difference(part, tool);
+      } catch (e) {
+        throw new Error(`filletAlongPath: semi-arc subtract failed — ${e && e.message ? e.message : e}`);
+      }
+      const seOut = _c4StatusError(out);
+      if (seOut) throw new Error(`filletAlongPath: bad semi-arc result (${seOut})`);
+      const removed = part.volume() - out.volume();
+      if (expectVolSum > 1e-3 && removed < 0.02 * expectVolSum) {
+        throw new Error(
+          `filletAlongPath: semi-arc batch removed only ${removed.toFixed(4)} vs expected ~${expectVolSum.toFixed(4)} `
+          + '(orientation/overlap failure) — failing loud rather than shipping a near-no-op solid',
+        );
+      }
+      if (expectVolSum > 1e-3 && removed > 8 * expectVolSum) {
+        throw new Error(
+          `filletAlongPath: semi-arc batch removed ${removed.toFixed(4)} vs expected ~${expectVolSum.toFixed(4)} `
+          + '(cutter far larger than requested radius) — failing loud',
+        );
+      }
+      // Semi-arc batch is composed of open runs — keep largest if the union
+      // leaves scrap (do not apply the closed-path hard multi-component fail).
+      try {
+        if (typeof out.decompose === 'function') {
+          const parts = out.decompose();
+          if (Array.isArray(parts) && parts.length > 1) {
+            let best = parts[0];
+            let bestVol = best.volume();
+            for (let i = 1; i < parts.length; i++) {
+              const v = parts[i].volume();
+              if (v > bestVol) { bestVol = v; best = parts[i]; }
+            }
+            const scrapVol = parts.reduce((s, c) => s + c.volume(), 0) - bestVol;
+            if (scrapVol > 0.05 * bestVol && scrapVol > 1e-2) {
+              throw new Error(
+                `filletAlongPath: semi-arc batch decompose found ${parts.length} components with scrap vol `
+                + `${scrapVol.toFixed(4)} — failing loud rather than shipping a dirty solid`,
+              );
+            }
+            out = best;
+          }
+        }
+      } catch (e) {
+        if (/semi-arc batch decompose|dirty solid/i.test(String(e && e.message))) throw e;
       }
       return out;
     }
@@ -4876,55 +4875,8 @@ function filletAlongPath(part, path, radius, opts = {}) {
   // Drop disconnected cutter scraps (thin purple sheets) via decompose —
   // closed-loop sweep seams often leave tiny extra components. For closed
   // paths, multiple components are a hard fail (no silent keep-largest).
-  // Same-radius fillet-on-fillet: sweep along a prior rim of radius ≈ r is
-  // degenerate (rolling-ball track collapses to a point) and leaves a
-  // triangular cusp of leftover material at each corner. Subtract clipped
-  // sphere caps AFTER the main sweep so volume guards still measure the
-  // sweep, and so a bad cap cannot inflate expectVol. Fillet only.
-  if (profileKind === 'fillet' && !opts._rawPath && !testingOversize) {
-    const caps = _s23SameRadiusCornerCaps(M, part, points, closed, radius);
-    if (caps.length) {
-      // Batch-union then one subtract. The 1.5·r corner boxes can nick thin
-      // walls and leave scrap components; keep the largest body when scrap is
-      // a tiny fraction — that body has the cusps consumed (Artur playtest).
-      try {
-        let tool = caps[0];
-        for (let i = 1; i < caps.length; i++) tool = M.union([tool, caps[i]]);
-        const next = M.difference(out, tool);
-        const se = _c4StatusError(next);
-        if (!se && next.volume() > 1e-9) {
-          const carved = out.volume() - next.volume();
-          const lim = caps.length * 0.55 * (4 / 3) * Math.PI * radius * radius * radius;
-          if (carved > 1e-6 && carved < lim) {
-            if (typeof next.decompose === 'function') {
-              const parts = next.decompose();
-              if (Array.isArray(parts) && parts.length > 1) {
-                let best = parts[0];
-                let bestVol = best.volume();
-                for (let i = 1; i < parts.length; i++) {
-                  const v = parts[i].volume();
-                  if (v > bestVol) { bestVol = v; best = parts[i]; }
-                }
-                const scrapVol = parts.reduce((s, c) => s + c.volume(), 0) - bestVol;
-                if (scrapVol <= 0.02 * bestVol || scrapVol <= 1.0) {
-                  out = best;
-                }
-                // else: scrap too large — keep sweep-only `out`
-              } else {
-                out = next;
-              }
-            } else {
-              out = next;
-            }
-          }
-        }
-      } catch (_) {
-        // Caps are best-effort — keep the sweep result if the corner tool fails.
-      }
-    }
-  }
-
-
+  // Same-r arcs are split upstream (planFilletSweepPath mode:'runs' →
+  // independent semi-arc subtracts). No sphere-cap post-pass (#107 bulges).
   try {
     if (typeof out.decompose === 'function') {
       const parts = out.decompose();
