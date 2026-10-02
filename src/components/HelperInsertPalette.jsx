@@ -28,9 +28,9 @@ import Angle from './icons/Angle';
 import { itemsByGroup, paletteRailSections } from '../utils/helperPaletteSnippets';
 import {
   RAIL_PAIR_HEIGHT_CLASS,
-  RAIL_PAIR_WIDTH_CLASS,
   RAIL_SCROLL_CLASS,
   RAIL_PAIR_HEIGHT_ATTR,
+  useLeftRailFit,
 } from '../utils/railPair';
 import { resolveFaceModal } from '../utils/faceFeaturePlacement';
 import { canBuildFilletAlongPath, resolveFilletStrategy } from '../utils/filletAlongPath';
@@ -110,8 +110,8 @@ const HelperInsertPalette = ({
   layout = 'game',
 }) => {
   const grouped = itemsByGroup();
-  // Both viewport rails (this one and CrossSectionPanel) share one *exact*
-  // height via RAIL_PAIR_HEIGHT_CLASS (pixel-perfect pair, not max-h approx).
+  // Content-height capped just below the part-name chip; narrows when no scroll.
+  const { railRef, fits, widthClass } = useLeftRailFit();
   const iconSize = 20;
   const pad = 'p-2';
   const [pending, setPending] = useState(null);
@@ -213,14 +213,16 @@ const HelperInsertPalette = ({
   return (
     <>
       <div
+        ref={railRef}
         className={`absolute left-2 lg:left-4 bottom-2.5 z-10 flex flex-col gap-1
           bg-white/60 backdrop-blur-sm rounded-lg shadow-lg
-          ${RAIL_PAIR_WIDTH_CLASS} ${RAIL_PAIR_HEIGHT_CLASS} ${RAIL_SCROLL_CLASS}
+          ${widthClass} ${RAIL_PAIR_HEIGHT_CLASS} ${RAIL_SCROLL_CLASS}
           p-2`}
         role="group"
         aria-label="Helper insert palette"
         data-rail-pair="left"
         data-rail-height={RAIL_PAIR_HEIGHT_ATTR}
+        data-rail-fit={fits ? 'fits' : 'scroll'}
         data-palette-layout={layout === 'cad' ? 'cad' : 'game'}
       >
         {sections.map((section, gi) => (

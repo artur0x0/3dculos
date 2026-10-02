@@ -3,8 +3,9 @@
  * Desktop feature strip between editor and viewer panes.
  *
  * CAD desktop mounts a vertical FeatureStrip in the seam (editor | strip |
- * SplitDivider | viewport). Chips jump Monaco caret; feature sheets stay
- * mobile-only. Mobile CAD/Script strips must remain unchanged.
+ * SplitDivider | viewport), starting below the measured editor ribbon.
+ * Chips jump Monaco caret; feature sheets stay mobile-only. Mobile CAD/Script
+ * strips must remain unchanged.
  */
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -87,6 +88,14 @@ console.log('desktop: feature strip between panes');
       const n = (app.match(/<FeatureStrip\b/g) || []).length;
       return n === 3;
     })(),
+  );
+  check(
+    'desktop strip starts below measured editor ribbon',
+    /data-desktop-feature-strip/.test(app) &&
+      /data-feature-strip-below-ribbon/.test(app) &&
+      /data-feature-strip-ribbon-spacer/.test(app) &&
+      /data-feature-strip-ribbon-spacer-h="measured"/.test(app) &&
+      /style=\{\{ height: ribbonPx \}\}/.test(app),
   );
 }
 

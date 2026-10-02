@@ -167,7 +167,7 @@ const contourRail = read('../../src/components/ContourModeRail.jsx');
   check('the right rail never scrolls', !/RAIL_SCROLL_CLASS/.test(panel)
     && /RAIL_NO_CLIP_CLASS/.test(panel));
   check('height and scrolling are separate concerns',
-    /RAIL_PAIR_HEIGHT_CLASS = 'h-\[min\(26rem,calc\(100%-5\.5rem\)\)\]'/.test(railPair));
+    /RAIL_PAIR_HEIGHT_CLASS = 'max-h-\[min\(26rem,calc\(100%-5\.5rem\)\)\]'/.test(railPair));
   check('the no-clip class is overflow-visible',
     /RAIL_NO_CLIP_CLASS = 'overflow-visible'/.test(railPair));
   check('rail-scroll gives the thumb a pill radius', /\.rail-scroll::-webkit-scrollbar-thumb[\s\S]{0,200}?border-radius: 9999px/.test(css));
@@ -302,8 +302,13 @@ const contourRail = read('../../src/components/ContourModeRail.jsx');
     const src = read(`../../src/components/${name}.jsx`);
     check(`${name} is frosted`, /surface-glass-chip/.test(src));
   }
+  const errorPopup = read('../../src/components/ErrorPopup.jsx');
+  // ErrorPopup consolidates execution/soft-fail/scrap toast frosting (was ≥8
+  // inline surface-glass-chip hits in Viewport alone).
   check('viewport chips and toasts are frosted',
-    (view.match(/surface-glass-chip/g) || []).length >= 8);
+    /surface-glass-chip/.test(errorPopup) &&
+      ((view.match(/surface-glass-chip/g) || []).length
+        + (errorPopup.match(/surface-glass-chip/g) || []).length) >= 6);
   check('no fully opaque toast survives in the viewport',
     !/bg-(?:amber-600|amber-700|cyan-700) text-white/.test(view));
 }

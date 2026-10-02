@@ -9,9 +9,9 @@ import {
 import { CONTOUR_TOOLS } from '../utils/contourMode';
 import {
   RAIL_PAIR_HEIGHT_CLASS,
-  RAIL_PAIR_WIDTH_CLASS,
   RAIL_SCROLL_CLASS,
   RAIL_PAIR_HEIGHT_ATTR,
+  useLeftRailFit,
 } from '../utils/railPair';
 
 const ICONS = {
@@ -33,21 +33,24 @@ const ContourModeRail = ({
   onBack,
   compact = false,
 }) => {
-  // Same exact height as CrossSectionPanel via RAIL_PAIR_HEIGHT_CLASS.
+  // Content-height capped like HelperInsertPalette; narrows when no scroll.
+  const { railRef, fits, widthClass } = useLeftRailFit();
   const iconSize = 20;
   const pad = 'p-2';
   const workplaneOnly = entry === 'workplane';
 
   return (
     <div
+      ref={railRef}
       className={`absolute left-2 lg:left-4 bottom-2.5 z-10 flex flex-col gap-1
         bg-white/60 backdrop-blur-sm rounded-lg shadow-lg
-        ${RAIL_PAIR_WIDTH_CLASS} ${RAIL_PAIR_HEIGHT_CLASS} ${RAIL_SCROLL_CLASS}
+        ${widthClass} ${RAIL_PAIR_HEIGHT_CLASS} ${RAIL_SCROLL_CLASS}
         p-2`}
       role="group"
       aria-label={workplaneOnly ? 'Workplane tools' : 'Contour tools'}
       data-rail-pair="left"
       data-rail-height={RAIL_PAIR_HEIGHT_ATTR}
+      data-rail-fit={fits ? 'fits' : 'scroll'}
     >
       <div
         className={`text-[9px] font-semibold uppercase tracking-wide text-cyan-800 px-1 truncate ${

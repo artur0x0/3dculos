@@ -51,6 +51,7 @@
         "golden:mobile-c3-roundedbox-fillet-tangent": "node scripts/golden/smoke_mobile_c3_roundedbox_fillet_tangent.mjs",
         "golden:mobile-c4-strip-z-rounded-edge-pick": "node scripts/golden/smoke_mobile_c4_strip_z_rounded_edge_pick.mjs",
         "golden:desktop-feature-strip": "node scripts/golden/smoke_desktop_feature_strip_between_panes.mjs",
+        "golden:ui-desktop-rail-error-undo": "node scripts/golden/smoke_ui_desktop_rail_error_undo.mjs",
         "golden:fillet-kernel-spike-c": "node scripts/golden/smoke_fillet_kernel_spike_c.mjs",
         "golden:fillet-c2-rolling-ball": "node scripts/golden/smoke_fillet_c2_rolling_ball.mjs",
         "golden:fillet-c3-variable-sweep": "node scripts/golden/smoke_fillet_c3_variable_sweep.mjs",
