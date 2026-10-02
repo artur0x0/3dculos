@@ -212,6 +212,70 @@ if (wrap) {
     .sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k}×${v}`).join('  '));
 }
 
+// ------------------------------------------------- the VISIBLE defect
+// What Artur actually sees is a dark wedge, and darkness means a normal
+// pointing the wrong way — not a needle. Needles are invisible (they are
+// coplanar with the face they sit in); INVERTED triangles render dark.
+//
+// Measured on the wrap stage: 51 triangles whose normal points back toward the
+// solid's centroid, and several carry real area (1.5–3.6 mm²) clustered at
+// x≈-13, y≈13–14, z=10 — the top face right where the wrap fillet lands. That
+// is the sliver in the screenshot.
+//
+// Nothing else in the suite catches this: `countDegenerateTriangles` counts
+// needles, and `isFilletSliverDirty` stays FALSE here (334/6602 = 5.1%, under
+// the 6% / 80-abs thresholds). So this check is the one that actually tracks
+// the reported bug. Ceiling, not a pass — drop it to 0 when the cause is fixed.
+{
+  const src = upTo(F, 3);
+  const p = await exec(src);
+  const m = p.mesh;
+  const np = m.numProp || 3;
+  const V = [];
+  for (let i = 0; i < m.vertProperties.length / np; i++) {
+    V.push([m.vertProperties[i * np], m.vertProperties[i * np + 1], m.vertProperties[i * np + 2]]);
+  }
+  let cx = 0, cy = 0, cz = 0;
+  for (const v of V) { cx += v[0]; cy += v[1]; cz += v[2]; }
+  cx /= V.length; cy /= V.length; cz /= V.length;
+  let inward = 0;
+  let inwardVisible = 0;
+  for (let t = 0; t < m.triVerts.length / 3; t++) {
+    const a = V[m.triVerts[t * 3]];
+    const b = V[m.triVerts[t * 3 + 1]];
+    const c = V[m.triVerts[t * 3 + 2]];
+    const ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+    const ac = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+    const n = [
+      ab[1] * ac[2] - ab[2] * ac[1],
+      ab[2] * ac[0] - ab[0] * ac[2],
+      ab[0] * ac[1] - ab[1] * ac[0],
+    ];
+    const L = Math.hypot(...n);
+    if (L < 1e-12) continue;
+    const ctr = [(a[0] + b[0] + c[0]) / 3, (a[1] + b[1] + c[1]) / 3, (a[2] + b[2] + c[2]) / 3];
+    const out = [ctr[0] - cx, ctr[1] - cy, ctr[2] - cz];
+    const d = (n[0] * out[0] + n[1] * out[1] + n[2] * out[2]) / L / (Math.hypot(...out) || 1);
+    if (d < -0.35) {
+      inward++;
+      if (0.5 * L > 0.5) inwardVisible++;
+    }
+  }
+  console.log(`      wrap stage: ${inward} inward-facing triangles, ${inwardVisible} with visible area (>0.5mm²)`);
+  const INWARD_CEILING = 51;
+  const INWARD_VISIBLE_CEILING = 3;
+  check(
+    'inward-facing triangle count does not regress',
+    inward <= INWARD_CEILING,
+    `${inward} > ceiling ${INWARD_CEILING}`,
+  );
+  check(
+    'visible-area inward triangles do not regress (this IS the dark wedge)',
+    inwardVisible <= INWARD_VISIBLE_CEILING,
+    `${inwardVisible} > ceiling ${INWARD_VISIBLE_CEILING}`,
+  );
+}
+
 // ---------------------------------------------------------------- preview
 // The live preview must agree with what Accept commits. The frame loop used to
 // index `ordered[i]` by PATH POINT index, clamped to the last edge — but the
