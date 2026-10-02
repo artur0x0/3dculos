@@ -61,6 +61,7 @@
         "golden:fillet-tangent-round-wrap": "node scripts/golden/smoke_fillet_tangent_round_wrap.mjs",
         "golden:fillet-chamfer-rounded-wrap": "node scripts/golden/smoke_fillet_chamfer_rounded_wrap.mjs",
         "golden:artur-playtest-wrap-chamfer": "node scripts/golden/smoke_artur_playtest_wrap_chamfer.mjs",
+        "golden:error-toast-undo": "node scripts/golden/smoke_error_toast_undo.mjs",
         "golden:app-loads": "npm run build && node scripts/golden/smoke_app_loads.mjs",
         "golden:hook-dep-tdz": "node scripts/golden/smoke_hook_dep_tdz.mjs",
         "golden:ui-polish": "node scripts/golden/smoke_ui_polish_icons_layout.mjs",
