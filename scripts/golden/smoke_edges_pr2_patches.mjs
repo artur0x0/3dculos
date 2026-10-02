@@ -181,6 +181,16 @@ return placeInFrame(fr, makeLoft([xs0, xs1]));
     'overlay does not use MeshLambertMaterial for patches',
     !/patchOverlayMatRef\.current = new MeshLambertMaterial/.test(vp),
   );
+  check(
+    'overlay-off is gated on patchOverlayActiveRef (no half-rebuild)',
+    /patchOverlayActiveRef/.test(vp)
+      && /if \(!showPatchOverlay\)/.test(vp)
+      && /if \(patchOverlayActiveRef\.current\)/.test(vp),
+  );
+  check(
+    'toggle-off force-restores via renderMeshData (lit base)',
+    /forceBaseRestore/.test(vp) && /renderMeshData\(cached\)/.test(vp),
+  );
 }
 
 if (failed) {
