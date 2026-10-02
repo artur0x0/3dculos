@@ -331,6 +331,37 @@ function _n(v) {
   return [v[0] / L, v[1] / L, v[2] / L];
 }
 
+/** Squared distance from p to segment [a,b]. */
+function _distSqToSeg(p, a, b) {
+  const ab = _sub(b, a);
+  const L2 = _dot(ab, ab);
+  let t = L2 > 1e-18 ? _dot(_sub(p, a), ab) / L2 : 0;
+  t = t < 0 ? 0 : (t > 1 ? 1 : t);
+  const d = _sub(p, _add(a, _mul(t, ab)));
+  return _dot(d, d);
+}
+
+/**
+ * The ordered edge whose segment lies closest to this path point.
+ * Falls back to positional indexing when an edge lacks va/vb.
+ */
+function _edgeNearestPoint(p, ordered, i) {
+  if (!ordered?.length) return null;
+  const fallback = ordered[Math.min(i, ordered.length - 1)];
+  if (!p) return fallback;
+  let best = null;
+  let bestD = Infinity;
+  for (const e of ordered) {
+    if (!e?.va || !e?.vb) continue;
+    const d = _distSqToSeg(p, e.va, e.vb);
+    if (d < bestD) {
+      bestD = d;
+      best = e;
+    }
+  }
+  return best || fallback;
+}
+
 function inFaceFromNormal(n, T, nOther) {
   if (!n || !T) return null;
   const f = _cross(n, T);
@@ -460,12 +491,23 @@ function buildSingleFilletBlendPreview(list, params = {}) {
 
   const normals = lookupNormals(list);
   const pts = assembled.value.points;
+  /**
+   * Which selected edge owns this path point.
+   *
+   * The path is densified/thinned independently of the edge list, so point i
+   * and edge i are NOT the same thing: Artur's 20-edge top-loop wrap assembles
+   * to 25 points. Indexing `ordered[i]` (clamped to the last edge) therefore
+   * gave the final 5 rings — 20% of the loop — the LAST edge's wall normals.
+   * On a closed wrap the walls rotate around the perimeter, so those rings got
+   * oriented into the wrong plane and the preview visibly disagreed with the
+   * committed blend. Match by geometry instead: nearest segment wins.
+   */
   const ordered = assembled.orderedEdges || [];
   const closed = !!assembled.value.closed;
   const frames = [];
   let prevN = null;
   for (let i = 0; i < pts.length; i++) {
-    const e = ordered[Math.min(i, Math.max(0, ordered.length - 1))];
+    const e = _edgeNearestPoint(pts[i], ordered, i);
     const nr = e ? normals.get(e.key) : null;
     let T;
     if (i < pts.length - 1) T = _n(_sub(pts[i + 1], pts[i]));

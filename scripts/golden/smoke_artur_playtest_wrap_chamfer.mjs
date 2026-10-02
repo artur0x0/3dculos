@@ -212,6 +212,65 @@ if (wrap) {
     .sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k}×${v}`).join('  '));
 }
 
+// ---------------------------------------------------------------- preview
+// The live preview must agree with what Accept commits. The frame loop used to
+// index `ordered[i]` by PATH POINT index, clamped to the last edge — but the
+// path is densified/thinned independently of the edge list (this 20-edge wrap
+// assembles to 25 points; 51 before path thinning). So the trailing frames all
+// took the LAST edge's wall normals, and on a closed wrap — where the walls
+// rotate around the perimeter — those rings were drawn in the wrong plane.
+// Measured on this fixture: 5 of 51 frames mis-oriented. Now matched by
+// geometry (nearest segment), so: zero.
+{
+  const mod = await import('../../src/utils/filletMode.js');
+  const m5 = full.match(/const selEdges5 = (\[.*?\]);\n/s);
+  check('fixture exposes the top-loop wrap selection', !!m5);
+  if (m5) {
+    const wrapEdges = JSON.parse(m5[1].replace(/([{,])\s*([A-Za-z_]\w*):/g, '$1"$2":'));
+    const pv = mod.buildFilletBlendPreview(wrapEdges, { radius: 2.88, strategy: 'sweep' });
+    check('wrap preview builds', pv.ok === true, pv.message);
+    check('wrap preview sees a closed loop', pv.closed === true);
+    check(
+      'preview has more path points than edges (the indexing trap)',
+      pv.path.points.length > wrapEdges.length,
+      `points=${pv.path.points.length} edges=${wrapEdges.length}`,
+    );
+    let off = 0;
+    for (const f of pv.frames) {
+      let best = null;
+      let bestD = Infinity;
+      for (const e of wrapEdges) {
+        const ab = [e.vb[0] - e.va[0], e.vb[1] - e.va[1], e.vb[2] - e.va[2]];
+        const L2 = ab[0] ** 2 + ab[1] ** 2 + ab[2] ** 2;
+        let t = L2 > 1e-18
+          ? ((f.origin[0] - e.va[0]) * ab[0] + (f.origin[1] - e.va[1]) * ab[1] + (f.origin[2] - e.va[2]) * ab[2]) / L2
+          : 0;
+        t = Math.max(0, Math.min(1, t));
+        const d = [
+          f.origin[0] - (e.va[0] + t * ab[0]),
+          f.origin[1] - (e.va[1] + t * ab[1]),
+          f.origin[2] - (e.va[2] + t * ab[2]),
+        ];
+        const dd = d[0] ** 2 + d[1] ** 2 + d[2] ** 2;
+        if (dd < bestD) { bestD = dd; best = e; }
+      }
+      const { n0, n1 } = best;
+      const cr = [
+        n0[1] * n1[2] - n0[2] * n1[1],
+        n0[2] * n1[0] - n0[0] * n1[2],
+        n0[0] * n1[1] - n0[1] * n1[0],
+      ];
+      const cl = Math.hypot(...cr) || 1;
+      if (Math.abs((f.N[0] * cr[0] + f.N[1] * cr[1] + f.N[2] * cr[2]) / cl) > 0.2) off++;
+    }
+    check(
+      'every preview ring is oriented by the edge it actually sits on',
+      off === 0,
+      `${off}/${pv.frames.length} rings in the wrong plane`,
+    );
+  }
+}
+
 if (failed) {
   console.error(`\n${failed} Artur playtest check(s) failed.`);
   process.exit(1);
