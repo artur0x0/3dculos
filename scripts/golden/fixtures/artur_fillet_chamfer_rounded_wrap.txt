@@ -1,0 +1,18 @@
+// Artur playtest — fillet wrap sliver + chamfer rounded-corner ribs (quality golden).
+// Cube → 4 vertical fillets → top perimeter wrap → bottom path chamfer.
+let box1 = Manifold.cube([40, 30, 20], true);
+let part = box1;
+for (const [fa, fb] of [[3, 6], [2, 3], [1, 2], [1, 6]]) {
+  part = filletAlongPath(part, makeSweepPath(edgesBetween(part, fa, fb)), 6);
+}
+const top = convexEdges(part).filter((e) => {
+  const m = [(e.va[0] + e.vb[0]) / 2, (e.va[1] + e.vb[1]) / 2, (e.va[2] + e.vb[2]) / 2];
+  return Math.abs(m[1] - 15) < 0.35;
+});
+part = filletAlongPath(part, makeSweepPath(top), 4.21);
+const bot = convexEdges(part).filter((e) => {
+  const m = [(e.va[0] + e.vb[0]) / 2, (e.va[1] + e.vb[1]) / 2, (e.va[2] + e.vb[2]) / 2];
+  return Math.abs(m[1] + 15) < 0.35;
+});
+part = filletAlongPath(part, makeSweepPath(bot), 6.1, { profile: 'chamfer' });
+return part;

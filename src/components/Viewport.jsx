@@ -487,6 +487,38 @@ const Viewport = forwardRef(({
   const sheetLiftNdcRef = useRef(0);
   const sheetLiftTweenRef = useRef(null);
 
+  /**
+   * Toast payload. Errors carry an Undo affordance so a bad Accept is one tap
+   * from reverted — the scrap notice used to just *say* "Undo restores the
+   * solid" and leave the user to find the button.
+   *
+   * Most toasts are refusals, so `undo` defaults ON; purely informational
+   * hints opt out with `{ undo: false }`. The button still only renders when
+   * `canUndo` says there is history to pop.
+   */
+  const toastPayload = (msg, opts) => (
+    msg == null ? null : { text: String(msg), undo: opts?.undo !== false }
+  );
+
+  /**
+   * Undo affordance inside an error toast. The bubble itself is
+   * pointer-events-none so it never eats viewport taps, so the button has to
+   * re-enable them for itself.
+   */
+  const ToastUndo = ({ show }) => (
+    show && canUndo ? (
+      <button
+        type="button"
+        data-toast-undo="1"
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={(e) => { e.stopPropagation(); onUndo?.(); }}
+        className="pointer-events-auto ml-2 shrink-0 rounded-full border border-white/50 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide hover:bg-white/20 active:bg-white/30"
+      >
+        Undo
+      </button>
+    ) : null
+  );
+
   const armEdgeModeToastClear = () => {
     if (edgeModeToastTimerRef.current) clearTimeout(edgeModeToastTimerRef.current);
     edgeModeToastTimerRef.current = setTimeout(() => {
@@ -501,8 +533,8 @@ const Viewport = forwardRef(({
       setContourToast(null);
     }, 3200);
   };
-  const showContourToast = (msg) => {
-    setContourToast(msg);
+  const showContourToast = (msg, opts) => {
+    setContourToast(toastPayload(msg, opts));
     armContourToastClear();
   };
   const armFilletToastClear = () => {
@@ -512,8 +544,8 @@ const Viewport = forwardRef(({
       setFilletToast(null);
     }, 3200);
   };
-  const showFilletToast = (msg) => {
-    setFilletToast(msg);
+  const showFilletToast = (msg, opts) => {
+    setFilletToast(toastPayload(msg, opts));
     armFilletToastClear();
   };
   const armShellToastClear = () => {
@@ -523,8 +555,8 @@ const Viewport = forwardRef(({
       setShellToast(null);
     }, 3200);
   };
-  const showShellToast = (msg) => {
-    setShellToast(msg);
+  const showShellToast = (msg, opts) => {
+    setShellToast(toastPayload(msg, opts));
     armShellToastClear();
   };
   const [materials, setMaterials] = useState([]);
@@ -646,7 +678,7 @@ const Viewport = forwardRef(({
       disposeEdgeOverlayObject(sceneRef.current, pathPreviewRef.current);
       pathPreviewRef.current = null;
       setSelectedEdges([]);
-      setEdgeModeToast(msg || 'Re-pick edges after geometry changes');
+      setEdgeModeToast(toastPayload(msg || 'Re-pick edges after geometry changes'));
       armEdgeModeToastClear();
     },
     setPickMode: (mode) => setPickMode(mode === 'edge' ? 'edge' : 'face'),
@@ -656,7 +688,9 @@ const Viewport = forwardRef(({
     },
     /** Slice 27: loud-fail toast — keep the path visible (do not clear edges). */
     softFailFillet: (msg) => {
-      showFilletToast(msg || 'Fillet refused — pick edges (disjoint sets fillet independently), then Accept.');
+      showFilletToast(msg || (filletModeRef.current?.entry === 'chamferEdges'
+        ? 'Chamfer refused — pick edges (disjoint sets chamfer independently), then Accept.'
+        : 'Fillet refused — pick edges (disjoint sets fillet independently), then Accept.'));
     },
     softFailShell: (msg) => {
       showShellToast(msg || 'Shell refused — tap a face or choose Closed, then Confirm.');
@@ -2025,15 +2059,25 @@ const Viewport = forwardRef(({
     });
   }, [filletMode, selectedEdges, meshEpoch]);
 
-  const filletBlendPayload = useMemo(
-    () => (filletMode && filletMode.entry !== 'chamferEdges'
-      ? buildFilletBlendPreview(selectedEdges, filletMode.params)
-      : null),
-    [filletMode, selectedEdges],
-  );
+  const filletBlendPayload = useMemo(() => {
+    if (!filletMode) return null;
+    if (filletMode.entry === 'chamferEdges') {
+      return buildFilletBlendPreview(selectedEdges, {
+        ...(filletMode.params || {}),
+        strategy: 'sweep',
+        profile: 'chamfer',
+        radius: filletMode.params?.chamfer,
+      });
+    }
+    return buildFilletBlendPreview(selectedEdges, filletMode.params);
+  }, [filletMode, selectedEdges]);
   useEffect(() => {
-    if (!filletMode || filletMode.entry === 'chamferEdges') {
+    if (!filletMode) {
       clearFilletBlendPreview();
+      return;
+    }
+    if (filletMode.entry === 'chamferEdges') {
+      paintFilletBlendPreview(filletBlendPayload);
       return;
     }
     if (!filletMode.radiusTouched) {
@@ -2463,7 +2507,7 @@ const Viewport = forwardRef(({
     featureEdgesSourceRef.current = null;
     const geom = resultRef.current?.geometry;
     const note = (msg) => {
-      setFilletToast(msg);
+      setFilletToast(toastPayload(msg));
       if (filletToastTimerRef.current) clearTimeout(filletToastTimerRef.current);
       filletToastTimerRef.current = setTimeout(() => {
         filletToastTimerRef.current = null;
@@ -2946,7 +2990,7 @@ const Viewport = forwardRef(({
       // Tapping a handle almost always means "grab this", not "stack a second
       // point on top of it" — say so instead of silently doing the wrong thing.
       if (pickPolylinePointAtClient(event.clientX, event.clientY) >= 0) {
-        showContourToast('Right-drag this point to move it — tap elsewhere to add one.');
+        showContourToast('Right-drag this point to move it — tap elsewhere to add one.', { undo: false });
         return;
       }
       const plane = contourWorkplane(contourModeRef.current, modelBoundsRef.current);
@@ -4131,7 +4175,7 @@ const Viewport = forwardRef(({
         // large NEW scrap delta (not a modest re-tessellation bump).
         const scrapy = introduced > Math.max(300, 0.1 * Math.max(preDeg, 1));
         setFilletScrapNotice(scrapy
-          ? 'Fillet left zero-area faces. Undo restores the solid.'
+          ? 'Unable to generate clean fillet, please try smaller size.'
           : null);
       } else {
         setFilletScrapNotice(null);
@@ -4170,7 +4214,7 @@ const Viewport = forwardRef(({
         if (edgeRematchToastSuppressRef.current) {
           edgeRematchToastSuppressRef.current = false;
         } else if (wasEdgeMode && hadEdges) {
-          setEdgeModeToast('Geometry updated — re-pick edges');
+          setEdgeModeToast(toastPayload('Geometry updated — re-pick edges'));
           armEdgeModeToastClear();
         }
       }
@@ -4203,7 +4247,7 @@ const Viewport = forwardRef(({
         clearEdgeHighlight();
         clearEdgeHover();
         setSelectedEdges([]);
-        setEdgeModeToast('Selected edges not found — re-pick after geometry changes');
+        setEdgeModeToast(toastPayload('Selected edges not found — re-pick after geometry changes'));
         armEdgeModeToastClear();
       }
 
@@ -4230,7 +4274,7 @@ const Viewport = forwardRef(({
         onFaceSelected?.(null);
         featureEdgesRef.current = [];
         featureEdgesSourceRef.current = null;
-        setEdgeModeToast('Run failed — selection cleared (no prior solid)');
+        setEdgeModeToast(toastPayload('Run failed — selection cleared (no prior solid)'));
         armEdgeModeToastClear();
       }
       return false;
@@ -4345,7 +4389,7 @@ const Viewport = forwardRef(({
             clearEdgeHover();
             clearPathPreview();
             setSelectedEdges([]);
-            setEdgeModeToast(msg || 'Re-pick edges after geometry changes');
+            setEdgeModeToast(toastPayload(msg || 'Re-pick edges after geometry changes'));
             armEdgeModeToastClear();
           }}
           onProfilePreview={setXsPreview}
@@ -4397,7 +4441,7 @@ const Viewport = forwardRef(({
               rebuildFeatureEdges();
               if (!edgeModeToastShownRef.current) {
                 edgeModeToastShownRef.current = true;
-                setEdgeModeToast('Edge pick on — tap near an edge (tangent loops on)');
+                setEdgeModeToast(toastPayload('Edge pick on — tap near an edge (tangent loops on)', { undo: false }));
                 armEdgeModeToastClear();
               }
             } else {
@@ -4717,16 +4761,18 @@ const Viewport = forwardRef(({
 
       {edgeModeToast && (
         <div className="absolute top-16 left-1/2 -translate-x-1/2 z-30 pointer-events-none">
-          <div className="bg-amber-600/85 surface-glass-chip text-white text-xs font-sans font-medium px-3 py-2 rounded-full shadow-lg">
-            {edgeModeToast}
+          <div className="bg-amber-600/85 surface-glass-chip text-white text-xs font-sans font-medium px-3 py-2 rounded-full shadow-lg flex items-center">
+            <span>{edgeModeToast.text}</span>
+            <ToastUndo show={edgeModeToast.undo} />
           </div>
         </div>
       )}
 
       {contourToast && (
         <div className="absolute top-16 left-1/2 -translate-x-1/2 z-30 pointer-events-none max-w-[min(22rem,calc(100%-2rem))]">
-          <div className="bg-cyan-700/85 surface-glass-chip text-white text-xs font-sans font-medium px-3 py-2 rounded-full shadow-lg text-center">
-            {contourToast}
+          <div className="bg-cyan-700/85 surface-glass-chip text-white text-xs font-sans font-medium px-3 py-2 rounded-full shadow-lg text-center flex items-center justify-center">
+            <span>{contourToast.text}</span>
+            <ToastUndo show={contourToast.undo} />
           </div>
         </div>
       )}
@@ -4734,27 +4780,30 @@ const Viewport = forwardRef(({
       {filletScrapNotice && (
         <div className="absolute top-16 left-1/2 -translate-x-1/2 z-30 pointer-events-none max-w-[min(18rem,calc(100%-2rem))]">
           <div
-            className="bg-red-950/85 surface-glass-chip border border-red-400/80 text-red-50 text-xs font-sans font-medium px-3 py-2 rounded-lg shadow-lg text-center"
+            className="bg-red-950/85 surface-glass-chip border border-red-400/80 text-red-50 text-xs font-sans font-medium px-3 py-2 rounded-lg shadow-lg text-center flex items-center justify-center"
             role="status"
             data-fillet-scrap="1"
           >
-            {filletScrapNotice}
+            <span>{filletScrapNotice}</span>
+            <ToastUndo show />
           </div>
         </div>
       )}
 
       {filletToast && (
         <div className="absolute top-16 left-1/2 -translate-x-1/2 z-30 pointer-events-none max-w-[min(22rem,calc(100%-2rem))]">
-          <div className="bg-amber-700/85 surface-glass-chip text-white text-xs font-sans font-medium px-3 py-2 rounded-full shadow-lg text-center">
-            {filletToast}
+          <div className="bg-amber-700/85 surface-glass-chip text-white text-xs font-sans font-medium px-3 py-2 rounded-full shadow-lg text-center flex items-center justify-center">
+            <span>{filletToast.text}</span>
+            <ToastUndo show={filletToast.undo} />
           </div>
         </div>
       )}
 
       {shellToast && (
         <div className="absolute top-16 left-1/2 -translate-x-1/2 z-30 pointer-events-none max-w-[min(22rem,calc(100%-2rem))]">
-          <div className="bg-cyan-700/85 surface-glass-chip text-white text-xs font-sans font-medium px-3 py-2 rounded-full shadow-lg text-center">
-            {shellToast}
+          <div className="bg-cyan-700/85 surface-glass-chip text-white text-xs font-sans font-medium px-3 py-2 rounded-full shadow-lg text-center flex items-center justify-center">
+            <span>{shellToast.text}</span>
+            <ToastUndo show={shellToast.undo} />
           </div>
         </div>
       )}
