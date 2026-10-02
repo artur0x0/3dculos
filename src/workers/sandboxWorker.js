@@ -379,6 +379,32 @@ function _c4PushDistinct(list, n, cosTol = null) {
 }
 
 /**
+ * Area-weighted normal clustering for shell offset. Unlike `_c4PushDistinct`
+ * (first-wins), a later larger facet in the same ~cosTol cone pulls the
+ * representative toward its normal — fillet boolean scraps no longer steal the
+ * cluster from the real wall/fillet plane.
+ * `list` entries are `{ n:[x,y,z], w:number }`; call `_c4FinalizeClusters`
+ * before using them as unit normals.
+ */
+function _c4PushCluster(list, n, area, cosTol) {
+  const w = Math.max(area, 1e-18);
+  for (let i = 0; i < list.length; i++) {
+    const c = list[i];
+    if (_c4Dot(c.n, n) >= cosTol) {
+      const nw = c.w + w;
+      c.n = _c4Norm(_c4Add(_c4Mul(c.w, c.n), _c4Mul(w, n)));
+      c.w = nw;
+      return;
+    }
+  }
+  list.push({ n: n.slice(), w });
+}
+
+function _c4FinalizeClusters(list) {
+  return list.map((c) => _c4Norm(c.n));
+}
+
+/**
  * Reject an offset/draft that turns the surface inside out.
  *
  * A fold is still a closed mesh, so volume alone does not catch it — but a
@@ -412,9 +438,28 @@ function _c4RequireNoFold(md, out, label, amount) {
  * `openNormals` are faces the cavity must break THROUGH: the vertex is pushed
  * out along them by t instead of in, so the cavity pokes past the outer surface
  * and the subtraction opens the face.
+ *
+ * Ill-conditioned multi-plane solves at fillet×planar junctions blow |d| past
+ * the orthogonal bound t√N. When residual is high, fall back to a single inward
+ * step along the mean of the (hemisphere-filtered) normals — they cannot cancel,
+ * so this insets instead of tearing the cavity.
  */
 function _c4VertexOffset(closedNormals, openNormals, t) {
   let d = _c4SolvePlaneMoves(closedNormals, closedNormals.map(() => -t));
+  if (closedNormals.length) {
+    let resid2 = 0;
+    for (const n of closedNormals) {
+      const e = _c4Dot(d, n) + t;
+      resid2 += e * e;
+    }
+    const resid = Math.sqrt(resid2 / closedNormals.length);
+    const dLen = _c4Len(d);
+    const softCap = t * Math.sqrt(closedNormals.length) * 1.6;
+    if (resid > t * 0.3 || dLen > softCap) {
+      const avg = _c4Norm(closedNormals.reduce(_c4Add, [0, 0, 0]));
+      d = _c4Mul(-t, avg);
+    }
+  }
   if (openNormals.length) {
     const avg = _c4Norm(openNormals.reduce(_c4Add, [0, 0, 0]));
     d = _c4Add(d, _c4Mul(t, avg));
@@ -435,15 +480,15 @@ function _c4VertexOffset(closedNormals, openNormals, t) {
  */
 function _c4OffsetCavity(md, thickness, openSet, label) {
   const nV = md.V.length;
-  // Cluster facet normals within ~10°. Tessellated fillets / cylinders put
-  // many near-parallel planes on one vertex; treating each as distinct makes
-  // `_c4SolvePlaneMoves` shoot vertices hundreds of mm (cavity vol → 0/neg).
-  // 10° still keeps real sharp edges; tighter than 15° so trihedral fillet
-  // junctions keep distinct dihedral planes instead of over-merging.
+  // Cluster facet normals within ~10°, AREA-WEIGHTED. Tessellated fillets /
+  // cylinders put many near-parallel planes on one vertex; treating each as
+  // distinct makes `_c4SolvePlaneMoves` shoot vertices hundreds of mm.
+  // First-wins clustering let tiny boolean scraps own the cone; area-weighted
+  // merge keeps the representative honest. 10° still keeps real sharp edges.
   const COS_CLUSTER = Math.cos((10 * Math.PI) / 180);
-  // Per-vertex distinct adjacent facet normals, split by open / closed.
-  const closed = Array.from({ length: nV }, () => []);
-  const open = Array.from({ length: nV }, () => []);
+  // Per-vertex area-weighted clusters (open / closed), finalised below.
+  const closedC = Array.from({ length: nV }, () => []);
+  const openC = Array.from({ length: nV }, () => []);
   const isOpenTri = new Uint8Array(md.numTri);
   for (const fi of openSet) {
     for (const t of md.faces[fi].tris) isOpenTri[t] = 1;
@@ -451,13 +496,16 @@ function _c4OffsetCavity(md, thickness, openSet, label) {
   for (let t = 0; t < md.numTri; t++) {
     const i0 = md.T[t * 3], i1 = md.T[t * 3 + 1], i2 = md.T[t * 3 + 2];
     const cx = _c4Cross(_c4Sub(md.V[i1], md.V[i0]), _c4Sub(md.V[i2], md.V[i0]));
-    if (_c4Len(cx) < 1e-12) continue; // zero-area facet carries no plane
+    const area2 = _c4Len(cx);
+    if (area2 < 1e-12) continue; // zero-area facet carries no plane
     const n = _c4Norm(cx);
-    const bucket = isOpenTri[t] ? open : closed;
-    _c4PushDistinct(bucket[i0], n, COS_CLUSTER);
-    _c4PushDistinct(bucket[i1], n, COS_CLUSTER);
-    _c4PushDistinct(bucket[i2], n, COS_CLUSTER);
+    const bucket = isOpenTri[t] ? openC : closedC;
+    _c4PushCluster(bucket[i0], n, area2, COS_CLUSTER);
+    _c4PushCluster(bucket[i1], n, area2, COS_CLUSTER);
+    _c4PushCluster(bucket[i2], n, area2, COS_CLUSTER);
   }
+  const closed = closedC.map(_c4FinalizeClusters);
+  const open = openC.map(_c4FinalizeClusters);
   // Bbox centre = outward reference for hemisphere filtering. Fillet boolean
   // scraps / opposite-sheet facets park nearly-antiparallel normals on one
   // vertex; averaging them cancels and the old fallback then shoved the vert
@@ -476,6 +524,26 @@ function _c4OffsetCavity(md, thickness, openSet, label) {
     0.5 * (bbMin[1] + bbMax[1]),
     0.5 * (bbMin[2] + bbMax[2]),
   ];
+  // Verts that sit on a solid AABB face must keep that face's plane in their
+  // normal set. Fillet scraps sometimes leave only a sideways normal on a
+  // flat-face vert; LS then insets the wrong way and the AABB clamp freezes
+  // or tears the inner wall at flat↔fillet transitions.
+  const AABB_FACE_EPS = 1e-3;
+  const ensureAabbFaceNormals = (normals, vert) => {
+    const add = [];
+    if (Math.abs(vert[0] - bbMax[0]) <= AABB_FACE_EPS) add.push([1, 0, 0]);
+    if (Math.abs(vert[0] - bbMin[0]) <= AABB_FACE_EPS) add.push([-1, 0, 0]);
+    if (Math.abs(vert[1] - bbMax[1]) <= AABB_FACE_EPS) add.push([0, 1, 0]);
+    if (Math.abs(vert[1] - bbMin[1]) <= AABB_FACE_EPS) add.push([0, -1, 0]);
+    if (Math.abs(vert[2] - bbMax[2]) <= AABB_FACE_EPS) add.push([0, 0, 1]);
+    if (Math.abs(vert[2] - bbMin[2]) <= AABB_FACE_EPS) add.push([0, 0, -1]);
+    if (!add.length) return normals;
+    const out = normals.slice();
+    for (const n of add) {
+      if (!out.some((m) => _c4Dot(m, n) >= 0.985)) out.push(n);
+    }
+    return out;
+  };
   const COS_HEMI = Math.cos((85 * Math.PI) / 180); // keep ~outward vs centre
   const filterHemi = (normals, vert) => {
     if (!normals.length) return normals;
@@ -496,7 +564,12 @@ function _c4OffsetCavity(md, thickness, openSet, label) {
   const out = md.V.map((v) => v.slice());
   for (let vi = 0; vi < nV; vi++) {
     if (!closed[vi].length && !open[vi].length) continue;
-    const closedF = filterHemi(closed[vi], md.V[vi]);
+    // Skip AABB-face injection on open-rim verts — injecting the open face's
+    // normal as closed would cancel the intentional outward overshoot.
+    const closedF = filterHemi(
+      open[vi].length ? closed[vi] : ensureAabbFaceNormals(closed[vi], md.V[vi]),
+      md.V[vi],
+    );
     // Open faces intentionally overshoot outward; do not hemisphere-filter them
     // against centre (the open rim would lose its -Y push).
     let d = _c4VertexOffset(closedF, open[vi], thickness);
@@ -509,10 +582,21 @@ function _c4OffsetCavity(md, thickness, openSet, label) {
     }
     if (_c4Len(d) < 1e-12) continue;
     moved++;
-    let nv = _c4Add(md.V[vi], d);
-    // Closed-only verts must not leave the solid AABB — any outward leftover
-    // still punches a hole when the cavity is subtracted.
+    const v0 = md.V[vi];
+    let nv = _c4Add(v0, d);
+    // Closed-only verts: (1) strip leftover OUTWARD motion along (v−centre) so
+    // a residual/LS miss cannot push the cavity through the outer wall;
+    // (2) per-axis AABB clamp ONLY axes that exited — full segment pullback
+    // froze verts that start on an AABB face whenever any component nudged
+    // outward through that face (inner-wall holes at flat↔fillet junctions).
     if (!open[vi].length) {
+      const ref = _c4Sub(v0, center);
+      const rLen = _c4Len(ref);
+      if (rLen > 1e-12) {
+        const r = _c4Mul(1 / rLen, ref);
+        const outExtra = _c4Dot(_c4Sub(nv, v0), r);
+        if (outExtra > 0) nv = _c4Sub(nv, _c4Mul(outExtra, r));
+      }
       nv = [
         Math.min(bbMax[0], Math.max(bbMin[0], nv[0])),
         Math.min(bbMax[1], Math.max(bbMin[1], nv[1])),
