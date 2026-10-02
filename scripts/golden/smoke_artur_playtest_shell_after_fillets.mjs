@@ -6,17 +6,21 @@
  *   cube(40×30×20) → 4 vertical fillets r=6 → top-rim wrap r=6 →
  *   hollow(2.5, { center:[0,-15,0], normal:[0,-1,0] }).
  *
- * Pre-fix: `_c4OffsetCavity` treated every tessellated fillet facet normal
- * as a distinct plane (1e-6 component match). Junction verts accumulated
- * ~24 near-parallel normals; `_c4SolvePlaneMoves` then shot those verts
- * ~1000mm, cavity volume went negative, and shell threw "no cavity".
+ * Pre-#110: `_c4OffsetCavity` treated every tessellated fillet facet normal
+ * as a distinct plane (1e-6 match). Junction verts got ~24 near-parallel
+ * normals; SolvePlaneMoves shot them ~1000mm → "no cavity".
  *
- * FIX: angular normal clustering (~15°) in the offset path + displacement
- * cap fallback to smooth avg-normal offset when the solve still blows up.
+ * #110: ~15° clustering + avg-normal fallback when |d|>4t. Hollow succeeded
+ * but punched through at vertical×top-rim junctions (tri holes / slivers):
+ * opposite-sheet normals cancelled in the avg fallback and shoved cavity
+ * verts OUT through the wall (cavity AABB overshot ±X/±Z by up to ~2.7mm).
  *
- * Asserts: hollow succeeds, positive volume, cavity vs solid, open toward
- * -Y (vol below closed hollow; outer bbox still on y=-15), NoError status.
- * Also: simple cube hollow and prior box-stack fillets-only still healthy.
+ * FIX: ~10° cluster; keep only outward-hemisphere normals vs bbox centre;
+ * clamp blown |d| along the LS direction (no avg-cancel); AABB-clamp
+ * closed verts so cavity cannot leave the solid.
+ *
+ * Asserts: hollow succeeds, open -Y, AND cavity does not overshoot closed
+ * faces / wall-thickness probes at fillet junctions stay ~t.
  */
 import { register } from 'node:module';
 import { readFileSync } from 'node:fs';
@@ -167,6 +171,104 @@ let hollowed;
       centerCapArea < 1,
       `centerCapArea=${centerCapArea.toFixed(3)}`);
   }
+}
+
+// ── Punch-through guard: cavity must stay inside on closed faces ─────────
+{
+  const shellScript = fixture.replace(
+    'part = hollow(part, 2.5, { center: [0, -15, 0], normal: [0, -1, 0] });',
+    "part = shell(part, 2.5, { center: [0, -15, 0], normal: [0, -1, 0] });",
+  );
+  let cav;
+  try {
+    cav = await exec(shellScript);
+  } catch (e) {
+    check('cavity (shell) builds for overshoot probe', false, e.message);
+  }
+  if (cav && solid) {
+    const sb = solid.boundingBox;
+    const cb = cav.boundingBox;
+    const overX = Math.max(0, cb.max[0] - sb.max[0], sb.min[0] - cb.min[0]);
+    const overYplus = Math.max(0, cb.max[1] - sb.max[1]);
+    const overZ = Math.max(0, cb.max[2] - sb.max[2], sb.min[2] - cb.min[2]);
+    // Open -Y intentionally overshoots by ~t; closed faces must not.
+    check('cavity does not overshoot closed ±X faces',
+      overX < 0.05, `overX=${overX.toFixed(4)}`);
+    check('cavity does not overshoot +Y face',
+      overYplus < 0.05, `overY+=${overYplus.toFixed(4)}`);
+    check('cavity does not overshoot closed ±Z faces',
+      overZ < 0.05, `overZ=${overZ.toFixed(4)}`);
+    check('cavity still overshoots open -Y by ~t',
+      (sb.min[1] - cb.min[1]) > 2.0 && (sb.min[1] - cb.min[1]) < 3.5,
+      `over-Y=${(sb.min[1] - cb.min[1]).toFixed(4)}`);
+  }
+}
+
+// ── Wall-thickness probes at vertical×top-rim junctions ──────────────────
+if (hollowed) {
+  const np = hollowed.mesh.numProp || 3;
+  const vp = hollowed.mesh.vertProperties;
+  const tv = hollowed.mesh.triVerts;
+  const vert = (i) => [vp[i * np], vp[i * np + 1], vp[i * np + 2]];
+  const rayTri = (orig, dir, a, b, c) => {
+    const EPS = 1e-9;
+    const e1 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+    const e2 = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+    const p = [
+      dir[1] * e2[2] - dir[2] * e2[1],
+      dir[2] * e2[0] - dir[0] * e2[2],
+      dir[0] * e2[1] - dir[1] * e2[0],
+    ];
+    const det = e1[0] * p[0] + e1[1] * p[1] + e1[2] * p[2];
+    if (Math.abs(det) < EPS) return null;
+    const inv = 1 / det;
+    const tvec = [orig[0] - a[0], orig[1] - a[1], orig[2] - a[2]];
+    const u = (tvec[0] * p[0] + tvec[1] * p[1] + tvec[2] * p[2]) * inv;
+    if (u < 0 || u > 1) return null;
+    const q = [
+      tvec[1] * e1[2] - tvec[2] * e1[1],
+      tvec[2] * e1[0] - tvec[0] * e1[2],
+      tvec[0] * e1[1] - tvec[1] * e1[0],
+    ];
+    const v = (dir[0] * q[0] + dir[1] * q[1] + dir[2] * q[2]) * inv;
+    if (v < 0 || u + v > 1) return null;
+    const tHit = (e2[0] * q[0] + e2[1] * q[1] + e2[2] * q[2]) * inv;
+    return tHit > EPS ? tHit : null;
+  };
+  const firstTwoHits = (orig, dir) => {
+    const dn = Math.hypot(dir[0], dir[1], dir[2]) || 1;
+    const d = [dir[0] / dn, dir[1] / dn, dir[2] / dn];
+    const hits = [];
+    for (let t = 0; t < tv.length; t += 3) {
+      const ht = rayTri(orig, d, vert(tv[t]), vert(tv[t + 1]), vert(tv[t + 2]));
+      if (ht != null && ht < 40) hits.push(ht);
+    }
+    hits.sort((a, b) => a - b);
+    return hits;
+  };
+  let thinCorners = 0;
+  let seeThrough = 0;
+  const tWall = 2.5;
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) {
+      // From outside the top-rim × vertical fillet junction, cast inward.
+      const hits = firstTwoHits([sx * 22, 16, sz * 12], [-sx, -0.5, -sz]);
+      if (hits.length < 2) {
+        seeThrough++;
+        continue;
+      }
+      const gap = hits[1] - hits[0];
+      // Along this diagonal, wall thickness projects to ≳ t*0.7; a punch-through
+      // leaves gap ≈ 0 or a single hit / huge empty span before the far wall.
+      if (gap < tWall * 0.55) thinCorners++;
+      // Far-wall gap (see-through hole): second hit jumps across the interior.
+      if (gap > 12) seeThrough++;
+    }
+  }
+  check('fillet-junction wall probes find front+back faces',
+    seeThrough === 0, `seeThroughCorners=${seeThrough}`);
+  check('fillet-junction wall thickness ≳ 0.55·t along probes',
+    thinCorners === 0, `thinCorners=${thinCorners}`);
 }
 
 if (failed) {
