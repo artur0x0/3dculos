@@ -15,12 +15,19 @@
  * opposite-sheet normals cancelled in the avg fallback and shoved cavity
  * verts OUT through the wall (cavity AABB overshot ±X/±Z by up to ~2.7mm).
  *
- * FIX: ~10° cluster; keep only outward-hemisphere normals vs bbox centre;
- * clamp blown |d| along the LS direction (no avg-cancel); AABB-clamp
- * closed verts so cavity cannot leave the solid.
+ * #111: ~10° cluster; outward-hemisphere; clamp blown |d|; AABB-clamp closed
+ * verts. Outer punch-through fixed, but inner walls still showed jagged
+ * gaps at flat↔fillet mid-height: first-wins clustering let scraps own the
+ * cone; ill-conditioned LS dragged verts; AABB-face verts missing their
+ * plane normal froze/teared under clamp.
  *
- * Asserts: hollow succeeds, open -Y, AND cavity does not overshoot closed
- * faces / wall-thickness probes at fillet junctions stay ~t.
+ * FIX: area-weighted normal clusters; residual→mean-hemisphere inset
+ * fallback; ensure AABB-face normals on closed verts; strip outward
+ * component before AABB clamp.
+ *
+ * Asserts: hollow succeeds, open -Y, cavity stays inside on closed faces,
+ * exterior junction thickness ~t, AND interior mid-height probes toward
+ * vertical fillets see a continuous wall (no see-through / far-wall first).
  */
 import { register } from 'node:module';
 import { readFileSync } from 'node:fs';
@@ -269,6 +276,88 @@ if (hollowed) {
     seeThrough === 0, `seeThroughCorners=${seeThrough}`);
   check('fillet-junction wall thickness ≳ 0.55·t along probes',
     thinCorners === 0, `thinCorners=${thinCorners}`);
+}
+
+// ── Interior mid-height see-through probes (flat↔fillet inner walls) ─────
+if (hollowed) {
+  const np = hollowed.mesh.numProp || 3;
+  const vp = hollowed.mesh.vertProperties;
+  const tv = hollowed.mesh.triVerts;
+  const vert = (i) => [vp[i * np], vp[i * np + 1], vp[i * np + 2]];
+  const rayTri = (orig, dir, a, b, c) => {
+    const EPS = 1e-9;
+    const e1 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+    const e2 = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+    const p = [
+      dir[1] * e2[2] - dir[2] * e2[1],
+      dir[2] * e2[0] - dir[0] * e2[2],
+      dir[0] * e2[1] - dir[1] * e2[0],
+    ];
+    const det = e1[0] * p[0] + e1[1] * p[1] + e1[2] * p[2];
+    if (Math.abs(det) < EPS) return null;
+    const inv = 1 / det;
+    const tvec = [orig[0] - a[0], orig[1] - a[1], orig[2] - a[2]];
+    const u = (tvec[0] * p[0] + tvec[1] * p[1] + tvec[2] * p[2]) * inv;
+    if (u < 0 || u > 1) return null;
+    const q = [
+      tvec[1] * e1[2] - tvec[2] * e1[1],
+      tvec[2] * e1[0] - tvec[0] * e1[2],
+      tvec[0] * e1[1] - tvec[1] * e1[0],
+    ];
+    const v = (dir[0] * q[0] + dir[1] * q[1] + dir[2] * q[2]) * inv;
+    if (v < 0 || u + v > 1) return null;
+    const tHit = (e2[0] * q[0] + e2[1] * q[1] + e2[2] * q[2]) * inv;
+    return tHit > EPS ? tHit : null;
+  };
+  const hitsDedup = (orig, dir) => {
+    const dn = Math.hypot(dir[0], dir[1], dir[2]) || 1;
+    const d = [dir[0] / dn, dir[1] / dn, dir[2] / dn];
+    const hits = [];
+    for (let t = 0; t < tv.length; t += 3) {
+      const ht = rayTri(orig, d, vert(tv[t]), vert(tv[t + 1]), vert(tv[t + 2]));
+      if (ht != null && ht < 50) hits.push(ht);
+    }
+    hits.sort((a, b) => a - b);
+    const uniq = [];
+    for (const h of hits) {
+      if (!uniq.length || h - uniq[uniq.length - 1] > 0.08) uniq.push(h);
+    }
+    return uniq;
+  };
+  const wallGap = (hs) => {
+    if (hs.length < 2) return null;
+    let h0 = hs[0];
+    let h1 = hs[1];
+    // Skip double-surface scrap on the inner wall.
+    if (h1 - h0 < 0.5) {
+      const next = hs.find((h) => h > h0 + 1.0);
+      if (next != null) h1 = next;
+    }
+    return h1 - h0;
+  };
+  let interiorSee = 0;
+  let interiorThin = 0;
+  const tWall = 2.5;
+  for (const y of [-5, 0, 5]) {
+    for (const sx of [-1, 1]) {
+      for (const sz of [-1, 1]) {
+        // Stand inside the cavity, cast toward a vertical-fillet corner.
+        const hs = hitsDedup([sx * 8, y, sz * 2.5], [sx, 0, sz]);
+        const gap = wallGap(hs);
+        if (gap == null) {
+          interiorSee++;
+          continue;
+        }
+        // See-through: first hit is a scrap / far wall, second jumps the interior.
+        if (gap > 12) interiorSee++;
+        else if (gap < tWall * 0.45) interiorThin++;
+      }
+    }
+  }
+  check('interior mid-height fillet probes find front+back faces',
+    interiorSee === 0, `interiorSeeThrough=${interiorSee}`);
+  check('interior mid-height wall thickness ≳ 0.45·t',
+    interiorThin === 0, `interiorThin=${interiorThin}`);
 }
 
 if (failed) {
