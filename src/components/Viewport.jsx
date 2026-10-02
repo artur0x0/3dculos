@@ -429,6 +429,8 @@ const Viewport = forwardRef(({
   const partGraphSourceRef = useRef(null);
   const patchOverlayMatRef = useRef(null);
   const preOverlayMaterialRef = useRef(null);
+  /** True only while the patch overlay has replaced base geometry/material. */
+  const patchOverlayActiveRef = useRef(false);
   const boundaryTopoRef = useRef(null);
   const idLabelGroupRef = useRef(null);
   const edgeHighlightRef = useRef(null);
@@ -552,6 +554,8 @@ const Viewport = forwardRef(({
     armShellToastClear();
   };
   const [materials, setMaterials] = useState([]);
+  const materialsRef = useRef(materials);
+  materialsRef.current = materials;
   const [isExecuting, setIsExecuting] = useState(false);
   const [executionError, setExecutionError] = useState(null);
   const [isDownloading, setIsDownloading] = useState(false);
@@ -3949,142 +3953,6 @@ const Viewport = forwardRef(({
     });
   };
 
-  // Edges PR2 — PartGraph patch colours (debug). Built lazily here from the
-  // already-delivered mesh (faceID + verts); worker serialize stays lean so
-  // iOS Safari does not OOM/hang before the mesh lands (#88/#89).
-  // Unlit MeshBasicMaterial + vertexColors — never leave that material on
-  // colour-less geometry; toggle-off always restores the base material.
-  useEffect(() => {
-    const mesh = resultRef.current;
-    if (!mesh) return undefined;
-
-    const restoreBaseMesh = () => {
-      if (patchOverlayMatRef.current) {
-        patchOverlayMatRef.current.dispose();
-        patchOverlayMatRef.current = null;
-      }
-      if (preOverlayMaterialRef.current) {
-        mesh.material = preOverlayMaterialRef.current;
-        preOverlayMaterialRef.current = null;
-      }
-      const cached = cachedMeshDataRef.current;
-      if (cached?.vertProperties && cached?.triVerts) {
-        const geometry = new BufferGeometry();
-        const vertProperties = new Float32Array(cached.vertProperties);
-        const triVerts = new Uint32Array(cached.triVerts);
-        geometry.setAttribute('position', new BufferAttribute(vertProperties, 3));
-        geometry.setIndex(new BufferAttribute(triVerts, 1));
-        if (cached.faceID?.length) {
-          geometry.setAttribute('faceID', new BufferAttribute(new Float32Array(cached.faceID), 1));
-        }
-        geometry.computeVertexNormals();
-        mesh.geometry?.dispose();
-        mesh.geometry = geometry;
-      }
-    };
-
-    const paint = () => {
-      const renderer = rendererRef.current;
-      const scene = sceneRef.current;
-      const camera = cameraRef.current;
-      if (renderer && scene && camera) renderer.render(scene, camera);
-    };
-
-    if (!showPatchOverlay) {
-      restoreBaseMesh();
-      paint();
-      return undefined;
-    }
-
-    const cached = cachedMeshDataRef.current;
-    if (!cached?.vertProperties || !cached?.triVerts) {
-      restoreBaseMesh();
-      paint();
-      return undefined;
-    }
-
-    const np = cached.numProp || 3;
-    const src = cached.vertProperties;
-    const nVert = Math.floor(src.length / np);
-    const numTri = Math.floor(cached.triVerts.length / 3);
-
-    // Size cap: skip overlay build on huge meshes (main-thread jank / memory).
-    if (numTri > PARTGRAPH_MAX_TRIANGLES) {
-      console.warn(
-        `[partGraph] skip overlay — ${numTri} tris > cap ${PARTGRAPH_MAX_TRIANGLES}`,
-      );
-      restoreBaseMesh();
-      paint();
-      return undefined;
-    }
-
-    // Rebuild only when the mesh identity changes.
-    if (partGraphSourceRef.current !== cached || !partGraphRef.current?.triPatch) {
-      const positions = new Float32Array(nVert * 3);
-      for (let i = 0; i < nVert; i++) {
-        positions[i * 3] = src[i * np];
-        positions[i * 3 + 1] = src[i * np + 1];
-        positions[i * 3 + 2] = src[i * np + 2];
-      }
-      try {
-        const built = buildPartGraphPatches({
-          positions,
-          indices: cached.triVerts,
-          faceIDs: cached.faceID || null,
-        });
-        partGraphRef.current = {
-          version: built.version,
-          atomCount: built.atomCount,
-          triPatch: built.triPatch,
-          patches: built.patches,
-        };
-        partGraphSourceRef.current = cached;
-      } catch (e) {
-        console.warn('[partGraph] segmentation failed:', e?.message || e);
-        partGraphRef.current = null;
-        partGraphSourceRef.current = null;
-        restoreBaseMesh();
-        paint();
-        return undefined;
-      }
-    }
-
-    const pg = partGraphRef.current;
-    if (!pg?.triPatch) {
-      restoreBaseMesh();
-      paint();
-      return undefined;
-    }
-
-    const positions = new Float32Array(nVert * 3);
-    for (let i = 0; i < nVert; i++) {
-      positions[i * 3] = src[i * np];
-      positions[i * 3 + 1] = src[i * np + 1];
-      positions[i * 3 + 2] = src[i * np + 2];
-    }
-    const { positions: oPos, colors } = buildPatchOverlayArrays(
-      { positions, indices: cached.triVerts },
-      pg.triPatch,
-    );
-    const geom = new BufferGeometry();
-    geom.setAttribute('position', new BufferAttribute(oPos, 3));
-    geom.setAttribute('color', new BufferAttribute(colors, 3));
-    // Unlit — MeshLambert + vertexColors paints black under poor iOS lighting.
-    if (!preOverlayMaterialRef.current) {
-      preOverlayMaterialRef.current = mesh.material;
-    }
-    mesh.geometry?.dispose();
-    mesh.geometry = geom;
-    if (patchOverlayMatRef.current) patchOverlayMatRef.current.dispose();
-    patchOverlayMatRef.current = new MeshBasicMaterial({
-      vertexColors: true,
-      side: 2,
-    });
-    mesh.material = patchOverlayMatRef.current;
-    paint();
-    return undefined;
-  }, [showPatchOverlay, cachedMeshData]);
-
   // Helper to render mesh data from the worker
   const renderMeshData = useCallback((meshData) => {
     if (!meshData || !resultRef.current) return;
@@ -4130,8 +3998,13 @@ const Viewport = forwardRef(({
       resultRef.current.material = preOverlayMaterialRef.current;
       preOverlayMaterialRef.current = null;
     }
+    // Prefer the canonical lit base materials from defineMaterials.
+    if (materialsRef.current?.length) {
+      resultRef.current.material = materialsRef.current;
+    }
     partGraphRef.current = null;
     partGraphSourceRef.current = null;
+    patchOverlayActiveRef.current = false;
 
     resultRef.current.geometry?.dispose();
     resultRef.current.geometry = geometry;
@@ -4154,6 +4027,148 @@ const Viewport = forwardRef(({
       renderer.render(scene, camera);
     }
   }, []);
+
+  // Edges PR2 — PartGraph patch colours (debug). Built lazily here from the
+  // already-delivered mesh (faceID + verts); worker serialize stays lean so
+  // iOS Safari does not OOM/hang before the mesh lands (#88/#89).
+  //
+  // Hotfix (#104+#105 black viewport): overlay-off must NOT half-rebuild
+  // geometry (that dropped runIndex groups and could leave MeshBasicMaterial
+  // + vertexColors on colour-less geometry → black on iOS). Fail-safe:
+  //   • overlay never applied + toggle off → no-op (leave renderMeshData alone)
+  //   • toggle on→off / failure → force lit base materials + full renderMeshData
+  useEffect(() => {
+    const mesh = resultRef.current;
+    if (!mesh) return undefined;
+
+    const paint = () => {
+      const renderer = rendererRef.current;
+      const scene = sceneRef.current;
+      const camera = cameraRef.current;
+      if (renderer && scene && camera) renderer.render(scene, camera);
+    };
+
+    const forceBaseRestore = () => {
+      if (patchOverlayMatRef.current) {
+        patchOverlayMatRef.current.dispose();
+        patchOverlayMatRef.current = null;
+      }
+      preOverlayMaterialRef.current = null;
+      partGraphRef.current = null;
+      partGraphSourceRef.current = null;
+      patchOverlayActiveRef.current = false;
+      const base = materialsRef.current;
+      if (base?.length) {
+        mesh.material = base;
+      }
+      const cached = cachedMeshDataRef.current;
+      if (cached?.vertProperties && cached?.triVerts) {
+        // Full rebuild matching the normal paint path (groups + normals).
+        renderMeshData(cached);
+      } else {
+        paint();
+      }
+    };
+
+    if (!showPatchOverlay) {
+      // Default / already-off path: never touch the mesh unless overlay was live.
+      if (patchOverlayActiveRef.current) {
+        forceBaseRestore();
+      }
+      return undefined;
+    }
+
+    const cached = cachedMeshDataRef.current;
+    if (!cached?.vertProperties || !cached?.triVerts) {
+      if (patchOverlayActiveRef.current) forceBaseRestore();
+      return undefined;
+    }
+
+    const np = cached.numProp || 3;
+    const src = cached.vertProperties;
+    const nVert = Math.floor(src.length / np);
+    const numTri = Math.floor(cached.triVerts.length / 3);
+
+    if (numTri > PARTGRAPH_MAX_TRIANGLES) {
+      console.warn(
+        `[partGraph] skip overlay — ${numTri} tris > cap ${PARTGRAPH_MAX_TRIANGLES}`,
+      );
+      forceBaseRestore();
+      setShowPatchOverlay(false);
+      return undefined;
+    }
+
+    if (partGraphSourceRef.current !== cached || !partGraphRef.current?.triPatch) {
+      const positions = new Float32Array(nVert * 3);
+      for (let i = 0; i < nVert; i++) {
+        positions[i * 3] = src[i * np];
+        positions[i * 3 + 1] = src[i * np + 1];
+        positions[i * 3 + 2] = src[i * np + 2];
+      }
+      try {
+        const built = buildPartGraphPatches({
+          positions,
+          indices: cached.triVerts,
+          faceIDs: cached.faceID || null,
+        });
+        partGraphRef.current = {
+          version: built.version,
+          atomCount: built.atomCount,
+          triPatch: built.triPatch,
+          patches: built.patches,
+        };
+        partGraphSourceRef.current = cached;
+      } catch (e) {
+        console.warn('[partGraph] segmentation failed:', e?.message || e);
+        forceBaseRestore();
+        setShowPatchOverlay(false);
+        return undefined;
+      }
+    }
+
+    const pg = partGraphRef.current;
+    if (!pg?.triPatch) {
+      forceBaseRestore();
+      setShowPatchOverlay(false);
+      return undefined;
+    }
+
+    try {
+      const positions = new Float32Array(nVert * 3);
+      for (let i = 0; i < nVert; i++) {
+        positions[i * 3] = src[i * np];
+        positions[i * 3 + 1] = src[i * np + 1];
+        positions[i * 3 + 2] = src[i * np + 2];
+      }
+      const { positions: oPos, colors } = buildPatchOverlayArrays(
+        { positions, indices: cached.triVerts },
+        pg.triPatch,
+      );
+      const geom = new BufferGeometry();
+      geom.setAttribute('position', new BufferAttribute(oPos, 3));
+      geom.setAttribute('color', new BufferAttribute(colors, 3));
+      // Unlit — MeshLambert + vertexColors paints black under poor iOS lighting.
+      if (!preOverlayMaterialRef.current) {
+        preOverlayMaterialRef.current = mesh.material;
+      }
+      mesh.geometry?.dispose();
+      mesh.geometry = geom;
+      if (patchOverlayMatRef.current) patchOverlayMatRef.current.dispose();
+      patchOverlayMatRef.current = new MeshBasicMaterial({
+        vertexColors: true,
+        side: 2,
+      });
+      mesh.material = patchOverlayMatRef.current;
+      patchOverlayActiveRef.current = true;
+      paint();
+    } catch (e) {
+      console.warn('[partGraph] overlay apply failed:', e?.message || e);
+      forceBaseRestore();
+      setShowPatchOverlay(false);
+    }
+    return undefined;
+  }, [showPatchOverlay, cachedMeshData, renderMeshData]);
+
 
   // Calculate model bounds from mesh data
   const calculateBoundsFromMesh = (meshData) => {
@@ -4208,11 +4223,15 @@ const Viewport = forwardRef(({
       faceIDsRef.current = null;
       partGraphRef.current = null;
       partGraphSourceRef.current = null;
+      patchOverlayActiveRef.current = false;
       if (patchOverlayMatRef.current) {
         patchOverlayMatRef.current.dispose();
         patchOverlayMatRef.current = null;
       }
       preOverlayMaterialRef.current = null;
+      if (resultRef.current && materialsRef.current?.length) {
+        resultRef.current.material = materialsRef.current;
+      }
       boundaryTopoRef.current = null;
       // Overlays drawn from that solid (cut plane, section/path previews, the
       // fillet blend ghost, f#/e# labels) must not outlive it on screen.
