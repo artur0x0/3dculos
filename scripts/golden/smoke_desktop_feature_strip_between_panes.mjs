@@ -44,20 +44,42 @@ console.log('desktop: feature strip between panes');
       return iStrip > 0 && iDiv > iStrip && iVp > iDiv;
     })(),
   );
+  // Desktop now jumps the caret AND opens the sheet: both panes are visible,
+  // so editing a feature and seeing its code is not the either/or it is on a
+  // phone. The sheet renders inside the VIEWER, not over the script.
   check(
-    'desktop jump is caret-only (no feature sheet open)',
+    'desktop jump reveals the code and opens the feature sheet',
     /handleDesktopFeatureStripJump/.test(app) &&
       /onJump=\{handleDesktopFeatureStripJump\}/.test(app) &&
       (() => {
         const m = app.match(
-          /const handleDesktopFeatureStripJump = \(feature\) => \{[\s\S]*?\n  \};/,
+          /const handleDesktopFeatureStripJump = \(feature\) => \{[\s\S]*?\n {2}\};/,
         );
         if (!m) return false;
-        return (
-          /revealRange/.test(m[0]) &&
-          !/setFeatureSheet/.test(m[0])
-        );
+        return /revealRange/.test(m[0]) && /setFeatureSheet/.test(m[0]);
       })(),
+  );
+  check(
+    'the desktop sheet is placed inside the viewer pane',
+    /placement="viewport"/.test(app) &&
+      app.indexOf('placement="viewport"') > app.indexOf('<SplitDivider orientation="vertical"'),
+  );
+  check(
+    'the viewer pane is a positioning context for it',
+    /<div className="relative flex-1 min-w-0">/.test(app),
+  );
+  check(
+    'desktop Edit script reveals in place (no mobile stage switch)',
+    (() => {
+      const m = app.match(
+        /const handleDesktopFeatureSheetEditScript = \(feature\) => \{[\s\S]*?\n {2}\};/,
+      );
+      return !!m && /revealRange/.test(m[0]) && !/setMobileStage/.test(m[0]);
+    })(),
+  );
+  check(
+    'the seam strip itself did not move',
+    /data-feature-strip-placement="desktop-seam"/.test(app),
   );
   check(
     'desktop strip gated off in game mode',

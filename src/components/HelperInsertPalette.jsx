@@ -28,6 +28,7 @@ import Angle from './icons/Angle';
 import { itemsByGroup, paletteRailSections } from '../utils/helperPaletteSnippets';
 import {
   RAIL_PAIR_HEIGHT_CLASS,
+  RAIL_FULL_LENGTH_CLASS,
   RAIL_PAIR_WIDTH_CLASS,
   RAIL_SCROLL_CLASS,
   RAIL_PAIR_HEIGHT_ATTR,
@@ -213,14 +214,15 @@ const HelperInsertPalette = ({
   return (
     <>
       <div
-        className={`absolute left-2 lg:left-4 bottom-2.5 z-10 flex flex-col gap-1
+        className={`absolute left-2 lg:left-4 z-10 flex flex-col gap-1
           bg-white/60 backdrop-blur-sm rounded-lg shadow-lg
-          ${RAIL_PAIR_WIDTH_CLASS} ${RAIL_PAIR_HEIGHT_CLASS} ${RAIL_SCROLL_CLASS}
+          ${RAIL_PAIR_WIDTH_CLASS} ${RAIL_SCROLL_CLASS}
+          ${compact ? `bottom-2.5 ${RAIL_PAIR_HEIGHT_CLASS}` : RAIL_FULL_LENGTH_CLASS}
           p-2`}
         role="group"
         aria-label="Helper insert palette"
         data-rail-pair="left"
-        data-rail-height={RAIL_PAIR_HEIGHT_ATTR}
+        data-rail-height={compact ? RAIL_PAIR_HEIGHT_ATTR : 'full-length'}
         data-palette-layout={layout === 'cad' ? 'cad' : 'game'}
       >
         {sections.map((section, gi) => (
