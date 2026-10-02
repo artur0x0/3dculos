@@ -629,3 +629,142 @@ export function varyingProfileTubeMesh(rings, closed = false) {
   }
   return { vertProperties, triVerts };
 }
+
+/**
+ * Circle through three non-colinear points.
+ * @returns {{ C: number[], R: number, n: number[] } | null}
+ */
+export function circFit3(p0, p1, p2) {
+  const A = [p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]];
+  const B = [p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]];
+  const n = [
+    A[1] * B[2] - A[2] * B[1],
+    A[2] * B[0] - A[0] * B[2],
+    A[0] * B[1] - A[1] * B[0],
+  ];
+  const nL = Math.hypot(n[0], n[1], n[2]);
+  if (nL < 1e-14) return null;
+  const mid1 = [(p0[0] + p1[0]) / 2, (p0[1] + p1[1]) / 2, (p0[2] + p1[2]) / 2];
+  const mid2 = [(p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2, (p1[2] + p2[2]) / 2];
+  const d1 = [
+    A[1] * n[2] - A[2] * n[1],
+    A[2] * n[0] - A[0] * n[2],
+    A[0] * n[1] - A[1] * n[0],
+  ];
+  const Bv = [p2[0] - p1[0], p2[1] - p1[1], p2[2] - p1[2]];
+  const d2 = [
+    Bv[1] * n[2] - Bv[2] * n[1],
+    Bv[2] * n[0] - Bv[0] * n[2],
+    Bv[0] * n[1] - Bv[1] * n[0],
+  ];
+  const rhs = [mid2[0] - mid1[0], mid2[1] - mid1[1], mid2[2] - mid1[2]];
+  const rhsxd2 = [
+    rhs[1] * d2[2] - rhs[2] * d2[1],
+    rhs[2] * d2[0] - rhs[0] * d2[2],
+    rhs[0] * d2[1] - rhs[1] * d2[0],
+  ];
+  const d1xd2 = [
+    d1[1] * d2[2] - d1[2] * d2[1],
+    d1[2] * d2[0] - d1[0] * d2[2],
+    d1[0] * d2[1] - d1[1] * d2[0],
+  ];
+  const denom = d1xd2[0] * n[0] + d1xd2[1] * n[1] + d1xd2[2] * n[2];
+  if (Math.abs(denom) < 1e-14) return null;
+  const s = (rhsxd2[0] * n[0] + rhsxd2[1] * n[1] + rhsxd2[2] * n[2]) / denom;
+  const C = [mid1[0] + s * d1[0], mid1[1] + s * d1[1], mid1[2] + s * d1[2]];
+  const R = Math.hypot(C[0] - p0[0], C[1] - p0[1], C[2] - p0[2]);
+  if (!(R > 1e-12) || !Number.isFinite(R)) return null;
+  return { C, R, n: [n[0] / nL, n[1] / nL, n[2] / nL] };
+}
+
+/**
+ * Find spans on a sweep path whose local curvature radius ≈ fillet radius.
+ *
+ * Same-radius fillet-on-fillet: when the path follows the rim of a prior
+ * fillet of radius r and the new fillet is also r, the rolling-ball track
+ * collapses to a point (ball centers lie on the prior cylinder axis). A
+ * constant-r sweep along that arc is degenerate and leaves a triangular
+ * cusp of leftover material at each corner. Callers add clipped sphere
+ * caps at the returned sites to consume those cusps.
+ *
+ * @param {number[][]} points
+ * @param {boolean} closed
+ * @param {number} radius
+ * @param {object} [opts]
+ * @param {number} [opts.tol=0.25] — relative |R − r| / r gate
+ * @param {number} [opts.minVerts=3] — minimum near-r vertices per site
+ * @returns {Array<{ C: number[], R: number, n: number[], A: number[], B: number[], O: number[], P: number[] }>}
+ */
+export function detectSameRadiusArcSites(points, closed, radius, opts = {}) {
+  const r = Number(radius);
+  if (!(r > 0) || !Number.isFinite(r) || !Array.isArray(points) || points.length < 3) {
+    return [];
+  }
+  const tol = opts.tol != null ? Number(opts.tol) : 0.25;
+  const minVerts = opts.minVerts != null ? Math.max(2, opts.minVerts | 0) : 3;
+  const n = points.length;
+  const near = (R) => Number.isFinite(R) && Math.abs(R - r) <= tol * r;
+
+  const localR = new Array(n).fill(Infinity);
+  for (let i = 0; i < n; i++) {
+    const i0 = closed ? (i - 1 + n) % n : i - 1;
+    const i2 = closed ? (i + 1) % n : i + 1;
+    if (i0 < 0 || i2 >= n) continue;
+    const fit = circFit3(points[i0], points[i], points[i2]);
+    if (fit) localR[i] = fit.R;
+  }
+
+  // Path centroid — used to pick plane-normal sign (outward = away from centroid).
+  let cx = 0, cy = 0, cz = 0;
+  for (const p of points) { cx += p[0]; cy += p[1]; cz += p[2]; }
+  cx /= n; cy /= n; cz /= n;
+
+  // Collect contiguous near-r runs (merge wrap-around for closed).
+  const runs = [];
+  let cur = [];
+  for (let i = 0; i < n; i++) {
+    if (near(localR[i])) cur.push(i);
+    else if (cur.length) { runs.push(cur); cur = []; }
+  }
+  if (cur.length) runs.push(cur);
+  if (closed && runs.length >= 2 && near(localR[0]) && near(localR[n - 1])) {
+    const head = runs[0];
+    const tail = runs[runs.length - 1];
+    if (head[0] === 0 && tail[tail.length - 1] === n - 1) {
+      runs[0] = tail.concat(head);
+      runs.pop();
+    }
+  }
+
+  const sites = [];
+  for (const idxs of runs) {
+    if (idxs.length < minVerts) continue;
+    // Arc endpoints: step one past the run into the straight (or wrap).
+    const iA = closed ? (idxs[0] - 1 + n) % n : Math.max(0, idxs[0] - 1);
+    const iB = closed ? (idxs[idxs.length - 1] + 1) % n : Math.min(n - 1, idxs[idxs.length - 1] + 1);
+    const A = points[iA];
+    const B = points[iB];
+    const mid = points[idxs[Math.floor(idxs.length / 2)]];
+    const fit = circFit3(A, mid, B);
+    if (!fit || !near(fit.R)) continue;
+    // Outward plane normal: points away from path centroid.
+    let nx = fit.n[0], ny = fit.n[1], nz = fit.n[2];
+    const away = (fit.C[0] - cx) * nx + (fit.C[1] - cy) * ny + (fit.C[2] - cz) * nz;
+    if (away < 0) { nx = -nx; ny = -ny; nz = -nz; }
+    // Ball center inset into material along the support-face normal.
+    const O = [fit.C[0] - r * nx, fit.C[1] - r * ny, fit.C[2] - r * nz];
+    // Outer trihedral corner for a 90° prior-fillet arc: P = A + B − C.
+    const P = [
+      A[0] + B[0] - fit.C[0],
+      A[1] + B[1] - fit.C[1],
+      A[2] + B[2] - fit.C[2],
+    ];
+    sites.push({
+      C: fit.C, R: fit.R, n: [nx, ny, nz], A, B, O, P, idxs: idxs.slice(),
+    });
+  }
+  return sites;
+}
+
+/** Clip-box scale past the outer corner toward the ball center (covers cusp). */
+export const SAME_RADIUS_CORNER_BOX_SCALE = 1.5;
