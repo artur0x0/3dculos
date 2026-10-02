@@ -4517,11 +4517,11 @@ function filletAlongPath(part, path, radius, opts = {}) {
   }
 
   // Sweep-path policy seam (planFilletSweepPath): keep the full wire by
-  // default (never skip-micro). Same-r arcs return mode:'runs' — each
-  // straight / semi-arc is an independent cutter + independent subtract.
+  // default (never skip-micro). Corner arcs (same-r or R≠cutter) return
+  // mode:'runs' — each straight / semi-arc is an independent cutter.
 
   if (!opts._rawPath) {
-    const plan = planFilletSweepPath(points, closed, radius);
+    const plan = planFilletSweepPath(points, closed, radius, { profile: profileKind });
     if (plan.mode === 'runs') {
       // Build each straight / semi-arc cutter independently against the ORIGINAL
       // part (so probes see pre-fillet faces), union, then ONE subtract.
@@ -4560,7 +4560,7 @@ function filletAlongPath(part, path, radius, opts = {}) {
         }
       }
       if (!cutters.length) {
-        throw new Error('filletAlongPath: same-r semi-arc split produced no valid cutters');
+        throw new Error('filletAlongPath: corner-arc semi-arc split produced no valid cutters');
       }
       let tool = cutters[0];
       for (let i = 1; i < cutters.length; i++) {
@@ -4875,7 +4875,7 @@ function filletAlongPath(part, path, radius, opts = {}) {
   // Drop disconnected cutter scraps (thin purple sheets) via decompose —
   // closed-loop sweep seams often leave tiny extra components. For closed
   // paths, multiple components are a hard fail (no silent keep-largest).
-  // Same-r arcs are split upstream (planFilletSweepPath mode:'runs' →
+  // Corner arcs are split upstream (planFilletSweepPath mode:'runs' →
   // independent semi-arc subtracts). No sphere-cap post-pass (#107 bulges).
   try {
     if (typeof out.decompose === 'function') {

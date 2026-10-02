@@ -229,22 +229,32 @@ export function chamferWedgeArea(c) {
  * Never drop micro arcs — slivers are consumed by cutter exterior overlap.
  * Uniform closed rims and mixed long+micro stay `as-is`.
  *
- * Same-radius fillet-on-fillet: a continuous sweep along a prior rim of
- * radius ≈ r has bad arc start/end conditions (cusp leftovers; #107 sphere
- * caps left twin bulges). When same-r arcs are present, split the path into
- * straight runs + two semi-arcs per corner and return `mode:'runs'` so each
- * piece is an independent cutter + independent subtract.
+ * Corner arcs on the path: a continuous sweep over an arc has bad start/end
+ * conditions (cusp leftovers; #107 sphere caps left twin bulges). When
+ * distinct corner-arc runs are present (mixed straights + arcs), split into
+ * straight runs + two semi-arcs per corner → `mode:'runs'`. Fillet profile
+ * only splits same-r arcs (path R ≈ cutter); chamfer also splits when path R
+ * ≠ cutter (chamfer-along-prior-fillet). Uniform closed all-arc rims stay
+ * `as-is`.
  *
  * @param {number[][]} points
  * @param {boolean} [closed]
  * @param {number} [radius]
+ * @param {object} [opts]
+ * @param {'fillet'|'chamfer'} [opts.profile='fillet'] — chamfer enables R≠cutter arc split
  * @returns {{ mode:'as-is' } | { mode:'empty' } | { mode:'runs', runs: number[][][] }}
  */
-export function planFilletSweepPath(points, closed, radius) {
+export function planFilletSweepPath(points, closed, radius, opts = {}) {
   if (!Array.isArray(points) || points.length < 2) return { mode: 'empty' };
   const r = Number(radius);
   if (Number.isFinite(r) && r > 0) {
-    const runs = splitSameRadiusArcsIntoSemiArcRuns(points, !!closed, r, { arcsOnly: false });
+    // Fillet: same-r arcs only (wrap r≠path-R stays as-is — fin-safe).
+    // Chamfer: any corner arc (chamfer-along-prior-fillet, path R ≠ cutter).
+    const matchCutterRadius = opts.profile !== 'chamfer';
+    const runs = splitSameRadiusArcsIntoSemiArcRuns(points, !!closed, r, {
+      arcsOnly: false,
+      matchCutterRadius,
+    });
     if (runs && runs.length >= 2) return { mode: 'runs', runs };
   }
   return { mode: 'as-is' };
@@ -684,20 +694,24 @@ export function circFit3(p0, p1, p2) {
 }
 
 /**
- * Find spans on a sweep path whose local curvature radius ≈ fillet radius.
+ * Find corner-arc spans on a sweep path (curved runs bounded by straights).
  *
- * Same-radius fillet-on-fillet: when the path follows the rim of a prior
- * fillet of radius r and the new fillet is also r, a continuous sweep along
- * that arc has degenerate start/end conditions. Callers split each site into
- * two semi-arc polylines and subtract those cutters independently
- * (`splitSameRadiusArcsIntoSemiArcRuns` / `planFilletSweepPath`).
+ * Continuous sweeps over path arcs have degenerate start/end conditions
+ * (cusp leftovers). Callers split each site into two semi-arc polylines and
+ * subtract those cutters independently (`splitSameRadiusArcsIntoSemiArcRuns`
+ * / `planFilletSweepPath`).
+ *
+ * Detects both same-r fillet-on-fillet (path R ≈ cutter r) and
+ * chamfer-along-prior-fillet (path R ≠ cutter r). Uniform closed all-arc
+ * rims are omitted (whole-path cover) so the planner keeps them `as-is`.
  *
  * @param {number[][]} points
  * @param {boolean} closed
- * @param {number} radius
+ * @param {number} radius — cutter radius (O inset; optional same-r filter)
  * @param {object} [opts]
- * @param {number} [opts.tol=0.25] — relative |R − r| / r gate
- * @param {number} [opts.minVerts=3] — minimum near-r vertices per site
+ * @param {number} [opts.tol=0.25] — relative |R − R_med| / R_med consistency
+ * @param {number} [opts.minVerts=3] — minimum consistent-arc vertices per site
+ * @param {boolean} [opts.matchCutterRadius=false] — also require |R_med − r|/r ≤ tol
  * @returns {Array<{ C: number[], R: number, n: number[], A: number[], B: number[], O: number[], P: number[], idxs: number[] }>}
  */
 export function detectSameRadiusArcSites(points, closed, radius, opts = {}) {
@@ -707,8 +721,13 @@ export function detectSameRadiusArcSites(points, closed, radius, opts = {}) {
   }
   const tol = opts.tol != null ? Number(opts.tol) : 0.25;
   const minVerts = opts.minVerts != null ? Math.max(2, opts.minVerts | 0) : 3;
+  const matchCutter = opts.matchCutterRadius === true;
   const n = points.length;
-  const near = (R) => Number.isFinite(R) && Math.abs(R - r) <= tol * r;
+  const isCurved = (R) => Number.isFinite(R) && R > 1e-12;
+  const nearMed = (R, med) => Number.isFinite(R) && Number.isFinite(med) && med > 0
+    && Math.abs(R - med) <= tol * med;
+  const compatible = (Ra, Rb) => isCurved(Ra) && isCurved(Rb)
+    && Math.abs(Ra - Rb) <= tol * Math.max(Ra, Rb);
 
   const localR = new Array(n).fill(Infinity);
   for (let i = 0; i < n; i++) {
@@ -724,41 +743,54 @@ export function detectSameRadiusArcSites(points, closed, radius, opts = {}) {
   for (const p of points) { cx += p[0]; cy += p[1]; cz += p[2]; }
   cx /= n; cy /= n; cz /= n;
 
-  // Collect contiguous near-r runs (merge wrap-around for closed).
+  // Contiguous same-R curved runs (relative-R gate splits arc from near-straight
+  // junction fits). Merge wrap-around for closed when end runs agree on R.
   const runs = [];
   let cur = [];
   for (let i = 0; i < n; i++) {
-    if (near(localR[i])) cur.push(i);
-    else if (cur.length) { runs.push(cur); cur = []; }
+    const R = localR[i];
+    if (!isCurved(R)) {
+      if (cur.length) { runs.push(cur); cur = []; }
+      continue;
+    }
+    if (!cur.length) { cur = [i]; continue; }
+    if (compatible(localR[cur[cur.length - 1]], R)) cur.push(i);
+    else { runs.push(cur); cur = [i]; }
   }
   if (cur.length) runs.push(cur);
-  if (closed && runs.length >= 2 && near(localR[0]) && near(localR[n - 1])) {
+  if (closed && runs.length >= 2) {
     const head = runs[0];
     const tail = runs[runs.length - 1];
-    if (head[0] === 0 && tail[tail.length - 1] === n - 1) {
+    if (head[0] === 0 && tail[tail.length - 1] === n - 1
+        && compatible(localR[tail[tail.length - 1]], localR[head[0]])) {
       runs[0] = tail.concat(head);
       runs.pop();
     }
   }
 
   const sites = [];
-  for (const idxs of runs) {
+  for (const rawIdxs of runs) {
+    if (rawIdxs.length < minVerts) continue;
+    const sortedR = rawIdxs.map((i) => localR[i]).filter(isCurved).sort((a, b) => a - b);
+    if (sortedR.length < minVerts) continue;
+    const med = sortedR[Math.floor(sortedR.length / 2)];
+    if (!(med > 0) || !Number.isFinite(med)) continue;
+    if (matchCutter && Math.abs(med - r) > tol * r) continue;
+    const idxs = rawIdxs.filter((i) => nearMed(localR[i], med));
     if (idxs.length < minVerts) continue;
-    // Arc endpoints: step one past the run into the straight (or wrap).
+    // Uniform all-arc rim: whole path is one arc → leave as-is.
+    if (idxs.length >= n) continue;
     const iA = closed ? (idxs[0] - 1 + n) % n : Math.max(0, idxs[0] - 1);
     const iB = closed ? (idxs[idxs.length - 1] + 1) % n : Math.min(n - 1, idxs[idxs.length - 1] + 1);
     const A = points[iA];
     const B = points[iB];
     const mid = points[idxs[Math.floor(idxs.length / 2)]];
     const fit = circFit3(A, mid, B);
-    if (!fit || !near(fit.R)) continue;
-    // Outward plane normal: points away from path centroid.
+    if (!fit || !nearMed(fit.R, med)) continue;
     let nx = fit.n[0], ny = fit.n[1], nz = fit.n[2];
     const away = (fit.C[0] - cx) * nx + (fit.C[1] - cy) * ny + (fit.C[2] - cz) * nz;
     if (away < 0) { nx = -nx; ny = -ny; nz = -nz; }
-    // Ball center inset into material along the support-face normal.
     const O = [fit.C[0] - r * nx, fit.C[1] - r * ny, fit.C[2] - r * nz];
-    // Outer trihedral corner for a 90° prior-fillet arc: P = A + B − C.
     const P = [
       A[0] + B[0] - fit.C[0],
       A[1] + B[1] - fit.C[1],
@@ -771,25 +803,6 @@ export function detectSameRadiusArcSites(points, closed, radius, opts = {}) {
   return sites;
 }
 
-/**
- * Emit independent semi-arc polylines for each same-radius arc on the path.
- *
- * Used as a post-pass after the main as-is wrap sweep: each same-r arc site
- * (from `detectSameRadiusArcSites`) is cut at its midpoint into two open
- * polylines (halves include one-past endpoints A/B). Callers build a cutter
- * per semi-arc and subtract independently — fixes arc start/end conditions
- * without fragmenting the main wrap into many open runs (that spiked fins).
- * Straights are omitted here (handled by the main sweep). Returns null when
- * there are no same-r arcs.
- *
- * @param {number[][]} points
- * @param {boolean} closed
- * @param {number} radius
- * @param {object} [opts]
- * @param {boolean} [opts.arcsOnly=false] — when true, return only semi-arc
- *   polylines (no straight runs). Default false keeps legacy full-path split.
- * @returns {number[][][] | null}
- */
 export function splitSameRadiusArcsIntoSemiArcRuns(points, closed, radius, opts = {}) {
   const sites = detectSameRadiusArcSites(points, closed, radius, opts);
   if (!sites.length || !Array.isArray(points) || points.length < 2) return null;
