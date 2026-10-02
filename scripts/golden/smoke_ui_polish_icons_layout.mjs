@@ -443,6 +443,29 @@ const contourRail = read('../../src/components/ContourModeRail.jsx');
     /absolute right-full/.test(snap));
 }
 
+// ── AC20: left rail content-max height; narrows when buttons fit ──
+// Supersedes the earlier full-length desktop rail: content-sized max-h yields
+// viewport space, and useLeftRailFit switches to w-14 when nothing scrolls.
+{
+  const railPair = read('../../src/utils/railPair.js');
+  check('left rail height is content-max (max-h)',
+    /max-h-\[min\(26rem,calc\(100%-5\.5rem\)\)\]/.test(railPair)
+      && /RAIL_PAIR_HEIGHT_ATTR = 'content-max'/.test(railPair));
+  check('fit hook narrows width when buttons fit',
+    /useLeftRailFit/.test(railPair)
+      && /RAIL_PAIR_WIDTH_FIT_CLASS = 'w-14'/.test(railPair));
+  for (const [name, src] of [['helper rail', palette], ['contour rail', contourRail]]) {
+    check(`${name} uses fit hook + content-max height`,
+      /useLeftRailFit/.test(src)
+        && /RAIL_PAIR_HEIGHT_CLASS/.test(src)
+        && /data-rail-fit=\{fits \? 'fits' : 'scroll'\}/.test(src));
+    check(`${name} still scrolls when the tools overflow`, /RAIL_SCROLL_CLASS/.test(src));
+  }
+  // Part-name chip sits at top-4; content-max caps below it via calc(100%-5.5rem).
+  check('the rail stops below the part-name chip, not over it',
+    /top-4 left-1\/2 -translate-x-1\/2/.test(view));
+}
+
 if (failed) {
   console.log(`\n${failed} check(s) failed`);
   process.exit(1);

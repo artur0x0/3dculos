@@ -63,13 +63,24 @@ if (!existsSync(new URL('../../dist/index.html', import.meta.url))) {
   process.exit(1);
 }
 
+// `detached` puts vite in its own process GROUP. Killing the npx wrapper alone
+// leaves the real server holding the port, which then fails every later run
+// with "Port already in use" — so signal the whole group instead.
 const server = spawn('npx', ['vite', 'preview', '--port', String(PORT), '--strictPort'], {
   cwd: new URL('../../', import.meta.url).pathname,
   stdio: 'ignore',
+  detached: true,
 });
 
-const stop = () => { try { server.kill('SIGTERM'); } catch { /* already gone */ } };
+let stopped = false;
+const stop = () => {
+  if (stopped) return;
+  stopped = true;
+  try { process.kill(-server.pid, 'SIGTERM'); } catch { /* already gone */ }
+  try { server.kill('SIGKILL'); } catch { /* already gone */ }
+};
 process.on('exit', stop);
+for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { stop(); process.exit(1); });
 
 async function waitForServer(timeoutMs = 30000) {
   const started = Date.now();

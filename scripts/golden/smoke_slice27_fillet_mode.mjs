@@ -388,9 +388,19 @@ const e30 = mk(3, 0);
     params: { chamfer: 1.5 },
   });
   check('chamfer accept ok', commit.ok === true, commit.message || '');
-  check('chamfer accept writes chamferEdges', /chamferEdges\s*\(/.test(commit.buffer || ''));
+  check('chamfer accept writes makeSweepPath', /makeSweepPath\s*\(/.test(commit.buffer || ''));
+  check('chamfer accept writes filletAlongPath', /filletAlongPath\s*\(/.test(commit.buffer || ''));
+  check('chamfer accept profile chamfer', /profile:\s*'chamfer'/.test(commit.buffer || ''));
   check('chamfer accept is marked', hasChamferModeBlock(commit.buffer || ''));
   check('chamfer accept keeps the starter cube', /Manifold\.cube\s*\(/.test(commit.buffer || ''));
+  const disc = composeChamferCommit(starter, {
+    edges: [e01, e23],
+    params: { chamfer: 1.5 },
+  });
+  check('chamfer disconnected ok (independent)', disc.ok === true, disc.message || '');
+  check('chamfer disconnected two pairs',
+    (disc.buffer.match(/makeSweepPath\s*\(/g) || []).length === 2
+    && (disc.buffer.match(/filletAlongPath\s*\(/g) || []).length === 2);
   const again = composeChamferCommit(commit.buffer, {
     edges: [e12],
     params: { chamfer: 1 },

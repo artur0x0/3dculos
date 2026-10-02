@@ -90,21 +90,31 @@ function snippetPreview(text, maxLines = 2) {
 
 /** Shared outer shell: full-width under title (top-14).
  *  Mobile: cap height below feature strip + finger clearance; body scrolls. */
-function SheetShell({ children, ...attrs }) {
+/**
+ * `placement`:
+ *   'stage'    — phone, full-width under the title (the original).
+ *   'viewport' — desktop, inside the 3D pane. Same anchor (just under the
+ *                part-name chip) but capped in width, because a sheet spanning
+ *                a 1000px viewer reads as a banner, not a popup. It also sits
+ *                clear of the left rail, which is full-length on desktop.
+ */
+function SheetShell({ children, placement = 'stage', ...attrs }) {
   const a = accentOf(ACCENT);
+  const viewport = placement === 'viewport';
   return (
     <div
-      className="pointer-events-auto absolute inset-x-0 top-14 z-40 px-2
-        flex justify-center"
+      className={`pointer-events-auto absolute top-14 z-40 flex justify-center
+        ${viewport ? 'left-20 right-4 lg:left-24' : 'inset-x-0 px-2'}`}
       data-feature-sheet=""
       data-feature-sheet-layout="under-title-horizontal"
+      data-feature-sheet-placement={placement}
       role="dialog"
       {...attrs}
     >
       <div
         className={`w-full rounded-xl border shadow-xl surface-glass-chip
           ${a.panel} px-3 py-2 overflow-hidden flex flex-col min-h-0
-          max-h-[calc(100dvh-10rem)]`}
+          ${viewport ? 'max-w-2xl max-h-[calc(100%-1rem)]' : 'max-h-[calc(100dvh-10rem)]'}`}
         data-feature-sheet-panel=""
       >
         <div className="min-h-0 overflow-y-auto rail-scroll" data-feature-sheet-scroll="">
@@ -139,6 +149,8 @@ export default function FeatureSheet({
   onDelete,
   onEditScript,
   onPickFeature,
+  /** 'stage' (phone) | 'viewport' (desktop, inside the 3D pane). */
+  placement = 'stage',
 }) {
   const a = accentOf(ACCENT);
   const block = useMemo(
@@ -162,6 +174,7 @@ export default function FeatureSheet({
   if (!feature && Array.isArray(features) && features.length > 0) {
     return (
       <SheetShell
+        placement={placement}
         data-feature-sheet-picker=""
         aria-label="Choose feature to edit"
       >
@@ -299,6 +312,7 @@ export default function FeatureSheet({
 
   return (
     <SheetShell
+      placement={placement}
       data-feature-sheet-kind={feature.kind}
       data-feature-sheet-id={feature.id}
       data-feature-sheet-editable={editable ? 'true' : 'false'}

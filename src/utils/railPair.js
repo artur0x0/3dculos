@@ -18,6 +18,16 @@ import { useLayoutEffect, useRef, useState } from 'react';
 export const RAIL_PAIR_HEIGHT_CLASS = 'max-h-[min(26rem,calc(100%-5.5rem))]';
 
 /**
+ * Desktop left rail: full length instead of a 26rem block floating at the
+ * bottom. Anchored top AND bottom, so the height is whatever is left between
+ * them — it stops just under the part-name chip (which sits at top-4 and is
+ * ~30px tall) and 10px off the bottom edge, matching the other viewport
+ * chrome. Phones keep RAIL_PAIR_HEIGHT_CLASS: there the viewport is short and
+ * a full-length rail would swallow the model.
+ */
+export const RAIL_FULL_LENGTH_CLASS = 'top-14 bottom-2.5';
+
+/**
  * Left rails share one width so ContourModeRail matches HelperInsertPalette
  * (the Contour caption is longer than Block/Model/Polish/Move and used to
  * widen the contour rail past the parent). When buttons fit without scroll,

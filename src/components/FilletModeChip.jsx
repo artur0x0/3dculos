@@ -89,17 +89,15 @@ const FilletModeChip = ({
             {title} · {edgeCount} edge{edgeCount === 1 ? '' : 's'}
           </div>
           <div className="text-[11px] text-amber-100/90 normal-case font-sans mt-0.5">
-            {chamfer
-              ? (edgeCount
-                ? 'Accept commits the chamfer and exits'
-                : 'Tap edges, then Accept')
-              : (pathOk
-                ? (componentCount > 1
-                  ? `${componentCount} independent fillets · Accept commits and exits`
-                  : 'Sweep blend preview · Accept commits and exits')
-                : edgeCount
-                  ? 'Path not ready — branched picks need a simple chain (Tangent on)'
-                  : 'Tap edges — shallow blend tessellation is not pickable')}
+            {pathOk
+              ? (componentCount > 1
+                ? `${componentCount} independent ${chamfer ? 'chamfers' : 'fillets'} · Accept commits and exits`
+                : (chamfer
+                  ? 'Sweep chamfer preview · Accept commits and exits'
+                  : 'Sweep blend preview · Accept commits and exits'))
+              : edgeCount
+                ? 'Path not ready — branched picks need a simple chain (Tangent on)'
+                : (chamfer ? 'Tap edges, then Accept' : 'Tap edges — shallow blend tessellation is not pickable')}
           </div>
         </div>
         <button
@@ -154,7 +152,7 @@ const FilletModeChip = ({
       </div>
       <div className="mt-2 flex items-center justify-between gap-2">
         <span className="text-[11px] text-amber-200/70 leading-tight">
-          {chamfer ? 'Equal-leg chamfer' : 'Strategy · sweep'}
+          {chamfer ? 'Strategy · sweep chamfer' : 'Strategy · sweep'}
         </span>
         <button
           type="button"
@@ -163,7 +161,7 @@ const FilletModeChip = ({
             bg-amber-600 hover:bg-amber-500 active:bg-amber-400 text-white shrink-0"
           data-fillet-accept="enabled"
           title={chamfer
-            ? 'Commit this chamfer (chamferEdges) and leave Chamfer mode.'
+            ? 'Commit this chamfer (path sweep) and leave Chamfer mode.'
             : 'Commit this fillet (makeSweepPath + filletAlongPath per contiguous component) and leave Fillet mode.'}
         >
           <Check size={14} />
