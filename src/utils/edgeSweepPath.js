@@ -406,6 +406,133 @@ export function orderEdgePath(selectedEdges) {
 }
 
 
+function _turnDeg(a, b, c) {
+  const abx = b[0] - a[0], aby = b[1] - a[1], abz = b[2] - a[2];
+  const bcx = c[0] - b[0], bcy = c[1] - b[1], bcz = c[2] - b[2];
+  const lab = Math.hypot(abx, aby, abz);
+  const lbc = Math.hypot(bcx, bcy, bcz);
+  if (!(lab > 1e-9) || !(lbc > 1e-9)) return 0;
+  const d = (abx * bcx + aby * bcy + abz * bcz) / (lab * lbc);
+  return Math.acos(Math.min(1, Math.max(-1, d))) * 180 / Math.PI;
+}
+
+/** Circle through 3 points, or null if colinear. Local — no filletAlongPath import. */
+function _circFit3(p0, p1, p2) {
+  const A = [p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]];
+  const B = [p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]];
+  const n = [
+    A[1] * B[2] - A[2] * B[1],
+    A[2] * B[0] - A[0] * B[2],
+    A[0] * B[1] - A[1] * B[0],
+  ];
+  const nL = Math.hypot(n[0], n[1], n[2]);
+  if (nL < 1e-14) return null;
+  const mid1 = [(p0[0] + p1[0]) / 2, (p0[1] + p1[1]) / 2, (p0[2] + p1[2]) / 2];
+  const mid2 = [(p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2, (p1[2] + p2[2]) / 2];
+  const d1 = [A[1] * n[2] - A[2] * n[1], A[2] * n[0] - A[0] * n[2], A[0] * n[1] - A[1] * n[0]];
+  const Bv = [p2[0] - p1[0], p2[1] - p1[1], p2[2] - p1[2]];
+  const d2 = [Bv[1] * n[2] - Bv[2] * n[1], Bv[2] * n[0] - Bv[0] * n[2], Bv[0] * n[1] - Bv[1] * n[0]];
+  const rhs = [mid2[0] - mid1[0], mid2[1] - mid1[1], mid2[2] - mid1[2]];
+  const rhsxd2 = [
+    rhs[1] * d2[2] - rhs[2] * d2[1],
+    rhs[2] * d2[0] - rhs[0] * d2[2],
+    rhs[0] * d2[1] - rhs[1] * d2[0],
+  ];
+  const d1xd2 = [
+    d1[1] * d2[2] - d1[2] * d2[1],
+    d1[2] * d2[0] - d1[0] * d2[2],
+    d1[0] * d2[1] - d1[1] * d2[0],
+  ];
+  const denom = d1xd2[0] * n[0] + d1xd2[1] * n[1] + d1xd2[2] * n[2];
+  if (Math.abs(denom) < 1e-14) return null;
+  const s = (rhsxd2[0] * n[0] + rhsxd2[1] * n[1] + rhsxd2[2] * n[2]) / denom;
+  const C = [mid1[0] + s * d1[0], mid1[1] + s * d1[1], mid1[2] + s * d1[2]];
+  const R = Math.hypot(C[0] - p0[0], C[1] - p0[1], C[2] - p0[2]);
+  if (!(R > 1e-9) || !Number.isFinite(R)) return null;
+  return { C, R };
+}
+
+/**
+ * Points dropped between `ib` and `ic` that still lie on a circular run.
+ * The 1.2 mm floor keeps a long prior-fillet quarter (r≈4, chords > 1.2 mm).
+ * A short inner offset of that quarter (r≈1.5, arc ≈ 2.4 mm) collapses to one
+ * chord and loses the tangency vertex where the arc meets the next straight,
+ * so the later fillet sweeps a shortcut off the shell edge. Put the arc back
+ * at ~15° steps — coarse enough to avoid micro-cluster fins, and at least
+ * three interior samples on a quarter so densifySweepArcTurns can fit the
+ * circle (it will not extend a two-point run to the tangency vertices).
+ * 15° is under that fitter's 50° step cap and under smoothPathCorners' 40°
+ * spike gate, so the restored samples stay on the arc for the ≤5° resample.
+ * A long straight
+ * tail is not subdivided. Colinear spans and real sharp corners (no circle)
+ * are left alone.
+ * A quarter that thinning already left with two or more interior samples
+ * (the r=4 wrap, ~22° chords) is left alone: the arc fitter can refit it,
+ * and extra samples there retessellate a later shell.
+ * @param {number[]} kept greedy-thinned original indices
+ * @returns {number[]} original indices strictly between ib and ic
+ */
+function _restoreShortArcSpan(pts, kept, ib, ic) {
+  if (ic <= ib + 1) return [];
+  const segLen = (i) => _dist(pts[i], pts[i + 1]);
+  const shorts = [];
+  let junction = ic;
+  for (let i = ib; i < ic; i++) {
+    const L = segLen(i);
+    if (shorts.length >= 2) {
+      const sorted = shorts.slice().sort((a, b) => a - b);
+      const med = sorted[sorted.length >> 1];
+      if (L > med * 2.5 && L > shorts[shorts.length - 1] * 2.5) {
+        junction = i;
+        break;
+      }
+    }
+    shorts.push(L);
+  }
+  if (junction <= ib) return [];
+  const seqIdx = [];
+  for (let i = ib; i <= junction; i++) seqIdx.push(i);
+  if (seqIdx.length < 3) {
+    if (junction < ic) return [junction];
+    return [];
+  }
+  const fit = _circFit3(
+    pts[seqIdx[0]],
+    pts[seqIdx[seqIdx.length >> 1]],
+    pts[seqIdx[seqIdx.length - 1]],
+  );
+  if (!fit) return junction < ic ? [junction] : [];
+  const tol = Math.max(0.35, 0.08 * fit.R);
+  for (const i of seqIdx) {
+    const p = pts[i];
+    const d = Math.hypot(p[0] - fit.C[0], p[1] - fit.C[1], p[2] - fit.C[2]);
+    if (Math.abs(d - fit.R) > tol) return junction < ic ? [junction] : [];
+  }
+  // densifySweepArcTurns needs two interior samples that can neighbor each
+  // other (plus the ends it extends to). A kept run that already has those
+  // is the normal 1.2 mm floor on a long quarter — do not re-seed it.
+  let onKept = 0;
+  for (const i of kept) {
+    const p = pts[i];
+    const d = Math.hypot(p[0] - fit.C[0], p[1] - fit.C[1], p[2] - fit.C[2]);
+    if (Math.abs(d - fit.R) <= tol) onKept++;
+  }
+  if (onKept >= 4) return [];
+  // 15°: a quarter then has ≥3 interior samples. Under the 40° corner-smooth
+  // gate and under the arc fitter's 50° step cap.
+  const chord = Math.max(0.2, 2 * fit.R * Math.sin((15 * Math.PI) / 360));
+  const out = [];
+  let last = ib;
+  for (let i = ib + 1; i < junction; i++) {
+    if (_dist(pts[i], pts[last]) >= chord * 0.85) {
+      out.push(i);
+      last = i;
+    }
+  }
+  if (junction < ic && junction !== last) out.push(junction);
+  return out;
+}
+
 /**
  * Cap path sample density after pts expansion.
  *
@@ -415,6 +542,16 @@ export function orderEdgePath(selectedEdges) {
  * (Artur cube playtest: 50+ zero-area fins on the side faces). Thinning to a
  * ~1.2 mm floor keeps arc fidelity for smooth wedges while dropping the
  * micro-cluster samples that poison the dihedral sweep boolean.
+ *
+ * That floor is ~11° on an r=6 arc and still leaves a fittable quarter when
+ * the chords themselves exceed 1.2 mm. It deletes a short inner-shell quarter
+ * (hollow offset of a prior fillet, arc shorter than ~2× the floor) including
+ * the vertex where the arc meets the next wall. The shortcut is not tangent
+ * to either shell face. When thinning itself creates that kink, and the
+ * dropped samples lie on a circle, restore the arc at ~15° steps (at least
+ * three interior samples on a quarter, which is what the arc fitter needs
+ * before it will extend to the tangency vertices) so the fillet arc resample
+ * (≤5°) can refit it. SWEEP_PATH_MIN_SEG is unchanged.
  *
  * Long straight edges are unchanged (already one segment). Closed paths keep
  * first ≠ last.
@@ -430,25 +567,57 @@ export function thinSweepPathPoints(points, closed, opts = {}) {
   const minSeg = typeof opts.minSeg === 'number' ? opts.minSeg : SWEEP_PATH_MIN_SEG;
   if (!(minSeg > 0)) return pts.map((p) => p.slice());
 
-  const out = [pts[0].slice()];
+  const kept = [0];
   for (let i = 1; i < pts.length; i++) {
-    const last = out[out.length - 1];
+    const last = pts[kept[kept.length - 1]];
     const d = _dist(pts[i], last);
     const isLast = i === pts.length - 1;
-    if (d >= minSeg || isLast) out.push(pts[i].slice());
+    if (d >= minSeg || isLast) kept.push(i);
   }
-  if (closed && out.length > 2) {
-    const a = out[0];
-    const b = out[out.length - 1];
-    if (_dist(a, b) < 1e-5) out.pop();
+  if (closed && kept.length > 2) {
+    const a = pts[kept[0]];
+    const b = pts[kept[kept.length - 1]];
+    if (_dist(a, b) < 1e-5) kept.pop();
   }
   // If the forced endpoint is too close to the previous kept sample, drop the
   // previous (keep the true end) so we do not reintroduce a micro segment.
-  if (out.length >= 3) {
-    const dEnd = _dist(out[out.length - 1], out[out.length - 2]);
-    if (dEnd < minSeg * 0.35) {
-      out.splice(out.length - 2, 1);
+  if (kept.length >= 3) {
+    const dEnd = _dist(pts[kept[kept.length - 1]], pts[kept[kept.length - 2]]);
+    if (dEnd < minSeg * 0.35) kept.splice(kept.length - 2, 1);
+  }
+  if (kept.length < 2) return pts.map((p) => p.slice());
+
+  // Thinning-created kinks only. A 15–22° chord on a long quarter already
+  // has two interior samples on the circle, so the span restore leaves it
+  // alone and wrap goldens keep their path. A collapsed short quarter
+  // (one interior sample, tangency vertex dropped) is put back.
+  const KINK_DEG = 18;
+  const restored = [kept[0]];
+  for (let k = 1; k < kept.length - 1; k++) {
+    const ia = kept[k - 1];
+    const ib = kept[k];
+    const ic = kept[k + 1];
+    restored.push(ib);
+    if (ic <= ib + 1) continue;
+    const thinTurn = _turnDeg(pts[ia], pts[ib], pts[ic]);
+    if (thinTurn < KINK_DEG) continue;
+    let maxOrig = 0;
+    for (let i = ib + 1; i < ic; i++) {
+      if (i - 1 < 0 || i + 1 >= pts.length) continue;
+      maxOrig = Math.max(maxOrig, _turnDeg(pts[i - 1], pts[i], pts[i + 1]));
     }
+    if (thinTurn < maxOrig + 8) continue;
+    for (const j of _restoreShortArcSpan(pts, kept, ib, ic)) {
+      if (j > restored[restored.length - 1] && j < ic) restored.push(j);
+    }
+  }
+  restored.push(kept[kept.length - 1]);
+
+  const out = [];
+  for (const i of restored) {
+    const p = pts[i];
+    if (out.length && _dist(out[out.length - 1], p) < 1e-9) continue;
+    out.push(p.slice());
   }
   if (out.length < 2) return pts.map((p) => p.slice());
   return out;
