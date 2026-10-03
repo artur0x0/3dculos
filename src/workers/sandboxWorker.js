@@ -780,7 +780,20 @@ function draftFaces(manifold, faces, angleDeg, opts = {}) {
     // In-plane part of the face normal: the direction the face slides. A face
     // perpendicular to pull (a cap) has none — it cannot be drafted.
     const nIn = _c4Sub(f.normal, _c4Mul(_c4Dot(f.normal, pull), pull));
-    if (_c4Len(nIn) < 1e-6) continue;
+    // A face parallel to the pull is a cap. Do not skip it — one cap in the
+    // list (including the neutral face) must fail, not silently drop.
+    if (_c4Len(nIn) < 1e-6) {
+      // A zero normal is a degenerate triangle cluster, not a cap. 'sides'
+      // can pick one up after a hollow; skipping it is not dropping a wall.
+      // A real face whose plane is perpendicular to the pull (normal parallel
+      // to the pull) must throw, even when other faces in the list are walls.
+      if (_c4Len(f.normal) < 1e-6) continue;
+      throw new Error(
+        'draftFaces: a selected face is parallel to the pull (its plane is perpendicular '
+        + 'to the pull direction) — a cap cannot be drafted, including the neutral face; '
+        + 'remove it from the list',
+      );
+    }
     let u = _c4Norm(nIn);
     if (sense === 'taper') {
       const r = _c4Sub(f.center, axisPt);

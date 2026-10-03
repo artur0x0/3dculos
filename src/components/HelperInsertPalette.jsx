@@ -105,6 +105,7 @@ const HelperInsertPalette = ({
   onEnterContourMode = null,
   onEnterFilletMode = null,
   onEnterShellMode = null,
+  onEnterDraftMode = null,
   compact = false,
   /** 'game' keeps Advanced. 'cad' promotes that set into Model. */
   layout = 'game',
@@ -148,6 +149,12 @@ const HelperInsertPalette = ({
     // was confusing — face pick maps to hollow(..., { center, normal }).
     if (item.id === 'shell' && typeof onEnterShellMode === 'function') {
       onEnterShellMode({ entry: 'shell' });
+      return;
+    }
+    // Draft enters neutral-plane face-pick mode. The pull is the neutral
+    // face normal — not a world-axis guess, and not addDraft().
+    if (item.id === 'addDraft' && typeof onEnterDraftMode === 'function') {
+      onEnterDraftMode({ entry: 'addDraft' });
       return;
     }
     // Workplane enters plane-only contour mode (Face / construction plane +
