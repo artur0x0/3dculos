@@ -12,6 +12,7 @@ import { isFilletSliverDirty } from '../utils/filletSliverGuard.js';
 import {
   expandFilletCutterContour,
   expandDihedralCutterContour,
+  filletSweepCutterExpand,
   planFilletSweepPath,
   densifySweepArcTurns,
   dihedralFilletContour,
@@ -4533,6 +4534,83 @@ function _s23VaryingProfileCutter(segs, closed, radius, profileKind, arcSegs, te
  * C3 hard: per-knot path-normal inscribed-arc frames via buildVariableProfileFrames.
  * Probes wall normals at densified knots, then sweeps with those N/B/theta frames.
  */
+
+/**
+ * Bbox as plain arrays. Manifold's min/max are indexable vec3s.
+ */
+function _s23ReadBBox(part) {
+  const bb = part.boundingBox();
+  return {
+    min: [Number(bb.min[0]), Number(bb.min[1]), Number(bb.min[2])],
+    max: [Number(bb.max[0]), Number(bb.max[1]), Number(bb.max[2])],
+  };
+}
+
+/** True when a short step along dir leaves the part bbox (open rim / free end). */
+function _s23StepExitsBBox(pt, dir, bb) {
+  const step = 0.05;
+  for (let i = 0; i < 3; i++) {
+    const q = pt[i] + dir[i] * step;
+    if (q < bb.min[i] - 1e-4 || q > bb.max[i] + 1e-4) return true;
+  }
+  return false;
+}
+
+/**
+ * Drop filler material that the open-end pad pushed past the pre-fillet bbox.
+ * eps keeps the original skin (float) so a solid fillet is not shaved.
+ */
+function _s23ClipToBBox(M, solid, bb) {
+  const eps = 1e-3;
+  const size = [
+    bb.max[0] - bb.min[0] + 2 * eps,
+    bb.max[1] - bb.min[1] + 2 * eps,
+    bb.max[2] - bb.min[2] + 2 * eps,
+  ];
+  const c = [
+    (bb.max[0] + bb.min[0]) / 2,
+    (bb.max[1] + bb.min[1]) / 2,
+    (bb.max[2] + bb.min[2]) / 2,
+  ];
+  const box = M.cube(size, true).translate(c);
+  const clipped = M.intersection(solid, box);
+  const se = _c4StatusError(clipped);
+  if (se) throw new Error(`filletAlongPath: bad open-end clip (${se})`);
+  return clipped;
+}
+
+/**
+ * Concave filler on an already-open shell ends ON the open face. The wedge
+ * cap is coplanar with that face, so the sharp inner corner survives as a
+ * triangular fan in the cavity (r < wall, so it is a fin, not a hole).
+ * Push only a concave open end past the bbox by the usual cutter-expand pad
+ * — same margin as the rear bumper, not a deeper blend — then the caller
+ * clips back to the pre-fillet bbox. Convex sweeps are not extended, so a
+ * solid-body fillet (no free end, or a convex end) is unchanged.
+ */
+function _s23ExtendConcaveOpenEnds(part, segs, closed, radius) {
+  if (closed || !Array.isArray(segs) || !segs.length) return null;
+  const pad = filletSweepCutterExpand(radius);
+  if (!(pad > 1e-9)) return null;
+  let bb = null;
+  const bump = (seg, which) => {
+    if (!seg || seg.convex !== false || !seg.T || !seg.p0 || !seg.p1) return false;
+    const T = seg.T;
+    const dir = which === 'start' ? [-T[0], -T[1], -T[2]] : [T[0], T[1], T[2]];
+    const pt = which === 'start' ? seg.p0 : seg.p1;
+    if (!bb) bb = _s23ReadBBox(part);
+    if (!_s23StepExitsBBox(pt, dir, bb)) return false;
+    const moved = [pt[0] + dir[0] * pad, pt[1] + dir[1] * pad, pt[2] + dir[2] * pad];
+    if (which === 'start') seg.p0 = moved;
+    else seg.p1 = moved;
+    seg.length = (Number(seg.length) || 0) + pad;
+    return true;
+  };
+  const a = bump(segs[0], 'start');
+  const b = bump(segs[segs.length - 1], 'end');
+  return (a || b) ? bb : null;
+}
+
 function _s23BuildVariableProfileCutter(
   M, CrossSection, part, points, closed, radius, profileKind, arcSegs, testScale, rawSegCount,
 ) {
@@ -4574,6 +4652,9 @@ function _s23BuildVariableProfileCutter(
       convex: segmentConvex[i] !== false,
     });
   }
+  // Open-shell concave ends: pad past the open face so the filler cap is not
+  // coplanar with it (the inner-corner triangle). Convex runs are left alone.
+  const openEndBBox = _s23ExtendConcaveOpenEnds(part, segs, closed, radius);
   // C3.3: one continuous cutter with a PER-KNOT section. C3.2's single median
   // θ removed the staircase but gouged wherever the true θ was far from the
   // median; θ-grouped runs (C3.1) put the same error back as steps.
@@ -4600,6 +4681,7 @@ function _s23BuildVariableProfileCutter(
     runCount: cut.runCount,
     thetaRunCount: cut.thetaRunCount,
   });
+  cut.openEndBBox = openEndBBox;
   return cut;
 }
 
@@ -4733,6 +4815,8 @@ function filletAlongPath(part, path, radius, opts = {}) {
           try {
             part = M.union([part, built.filler]);
           } catch (_) { /* keep */ }
+          // Clip outside the swallow: a failed open-end clip must not drop the filler silently.
+          if (built.openEndBBox) part = _s23ClipToBBox(M, part, built.openEndBBox);
         }
       }
       if (!cutters.length) {
@@ -4807,6 +4891,7 @@ function filletAlongPath(part, path, radius, opts = {}) {
   let filler = null;
   let expectAddOverride = 0;
   let expectVolOverride = null;
+  let openEndBBox = null;
   if (!opts.initialNormal) {
     const scale = testingOversize ? testCutterScale : 1;
     const built = variableProfile
@@ -4820,6 +4905,7 @@ function filletAlongPath(part, path, radius, opts = {}) {
     filler = built.filler || null;
     expectAddOverride = built.expectAdd || 0;
     expectVolOverride = built.expectVol;
+    openEndBBox = built.openEndBBox || null;
   }
 
   // Legacy 90° RMF — only when opts.initialNormal is set. May reverse the path.
@@ -5026,6 +5112,9 @@ function filletAlongPath(part, path, radius, opts = {}) {
         + '(filler far larger than requested radius) — failing loud rather than shipping an oversized blend',
       );
     }
+    // Pad lives outside the pre-fillet bbox. Clip after the volume guard so
+    // expectAdd (which includes the pad length) still matches `added`.
+    if (openEndBBox) out = _s23ClipToBBox(M, out, openEndBBox);
   }
   // Near-no-op and oversize guards use the dihedral removed-area when the
   // per-segment cutter ran. A 90°-only expect false-trips an acute fillet
