@@ -57,6 +57,7 @@ import ContourModeChip from './ContourModeChip';
 import FilletModeChip from './FilletModeChip';
 import ShellModeChip from './ShellModeChip';
 import DraftModeChip from './DraftModeChip';
+import CutModeChip from './CutModeChip';
 import { buildCrossSectionPreview, defaultTopPlaneFrame } from '../utils/crossSectionSubstrate';
 import {
   applySavedContour,
@@ -134,6 +135,21 @@ import {
   setDraftFlip,
   validateDraftAccept,
 } from '../utils/draftMode';
+import {
+  emptyCutState,
+  applyCutTap,
+  popLastCutPick,
+  clearCutPicks,
+  setCutPlaneSource,
+  setCutOriginOffset,
+  setCutPickTarget,
+  cutPlaneFromState,
+  validateCutAccept,
+  meshBodyComponents,
+  classifyCutBody,
+  trianglePieceSide,
+  cutBodyKey,
+} from '../utils/cutMode';
 import { classifySelectedFace } from '../utils/faceFeaturePlacement';
 import { classifyFilletEdges, countDegenerateTriangles } from '../utils/filletEdgeClass';
 import {
@@ -360,6 +376,7 @@ const Viewport = forwardRef(({
   onCommitFillet = null,
   onCommitShell = null,
   onCommitDraft = null,
+  onCommitCut = null,
   getHelperBuffer = null,
   /** Mobile CAD mid-strip host (CodeEditor). Null on desktop and in game. */
   cadToolbarHost = null,
@@ -494,6 +511,9 @@ const Viewport = forwardRef(({
   const shellModeRef = useRef(null);
   const [draftMode, setDraftMode] = useState(null);
   const draftModeRef = useRef(null);
+  const [cutMode, setCutMode] = useState(null);
+  const cutModeRef = useRef(null);
+  const cutPlaneWidgetRef = useRef(null);
   const [shellToast, setShellToast] = useState(null);
   const shellToastTimerRef = useRef(null);
   /** Slice C: restore Face/Edge after Fillet Accept / exit (do not snap to default). */
@@ -607,6 +627,7 @@ const Viewport = forwardRef(({
   filletModeRef.current = filletMode;
   shellModeRef.current = shellMode;
   draftModeRef.current = draftMode;
+  cutModeRef.current = cutMode;
 
   useImperativeHandle(ref, () => ({
     executeScript,
@@ -643,6 +664,8 @@ const Viewport = forwardRef(({
       shellModeRef.current = null;
       setDraftMode(null);
       draftModeRef.current = null;
+      setCutMode(null);
+      cutModeRef.current = null;
       setContourToast(null);
       setFilletToast(null);
       setShellToast(null);
@@ -711,6 +734,9 @@ const Viewport = forwardRef(({
     },
     softFailDraft: (msg) => {
       showShellToast(msg || 'Draft refused — tap the neutral face, then the faces to draft.');
+    },
+    softFailCut: (msg) => {
+      showShellToast(msg || 'Cut refused — pick a plane and the bodies to cut.');
     },
     // Updated to use cached mesh when available
     export3MF: async () => {
@@ -1799,6 +1825,8 @@ const Viewport = forwardRef(({
     shellModeRef.current = null;
     setDraftMode(null);
     draftModeRef.current = null;
+    setCutMode(null);
+    cutModeRef.current = null;
     setPickMode('face');
     disposeEdgeOverlayObject(sceneRef.current, pathPreviewRef.current);
     pathPreviewRef.current = null;
@@ -1930,6 +1958,8 @@ const Viewport = forwardRef(({
     shellModeRef.current = null;
     setDraftMode(null);
     draftModeRef.current = null;
+    setCutMode(null);
+    cutModeRef.current = null;
     setPickMode('edge');
     clearHighlight();
     setSelectedFace(null);
@@ -2012,13 +2042,16 @@ const Viewport = forwardRef(({
     setShellToast(null);
   }, []);
 
-  const enterShellMode = useCallback((opts = {}) => {
+  const enterShellMode = useCallback(() => {
     exitContourMode();
     setFilletMode(null);
     filletModeRef.current = null;
     clearFilletBlendPreview();
     setDraftMode(null);
     draftModeRef.current = null;
+    if (cutModeRef.current) clearHighlight();
+    setCutMode(null);
+    cutModeRef.current = null;
     setPickMode('face');
     clearEdgeHover();
     clearEdgeHighlight();
@@ -2026,7 +2059,7 @@ const Viewport = forwardRef(({
     const next = enterShellState(selectedFace);
     setShellMode(next);
     shellModeRef.current = next;
-  }, [exitContourMode, selectedFace, clearFilletBlendPreview, clearEdgeHover, clearEdgeHighlight]);
+  }, [exitContourMode, selectedFace, clearFilletBlendPreview, clearEdgeHover, clearEdgeHighlight, clearHighlight]);
 
   const acceptShell = useCallback(() => {
     const state = shellModeRef.current;
@@ -2816,6 +2849,9 @@ const Viewport = forwardRef(({
     clearFilletBlendPreview();
     setShellMode(null);
     shellModeRef.current = null;
+    if (cutModeRef.current) clearHighlight();
+    setCutMode(null);
+    cutModeRef.current = null;
     setPickMode('face');
     clearEdgeHover();
     clearEdgeHighlight();
@@ -2834,7 +2870,7 @@ const Viewport = forwardRef(({
     setDraftMode(next);
     draftModeRef.current = next;
     paintDraftPicks(next);
-  }, [exitContourMode, selectedFace, clearFilletBlendPreview, clearEdgeHover, clearEdgeHighlight, paintDraftPicks]);
+  }, [exitContourMode, selectedFace, clearFilletBlendPreview, clearEdgeHover, clearEdgeHighlight, clearHighlight, paintDraftPicks]);
 
   const commitDraftState = useCallback((next) => {
     draftModeRef.current = next;
@@ -2858,6 +2894,143 @@ const Viewport = forwardRef(({
       exitDraftMode();
     }
   }, [onCommitDraft, exitDraftMode, onFaceSelected, clearHighlight]);
+
+  const clearCutPlaneWidget = useCallback(() => {
+    const widget = cutPlaneWidgetRef.current;
+    if (!widget || !sceneRef.current) return;
+    sceneRef.current.remove(widget);
+    widget.traverse((obj) => {
+      obj.geometry?.dispose();
+      obj.material?.dispose();
+    });
+    cutPlaneWidgetRef.current = null;
+  }, []);
+
+  useEffect(() => {
+    if (!cutMode) clearCutPlaneWidget();
+  }, [cutMode, clearCutPlaneWidget]);
+
+  const syncCutPlaneWidget = useCallback((state) => {
+    const plane = cutPlaneFromState(state);
+    if (!plane || !sceneRef.current) {
+      clearCutPlaneWidget();
+      return;
+    }
+    const size = Math.max(40, ...(modelBoundsRef.current?.size || [40]));
+    if (cutPlaneWidgetRef.current) {
+      updateCuttingPlaneWidget(cutPlaneWidgetRef.current, {
+        normal: plane.normal,
+        originOffset: plane.originOffset,
+      });
+      return;
+    }
+    const widget = createCuttingPlaneWidget({
+      normal: plane.normal,
+      originOffset: plane.originOffset,
+      size: size * 1.4,
+      color: 0x22d3ee,
+      opacity: 0.22,
+    });
+    sceneRef.current.add(widget);
+    cutPlaneWidgetRef.current = widget;
+  }, [clearCutPlaneWidget]);
+
+  const paintCutPicks = useCallback((state) => {
+    const geom = resultRef.current?.geometry;
+    const positions = geom?.attributes?.position;
+    const index = geom?.index?.array;
+    clearHighlight();
+    if (!state || !geom || !positions || !index) return;
+    const plane = cutPlaneFromState(state);
+    const keepTris = [];
+    const dropTris = [];
+    for (const body of state.bodies || []) {
+      const info = classifyCutBody(body, plane, positions, index);
+      for (const tri of body.triangles || []) {
+        const side = trianglePieceSide(tri, body, info, plane, positions, index);
+        const dropped = (state.drop || []).some((d) => d.key === cutBodyKey(body) && d.side === side);
+        (dropped ? dropTris : keepTris).push(tri);
+      }
+    }
+    if (keepTris.length) highlightFace(keepTris, geom, positions, index, 0x22d3ee, 'cut-bodies');
+    if (dropTris.length) highlightFace(dropTris, geom, positions, index, 0xf97316, 'cut-drop');
+  }, [clearHighlight, highlightFace]);
+
+  const exitCutMode = useCallback(() => {
+    const was = cutModeRef.current;
+    setCutMode(null);
+    cutModeRef.current = null;
+    clearCutPlaneWidget();
+    if (was) clearHighlight();
+    if (shellToastTimerRef.current) {
+      clearTimeout(shellToastTimerRef.current);
+      shellToastTimerRef.current = null;
+    }
+    setShellToast(null);
+  }, [clearHighlight, clearCutPlaneWidget]);
+
+  const commitCutState = useCallback((next) => {
+    cutModeRef.current = next;
+    setCutMode(next);
+    paintCutPicks(next);
+    syncCutPlaneWidget(next);
+  }, [paintCutPicks, syncCutPlaneWidget]);
+
+  const enterCutMode = useCallback(() => {
+    exitContourMode();
+    setFilletMode(null);
+    filletModeRef.current = null;
+    clearFilletBlendPreview();
+    setShellMode(null);
+    shellModeRef.current = null;
+    setDraftMode(null);
+    draftModeRef.current = null;
+    setPickMode('face');
+    clearEdgeHover();
+    clearEdgeHighlight();
+    setSelectedEdges([]);
+    const next = emptyCutState();
+    const face = selectedFace && Array.isArray(selectedFace.center) && Array.isArray(selectedFace.normal)
+      ? selectedFace
+      : null;
+    const classified = face ? (face.type ? face : classifySelectedFace(face)) : null;
+    if (classified && classified.type === 'planar') {
+      next.planeFace = {
+        center: classified.center.map(Number),
+        normal: classified.normal.map(Number),
+      };
+      next.pick = 'bodies';
+    }
+    commitCutState(next);
+  }, [
+    exitContourMode,
+    selectedFace,
+    clearFilletBlendPreview,
+    clearEdgeHover,
+    clearEdgeHighlight,
+    commitCutState,
+  ]);
+
+  const acceptCut = useCallback(() => {
+    const state = cutModeRef.current;
+    if (!state) return;
+    const geom = resultRef.current?.geometry;
+    const positions = geom?.attributes?.position;
+    const index = geom?.index?.array;
+    const bodyCount = meshBodyComponents(positions, index).length;
+    const gate = validateCutAccept(state, { positions, index, bodyCount });
+    if (!gate.ok) {
+      showShellToast(gate.message);
+      return;
+    }
+    const ok = onCommitCut?.({ state, mesh: { positions, index, bodyCount } });
+    if (ok) {
+      clearHighlight();
+      setSelectedFace(null);
+      onFaceSelected?.(null);
+      exitCutMode();
+    }
+  }, [onCommitCut, exitCutMode, onFaceSelected, clearHighlight]);
 
   const clearMeasurementLines = useCallback(() => {
     if (measurementLinesRef.current && sceneRef.current) {
@@ -3224,6 +3397,8 @@ const Viewport = forwardRef(({
         // Preserve draft face selection — stray taps must not wipe the set.
       } else if (shellModeRef.current) {
         // Preserve shell face selection — stray taps must not wipe the set.
+      } else if (cutModeRef.current) {
+        // Preserve cut body selection — stray taps must not wipe the set.
       } else {
         clearHighlight();
         setSelectedFace(null);
@@ -3248,6 +3423,7 @@ const Viewport = forwardRef(({
       positions,
       index,
       faceNormal: [clickedFace.normal.x, clickedFace.normal.y, clickedFace.normal.z],
+      hitPoint: [intersection.point.x, intersection.point.y, intersection.point.z],
       // Shift (or ⌘/Ctrl) adds this face to the pick instead of replacing it.
       additive: !!(event.shiftKey || event.metaKey || event.ctrlKey),
     };
@@ -3408,6 +3584,20 @@ const Viewport = forwardRef(({
         indices: faceIndices.slice(),
       };
       let picks;
+      if (cutModeRef.current) {
+        // Cut: plane, bodies, and pieces are sticky taps. No shift-click.
+        const geom = geometry;
+        const tap = applyCutTap(cutModeRef.current, {
+          triangle: seedFaceIndex,
+          point: clickData.hitPoint,
+          face: entry,
+          positions: geom?.attributes?.position,
+          index: geom?.index?.array,
+        });
+        if (tap.toast) showShellToast(tap.toast);
+        commitCutState(tap.state);
+        return;
+      }
       if (draftModeRef.current) {
         // Draft: first tap is the neutral face. Later taps toggle drafted faces.
         // Tap the neutral face again to replace it, not to draft it. No modifier.
@@ -3431,7 +3621,7 @@ const Viewport = forwardRef(({
       }
     }
     
-  }, [measurementEnabled, measurementFaces, onFaceSelected, clearHighlight, clearEdgeHighlight, highlightFace, publishFacePicks, paintDraftPicks]);
+  }, [measurementEnabled, measurementFaces, onFaceSelected, clearHighlight, clearEdgeHighlight, highlightFace, publishFacePicks, paintDraftPicks, commitCutState]);
 
   /**
    * Handle face selection in measurement mode
@@ -4719,7 +4909,7 @@ const Viewport = forwardRef(({
       )}
       
       {/* Left helper rail. Game keeps Advanced; CAD promotes those tools into Model. */}
-      {onInsertHelper && !contourMode && !filletMode && !shellMode && !draftMode && (
+      {onInsertHelper && !contourMode && !filletMode && !shellMode && !draftMode && !cutMode && (
         <HelperInsertPalette
           layout={mode === 'game' ? 'game' : 'cad'}
           onInsert={onInsertHelper}
@@ -4741,6 +4931,7 @@ const Viewport = forwardRef(({
           onEnterFilletMode={enterFilletMode}
           onEnterShellMode={enterShellMode}
           onEnterDraftMode={enterDraftMode}
+          onEnterCutMode={enterCutMode}
           compact={isMobile}
         />
       )}
@@ -5024,6 +5215,21 @@ const Viewport = forwardRef(({
           onClear={() => commitDraftState(clearDraftFaces(draftModeRef.current))}
           onConfirm={acceptDraft}
           onDismiss={exitDraftMode}
+        />
+      )}
+
+      {/* Cut plane + bodies. Confirm writes one cut(); pieces stay separate. */}
+      {cutMode && (
+        <CutModeChip
+          state={cutMode}
+          compact={isMobile}
+          onPlaneSource={(source) => commitCutState(setCutPlaneSource(cutModeRef.current, source))}
+          onOffset={(originOffset) => commitCutState(setCutOriginOffset(cutModeRef.current, originOffset))}
+          onPickTarget={(pick) => commitCutState(setCutPickTarget(cutModeRef.current, pick))}
+          onUndo={() => commitCutState(popLastCutPick(cutModeRef.current))}
+          onClear={() => commitCutState(clearCutPicks(cutModeRef.current))}
+          onConfirm={acceptCut}
+          onDismiss={exitCutMode}
         />
       )}
 

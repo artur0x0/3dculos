@@ -90,6 +90,7 @@ function stubRunner(source) {
     hollow: (p) => p,
     addDraft: (p) => p,
     draftFaces: (p) => p,
+    cut: (p) => p,
     rectTube: () => solid('rectTube'),
     center: (p) => p,
     align: (p) => p,

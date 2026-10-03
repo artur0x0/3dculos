@@ -5454,6 +5454,272 @@ function boundaryEdges(part) {
   }));
 }
 
+/**
+ * cut(manifold, plane, opts) — split one or more bodies with a plane, then
+ * optionally delete pieces. Uses Manifold.splitByPlane (no separate kernel).
+ *
+ * plane is a face `{ center, normal }` or an explicit `{ normal, originOffset }`.
+ * A face is never read as a world-axis name. The first splitByPlane result is
+ * the '+' side (along the normal); the second is '-'.
+ *
+ * A body that does not cross the plane is returned unchanged (same solid, so
+ * the same volume, still one body). Pieces that are kept stay separate via
+ * Manifold.compose, which decompose() splits back apart.
+ *
+ * opts.bodies — subset to cut, each `{ at }` near that body's vertex centroid.
+ *   Omit to cut every body.
+ * opts.keep — 'both' (default) | '+' | '-'.
+ * opts.drop — `{ at, side }` pieces to delete when keep is not a whole side.
+ */
+function cut(manifold, plane, opts = {}) {
+  if (!manifoldModule) throw new Error('Manifold not initialized');
+  if (!manifold || typeof manifold.splitByPlane !== 'function') {
+    throw new Error('cut: expected a Manifold');
+  }
+  const { Manifold } = manifoldModule;
+  const pl = _cutResolvePlane(plane);
+  const options = (opts && typeof opts === 'object' && !Array.isArray(opts)) ? opts : {};
+  const keep = _cutKeepMode(options);
+  const bodies = _cutBodiesOf(manifold);
+  const selected = _cutSelected(bodies, options.bodies);
+  const drops = _cutDrops(bodies, selected, options.drop, keep);
+  const kept = [];
+  const discard = [];
+  for (let i = 0; i < bodies.length; i++) {
+    const body = bodies[i];
+    if (!selected.has(i)) {
+      kept.push(body);
+      continue;
+    }
+    const split = _cutSplitOrOriginal(body, pl);
+    for (const piece of split.pieces) {
+      const drop = _cutPieceDropped(piece.side, i, keep, drops);
+      if (drop) {
+        if (!piece.original) discard.push(piece.manifold);
+        continue;
+      }
+      kept.push(piece.manifold);
+    }
+    for (const extra of split.discard) discard.push(extra);
+  }
+  for (const m of discard) _safeDeleteManifold(m);
+  if (!kept.length) throw new Error('cut: every piece was deleted');
+  const result = kept.length === 1 ? kept[0] : Manifold.compose(kept);
+  const status = _c4StatusError(result);
+  if (status) throw new Error(`cut: result is not a valid solid (${status})`);
+  return result;
+}
+
+/** Face { center, normal } or explicit { normal, originOffset }. Never an axis name. */
+function _cutResolvePlane(plane) {
+  if (plane == null || typeof plane !== 'object' || Array.isArray(plane)) {
+    throw new Error("cut: plane must be a face { center, normal } or { normal, originOffset } — not a world-axis name");
+  }
+  const nRaw = plane.normal;
+  if (!Array.isArray(nRaw) || nRaw.length < 3) {
+    throw new Error('cut: plane.normal must be [x, y, z]');
+  }
+  const nx = Number(nRaw[0]);
+  const ny = Number(nRaw[1]);
+  const nz = Number(nRaw[2]);
+  const len = Math.hypot(nx, ny, nz);
+  if (!(len > 1e-12) || !Number.isFinite(len)) throw new Error('cut: plane normal has zero length');
+  const normal = [nx / len, ny / len, nz / len];
+  let originOffset;
+  if (plane.originOffset != null && plane.originOffset !== '') {
+    originOffset = Number(plane.originOffset);
+    if (!Number.isFinite(originOffset)) throw new Error('cut: originOffset must be a finite number');
+  } else if (Array.isArray(plane.center) && plane.center.length >= 3) {
+    const c = plane.center.map(Number);
+    if (c.some((v) => !Number.isFinite(v))) throw new Error('cut: plane.center must be finite');
+    originOffset = normal[0] * c[0] + normal[1] * c[1] + normal[2] * c[2];
+  } else {
+    throw new Error('cut: plane needs originOffset or a center from the picked face');
+  }
+  return { normal, originOffset };
+}
+
+function _cutKeepMode(options) {
+  const keep = options.keep == null ? 'both' : options.keep;
+  if (keep !== 'both' && keep !== '+' && keep !== '-') {
+    throw new Error(`cut: keep must be 'both', '+', or '-' (got ${keep})`);
+  }
+  if (keep !== 'both' && Array.isArray(options.drop) && options.drop.length) {
+    throw new Error('cut: pass keep or drop, not both');
+  }
+  return keep;
+}
+
+function _cutVol(m) {
+  try {
+    const v = m.volume();
+    return Number.isFinite(v) ? v : 0;
+  } catch (_) {
+    return 0;
+  }
+}
+
+function _cutNegligible(m, total) {
+  if (!m) return true;
+  if (typeof m.isEmpty === 'function') {
+    try { if (m.isEmpty()) return true; } catch (_) { /* volume floor below */ }
+  }
+  const floor = Math.max(1e-6, Math.abs(total) * 1e-8);
+  return !(_cutVol(m) > floor);
+}
+
+/** More than one component → those bodies. One component → the input, unchanged. */
+function _cutBodiesOf(manifold) {
+  if (typeof manifold.decompose !== 'function') return [manifold];
+  let parts = null;
+  try { parts = manifold.decompose(); } catch (_) { parts = null; }
+  if (!Array.isArray(parts) || parts.length <= 1) {
+    if (Array.isArray(parts)) {
+      for (const p of parts) {
+        if (p && p !== manifold) _safeDeleteManifold(p);
+      }
+    }
+    return [manifold];
+  }
+  return parts;
+}
+
+function _cutCentroid(body) {
+  const mesh = body.getMesh();
+  const vp = mesh.vertProperties;
+  const np = mesh.numProp || 3;
+  const n = Math.floor(vp.length / np);
+  if (!n) return [0, 0, 0];
+  let sx = 0;
+  let sy = 0;
+  let sz = 0;
+  for (let i = 0; i < n; i++) {
+    sx += vp[i * np];
+    sy += vp[i * np + 1];
+    sz += vp[i * np + 2];
+  }
+  return [sx / n, sy / n, sz / n];
+}
+
+function _cutDist2(a, b) {
+  const dx = a[0] - b[0];
+  const dy = a[1] - b[1];
+  const dz = a[2] - b[2];
+  return dx * dx + dy * dy + dz * dz;
+}
+
+function _cutBodyIndex(bodies, at) {
+  const point = [Number(at[0]), Number(at[1]), Number(at[2])];
+  if (point.some((v) => !Number.isFinite(v))) {
+    throw new Error('cut: body point must be finite [x, y, z]');
+  }
+  let best = -1;
+  let bestD = Infinity;
+  let second = Infinity;
+  for (let i = 0; i < bodies.length; i++) {
+    const d = _cutDist2(_cutCentroid(bodies[i]), point);
+    if (d < bestD) {
+      second = bestD;
+      bestD = d;
+      best = i;
+    } else if (d < second) {
+      second = d;
+    }
+  }
+  // 4-decimal script literals land well inside 1e-2 of the vertex centroid.
+  if (!(bestD <= 1e-4)) {
+    throw new Error('cut: that point is not a body centroid — re-pick the body');
+  }
+  if (second <= 1e-4 && Math.sqrt(second) - Math.sqrt(bestD) < 1e-4) {
+    throw new Error('cut: that point matches more than one body');
+  }
+  return best;
+}
+
+function _cutSelected(bodies, spec) {
+  const selected = new Set();
+  if (Array.isArray(spec) && spec.length) {
+    for (const entry of spec) {
+      const at = entry && (entry.at || entry.center);
+      if (!Array.isArray(at)) throw new Error('cut: bodies entries need { at: [x, y, z] }');
+      selected.add(_cutBodyIndex(bodies, at));
+    }
+    return selected;
+  }
+  for (let i = 0; i < bodies.length; i++) selected.add(i);
+  return selected;
+}
+
+function _cutDrops(bodies, selected, spec, keep) {
+  const drops = [];
+  if (keep !== 'both' || !Array.isArray(spec)) return drops;
+  for (const entry of spec) {
+    const at = entry && (entry.at || entry.center);
+    const side = entry && entry.side;
+    if (side !== '+' && side !== '-') throw new Error("cut: drop side must be '+' or '-'");
+    if (!Array.isArray(at)) throw new Error('cut: drop entries need { at, side }');
+    const idx = _cutBodyIndex(bodies, at);
+    if (!selected.has(idx)) throw new Error('cut: cannot drop a piece of a body that was not cut');
+    drops.push({ idx, side });
+  }
+  return drops;
+}
+
+function _cutPieceDropped(side, idx, keep, drops) {
+  if (keep === '+') return side === '-';
+  if (keep === '-') return side === '+';
+  return drops.some((d) => d.idx === idx && d.side === side);
+}
+
+function _cutExtents(body, normal, originOffset) {
+  const mesh = body.getMesh();
+  const vp = mesh.vertProperties;
+  const np = mesh.numProp || 3;
+  let min = Infinity;
+  let max = -Infinity;
+  const n = Math.floor(vp.length / np);
+  for (let i = 0; i < n; i++) {
+    const d = vp[i * np] * normal[0] + vp[i * np + 1] * normal[1] + vp[i * np + 2] * normal[2] - originOffset;
+    if (d < min) min = d;
+    if (d > max) max = d;
+  }
+  return { min, max };
+}
+
+/**
+ * Split only when vertices lie strictly on both sides. Otherwise hand back
+ * the same body (a tangent plane is not a cut). Empty split halves are the
+ * same case — discard them and keep the original.
+ */
+function _cutSplitOrOriginal(body, plane) {
+  const eps = 1e-5;
+  const { min, max } = _cutExtents(body, plane.normal, plane.originOffset);
+  const crosses = min < -eps && max > eps;
+  const wholeSide = min >= -eps ? '+' : '-';
+  if (!crosses) {
+    return { pieces: [{ side: wholeSide, manifold: body, original: true }], discard: [] };
+  }
+  const total = _cutVol(body);
+  const halves = body.splitByPlane(plane.normal, plane.originOffset);
+  const pos = halves && halves[0];
+  const neg = halves && halves[1];
+  const posEmpty = _cutNegligible(pos, total);
+  const negEmpty = _cutNegligible(neg, total);
+  if (posEmpty || negEmpty) {
+    return {
+      pieces: [{ side: posEmpty ? '-' : '+', manifold: body, original: true }],
+      discard: [pos, neg].filter(Boolean),
+    };
+  }
+  return {
+    pieces: [
+      { side: '+', manifold: pos, original: false },
+      { side: '-', manifold: neg, original: false },
+    ],
+    discard: [],
+  };
+}
+
 // Collection of all helper functions to inject
 const HELPER_FUNCTIONS = {
   shell,
@@ -5471,6 +5737,7 @@ const HELPER_FUNCTIONS = {
   getDimensions,
   addDraft,
   draftFaces,
+  cut,
   loft,
   //loft helpers
   sumSqDist,

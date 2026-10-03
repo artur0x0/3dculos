@@ -18,7 +18,7 @@ const ALLOWLIST = [
   { name: 'cboreHole / cskHole', role: 'Counterbore / countersink' },
   { name: 'hole / holeSpan / holePattern', role: 'Generic through-holes' },
   { name: 'facesByNormal / workplaneFromFace / …', role: 'Selection helpers' },
-  { name: 'shell, addDraft, mirror, array3D, polarArray…', role: 'Solids / layout' },
+  { name: 'shell, cut, addDraft, mirror, array3D, polarArray…', role: 'Solids / layout' },
   { name: 'loft / makeLoft, offsetPlaneFrame, sweep, makeExtrude, makeRevolve', role: 'Profiles / paths' },
   { name: 'center / align', role: 'Placement' },
 ];

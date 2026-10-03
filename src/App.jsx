@@ -56,6 +56,7 @@ import { composeContourCommit } from './utils/contourMode';
 import { composeFilletCommit, composeChamferCommit } from './utils/filletMode';
 import { composeShellCommit } from './utils/shellMode';
 import { composeDraftCommit } from './utils/draftMode';
+import { composeCutCommit } from './utils/cutMode';
 
 const App = () => {
   const [currentScript, setCurrentScript] = useState('');
@@ -1206,6 +1207,29 @@ const App = () => {
     return true;
   };
 
+  /** Cut plane Confirm — one cut() + CUT markers; Auto-Run. */
+  const handleCommitCut = (payload) => {
+    const buf = codeEditorRef.current?.getContent?.() || '';
+    const result = composeCutCommit(buf, payload?.state || payload || {}, payload?.mesh || null);
+    if (!result.ok) {
+      viewportRef.current?.softFailCut?.(result.message);
+      return false;
+    }
+    const wrote = codeEditorRef.current?.applyBuffer?.(result.buffer, 'Cut');
+    if (!wrote) {
+      viewportRef.current?.softFailCut?.(
+        'Could not write Cut into the editor — try again.',
+      );
+      return false;
+    }
+    if (result.run) {
+      setTimeout(() => {
+        handleGameRun();
+      }, 0);
+    }
+    return true;
+  };
+
   const handleExecute = (script, autoExecute=false) => {
     // The editor has produced a real buffer — the draft autosave may now
     // treat currentScript as authoritative (before this, '' is just "Monaco
@@ -1574,6 +1598,7 @@ const App = () => {
               onCommitFillet={handleCommitFillet}
               onCommitShell={handleCommitShell}
               onCommitDraft={handleCommitDraft}
+              onCommitCut={handleCommitCut}
               getHelperBuffer={() => codeEditorRef.current?.getContent?.() || ''}
               cadToolbarHost={cadToolbarHost}
               featureSheetEnabled={useStages && isCadStage && !featureSheet}
@@ -1944,6 +1969,7 @@ const App = () => {
             onCommitFillet={handleCommitFillet}
               onCommitShell={handleCommitShell}
               onCommitDraft={handleCommitDraft}
+              onCommitCut={handleCommitCut}
             getHelperBuffer={() => codeEditorRef.current?.getContent?.() || ''}
             cadToolbarHost={cadToolbarHost}
           />

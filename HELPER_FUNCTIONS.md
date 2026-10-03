@@ -17,7 +17,7 @@ comparable and train-able.
 | `tapDrillHole(part, frame, u, v, size, span?)` | Tap-drill hole by fastener size |
 | `cboreHole` / `cskHole` | Counterbore / countersink |
 | `convexEdges` / `facesByNormal` / `workplaneFromFace` / `planarFaceAt` / `edgesByOrientation` / `placeInFrame` / `transformByFrame` | Selection / frame |
-| `shell`, `hollow`, `addDraft`, `draftFaces`, `tube`, `rectTube`, `hexPrism`, `roundedBox`, `mirror`, `array3D`, `polarArray`, `center`, `align` | Solids / layout |
+| `shell`, `hollow`, `cut`, `addDraft`, `draftFaces`, `tube`, `rectTube`, `hexPrism`, `roundedBox`, `mirror`, `array3D`, `polarArray`, `center`, `align` | Solids / layout |
 | `loft`, `makeLoft`, `offsetPlaneFrame`, `sweep`, `sweepPoints`, `makeExtrude`, `makeRevolve` | Profiles / paths |
 | `profileCircle` / `profileRectangle` / `profilePolygon` / `makeCrossSection` | Cross-section substrate (Slice 21) |
 | `makeSweepPath(edges, opts?)` | Ordered sweep path / wire from edges (Slice 22) |
@@ -236,6 +236,46 @@ part = draftFaces(part, [
 - Vertices shared by two selected faces are solved once against both, so drafted
   corners stay sharp instead of doubling up.
 - An angle the body cannot take throws instead of returning a folded solid.
+
+---
+
+### cut(manifold, plane, opts)
+
+Splits every selected body with a plane, then optionally deletes pieces. The
+cut is Manifold's `splitByPlane`: the `'+'` piece is the side the normal
+points to, and `'-'` is the other side. Pieces you keep stay separate bodies
+(`decompose()` returns them one by one). A body that does not cross the plane
+is left alone — same solid, same volume, still one body.
+
+```javascript
+// Mid plane z = 0, keep both halves
+let part = Manifold.cube([40, 30, 20], true);
+part = cut(part, { normal: [0, 0, 1], originOffset: 0 });
+
+// Same cut, keep only the +Z half
+part = cut(part, { normal: [0, 0, 1], originOffset: 0 }, { keep: '+' });
+
+// The plane is the face you picked — not a guessed world axis
+part = cut(part, { center: [0, 0, 10], normal: [0, 0, 1] });
+```
+
+**Parameters:**
+- `manifold` - The solid, or several solids grouped by `Manifold.compose`
+- `plane` - a face `{ center, normal }`, or an explicit `{ normal, originOffset }`.
+  A world-axis name such as `'z'` is rejected.
+- `opts.keep` - `'both'` (default), `'+'`, or `'-'`
+- `opts.bodies` - which bodies to cut, each `{ at }` near that body's centroid.
+  Omit to cut every body. Bodies you skip are unchanged.
+- `opts.drop` - pieces to delete when you are not dropping a whole side:
+  `{ at, side: '+' | '-' }`
+
+**Returns:** The kept pieces. One piece is that solid. Several pieces are one
+composed manifold whose `decompose()` length is the number of pieces.
+
+**Notes:**
+- A body that only touches the plane is not cut.
+- Deleting every piece throws.
+- Pass `keep` or `drop`, not both.
 
 ---
 

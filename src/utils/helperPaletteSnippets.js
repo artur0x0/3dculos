@@ -53,6 +53,7 @@ import {
   resolveHoleUV,
   holeFeatureParamDefs,
   emitFaceSelectionExpr,
+  formatVec3,
   SHELL_OPENING_OPTIONS,
   DRAFT_PULL_OPTIONS,
   DRAFT_REFERENCE_OPTIONS,
@@ -122,6 +123,8 @@ export const SHELL_BEGIN = '// --- shell begin ---';
 export const SHELL_END = '// --- shell end ---';
 export const DRAFT_BEGIN = '// --- draft begin ---';
 export const DRAFT_END = '// --- draft end ---';
+export const CUT_BEGIN = '// --- cut begin ---';
+export const CUT_END = '// --- cut end ---';
 export const CENTER_BEGIN = '// --- center begin ---';
 export const CENTER_END = '// --- center end ---';
 export const ALIGN_BEGIN = '// --- align begin ---';
@@ -158,6 +161,7 @@ export const FEATURE_BLOCK_END_MARKERS = Object.freeze([
   CSK_HOLE_END,
   SHELL_END,
   DRAFT_END,
+  CUT_END,
   CENTER_END,
   ALIGN_END,
   MIRROR_END,
@@ -403,7 +407,7 @@ export function listBodyNames(buffer) {
   // Fallback only when part is mutable (or undeclared).
   if (!constNames.has('part')) names.add('part');
   // Also catch `part = …` / `box1 = …` mutations without fresh decl.
-  const assign = /\b([A-Za-z_$][\w$]*)\s*=\s*(?:Manifold\.|tube\(|hexPrism\(|roundedBox\(|makeExtrude\(|makeRevolve\(|makeLoft\(|filletEdges\(|filletAlongPath\(|chamferEdges\(|hole\(|clearanceHole\(|tapDrillHole\(|cboreHole\(|cskHole\(|holePattern\(|shell\(|hollow\(|addDraft\(|draftFaces\(|rectTube\(|center\(|align\(|mirror\(|array3D\(|polarArray\()/g;
+  const assign = /\b([A-Za-z_$][\w$]*)\s*=\s*(?:Manifold\.|tube\(|hexPrism\(|roundedBox\(|makeExtrude\(|makeRevolve\(|makeLoft\(|filletEdges\(|filletAlongPath\(|chamferEdges\(|hole\(|clearanceHole\(|tapDrillHole\(|cboreHole\(|cskHole\(|holePattern\(|shell\(|hollow\(|addDraft\(|draftFaces\(|cut\(|rectTube\(|center\(|align\(|mirror\(|array3D\(|polarArray\()/g;
   while ((m = assign.exec(s))) {
     const n = m[1];
     if (constNames.has(n)) continue;
@@ -1834,6 +1838,32 @@ export const HELPER_PALETTE_ITEMS = [
         ...syncPartLines(body, names, /(?:let|const|var)\s+part\b/.test(lines.join('\n')) || !empty),
       ];
       lines.push(...wrapFeatureBlock(SHELL_BEGIN, SHELL_END, feat));
+      return withReturn(lines, empty);
+    },
+  },
+  {
+    id: 'cut',
+    label: 'Cut',
+    group: 'Features',
+    title: 'cut(manifold, plane, { keep, bodies, drop }) — split bodies on a plane; kept pieces stay separate',
+    params: [
+      { name: 'body', type: 'body', default: 'part', label: 'Body' },
+    ],
+    build: (empty, p, names, buffer, faceCtx = null) => {
+      const lines = [...ensurePartPrefix(empty, names)];
+      const body = resolveBody(p, names, empty ? lines.join('\n') : buffer);
+      const face = faceCtx && faceCtx.type ? faceCtx : (faceCtx ? classifySelectedFace(faceCtx) : null);
+      // A picked face is its own plane. No face → explicit XY through the origin,
+      // not a guess about which face the user meant.
+      const planeLit = (face && Array.isArray(face.center) && Array.isArray(face.normal)
+        && face.type !== 'cylindrical' && face.type !== 'irregular')
+        ? `{ center: ${formatVec3(face.center)}, normal: ${formatVec3(face.normal)} }`
+        : '{ normal: [0, 0, 1], originOffset: 0 }';
+      const feat = [
+        `${body} = cut(${body}, ${planeLit});`,
+        ...syncPartLines(body, names, /(?:let|const|var)\s+part\b/.test(lines.join('\n')) || !empty),
+      ];
+      lines.push(...wrapFeatureBlock(CUT_BEGIN, CUT_END, feat));
       return withReturn(lines, empty);
     },
   },
