@@ -4,7 +4,7 @@
  *
  * Fixture `fixtures/artur_playtest_fillet_after_hollow.txt` is the exact
  * script: cube → straight fillet r=4 → variable-profile wrap r=4.83 →
- * hollow 2.5 open toward -Z → fillet r=1.75 on edgesBetween faces 2 and 34.
+ * hollow 2.5 open toward -Z → fillet r=1.75 on edgesBetween faces 2 and 35.
  *
  * That edge is the cavity's inner vertical corner (concave), not the wrap.
  * On #114 main the filler wedge stops on the open face, so its end cap is
@@ -22,7 +22,10 @@
  * offset are unchanged.
  *
  * Asserts: open-face fan still gone, and no lip crease at the wall-ceiling
- * junction.
+ * junction. The +X corner's interior stray triangle (a facet bridging the
+ * inner r=1.5 cylinder and the outer r=4 fillet) must also stay 0.
+ * Lattice-aligned wrap chords shifted that cavity edge's face id 34 → 35;
+ * selEdges2 is unchanged.
  */
 import { register } from 'node:module';
 import { readFileSync } from 'node:fs';
@@ -185,6 +188,23 @@ function analyze(mesh) {
     lip++;
     if (d > lipMax) lipMax = d;
   }
+  // Interior stray triangle at the +X/+Y r=4 fillet, seen from inside the
+  // shell. The corner sweep used to sample that quarter at ~4.92° while the
+  // horizontal fillet's rulings are every 3.75°, so a facet bridges the inner
+  // offset cylinder (r=1.5) and the outer fillet (r=4) instead of stopping on
+  // a shared ruling. #116 lip probe stays 0 on that mesh — this is not that bug.
+  // Measured on #116 main: stray=5. After the lattice snap: stray=0.
+  const AXIS = [11, 6];
+  let stray = 0;
+  for (const t of tris) {
+    const pts = [t.a, t.b, t.c];
+    const rs = pts.map((q) => Math.hypot(q[1] - AXIS[0], q[2] - AXIS[1]));
+    const onIn = rs.some((r) => Math.abs(r - 1.5) < 0.25);
+    const onOut = rs.some((r) => Math.abs(r - 4) < 0.25);
+    if (!onIn || !onOut) continue;
+    if (t.cen[0] < 12) continue;
+    stray++;
+  }
   const nTri = mesh.triVerts.length / 3;
   return {
     nTri,
@@ -198,6 +218,7 @@ function analyze(mesh) {
     pieArea,
     lip,
     lipMax,
+    stray,
     dirty: isFilletSliverDirty(tiny, nTri),
   };
 }
@@ -234,7 +255,7 @@ try {
     `      fillet-after-hollow vol=${got.vol.toFixed(3)} tris=${got.nTri} fins=${got.fins} `
     + `inwardVis=${got.inwardVis} pie=${got.pie} pieArea=${got.pieArea.toFixed(4)} `
     + `openCorner=${got.openCorner} sharpEdge=${got.sharpEdge} arcVerts=${got.arcVerts} `
-    + `lip=${got.lip} lipMax=${got.lipMax.toFixed(1)}`,
+    + `lip=${got.lip} lipMax=${got.lipMax.toFixed(1)} stray=${got.stray}`,
   );
 } catch (e) {
   check('fillet after hollow builds', false, e.message);
@@ -259,6 +280,11 @@ check(
   got && got.lip === 0,
   `lip=${got?.lip} lipMax=${got?.lipMax?.toFixed?.(1)}`,
 );
+check(
+  'interior stray triangle at the r=4 corner is gone',
+  got && got.stray === 0,
+  `stray=${got?.stray}`,
+);
 check('sharp inner corner vertex is gone off the open rim', got && got.openCorner === 0 && got.sharpEdge === 0,
   `openCorner=${got?.openCorner} sharpEdge=${got?.sharpEdge}`);
 check('concave fillet arc is present inside the cavity', got && got.arcVerts >= 8, `arcVerts=${got?.arcVerts}`);
@@ -267,8 +293,10 @@ check('not sliver-dirty', got && !got.dirty, `tiny=${got?.tiny}/${got?.nTri}`);
 // shell. #115 open-end pad: 336 (ceiling 338). Inner-end pad retessellates
 // those same cavity faces: measured 358. Not the lip (that probe is `lip`).
 check('inward-visible count does not rise', got && got.inwardVis <= 358, `inwardVis=${got?.inwardVis}`);
-// Pre-fix fins=39 (the fan). After the open-end pad: fins=41.
-check('long-fin count stays at the measured ceiling', got && got.fins <= 41, `fins=${got?.fins}`);
+// Pre-fix fins=39 (the fan). Open-end pad: 41. Quarter-arc lattice
+// (3.75° instead of ~4.92°) adds zero-area slivers along the r=4 cylinder:
+// measured fins=62. Not the interior stray triangle (that probe is `stray`).
+check('long-fin count stays at the measured ceiling', got && got.fins <= 62, `fins=${got?.fins}`);
 
 if (failed) {
   console.error(`\nFAILED: ${failed} check(s)`);

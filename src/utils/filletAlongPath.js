@@ -738,13 +738,18 @@ function _turnAt(a, b, c) {
  * @param {number[][]} points
  * @param {boolean} closed
  * @param {number} [maxTurnDeg=5]
+ * @param {{ alignFilletLattice?: boolean }} [opts]
+ *   alignFilletLattice (default true): a ~90° arc whose samples already sit
+ *   on the FILLET_ARC_SEGMENTS lattice is filled on that phase, so a later
+ *   fillet meets the earlier one's rulings. false keeps the plain ≤maxTurn
+ *   resample (chamfer sweeps — lattice fill regresses sliver counts).
  * @returns {number[][]}
  */
-export function densifySweepArcTurns(points, closed, maxTurnDeg = 5) {
-  return _densifySweepArcTurns(points, !!closed, maxTurnDeg, false);
+export function densifySweepArcTurns(points, closed, maxTurnDeg = 5, opts = {}) {
+  return _densifySweepArcTurns(points, !!closed, maxTurnDeg, false, opts || {});
 }
 
-function _densifySweepArcTurns(points, isClosed, maxTurnDeg, rotated) {
+function _densifySweepArcTurns(points, isClosed, maxTurnDeg, rotated, opts) {
   if (!Array.isArray(points) || points.length < 3) {
     return points ? points.map((p) => p.slice()) : [];
   }
@@ -802,7 +807,7 @@ function _densifySweepArcTurns(points, isClosed, maxTurnDeg, rotated) {
     const origin = arc.findIndex((v) => !v);
     if (origin > 0) {
       const spun = points.slice(origin).concat(points.slice(0, origin));
-      return _densifySweepArcTurns(spun, true, maxTurnDeg, true);
+      return _densifySweepArcTurns(spun, true, maxTurnDeg, true, opts);
     }
   }
 
@@ -865,16 +870,94 @@ function _densifySweepArcTurns(points, isClosed, maxTurnDeg, rotated) {
     const arcLen = Math.abs(sweep) * R;
     const nCh = chord > 1e-9 ? Math.max(1, Math.ceil(arcLen / chord - 1e-9)) : nAng;
     const steps = Math.max(nAng, nCh);
-    const out = [];
-    for (let k = 0; k <= steps; k++) {
-      const a = angles[0] + sweep * (k / steps);
+    const atOn = (CC, RR, xx, yy, a) => {
       const c = Math.cos(a);
-      const s = Math.sin(a);
-      out.push([
-        C[0] + R * (c * x[0] + s * y[0]),
-        C[1] + R * (c * x[1] + s * y[1]),
-        C[2] + R * (c * x[2] + s * y[2]),
-      ]);
+      const sn = Math.sin(a);
+      return [
+        CC[0] + RR * (c * xx[0] + sn * yy[0]),
+        CC[1] + RR * (c * xx[1] + sn * yy[1]),
+        CC[2] + RR * (c * xx[2] + sn * yy[2]),
+      ];
+    };
+    // A prior fillet's quarter-arc is already sampled on the profile lattice
+    // (FILLET_ARC_SEGMENTS over 90°, 3.75° at 24). Equal 5° chords of that
+    // span fall BETWEEN those rulings, so the later corner's rings cross the
+    // earlier fillet instead of meeting it on shared lines — a stray triangle
+    // on the inside after the shell. When the input samples already share
+    // that lattice, fill the quarter on the same phase (still ≤ lim). Other
+    // arcs, including a quarter that is not a prior fillet, keep the ≤lim
+    // chord resample. Endpoints stay put (face-epsilon nudge).
+    let out = null;
+    const QUARTER = Math.PI / 2;
+    // Chamfer-along-fillet keeps the 5° chord resample. Filling the fillet
+    // lattice there blew zero-area counts past the sliver gate (rounded-wrap
+    // chamfer, box-stack bottom). Fillet sweeps want the shared rulings.
+    const alignLattice = !opts || opts.alignFilletLattice !== false;
+    if (alignLattice && Math.abs(Math.abs(sweep) - QUARTER) <= 4 * Math.PI / 180 && seq.length >= 5) {
+      const step = QUARTER / FILLET_ARC_SEGMENTS;
+      const fit2 = circFit3(seq[1], seq[Math.floor(seq.length / 2)], seq[seq.length - 2]);
+      if (fit2 && step <= lim + 1e-9 && Math.abs(fit2.R - R) <= Math.max(0.05, 0.02 * R)) {
+        let n2 = fit2.n;
+        if (_ddot(n2, nn) < 0) n2 = [-n2[0], -n2[1], -n2[2]];
+        const tmp2 = Math.abs(n2[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0];
+        const x2 = _dnorm(_dcross(tmp2, n2));
+        const y2 = _dcross(n2, x2);
+        const angOf2 = (p) => {
+          const v = _dst(p, fit2.C);
+          return Math.atan2(_ddot(v, y2), _ddot(v, x2));
+        };
+        const src2 = fullLoop ? seq.concat([seq[0]]) : seq;
+        const ang = src2.map(angOf2);
+        let monotonic = true;
+        for (let i = 1; i < ang.length; i++) {
+          let a = ang[i];
+          while (a - ang[i - 1] > Math.PI) a -= 2 * Math.PI;
+          while (ang[i - 1] - a > Math.PI) a += 2 * Math.PI;
+          ang[i] = a;
+          if (Math.sign(ang[i] - ang[i - 1]) && Math.sign(ang[i] - ang[i - 1]) !== dir) monotonic = false;
+        }
+        const a0 = ang[0];
+        const a1 = ang[ang.length - 1];
+        const phases = [];
+        for (let i = 1; i < ang.length - 1; i++) {
+          let ph = ang[i] % step;
+          if (ph < 0) ph += step;
+          phases.push(ph);
+        }
+        phases.sort((p, q) => p - q);
+        let phase = phases.length ? phases[phases.length >> 1] : 0;
+        let spread = phases.length ? phases[phases.length - 1] - phases[0] : 0;
+        if (phases.length >= 2 && spread > step * 0.5) {
+          const wrapped = phases.map((ph) => (ph > step * 0.5 ? ph - step : ph));
+          wrapped.sort((p, q) => p - q);
+          phase = wrapped[wrapped.length >> 1];
+          spread = wrapped[wrapped.length - 1] - wrapped[0];
+        }
+        // Only a lattice the input already sits on. A foreign phase would
+        // move knots off a quarter that was not this fillet's rulings.
+        if (monotonic && spread <= step * 0.15) {
+          const lo = Math.min(a0, a1);
+          const hi = Math.max(a0, a1);
+          const grid = [];
+          const base = Math.floor(lo / step) * step + (phase >= 0 ? phase : phase + step);
+          for (let a = base - 2 * step; a < hi + 2 * step; a += step) {
+            if (a > lo + 1e-4 && a < hi - 1e-4) grid.push(a);
+          }
+          grid.sort((p, q) => (a1 >= a0 ? p - q : q - p));
+          const seqA = [a0, ...grid, a1];
+          let spaced = grid.length > 0;
+          for (let i = 1; i < seqA.length; i++) {
+            if (Math.abs(seqA[i] - seqA[i - 1]) > lim + 1e-4) spaced = false;
+          }
+          if (spaced) out = seqA.map((a) => atOn(fit2.C, fit2.R, x2, y2, a));
+        }
+      }
+    }
+    if (!out) {
+      out = [];
+      for (let k = 0; k <= steps; k++) {
+        out.push(atOn(C, R, x, y, angles[0] + sweep * (k / steps)));
+      }
     }
     out[0] = seq[0].slice();
     if (fullLoop) out.pop();
