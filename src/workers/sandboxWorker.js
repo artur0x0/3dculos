@@ -5512,6 +5512,73 @@ function cut(manifold, plane, opts = {}) {
   return result;
 }
 
+/**
+ * move(manifold, [dx, dy, dz], { bodies: [{ at }] }) — translate one body.
+ * Same Manifold.translate center() already uses, and the same decompose /
+ * centroid / compose split cut() uses. Not a second kernel. The named body
+ * moves; every other body stays. A zero delta returns the input solid.
+ */
+function move(manifold, delta, opts = {}) {
+  if (!manifoldModule) throw new Error('Manifold not initialized');
+  if (!manifold || typeof manifold.translate !== 'function') {
+    throw new Error('move: expected a Manifold');
+  }
+  if (!Array.isArray(delta) || delta.length < 3) {
+    throw new Error('move: delta must be finite [dx, dy, dz]');
+  }
+  const d = [Number(delta[0]), Number(delta[1]), Number(delta[2])];
+  if (d.some((v) => !Number.isFinite(v))) {
+    throw new Error('move: delta must be finite [dx, dy, dz]');
+  }
+  const options = (opts && typeof opts === 'object' && !Array.isArray(opts)) ? opts : {};
+  if (!Array.isArray(options.bodies) || options.bodies.length !== 1) {
+    throw new Error('move: name one body with { bodies: [{ at }] }');
+  }
+  let bodies;
+  let selected;
+  try {
+    bodies = _cutBodiesOf(manifold);
+    selected = _cutSelected(bodies, options.bodies);
+  } catch (err) {
+    const msg = err && err.message ? String(err.message) : String(err);
+    throw new Error(msg.replace(/^cut:/, 'move:'));
+  }
+  if (selected.size !== 1) {
+    throw new Error('move: name one body with { bodies: [{ at }] }');
+  }
+  const zero = d[0] === 0 && d[1] === 0 && d[2] === 0;
+  if (bodies.length === 1 && bodies[0] === manifold) {
+    if (zero) return manifold;
+    const moved = manifold.translate(d);
+    const status = _c4StatusError(moved);
+    if (status) throw new Error(`move: result is not a valid solid (${status})`);
+    return moved;
+  }
+  if (zero) {
+    for (const body of bodies) {
+      if (body && body !== manifold) _safeDeleteManifold(body);
+    }
+    return manifold;
+  }
+  const { Manifold } = manifoldModule;
+  const kept = [];
+  const discard = [];
+  for (let i = 0; i < bodies.length; i++) {
+    const body = bodies[i];
+    if (!selected.has(i)) {
+      kept.push(body);
+      continue;
+    }
+    kept.push(body.translate(d));
+    if (body !== manifold) discard.push(body);
+  }
+  for (const m of discard) _safeDeleteManifold(m);
+  const result = kept.length === 1 ? kept[0] : Manifold.compose(kept);
+  const status = _c4StatusError(result);
+  if (status) throw new Error(`move: result is not a valid solid (${status})`);
+  return result;
+}
+
 /** Face { center, normal, offset? } or explicit { normal, originOffset }. Never an axis name. */
 function _cutResolvePlane(plane) {
   if (plane == null || typeof plane !== 'object' || Array.isArray(plane)) {
@@ -5745,6 +5812,7 @@ const HELPER_FUNCTIONS = {
   addDraft,
   draftFaces,
   cut,
+  move,
   loft,
   //loft helpers
   sumSqDist,

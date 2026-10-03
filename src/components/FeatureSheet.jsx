@@ -25,6 +25,7 @@ import {
   AlignVerticalJustifyCenter,
   FlipHorizontal2,
   Boxes,
+  Move,
 } from 'lucide-react';
 import SquareRoundCorner from './icons/SquareRoundCorner';
 import Angle from './icons/Angle';
@@ -73,6 +74,7 @@ const FEATURE_ICONS = Object.freeze({
   cskHole: Cone,
   shell: PackageOpen,
   draft: Angle,
+  move: Move,
   center: Focus,
   align: AlignVerticalJustifyCenter,
   mirror: FlipHorizontal2,

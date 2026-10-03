@@ -425,7 +425,11 @@ Import `src/utils/importModel.js` (+ `POST /api/convert/step`); export
   `GROUP_SHORT_LABEL` in `HelperInsertPalette.jsx` for the captions). The
   internal group keys are still `Primitives` / `Advanced` / `Features` /
   `Transforms` — display names only. The order is the modelling order: make a
-  shape, model it, polish it, move it.
+  shape, model it, polish it, move it. The first button in that Move section
+  is Move (`Move` glyph, directly above Center): it opens the delta X/Y/Z
+  chip and translates one body. The right-rail axis helper (`Move3d`) only
+  shows the `AxesHelper`. It does not move a body and it does not grow
+  viewport arrows.
 - **Previews all share one recipe** (`src/utils/previewStyle.js`): unlit
   translucent cyan skin + brighter outline. **Never paint a preview with a lit
   material** — MeshLambert/MeshStandard take the scene lights, so faces angled
