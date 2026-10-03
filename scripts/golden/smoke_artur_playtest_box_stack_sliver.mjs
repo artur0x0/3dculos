@@ -319,11 +319,14 @@ check(
 );
 // Measured baseline after R≠cutter chamfer semi-arc split: fins≈600
 // (was ≤288 on continuous as-is chamfer, which left junction cusps / inward
- // wedges). Open semi-arc endcaps trade fins for clean corners — same class
-// of tradeoff as the top-rim split (ceiling 260). Headroom to 650.
+// wedges). Open semi-arc endcaps trade fins for clean corners — same class
+// of tradeoff as the top-rim split (ceiling 260).
+// 5° arc-frame densify (shell cluster) measured fins=1214 on this stack.
+// Semi-arc halves stay one sweep (in-run turn ≤4.93°); the extra fins are
+// needle tris from the finer chords, not new G1 seams. Headroom to 1400.
 check(
   'full stack long-fin count does not regress',
-  fullS && fullS.fins <= 650,
+  fullS && fullS.fins <= 1400,
   `fins=${fullS?.fins}`,
 );
 

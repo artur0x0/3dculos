@@ -26,8 +26,16 @@
  * component before AABB clamp.
  *
  * Asserts: hollow succeeds, open -Y, cavity stays inside on closed faces,
- * exterior junction thickness ~t, AND interior mid-height probes toward
- * vertical fillets see a continuous wall (no see-through / far-wall first).
+ * exterior junction thickness ~t, interior mid-height probes, AND interior
+ * probes at the flat↔fillet under the top rim (not only mid-height).
+ *
+ * The remaining top-corner notch was not another shell heuristic. Hollow
+ * stays closed only when a vertex's incident normals sit inside the ~10°
+ * cluster. The default convex fillet never densified sweep frames
+ * (FRAME_DENSIFY_MAX_TURN_DEG ran only for variableProfile), and
+ * SWEEP_PATH_MIN_SEG=1.2 mm is ~11° of arc on r=6. Fillet consumption now
+ * resamples those arcs to ≤5° (chord ≤ ~0.52 mm at r=6) without rounding
+ * sharp corners or subdividing long straights.
  */
 import { register } from 'node:module';
 import { readFileSync } from 'node:fs';
@@ -251,7 +259,13 @@ if (hollowed) {
       if (ht != null && ht < 40) hits.push(ht);
     }
     hits.sort((a, b) => a - b);
-    return hits;
+    // Coincident tris from a ≤5° sweep share a hit distance. A 0-gap
+    // duplicate is not a thin wall — collapse it before the thickness test.
+    const uniq = [];
+    for (const h of hits) {
+      if (!uniq.length || h - uniq[uniq.length - 1] > 0.08) uniq.push(h);
+    }
+    return uniq;
   };
   let thinCorners = 0;
   let seeThrough = 0;
@@ -358,6 +372,89 @@ if (hollowed) {
     interiorSee === 0, `interiorSeeThrough=${interiorSee}`);
   check('interior mid-height wall thickness ≳ 0.45·t',
     interiorThin === 0, `interiorThin=${interiorThin}`);
+}
+
+// ── Interior flat↔fillet under the top rim (see-through notch) ───────────
+if (hollowed) {
+  const np = hollowed.mesh.numProp || 3;
+  const vp = hollowed.mesh.vertProperties;
+  const tv = hollowed.mesh.triVerts;
+  const vert = (i) => [vp[i * np], vp[i * np + 1], vp[i * np + 2]];
+  const rayTri = (orig, dir, a, b, c) => {
+    const EPS = 1e-9;
+    const e1 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+    const e2 = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+    const p = [
+      dir[1] * e2[2] - dir[2] * e2[1],
+      dir[2] * e2[0] - dir[0] * e2[2],
+      dir[0] * e2[1] - dir[1] * e2[0],
+    ];
+    const det = e1[0] * p[0] + e1[1] * p[1] + e1[2] * p[2];
+    if (Math.abs(det) < EPS) return null;
+    const inv = 1 / det;
+    const tvec = [orig[0] - a[0], orig[1] - a[1], orig[2] - a[2]];
+    const u = (tvec[0] * p[0] + tvec[1] * p[1] + tvec[2] * p[2]) * inv;
+    if (u < 0 || u > 1) return null;
+    const q = [
+      tvec[1] * e1[2] - tvec[2] * e1[1],
+      tvec[2] * e1[0] - tvec[0] * e1[2],
+      tvec[0] * e1[1] - tvec[1] * e1[0],
+    ];
+    const v = (dir[0] * q[0] + dir[1] * q[1] + dir[2] * q[2]) * inv;
+    if (v < 0 || u + v > 1) return null;
+    const tHit = (e2[0] * q[0] + e2[1] * q[1] + e2[2] * q[2]) * inv;
+    return tHit > EPS ? tHit : null;
+  };
+  const hitsDedup = (orig, dir) => {
+    const dn = Math.hypot(dir[0], dir[1], dir[2]) || 1;
+    const d = [dir[0] / dn, dir[1] / dn, dir[2] / dn];
+    const hits = [];
+    for (let t = 0; t < tv.length; t += 3) {
+      const ht = rayTri(orig, d, vert(tv[t]), vert(tv[t + 1]), vert(tv[t + 2]));
+      if (ht != null && ht < 50) hits.push(ht);
+    }
+    hits.sort((a, b) => a - b);
+    const uniq = [];
+    for (const h of hits) {
+      if (!uniq.length || h - uniq[uniq.length - 1] > 0.08) uniq.push(h);
+    }
+    return uniq;
+  };
+  let topSee = 0;
+  let topThin = 0;
+  const detail = [];
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) {
+      // Inside the cavity, below the top skin, aimed at the inner
+      // flat↔fillet under that top corner (y≈12.5, not mid-height).
+      const origins = [[sx * 6, 9.5, sz * 1.2]];
+      const aims = [[sx * 15.7, 12.5, sz * 8.2], [sx * 14.5, 12.2, sz * 6.5]];
+      for (const o of origins) {
+        for (const a of aims) {
+          const hs = hitsDedup(o, [a[0] - o[0], a[1] - o[1], a[2] - o[2]]);
+          if (!hs.length || hs[0] > 14) {
+            topSee++;
+            detail.push(`miss/far h0=${hs[0]}`);
+            continue;
+          }
+          const h0 = hs[0];
+          const back = hs.find((h) => h > h0 + 1.4);
+          const gap = back == null ? null : back - h0;
+          if (gap == null || gap > 12) {
+            topSee++;
+            detail.push(`see gap=${gap == null ? 'none' : gap.toFixed(2)} hs=${hs.slice(0, 4).map((h) => h.toFixed(2)).join(',')}`);
+          } else if (gap < 1.6) {
+            topThin++;
+            detail.push(`thin gap=${gap.toFixed(2)}`);
+          }
+        }
+      }
+    }
+  }
+  check('top-corner interior probes hit the near wall (no far-wall jump)',
+    topSee === 0, `topSee=${topSee} ${detail.join('; ')}`);
+  check('top-corner interior wall closes (no notch / see-through)',
+    topThin === 0 && topSee === 0, `topThin=${topThin} ${detail.join('; ')}`);
 }
 
 if (failed) {
