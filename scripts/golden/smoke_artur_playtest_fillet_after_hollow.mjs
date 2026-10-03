@@ -1,0 +1,226 @@
+#!/usr/bin/env node
+/**
+ * Artur playtest — fillet AFTER hollow (r=1.75 on the open shell).
+ *
+ * Fixture `fixtures/artur_playtest_fillet_after_hollow.txt` is the exact
+ * script: cube → straight fillet r=4 → variable-profile wrap r=4.83 →
+ * hollow 2.5 open toward -Z → fillet r=1.75 on edgesBetween faces 2 and 34.
+ *
+ * That edge is the cavity's inner vertical corner (concave), not the wrap.
+ * On #114 main the filler wedge stops on the open face, so its end cap is
+ * coplanar with z=-10 and the sharp corner survives as a triangular fan in
+ * the cavity (measured pie=14, pieArea≈0.51). r=1.75 < wall 2.5, so it is a
+ * leftover fin, not a punch-through.
+ *
+ * Fix: extend only a concave open end past the pre-fillet bbox by the
+ * existing cutter-expand pad, then clip back. Convex sweeps (#113/#114)
+ * and shell offset are unchanged.
+ *
+ * Asserts probe the open-face fan at the inner corner, not only outer volume.
+ */
+import { register } from 'node:module';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+import { isFilletSliverDirty } from '../../src/utils/filletSliverGuard.js';
+
+register('./manifold-resolve-hook.mjs', import.meta.url);
+
+const pending = new Map();
+let msgId = 0;
+const workerSelf = {
+  onmessage: null,
+  postMessage(msg) {
+    if (msg.type === 'loaded') return;
+    const w = pending.get(msg.id);
+    if (!w) return;
+    pending.delete(msg.id);
+    if (msg.type === 'error') w.reject(new Error(msg.payload?.message || 'err'));
+    else w.resolve(msg);
+  },
+};
+globalThis.self = workerSelf;
+function send(type, payload = {}) {
+  return new Promise((resolve, reject) => {
+    const id = ++msgId;
+    pending.set(id, { resolve, reject });
+    Promise.resolve().then(() => workerSelf.onmessage({ data: { type, payload, id } }));
+  });
+}
+
+let failed = 0;
+function check(name, cond, detail = '') {
+  if (cond) console.log(`  ✅ ${name}`);
+  else {
+    failed++;
+    console.log(`  ❌ ${name}${detail ? ' — ' + detail : ''}`);
+  }
+}
+
+await import('../../src/workers/sandboxWorker.js');
+await send('init');
+const exec = async (s) =>
+  (await send('execute', { script: s, importedModels: {}, memoryLimitMB: 512 })).payload;
+
+const here = dirname(fileURLToPath(import.meta.url));
+const full = readFileSync(join(here, 'fixtures', 'artur_playtest_fillet_after_hollow.txt'), 'utf8');
+const hollowOnly = full.replace(
+  /const selEdges3 = edgesBetween[\s\S]*return part;/,
+  'return part;',
+);
+
+/** Inner corner of the cavity at the -X/-Y wall, open face at z=-10. */
+const CORNER = [-17.5, -12.5];
+
+function analyze(mesh) {
+  const np = mesh.numProp || 3;
+  const V = [];
+  for (let i = 0; i < mesh.vertProperties.length / np; i++) {
+    V.push([
+      mesh.vertProperties[i * np],
+      mesh.vertProperties[i * np + 1],
+      mesh.vertProperties[i * np + 2],
+    ]);
+  }
+  let tiny = 0;
+  let fins = 0;
+  let inwardVis = 0;
+  let openCorner = 0;
+  let sharpEdge = 0;
+  let arcVerts = 0;
+  const tris = [];
+  for (let t = 0; t < mesh.triVerts.length; t += 3) {
+    const ia = mesh.triVerts[t];
+    const ib = mesh.triVerts[t + 1];
+    const ic = mesh.triVerts[t + 2];
+    const a = V[ia];
+    const b = V[ib];
+    const c = V[ic];
+    const ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+    const ac = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+    const cr = [
+      ab[1] * ac[2] - ab[2] * ac[1],
+      ab[2] * ac[0] - ab[0] * ac[2],
+      ab[0] * ac[1] - ab[1] * ac[0],
+    ];
+    const nL = Math.hypot(...cr) || 1;
+    const area = 0.5 * nL;
+    const cen = [(a[0] + b[0] + c[0]) / 3, (a[1] + b[1] + c[1]) / 3, (a[2] + b[2] + c[2]) / 3];
+    const L = Math.max(
+      Math.hypot(...ab),
+      Math.hypot(...ac),
+      Math.hypot(c[0] - b[0], c[1] - b[1], c[2] - b[2]),
+    );
+    const asp = L > 1e-12 ? area / (L * L) : 0;
+    if (area < 1e-8) tiny++;
+    if ((area < 1e-6 || asp < 1e-4) && L > 1) fins++;
+    const nd = (cr[0] * cen[0] + cr[1] * cen[1] + cr[2] * cen[2]) / nL / (Math.hypot(...cen) || 1);
+    if (nd < -0.35 && area > 0.5) inwardVis++;
+    tris.push({ a, b, c, area });
+  }
+  for (const p of V) {
+    const onCorner = Math.abs(p[0] - CORNER[0]) < 0.12 && Math.abs(p[1] - CORNER[1]) < 0.12;
+    if (onCorner && Math.abs(p[2] + 10) < 0.2) openCorner++;
+    if (onCorner && p[2] > -9.5 && p[2] < 7.0) sharpEdge++;
+    // Quarter-round of the concave fillet: center inset r along both inner walls.
+    const cx = CORNER[0] + 1.75;
+    const cy = CORNER[1] + 1.75;
+    const d = Math.hypot(p[0] - cx, p[1] - cy);
+    if (Math.abs(d - 1.75) < 0.2 && p[2] > -9 && p[2] < 7 && p[0] < -15.5 && p[1] < -10.5) arcVerts++;
+  }
+  // Triangular fan on the open face: a triangle in the z=-10 plane that still
+  // touches the sharp inner corner and reaches into the cavity.
+  let pie = 0;
+  let pieArea = 0;
+  for (const t of tris) {
+    const pts = [t.a, t.b, t.c];
+    if (!pts.every((p) => Math.abs(p[2] + 10) < 0.25)) continue;
+    const sharp = pts.filter((p) => Math.abs(p[0] - CORNER[0]) < 0.12 && Math.abs(p[1] - CORNER[1]) < 0.12);
+    if (!sharp.length) continue;
+    const others = pts.filter((p) => sharp.indexOf(p) < 0);
+    if (others.some((p) => p[0] > CORNER[0] + 0.05 && p[1] > CORNER[1] + 0.05)) {
+      pie++;
+      pieArea += t.area;
+    }
+  }
+  const nTri = mesh.triVerts.length / 3;
+  return {
+    nTri,
+    tiny,
+    fins,
+    inwardVis,
+    openCorner,
+    sharpEdge,
+    arcVerts,
+    pie,
+    pieArea,
+    dirty: isFilletSliverDirty(tiny, nTri),
+  };
+}
+
+console.log('Artur playtest — fillet after hollow (inner corner r=1.75)');
+
+// Solid-body control: convex fillet must stay metrically the same (no pad).
+{
+  const solid = await exec(`
+    let part = Manifold.cube([40, 30, 20], true);
+    part = filletAlongPath(part, makeSweepPath(edgesBetween(part, 3, 5)), 4);
+    return part;
+  `);
+  check('solid fillet still builds', solid.status === 'NoError' && solid.volume > 20000,
+    `status=${solid.status} vol=${solid.volume}`);
+  // Measured on #114 main (no open-end pad on a convex edge): 23862.313
+  check('solid fillet volume unchanged', Math.abs(solid.volume - 23862.313) < 0.05,
+    `vol=${solid.volume}`);
+}
+
+let hollow;
+let got;
+try {
+  hollow = await exec(hollowOnly);
+  check('hollow-only builds', hollow.status === 'NoError' && hollow.volume > 5000,
+    `status=${hollow.status} vol=${hollow.volume}`);
+} catch (e) {
+  check('hollow-only builds', false, e.message);
+}
+try {
+  const p = await exec(full);
+  got = { vol: p.volume, bb: p.boundingBox, status: p.status, ...analyze(p.mesh) };
+  console.log(
+    `      fillet-after-hollow vol=${got.vol.toFixed(3)} tris=${got.nTri} fins=${got.fins} `
+    + `inwardVis=${got.inwardVis} pie=${got.pie} pieArea=${got.pieArea.toFixed(4)} `
+    + `openCorner=${got.openCorner} sharpEdge=${got.sharpEdge} arcVerts=${got.arcVerts}`,
+  );
+} catch (e) {
+  check('fillet after hollow builds', false, e.message);
+}
+
+check('fillet after hollow builds', !!got && got.status === 'NoError' && got.vol > 0, `vol=${got?.vol}`);
+const added = got && hollow ? got.vol - hollow.volume : NaN;
+check(
+  'fillet adds the inner round (not a punch-through)',
+  got && hollow && added > 8 && added < 25,
+  `added=${added} hollow=${hollow?.volume} final=${got?.vol}`,
+);
+check(
+  'outer shell bbox still reaches the -X/-Y/-Z skin',
+  got && got.bb.min[0] <= -19.9 && got.bb.min[1] <= -14.9 && got.bb.min[2] <= -9.99
+    && got.bb.max[2] >= 9.9,
+  JSON.stringify(got?.bb),
+);
+check('open-face inner corner fan is gone', got && got.pie === 0, `pie=${got?.pie} area=${got?.pieArea}`);
+check('sharp inner corner vertex is gone off the open rim', got && got.openCorner === 0 && got.sharpEdge === 0,
+  `openCorner=${got?.openCorner} sharpEdge=${got?.sharpEdge}`);
+check('concave fillet arc is present inside the cavity', got && got.arcVerts >= 8, `arcVerts=${got?.arcVerts}`);
+check('not sliver-dirty', got && !got.dirty, `tiny=${got?.tiny}/${got?.nTri}`);
+// Cavity walls point toward the origin, so a radial inward test is not zero on a
+// shell (pre-fix measured inwardVis=338). The pad must not add any.
+check('inward-visible count does not rise', got && got.inwardVis <= 338, `inwardVis=${got?.inwardVis}`);
+// Pre-fix fins=39 (the fan). After the open-end pad: fins=41.
+check('long-fin count stays at the measured ceiling', got && got.fins <= 41, `fins=${got?.fins}`);
+
+if (failed) {
+  console.error(`\nFAILED: ${failed} check(s)`);
+  process.exit(1);
+}
+console.log('\nAll fillet-after-hollow checks passed.');
