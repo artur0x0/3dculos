@@ -5459,6 +5459,8 @@ function boundaryEdges(part) {
  * optionally delete pieces. Uses Manifold.splitByPlane (no separate kernel).
  *
  * plane is a face `{ center, normal }` or an explicit `{ normal, originOffset }`.
+ * `offset` on a face shifts the plane along the normal (positive with the
+ * normal) and is added to center·normal. Offset 0 is the face itself.
  * A face is never read as a world-axis name. The first splitByPlane result is
  * the '+' side (along the normal); the second is '-'.
  *
@@ -5510,7 +5512,7 @@ function cut(manifold, plane, opts = {}) {
   return result;
 }
 
-/** Face { center, normal } or explicit { normal, originOffset }. Never an axis name. */
+/** Face { center, normal, offset? } or explicit { normal, originOffset }. Never an axis name. */
 function _cutResolvePlane(plane) {
   if (plane == null || typeof plane !== 'object' || Array.isArray(plane)) {
     throw new Error("cut: plane must be a face { center, normal } or { normal, originOffset } — not a world-axis name");
@@ -5535,6 +5537,11 @@ function _cutResolvePlane(plane) {
     originOffset = normal[0] * c[0] + normal[1] * c[1] + normal[2] * c[2];
   } else {
     throw new Error('cut: plane needs originOffset or a center from the picked face');
+  }
+  if (plane.offset != null && plane.offset !== '') {
+    const extra = Number(plane.offset);
+    if (!Number.isFinite(extra)) throw new Error('cut: offset must be a finite number');
+    originOffset += extra;
   }
   return { normal, originOffset };
 }

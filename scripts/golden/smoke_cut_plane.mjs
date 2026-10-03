@@ -35,9 +35,12 @@ const {
   setCutPickTarget,
   composeCutCommit,
   meshBodyComponents,
+  listCutPieces,
+  setCutOriginOffset,
   CUT_MODE_NEED_PLANE,
   CUT_MODE_NEED_BODIES,
 } = await import('../../src/utils/cutMode.js');
+const { contactSeamSegments } = await import('../../src/utils/contactSeam.js');
 const { parseFeatureMarkers } = await import('../../src/utils/featureMarkers.js');
 
 console.log('cut plane');
@@ -139,9 +142,51 @@ console.log('cut plane');
     faceCommit.ok
     && /cut\(part, \{ center: \[0, 0, 10\], normal: \[0, 0, 1\] \}\)/.test(faceCommit.buffer)
     && !/originOffset/.test(faceCommit.buffer)
+    && !/\boffset:/.test(faceCommit.buffer)
     && !/['"]z['"]/.test(faceCommit.buffer)
     && !/pull:\s*'/.test(faceCommit.buffer),
     faceCommit.buffer || faceCommit.message);
+
+  const shifted = setCutOriginOffset(face, 4);
+  const shiftCommit = composeCutCommit('', shifted, {
+    positions: crossPos,
+    index: crossIdx,
+    bodyCount: 1,
+  });
+  check('a face offset is written on the same cut() and the center stays',
+    shiftCommit.ok
+    && /cut\(part, \{ center: \[0, 0, 10\], normal: \[0, 0, 1\], offset: 4 \}\)/.test(shiftCommit.buffer)
+    && !/originOffset/.test(shiftCommit.buffer)
+    && (shiftCommit.buffer.match(/cut\s*\(/g) || []).length === 1,
+    shiftCommit.buffer || shiftCommit.message);
+
+  const pos2 = [0, 0, 1, 1, 0, 1, 0, 1, 1, 1, 0, -1, 0, 0, -1];
+  const idx2 = [0, 1, 2, 0, 3, 4];
+  let halves = setCutPickTarget(setCutPlaneSource(emptyCutState(), 'xy'), 'bodies');
+  halves = applyCutTap(halves, { triangle: 0, positions: pos2, index: idx2 }).state;
+  const shown = listCutPieces(halves, pos2, idx2);
+  check('pieces preview lists both sides in different colors',
+    shown.length === 2 && shown[0].hidden === false && shown[1].hidden === false
+    && shown[0].color !== shown[1].color
+    && shown[0].triangles.length === 1 && shown[1].triangles.length === 1,
+    JSON.stringify(shown.map((p) => ({ side: p.side, n: p.triangles.length, hidden: p.hidden }))));
+  const hiding = setCutPickTarget(halves, 'pieces');
+  const hid = applyCutTap(hiding, {
+    triangle: 1,
+    point: [0.3, 0, -0.4],
+    positions: pos2,
+    index: idx2,
+  }).state;
+  const afterHide = listCutPieces(hid, pos2, idx2);
+  check('tapping a piece hides only that piece',
+    afterHide.filter((p) => p.hidden).length === 1 && afterHide.find((p) => p.side === '-').hidden);
+  const undoneHide = popLastCutPick(hid);
+  const afterUndo = listCutPieces(undoneHide, pos2, idx2);
+  check('Undo brings back only the last hidden piece',
+    afterUndo.every((p) => !p.hidden) && undoneHide.bodies.length === 1);
+  const clearedHide = clearCutPicks(hid);
+  check('Clear unhides every piece and keeps the plane',
+    clearedHide.drop.length === 0 && clearedHide.planeSource === 'xy' && clearedHide.bodies.length === 1);
 
   const again = composeCutCommit(both.buffer, marked, {
     positions: crossPos,
@@ -175,7 +220,16 @@ console.log('cut plane');
   check('chip has Undo, Clear, and the Shell sticky copy',
     /data-cut-undo/.test(chip) && /data-cut-clear/.test(chip)
     && /tap to add, tap a selected body to remove/.test(chip)
-    && /tap again to keep/.test(chip));
+    && /tap a piece to hide it/.test(chip)
+    && /bring it back/.test(chip));
+  check('face and named planes share the offset field',
+    /id="cut-offset"/.test(chip) && /along the plane normal/.test(chip));
+  check('pieces preview colors each piece and leaves hidden ones pickable',
+    /listCutPieces/.test(view) && /colorWrite: false/.test(view)
+    && /CUT_PIECE_OPACITY/.test(view) && /if \(piece\.hidden\) continue/.test(view));
+  check('a cut tap is not swallowed by a contour or a construction plane',
+    /!cutModeRef\.current && showContoursRef/.test(view)
+    && /!cutModeRef\.current && planeHits/.test(view));
   check('chip does not ask for shift-click', !/shift-click/.test(chip) && !/shiftKey/.test(chip));
   check('POPUP_STYLE documents CutModeChip', /CutModeChip/.test(popup) && /sticky picker/.test(popup));
 }
@@ -246,6 +300,11 @@ const cube = 'let part = Manifold.cube([40, 30, 20], true);';
     return part;
   `);
   check('1 both halves volume 24000', Math.abs(res.volume - 24000) < 1e-3, `vol=${res.volume}`);
+  const bothSeams = contactSeamSegments(res.mesh.vertProperties, res.mesh.triVerts, res.mesh.numProp);
+  check('1 both halves draw the shared boundary as body edges',
+    bothSeams.length === 4 && bothSeams.every((s) => Math.abs(s.a[2]) < 1e-3 && Math.abs(s.b[2]) < 1e-3
+      && Math.abs(s.capNormal[2]) > 0.9),
+    `n=${bothSeams.length}`);
   check('1 composed bbox is still the cube',
     Math.abs(res.boundingBox.min[2] + 10) < 1e-3 && Math.abs(res.boundingBox.max[2] - 10) < 1e-3
     && Math.abs(res.boundingBox.min[0] + 20) < 1e-3 && Math.abs(res.boundingBox.max[1] - 15) < 1e-3);
@@ -270,6 +329,8 @@ const cube = 'let part = Manifold.cube([40, 30, 20], true);';
   check('2 kept piece is z from 0 to 10',
     Math.abs(res.boundingBox.min[2]) < 1e-3 && Math.abs(res.boundingBox.max[2] - 10) < 1e-3,
     JSON.stringify(res.boundingBox));
+  const halfSeams = contactSeamSegments(res.mesh.vertProperties, res.mesh.triVerts, res.mesh.numProp);
+  check('2 keeping one side does not add a seam edge', halfSeams.length === 0, `n=${halfSeams.length}`);
 
   const dropped = await exec(`
     ${cube}
@@ -301,6 +362,8 @@ const cube = 'let part = Manifold.cube([40, 30, 20], true);';
   check('a body that misses the plane stays one body with the same volume',
     Math.abs(res.volume - 24000) < 1e-3 && Math.abs(res.boundingBox.min[2] - 30) < 1e-3,
     `vol=${res.volume} z0=${res.boundingBox.min[2]}`);
+  const missSeams = contactSeamSegments(res.mesh.vertProperties, res.mesh.triVerts, res.mesh.numProp);
+  check('a body that is not cut does not grow an extra edge', missSeams.length === 0, `n=${missSeams.length}`);
 }
 
 {
@@ -314,6 +377,32 @@ const cube = 'let part = Manifold.cube([40, 30, 20], true);';
   `);
   check('a face on the top of the cube is that plane, not a guessed z=0 cut',
     Math.abs(res.volume - 24000) < 1e-3, `vol=${res.volume}`);
+
+  const moved = await exec(`
+    ${cube}
+    part = cut(part, { center: [0, 0, 10], normal: [0, 0, 1], offset: -10 });
+    const parts = part.decompose();
+    if (parts.length !== 2) throw new Error('bodies ' + parts.length);
+    if (Math.abs(part.volume() - 24000) > 1e-3) throw new Error('vol ' + part.volume());
+    const zs = parts.map((p) => {
+      const bb = p.boundingBox();
+      return [bb.min[2], bb.max[2]];
+    });
+    const has = (z0, z1) => zs.some((r) => Math.abs(r[0] - z0) < 1e-3 && Math.abs(r[1] - z1) < 1e-3);
+    if (!has(0, 10) || !has(-10, 0)) throw new Error('ranges ' + JSON.stringify(zs));
+    return part;
+  `);
+  check('face offset -10 from the top face is the mid plane, both halves',
+    Math.abs(moved.volume - 24000) < 1e-3, `vol=${moved.volume}`);
+
+  const zeroOff = await exec(`
+    ${cube}
+    part = cut(part, { center: [0, 0, 10], normal: [0, 0, 1], offset: 0 });
+    if (part.decompose().length !== 1) throw new Error('bodies ' + part.decompose().length);
+    if (Math.abs(part.volume() - 24000) > 1e-6) throw new Error('vol ' + part.volume());
+    return part;
+  `);
+  check('face offset 0 does not move the plane', Math.abs(zeroOff.volume - 24000) < 1e-3);
 
   const named = await execFail(`
     ${cube}

@@ -6,8 +6,9 @@
  *
  * Confirm writes one cut() and replaces a previous Cut block, the way Shell
  * replaces hollow() and Draft replaces draftFaces(). A face plane is emitted
- * as { center, normal } — never a guessed world axis. An explicit plane is
- * { normal, originOffset }.
+ * as { center, normal } — never a guessed world axis. A face offset moves
+ * that plane along the face normal and is written as `offset` only when it
+ * is not 0. An explicit plane is { normal, originOffset }.
  *
  * Several bodies or several pieces use the Shell picker: tap to add, tap
  * again to remove, Undo drops the last pick, Clear drops that list. No
@@ -29,7 +30,20 @@ export const CUT_EXPLICIT_PLANES = Object.freeze({
 
 export const CUT_MODE_NEED_PLANE = 'Pick a planar face, or choose XY, YZ, or ZX.';
 export const CUT_MODE_NEED_BODIES = 'Tap the bodies to cut. Tap a body again to remove it.';
-export const CUT_MODE_ALL_DROPPED = 'Every piece is marked for deletion. Tap a piece again to keep it.';
+export const CUT_MODE_ALL_DROPPED = 'Every piece is hidden. Tap a hidden piece to bring it back.';
+
+/** Slightly translucent, one per resulting piece, stable for the life of the list. */
+export const CUT_PIECE_COLORS = Object.freeze([
+  0x38bdf8,
+  0xfbbf24,
+  0xc084fc,
+  0x4ade80,
+  0xfb7185,
+  0x2dd4bf,
+  0xf97316,
+  0x818cf8,
+]);
+export const CUT_PIECE_OPACITY = 0.78;
 
 function round3(n) {
   const v = Number(n);
@@ -200,8 +214,10 @@ export function cutPlaneFromState(state) {
     if (!normal) return null;
     const center = face.center.map(Number);
     if (center.some((v) => !Number.isFinite(v))) return null;
-    const originOffset = normal[0] * center[0] + normal[1] * center[1] + normal[2] * center[2];
-    return { source: 'face', normal, center, originOffset };
+    const faceOffset = Number(state.originOffset);
+    const extra = Number.isFinite(faceOffset) ? faceOffset : 0;
+    const originOffset = normal[0] * center[0] + normal[1] * center[1] + normal[2] * center[2] + extra;
+    return { source: 'face', normal, center, originOffset, faceOffset: extra };
   }
   const spec = CUT_EXPLICIT_PLANES[state.planeSource];
   if (!spec) return null;
@@ -411,6 +427,45 @@ function isDropped(drop, body, side) {
 }
 
 /**
+ * Pieces the cut would produce for the bodies already picked.
+ * A hidden piece is one the user tapped to delete. It stays in the list so
+ * a later tap can bring it back. Colors stay put when a piece is hidden.
+ */
+export function listCutPieces(state, positions, index) {
+  const plane = cutPlaneFromState(state);
+  if (!plane) return [];
+  const bodies = Array.isArray(state?.bodies) ? state.bodies : [];
+  const out = [];
+  for (const body of bodies) {
+    const info = classifyCutBody(body, plane, positions, index);
+    const buckets = new Map();
+    for (const tri of body.triangles || []) {
+      let side = trianglePieceSide(tri, body, info, plane, positions, index);
+      if (side === '0') side = '+';
+      let list = buckets.get(side);
+      if (!list) {
+        list = [];
+        buckets.set(side, list);
+      }
+      list.push(tri);
+    }
+    const sides = info.crosses ? ['+', '-'] : [info.wholeSide || '+'];
+    for (const side of sides) {
+      out.push({
+        key: cutBodyKey(body),
+        side,
+        triangles: buckets.get(side) || [],
+        hidden: isDropped(state?.drop, body, side),
+      });
+    }
+  }
+  return out.map((piece, i) => ({
+    ...piece,
+    color: CUT_PIECE_COLORS[i % CUT_PIECE_COLORS.length],
+  }));
+}
+
+/**
  * @param {object} state
  * @param {{ positions?: object, index?: object, bodyCount?: number }} [mesh]
  */
@@ -463,7 +518,10 @@ export function validateCutAccept(state, mesh = null) {
 
 function planeLiteral(plane) {
   if (plane.source === 'face') {
-    return `{ center: ${formatVec(plane.center)}, normal: ${formatVec(plane.normal)} }`;
+    const base = `{ center: ${formatVec(plane.center)}, normal: ${formatVec(plane.normal)}`;
+    const off = formatNum(plane.faceOffset);
+    if (off !== '0') return `${base}, offset: ${off} }`;
+    return `${base} }`;
   }
   return `{ normal: ${formatVec(plane.normal)}, originOffset: ${formatNum(plane.originOffset)} }`;
 }

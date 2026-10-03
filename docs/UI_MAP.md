@@ -361,8 +361,8 @@ Import `src/utils/importModel.js` (+ `POST /api/convert/step`); export
   [`docs/POPUP_STYLE.md`](./POPUP_STYLE.md). References: `ContourModeChip` (incl.
   Loft / Workplane), `FilletModeChip`, `ShellModeChip` (face-pick opening —
   not axis X/Y/Z), `DraftModeChip` (neutral-plane draft, not a world-axis guess),
-  `CutModeChip` (plane cut — a face plane or an explicit XY/YZ/ZX, Shell sticky
-  picker for bodies and pieces, one `cut()`).
+  `CutModeChip` (plane cut — a face plane or an explicit XY/YZ/ZX, offset along
+  the normal, Shell sticky picker for bodies and pieces, one `cut()`).
 - **Feature popups all use `src/components/controls/popupUI.jsx`** — one type
   scale (`POPUP_TEXT`), one set of fields, accents per surface (`cyan` contour,
   `amber` fillet, `slate` helper sheets). **Every number renders a slider AND a
