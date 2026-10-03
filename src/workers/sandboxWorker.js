@@ -690,15 +690,136 @@ function hollow(manifold, thickness, opening = 'z') {
   return out;
 }
 
+/** Face → neighbor face indices, from the welded edge table. */
+function _c4FaceAdj(md) {
+  const adj = new Map();
+  for (const e of md.edges) {
+    const a = e.faces[0], b = e.faces[1];
+    if (a < 0 || b < 0 || a === b) continue;
+    let sa = adj.get(a);
+    if (!sa) { sa = []; adj.set(a, sa); }
+    let sb = adj.get(b);
+    if (!sb) { sb = []; adj.set(b, sb); }
+    sa.push(b);
+    sb.push(a);
+  }
+  return adj;
+}
+
+/**
+ * Pull-coordinate of the fillet/chamfer tangency to hinge `fi` on, or null
+ * to keep the neutral plane.
+ *
+ * A blend between the neutral plane and the wall stops the wall short of the
+ * plane. Shearing that wall about the plane slides the shared tangency edge
+ * (tan(angle) × the gap) and leaves a ledge; the blend itself must stay.
+ * Hinge on the tangency instead: vertices on that line do not move, and the
+ * wall tilts from there. The blend is not added to the draft selection.
+ *
+ * Returns null — caller keeps the neutral plane — when the wall already
+ * meets that plane, when the blend is on the far side of the wall, or when
+ * the near outline is not one tangency line (reference:'mid' on a cube).
+ */
+function _c4BlendHingePull(md, fi, pull, t0, sel, getAdj) {
+  const f = md.faces[fi];
+  const sAbs = (vi) => Math.abs(_c4Dot(md.V[vi], pull) - t0);
+  const vis = _c4FaceVertIndices(md, f);
+  let minAbs = Infinity;
+  for (const vi of vis) minAbs = Math.min(minAbs, sAbs(vi));
+  // Already meets the neutral plane — nothing sits between them.
+  if (!(minAbs > 1e-3)) return null;
+
+  // Vertices on the near side of this face. 0.05 mm covers tessellation
+  // noise on the tangency without swallowing the rest of a real wall.
+  const near = new Set();
+  for (const vi of vis) {
+    if (Math.abs(sAbs(vi) - minAbs) <= 0.05) near.add(vi);
+  }
+  const pulls = [];
+  const start = [];
+  for (const e of md.edges) {
+    let ni = -1;
+    if (e.faces[0] === fi) ni = e.faces[1];
+    else if (e.faces[1] === fi) ni = e.faces[0];
+    else continue;
+    if (ni < 0 || ni === fi || !near.has(e.a) || !near.has(e.b)) continue;
+    if (sel.has(ni)) continue;
+    pulls.push(_c4Dot(md.V[e.a], pull), _c4Dot(md.V[e.b], pull));
+    start.push(ni);
+  }
+  if (!pulls.length) return null;
+  let pLo = Infinity, pHi = -Infinity;
+  for (const p of pulls) {
+    if (p < pLo) pLo = p;
+    if (p > pHi) pHi = p;
+  }
+  // The tangency has to be one line parallel to the neutral plane. A face
+  // whose whole outline is equally near (reference:'mid' on a cube) spans
+  // the height and keeps the neutral-plane hinge.
+  if (pHi - pLo > 0.5) return null;
+
+  const adj = getAdj();
+  const CAP = Math.cos((20 * Math.PI) / 180);
+  const PARALLEL = Math.cos((5 * Math.PI) / 180);
+  const fn = f.normal;
+  const seen = new Set([fi]);
+  const q = start.slice();
+  let closer = false;
+  let blend = false;
+  let guard = 0;
+  while (q.length && guard < 4000) {
+    const ni = q.pop();
+    guard++;
+    if (seen.has(ni)) continue;
+    seen.add(ni);
+    if (sel.has(ni)) continue;
+    const n = md.faces[ni];
+    if (!n || _c4Len(n.normal) < 1e-8) continue;
+    const align = Math.abs(_c4Dot(n.normal, fn));
+    const pullAlign = Math.abs(_c4Dot(n.normal, pull));
+    const isCap = pullAlign > CAP;
+    // Neighboring wall: perpendicular to the drafted face and to the pull.
+    const isSide = pullAlign < 0.34 && align < 0.25;
+    let headsToward = false;
+    for (const vi of _c4FaceVertIndices(md, n)) {
+      const a = sAbs(vi);
+      if (a < minAbs - 0.005) {
+        closer = true;
+        headsToward = true;
+      } else if (a <= minAbs + 0.2) headsToward = true;
+    }
+    // A blend normal sits between the wall and the cap (fillet facets, or
+    // one chamfer plane). A parallel step and the floor do not count.
+    if (!isCap && !isSide && align < PARALLEL && align > 0.25) blend = true;
+    if (closer && blend) break;
+    if (isCap || isSide || !headsToward) continue;
+    const nbrs = adj.get(ni);
+    if (!nbrs) continue;
+    for (const k of nbrs) if (!seen.has(k)) q.push(k);
+  }
+  if (!closer || !blend) return null;
+  return pulls.reduce((a, b) => a + b, 0) / pulls.length;
+}
+
+/** One slide direction per vertex. Same normal keeps the first hinge. */
+function _c4PushDraftDir(list, n, tRef) {
+  for (const m of list) {
+    if (Math.abs(m.n[0] - n[0]) < 1e-6 && Math.abs(m.n[1] - n[1]) < 1e-6 && Math.abs(m.n[2] - n[2]) < 1e-6) return;
+  }
+  list.push({ n, tRef });
+}
+
 /**
  * draftFaces(manifold, faces, angleDeg, opts) — tilt the selected faces by a
  * true constant angle about their intersection with a reference plane.
  *
- * Each selected face rotates about the line where it meets the reference plane,
+ * Each selected face tilts about the line where it meets the reference plane,
  * so the achieved angle is `angleDeg` on EVERY selected wall regardless of its
  * width (the old scale-based taper only hit the angle on the narrowest one).
- * Vertices shared by two selected faces get both displacements summed, which is
- * what keeps a drafted corner sharp.
+ * When a fillet or chamfer sits between that plane and the face, the hinge
+ * moves to the blend–wall tangency; the blend face is not drafted.
+ * Vertices shared by two selected faces get both displacements solved together,
+ * which is what keeps a drafted corner sharp.
  *
  * Sign: positive tapers the face INWARD going along the pull direction (the
  * usual mould-release sense — the section shrinks toward the pull); negative
@@ -756,8 +877,11 @@ function draftFaces(manifold, faces, angleDeg, opts = {}) {
   // Per vertex, the DISTINCT slide directions of the selected faces meeting it.
   // Distinct is the operative word: a tessellated wall contributes one direction
   // many times over (solve once), while two walls of a box corner contribute two
-  // (solve together, so the corner stays sharp).
-  const dirs = new Map(); // vertex index -> unit in-plane directions
+  // (solve together, so the corner stays sharp). Each direction carries the
+  // pull coordinate it hinges on: the neutral plane, or the blend tangency
+  // when a fillet/chamfer sits between that plane and the face.
+  const dirs = new Map(); // vertex index -> { n, tRef }[]
+  let faceAdj = null;
   // 'taper' makes every selected wall lean the same way round the pull axis, so
   // a HOLLOW part keeps its wall: the cavity wall's own normal points at the
   // axis, and honouring it would drive the inner and outer walls INTO each other
@@ -803,10 +927,14 @@ function draftFaces(manifold, faces, angleDeg, opts = {}) {
       if (_c4Len(rIn) > 1e-9 && _c4Dot(u, rIn) < 0) u = _c4Mul(-1, u);
     }
     drafted++;
+    const tRef = _c4BlendHingePull(md, fi, pull, t0, sel, () => {
+      if (!faceAdj) faceAdj = _c4FaceAdj(md);
+      return faceAdj;
+    }) ?? t0;
     for (const vi of _c4FaceVertIndices(md, f)) {
       let list = dirs.get(vi);
       if (!list) { list = []; dirs.set(vi, list); }
-      _c4PushDistinct(list, u);
+      _c4PushDraftDir(list, u, tRef);
     }
   }
   if (!drafted) {
@@ -823,10 +951,11 @@ function draftFaces(manifold, faces, angleDeg, opts = {}) {
   // _c4RebuildWithVerts).
   const moved = md.V.map((v) => v.slice());
   for (const [vi, us] of dirs) {
-    // The drafted plane of each selected face moves by tan(angle) x the vertex's
-    // distance from the reference plane — one scalar, every direction.
-    const dist = -tan * (_c4Dot(md.V[vi], pull) - t0);
-    moved[vi] = _c4Add(md.V[vi], _c4SolvePlaneMoves(us, us.map(() => dist)));
+    // Each selected plane slides by tan(angle) × the vertex's distance along
+    // pull from THAT face's hinge (neutral plane, or the blend tangency).
+    const s = _c4Dot(md.V[vi], pull);
+    const rhs = us.map((u) => -tan * (s - u.tRef));
+    moved[vi] = _c4Add(md.V[vi], _c4SolvePlaneMoves(us.map((u) => u.n), rhs));
   }
   _c4RequireNoFold(md, moved, 'draftFaces', `${angleDeg}°`);
   return _c4RequireValidSolid(_c4RebuildWithVerts(md, moved, 'draftFaces'), 'draftFaces');
