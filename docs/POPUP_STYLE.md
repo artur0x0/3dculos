@@ -16,6 +16,12 @@ over inventing a new modal layout.
   control. Taps add faces with no modifier (tap a selected face to remove it,
   same as the edge picker). Undo drops the last face; Clear drops all.
   Confirm writes one `hollow()`; grey X exits with no write.
+- **`DraftModeChip.jsx`** — cyan glass card (same shell as Shell); first tap
+  is the neutral face (its normal is the pull), Flip reverses that normal,
+  later taps are the faces to draft (tap again to remove). Undo drops only
+  the last drafted face; Clear drops drafted faces and keeps the neutral.
+  One angle, default 2°. Confirm writes one `draftFaces()`; grey X exits
+  with no write. No shift-click.
 
 ## Placement
 

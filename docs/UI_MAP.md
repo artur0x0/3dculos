@@ -360,7 +360,7 @@ Import `src/utils/importModel.js` (+ `POST /api/convert/step`); export
   `max-h-[calc(100dvh-12rem)]` + `rail-scroll`, Confirm/X): see
   [`docs/POPUP_STYLE.md`](./POPUP_STYLE.md). References: `ContourModeChip` (incl.
   Loft / Workplane), `FilletModeChip`, `ShellModeChip` (face-pick opening —
-  not axis X/Y/Z).
+  not axis X/Y/Z), `DraftModeChip` (neutral-plane draft, not a world-axis guess).
 - **Feature popups all use `src/components/controls/popupUI.jsx`** — one type
   scale (`POPUP_TEXT`), one set of fields, accents per surface (`cyan` contour,
   `amber` fillet, `slate` helper sheets). **Every number renders a slider AND a

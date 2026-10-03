@@ -345,40 +345,39 @@ function extentAt(mesh, axis, pickAxis, pickValue, tol = 1e-3) {
     /hollow\(\s*\w+,\s*2,\s*\{ center: \[0, 0, 10\], normal: \[0, 0, 1\] \}\)/.test(faceShell),
     faceShell);
 
-  // Draft: pull seeded off the pick, signed angle, reference plane.
-  const xFace = pick([20, 0, 10], [1, 0, 0]);
-  const dModal = resolveFaceModal({ id: 'addDraft', title: 'Draft', params: [] }, xFace);
-  check('draft sheet offers pull + reference',
-    dModal.item.params.some((p) => p.name === 'pull')
-    && dModal.item.params.some((p) => p.name === 'reference'));
-  check('draft pull seeded to an axis the face can tilt about',
-    dModal.item.params.find((p) => p.name === 'pull')?.default === 'z');
-  check('draft angle slider allows negative',
-    dModal.item.params.find((p) => p.name === 'draftDeg')?.min === -45);
+  // Draft picker: neutral face supplies pull + reference. No world-axis guess,
+  // no addDraft(), no shift-click. Signed angle still allowed.
+  const {
+    composeDraftCommit, applyDraftFaceTap, emptyDraftState,
+  } = await import('../../src/utils/draftMode.js');
+  const neutralZ = { center: [0, 0, 10], normal: [0, 0, 1] };
+  const xPlus = { center: [20, 0, 0], normal: [1, 0, 0] };
+  const xMinus = { center: [-20, 0, 0], normal: [-1, 0, 0] };
+  let drafted = applyDraftFaceTap(emptyDraftState(), neutralZ);
+  drafted = applyDraftFaceTap(drafted, xPlus);
+  drafted = { ...drafted, angle: -3 };
+  const oneFace = composeDraftCommit('', drafted);
+  check('single-face draft emits the pick, the sign and the neutral reference',
+    oneFace.ok
+    && /draftFaces\(\s*part,\s*\[\{ center: \[20, 0, 0\], normal: \[1, 0, 0\] \}\],\s*-3,\s*\{ pull: \[0, 0, 1\], reference: \{ center: \[0, 0, 10\], normal: \[0, 0, 1\] \} \}\)/.test(oneFace.buffer)
+    && !/addDraft\s*\(/.test(oneFace.buffer)
+    && !/pull:\s*'/.test(oneFace.buffer),
+    oneFace.buffer || oneFace.message);
+  check('draft angle still allows a negative', drafted.angle === -3 && /-3/.test(oneFace.buffer || ''));
 
-  const oneFace = composeHelperInsert('', 'addDraft', null,
-    { draftDeg: -3, faceScope: 'selected', pull: 'z', reference: 'max' },
-    classifySelectedFace(xFace));
-  check('single-face draft emits the pick, the sign and the reference',
-    /draftFaces\(\s*\w+,\s*\{ center: \[20, 0, 10\], normal: \[1, 0, 0\] \},\s*-3,\s*\{ pull: 'z', reference: 'max' \}\)/
-      .test(oneFace), oneFace);
-
-  // Multi-face pick (shift-click) → an array of literals.
-  const multi = classifySelectedFace(pick([20, 0, 10], [1, 0, 0], {
-    group: [
-      { center: [20, 0, 10], normal: [1, 0, 0] },
-      { center: [-20, 0, 10], normal: [-1, 0, 0] },
-    ],
-  }));
-  check('multi-pick survives classification', multi.group?.length === 2);
-  const multiDraft = composeHelperInsert('', 'addDraft', null,
-    { draftDeg: 2, faceScope: 'selected', pull: 'z', reference: 'min' }, multi);
-  check('two picked faces emit an array',
-    /draftFaces\(\s*\w+,\s*\[\{ center: \[20, 0, 10\], normal: \[1, 0, 0\] \}, \{ center: \[-20, 0, 10\], normal: \[-1, 0, 0\] \}\],\s*2,/
-      .test(multiDraft), multiDraft);
-  check('multi-pick sheet says how many',
-    /2 picked faces/.test(resolveFaceModal({ id: 'addDraft', title: 'Draft', params: [] },
-      { ...pick([20, 0, 10], [1, 0, 0]), group: multi.group }).item.title));
+  drafted = applyDraftFaceTap(emptyDraftState(), neutralZ);
+  drafted = applyDraftFaceTap(drafted, xPlus);
+  drafted = applyDraftFaceTap(drafted, xMinus);
+  drafted = { ...drafted, angle: 2 };
+  const multiDraft = composeDraftCommit('', drafted);
+  check('two picked faces emit one draftFaces array',
+    multiDraft.ok
+    && (multiDraft.buffer.match(/draftFaces\s*\(/g) || []).length === 1
+    && /\[\{ center: \[20, 0, 0\], normal: \[1, 0, 0\] \}, \{ center: \[-20, 0, 0\], normal: \[-1, 0, 0\] \}\]/.test(multiDraft.buffer)
+    && !/addDraft\s*\(/.test(multiDraft.buffer),
+    multiDraft.buffer || multiDraft.message);
+  const chip = await import('node:fs').then((fs) => fs.readFileSync(new URL('../../src/components/DraftModeChip.jsx', import.meta.url), 'utf8'));
+  check('draft chip angle goes negative', /min=\{-45\}/.test(chip));
 
   // And the emitted multi-face draft actually runs.
   const ran = await exec(`

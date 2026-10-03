@@ -56,6 +56,7 @@ import ContourModeRail from './ContourModeRail';
 import ContourModeChip from './ContourModeChip';
 import FilletModeChip from './FilletModeChip';
 import ShellModeChip from './ShellModeChip';
+import DraftModeChip from './DraftModeChip';
 import { buildCrossSectionPreview, defaultTopPlaneFrame } from '../utils/crossSectionSubstrate';
 import {
   applySavedContour,
@@ -124,6 +125,15 @@ import {
   toggleShellFaceSelection,
   popLastShellFace,
 } from '../utils/shellMode';
+import {
+  emptyDraftState,
+  applyDraftFaceTap,
+  popLastDraftFace,
+  clearDraftFaces,
+  setDraftAngle,
+  setDraftFlip,
+  validateDraftAccept,
+} from '../utils/draftMode';
 import { classifySelectedFace } from '../utils/faceFeaturePlacement';
 import { classifyFilletEdges, countDegenerateTriangles } from '../utils/filletEdgeClass';
 import {
@@ -349,6 +359,7 @@ const Viewport = forwardRef(({
   onCommitContourProfile = null,
   onCommitFillet = null,
   onCommitShell = null,
+  onCommitDraft = null,
   getHelperBuffer = null,
   /** Mobile CAD mid-strip host (CodeEditor). Null on desktop and in game. */
   cadToolbarHost = null,
@@ -481,6 +492,8 @@ const Viewport = forwardRef(({
   const filletModeRef = useRef(null);
   const [shellMode, setShellMode] = useState(null);
   const shellModeRef = useRef(null);
+  const [draftMode, setDraftMode] = useState(null);
+  const draftModeRef = useRef(null);
   const [shellToast, setShellToast] = useState(null);
   const shellToastTimerRef = useRef(null);
   /** Slice C: restore Face/Edge after Fillet Accept / exit (do not snap to default). */
@@ -593,6 +606,7 @@ const Viewport = forwardRef(({
   contourModeRef.current = contourMode;
   filletModeRef.current = filletMode;
   shellModeRef.current = shellMode;
+  draftModeRef.current = draftMode;
 
   useImperativeHandle(ref, () => ({
     executeScript,
@@ -627,6 +641,8 @@ const Viewport = forwardRef(({
       filletModeRef.current = null;
       setShellMode(null);
       shellModeRef.current = null;
+      setDraftMode(null);
+      draftModeRef.current = null;
       setContourToast(null);
       setFilletToast(null);
       setShellToast(null);
@@ -692,6 +708,9 @@ const Viewport = forwardRef(({
     },
     softFailShell: (msg) => {
       showShellToast(msg || 'Shell refused — tap a face or choose Closed, then Confirm.');
+    },
+    softFailDraft: (msg) => {
+      showShellToast(msg || 'Draft refused — tap the neutral face, then the faces to draft.');
     },
     // Updated to use cached mesh when available
     export3MF: async () => {
@@ -1778,6 +1797,8 @@ const Viewport = forwardRef(({
     clearFilletBlendPreview();
     setShellMode(null);
     shellModeRef.current = null;
+    setDraftMode(null);
+    draftModeRef.current = null;
     setPickMode('face');
     disposeEdgeOverlayObject(sceneRef.current, pathPreviewRef.current);
     pathPreviewRef.current = null;
@@ -1907,6 +1928,8 @@ const Viewport = forwardRef(({
     exitContourMode();
     setShellMode(null);
     shellModeRef.current = null;
+    setDraftMode(null);
+    draftModeRef.current = null;
     setPickMode('edge');
     clearHighlight();
     setSelectedFace(null);
@@ -1994,6 +2017,8 @@ const Viewport = forwardRef(({
     setFilletMode(null);
     filletModeRef.current = null;
     clearFilletBlendPreview();
+    setDraftMode(null);
+    draftModeRef.current = null;
     setPickMode('face');
     clearEdgeHover();
     clearEdgeHighlight();
@@ -2046,6 +2071,83 @@ const Viewport = forwardRef(({
       return next;
     });
   }, [shellMode, selectedFace]);
+
+  const paintDraftPicks = useCallback((state) => {
+    const geom = resultRef.current?.geometry;
+    const positions = geom?.attributes?.position;
+    const index = geom?.index?.array;
+    clearHighlight();
+    if (!state) return;
+    if (geom && positions && index && state.neutral?.indices?.length) {
+      highlightFace(state.neutral.indices, geom, positions, index, 0x22d3ee, 'draft-neutral');
+    }
+    const drafted = (state.drafts || []).flatMap((f) => f.indices || []);
+    if (geom && positions && index && drafted.length) {
+      highlightFace(drafted, geom, positions, index, 0xfbbf24, 'draft-faces');
+    }
+  }, [clearHighlight, highlightFace]);
+
+  const exitDraftMode = useCallback(() => {
+    const was = draftModeRef.current;
+    setDraftMode(null);
+    draftModeRef.current = null;
+    if (was) clearHighlight();
+    if (shellToastTimerRef.current) {
+      clearTimeout(shellToastTimerRef.current);
+      shellToastTimerRef.current = null;
+    }
+    setShellToast(null);
+  }, [clearHighlight]);
+
+  const enterDraftMode = useCallback(() => {
+    exitContourMode();
+    setFilletMode(null);
+    filletModeRef.current = null;
+    clearFilletBlendPreview();
+    setShellMode(null);
+    shellModeRef.current = null;
+    setPickMode('face');
+    clearEdgeHover();
+    clearEdgeHighlight();
+    setSelectedEdges([]);
+    const picks = facePickGroupRef.current?.picks || [];
+    let seed = null;
+    if (picks.length === 1) seed = picks[0];
+    else if (selectedFace && Array.isArray(selectedFace.center) && Array.isArray(selectedFace.normal)) {
+      seed = {
+        center: selectedFace.center,
+        normal: selectedFace.normal,
+        indices: undefined,
+      };
+    }
+    const next = emptyDraftState(seed);
+    setDraftMode(next);
+    draftModeRef.current = next;
+    paintDraftPicks(next);
+  }, [exitContourMode, selectedFace, clearFilletBlendPreview, clearEdgeHover, clearEdgeHighlight, paintDraftPicks]);
+
+  const commitDraftState = useCallback((next) => {
+    draftModeRef.current = next;
+    setDraftMode(next);
+    paintDraftPicks(next);
+  }, [paintDraftPicks]);
+
+  const acceptDraft = useCallback(() => {
+    const state = draftModeRef.current;
+    if (!state) return;
+    const gate = validateDraftAccept(state);
+    if (!gate.ok) {
+      showShellToast(gate.message);
+      return;
+    }
+    const ok = onCommitDraft?.({ state });
+    if (ok) {
+      clearHighlight();
+      setSelectedFace(null);
+      onFaceSelected?.(null);
+      exitDraftMode();
+    }
+  }, [onCommitDraft, exitDraftMode, onFaceSelected, clearHighlight]);
 
   // Live sweep-fillet blend as edges accumulate. The payload is memoized so the
   // chip's pathOk flag and the painter share ONE build per input (Slice 27 nit:
@@ -3116,6 +3218,8 @@ const Viewport = forwardRef(({
         console.log("[Measurement] Keeping face selected for measurement");
       } else if (contourModeRef.current) {
         // Keep the contour workplane — empty taps must not drop the plane.
+      } else if (draftModeRef.current) {
+        // Preserve draft face selection — stray taps must not wipe the set.
       } else if (shellModeRef.current) {
         // Preserve shell face selection — stray taps must not wipe the set.
       } else {
@@ -3302,6 +3406,15 @@ const Viewport = forwardRef(({
         indices: faceIndices.slice(),
       };
       let picks;
+      if (draftModeRef.current) {
+        // Draft: first tap is the neutral face. Later taps toggle drafted faces.
+        // Tap the neutral face again to replace it, not to draft it. No modifier.
+        const next = applyDraftFaceTap(draftModeRef.current, entry);
+        draftModeRef.current = next;
+        setDraftMode(next);
+        paintDraftPicks(next);
+        return;
+      }
       if (shellModeRef.current) {
         // Shell: every tap adds. Tap an already-selected face to remove it.
         // No shift / ctrl. Same model as toggleEdgeSelection.
@@ -3316,7 +3429,7 @@ const Viewport = forwardRef(({
       }
     }
     
-  }, [measurementEnabled, measurementFaces, onFaceSelected, clearHighlight, clearEdgeHighlight, highlightFace, publishFacePicks]);
+  }, [measurementEnabled, measurementFaces, onFaceSelected, clearHighlight, clearEdgeHighlight, highlightFace, publishFacePicks, paintDraftPicks]);
 
   /**
    * Handle face selection in measurement mode
@@ -3372,7 +3485,7 @@ const Viewport = forwardRef(({
     const onPointerDown = (event) => {
       if (!featureSheetEnabledRef.current) return;
       if (event.button != null && event.button !== 0) return;
-      if (contourModeRef.current || filletModeRef.current || shellModeRef.current) return;
+      if (contourModeRef.current || filletModeRef.current || shellModeRef.current || draftModeRef.current) return;
       if (measurementEnabled) return;
       CLEAR_LP();
       featureLongPressFiredRef.current = false;
@@ -3382,7 +3495,7 @@ const Viewport = forwardRef(({
         const origin = featureLongPressOriginRef.current;
         featureLongPressOriginRef.current = null;
         if (!origin || !featureSheetEnabledRef.current) return;
-        if (contourModeRef.current || filletModeRef.current || shellModeRef.current) return;
+        if (contourModeRef.current || filletModeRef.current || shellModeRef.current || draftModeRef.current) return;
         featureLongPressFiredRef.current = true;
         onFeatureLongPressRef.current?.({ clientX: origin.x, clientY: origin.y });
       }, 450);
@@ -4604,7 +4717,7 @@ const Viewport = forwardRef(({
       )}
       
       {/* Left helper rail. Game keeps Advanced; CAD promotes those tools into Model. */}
-      {onInsertHelper && !contourMode && !filletMode && !shellMode && (
+      {onInsertHelper && !contourMode && !filletMode && !shellMode && !draftMode && (
         <HelperInsertPalette
           layout={mode === 'game' ? 'game' : 'cad'}
           onInsert={onInsertHelper}
@@ -4625,6 +4738,7 @@ const Viewport = forwardRef(({
           onEnterContourMode={enterContourMode}
           onEnterFilletMode={enterFilletMode}
           onEnterShellMode={enterShellMode}
+          onEnterDraftMode={enterDraftMode}
           compact={isMobile}
         />
       )}
@@ -4890,6 +5004,24 @@ const Viewport = forwardRef(({
           }}
           onConfirm={acceptShell}
           onDismiss={exitShellMode}
+        />
+      )}
+
+      {/* Draft face-pick chip — neutral plane + faces; Confirm writes draftFaces(). */}
+      {draftMode && (
+        <DraftModeChip
+          neutral={draftMode.neutral}
+          drafts={draftMode.drafts}
+          replaceNeutral={draftMode.replaceNeutral}
+          angle={draftMode.angle}
+          flip={draftMode.flip}
+          compact={isMobile}
+          onAngle={(angle) => commitDraftState(setDraftAngle(draftModeRef.current, angle))}
+          onFlip={(flip) => commitDraftState(setDraftFlip(draftModeRef.current, flip))}
+          onUndo={() => commitDraftState(popLastDraftFace(draftModeRef.current))}
+          onClear={() => commitDraftState(clearDraftFaces(draftModeRef.current))}
+          onConfirm={acceptDraft}
+          onDismiss={exitDraftMode}
         />
       )}
 
