@@ -22,6 +22,7 @@ import {
   FlipHorizontal2,
   Boxes,
   Layers3,
+  Scissors,
 } from 'lucide-react';
 import SquareRoundCorner from './icons/SquareRoundCorner';
 import Angle from './icons/Angle';
@@ -65,6 +66,7 @@ const FEATURE_ICONS = Object.freeze({
   cskHole: Cone,
   shell: PackageOpen,
   draft: Angle,
+  cut: Scissors,
   center: Focus,
   align: AlignVerticalJustifyCenter,
   mirror: FlipHorizontal2,

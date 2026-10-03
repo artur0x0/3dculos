@@ -22,6 +22,7 @@ import {
   Pyramid,
   NotebookPen,
   Route,
+  Scissors,
 } from 'lucide-react';
 import SquareRoundCorner from './icons/SquareRoundCorner';
 import Angle from './icons/Angle';
@@ -54,6 +55,7 @@ const ICONS = {
   cboreHole: Cylinder,
   cskHole: Cone,
   shell: PackageOpen,
+  cut: Scissors,
   addDraft: Angle,
   center: Focus,
   align: AlignVerticalJustifyCenter,
@@ -106,6 +108,7 @@ const HelperInsertPalette = ({
   onEnterFilletMode = null,
   onEnterShellMode = null,
   onEnterDraftMode = null,
+  onEnterCutMode = null,
   compact = false,
   /** 'game' keeps Advanced. 'cad' promotes that set into Model. */
   layout = 'game',
@@ -155,6 +158,12 @@ const HelperInsertPalette = ({
     // face normal — not a world-axis guess, and not addDraft().
     if (item.id === 'addDraft' && typeof onEnterDraftMode === 'function') {
       onEnterDraftMode({ entry: 'addDraft' });
+      return;
+    }
+    // Cut enters plane + body pick. A face plane stays that face; explicit
+    // XY / YZ / ZX is chosen in the chip. Not a world-axis guess.
+    if (item.id === 'cut' && typeof onEnterCutMode === 'function') {
+      onEnterCutMode({ entry: 'cut' });
       return;
     }
     // Workplane enters plane-only contour mode (Face / construction plane +

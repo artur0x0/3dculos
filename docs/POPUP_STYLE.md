@@ -22,6 +22,12 @@ over inventing a new modal layout.
   the last drafted face; Clear drops drafted faces and keeps the neutral.
   One angle, default 2°. Confirm writes one `draftFaces()`; grey X exits
   with no write. No shift-click.
+- **`CutModeChip.jsx`** — cyan glass card (same shell as Shell). The plane is a
+  planar face or an explicit XY / YZ / ZX plane (offset along its normal).
+  A face is written as `{ center, normal }`, not a world-axis name. Bodies
+  and the pieces to delete use the Shell sticky picker: tap to add, tap again
+  to remove, Undo drops the last pick, Clear drops that list. No shift-click.
+  Confirm writes one `cut()`; grey X exits with no write.
 
 ## Placement
 
