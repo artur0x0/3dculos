@@ -4741,7 +4741,9 @@ function filletAlongPath(part, path, radius, opts = {}) {
   // are still copied unchanged. Semi-arc split below still owns the corner;
   // within each half this stays one sweep at ≤ FRAME_DENSIFY_MAX_TURN_DEG.
   if (!opts._rawPath) {
-    const turned = densifySweepArcTurns(points, closed, FRAME_DENSIFY_MAX_TURN_DEG);
+    const turned = densifySweepArcTurns(points, closed, FRAME_DENSIFY_MAX_TURN_DEG, {
+      alignFilletLattice: profileKind !== 'chamfer',
+    });
     if (Array.isArray(turned) && turned.length >= 2 && turned.length !== points.length) {
       points = turned;
       length = pathPolylineLength(points, closed);
