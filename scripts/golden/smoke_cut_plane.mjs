@@ -227,6 +227,9 @@ console.log('cut plane');
   check('pieces preview colors each piece and leaves hidden ones pickable',
     /listCutPieces/.test(view) && /colorWrite: false/.test(view)
     && /CUT_PIECE_OPACITY/.test(view) && /if \(piece\.hidden\) continue/.test(view));
+  check('a cut tap is not swallowed by a contour or a construction plane',
+    /!cutModeRef\.current && showContoursRef/.test(view)
+    && /!cutModeRef\.current && planeHits/.test(view));
   check('chip does not ask for shift-click', !/shift-click/.test(chip) && !/shiftKey/.test(chip));
   check('POPUP_STYLE documents CutModeChip', /CutModeChip/.test(popup) && /sticky picker/.test(popup));
 }

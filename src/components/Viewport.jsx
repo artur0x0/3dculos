@@ -3524,7 +3524,9 @@ const Viewport = forwardRef(({
     const origin = [ray.origin.x, ray.origin.y, ray.origin.z];
     const dir = [ray.direction.x, ray.direction.y, ray.direction.z];
     const camDist = Math.hypot(ray.origin.x, ray.origin.y, ray.origin.z) || 80;
-    if (showContoursRef.current && contourModeRef.current?.tool !== 'polyline') {
+    // Cut owns the canvas: a saved contour under the cursor must not eat the
+    // piece tap (same as a construction plane sitting on the cut).
+    if (!cutModeRef.current && showContoursRef.current && contourModeRef.current?.tool !== 'polyline') {
       const hitC = pickContourByRay(
         origin,
         dir,
@@ -3546,7 +3548,9 @@ const Viewport = forwardRef(({
       : [];
     const planeD = planeHits[0]?.distance ?? Infinity;
     const solidD = solidHits[0]?.distance ?? Infinity;
-    if (planeHits.length && planeD <= solidD + 0.5) {
+    // Cut taps a body or a piece. A construction plane that sits on the cut
+    // (the XY plane through a centered part) must not swallow that click.
+    if (!cutModeRef.current && planeHits.length && planeD <= solidD + 0.5) {
       const ud = planeHits[0].object.userData?.plane
         ? planeHits[0].object.userData
         : planeHits[0].object.parent?.userData;
@@ -3563,7 +3567,7 @@ const Viewport = forwardRef(({
       }
     }
     const intersects = solidHits;
-    
+
     // Handle click on empty space (only if not dragging)
     if (intersects.length === 0) {
       if (clickTimerRef.current) {
