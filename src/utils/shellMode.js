@@ -6,8 +6,10 @@
  * confusing. Face pick maps to hollow(body, wall, { center, normal }) — the
  * same worker API as axis / 'none' / facesByNormal forms.
  *
- * Confirm Auto-Runs. Grey X / Cancel exits with no write. A later Shell on
- * another opening appends another marked block (commitMode 'append').
+ * Confirm Auto-Runs. Grey X / Cancel exits with no write. One Shell feature:
+ * any number of opening faces emit a single hollow(body, wall, [pick, …]).
+ * A later Shell replaces that block. It does not append another hollow()
+ * onto an already thin body. Closed stays 'none'.
  */
 
 import {
@@ -122,8 +124,9 @@ export function stripShellBlock(buffer) {
 }
 
 /**
- * Confirm → hollow() wrapped in SHELL markers.
- * commitMode 'replace' updates the last marked block; 'append' keeps it.
+ * Confirm → one hollow() wrapped in SHELL markers.
+ * Always replaces the last marked Shell block. `commitMode: 'append'` is
+ * accepted and ignored: a second hollow() would shell an already thin body.
  *
  * @param {string} buffer
  * @param {{ face?: object|null, params?: object, commitMode?: string }} [opts]
@@ -131,13 +134,14 @@ export function stripShellBlock(buffer) {
 export function composeShellCommit(buffer, {
   face = null,
   params = {},
-  commitMode = 'replace',
 } = {}) {
   const gate = validateShellAccept(face, params);
   if (!gate.ok) return gate;
 
   const text = String(buffer || '');
-  const base = commitMode === 'append' ? text : stripShellBlock(text);
+  // One feature. Never keep the previous hollow() and add another,
+  // even if the caller still passes commitMode: 'append'.
+  const base = stripShellBlock(text);
   const emitParams = {
     body: gate.normalized.body,
     wall: gate.normalized.wall,
@@ -177,6 +181,19 @@ export function composeShellCommit(buffer, {
     return {
       ok: false,
       message: 'composeShellCommit: face opening must emit a { center, normal } literal.',
+    };
+  }
+  const multi = Array.isArray(gate.face?.group) && gate.face.group.length > 1;
+  if (multi && !/hollow\s*\(\s*[^,]+,\s*[^,]+,\s*\[/.test(owned)) {
+    return {
+      ok: false,
+      message: 'composeShellCommit: several opening faces must emit one hollow() with an array.',
+    };
+  }
+  if ((owned.match(/hollow\s*\(/g) || []).length !== 1) {
+    return {
+      ok: false,
+      message: 'composeShellCommit: Shell must emit exactly one hollow().',
     };
   }
   return { ok: true, buffer: composed, run: true };

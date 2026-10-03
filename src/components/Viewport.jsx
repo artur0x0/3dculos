@@ -120,7 +120,6 @@ import {
 import {
   enterShellState,
   validateShellAccept,
-  hasShellBlock,
   normalizeShellParams,
 } from '../utils/shellMode';
 import { classifySelectedFace } from '../utils/faceFeaturePlacement';
@@ -2013,11 +2012,13 @@ const Viewport = forwardRef(({
       showShellToast(gate.message);
       return;
     }
-    const buf = (typeof getHelperBuffer === 'function' ? getHelperBuffer() : '') || '';
     const ok = onCommitShell?.({
       face: gate.face,
       params: gate.normalized,
-      commitMode: hasShellBlock(buf) ? 'append' : 'replace',
+      // One Shell feature. Replacing the marked block keeps a single hollow()
+      // even when the script already has one — appending would shell the
+      // already thin body. Extra openings are shift-click picks on this face.
+      commitMode: 'replace',
     });
     if (ok) {
       clearHighlight();
@@ -2025,7 +2026,7 @@ const Viewport = forwardRef(({
       onFaceSelected?.(null);
       exitShellMode();
     }
-  }, [onCommitShell, selectedFace, getHelperBuffer, exitShellMode, onFaceSelected, clearHighlight]);
+  }, [onCommitShell, selectedFace, exitShellMode, onFaceSelected, clearHighlight]);
 
   // Keep lastFace in sync while the user picks opening faces in Shell mode.
   useEffect(() => {

@@ -3,7 +3,8 @@
  * Shell face-pick UI — Contour/Loft-style chip; opening = face (not axis).
  *
  * - shellMode enter / validate / compose → hollow() + SHELL markers
- * - Face pick emits { center, normal }; Closed emits 'none'
+ * - Face pick emits { center, normal }; several picks emit one hollow([...]); Closed emits 'none'
+ * - A later Shell replaces the block (no second hollow())
  * - HelperInsertPalette routes Shell into onEnterShellMode (not axis modal)
  * - ShellModeChip + Viewport / App wiring
  * - docs/POPUP_STYLE + UI_MAP mention ShellModeChip
@@ -99,8 +100,35 @@ console.log('shell face-pick UI');
     params: { wall: 1.5, openingMode: 'face' },
     commitMode: 'append',
   });
-  check('append keeps prior shell block', hasShellBlock(appended.buffer)
-    && (appended.buffer.match(/hollow\s*\(/g) || []).length === 2);
+  check('later Shell replaces, does not append a second hollow',
+    appended.ok && hasShellBlock(appended.buffer)
+    && (appended.buffer.match(/hollow\s*\(/g) || []).length === 1
+    && /hollow\(\s*\w+,\s*1\.5,/.test(appended.buffer),
+    appended.buffer);
+
+  const multi = classifySelectedFace({
+    center: [0, 15, 0],
+    normal: [0, 1, 0],
+    area: 800,
+    triangleCount: 2,
+    selectionMode: 'coplanar',
+    group: [
+      { center: [0, 0, 10], normal: [0, 0, 1] },
+      { center: [0, 15, 0], normal: [0, 1, 0] },
+    ],
+  });
+  const multiCommit = composeShellCommit('', {
+    face: multi,
+    params: { wall: 2.5, openingMode: 'face' },
+  });
+  check('several picks are one Shell feature', multiCommit.ok
+    && (multiCommit.buffer.match(/hollow\s*\(/g) || []).length === 1
+    && (multiCommit.buffer.match(/shell begin/g) || []).length === 1);
+  check(
+    'several picks emit one hollow() array',
+    /hollow\(\s*\w+,\s*2\.5,\s*\[\s*\{ center: \[0, 0, 10\], normal: \[0, 0, 1\] \},\s*\{ center: \[0, 15, 0\], normal: \[0, 1, 0\] \}\s*\]\s*\)/.test(multiCommit.buffer),
+    multiCommit.buffer || multiCommit.message,
+  );
 
   const replaced = composeShellCommit(faceCommit.buffer, {
     params: { wall: 4, openingMode: 'none' },
@@ -135,6 +163,9 @@ console.log('shell face-pick UI');
   check('Viewport imports ShellModeChip', /import ShellModeChip/.test(view));
   check('Viewport enterShellMode', /enterShellMode/.test(view) && /onEnterShellMode=\{enterShellMode\}/.test(view));
   check('Viewport onCommitShell', /onCommitShell/.test(view) && /acceptShell/.test(view));
+  check('Viewport shell confirm does not append another hollow',
+    !/hasShellBlock\(buf\) \? 'append'/.test(view)
+    && /commitMode: 'replace'/.test(view));
   check('palette hidden in shell mode', /!shellMode/.test(view));
 
   const app = read('../../src/App.jsx');
