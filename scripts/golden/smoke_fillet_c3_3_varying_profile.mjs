@@ -183,11 +183,11 @@ console.log('fillet C3.3 — WASM distribution net (the check C3.2 could not fai
 const before = placeInFrame(fr, makeLoft([xs2, xs3]));
 ${SEL}
 const after = filletAlongPath(before, makeSweepPath(selEdges), 1.98, { variableProfile: true });
-const cut = Manifold.difference(before, after);
+const cutPiece = Manifold.difference(before, after);
 const z0 = 126.230766, z1 = 145, h = (z1 - z0) / 4;
 const q = [];
 for (let k = 0; k < 4; k++) {
-  q.push(Manifold.intersection(cut, Manifold.cube([200,200,h], true).translate([0,0,z0 + h*(k+0.5)])).volume());
+  q.push(Manifold.intersection(cutPiece, Manifold.cube([200,200,h], true).translate([0,0,z0 + h*(k+0.5)])).volume());
 }
 globalThis.__q = q;
 globalThis.__removed = before.volume() - after.volume();

@@ -29,6 +29,8 @@ import {
   LineLoop,
   Line,
   LineBasicMaterial,
+  ShaderMaterial,
+  DoubleSide,
   SphereGeometry,
   Group,
   Sprite,
@@ -149,7 +151,10 @@ import {
   classifyCutBody,
   trianglePieceSide,
   cutBodyKey,
+  listCutPieces,
+  CUT_PIECE_OPACITY,
 } from '../utils/cutMode';
+import { contactSeamSegments } from '../utils/contactSeam';
 import { classifySelectedFace } from '../utils/faceFeaturePlacement';
 import { classifyFilletEdges, countDegenerateTriangles } from '../utils/filletEdgeClass';
 import {
@@ -254,6 +259,89 @@ function disposeEdgeOverlayObject(scene, obj) {
     });
   }
   disposeOne(obj);
+}
+
+/**
+ * Sit the shared cut just proud of the side face so the depth test keeps it,
+ * without opening a gap. 0.03 on a 40-unit part is a fraction of a pixel at
+ * the fitted camera — not a second, thicker edge.
+ */
+const CONTACT_SEAM_LIFT = 0.03;
+
+function removeContactSeam(mesh) {
+  const prev = mesh?.getObjectByName?.('contactSeam');
+  if (!prev) return;
+  mesh.remove(prev);
+  prev.geometry?.dispose?.();
+  prev.material?.dispose?.();
+}
+
+/**
+ * Draw the flush cut with the same coloring as every other body edge:
+ * MeshNormalMaterial's view-space normal (pack normal * 0.5 + 0.5). A 1px
+ * line, not the fat selection overlay. Only contactSeamSegments qualify, so
+ * an uncut body and a one-sided cut grow nothing.
+ */
+function attachContactSeam(mesh, meshData) {
+  removeContactSeam(mesh);
+  if (!mesh || !meshData?.vertProperties || !meshData?.triVerts) return;
+  const segs = contactSeamSegments(
+    meshData.vertProperties,
+    meshData.triVerts,
+    meshData.numProp || 3,
+  );
+  if (!segs.length) return;
+  const pos = new Float32Array(segs.length * 6);
+  const cap = new Float32Array(segs.length * 6);
+  for (let i = 0; i < segs.length; i++) {
+    const s = segs[i];
+    const ox = s.sideNormal[0] * CONTACT_SEAM_LIFT;
+    const oy = s.sideNormal[1] * CONTACT_SEAM_LIFT;
+    const oz = s.sideNormal[2] * CONTACT_SEAM_LIFT;
+    const o = i * 6;
+    pos[o] = s.a[0] + ox;
+    pos[o + 1] = s.a[1] + oy;
+    pos[o + 2] = s.a[2] + oz;
+    pos[o + 3] = s.b[0] + ox;
+    pos[o + 4] = s.b[1] + oy;
+    pos[o + 5] = s.b[2] + oz;
+    cap[o] = s.capNormal[0];
+    cap[o + 1] = s.capNormal[1];
+    cap[o + 2] = s.capNormal[2];
+    cap[o + 3] = s.capNormal[0];
+    cap[o + 4] = s.capNormal[1];
+    cap[o + 5] = s.capNormal[2];
+  }
+  const geom = new BufferGeometry();
+  geom.setAttribute('position', new BufferAttribute(pos, 3));
+  geom.setAttribute('capNormal', new BufferAttribute(cap, 3));
+  const material = new ShaderMaterial({
+    vertexShader: `
+      attribute vec3 capNormal;
+      varying vec3 vColor;
+      void main() {
+        vec3 n = normalize(normalMatrix * capNormal);
+        vColor = n * 0.5 + 0.5;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: `
+      varying vec3 vColor;
+      void main() {
+        gl_FragColor = vec4(vColor, 1.0);
+      }
+    `,
+    depthTest: true,
+    depthWrite: false,
+    polygonOffset: true,
+    polygonOffsetFactor: -2,
+    polygonOffsetUnits: -2,
+  });
+  const line = new LineSegments(geom, material);
+  line.name = 'contactSeam';
+  line.raycast = () => {};
+  line.renderOrder = 3;
+  mesh.add(line);
 }
 
 /** Shared top title. Puzzle name in game; filename on mobile CAD. */
@@ -514,6 +602,9 @@ const Viewport = forwardRef(({
   const [cutMode, setCutMode] = useState(null);
   const cutModeRef = useRef(null);
   const cutPlaneWidgetRef = useRef(null);
+  const cutPiecesPreviewRef = useRef(null);
+  const cutBaseMaterialRef = useRef(null);
+  const cutBaseHiddenMatRef = useRef(null);
   const [shellToast, setShellToast] = useState(null);
   const shellToastTimerRef = useRef(null);
   /** Slice C: restore Face/Edge after Fillet Accept / exit (do not snap to default). */
@@ -676,6 +767,7 @@ const Viewport = forwardRef(({
       setExecutionError(null);
       setModelBounds(null);
       if (resultRef.current) {
+        removeContactSeam(resultRef.current);
         resultRef.current.geometry?.dispose();
         resultRef.current.geometry = new BufferGeometry();
       }
@@ -2935,13 +3027,98 @@ const Viewport = forwardRef(({
     cutPlaneWidgetRef.current = widget;
   }, [clearCutPlaneWidget]);
 
+  const clearCutPiecePreview = useCallback(() => {
+    const group = cutPiecesPreviewRef.current;
+    if (group) {
+      sceneRef.current?.remove(group);
+      group.traverse((obj) => {
+        if (obj === group) return;
+        obj.geometry?.dispose?.();
+        obj.material?.dispose?.();
+      });
+      cutPiecesPreviewRef.current = null;
+    }
+    const mesh = resultRef.current;
+    if (mesh && cutBaseMaterialRef.current) {
+      mesh.material = cutBaseMaterialRef.current;
+      cutBaseMaterialRef.current = null;
+    }
+  }, []);
+
+  const paintCutPiecePreview = useCallback((state, positions, index) => {
+    const mesh = resultRef.current;
+    const scene = sceneRef.current;
+    if (!mesh || !scene) return;
+    if (!cutBaseHiddenMatRef.current) {
+      cutBaseHiddenMatRef.current = new MeshBasicMaterial({
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+        colorWrite: false,
+      });
+    }
+    if (!cutBaseMaterialRef.current) cutBaseMaterialRef.current = mesh.material;
+    mesh.material = cutBaseHiddenMatRef.current;
+
+    const group = new Group();
+    group.name = 'cutPiecesPreview';
+    const trisOf = (tris, makeMat) => {
+      if (!tris?.length) return;
+      const pos = [];
+      for (const t of tris) {
+        for (let k = 0; k < 3; k++) {
+          const v = index[t * 3 + k];
+          pos.push(positions.getX(v), positions.getY(v), positions.getZ(v));
+        }
+      }
+      if (!pos.length) return;
+      const geom = new BufferGeometry();
+      geom.setAttribute('position', new BufferAttribute(new Float32Array(pos), 3));
+      geom.computeVertexNormals();
+      const pieceMesh = new ThreeMesh(geom, makeMat());
+      pieceMesh.raycast = () => {};
+      group.add(pieceMesh);
+    };
+
+    const selected = new Set((state.bodies || []).map((b) => cutBodyKey(b)));
+    const rest = meshBodyComponents(positions, index).filter((b) => !selected.has(cutBodyKey(b)));
+    if (rest.length) {
+      trisOf(
+        rest.flatMap((b) => b.triangles || []),
+        () => new MeshNormalMaterial({ flatShading: true }),
+      );
+    }
+
+    const pieces = listCutPieces(state, positions, index);
+    for (const piece of pieces) {
+      if (piece.hidden) continue;
+      trisOf(piece.triangles, () => new MeshBasicMaterial({
+        color: piece.color,
+        transparent: true,
+        opacity: CUT_PIECE_OPACITY,
+        depthWrite: true,
+        side: DoubleSide,
+        polygonOffset: true,
+        polygonOffsetFactor: -1,
+        polygonOffsetUnits: -1,
+      }));
+    }
+    scene.add(group);
+    cutPiecesPreviewRef.current = group;
+  }, []);
+
   const paintCutPicks = useCallback((state) => {
+    clearCutPiecePreview();
     const geom = resultRef.current?.geometry;
     const positions = geom?.attributes?.position;
     const index = geom?.index?.array;
     clearHighlight();
     if (!state || !geom || !positions || !index) return;
     const plane = cutPlaneFromState(state);
+    if (state.pick === 'pieces' && plane && (state.bodies || []).length) {
+      paintCutPiecePreview(state, positions, index);
+      return;
+    }
     const keepTris = [];
     const dropTris = [];
     for (const body of state.bodies || []) {
@@ -2954,20 +3131,21 @@ const Viewport = forwardRef(({
     }
     if (keepTris.length) highlightFace(keepTris, geom, positions, index, 0x22d3ee, 'cut-bodies');
     if (dropTris.length) highlightFace(dropTris, geom, positions, index, 0xf97316, 'cut-drop');
-  }, [clearHighlight, highlightFace]);
+  }, [clearHighlight, highlightFace, clearCutPiecePreview, paintCutPiecePreview]);
 
   const exitCutMode = useCallback(() => {
     const was = cutModeRef.current;
     setCutMode(null);
     cutModeRef.current = null;
     clearCutPlaneWidget();
+    clearCutPiecePreview();
     if (was) clearHighlight();
     if (shellToastTimerRef.current) {
       clearTimeout(shellToastTimerRef.current);
       shellToastTimerRef.current = null;
     }
     setShellToast(null);
-  }, [clearHighlight, clearCutPlaneWidget]);
+  }, [clearHighlight, clearCutPlaneWidget, clearCutPiecePreview]);
 
   const commitCutState = useCallback((next) => {
     cutModeRef.current = next;
@@ -4373,6 +4551,7 @@ const Viewport = forwardRef(({
 
     resultRef.current.geometry?.dispose();
     resultRef.current.geometry = geometry;
+    attachContactSeam(resultRef.current, meshData);
     setMeshEpoch((n) => n + 1);
 
     // Dev-only: the single choke point where geometry reaches the scene. Report the exact
@@ -4606,6 +4785,7 @@ const Viewport = forwardRef(({
       clearPathPreview();
       clearFilletBlendPreview();
       if (resultRef.current) {
+        removeContactSeam(resultRef.current);
         resultRef.current.geometry?.dispose();
         resultRef.current.geometry = new BufferGeometry();
       }
@@ -4796,6 +4976,7 @@ const Viewport = forwardRef(({
           // highlightSelectedEdges is invoked via selectedEdges effect
         }
       } else if (resultRef.current) {
+        removeContactSeam(resultRef.current);
         resultRef.current.geometry?.dispose();
         resultRef.current.geometry = new BufferGeometry();
         // No prior mesh — selection would be meaningless on empty geom.

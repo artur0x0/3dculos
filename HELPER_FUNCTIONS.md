@@ -255,13 +255,17 @@ part = cut(part, { normal: [0, 0, 1], originOffset: 0 });
 // Same cut, keep only the +Z half
 part = cut(part, { normal: [0, 0, 1], originOffset: 0 }, { keep: '+' });
 
-// The plane is the face you picked — not a guessed world axis
+// The plane is the face you picked — not a guessed world axis.
+// Offset 0 keeps this shape. A nonzero offset is along the face normal.
 part = cut(part, { center: [0, 0, 10], normal: [0, 0, 1] });
+part = cut(part, { center: [0, 0, 10], normal: [0, 0, 1], offset: -10 });
 ```
 
 **Parameters:**
 - `manifold` - The solid, or several solids grouped by `Manifold.compose`
 - `plane` - a face `{ center, normal }`, or an explicit `{ normal, originOffset }`.
+  `offset` on a face is added along the normal (positive in the normal
+  direction). Offset 0 is omitted and the call stays `{ center, normal }`.
   A world-axis name such as `'z'` is rejected.
 - `opts.keep` - `'both'` (default), `'+'`, or `'-'`
 - `opts.bodies` - which bodies to cut, each `{ at }` near that body's centroid.

@@ -10,6 +10,9 @@ const ACCENT = 'cyan';
  * Plane is a planar face or an explicit XY / YZ / ZX plane.
  * Bodies and pieces use the Shell sticky picker: tap to add, tap again to
  * remove, Undo drops the last pick, Clear drops that list.
+ * Offset is along the plane normal for a face and for XY / YZ / ZX.
+ * Pieces: each resulting piece gets its own color; tap hides it, tap again
+ * brings it back. Undo drops the last hide. Clear unhides every piece.
  * Confirm writes one cut(); grey X exits with no write.
  */
 const CutModeChip = ({
@@ -32,7 +35,6 @@ const CutModeChip = ({
   const plane = cutPlaneFromState(state);
   const bodyCount = Array.isArray(state?.bodies) ? state.bodies.length : 0;
   const dropCount = Array.isArray(state?.drop) ? state.drop.length : 0;
-  const explicit = source !== 'face';
   const offset = state?.originOffset ?? 0;
   const offsetNum = Number(offset);
   const offsetMax = Math.max(80, Number.isFinite(offsetNum) ? Math.abs(offsetNum) : 0);
@@ -44,8 +46,8 @@ const CutModeChip = ({
     status = 'Plane from the face — tap another face to replace it';
   } else if (pick === 'pieces') {
     status = dropCount
-      ? `${dropCount} piece${dropCount === 1 ? '' : 's'} to delete · tap again to keep`
-      : 'Tap a piece to delete it · tap again to keep it';
+      ? `${dropCount} hidden · tap that piece again to bring it back`
+      : 'Each piece has its own color · tap a piece to hide it';
   } else if (bodyCount > 1) {
     status = `${bodyCount} bodies · tap to add, tap a selected body to remove`;
   } else if (bodyCount === 1) {
@@ -145,7 +147,7 @@ const CutModeChip = ({
           {sourceBtn('zx', 'ZX', 'Explicit ZX plane, normal +Y')}
         </div>
 
-        {explicit && (
+        <div title="Offset along the plane normal. Positive moves with the normal. Zero keeps a face call as { center, normal }.">
           <NumberField
             id="cut-offset"
             label="Offset"
@@ -156,19 +158,19 @@ const CutModeChip = ({
             max={offsetMax}
             step={1}
           />
-        )}
+        </div>
 
         <div className="flex gap-1 flex-wrap" role="group" aria-label="Cut picks">
           {source === 'face' && pickBtn('plane', 'Plane', 'Tap a face to set the plane')}
           {pickBtn('bodies', 'Bodies', 'Tap bodies to cut. Tap again to remove.')}
-          {pickBtn('pieces', 'Pieces', 'Tap resulting pieces to delete. Tap again to keep.')}
+          {pickBtn('pieces', 'Pieces', 'Tap a piece to hide it. Tap again to bring it back.')}
           {showUndo && (
             <>
               <button
                 type="button"
                 className="px-2.5 py-1 rounded text-[13px] text-cyan-200 underline"
                 onClick={() => onUndo?.()}
-                title="Drop the last pick"
+                title={pick === 'pieces' ? 'Bring back the last hidden piece' : 'Drop the last pick'}
                 data-cut-undo=""
               >
                 Undo
@@ -177,7 +179,7 @@ const CutModeChip = ({
                 type="button"
                 className="px-2.5 py-1 rounded text-[13px] text-cyan-200 underline"
                 onClick={() => onClear?.()}
-                title="Drop the picks in this list"
+                title={pick === 'pieces' ? 'Show every piece. The plane stays.' : 'Drop the picks in this list'}
                 data-cut-clear=""
               >
                 Clear
