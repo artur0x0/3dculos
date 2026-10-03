@@ -322,7 +322,12 @@ function attachContactSeam(mesh, meshData) {
       void main() {
         vec3 n = normalize(normalMatrix * capNormal);
         vColor = n * 0.5 + 0.5;
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        // View-space bias toward the camera. A flush seam otherwise loses the
+        // depth test against the face it lies on (far plane is 2000). This is
+        // not a wider stroke — gl.LINES stays 1px.
+        vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+        mvPosition.z += 1.0;
+        gl_Position = projectionMatrix * mvPosition;
       }
     `,
     fragmentShader: `
@@ -340,6 +345,7 @@ function attachContactSeam(mesh, meshData) {
   const line = new LineSegments(geom, material);
   line.name = 'contactSeam';
   line.raycast = () => {};
+  line.frustumCulled = false;
   line.renderOrder = 3;
   mesh.add(line);
 }
