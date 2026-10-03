@@ -6,14 +6,17 @@ const ACCENT = 'cyan';
 
 /**
  * Shell face-pick chip — ContourModeChip / FilletModeChip placement + chrome.
- * Tap a face to define the opening; Wall thickness stays editable; Closed is
- * the no-opening hollow. Confirm writes SHELL markers; grey X exits cleanly.
+ * Tap a face to add it (no modifier). Tap a selected face again to drop it,
+ * same as the edge picker. Undo drops only the last face; Clear drops all.
+ * Closed is the no-opening hollow. Confirm writes one hollow(); grey X exits
+ * with no write.
  */
 const ShellModeChip = ({
   face = null,
   params = {},
   compact = false,
   onParamChange,
+  onUndoFace,
   onClearFace,
   onConfirm,
   onDismiss,
@@ -45,12 +48,12 @@ const ShellModeChip = ({
   if (closed) {
     status = 'Closed hollow — no opening face';
   } else if (faceCount > 1) {
-    status = `${faceCount} faces · openings at each pick (shift-click to add)`;
+    status = `${faceCount} faces · tap to add, tap a selected face to remove`;
   } else if (face) {
     const kind = face.type || 'planar';
-    status = `Opening · ${kind} face — Confirm writes hollow()`;
+    status = `Opening · ${kind} face — tap another to add`;
   } else {
-    status = 'Tap a face to open the shell (shift-click for more)';
+    status = 'Tap faces to add openings';
   }
 
   const canConfirm = closed || !!face;
@@ -118,15 +121,27 @@ const ShellModeChip = ({
           >
             Closed
           </button>
-          {faceCount > 0 && !closed && (
-            <button
-              type="button"
-              className="px-2.5 py-1 rounded text-[13px] text-cyan-200 underline"
-              onClick={() => onClearFace?.()}
-              title="Clear picked opening faces"
-            >
-              Clear
-            </button>
+          {faceCount > 0 && (
+            <>
+              <button
+                type="button"
+                className="px-2.5 py-1 rounded text-[13px] text-cyan-200 underline"
+                onClick={() => onUndoFace?.()}
+                title="Drop the last selected face"
+                data-shell-undo=""
+              >
+                Undo
+              </button>
+              <button
+                type="button"
+                className="px-2.5 py-1 rounded text-[13px] text-cyan-200 underline"
+                onClick={() => onClearFace?.()}
+                title="Drop every selected face"
+                data-shell-clear=""
+              >
+                Clear
+              </button>
+            </>
           )}
         </div>
 

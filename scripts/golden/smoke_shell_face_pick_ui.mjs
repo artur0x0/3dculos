@@ -3,7 +3,8 @@
  * Shell face-pick UI — Contour/Loft-style chip; opening = face (not axis).
  *
  * - shellMode enter / validate / compose → hollow() + SHELL markers
- * - Face pick emits { center, normal }; several picks emit one hollow([...]); Closed emits 'none'
+ * - Face pick emits { center, normal }; several taps emit one hollow([...]); Closed emits 'none'
+ * - Tap-to-add (no shift). Undo drops only the last face. Clear drops all.
  * - A later Shell replaces the block (no second hollow())
  * - HelperInsertPalette routes Shell into onEnterShellMode (not axis modal)
  * - ShellModeChip + Viewport / App wiring
@@ -27,6 +28,9 @@ import {
   hasShellBlock,
   isShellEntry,
   stripShellBlock,
+  toggleShellFaceSelection,
+  popLastShellFace,
+  shellFaceKey,
 } from '../../src/utils/shellMode.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -140,6 +144,31 @@ console.log('shell face-pick UI');
 }
 
 {
+  const A = { center: [0, 0, 10], normal: [0, 0, 1], indices: [1] };
+  const B = { center: [0, 15, 0], normal: [0, 1, 0], indices: [4, 5] };
+  const C = { center: [20, 0, 0], normal: [1, 0, 0], indices: [8] };
+  let picks = toggleShellFaceSelection([], A);
+  picks = toggleShellFaceSelection(picks, B);
+  picks = toggleShellFaceSelection(picks, C);
+  check('tap adds without a modifier', picks.length === 3
+    && shellFaceKey(picks[0]) === shellFaceKey(A)
+    && shellFaceKey(picks[2]) === shellFaceKey(C));
+  const toggled = toggleShellFaceSelection(picks, B);
+  check('tap on a selected face removes only that face',
+    toggled.length === 2
+    && shellFaceKey(toggled[0]) === shellFaceKey(A)
+    && shellFaceKey(toggled[1]) === shellFaceKey(C));
+  const undone = popLastShellFace(picks);
+  check('Undo drops only the last face',
+    undone.length === 2
+    && shellFaceKey(undone[0]) === shellFaceKey(A)
+    && shellFaceKey(undone[1]) === shellFaceKey(B));
+  check('second Undo leaves the first face',
+    popLastShellFace(undone).length === 1
+    && shellFaceKey(popLastShellFace(undone)[0]) === shellFaceKey(A));
+}
+
+{
   // Axis form still composes (worker API / goldens) — UI just does not offer it.
   const axis = composeHelperInsert('', 'shell', null, { wall: 2, openScope: 'z' });
   check("axis compose still works for API", /hollow\(\s*\w+,\s*2,\s*'z'\s*\)/.test(axis));
@@ -157,6 +186,9 @@ console.log('shell face-pick UI');
   check('chip uses Contour-style cyan glass', /bg-cyan-950\/80/.test(chip) && /surface-glass-chip/.test(chip));
   check('chip has Face / Closed segmented', /Opening/.test(chip) && /Closed/.test(chip));
   check('chip Confirm + grey X', /Confirm/.test(chip) && /<X /.test(chip));
+  check('chip Undo drops the last face', /data-shell-undo/.test(chip) && />\s*Undo\s*</.test(chip));
+  check('chip Clear drops every face', /data-shell-clear/.test(chip) && />\s*Clear\s*</.test(chip));
+  check('shell chip does not ask for shift-click', !/shift-click/.test(chip) && !/shiftKey/.test(chip));
   check('chip mobile max-h', /max-h-\[calc\(100dvh-12rem\)\]/.test(chip));
 
   const view = read('../../src/components/Viewport.jsx');
@@ -166,6 +198,12 @@ console.log('shell face-pick UI');
   check('Viewport shell confirm does not append another hollow',
     !/hasShellBlock\(buf\) \? 'append'/.test(view)
     && /commitMode: 'replace'/.test(view));
+  check('shell taps use toggleShellFaceSelection, not shift',
+    /toggleShellFaceSelection\(facePickGroupRef\.current\?\.picks/.test(view)
+    && /popLastShellFace\(facePickGroupRef\.current\?\.picks\)/.test(view)
+    && /Preserve shell face selection/.test(view));
+  check('Clear publishes an empty face list',
+    /onClearFace=\{\(\) => \{\s*publishFacePicks\(\[\]/.test(view));
   check('palette hidden in shell mode', /!shellMode/.test(view));
 
   const app = read('../../src/App.jsx');

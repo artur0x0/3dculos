@@ -7,9 +7,11 @@
  * same worker API as axis / 'none' / facesByNormal forms.
  *
  * Confirm Auto-Runs. Grey X / Cancel exits with no write. One Shell feature:
- * any number of opening faces emit a single hollow(body, wall, [pick, …]).
- * A later Shell replaces that block. It does not append another hollow()
- * onto an already thin body. Closed stays 'none'.
+ * tap faces to add openings (no shift / ctrl). Tap a selected face again to
+ * drop it, same as the edge picker. Undo drops only the last face; Clear
+ * drops every face. Emit one hollow(body, wall, [pick, …]). A later Shell
+ * replaces that block — it does not append another hollow(). Closed stays
+ * 'none'.
  */
 
 import {
@@ -26,6 +28,47 @@ export const SHELL_MODE_EMPTY =
 
 export const SHELL_MODE_NO_COMMIT =
   'Dismiss exits Shell mode with no commit.';
+
+/** Stable id for a shell opening face. Rounded so the same coplanar tap matches. */
+export function shellFaceKey(face) {
+  if (!face || !Array.isArray(face.center) || !Array.isArray(face.normal)) return '';
+  const r = (n) => {
+    const v = Number(n);
+    return Number.isFinite(v) ? Math.round(v * 1000) / 1000 : 0;
+  };
+  return `${face.center.map(r).join(',')}|${face.normal.map(r).join(',')}`;
+}
+
+/**
+ * Edge-picker model for shell openings: tap adds, tap again removes that face.
+ * Order is oldest first. No modifier.
+ * @param {object[]|null|undefined} selected
+ * @param {object} face — { center, normal, indices? }
+ * @returns {object[]}
+ */
+export function toggleShellFaceSelection(selected, face) {
+  const list = Array.isArray(selected) ? selected.slice() : [];
+  const key = shellFaceKey(face);
+  if (!key) return list;
+  const idx = list.findIndex((f) => shellFaceKey(f) === key);
+  if (idx >= 0) {
+    list.splice(idx, 1);
+    return list;
+  }
+  list.push({
+    center: face.center.map(Number),
+    normal: face.normal.map(Number),
+    indices: Array.isArray(face.indices) ? face.indices.slice() : undefined,
+  });
+  return list;
+}
+
+/** Undo: drop only the last selected opening face. */
+export function popLastShellFace(selected) {
+  const list = Array.isArray(selected) ? selected.slice() : [];
+  if (list.length) list.pop();
+  return list;
+}
 
 export function isShellEntry(id) {
   return id === SHELL_ENTRY_ID;

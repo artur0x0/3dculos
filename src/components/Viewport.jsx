@@ -121,6 +121,8 @@ import {
   enterShellState,
   validateShellAccept,
   normalizeShellParams,
+  toggleShellFaceSelection,
+  popLastShellFace,
 } from '../utils/shellMode';
 import { classifySelectedFace } from '../utils/faceFeaturePlacement';
 import { classifyFilletEdges, countDegenerateTriangles } from '../utils/filletEdgeClass';
@@ -376,10 +378,11 @@ const Viewport = forwardRef(({
   const clickTimerRef = useRef(null);
   const lastClickTimeRef = useRef(0);
   const pendingClickDataRef = useRef(null);
-  // Multi-face pick (shift-click): every face picked since the last deselect,
-  // oldest first, plus the union of their triangles for the highlight. Shell
-  // and Draft read the list off selectedFace.group; every other feature keeps
-  // using the LAST pick, so single-face flows are untouched.
+  // Multi-face pick. Each entry is { center, normal, indices }.
+  // Shell (in mode) accumulates every tap — no shift — and toggles a face
+  // that is already selected, same as the edge picker. Draft still shift-adds.
+  // Shell and Draft read the list off selectedFace.group; every other feature
+  // keeps using the LAST pick.
   const facePickGroupRef = useRef(null);
   const mouseDownPosRef = useRef({ x: 0, y: 0 });
   const isDraggingRef = useRef(false);
@@ -2017,7 +2020,7 @@ const Viewport = forwardRef(({
       params: gate.normalized,
       // One Shell feature. Replacing the marked block keeps a single hollow()
       // even when the script already has one — appending would shell the
-      // already thin body. Extra openings are shift-click picks on this face.
+      // already thin body. Extra openings are further taps on this picker.
       commitMode: 'replace',
     });
     if (ok) {
@@ -3113,6 +3116,8 @@ const Viewport = forwardRef(({
         console.log("[Measurement] Keeping face selected for measurement");
       } else if (contourModeRef.current) {
         // Keep the contour workplane — empty taps must not drop the plane.
+      } else if (shellModeRef.current) {
+        // Preserve shell face selection — stray taps must not wipe the set.
       } else {
         clearHighlight();
         setSelectedFace(null);
@@ -3163,6 +3168,57 @@ const Viewport = forwardRef(({
   }, [onFaceSelected, measurementEnabled, clearHighlight, clearEdgeHover, pickEdgeAtClient,
     endPolylinePointDrag, pickPolylinePointAtClient]);
 
+
+  /**
+   * Commit a shell/draft face list: highlight every selected face and expose
+   * the group on selectedFace. clearHighlight() drops the ref, so restore it
+   * after. An empty list clears the highlight — used by Undo-to-zero and Clear.
+   */
+  const publishFacePicks = useCallback((picks, geometry, positions, index, faceData = null) => {
+    const list = Array.isArray(picks) ? picks : [];
+    const lite = list.map((f) => ({ center: f.center, normal: f.normal }));
+    const shown = [...new Set(list.flatMap((f) => f.indices || []))];
+    clearHighlight();
+    facePickGroupRef.current = list.length ? { picks: list } : null;
+    if (!list.length) {
+      setSelectedFace(null);
+      onFaceSelected?.(null);
+      setShellMode((prev) => {
+        if (!prev) return prev;
+        const updated = { ...prev, lastFace: null };
+        shellModeRef.current = updated;
+        return updated;
+      });
+      return;
+    }
+    const last = list[list.length - 1];
+    const sameTap = faceData
+      && Array.isArray(faceData.center)
+      && faceData.center.length === 3
+      && faceData.center.every((v, i) => Math.abs(v - last.center[i]) < 1e-6);
+    const base = sameTap
+      ? faceData
+      : {
+        center: last.center,
+        normal: last.normal,
+        area: 0,
+        triangleCount: (last.indices || []).length,
+        selectionMode: 'coplanar',
+      };
+    const payload = list.length > 1 ? { ...base, group: lite } : { ...base };
+    const classified = classifySelectedFace(payload) || payload;
+    setSelectedFace(classified);
+    onFaceSelected?.(classified);
+    setShellMode((prev) => {
+      if (!prev) return prev;
+      const updated = { ...prev, lastFace: classified };
+      shellModeRef.current = updated;
+      return updated;
+    });
+    if (geometry && positions && index && shown.length) {
+      highlightFace(shown, geometry, positions, index, 0xffff00);
+    }
+  }, [clearHighlight, highlightFace, onFaceSelected]);
 
   /**
    * Process the pending click based on click count
@@ -3240,24 +3296,27 @@ const Viewport = forwardRef(({
       clearEdgeHighlight();
       setSelectedEdges([]);
       // Read the accumulated multi-pick BEFORE clearHighlight() drops it.
-      const prev = additive ? facePickGroupRef.current : null;
-      const picks = [
-        ...(prev?.picks || []),
-        { center: faceData.center, normal: faceData.normal },
-      ];
-      const shown = prev ? [...new Set([...prev.indices, ...faceIndices])] : faceIndices;
-      const payload = picks.length > 1 ? { ...faceData, group: picks } : faceData;
-      setSelectedFace(payload);
-      onFaceSelected?.(payload);
-      clearHighlight();
-      facePickGroupRef.current = { picks, indices: shown };
-      highlightFace(shown, geometry, positions, index, 0xffff00);
-      if (picks.length > 1) {
+      const entry = {
+        center: faceData.center,
+        normal: faceData.normal,
+        indices: faceIndices.slice(),
+      };
+      let picks;
+      if (shellModeRef.current) {
+        // Shell: every tap adds. Tap an already-selected face to remove it.
+        // No shift / ctrl. Same model as toggleEdgeSelection.
+        picks = toggleShellFaceSelection(facePickGroupRef.current?.picks, entry);
+      } else {
+        const prev = additive ? (facePickGroupRef.current?.picks || []) : [];
+        picks = [...prev, entry];
+      }
+      publishFacePicks(picks, geometry, positions, index, faceData);
+      if (picks.length > 1 && !shellModeRef.current) {
         console.log(`[Face Selection] ${picks.length} faces picked (shift-click to add more)`);
       }
     }
     
-  }, [measurementEnabled, measurementFaces, onFaceSelected, clearHighlight, clearEdgeHighlight, highlightFace]);
+  }, [measurementEnabled, measurementFaces, onFaceSelected, clearHighlight, clearEdgeHighlight, highlightFace, publishFacePicks]);
 
   /**
    * Handle face selection in measurement mode
@@ -4817,16 +4876,17 @@ const Viewport = forwardRef(({
             shellModeRef.current = updated;
             return updated;
           })}
+          onUndoFace={() => {
+            const geom = resultRef.current?.geometry;
+            publishFacePicks(
+              popLastShellFace(facePickGroupRef.current?.picks),
+              geom,
+              geom?.attributes?.position,
+              geom?.index?.array,
+            );
+          }}
           onClearFace={() => {
-            clearHighlight();
-            setSelectedFace(null);
-            onFaceSelected?.(null);
-            setShellMode((prev) => {
-              if (!prev) return prev;
-              const updated = { ...prev, lastFace: null };
-              shellModeRef.current = updated;
-              return updated;
-            });
+            publishFacePicks([], resultRef.current?.geometry, null, null);
           }}
           onConfirm={acceptShell}
           onDismiss={exitShellMode}
