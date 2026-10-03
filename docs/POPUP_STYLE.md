@@ -13,7 +13,9 @@ over inventing a new modal layout.
   edge-pick Accept / Back / grey X dismiss.
 - **`ShellModeChip.jsx`** — cyan glass card (same shell as Contour / Loft /
   Workplane); face-pick opening + Wall `NumberField` + Face/Closed segmented
-  control; Confirm writes `hollow()`; grey X exits with no write.
+  control. Taps add faces with no modifier (tap a selected face to remove it,
+  same as the edge picker). Undo drops the last face; Clear drops all.
+  Confirm writes one `hollow()`; grey X exits with no write.
 
 ## Placement
 
