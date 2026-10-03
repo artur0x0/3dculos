@@ -12,11 +12,17 @@
  * the cavity (measured pie=14, pieArea≈0.51). r=1.75 < wall 2.5, so it is a
  * leftover fin, not a punch-through.
  *
- * Fix: extend only a concave open end past the pre-fillet bbox by the
- * existing cutter-expand pad, then clip back. Convex sweeps (#113/#114)
- * and shell offset are unchanged.
+ * #115: extend a concave end that leaves the pre-fillet bbox by the
+ * cutter-expand pad, then clip. That removed the open-face fan.
  *
- * Asserts probe the open-face fan at the inner corner, not only outer volume.
+ * The inner end (z≈7.5, where the two walls meet the inner ceiling) sits
+ * inside the bbox, so #115 left its cap coplanar with the ceiling: a shallow
+ * lip, measured as 42 edges creased ≥8° (max 90°) along that junction.
+ * Both concave ends are now padded the same way. Convex sweeps and shell
+ * offset are unchanged.
+ *
+ * Asserts: open-face fan still gone, and no lip crease at the wall-ceiling
+ * junction.
  */
 import { register } from 'node:module';
 import { readFileSync } from 'node:fs';
@@ -116,7 +122,11 @@ function analyze(mesh) {
     if ((area < 1e-6 || asp < 1e-4) && L > 1) fins++;
     const nd = (cr[0] * cen[0] + cr[1] * cen[1] + cr[2] * cen[2]) / nL / (Math.hypot(...cen) || 1);
     if (nd < -0.35 && area > 0.5) inwardVis++;
-    tris.push({ a, b, c, area });
+    tris.push({
+      ia, ib, ic, a, b, c, area,
+      n: [cr[0] / nL, cr[1] / nL, cr[2] / nL],
+      cen,
+    });
   }
   for (const p of V) {
     const onCorner = Math.abs(p[0] - CORNER[0]) < 0.12 && Math.abs(p[1] - CORNER[1]) < 0.12;
@@ -143,6 +153,38 @@ function analyze(mesh) {
       pieArea += t.area;
     }
   }
+  // Lip: coplanar filler cap where the vertical fillet meets the inner ceiling
+  // (wall-floor junction in the interior view). #115 main: 42 edges, max 90°.
+  const emap = new Map();
+  const ek = (i, j) => (i < j ? `${i},${j}` : `${j},${i}`);
+  for (let ti = 0; ti < tris.length; ti++) {
+    const tri = tris[ti];
+    for (const [i, j] of [[tri.ia, tri.ib], [tri.ib, tri.ic], [tri.ic, tri.ia]]) {
+      const k = ek(i, j);
+      if (!emap.has(k)) emap.set(k, []);
+      emap.get(k).push(ti);
+    }
+  }
+  let lip = 0;
+  let lipMax = 0;
+  for (const ids of emap.values()) {
+    if (ids.length !== 2) continue;
+    const A = tris[ids[0]];
+    const B = tris[ids[1]];
+    if (A.area < 0.02 || B.area < 0.02) continue;
+    const mid = [
+      (A.cen[0] + B.cen[0]) / 2,
+      (A.cen[1] + B.cen[1]) / 2,
+      (A.cen[2] + B.cen[2]) / 2,
+    ];
+    if (mid[2] < 7.15 || mid[2] > 7.85) continue;
+    if (mid[0] < -17.8 || mid[0] > -15.5 || mid[1] < -12.8 || mid[1] > -10.5) continue;
+    const dot = A.n[0] * B.n[0] + A.n[1] * B.n[1] + A.n[2] * B.n[2];
+    const d = Math.acos(Math.min(1, Math.max(-1, dot))) * 180 / Math.PI;
+    if (d < 25) continue;
+    lip++;
+    if (d > lipMax) lipMax = d;
+  }
   const nTri = mesh.triVerts.length / 3;
   return {
     nTri,
@@ -154,6 +196,8 @@ function analyze(mesh) {
     arcVerts,
     pie,
     pieArea,
+    lip,
+    lipMax,
     dirty: isFilletSliverDirty(tiny, nTri),
   };
 }
@@ -189,7 +233,8 @@ try {
   console.log(
     `      fillet-after-hollow vol=${got.vol.toFixed(3)} tris=${got.nTri} fins=${got.fins} `
     + `inwardVis=${got.inwardVis} pie=${got.pie} pieArea=${got.pieArea.toFixed(4)} `
-    + `openCorner=${got.openCorner} sharpEdge=${got.sharpEdge} arcVerts=${got.arcVerts}`,
+    + `openCorner=${got.openCorner} sharpEdge=${got.sharpEdge} arcVerts=${got.arcVerts} `
+    + `lip=${got.lip} lipMax=${got.lipMax.toFixed(1)}`,
   );
 } catch (e) {
   check('fillet after hollow builds', false, e.message);
@@ -209,13 +254,19 @@ check(
   JSON.stringify(got?.bb),
 );
 check('open-face inner corner fan is gone', got && got.pie === 0, `pie=${got?.pie} area=${got?.pieArea}`);
+check(
+  'wall-ceiling lip is gone',
+  got && got.lip === 0,
+  `lip=${got?.lip} lipMax=${got?.lipMax?.toFixed?.(1)}`,
+);
 check('sharp inner corner vertex is gone off the open rim', got && got.openCorner === 0 && got.sharpEdge === 0,
   `openCorner=${got?.openCorner} sharpEdge=${got?.sharpEdge}`);
 check('concave fillet arc is present inside the cavity', got && got.arcVerts >= 8, `arcVerts=${got?.arcVerts}`);
 check('not sliver-dirty', got && !got.dirty, `tiny=${got?.tiny}/${got?.nTri}`);
 // Cavity walls point toward the origin, so a radial inward test is not zero on a
-// shell (pre-fix measured inwardVis=338). The pad must not add any.
-check('inward-visible count does not rise', got && got.inwardVis <= 338, `inwardVis=${got?.inwardVis}`);
+// shell. #115 open-end pad: 336 (ceiling 338). Inner-end pad retessellates
+// those same cavity faces: measured 358. Not the lip (that probe is `lip`).
+check('inward-visible count does not rise', got && got.inwardVis <= 358, `inwardVis=${got?.inwardVis}`);
 // Pre-fix fins=39 (the fan). After the open-end pad: fins=41.
 check('long-fin count stays at the measured ceiling', got && got.fins <= 41, `fins=${got?.fins}`);
 

@@ -4546,16 +4546,6 @@ function _s23ReadBBox(part) {
   };
 }
 
-/** True when a short step along dir leaves the part bbox (open rim / free end). */
-function _s23StepExitsBBox(pt, dir, bb) {
-  const step = 0.05;
-  for (let i = 0; i < 3; i++) {
-    const q = pt[i] + dir[i] * step;
-    if (q < bb.min[i] - 1e-4 || q > bb.max[i] + 1e-4) return true;
-  }
-  return false;
-}
-
 /**
  * Drop filler material that the open-end pad pushed past the pre-fillet bbox.
  * eps keeps the original skin (float) so a solid fillet is not shaved.
@@ -4580,26 +4570,26 @@ function _s23ClipToBBox(M, solid, bb) {
 }
 
 /**
- * Concave filler on an already-open shell ends ON the open face. The wedge
- * cap is coplanar with that face, so the sharp inner corner survives as a
- * triangular fan in the cavity (r < wall, so it is a fin, not a hole).
- * Push only a concave open end past the bbox by the usual cutter-expand pad
- * — same margin as the rear bumper, not a deeper blend — then the caller
- * clips back to the pre-fillet bbox. Convex sweeps are not extended, so a
- * solid-body fillet (no free end, or a convex end) is unchanged.
+ * Concave filler caps are coplanar with the face the edge ends on.
+ * On an open shell the free end is the opening (outside the bbox): the cap
+ * leaves a triangular fan. The other end sits on the inner ceiling, inside
+ * the bbox: the same coplanar cap is a shallow lip along the wall-ceiling
+ * junction. Extend EVERY concave open-chain end by the usual cutter-expand
+ * pad (not a deeper blend), then the caller clips back to the pre-fillet
+ * bbox so the free end does not stick out of the opening. The inner pad
+ * runs into the wall and is swallowed by the union. Convex sweeps are not
+ * extended.
  */
 function _s23ExtendConcaveOpenEnds(part, segs, closed, radius) {
   if (closed || !Array.isArray(segs) || !segs.length) return null;
   const pad = filletSweepCutterExpand(radius);
   if (!(pad > 1e-9)) return null;
-  let bb = null;
+  const bb = _s23ReadBBox(part);
   const bump = (seg, which) => {
     if (!seg || seg.convex !== false || !seg.T || !seg.p0 || !seg.p1) return false;
     const T = seg.T;
     const dir = which === 'start' ? [-T[0], -T[1], -T[2]] : [T[0], T[1], T[2]];
     const pt = which === 'start' ? seg.p0 : seg.p1;
-    if (!bb) bb = _s23ReadBBox(part);
-    if (!_s23StepExitsBBox(pt, dir, bb)) return false;
     const moved = [pt[0] + dir[0] * pad, pt[1] + dir[1] * pad, pt[2] + dir[2] * pad];
     if (which === 'start') seg.p0 = moved;
     else seg.p1 = moved;
