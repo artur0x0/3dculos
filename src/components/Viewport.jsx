@@ -2072,83 +2072,6 @@ const Viewport = forwardRef(({
     });
   }, [shellMode, selectedFace]);
 
-  const paintDraftPicks = useCallback((state) => {
-    const geom = resultRef.current?.geometry;
-    const positions = geom?.attributes?.position;
-    const index = geom?.index?.array;
-    clearHighlight();
-    if (!state) return;
-    if (geom && positions && index && state.neutral?.indices?.length) {
-      highlightFace(state.neutral.indices, geom, positions, index, 0x22d3ee, 'draft-neutral');
-    }
-    const drafted = (state.drafts || []).flatMap((f) => f.indices || []);
-    if (geom && positions && index && drafted.length) {
-      highlightFace(drafted, geom, positions, index, 0xfbbf24, 'draft-faces');
-    }
-  }, [clearHighlight, highlightFace]);
-
-  const exitDraftMode = useCallback(() => {
-    const was = draftModeRef.current;
-    setDraftMode(null);
-    draftModeRef.current = null;
-    if (was) clearHighlight();
-    if (shellToastTimerRef.current) {
-      clearTimeout(shellToastTimerRef.current);
-      shellToastTimerRef.current = null;
-    }
-    setShellToast(null);
-  }, [clearHighlight]);
-
-  const enterDraftMode = useCallback(() => {
-    exitContourMode();
-    setFilletMode(null);
-    filletModeRef.current = null;
-    clearFilletBlendPreview();
-    setShellMode(null);
-    shellModeRef.current = null;
-    setPickMode('face');
-    clearEdgeHover();
-    clearEdgeHighlight();
-    setSelectedEdges([]);
-    const picks = facePickGroupRef.current?.picks || [];
-    let seed = null;
-    if (picks.length === 1) seed = picks[0];
-    else if (selectedFace && Array.isArray(selectedFace.center) && Array.isArray(selectedFace.normal)) {
-      seed = {
-        center: selectedFace.center,
-        normal: selectedFace.normal,
-        indices: undefined,
-      };
-    }
-    const next = emptyDraftState(seed);
-    setDraftMode(next);
-    draftModeRef.current = next;
-    paintDraftPicks(next);
-  }, [exitContourMode, selectedFace, clearFilletBlendPreview, clearEdgeHover, clearEdgeHighlight, paintDraftPicks]);
-
-  const commitDraftState = useCallback((next) => {
-    draftModeRef.current = next;
-    setDraftMode(next);
-    paintDraftPicks(next);
-  }, [paintDraftPicks]);
-
-  const acceptDraft = useCallback(() => {
-    const state = draftModeRef.current;
-    if (!state) return;
-    const gate = validateDraftAccept(state);
-    if (!gate.ok) {
-      showShellToast(gate.message);
-      return;
-    }
-    const ok = onCommitDraft?.({ state });
-    if (ok) {
-      clearHighlight();
-      setSelectedFace(null);
-      onFaceSelected?.(null);
-      exitDraftMode();
-    }
-  }, [onCommitDraft, exitDraftMode, onFaceSelected, clearHighlight]);
-
   // Live sweep-fillet blend as edges accumulate. The payload is memoized so the
   // chip's pathOk flag and the painter share ONE build per input (Slice 27 nit:
   // the chip used to re-run buildFilletBlendPreview on every render just for .ok).
@@ -2856,6 +2779,85 @@ const Viewport = forwardRef(({
     }
     highlightMeshRef.current.push(highlightMesh);
   }, []);
+
+  // Below highlightFace on purpose. These dep arrays run during render; listing
+  // highlightFace above its const throws and the viewport never mounts.
+  const paintDraftPicks = useCallback((state) => {
+    const geom = resultRef.current?.geometry;
+    const positions = geom?.attributes?.position;
+    const index = geom?.index?.array;
+    clearHighlight();
+    if (!state) return;
+    if (geom && positions && index && state.neutral?.indices?.length) {
+      highlightFace(state.neutral.indices, geom, positions, index, 0x22d3ee, 'draft-neutral');
+    }
+    const drafted = (state.drafts || []).flatMap((f) => f.indices || []);
+    if (geom && positions && index && drafted.length) {
+      highlightFace(drafted, geom, positions, index, 0xfbbf24, 'draft-faces');
+    }
+  }, [clearHighlight, highlightFace]);
+
+  const exitDraftMode = useCallback(() => {
+    const was = draftModeRef.current;
+    setDraftMode(null);
+    draftModeRef.current = null;
+    if (was) clearHighlight();
+    if (shellToastTimerRef.current) {
+      clearTimeout(shellToastTimerRef.current);
+      shellToastTimerRef.current = null;
+    }
+    setShellToast(null);
+  }, [clearHighlight]);
+
+  const enterDraftMode = useCallback(() => {
+    exitContourMode();
+    setFilletMode(null);
+    filletModeRef.current = null;
+    clearFilletBlendPreview();
+    setShellMode(null);
+    shellModeRef.current = null;
+    setPickMode('face');
+    clearEdgeHover();
+    clearEdgeHighlight();
+    setSelectedEdges([]);
+    const picks = facePickGroupRef.current?.picks || [];
+    let seed = null;
+    if (picks.length === 1) seed = picks[0];
+    else if (selectedFace && Array.isArray(selectedFace.center) && Array.isArray(selectedFace.normal)) {
+      seed = {
+        center: selectedFace.center,
+        normal: selectedFace.normal,
+        indices: undefined,
+      };
+    }
+    const next = emptyDraftState(seed);
+    setDraftMode(next);
+    draftModeRef.current = next;
+    paintDraftPicks(next);
+  }, [exitContourMode, selectedFace, clearFilletBlendPreview, clearEdgeHover, clearEdgeHighlight, paintDraftPicks]);
+
+  const commitDraftState = useCallback((next) => {
+    draftModeRef.current = next;
+    setDraftMode(next);
+    paintDraftPicks(next);
+  }, [paintDraftPicks]);
+
+  const acceptDraft = useCallback(() => {
+    const state = draftModeRef.current;
+    if (!state) return;
+    const gate = validateDraftAccept(state);
+    if (!gate.ok) {
+      showShellToast(gate.message);
+      return;
+    }
+    const ok = onCommitDraft?.({ state });
+    if (ok) {
+      clearHighlight();
+      setSelectedFace(null);
+      onFaceSelected?.(null);
+      exitDraftMode();
+    }
+  }, [onCommitDraft, exitDraftMode, onFaceSelected, clearHighlight]);
 
   const clearMeasurementLines = useCallback(() => {
     if (measurementLinesRef.current && sceneRef.current) {
