@@ -180,7 +180,7 @@ import {
 import { downloadModelFromMesh, get3MFBase64FromMesh } from '../utils/exportModel';
 import { parseImportedModels, loadCachedModel } from '../utils/importModel';
 import { calculateQuote } from '../utils/quoting';
-import { selectFaceByID, selectFaceWithTolerance, selectAllConnected } from '../utils/selectFace';
+import { resolveViewportFaceClick } from '../utils/selectFace';
 import { buildPartGraphPatches, buildPatchOverlayArrays, PARTGRAPH_MAX_TRIANGLES } from '../utils/partGraphPatches';
 import { createCuttingPlaneWidget, updateCuttingPlaneWidget } from '../utils/cuttingPlaneWidget';
 import { AxesHelper } from 'three';
@@ -3706,25 +3706,27 @@ const Viewport = forwardRef(({
     clickTimerRef.current = null;
     pendingClickDataRef.current = null;
     
-    // Determine which selection function to use based on click count
-    let faceIndices;
-    let selectionMode;
-    
-    if (clickCount >= 3) {
-      // Triple click: select all connected triangles
-      faceIndices = selectAllConnected(geometry, seedFaceIndex);
-      selectionMode = 'all-connected';
-      console.log(`[Face Selection] Triple-click: selecting all ${faceIndices.length} connected triangles`);
-    } else if (clickCount === 2) {
-      // Double click: select faces within angular tolerance
-      faceIndices = selectFaceWithTolerance(geometry, seedFaceIndex, { normal: faceNormal }, ANGLE_TOLERANCE_DEGREES);
-      selectionMode = 'angular-tolerance';
-      console.log(`[Face Selection] Double-click: selecting ${faceIndices.length} triangles within ${ANGLE_TOLERANCE_DEGREES}° tolerance`);
+    // Shell, Draft, and Cut keep tap-to-add / tap-to-remove. A double click
+    // there must stay the old tolerance walk — not the owning body — so
+    // confirm still writes the face that was tapped.
+    const legacyTap = !!(shellModeRef.current || draftModeRef.current || cutModeRef.current);
+    const resolved = resolveViewportFaceClick({
+      geometry,
+      seedFaceIndex,
+      faceNormal,
+      clickCount,
+      faceIDs: faceIDsRef.current,
+      angleTolerance: ANGLE_TOLERANCE_DEGREES,
+      legacy: legacyTap,
+    });
+    const faceIndices = resolved.indices;
+    const selectionMode = resolved.selectionMode;
+    if (legacyTap) {
+      console.log(`[Face Selection] ${clickCount}-click picker tap: ${faceIndices.length} triangles (${selectionMode})`);
+    } else if (clickCount >= 2) {
+      console.log(`[Face Selection] Double-click: body, ${faceIndices.length} triangles`);
     } else {
-      // Single click: select exact coplanar faces
-      faceIndices = selectFaceByID(geometry, seedFaceIndex, { normal: faceNormal });
-      selectionMode = 'coplanar';
-      console.log(`[Face Selection] Single-click: selecting ${faceIndices.length} coplanar triangles`);
+      console.log(`[Face Selection] Single-click: face (${resolved.kind}), ${faceIndices.length} triangles`);
     }
     
     // Calculate face data (center, area, vertices) from selected triangles

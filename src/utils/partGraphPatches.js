@@ -17,7 +17,8 @@
  * Pure mesh math. Built lazily on the main thread when the patch-colour
  * debug overlay is requested (never on the worker serialize/postMessage
  * critical path — that caused iOS Safari OOM / black viewport in #88/#89).
- * Face pick / edge propagation must NOT read patches yet (PR 3 / 5).
+ * Face pick reads one patch: the graph component for that face (flat or curved).
+ * Edge propagation must NOT read patches yet.
  * No visibility BVH (PR 6).
  */
 
