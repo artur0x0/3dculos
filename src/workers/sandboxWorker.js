@@ -439,7 +439,9 @@ function _c4RequireNoFold(md, out, label, amount) {
  * Displacement that puts a vertex on the inward offset of every face meeting it.
  * `openNormals` are faces the cavity must break THROUGH: the vertex is pushed
  * out along them by t instead of in, so the cavity pokes past the outer surface
- * and the subtraction opens the face.
+ * and the subtraction opens the face. Several removed faces are solved together
+ * (each at +t), not averaged into one push — an averaged push leaves a rib on
+ * the edge those faces share.
  *
  * Ill-conditioned multi-plane solves at fillet×planar junctions blow |d| past
  * the orthogonal bound t√N. When residual is high, fall back to a single inward
@@ -462,9 +464,33 @@ function _c4VertexOffset(closedNormals, openNormals, t) {
       d = _c4Mul(-t, avg);
     }
   }
-  if (openNormals.length) {
-    const avg = _c4Norm(openNormals.reduce(_c4Add, [0, 0, 0]));
-    d = _c4Add(d, _c4Mul(t, avg));
+  if (openNormals.length === 1) {
+    // One removed face: push out along its normal by t so the cavity
+    // overshoots that face and the subtraction opens it.
+    d = _c4Add(d, _c4Mul(t, openNormals[0]));
+  } else if (openNormals.length > 1) {
+    // Two or more removed faces meet here. Averaging their normals into ONE
+    // push of length t leaves the shared edge short of both planes (a rib).
+    // Solve every removed plane at +t together with the kept-face offsets at
+    // -t, so that edge is consumed in one bite.
+    const normals = closedNormals.concat(openNormals);
+    const rhs = closedNormals.map(() => -t).concat(openNormals.map(() => t));
+    const dj = _c4SolvePlaneMoves(normals, rhs);
+    let resid2 = 0;
+    for (let k = 0; k < normals.length; k++) {
+      const e = _c4Dot(dj, normals[k]) - rhs[k];
+      resid2 += e * e;
+    }
+    const resid = Math.sqrt(resid2 / normals.length);
+    const dLen = _c4Len(dj);
+    const softCap = t * Math.sqrt(normals.length) * 1.6;
+    if (!Number.isFinite(dLen) || resid > t * 0.3 || dLen > softCap) {
+      // Ill-conditioned (opposite openings, scrap normals). Still clear each
+      // removed plane by a full t — do not fall back to the short bisector.
+      for (const n of openNormals) d = _c4Add(d, _c4Mul(t, n));
+    } else {
+      d = dj;
+    }
   }
   return d;
 }
