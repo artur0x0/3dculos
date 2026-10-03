@@ -4659,9 +4659,26 @@ function filletAlongPath(part, path, radius, opts = {}) {
   const rawSegCount = opts._c3RawSegCount != null
     ? Number(opts._c3RawSegCount)
     : (closed ? points.length : Math.max(0, points.length - 1));
+  // Resample consistent circular arcs BEFORE variable-profile chord densify.
+  // densifyPathByMaxTurn only inserts colinear chord midpoints, which cannot
+  // shrink the turn at an existing vertex and pull those points off the
+  // circle. Doing that first (the old order) left a prior-fillet quarter-arc
+  // at ~15–22° chords: arc resample no longer saw a circle, and the same-
+  // radius semi-arc split missed the site, so the wrap stayed one sweep
+  // over the coarse arc (pinched corner). Sharp corners and long straights
+  // are still copied unchanged. Semi-arc split below still owns the corner;
+  // within each half this stays one sweep at ≤ FRAME_DENSIFY_MAX_TURN_DEG.
+  if (!opts._rawPath) {
+    const turned = densifySweepArcTurns(points, closed, FRAME_DENSIFY_MAX_TURN_DEG);
+    if (Array.isArray(turned) && turned.length >= 2 && turned.length !== points.length) {
+      points = turned;
+      length = pathPolylineLength(points, closed);
+    }
+  }
   if (variableProfile && !opts._rawPath) {
     // C3.2: step from min(0.28R, pathLen/48) + max-turn densify so large-R /
     // high-curvature loft ridges get enough knots (0.75R alone was too sparse).
+    // Runs after arc resample so a fitted fillet arc is not chord-poisoned.
     const plen0 = (typeof length === 'number' && length > 0)
       ? length
       : pathPolylineLength(points, closed);
@@ -4671,18 +4688,6 @@ function filletAlongPath(part, path, radius, opts = {}) {
     });
     if (dense.length > points.length) {
       points = dense;
-      length = pathPolylineLength(points, closed);
-    }
-  }
-  // Default convex fillets never entered the block above, so Artur's box
-  // kept SWEEP_PATH_MIN_SEG chords (~11° on r=6) — coarser than the shell
-  // cluster. Resample consistent arcs (not sharp corners, not straights)
-  // so consecutive frames turn ≤ FRAME_DENSIFY_MAX_TURN_DEG. Semi-arc
-  // split below still owns corner arcs; within each half this stays one sweep.
-  if (!opts._rawPath) {
-    const turned = densifySweepArcTurns(points, closed, FRAME_DENSIFY_MAX_TURN_DEG);
-    if (Array.isArray(turned) && turned.length >= 2 && turned.length !== points.length) {
-      points = turned;
       length = pathPolylineLength(points, closed);
     }
   }
