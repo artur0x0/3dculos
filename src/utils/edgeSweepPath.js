@@ -33,8 +33,31 @@ export const SWEEP_PATH_INVALID =
 /** Recover a dominant simple chain when strays are a small leftover (not a tie). */
 export const SWEEP_PATH_RECOVER_MIN_FRAC = 0.75;
 
-/** Min path sample spacing after pts expansion (mm). See thinSweepPathPoints. */
+/** Min path sample spacing after pts expansion (mm). See thinSweepPathPoints.
+ * Assembly floor only — long straights are already one segment, so this does
+ * not subdivide them. Fillet consumption resamples arcs separately
+ * (sweepPathMaxChordForTurn); do not lower this globally or micro-clusters
+ * come back as fin slivers. */
 export const SWEEP_PATH_MIN_SEG = 1.2;
+
+/**
+ * Longest chord on a circular arc of radius `r` whose turn is ≤ maxTurnDeg.
+ * chord = 2 r sin(θ/2). At 5° and r=6 this is ~0.52 mm; the 1.2 mm assembly
+ * floor is ~11° on that arc, coarser than the shell normal cluster.
+ * Not a straight-edge subdivider — only meaningful along a fitted turn.
+ * @param {number} radius path-arc radius (mm)
+ * @param {number} [maxTurnDeg=5]
+ * @returns {number}
+ */
+export function sweepPathMaxChordForTurn(radius, maxTurnDeg = 5) {
+  const r = Number(radius);
+  const deg = Number(maxTurnDeg);
+  if (!(r > 0) || !Number.isFinite(r) || !(deg > 0) || !Number.isFinite(deg)) {
+    return SWEEP_PATH_MIN_SEG;
+  }
+  const half = (deg * Math.PI) / 360;
+  return 2 * r * Math.sin(half);
+}
 
 function disconnectedMessage(compSizes, total) {
   const sizes = compSizes.slice().sort((a, b) => b - a);

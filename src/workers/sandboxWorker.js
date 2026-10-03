@@ -13,6 +13,7 @@ import {
   expandFilletCutterContour,
   expandDihedralCutterContour,
   planFilletSweepPath,
+  densifySweepArcTurns,
   dihedralFilletContour,
   dihedralChamferContour,
   filletRemovedArea,
@@ -4268,7 +4269,11 @@ function _s23ProbeKnotNormals(part, points, closed) {
  * solid. Smooth runs (tessellated rims, loft ridges) stay in one piece — the
  * gate is well above their per-segment turn.
  */
-const _S23_RUN_CORNER_DEG = 25;
+// Half the ~10° shell normal cluster. A run that still bends more than this
+// at one vertex is a real corner (split into its own cutter). Smooth arcs are
+// resampled to ≤ this before the sweep, so they stay ONE piece — do not split
+// a G1 arc into a cutter per step.
+const _S23_RUN_CORNER_DEG = FRAME_DENSIFY_MAX_TURN_DEG;
 
 function _s23SplitRunsAtCorners(runs) {
   if (!Array.isArray(runs) || !runs.length) return runs;
@@ -4666,6 +4671,18 @@ function filletAlongPath(part, path, radius, opts = {}) {
     });
     if (dense.length > points.length) {
       points = dense;
+      length = pathPolylineLength(points, closed);
+    }
+  }
+  // Default convex fillets never entered the block above, so Artur's box
+  // kept SWEEP_PATH_MIN_SEG chords (~11° on r=6) — coarser than the shell
+  // cluster. Resample consistent arcs (not sharp corners, not straights)
+  // so consecutive frames turn ≤ FRAME_DENSIFY_MAX_TURN_DEG. Semi-arc
+  // split below still owns corner arcs; within each half this stays one sweep.
+  if (!opts._rawPath) {
+    const turned = densifySweepArcTurns(points, closed, FRAME_DENSIFY_MAX_TURN_DEG);
+    if (Array.isArray(turned) && turned.length >= 2 && turned.length !== points.length) {
+      points = turned;
       length = pathPolylineLength(points, closed);
     }
   }

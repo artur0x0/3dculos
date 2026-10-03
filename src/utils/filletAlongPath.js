@@ -14,7 +14,7 @@
  * Does NOT ship extrude/revolve/loft — wait for Product brief.
  */
 
-import { assembleSweepPath } from './edgeSweepPath.js';
+import { assembleSweepPath, sweepPathMaxChordForTurn } from './edgeSweepPath.js';
 export { SLIVER_MAX_ABS, SLIVER_MAX_FRAC, isFilletSliverDirty } from './filletSliverGuard.js';
 
 export const FILLET_SWEEP_EMPTY =
@@ -691,6 +691,255 @@ export function circFit3(p0, p1, p2) {
   const R = Math.hypot(C[0] - p0[0], C[1] - p0[1], C[2] - p0[2]);
   if (!(R > 1e-12) || !Number.isFinite(R)) return null;
   return { C, R, n: [n[0] / nL, n[1] / nL, n[2] / nL] };
+}
+
+function _dst(a, b) {
+  return [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+}
+function _ddot(a, b) {
+  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+}
+function _dcross(a, b) {
+  return [
+    a[1] * b[2] - a[2] * b[1],
+    a[2] * b[0] - a[0] * b[2],
+    a[0] * b[1] - a[1] * b[0],
+  ];
+}
+function _dlen(a) {
+  return Math.hypot(a[0], a[1], a[2]);
+}
+function _dnorm(a) {
+  const L = _dlen(a) || 1;
+  return [a[0] / L, a[1] / L, a[2] / L];
+}
+
+/** Turn at b between chords a→b and b→c. ang in radians, axis = t0×t1. */
+function _turnAt(a, b, c) {
+  const t0 = _dnorm(_dst(b, a));
+  const t1 = _dnorm(_dst(c, b));
+  const cr = _dcross(t0, t1);
+  const s = _dlen(cr);
+  const ang = Math.atan2(s, _ddot(t0, t1));
+  if (!(ang > 1e-8) || s < 1e-12) return { ang: 0, axis: null };
+  return { ang, axis: [cr[0] / s, cr[1] / s, cr[2] / s] };
+}
+
+/**
+ * Resample consistent circular-arc spans so consecutive chords turn by at
+ * most `maxTurnDeg`. Sharp corners (one kink, straight neighbors) and long
+ * straights are copied unchanged — this must not round a cube edge or
+ * dust a straight into extra sweep seams.
+ *
+ * Colinear midpoint insertion (densifyPathByMaxTurn) cannot shrink the turn
+ * at an existing vertex. Points already on the arc are rebuilt along the
+ * fitted circle at chord ≤ sweepPathMaxChordForTurn(R).
+ *
+ * @param {number[][]} points
+ * @param {boolean} closed
+ * @param {number} [maxTurnDeg=5]
+ * @returns {number[][]}
+ */
+export function densifySweepArcTurns(points, closed, maxTurnDeg = 5) {
+  return _densifySweepArcTurns(points, !!closed, maxTurnDeg, false);
+}
+
+function _densifySweepArcTurns(points, isClosed, maxTurnDeg, rotated) {
+  if (!Array.isArray(points) || points.length < 3) {
+    return points ? points.map((p) => p.slice()) : [];
+  }
+  const lim = Math.max(1, Number(maxTurnDeg) || 5) * Math.PI / 180;
+  const n = points.length;
+  const info = new Array(n);
+  for (let i = 0; i < n; i++) {
+    if (!isClosed && (i === 0 || i === n - 1)) {
+      info[i] = { ang: 0, axis: null };
+      continue;
+    }
+    info[i] = _turnAt(points[(i - 1 + n) % n], points[i], points[(i + 1) % n]);
+  }
+  const segLen = new Array(n).fill(0);
+  const segN = isClosed ? n : n - 1;
+  for (let i = 0; i < segN; i++) {
+    const a = points[i];
+    const b = points[(i + 1) % n];
+    segLen[i] = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+  }
+  // Tessellation step, not a designed corner. 90° rectangle corners are
+  // concyclic — rebuilding them would turn the path into a circle. 60° hex
+  // corners stay corners. ~11° thinned fillet arcs (and coarse rims up to
+  // ~50°) are eligible.
+  const stepCap = 50 * Math.PI / 180;
+  const neigh = (i, j) => {
+    if (!isClosed && (j <= 0 || j >= n - 1)) return false;
+    if (!(info[j].ang > lim * 0.35) || info[j].ang > stepCap) return false;
+    if (!info[i].axis || !info[j].axis) return false;
+    return _ddot(info[i].axis, info[j].axis) > 0.5;
+  };
+  // Long straight vs short arc chord: the junction vertex must not glue
+  // separate corner arcs into one loop (rounded-rect perimeter).
+  const chordsSimilar = (i) => {
+    const prev = (i - 1 + n) % n;
+    const l0 = segLen[prev];
+    const l1 = segLen[i];
+    if (!(l0 > 1e-9) || !(l1 > 1e-9)) return false;
+    const ratio = Math.max(l0, l1) / Math.min(l0, l1);
+    return ratio <= 2.5;
+  };
+  const arc = new Array(n).fill(false);
+  for (let i = 0; i < n; i++) {
+    if (!(info[i].ang > lim) || info[i].ang > stepCap) continue;
+    if (!chordsSimilar(i)) continue;
+    const prev = (i - 1 + n) % n;
+    const next = (i + 1) % n;
+    if (neigh(i, prev) || neigh(i, next)) arc[i] = true;
+  }
+  if (!arc.some(Boolean)) return points.map((p) => p.slice());
+
+  // Closed paths have no distinguished start. Spin so a straight vertex is
+  // index 0 and every arc span is a linear slice (no wrap bookkeeping).
+  if (isClosed && !rotated && !arc.every(Boolean)) {
+    const origin = arc.findIndex((v) => !v);
+    if (origin > 0) {
+      const spun = points.slice(origin).concat(points.slice(0, origin));
+      return _densifySweepArcTurns(spun, true, maxTurnDeg, true);
+    }
+  }
+
+  const runs = [];
+  if (arc.every(Boolean)) {
+    runs.push({ full: true, idxs: [...Array(n).keys()] });
+  } else {
+    for (let i = 0; i < n; i++) {
+      if (!arc[i]) continue;
+      const idxs = [i];
+      let j = i + 1;
+      while (j < n && arc[j]) {
+        idxs.push(j);
+        j++;
+      }
+      i = j - 1;
+      runs.push({ full: false, idxs });
+    }
+  }
+
+  function resample(seq, fullLoop) {
+    if (seq.length < 3) return null;
+    const mid = seq[Math.floor(seq.length / 2)];
+    const fit = circFit3(seq[0], mid, seq[seq.length - 1]);
+    if (!fit) return null;
+    const { C, R } = fit;
+    const nn = fit.n;
+    const tol = Math.max(0.35, 0.06 * R);
+    for (const p of seq) {
+      const d = Math.hypot(p[0] - C[0], p[1] - C[1], p[2] - C[2]);
+      if (Math.abs(d - R) > tol) return null;
+    }
+    const tmp = Math.abs(nn[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0];
+    const x = _dnorm(_dcross(tmp, nn));
+    const y = _dcross(nn, x);
+    const angOf = (p) => {
+      const v = _dst(p, C);
+      return Math.atan2(_ddot(v, y), _ddot(v, x));
+    };
+    const src = fullLoop ? seq.concat([seq[0]]) : seq;
+    const angles = src.map(angOf);
+    for (let i = 1; i < angles.length; i++) {
+      let a = angles[i];
+      while (a - angles[i - 1] > Math.PI) a -= 2 * Math.PI;
+      while (angles[i - 1] - a > Math.PI) a += 2 * Math.PI;
+      angles[i] = a;
+    }
+    let dir = 0;
+    for (let i = 1; i < angles.length; i++) {
+      const dlt = angles[i] - angles[i - 1];
+      if (Math.abs(dlt) < 1e-8) continue;
+      const s = Math.sign(dlt);
+      if (!dir) dir = s;
+      else if (s !== dir) return null;
+    }
+    const sweep = angles[angles.length - 1] - angles[0];
+    if (!(Math.abs(sweep) > lim)) return null;
+    const chord = sweepPathMaxChordForTurn(R, (lim * 180) / Math.PI);
+    const nAng = Math.max(1, Math.ceil(Math.abs(sweep) / lim - 1e-9));
+    const arcLen = Math.abs(sweep) * R;
+    const nCh = chord > 1e-9 ? Math.max(1, Math.ceil(arcLen / chord - 1e-9)) : nAng;
+    const steps = Math.max(nAng, nCh);
+    const out = [];
+    for (let k = 0; k <= steps; k++) {
+      const a = angles[0] + sweep * (k / steps);
+      const c = Math.cos(a);
+      const s = Math.sin(a);
+      out.push([
+        C[0] + R * (c * x[0] + s * y[0]),
+        C[1] + R * (c * x[1] + s * y[1]),
+        C[2] + R * (c * x[2] + s * y[2]),
+      ]);
+    }
+    out[0] = seq[0].slice();
+    if (fullLoop) out.pop();
+    else out[out.length - 1] = seq[seq.length - 1].slice();
+    if (out.length <= seq.length) return null;
+    return out;
+  }
+
+  if (runs.length === 1 && runs[0].full) {
+    const pts = resample(points, true);
+    return pts || points.map((p) => p.slice());
+  }
+
+  const byStart = new Map();
+  for (const run of runs) {
+    let idxs = run.idxs.slice();
+    const seq0 = idxs.map((i) => points[i]);
+    const fit0 = circFit3(seq0[0], seq0[Math.floor(seq0.length / 2)], seq0[seq0.length - 1]);
+    if (fit0) {
+      const onCirc = (p) => {
+        const d = Math.hypot(p[0] - fit0.C[0], p[1] - fit0.C[1], p[2] - fit0.C[2]);
+        return Math.abs(d - fit0.R) <= Math.max(0.35, 0.06 * fit0.R);
+      };
+      let prev = idxs[0] - 1;
+      let next = idxs[idxs.length - 1] + 1;
+      if (isClosed) {
+        if (prev < 0) prev = n - 1;
+        if (next >= n) next = 0;
+      }
+      if (prev >= 0 && prev < n && !idxs.includes(prev) && onCirc(points[prev])) {
+        idxs = [prev, ...idxs];
+      }
+      if (next >= 0 && next < n && !idxs.includes(next) && onCirc(points[next])) {
+        idxs = [...idxs, next];
+      }
+    }
+    if (idxs.length < 3) continue;
+    const pts = resample(idxs.map((i) => points[i]), false);
+    if (!pts) continue;
+    byStart.set(idxs[0], { start: idxs[0], end: idxs[idxs.length - 1], pts });
+  }
+  if (!byStart.size) return points.map((p) => p.slice());
+
+  // A closed arc that ends on index 0 is emitted at the tail; don't also
+  // copy point 0 at the head (that chord is the close of the loop).
+  let i0 = 0;
+  for (const rep of byStart.values()) {
+    if (rep.end === 0 && rep.start > 0) i0 = 1;
+  }
+  const out = [];
+  for (let i = i0; i < n;) {
+    const rep = byStart.get(i);
+    if (!rep) {
+      out.push(points[i].slice());
+      i++;
+      continue;
+    }
+    const prev = out.length ? out[out.length - 1] : null;
+    const p0 = rep.pts[0];
+    const dup = prev && Math.hypot(prev[0] - p0[0], prev[1] - p0[1], prev[2] - p0[2]) < 1e-6;
+    const chunk = dup ? rep.pts.slice(1) : rep.pts;
+    for (const q of chunk) out.push(q);
+    i = rep.end >= i ? rep.end + 1 : n;
+  }
+  return out.length >= 2 ? out : points.map((p) => p.slice());
 }
 
 /**
