@@ -18,8 +18,9 @@
  * debug overlay is requested (never on the worker serialize/postMessage
  * critical path — that caused iOS Safari OOM / black viewport in #88/#89).
  * Face pick reads one patch: the graph component for that face (flat or curved).
- * Move Face also reads `tangentTris` on a planar patch. That does not merge
- * the blend into the flat.
+ * After the curved merge, triangles that still lie on a locked flat's plane
+ * are pulled back onto that face, even when a fillet sits between them and
+ * the face ids differ. The curved blend stays its own patch.
  * Edge propagation must NOT read patches yet.
  * No visibility BVH (PR 6).
  */
@@ -44,12 +45,15 @@ export const PATCH_K_FEATURE_DEG = 25;
  */
 /** Coplanar group area ≥ this × the largest coplanar group → locked flat. */
 export const PATCH_FLAT_AREA_FRAC_OF_MAX = 0.15;
+/** A triangle is on a flat's plane when its offset matches within this many mm. */
+const PLANE_OFFSET_MM = 0.05;
 /**
- * A non-planar patch that meets a flat across a dihedral at or below this
- * is recorded on that flat as `tangentTris`. It is not merged into `tris`.
- * 90° ends (fillet ends, cylinder rims) stay unattached.
+ * A fillet between two pieces of one plane leaves the mesh by about the
+ * fillet radius. Triangles within this distance may be crossed so those
+ * pieces become one face. On the shelled L the separate coplanar arms are
+ * 16mm apart and stay separate at this distance.
  */
-export const PATCH_TANGENT_BLEND_DEG = 18;
+const PLANE_BRIDGE_MM = 8;
 
 function sub(a, b) {
   return [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
@@ -441,37 +445,109 @@ export function buildPartGraphPatches(mesh, opts = {}) {
       curvature: { mean: meanK, variance },
       atomCount: patchAtomCount[pid],
       faceIds: [...patchFaceIds[pid]].sort((x, y) => x - y),
-      tangentTris: [],
     });
   }
 
-  // Tangent link only. A fillet stays its own blend patch (`tris` unchanged)
-  // and is listed on the flat it meets within PATCH_TANGENT_BLEND_DEG.
-  const linked = new Set();
-  for (const [key, edgeTris] of edgeMap) {
+  // A fillet can leave the rest of a cap on the same plane, past the blend,
+  // still wearing the other body's face id. Pass 1 stops at the blend, and
+  // pass 3 then swallows the smaller piece. Cross triangles that stay near
+  // the plane and pull the on-plane ones back onto the larger flat. Curved
+  // triangles are crossed, not collected. A coplanar wall whose path leaves
+  // the plane stays its own face.
+  const neighbors = Array.from({ length: numTri }, () => []);
+  for (const edgeTris of edgeMap.values()) {
     if (edgeTris.length !== 2) continue;
-    const turn = dihedral.get(key);
-    if (turn == null || turn > PATCH_TANGENT_BLEND_DEG) continue;
-    const ia = triPatch[edgeTris[0]];
-    const ib = triPatch[edgeTris[1]];
-    if (ia === ib) continue;
-    const pa = patches[ia];
-    const pb = patches[ib];
-    let flat = null;
-    let curved = null;
-    if (pa.kind === 'planar' && pb.kind !== 'planar') {
-      flat = pa;
-      curved = pb;
-    } else if (pb.kind === 'planar' && pa.kind !== 'planar') {
-      flat = pb;
-      curved = pa;
-    } else continue;
-    const stamp = flat.id * 0x100000 + curved.id;
-    if (linked.has(stamp)) continue;
-    linked.add(stamp);
-    for (const t of curved.tris) flat.tangentTris.push(t);
+    if (!sameBody(edgeTris[0], edgeTris[1])) continue;
+    neighbors[edgeTris[0]].push(edgeTris[1]);
+    neighbors[edgeTris[1]].push(edgeTris[0]);
   }
-  linked.clear();
+  const cosPlanar = Math.cos((planarDeg * Math.PI) / 180);
+  const planeOffset = (patch) => patch.center[0] * patch.normal[0]
+    + patch.center[1] * patch.normal[1]
+    + patch.center[2] * patch.normal[2];
+  const onPlane = (t, patch, offP) => {
+    if (triArea[t] < 1e-8) return false;
+    const n = triN[t];
+    const nd = n[0] * patch.normal[0] + n[1] * patch.normal[1] + n[2] * patch.normal[2];
+    if (nd < cosPlanar) return false;
+    const c = triCent[t];
+    const offT = c[0] * patch.normal[0] + c[1] * patch.normal[1] + c[2] * patch.normal[2];
+    return Math.abs(offP - offT) <= PLANE_OFFSET_MM;
+  };
+  const bridgeOff = (t, normal, offP) => {
+    let max = 0;
+    for (let k = 0; k < 3; k++) {
+      const i = indices[t * 3 + k];
+      const d = positions[i * 3] * normal[0]
+        + positions[i * 3 + 1] * normal[1]
+        + positions[i * 3 + 2] * normal[2];
+      const off = Math.abs(d - offP);
+      if (off > max) max = off;
+    }
+    return max;
+  };
+  const planarOrder = patches
+    .filter((p) => p.kind === 'planar' && p.tris.length)
+    .sort((a, b) => b.area - a.area);
+  for (const p of planarOrder) {
+    const seed = p.tris.filter((t) => triPatch[t] === p.id);
+    if (!seed.length) continue;
+    const offP = planeOffset(p);
+    const stack = seed.slice();
+    const seen = new Uint8Array(numTri);
+    for (const t of stack) seen[t] = 1;
+    while (stack.length) {
+      const t = stack.pop();
+      const nbs = neighbors[t];
+      for (let i = 0; i < nbs.length; i++) {
+        const nb = nbs[i];
+        if (seen[nb]) continue;
+        seen[nb] = 1;
+        if (bridgeOff(nb, p.normal, offP) > PLANE_BRIDGE_MM) continue;
+        stack.push(nb);
+        if (!onPlane(nb, p, offP) || triPatch[nb] === p.id) continue;
+        const owner = patches[triPatch[nb]];
+        if (owner && owner.kind === 'planar' && owner.area > p.area) continue;
+        triPatch[nb] = p.id;
+      }
+    }
+  }
+  for (const p of patches) p.tris = [];
+  for (let t = 0; t < numTri; t++) patches[triPatch[t]].tris.push(t);
+  for (const p of patches) {
+    let area = 0;
+    let cx = 0;
+    let cy = 0;
+    let cz = 0;
+    const fids = new Set();
+    for (const t of p.tris) {
+      const ar = triArea[t];
+      area += ar;
+      const c = triCent[t];
+      cx += c[0] * ar;
+      cy += c[1] * ar;
+      cz += c[2] * ar;
+      fids.add(rawFid[t]);
+    }
+    p.area = area;
+    if (area > 1e-18) p.center = [cx / area, cy / area, cz / area];
+    p.faceIds = [...fids].sort((a, b) => a - b);
+  }
+  const remap = new Int32Array(patches.length);
+  let kept = 0;
+  for (let i = 0; i < patches.length; i++) {
+    if (!patches[i].tris.length) {
+      remap[i] = -1;
+      continue;
+    }
+    remap[i] = kept;
+    patches[i].id = kept;
+    patches[kept] = patches[i];
+    kept++;
+  }
+  patches.length = kept;
+  for (let t = 0; t < numTri; t++) triPatch[t] = remap[triPatch[t]];
+  patchCount = kept;
 
   let hash = numTri * 2654435761;
   hash = (hash ^ (atomCount * 97531)) >>> 0;
