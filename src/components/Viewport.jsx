@@ -210,7 +210,7 @@ import {
 import { downloadModelFromMesh, get3MFBase64FromMesh } from '../utils/exportModel';
 import { parseImportedModels, loadCachedModel } from '../utils/importModel';
 import { calculateQuote } from '../utils/quoting';
-import { resolveViewportFaceClick, selectMoveFaceWithTangentFillet, warmFaceGraph } from '../utils/selectFace';
+import { resolveViewportFaceClick, warmFaceGraph } from '../utils/selectFace';
 import { buildPartGraphPatches, buildPatchOverlayArrays, PARTGRAPH_MAX_TRIANGLES } from '../utils/partGraphPatches';
 import { createCuttingPlaneWidget, updateCuttingPlaneWidget } from '../utils/cuttingPlaneWidget';
 import { AxesHelper } from 'three';
@@ -4386,17 +4386,7 @@ const Viewport = forwardRef(({
       angleTolerance: ANGLE_TOLERANCE_DEGREES,
       legacy: legacyTap || !!moveFaceModeRef.current || !!deleteFaceModeRef.current,
     });
-    // Move Face one-click keeps the legacy coplanar walk, then adds a blend
-    // that meets that wall. Double click stays the 3° walk above.
-    let faceIndices = resolved.indices;
-    if (moveFaceModeRef.current && clickCount < 2) {
-      faceIndices = selectMoveFaceWithTangentFillet(
-        geometry,
-        seedFaceIndex,
-        faceNormal,
-        faceIDsRef.current,
-      );
-    }
+    const faceIndices = resolved.indices;
     const selectionMode = resolved.selectionMode;
     if (legacyTap) {
       console.log(`[Face Selection] ${clickCount}-click picker tap: ${faceIndices.length} triangles (${selectionMode})`);
@@ -4406,16 +4396,10 @@ const Viewport = forwardRef(({
       console.log(`[Face Selection] Single-click: face (${resolved.kind}), ${faceIndices.length} triangles`);
     }
     
-    // Calculate face data (center, area, vertices) from selected triangles.
-    // Move Face may include the tangent fillet in the highlight. The center
-    // written for moveFace stays on the planar wall (within 1° of the hit).
+    // Calculate face data (center, area, vertices) from selected triangles
     let centerSum = new Vector3();
     let totalArea = 0;
-    let centerArea = 0;
     const allVertices = [];
-    const hitN = clickedFace.normal;
-    const cosPlanar = Math.cos((1 * Math.PI) / 180);
-    const centerOnPlane = !!(moveFaceModeRef.current && clickCount < 2);
     
     faceIndices.forEach(faceIdx => {
       const i0 = index[faceIdx * 3];
@@ -4427,30 +4411,12 @@ const Viewport = forwardRef(({
       const triangle = new Triangle(v1, v2, v3);
       const area = triangle.getArea();
       const triCenter = new Vector3().add(v1).add(v2).add(v3).divideScalar(3);
+      centerSum.add(triCenter.multiplyScalar(area));
       totalArea += area;
-      let onPlane = true;
-      if (centerOnPlane) {
-        const ax = v2.x - v1.x;
-        const ay = v2.y - v1.y;
-        const az = v2.z - v1.z;
-        const bx = v3.x - v1.x;
-        const by = v3.y - v1.y;
-        const bz = v3.z - v1.z;
-        const nx = ay * bz - az * by;
-        const ny = az * bx - ax * bz;
-        const nz = ax * by - ay * bx;
-        const len = Math.hypot(nx, ny, nz) || 1;
-        const dot = (nx / len) * hitN.x + (ny / len) * hitN.y + (nz / len) * hitN.z;
-        onPlane = dot > cosPlanar;
-      }
-      if (onPlane) {
-        centerSum.add(triCenter.multiplyScalar(area));
-        centerArea += area;
-      }
       allVertices.push([v1.x, v1.y, v1.z], [v2.x, v2.y, v2.z], [v3.x, v3.y, v3.z]);
     });
     
-    const center = centerSum.divideScalar(centerArea || totalArea);
+    const center = centerSum.divideScalar(totalArea);
     const normal = clickedFace.normal.clone();
     const faceData = {
       center: [center.x, center.y, center.z],
@@ -5343,8 +5309,8 @@ const Viewport = forwardRef(({
 
     resultRef.current.geometry?.dispose();
     resultRef.current.geometry = geometry;
-    // New mesh, including after fillet. The blend stays its own patch;
-    // Move Face reads the tangent link from this graph.
+    // New mesh, including after fillet. Coplanar caps join here; the blend
+    // stays its own patch.
     warmFaceGraph(geometry, faceIDsRef.current);
     attachContactSeam(resultRef.current, meshData);
     setMeshEpoch((n) => n + 1);

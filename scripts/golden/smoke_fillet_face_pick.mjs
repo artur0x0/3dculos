@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 /**
- * A face pick on the wall next to an internal fillet includes that fillet,
- * and Move Face then carries it.
+ * One click on a coplanar cap covers both former bodies. The curved fillet
+ * is not part of that pick.
  *
- * The fillet and the wall are one body (one decompose component, one vertex
- * component). The blend stays its own patch. Move Face one-click reads the
- * tangent link, so the pick includes the fillet triangles. The named center
- * stays on the wall, and moveFace carries the blend into the cavity.
- * Default one-click stays the planar face. A click on the fillet stays the
- * coplanar facet.
+ * The shelled L is one body and the inner ceiling is one plane. A fillet
+ * between the two source bodies leaves the far half of that cap with the
+ * other face id. The face graph joins those coplanar triangles. Shell,
+ * Draft, Cut, and Move Face one-click read that same planar face. A click
+ * on the blend stays the coplanar facet. Move Face double-click is not the
+ * body.
  */
 import { register } from 'node:module';
 import { readFileSync } from 'node:fs';
@@ -18,7 +18,6 @@ import { buildPartGraphPatches } from '../../src/utils/partGraphPatches.js';
 import {
   resolveViewportFaceClick,
   selectFaceByID,
-  selectMoveFaceWithTangentFillet,
 } from '../../src/utils/selectFace.js';
 
 register('./manifold-resolve-hook.mjs', import.meta.url);
@@ -65,11 +64,7 @@ async function exec(script) {
   }
 }
 
-function ball(solidName, p) {
-  return `Manifold.intersection(${solidName}, Manifold.sphere(0.2, 12).translate([${p.join(',')}])).volume()`;
-}
-
-function triNormal(pos, index, t) {
+function triInfo(pos, index, t) {
   const i0 = index[t * 3];
   const i1 = index[t * 3 + 1];
   const i2 = index[t * 3 + 2];
@@ -82,22 +77,17 @@ function triNormal(pos, index, t) {
   const nx = ay * bz - az * by;
   const ny = az * bx - ax * bz;
   const nz = ax * by - ay * bx;
-  const len = Math.hypot(nx, ny, nz) || 1;
-  return [nx / len, ny / len, nz / len];
+  const raw = Math.hypot(nx, ny, nz);
+  const len = raw || 1;
+  const area = 0.5 * raw;
+  const cx = (pos[i0 * 3] + pos[i1 * 3] + pos[i2 * 3]) / 3;
+  const cy = (pos[i0 * 3 + 1] + pos[i1 * 3 + 1] + pos[i2 * 3 + 1]) / 3;
+  const cz = (pos[i0 * 3 + 2] + pos[i1 * 3 + 2] + pos[i2 * 3 + 2]) / 3;
+  return { nx: nx / len, ny: ny / len, nz: nz / len, area, cx, cy, cz };
 }
 
-function triOnPlane(pos, index, t, axis, value, eps = 0.05) {
-  for (let k = 0; k < 3; k++) {
-    const v = index[t * 3 + k];
-    if (Math.abs(pos[v * 3 + axis] - value) > eps) return false;
-  }
-  return true;
-}
-
-console.log('face pick on the wall includes the internal fillet');
+console.log('one click on the coplanar cap covers both former bodies');
 {
-  const arrived = [0, -32.8, 10.8];
-  const cavity = [0, -32.8, 9.2];
   const r = await exec(`
 let part = Manifold.union([
   Manifold.cube([60, 24, 28], true).translate([-8, 0, 0]),
@@ -105,42 +95,14 @@ let part = Manifold.union([
 ]);
 part = hollow(part, 3, [{ center: [0, 0, -14], normal: [0, 0, -1] }]);
 const edgeLen = (e) => Math.hypot(e.vb[0] - e.va[0], e.vb[1] - e.va[1], e.vb[2] - e.va[2]);
-const horizontal = concaveEdges(part).filter((e) => {
-  const midY = (e.va[1] + e.vb[1]) / 2;
-  const midZ = (e.va[2] + e.vb[2]) / 2;
-  return Math.abs(e.vb[2] - e.va[2]) < 0.5 && midZ > 8 && edgeLen(e) > 8 && Math.abs(midY + 35) < 1;
-});
-if (!horizontal.length) throw new Error('no inner-wall top edge');
-const before = part.volume();
-part = filletAlongPath(part, makeSweepPath([horizontal[0]]), 2.5, { variableProfile: true });
-const preN = part.decompose().length;
-const preArrived = ${ball('part', arrived)};
-const preCavity = ${ball('part', cavity)};
-const moved = moveFace(part, [{ center: [0, -35, 0], normal: [0, 1, 0] }], 1.5);
-const postArrived = ${ball('moved', arrived)};
-const postCavity = ${ball('moved', cavity)};
-globalThis.__note = {
-  preN,
-  postN: moved.decompose().length,
-  filletAdd: +(part.volume() - before).toFixed(3),
-  preArrived: +preArrived.toFixed(5),
-  postArrived: +postArrived.toFixed(5),
-  preCavity: +preCavity.toFixed(5),
-  postCavity: +postCavity.toFixed(5),
-};
+const edges = concaveEdges(part).filter((e) => edgeLen(e) > 10 && (e.va[2] + e.vb[2]) / 2 > 6);
+part = filletAlongPath(part, makeSweepPath(edges), 2, { variableProfile: true });
+globalThis.__note = { bodies: part.decompose().length, edges: edges.length };
 return part;
 `);
   check('shelled L fillet runs', !r.error, r.error || '');
-  const n = r.note;
-  if (!r.error && n) {
-    check('the fillet and the wall are one body', n.preN === 1, `n=${n.preN}`);
-    check('the fillet added material', n.filletAdd > 1, `add=${n.filletAdd}`);
-    check('moveFace still returns one body', n.postN === 1, `n=${n.postN}`);
-    check('the cavity point beside the fillet was empty', n.preArrived < 1e-4, `vol=${n.preArrived}`);
-    check('Move Face carried the fillet into that point', n.postArrived > 1e-3, `vol=${n.postArrived}`);
-    check('a deeper cavity point stayed empty', n.preCavity < 1e-4 && n.postCavity < 1e-4,
-      `vol ${n.preCavity}->${n.postCavity}`);
-  }
+  check('the cap halves are one body', r.note?.bodies === 1, `n=${r.note?.bodies}`);
+  check('more than one inner edge was filleted', (r.note?.edges || 0) > 1, `n=${r.note?.edges}`);
 
   const mesh = r.payload?.mesh;
   if (!r.error && mesh?.vertProperties && mesh?.triVerts) {
@@ -157,104 +119,133 @@ return part;
     geometry.setAttribute('position', new BufferAttribute(pos, 3));
     geometry.setIndex(new BufferAttribute(index, 1));
     const bodies = meshBodyComponents(geometry.attributes.position, geometry.index);
-    check('the fillet shares the wall vertex component', bodies.length === 1, `bodies=${bodies.length}`);
+    check('the cap shares one vertex component', bodies.length === 1, `bodies=${bodies.length}`);
 
     const numTri = index.length / 3;
-    let wall = -1;
+    const cosCap = Math.cos((0.5 * Math.PI) / 180);
+    const cosFillet = Math.cos((20 * Math.PI) / 180);
+    let ceilingArea = 0;
+    let seed = -1;
     let filletTri = -1;
+    const infos = new Array(numTri);
     for (let t = 0; t < numTri; t++) {
-      const normal = triNormal(pos, index, t);
-      if (wall < 0 && normal[1] > 0.99 && triOnPlane(pos, index, t, 1, -35)) wall = t;
-      if (filletTri < 0 && normal[1] < Math.cos((20 * Math.PI) / 180) && normal[1] > 0.2) {
-        let cy = 0;
-        let cz = 0;
-        for (let k = 0; k < 3; k++) {
-          const v = index[t * 3 + k];
-          cy += pos[v * 3 + 1];
-          cz += pos[v * 3 + 2];
-        }
-        cy /= 3;
-        cz /= 3;
-        if (cy > -35.2 && cy < -30 && cz > 8) filletTri = t;
+      const info = triInfo(pos, index, t);
+      infos[t] = info;
+      const onCap = info.nz < -cosCap && Math.abs(info.cz - 11) <= 0.05;
+      if (onCap) {
+        ceilingArea += info.area;
+        if (seed < 0 || info.cx < infos[seed].cx) seed = t;
       }
+      const ang = -info.nz;
+      if (filletTri < 0 && ang < cosFillet && ang > 0.2 && info.cz > 8 && info.cz < 11.2) filletTri = t;
     }
-    check('the inner wall triangle is on y = -35', wall >= 0, `wall=${wall}`);
-    check('a fillet triangle sits on that corner', filletTri >= 0, `fillet=${filletTri}`);
+    check('the inner ceiling is one plane of real area', ceilingArea > 1100 && seed >= 0,
+      `area=${ceilingArea.toFixed(1)} seed=${seed}`);
+    check('a curved fillet triangle sits beside that cap', filletTri >= 0, `fillet=${filletTri}`);
 
-    if (wall >= 0) {
+    if (seed >= 0) {
       const graph = buildPartGraphPatches({
         positions: pos,
         indices: index,
         faceIDs: mesh.faceID,
       });
-      const wallPatch = graph.patches[graph.triPatch[wall]];
-      const blend = graph.patches.find((p) => p.kind === 'blend');
-      check('the wall patch stays planar', wallPatch?.kind === 'planar', wallPatch?.kind || 'missing');
-      check('the fillet stays its own blend patch', !!blend && blend.id !== wallPatch?.id);
-      check('the wall patch tris do not swallow the blend',
-        !!blend && blend.tris.every((t) => !wallPatch.tris.includes(t)));
-      check('the wall records the tangent fillet',
-        !!blend && blend.tris.some((t) => wallPatch.tangentTris.includes(t)),
-        `tangent=${wallPatch?.tangentTris?.length || 0}`);
-      const side = graph.patches.find((p) => p.kind === 'planar' && Math.abs(p.normal[0]) > 0.9 && p.area > 50);
-      check('a 90° side wall does not record the fillet',
-        !!side && (!blend || blend.tris.every((t) => !side.tangentTris.includes(t))),
-        side ? `tangent=${side.tangentTris.length}` : 'no side');
-
-      const picked = selectMoveFaceWithTangentFillet(geometry, wall, [0, 1, 0], mesh.faceID);
-      const pickedSet = new Set(picked);
-      const includesWall = wallPatch.tris.every((t) => pickedSet.has(t));
-      const includesFillet = !!blend && blend.tris.some((t) => pickedSet.has(t));
-      check('Move Face pick on the wall includes the wall', includesWall, `n=${picked.length}`);
-      check('Move Face pick on the wall includes the fillet', includesFillet, `n=${picked.length}`);
-      let cy = 0;
-      let cArea = 0;
-      const cos1 = Math.cos(Math.PI / 180);
-      for (const t of picked) {
-        const normal = triNormal(pos, index, t);
-        if (normal[1] <= cos1) continue;
-        let y = 0;
-        for (let k = 0; k < 3; k++) y += pos[index[t * 3 + k] * 3 + 1];
-        const i0 = index[t * 3];
-        const i1 = index[t * 3 + 1];
-        const i2 = index[t * 3 + 2];
-        const ax = pos[i1 * 3] - pos[i0 * 3];
-        const ay = pos[i1 * 3 + 1] - pos[i0 * 3 + 1];
-        const az = pos[i1 * 3 + 2] - pos[i0 * 3 + 2];
-        const bx = pos[i2 * 3] - pos[i0 * 3];
-        const by = pos[i2 * 3 + 1] - pos[i0 * 3 + 1];
-        const bz = pos[i2 * 3 + 2] - pos[i0 * 3 + 2];
-        const area = 0.5 * Math.hypot(ay * bz - az * by, az * bx - ax * bz, ax * by - ay * bx);
-        cy += (y / 3) * area;
-        cArea += area;
+      const cap = graph.patches[graph.triPatch[seed]];
+      const faceIds = new Set();
+      let pickedCap = 0;
+      let minX = Infinity;
+      let maxX = -Infinity;
+      let minY = Infinity;
+      let maxY = -Infinity;
+      for (const t of cap.tris) {
+        const info = infos[t];
+        if (!(info.nz < -cosCap && Math.abs(info.cz - 11) <= 0.05)) continue;
+        pickedCap += info.area;
+        faceIds.add(mesh.faceID?.[t]);
+        if (info.cx < minX) minX = info.cx;
+        if (info.cx > maxX) maxX = info.cx;
+        if (info.cy < minY) minY = info.cy;
+        if (info.cy > maxY) maxY = info.cy;
       }
-      const centerY = cArea > 0 ? cy / cArea : 0;
-      check('the named center stays on the wall', cArea > 0 && Math.abs(centerY + 35) < 0.05,
-        `y=${centerY.toFixed(3)} area=${cArea.toFixed(2)}`);
+      check('the cap patch stays planar', cap?.kind === 'planar', cap?.kind || 'missing');
+      check('one patch holds both former bodies of the cap',
+        pickedCap > ceilingArea * 0.95 && (maxX - minX) > 20 && (maxY - minY) > 20,
+        `area=${pickedCap.toFixed(1)}/${ceilingArea.toFixed(1)} span=${(maxX - minX).toFixed(1)}x${(maxY - minY).toFixed(1)}`);
+      check('those halves still carry more than one face id', faceIds.size > 1, `ids=${faceIds.size}`);
+      const curvedInCap = cap.tris.some((t) => infos[t].area > 1e-6 && -infos[t].nz < cosFillet);
+      check('the curved fillet is not in the cap patch', !curvedInCap);
 
-      const graphClick = resolveViewportFaceClick({
+      const click = (legacy) => resolveViewportFaceClick({
         geometry,
-        seedFaceIndex: wall,
-        faceNormal: [0, 1, 0],
+        seedFaceIndex: seed,
+        faceNormal: [0, 0, -1],
         clickCount: 1,
         faceIDs: mesh.faceID,
-        legacy: false,
+        legacy,
       });
-      const graphSet = new Set(graphClick.indices);
-      check('default one-click on the wall stays the planar face',
-        graphClick.kind === 'planar'
-          && wallPatch.tris.every((t) => graphSet.has(t))
-          && (!blend || blend.tris.every((t) => !graphSet.has(t))));
+      for (const legacy of [false, true]) {
+        const picked = click(legacy);
+        const set = new Set(picked.indices);
+        const covers = cap.tris.every((t) => set.has(t));
+        const filletIn = filletTri >= 0 && set.has(filletTri);
+        const curved = picked.indices.some((t) => infos[t].area > 1e-6 && -infos[t].nz < cosFillet);
+        check(`${legacy ? 'Shell/Draft/Cut/Move Face' : 'default'} one-click selects the whole cap`,
+          picked.kind === 'planar' && covers && !filletIn && !curved,
+          `n=${picked.indices.length} filletIn=${filletIn} curved=${curved}`);
+      }
+
+      const dbl = resolveViewportFaceClick({
+        geometry,
+        seedFaceIndex: seed,
+        faceNormal: [0, 0, -1],
+        clickCount: 2,
+        faceIDs: mesh.faceID,
+        legacy: true,
+      });
+      check('Move Face double-click is not the body',
+        dbl.selectionMode === 'angular-tolerance' && dbl.indices.length < numTri * 0.5,
+        `mode=${dbl.selectionMode} n=${dbl.indices.length}`);
+
+      const arms = graph.patches.filter((p) => {
+        if (p.kind !== 'planar' || p.area < 100) return false;
+        return Math.abs(p.normal[1] + 1) < 0.01;
+      });
+      const yOff = (p) => p.center[1] * p.normal[1];
+      let split = null;
+      for (let i = 0; i < arms.length && !split; i++) {
+        for (let j = i + 1; j < arms.length; j++) {
+          if (Math.abs(yOff(arms[i]) - yOff(arms[j])) > 0.05) continue;
+          const dx = arms[i].center[0] - arms[j].center[0];
+          const dy = arms[i].center[1] - arms[j].center[1];
+          const dz = arms[i].center[2] - arms[j].center[2];
+          if (Math.hypot(dx, dy, dz) > 20) split = [arms[i], arms[j]];
+        }
+      }
+      check('coplanar arms that the fillet does not join stay two faces', !!split,
+        `candidates=${arms.length}`);
+      if (split) {
+        const a = new Set(split[0].tris);
+        check('a click on one arm does not select the other',
+          split[1].tris.every((t) => !a.has(t)));
+      }
     }
 
     if (filletTri >= 0) {
-      const nrm = triNormal(pos, index, filletTri);
+      const nrm = [infos[filletTri].nx, infos[filletTri].ny, infos[filletTri].nz];
       const facet = selectFaceByID(geometry, filletTri, { normal: nrm });
-      const onFillet = selectMoveFaceWithTangentFillet(geometry, filletTri, nrm, mesh.faceID);
+      const onFillet = resolveViewportFaceClick({
+        geometry,
+        seedFaceIndex: filletTri,
+        faceNormal: nrm,
+        clickCount: 1,
+        faceIDs: mesh.faceID,
+        legacy: true,
+      });
       const facetSet = new Set(facet);
       check('a click on the fillet stays the coplanar facet',
-        onFillet.length === facet.length && onFillet.every((t) => facetSet.has(t)),
-        `pick=${onFillet.length} facet=${facet.length}`);
+        onFillet.selectionMode === 'coplanar'
+          && onFillet.indices.length === facet.length
+          && onFillet.indices.every((t) => facetSet.has(t)),
+        `pick=${onFillet.indices.length} facet=${facet.length}`);
     }
   } else if (!r.error) {
     check('mesh is available for the face pick', false, 'no mesh');
@@ -264,7 +255,8 @@ return part;
 {
   const vp = readFileSync(new URL('../../src/components/Viewport.jsx', import.meta.url), 'utf8');
   check('the new mesh warms the face graph', /warmFaceGraph\(geometry, faceIDsRef\.current\)/.test(vp));
-  check('Move Face one-click reads the tangent fillet', /selectMoveFaceWithTangentFillet\(/.test(vp));
+  check('Move Face does not pull a tangent blend into the click',
+    !/selectMoveFaceWithTangentFillet\(/.test(vp));
   check('Move Face still forces the legacy walk',
     /legacy: legacyTap \|\| !!moveFaceModeRef\.current/.test(vp));
 }
