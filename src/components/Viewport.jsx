@@ -61,6 +61,7 @@ import ShellModeChip from './ShellModeChip';
 import DraftModeChip from './DraftModeChip';
 import CutModeChip from './CutModeChip';
 import MoveModeChip from './MoveModeChip';
+import MoveFaceModeChip from './MoveFaceModeChip';
 import { buildCrossSectionPreview, defaultTopPlaneFrame } from '../utils/crossSectionSubstrate';
 import {
   applySavedContour,
@@ -166,6 +167,15 @@ import {
   cutNormalFromScript,
   MOVE_MODE_NEED_BODY,
 } from '../utils/moveMode';
+import {
+  emptyMoveFaceState,
+  toggleMoveFaceSelection,
+  popLastMoveFace,
+  clearMoveFaces,
+  setMoveFaceDistance,
+  setMoveFaceFlip,
+  validateMoveFaceAccept,
+} from '../utils/moveFaceMode';
 import { contactSeamSegments } from '../utils/contactSeam';
 import { classifySelectedFace } from '../utils/faceFeaturePlacement';
 import { classifyFilletEdges, countDegenerateTriangles } from '../utils/filletEdgeClass';
@@ -513,6 +523,7 @@ const Viewport = forwardRef(({
   onCommitDraft = null,
   onCommitCut = null,
   onCommitMove = null,
+  onCommitMoveFace = null,
   getHelperBuffer = null,
   /** Mobile CAD mid-strip host (CodeEditor). Null on desktop and in game. */
   cadToolbarHost = null,
@@ -651,9 +662,18 @@ const Viewport = forwardRef(({
   const cutModeRef = useRef(null);
   const [moveMode, setMoveMode] = useState(null);
   const moveModeRef = useRef(null);
+  const [moveFaceMode, setMoveFaceMode] = useState(null);
+  const moveFaceModeRef = useRef(null);
   /** Kernel centroids from the last execute. move() matches these, not the viewport average. */
   const bodyCentroidsRef = useRef([]);
   const movePreviewRef = useRef(null);
+  const moveFacePreviewRef = useRef(null);
+  const moveFaceBaseMaterialRef = useRef(null);
+  const moveFaceHiddenMatRef = useRef(null);
+  const moveFaceLiveKeyRef = useRef('');
+  const moveFacePreviewGenRef = useRef(0);
+  const moveFacePreviewTimerRef = useRef(null);
+  const clearMoveFacePreviewRef = useRef(() => {});
   const cutPlaneWidgetRef = useRef(null);
   const cutPiecesPreviewRef = useRef(null);
   const cutBaseMaterialRef = useRef(null);
@@ -778,6 +798,7 @@ const Viewport = forwardRef(({
   draftModeRef.current = draftMode;
   cutModeRef.current = cutMode;
   moveModeRef.current = moveMode;
+  moveFaceModeRef.current = moveFaceMode;
 
   useImperativeHandle(ref, () => ({
     executeScript,
@@ -818,6 +839,9 @@ const Viewport = forwardRef(({
       cutModeRef.current = null;
       setMoveMode(null);
       moveModeRef.current = null;
+      clearMoveFacePreviewRef.current();
+      setMoveFaceMode(null);
+      moveFaceModeRef.current = null;
       setContourToast(null);
       setFilletToast(null);
       setShellToast(null);
@@ -893,6 +917,9 @@ const Viewport = forwardRef(({
     },
     softFailMove: (msg) => {
       showShellToast(msg || 'Move refused — double-click a body, then Confirm.');
+    },
+    softFailMoveFace: (msg) => {
+      showShellToast(msg || 'Move Face refused — tap a face, then Confirm.');
     },
     // Updated to use cached mesh when available
     export3MF: async () => {
@@ -1985,6 +2012,9 @@ const Viewport = forwardRef(({
     cutModeRef.current = null;
     setMoveMode(null);
     moveModeRef.current = null;
+    clearMoveFacePreviewRef.current();
+    setMoveFaceMode(null);
+    moveFaceModeRef.current = null;
     setPickMode('face');
     disposeEdgeOverlayObject(sceneRef.current, pathPreviewRef.current);
     pathPreviewRef.current = null;
@@ -2120,6 +2150,9 @@ const Viewport = forwardRef(({
     cutModeRef.current = null;
     setMoveMode(null);
     moveModeRef.current = null;
+    clearMoveFacePreviewRef.current();
+    setMoveFaceMode(null);
+    moveFaceModeRef.current = null;
     setPickMode('edge');
     clearHighlight();
     setSelectedFace(null);
@@ -2209,11 +2242,14 @@ const Viewport = forwardRef(({
     clearFilletBlendPreview();
     setDraftMode(null);
     draftModeRef.current = null;
-    if (cutModeRef.current || moveModeRef.current) clearHighlight();
+    if (cutModeRef.current || moveModeRef.current || moveFaceModeRef.current) clearHighlight();
     setCutMode(null);
     cutModeRef.current = null;
     setMoveMode(null);
     moveModeRef.current = null;
+    clearMoveFacePreviewRef.current();
+    setMoveFaceMode(null);
+    moveFaceModeRef.current = null;
     setPickMode('face');
     clearEdgeHover();
     clearEdgeHighlight();
@@ -3011,11 +3047,14 @@ const Viewport = forwardRef(({
     clearFilletBlendPreview();
     setShellMode(null);
     shellModeRef.current = null;
-    if (cutModeRef.current || moveModeRef.current) clearHighlight();
+    if (cutModeRef.current || moveModeRef.current || moveFaceModeRef.current) clearHighlight();
     setCutMode(null);
     cutModeRef.current = null;
     setMoveMode(null);
     moveModeRef.current = null;
+    clearMoveFacePreviewRef.current();
+    setMoveFaceMode(null);
+    moveFaceModeRef.current = null;
     setPickMode('face');
     clearEdgeHover();
     clearEdgeHighlight();
@@ -3302,9 +3341,12 @@ const Viewport = forwardRef(({
     shellModeRef.current = null;
     setDraftMode(null);
     draftModeRef.current = null;
-    if (moveModeRef.current) clearHighlight();
+    if (moveModeRef.current || moveFaceModeRef.current) clearHighlight();
     setMoveMode(null);
     moveModeRef.current = null;
+    clearMoveFacePreviewRef.current();
+    setMoveFaceMode(null);
+    moveFaceModeRef.current = null;
     setPickMode('face');
     clearEdgeHover();
     clearEdgeHighlight();
@@ -3430,6 +3472,10 @@ const Viewport = forwardRef(({
     }
     setCutMode(null);
     cutModeRef.current = null;
+    if (moveFaceModeRef.current) clearHighlight();
+    clearMoveFacePreviewRef.current();
+    setMoveFaceMode(null);
+    moveFaceModeRef.current = null;
     setPickMode('face');
     clearEdgeHover();
     clearEdgeHighlight();
@@ -3464,6 +3510,198 @@ const Viewport = forwardRef(({
       exitMoveMode();
     }
   }, [onCommitMove, exitMoveMode, onFaceSelected, clearHighlight]);
+
+  const removeMoveFacePreview = useCallback(() => {
+    if (moveFacePreviewTimerRef.current) {
+      clearTimeout(moveFacePreviewTimerRef.current);
+      moveFacePreviewTimerRef.current = null;
+    }
+    const preview = moveFacePreviewRef.current;
+    moveFacePreviewRef.current = null;
+    if (preview) {
+      sceneRef.current?.remove(preview);
+      preview.geometry?.dispose?.();
+      preview.material?.dispose?.();
+    }
+    const mesh = resultRef.current;
+    if (mesh && moveFaceBaseMaterialRef.current) {
+      mesh.material = moveFaceBaseMaterialRef.current;
+      moveFaceBaseMaterialRef.current = null;
+    }
+  }, []);
+
+  const clearMoveFacePreview = useCallback(() => {
+    moveFacePreviewGenRef.current += 1;
+    moveFaceLiveKeyRef.current = '';
+    removeMoveFacePreview();
+  }, [removeMoveFacePreview]);
+  clearMoveFacePreviewRef.current = clearMoveFacePreview;
+
+  const hideMoveFaceBase = useCallback(() => {
+    const mesh = resultRef.current;
+    if (!mesh) return;
+    if (!moveFaceHiddenMatRef.current) {
+      moveFaceHiddenMatRef.current = new MeshBasicMaterial({
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+        colorWrite: false,
+      });
+    }
+    if (!moveFaceBaseMaterialRef.current) moveFaceBaseMaterialRef.current = mesh.material;
+    mesh.material = moveFaceHiddenMatRef.current;
+  }, []);
+
+  const paintMoveFacePreview = useCallback((meshData) => {
+    const scene = sceneRef.current;
+    removeMoveFacePreview();
+    if (!scene || !meshData) return;
+    const geom = geometryFromPreviewMesh(meshData);
+    if (!geom) return;
+    hideMoveFaceBase();
+    const mesh = new ThreeMesh(geom, makePreviewSkinMaterial());
+    mesh.name = 'move-face-preview';
+    mesh.raycast = () => {};
+    scene.add(mesh);
+    moveFacePreviewRef.current = mesh;
+    const renderer = rendererRef.current;
+    const camera = cameraRef.current;
+    if (renderer && camera) renderer.render(scene, camera);
+  }, [hideMoveFaceBase, removeMoveFacePreview]);
+
+  const ensureMoveFacePreview = useCallback((state) => {
+    const dist = Number(state?.distance);
+    const faces = state?.faces || [];
+    if (!faces.length || !Number.isFinite(dist) || dist === 0) {
+      clearMoveFacePreview();
+      return;
+    }
+    const payloadFaces = faces.map((f) => ({ center: f.center, normal: f.normal }));
+    const key = JSON.stringify({ payloadFaces, dist, flip: !!state.flip });
+    if (moveFaceLiveKeyRef.current === key && moveFacePreviewRef.current) return;
+    const gen = ++moveFacePreviewGenRef.current;
+    moveFaceLiveKeyRef.current = '';
+    removeMoveFacePreview();
+    moveFacePreviewTimerRef.current = setTimeout(() => {
+      moveFacePreviewTimerRef.current = null;
+      if (gen !== moveFacePreviewGenRef.current) return;
+      manifoldContext.previewMoveFace({
+        faces: payloadFaces,
+        distance: dist,
+        flip: !!state.flip,
+      }).then((payload) => {
+        if (gen !== moveFacePreviewGenRef.current) return;
+        const live = moveFaceModeRef.current;
+        if (!live) return;
+        moveFaceLiveKeyRef.current = key;
+        paintMoveFacePreview(payload?.mesh);
+      }).catch((err) => {
+        if (gen !== moveFacePreviewGenRef.current) return;
+        removeMoveFacePreview();
+        showShellToast(err?.message || 'Move Face preview failed');
+      });
+    }, 60);
+  }, [clearMoveFacePreview, paintMoveFacePreview, removeMoveFacePreview]);
+
+  const paintMoveFacePicks = useCallback((state) => {
+    const geom = resultRef.current?.geometry;
+    const positions = geom?.attributes?.position;
+    const index = geom?.index?.array;
+    clearHighlight();
+    const shown = [...new Set((state?.faces || []).flatMap((f) => f.indices || []))];
+    if (geom && positions && index && shown.length) {
+      highlightFace(shown, geom, positions, index, 0xffff00, 'move-face');
+    }
+  }, [clearHighlight, highlightFace]);
+
+  const exitMoveFaceMode = useCallback(() => {
+    const was = moveFaceModeRef.current;
+    clearMoveFacePreview();
+    setMoveFaceMode(null);
+    moveFaceModeRef.current = null;
+    if (was) clearHighlight();
+    if (shellToastTimerRef.current) {
+      clearTimeout(shellToastTimerRef.current);
+      shellToastTimerRef.current = null;
+    }
+    setShellToast(null);
+  }, [clearHighlight, clearMoveFacePreview]);
+
+  const commitMoveFaceState = useCallback((next) => {
+    moveFaceModeRef.current = next;
+    setMoveFaceMode(next);
+    paintMoveFacePicks(next);
+  }, [paintMoveFacePicks]);
+
+  const enterMoveFaceMode = useCallback(() => {
+    exitContourMode();
+    setFilletMode(null);
+    filletModeRef.current = null;
+    clearFilletBlendPreview();
+    setShellMode(null);
+    shellModeRef.current = null;
+    setDraftMode(null);
+    draftModeRef.current = null;
+    if (cutModeRef.current) {
+      clearHighlight();
+      clearCutPlaneWidget();
+      clearCutPiecePreview();
+    }
+    setCutMode(null);
+    cutModeRef.current = null;
+    if (moveModeRef.current) {
+      clearHighlight();
+      clearMovePreview();
+    }
+    setMoveMode(null);
+    moveModeRef.current = null;
+    setPickMode('face');
+    clearEdgeHover();
+    clearEdgeHighlight();
+    setSelectedEdges([]);
+    const picks = facePickGroupRef.current?.picks;
+    let seed = [];
+    if (Array.isArray(picks) && picks.length) seed = picks;
+    else if (selectedFace && Array.isArray(selectedFace.center) && Array.isArray(selectedFace.normal)) {
+      seed = [selectedFace];
+    }
+    commitMoveFaceState(emptyMoveFaceState(seed));
+  }, [
+    exitContourMode,
+    selectedFace,
+    clearFilletBlendPreview,
+    clearCutPlaneWidget,
+    clearCutPiecePreview,
+    clearMovePreview,
+    clearEdgeHover,
+    clearEdgeHighlight,
+    commitMoveFaceState,
+  ]);
+
+  const acceptMoveFace = useCallback(() => {
+    const state = moveFaceModeRef.current;
+    if (!state) return;
+    const gate = validateMoveFaceAccept(state);
+    if (!gate.ok) {
+      showShellToast(gate.message);
+      return;
+    }
+    const ok = onCommitMoveFace?.({ state });
+    if (ok) {
+      clearHighlight();
+      setSelectedFace(null);
+      onFaceSelected?.(null);
+      exitMoveFaceMode();
+    }
+  }, [onCommitMoveFace, exitMoveFaceMode, onFaceSelected, clearHighlight]);
+
+  useEffect(() => {
+    if (!moveFaceMode) {
+      clearMoveFacePreview();
+      return;
+    }
+    ensureMoveFacePreview(moveFaceMode);
+  }, [moveFaceMode, clearMoveFacePreview, ensureMoveFacePreview]);
 
   const clearMeasurementLines = useCallback(() => {
     if (measurementLinesRef.current && sceneRef.current) {
@@ -3775,7 +4013,7 @@ const Viewport = forwardRef(({
     const camDist = Math.hypot(ray.origin.x, ray.origin.y, ray.origin.z) || 80;
     // Cut owns the canvas: a saved contour under the cursor must not eat the
     // piece tap (same as a construction plane sitting on the cut).
-    if (!cutModeRef.current && showContoursRef.current && !moveModeRef.current && contourModeRef.current?.tool !== 'polyline') {
+    if (!moveFaceModeRef.current && !cutModeRef.current && showContoursRef.current && !moveModeRef.current && contourModeRef.current?.tool !== 'polyline') {
       const hitC = pickContourByRay(
         origin,
         dir,
@@ -3799,7 +4037,7 @@ const Viewport = forwardRef(({
     const solidD = solidHits[0]?.distance ?? Infinity;
     // Cut taps a body or a piece. A construction plane that sits on the cut
     // (the XY plane through a centered part) must not swallow that click.
-    if (!cutModeRef.current && planeHits.length && !moveModeRef.current && planeD <= solidD + 0.5) {
+    if (!cutModeRef.current && planeHits.length && !moveModeRef.current && !moveFaceModeRef.current && planeD <= solidD + 0.5) {
       const ud = planeHits[0].object.userData?.plane
         ? planeHits[0].object.userData
         : planeHits[0].object.parent?.userData;
@@ -3838,6 +4076,8 @@ const Viewport = forwardRef(({
         // Preserve cut body selection — stray taps must not wipe the set.
       } else if (moveModeRef.current) {
         // Preserve the picked body — stray taps must not wipe the target.
+      } else if (moveFaceModeRef.current) {
+        // Preserve the picked faces — stray taps must not wipe the set.
       } else {
         clearHighlight();
         setSelectedFace(null);
@@ -3968,7 +4208,7 @@ const Viewport = forwardRef(({
       clickCount,
       faceIDs: faceIDsRef.current,
       angleTolerance: ANGLE_TOLERANCE_DEGREES,
-      legacy: legacyTap,
+      legacy: legacyTap || !!moveFaceModeRef.current,
     });
     const faceIndices = resolved.indices;
     const selectionMode = resolved.selectionMode;
@@ -4086,6 +4326,13 @@ const Viewport = forwardRef(({
         }
         return;
       }
+      if (moveFaceModeRef.current) {
+        // Same sticky tap as Shell. A double click stays the legacy face walk,
+        // not the owning body, so Confirm still writes the tapped face.
+        const next = toggleMoveFaceSelection(moveFaceModeRef.current, entry);
+        commitMoveFaceState(next);
+        return;
+      }
       if (cutModeRef.current) {
         // Cut: plane, bodies, and pieces are sticky taps. No shift-click.
         const geom = geometry;
@@ -4123,7 +4370,7 @@ const Viewport = forwardRef(({
       }
     }
     
-  }, [measurementEnabled, measurementFaces, onFaceSelected, clearHighlight, clearEdgeHighlight, highlightFace, publishFacePicks, paintDraftPicks, commitCutState, paintMovePreview, getHelperBuffer]);
+  }, [measurementEnabled, measurementFaces, onFaceSelected, clearHighlight, clearEdgeHighlight, highlightFace, publishFacePicks, paintDraftPicks, commitCutState, paintMovePreview, commitMoveFaceState, getHelperBuffer]);
 
   /**
    * Handle face selection in measurement mode
@@ -4179,7 +4426,7 @@ const Viewport = forwardRef(({
     const onPointerDown = (event) => {
       if (!featureSheetEnabledRef.current) return;
       if (event.button != null && event.button !== 0) return;
-      if (contourModeRef.current || filletModeRef.current || shellModeRef.current || draftModeRef.current || moveModeRef.current) return;
+      if (contourModeRef.current || filletModeRef.current || shellModeRef.current || draftModeRef.current || moveModeRef.current || moveFaceModeRef.current) return;
       if (measurementEnabled) return;
       CLEAR_LP();
       featureLongPressFiredRef.current = false;
@@ -4189,7 +4436,7 @@ const Viewport = forwardRef(({
         const origin = featureLongPressOriginRef.current;
         featureLongPressOriginRef.current = null;
         if (!origin || !featureSheetEnabledRef.current) return;
-        if (contourModeRef.current || filletModeRef.current || shellModeRef.current || draftModeRef.current || moveModeRef.current) return;
+        if (contourModeRef.current || filletModeRef.current || shellModeRef.current || draftModeRef.current || moveModeRef.current || moveFaceModeRef.current) return;
         featureLongPressFiredRef.current = true;
         onFeatureLongPressRef.current?.({ clientX: origin.x, clientY: origin.y });
       }, 450);
@@ -5418,7 +5665,7 @@ const Viewport = forwardRef(({
       )}
       
       {/* Left helper rail. Game keeps Advanced; CAD promotes those tools into Model. */}
-      {onInsertHelper && !contourMode && !filletMode && !shellMode && !draftMode && !cutMode && !moveMode && (
+      {onInsertHelper && !contourMode && !filletMode && !shellMode && !draftMode && !cutMode && !moveMode && !moveFaceMode && (
         <HelperInsertPalette
           layout={mode === 'game' ? 'game' : 'cad'}
           onInsert={onInsertHelper}
@@ -5442,6 +5689,7 @@ const Viewport = forwardRef(({
           onEnterDraftMode={enterDraftMode}
           onEnterCutMode={enterCutMode}
           onEnterMoveMode={enterMoveMode}
+          onEnterMoveFaceMode={enterMoveFaceMode}
           compact={isMobile}
         />
       )}
@@ -5784,6 +6032,22 @@ const Viewport = forwardRef(({
           }}
           onConfirm={acceptMove}
           onDismiss={exitMoveMode}
+        />
+      )}
+
+      {/* Move Face — offset along each face normal. Confirm writes one moveFace(). */}
+      {moveFaceMode && (
+        <MoveFaceModeChip
+          faces={moveFaceMode.faces}
+          distance={moveFaceMode.distance}
+          flip={moveFaceMode.flip}
+          compact={isMobile}
+          onDistance={(distance) => commitMoveFaceState(setMoveFaceDistance(moveFaceModeRef.current, distance))}
+          onFlip={(flip) => commitMoveFaceState(setMoveFaceFlip(moveFaceModeRef.current, flip))}
+          onUndo={() => commitMoveFaceState(popLastMoveFace(moveFaceModeRef.current))}
+          onClear={() => commitMoveFaceState(clearMoveFaces(moveFaceModeRef.current))}
+          onConfirm={acceptMoveFace}
+          onDismiss={exitMoveFaceMode}
         />
       )}
 

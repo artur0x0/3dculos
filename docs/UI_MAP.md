@@ -421,14 +421,16 @@ Import `src/utils/importModel.js` (+ `POST /api/convert/step`); export
   Create contour = `NotebookPen` (= sketch overlays) and Workplane = `Layers3`
   (= plane overlays). The tool that makes a thing wears the icon that shows it;
   the no-duplicates rule is per rail, so this is intended, not a slip.
-- **Rail sections are Block / Model / Polish / Move**, in that order
+- **Rail sections are Block / Model / Polish / Move / Refine**, in that order
   (`CAD_RAIL_ORDER` in `helperPaletteSnippets.js` for the order,
   `GROUP_SHORT_LABEL` in `HelperInsertPalette.jsx` for the captions). The
   internal group keys are still `Primitives` / `Advanced` / `Features` /
   `Transforms` — display names only. The order is the modelling order: make a
-  shape, model it, polish it, move it. The first button in that Move section
+  shape, model it, polish it, move it.   The first button in that Move section
   is Move (`Move` glyph, directly above Center): it opens the delta X/Y/Z
-  chip and translates one body. The right-rail axis helper (`Move3d`) only
+  chip and translates one body. Refine is last. Its button is Move Face
+  (`SquareArrowOutUpRight`): offset the picked faces along their normals.
+  The right-rail axis helper (`Move3d`) only
   shows the `AxesHelper`. It does not move a body and it does not grow
   viewport arrows.
 - **Previews all share one recipe** (`src/utils/previewStyle.js`): unlit

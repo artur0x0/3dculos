@@ -53,6 +53,7 @@ import {
   resolveHoleUV,
   holeFeatureParamDefs,
   emitFaceSelectionExpr,
+  facePickLiterals,
   formatVec3,
   SHELL_OPENING_OPTIONS,
   DRAFT_PULL_OPTIONS,
@@ -127,6 +128,8 @@ export const CUT_BEGIN = '// --- cut begin ---';
 export const CUT_END = '// --- cut end ---';
 export const MOVE_BEGIN = '// --- move begin ---';
 export const MOVE_END = '// --- move end ---';
+export const MOVE_FACE_BEGIN = '// --- move-face begin ---';
+export const MOVE_FACE_END = '// --- move-face end ---';
 export const CENTER_BEGIN = '// --- center begin ---';
 export const CENTER_END = '// --- center end ---';
 export const ALIGN_BEGIN = '// --- align begin ---';
@@ -165,6 +168,7 @@ export const FEATURE_BLOCK_END_MARKERS = Object.freeze([
   DRAFT_END,
   CUT_END,
   MOVE_END,
+  MOVE_FACE_END,
   CENTER_END,
   ALIGN_END,
   MIRROR_END,
@@ -410,7 +414,7 @@ export function listBodyNames(buffer) {
   // Fallback only when part is mutable (or undeclared).
   if (!constNames.has('part')) names.add('part');
   // Also catch `part = …` / `box1 = …` mutations without fresh decl.
-  const assign = /\b([A-Za-z_$][\w$]*)\s*=\s*(?:Manifold\.|tube\(|hexPrism\(|roundedBox\(|makeExtrude\(|makeRevolve\(|makeLoft\(|filletEdges\(|filletAlongPath\(|chamferEdges\(|hole\(|clearanceHole\(|tapDrillHole\(|cboreHole\(|cskHole\(|holePattern\(|shell\(|hollow\(|addDraft\(|draftFaces\(|cut\(|rectTube\(|center\(|align\(|mirror\(|array3D\(|polarArray\()/g;
+  const assign = /\b([A-Za-z_$][\w$]*)\s*=\s*(?:Manifold\.|tube\(|hexPrism\(|roundedBox\(|makeExtrude\(|makeRevolve\(|makeLoft\(|filletEdges\(|filletAlongPath\(|chamferEdges\(|hole\(|clearanceHole\(|tapDrillHole\(|cboreHole\(|cskHole\(|holePattern\(|shell\(|hollow\(|addDraft\(|draftFaces\(|cut\(|moveFace\(|rectTube\(|center\(|align\(|mirror\(|array3D\(|polarArray\()/g;
   while ((m = assign.exec(s))) {
     const n = m[1];
     if (constNames.has(n)) continue;
@@ -2227,6 +2231,31 @@ export const HELPER_PALETTE_ITEMS = [
       return withReturn(lines, empty);
     },
   },
+  {
+    id: 'moveFace',
+    label: 'Move Face',
+    group: 'Refine',
+    title: 'moveFace(manifold, faces, distance, { flip }) — offset faces along their normals; adjacent walls extend or trim',
+    params: [
+      { name: 'body', type: 'body', default: 'part', label: 'Body' },
+      { name: 'distance', type: 'number', default: 2, label: 'Distance', step: 0.5, slider: true },
+      { name: 'flip', type: 'bool', default: false, label: 'Flip' },
+    ],
+    build: (empty, p, names, buffer, faceCtx = null) => {
+      const lines = [...ensurePartPrefix(empty, names)];
+      const body = resolveBody(p, names, empty ? lines.join('\n') : buffer);
+      const face = faceCtx && faceCtx.type ? faceCtx : (faceCtx ? classifySelectedFace(faceCtx) : null);
+      const picks = face ? facePickLiterals(face) : [];
+      const distance = num(p.distance, 2);
+      const flip = bool(p.flip, false) ? ', { flip: true }' : '';
+      const feat = [
+        `${body} = moveFace(${body}, [${picks.join(', ')}], ${distance}${flip});`,
+        ...syncPartLines(body, names, /(?:let|const|var)\s+part\b/.test(lines.join('\n')) || !empty),
+      ];
+      lines.push(...wrapFeatureBlock(MOVE_FACE_BEGIN, MOVE_FACE_END, feat));
+      return withReturn(lines, empty);
+    },
+  },
 ];
 
 /** Group order for the palette UI (Slice 29): Prim, Advanced, Features, Xforms. */
@@ -2252,16 +2281,23 @@ export function itemsByGroup() {
  * Game keeps Advanced as the home of Profile / Workplane / Extrude / Revolve /
  * Sweep / Loft. Regular CAD promotes that same list into a Model section and
  * does not also render Advanced (one entry per tool).
+ * Refine is last on both rails. Move Face lives there, after Move.
  */
 export function paletteRailSections(layout, grouped = itemsByGroup()) {
   // `railHidden` items keep their group membership and their build(), they just
   // get no button (see sweepPath). Filter here, not in itemsByGroup, so the
   // data model stays the whole set.
   const shown = (group) => (grouped[group] || []).filter((i) => !i.railHidden);
+  const withRefine = (sections) => {
+    const items = shown('Refine');
+    if (items.length) sections.push({ key: 'Refine', items });
+    return sections;
+  };
   if (layout === 'cad') {
     // Rail order is the modelling order, not the data order: make a shape,
     // model it, polish it, move it. Advanced is promoted to "Model" and sits
     // second — Block leads because that is where an empty part starts.
+    // Refine is the last section.
     const sections = [];
     for (const group of CAD_RAIL_ORDER) {
       const items = shown(group);
@@ -2271,10 +2307,10 @@ export function paletteRailSections(layout, grouped = itemsByGroup()) {
       }
       sections.push({ key: group, items });
     }
-    return sections;
+    return withRefine(sections);
   }
-  return HELPER_PALETTE_GROUPS.map((group) => ({
+  return withRefine(HELPER_PALETTE_GROUPS.map((group) => ({
     key: group,
     items: shown(group),
-  }));
+  })));
 }

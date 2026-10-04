@@ -49,7 +49,8 @@ console.log('cad palette + plane/contour toggles');
   const game = paletteRailSections('game', grouped);
   check(
     'game rail still Prim then Advanced',
-    game.map((s) => s.key).join('|') === 'Primitives|Advanced|Features|Transforms',
+    game.map((s) => s.key).join('|') === 'Primitives|Advanced|Features|Transforms|Refine',
+    game.map((s) => s.key).join('|'),
   );
   check(
     'game Advanced is the promoted set',
@@ -58,8 +59,8 @@ console.log('cad palette + plane/contour toggles');
 
   const cad = paletteRailSections('cad', grouped);
   check(
-    'CAD rail is Block, Model, Polish, Move',
-    cad.map((s) => s.key).join('|') === 'Primitives|Model|Features|Transforms',
+    'CAD rail is Block, Model, Polish, Move, Refine',
+    cad.map((s) => s.key).join('|') === 'Primitives|Model|Features|Transforms|Refine',
     cad.map((s) => s.key).join('|'),
   );
   check(

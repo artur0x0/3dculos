@@ -486,6 +486,44 @@ class ManifoldWorker {
       });
     });
   }
+
+  /**
+   * Offset a clone of the cached solid for the Move Face preview.
+   * Does not replace the cached manifold and does not write the script.
+   *
+   * @param {{ center: number[], normal: number[] }[]} faces
+   * @param {number} distance
+   * @param {boolean} [flip]
+   * @returns {Promise<{ mesh: object }>}
+   */
+  async previewMoveFace(faces, distance, flip = false, options = {}) {
+    if (!this.isReady) {
+      throw new Error('ManifoldWorker not initialized');
+    }
+    const timeoutMs = options.timeoutMs || this.config.timeoutMs;
+    return new Promise((resolve, reject) => {
+      const requestId = this._generateRequestId();
+      const timeoutId = setTimeout(() => {
+        this.pendingRequests.delete(requestId);
+        reject(new Error(`previewMoveFace timed out after ${timeoutMs / 1000}s`));
+      }, timeoutMs);
+      this.pendingRequests.set(requestId, {
+        resolve: (result) => {
+          clearTimeout(timeoutId);
+          resolve(result);
+        },
+        reject: (error) => {
+          clearTimeout(timeoutId);
+          reject(error);
+        }
+      });
+      this.worker.postMessage({
+        type: 'previewMoveFace',
+        id: requestId,
+        payload: { faces, distance, flip }
+      });
+    });
+  }
   
   /**
    * Terminate the worker
@@ -742,6 +780,17 @@ class ManifoldContext {
       throw new Error('ManifoldContext not initialized');
     }
     return await this.worker.previewCut(plane, bodies);
+  }
+
+  /**
+   * Move Face preview. Runs moveFace on a clone of the last solid.
+   * The cached solid is left as it was.
+   */
+  async previewMoveFace({ faces, distance, flip } = {}) {
+    if (!this.worker || !this.worker.isReady) {
+      throw new Error('ManifoldContext not initialized');
+    }
+    return await this.worker.previewMoveFace(faces, distance, !!flip);
   }
   
   /**

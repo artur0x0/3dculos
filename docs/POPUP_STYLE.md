@@ -38,6 +38,12 @@ over inventing a new modal layout.
   that normal. The body is previewed at the new translation until Confirm. No
   viewport arrows. Confirm writes one `move()` and replaces a previous Move
   block; grey X exits with no write.
+- **`MoveFaceModeChip.jsx`** — cyan glass card (same shell as Shell). Tap adds a
+  face, tap again removes it. Undo drops the last face. Clear drops the faces.
+  Distance is along each face normal. Flip reverses that normal. No shift-click.
+  A double click does not select the body. Confirm writes one `moveFace()` and
+  replaces a previous Move Face block; grey X exits with no write. Live preview
+  while the distance changes. This is not the body `move()` helper.
 
 ## Placement
 
