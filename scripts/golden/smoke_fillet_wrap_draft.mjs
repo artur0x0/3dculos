@@ -34,6 +34,8 @@ console.log('wrap onto a drafted face — source pins');
   const fillet = readRepo('src/utils/filletAlongPath.js');
   check('varying-profile cutter splits runs at corners',
     /const splitRuns = \[\]/.test(w) && /_s23SplitRunsAtCorners\(\[run\.segs\]\)/.test(w));
+  check('a rounded run extends only its back end',
+    /_s23RunRounded\(segs\) \? \['end'\]/.test(w));
   check('FRAME_DENSIFY_MAX_TURN_DEG stays 5', /FRAME_DENSIFY_MAX_TURN_DEG = 5/.test(field));
   check('FILLET_ARC_SEGMENTS stays 24', /FILLET_ARC_SEGMENTS = 24/.test(fillet));
   check('coherent gate stays 15°', /minDeg = typeof opts\.minDeg === 'number' \? opts\.minDeg : 15/.test(
@@ -132,7 +134,13 @@ for (let i = 0; i < vp.length / np; i++) {
   const z = vp[i * np + 2];
   if (Math.abs(x - 15.75) < 0.2 && Math.abs(z - 10) < 0.2 && Math.abs(y) < 10) onCrease++;
 }
-globalThis.__note = { n: parts.length, onCrease, base: drafted.volume(), out: out.volume() };
+let gapVol = -1;
+let wallVol = -1;
+try {
+  gapVol = Manifold.intersection(out, Manifold.sphere(0.025, 6).translate([15.915, -14.92, 8.45])).volume();
+  wallVol = Manifold.intersection(out, Manifold.sphere(0.025, 6).translate([15.78, -14.92, 7.4])).volume();
+} catch (e) { /* recorded as -1 */ }
+globalThis.__note = { n: parts.length, onCrease, base: drafted.volume(), out: out.volume(), gapVol, wallVol };
 return out;`);
   check('wrap onto the drafted face succeeds', !r.error, r.error || '');
   const note = globalThis.__note;
@@ -173,6 +181,20 @@ return out;`);
     check('corner split made two cutter runs',
       !!meta && meta.runCount === 2 && meta.singleRunCutter === false,
       meta ? JSON.stringify(meta) : 'meta missing');
+    // r·tan(12°) is the profile clearance through the drafted plane (~0.64 at
+    // r=3). The cutter must extend at least that far, pad included.
+    check('cutter extends past the end on the drafted face',
+      !!meta && meta.endExtend > 0.6 && meta.endExtend < 2 * 3 + 1.2,
+      meta ? `endExtend=${meta.endExtend}` : 'meta missing');
+    // This point sits past the old end plane, inside the front fillet's
+    // profile, and still inside the drafted face. Without the extension it
+    // stays solid. The wall below the fillet must stay solid.
+    check('extended cutter covers that drafted-face end',
+      note.gapVol >= 0 && note.gapVol < 1e-8,
+      `gapVol=${note.gapVol}`);
+    check('extension does not eat the wall below the fillet',
+      note.wallVol > 1e-6,
+      `wallVol=${note.wallVol}`);
     const chains = buildCoherentEdges(buildFeatureEdges(geometryFromMesh(r.mesh)));
     const sideLens = chains.map((e) => {
       const pts = edgePolyline(e) || [];

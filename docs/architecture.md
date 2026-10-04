@@ -103,6 +103,8 @@ What you see as an edge is not one list.
 
 The varying-profile cutter swept one tube through that 90° corner. The easy path already splits a run at a turn sharper than `FRAME_DENSIFY_MAX_TURN_DEG` (5°). The varying-profile path now does the same: one tube per straight leg, then union. A smooth loft (turns ≤ 5°) stays one run. The shredded mesh was what broke the drafted-face contours into short fragments.
 
+An open run that ends on a face tilted off the path extends the cutter past that end. The distance is how far the end profile must travel to clear the tilted plane, plus the sweep expand pad. A rounded run samples that at its back end only. This is not a sphere cap and not the concave open-end pad. A face perpendicular to the path is not extended.
+
 ## Keep-both cut and the shared edge
 
 `cut` defaults to `keep: 'both'`. Each selected body is `splitByPlane`. Kept pieces are `Manifold.compose`d when more than one remains. `decompose()` splits them apart again. They do not share vertices, so each piece is its own body. A body that does not cross the plane is returned unchanged. `faceID` may still be reused across the cut; worker face merge will not join those faces (body id is part of the plane key).
@@ -149,7 +151,7 @@ Fillet's marker comment still says the second Accept replaces. The call site pas
 | --- | --- | --- | --- | --- |
 | Cut confirm (keep both) | lazy, then clipped to the seed body | rebuilt; pieces share no vertices | 1px black, on the edge | `filletAlongPath` fillets the body that owns the path, then composes the rest |
 | Cut confirm (one side) | lazy | rebuilt; one body | none | |
-| Draft confirm | lazy | rebuilt from new dihedrals | recomputed; one body still has none | wrap splits at a corner sharper than 5° and finishes onto the drafted face; 15° / 28° unchanged |
+| Draft confirm | lazy | rebuilt from new dihedrals | recomputed; one body still has none | wrap splits at a corner sharper than 5°, then the cutter extends past an end on the drafted face; 15° / 28° unchanged |
 | Fillet / Chamfer confirm | lazy | rebuilt; picked wire kept | recomputed from the new mesh | |
 | Shell / hollow confirm | lazy | rebuilt; no shell-specific rule | recomputed from the new mesh | |
 | Move confirm | lazy | rebuilt | recomputed from the new mesh | preview does not rebuild graphs |
