@@ -62,6 +62,7 @@ import DraftModeChip from './DraftModeChip';
 import CutModeChip from './CutModeChip';
 import MoveModeChip from './MoveModeChip';
 import MoveFaceModeChip from './MoveFaceModeChip';
+import DeleteFaceModeChip from './DeleteFaceModeChip';
 import { buildCrossSectionPreview, defaultTopPlaneFrame } from '../utils/crossSectionSubstrate';
 import {
   applySavedContour,
@@ -176,6 +177,13 @@ import {
   setMoveFaceFlip,
   validateMoveFaceAccept,
 } from '../utils/moveFaceMode';
+import {
+  emptyDeleteFaceState,
+  toggleDeleteFaceSelection,
+  popLastDeleteFace,
+  clearDeleteFaces,
+  validateDeleteFaceAccept,
+} from '../utils/deleteFaceMode';
 import { contactSeamSegments } from '../utils/contactSeam';
 import { classifySelectedFace } from '../utils/faceFeaturePlacement';
 import { classifyFilletEdges, countDegenerateTriangles } from '../utils/filletEdgeClass';
@@ -524,6 +532,7 @@ const Viewport = forwardRef(({
   onCommitCut = null,
   onCommitMove = null,
   onCommitMoveFace = null,
+  onCommitDeleteFace = null,
   getHelperBuffer = null,
   /** Mobile CAD mid-strip host (CodeEditor). Null on desktop and in game. */
   cadToolbarHost = null,
@@ -664,6 +673,8 @@ const Viewport = forwardRef(({
   const moveModeRef = useRef(null);
   const [moveFaceMode, setMoveFaceMode] = useState(null);
   const moveFaceModeRef = useRef(null);
+  const [deleteFaceMode, setDeleteFaceMode] = useState(null);
+  const deleteFaceModeRef = useRef(null);
   /** Kernel centroids from the last execute. move() matches these, not the viewport average. */
   const bodyCentroidsRef = useRef([]);
   const movePreviewRef = useRef(null);
@@ -674,6 +685,13 @@ const Viewport = forwardRef(({
   const moveFacePreviewGenRef = useRef(0);
   const moveFacePreviewTimerRef = useRef(null);
   const clearMoveFacePreviewRef = useRef(() => {});
+  const deleteFacePreviewRef = useRef(null);
+  const deleteFaceBaseMaterialRef = useRef(null);
+  const deleteFaceHiddenMatRef = useRef(null);
+  const deleteFaceLiveKeyRef = useRef('');
+  const deleteFacePreviewGenRef = useRef(0);
+  const deleteFacePreviewTimerRef = useRef(null);
+  const clearDeleteFacePreviewRef = useRef(() => {});
   const cutPlaneWidgetRef = useRef(null);
   const cutPiecesPreviewRef = useRef(null);
   const cutBaseMaterialRef = useRef(null);
@@ -799,6 +817,7 @@ const Viewport = forwardRef(({
   cutModeRef.current = cutMode;
   moveModeRef.current = moveMode;
   moveFaceModeRef.current = moveFaceMode;
+  deleteFaceModeRef.current = deleteFaceMode;
 
   useImperativeHandle(ref, () => ({
     executeScript,
@@ -842,6 +861,9 @@ const Viewport = forwardRef(({
       clearMoveFacePreviewRef.current();
       setMoveFaceMode(null);
       moveFaceModeRef.current = null;
+      clearDeleteFacePreviewRef.current();
+      setDeleteFaceMode(null);
+      deleteFaceModeRef.current = null;
       setContourToast(null);
       setFilletToast(null);
       setShellToast(null);
@@ -920,6 +942,9 @@ const Viewport = forwardRef(({
     },
     softFailMoveFace: (msg) => {
       showShellToast(msg || 'Move Face refused — tap a face, then Confirm.');
+    },
+    softFailDeleteFace: (msg) => {
+      showShellToast(msg || 'Delete Face refused — tap a face, then Confirm.');
     },
     // Updated to use cached mesh when available
     export3MF: async () => {
@@ -2015,6 +2040,9 @@ const Viewport = forwardRef(({
     clearMoveFacePreviewRef.current();
     setMoveFaceMode(null);
     moveFaceModeRef.current = null;
+    clearDeleteFacePreviewRef.current();
+    setDeleteFaceMode(null);
+    deleteFaceModeRef.current = null;
     setPickMode('face');
     disposeEdgeOverlayObject(sceneRef.current, pathPreviewRef.current);
     pathPreviewRef.current = null;
@@ -2153,6 +2181,9 @@ const Viewport = forwardRef(({
     clearMoveFacePreviewRef.current();
     setMoveFaceMode(null);
     moveFaceModeRef.current = null;
+    clearDeleteFacePreviewRef.current();
+    setDeleteFaceMode(null);
+    deleteFaceModeRef.current = null;
     setPickMode('edge');
     clearHighlight();
     setSelectedFace(null);
@@ -2242,7 +2273,7 @@ const Viewport = forwardRef(({
     clearFilletBlendPreview();
     setDraftMode(null);
     draftModeRef.current = null;
-    if (cutModeRef.current || moveModeRef.current || moveFaceModeRef.current) clearHighlight();
+    if (cutModeRef.current || moveModeRef.current || moveFaceModeRef.current || deleteFaceModeRef.current) clearHighlight();
     setCutMode(null);
     cutModeRef.current = null;
     setMoveMode(null);
@@ -2250,6 +2281,9 @@ const Viewport = forwardRef(({
     clearMoveFacePreviewRef.current();
     setMoveFaceMode(null);
     moveFaceModeRef.current = null;
+    clearDeleteFacePreviewRef.current();
+    setDeleteFaceMode(null);
+    deleteFaceModeRef.current = null;
     setPickMode('face');
     clearEdgeHover();
     clearEdgeHighlight();
@@ -3047,7 +3081,7 @@ const Viewport = forwardRef(({
     clearFilletBlendPreview();
     setShellMode(null);
     shellModeRef.current = null;
-    if (cutModeRef.current || moveModeRef.current || moveFaceModeRef.current) clearHighlight();
+    if (cutModeRef.current || moveModeRef.current || moveFaceModeRef.current || deleteFaceModeRef.current) clearHighlight();
     setCutMode(null);
     cutModeRef.current = null;
     setMoveMode(null);
@@ -3055,6 +3089,9 @@ const Viewport = forwardRef(({
     clearMoveFacePreviewRef.current();
     setMoveFaceMode(null);
     moveFaceModeRef.current = null;
+    clearDeleteFacePreviewRef.current();
+    setDeleteFaceMode(null);
+    deleteFaceModeRef.current = null;
     setPickMode('face');
     clearEdgeHover();
     clearEdgeHighlight();
@@ -3341,12 +3378,15 @@ const Viewport = forwardRef(({
     shellModeRef.current = null;
     setDraftMode(null);
     draftModeRef.current = null;
-    if (moveModeRef.current || moveFaceModeRef.current) clearHighlight();
+    if (moveModeRef.current || moveFaceModeRef.current || deleteFaceModeRef.current) clearHighlight();
     setMoveMode(null);
     moveModeRef.current = null;
     clearMoveFacePreviewRef.current();
     setMoveFaceMode(null);
     moveFaceModeRef.current = null;
+    clearDeleteFacePreviewRef.current();
+    setDeleteFaceMode(null);
+    deleteFaceModeRef.current = null;
     setPickMode('face');
     clearEdgeHover();
     clearEdgeHighlight();
@@ -3472,10 +3512,13 @@ const Viewport = forwardRef(({
     }
     setCutMode(null);
     cutModeRef.current = null;
-    if (moveFaceModeRef.current) clearHighlight();
+    if (moveFaceModeRef.current || deleteFaceModeRef.current) clearHighlight();
     clearMoveFacePreviewRef.current();
     setMoveFaceMode(null);
     moveFaceModeRef.current = null;
+    clearDeleteFacePreviewRef.current();
+    setDeleteFaceMode(null);
+    deleteFaceModeRef.current = null;
     setPickMode('face');
     clearEdgeHover();
     clearEdgeHighlight();
@@ -3655,6 +3698,10 @@ const Viewport = forwardRef(({
     }
     setMoveMode(null);
     moveModeRef.current = null;
+    if (deleteFaceModeRef.current) clearHighlight();
+    clearDeleteFacePreviewRef.current();
+    setDeleteFaceMode(null);
+    deleteFaceModeRef.current = null;
     setPickMode('face');
     clearEdgeHover();
     clearEdgeHighlight();
@@ -3702,6 +3749,198 @@ const Viewport = forwardRef(({
     }
     ensureMoveFacePreview(moveFaceMode);
   }, [moveFaceMode, clearMoveFacePreview, ensureMoveFacePreview]);
+
+  const removeDeleteFacePreview = useCallback(() => {
+    if (deleteFacePreviewTimerRef.current) {
+      clearTimeout(deleteFacePreviewTimerRef.current);
+      deleteFacePreviewTimerRef.current = null;
+    }
+    const preview = deleteFacePreviewRef.current;
+    deleteFacePreviewRef.current = null;
+    if (preview) {
+      sceneRef.current?.remove(preview);
+      preview.geometry?.dispose?.();
+      preview.material?.dispose?.();
+    }
+    const mesh = resultRef.current;
+    if (mesh && deleteFaceBaseMaterialRef.current) {
+      mesh.material = deleteFaceBaseMaterialRef.current;
+      deleteFaceBaseMaterialRef.current = null;
+    }
+  }, []);
+
+  const clearDeleteFacePreview = useCallback(() => {
+    deleteFacePreviewGenRef.current += 1;
+    deleteFaceLiveKeyRef.current = '';
+    removeDeleteFacePreview();
+  }, [removeDeleteFacePreview]);
+  clearDeleteFacePreviewRef.current = clearDeleteFacePreview;
+
+  const hideDeleteFaceBase = useCallback(() => {
+    const mesh = resultRef.current;
+    if (!mesh) return;
+    if (!deleteFaceHiddenMatRef.current) {
+      deleteFaceHiddenMatRef.current = new MeshBasicMaterial({
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+        colorWrite: false,
+      });
+    }
+    if (!deleteFaceBaseMaterialRef.current) deleteFaceBaseMaterialRef.current = mesh.material;
+    mesh.material = deleteFaceHiddenMatRef.current;
+  }, []);
+
+  const paintDeleteFacePreview = useCallback((meshData) => {
+    const scene = sceneRef.current;
+    removeDeleteFacePreview();
+    if (!scene || !meshData) return;
+    const geom = geometryFromPreviewMesh(meshData);
+    if (!geom) return;
+    hideDeleteFaceBase();
+    const mesh = new ThreeMesh(geom, makePreviewSkinMaterial());
+    mesh.name = 'delete-face-preview';
+    mesh.raycast = () => {};
+    scene.add(mesh);
+    deleteFacePreviewRef.current = mesh;
+    const renderer = rendererRef.current;
+    const camera = cameraRef.current;
+    if (renderer && camera) renderer.render(scene, camera);
+  }, [hideDeleteFaceBase, removeDeleteFacePreview]);
+
+  const ensureDeleteFacePreview = useCallback((state) => {
+    const faces = state?.faces || [];
+    if (!faces.length) {
+      clearDeleteFacePreview();
+      return;
+    }
+    const payloadFaces = faces.map((f) => ({ center: f.center, normal: f.normal }));
+    const key = JSON.stringify(payloadFaces);
+    if (deleteFaceLiveKeyRef.current === key && deleteFacePreviewRef.current) return;
+    const gen = ++deleteFacePreviewGenRef.current;
+    deleteFaceLiveKeyRef.current = '';
+    removeDeleteFacePreview();
+    deleteFacePreviewTimerRef.current = setTimeout(() => {
+      deleteFacePreviewTimerRef.current = null;
+      if (gen !== deleteFacePreviewGenRef.current) return;
+      manifoldContext.previewDeleteFace({ faces: payloadFaces }).then((payload) => {
+        if (gen !== deleteFacePreviewGenRef.current) return;
+        const live = deleteFaceModeRef.current;
+        if (!live) return;
+        deleteFaceLiveKeyRef.current = key;
+        paintDeleteFacePreview(payload?.mesh);
+      }).catch((err) => {
+        if (gen !== deleteFacePreviewGenRef.current) return;
+        removeDeleteFacePreview();
+        showShellToast(err?.message || 'Delete Face preview failed');
+      });
+    }, 60);
+  }, [clearDeleteFacePreview, paintDeleteFacePreview, removeDeleteFacePreview]);
+
+  const paintDeleteFacePicks = useCallback((state) => {
+    const geom = resultRef.current?.geometry;
+    const positions = geom?.attributes?.position;
+    const index = geom?.index?.array;
+    clearHighlight();
+    const shown = [...new Set((state?.faces || []).flatMap((f) => f.indices || []))];
+    if (geom && positions && index && shown.length) {
+      highlightFace(shown, geom, positions, index, 0xffff00, 'delete-face');
+    }
+  }, [clearHighlight, highlightFace]);
+
+  const exitDeleteFaceMode = useCallback(() => {
+    const was = deleteFaceModeRef.current;
+    clearDeleteFacePreview();
+    setDeleteFaceMode(null);
+    deleteFaceModeRef.current = null;
+    if (was) clearHighlight();
+    if (shellToastTimerRef.current) {
+      clearTimeout(shellToastTimerRef.current);
+      shellToastTimerRef.current = null;
+    }
+    setShellToast(null);
+  }, [clearHighlight, clearDeleteFacePreview]);
+
+  const commitDeleteFaceState = useCallback((next) => {
+    deleteFaceModeRef.current = next;
+    setDeleteFaceMode(next);
+    paintDeleteFacePicks(next);
+  }, [paintDeleteFacePicks]);
+
+  const enterDeleteFaceMode = useCallback(() => {
+    exitContourMode();
+    setFilletMode(null);
+    filletModeRef.current = null;
+    clearFilletBlendPreview();
+    setShellMode(null);
+    shellModeRef.current = null;
+    setDraftMode(null);
+    draftModeRef.current = null;
+    if (cutModeRef.current) {
+      clearHighlight();
+      clearCutPlaneWidget();
+      clearCutPiecePreview();
+    }
+    setCutMode(null);
+    cutModeRef.current = null;
+    if (moveModeRef.current) {
+      clearHighlight();
+      clearMovePreview();
+    }
+    setMoveMode(null);
+    moveModeRef.current = null;
+    if (moveFaceModeRef.current) clearHighlight();
+    clearMoveFacePreview();
+    setMoveFaceMode(null);
+    moveFaceModeRef.current = null;
+    setPickMode('face');
+    clearEdgeHover();
+    clearEdgeHighlight();
+    setSelectedEdges([]);
+    const picks = facePickGroupRef.current?.picks;
+    let seed = [];
+    if (Array.isArray(picks) && picks.length) seed = picks;
+    else if (selectedFace && Array.isArray(selectedFace.center) && Array.isArray(selectedFace.normal)) {
+      seed = [selectedFace];
+    }
+    commitDeleteFaceState(emptyDeleteFaceState(seed));
+  }, [
+    exitContourMode,
+    selectedFace,
+    clearFilletBlendPreview,
+    clearCutPlaneWidget,
+    clearCutPiecePreview,
+    clearMovePreview,
+    clearMoveFacePreview,
+    clearEdgeHover,
+    clearEdgeHighlight,
+    commitDeleteFaceState,
+  ]);
+
+  const acceptDeleteFace = useCallback(() => {
+    const state = deleteFaceModeRef.current;
+    if (!state) return;
+    const gate = validateDeleteFaceAccept(state);
+    if (!gate.ok) {
+      showShellToast(gate.message);
+      return;
+    }
+    const ok = onCommitDeleteFace?.({ state });
+    if (ok) {
+      clearHighlight();
+      setSelectedFace(null);
+      onFaceSelected?.(null);
+      exitDeleteFaceMode();
+    }
+  }, [onCommitDeleteFace, exitDeleteFaceMode, onFaceSelected, clearHighlight]);
+
+  useEffect(() => {
+    if (!deleteFaceMode) {
+      clearDeleteFacePreview();
+      return;
+    }
+    ensureDeleteFacePreview(deleteFaceMode);
+  }, [deleteFaceMode, clearDeleteFacePreview, ensureDeleteFacePreview]);
 
   const clearMeasurementLines = useCallback(() => {
     if (measurementLinesRef.current && sceneRef.current) {
@@ -4013,7 +4252,7 @@ const Viewport = forwardRef(({
     const camDist = Math.hypot(ray.origin.x, ray.origin.y, ray.origin.z) || 80;
     // Cut owns the canvas: a saved contour under the cursor must not eat the
     // piece tap (same as a construction plane sitting on the cut).
-    if (!moveFaceModeRef.current && !cutModeRef.current && showContoursRef.current && !moveModeRef.current && contourModeRef.current?.tool !== 'polyline') {
+    if (!moveFaceModeRef.current && !deleteFaceModeRef.current && !cutModeRef.current && showContoursRef.current && !moveModeRef.current && contourModeRef.current?.tool !== 'polyline') {
       const hitC = pickContourByRay(
         origin,
         dir,
@@ -4037,7 +4276,7 @@ const Viewport = forwardRef(({
     const solidD = solidHits[0]?.distance ?? Infinity;
     // Cut taps a body or a piece. A construction plane that sits on the cut
     // (the XY plane through a centered part) must not swallow that click.
-    if (!cutModeRef.current && planeHits.length && !moveModeRef.current && !moveFaceModeRef.current && planeD <= solidD + 0.5) {
+    if (!cutModeRef.current && planeHits.length && !moveModeRef.current && !moveFaceModeRef.current && !deleteFaceModeRef.current && planeD <= solidD + 0.5) {
       const ud = planeHits[0].object.userData?.plane
         ? planeHits[0].object.userData
         : planeHits[0].object.parent?.userData;
@@ -4077,6 +4316,8 @@ const Viewport = forwardRef(({
       } else if (moveModeRef.current) {
         // Preserve the picked body — stray taps must not wipe the target.
       } else if (moveFaceModeRef.current) {
+        // Preserve the picked faces — stray taps must not wipe the set.
+      } else if (deleteFaceModeRef.current) {
         // Preserve the picked faces — stray taps must not wipe the set.
       } else {
         clearHighlight();
@@ -4208,7 +4449,7 @@ const Viewport = forwardRef(({
       clickCount,
       faceIDs: faceIDsRef.current,
       angleTolerance: ANGLE_TOLERANCE_DEGREES,
-      legacy: legacyTap || !!moveFaceModeRef.current,
+      legacy: legacyTap || !!moveFaceModeRef.current || !!deleteFaceModeRef.current,
     });
     const faceIndices = resolved.indices;
     const selectionMode = resolved.selectionMode;
@@ -4333,6 +4574,13 @@ const Viewport = forwardRef(({
         commitMoveFaceState(next);
         return;
       }
+      if (deleteFaceModeRef.current) {
+        // Same sticky tap as Shell. A double click stays the legacy face walk,
+        // not the owning body, so Confirm still writes the tapped faces.
+        const next = toggleDeleteFaceSelection(deleteFaceModeRef.current, entry);
+        commitDeleteFaceState(next);
+        return;
+      }
       if (cutModeRef.current) {
         // Cut: plane, bodies, and pieces are sticky taps. No shift-click.
         const geom = geometry;
@@ -4370,7 +4618,7 @@ const Viewport = forwardRef(({
       }
     }
     
-  }, [measurementEnabled, measurementFaces, onFaceSelected, clearHighlight, clearEdgeHighlight, highlightFace, publishFacePicks, paintDraftPicks, commitCutState, paintMovePreview, commitMoveFaceState, getHelperBuffer]);
+  }, [measurementEnabled, measurementFaces, onFaceSelected, clearHighlight, clearEdgeHighlight, highlightFace, publishFacePicks, paintDraftPicks, commitCutState, paintMovePreview, commitMoveFaceState, commitDeleteFaceState, getHelperBuffer]);
 
   /**
    * Handle face selection in measurement mode
@@ -4426,7 +4674,7 @@ const Viewport = forwardRef(({
     const onPointerDown = (event) => {
       if (!featureSheetEnabledRef.current) return;
       if (event.button != null && event.button !== 0) return;
-      if (contourModeRef.current || filletModeRef.current || shellModeRef.current || draftModeRef.current || moveModeRef.current || moveFaceModeRef.current) return;
+      if (contourModeRef.current || filletModeRef.current || shellModeRef.current || draftModeRef.current || moveModeRef.current || moveFaceModeRef.current || deleteFaceModeRef.current) return;
       if (measurementEnabled) return;
       CLEAR_LP();
       featureLongPressFiredRef.current = false;
@@ -4436,7 +4684,7 @@ const Viewport = forwardRef(({
         const origin = featureLongPressOriginRef.current;
         featureLongPressOriginRef.current = null;
         if (!origin || !featureSheetEnabledRef.current) return;
-        if (contourModeRef.current || filletModeRef.current || shellModeRef.current || draftModeRef.current || moveModeRef.current || moveFaceModeRef.current) return;
+        if (contourModeRef.current || filletModeRef.current || shellModeRef.current || draftModeRef.current || moveModeRef.current || moveFaceModeRef.current || deleteFaceModeRef.current) return;
         featureLongPressFiredRef.current = true;
         onFeatureLongPressRef.current?.({ clientX: origin.x, clientY: origin.y });
       }, 450);
@@ -5665,7 +5913,7 @@ const Viewport = forwardRef(({
       )}
       
       {/* Left helper rail. Game keeps Advanced; CAD promotes those tools into Model. */}
-      {onInsertHelper && !contourMode && !filletMode && !shellMode && !draftMode && !cutMode && !moveMode && !moveFaceMode && (
+      {onInsertHelper && !contourMode && !filletMode && !shellMode && !draftMode && !cutMode && !moveMode && !moveFaceMode && !deleteFaceMode && (
         <HelperInsertPalette
           layout={mode === 'game' ? 'game' : 'cad'}
           onInsert={onInsertHelper}
@@ -5690,6 +5938,7 @@ const Viewport = forwardRef(({
           onEnterCutMode={enterCutMode}
           onEnterMoveMode={enterMoveMode}
           onEnterMoveFaceMode={enterMoveFaceMode}
+          onEnterDeleteFaceMode={enterDeleteFaceMode}
           compact={isMobile}
         />
       )}
@@ -6048,6 +6297,18 @@ const Viewport = forwardRef(({
           onClear={() => commitMoveFaceState(clearMoveFaces(moveFaceModeRef.current))}
           onConfirm={acceptMoveFace}
           onDismiss={exitMoveFaceMode}
+        />
+      )}
+
+      {/* Delete Face — heal by extending neighbors. Confirm writes one deleteFace(). */}
+      {deleteFaceMode && (
+        <DeleteFaceModeChip
+          faces={deleteFaceMode.faces}
+          compact={isMobile}
+          onUndo={() => commitDeleteFaceState(popLastDeleteFace(deleteFaceModeRef.current))}
+          onClear={() => commitDeleteFaceState(clearDeleteFaces(deleteFaceModeRef.current))}
+          onConfirm={acceptDeleteFace}
+          onDismiss={exitDeleteFaceMode}
         />
       )}
 

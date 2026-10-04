@@ -399,7 +399,7 @@ export function selectOwningBody(geometry, seedFaceIndex) {
 
 /**
  * Default viewport: one click is the face-graph component, two clicks are
- * the body that owns it. Shell, Draft, Cut, and Move Face pass `legacy` so a tap still
+ * the body that owns it. Shell, Draft, Cut, Move Face, and Delete Face pass `legacy` so a tap still
  * adds or removes the coplanar (or tolerance) region and a double click
  * does not become the body.
  *

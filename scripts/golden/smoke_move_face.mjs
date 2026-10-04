@@ -60,8 +60,8 @@ const SIDE = { center: [5, 0, 0], normal: [1, 0, 0] };
     const last = sections[sections.length - 1];
     check(`${layout} Refine is the last section`, last && last.key === 'Refine',
       sections.map((s) => s.key).join('|'));
-    check(`${layout} Move Face is the last button`,
-      last && last.items.length === 1 && last.items[0].id === 'moveFace');
+    check(`${layout} Move Face is followed by Delete Face`,
+      last && last.items[0]?.id === 'moveFace' && last.items[1]?.id === 'deleteFace');
   }
   check('sticky picker has Undo and Clear and no shift',
     /data-move-face-undo/.test(chip) && /data-move-face-clear/.test(chip)

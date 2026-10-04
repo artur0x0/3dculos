@@ -1,0 +1,8 @@
+// --- cube begin ---
+let box1 = Manifold.cube([40, 30, 20], true);
+let part = box1.trimByPlane([-0.7071067811865476, 0, -0.7071067811865476], -18.384776310850235);
+// --- cube end ---
+// --- delete-face begin ---
+part = deleteFace(part, [{ center: [18, 0, 8], normal: [0.7071067811865476, 0, 0.7071067811865476] }]);
+// --- delete-face end ---
+return part;

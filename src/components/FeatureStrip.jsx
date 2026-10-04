@@ -25,6 +25,7 @@ import {
   Scissors,
   Move,
   SquareArrowOutUpRight,
+  SquareX,
 } from 'lucide-react';
 import SquareRoundCorner from './icons/SquareRoundCorner';
 import Angle from './icons/Angle';
@@ -71,6 +72,7 @@ const FEATURE_ICONS = Object.freeze({
   cut: Scissors,
   move: Move,
   moveFace: SquareArrowOutUpRight,
+  deleteFace: SquareX,
   center: Focus,
   align: AlignVerticalJustifyCenter,
   mirror: FlipHorizontal2,

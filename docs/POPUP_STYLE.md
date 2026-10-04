@@ -44,6 +44,11 @@ over inventing a new modal layout.
   A double click does not select the body. Confirm writes one `moveFace()` and
   replaces a previous Move Face block; grey X exits with no write. Live preview
   while the distance changes. This is not the body `move()` helper.
+- **`DeleteFaceModeChip.jsx`** — cyan glass card (same shell as Shell). Tap adds a
+  face, tap again removes it. Undo drops the last face. Clear drops the faces.
+  No shift-click. A double click does not select the body. Confirm writes one
+  `deleteFace()` and replaces a previous Delete Face block; grey X exits with
+  no write. Live preview shows the healed solid when the neighbors can close it.
 
 ## Placement
 

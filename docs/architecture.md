@@ -46,6 +46,7 @@ Injected names are the keys of `HELPER_FUNCTIONS` in `src/workers/sandboxWorker.
 | `cut` | solid, plane, `{ bodies, keep, drop }` → kept pieces | `decompose`, cut the named bodies, `compose` what remains. Default `keep` is `'both'`. |
 | `move` | solid, `[dx,dy,dz]`, `{ bodies: [{ at }] }` → that body translated | Same split as `cut`. Exactly one body. Other bodies stay. |
 | `moveFace` | solid, faces, distance, `{ flip }` → those faces offset along their normals | No `decompose`. Adjacent faces extend or trim. Not `move()`. Other bodies' vertices stay. |
+| `deleteFace` | solid, faces `{ center, normal }` → those faces removed and the solid healed | No `decompose`. Neighbors extend or trim until they meet. If they cannot keep a closed solid, throws. Does not return an open or non-manifold mesh. |
 | `edge`, `edgesBetween`, `boundaryEdges` | current solid + ids → segments | Ids are for this mesh. A miss throws `re-pick edges`. |
 | `facesByNormal`, `planarFaceAt`, `edgesByOrientation`, `convexEdges`, `concaveEdges`, `signedFeatureEdges`, `workplaneFromFace`, `placeInFrame`, `transformByFrame`, `placeOnFace` | queries / frames on one solid | Worker faces do not merge across bodies (below). |
 | `hole`, `holeSpan`, `cboreHole`, `cskHole`, `holePattern`, `clearanceHole`, `tapDrillHole`, fastener lookups | solid + frame → solid with holes | No body split. |
@@ -57,11 +58,11 @@ Worker faces (`c4MeshData`): a Manifold `faceID` is split into edge-connected co
 
 ## When to rebuild graphs
 
-There is no `rebuildGraphs()` and no per-op hook. Cut, Draft, and Move Face do not rebuild anything while the picker is open.
+There is no `rebuildGraphs()` and no per-op hook. Cut, Draft, Move Face, and Delete Face do not rebuild anything while the picker is open.
 
 | Graph | Where | Built | Invalidated | Rebuilt |
 | --- | --- | --- | --- | --- |
-| **Face** (PartGraph) | `faceGraphFor` WeakMap on the BufferGeometry. Overlay copy in `partGraphRef`. | Next non-legacy face click, or when the patch-colour overlay is on. | `renderMeshData` drops `partGraphRef`. A new geometry is a WeakMap miss. The 250k-tri cap applies to the **overlay only**; a click still builds. | That next click / overlay pass. Not during Cut, Draft, or Move Face. |
+| **Face** (PartGraph) | `faceGraphFor` WeakMap on the BufferGeometry. Overlay copy in `partGraphRef`. | Next non-legacy face click, or when the patch-colour overlay is on. | `renderMeshData` drops `partGraphRef`. A new geometry is a WeakMap miss. The 250k-tri cap applies to the **overlay only**; a click still builds. | That next click / overlay pass. Not during Cut, Draft, Move Face, or Delete Face. |
 | **Edge** | `buildFeatureEdges` inside `syncFeatureEdges`. Cache key is the geometry object (`featureEdgesSourceRef`). | Dihedral **≥ 2°**. Each edge gets `bodyId` from `meshBodyComponents` (shared vertex index = one body). | Success path sets the source ref to null, then syncs. An empty script clears and does not rebuild. | End of every successful run, including Cut and Draft confirm. Also on Fillet enter, leaving Fillet while still in Edge, and Sweep path pick. |
 | **Body contours** | `buildCoherentEdges` in that same sync. Not a third cache. | Feature edges with dihedral **≥ 15°**, traced into chains. A keep-both cut shares no vertices, so a vertex walk cannot cross pieces. `bodyId` also blocks collinear merge and the spatial / parallel-face bridges (those links do not require a shared index). | Same as the edge graph. | Same call. If `faceID` is present, `indexBoundaryEdges` also runs and annotates those edges (fillet `fN` / `eN`). |
 
@@ -77,6 +78,8 @@ There is no `rebuildGraphs()` and no per-op hook. Cut, Draft, and Move Face do n
 - Shell confirm uses this same run path. Nothing in the graph code special-cases shell.
 - **Move Face confirm** is the same path: one `moveFace()`, Auto-Run, then the edge graph and body contours rebuild. The face graph stays lazy.
 - The Move Face preview runs `moveFace` on a clone. It does not replace `resultRef.geometry` and does not rebuild graphs. Dismiss writes nothing.
+- **Delete Face confirm** is the same path: one `deleteFace()`, Auto-Run, then the edge graph and body contours rebuild. The face graph stays lazy.
+- The Delete Face preview runs `deleteFace` on a clone. It does not replace `resultRef.geometry` and does not rebuild graphs. Dismiss writes nothing. If the heal cannot stay closed, the preview throws and the part on screen stays the unedited solid.
 
 What the new mesh contains is the difference, not the rebuild:
 
@@ -92,8 +95,9 @@ What the new mesh contains is the difference, not the rebuild:
 - **Shell, Draft, Cut** pass `legacy`. One click is the coplanar region, two clicks are the 3° neighbour walk, three clicks are the connected component. A double click does **not** become the body, so Confirm still writes the tapped face.
 - **Move.** One click is the full face and does not change the target. Double click sets that body (`{ at }` centroid).
 - **Move Face.** Same legacy tap as Shell. A double click is not the body, so Confirm still writes the tapped faces.
+- **Delete Face.** Same legacy tap as Shell and Move Face. A double click is not the body.
 
-Worker face picks (`{ center, normal }` passed to `hollow` / `draftFaces` / `cut`) resolve in `c4MeshData`, not in PartGraph. The two face graphs are not kept in sync.
+Worker face picks (`{ center, normal }` passed to `hollow` / `draftFaces` / `cut` / `moveFace` / `deleteFace`) resolve in `c4MeshData`, not in PartGraph. The two face graphs are not kept in sync. `deleteFace` uses that same center and normal.
 
 ## Contour paint
 
@@ -136,7 +140,7 @@ Scrap volume is `(sum of component volumes) − largest`. That still means disco
 
 ## UI confirm
 
-Sticky pickers (Shell, Draft, Cut, Move, Move Face) write **one** call and **replace** the previous marked block of that kind. A second confirm does not append. Grey X writes nothing. Chip behaviour is `docs/POPUP_STYLE.md`.
+Sticky pickers (Shell, Draft, Cut, Move, Move Face, Delete Face) write **one** call and **replace** the previous marked block of that kind. A second confirm does not append. Grey X writes nothing. Chip behaviour is `docs/POPUP_STYLE.md`.
 
 | Mode | Tap | Confirm emits | Next confirm |
 | --- | --- | --- | --- |
@@ -145,6 +149,7 @@ Sticky pickers (Shell, Draft, Cut, Move, Move Face) write **one** call and **rep
 | Cut | plane, then bodies (tap add/remove), then pieces (tap hides). | one `cut()`. `keep` omitted means both. | replace |
 | Move | double-click one body. XYZ, or a distance along the previous cut normal or a face normal. | one `move()` | replace |
 | Move Face | tap add / remove. Undo drops the last face. Clear drops the faces. Flip reverses each normal. | one `moveFace()` | replace |
+| Delete Face | tap add / remove. Undo drops the last face. Clear drops the faces. | one `deleteFace()` | replace |
 | Fillet / Chamfer | edge pick. Tangent on by default. | `makeSweepPath` + `filletAlongPath` | **append** if that kind's markers are already in the buffer, else replace |
 | Sketch contour (Extrude, Revolve, Loft, Sweep, Profile) | profile on a plane | profile, and a solid for the four tools | replace that marked block |
 
@@ -161,11 +166,13 @@ Fillet's marker comment still says the second Accept replaces. The call site pas
 | Shell / hollow confirm | lazy | rebuilt; no shell-specific rule | recomputed from the new mesh | |
 | Move confirm | lazy | rebuilt | recomputed from the new mesh | preview does not rebuild graphs |
 | Move Face confirm | lazy | rebuilt | recomputed from the new mesh | preview does not rebuild graphs |
-| Enter Cut / Draft / Move / Move Face | unchanged | unchanged | unchanged | highlights and clones only |
+| Delete Face confirm | lazy | rebuilt | recomputed from the new mesh | preview does not rebuild graphs; a heal that cannot close throws |
+| Enter Cut / Draft / Move / Move Face / Delete Face | unchanged | unchanged | unchanged | highlights and clones only |
 
 ## Goldens and fixtures
 
 - Runners live in `scripts/golden/`. Playtest scripts live in `scripts/golden/fixtures/*.txt`.
 - Each runner is a `package.json` script named `golden:…` (`node scripts/golden/smoke_….mjs`). `npm run verify` is the full gate (`VALIDATION.md`).
-- `golden:helper-binding-clash` scans those fixtures. The user script is still the body of `new Function(...helperNames, script)`. A top-level `const cut` in a fixture is a SyntaxError because `cut` is already a parameter. Nesting the script in another function would hide that and is not the fix. Do not name a fixture binding after an injected helper (`cut`, `move`, `shell`, `hollow`, `draftFaces`, `moveFace`, …).
+- `golden:helper-binding-clash` scans those fixtures. The user script is still the body of `new Function(...helperNames, script)`. A top-level `const cut` in a fixture is a SyntaxError because `cut` is already a parameter. Nesting the script in another function would hide that and is not the fix. Do not name a fixture binding after an injected helper (`cut`, `move`, `shell`, `hollow`, `draftFaces`, `moveFace`, `deleteFace`, …).
 - `golden:move-face` offsets picked faces along their normals. Flip reverses each normal. Adjacent faces extend or trim.
+- `golden:delete-face` removes a planar chamfer whose neighbors meet again, and throws when deleting a cube face would leave the solid open.

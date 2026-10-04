@@ -17,7 +17,7 @@ comparable and train-able.
 | `tapDrillHole(part, frame, u, v, size, span?)` | Tap-drill hole by fastener size |
 | `cboreHole` / `cskHole` | Counterbore / countersink |
 | `convexEdges` / `facesByNormal` / `workplaneFromFace` / `planarFaceAt` / `edgesByOrientation` / `placeInFrame` / `transformByFrame` | Selection / frame |
-| `shell`, `hollow`, `cut`, `moveFace`, `addDraft`, `draftFaces`, `tube`, `rectTube`, `hexPrism`, `roundedBox`, `mirror`, `array3D`, `polarArray`, `center`, `align` | Solids / layout |
+| `shell`, `hollow`, `cut`, `moveFace`, `deleteFace`, `addDraft`, `draftFaces`, `tube`, `rectTube`, `hexPrism`, `roundedBox`, `mirror`, `array3D`, `polarArray`, `center`, `align` | Solids / layout |
 | `loft`, `makeLoft`, `offsetPlaneFrame`, `sweep`, `sweepPoints`, `makeExtrude`, `makeRevolve` | Profiles / paths |
 | `profileCircle` / `profileRectangle` / `profilePolygon` / `makeCrossSection` | Cross-section substrate (Slice 21) |
 | `makeSweepPath(edges, opts?)` | Ordered sweep path / wire from edges (Slice 22) |
@@ -260,6 +260,27 @@ part = moveFace(part, [{ center: [0, 0, 10], normal: [0, 0, 1] }], 5, { flip: tr
 **Notes:**
 - A distance the walls cannot absorb throws. It does not return a folded mesh.
 - A picked face that is no longer on the body throws.
+
+---
+
+### deleteFace(manifold, faces)
+
+Removes the selected faces and heals the solid by extending or trimming the neighboring faces. A face is `{ center, normal }`, the same pick `moveFace` uses. If the neighbors cannot meet in a closed solid, this throws. It does not return an open or non-manifold mesh.
+
+```javascript
+let part = Manifold.cube([10, 10, 10], true);
+part = deleteFace(part, [{ center: [0, 0, 5], normal: [0, 0, 1] }]);
+```
+
+**Parameters:**
+- `manifold` - The solid
+- `faces` - a viewport pick `{ center, normal }`, a face from `facesByNormal()`, or an array of those
+
+**Returns:** The healed solid.
+
+**Notes:**
+- Deleting one face of a cube throws: the side walls do not meet.
+- A planar chamfer whose two neighbors can meet is healed back to the sharp edge.
 
 ---
 
