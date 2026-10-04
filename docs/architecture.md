@@ -112,7 +112,12 @@ What you see as an edge is not one list.
 
 The varying-profile cutter swept one tube through that 90° corner. The easy path already splits a run at a turn sharper than `FRAME_DENSIFY_MAX_TURN_DEG` (5°). The varying-profile path now does the same: one tube per straight leg, then union. A smooth loft (turns ≤ 5°) stays one run. The shredded mesh was what broke the drafted-face contours into short fragments.
 
-An open run that ends on a face tilted off the path extends the cutter past that end. The distance is how far the end profile must travel to clear the tilted plane, plus the sweep expand pad. A rounded run samples that at its back end only. This is not a sphere cap and not the concave open-end pad. A face perpendicular to the path is not extended.
+An open fillet end extends in two cases. Neither is a sphere cap, and neither is the concave open-end pad.
+
+- The end lands on a tilted face. The distance is how far the end profile must travel to clear that plane, capped, plus the sweep expand pad. Clearance about 0 means the end is already on the face. Alignment tighter than cos(2°) is not that test. A rounded run samples the back end only.
+- The end is not an original path end, and the turn there is about 20° or less (a same-radius joint, or a shallow kink the 5° split cut). It is pushed along the outward tangent by the sweep expand pad. A hard corner, about 90°, is not.
+
+Path thinning (the 1.2 mm floor) can drop the vertex where a circular run meets a long straight. That joint is put back when the thinned shortcut turns more than 5° and the span is a circle running into a long straight. The 18° gate that rebuilds a whole collapsed quarter stays.
 
 ## Keep-both cut and the shared edge
 
@@ -162,7 +167,7 @@ Fillet's marker comment still says the second Accept replaces. The call site pas
 | --- | --- | --- | --- | --- |
 | Cut confirm (keep both) | lazy, then clipped to the seed body | rebuilt; pieces share no vertices | 1px black, on the edge | `filletAlongPath` fillets the body that owns the path, then composes the rest |
 | Cut confirm (one side) | lazy | rebuilt; one body | none | |
-| Draft confirm | lazy | rebuilt from new dihedrals | recomputed; one body still has none | wrap splits at a corner sharper than 5°, then the cutter extends past an end on the drafted face; 15° / 28° unchanged |
+| Draft confirm | lazy | rebuilt from new dihedrals | recomputed; one body still has none | wrap splits at a corner sharper than 5°; an open end extends when clearance is not already ~0, and a shallow internal split (≤ ~20°) takes the sweep expand pad; 15° / 28° unchanged |
 | Fillet / Chamfer confirm | lazy | rebuilt; picked wire kept | recomputed from the new mesh | |
 | Shell / hollow confirm | lazy | rebuilt; no shell-specific rule | recomputed from the new mesh | |
 | Move confirm | lazy | rebuilt | recomputed from the new mesh | preview does not rebuild graphs |
