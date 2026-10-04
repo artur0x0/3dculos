@@ -78,8 +78,8 @@ There is no `rebuildGraphs()` and no per-op hook. Cut, Draft, Move Face, and Del
 - Shell confirm uses this same run path. Nothing in the graph code special-cases shell.
 - **Move Face confirm** is the same path: one `moveFace()`, Auto-Run, then the edge graph and body contours rebuild. The face graph stays lazy.
 - The Move Face preview runs `moveFace` on a clone. It does not replace `resultRef.geometry` and does not rebuild graphs. Dismiss writes nothing.
-- **Delete Face confirm** is the same path: one `deleteFace()`, Auto-Run, then the edge graph and body contours rebuild. The face graph stays lazy.
-- The Delete Face preview runs `deleteFace` on a clone. It does not replace `resultRef.geometry` and does not rebuild graphs. Dismiss writes nothing. If the heal cannot stay closed, the preview throws and the part on screen stays the unedited solid.
+- **Delete Face confirm** writes one `deleteFace()` for every picked face, replaces the previous Delete Face block, Auto-Runs, then the edge graph and body contours rebuild. The face graph stays lazy. A heal that cannot stay a closed solid throws on that run.
+- A Delete Face tap only adds or removes the face. It does not run `deleteFace`. Leaving without Confirm writes nothing.
 - **Assembly.** Graphs stay on the active part, the script in the editor. A successful run of that part drops the face graph and rebuilds the edge graph and body contours at the end of the run. A failed run, or hiding that part, clears its mesh and does not rebuild from a previous solid. Other visible parts are extra meshes. Showing or hiding them does not rebuild graphs.
 
 What the new mesh contains is the difference, not the rebuild:
@@ -96,7 +96,7 @@ What the new mesh contains is the difference, not the rebuild:
 - **Shell, Draft, Cut** pass `legacy`. One click is the coplanar region, two clicks are the 3° neighbour walk, three clicks are the connected component. A double click does **not** become the body, so Confirm still writes the tapped face.
 - **Move.** One click is the full face and does not change the target. Double click sets that body (`{ at }` centroid).
 - **Move Face.** Same legacy tap as Shell. A double click is not the body, so Confirm still writes the tapped faces. Triangles outside the seed body are removed.
-- **Delete Face.** Same legacy tap as Shell and Move Face, including that seed-body clip. A double click is not the body.
+- **Delete Face.** Same legacy tap as Shell and Move Face, including that seed-body clip. A double click is not the body. The tap does not delete.
 
 Worker face picks (`{ center, normal }` passed to `hollow` / `draftFaces` / `cut` / `moveFace` / `deleteFace`) resolve in `c4MeshData`, not in PartGraph. A named pick stays on the body whose surface contains the center. It does not move to another body because that face's center is nearer. The two face graphs are not kept in sync. `deleteFace` uses that same center and normal.
 
@@ -155,7 +155,7 @@ Sticky pickers (Shell, Draft, Cut, Move, Move Face, Delete Face) write **one** c
 | Cut | plane, then bodies (tap add/remove), then pieces (tap hides). | one `cut()`. `keep` omitted means both. | replace |
 | Move | double-click one body. XYZ, or a distance along the previous cut normal or a face normal. | one `move()` | replace |
 | Move Face | tap add / remove. Undo drops the last face. Clear drops the faces. Flip reverses each normal. | one `moveFace()` | replace |
-| Delete Face | tap add / remove. Undo drops the last face. Clear drops the faces. | one `deleteFace()` | replace |
+| Delete Face | tap add / remove only. The tap does not run `deleteFace`. Undo drops the last face. Clear drops the faces. | one `deleteFace()` for every picked face | replace |
 | Fillet / Chamfer | edge pick. Tangent on by default. | `makeSweepPath` + `filletAlongPath` | **append** if that kind's markers are already in the buffer, else replace |
 | Sketch contour (Extrude, Revolve, Loft, Sweep, Profile) | profile on a plane | profile, and a solid for the four tools | replace that marked block |
 
@@ -172,8 +172,9 @@ Fillet's marker comment still says the second Accept replaces. The call site pas
 | Shell / hollow confirm | lazy | rebuilt; no shell-specific rule | recomputed from the new mesh | |
 | Move confirm | lazy | rebuilt | recomputed from the new mesh | preview does not rebuild graphs |
 | Move Face confirm | lazy, clipped to the seed body | rebuilt | recomputed from the new mesh | preview does not rebuild graphs |
-| Delete Face confirm | lazy | rebuilt | recomputed from the new mesh | preview does not rebuild graphs; a heal that cannot close throws |
-| Enter Cut / Draft / Move / Move Face / Delete Face | unchanged | unchanged | unchanged | highlights and clones only |
+| Delete Face confirm | lazy | rebuilt | recomputed from the new mesh | a heal that cannot close throws on Confirm, not on the tap |
+| Enter Cut / Draft / Move / Move Face | unchanged | unchanged | unchanged | highlights and clones only |
+| Enter Delete Face | unchanged | unchanged | unchanged | highlight only; the tap does not run `deleteFace` |
 | Assembly, active part succeeds | lazy (dropped on that run) | rebuilt on the active mesh | recomputed from the active mesh | other visible parts are drawn and are not the pick mesh |
 | Assembly, active part fails or is hidden | cleared, not rebuilt from a previous solid | cleared, not rebuilt | none for that part | that part is omitted; no shadow solid |
 
@@ -182,7 +183,7 @@ Fillet's marker comment still says the second Accept replaces. The call site pas
 The viewport can show more than the script in Monaco. An assembly is a list of parts. The editor still holds one part at a time.
 
 - **Desktop.** A feed pane sits to the left of the editor. Each row is a thumbnail and the part name, in feed order. A red bar marks the selected row and loads that part's script into Monaco. An eye on the row shows or hides that part.
-- **Mobile.** The home-indicator pill has a third dot. The order is CAD, then Script, then Parts. The Parts stage is the same feed. Load lives in the feed pane.
+- **Mobile.** The home-indicator pill uses Lucide icons. The order is CAD (box), then Script (square-text), then Parts (layout-list). The Parts stage is the same feed. Its top bar uses the script editor ribbon. Load lives in the feed pane.
 - **Document.** The saved assembly lists `id`, `name`, `visible`, and `order`. An optional `position` `[x, y, z]` is a translation the viewport applies. There are no mates. The script source is not in the JSON.
 - **Row id.** In git mode the id is a repo path and the part is that file. A path with no file yet offers Find in repo. In local mode the id is an IndexedDB key. A missing key offers Upload. Nothing else talks to git.
 - **Visibility and failure.** The viewport draws every visible part whose latest run returned a solid. A hidden row is left out. A failed script highlights that row and contributes no solid. The previous mesh is not kept.

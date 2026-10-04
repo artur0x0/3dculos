@@ -4,9 +4,9 @@
  * or trim. Confirm writes one moveFace() and replaces a previous Move Face
  * block. Leaving without Confirm writes nothing. This is not body move().
  *
- * Refine is the last left-rail section. The button is square-arrow-out-up-right.
- * The picker is the Shell sticky tap: add, tap again to remove, Undo, Clear.
- * A double click does not select the body.
+ * Polish holds fillet, chamfer, then Move Face, then Delete Face. The button
+ * is square-arrow-out-up-right. The picker is the Shell sticky tap: add, tap
+ * again to remove, Undo, Clear. A double click does not select the body.
  */
 import { readFileSync } from 'node:fs';
 import { register } from 'node:module';
@@ -50,18 +50,22 @@ const SIDE = { center: [5, 0, 0], normal: [1, 0, 0] };
   check('body Move stays off the legacy tap line', !!legacy && !/moveMode/.test(legacy[1]));
   check('Move Face double click is not the body',
     /legacy: legacyTap \|\| !!moveFaceModeRef\.current/.test(view));
-  check('Refine button is square-arrow-out-up-right',
+  check('Move Face button is square-arrow-out-up-right',
     /moveFace:\s*SquareArrowOutUpRight/.test(palette)
     && /SquareArrowOutUpRight/.test(palette));
   check('Move Face enters its own mode',
     /item\.id === 'moveFace'/.test(palette) && /onEnterMoveFaceMode/.test(palette));
   for (const layout of ['cad', 'game']) {
     const sections = paletteRailSections(layout);
-    const last = sections[sections.length - 1];
-    check(`${layout} Refine is the last section`, last && last.key === 'Refine',
+    const polish = sections.find((s) => s.key === 'Features');
+    const ids = polish ? polish.items.map((i) => i.id) : [];
+    check(`${layout} Move Face sits in Polish before Delete Face`,
+      ids.indexOf('deleteFace') === ids.indexOf('moveFace') + 1
+      && ids[0] === 'filletEdges' && ids[1] === 'chamferEdges',
+      ids.join(','));
+    check(`${layout} Move is the last section`,
+      sections[sections.length - 1]?.key === 'Transforms',
       sections.map((s) => s.key).join('|'));
-    check(`${layout} Move Face is followed by Delete Face`,
-      last && last.items[0]?.id === 'moveFace' && last.items[1]?.id === 'deleteFace');
   }
   check('sticky picker has Undo and Clear and no shift',
     /data-move-face-undo/.test(chip) && /data-move-face-clear/.test(chip)

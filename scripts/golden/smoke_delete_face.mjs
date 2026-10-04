@@ -8,9 +8,9 @@
  * throws — the side walls do not meet, and the helper must not return an open
  * solid.
  *
- * Refine is the last left-rail section. Delete Face is square-x, immediately
- * after Move Face. The picker is the Shell sticky tap. A double click does
- * not select the body.
+ * Polish holds fillet, chamfer, move face, then delete face. Delete Face is
+ * square-x. A tap only adds or removes a face. Confirm writes one
+ * deleteFace() for every picked face. A double click does not select the body.
  */
 import { readFileSync } from 'node:fs';
 import { register } from 'node:module';
@@ -48,18 +48,20 @@ const CHAMFER = { center: [4, 0, 4], normal: [Math.SQRT1_2, 0, Math.SQRT1_2] };
   const arch = read('docs/architecture.md');
   check('Delete Face double click is not the body',
     /legacy: legacyTap \|\| !!moveFaceModeRef\.current \|\| !!deleteFaceModeRef\.current/.test(view));
-  check('Refine button is square-x after Move Face',
+  check('Delete Face button is square-x',
     /deleteFace:\s*SquareX/.test(palette)
     && /SquareX/.test(read('src/components/FeatureStrip.jsx')));
   check('Delete Face enters its own mode',
     /item\.id === 'deleteFace'/.test(palette) && /onEnterDeleteFaceMode/.test(palette));
   for (const layout of ['cad', 'game']) {
     const sections = paletteRailSections(layout);
-    const last = sections[sections.length - 1];
-    check(`${layout} Refine is the last section`, last && last.key === 'Refine',
-      sections.map((s) => s.key).join('|'));
-    check(`${layout} Delete Face is immediately after Move Face`,
-      last && last.items[0]?.id === 'moveFace' && last.items[1]?.id === 'deleteFace');
+    const polish = sections.find((s) => s.key === 'Features');
+    const ids = polish ? polish.items.map((i) => i.id).join(',') : '';
+    check(`${layout} Polish is fillet, chamfer, move face, delete face`,
+      ids === 'filletEdges,chamferEdges,moveFace,deleteFace',
+      sections.map((s) => s.key).join('|') + ' polish=' + ids);
+    check(`${layout} Move is the last section`,
+      sections[sections.length - 1]?.key === 'Transforms');
   }
   check('sticky picker has Undo and Clear and no shift',
     /data-delete-face-undo/.test(chip) && /data-delete-face-clear/.test(chip)
@@ -72,9 +74,13 @@ const CHAMFER = { center: [4, 0, 4], normal: [Math.SQRT1_2, 0, Math.SQRT1_2] };
   check('dismiss does not commit',
     /onDismiss=\{exitDeleteFaceMode\}/.test(view)
     && !/onDismiss=\{[^}]*onCommitDeleteFace/.test(view));
-  check('live preview is a clone, not the cached solid',
-    /name = 'delete-face-preview'/.test(view)
-    && /case 'previewDeleteFace'/.test(worker)
+  check('a tap does not run deleteFace',
+    /toggleDeleteFaceSelection\(deleteFaceModeRef\.current/.test(view)
+    && !/previewDeleteFace/.test(view)
+    && !/Delete Face preview failed/.test(view)
+    && /onConfirm=\{acceptDeleteFace\}/.test(view));
+  check('worker preview still heals a clone and leaves the cache',
+    /case 'previewDeleteFace'/.test(worker)
     && /cachedManifold is not/.test(worker));
   check('deleteFace is a helper',
     /function deleteFace\(manifold, faces\)/.test(worker)

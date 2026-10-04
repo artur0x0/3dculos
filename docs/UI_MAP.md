@@ -90,7 +90,7 @@ CAD stage                          Script stage
 ││strip Contour/Fillet chips  │   ││strip mid: Monaco (full)   │
 ││(edit) title chip           │   ││icons PromptInput (hidden) │
 ││      feature sheet (glass) │   ││vert  (viewport mounted)   │
-│         ( ●  ○ ) pill       │   ││      ( ○  ● ) pill        │
+│         (box script parts)  │   ││      pager icons          │
 └─────────────────────────────┘   └─────────────────────────────┘
 ```
 
@@ -111,8 +111,9 @@ draggable seam). Stages do not apply in puzzle mode.
 Mobile specifics:
 - **Stage toggle (Slice Mobile B):** `MobileStageToggle.jsx` is a bottom-centered
   iPhone Home Screen–style glass pill (`data-mobile-stage-home-indicator`,
-  `data-home-indicator-pill`) with two dots (left = CAD, right = Script).
-  Tap left/right half switches stage. Session-sticky via `3dculos.mobileStage`.
+  `data-home-indicator-pill`) with three Lucide icons: CAD (`Box`), Script
+  (`square-text`), Parts (`LayoutList`). Tap a third to switch stage.
+  Session-sticky via `3dculos.mobileStage`.
   Top CAD|Script text chrome is gone. Inert `data-ai-prompt-hook` marks a
   future AI-on-tap site (not wired). Contour/Fillet chips use `bottom-14` on
   mobile so they clear the pill. Shell exposes `data-mobile-stage="cad"|"script"`.
@@ -207,7 +208,7 @@ That yields **four** layout combinations; check both flags when editing chrome.
 | Toolbar contents | **run + select-all** (green run first, own section) then account/open/upload/undo/save/download/quote/puzzle | back, undo/redo, run, picker, hint (`src/components/Toolbar.jsx:98`+) |
 | Toolbar placement | portaled strip above the editor, both shells | strip inside CodeEditor, both shells |
 | Title chip | always (filename) | always (puzzle title) |
-| Helper rail | `layout="cad"` — advanced tools folded into Model | `layout="game"` — keeps the Advanced group |
+| Helper rail | `layout="cad"` — Block, Build, Shape, Polish, Move | `layout="game"` — the same five sections |
 | Info chips | bottom-left on desktop | always bottom-right (dodges the palette) |
 | PromptInput | mounted but `hidden` (see shells) | not rendered (`appMode !== 'game'` guards) |
 | Extras | — | ghost mesh, timer, confetti, "Match!" banner (`src/components/Viewport.jsx:3595`) |
@@ -232,12 +233,12 @@ All of these are absolutely positioned inside the shell at
 | left-2/4 bottom-2.5 | contour tool rail (replaces the helper rail) | `ContourModeRail.jsx` | Viewport |
 | right-2/4 bottom-4 | view / pick / cross-section cluster | `CrossSectionPanel.jsx:175` collapsed, `:327` expanded | `:3641` |
 | inside that cluster | Front/Right/Top/**Iso** snap popup | `ViewSnapControl.jsx` | `CrossSectionPanel.jsx:181` |
-| top-16 right-4 | execution error card (`ErrorPopup` + Undo) | `ErrorPopup.jsx` | Viewport |
+| top-16 center, portaled `z-50` | execution error card (`ErrorPopup` + Undo), glass `rounded-lg` | `ErrorPopup.jsx` | Viewport |
 | *(removed C.1)* | Selected Face readout | — | — |
 | bottom-4 right-2/4 | contour param chip | `ContourModeChip.jsx:176` | `:3733` |
 | bottom-4 right-2/4 | fillet param chip | `FilletModeChip.jsx:43` | `:3835` |
 | bottom-center (raised) | Edge-pick chip (`data-edge-selector`) | inline | Viewport |
-| top-16 center | toasts: edge-mode, contour, fillet-scrap, fillet | inline, four blocks | `:3924`, `:3932`, `:3940`, `:3952` |
+| top-16 center, portaled `z-50` | toasts: edge-mode, contour, fillet-scrap, fillet, shell — same `ErrorPopup` card | `ErrorPopup.jsx` | Viewport |
 | bottom-left | measurement readout | inline | `:3961` |
 | fills the pane | WebGL canvas | `<canvas ref={canvasRef}>` | `:3985` |
 
@@ -396,8 +397,9 @@ Import `src/utils/importModel.js` (+ `POST /api/convert/step`); export
 - **z-index ladder:** overlays `z-10`; edge chip and success banner `z-20`;
   toasts + mobile stage pill `z-30`; **cross-section panel/popup `z-40`** (above
   the CAD↔Script home-indicator so expanded options win); modals and error
-  banners `z-50`. The execution-error toast is portaled to `document.body` at
-  `z-50` so the full message sits above the feature strip and the left rail. Cross-section popup **Dismiss** is a grey lucide `X` (not the
+  banners `z-50`. Error cards (`ErrorPopup`) are the glass `rounded-lg` chip
+  from `POPUP_STYLE.md`, not a rounded pill. They are portaled to `document.body`
+  at `z-50` so the full message sits above the feature strip and the left rail. Cross-section popup **Dismiss** is a grey lucide `X` (not the
   red FlipHorizontal); the collapsed rail still uses FlipHorizontal to
   enable/disable. Contour-mode rail dismiss is the same grey `X`. Check stays
   green Done.
@@ -406,9 +408,9 @@ Import `src/utils/importModel.js` (+ `POST /api/convert/step`); export
   validation / workplane-miss toasts stay.
 - **Icons** are `lucide-react` only, with three vendored exceptions in
   `src/components/icons/`: `SquareRoundCorner.jsx` (Fillet), `Angle.jsx`
-  (Draft) and `TrianglesCenterlineDashedVertical.jsx` (cross-section options).
-  All three postdate lucide 0.469, which this project pins. Delete them and
-  import from `lucide-react` once the dep moves.
+  (Draft), `TrianglesCenterlineDashedVertical.jsx` (cross-section options),
+  and `SquareText.jsx` (Script pager). They postdate lucide 0.469, which this
+  project pins. Delete them and import from `lucide-react` once the dep moves.
   Overlay buttons carry `title` *and*
   `aria-label`; toggles carry `aria-pressed`. **No two buttons in the same rail
   share a glyph** — the right rail's selectors are deliberately distinct:
@@ -421,17 +423,17 @@ Import `src/utils/importModel.js` (+ `POST /api/convert/step`); export
   Create contour = `NotebookPen` (= sketch overlays) and Workplane = `Layers3`
   (= plane overlays). The tool that makes a thing wears the icon that shows it;
   the no-duplicates rule is per rail, so this is intended, not a slip.
-- **Rail sections are Block / Model / Polish / Move / Refine**, in that order
+- **Rail sections are Block / Build / Shape / Polish / Move**, in that order
   (`CAD_RAIL_ORDER` in `helperPaletteSnippets.js` for the order,
-  `GROUP_SHORT_LABEL` in `HelperInsertPalette.jsx` for the captions). The
-  internal group keys are still `Primitives` / `Advanced` / `Features` /
-  `Transforms` — display names only. The order is the modelling order: make a
-  shape, model it, polish it, move it.   The first button in that Move section
-  is Move (`Move` glyph, directly above Center): it opens the delta X/Y/Z
-  chip and translates one body. Refine is last. Move Face
-  (`SquareArrowOutUpRight`) offsets the picked faces along their normals.
-  Delete Face (`SquareX`) is the next button: it removes the picked faces and
-  heals by extending or trimming the neighbors.
+  `GROUP_SHORT_LABEL` in `HelperInsertPalette.jsx` for the captions). Shape is
+  the old Model section, same buttons. Build is hole, cut, shell, draft,
+  pattern. Polish is fillet, chamfer, move face, delete face. Move is every
+  remaining button. The first button in Move is Move (`Move` glyph, directly
+  above Center): it opens the delta X/Y/Z chip and translates one body. Move
+  Face (`SquareArrowOutUpRight`) offsets the picked faces along their normals.
+  Delete Face (`SquareX`) is the next Polish button: a tap only adds or removes
+  a face. Confirm writes one `deleteFace()` for every picked face. A heal that
+  cannot stay a closed solid throws on Confirm, not on the tap.
   The right-rail axis helper (`Move3d`) only
   shows the `AxesHelper`. It does not move a body and it does not grow
   viewport arrows.

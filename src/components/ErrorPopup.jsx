@@ -5,13 +5,14 @@ import { X } from 'lucide-react';
  * Shared error / soft-fail popup. Always includes an Undo control when an
  * onUndo handler is provided (disabled when canUndo is false).
  */
+// Same glass card as the mode chips in docs/POPUP_STYLE.md. Not a rounded pill.
 const TONE_CLASS = {
-  error: 'bg-red-900/85 text-white',
-  scrap: 'bg-red-950/85 border border-red-400/80 text-red-50',
-  warn: 'bg-amber-700/85 text-white',
-  amber: 'bg-amber-600/85 text-white',
-  cyan: 'bg-cyan-700/85 text-white',
-  banner: 'bg-red-900/90 text-white',
+  error: 'bg-red-950/80 border border-red-400/70 text-red-50',
+  scrap: 'bg-red-950/80 border border-red-400/70 text-red-50',
+  warn: 'bg-amber-950/80 border border-amber-400/70 text-amber-50',
+  amber: 'bg-amber-950/80 border border-amber-400/70 text-amber-50',
+  cyan: 'bg-cyan-950/80 border border-cyan-400/70 text-cyan-50',
+  banner: 'bg-red-950/80 border border-red-400/70 text-red-50',
 };
 
 export default function ErrorPopup({
@@ -21,7 +22,6 @@ export default function ErrorPopup({
   onDismiss = null,
   onUndo = null,
   canUndo = false,
-  rounded = 'rounded-lg',
   className = '',
   ...rest
 }) {
@@ -34,13 +34,13 @@ export default function ErrorPopup({
     <div
       role="alert"
       data-error-popup=""
-      className={`${TONE_CLASS[tone] || TONE_CLASS.error} surface-glass-chip text-xs font-sans font-medium shadow-lg ${rounded} ${className}`}
+      className={`${TONE_CLASS[tone] || TONE_CLASS.error} surface-glass-chip text-xs font-sans font-medium shadow-lg rounded-lg ${className}`}
       {...rest}
     >
       <div className="flex items-start gap-2">
         <div className="flex-1 min-w-0">
           {title ? <div className="font-bold mb-1">{title}</div> : null}
-          <div className={title || tone === 'banner' || tone === 'error' ? 'text-left' : 'text-center'}>{children}</div>
+          <div className="text-left">{children}</div>
         </div>
         <div className="flex items-center gap-1 shrink-0 pointer-events-auto">
           {typeof onUndo === 'function' && (
@@ -49,7 +49,7 @@ export default function ErrorPopup({
               data-error-undo=""
               onClick={handleUndo}
               disabled={!canUndo}
-              className="px-2 py-0.5 rounded bg-white/15 hover:bg-white/25
+              className="px-2 py-0.5 rounded-md bg-white/15 hover:bg-white/25
                 disabled:opacity-40 disabled:pointer-events-none font-semibold"
               title="Undo"
               aria-label="Undo"

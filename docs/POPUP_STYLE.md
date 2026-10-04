@@ -45,10 +45,22 @@ over inventing a new modal layout.
   replaces a previous Move Face block; grey X exits with no write. Live preview
   while the distance changes. This is not the body `move()` helper.
 - **`DeleteFaceModeChip.jsx`** — cyan glass card (same shell as Shell). Tap adds a
-  face, tap again removes it. Undo drops the last face. Clear drops the faces.
-  No shift-click. A double click does not select the body. Confirm writes one
-  `deleteFace()` and replaces a previous Delete Face block; grey X exits with
-  no write. Live preview shows the healed solid when the neighbors can close it.
+  face, tap again removes it. The tap does not run `deleteFace`. Undo drops the
+  last face. Clear drops the faces. No shift-click. A double click does not
+  select the body. Confirm writes one `deleteFace()` for every picked face and
+  replaces a previous Delete Face block; grey X exits with no write. A heal
+  that cannot stay a closed solid throws when Confirm runs the script, not on
+  the tap.
+
+## Error toasts
+
+Errors use this same glass card. They are not a blue rounded pill.
+
+- **`ErrorPopup.jsx`** — `rounded-lg`, `surface-glass-chip`, and a tinted border
+  (`border-red-400/70`, `border-amber-400/70`, or `border-cyan-400/70`).
+- Undo stays on the card when there is history to pop.
+- The card is portaled at `fixed top-16 left-1/2 z-50` so it sits above the
+  feature strip and the left rail.
 
 ## Placement
 

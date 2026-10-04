@@ -2286,10 +2286,15 @@ export const HELPER_PALETTE_ITEMS = [
 export const HELPER_PALETTE_GROUPS = ['Primitives', 'Advanced', 'Features', 'Transforms'];
 
 /**
- * CAD rail section order — Block, Model, Polish, Move. Display names live in
- * HelperInsertPalette's GROUP_SHORT_LABEL; these stay the internal group keys.
+ * Data-group order. The visible rail is paletteRailSections: Block, Build,
+ * Shape, Polish, Move. Display names live in HelperInsertPalette's
+ * GROUP_SHORT_LABEL.
  */
-export const CAD_RAIL_ORDER = ['Primitives', 'Advanced', 'Features', 'Transforms'];
+export const CAD_RAIL_ORDER = ['Primitives', 'Build', 'Shape', 'Features', 'Transforms'];
+
+const RAIL_BUILD_IDS = ['hole', 'cut', 'shell', 'addDraft', 'array3D'];
+const RAIL_POLISH_IDS = ['filletEdges', 'chamferEdges', 'moveFace', 'deleteFace'];
+const RAIL_MOVE_FIRST = ['move', 'center', 'align', 'mirror'];
 
 export function itemsByGroup() {
   const map = Object.fromEntries(HELPER_PALETTE_GROUPS.map((g) => [g, []]));
@@ -2301,40 +2306,50 @@ export function itemsByGroup() {
 }
 
 /**
- * Visible rail sections.
- * Game keeps Advanced as the home of Profile / Workplane / Extrude / Revolve /
- * Sweep / Loft. Regular CAD promotes that same list into a Model section and
- * does not also render Advanced (one entry per tool).
- * Refine is last on both rails. Move Face lives there, then Delete Face.
+ * Visible rail sections, both layouts. Order is Block, Build, Shape, Polish,
+ * Move. Shape is the old Model section (Profile / Workplane / Extrude /
+ * Revolve / Sweep / Loft), same buttons. Build is hole, cut, shell, draft,
+ * pattern. Polish is fillet, chamfer, move face, delete face. Move is every
+ * remaining button, with Move directly above Center.
+ *
+ * `railHidden` items keep their group membership and their build(); they get
+ * no button. Filter here, not in itemsByGroup.
  */
 export function paletteRailSections(layout, grouped = itemsByGroup()) {
-  // `railHidden` items keep their group membership and their build(), they just
-  // get no button (see sweepPath). Filter here, not in itemsByGroup, so the
-  // data model stays the whole set.
-  const shown = (group) => (grouped[group] || []).filter((i) => !i.railHidden);
-  const withRefine = (sections) => {
-    const items = shown('Refine');
-    if (items.length) sections.push({ key: 'Refine', items });
-    return sections;
-  };
-  if (layout === 'cad') {
-    // Rail order is the modelling order, not the data order: make a shape,
-    // model it, polish it, move it. Advanced is promoted to "Model" and sits
-    // second — Block leads because that is where an empty part starts.
-    // Refine is the last section.
-    const sections = [];
-    for (const group of CAD_RAIL_ORDER) {
-      const items = shown(group);
-      if (group === 'Advanced') {
-        if (items.length) sections.push({ key: 'Model', items });
-        continue;
-      }
-      sections.push({ key: group, items });
+  void layout;
+  const byId = new Map();
+  for (const items of Object.values(grouped)) {
+    for (const item of items || []) {
+      if (!item.railHidden) byId.set(item.id, item);
     }
-    return withRefine(sections);
   }
-  return withRefine(HELPER_PALETTE_GROUPS.map((group) => ({
-    key: group,
-    items: shown(group),
-  })));
+  const take = (ids) => ids.map((id) => byId.get(id)).filter(Boolean);
+  const visibleIds = (group) => (grouped[group] || []).filter((i) => !i.railHidden).map((i) => i.id);
+  const block = take(visibleIds('Primitives'));
+  const shape = take(visibleIds('Advanced'));
+  const build = take(RAIL_BUILD_IDS);
+  const polish = take(RAIL_POLISH_IDS);
+  const claimed = new Set([
+    ...block.map((i) => i.id),
+    ...shape.map((i) => i.id),
+    ...RAIL_BUILD_IDS,
+    ...RAIL_POLISH_IDS,
+  ]);
+  const move = [];
+  for (const id of RAIL_MOVE_FIRST) {
+    if (byId.has(id) && !claimed.has(id)) move.push(byId.get(id));
+  }
+  for (const item of byId.values()) {
+    if (!claimed.has(item.id) && !move.some((entry) => entry.id === item.id)) move.push(item);
+  }
+  const byKey = {
+    Primitives: block,
+    Build: build,
+    Shape: shape,
+    Features: polish,
+    Transforms: move,
+  };
+  return CAD_RAIL_ORDER
+    .map((key) => ({ key, items: byKey[key] || [] }))
+    .filter((section) => section.items.length);
 }
