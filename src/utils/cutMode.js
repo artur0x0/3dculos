@@ -16,6 +16,9 @@
  */
 
 import { CUT_BEGIN, CUT_END } from './helperPaletteSnippets.js';
+import { meshBodyComponents } from './meshBodyComponents.js';
+
+export { meshBodyComponents };
 
 export const CUT_ENTRY_ID = 'cut';
 
@@ -113,85 +116,6 @@ export function cutBodyKey(body) {
 export function cutPointsMatch(a, b) {
   if (!Array.isArray(a) || !Array.isArray(b)) return false;
   return a.map(round3).join(',') === b.map(round3).join(',');
-}
-
-/**
- * Connected components of an indexed triangle mesh. Shared vertex indices
- * join one body, which is how a composed Manifold comes back from the worker
- * (separate solids do not share vertices).
- * @returns {{ center: number[], at: number[], triangles: number[], minTri: number }[]}
- */
-export function meshBodyComponents(positions, index) {
-  const idx = readIndex(index);
-  if (!positions || !idx || !idx.length) return [];
-  const triCount = Math.floor(idx.length / 3);
-  if (!triCount) return [];
-  const parent = new Uint32Array(triCount);
-  for (let i = 0; i < triCount; i++) parent[i] = i;
-  const find = (a) => {
-    let r = a;
-    while (parent[r] !== r) r = parent[r];
-    let x = a;
-    while (parent[x] !== r) {
-      const n = parent[x];
-      parent[x] = r;
-      x = n;
-    }
-    return r;
-  };
-  const unite = (a, b) => {
-    const ra = find(a);
-    const rb = find(b);
-    if (ra !== rb) parent[rb] = ra;
-  };
-  const vertToTri = new Map();
-  for (let t = 0; t < triCount; t++) {
-    for (let k = 0; k < 3; k++) {
-      const v = idx[t * 3 + k];
-      const prev = vertToTri.get(v);
-      if (prev === undefined) vertToTri.set(v, t);
-      else unite(prev, t);
-    }
-  }
-  const groups = new Map();
-  for (let t = 0; t < triCount; t++) {
-    const r = find(t);
-    let g = groups.get(r);
-    if (!g) {
-      g = { triangles: [], minTri: t };
-      groups.set(r, g);
-    }
-    g.triangles.push(t);
-  }
-  const bodies = [];
-  for (const g of groups.values()) {
-    const seen = new Set();
-    let sx = 0;
-    let sy = 0;
-    let sz = 0;
-    let n = 0;
-    for (const t of g.triangles) {
-      for (let k = 0; k < 3; k++) {
-        const v = idx[t * 3 + k];
-        if (seen.has(v)) continue;
-        seen.add(v);
-        const p = readPos(positions, v);
-        sx += p[0];
-        sy += p[1];
-        sz += p[2];
-        n++;
-      }
-    }
-    const center = n ? [sx / n, sy / n, sz / n] : [0, 0, 0];
-    bodies.push({
-      center,
-      at: center.slice(),
-      triangles: g.triangles,
-      minTri: g.minTri,
-    });
-  }
-  bodies.sort((a, b) => a.minTri - b.minTri);
-  return bodies;
 }
 
 export function bodyContainingTriangle(bodies, tri) {

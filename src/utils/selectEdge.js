@@ -10,7 +10,9 @@ import {
   TANGENCY_PROP_DEG,
   TANGENCY_NORMAL_ALIGN,
 } from './edgeTangencyField.js';
-import { meshBodyComponents } from './cutMode.js';
+// Not cutMode.js: that file imports the helper palette, which imports this
+// module back. The cycle ran holeFeatureParamDefs before HOLE_SIZE_OPTIONS.
+import { meshBodyComponents } from './meshBodyComponents.js';
 
 const DEFAULT_FEATURE_DEG = 2;
 
