@@ -2,7 +2,7 @@
 
 **Maintenance:** every PR that changes kernel helpers, face/edge/contour graphs, multi-body rules, or UI pickers must update this file in the same PR (or a tiny follow-up before the next feature). Drop stale sections when behavior changes.
 
-Runtime map for SurfCAD on current `main` (#129, `82508fa`). Screen placement is `docs/UI_MAP.md`. Popup chrome is `docs/POPUP_STYLE.md`. Blend kernels are `.claude/skills/fillets/SKILL.md`. `EDGES.md` is an older plan; the graphs below are what the code builds.
+Runtime map for SurfCAD. Screen placement is `docs/UI_MAP.md`. Popup chrome is `docs/POPUP_STYLE.md`. Blend kernels are `.claude/skills/fillets/SKILL.md`. `EDGES.md` is an older plan; the graphs below are what the code builds.
 
 Two different things are called contours. **Sketch contours** are `makeCrossSection` profiles (contour mode). **Body contours** are the coherent edge chains the viewport paints and that Fillet / Sweep path picks walk. This file uses those names.
 
@@ -36,7 +36,7 @@ Injected names are the keys of `HELPER_FUNCTIONS` in `src/workers/sandboxWorker.
 | `loft`, `sweep`, `sweepPoints` | profiles / path → a new solid | Same. |
 | `makeCrossSection`, `profileCircle`, `profileRectangle`, `profilePolygon` | plane + 2D profile → a sketch contour, not a solid | — |
 | `makeSweepPath` | edge list → one ordered path | Orders the edges it is given. It does not walk bodies. |
-| `filletAlongPath` | solid, path, radius, opts → blend (subtract, or union for a concave run) | Does not split the input. After the boolean, `decompose()` can throw. See below. |
+| `filletAlongPath` | solid, path, radius, opts → blend (subtract, or union for a concave run) | On a multi-body solid, fillets the body that owns the path, then `compose`s the untouched bodies. The scrap check still runs on that one result. See below. |
 | `filletEdges` | solid, edges, radius → planar blend | No `decompose` scrap check. |
 | `chamferEdges` | solid, edges, size → chamfer | No `decompose` scrap check. Fillet-mode Chamfer emits `filletAlongPath(..., { profile: 'chamfer' })`, not this. |
 | `shell` | solid, thickness, opening → the cavity | No `decompose` / `compose`. Offsets the mesh it is given. |
@@ -99,9 +99,9 @@ What you see as an edge is not one list.
 2. **Pick contour.** `paintEdgeLines` draws `edgePolyline` of the **selected** or hovered coherent chain (and saved sketch-contour wires). It does not draw every coherent edge. Fillet and Sweep path consume those selected chains (`assembleSweepPath` / `makeSweepPath`). An edge enters that chain only through the gates above: dihedral ≥ 2° to exist, ≥ 15° to join a contour, and the chain must survive the simplify / spine tests. Pieces of a keep-both cut do not share vertices, and `bodyId` blocks the bridges that would join them anyway. The tangent walk stops when the next edge's tangents diverge by more than 28°.
 3. **Shared cut.** Only `contactSeamSegments`. See below.
 
-**Edges that end on a drafted face.** No painter checks "drafted". After Draft confirm the mesh is new and the same gates run on the new dihedrals. Draft moves vertices of the selected faces (`draftFaces`); a fillet between the neutral plane and the wall stays put and the hinge moves to the tangency. How many degrees that leaves on the tangency edge is not computed in the paint path. What the paint path does compute: an edge under 15° is absent from the coherent contour, so selection paint and path picks stop before it, while a material crease can still show if the normals differ at all. A wall that stays well above 15° stays eligible. The 28° tangent walk stops when the next tangent diverges, which a tilted edge can cause. Nothing extends the chain onto the drafted face to finish it.
+**Edges that end on a drafted face.** No painter checks "drafted", and there is no draft flag. After Draft confirm the mesh is new and the same gates run on the new dihedrals. An edge under 15° is absent from the coherent contour. The 28° tangent walk stops when the next tangent diverges. A 12° draft leaves the wall edges well above 15° (about 78–102° on the playtest cube), and that 28° walk already stopped at the 90° corner before the draft. Those gates were not why the wrap stopped short. The documented guess that they were is wrong.
 
-That is the open seam: a wrap fillet plus these contours can stop short on a drafted face. The source has no branch for it. This note does not claim which gate fired in the playtest; those gates are the only rules, and none of them mention draft.
+The varying-profile cutter swept one tube through that 90° corner. The easy path already splits a run at a turn sharper than `FRAME_DENSIFY_MAX_TURN_DEG` (5°). The varying-profile path now does the same: one tube per straight leg, then union. A smooth loft (turns ≤ 5°) stays one run. The shredded mesh was what broke the drafted-face contours into short fragments.
 
 ## Keep-both cut and the shared edge
 
@@ -113,7 +113,9 @@ The new faces on the cut are real 90° edges on each piece, but the two side fac
 
 ## filletAlongPath on a multi-body solid
 
-The helper never looks at how many bodies came in. It booleans the whole solid, then `out.decompose()`.
+When the input `decompose()`s into two or more bodies, the helper fillets only the body that owns the path, then `Manifold.compose`s the untouched bodies back. Ownership is the smallest worst-point distance of up to 48 path samples to that body's triangles. A tie (the shared cut edge, both ~0) keeps the first decompose index. A bad path throws before the split. One body does not split.
+
+The boolean and the scrap check then see that one body. Thresholds are unchanged:
 
 | Result of `decompose` | What it does |
 | --- | --- |
@@ -122,11 +124,9 @@ The helper never looks at how many bodies came in. It booleans the whole solid, 
 | Open path, 2+ | Keep the largest, unless scrap volume `> 5%` of that largest **and** `> 0.01`. Then throw `decompose found N components with scrap vol …`. |
 | Semi-arc batch (`plan.mode === 'runs'`, a wrap split at corners) | Same 5% / 0.01 test. The message is `semi-arc batch decompose found N components with scrap vol …`. |
 
-Scrap volume is `(sum of component volumes) − largest`. The comment describes disconnected cutter scraps (thin sheets), not a second designed body. A keep-both cut's other piece is a real component. If that piece is more than 5% of the larger body and more than 0.01 volume, the open-path and semi-arc paths throw. They do not ask whether the input was already two bodies. A closed wrap hits the other message even when the second component is the other kept body.
+Scrap volume is `(sum of component volumes) − largest`. That still means disconnected cutter scraps (thin sheets), not a second designed body. The other keep-both piece is composed back after the check, so it is not scored as scrap.
 
-The playtest line `decompose found 2 components with scrap vol …` is the open-path or semi-arc throw. Both strings are still in `filletAlongPath`. Not fixed here.
-
-Fillet after hollow is a different path. A concave segment forces the variable-profile builder inside `filletAlongPath`; that is not this scrap check. `golden:draft-fillet-tangency` covers draft hinge vs a fillet. Nothing registered in `package.json` covers keep-both plus `filletAlongPath`.
+`golden:fillet-after-cut` is keep-both plus `filletAlongPath`. `golden:fillet-wrap-draft` is a wrap that finishes onto a drafted face. Fillet after hollow is a different path: a concave segment forces the variable-profile builder. `golden:draft-fillet-tangency` covers draft hinge vs a fillet.
 
 ## UI confirm
 
@@ -147,20 +147,13 @@ Fillet's marker comment still says the second Accept replaces. The call site pas
 
 | | Face graph | Edge + body contours | Shared-edge line | Notes |
 | --- | --- | --- | --- | --- |
-| Cut confirm (keep both) | lazy, then clipped to the seed body | rebuilt; pieces share no vertices | 1px black, on the edge | `filletAlongPath` afterwards can throw scrap (open) |
+| Cut confirm (keep both) | lazy, then clipped to the seed body | rebuilt; pieces share no vertices | 1px black, on the edge | `filletAlongPath` fillets the body that owns the path, then composes the rest |
 | Cut confirm (one side) | lazy | rebuilt; one body | none | |
-| Draft confirm | lazy | rebuilt from new dihedrals | recomputed; one body still has none | contour can stop short of a drafted face (open) |
+| Draft confirm | lazy | rebuilt from new dihedrals | recomputed; one body still has none | wrap splits at a corner sharper than 5° and finishes onto the drafted face; 15° / 28° unchanged |
 | Fillet / Chamfer confirm | lazy | rebuilt; picked wire kept | recomputed from the new mesh | |
 | Shell / hollow confirm | lazy | rebuilt; no shell-specific rule | recomputed from the new mesh | |
 | Move confirm | lazy | rebuilt | recomputed from the new mesh | preview does not rebuild graphs |
 | Enter Cut / Draft / Move | unchanged | unchanged | unchanged | highlights and clones only |
-
-## Open seams
-
-Still true in source. Do not treat this doc as the fix.
-
-- **`filletAlongPath` after a keep-both cut** throws `decompose found 2 components with scrap vol …` (or the semi-arc / closed-path variants above) when the other piece survives as a second component. The guard cannot tell a kept body from cutter scrap.
-- **A wrap fillet plus body contours can stop short on a drafted face.** Paint and path picks use the 15° coherent gate and the 28° tangent walk. Neither knows the face was drafted.
 
 ## Goldens and fixtures
 
