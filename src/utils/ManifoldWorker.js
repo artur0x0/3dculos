@@ -524,6 +524,42 @@ class ManifoldWorker {
       });
     });
   }
+
+  /**
+   * Heal a clone of the cached solid for the Delete Face preview.
+   * Does not replace the cached manifold and does not write the script.
+   *
+   * @param {{ center: number[], normal: number[] }[]} faces
+   * @returns {Promise<{ mesh: object }>}
+   */
+  async previewDeleteFace(faces, options = {}) {
+    if (!this.isReady) {
+      throw new Error('ManifoldWorker not initialized');
+    }
+    const timeoutMs = options.timeoutMs || this.config.timeoutMs;
+    return new Promise((resolve, reject) => {
+      const requestId = this._generateRequestId();
+      const timeoutId = setTimeout(() => {
+        this.pendingRequests.delete(requestId);
+        reject(new Error(`previewDeleteFace timed out after ${timeoutMs / 1000}s`));
+      }, timeoutMs);
+      this.pendingRequests.set(requestId, {
+        resolve: (result) => {
+          clearTimeout(timeoutId);
+          resolve(result);
+        },
+        reject: (error) => {
+          clearTimeout(timeoutId);
+          reject(error);
+        }
+      });
+      this.worker.postMessage({
+        type: 'previewDeleteFace',
+        id: requestId,
+        payload: { faces }
+      });
+    });
+  }
   
   /**
    * Terminate the worker
@@ -791,6 +827,17 @@ class ManifoldContext {
       throw new Error('ManifoldContext not initialized');
     }
     return await this.worker.previewMoveFace(faces, distance, !!flip);
+  }
+
+  /**
+   * Delete Face preview. Runs deleteFace on a clone of the last solid.
+   * The cached solid is left as it was.
+   */
+  async previewDeleteFace({ faces } = {}) {
+    if (!this.worker || !this.worker.isReady) {
+      throw new Error('ManifoldContext not initialized');
+    }
+    return await this.worker.previewDeleteFace(faces);
   }
   
   /**

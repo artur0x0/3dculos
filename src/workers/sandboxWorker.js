@@ -1091,6 +1091,297 @@ function moveFace(manifold, faces, distance, opts = {}) {
   }
 }
 
+/**
+ * deleteFace(manifold, faces) — remove the selected faces and heal by
+ * extending or trimming the neighboring faces.
+ *
+ * A boundary vertex of a deleted face slides onto the intersection of the
+ * kept planes that meet it and the neighbor across the gap. The deleted
+ * triangles are dropped. The result is returned only when every edge is
+ * shared by two triangles and Manifold accepts a closed solid. An open gap,
+ * a non-manifold edge, or a folded heal throws. Nothing dirty is returned.
+ *
+ * Faces are the same `{ center, normal }` picks moveFace uses.
+ *
+ * @param {Manifold} manifold
+ * @param {*} faces face selection: a viewport pick `{ center, normal }`, a
+ *        face from facesByNormal(), or an array of those
+ * @returns {Manifold}
+ */
+function deleteFace(manifold, faces) {
+  if (!manifoldModule) throw new Error('Manifold not initialized');
+  const md = c4MeshData(manifold);
+  const sel = _c4ResolveFaceSelection(md, faces, { label: 'deleteFace: faces' });
+  if (!sel.size) throw new Error('deleteFace: face selection is empty — nothing to delete');
+  for (const fi of sel) {
+    if (_c4Len(md.faces[fi].normal) < 1e-8) {
+      throw new Error('deleteFace: a selected face has no normal — re-pick it');
+    }
+  }
+
+  const nTri = md.numTri;
+  const nV = md.V.length;
+  const triFace = new Int32Array(nTri).fill(-1);
+  for (let fi = 0; fi < md.faces.length; fi++) {
+    for (const t of md.faces[fi].tris) triFace[t] = fi;
+  }
+  const dropTri = new Uint8Array(nTri);
+  for (const fi of sel) {
+    for (const t of md.faces[fi].tris) dropTri[t] = 1;
+  }
+  let keptTris = 0;
+  for (let t = 0; t < nTri; t++) if (!dropTri[t]) keptTris++;
+  if (!keptTris) {
+    throw new Error(
+      'deleteFace: removing these faces cannot keep a closed solid — every face was selected',
+    );
+  }
+
+  const planeOf = (face) => {
+    if (!face || _c4Len(face.normal) < 1e-8) return null;
+    return { n: face.normal, o: _c4Dot(face.normal, face.center) };
+  };
+  const planesParallel = (a, b) => Math.abs(_c4Dot(a.n, b.n)) >= 0.999;
+  const samePlane = (a, b) => {
+    const d = _c4Dot(a.n, b.n);
+    if (Math.abs(d) < 0.999) return false;
+    const oB = d >= 0 ? b.o : -b.o;
+    return Math.abs(a.o - oB) <= 0.05;
+  };
+  const pushPlane = (list, plane) => {
+    if (!plane) return;
+    for (const have of list) {
+      if (samePlane(have, plane)) return;
+    }
+    list.push(plane);
+  };
+  const planeLine = (p, q) => {
+    const dir = _c4Cross(p.n, q.n);
+    const len = _c4Len(dir);
+    if (len < 1e-8) return null;
+    const n3 = [dir[0] / len, dir[1] / len, dir[2] / len];
+    const point = _c4Solve3([p.n, q.n, n3], [p.o, q.o, 0]);
+    if (!point) return null;
+    return { point, dir: n3 };
+  };
+  const lineHit = (line, plane) => {
+    const denom = _c4Dot(line.dir, plane.n);
+    if (Math.abs(denom) < 1e-8) return null;
+    const t = (plane.o - _c4Dot(line.point, plane.n)) / denom;
+    if (!Number.isFinite(t)) return null;
+    return _c4Add(line.point, _c4Mul(t, line.dir));
+  };
+  const projectLine = (v, line) => {
+    const t = _c4Dot(_c4Sub(v, line.point), line.dir);
+    return _c4Add(line.point, _c4Mul(t, line.dir));
+  };
+  const onPlanes = (point, planes) => {
+    for (const p of planes) {
+      if (Math.abs(_c4Dot(p.n, point) - p.o) > 0.05) return false;
+    }
+    return true;
+  };
+
+  const vertFaces = Array.from({ length: nV }, () => []);
+  const touchesDrop = new Uint8Array(nV);
+  const touchesKeep = new Uint8Array(nV);
+  for (let t = 0; t < nTri; t++) {
+    const fi = triFace[t];
+    const drop = dropTri[t];
+    for (let k = 0; k < 3; k++) {
+      const vi = md.T[t * 3 + k];
+      if (drop) touchesDrop[vi] = 1;
+      else touchesKeep[vi] = 1;
+      if (fi >= 0 && vertFaces[vi].indexOf(fi) < 0) vertFaces[vi].push(fi);
+    }
+  }
+
+  const delNeighbors = new Map();
+  for (const e of md.edges) {
+    const a = e.faces[0];
+    const b = e.faces[1];
+    if (a < 0 || b < 0 || a === b) continue;
+    const link = (del, kept) => {
+      let set = delNeighbors.get(del);
+      if (!set) { set = new Set(); delNeighbors.set(del, set); }
+      set.add(kept);
+    };
+    if (sel.has(a) && !sel.has(b)) link(a, b);
+    else if (sel.has(b) && !sel.has(a)) link(b, a);
+  }
+
+  const bb = manifold.boundingBox();
+  const diag = Math.hypot(
+    bb.max[0] - bb.min[0],
+    bb.max[1] - bb.min[1],
+    bb.max[2] - bb.min[2],
+  );
+  const cap = Math.max(diag, 1);
+
+  const moved = md.V.map((v) => v.slice());
+  for (let vi = 0; vi < nV; vi++) {
+    if (!touchesDrop[vi] || !touchesKeep[vi]) continue;
+    const constraints = [];
+    const deleted = [];
+    for (const fi of vertFaces[vi]) {
+      if (sel.has(fi)) deleted.push(fi);
+      else pushPlane(constraints, planeOf(md.faces[fi]));
+    }
+    const partners = [];
+    for (const dfi of deleted) {
+      const neigh = delNeighbors.get(dfi);
+      if (!neigh) continue;
+      for (const kfi of neigh) {
+        const plane = planeOf(md.faces[kfi]);
+        if (!plane) continue;
+        let blocked = false;
+        for (const c of constraints) {
+          if (planesParallel(c, plane)) { blocked = true; break; }
+        }
+        if (blocked) continue;
+        pushPlane(partners, plane);
+      }
+    }
+
+    let point = null;
+    let bestD = Infinity;
+    const consider = (hit) => {
+      if (!hit || !onPlanes(hit, constraints)) return;
+      const d = _c4Len(_c4Sub(hit, md.V[vi]));
+      if (d < bestD) { bestD = d; point = hit; }
+    };
+    if (constraints.length === 2) {
+      const line = planeLine(constraints[0], constraints[1]);
+      if (line) {
+        for (const p of partners) consider(lineHit(line, p));
+      }
+    } else if (constraints.length === 1) {
+      for (const p of partners) {
+        const line = planeLine(constraints[0], p);
+        if (line) consider(projectLine(md.V[vi], line));
+      }
+    }
+    if (!point || !(bestD > 1e-4) || bestD > cap) continue;
+    moved[vi] = point;
+  }
+
+  let flipped = 0;
+  let total = 0;
+  for (let t = 0; t < nTri; t++) {
+    if (dropTri[t]) continue;
+    const i0 = md.T[t * 3];
+    const i1 = md.T[t * 3 + 1];
+    const i2 = md.T[t * 3 + 2];
+    const before = _c4Cross(_c4Sub(md.V[i1], md.V[i0]), _c4Sub(md.V[i2], md.V[i0]));
+    const a = _c4Len(before);
+    if (a < 1e-9) continue;
+    total += a;
+    const after = _c4Cross(_c4Sub(moved[i1], moved[i0]), _c4Sub(moved[i2], moved[i0]));
+    if (_c4Len(after) < 1e-9) continue;
+    if (_c4Dot(before, after) < 0) flipped += a;
+  }
+  if (total > 0 && flipped / total > 0.02) {
+    throw new Error(
+      `deleteFace: removing these faces cannot keep a closed solid — `
+      + `${Math.round((flipped / total) * 100)}% of the surface folds`,
+    );
+  }
+
+  const weld = new Map();
+  const newV = [];
+  const mapV = (old) => {
+    const v = moved[old];
+    const key = `${Math.round(v[0] * 1e4)},${Math.round(v[1] * 1e4)},${Math.round(v[2] * 1e4)}`;
+    if (weld.has(key)) return weld.get(key);
+    const id = newV.length;
+    weld.set(key, id);
+    newV.push(v.slice());
+    return id;
+  };
+  const newTris = [];
+  const seenTri = new Set();
+  for (let t = 0; t < nTri; t++) {
+    if (dropTri[t]) continue;
+    const i0 = mapV(md.T[t * 3]);
+    const i1 = mapV(md.T[t * 3 + 1]);
+    const i2 = mapV(md.T[t * 3 + 2]);
+    if (i0 === i1 || i1 === i2 || i2 === i0) continue;
+    const area = _c4Len(_c4Cross(
+      _c4Sub(newV[i1], newV[i0]),
+      _c4Sub(newV[i2], newV[i0]),
+    ));
+    if (area < 1e-8) continue;
+    const key = [i0, i1, i2].sort((a, b) => a - b).join(',');
+    if (seenTri.has(key)) continue;
+    seenTri.add(key);
+    newTris.push(i0, i1, i2);
+  }
+  if (newTris.length < 12) {
+    throw new Error(
+      'deleteFace: removing these faces cannot keep a closed solid — neighboring faces do not meet',
+    );
+  }
+
+  const edgeUse = new Map();
+  for (let i = 0; i < newTris.length; i += 3) {
+    for (let k = 0; k < 3; k++) {
+      const u = newTris[i + k];
+      const w = newTris[i + ((k + 1) % 3)];
+      const key = u < w ? `${u},${w}` : `${w},${u}`;
+      edgeUse.set(key, (edgeUse.get(key) || 0) + 1);
+    }
+  }
+  let open = 0;
+  let nonManifold = 0;
+  for (const count of edgeUse.values()) {
+    if (count === 1) open++;
+    else if (count !== 2) nonManifold++;
+  }
+  if (open || nonManifold) {
+    throw new Error(
+      'deleteFace: removing these faces cannot keep a closed solid — neighboring faces do not meet'
+      + ` (${open} open, ${nonManifold} non-manifold)`,
+    );
+  }
+
+  const { Manifold, Mesh } = manifoldModule;
+  const vp = new Float32Array(newV.length * 3);
+  for (let i = 0; i < newV.length; i++) {
+    vp[i * 3] = newV[i][0];
+    vp[i * 3 + 1] = newV[i][1];
+    vp[i * 3 + 2] = newV[i][2];
+  }
+  let out;
+  try {
+    out = new Manifold(new Mesh({
+      numProp: 3,
+      vertProperties: vp,
+      triVerts: new Uint32Array(newTris),
+    }));
+    const se = _c4StatusError(out);
+    if (se) {
+      throw new Error(
+        `deleteFace: removing these faces cannot keep a closed solid (${se})`,
+      );
+    }
+    const outBb = out.boundingBox();
+    const outDiag = Math.hypot(
+      outBb.max[0] - outBb.min[0],
+      outBb.max[1] - outBb.min[1],
+      outBb.max[2] - outBb.min[2],
+    );
+    if (outDiag > diag * 2 + 1) {
+      throw new Error(
+        'deleteFace: removing these faces cannot keep a closed solid — the heal runs away',
+      );
+    }
+    return _c4RequireValidSolid(out, 'deleteFace');
+  } catch (err) {
+    if (out) _safeDeleteManifold(out);
+    throw err;
+  }
+}
+
 // Helpers for a loft function
 
 // Compute centroid of a contour (array of [x, y] points)
@@ -6322,6 +6613,7 @@ const HELPER_FUNCTIONS = {
   cut,
   move,
   moveFace,
+  deleteFace,
   loft,
   //loft helpers
   sumSqDist,
@@ -7170,6 +7462,33 @@ self.onmessage = async (event) => {
           const out = moveFace(clone, payload && payload.faces, payload && payload.distance, {
             flip: !!(payload && payload.flip),
           });
+          track(out);
+          mesh = serializeResult(out);
+        } finally {
+          for (const m of created) _safeDeleteManifold(m);
+        }
+        self.postMessage({ type: 'result', id, payload: { mesh } });
+        break;
+      }
+
+      // Delete Face preview. Clone the cached solid and heal with deleteFace.
+      // The clone is deleted before this returns. cachedManifold is not
+      // assigned, so leaving without Confirm writes nothing and the model
+      // stays put.
+      case 'previewDeleteFace': {
+        if (!isInitialized) throw new Error('Worker not initialized');
+        if (!cachedManifold) throw new Error('No cached manifold - execute a script first');
+        const created = [];
+        const track = (m) => {
+          if (!m || m === cachedManifold) return;
+          if (created.indexOf(m) >= 0) return;
+          created.push(m);
+        };
+        let mesh;
+        try {
+          const clone = cachedManifold.clone();
+          track(clone);
+          const out = deleteFace(clone, payload && payload.faces);
           track(out);
           mesh = serializeResult(out);
         } finally {

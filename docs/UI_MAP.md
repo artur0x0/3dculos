@@ -428,8 +428,10 @@ Import `src/utils/importModel.js` (+ `POST /api/convert/step`); export
   `Transforms` — display names only. The order is the modelling order: make a
   shape, model it, polish it, move it.   The first button in that Move section
   is Move (`Move` glyph, directly above Center): it opens the delta X/Y/Z
-  chip and translates one body. Refine is last. Its button is Move Face
-  (`SquareArrowOutUpRight`): offset the picked faces along their normals.
+  chip and translates one body. Refine is last. Move Face
+  (`SquareArrowOutUpRight`) offsets the picked faces along their normals.
+  Delete Face (`SquareX`) is the next button: it removes the picked faces and
+  heals by extending or trimming the neighbors.
   The right-rail axis helper (`Move3d`) only
   shows the `AxesHelper`. It does not move a body and it does not grow
   viewport arrows.
