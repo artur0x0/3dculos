@@ -58,6 +58,7 @@ import { composeShellCommit } from './utils/shellMode';
 import { composeDraftCommit } from './utils/draftMode';
 import { composeCutCommit } from './utils/cutMode';
 import { composeMoveCommit } from './utils/moveMode';
+import { composeMoveFaceCommit } from './utils/moveFaceMode';
 
 const App = () => {
   const [currentScript, setCurrentScript] = useState('');
@@ -1231,6 +1232,29 @@ const App = () => {
     return true;
   };
 
+  /** Move Face Confirm — one moveFace() + markers; Auto-Run. Not body move(). */
+  const handleCommitMoveFace = (payload) => {
+    const buf = codeEditorRef.current?.getContent?.() || '';
+    const result = composeMoveFaceCommit(buf, payload?.state || payload || {});
+    if (!result.ok) {
+      viewportRef.current?.softFailMoveFace?.(result.message);
+      return false;
+    }
+    const wrote = codeEditorRef.current?.applyBuffer?.(result.buffer, 'Move Face');
+    if (!wrote) {
+      viewportRef.current?.softFailMoveFace?.(
+        'Could not write Move Face into the editor — try again.',
+      );
+      return false;
+    }
+    if (result.run) {
+      setTimeout(() => {
+        handleGameRun();
+      }, 0);
+    }
+    return true;
+  };
+
   /** Move body Confirm — one move() + MOVE markers; Auto-Run. */
   const handleCommitMove = (payload) => {
     const buf = codeEditorRef.current?.getContent?.() || '';
@@ -1624,6 +1648,7 @@ const App = () => {
               onCommitDraft={handleCommitDraft}
               onCommitCut={handleCommitCut}
               onCommitMove={handleCommitMove}
+              onCommitMoveFace={handleCommitMoveFace}
               getHelperBuffer={() => codeEditorRef.current?.getContent?.() || ''}
               cadToolbarHost={cadToolbarHost}
               featureSheetEnabled={useStages && isCadStage && !featureSheet}
@@ -1996,6 +2021,7 @@ const App = () => {
               onCommitDraft={handleCommitDraft}
               onCommitCut={handleCommitCut}
               onCommitMove={handleCommitMove}
+              onCommitMoveFace={handleCommitMoveFace}
             getHelperBuffer={() => codeEditorRef.current?.getContent?.() || ''}
             cadToolbarHost={cadToolbarHost}
           />

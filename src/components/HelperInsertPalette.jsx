@@ -24,6 +24,7 @@ import {
   Route,
   Scissors,
   Move,
+  SquareArrowOutUpRight,
 } from 'lucide-react';
 import SquareRoundCorner from './icons/SquareRoundCorner';
 import Angle from './icons/Angle';
@@ -58,6 +59,7 @@ const ICONS = {
   shell: PackageOpen,
   cut: Scissors,
   move: Move,
+  moveFace: SquareArrowOutUpRight,
   addDraft: Angle,
   center: Focus,
   align: AlignVerticalJustifyCenter,
@@ -112,6 +114,7 @@ const HelperInsertPalette = ({
   onEnterDraftMode = null,
   onEnterCutMode = null,
   onEnterMoveMode = null,
+  onEnterMoveFaceMode = null,
   compact = false,
   /** 'game' keeps Advanced. 'cad' promotes that set into Model. */
   layout = 'game',
@@ -173,6 +176,11 @@ const HelperInsertPalette = ({
     // stays a visual AxesHelper — it does not move a body.
     if (item.id === 'move' && typeof onEnterMoveMode === 'function') {
       onEnterMoveMode({ entry: 'move' });
+      return;
+    }
+    // Move Face offsets picked faces. It is not the body move() helper.
+    if (item.id === 'moveFace' && typeof onEnterMoveFaceMode === 'function') {
+      onEnterMoveFaceMode({ entry: 'moveFace' });
       return;
     }
     // Workplane enters plane-only contour mode (Face / construction plane +

@@ -415,7 +415,7 @@ function _c4FinalizeClusters(list) {
  * invert under any offset (the boolean absorbs them), while a genuinely
  * over-thick wall or over-steep draft turns the whole surface inside out.
  */
-function _c4RequireNoFold(md, out, label, amount) {
+function _c4RequireNoFold(md, out, label, amount, maxFrac = 0.25) {
   let flipped = 0;
   let total = 0;
   for (let t = 0; t < md.numTri; t++) {
@@ -427,7 +427,7 @@ function _c4RequireNoFold(md, out, label, amount) {
     const after = _c4Cross(_c4Sub(out[i1], out[i0]), _c4Sub(out[i2], out[i0]));
     if (_c4Dot(before, after) < 0) flipped += a;
   }
-  if (total > 0 && flipped / total > 0.25) {
+  if (total > 0 && flipped / total > maxFrac) {
     throw new Error(
       `${label}: ${amount} is too large for this body — ${Math.round((flipped / total) * 100)}% `
       + 'of the surface folds through itself; use a smaller value',
@@ -979,6 +979,116 @@ function draftFaces(manifold, faces, angleDeg, opts = {}) {
  */
 function addDraft(manifold, draftDeg, axis = "z") {
   return draftFaces(manifold, 'sides', draftDeg, { pull: axis, reference: 'min' });
+}
+
+/**
+ * moveFace(manifold, faces, distance, opts) — offset the selected faces along
+ * their own normals. Adjacent faces stay on their planes, so they extend or
+ * trim and the result is still one closed solid.
+ *
+ * This is not move(). move() translates a whole body. A vertex on a selected
+ * face is solved against every plane that meets it: selected planes move by
+ * the signed distance, the others stay. A distance the walls cannot absorb
+ * throws. It does not return a folded mesh.
+ *
+ * @param {Manifold} manifold
+ * @param {*} faces face selection: a viewport pick `{ center, normal }`, a
+ *        face from facesByNormal(), or an array of those
+ * @param {number} distance millimetres along each selected face normal
+ * @param {object} [opts]
+ * @param {boolean} [opts.flip=false] reverse each face normal
+ * @returns {Manifold}
+ */
+function moveFace(manifold, faces, distance, opts = {}) {
+  if (!manifoldModule) throw new Error('Manifold not initialized');
+  if (typeof distance !== 'number' || !Number.isFinite(distance)) {
+    throw new Error(`moveFace: distance must be a finite number (got ${distance})`);
+  }
+  const flip = !!(opts && opts.flip);
+  const signed = flip ? -distance : distance;
+  const md = c4MeshData(manifold);
+  const sel = _c4ResolveFaceSelection(md, faces, { label: 'moveFace: faces' });
+  if (!sel.size) throw new Error('moveFace: face selection is empty — nothing to move');
+  for (const fi of sel) {
+    if (_c4Len(md.faces[fi].normal) < 1e-8) {
+      throw new Error('moveFace: a selected face has no normal — re-pick it');
+    }
+  }
+  if (signed === 0) return manifold;
+
+  const vertFaces = new Map();
+  for (let fi = 0; fi < md.faces.length; fi++) {
+    for (const vi of _c4FaceVertIndices(md, md.faces[fi])) {
+      let list = vertFaces.get(vi);
+      if (!list) { list = []; vertFaces.set(vi, list); }
+      list.push(fi);
+    }
+  }
+  const touched = new Set();
+  for (const fi of sel) {
+    for (const vi of _c4FaceVertIndices(md, md.faces[fi])) touched.add(vi);
+  }
+
+  const moved = md.V.map((v) => v.slice());
+  const tol = Math.max(1e-3, Math.abs(signed) * 1e-3);
+  for (const vi of touched) {
+    const normals = [];
+    const rhs = [];
+    for (const fi of vertFaces.get(vi) || []) {
+      const n = md.faces[fi].normal;
+      if (_c4Len(n) < 1e-8) continue;
+      const r = sel.has(fi) ? signed : 0;
+      let dup = false;
+      for (let k = 0; k < normals.length; k++) {
+        const m = normals[k];
+        if (Math.abs(m[0] - n[0]) < 1e-6 && Math.abs(m[1] - n[1]) < 1e-6 && Math.abs(m[2] - n[2]) < 1e-6
+          && Math.abs(rhs[k] - r) < 1e-9) {
+          dup = true;
+          break;
+        }
+      }
+      if (!dup) { normals.push(n); rhs.push(r); }
+    }
+    if (!normals.length) continue;
+    const d = _c4SolvePlaneMoves(normals, rhs);
+    let worst = 0;
+    for (let k = 0; k < normals.length; k++) {
+      worst = Math.max(worst, Math.abs(_c4Dot(d, normals[k]) - rhs[k]));
+    }
+    if (worst > tol) {
+      throw new Error(
+        `moveFace: offset ${distance} cannot keep a closed solid — adjacent faces `
+        + 'would not meet the moved face; use a smaller distance',
+      );
+    }
+    moved[vi] = _c4Add(md.V[vi], d);
+  }
+
+  let acc = 0;
+  let nAcc = 0;
+  for (const fi of sel) {
+    const n = md.faces[fi].normal;
+    for (const vi of _c4FaceVertIndices(md, md.faces[fi])) {
+      acc += _c4Dot(_c4Sub(moved[vi], md.V[vi]), n);
+      nAcc++;
+    }
+  }
+  const achieved = nAcc ? acc / nAcc : 0;
+  if (Math.abs(achieved - signed) > Math.max(1e-2, Math.abs(signed) * 0.02)) {
+    throw new Error(
+      `moveFace: offset ${distance} did not land on the moved face `
+      + `(achieved ${achieved.toFixed(3)}) — refusing a solid that is not that offset`,
+    );
+  }
+  _c4RequireNoFold(md, moved, 'moveFace', `${distance}`, 0.02);
+  let out;
+  try {
+    out = _c4RebuildWithVerts(md, moved, 'moveFace');
+    return _c4RequireValidSolid(out, 'moveFace');
+  } catch (err) {
+    if (out) _safeDeleteManifold(out);
+    throw err;
+  }
 }
 
 // Helpers for a loft function
@@ -6211,6 +6321,7 @@ const HELPER_FUNCTIONS = {
   draftFaces,
   cut,
   move,
+  moveFace,
   loft,
   //loft helpers
   sumSqDist,
@@ -7036,6 +7147,35 @@ self.onmessage = async (event) => {
           id,
           payload: Object.keys(HELPER_FUNCTIONS)
         });
+        break;
+      }
+
+      // Move Face preview. Clone the cached solid and offset with moveFace.
+      // The clone is deleted before this returns. cachedManifold is not
+      // assigned, so leaving without Confirm writes nothing and the model
+      // stays put.
+      case 'previewMoveFace': {
+        if (!isInitialized) throw new Error('Worker not initialized');
+        if (!cachedManifold) throw new Error('No cached manifold - execute a script first');
+        const created = [];
+        const track = (m) => {
+          if (!m || m === cachedManifold) return;
+          if (created.indexOf(m) >= 0) return;
+          created.push(m);
+        };
+        let mesh;
+        try {
+          const clone = cachedManifold.clone();
+          track(clone);
+          const out = moveFace(clone, payload && payload.faces, payload && payload.distance, {
+            flip: !!(payload && payload.flip),
+          });
+          track(out);
+          mesh = serializeResult(out);
+        } finally {
+          for (const m of created) _safeDeleteManifold(m);
+        }
+        self.postMessage({ type: 'result', id, payload: { mesh } });
         break;
       }
 

@@ -1,0 +1,11 @@
+// --- cube begin ---
+let box1 = Manifold.cube([40, 30, 20], true);
+let part = box1;
+// --- cube end ---
+// --- move-face begin ---
+part = moveFace(part, [
+  { center: [0, 0, 10], normal: [0, 0, 1] },
+  { center: [20, 0, 0], normal: [1, 0, 0] },
+], 5);
+// --- move-face end ---
+return part;
