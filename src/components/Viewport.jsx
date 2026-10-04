@@ -185,7 +185,7 @@ import {
   validateDeleteFaceAccept,
 } from '../utils/deleteFaceMode';
 import { contactSeamSegments } from '../utils/contactSeam';
-import { dropPlanarFins } from '../utils/planarSeam';
+import { dropPlanarFins, highlightBoundaryPositions } from '../utils/planarSeam';
 import { classifySelectedFace } from '../utils/faceFeaturePlacement';
 import { classifyFilletEdges, countDegenerateTriangles } from '../utils/filletEdgeClass';
 import {
@@ -2998,11 +2998,10 @@ const Viewport = forwardRef(({
     }
   }, [crossSectionEnabled]);
 
-  // Helper function to highlight a face - with boundary edges only
+  // Picked triangles plus their outline. A duplicate-vertex seam is not an outline edge.
   const highlightFace = useCallback((faceIndices, geometry, positions, index, color = 0xffff00, name = 'highlight') => {
     const highlightPositions = [];
-    const edgeCount = new Map(); // Track how many times each edge appears
-    
+
     faceIndices.forEach(faceIdx => {
       const i0 = index[faceIdx * 3];
       const i1 = index[faceIdx * 3 + 1];
@@ -3015,30 +3014,11 @@ const Viewport = forwardRef(({
         v2.x, v2.y, v2.z,
         v3.x, v3.y, v3.z
       );
-      
-      // Track edges (use sorted vertex indices as key)
-      const edges = [
-        [Math.min(i0, i1), Math.max(i0, i1)],
-        [Math.min(i1, i2), Math.max(i1, i2)],
-        [Math.min(i2, i0), Math.max(i2, i0)]
-      ];
-      
-      edges.forEach(([a, b]) => {
-        const key = `${a}-${b}`;
-        edgeCount.set(key, (edgeCount.get(key) || 0) + 1);
-      });
     });
-    
-    // Build boundary edges (edges that appear only once)
-    const boundaryEdgePositions = [];
-    edgeCount.forEach((count, key) => {
-      if (count === 1) {
-        const [a, b] = key.split('-').map(Number);
-        const v1 = new Vector3().fromBufferAttribute(positions, a);
-        const v2 = new Vector3().fromBufferAttribute(positions, b);
-        boundaryEdgePositions.push(v1.x, v1.y, v1.z, v2.x, v2.y, v2.z);
-      }
-    });
+
+    // Index-shared edges cancel. A seam whose copies do not share an index
+    // cancels too, when its midpoint already lies on this face.
+    const boundaryEdgePositions = highlightBoundaryPositions(positions, index, faceIndices);
     
     // Create highlight mesh
     const highlightGeometry = new BufferGeometry();
