@@ -151,10 +151,10 @@ import {
   classifyCutBody,
   trianglePieceSide,
   cutBodyKey,
-  listCutPieces,
+  cutPointsMatch,
+  CUT_PIECE_COLORS,
   CUT_PIECE_OPACITY,
 } from '../utils/cutMode';
-import { buildCutPiecePositions } from '../utils/cutPieceMesh';
 import { contactSeamSegments } from '../utils/contactSeam';
 import { classifySelectedFace } from '../utils/faceFeaturePlacement';
 import { classifyFilletEdges, countDegenerateTriangles } from '../utils/filletEdgeClass';
@@ -349,6 +349,63 @@ function attachContactSeam(mesh, meshData) {
   line.frustumCulled = false;
   line.renderOrder = 3;
   mesh.add(line);
+}
+
+/** Plane + picked bodies. Drop list is not part of the key: hiding does not re-cut. */
+function cutPreviewKey(state) {
+  const plane = cutPlaneFromState(state);
+  const bodies = state?.bodies || [];
+  if (!plane || !bodies.length) return '';
+  const r3 = (n) => Math.round(Number(n) * 1000) / 1000;
+  const bodyKey = bodies.map((b) => (b.at || []).map(r3).join(',')).join(';');
+  if (plane.source === 'face') {
+    return ['face', plane.center.map(r3).join(','), plane.normal.map(r3).join(','), r3(plane.faceOffset), bodyKey].join('|');
+  }
+  return [plane.source, r3(plane.originOffset), bodyKey].join('|');
+}
+
+/** Same object cut() would receive. Offset is omitted when it is 0. */
+function cutPreviewPlanePayload(state) {
+  const plane = cutPlaneFromState(state);
+  if (!plane) return null;
+  if (plane.source === 'face') {
+    const payload = { center: plane.center.slice(), normal: plane.normal.slice() };
+    const off = Number(plane.faceOffset);
+    if (Number.isFinite(off) && off !== 0) payload.offset = off;
+    return payload;
+  }
+  return { normal: plane.normal.slice(), originOffset: Number(plane.originOffset) || 0 };
+}
+
+function cutPreviewPieceHidden(state, piece) {
+  if (!piece?.selected) return false;
+  return (state?.drop || []).some((d) => {
+    if (d.side !== piece.side || !Array.isArray(d.at) || !Array.isArray(piece.at)) return false;
+    if (cutPointsMatch(d.at, piece.at)) return true;
+    const dx = d.at[0] - piece.at[0];
+    const dy = d.at[1] - piece.at[1];
+    const dz = d.at[2] - piece.at[2];
+    return dx * dx + dy * dy + dz * dz <= 1e-4;
+  });
+}
+
+function geometryFromPreviewMesh(mesh) {
+  const np = mesh?.numProp || 3;
+  const src = mesh?.vertProperties;
+  const tris = mesh?.triVerts;
+  if (!src?.length || !tris?.length) return null;
+  const n = Math.floor(src.length / np);
+  const positions = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) {
+    positions[i * 3] = src[i * np];
+    positions[i * 3 + 1] = src[i * np + 1];
+    positions[i * 3 + 2] = src[i * np + 2];
+  }
+  const geom = new BufferGeometry();
+  geom.setAttribute('position', new BufferAttribute(positions, 3));
+  geom.setIndex(new BufferAttribute(Uint32Array.from(tris), 1));
+  geom.computeVertexNormals();
+  return geom;
 }
 
 /** Shared top title. Puzzle name in game; filename on mobile CAD. */
@@ -612,6 +669,11 @@ const Viewport = forwardRef(({
   const cutPiecesPreviewRef = useRef(null);
   const cutBaseMaterialRef = useRef(null);
   const cutBaseHiddenMatRef = useRef(null);
+  const cutLiveKeyRef = useRef('');
+  const cutLivePiecesRef = useRef(null);
+  const cutPreviewGenRef = useRef(0);
+  const cutPreviewTimerRef = useRef(null);
+  const clearCutPiecePreviewRef = useRef(() => {});
   const [shellToast, setShellToast] = useState(null);
   const shellToastTimerRef = useRef(null);
   /** Slice C: restore Face/Edge after Fillet Accept / exit (do not snap to default). */
@@ -3034,17 +3096,19 @@ const Viewport = forwardRef(({
     cutPlaneWidgetRef.current = widget;
   }, [clearCutPlaneWidget]);
 
-  const clearCutPiecePreview = useCallback(() => {
+  const removeCutPreviewGroup = useCallback(() => {
     const group = cutPiecesPreviewRef.current;
-    if (group) {
-      sceneRef.current?.remove(group);
-      group.traverse((obj) => {
-        if (obj === group) return;
-        obj.geometry?.dispose?.();
-        obj.material?.dispose?.();
-      });
-      cutPiecesPreviewRef.current = null;
-    }
+    if (!group) return;
+    sceneRef.current?.remove(group);
+    group.traverse((obj) => {
+      if (obj === group) return;
+      obj.geometry?.dispose?.();
+      obj.material?.dispose?.();
+    });
+    cutPiecesPreviewRef.current = null;
+  }, []);
+
+  const restoreCutBaseMesh = useCallback(() => {
     const mesh = resultRef.current;
     if (mesh && cutBaseMaterialRef.current) {
       mesh.material = cutBaseMaterialRef.current;
@@ -3052,10 +3116,29 @@ const Viewport = forwardRef(({
     }
   }, []);
 
-  const paintCutPiecePreview = useCallback((state, positions, index) => {
+  const clearCutPiecePreview = useCallback(() => {
+    cutPreviewGenRef.current += 1;
+    cutLiveKeyRef.current = '';
+    cutLivePiecesRef.current = null;
+    if (cutPreviewTimerRef.current) {
+      clearTimeout(cutPreviewTimerRef.current);
+      cutPreviewTimerRef.current = null;
+    }
+    removeCutPreviewGroup();
+    restoreCutBaseMesh();
+  }, [removeCutPreviewGroup, restoreCutBaseMesh]);
+  clearCutPiecePreviewRef.current = clearCutPiecePreview;
+
+  // Leaving Pieces, Dismiss, or another mode that drops cut mode: the clone
+  // never touched the script, and the viewport goes back to the whole model.
+  useEffect(() => {
+    if (cutMode?.pick === 'pieces') return;
+    clearCutPiecePreview();
+  }, [cutMode, clearCutPiecePreview]);
+
+  const hideCutBaseMesh = useCallback(() => {
     const mesh = resultRef.current;
-    const scene = sceneRef.current;
-    if (!mesh || !scene) return;
+    if (!mesh) return;
     if (!cutBaseHiddenMatRef.current) {
       cutBaseHiddenMatRef.current = new MeshBasicMaterial({
         transparent: true,
@@ -3066,84 +3149,112 @@ const Viewport = forwardRef(({
     }
     if (!cutBaseMaterialRef.current) cutBaseMaterialRef.current = mesh.material;
     mesh.material = cutBaseHiddenMatRef.current;
+  }, []);
 
+  const paintLiveCutPieces = useCallback((state, pieces) => {
+    const scene = sceneRef.current;
+    if (!scene) return;
+    removeCutPreviewGroup();
+    hideCutBaseMesh();
     const group = new Group();
     group.name = 'cutPiecesPreview';
-    const trisOf = (tris, makeMat) => {
-      if (!tris?.length) return;
-      const pos = [];
-      for (const t of tris) {
-        for (let k = 0; k < 3; k++) {
-          const v = index[t * 3 + k];
-          pos.push(positions.getX(v), positions.getY(v), positions.getZ(v));
-        }
-      }
-      if (!pos.length) return;
-      const geom = new BufferGeometry();
-      geom.setAttribute('position', new BufferAttribute(new Float32Array(pos), 3));
-      geom.computeVertexNormals();
-      const pieceMesh = new ThreeMesh(geom, makeMat());
+    const addMesh = (geom, material) => {
+      const pieceMesh = new ThreeMesh(geom, material);
       pieceMesh.raycast = () => {};
       group.add(pieceMesh);
+      return pieceMesh;
     };
-
-    const selected = new Set((state.bodies || []).map((b) => cutBodyKey(b)));
-    const rest = meshBodyComponents(positions, index).filter((b) => !selected.has(cutBodyKey(b)));
-    if (rest.length) {
-      trisOf(
-        rest.flatMap((b) => b.triangles || []),
-        () => new MeshNormalMaterial({ flatShading: true }),
-      );
-    }
-
-    // Depth first, then the tint. Both pieces are slightly translucent; without
-    // the depth pass the front piece blends with the piece behind it. The
-    // geometry is the clipped body (buildCutPiecePositions), front faces only,
-    // so the uncut shell and the other piece do not show through.
-    const plane = cutPlaneFromState(state);
-    const depthMat = new MeshBasicMaterial({
-      colorWrite: false,
-      depthWrite: true,
-      depthTest: true,
-      side: FrontSide,
-    });
-    const pieces = listCutPieces(state, positions, index);
-    for (const piece of pieces) {
-      if (piece.hidden) continue;
-      const flat = buildCutPiecePositions(positions, index, piece.triangles, plane, piece.side);
-      if (flat.length < 9) continue;
-      const geom = new BufferGeometry();
-      geom.setAttribute('position', new BufferAttribute(new Float32Array(flat), 3));
-      const depthMesh = new ThreeMesh(geom, depthMat);
-      depthMesh.raycast = () => {};
-      const colorMesh = new ThreeMesh(geom, new MeshBasicMaterial({
-        color: piece.color,
+    let colorI = 0;
+    for (const piece of pieces || []) {
+      const geom = geometryFromPreviewMesh(piece.mesh);
+      if (!geom) continue;
+      if (!piece.selected) {
+        addMesh(geom, new MeshNormalMaterial({ flatShading: true }));
+        continue;
+      }
+      const color = CUT_PIECE_COLORS[colorI % CUT_PIECE_COLORS.length];
+      colorI += 1;
+      const hidden = cutPreviewPieceHidden(state, piece);
+      if (hidden) {
+        geom.dispose();
+        continue;
+      }
+      // Opaque depth, then a front-face tint. The tint blends with the
+      // background; the other piece is already in the depth buffer.
+      const depthGeom = geom.clone();
+      addMesh(depthGeom, new MeshBasicMaterial({
+        colorWrite: false,
+        depthWrite: true,
+        depthTest: true,
+        side: FrontSide,
+      }));
+      addMesh(geom, new MeshBasicMaterial({
+        color,
         transparent: true,
         opacity: CUT_PIECE_OPACITY,
         depthWrite: false,
         depthTest: true,
         side: FrontSide,
       }));
-      colorMesh.raycast = () => {};
-      group.add(depthMesh);
-      group.add(colorMesh);
     }
     scene.add(group);
     cutPiecesPreviewRef.current = group;
-  }, []);
+    const renderer = rendererRef.current;
+    const camera = cameraRef.current;
+    if (renderer && camera) renderer.render(scene, camera);
+  }, [hideCutBaseMesh, removeCutPreviewGroup]);
+
+  const ensureLiveCutPreview = useCallback((state) => {
+    const key = cutPreviewKey(state);
+    if (!key) {
+      clearCutPiecePreview();
+      return;
+    }
+    if (cutLiveKeyRef.current === key && cutLivePiecesRef.current) {
+      paintLiveCutPieces(state, cutLivePiecesRef.current);
+      return;
+    }
+    const gen = ++cutPreviewGenRef.current;
+    cutLiveKeyRef.current = '';
+    cutLivePiecesRef.current = null;
+    removeCutPreviewGroup();
+    restoreCutBaseMesh();
+    if (cutPreviewTimerRef.current) clearTimeout(cutPreviewTimerRef.current);
+    const plane = cutPreviewPlanePayload(state);
+    const bodies = (state.bodies || []).map((b) => ({ at: b.at }));
+    cutPreviewTimerRef.current = setTimeout(() => {
+      cutPreviewTimerRef.current = null;
+      if (gen !== cutPreviewGenRef.current) return;
+      manifoldContext.previewCut({ plane, bodies }).then((payload) => {
+        if (gen !== cutPreviewGenRef.current) return;
+        const live = cutModeRef.current;
+        if (!live || live.pick !== 'pieces' || cutPreviewKey(live) !== key) return;
+        cutLiveKeyRef.current = key;
+        cutLivePiecesRef.current = payload?.pieces || [];
+        paintLiveCutPieces(live, cutLivePiecesRef.current);
+      }).catch((err) => {
+        if (gen !== cutPreviewGenRef.current) return;
+        clearCutPiecePreview();
+        showShellToast(err?.message || 'Cut preview failed');
+      });
+    }, 60);
+  }, [clearCutPiecePreview, paintLiveCutPieces, removeCutPreviewGroup, restoreCutBaseMesh]);
 
   const paintCutPicks = useCallback((state) => {
-    clearCutPiecePreview();
     const geom = resultRef.current?.geometry;
     const positions = geom?.attributes?.position;
     const index = geom?.index?.array;
     clearHighlight();
-    if (!state || !geom || !positions || !index) return;
-    const plane = cutPlaneFromState(state);
-    if (state.pick === 'pieces' && plane && (state.bodies || []).length) {
-      paintCutPiecePreview(state, positions, index);
+    if (!state || !geom || !positions || !index) {
+      clearCutPiecePreview();
       return;
     }
+    const plane = cutPlaneFromState(state);
+    if (state.pick === 'pieces' && plane && (state.bodies || []).length) {
+      ensureLiveCutPreview(state);
+      return;
+    }
+    clearCutPiecePreview();
     const keepTris = [];
     const dropTris = [];
     for (const body of state.bodies || []) {
@@ -3156,7 +3267,7 @@ const Viewport = forwardRef(({
     }
     if (keepTris.length) highlightFace(keepTris, geom, positions, index, 0x22d3ee, 'cut-bodies');
     if (dropTris.length) highlightFace(dropTris, geom, positions, index, 0xf97316, 'cut-drop');
-  }, [clearHighlight, highlightFace, clearCutPiecePreview, paintCutPiecePreview]);
+  }, [clearHighlight, highlightFace, clearCutPiecePreview, ensureLiveCutPreview]);
 
   const exitCutMode = useCallback(() => {
     const was = cutModeRef.current;
@@ -4528,6 +4639,9 @@ const Viewport = forwardRef(({
   // Helper to render mesh data from the worker
   const renderMeshData = useCallback((meshData) => {
     if (!meshData || !resultRef.current) return;
+    // A new script result replaces the solid. Drop any Pieces clone so the
+    // viewport shows that result in the normal body color.
+    clearCutPiecePreviewRef.current();
 
     const geometry = new BufferGeometry();
     

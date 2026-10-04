@@ -449,6 +449,43 @@ class ManifoldWorker {
       });
     });
   }
+
+  /**
+   * Split a clone of the cached solid for the Pieces preview.
+   * Does not replace the cached manifold and does not write the script.
+   *
+   * @param {object} plane - Face `{ center, normal, offset? }` or `{ normal, originOffset }`
+   * @param {{ at: number[] }[]} bodies - Bodies to cut. Omit to cut every body.
+   * @returns {Promise<{ pieces: object[] }>}
+   */
+  async previewCut(plane, bodies, options = {}) {
+    if (!this.isReady) {
+      throw new Error('ManifoldWorker not initialized');
+    }
+    const timeoutMs = options.timeoutMs || this.config.timeoutMs;
+    return new Promise((resolve, reject) => {
+      const requestId = this._generateRequestId();
+      const timeoutId = setTimeout(() => {
+        this.pendingRequests.delete(requestId);
+        reject(new Error(`previewCut timed out after ${timeoutMs / 1000}s`));
+      }, timeoutMs);
+      this.pendingRequests.set(requestId, {
+        resolve: (result) => {
+          clearTimeout(timeoutId);
+          resolve(result);
+        },
+        reject: (error) => {
+          clearTimeout(timeoutId);
+          reject(error);
+        }
+      });
+      this.worker.postMessage({
+        type: 'previewCut',
+        id: requestId,
+        payload: { plane, bodies }
+      });
+    });
+  }
   
   /**
    * Terminate the worker
@@ -694,6 +731,17 @@ class ManifoldContext {
     }
     
     return await this.worker.trimByPlane(normal, originOffset);
+  }
+
+  /**
+   * Pieces preview. Runs the real cut on a clone of the last solid and
+   * returns each piece mesh. The cached solid is left as it was.
+   */
+  async previewCut({ plane, bodies } = {}) {
+    if (!this.worker || !this.worker.isReady) {
+      throw new Error('ManifoldContext not initialized');
+    }
+    return await this.worker.previewCut(plane, bodies);
   }
   
   /**

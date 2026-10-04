@@ -6571,6 +6571,54 @@ self.onmessage = async (event) => {
         break;
       }
 
+      // Pieces preview. Clone the cached solid and split it with the same
+      // helpers cut() uses. The clone and every temporary are deleted before
+      // this returns. cachedManifold is not assigned, so leaving Pieces
+      // without Confirm leaves the model whole and the editor gains no cut().
+      case 'previewCut': {
+        if (!isInitialized) throw new Error('Worker not initialized');
+        if (!cachedManifold) throw new Error('No cached manifold - execute a script first');
+        const created = [];
+        const track = (m) => {
+          if (!m || m === cachedManifold) return;
+          if (created.indexOf(m) >= 0) return;
+          created.push(m);
+        };
+        let pieces;
+        try {
+          const pl = _cutResolvePlane(payload && payload.plane);
+          const clone = cachedManifold.clone();
+          track(clone);
+          const bodies = _cutBodiesOf(clone);
+          for (const body of bodies) track(body);
+          const selected = _cutSelected(bodies, payload && payload.bodies);
+          pieces = [];
+          for (let i = 0; i < bodies.length; i++) {
+            const body = bodies[i];
+            const at = _cutCentroid(body);
+            if (!selected.has(i)) {
+              pieces.push({ at, side: 'whole', selected: false, mesh: serializeResult(body) });
+              continue;
+            }
+            const split = _cutSplitOrOriginal(body, pl);
+            for (const piece of split.pieces) {
+              track(piece.manifold);
+              pieces.push({
+                at,
+                side: piece.side,
+                selected: true,
+                mesh: serializeResult(piece.manifold),
+              });
+            }
+            for (const extra of split.discard) track(extra);
+          }
+        } finally {
+          for (const m of created) _safeDeleteManifold(m);
+        }
+        self.postMessage({ type: 'result', id, payload: { pieces } });
+        break;
+      }
+
       case 'trimByPlane': {
         if (!isInitialized) {
           throw new Error('Worker not initialized');
