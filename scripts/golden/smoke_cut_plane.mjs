@@ -41,6 +41,7 @@ const {
   CUT_MODE_NEED_BODIES,
 } = await import('../../src/utils/cutMode.js');
 const { contactSeamSegments } = await import('../../src/utils/contactSeam.js');
+const { buildCutPiecePositions } = await import('../../src/utils/cutPieceMesh.js');
 const { parseFeatureMarkers } = await import('../../src/utils/featureMarkers.js');
 
 console.log('cut plane');
@@ -188,6 +189,110 @@ console.log('cut plane');
   check('Clear unhides every piece and keeps the plane',
     clearedHide.drop.length === 0 && clearedHide.planeSource === 'xy' && clearedHide.bodies.length === 1);
 
+  // A triangle that crosses the plane must be clipped. Keeping it whole is
+  // what painted both colors through each other.
+  const crossTriPos = [0, 0, -1, 1, 0, 1, 0, 1, 1];
+  const crossTriIdx = [0, 1, 2];
+  const clippedPlus = buildCutPiecePositions(crossTriPos, crossTriIdx, [0], {
+    normal: [0, 0, 1], originOffset: 0,
+  }, '+');
+  let clippedBelow = false;
+  for (let i = 2; i < clippedPlus.length; i += 3) {
+    if (clippedPlus[i] < -1e-6) clippedBelow = true;
+  }
+  check('a crossing triangle is clipped to the piece instead of kept whole',
+    clippedPlus.length >= 9 && !clippedBelow);
+
+  // Closed cube, outward winding, cut on z=0. Each preview piece is that
+  // half: positive volume, nothing on the wrong side, cap area 4.
+  const cubePos = [
+    -1, -1, -1, 1, -1, -1, 1, 1, -1, -1, 1, -1,
+    -1, -1, 1, 1, -1, 1, 1, 1, 1, -1, 1, 1,
+  ];
+  const cubeIdx = [
+    0, 2, 1, 0, 3, 2,
+    4, 5, 6, 4, 6, 7,
+    0, 1, 5, 0, 5, 4,
+    3, 6, 2, 3, 7, 6,
+    0, 4, 7, 0, 7, 3,
+    1, 2, 6, 1, 6, 5,
+  ];
+  const cubeTris = Array.from({ length: 12 }, (_, i) => i);
+  const xy0 = { normal: [0, 0, 1], originOffset: 0 };
+  const halfPlus = buildCutPiecePositions(cubePos, cubeIdx, cubeTris, xy0, '+');
+  const halfMinus = buildCutPiecePositions(cubePos, cubeIdx, cubeTris, xy0, '-');
+  const signedVol = (flat) => {
+    let v = 0;
+    for (let i = 0; i < flat.length; i += 9) {
+      const ax = flat[i];
+      const ay = flat[i + 1];
+      const az = flat[i + 2];
+      const bx = flat[i + 3];
+      const by = flat[i + 4];
+      const bz = flat[i + 5];
+      const cx = flat[i + 6];
+      const cy = flat[i + 7];
+      const cz = flat[i + 8];
+      v += ax * (by * cz - bz * cy) - ay * (bx * cz - bz * cx) + az * (bx * cy - by * cx);
+    }
+    return v / 6;
+  };
+  const onWrongSide = (flat, sign) => {
+    for (let i = 2; i < flat.length; i += 3) {
+      if (sign > 0 && flat[i] < -1e-6) return true;
+      if (sign < 0 && flat[i] > 1e-6) return true;
+    }
+    return false;
+  };
+  check('each preview half is the closed piece on its own side of the plane',
+    Math.abs(signedVol(halfPlus) - 4) < 1e-3
+    && Math.abs(signedVol(halfMinus) - 4) < 1e-3
+    && !onWrongSide(halfPlus, 1)
+    && !onWrongSide(halfMinus, -1));
+
+  // Square tube. The cap is the frame (outer 16 minus hole 4), not a solid
+  // square and not empty. A centroid in the hole means the hole was filled.
+  const tubeVerts = [];
+  const tubeFaces = [];
+  const addQuad = (a, b, c, d) => {
+    const i = tubeVerts.length;
+    tubeVerts.push(a, b, c, d);
+    tubeFaces.push([i, i + 1, i + 2], [i, i + 2, i + 3]);
+  };
+  addQuad([-2, -2, -1], [2, -2, -1], [2, -2, 1], [-2, -2, 1]);
+  addQuad([2, 2, -1], [-2, 2, -1], [-2, 2, 1], [2, 2, 1]);
+  addQuad([-2, 2, -1], [-2, -2, -1], [-2, -2, 1], [-2, 2, 1]);
+  addQuad([2, -2, -1], [2, 2, -1], [2, 2, 1], [2, -2, 1]);
+  addQuad([1, -1, -1], [-1, -1, -1], [-1, -1, 1], [1, -1, 1]);
+  addQuad([-1, 1, -1], [1, 1, -1], [1, 1, 1], [-1, 1, 1]);
+  addQuad([-1, -1, -1], [-1, 1, -1], [-1, 1, 1], [-1, -1, 1]);
+  addQuad([1, 1, -1], [1, -1, -1], [1, -1, 1], [1, 1, 1]);
+  const tube = buildCutPiecePositions(
+    tubeVerts.flat(),
+    tubeFaces.flat(),
+    tubeFaces.map((_, i) => i),
+    xy0,
+    '+',
+  );
+  let tubeCap = 0;
+  let tubeHole = 0;
+  for (let i = 0; i < tube.length; i += 9) {
+    if (Math.abs(tube[i + 2]) > 1e-3 || Math.abs(tube[i + 5]) > 1e-3 || Math.abs(tube[i + 8]) > 1e-3) continue;
+    const ax = tube[i];
+    const ay = tube[i + 1];
+    const bx = tube[i + 3];
+    const by = tube[i + 4];
+    const cx = tube[i + 6];
+    const cy = tube[i + 7];
+    tubeCap += ((bx - ax) * (cy - ay) - (by - ay) * (cx - ax)) * 0.5;
+    const mx = (ax + bx + cx) / 3;
+    const my = (ay + by + cy) / 3;
+    if (Math.abs(mx) < 0.9 && Math.abs(my) < 0.9) tubeHole++;
+  }
+  check('a holed section caps as a frame, not a filled blob',
+    Math.abs(tubeCap - 12) < 1e-2 && tubeHole === 0,
+    `area=${tubeCap} holeTris=${tubeHole}`);
+
   const again = composeCutCommit(both.buffer, marked, {
     positions: crossPos,
     index: crossIdx,
@@ -226,7 +331,9 @@ console.log('cut plane');
     /id="cut-offset"/.test(chip) && /along the plane normal/.test(chip));
   check('pieces preview colors each piece and leaves hidden ones pickable',
     /listCutPieces/.test(view) && /colorWrite: false/.test(view)
-    && /CUT_PIECE_OPACITY/.test(view) && /if \(piece\.hidden\) continue/.test(view));
+    && /CUT_PIECE_OPACITY/.test(view) && /if \(piece\.hidden\) continue/.test(view)
+    && /buildCutPiecePositions/.test(view) && /side: FrontSide/.test(view)
+    && !/side: DoubleSide/.test(view));
   check('a cut tap is not swallowed by a contour or a construction plane',
     /!cutModeRef\.current && showContoursRef/.test(view)
     && /!cutModeRef\.current && planeHits/.test(view));
