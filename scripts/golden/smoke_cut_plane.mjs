@@ -16,8 +16,61 @@
  */
 import { register } from 'node:module';
 import { readFileSync } from 'node:fs';
+import { BufferAttribute, BufferGeometry } from 'three';
+import { buildCoherentEdges, buildFeatureEdges } from '../../src/utils/selectEdge.js';
+import { selectGraphFace } from '../../src/utils/selectFace.js';
 
 let failed = 0;
+function geometryFromCutMesh(mesh) {
+  const np = mesh.numProp || 3;
+  const src = mesh.vertProperties;
+  const nVert = Math.floor(src.length / np);
+  const positions = new Float32Array(nVert * 3);
+  for (let i = 0; i < nVert; i++) {
+    positions[i * 3] = src[i * np];
+    positions[i * 3 + 1] = src[i * np + 1];
+    positions[i * 3 + 2] = src[i * np + 2];
+  }
+  const geometry = new BufferGeometry();
+  geometry.setAttribute('position', new BufferAttribute(positions, 3));
+  geometry.setIndex(new BufferAttribute(new Uint32Array(mesh.triVerts), 1));
+  return geometry;
+}
+
+function triangleCentroidZ(geometry, t) {
+  const index = geometry.index.array;
+  const p = geometry.attributes.position;
+  const i0 = index[t * 3];
+  const i1 = index[t * 3 + 1];
+  const i2 = index[t * 3 + 2];
+  return (p.getZ(i0) + p.getZ(i1) + p.getZ(i2)) / 3;
+}
+
+function triangleOnPlusX(geometry, minZ) {
+  const index = geometry.index.array;
+  const p = geometry.attributes.position;
+  const nTri = index.length / 3;
+  for (let t = 0; t < nTri; t++) {
+    const i0 = index[t * 3];
+    const i1 = index[t * 3 + 1];
+    const i2 = index[t * 3 + 2];
+    const ax = p.getX(i1) - p.getX(i0);
+    const ay = p.getY(i1) - p.getY(i0);
+    const az = p.getZ(i1) - p.getZ(i0);
+    const bx = p.getX(i2) - p.getX(i0);
+    const by = p.getY(i2) - p.getY(i0);
+    const bz = p.getZ(i2) - p.getZ(i0);
+    const nx = ay * bz - az * by;
+    const ny = az * bx - ax * bz;
+    const nz = ax * by - ay * bx;
+    const len = Math.hypot(nx, ny, nz) || 1;
+    if (nx / len < 0.9) continue;
+    if (triangleCentroidZ(geometry, t) <= minZ) continue;
+    return t;
+  }
+  return -1;
+}
+
 function check(name, cond, detail = '') {
   if (cond) console.log(`  ✅ ${name}`);
   else {
@@ -212,6 +265,10 @@ console.log('cut plane');
   const note = view.indexOf('Below highlightFace on purpose');
   const draftPaint = view.indexOf('const paintDraftPicks = useCallback');
   check('highlightFace stays above the Draft callbacks', hi >= 0 && note > hi && draftPaint > note);
+  check('shared cut contour is a black line on the edge',
+    /gl_FragColor = vec4\(0\.0, 0\.0, 0\.0, 1\.0\)/.test(view)
+    && /line\.name = 'contactSeam'/.test(view)
+    && !/CONTACT_SEAM_LIFT/.test(view));
   check('palette routes Cut into cut mode',
     /item\.id === 'cut'/.test(palette) && /onEnterCutMode\(\{\s*entry:\s*'cut'\s*\}\)/.test(palette));
   check('missed tap does not clear the cut set', /Preserve cut body selection/.test(view));
@@ -315,6 +372,31 @@ const cube = 'let part = Manifold.cube([40, 30, 20], true);';
     bothSeams.length === 4 && bothSeams.every((s) => Math.abs(s.a[2]) < 1e-3 && Math.abs(s.b[2]) < 1e-3
       && Math.abs(s.capNormal[2]) > 0.9),
     `n=${bothSeams.length}`);
+  const cutGeom = geometryFromCutMesh(res.mesh);
+  const cutEdges = buildCoherentEdges(buildFeatureEdges(cutGeom));
+  const vertical = cutEdges.filter((e) => Math.abs(e.va[2] - e.vb[2]) > 5);
+  check('each cut body keeps its own vertical edges',
+    vertical.length >= 4 && vertical.every((e) => Math.abs(e.va[2] - e.vb[2]) <= 10.5),
+    `n=${vertical.length} spans=${vertical.map((e) => Math.abs(e.va[2] - e.vb[2]).toFixed(2)).join(',')}`);
+  const pxSeed = triangleOnPlusX(cutGeom, 1);
+  const pxFace = selectGraphFace(cutGeom, pxSeed, res.mesh.faceID);
+  const pxZs = pxFace.indices.map((t) => triangleCentroidZ(cutGeom, t));
+  check('a face click stays on one cut body',
+    pxSeed >= 0 && pxZs.length > 0 && pxZs.every((z) => z > -0.05),
+    `seed=${pxSeed} zs=${pxZs.map((z) => z.toFixed(2)).join(',')}`);
+  const faceSplit = await execFail(`
+    ${cube}
+    part = cut(part, { normal: [0, 0, 1], originOffset: 0 });
+    const px = facesByNormal(part, [1, 0, 0], 1);
+    if (px.length !== 2) throw new Error('faces ' + px.length);
+    for (const f of px) {
+      const zs = f.verts.map((v) => v[2]);
+      const span = Math.max(...zs) - Math.min(...zs);
+      if (span > 10.01) throw new Error('span ' + span);
+    }
+    return part;
+  `);
+  check('facesByNormal stays inside one cut body', faceSplit == null, faceSplit || '');
   check('1 composed bbox is still the cube',
     Math.abs(res.boundingBox.min[2] + 10) < 1e-3 && Math.abs(res.boundingBox.max[2] - 10) < 1e-3
     && Math.abs(res.boundingBox.min[0] + 20) < 1e-3 && Math.abs(res.boundingBox.max[1] - 15) < 1e-3);

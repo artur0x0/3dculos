@@ -33,7 +33,9 @@ over inventing a new modal layout.
   Confirm writes one `cut()`; grey X exits with no write.
 - **`MoveModeChip.jsx`** — cyan glass card (same shell as Shell). Double-click
   selects the body (one click still selects the full face and does not change
-  the target). X, Y, and Z are `NumberField` deltas, slider and type-in. No
+  the target). XYZ are `NumberField` deltas, slider and type-in. Cut (when the
+  previous operation is a cut) and Face (a picked face) take one distance along
+  that normal. The body is previewed at the new translation until Confirm. No
   viewport arrows. Confirm writes one `move()` and replaces a previous Move
   block; grey X exits with no write.
 

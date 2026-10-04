@@ -1888,11 +1888,60 @@ function _c4Sub(a, b) { return [a[0]-b[0], a[1]-b[1], a[2]-b[2]]; }
 function _c4Add(a, b) { return [a[0]+b[0], a[1]+b[1], a[2]+b[2]]; }
 function _c4Mul(s, v) { return [s*v[0], s*v[1], s*v[2]]; }
 
+/**
+ * Vertex-connected component of each triangle. A cut that keeps both pieces
+ * does not share vertices, so each piece is its own body even when Manifold
+ * reuses the original faceID across the cut.
+ */
+function _triComponentIds(triVerts, numTri) {
+  const parent = new Uint32Array(numTri);
+  for (let i = 0; i < numTri; i++) parent[i] = i;
+  const find = (a) => {
+    let r = a;
+    while (parent[r] !== r) r = parent[r];
+    let x = a;
+    while (parent[x] !== r) {
+      const n = parent[x];
+      parent[x] = r;
+      x = n;
+    }
+    return r;
+  };
+  const unite = (a, b) => {
+    const ra = find(a);
+    const rb = find(b);
+    if (ra !== rb) parent[rb] = ra;
+  };
+  const vertToTri = new Map();
+  for (let t = 0; t < numTri; t++) {
+    for (let k = 0; k < 3; k++) {
+      const v = triVerts[t * 3 + k];
+      const prev = vertToTri.get(v);
+      if (prev === undefined) vertToTri.set(v, t);
+      else unite(prev, t);
+    }
+  }
+  const rootToId = new Map();
+  const ids = new Int32Array(numTri);
+  let next = 0;
+  for (let t = 0; t < numTri; t++) {
+    const r = find(t);
+    let id = rootToId.get(r);
+    if (id == null) {
+      id = next++;
+      rootToId.set(r, id);
+    }
+    ids[t] = id;
+  }
+  return ids;
+}
+
 // ---------------------------------------------------------------- mesh data
 // c4MeshData(m) -> { V:[[x,y,z]...], faces:[{id, tris, normal, center, verts}],
 //                    edges:[{a, b, va, vb, tris, tangent, faces:[faceIdx,faceIdx]}] }
 function c4MeshData(m) {
   const mesh = m.getMesh();
+  const triBody = _triComponentIds(mesh.triVerts, mesh.numTri);
   const np = mesh.numProp;
   const V = [];
   // Vertex count = vertProperties length / numProp (NOT tri count — that silently
@@ -1949,19 +1998,20 @@ function c4MeshData(m) {
       if (!byRoot.has(r)) byRoot.set(r, []);
       byRoot.get(r).push(gi);
     });
-    // Components that lie in the SAME plane (e.g. an annulus split into two
-    // regions by a groove, both at z=10) are re-merged into one face so that
-    // queries see the original Manifold face (center on the plane, on the
-    // part's symmetry axis when regions are symmetric). Curved faces never
-    // re-merge: their connected components each span one plane offset, and a
-    // curved group is a single connected component anyway.
+    // Components that lie in the SAME plane AND the same body (e.g. an annulus
+    // split into two regions by a groove, both at z=10) are re-merged into one
+    // face so that queries see the original Manifold face. A cut that keeps
+    // both pieces reuses that faceID across two bodies; those stay separate
+    // so each body keeps its own contour. Curved faces never re-merge: their
+    // connected components each span one plane offset, and a curved group is
+    // a single connected component anyway.
     const offs = tris.map((t) => {
       const v0 = V[mesh.triVerts[t*3]];
       return nrm[0]*v0[0] + nrm[1]*v0[1] + nrm[2]*v0[2];
     });
     const planeGroups = new Map(); // offsetKey -> [gi...]
     for (const gis of byRoot.values()) {
-      const key = Math.round(offs[gis[0]] * 1e3);
+      const key = `${triBody[tris[gis[0]]]}:${Math.round(offs[gis[0]] * 1e3)}`;
       if (!planeGroups.has(key)) planeGroups.set(key, []);
       planeGroups.get(key).push(...gis);
     }
@@ -2030,6 +2080,7 @@ function c4MeshData(m) {
         if (trisE.length !== 2) continue;
         const f0 = t2f[trisE[0]], f1 = t2f[trisE[1]];
         if (f0 < 0 || f1 < 0 || f0 === f1) continue;
+        if (triBody[trisE[0]] !== triBody[trisE[1]]) continue;
         const A = faces[f0], B = faces[f1];
         if (_c4Dot(A.normal, B.normal) < cosPlanar) continue;
         const offA = A.center[0]*A.normal[0] + A.center[1]*A.normal[1] + A.center[2]*A.normal[2];
@@ -5658,6 +5709,32 @@ function _cutBodiesOf(manifold) {
   return parts;
 }
 
+/**
+ * Centroids move() will accept for each decomposed body. Computed on a clone
+ * so the cached solid stays put. The viewport mesh's own average can miss
+ * these by enough to fail the 1e-4 gate after a cut of a filleted shell.
+ */
+function _kernelBodyCentroids(manifold) {
+  if (!manifold || typeof manifold.clone !== 'function') return [];
+  const clone = manifold.clone();
+  const extra = [];
+  try {
+    const bodies = _cutBodiesOf(clone);
+    const at = [];
+    for (const body of bodies) {
+      if (body !== clone) extra.push(body);
+      const c = _cutCentroid(body);
+      at.push([Number(c[0]), Number(c[1]), Number(c[2])]);
+    }
+    return at;
+  } catch (_) {
+    return [];
+  } finally {
+    for (const body of extra) _safeDeleteManifold(body);
+    _safeDeleteManifold(clone);
+  }
+}
+
 function _cutCentroid(body) {
   const mesh = body.getMesh();
   const vp = mesh.vertProperties;
@@ -6313,6 +6390,7 @@ self.onmessage = async (event) => {
         // Get metadata for quoting/display
         const volume = result.volume();
         const bbox = result.boundingBox();
+        const bodyCentroids = _kernelBodyCentroids(result);
         
         self.postMessage({ 
           type: 'result', 
@@ -6329,6 +6407,7 @@ self.onmessage = async (event) => {
               max: [...bbox.max]
             },
             nonce: cachedExecuteNonce,
+            bodyCentroids,
           }
         });
         break;

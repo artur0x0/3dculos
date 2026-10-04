@@ -219,10 +219,12 @@ console.log('cad palette + plane/contour toggles');
     'contours hidden skip saved-contour paint',
     /if \(!showContours\) \{\s*clearSavedContourGhosts\(\)/.test(view),
   );
-  check('workplane overlay gated on Plane', /if \(showPlanes\) paintWorkplaneOverlay/.test(view));
+  check('workplane overlay gated on Plane',
+    /if \(showPlanes \|\| isWorkplaneEntry\(contourMode\.entry\)\) paintWorkplaneOverlay/.test(view));
   check(
     'saved contour pick gated',
-    /showContoursRef\.current && contourModeRef\.current\?\.tool !== 'polyline'/.test(view),
+    /showContoursRef\.current && !moveModeRef\.current && contourModeRef\.current\?\.tool !== 'polyline'/.test(view)
+      && /!cutModeRef\.current && showContoursRef\.current/.test(view),
   );
   check(
     'construction plane pick gated',

@@ -396,7 +396,8 @@ Import `src/utils/importModel.js` (+ `POST /api/convert/step`); export
 - **z-index ladder:** overlays `z-10`; edge chip and success banner `z-20`;
   toasts + mobile stage pill `z-30`; **cross-section panel/popup `z-40`** (above
   the CAD↔Script home-indicator so expanded options win); modals and error
-  banners `z-50`. Cross-section popup **Dismiss** is a grey lucide `X` (not the
+  banners `z-50`. The execution-error toast is portaled to `document.body` at
+  `z-50` so the full message sits above the feature strip and the left rail. Cross-section popup **Dismiss** is a grey lucide `X` (not the
   red FlipHorizontal); the collapsed rail still uses FlipHorizontal to
   enable/disable. Contour-mode rail dismiss is the same grey `X`. Check stays
   green Done.

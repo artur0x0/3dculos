@@ -13,7 +13,14 @@ import { readFileSync } from 'node:fs';
 import { register } from 'node:module';
 import { BufferAttribute, BufferGeometry } from 'three';
 import { paletteRailSections } from '../../src/utils/helperPaletteSnippets.js';
-import { composeMoveCommit, validateMoveAccept } from '../../src/utils/moveMode.js';
+import {
+  composeMoveCommit,
+  validateMoveAccept,
+  resolveMoveBodyAt,
+  cutNormalFromScript,
+  movePreviewOffset,
+} from '../../src/utils/moveMode.js';
+import { CUT_BEGIN, CUT_END } from '../../src/utils/helperPaletteSnippets.js';
 import { meshBodyComponents } from '../../src/utils/cutMode.js';
 
 const read = (rel) => readFileSync(new URL(`../../${rel}`, import.meta.url), 'utf8');
@@ -59,6 +66,12 @@ function check(name, cond, detail = '') {
     && /_cutBodiesOf\(manifold\)/.test(worker) && /_cutSelected\(bodies/.test(worker)
     && /Manifold\.compose\(kept\)/.test(worker));
   check('POPUP_STYLE documents MoveModeChip', /MoveModeChip/.test(popup) && /No\s*\n\s*viewport arrows/.test(popup));
+  check('slider motion previews the body and dismiss does not commit',
+    /name = 'move-preview'/.test(view) && /onDismiss=\{exitMoveMode\}/.test(view)
+    && !/onDismiss=\{[^}]*onCommitMove/.test(view));
+  check('execution error sits above the strip and the left rail',
+    /data-execution-error/.test(view) && /createPortal\(/.test(view)
+    && /z-50[\s\S]{0,500}data-execution-error/.test(view));
 }
 
 {
@@ -84,6 +97,53 @@ function check(name, cond, detail = '') {
     && (again.buffer.match(/\/\/ --- move begin ---/g) || []).length === 1
     && again.buffer.includes('part = move(part, [5, 0, -1], { bodies: [{ at: [4, 5, 6] }] });')
     && !again.buffer.includes('[0, 10, 0]'));
+
+  const drifted = [-0.4941, 10.5913, 5.9703];
+  const kernel = [
+    [-0.1403, 10.6516, -5.9599],
+    [-0.5027, 10.5553, 5.9708],
+    [18.2426, 12.6256, -8.2426],
+  ];
+  const snapped = resolveMoveBodyAt(drifted, kernel, '');
+  check('a drifted post-cut centroid snaps to the kernel body',
+    snapped[0] === kernel[1][0] && snapped[1] === kernel[1][1] && snapped[2] === kernel[1][2],
+    JSON.stringify(snapped));
+  const miss = resolveMoveBodyAt([0, 0, 0], kernel, '');
+  check('a point far from every body is not renamed',
+    miss[0] === 0 && miss[1] === 0 && miss[2] === 0);
+
+  const cutBuf = `${CUT_BEGIN}\npart = cut(part, { normal: [0, 0, 1], originOffset: 0 }, { bodies: [{ at: [0, 0, 0] }] });\n${CUT_END}\nreturn part;\n`;
+  const along = cutNormalFromScript(cutBuf);
+  check('the previous cut supplies its normal', !!along && Math.abs(along[2] - 1) < 1e-9, JSON.stringify(along));
+  const directed = composeMoveCommit(cutBuf, {
+    body: 'part',
+    direction: 'cut',
+    distance: 10,
+    target: { at: [0, 0, 5] },
+    dx: 0,
+    dy: 0,
+    dz: 0,
+  });
+  check('a cut-normal distance writes one move along that normal', directed.ok === true
+    && (directed.buffer.match(/\bmove\s*\(/g) || []).length === 1
+    && directed.buffer.includes('part = move(part, [0, 0, 10], { bodies: [{ at: [0, 0, 5] }] });'),
+    directed.buffer || directed.message);
+  const faced = composeMoveCommit('let part = Manifold.cube([10, 10, 10], true);', {
+    body: 'part',
+    direction: 'face',
+    distance: 4,
+    faceNormal: [0, 1, 0],
+    target: { at: [0, 0, 0] },
+  });
+  check('a picked-face distance writes one move along that normal', faced.ok === true
+    && faced.buffer.includes('part = move(part, [0, 4, 0], { bodies: [{ at: [0, 0, 0] }] });'),
+    faced.buffer || faced.message);
+  const preview = movePreviewOffset({
+    direction: 'xyz', dx: 0, dy: 15, dz: 0, target: { at: [0, 0, 5] },
+  }, directed.buffer);
+  check('replacing a move previews the difference from the previous translation',
+    !!preview && Math.abs(preview[1] - 15) < 1e-9 && Math.abs(preview[2] + 10) < 1e-9,
+    JSON.stringify(preview));
 }
 
 const pending = new Map();
@@ -228,6 +288,32 @@ let part = Manifold.compose([a, b]);
     return part;
   `);
   check('move names the body', !!unnamed && /name one body/.test(unnamed), unnamed || 'no throw');
+}
+
+{
+  const shellSrc = readFileSync(
+    new URL('./fixtures/artur_playtest_shell_after_fillets.txt', import.meta.url),
+    'utf8',
+  ).replace(/\n*return\s+part\s*;?\s*$/i, '');
+  const cutBody = `${shellSrc}\npart = cut(part, { normal: [0, 0, 1], originOffset: 0 });`;
+  const res = await exec(`${cutBody}\nreturn part;`);
+  const geom = geometryFromMesh(res.mesh);
+  const bodies = meshBodyComponents(geom.attributes.position, geom.index);
+  const kernel = res.bodyCentroids;
+  check('execute names a kernel centroid for each body',
+    Array.isArray(kernel) && kernel.length >= 2 && kernel.length === bodies.length,
+    `kernel=${kernel?.length} view=${bodies.length}`);
+  let snappedOk = true;
+  let detail = '';
+  for (const b of bodies) {
+    const at = resolveMoveBodyAt(b.at, kernel, '').map((n) => Math.round(n * 1e4) / 1e4);
+    const msg = await execFail(`${cutBody}\npart = move(part, [0, 5, 0], { bodies: [{ at: [${at.join(', ')}] }] });\nreturn part;`);
+    if (msg) {
+      snappedOk = false;
+      detail = msg;
+    }
+  }
+  check('a filleted shell cut body moves when named by the kernel centroid', snappedOk, detail);
 }
 
 if (failed) {

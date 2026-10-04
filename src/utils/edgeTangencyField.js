@@ -217,6 +217,7 @@ function _neighborsOf(cur, featureEdges, adj, useSpatial) {
     for (const nbr of featureEdges || []) {
       const nk = _edgeKey(nbr);
       if (out.has(nk) || nk === _edgeKey(cur)) continue;
+      if (Number.isFinite(cur.bodyId) && Number.isFinite(nbr.bodyId) && cur.bodyId !== nbr.bodyId) continue;
       if (_near3(p, nbr.va) || _near3(p, nbr.vb)) {
         out.set(nk, nbr);
       }
@@ -286,6 +287,7 @@ function _parallelFaceBridge(seed, list, planeN) {
   let bestH = -Infinity;
   for (const e of list) {
     if (_edgeKey(e) === _edgeKey(seed)) continue;
+    if (Number.isFinite(seed.bodyId) && Number.isFinite(e.bodyId) && seed.bodyId !== e.bodyId) continue;
     if (!faces.includes(e.faceA) && !faces.includes(e.faceB)) continue;
     if (!e.va || !e.vb) continue;
     const ef = edgeTangencyFrame(e);
