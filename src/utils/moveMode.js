@@ -117,12 +117,13 @@ export function parseLastMove(buffer) {
 
 /**
  * Viewport components and decompose().getMesh() do not share a vertex set.
- * On a filleted shell after a cut those averages differ by ~0.04, and
- * 0.04² is outside move()'s 1e-4 gate, so the call throws
- * "that point is not a body centroid". Snap to the kernel centroid when
- * one body is clearly nearer than the others. The gate stays 1e-4.
- * A previous move is stripped on confirm, so a body that already moved
- * keeps the pre-move { at }.
+ * On a filleted shell after a cut those averages differ by ~0.04. Snap to
+ * the kernel centroid when one body is clearly nearer than the others.
+ * The next run can still shift that average by a few hundredths, because a
+ * fillet does not retessellate the same way. move() names the nearest body
+ * within 1% of its radius (at least 0.05) in that case. A point that is not
+ * near a centroid still throws. A previous move is stripped on confirm, so
+ * a body that already moved keeps the pre-move { at }.
  */
 export function resolveMoveBodyAt(viewportAt, kernelCentroids, buffer) {
   const view = Array.isArray(viewportAt) ? viewportAt.slice(0, 3).map(Number) : [0, 0, 0];
