@@ -83,6 +83,7 @@
         "golden:fillet-after-cut": "node scripts/golden/smoke_fillet_after_cut.mjs",
         "golden:fillet-join-body": "node scripts/golden/smoke_fillet_join_body.mjs",
         "golden:fillet-move-seam": "node scripts/golden/smoke_fillet_move_seam.mjs",
+        "golden:fillet-face-pick": "node scripts/golden/smoke_fillet_face_pick.mjs",
         "golden:fillet-box-stack-and-loft": "node scripts/golden/smoke_fillet_box_stack_and_loft.mjs",
         "golden:fillet-wrap-draft": "node scripts/golden/smoke_fillet_wrap_draft.mjs",
         "golden:playtest-draft-fillet-tear": "node scripts/golden/smoke_playtest_draft_fillet_tear.mjs",

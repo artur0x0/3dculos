@@ -62,7 +62,7 @@ There is no `rebuildGraphs()` and no per-op hook. Cut, Draft, Move Face, and Del
 
 | Graph | Where | Built | Invalidated | Rebuilt |
 | --- | --- | --- | --- | --- |
-| **Face** (PartGraph) | `faceGraphFor` WeakMap on the BufferGeometry. Overlay copy in `partGraphRef`. | Next non-legacy face click, or when the patch-colour overlay is on. | `renderMeshData` drops `partGraphRef`. A new geometry is a WeakMap miss. The 250k-tri cap applies to the **overlay only**; a click still builds. | That next click / overlay pass. Not during Cut, Draft, Move Face, or Delete Face. |
+| **Face** (PartGraph) | `faceGraphFor` WeakMap on the BufferGeometry. Overlay copy in `partGraphRef`. | `warmFaceGraph` in `renderMeshData` when the mesh is shown, including after fillet. A click builds it if that paint missed. The overlay builds its own copy when patch colours are on. The 250k-tri cap applies to the **overlay only**. | `renderMeshData` drops `partGraphRef` and replaces the geometry. The WeakMap misses, then that paint fills the new mesh. | That paint. Not while Cut, Draft, Move Face, or Delete Face is still on the old mesh. |
 | **Edge** | `buildFeatureEdges` inside `syncFeatureEdges`. Cache key is the geometry object (`featureEdgesSourceRef`). | Dihedral **≥ 2°**. Each edge gets `bodyId` from `meshBodyComponents` (shared vertex index = one body). | Success path sets the source ref to null, then syncs. An empty script clears and does not rebuild. | End of every successful run, including Cut and Draft confirm. Also on Fillet enter, leaving Fillet while still in Edge, and Sweep path pick. |
 | **Body contours** | `buildCoherentEdges` in that same sync. Not a third cache. | Feature edges with dihedral **≥ 15°**, traced into chains. A keep-both cut shares no vertices, so a vertex walk cannot cross pieces. `bodyId` also blocks collinear merge and the spatial / parallel-face bridges (those links do not require a shared index). | Same as the edge graph. | Same call. If `faceID` is present, `indexBoundaryEdges` also runs and annotates those edges (fillet `fN` / `eN`). |
 
@@ -71,16 +71,16 @@ There is no `rebuildGraphs()` and no per-op hook. Cut, Draft, Move Face, and Del
 **After Cut confirm and after Draft confirm** the path is the same: Confirm writes one call, Auto-Run, `renderMeshData`, then `syncFeatureEdges` on the new geometry.
 
 - Edge graph and body contours are rebuilt in that success path.
-- The face graph is not. It waits for the next click (or the overlay).
+- The face graph is rebuilt in that same paint (`warmFaceGraph`). A new geometry is a WeakMap miss, so the graph is the new mesh, not the pre-fillet one.
 - Face and edge picks are cleared, except Fillet mode and Sweep contour mode, which keep the edge wire and re-stamp boundary ids.
 - The live Cut preview (`previewCut` on a clone) and the Move preview (translated triangles) do not replace `resultRef.geometry`. Graphs stay on the uncut / unmoved solid. Preview meshes do not raycast.
 - Draft highlights do not change the mesh. Taps before Confirm still read the pre-draft graphs.
 - Shell confirm uses this same run path. Nothing in the graph code special-cases shell.
-- **Move Face confirm** is the same path: one `moveFace()`, Auto-Run, then the edge graph and body contours rebuild. The face graph stays lazy. Fillet confirm is the same: the face graph is not rebuilt.
+- **Move Face confirm** is the same path: one `moveFace()`, Auto-Run, then the edge graph, body contours, and face graph rebuild. Fillet confirm is the same paint: the face graph is rebuilt with the filleted mesh.
 - The Move Face preview runs `moveFace` on a clone. It does not replace `resultRef.geometry` and does not rebuild graphs. Dismiss writes nothing.
-- **Delete Face confirm** writes one `deleteFace()` for every picked face, replaces the previous Delete Face block, Auto-Runs, then the edge graph and body contours rebuild. The face graph stays lazy. A heal that cannot stay a closed solid throws on that run.
+- **Delete Face confirm** writes one `deleteFace()` for every picked face, replaces the previous Delete Face block, Auto-Runs, then the edge graph, body contours, and face graph rebuild. A heal that cannot stay a closed solid throws on that run.
 - A Delete Face tap only adds or removes the face. It does not run `deleteFace`. Leaving without Confirm writes nothing.
-- **Assembly.** Graphs stay on the active part, the script in the editor. A successful run of that part drops the face graph and rebuilds the edge graph and body contours at the end of the run. A failed run, or hiding that part, clears its mesh and does not rebuild from a previous solid. Other visible parts are extra meshes. Showing or hiding them does not rebuild graphs.
+- **Assembly.** Graphs stay on the active part, the script in the editor. A successful run of that part rebuilds the face graph when the new mesh is shown, and rebuilds the edge graph and body contours at the end of the run. A failed run, or hiding that part, clears its mesh and does not rebuild from a previous solid. Other visible parts are extra meshes. Showing or hiding them does not rebuild graphs.
 
 What the new mesh contains is the difference, not the rebuild:
 
@@ -95,7 +95,7 @@ What the new mesh contains is the difference, not the rebuild:
 - **Default (double click).** The vertex-connected body (`selectOwningBody`), not a wider face.
 - **Shell, Draft, Cut** pass `legacy`. One click is the coplanar region, two clicks are the 3° neighbour walk, three clicks are the connected component. A double click does **not** become the body, so Confirm still writes the tapped face.
 - **Move.** One click is the full face and does not change the target. Double click sets that body (`{ at }` centroid).
-- **Move Face.** Same legacy tap as Shell. A double click is not the body, so Confirm still writes the tapped faces. Triangles outside the seed body are removed. The worker then carries a tangent blend on that face (an internal fillet) with the offset. The fillet is already the same body; a stale face graph is not what left it behind.
+- **Move Face.** One click is the coplanar face plus a blend that meets it within 18° (`tangentTris` on that planar patch). The blend stays its own patch. A double click is still the 3° walk, not the body, so Confirm still writes the tapped faces. Triangles outside the seed body are removed. The `{center, normal}` passed to `moveFace` is taken only from triangles within 1° of the hit, so it stays on the planar face. The worker then carries that tangent blend with the offset. The fillet and the wall are one vertex-connected body; the seed-body clip does not drop the fillet. Default one-click, and Shell, Draft, and Cut, stay the planar face only.
 - **Delete Face.** Same legacy tap as Shell and Move Face, including that seed-body clip. A double click is not the body. The tap does not delete.
 
 Worker face picks (`{ center, normal }` passed to `hollow` / `draftFaces` / `cut` / `moveFace` / `deleteFace`) resolve in `c4MeshData`, not in PartGraph. A named pick stays on the body whose surface contains the center. It does not move to another body because that face's center is nearer. The two face graphs are not kept in sync. `deleteFace` uses that same center and normal.
@@ -133,7 +133,7 @@ When the input `decompose()`s into two or more bodies, the helper fillets only t
 
 The fillet piece is unioned into that owning body. The blend is one solid with the owner, not a leftover wedge beside it. Keep-both siblings are not part of that union (union would weld the cut). The boolean and the scrap check then see that one body. If decompose still sees separate scrap after the join, the gate below fails loud. Thresholds are unchanged.
 
-That join does not rebuild the face graph. The graph stays lazy until the next non-legacy click or the overlay. Move Face does not read it. `moveFace` on a face next to the fillet carries the tangent blend with that face, so the fillet does not stay behind as its own piece.
+The fillet and the wall are already one body (one `decompose` component, one vertex component). They share the tangency edge. The face graph is rebuilt when that mesh is shown. The blend stays its own patch — a flat is not swallowed — and the planar patch records the blend in `tangentTris` when the shared edge is within 18°. A 90° end does not. Move Face one-click reads that link, so a pick on the wall includes the fillet. `moveFace` then carries it. Default one-click does not.
 
 | Result of `decompose` | What it does |
 | --- | --- |
@@ -144,7 +144,7 @@ That join does not rebuild the face graph. The graph stays lazy until the next n
 
 Scrap volume is `(sum of component volumes) − largest`. That still means disconnected cutter scraps (thin sheets), not a second designed body. The other keep-both piece is composed back after the check, so it is not scored as scrap.
 
-`golden:fillet-after-cut` is keep-both plus `filletAlongPath`. `golden:fillet-join-body` is an internal fillet whose wedge is in that one body, and a face pick that cannot select another body. `golden:fillet-move-seam` moves the face next to that fillet and checks the body-split line on a drafted face. `golden:fillet-wrap-draft` is a wrap that finishes onto a drafted face. Fillet after hollow is a different path: a concave segment forces the variable-profile builder. `golden:draft-fillet-tangency` covers draft hinge vs a fillet.
+`golden:fillet-after-cut` is keep-both plus `filletAlongPath`. `golden:fillet-join-body` is an internal fillet whose wedge is in that one body, and a face pick that cannot select another body. `golden:fillet-move-seam` moves the face next to that fillet and checks the body-split line on a drafted face. `golden:fillet-face-pick` is the wall pick itself: the fillet is in that pick, then the move carries it. `golden:fillet-wrap-draft` is a wrap that finishes onto a drafted face. Fillet after hollow is a different path: a concave segment forces the variable-profile builder. `golden:draft-fillet-tangency` covers draft hinge vs a fillet.
 
 ## UI confirm
 
@@ -167,17 +167,17 @@ Fillet's marker comment still says the second Accept replaces. The call site pas
 
 | | Face graph | Edge + body contours | Shared-edge line | Notes |
 | --- | --- | --- | --- | --- |
-| Cut confirm (keep both) | lazy, then clipped to the seed body | rebuilt; pieces share no vertices | 1px black, on the edge | `filletAlongPath` fillets the body that owns the path, then composes the rest |
-| Cut confirm (one side) | lazy | rebuilt; one body | none | |
-| Draft confirm | lazy | rebuilt from new dihedrals | recomputed; one body still has none; a drafted face that still meets the other body keeps the 1px line | wrap splits at a corner sharper than 5°; an open end extends when clearance is not already ~0, and a shallow internal split (≤ ~20°) takes the sweep expand pad; 15° / 28° unchanged |
-| Fillet / Chamfer confirm | lazy | rebuilt; picked wire kept | recomputed from the new mesh | |
-| Shell / hollow confirm | lazy | rebuilt; no shell-specific rule | recomputed from the new mesh | |
-| Move confirm | lazy | rebuilt | recomputed from the new mesh | preview does not rebuild graphs |
-| Move Face confirm | lazy, clipped to the seed body | rebuilt | recomputed from the new mesh | a tangent fillet on the picked face is carried with the offset; preview does not rebuild graphs |
-| Delete Face confirm | lazy | rebuilt | recomputed from the new mesh | a heal that cannot close throws on Confirm, not on the tap |
+| Cut confirm (keep both) | rebuilt, then clipped to the seed body | rebuilt; pieces share no vertices | 1px black, on the edge | `filletAlongPath` fillets the body that owns the path, then composes the rest |
+| Cut confirm (one side) | rebuilt | rebuilt; one body | none | |
+| Draft confirm | rebuilt | rebuilt from new dihedrals | recomputed; one body still has none; a drafted face that still meets the other body keeps the 1px line | wrap splits at a corner sharper than 5°; an open end extends when clearance is not already ~0, and a shallow internal split (≤ ~20°) takes the sweep expand pad; 15° / 28° unchanged |
+| Fillet / Chamfer confirm | rebuilt with the new mesh; the blend stays its own patch | rebuilt; picked wire kept | recomputed from the new mesh | a wall records a blend that meets it within 18° |
+| Shell / hollow confirm | rebuilt | rebuilt; no shell-specific rule | recomputed from the new mesh | |
+| Move confirm | rebuilt | rebuilt | recomputed from the new mesh | preview does not rebuild graphs |
+| Move Face confirm | rebuilt with the new mesh; one click includes a tangent fillet, still clipped to the seed body | rebuilt | recomputed from the new mesh | the pick includes that fillet and the offset carries it; preview does not rebuild graphs |
+| Delete Face confirm | rebuilt | rebuilt | recomputed from the new mesh | a heal that cannot close throws on Confirm, not on the tap |
 | Enter Cut / Draft / Move / Move Face | unchanged | unchanged | unchanged | highlights and clones only |
 | Enter Delete Face | unchanged | unchanged | unchanged | highlight only; the tap does not run `deleteFace` |
-| Assembly, active part succeeds | lazy (dropped on that run) | rebuilt on the active mesh | recomputed from the active mesh | other visible parts are drawn and are not the pick mesh |
+| Assembly, active part succeeds | rebuilt when that mesh is shown | rebuilt on the active mesh | recomputed from the active mesh | other visible parts are drawn and are not the pick mesh |
 | Assembly, active part fails or is hidden | cleared, not rebuilt from a previous solid | cleared, not rebuilt | none for that part | that part is omitted; no shadow solid |
 
 ## Parts feed
@@ -189,7 +189,7 @@ The viewport can show more than the script in Monaco. An assembly is a list of p
 - **Document.** The saved assembly lists `id`, `name`, `visible`, and `order`. An optional `position` `[x, y, z]` is a translation the viewport applies. There are no mates. The script source is not in the JSON.
 - **Row id.** In git mode the id is a repo path and the part is that file. A path with no file yet offers Find in repo. In local mode the id is an IndexedDB key. A missing key offers Upload. Nothing else talks to git.
 - **Visibility and failure.** The viewport draws every visible part whose latest run returned a solid. A hidden row is left out. A failed script highlights that row and contributes no solid. The previous mesh is not kept.
-- **Graphs.** Face, edge, and body-contour graphs stay on the active part. They rebuild when that part's script succeeds, on the same path as a single script (edge graph and contours at the end of the run; face graph on the next click). A failed or hidden active part clears its mesh and does not rebuild those graphs from a previous solid. The other visible parts are drawn beside it and are not the pick mesh, so they do not rebuild graphs.
+- **Graphs.** Face, edge, and body-contour graphs stay on the active part. They rebuild when that part's script succeeds, on the same path as a single script (edge graph and contours at the end of the run; face graph when the new mesh is shown). A failed or hidden active part clears its mesh and does not rebuild those graphs from a previous solid. The other visible parts are drawn beside it and are not the pick mesh, so they do not rebuild graphs.
 
 ## Goldens and fixtures
 
@@ -197,5 +197,6 @@ The viewport can show more than the script in Monaco. An assembly is a list of p
 - Each runner is a `package.json` script named `golden:…` (`node scripts/golden/smoke_….mjs`). `npm run verify` is the full gate (`VALIDATION.md`).
 - `golden:helper-binding-clash` scans those fixtures. The user script is still the body of `new Function(...helperNames, script)`. A top-level `const cut` in a fixture is a SyntaxError because `cut` is already a parameter. Nesting the script in another function would hide that and is not the fix. Do not name a fixture binding after an injected helper (`cut`, `move`, `shell`, `hollow`, `draftFaces`, `moveFace`, `deleteFace`, …).
 - `golden:move-face` offsets picked faces along their normals. Flip reverses each normal. Adjacent planar faces extend or trim. A tangent fillet on the picked face is carried with that offset (`golden:fillet-move-seam`).
+- `golden:fillet-face-pick` is a face pick on the wall next to an internal fillet. The pick includes that fillet, and `moveFace` then carries it. The two regions are one body.
 - `golden:delete-face` removes a planar chamfer whose neighbors meet again, and throws when deleting a cube face would leave the solid open.
 - `golden:assembly` loads the selected row's script, drops a hidden row from the composed viewport, omits a failed script with no previous solid, and saves ids rather than inline scripts.

@@ -18,6 +18,8 @@
  * debug overlay is requested (never on the worker serialize/postMessage
  * critical path — that caused iOS Safari OOM / black viewport in #88/#89).
  * Face pick reads one patch: the graph component for that face (flat or curved).
+ * Move Face also reads `tangentTris` on a planar patch. That does not merge
+ * the blend into the flat.
  * Edge propagation must NOT read patches yet.
  * No visibility BVH (PR 6).
  */
@@ -42,6 +44,12 @@ export const PATCH_K_FEATURE_DEG = 25;
  */
 /** Coplanar group area ≥ this × the largest coplanar group → locked flat. */
 export const PATCH_FLAT_AREA_FRAC_OF_MAX = 0.15;
+/**
+ * A non-planar patch that meets a flat across a dihedral at or below this
+ * is recorded on that flat as `tangentTris`. It is not merged into `tris`.
+ * 90° ends (fillet ends, cylinder rims) stay unattached.
+ */
+export const PATCH_TANGENT_BLEND_DEG = 18;
 
 function sub(a, b) {
   return [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
@@ -433,8 +441,37 @@ export function buildPartGraphPatches(mesh, opts = {}) {
       curvature: { mean: meanK, variance },
       atomCount: patchAtomCount[pid],
       faceIds: [...patchFaceIds[pid]].sort((x, y) => x - y),
+      tangentTris: [],
     });
   }
+
+  // Tangent link only. A fillet stays its own blend patch (`tris` unchanged)
+  // and is listed on the flat it meets within PATCH_TANGENT_BLEND_DEG.
+  const linked = new Set();
+  for (const [key, edgeTris] of edgeMap) {
+    if (edgeTris.length !== 2) continue;
+    const turn = dihedral.get(key);
+    if (turn == null || turn > PATCH_TANGENT_BLEND_DEG) continue;
+    const ia = triPatch[edgeTris[0]];
+    const ib = triPatch[edgeTris[1]];
+    if (ia === ib) continue;
+    const pa = patches[ia];
+    const pb = patches[ib];
+    let flat = null;
+    let curved = null;
+    if (pa.kind === 'planar' && pb.kind !== 'planar') {
+      flat = pa;
+      curved = pb;
+    } else if (pb.kind === 'planar' && pa.kind !== 'planar') {
+      flat = pb;
+      curved = pa;
+    } else continue;
+    const stamp = flat.id * 0x100000 + curved.id;
+    if (linked.has(stamp)) continue;
+    linked.add(stamp);
+    for (const t of curved.tris) flat.tangentTris.push(t);
+  }
+  linked.clear();
 
   let hash = numTri * 2654435761;
   hash = (hash ^ (atomCount * 97531)) >>> 0;

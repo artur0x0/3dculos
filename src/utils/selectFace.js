@@ -343,6 +343,51 @@ function clipIndicesToSeedBody(geometry, seedFaceIndex, indices) {
   return filtered.length ? filtered : (Number.isFinite(seed) ? [seed] : []);
 }
 
+/**
+ * Build the face graph for this geometry now. `renderMeshData` calls this
+ * when a new mesh is shown, including after fillet, so the next pick reads
+ * the new solid. A click builds the same graph if this paint missed.
+ */
+export function warmFaceGraph(geometry, faceIDs) {
+  return faceGraphFor(geometry, faceIDs);
+}
+
+/**
+ * Move Face one-click. The coplanar wall, plus a blend that meets that wall
+ * within PATCH_TANGENT_BLEND_DEG. The blend stays its own patch; this only
+ * adds its triangles to the pick. A click that lands on the fillet stays the
+ * coplanar facet. Triangles outside the seed body are removed.
+ *
+ * @param {BufferGeometry} geometry
+ * @param {number} seedFaceIndex
+ * @param {number[]|null} faceNormal
+ * @param {ArrayLike<number>|null} [faceIDs]
+ * @returns {number[]}
+ */
+export function selectMoveFaceWithTangentFillet(geometry, seedFaceIndex, faceNormal, faceIDs = null) {
+  const seed = Number(seedFaceIndex);
+  const coplanar = clipIndicesToSeedBody(
+    geometry,
+    seed,
+    selectFaceByID(geometry, seed, { normal: faceNormal }),
+  );
+  const graph = faceGraphFor(geometry, faceIDs);
+  const triPatch = graph?.triPatch;
+  if (!graph || !triPatch || seed < 0 || seed >= triPatch.length) return coplanar;
+  const patch = graph.patches[triPatch[seed]];
+  if (!patch || patch.kind !== 'planar' || !patch.tangentTris?.length) return coplanar;
+  const extra = clipIndicesToSeedBody(geometry, seed, patch.tangentTris);
+  if (!extra.length) return coplanar;
+  const seen = new Set(coplanar);
+  const out = coplanar.slice();
+  for (const t of extra) {
+    if (seen.has(t)) continue;
+    seen.add(t);
+    out.push(t);
+  }
+  return out;
+}
+
 function faceGraphFor(geometry, faceIDs) {
   const positions = geometry?.attributes?.position?.array;
   const indices = geometry?.index?.array;
