@@ -59,8 +59,13 @@ Errors use this same glass card. They are not a blue rounded pill.
 - **`ErrorPopup.jsx`** — `rounded-lg`, `surface-glass-chip`, and a tinted border
   (`border-red-400/70`, `border-amber-400/70`, or `border-cyan-400/70`).
 - Undo stays on the card when there is history to pop.
-- The card is portaled at `fixed top-16 left-1/2 z-50` so it sits above the
-  feature strip and the left rail.
+- Soft-fail toasts are portaled at `fixed top-16 left-1/2 z-50` so they sit
+  above the feature strip and the left rail.
+- The execution-error toast is one card for every message: `fixed top-16
+  inset-x-3 z-50` (most of the viewport width, the same card on desktop). It
+  does not shrink to the text. The first line is the word `Error`, left
+  justified, with Undo and the dismiss X right justified and a wider gap
+  between those two controls. The description is the second line.
 
 ## Placement
 

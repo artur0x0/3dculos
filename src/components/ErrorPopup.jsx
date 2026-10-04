@@ -4,6 +4,11 @@ import { X } from 'lucide-react';
 /**
  * Shared error / soft-fail popup. Always includes an Undo control when an
  * onUndo handler is provided (disabled when canUndo is false).
+ *
+ * layout="inline" (default) keeps the message beside the actions — the
+ * soft-fail toasts. layout="stacked" is the execution-error toast: one
+ * two-line card (label, then description) whose width comes from the
+ * portal, not from the message.
  */
 // Same glass card as the mode chips in docs/POPUP_STYLE.md. Not a rounded pill.
 const TONE_CLASS = {
@@ -19,6 +24,7 @@ export default function ErrorPopup({
   children,
   title = null,
   tone = 'error',
+  layout = 'inline',
   onDismiss = null,
   onUndo = null,
   canUndo = false,
@@ -30,11 +36,65 @@ export default function ErrorPopup({
     onDismiss?.();
   };
 
+  const actions = (
+    <div className={`flex items-center shrink-0 pointer-events-auto ${layout === 'stacked' ? 'gap-5' : 'gap-1'}`}>
+      {typeof onUndo === 'function' && (
+        <button
+          type="button"
+          data-error-undo=""
+          onClick={handleUndo}
+          disabled={!canUndo}
+          className="px-2 py-0.5 rounded-md bg-white/15 hover:bg-white/25
+            disabled:opacity-40 disabled:pointer-events-none font-semibold"
+          title="Undo"
+          aria-label="Undo"
+        >
+          Undo
+        </button>
+      )}
+      {typeof onDismiss === 'function' && (
+        <button
+          type="button"
+          data-error-dismiss=""
+          onClick={onDismiss}
+          className="text-white/80 hover:text-white p-0.5"
+          title="Dismiss"
+          aria-label="Dismiss"
+        >
+          <X size={14} />
+        </button>
+      )}
+    </div>
+  );
+
+  const shell = `${TONE_CLASS[tone] || TONE_CLASS.error} surface-glass-chip text-xs font-sans font-medium shadow-lg rounded-lg ${layout === 'stacked' ? 'w-full' : ''} ${className}`;
+
+  // Execution errors: one shape. Label and actions share the first line;
+  // the description is the full-width second line, so a short message and a
+  // long one occupy the same card width.
+  if (layout === 'stacked') {
+    return (
+      <div
+        role="alert"
+        data-error-popup=""
+        data-error-layout="stacked"
+        className={shell}
+        {...rest}
+      >
+        <div className="flex items-center justify-between gap-3">
+          <div className="font-bold text-left">{title}</div>
+          {actions}
+        </div>
+        <div className="text-left mt-1 break-words">{children}</div>
+      </div>
+    );
+  }
+
   return (
     <div
       role="alert"
       data-error-popup=""
-      className={`${TONE_CLASS[tone] || TONE_CLASS.error} surface-glass-chip text-xs font-sans font-medium shadow-lg rounded-lg ${className}`}
+      className={shell}
       {...rest}
     >
       <div className="flex items-start gap-2">
@@ -42,34 +102,7 @@ export default function ErrorPopup({
           {title ? <div className="font-bold mb-1">{title}</div> : null}
           <div className="text-left">{children}</div>
         </div>
-        <div className="flex items-center gap-1 shrink-0 pointer-events-auto">
-          {typeof onUndo === 'function' && (
-            <button
-              type="button"
-              data-error-undo=""
-              onClick={handleUndo}
-              disabled={!canUndo}
-              className="px-2 py-0.5 rounded-md bg-white/15 hover:bg-white/25
-                disabled:opacity-40 disabled:pointer-events-none font-semibold"
-              title="Undo"
-              aria-label="Undo"
-            >
-              Undo
-            </button>
-          )}
-          {typeof onDismiss === 'function' && (
-            <button
-              type="button"
-              data-error-dismiss=""
-              onClick={onDismiss}
-              className="text-white/80 hover:text-white p-0.5"
-              title="Dismiss"
-              aria-label="Dismiss"
-            >
-              <X size={14} />
-            </button>
-          )}
-        </div>
+        {actions}
       </div>
     </div>
   );
