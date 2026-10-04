@@ -84,7 +84,7 @@ There is no `rebuildGraphs()` and no per-op hook. Cut, Draft, Move Face, and Del
 
 What the new mesh contains is the difference, not the rebuild:
 
-- **Keep-both cut.** Two vertex-disjoint bodies. Vertex walks cannot cross them; `bodyId` also blocks the bridges that would. `selectGraphFace` drops triangles that are not in the seed body when more than one body exists. The shared edge is painted (below).
+- **Keep-both cut.** Two vertex-disjoint bodies. Vertex walks cannot cross them. Face and edge graphs clip to the seed body: `selectGraphFace`, legacy taps (Move Face and Delete Face included), and the part-graph merge drop triangles that belong to another body. An edge walk skips a neighbor whose `bodyId` differs. The shared edge is painted (below).
 - **Draft.** One body, unless the input was already split. Vertices of the drafted faces move, so dihedrals change, so the 2° / 15° gates can drop or keep different edges. No draft flag is stored on an edge.
 
 ## One click, one face
@@ -95,10 +95,10 @@ What the new mesh contains is the difference, not the rebuild:
 - **Default (double click).** The vertex-connected body (`selectOwningBody`), not a wider face.
 - **Shell, Draft, Cut** pass `legacy`. One click is the coplanar region, two clicks are the 3° neighbour walk, three clicks are the connected component. A double click does **not** become the body, so Confirm still writes the tapped face.
 - **Move.** One click is the full face and does not change the target. Double click sets that body (`{ at }` centroid).
-- **Move Face.** Same legacy tap as Shell. A double click is not the body, so Confirm still writes the tapped faces.
-- **Delete Face.** Same legacy tap as Shell and Move Face. A double click is not the body.
+- **Move Face.** Same legacy tap as Shell. A double click is not the body, so Confirm still writes the tapped faces. Triangles outside the seed body are removed.
+- **Delete Face.** Same legacy tap as Shell and Move Face, including that seed-body clip. A double click is not the body.
 
-Worker face picks (`{ center, normal }` passed to `hollow` / `draftFaces` / `cut` / `moveFace` / `deleteFace`) resolve in `c4MeshData`, not in PartGraph. The two face graphs are not kept in sync. `deleteFace` uses that same center and normal.
+Worker face picks (`{ center, normal }` passed to `hollow` / `draftFaces` / `cut` / `moveFace` / `deleteFace`) resolve in `c4MeshData`, not in PartGraph. A named pick stays on the body whose surface contains the center. It does not move to another body because that face's center is nearer. The two face graphs are not kept in sync. `deleteFace` uses that same center and normal.
 
 ## Contour paint
 
@@ -131,7 +131,7 @@ The new faces on the cut are real 90° edges on each piece, but the two side fac
 
 When the input `decompose()`s into two or more bodies, the helper fillets only the body that owns the path, then `Manifold.compose`s the untouched bodies back. Ownership is the smallest worst-point distance of up to 48 path samples to that body's triangles. A tie (the shared cut edge, both ~0) keeps the first decompose index. A bad path throws before the split. One body does not split.
 
-The boolean and the scrap check then see that one body. Thresholds are unchanged:
+The fillet piece is unioned into that owning body. The blend is one solid with the owner, not a leftover wedge beside it. Keep-both siblings are not part of that union (union would weld the cut). The boolean and the scrap check then see that one body. If decompose still sees separate scrap after the join, the gate below fails loud. Thresholds are unchanged:
 
 | Result of `decompose` | What it does |
 | --- | --- |
@@ -142,7 +142,7 @@ The boolean and the scrap check then see that one body. Thresholds are unchanged
 
 Scrap volume is `(sum of component volumes) − largest`. That still means disconnected cutter scraps (thin sheets), not a second designed body. The other keep-both piece is composed back after the check, so it is not scored as scrap.
 
-`golden:fillet-after-cut` is keep-both plus `filletAlongPath`. `golden:fillet-wrap-draft` is a wrap that finishes onto a drafted face. Fillet after hollow is a different path: a concave segment forces the variable-profile builder. `golden:draft-fillet-tangency` covers draft hinge vs a fillet.
+`golden:fillet-after-cut` is keep-both plus `filletAlongPath`. `golden:fillet-join-body` is an internal fillet whose wedge is in that one body, and a face pick that cannot select another body. `golden:fillet-wrap-draft` is a wrap that finishes onto a drafted face. Fillet after hollow is a different path: a concave segment forces the variable-profile builder. `golden:draft-fillet-tangency` covers draft hinge vs a fillet.
 
 ## UI confirm
 
@@ -171,7 +171,7 @@ Fillet's marker comment still says the second Accept replaces. The call site pas
 | Fillet / Chamfer confirm | lazy | rebuilt; picked wire kept | recomputed from the new mesh | |
 | Shell / hollow confirm | lazy | rebuilt; no shell-specific rule | recomputed from the new mesh | |
 | Move confirm | lazy | rebuilt | recomputed from the new mesh | preview does not rebuild graphs |
-| Move Face confirm | lazy | rebuilt | recomputed from the new mesh | preview does not rebuild graphs |
+| Move Face confirm | lazy, clipped to the seed body | rebuilt | recomputed from the new mesh | preview does not rebuild graphs |
 | Delete Face confirm | lazy | rebuilt | recomputed from the new mesh | preview does not rebuild graphs; a heal that cannot close throws |
 | Enter Cut / Draft / Move / Move Face / Delete Face | unchanged | unchanged | unchanged | highlights and clones only |
 | Assembly, active part succeeds | lazy (dropped on that run) | rebuilt on the active mesh | recomputed from the active mesh | other visible parts are drawn and are not the pick mesh |

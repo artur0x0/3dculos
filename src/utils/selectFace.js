@@ -327,6 +327,22 @@ export const SelectionMode = {
 /** One PartGraph per geometry. Rebuilt when the mesh or its faceID buffer changes. */
 const faceGraphCache = new WeakMap();
 
+/**
+ * Drop triangles that are not in the seed body's vertex component.
+ * Same rule as selectGraphFace. One body is a no-op.
+ */
+function clipIndicesToSeedBody(geometry, seedFaceIndex, indices) {
+  const list = Array.isArray(indices) ? indices : [];
+  const bodies = meshBodyComponents(geometry?.attributes?.position, geometry?.index);
+  if (!bodies || bodies.length < 2) return list;
+  const seed = Number(seedFaceIndex);
+  const owner = bodies.find((b) => b.triangles.includes(seed));
+  if (!owner) return list;
+  const allow = new Set(owner.triangles);
+  const filtered = list.filter((t) => allow.has(t));
+  return filtered.length ? filtered : (Number.isFinite(seed) ? [seed] : []);
+}
+
 function faceGraphFor(geometry, faceIDs) {
   const positions = geometry?.attributes?.position?.array;
   const indices = geometry?.index?.array;
@@ -425,27 +441,37 @@ export function resolveViewportFaceClick({
 }) {
   const clicks = Number(clickCount) || 1;
   if (legacy) {
+    // Shell, Draft, Cut, Move Face, and Delete Face stay on the tapped face,
+    // not the whole body. The walk still cannot enter another body.
     if (clicks >= 3) {
       return {
-        indices: selectAllConnected(geometry, seedFaceIndex),
+        indices: clipIndicesToSeedBody(geometry, seedFaceIndex, selectAllConnected(geometry, seedFaceIndex)),
         selectionMode: 'all-connected',
         kind: 'body',
       };
     }
     if (clicks === 2) {
       return {
-        indices: selectFaceWithTolerance(
+        indices: clipIndicesToSeedBody(
           geometry,
           seedFaceIndex,
-          { normal: faceNormal },
-          angleTolerance,
+          selectFaceWithTolerance(
+            geometry,
+            seedFaceIndex,
+            { normal: faceNormal },
+            angleTolerance,
+          ),
         ),
         selectionMode: 'angular-tolerance',
         kind: 'tolerance',
       };
     }
     return {
-      indices: selectFaceByID(geometry, seedFaceIndex, { normal: faceNormal }),
+      indices: clipIndicesToSeedBody(
+        geometry,
+        seedFaceIndex,
+        selectFaceByID(geometry, seedFaceIndex, { normal: faceNormal }),
+      ),
       selectionMode: 'coplanar',
       kind: 'planar',
     };

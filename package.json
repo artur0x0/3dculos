@@ -77,6 +77,7 @@
         "golden:slice-bc-edge-chip-tracking": "node scripts/golden/smoke_slice_bc_edge_chip_tracking.mjs",
         "golden:cut-plane": "node scripts/golden/smoke_cut_plane.mjs",
         "golden:fillet-after-cut": "node scripts/golden/smoke_fillet_after_cut.mjs",
+        "golden:fillet-join-body": "node scripts/golden/smoke_fillet_join_body.mjs",
         "golden:fillet-wrap-draft": "node scripts/golden/smoke_fillet_wrap_draft.mjs",
         "golden:playtest-draft-fillet-tear": "node scripts/golden/smoke_playtest_draft_fillet_tear.mjs",
         "golden:face-click": "node scripts/golden/smoke_face_click_graph.mjs",

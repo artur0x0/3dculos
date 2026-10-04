@@ -71,6 +71,50 @@ function edgeKey(u, w) {
   return u < w ? u * 1e9 + w : w * 1e9 + u;
 }
 
+/** Vertex-connected component id per triangle. Bodies that share no vertex stay apart. */
+function triangleBodyIds(indices, numTri) {
+  const parent = new Uint32Array(numTri);
+  for (let i = 0; i < numTri; i++) parent[i] = i;
+  const find = (a) => {
+    let r = a;
+    while (parent[r] !== r) r = parent[r];
+    let x = a;
+    while (parent[x] !== r) {
+      const n = parent[x];
+      parent[x] = r;
+      x = n;
+    }
+    return r;
+  };
+  const unite = (a, b) => {
+    const ra = find(a);
+    const rb = find(b);
+    if (ra !== rb) parent[rb] = ra;
+  };
+  const vertToTri = new Map();
+  for (let t = 0; t < numTri; t++) {
+    for (let k = 0; k < 3; k++) {
+      const v = indices[t * 3 + k];
+      const prev = vertToTri.get(v);
+      if (prev === undefined) vertToTri.set(v, t);
+      else unite(prev, t);
+    }
+  }
+  const rootToId = new Map();
+  const ids = new Int32Array(numTri);
+  let next = 0;
+  for (let t = 0; t < numTri; t++) {
+    const r = find(t);
+    let id = rootToId.get(r);
+    if (id == null) {
+      id = next++;
+      rootToId.set(r, id);
+    }
+    ids[t] = id;
+  }
+  return ids;
+}
+
 function makeUF(n) {
   const parent = new Int32Array(n);
   for (let i = 0; i < n; i++) parent[i] = i;
@@ -161,10 +205,21 @@ export function buildPartGraphPatches(mesh, opts = {}) {
     rawFid[t] = faceIDs && faceIDs.length > t ? Number(faceIDs[t]) | 0 : t;
   }
 
+  // Vertex-connected body of each triangle. A keep-both cut does not share
+  // vertices, so a coplanar flood must not unite those faces even when a
+  // faceID is reused across the cut.
+  const bodyOf = triangleBodyIds(indices, numTri);
+  let multiBody = false;
+  for (let t = 1; t < numTri; t++) {
+    if (bodyOf[t] !== bodyOf[0]) { multiBody = true; break; }
+  }
+  const sameBody = (t0, t1) => !multiBody || bodyOf[t0] === bodyOf[t1];
+
   // --- Atoms: faceID connected components ---------------------------------
   const atomUF = makeUF(numTri);
   for (const tris of edgeMap.values()) {
     if (tris.length !== 2) continue;
+    if (!sameBody(tris[0], tris[1])) continue;
     if (rawFid[tris[0]] === rawFid[tris[1]]) atomUF.unite(tris[0], tris[1]);
   }
 
@@ -201,6 +256,7 @@ export function buildPartGraphPatches(mesh, opts = {}) {
   };
   for (const [key, tris] of edgeMap) {
     if (tris.length !== 2) continue;
+    if (!sameBody(tris[0], tris[1])) continue;
     const a0 = triAtom[tris[0]];
     const a1 = triAtom[tris[1]];
     if (a0 === a1) continue;
