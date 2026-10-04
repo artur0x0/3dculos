@@ -20,7 +20,9 @@
  * Face pick reads one patch: the graph component for that face (flat or curved).
  * After the curved merge, triangles that still lie on a locked flat's plane
  * are pulled back onto that face, even when a fillet sits between them and
- * the face ids differ. The curved blend stays its own patch.
+ * the face ids differ. Vertices within SEAM_VERTEX_MM count as touching, so
+ * a duplicate-vertex seam on that plane is the same face. The curved blend
+ * stays its own patch.
  * Edge propagation must NOT read patches yet.
  * No visibility BVH (PR 6).
  */
@@ -54,6 +56,12 @@ const PLANE_OFFSET_MM = 0.05;
  * 16mm apart and stay separate at this distance.
  */
 const PLANE_BRIDGE_MM = 8;
+/**
+ * A fillet boolean can leave two copies of a cap vertex about 0.001mm apart.
+ * They do not share an index, so an edge walk stops. This is the gap that
+ * still counts as the same face. It is far inside the 16mm arm split.
+ */
+const SEAM_VERTEX_MM = 0.02;
 
 function sub(a, b) {
   return [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
@@ -461,6 +469,80 @@ export function buildPartGraphPatches(mesh, opts = {}) {
     neighbors[edgeTris[0]].push(edgeTris[1]);
     neighbors[edgeTris[1]].push(edgeTris[0]);
   }
+  // Duplicate vertices across a fillet seam are not an edge. Record coplanar
+  // same-body triangles whose vertices are within SEAM_VERTEX_MM. The walk
+  // below claims across that gap and then stays on the plane. It does not
+  // enter the blend, so coplanar arms whose path leaves the plane stay apart.
+  const seamTouch = Array.from({ length: numTri }, () => []);
+  {
+    const seam2 = SEAM_VERTEX_MM * SEAM_VERTEX_MM;
+    const inv = 1 / SEAM_VERTEX_MM;
+    const cosSeam = Math.cos((PATCH_PLANAR_DEG * Math.PI) / 180);
+    const buckets = new Map();
+    for (let t = 0; t < numTri; t++) {
+      if (triArea[t] < 1e-8) continue;
+      for (let k = 0; k < 3; k++) {
+        const i = indices[t * 3 + k];
+        const key = `${Math.floor(positions[i * 3] * inv)}|${Math.floor(positions[i * 3 + 1] * inv)}|${Math.floor(positions[i * 3 + 2] * inv)}`;
+        let list = buckets.get(key);
+        if (!list) {
+          list = [];
+          buckets.set(key, list);
+        }
+        list.push(t);
+      }
+    }
+    const linked = seamTouch.map(() => new Set());
+    for (let t = 0; t < numTri; t++) {
+      if (triArea[t] < 1e-8) continue;
+      const n = triN[t];
+      const c = triCent[t];
+      const off = c[0] * n[0] + c[1] * n[1] + c[2] * n[2];
+      const seen = new Set();
+      for (let k = 0; k < 3; k++) {
+        const i = indices[t * 3 + k];
+        const cx = Math.floor(positions[i * 3] * inv);
+        const cy = Math.floor(positions[i * 3 + 1] * inv);
+        const cz = Math.floor(positions[i * 3 + 2] * inv);
+        for (let dx = -1; dx <= 1; dx++) {
+          for (let dy = -1; dy <= 1; dy++) {
+            for (let dz = -1; dz <= 1; dz++) {
+              const list = buckets.get(`${cx + dx}|${cy + dy}|${cz + dz}`);
+              if (!list) continue;
+              for (let li = 0; li < list.length; li++) {
+                const nb = list[li];
+                if (nb === t || seen.has(nb) || linked[t].has(nb)) continue;
+                seen.add(nb);
+                if (triArea[nb] < 1e-8 || !sameBody(t, nb)) continue;
+                const nd = n[0] * triN[nb][0] + n[1] * triN[nb][1] + n[2] * triN[nb][2];
+                if (nd < cosSeam) continue;
+                const o = triCent[nb];
+                const offO = o[0] * n[0] + o[1] * n[1] + o[2] * n[2];
+                if (Math.abs(offO - off) > PLANE_OFFSET_MM) continue;
+                let close = false;
+                for (let a = 0; a < 3 && !close; a++) {
+                  const ia = indices[nb * 3 + a];
+                  const ax = positions[ia * 3];
+                  const ay = positions[ia * 3 + 1];
+                  const az = positions[ia * 3 + 2];
+                  for (let b = 0; b < 3; b++) {
+                    const ib = indices[t * 3 + b];
+                    const ex = ax - positions[ib * 3];
+                    const ey = ay - positions[ib * 3 + 1];
+                    const ez = az - positions[ib * 3 + 2];
+                    if (ex * ex + ey * ey + ez * ez <= seam2) { close = true; break; }
+                  }
+                }
+                if (!close) continue;
+                seamTouch[t].push(nb);
+                linked[t].add(nb);
+              }
+            }
+          }
+        }
+      }
+    }
+  }
   const cosPlanar = Math.cos((planarDeg * Math.PI) / 180);
   const planeOffset = (patch) => patch.center[0] * patch.normal[0]
     + patch.center[1] * patch.normal[1]
@@ -510,6 +592,33 @@ export function buildPartGraphPatches(mesh, opts = {}) {
         if (owner && owner.kind === 'planar' && owner.area > p.area) continue;
         triPatch[nb] = p.id;
       }
+    }
+    // The needle between two copies of a cap vertex is not an edge, and it
+    // is dropped from the draw. Step across that gap, then keep walking
+    // only on this plane so the rest of the cap comes along. A blend
+    // triangle fails onPlane, so this does not reach a coplanar arm whose
+    // path leaves the plane.
+    const seamStack = [];
+    const seamSeen = new Uint8Array(numTri);
+    for (let t = 0; t < numTri; t++) {
+      if (triPatch[t] !== p.id) continue;
+      seamSeen[t] = 1;
+      seamStack.push(t);
+    }
+    const claimOnPlane = (nb) => {
+      if (seamSeen[nb] || !onPlane(nb, p, offP)) return;
+      const owner = patches[triPatch[nb]];
+      if (triPatch[nb] !== p.id && owner && owner.kind === 'planar' && owner.area > p.area) return;
+      seamSeen[nb] = 1;
+      triPatch[nb] = p.id;
+      seamStack.push(nb);
+    };
+    while (seamStack.length) {
+      const t = seamStack.pop();
+      const touch = seamTouch[t];
+      for (let i = 0; i < touch.length; i++) claimOnPlane(touch[i]);
+      const nbs = neighbors[t];
+      for (let i = 0; i < nbs.length; i++) claimOnPlane(nbs[i]);
     }
   }
   for (const p of patches) p.tris = [];

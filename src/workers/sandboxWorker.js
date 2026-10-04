@@ -1136,6 +1136,79 @@ function _c4BlendCarryDelta(md, sel, signed) {
  * @param {boolean} [opts.flip=false] reverse each face normal
  * @returns {Manifold}
  */
+/**
+ * A fillet boolean can leave two copies of a cap vertex about 0.001mm apart,
+ * so c4MeshData keeps two faces and the needle between them draws a seam.
+ * They are one plane on one body. A named pick of either face includes the
+ * other. The curved blend is several degrees off that plane and stays out.
+ */
+function _c4ExpandCoplanarSeam(md, sel) {
+  const STITCH = 0.02;
+  const STITCH2 = STITCH * STITCH;
+  const cosP = Math.cos((0.5 * Math.PI) / 180);
+  const inv = 1 / STITCH;
+  const faceVerts = md.faces.map((face) => _c4FaceVertIndices(md, face));
+  const buckets = new Map();
+  for (let fi = 0; fi < md.faces.length; fi++) {
+    for (let k = 0; k < faceVerts[fi].length; k++) {
+      const p = md.V[faceVerts[fi][k]];
+      const key = `${Math.floor(p[0] * inv)}|${Math.floor(p[1] * inv)}|${Math.floor(p[2] * inv)}`;
+      let list = buckets.get(key);
+      if (!list) { list = []; buckets.set(key, list); }
+      list.push(fi);
+    }
+  }
+  const out = new Set(sel);
+  const stack = [...sel];
+  while (stack.length) {
+    const fi = stack.pop();
+    const face = md.faces[fi];
+    const n = face.normal;
+    const off = n[0] * face.center[0] + n[1] * face.center[1] + n[2] * face.center[2];
+    const seen = new Set();
+    for (let k = 0; k < faceVerts[fi].length; k++) {
+      const p = md.V[faceVerts[fi][k]];
+      const cx = Math.floor(p[0] * inv);
+      const cy = Math.floor(p[1] * inv);
+      const cz = Math.floor(p[2] * inv);
+      for (let dx = -1; dx <= 1; dx++) {
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dz = -1; dz <= 1; dz++) {
+            const list = buckets.get(`${cx + dx}|${cy + dy}|${cz + dz}`);
+            if (!list) continue;
+            for (let li = 0; li < list.length; li++) {
+              const fj = list[li];
+              if (out.has(fj) || seen.has(fj)) continue;
+              seen.add(fj);
+              const other = md.faces[fj];
+              if (other.body !== face.body) continue;
+              const nd = n[0] * other.normal[0] + n[1] * other.normal[1] + n[2] * other.normal[2];
+              if (nd < cosP) continue;
+              const offO = n[0] * other.center[0] + n[1] * other.center[1] + n[2] * other.center[2];
+              if (Math.abs(offO - off) > 0.05) continue;
+              let close = false;
+              for (let a = 0; a < faceVerts[fj].length && !close; a++) {
+                const q = md.V[faceVerts[fj][a]];
+                for (let b = 0; b < faceVerts[fi].length; b++) {
+                  const r = md.V[faceVerts[fi][b]];
+                  const ex = q[0] - r[0];
+                  const ey = q[1] - r[1];
+                  const ez = q[2] - r[2];
+                  if (ex * ex + ey * ey + ez * ez <= STITCH2) { close = true; break; }
+                }
+              }
+              if (!close) continue;
+              out.add(fj);
+              stack.push(fj);
+            }
+          }
+        }
+      }
+    }
+  }
+  return out;
+}
+
 function moveFace(manifold, faces, distance, opts = {}) {
   if (!manifoldModule) throw new Error('Manifold not initialized');
   if (typeof distance !== 'number' || !Number.isFinite(distance)) {
@@ -1144,7 +1217,7 @@ function moveFace(manifold, faces, distance, opts = {}) {
   const flip = !!(opts && opts.flip);
   const signed = flip ? -distance : distance;
   const md = c4MeshData(manifold);
-  const sel = _c4ResolveFaceSelection(md, faces, { label: 'moveFace: faces' });
+  const sel = _c4ExpandCoplanarSeam(md, _c4ResolveFaceSelection(md, faces, { label: 'moveFace: faces' }));
   if (!sel.size) throw new Error('moveFace: face selection is empty — nothing to move');
   for (const fi of sel) {
     if (_c4Len(md.faces[fi].normal) < 1e-8) {
