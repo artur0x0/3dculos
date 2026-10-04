@@ -82,6 +82,7 @@
         "golden:move-body": "node scripts/golden/smoke_move_body.mjs",
         "golden:move-face": "node scripts/golden/smoke_move_face.mjs",
         "golden:delete-face": "node scripts/golden/smoke_delete_face.mjs",
+        "golden:assembly": "node scripts/golden/smoke_assembly.mjs",
         "golden:helper-binding-clash": "node scripts/golden/smoke_helper_binding_clash.mjs"
     },
     "dependencies": {
