@@ -222,7 +222,7 @@ function _c4FaceVertIndices(md, face) {
  * selection would make shell()/draftFaces() a no-op that looks like a kernel bug.
  */
 function _c4ResolveFaceSelection(md, spec, opts = {}) {
-  const { tolDeg = 8, planeTol = 0.05, label = 'faces', pull = null } = opts;
+  const { tolDeg = 8, label = 'faces', pull = null } = opts;
   const out = new Set();
   const add = (s) => {
     if (s === null || s === undefined || s === false || s === 'none') return;
@@ -253,20 +253,38 @@ function _c4ResolveFaceSelection(md, spec, opts = {}) {
     }
     if (!named) { cands.forEach((i) => out.add(i)); return; }
     const c = s.center;
-    const scored = cands.map((i) => ({
-      i,
-      off: Math.abs(_c4Dot(_c4Sub(c, md.faces[i].center), md.faces[i].normal)),
-      d: _c4Len(_c4Sub(c, md.faces[i].center)),
-    }));
-    const onPlane = scored.filter((x) => x.off <= planeTol);
-    const pick = (onPlane.length ? onPlane : scored).sort((a, b) => a.d - b.d)[0];
-    if (!onPlane.length && pick.off > 1) {
+    // Distance to the face center crosses bodies: a small face on another
+    // body can sit closer to the pick than the center of the face that was
+    // actually hit. The pick stays on the body whose surface contains it.
+    let best = null;
+    for (const i of cands) {
+      const f = md.faces[i];
+      let dist = Infinity;
+      const tris = f.tris;
+      for (let ti = 0; ti < tris.length; ti++) {
+        const t = tris[ti];
+        const d = _c4DistPointTri(
+          c,
+          md.V[md.T[t * 3]],
+          md.V[md.T[t * 3 + 1]],
+          md.V[md.T[t * 3 + 2]],
+        );
+        if (d < dist) dist = d;
+      }
+      const off = Math.abs(_c4Dot(_c4Sub(c, f.center), f.normal));
+      if (!best || dist < best.dist - 1e-4
+        || (Math.abs(dist - best.dist) <= 1e-4 && off < best.off - 1e-6)) {
+        best = { i, dist, off };
+      }
+    }
+    if (!best) return;
+    if (best.dist > 1 && best.off > 1) {
       throw new Error(
-        `${label}: the picked face is ${pick.off.toFixed(3)}mm off every matching `
+        `${label}: the picked face is ${best.off.toFixed(3)}mm off every matching `
         + 'plane on this body — it belongs to an earlier version of the part; re-pick it',
       );
     }
-    out.add(pick.i);
+    out.add(best.i);
   };
   add(spec);
   return out;
@@ -2289,6 +2307,43 @@ function _c4Sub(a, b) { return [a[0]-b[0], a[1]-b[1], a[2]-b[2]]; }
 function _c4Add(a, b) { return [a[0]+b[0], a[1]+b[1], a[2]+b[2]]; }
 function _c4Mul(s, v) { return [s*v[0], s*v[1], s*v[2]]; }
 
+/** Distance from point p to triangle abc. Used so a face pick stays on the body under the point. */
+function _c4DistPointTri(p, a, b, c) {
+  const ab = _c4Sub(b, a);
+  const ac = _c4Sub(c, a);
+  const ap = _c4Sub(p, a);
+  const d1 = _c4Dot(ab, ap);
+  const d2 = _c4Dot(ac, ap);
+  if (d1 <= 0 && d2 <= 0) return _c4Len(ap);
+  const bp = _c4Sub(p, b);
+  const d3 = _c4Dot(ab, bp);
+  const d4 = _c4Dot(ac, bp);
+  if (d3 >= 0 && d4 <= d3) return _c4Len(bp);
+  const cp = _c4Sub(p, c);
+  const d5 = _c4Dot(ab, cp);
+  const d6 = _c4Dot(ac, cp);
+  if (d6 >= 0 && d5 <= d6) return _c4Len(cp);
+  const vc = d1 * d4 - d3 * d2;
+  if (vc <= 0 && d1 >= 0 && d3 <= 0) {
+    const v = d1 / (d1 - d3);
+    return _c4Len(_c4Sub(p, _c4Add(a, _c4Mul(v, ab))));
+  }
+  const vb = d5 * d2 - d1 * d6;
+  if (vb <= 0 && d2 >= 0 && d6 <= 0) {
+    const w = d2 / (d2 - d6);
+    return _c4Len(_c4Sub(p, _c4Add(a, _c4Mul(w, ac))));
+  }
+  const va = d3 * d6 - d5 * d4;
+  if (va <= 0 && (d4 - d3) >= 0 && (d5 - d6) >= 0) {
+    const w = (d4 - d3) / ((d4 - d3) + (d5 - d6));
+    return _c4Len(_c4Sub(p, _c4Add(b, _c4Mul(w, _c4Sub(c, b)))));
+  }
+  const n = _c4Cross(ab, ac);
+  const nn = _c4Len(n);
+  if (!(nn > 1e-18)) return _c4Len(ap);
+  return Math.abs(_c4Dot(ap, n)) / nn;
+}
+
 /**
  * Vertex-connected component of each triangle. A cut that keeps both pieces
  * does not share vertices, so each piece is its own body even when Manifold
@@ -2437,7 +2492,14 @@ function c4MeshData(m) {
         }
       }
       const center = areaSum > 1e-18 ? _c4Mul(1/areaSum, c) : [0, 0, 0];
-      faces.push({ id: fid, tris: trisSub, normal: _c4Norm(cn), center, verts: all });
+      faces.push({
+        id: fid,
+        tris: trisSub,
+        normal: _c4Norm(cn),
+        center,
+        verts: all,
+        body: triBody[trisSub[0]],
+      });
     }
   }
   faces.sort((a, b) => a.id - b.id);
@@ -2526,7 +2588,14 @@ function c4MeshData(m) {
             }
           }
           const center = areaSum > 1e-18 ? _c4Mul(1/areaSum, c) : faces[members[0]].center;
-          merged.push({ id, tris: trisSub, normal: _c4Norm(cn), center, verts: all });
+          merged.push({
+            id,
+            tris: trisSub,
+            normal: _c4Norm(cn),
+            center,
+            verts: all,
+            body: faces[members[0]].body,
+          });
         }
         faces.length = 0;
         faces.push(...merged);
@@ -5652,6 +5721,29 @@ function _filletBodyWorstDist2(body, samples) {
  * both distances ~0) keep the first decompose index.
  * Returns null when there is nothing to split.
  */
+/**
+ * Union decompose pieces of one fillet result back into that body.
+ * A wedge that shares a face with the owner was its own body; union joins
+ * that contact and the volume stays. Pieces that remain separate are
+ * returned unchanged so the 5% / 0.01 scrap gate still decides them.
+ * Not for keep-both siblings — union would weld the cut back together.
+ */
+function _filletJoinOwnedPieces(M, solid) {
+  if (!solid || typeof solid.decompose !== 'function') return solid;
+  let parts;
+  try { parts = solid.decompose(); } catch (_) { return solid; }
+  if (!Array.isArray(parts) || parts.length < 2) return solid;
+  try {
+    let joined = parts[0];
+    for (let i = 1; i < parts.length; i++) joined = M.union([joined, parts[i]]);
+    const se = _c4StatusError(joined);
+    if (se) return solid;
+    const again = joined.decompose();
+    if (Array.isArray(again) && again.length < parts.length) return joined;
+  } catch (_) { /* scrap gate still sees the original pieces */ }
+  return solid;
+}
+
 function _filletOnlyOwningBody(M, part, path, radius, opts) {
   const norm = _s23NormalizePath(path, opts);
   const bodies = _cutBodiesOf(part);
@@ -5875,6 +5967,8 @@ function filletAlongPath(part, path, radius, opts = {}) {
       }
       // Semi-arc batch is composed of open runs — keep largest if the union
       // leaves scrap (do not apply the closed-path hard multi-component fail).
+      // Join a wedge that shares a face with the owner before that gate.
+      out = _filletJoinOwnedPieces(M, out);
       try {
         if (typeof out.decompose === 'function') {
           const parts = out.decompose();
@@ -6157,11 +6251,13 @@ function filletAlongPath(part, path, radius, opts = {}) {
       + '(cutter far larger than requested radius) — failing loud rather than shipping an oversized blend',
     );
   }
-  // Drop disconnected cutter scraps (thin purple sheets) via decompose —
-  // closed-loop sweep seams often leave tiny extra components. For closed
+  // Join a fillet wedge that shares a face with the owner, then drop
+  // disconnected cutter scraps (thin purple sheets) via decompose.
+  // Closed-loop sweep seams often leave tiny extra components. For closed
   // paths, multiple components are a hard fail (no silent keep-largest).
   // Corner arcs are split upstream (planFilletSweepPath mode:'runs' →
   // independent semi-arc subtracts). No sphere-cap post-pass (#107 bulges).
+  out = _filletJoinOwnedPieces(M, out);
   try {
     if (typeof out.decompose === 'function') {
       const parts = out.decompose();

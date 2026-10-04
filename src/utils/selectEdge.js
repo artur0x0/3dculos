@@ -824,6 +824,7 @@ function _walkDir(prev, v, adj, used) {
     for (const n of nbrs) {
       const nk = edgeKey(n);
       if (used.has(nk)) continue;
+      if (Number.isFinite(prev.bodyId) && Number.isFinite(n.bodyId) && prev.bodyId !== n.bodyId) continue;
       const al = tangentAlign(prev.tangent, n.tangent);
       if (al + 1e-12 < cosTol) continue;
       if (!best || al > bestAl + 1e-12 || (Math.abs(al - bestAl) <= 1e-12 && n.length > best.length)) {
