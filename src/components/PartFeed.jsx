@@ -1,5 +1,12 @@
 import React, { useEffect, useRef } from 'react';
-import { Eye, EyeOff, GripVertical } from 'lucide-react';
+import { Eye, EyeOff, FilePlus, FolderOpen, GripVertical, Plus } from 'lucide-react';
+
+// Same ribbon and strip buttons as the script editor top bar
+// (CodeEditor `data-editor-ribbon` + Toolbar `variant="strip"`).
+const STRIP_ROW = 'flex items-center gap-0.5 sm:gap-1 flex-1 min-w-0 overflow-x-auto';
+const STRIP_BTN = 'shrink-0 p-1.5 flex items-center rounded active:opacity-80 hover:bg-gray-700/60 text-blue-400';
+const STRIP_DIVIDER = 'shrink-0 w-px bg-gray-600 mx-0.5 self-stretch my-1';
+const STRIP_ICON = 18;
 
 /**
  * Parts feed. Desktop mounts it to the left of the editor. Mobile mounts it
@@ -137,61 +144,68 @@ export default function PartFeed({
 
   return (
     <aside className={shell} data-parts-feed="" data-parts-source={source}>
-      <div className="shrink-0 border-b border-white/10 px-3 py-2">
-        <div className="flex items-center justify-between gap-2">
-          <div className="text-sm font-semibold tracking-tight">Parts</div>
-          <span
-            className="rounded-full bg-white/10 px-2 py-0.5 text-[10px] uppercase tracking-wide text-gray-300"
-            data-parts-source-label=""
-          >
-            {source === 'git' ? 'Git' : 'Local'}
-          </span>
-        </div>
-        <div className="mt-2 flex items-center gap-2">
+      <div
+        data-ribbon-bg="editor"
+        data-parts-feed-ribbon=""
+        className="relative z-30 w-full flex items-center gap-1 px-1 py-0.5 border-b border-gray-700/60 bg-gray-900 shrink-0"
+      >
+        <div className={STRIP_ROW} data-parts-feed-toolbar="">
           <button
             type="button"
-            className="rounded-full bg-white/10 px-3 py-1 text-xs font-medium hover:bg-white/15"
+            className={STRIP_BTN}
             data-assembly-load=""
+            title="Load assembly"
+            aria-label="Load assembly"
             onClick={() => loadRef.current?.click()}
           >
-            Load
+            <FolderOpen size={STRIP_ICON} />
           </button>
           {source === 'local' && (
             <button
               type="button"
-              className="rounded-full bg-white/10 px-3 py-1 text-xs font-medium hover:bg-white/15"
+              className={STRIP_BTN}
               data-part-add=""
+              title="New part"
+              aria-label="New part"
               onClick={() => onAddPart?.()}
             >
-              New
+              <Plus size={STRIP_ICON} />
             </button>
           )}
-        </div>
-        {source === 'git' && (
-          <form className="mt-2 flex flex-col gap-1" data-git-add="" onSubmit={submitGit}>
-            <input
-              ref={gitPathRef}
-              data-git-path=""
-              placeholder="parts/name.js"
-              className="w-full rounded bg-black/30 px-2 py-1 text-xs text-gray-100 outline-none ring-1 ring-white/10"
-            />
-            <div className="flex items-center gap-2">
+          <div className={STRIP_DIVIDER} />
+          <span
+            className="shrink-0 px-1 text-[11px] font-mono text-gray-300"
+            data-parts-source-label=""
+          >
+            {source === 'git' ? 'Git' : 'Local'}
+          </span>
+          {source === 'git' && (
+            <form className="flex items-center gap-0.5 sm:gap-1 min-w-0 flex-1" data-git-add="" onSubmit={submitGit}>
+              <div className={STRIP_DIVIDER} />
+              <input
+                ref={gitPathRef}
+                data-git-path=""
+                placeholder="parts/name.js"
+                className="min-w-0 flex-1 bg-transparent px-1 py-0.5 text-xs text-gray-100 outline-none"
+              />
               <input
                 ref={gitFileRef}
                 data-git-file=""
                 type="file"
                 accept=".js,.txt"
-                className="min-w-0 flex-1 text-[10px] text-gray-400"
+                className="min-w-0 w-24 text-[10px] text-gray-400"
               />
               <button
                 type="submit"
-                className="shrink-0 rounded-full bg-white/10 px-2 py-1 text-[10px] font-medium"
+                className={STRIP_BTN}
+                title="Add git part"
+                aria-label="Add git part"
               >
-                Add
+                <FilePlus size={STRIP_ICON} />
               </button>
-            </div>
-          </form>
-        )}
+            </form>
+          )}
+        </div>
         <input
           ref={loadRef}
           type="file"

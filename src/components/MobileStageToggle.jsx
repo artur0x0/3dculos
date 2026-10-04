@@ -1,11 +1,14 @@
 import React from 'react';
+import { Box, LayoutList } from 'lucide-react';
+import SquareText from './icons/SquareText';
 
 /**
  * Slice Mobile B — iPhone Home Screen–style stage control.
  *
- * Bottom translucent glass pill. Three dots, in order: CAD, Script, Parts.
- * Tap a third to switch stage; session sticky via the caller
- * (`3dculos.mobileStage`). Desktop never mounts this.
+ * Bottom translucent glass pill. Three Lucide icons, in order: CAD (box),
+ * Script (square-text), Parts (layout-list). Tap a third to switch stage;
+ * session sticky via the caller (`3dculos.mobileStage`). Desktop never
+ * mounts this.
  *
  * Future (NOT this PR): tapping the control invokes the AI prompt. An inert
  * center affordance (`data-ai-prompt-hook`) marks the wire-up site — do not
@@ -20,11 +23,7 @@ export default function MobileStageToggle({ stage = 'cad', onChange }) {
   const goScript = () => onChange?.('script');
   const goParts = () => onChange?.('parts');
 
-  const dot = (on) => (
-    on
-      ? 'w-2.5 h-2.5 bg-white shadow'
-      : 'w-2 h-2 bg-white/35'
-  );
+  const glyph = (on) => (on ? 'text-white' : 'text-white/35');
 
   return (
     <div
@@ -81,9 +80,15 @@ export default function MobileStageToggle({ stage = 'cad', onChange }) {
           className="relative z-[1] flex w-full items-center justify-between px-5 pointer-events-none"
           aria-hidden="true"
         >
-          <span data-stage-dot="cad" className={`block rounded-full transition-all ${dot(isCad)}`} />
-          <span data-stage-dot="script" className={`block rounded-full transition-all ${dot(isScript)}`} />
-          <span data-stage-dot="parts" className={`block rounded-full transition-all ${dot(isParts)}`} />
+          <span data-stage-dot="cad" data-stage-icon="box" className={`flex items-center ${glyph(isCad)}`}>
+            <Box size={16} strokeWidth={isCad ? 2.25 : 1.75} />
+          </span>
+          <span data-stage-dot="script" data-stage-icon="square-text" className={`flex items-center ${glyph(isScript)}`}>
+            <SquareText size={16} strokeWidth={isScript ? 2.25 : 1.75} />
+          </span>
+          <span data-stage-dot="parts" data-stage-icon="layout-list" className={`flex items-center ${glyph(isParts)}`}>
+            <LayoutList size={16} strokeWidth={isParts ? 2.25 : 1.75} />
+          </span>
         </div>
       </div>
     </div>

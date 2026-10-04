@@ -83,6 +83,8 @@ const ICONS = {
 /** Mobile-first group captions (full names stay on the data model). */
 const GROUP_SHORT_LABEL = {
   Primitives: 'Block',
+  Build: 'Build',
+  Shape: 'Shape',
   Advanced: 'Adv',
   Features: 'Polish',
   Transforms: 'Move',
@@ -90,8 +92,8 @@ const GROUP_SHORT_LABEL = {
 
 /**
  * Slice 09/10/11 — left vertical helper insert palette.
- * Game keeps the Advanced grouping. Regular CAD promotes Profile / Workplane /
- * Extrude / Revolve / Sweep / Loft into the Model section of this same rail.
+ * Both layouts use one rail: Block, Build, Shape, Polish, Move. Shape is the
+ * old Model section (Profile / Workplane / Extrude / Revolve / Sweep / Loft).
  * Tap opens HelperParamModal; with selectedFace / selectedEdges, face/edge
  * features get an aware sheet (or refuse). Confirm → onInsert(id, params, faceContext, edgeContext).
  * Slice 24/25/26/28/30: Extrude / Revolve / Loft / Sweep / Profile call onEnterContourMode.
@@ -119,7 +121,7 @@ const HelperInsertPalette = ({
   onEnterMoveFaceMode = null,
   onEnterDeleteFaceMode = null,
   compact = false,
-  /** 'game' keeps Advanced. 'cad' promotes that set into Model. */
+  /** Both layouts share Block / Build / Shape / Polish / Move. */
   layout = 'game',
 }) => {
   const grouped = itemsByGroup();
@@ -246,8 +248,8 @@ const HelperInsertPalette = ({
 
   const sections = paletteRailSections(layout, grouped).map((section) => ({
     key: section.key,
-    label: section.key === 'Model' ? 'Model' : (GROUP_SHORT_LABEL[section.key] || section.key),
-    section: section.key === 'Model' ? 'model' : section.key.toLowerCase(),
+    label: GROUP_SHORT_LABEL[section.key] || section.key,
+    section: section.key.toLowerCase(),
     items: section.items,
   }));
 

@@ -708,12 +708,6 @@ const Viewport = forwardRef(({
   const moveFacePreviewGenRef = useRef(0);
   const moveFacePreviewTimerRef = useRef(null);
   const clearMoveFacePreviewRef = useRef(() => {});
-  const deleteFacePreviewRef = useRef(null);
-  const deleteFaceBaseMaterialRef = useRef(null);
-  const deleteFaceHiddenMatRef = useRef(null);
-  const deleteFaceLiveKeyRef = useRef('');
-  const deleteFacePreviewGenRef = useRef(0);
-  const deleteFacePreviewTimerRef = useRef(null);
   const clearDeleteFacePreviewRef = useRef(() => {});
   const cutPlaneWidgetRef = useRef(null);
   const cutPiecesPreviewRef = useRef(null);
@@ -3781,92 +3775,10 @@ const Viewport = forwardRef(({
     ensureMoveFacePreview(moveFaceMode);
   }, [moveFaceMode, clearMoveFacePreview, ensureMoveFacePreview]);
 
-  const removeDeleteFacePreview = useCallback(() => {
-    if (deleteFacePreviewTimerRef.current) {
-      clearTimeout(deleteFacePreviewTimerRef.current);
-      deleteFacePreviewTimerRef.current = null;
-    }
-    const preview = deleteFacePreviewRef.current;
-    deleteFacePreviewRef.current = null;
-    if (preview) {
-      sceneRef.current?.remove(preview);
-      preview.geometry?.dispose?.();
-      preview.material?.dispose?.();
-    }
-    const mesh = resultRef.current;
-    if (mesh && deleteFaceBaseMaterialRef.current) {
-      mesh.material = deleteFaceBaseMaterialRef.current;
-      deleteFaceBaseMaterialRef.current = null;
-    }
-  }, []);
-
-  const clearDeleteFacePreview = useCallback(() => {
-    deleteFacePreviewGenRef.current += 1;
-    deleteFaceLiveKeyRef.current = '';
-    removeDeleteFacePreview();
-  }, [removeDeleteFacePreview]);
+  // A tap only adds or removes a face. deleteFace runs on Confirm, not here,
+  // so a heal that cannot stay closed does not throw on the click.
+  const clearDeleteFacePreview = useCallback(() => {}, []);
   clearDeleteFacePreviewRef.current = clearDeleteFacePreview;
-
-  const hideDeleteFaceBase = useCallback(() => {
-    const mesh = resultRef.current;
-    if (!mesh) return;
-    if (!deleteFaceHiddenMatRef.current) {
-      deleteFaceHiddenMatRef.current = new MeshBasicMaterial({
-        transparent: true,
-        opacity: 0,
-        depthWrite: false,
-        colorWrite: false,
-      });
-    }
-    if (!deleteFaceBaseMaterialRef.current) deleteFaceBaseMaterialRef.current = mesh.material;
-    mesh.material = deleteFaceHiddenMatRef.current;
-  }, []);
-
-  const paintDeleteFacePreview = useCallback((meshData) => {
-    const scene = sceneRef.current;
-    removeDeleteFacePreview();
-    if (!scene || !meshData) return;
-    const geom = geometryFromPreviewMesh(meshData);
-    if (!geom) return;
-    hideDeleteFaceBase();
-    const mesh = new ThreeMesh(geom, makePreviewSkinMaterial());
-    mesh.name = 'delete-face-preview';
-    mesh.raycast = () => {};
-    scene.add(mesh);
-    deleteFacePreviewRef.current = mesh;
-    const renderer = rendererRef.current;
-    const camera = cameraRef.current;
-    if (renderer && camera) renderer.render(scene, camera);
-  }, [hideDeleteFaceBase, removeDeleteFacePreview]);
-
-  const ensureDeleteFacePreview = useCallback((state) => {
-    const faces = state?.faces || [];
-    if (!faces.length) {
-      clearDeleteFacePreview();
-      return;
-    }
-    const payloadFaces = faces.map((f) => ({ center: f.center, normal: f.normal }));
-    const key = JSON.stringify(payloadFaces);
-    if (deleteFaceLiveKeyRef.current === key && deleteFacePreviewRef.current) return;
-    const gen = ++deleteFacePreviewGenRef.current;
-    deleteFaceLiveKeyRef.current = '';
-    removeDeleteFacePreview();
-    deleteFacePreviewTimerRef.current = setTimeout(() => {
-      deleteFacePreviewTimerRef.current = null;
-      if (gen !== deleteFacePreviewGenRef.current) return;
-      manifoldContext.previewDeleteFace({ faces: payloadFaces }).then((payload) => {
-        if (gen !== deleteFacePreviewGenRef.current) return;
-        const live = deleteFaceModeRef.current;
-        if (!live) return;
-        deleteFaceLiveKeyRef.current = key;
-        paintDeleteFacePreview(payload?.mesh);
-      }).catch((err) => {
-        if (gen !== deleteFacePreviewGenRef.current) return;
-        removeDeleteFacePreview();
-        showShellToast(err?.message || 'Delete Face preview failed');
-      });
-    }, 60);
-  }, [clearDeleteFacePreview, paintDeleteFacePreview, removeDeleteFacePreview]);
 
   const paintDeleteFacePicks = useCallback((state) => {
     const geom = resultRef.current?.geometry;
@@ -3964,14 +3876,6 @@ const Viewport = forwardRef(({
       exitDeleteFaceMode();
     }
   }, [onCommitDeleteFace, exitDeleteFaceMode, onFaceSelected, clearHighlight]);
-
-  useEffect(() => {
-    if (!deleteFaceMode) {
-      clearDeleteFacePreview();
-      return;
-    }
-    ensureDeleteFacePreview(deleteFaceMode);
-  }, [deleteFaceMode, clearDeleteFacePreview, ensureDeleteFacePreview]);
 
   const clearMeasurementLines = useCallback(() => {
     if (measurementLinesRef.current && sceneRef.current) {
@@ -4606,8 +4510,8 @@ const Viewport = forwardRef(({
         return;
       }
       if (deleteFaceModeRef.current) {
-        // Same sticky tap as Shell. A double click stays the legacy face walk,
-        // not the owning body, so Confirm still writes the tapped faces.
+        // Sticky tap: add the face, or remove it if it is already picked.
+        // This does not run deleteFace. Confirm writes the call.
         const next = toggleDeleteFaceSelection(deleteFaceModeRef.current, entry);
         commitDeleteFaceState(next);
         return;
@@ -6075,7 +5979,7 @@ const Viewport = forwardRef(({
         </div>
       )}
       
-      {/* Left helper rail. Game keeps Advanced; CAD promotes those tools into Model. */}
+      {/* Left helper rail. Block, Build, Shape, Polish, Move. */}
       {onInsertHelper && !contourMode && !filletMode && !shellMode && !draftMode && !cutMode && !moveMode && !moveFaceMode && !deleteFaceMode && (
         <HelperInsertPalette
           layout={mode === 'game' ? 'game' : 'cad'}
@@ -6570,11 +6474,10 @@ const Viewport = forwardRef(({
         </div>
       )}
 
-      {edgeModeToast && (
-        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-30 pointer-events-none max-w-[min(22rem,calc(100%-2rem))]">
+      {edgeModeToast && createPortal(
+        <div className="fixed top-16 left-1/2 -translate-x-1/2 z-50 pointer-events-none max-w-[min(22rem,calc(100%-2rem))]">
           <ErrorPopup
             tone="amber"
-            rounded="rounded-full"
             onDismiss={() => setEdgeModeToast(null)}
             onUndo={edgeModeToast.undo ? onUndo : undefined}
             canUndo={canUndo}
@@ -6582,14 +6485,14 @@ const Viewport = forwardRef(({
           >
             {edgeModeToast.text}
           </ErrorPopup>
-        </div>
+        </div>,
+        document.body,
       )}
 
-      {contourToast && (
-        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-30 pointer-events-none max-w-[min(22rem,calc(100%-2rem))]">
+      {contourToast && createPortal(
+        <div className="fixed top-16 left-1/2 -translate-x-1/2 z-50 pointer-events-none max-w-[min(22rem,calc(100%-2rem))]">
           <ErrorPopup
             tone="cyan"
-            rounded="rounded-full"
             onDismiss={() => setContourToast(null)}
             onUndo={contourToast.undo ? onUndo : undefined}
             canUndo={canUndo}
@@ -6597,11 +6500,12 @@ const Viewport = forwardRef(({
           >
             {contourToast.text}
           </ErrorPopup>
-        </div>
+        </div>,
+        document.body,
       )}
 
-      {filletScrapNotice && (
-        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-30 pointer-events-none max-w-[min(18rem,calc(100%-2rem))]">
+      {filletScrapNotice && createPortal(
+        <div className="fixed top-16 left-1/2 -translate-x-1/2 z-50 pointer-events-none max-w-[min(18rem,calc(100%-2rem))]">
           <ErrorPopup
             tone="scrap"
             role="status"
@@ -6613,14 +6517,14 @@ const Viewport = forwardRef(({
           >
             {filletScrapNotice}
           </ErrorPopup>
-        </div>
+        </div>,
+        document.body,
       )}
 
-      {filletToast && (
-        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-30 pointer-events-none max-w-[min(22rem,calc(100%-2rem))]">
+      {filletToast && createPortal(
+        <div className="fixed top-16 left-1/2 -translate-x-1/2 z-50 pointer-events-none max-w-[min(22rem,calc(100%-2rem))]">
           <ErrorPopup
             tone="warn"
-            rounded="rounded-full"
             onDismiss={() => setFilletToast(null)}
             onUndo={filletToast.undo ? onUndo : undefined}
             canUndo={canUndo}
@@ -6628,14 +6532,14 @@ const Viewport = forwardRef(({
           >
             {filletToast.text}
           </ErrorPopup>
-        </div>
+        </div>,
+        document.body,
       )}
 
-      {shellToast && (
-        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-30 pointer-events-none max-w-[min(22rem,calc(100%-2rem))]">
+      {shellToast && createPortal(
+        <div className="fixed top-16 left-1/2 -translate-x-1/2 z-50 pointer-events-none max-w-[min(22rem,calc(100%-2rem))]">
           <ErrorPopup
             tone="cyan"
-            rounded="rounded-full"
             onDismiss={() => setShellToast(null)}
             onUndo={shellToast.undo ? onUndo : undefined}
             canUndo={canUndo}
@@ -6643,7 +6547,8 @@ const Viewport = forwardRef(({
           >
             {shellToast.text}
           </ErrorPopup>
-        </div>
+        </div>,
+        document.body,
       )}
 
       {/* Measurement Info Display */}

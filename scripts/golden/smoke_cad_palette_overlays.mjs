@@ -2,8 +2,8 @@
 /**
  * Regular CAD palette promotion + Plane/Contour overlay toggles.
  * - Profile, Workplane, Extrude, Revolve, Sweep, Loft stay one entry each.
- * - Game rail keeps them under Advanced. CAD rail shows them in Model, first,
- *   and does not also render Advanced.
+ * - Both rails show that set as Shape (the old Model section). Advanced is
+ *   not also rendered.
  * - Fillet and Hole stay in Features.
  * - Plane and Contour display toggles default on, session-only, and gate
  *   overlay paint plus viewport picking. Face/Edge pick chrome stays.
@@ -46,28 +46,30 @@ console.log('cad palette + plane/contour toggles');
   check('Fillet stays in Features', grouped.Features.some((i) => i.id === 'filletEdges'));
   check('Hole stays in Features', grouped.Features.some((i) => i.id === 'hole'));
 
+  const RAIL = 'Primitives|Build|Shape|Features|Transforms';
   const game = paletteRailSections('game', grouped);
   check(
-    'game rail still Prim then Advanced',
-    game.map((s) => s.key).join('|') === 'Primitives|Advanced|Features|Transforms|Refine',
+    'game rail is Block, Build, Shape, Polish, Move',
+    game.map((s) => s.key).join('|') === RAIL,
     game.map((s) => s.key).join('|'),
   );
   check(
-    'game Advanced is the promoted set',
-    game.find((s) => s.key === 'Advanced').items.map((i) => i.id).join(',') === PROMOTED,
+    'game Shape is the promoted set',
+    game.find((s) => s.key === 'Shape').items.map((i) => i.id).join(',') === PROMOTED,
   );
 
   const cad = paletteRailSections('cad', grouped);
   check(
-    'CAD rail is Block, Model, Polish, Move, Refine',
-    cad.map((s) => s.key).join('|') === 'Primitives|Model|Features|Transforms|Refine',
+    'CAD rail is Block, Build, Shape, Polish, Move',
+    cad.map((s) => s.key).join('|') === RAIL,
     cad.map((s) => s.key).join('|'),
   );
   check(
-    'CAD Model is the promoted set',
-    cad.find((s) => s.key === 'Model').items.map((i) => i.id).join(',') === PROMOTED,
+    'CAD Shape is the promoted set',
+    cad.find((s) => s.key === 'Shape').items.map((i) => i.id).join(',') === PROMOTED,
   );
-  check('CAD does not render an Advanced section', !cad.some((s) => s.key === 'Advanced'));
+  check('CAD does not render an Advanced or Model section',
+    !cad.some((s) => s.key === 'Advanced' || s.key === 'Model'));
   // The dedicated Path button is gone; Sweep covers it. The item survives for
   // programmatic composition, so assert the *rail* drops it while the data
   // model keeps it.
@@ -105,11 +107,18 @@ console.log('cad palette + plane/contour toggles');
     }));
   }
 
-  // ── Draft is Polish now, and the rail reads Block → Model → Polish → Move ──
+  // ── Build / Polish / Move ──
   {
+    const build = cad.find((s) => s.key === 'Build').items.map((i) => i.id);
+    check('Build is hole, cut, shell, draft, pattern',
+      build.join(',') === 'hole,cut,shell,addDraft,array3D', build.join(','));
     const polish = cad.find((s) => s.key === 'Features').items.map((i) => i.id);
-    check('Draft sits in Polish', polish.includes('addDraft'));
+    check('Polish is fillet, chamfer, move face, delete face',
+      polish.join(',') === 'filletEdges,chamferEdges,moveFace,deleteFace', polish.join(','));
     const move = cad.find((s) => s.key === 'Transforms').items.map((i) => i.id);
+    check('Move is the leftovers, Move above Center',
+      move.join(',') === 'move,center,align,mirror', move.join(','));
+    check('Draft sits in Build', build.includes('addDraft'));
     check('Move no longer carries Draft', !move.includes('addDraft'));
   }
   check(
@@ -143,12 +152,12 @@ console.log('cad palette + plane/contour toggles');
     cadIds.includes('filletEdges') && cadIds.includes('hole'),
   );
   check(
-    'CAD Fillet is still under Features',
+    'CAD Fillet is under Polish',
     cad.find((s) => s.key === 'Features').items.some((i) => i.id === 'filletEdges'),
   );
   check(
-    'CAD Hole is still under Features',
-    cad.find((s) => s.key === 'Features').items.some((i) => i.id === 'hole'),
+    'CAD Hole is under Build',
+    cad.find((s) => s.key === 'Build').items.some((i) => i.id === 'hole'),
   );
 }
 
@@ -165,7 +174,7 @@ console.log('cad palette + plane/contour toggles');
   check('contour rail is not game-only', !/mode === 'game' && contourMode/.test(view));
   check('palette uses paletteRailSections', /paletteRailSections\(/.test(rail));
   check('palette marks the section', /data-palette-section=\{section\.section\}/.test(rail));
-  check('CAD model caption', /section\.key === 'Model' \? 'Model'/.test(rail));
+  check('CAD shape caption', /Shape:\s*'Shape'/.test(rail) && /Build:\s*'Build'/.test(rail));
 
   check(
     'Plane toggle in the right rail',

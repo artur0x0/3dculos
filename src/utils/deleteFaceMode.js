@@ -1,10 +1,11 @@
 /**
  * Delete Face — remove picked faces and heal by extending or trimming neighbors.
- * Confirm writes one deleteFace() and replaces a previous Delete Face block.
- * Leaving without Confirm writes nothing.
+ * Confirm writes one deleteFace() for every picked face and replaces a
+ * previous Delete Face block. Leaving without Confirm writes nothing.
+ * A heal that cannot stay a closed solid throws when that script runs.
  *
- * Tap adds a face. Tap it again to remove it. Undo drops the last face.
- * Clear drops every face. No modifier key.
+ * Tap adds a face. Tap it again to remove it. The tap does not run
+ * deleteFace. Undo drops the last face. Clear drops every face. No modifier.
  */
 
 import { shellFaceKey } from './shellMode.js';
