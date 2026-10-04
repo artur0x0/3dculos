@@ -135,6 +135,107 @@ function coverBuckets(covers) {
   return { buckets, inv };
 }
 
+function posAt(positions, i) {
+  if (typeof positions.getX === 'function') {
+    return [positions.getX(i), positions.getY(i), positions.getZ(i)];
+  }
+  const o = i * 3;
+  return [positions[o], positions[o + 1], positions[o + 2]];
+}
+
+/**
+ * Outline of a highlighted face, as flat xyz pairs.
+ *
+ * An edge two picked triangles share by index is internal. So is an edge
+ * that only exists because a fillet boolean left two copies of the vertices:
+ * the copies do not share an index, but the midpoint already lies on another
+ * triangle of this face (within COVER_MM). That seam is not drawn. The
+ * curved fillet is a different face, so it is not in `faceIndices` and its
+ * own outline stays.
+ *
+ * `positions` is a tightly packed xyz array or a three.js BufferAttribute.
+ */
+export function highlightBoundaryPositions(positions, index, faceIndices) {
+  if (!positions || !index || !faceIndices?.length) return [];
+  const edgeCount = new Map();
+  const covers = [];
+  const pad = COVER_MM;
+  for (let f = 0; f < faceIndices.length; f++) {
+    const t = faceIndices[f];
+    const base = t * 3;
+    const i0 = index[base];
+    const i1 = index[base + 1];
+    const i2 = index[base + 2];
+    const pairs = [[i0, i1], [i1, i2], [i2, i0]];
+    for (let p = 0; p < 3; p++) {
+      const u = pairs[p][0];
+      const v = pairs[p][1];
+      const lo = u < v ? u : v;
+      const hi = u < v ? v : u;
+      const key = `${lo}-${hi}`;
+      edgeCount.set(key, (edgeCount.get(key) || 0) + 1);
+    }
+    const a = posAt(positions, i0);
+    const b = posAt(positions, i1);
+    const c = posAt(positions, i2);
+    const abx = b[0] - a[0];
+    const aby = b[1] - a[1];
+    const abz = b[2] - a[2];
+    const acx = c[0] - a[0];
+    const acy = c[1] - a[1];
+    const acz = c[2] - a[2];
+    const area = 0.5 * Math.hypot(
+      aby * acz - abz * acy,
+      abz * acx - abx * acz,
+      abx * acy - aby * acx,
+    );
+    if (!(area > 1e-8)) continue;
+    covers.push({
+      i0, i1, i2,
+      ax: a[0], ay: a[1], az: a[2],
+      bx: b[0], by: b[1], bz: b[2],
+      cx: c[0], cy: c[1], cz: c[2],
+      minX: Math.min(a[0], b[0], c[0]) - pad,
+      maxX: Math.max(a[0], b[0], c[0]) + pad,
+      minY: Math.min(a[1], b[1], c[1]) - pad,
+      maxY: Math.max(a[1], b[1], c[1]) + pad,
+      minZ: Math.min(a[2], b[2], c[2]) - pad,
+      maxZ: Math.max(a[2], b[2], c[2]) + pad,
+    });
+  }
+
+  const grid = coverBuckets(covers);
+  const cover2 = COVER_MM * COVER_MM;
+  const onFace = (px, py, pz, ia, ib) => {
+    const list = grid.buckets.get(`${Math.floor(px * grid.inv)}|${Math.floor(py * grid.inv)}|${Math.floor(pz * grid.inv)}`);
+    if (!list) return false;
+    for (let i = 0; i < list.length; i++) {
+      const c = list[i];
+      if (c.i0 === ia || c.i1 === ia || c.i2 === ia || c.i0 === ib || c.i1 === ib || c.i2 === ib) continue;
+      if (px < c.minX || px > c.maxX || py < c.minY || py > c.maxY || pz < c.minZ || pz > c.maxZ) continue;
+      const d = distPointTri(px, py, pz, c.ax, c.ay, c.az, c.bx, c.by, c.bz, c.cx, c.cy, c.cz);
+      if (d * d <= cover2) return true;
+    }
+    return false;
+  };
+
+  const out = [];
+  for (const [key, count] of edgeCount) {
+    if (count !== 1) continue;
+    const dash = key.indexOf('-');
+    const ia = Number(key.slice(0, dash));
+    const ib = Number(key.slice(dash + 1));
+    const a = posAt(positions, ia);
+    const b = posAt(positions, ib);
+    const mx = (a[0] + b[0]) * 0.5;
+    const my = (a[1] + b[1]) * 0.5;
+    const mz = (a[2] + b[2]) * 0.5;
+    if (onFace(mx, my, mz, ia, ib)) continue;
+    out.push(a[0], a[1], a[2], b[0], b[1], b[2]);
+  }
+  return out;
+}
+
 function vertexOnCover(positions, buckets, inv, vi) {
   const px = positions[vi * 3];
   const py = positions[vi * 3 + 1];

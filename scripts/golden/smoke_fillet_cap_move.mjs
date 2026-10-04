@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
  * Move Face on the playtest cap offsets both sides of the duplicate-vertex
- * seam. The drawn mesh drops the needle, so one click is that plane with no
- * edge between the fillet side and the main side. The curved fillet stays
- * its own face.
+ * seam. The drawn mesh drops the needle. The highlight outline drops that
+ * seam too: one click is that plane with no edge between the fillet side
+ * and the main side. The curved fillet stays its own face.
  *
  * The two regions are already one body and one plane. c4MeshData still sees
  * two faces because the vertices are copies about 0.001mm apart. The second
@@ -14,7 +14,7 @@ import { readFileSync } from 'node:fs';
 import { BufferAttribute, BufferGeometry } from 'three';
 import { buildPartGraphPatches } from '../../src/utils/partGraphPatches.js';
 import { resolveViewportFaceClick } from '../../src/utils/selectFace.js';
-import { dropPlanarFins, isPlanarFin } from '../../src/utils/planarSeam.js';
+import { dropPlanarFins, highlightBoundaryPositions, isPlanarFin } from '../../src/utils/planarSeam.js';
 
 register('./manifold-resolve-hook.mjs', import.meta.url);
 
@@ -46,6 +46,120 @@ function check(name, cond, detail = '') {
     failed++;
     console.log(`  ❌ ${name}${detail ? ' — ' + detail : ''}`);
   }
+}
+
+function distPointTri(px, py, pz, ax, ay, az, bx, by, bz, cx, cy, cz) {
+  const abx = bx - ax;
+  const aby = by - ay;
+  const abz = bz - az;
+  const acx = cx - ax;
+  const acy = cy - ay;
+  const acz = cz - az;
+  const apx = px - ax;
+  const apy = py - ay;
+  const apz = pz - az;
+  const d1 = abx * apx + aby * apy + abz * apz;
+  const d2 = acx * apx + acy * apy + acz * apz;
+  if (d1 <= 0 && d2 <= 0) return Math.hypot(apx, apy, apz);
+  const bpx = px - bx;
+  const bpy = py - by;
+  const bpz = pz - bz;
+  const d3 = abx * bpx + aby * bpy + abz * bpz;
+  const d4 = acx * bpx + acy * bpy + acz * bpz;
+  if (d3 >= 0 && d4 <= d3) return Math.hypot(bpx, bpy, bpz);
+  const vc = d1 * d4 - d3 * d2;
+  if (vc <= 0 && d1 >= 0 && d3 <= 0) {
+    const v = d1 / (d1 - d3);
+    return Math.hypot(ax + v * abx - px, ay + v * aby - py, az + v * abz - pz);
+  }
+  const cpx = px - cx;
+  const cpy = py - cy;
+  const cpz = pz - cz;
+  const d5 = abx * cpx + aby * cpy + abz * cpz;
+  const d6 = acx * cpx + acy * cpy + acz * cpz;
+  if (d6 >= 0 && d5 <= d6) return Math.hypot(cpx, cpy, cpz);
+  const vb = d5 * d2 - d1 * d6;
+  if (vb <= 0 && d2 >= 0 && d6 <= 0) {
+    const w = d2 / (d2 - d6);
+    return Math.hypot(ax + w * acx - px, ay + w * acy - py, az + w * acz - pz);
+  }
+  const va = d3 * d6 - d5 * d4;
+  if (va <= 0 && (d4 - d3) >= 0 && (d5 - d6) >= 0) {
+    const w = (d4 - d3) / ((d4 - d3) + (d5 - d6));
+    return Math.hypot(bx + w * (cx - bx) - px, by + w * (cy - by) - py, bz + w * (cz - bz) - pz);
+  }
+  const denom = 1 / (va + vb + vc);
+  const v = vb * denom;
+  const w = vc * denom;
+  return Math.hypot(
+    ax + abx * v + acx * w - px,
+    ay + aby * v + acy * w - py,
+    az + abz * v + acz * w - pz,
+  );
+}
+
+function indexBoundarySegs(pos, index, triList) {
+  const edgeCount = new Map();
+  const ends = new Map();
+  for (const t of triList) {
+    const ids = [index[t * 3], index[t * 3 + 1], index[t * 3 + 2]];
+    for (let k = 0; k < 3; k++) {
+      const u = ids[k];
+      const v = ids[(k + 1) % 3];
+      const lo = u < v ? u : v;
+      const hi = u < v ? v : u;
+      const key = `${lo}-${hi}`;
+      edgeCount.set(key, (edgeCount.get(key) || 0) + 1);
+      if (!ends.has(key)) ends.set(key, [u, v]);
+    }
+  }
+  const segs = [];
+  for (const [key, count] of edgeCount) {
+    if (count !== 1) continue;
+    const [u, v] = ends.get(key);
+    segs.push({
+      ax: pos[u * 3], ay: pos[u * 3 + 1], az: pos[u * 3 + 2],
+      bx: pos[v * 3], by: pos[v * 3 + 1], bz: pos[v * 3 + 2],
+    });
+  }
+  return segs;
+}
+
+function segCount(flat) {
+  return flat.length / 6;
+}
+function hasSeg(flat, ax, ay, az, bx, by, bz) {
+  for (let i = 0; i < flat.length; i += 6) {
+    const d0 = Math.hypot(flat[i] - ax, flat[i + 1] - ay, flat[i + 2] - az);
+    const d1 = Math.hypot(flat[i + 3] - bx, flat[i + 4] - by, flat[i + 5] - bz);
+    const e0 = Math.hypot(flat[i] - bx, flat[i + 1] - by, flat[i + 2] - bz);
+    const e1 = Math.hypot(flat[i + 3] - ax, flat[i + 4] - ay, flat[i + 5] - az);
+    if ((d0 < 1e-6 && d1 < 1e-6) || (e0 < 1e-6 && e1 < 1e-6)) return true;
+  }
+  return false;
+}
+
+console.log('highlight outline drops a duplicate-vertex seam');
+{
+  const positions = new Float32Array([
+    0, 0, 0, 4, 0, 0, 0, 4, 0, 4, 4, 0,
+    1, 1, 0.001, 3, 1, 0.001, 3, 3, 0.001, 1, 3, 0.001,
+  ]);
+  const index = new Uint32Array([
+    0, 1, 2, 1, 3, 2,
+    4, 5, 6, 4, 6, 7,
+  ]);
+  const quad = highlightBoundaryPositions(positions, index, [0, 1]);
+  check('a quad highlight is its four sides', segCount(quad) === 4, `n=${segCount(quad)}`);
+  check('the shared diagonal is not an outline', !hasSeg(quad, 4, 0, 0, 0, 4, 0));
+  const cap = highlightBoundaryPositions(positions, index, [0, 1, 2, 3]);
+  check('the seam square is not an outline', segCount(cap) === 4, `n=${segCount(cap)}`);
+  check('the outer edge stays', hasSeg(cap, 0, 0, 0, 4, 0, 0));
+  check('an inner seam edge is gone', !hasSeg(cap, 1, 1, 0.001, 3, 1, 0.001));
+  const attr = new BufferAttribute(positions, 3);
+  const viaAttr = highlightBoundaryPositions(attr, index, [0, 1, 2, 3]);
+  check('a buffer attribute gives the same outline', viaAttr.length === cap.length
+    && viaAttr.every((v, i) => v === cap[i]));
 }
 
 await import('../../src/workers/sandboxWorker.js');
@@ -271,6 +385,72 @@ return shifted;
       } else {
         check('a curved fillet triangle sits beside the cap', false);
       }
+
+      const picked = click(true);
+      const flat = highlightBoundaryPositions(pos, index, picked.indices);
+      const drawn = [];
+      for (let i = 0; i < flat.length; i += 6) {
+        drawn.push({
+          ax: flat[i], ay: flat[i + 1], az: flat[i + 2],
+          bx: flat[i + 3], by: flat[i + 4], bz: flat[i + 5],
+        });
+      }
+      const triDist = (t, x, y, z) => {
+        const i0 = index[t * 3];
+        const i1 = index[t * 3 + 1];
+        const i2 = index[t * 3 + 2];
+        return distPointTri(
+          x, y, z,
+          pos[i0 * 3], pos[i0 * 3 + 1], pos[i0 * 3 + 2],
+          pos[i1 * 3], pos[i1 * 3 + 1], pos[i1 * 3 + 2],
+          pos[i2 * 3], pos[i2 * 3 + 1], pos[i2 * 3 + 2],
+        );
+      };
+      // A triangle that contains an endpoint is the edge's own face, or the
+      // next edge around that vertex. The other copy sits about 0.001mm off
+      // and contains neither endpoint.
+      const touches = (s, t) => triDist(t, s.ax, s.ay, s.az) < 1e-4 || triDist(t, s.bx, s.by, s.bz) < 1e-4;
+      const liesOnOther = (s) => {
+        const mx = (s.ax + s.bx) / 2;
+        const my = (s.ay + s.by) / 2;
+        const mz = (s.az + s.bz) / 2;
+        for (const t of picked.indices) {
+          if (touches(s, t)) continue;
+          if (triDist(t, mx, my, mz) <= 0.01) return true;
+        }
+        return false;
+      };
+      let crossing = 0;
+      for (const s of drawn) if (liesOnOther(s)) crossing++;
+      check('the cap highlight has no edge between the fillet side and the main side',
+        crossing === 0, `n=${crossing}`);
+      const raw = indexBoundarySegs(pos, index, picked.indices);
+      const outline = raw.filter((s) => !liesOnOther(s));
+      const nearDrawn = (s) => drawn.some((d) => {
+        const dx = (d.ax + d.bx) / 2 - (s.ax + s.bx) / 2;
+        const dy = (d.ay + d.by) / 2 - (s.ay + s.by) / 2;
+        const dz = (d.az + d.bz) / 2 - (s.az + s.bz) / 2;
+        return dx * dx + dy * dy + dz * dz < 1e-4;
+      });
+      const kept = outline.filter(nearDrawn);
+      check('the cap outline is still the highlight',
+        outline.length > 0 && kept.length === outline.length,
+        `kept=${kept.length} outline=${outline.length} drawn=${drawn.length} raw=${raw.length}`);
+      let blend = null;
+      for (const p of graph.patches) {
+        if (p.kind === 'planar') continue;
+        const near = p.tris.some((t) => Math.abs(infos[t].cz + 12) < 4);
+        if (near && (!blend || p.area > blend.area)) blend = p;
+      }
+      if (blend) {
+        const blendRaw = indexBoundarySegs(pos, index, blend.tris).length;
+        const blendDrawn = segCount(highlightBoundaryPositions(pos, index, blend.tris));
+        check('the curved fillet highlight keeps its own outline',
+          blend.kind === 'blend' && blendDrawn === blendRaw && blendDrawn > 0,
+          `kind=${blend.kind} drawn=${blendDrawn} raw=${blendRaw}`);
+      } else {
+        check('a curved fillet sits beside the cap', false);
+      }
     }
   } else if (!r.error) {
     check('mesh is available', false, 'no mesh');
@@ -291,6 +471,8 @@ return shifted;
   check('the drawn mesh drops the needle before the face graph',
     /dropPlanarFins\(vertProperties, srcIndex, srcFaceID\)/.test(vp)
     && /warmFaceGraph\(geometry, faceIDsRef\.current\)/.test(vp));
+  check('the highlight outline drops a seam that already lies on the face',
+    /highlightBoundaryPositions\(positions, index, faceIndices\)/.test(vp));
 }
 
 if (failed) {
