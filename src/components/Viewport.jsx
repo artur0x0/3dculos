@@ -30,7 +30,7 @@ import {
   Line,
   LineBasicMaterial,
   ShaderMaterial,
-  DoubleSide,
+  FrontSide,
   SphereGeometry,
   Group,
   Sprite,
@@ -157,6 +157,7 @@ import {
   CUT_PIECE_OPACITY,
 } from '../utils/cutMode';
 import { emptyMoveState, clearMoveTarget, validateMoveAccept, MOVE_MODE_NEED_BODY } from '../utils/moveMode';
+import { buildCutPiecePositions } from '../utils/cutPieceMesh';
 import { contactSeamSegments } from '../utils/contactSeam';
 import { classifySelectedFace } from '../utils/faceFeaturePlacement';
 import { classifyFilletEdges, countDegenerateTriangles } from '../utils/filletEdgeClass';
@@ -3115,19 +3116,37 @@ const Viewport = forwardRef(({
       );
     }
 
+    // Depth first, then the tint. Both pieces are slightly translucent; without
+    // the depth pass the front piece blends with the piece behind it. The
+    // geometry is the clipped body (buildCutPiecePositions), front faces only,
+    // so the uncut shell and the other piece do not show through.
+    const plane = cutPlaneFromState(state);
+    const depthMat = new MeshBasicMaterial({
+      colorWrite: false,
+      depthWrite: true,
+      depthTest: true,
+      side: FrontSide,
+    });
     const pieces = listCutPieces(state, positions, index);
     for (const piece of pieces) {
       if (piece.hidden) continue;
-      trisOf(piece.triangles, () => new MeshBasicMaterial({
+      const flat = buildCutPiecePositions(positions, index, piece.triangles, plane, piece.side);
+      if (flat.length < 9) continue;
+      const geom = new BufferGeometry();
+      geom.setAttribute('position', new BufferAttribute(new Float32Array(flat), 3));
+      const depthMesh = new ThreeMesh(geom, depthMat);
+      depthMesh.raycast = () => {};
+      const colorMesh = new ThreeMesh(geom, new MeshBasicMaterial({
         color: piece.color,
         transparent: true,
         opacity: CUT_PIECE_OPACITY,
-        depthWrite: true,
-        side: DoubleSide,
-        polygonOffset: true,
-        polygonOffsetFactor: -1,
-        polygonOffsetUnits: -1,
+        depthWrite: false,
+        depthTest: true,
+        side: FrontSide,
       }));
+      colorMesh.raycast = () => {};
+      group.add(depthMesh);
+      group.add(colorMesh);
     }
     scene.add(group);
     cutPiecesPreviewRef.current = group;
