@@ -1,6 +1,6 @@
 import { Vector3 } from 'three';
 import { buildPartGraphPatches } from './partGraphPatches.js';
-import { meshBodyComponents } from './cutMode.js';
+import { meshBodyComponents } from './meshBodyComponents.js';
 
 // Configuration constants
 const NORMAL_THRESHOLD = 0.001; // Element-wise tolerance for normal comparison (coplanar)

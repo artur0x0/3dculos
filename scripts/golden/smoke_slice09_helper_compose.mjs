@@ -92,6 +92,8 @@ function stubRunner(source) {
     draftFaces: (p) => p,
     cut: (p) => p,
     move: (p) => p,
+    moveFace: (p) => p,
+    deleteFace: (p) => p,
     rectTube: () => solid('rectTube'),
     center: (p) => p,
     align: (p) => p,
