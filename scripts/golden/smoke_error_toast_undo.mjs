@@ -69,6 +69,25 @@ check(
   popup.includes('onUndo?.()'),
   'onUndo not wired',
 );
+check(
+  'stacked execution layout keeps Undo and dismiss on the first line',
+  /layout === 'stacked' \? 'gap-5' : 'gap-1'/.test(popup)
+    && /data-error-layout="stacked"/.test(popup)
+    && /justify-between/.test(popup),
+  'stacked header missing',
+);
+
+const execStart = src.indexOf('{executionError && createPortal(');
+const execBlock = execStart >= 0 ? src.slice(execStart, execStart + 700) : '';
+check(
+  'execution error is one wide card, not a shrink-wrapped title',
+  /inset-x-3/.test(execBlock)
+    && /layout="stacked"/.test(execBlock)
+    && /title="Error"/.test(execBlock)
+    && !/max-w-/.test(execBlock)
+    && !src.includes('Execution Error'),
+  'execution toast still sizes to the message or still says Execution Error',
+);
 
 // ---- every toast renders text + conditional Undo via ErrorPopup ----
 for (const t of ['edgeModeToast', 'contourToast', 'filletToast', 'shellToast']) {

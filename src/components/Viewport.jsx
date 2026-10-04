@@ -6065,12 +6065,13 @@ const Viewport = forwardRef(({
       
       {executionError && createPortal(
         <div
-          className="fixed top-16 left-1/2 -translate-x-1/2 z-50 max-w-[min(22rem,calc(100%-2rem))] pointer-events-auto"
+          className="fixed top-16 inset-x-3 z-50 pointer-events-auto"
           data-execution-error=""
         >
           <ErrorPopup
             tone="error"
-            title="Execution Error"
+            layout="stacked"
+            title="Error"
             onDismiss={() => setExecutionError(null)}
             onUndo={onUndo}
             canUndo={canUndo}

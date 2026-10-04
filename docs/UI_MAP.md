@@ -233,7 +233,7 @@ All of these are absolutely positioned inside the shell at
 | left-2/4 bottom-2.5 | contour tool rail (replaces the helper rail) | `ContourModeRail.jsx` | Viewport |
 | right-2/4 bottom-4 | view / pick / cross-section cluster | `CrossSectionPanel.jsx:175` collapsed, `:327` expanded | `:3641` |
 | inside that cluster | Front/Right/Top/**Iso** snap popup | `ViewSnapControl.jsx` | `CrossSectionPanel.jsx:181` |
-| top-16 center, portaled `z-50` | execution error card (`ErrorPopup` + Undo), glass `rounded-lg` | `ErrorPopup.jsx` | Viewport |
+| top-16, portaled `z-50`, `inset-x-3` (most of the viewport width, same card on desktop) | execution error toast: fixed card, label "Error", Undo and dismiss on the right, description on the next line (`ErrorPopup` `layout="stacked"`), glass `rounded-lg` | `ErrorPopup.jsx` | Viewport |
 | *(removed C.1)* | Selected Face readout | — | — |
 | bottom-4 right-2/4 | contour param chip | `ContourModeChip.jsx:176` | `:3733` |
 | bottom-4 right-2/4 | fillet param chip | `FilletModeChip.jsx:43` | `:3835` |
