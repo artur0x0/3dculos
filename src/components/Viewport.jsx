@@ -291,6 +291,23 @@ function disposeEdgeOverlayObject(scene, obj) {
   disposeOne(obj);
 }
 
+function geometryFromMeshData(meshData) {
+  const geometry = new BufferGeometry();
+  const np = meshData.numProp || 3;
+  const src = meshData.vertProperties;
+  const nVert = Math.floor(src.length / np);
+  const positions = new Float32Array(nVert * 3);
+  for (let i = 0; i < nVert; i++) {
+    positions[i * 3] = src[i * np];
+    positions[i * 3 + 1] = src[i * np + 1];
+    positions[i * 3 + 2] = src[i * np + 2];
+  }
+  geometry.setAttribute('position', new BufferAttribute(positions, 3));
+  geometry.setIndex(new BufferAttribute(new Uint32Array(meshData.triVerts), 1));
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
 function removeContactSeam(mesh) {
   const prev = mesh?.getObjectByName?.('contactSeam');
   if (!prev) return;
@@ -536,6 +553,8 @@ const Viewport = forwardRef(({
   getHelperBuffer = null,
   /** Mobile CAD mid-strip host (CodeEditor). Null on desktop and in game. */
   cadToolbarHost = null,
+  /** CAD Run. When set, the strip runs the assembly instead of one script. */
+  onRunAssembly = null,
   /** Slice Mobile C: long-press on body opens feature sheet (mobile CAD only). */
   featureSheetEnabled = false,
   onFeatureLongPress = null,
@@ -547,6 +566,10 @@ const Viewport = forwardRef(({
   const cameraRef = useRef(null);
   const controlsRef = useRef(null);
   const resultRef = useRef(null);
+  const assemblyGroupRef = useRef(null);
+  const assemblyExtrasRef = useRef(new Map());
+  const clearAssemblyExtrasRef = useRef(() => {});
+  const placeAssemblyRef = useRef(() => false);
   const ghostMeshRef = useRef(null);
   const raycasterRef = useRef(new Raycaster());
   const mouseRef = useRef(new Vector2());
@@ -877,7 +900,9 @@ const Viewport = forwardRef(({
         removeContactSeam(resultRef.current);
         resultRef.current.geometry?.dispose();
         resultRef.current.geometry = new BufferGeometry();
+        resultRef.current.position.set(0, 0, 0);
       }
+      clearAssemblyExtrasRef.current();
       featureEdgesRef.current = [];
       featureEdgesSourceRef.current = null;
     },
@@ -958,6 +983,12 @@ const Viewport = forwardRef(({
     },
     zoomToFit: handleZoomToFit,
     getCurrentMeshData: () => cachedMeshData,
+    /**
+     * Place visible assembly solids that are not the active part, and move
+     * the active solid when the row stores a position. Graphs stay on the
+     * active mesh; this does not rebuild them.
+     */
+    placeAssembly: (payload) => placeAssemblyRef.current(payload),
     /**
      * Mobile C.2 — tween the part away from an open under-title feature sheet.
      * `ndcY` is the target lift in NDC-Y units (positive → part moves DOWN on
@@ -5148,6 +5179,7 @@ const Viewport = forwardRef(({
       if (resultRef.current?.geometry) {
         resultRef.current.geometry.dispose();
       }
+      clearAssemblyExtrasRef.current();
       if (ghostMeshRef.current) {
         sceneRef.current?.remove(ghostMeshRef.current);
         ghostMeshRef.current.geometry?.dispose();
@@ -5562,8 +5594,9 @@ const Viewport = forwardRef(({
   /**
    * Execute script using the sandbox worker
    */
-  const executeScript = useCallback(async (scriptOverride) => {
+  const executeScript = useCallback(async (scriptOverride, opts = {}) => {
     const script = scriptOverride ?? currentScript ?? '';
+    const noShadow = opts.noShadow === true;
 
     if (!sceneRef.current) return false;
 
@@ -5768,7 +5801,7 @@ const Viewport = forwardRef(({
       
       console.log('[Viewport] Script executed successfully');
       // Truthy object: callers that only check success keep working; game compare needs nonce.
-      return { ok: true, nonce };
+      return { ok: true, nonce, mesh: meshData };
 
     } catch (error) {
       filletQualityWatchRef.current = null;
@@ -5787,9 +5820,10 @@ const Viewport = forwardRef(({
         armEdgeModeToastClear();
       }
 
-      // Failed Auto-Run: restore the last good mesh and keep edge/face selection
-      // so the chip does not falsely show "0 selected" (unless soft-cleared above).
-      const prev = cachedMeshDataRef.current;
+      // A single-script failure still restores the last good mesh.
+      // An assembly part must not: noShadow drops the solid and does not
+      // rebuild graphs from that previous mesh.
+      const prev = noShadow ? null : cachedMeshDataRef.current;
       if (prev?.vertProperties && resultRef.current) {
         renderMeshData(prev);
         featureEdgesSourceRef.current = null;
@@ -5799,10 +5833,13 @@ const Viewport = forwardRef(({
           // highlightSelectedEdges is invoked via selectedEdges effect
         }
       } else if (resultRef.current) {
+        // assembly-fail: omit this part, drop the cached solid, do not rebuild graphs
+        setCachedMeshData(null);
+        cachedMeshDataRef.current = null;
         removeContactSeam(resultRef.current);
         resultRef.current.geometry?.dispose();
         resultRef.current.geometry = new BufferGeometry();
-        // No prior mesh — selection would be meaningless on empty geom.
+        resultRef.current.position.set(0, 0, 0);
         clearHighlight();
         clearEdgeHighlight();
         clearEdgeHover();
@@ -5811,10 +5848,15 @@ const Viewport = forwardRef(({
         onFaceSelected?.(null);
         featureEdgesRef.current = [];
         featureEdgesSourceRef.current = null;
-        setEdgeModeToast(toastPayload('Run failed — selection cleared (no prior solid)'));
-        armEdgeModeToastClear();
+        partGraphRef.current = null;
+        partGraphSourceRef.current = null;
+        faceIDsRef.current = null;
+        if (!noShadow) {
+          setEdgeModeToast(toastPayload('Run failed — selection cleared (no prior solid)'));
+          armEdgeModeToastClear();
+        }
       }
-      return false;
+      return noShadow ? { ok: false, error: msg } : false;
     } finally {
       setIsExecuting(false);
       if (executionAbortRef.current === abortController) {
@@ -5822,6 +5864,118 @@ const Viewport = forwardRef(({
       }
     }
   }, [currentScript, materials, onFaceSelected, renderMeshData, clearHighlight, clearEdgeHighlight, clearEdgeHover, autoFitEnabled, handleZoomToFit, selectedEdges, syncFeatureEdges]);
+
+  clearAssemblyExtrasRef.current = () => {
+    const group = assemblyGroupRef.current;
+    for (const mesh of assemblyExtrasRef.current.values()) {
+      group?.remove(mesh);
+      mesh.geometry?.dispose();
+      if (mesh.material?.dispose) mesh.material.dispose();
+    }
+    assemblyExtrasRef.current.clear();
+  };
+
+  placeAssemblyRef.current = (payload) => {
+    const scene = sceneRef.current;
+    if (!scene || !resultRef.current) return false;
+    const solids = Array.isArray(payload?.solids) ? payload.solids : [];
+    const activeId = payload?.activeId ?? null;
+    const blankActive = payload?.blankActive === true;
+    if (!assemblyGroupRef.current) {
+      const group = new Group();
+      group.name = 'assembly-parts';
+      scene.add(group);
+      assemblyGroupRef.current = group;
+    }
+    const group = assemblyGroupRef.current;
+    const keep = new Set();
+    for (const solid of solids) {
+      if (!solid || solid.id === activeId) continue;
+      if (!solid.mesh?.vertProperties || !solid.mesh?.triVerts) continue;
+      keep.add(solid.id);
+      let mesh = assemblyExtrasRef.current.get(solid.id);
+      if (!mesh) {
+        mesh = new ThreeMesh(undefined, new MeshNormalMaterial({ flatShading: true }));
+        mesh.name = 'assembly-part';
+        mesh.userData.assemblyPartId = solid.id;
+        group.add(mesh);
+        assemblyExtrasRef.current.set(solid.id, mesh);
+      }
+      const geom = geometryFromMeshData(solid.mesh);
+      mesh.geometry?.dispose();
+      mesh.geometry = geom;
+      const p = solid.position || [0, 0, 0];
+      mesh.position.set(p[0], p[1], p[2]);
+    }
+    for (const [id, mesh] of assemblyExtrasRef.current) {
+      if (keep.has(id)) continue;
+      group.remove(mesh);
+      mesh.geometry?.dispose();
+      if (mesh.material?.dispose) mesh.material.dispose();
+      assemblyExtrasRef.current.delete(id);
+    }
+    if (blankActive) {
+      // assembly-fail: the active part is hidden or failed. No previous solid.
+      setCachedMeshData(null);
+      cachedMeshDataRef.current = null;
+      removeContactSeam(resultRef.current);
+      resultRef.current.geometry?.dispose();
+      resultRef.current.geometry = new BufferGeometry();
+      resultRef.current.position.set(0, 0, 0);
+      featureEdgesRef.current = [];
+      featureEdgesSourceRef.current = null;
+      partGraphRef.current = null;
+      partGraphSourceRef.current = null;
+      faceIDsRef.current = null;
+    } else {
+      const active = solids.find((solid) => solid.id === activeId);
+      const p = active?.position || [0, 0, 0];
+      resultRef.current.position.set(p[0], p[1], p[2]);
+    }
+    if (autoFitEnabled && solids.length && cameraRef.current) {
+      const geom = new BufferGeometry();
+      const chunks = [];
+      for (const solid of solids) {
+        const src = solid.mesh?.vertProperties;
+        if (!src) continue;
+        const np = solid.mesh.numProp || 3;
+        const p = solid.position || [0, 0, 0];
+        const n = Math.floor(src.length / np);
+        const arr = new Float32Array(n * 3);
+        for (let i = 0; i < n; i++) {
+          arr[i * 3] = src[i * np] + p[0];
+          arr[i * 3 + 1] = src[i * np + 1] + p[1];
+          arr[i * 3 + 2] = src[i * np + 2] + p[2];
+        }
+        chunks.push(arr);
+      }
+      let total = 0;
+      for (const chunk of chunks) total += chunk.length;
+      if (total > 0) {
+        const all = new Float32Array(total);
+        let offset = 0;
+        for (const chunk of chunks) {
+          all.set(chunk, offset);
+          offset += chunk.length;
+        }
+        geom.setAttribute('position', new BufferAttribute(all, 3));
+        fitView({
+          camera: cameraRef.current,
+          controls: controlsRef.current,
+          geometry: geom,
+        });
+        geom.dispose();
+      }
+    }
+    if (containerRef.current) {
+      containerRef.current.setAttribute('data-assembly-solids', String(solids.length));
+      containerRef.current.setAttribute('data-assembly-active', blankActive ? 'omitted' : 'shown');
+    }
+    const renderer = rendererRef.current;
+    const camera = cameraRef.current;
+    if (renderer && camera) renderer.render(scene, camera);
+    return true;
+  };
 
   /**
    * Download the current model as 3mf
@@ -5832,9 +5986,18 @@ const Viewport = forwardRef(({
    * live `currentScript`, which App refreshes on every keystroke, so this runs
    * exactly what is in the editor right now.
    */
-  const runCadScript = useCallback(() => {
+  const runCadScript = useCallback(async () => {
+    if (onRunAssembly) {
+      setIsExecuting(true);
+      try {
+        await onRunAssembly();
+      } finally {
+        setIsExecuting(false);
+      }
+      return;
+    }
     executeScript();
-  }, [executeScript]);
+  }, [executeScript, onRunAssembly]);
 
   const handleDownloadModel = useCallback(async () => {
     if (!cachedMeshData?.vertProperties) {

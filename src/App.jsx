@@ -36,6 +36,25 @@ import {
   clearEditorState 
 } from './utils/editorStorage';
 import { saveEditorDraft, loadEditorDraft } from './utils/editorDraft';
+import {
+  composeViewportParts,
+  feedRows,
+  newLocalPartId,
+  normalizeRepoPath,
+  parseAssemblyDocument,
+  reorderParts,
+  scriptForRow,
+  serializeAssembly,
+  setPartVisible,
+} from './utils/assembly';
+import { runAssemblyParts } from './utils/assemblyRun';
+import {
+  loadAssemblyDocument,
+  loadPartScripts,
+  saveAssemblyDocument,
+  savePartScript,
+} from './utils/assemblyStore';
+import PartFeed from './components/PartFeed';
 import manifoldContext from './utils/ManifoldWorker';
 import DEFAULT_SCRIPT from './utils/defaultScript';
 import {
@@ -66,6 +85,16 @@ const App = () => {
   const [isMobile, setIsMobile] = useState(false);
   const [selectedFace, setSelectedFace] = useState(null);
   const [currentFilename, setCurrentFilename] = useState(null);
+  /** Assembly list. Scripts live beside it, never inside the document. */
+  const [assemblyDoc, setAssemblyDoc] = useState(null);
+  const [partScripts, setPartScripts] = useState({});
+  const [partRuns, setPartRuns] = useState({});
+  const assemblyRef = useRef(null);
+  const partScriptsRef = useRef({});
+  const refreshGenRef = useRef(0);
+  const refreshAssemblyRef = useRef(async () => false);
+  /** Missing-row placeholder must not become that part's stored script. */
+  const suppressPartSaveRef = useRef(false);
   /** Editor column width % (desktop) and editor height px (mobile, null = auto). */
   const [splitPct, setSplitPct] = useState(50);
   const [mobileEditorPxOverride, setMobileEditorPx] = useState(null);
@@ -73,13 +102,14 @@ const App = () => {
   const [mobileStage, setMobileStage] = useState(() => {
     try {
       const s = sessionStorage.getItem('3dculos.mobileStage');
+      if (s === 'parts') return 'parts';
       return s === 'script' ? 'script' : 'cad';
     } catch {
       return 'cad';
     }
   });
   const setMobileStageSticky = (stage) => {
-    const next = stage === 'script' ? 'script' : 'cad';
+    const next = stage === 'parts' ? 'parts' : stage === 'script' ? 'script' : 'cad';
     setMobileStage(next);
     try { sessionStorage.setItem('3dculos.mobileStage', next); } catch { /* private mode */ }
   };
@@ -722,6 +752,46 @@ const App = () => {
         clearCheckoutReturnFlag();
       }
     
+      // Assembly wraps the editor buffer. The document stores ids only.
+      // The buffer we just restored is the active part's script.
+      let doc = null;
+      let scripts = {};
+      try {
+        doc = await loadAssemblyDocument();
+        if (doc) scripts = await loadPartScripts(doc.parts.map((part) => part.id));
+      } catch (err) {
+        console.warn('[App] Assembly restore failed:', err);
+        doc = null;
+      }
+      if (cancelled) return;
+      if (!doc || !doc.parts.length) {
+        const id = newLocalPartId();
+        doc = serializeAssembly({
+          source: 'local',
+          activeId: id,
+          parts: [{ id, name: filename || 'Part 1', visible: true, order: 0 }],
+        });
+        scripts = { [id]: script };
+        await savePartScript(id, script);
+        await saveAssemblyDocument(doc);
+      } else {
+        const active = doc.parts.find((part) => part.id === doc.activeId) || doc.parts[0];
+        doc = serializeAssembly({ ...doc, activeId: active.id });
+        if (typeof scripts[active.id] === 'string' && !restoredEditor) {
+          script = scripts[active.id];
+          filename = filename || active.name;
+        } else {
+          scripts = { ...scripts, [active.id]: script };
+          await savePartScript(active.id, script);
+        }
+        if (!filename) filename = active.name;
+      }
+      if (cancelled) return;
+      assemblyRef.current = doc;
+      partScriptsRef.current = scripts;
+      setAssemblyDoc(doc);
+      setPartScripts(scripts);
+
       // Set state - order matters for avoiding flicker
       if (filename) setCurrentFilename(filename);
       if (restoredCheckout) {
@@ -748,6 +818,13 @@ const App = () => {
     if (appMode === 'game' || !editorLiveRef.current) return undefined;
     const timer = setTimeout(() => {
       saveEditorDraft({ script: currentScript, filename: currentFilename });
+      const id = assemblyRef.current?.activeId;
+      if (id && !suppressPartSaveRef.current && typeof currentScript === 'string') {
+        const next = { ...partScriptsRef.current, [id]: currentScript };
+        partScriptsRef.current = next;
+        setPartScripts(next);
+        savePartScript(id, currentScript);
+      }
     }, 600);
     return () => clearTimeout(timer);
   }, [currentScript, currentFilename, manifoldReady, editorInitialScript, appMode]);
@@ -760,6 +837,11 @@ const App = () => {
       if (appModeRef.current === 'game' || !editorLiveRef.current) return;
       const live = codeEditorRef.current?.getContent?.() ?? currentScript;
       saveEditorDraft({ script: live, filename: currentFilename });
+      const id = assemblyRef.current?.activeId;
+      if (id && !suppressPartSaveRef.current && typeof live === 'string') {
+        partScriptsRef.current = { ...partScriptsRef.current, [id]: live };
+        savePartScript(id, live);
+      }
     };
     window.addEventListener('pagehide', flush);
     document.addEventListener('visibilitychange', flush);
@@ -768,6 +850,18 @@ const App = () => {
       document.removeEventListener('visibilitychange', flush);
     };
   }, [currentScript, currentFilename, manifoldReady, editorInitialScript]);
+
+  // Leaving a puzzle puts the assembly back in the viewport. appModeRef is
+  // still 'game' during the exit click, so the editor's auto-run skips it.
+  const prevAppModeRef = useRef(appMode);
+  useEffect(() => {
+    const prev = prevAppModeRef.current;
+    prevAppModeRef.current = appMode;
+    if (prev === 'game' && appMode === 'cad' && assemblyRef.current) {
+      const code = codeEditorRef.current?.getContent?.();
+      refreshAssemblyRef.current?.(code);
+    }
+  }, [appMode]);
 
   // Check for mobile layout
   useEffect(() => {
@@ -960,7 +1054,238 @@ const App = () => {
     setCadScriptBackup(null);
   };
 
+  const rememberScripts = (next) => {
+    partScriptsRef.current = next;
+    setPartScripts(next);
+  };
+
+  const rememberAssembly = (doc) => {
+    const clean = serializeAssembly(doc);
+    assemblyRef.current = clean;
+    setAssemblyDoc(clean);
+    saveAssemblyDocument(clean);
+    return clean;
+  };
+
+  /**
+   * Run every visible part. The active part goes through executeScript so
+   * face and edge graphs still rebuild on that solid alone. A failed active
+   * part passes noShadow and is omitted. Other parts are meshes beside it.
+   */
+  const refreshAssembly = async (activeScript, opts = {}) => {
+    const doc = assemblyRef.current;
+    if (!doc || appModeRef.current === 'game') return false;
+    const persistActive = opts.persistActive !== false && !suppressPartSaveRef.current;
+    let scripts = { ...partScriptsRef.current };
+    const activeId = doc.activeId;
+    if (typeof activeScript === 'string' && activeId && persistActive) {
+      scripts = { ...scripts, [activeId]: activeScript };
+      rememberScripts(scripts);
+      savePartScript(activeId, activeScript);
+    }
+    const gen = ++refreshGenRef.current;
+    const activePart = doc.parts.find((part) => part.id === activeId);
+    const activeVisible = !!(activePart && activePart.visible !== false);
+    const otherIds = doc.parts
+      .filter((part) => part.visible !== false && part.id !== activeId)
+      .map((part) => part.id);
+    let other;
+    try {
+      other = await runAssemblyParts({
+        doc,
+        scripts,
+        ids: otherIds,
+        execute: (script) => manifoldContext.executeScript(script, { timeoutMs: 30000 }),
+      });
+    } catch (err) {
+      console.error('[App] assembly run failed', err);
+      return false;
+    }
+    if (gen !== refreshGenRef.current) return false;
+
+    const runs = { ...(other.runs || {}) };
+    if (activeId && activeVisible && typeof scripts[activeId] === 'string') {
+      let run = await viewportRef.current?.executeScript(scripts[activeId], { noShadow: true });
+      if (run == null || run === false) {
+        await new Promise((resolve) => { setTimeout(resolve, 200); });
+        if (gen !== refreshGenRef.current) return false;
+        run = await viewportRef.current?.executeScript(scripts[activeId], { noShadow: true });
+      }
+      if (gen !== refreshGenRef.current) return false;
+      if (run?.cleared) {
+        runs[activeId] = { ok: false, mesh: null, empty: true, error: null };
+      } else if (run?.ok && run.mesh?.vertProperties) {
+        runs[activeId] = { ok: true, mesh: run.mesh, error: null };
+      } else if (run && run.ok === false) {
+        runs[activeId] = { ok: false, mesh: null, error: run.error || 'Script failed' };
+        manifoldContext.clearResult().catch(() => {});
+      }
+    } else if (activeId) {
+      runs[activeId] = {
+        ok: false,
+        mesh: null,
+        skipped: !activeVisible,
+        missing: typeof scripts[activeId] !== 'string',
+        error: typeof scripts[activeId] === 'string' ? null : 'missing',
+      };
+    }
+
+    if (gen !== refreshGenRef.current) return false;
+    setPartRuns(runs);
+    const solids = composeViewportParts(doc, runs);
+    const activeOk = !!(activeId && runs[activeId]?.ok === true && activeVisible);
+    viewportRef.current?.placeAssembly?.({
+      solids,
+      activeId,
+      blankActive: !activeOk,
+    });
+    return true;
+  };
+  refreshAssemblyRef.current = refreshAssembly;
+
+  const handleSelectPart = (id) => {
+    const doc = assemblyRef.current;
+    if (!doc || id == null || id === doc.activeId) return;
+    const live = codeEditorRef.current?.getContent?.();
+    const prev = doc.activeId;
+    if (prev && !suppressPartSaveRef.current && typeof live === 'string') {
+      const nextScripts = { ...partScriptsRef.current, [prev]: live };
+      rememberScripts(nextScripts);
+      savePartScript(prev, live);
+    }
+    const nextDoc = rememberAssembly({ ...doc, activeId: id });
+    const part = nextDoc.parts.find((row) => row.id === id);
+    setCurrentFilename(part?.name || null);
+    const picked = scriptForRow(nextDoc, partScriptsRef.current, id);
+    if (picked.ok) {
+      suppressPartSaveRef.current = false;
+      codeEditorRef.current?.loadContent(picked.script, part?.name || 'Part', false);
+      return;
+    }
+    suppressPartSaveRef.current = true;
+    const note = '// This part has no file yet.\n';
+    codeEditorRef.current?.setTextOnly?.(note);
+    setCurrentScript(note);
+    refreshAssemblyRef.current?.(undefined, { persistActive: false });
+  };
+
+  const handleTogglePartVisible = (id) => {
+    const doc = assemblyRef.current;
+    if (!doc) return;
+    const part = doc.parts.find((row) => row.id === id);
+    const next = setPartVisible(doc, id, part?.visible === false);
+    rememberAssembly(next);
+    const live = codeEditorRef.current?.getContent?.();
+    refreshAssemblyRef.current?.(live, { persistActive: !suppressPartSaveRef.current });
+  };
+
+  const handleReorderParts = (from, to) => {
+    if (!assemblyRef.current) return;
+    rememberAssembly(reorderParts(assemblyRef.current, from, to));
+  };
+
+  const handleLoadAssembly = async (text) => {
+    let doc;
+    try {
+      doc = parseAssemblyDocument(text);
+    } catch (err) {
+      setUploadError(err.message || 'Could not read assembly');
+      return;
+    }
+    const scripts = await loadPartScripts(doc.parts.map((part) => part.id));
+    rememberScripts(scripts);
+    const saved = rememberAssembly(doc);
+    const active = saved.parts.find((part) => part.id === saved.activeId) || saved.parts[0];
+    if (!active) return;
+    setCurrentFilename(active.name);
+    const picked = scriptForRow(saved, scripts, active.id);
+    if (picked.ok) {
+      suppressPartSaveRef.current = false;
+      codeEditorRef.current?.loadContent(picked.script, active.name, false);
+      return;
+    }
+    suppressPartSaveRef.current = true;
+    codeEditorRef.current?.setTextOnly?.('// This part has no file yet.\n');
+    refreshAssemblyRef.current?.(undefined, { persistActive: false });
+  };
+
+  const handleResolvePartFile = async (id, text) => {
+    if (!id || typeof text !== 'string') return;
+    await savePartScript(id, text);
+    const scripts = { ...partScriptsRef.current, [id]: text };
+    rememberScripts(scripts);
+    suppressPartSaveRef.current = false;
+    if (assemblyRef.current?.activeId === id) {
+      codeEditorRef.current?.loadContent(text, 'Part file', false);
+      return;
+    }
+    refreshAssemblyRef.current?.(codeEditorRef.current?.getContent?.());
+  };
+
+  const handleAddPart = async () => {
+    const doc = assemblyRef.current;
+    if (!doc || doc.source === 'git') return;
+    const live = codeEditorRef.current?.getContent?.();
+    const prev = doc.activeId;
+    const scripts = { ...partScriptsRef.current };
+    if (prev && !suppressPartSaveRef.current && typeof live === 'string') {
+      scripts[prev] = live;
+      savePartScript(prev, live);
+    }
+    const id = newLocalPartId();
+    const order = doc.parts.length;
+    const starter = 'let part = Manifold.cube([20, 20, 20], true);\nreturn part;\n';
+    const part = {
+      id,
+      name: `Part ${order + 1}`,
+      visible: true,
+      order,
+      position: order === 0 ? undefined : [order * 40, 0, 0],
+    };
+    scripts[id] = starter;
+    await savePartScript(id, starter);
+    rememberScripts(scripts);
+    rememberAssembly({ ...doc, activeId: id, parts: [...doc.parts, part] });
+    suppressPartSaveRef.current = false;
+    setCurrentFilename(part.name);
+    codeEditorRef.current?.loadContent(starter, part.name, false);
+  };
+
+  const handleAddGitPart = async (path, text) => {
+    const doc = assemblyRef.current;
+    if (!doc || typeof text !== 'string') return;
+    const id = normalizeRepoPath(path);
+    if (!id) {
+      setUploadError('Enter a repo path such as parts/name.js');
+      return;
+    }
+    await savePartScript(id, text);
+    const scripts = { ...partScriptsRef.current, [id]: text };
+    rememberScripts(scripts);
+    const existing = doc.parts.some((part) => part.id === id);
+    const parts = existing
+      ? doc.parts
+      : [...doc.parts, {
+        id,
+        name: id.split('/').pop() || id,
+        visible: true,
+        order: doc.parts.length,
+      }];
+    const source = doc.source === 'git' ? 'git' : doc.source;
+    rememberAssembly({ ...doc, source, activeId: id, parts });
+    suppressPartSaveRef.current = false;
+    setCurrentFilename(id.split('/').pop() || id);
+    codeEditorRef.current?.loadContent(text, id, false);
+  };
+
   const handleGameRun = async () => {
+    if (appModeRef.current !== 'game') {
+      const code = codeEditorRef.current?.getContent?.();
+      if (code == null) return;
+      setCurrentScript(code);
+      await refreshAssemblyRef.current?.(code);
+      return;
+    }
     if (gameSuccess || gameRunInFlightRef.current) return;
     const code = codeEditorRef.current?.getContent?.();
     if (code == null) return;
@@ -1310,14 +1635,18 @@ const App = () => {
     setCurrentScript(script);
     // Game mode: never auto-run on Monaco mount/remount (blank-enter / ghost-only).
     if (autoExecute && appModeRef.current !== 'game') {
-      // Pass script directly to avoid stale closure
+      // Pass script directly to avoid stale closure. CAD runs the assembly
+      // so every visible part is drawn, not only the buffer in Monaco.
       setTimeout(() => {
-        viewportRef.current?.executeScript(script);
+        refreshAssemblyRef.current?.(script);
       }, 100);
     }
   };
 
   const handleCodeChange = (code, message = 'Code updated') => {
+    if (suppressPartSaveRef.current && message === 'Manual edit') {
+      suppressPartSaveRef.current = false;
+    }
     setHistory(prev => {
       const branch = prev.branches[prev.currentBranch];
       const newCommit = {
@@ -1471,7 +1800,16 @@ const App = () => {
   // save/export and by the OAuth-redirect snapshot, so nothing else to write.
   const handleRenameFile = (name) => {
     const next = String(name || '').trim();
-    if (next) setCurrentFilename(next);
+    if (!next) return;
+    setCurrentFilename(next);
+    const doc = assemblyRef.current;
+    if (!doc?.activeId) return;
+    rememberAssembly({
+      ...doc,
+      parts: doc.parts.map((part) => (
+        part.id === doc.activeId ? { ...part, name: next } : part
+      )),
+    });
   };
 
   const handleSave = () => {
@@ -1616,6 +1954,23 @@ const App = () => {
       ? Math.round(Math.min(Math.max(mobileEditorPxOverride, 120), Math.max(160, vv.height - 160)))
       : Math.round(Math.min(Math.max(vv.height * 0.32, 160), vv.height * 0.38)));
 
+  const partRows = assemblyDoc ? feedRows(assemblyDoc, partRuns, partScripts) : [];
+  const partFeed = appMode !== 'game' && assemblyDoc ? (
+    <PartFeed
+      placement={isMobile ? 'mobile' : 'desktop'}
+      source={assemblyDoc.source}
+      rows={partRows}
+      activeId={assemblyDoc.activeId}
+      onSelect={handleSelectPart}
+      onToggleVisible={handleTogglePartVisible}
+      onReorder={handleReorderParts}
+      onLoadFile={handleLoadAssembly}
+      onResolveFile={handleResolvePartFile}
+      onAddPart={handleAddPart}
+      onAddGitPart={handleAddGitPart}
+    />
+  ) : null;
+
   if (isMobile) {
     // Keep h-dvh while the keyboard is closed so Monaco can take a real
     // user-gesture focus (iOS often refuses keyboard inside a fixed+overflow
@@ -1634,6 +1989,7 @@ const App = () => {
     const useStages = appMode === 'cad';
     const isCadStage = !useStages || mobileStage === 'cad';
     const isScriptStage = useStages && mobileStage === 'script';
+    const isPartsStage = useStages && mobileStage === 'parts';
 
     const viewportEl = (
             <Viewport 
@@ -1676,6 +2032,12 @@ const App = () => {
               onCommitDeleteFace={handleCommitDeleteFace}
               getHelperBuffer={() => codeEditorRef.current?.getContent?.() || ''}
               cadToolbarHost={cadToolbarHost}
+              onRunAssembly={() => {
+                const code = codeEditorRef.current?.getContent?.();
+                if (code == null) return false;
+                setCurrentScript(code);
+                return refreshAssemblyRef.current?.(code);
+              }}
               featureSheetEnabled={useStages && isCadStage && !featureSheet}
               onFeatureLongPress={openFeatureSheetFromCad}
             />
@@ -1798,6 +2160,15 @@ const App = () => {
                   )}
                 </div>
                 {aiRow}
+              </div>
+              <div
+                className={`absolute inset-0 flex min-h-0 flex-col ${
+                  isPartsStage ? 'z-10' : 'invisible pointer-events-none'
+                }`}
+                data-stage-pane="parts"
+                aria-hidden={!isPartsStage}
+              >
+                {partFeed}
               </div>
 
               {/* C.1: feature sheets — full-width under-title, CAD + Script stages. */}
@@ -1941,7 +2312,13 @@ const App = () => {
   }
 
   return (
-      <div ref={splitShellRef} className="flex h-dvh bg-gray-900">
+      <div className="flex h-dvh bg-gray-900">
+        {appMode !== 'game' && (
+          <div data-parts-feed-placement="desktop-left" className="h-full shrink-0">
+            {partFeed}
+          </div>
+        )}
+        <div ref={splitShellRef} className="relative flex h-full min-w-0 flex-1">
         <div className="flex flex-col min-w-0" style={{ width: `${splitPct}%` }}>
           <div className="flex-1 min-h-0">
             <CodeEditor 
@@ -2050,6 +2427,12 @@ const App = () => {
               onCommitDeleteFace={handleCommitDeleteFace}
             getHelperBuffer={() => codeEditorRef.current?.getContent?.() || ''}
             cadToolbarHost={cadToolbarHost}
+            onRunAssembly={() => {
+              const code = codeEditorRef.current?.getContent?.();
+              if (code == null) return false;
+              setCurrentScript(code);
+              return refreshAssemblyRef.current?.(code);
+            }}
           />
           {/* Feature sheets live INSIDE the viewer on desktop: the seam strip
               stays put, and editing a feature happens over the model it
@@ -2153,6 +2536,7 @@ const App = () => {
               </ErrorPopup>
             </div>
           )}
+        </div>
       </div>
   );
 };
