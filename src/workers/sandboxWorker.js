@@ -2187,6 +2187,7 @@ function c4MeshData(m) {
   // T/numTri expose the welded triangle table so callers that need per-triangle
   // vertices (shell skin prisms, draftFaces vertex sets) do not have to call
   // getMesh() again and risk a DIFFERENT welding than the faces above.
+  if (_s23CaptureFaceSoupOn) _s23RememberFaceSoup(m, faces, V, mesh.triVerts);
   return { V, faces, edges, faceIdxById, T: mesh.triVerts, numTri: mesh.numTri };
 }
 
@@ -4113,7 +4114,7 @@ function _s23NearestMatched(raw, i, closed) {
  * degenerate — a 90° start-frame fallback is the acute-edge hook.
  */
 function _s23ProbeSegments(part, points, closed) {
-  const edges = signedFeatureEdges(part);
+  const edges = _s23ProbeFeatureEdges(part);
   const mesh = _c6BuildMeshInfo(part);
   const n = points.length;
   const segCount = closed ? n : n - 1;
@@ -4394,7 +4395,7 @@ function _recordVariableProfileMeta(meta) {
  * Same mid-match spirit as _s23ProbeSegments; feeds buildVariableProfileFrames.
  */
 function _s23ProbeKnotNormals(part, points, closed) {
-  const edges = signedFeatureEdges(part);
+  const edges = _s23ProbeFeatureEdges(part);
   const n = points.length;
   const segCount = closed ? n : n - 1;
   const segmentNormals = new Array(segCount).fill(null);
@@ -4536,6 +4537,9 @@ function _s23CuttersFromSegs(M, CrossSection, segs, closed, radius, profileKind,
   const cutters = [];
   let expectVol = 0;
   for (const run of runs) {
+    if (opts.part && !(closed && runs.length === 1)) {
+      _s23ExtendOpenRunEnds(opts.part, run, radius, profileKind, arcSegs);
+    }
     let theta = run[0].theta;
     if (singleRun && run.length > 1) {
       const ts = run.map((s) => Number(s.theta)).filter((t) => t > 0.05 && t < Math.PI - 0.05).sort((a, b) => a - b);
@@ -4680,7 +4684,7 @@ function _s23VaryingProfileTube(runSegs, wrapClosed, radius, profileKind, arcSeg
  * in-face directions IS the empty-side angle, so the same contour that carves
  * a convex corner fills a concave one.
  */
-function _s23VaryingProfileCutter(segs, closed, radius, profileKind, arcSegs, testScale) {
+function _s23VaryingProfileCutter(segs, closed, radius, profileKind, arcSegs, testScale, part) {
   if (!Array.isArray(segs) || !segs.length) {
     throw new Error('filletAlongPath: varying-profile cutter needs ≥ 1 segment');
   }
@@ -4731,7 +4735,14 @@ function _s23VaryingProfileCutter(segs, closed, radius, profileKind, arcSegs, te
   let clampedKnots = 0;
   let ringCount = 0;
   const allThetas = [];
+  let endExtend = 0;
   for (const run of splitRuns) {
+    if (!wrapClosed && part && run.convex) {
+      endExtend = Math.max(
+        endExtend,
+        _s23ExtendOpenRunEnds(part, run.segs, radius, profileKind, arcSegs),
+      );
+    }
     const t = _s23VaryingProfileTube(
       run.segs, wrapClosed, radius, profileKind, arcSegs, testScale,
     );
@@ -4771,6 +4782,7 @@ function _s23VaryingProfileCutter(segs, closed, radius, profileKind, arcSegs, te
     clampedKnots,
     thetaMinDeg: +Math.min(...degs).toFixed(2),
     thetaMaxDeg: +Math.max(...degs).toFixed(2),
+    endExtend,
   };
 }
 
@@ -4845,6 +4857,145 @@ function _s23ExtendConcaveOpenEnds(part, segs, closed, radius) {
   return (a || b) ? bb : null;
 }
 
+/**
+ * How far an open cutter end must travel along its outward tangent so the
+ * whole end profile clears a face that is not perpendicular to the path.
+ * A 90° end face already contains the end cap, so the distance is 0.
+ * A drafted face is tilted: the profile still sits inside that plane, and
+ * the boolean stops short of the face. Clearance is the worst profile
+ * point, then the sweep expand pad. Not a sphere cap, and not the concave
+ * open-end pad above (that one runs on every concave end and is clipped
+ * back to the bbox).
+ */
+// Plain-JS copy of the faces c4MeshData already walked. A second getMesh()
+// on the live fillet input shifts a later decompose by ~0.01 and fails the
+// move centroid gate, so the end extension must not touch the solid again.
+let _s23CaptureFaceSoupOn = false;
+let _s23FaceSoupPart = null;
+let _s23FaceSoup = null;
+
+function _s23ProbeFeatureEdges(part) {
+  _s23CaptureFaceSoupOn = true;
+  try {
+    return signedFeatureEdges(part);
+  } finally {
+    _s23CaptureFaceSoupOn = false;
+  }
+}
+
+function _s23RememberFaceSoup(part, faces, V, triVerts) {
+  const soup = [];
+  for (const f of faces) {
+    const n = f && f.normal;
+    if (!n || _c4Len(n) < 0.5 || !Array.isArray(f.tris)) continue;
+    const nn = [n[0], n[1], n[2]];
+    for (const t of f.tris) {
+      const i0 = triVerts[t * 3];
+      const i1 = triVerts[t * 3 + 1];
+      const i2 = triVerts[t * 3 + 2];
+      const a = V[i0];
+      const b = V[i1];
+      const c = V[i2];
+      if (!a || !b || !c) continue;
+      soup.push({
+        n: nn,
+        a: [a[0], a[1], a[2]],
+        b: [b[0], b[1], b[2]],
+        c: [c[0], c[1], c[2]],
+      });
+    }
+  }
+  _s23FaceSoupPart = part;
+  _s23FaceSoup = soup;
+}
+
+function _s23DraftEndExtension(part, origin, tout, N, B, theta, radius, profileKind, arcSegs) {
+  if (!part || !origin || !tout || !N || !B) return 0;
+  if (!(Number(theta) > 0.05) || !(Number(radius) > 0)) return 0;
+  if (_s23FaceSoupPart !== part || !_s23FaceSoup) return 0;
+  const alignGate = 0.2;
+  const near2 = 0.35 * 0.35;
+  let faceN = null;
+  let bestAlign = alignGate;
+  for (const tri of _s23FaceSoup) {
+    if (_pointTriDist2(origin, tri.a, tri.b, tri.c) > near2) continue;
+    const align = _c4Dot(tout, tri.n);
+    if (align > bestAlign) {
+      bestAlign = align;
+      faceN = tri.n;
+    }
+  }
+  if (!faceN) return 0;
+  // Parallel to the path: the end cap already lies in the face.
+  if (bestAlign > Math.cos((2 * Math.PI) / 180)) return 0;
+  const contour = _s23DihedralContour(radius, theta, profileKind, arcSegs, 1);
+  let geom = 0;
+  for (const uv of contour) {
+    const u = Number(uv[0]);
+    const v = Number(uv[1]);
+    const Q = [
+      u * N[0] + v * B[0],
+      u * N[1] + v * B[1],
+      u * N[2] + v * B[2],
+    ];
+    const need = -_c4Dot(Q, faceN) / bestAlign;
+    if (need > geom) geom = need;
+  }
+  if (!(geom > 1e-4)) return 0;
+  const pad = filletSweepCutterExpand(radius);
+  const cap = 2 * radius + pad;
+  return Math.min(geom, cap) + pad;
+}
+
+/** A run whose ends do not share a tangent is a rounded path. */
+function _s23RunRounded(segs) {
+  if (!Array.isArray(segs) || segs.length < 2) return false;
+  const dir = (s) => {
+    if (!s?.T) return null;
+    const L = Math.hypot(s.T[0], s.T[1], s.T[2]);
+    return L > 1e-12 ? [s.T[0] / L, s.T[1] / L, s.T[2] / L] : null;
+  };
+  const a = dir(segs[0]);
+  const b = dir(segs[segs.length - 1]);
+  if (!a || !b) return false;
+  return _c4Dot(a, b) < Math.cos((8 * Math.PI) / 180);
+}
+
+/**
+ * Push open cutter ends that land on a tilted face. Convex runs only.
+ * A rounded path samples the face at the back end and extends only that end.
+ * Returns the longest extension applied (mm).
+ */
+function _s23ExtendOpenRunEnds(part, segs, radius, profileKind, arcSegs) {
+  if (!part || !Array.isArray(segs) || !segs.length) return 0;
+  if (segs.some((s) => s && s.convex === false)) return 0;
+  const whichEnds = _s23RunRounded(segs) ? ['end'] : ['start', 'end'];
+  let applied = 0;
+  for (const which of whichEnds) {
+    const seg = which === 'end' ? segs[segs.length - 1] : segs[0];
+    if (!seg?.T || !seg.N || !seg.B || !seg.p0 || !seg.p1) continue;
+    const tLen = Math.hypot(seg.T[0], seg.T[1], seg.T[2]);
+    if (!(tLen > 1e-12)) continue;
+    const T = [seg.T[0] / tLen, seg.T[1] / tLen, seg.T[2] / tLen];
+    const tout = which === 'end' ? T : [-T[0], -T[1], -T[2]];
+    const origin = which === 'end' ? seg.p1 : seg.p0;
+    const dist = _s23DraftEndExtension(
+      part, origin, tout, seg.N, seg.B, seg.theta, radius, profileKind, arcSegs,
+    );
+    if (!(dist > 1e-4)) continue;
+    const moved = [
+      origin[0] + tout[0] * dist,
+      origin[1] + tout[1] * dist,
+      origin[2] + tout[2] * dist,
+    ];
+    if (which === 'end') seg.p1 = moved;
+    else seg.p0 = moved;
+    seg.length = (Number(seg.length) || 0) + dist;
+    if (dist > applied) applied = dist;
+  }
+  return applied;
+}
+
 function _s23BuildVariableProfileCutter(
   M, CrossSection, part, points, closed, radius, profileKind, arcSegs, testScale, rawSegCount,
 ) {
@@ -4892,7 +5043,7 @@ function _s23BuildVariableProfileCutter(
   // C3.3: one continuous cutter with a PER-KNOT section. C3.2's single median
   // θ removed the staircase but gouged wherever the true θ was far from the
   // median; θ-grouped runs (C3.1) put the same error back as steps.
-  const cut = _s23VaryingProfileCutter(segs, closed, radius, profileKind, arcSegs, testScale);
+  const cut = _s23VaryingProfileCutter(segs, closed, radius, profileKind, arcSegs, testScale, part);
   _recordVariableProfileMeta({
     usedFrames: true,
     frameCount: frames.length,
@@ -4914,6 +5065,7 @@ function _s23BuildVariableProfileCutter(
     thetaMaxDeg: cut.thetaMaxDeg,
     runCount: cut.runCount,
     thetaRunCount: cut.thetaRunCount,
+    endExtend: cut.endExtend || 0,
   });
   cut.openEndBBox = openEndBBox;
   return cut;
@@ -4921,7 +5073,7 @@ function _s23BuildVariableProfileCutter(
 
 function _s23BuildDihedralCutter(M, CrossSection, part, points, closed, radius, profileKind, arcSegs, testScale) {
   const segs = _s23ProbeSegments(part, points, closed);
-  return _s23CuttersFromSegs(M, CrossSection, segs, closed, radius, profileKind, arcSegs, testScale);
+  return _s23CuttersFromSegs(M, CrossSection, segs, closed, radius, profileKind, arcSegs, testScale, { part });
 }
 
 /** Up to 48 samples along an already-normalized path, endpoints included. */
