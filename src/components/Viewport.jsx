@@ -60,6 +60,7 @@ import FilletModeChip from './FilletModeChip';
 import ShellModeChip from './ShellModeChip';
 import DraftModeChip from './DraftModeChip';
 import CutModeChip from './CutModeChip';
+import MoveModeChip from './MoveModeChip';
 import { buildCrossSectionPreview, defaultTopPlaneFrame } from '../utils/crossSectionSubstrate';
 import {
   applySavedContour,
@@ -148,12 +149,14 @@ import {
   cutPlaneFromState,
   validateCutAccept,
   meshBodyComponents,
+  bodyContainingTriangle,
   classifyCutBody,
   trianglePieceSide,
   cutBodyKey,
   listCutPieces,
   CUT_PIECE_OPACITY,
 } from '../utils/cutMode';
+import { emptyMoveState, clearMoveTarget, validateMoveAccept, MOVE_MODE_NEED_BODY } from '../utils/moveMode';
 import { buildCutPiecePositions } from '../utils/cutPieceMesh';
 import { contactSeamSegments } from '../utils/contactSeam';
 import { classifySelectedFace } from '../utils/faceFeaturePlacement';
@@ -181,7 +184,7 @@ import {
 import { downloadModelFromMesh, get3MFBase64FromMesh } from '../utils/exportModel';
 import { parseImportedModels, loadCachedModel } from '../utils/importModel';
 import { calculateQuote } from '../utils/quoting';
-import { selectFaceByID, selectFaceWithTolerance, selectAllConnected } from '../utils/selectFace';
+import { resolveViewportFaceClick } from '../utils/selectFace';
 import { buildPartGraphPatches, buildPatchOverlayArrays, PARTGRAPH_MAX_TRIANGLES } from '../utils/partGraphPatches';
 import { createCuttingPlaneWidget, updateCuttingPlaneWidget } from '../utils/cuttingPlaneWidget';
 import { AxesHelper } from 'three';
@@ -472,6 +475,7 @@ const Viewport = forwardRef(({
   onCommitShell = null,
   onCommitDraft = null,
   onCommitCut = null,
+  onCommitMove = null,
   getHelperBuffer = null,
   /** Mobile CAD mid-strip host (CodeEditor). Null on desktop and in game. */
   cadToolbarHost = null,
@@ -608,6 +612,8 @@ const Viewport = forwardRef(({
   const draftModeRef = useRef(null);
   const [cutMode, setCutMode] = useState(null);
   const cutModeRef = useRef(null);
+  const [moveMode, setMoveMode] = useState(null);
+  const moveModeRef = useRef(null);
   const cutPlaneWidgetRef = useRef(null);
   const cutPiecesPreviewRef = useRef(null);
   const cutBaseMaterialRef = useRef(null);
@@ -726,6 +732,7 @@ const Viewport = forwardRef(({
   shellModeRef.current = shellMode;
   draftModeRef.current = draftMode;
   cutModeRef.current = cutMode;
+  moveModeRef.current = moveMode;
 
   useImperativeHandle(ref, () => ({
     executeScript,
@@ -764,6 +771,8 @@ const Viewport = forwardRef(({
       draftModeRef.current = null;
       setCutMode(null);
       cutModeRef.current = null;
+      setMoveMode(null);
+      moveModeRef.current = null;
       setContourToast(null);
       setFilletToast(null);
       setShellToast(null);
@@ -836,6 +845,9 @@ const Viewport = forwardRef(({
     },
     softFailCut: (msg) => {
       showShellToast(msg || 'Cut refused — pick a plane and the bodies to cut.');
+    },
+    softFailMove: (msg) => {
+      showShellToast(msg || 'Move refused — double-click a body, then Confirm.');
     },
     // Updated to use cached mesh when available
     export3MF: async () => {
@@ -1926,6 +1938,8 @@ const Viewport = forwardRef(({
     draftModeRef.current = null;
     setCutMode(null);
     cutModeRef.current = null;
+    setMoveMode(null);
+    moveModeRef.current = null;
     setPickMode('face');
     disposeEdgeOverlayObject(sceneRef.current, pathPreviewRef.current);
     pathPreviewRef.current = null;
@@ -2059,6 +2073,8 @@ const Viewport = forwardRef(({
     draftModeRef.current = null;
     setCutMode(null);
     cutModeRef.current = null;
+    setMoveMode(null);
+    moveModeRef.current = null;
     setPickMode('edge');
     clearHighlight();
     setSelectedFace(null);
@@ -2148,9 +2164,11 @@ const Viewport = forwardRef(({
     clearFilletBlendPreview();
     setDraftMode(null);
     draftModeRef.current = null;
-    if (cutModeRef.current) clearHighlight();
+    if (cutModeRef.current || moveModeRef.current) clearHighlight();
     setCutMode(null);
     cutModeRef.current = null;
+    setMoveMode(null);
+    moveModeRef.current = null;
     setPickMode('face');
     clearEdgeHover();
     clearEdgeHighlight();
@@ -2948,9 +2966,11 @@ const Viewport = forwardRef(({
     clearFilletBlendPreview();
     setShellMode(null);
     shellModeRef.current = null;
-    if (cutModeRef.current) clearHighlight();
+    if (cutModeRef.current || moveModeRef.current) clearHighlight();
     setCutMode(null);
     cutModeRef.current = null;
+    setMoveMode(null);
+    moveModeRef.current = null;
     setPickMode('face');
     clearEdgeHover();
     clearEdgeHighlight();
@@ -3188,6 +3208,9 @@ const Viewport = forwardRef(({
     shellModeRef.current = null;
     setDraftMode(null);
     draftModeRef.current = null;
+    if (moveModeRef.current) clearHighlight();
+    setMoveMode(null);
+    moveModeRef.current = null;
     setPickMode('face');
     clearEdgeHover();
     clearEdgeHighlight();
@@ -3234,6 +3257,69 @@ const Viewport = forwardRef(({
       exitCutMode();
     }
   }, [onCommitCut, exitCutMode, onFaceSelected, clearHighlight]);
+
+  const exitMoveMode = useCallback(() => {
+    const was = moveModeRef.current;
+    setMoveMode(null);
+    moveModeRef.current = null;
+    if (was) clearHighlight();
+    if (shellToastTimerRef.current) {
+      clearTimeout(shellToastTimerRef.current);
+      shellToastTimerRef.current = null;
+    }
+    setShellToast(null);
+  }, [clearHighlight]);
+
+  const enterMoveMode = useCallback(() => {
+    exitContourMode();
+    setFilletMode(null);
+    filletModeRef.current = null;
+    clearFilletBlendPreview();
+    setShellMode(null);
+    shellModeRef.current = null;
+    setDraftMode(null);
+    draftModeRef.current = null;
+    if (cutModeRef.current) {
+      clearHighlight();
+      clearCutPlaneWidget();
+      clearCutPiecePreview();
+    }
+    setCutMode(null);
+    cutModeRef.current = null;
+    setPickMode('face');
+    clearEdgeHover();
+    clearEdgeHighlight();
+    setSelectedEdges([]);
+    const next = emptyMoveState();
+    moveModeRef.current = next;
+    setMoveMode(next);
+    clearHighlight();
+  }, [
+    exitContourMode,
+    clearFilletBlendPreview,
+    clearCutPlaneWidget,
+    clearCutPiecePreview,
+    clearEdgeHover,
+    clearEdgeHighlight,
+    clearHighlight,
+  ]);
+
+  const acceptMove = useCallback(() => {
+    const state = moveModeRef.current;
+    if (!state) return;
+    const gate = validateMoveAccept(state);
+    if (!gate.ok) {
+      showShellToast(gate.message);
+      return;
+    }
+    const ok = onCommitMove?.({ state });
+    if (ok) {
+      clearHighlight();
+      setSelectedFace(null);
+      onFaceSelected?.(null);
+      exitMoveMode();
+    }
+  }, [onCommitMove, exitMoveMode, onFaceSelected, clearHighlight]);
 
   const clearMeasurementLines = useCallback(() => {
     if (measurementLinesRef.current && sceneRef.current) {
@@ -3545,7 +3631,7 @@ const Viewport = forwardRef(({
     const camDist = Math.hypot(ray.origin.x, ray.origin.y, ray.origin.z) || 80;
     // Cut owns the canvas: a saved contour under the cursor must not eat the
     // piece tap (same as a construction plane sitting on the cut).
-    if (!cutModeRef.current && showContoursRef.current && contourModeRef.current?.tool !== 'polyline') {
+    if (!cutModeRef.current && showContoursRef.current && !moveModeRef.current && contourModeRef.current?.tool !== 'polyline') {
       const hitC = pickContourByRay(
         origin,
         dir,
@@ -3569,7 +3655,7 @@ const Viewport = forwardRef(({
     const solidD = solidHits[0]?.distance ?? Infinity;
     // Cut taps a body or a piece. A construction plane that sits on the cut
     // (the XY plane through a centered part) must not swallow that click.
-    if (!cutModeRef.current && planeHits.length && planeD <= solidD + 0.5) {
+    if (!cutModeRef.current && planeHits.length && !moveModeRef.current && planeD <= solidD + 0.5) {
       const ud = planeHits[0].object.userData?.plane
         ? planeHits[0].object.userData
         : planeHits[0].object.parent?.userData;
@@ -3606,6 +3692,8 @@ const Viewport = forwardRef(({
         // Preserve shell face selection — stray taps must not wipe the set.
       } else if (cutModeRef.current) {
         // Preserve cut body selection — stray taps must not wipe the set.
+      } else if (moveModeRef.current) {
+        // Preserve the picked body — stray taps must not wipe the target.
       } else {
         clearHighlight();
         setSelectedFace(null);
@@ -3725,25 +3813,27 @@ const Viewport = forwardRef(({
     clickTimerRef.current = null;
     pendingClickDataRef.current = null;
     
-    // Determine which selection function to use based on click count
-    let faceIndices;
-    let selectionMode;
-    
-    if (clickCount >= 3) {
-      // Triple click: select all connected triangles
-      faceIndices = selectAllConnected(geometry, seedFaceIndex);
-      selectionMode = 'all-connected';
-      console.log(`[Face Selection] Triple-click: selecting all ${faceIndices.length} connected triangles`);
-    } else if (clickCount === 2) {
-      // Double click: select faces within angular tolerance
-      faceIndices = selectFaceWithTolerance(geometry, seedFaceIndex, { normal: faceNormal }, ANGLE_TOLERANCE_DEGREES);
-      selectionMode = 'angular-tolerance';
-      console.log(`[Face Selection] Double-click: selecting ${faceIndices.length} triangles within ${ANGLE_TOLERANCE_DEGREES}° tolerance`);
+    // Shell, Draft, and Cut keep tap-to-add / tap-to-remove. A double click
+    // there must stay the old tolerance walk — not the owning body — so
+    // confirm still writes the face that was tapped.
+    const legacyTap = !!(shellModeRef.current || draftModeRef.current || cutModeRef.current);
+    const resolved = resolveViewportFaceClick({
+      geometry,
+      seedFaceIndex,
+      faceNormal,
+      clickCount,
+      faceIDs: faceIDsRef.current,
+      angleTolerance: ANGLE_TOLERANCE_DEGREES,
+      legacy: legacyTap,
+    });
+    const faceIndices = resolved.indices;
+    const selectionMode = resolved.selectionMode;
+    if (legacyTap) {
+      console.log(`[Face Selection] ${clickCount}-click picker tap: ${faceIndices.length} triangles (${selectionMode})`);
+    } else if (clickCount >= 2) {
+      console.log(`[Face Selection] Double-click: body, ${faceIndices.length} triangles`);
     } else {
-      // Single click: select exact coplanar faces
-      faceIndices = selectFaceByID(geometry, seedFaceIndex, { normal: faceNormal });
-      selectionMode = 'coplanar';
-      console.log(`[Face Selection] Single-click: selecting ${faceIndices.length} coplanar triangles`);
+      console.log(`[Face Selection] Single-click: face (${resolved.kind}), ${faceIndices.length} triangles`);
     }
     
     // Calculate face data (center, area, vertices) from selected triangles
@@ -3791,6 +3881,36 @@ const Viewport = forwardRef(({
         indices: faceIndices.slice(),
       };
       let picks;
+      if (moveModeRef.current) {
+        // Same resolver as the rest of the viewport: one click is the full
+        // face and does not change the body. Two clicks set that body as
+        // the move target. Not a legacy picker, and no viewport arrows.
+        if (clickCount >= 2) {
+          const bodies = meshBodyComponents(positions, index);
+          const hit = bodyContainingTriangle(bodies, seedFaceIndex);
+          if (!hit) {
+            showShellToast(MOVE_MODE_NEED_BODY);
+            return;
+          }
+          const prev = moveModeRef.current.target;
+          const same = prev && cutBodyKey(prev) === cutBodyKey(hit);
+          const target = same ? null : {
+            at: hit.at.slice(),
+            minTri: hit.minTri,
+            triangles: hit.triangles.slice(),
+          };
+          const next = { ...moveModeRef.current, target };
+          moveModeRef.current = next;
+          setMoveMode(next);
+          clearHighlight();
+          if (target) {
+            highlightFace(target.triangles, geometry, positions, index, 0x22d3ee, 'move-body');
+          }
+          return;
+        }
+        publishFacePicks([entry], geometry, positions, index, faceData);
+        return;
+      }
       if (cutModeRef.current) {
         // Cut: plane, bodies, and pieces are sticky taps. No shift-click.
         const geom = geometry;
@@ -3884,7 +4004,7 @@ const Viewport = forwardRef(({
     const onPointerDown = (event) => {
       if (!featureSheetEnabledRef.current) return;
       if (event.button != null && event.button !== 0) return;
-      if (contourModeRef.current || filletModeRef.current || shellModeRef.current || draftModeRef.current) return;
+      if (contourModeRef.current || filletModeRef.current || shellModeRef.current || draftModeRef.current || moveModeRef.current) return;
       if (measurementEnabled) return;
       CLEAR_LP();
       featureLongPressFiredRef.current = false;
@@ -3894,7 +4014,7 @@ const Viewport = forwardRef(({
         const origin = featureLongPressOriginRef.current;
         featureLongPressOriginRef.current = null;
         if (!origin || !featureSheetEnabledRef.current) return;
-        if (contourModeRef.current || filletModeRef.current || shellModeRef.current || draftModeRef.current) return;
+        if (contourModeRef.current || filletModeRef.current || shellModeRef.current || draftModeRef.current || moveModeRef.current) return;
         featureLongPressFiredRef.current = true;
         onFeatureLongPressRef.current?.({ clientX: origin.x, clientY: origin.y });
       }, 450);
@@ -5119,7 +5239,7 @@ const Viewport = forwardRef(({
       )}
       
       {/* Left helper rail. Game keeps Advanced; CAD promotes those tools into Model. */}
-      {onInsertHelper && !contourMode && !filletMode && !shellMode && !draftMode && !cutMode && (
+      {onInsertHelper && !contourMode && !filletMode && !shellMode && !draftMode && !cutMode && !moveMode && (
         <HelperInsertPalette
           layout={mode === 'game' ? 'game' : 'cad'}
           onInsert={onInsertHelper}
@@ -5142,6 +5262,7 @@ const Viewport = forwardRef(({
           onEnterShellMode={enterShellMode}
           onEnterDraftMode={enterDraftMode}
           onEnterCutMode={enterCutMode}
+          onEnterMoveMode={enterMoveMode}
           compact={isMobile}
         />
       )}
@@ -5440,6 +5561,31 @@ const Viewport = forwardRef(({
           onClear={() => commitCutState(clearCutPicks(cutModeRef.current))}
           onConfirm={acceptCut}
           onDismiss={exitCutMode}
+        />
+      )}
+
+      {/* Move body chip — delta X/Y/Z. Confirm writes one move(). No viewport arrows. */}
+      {moveMode && (
+        <MoveModeChip
+          target={moveMode.target}
+          dx={moveMode.dx}
+          dy={moveMode.dy}
+          dz={moveMode.dz}
+          compact={isMobile}
+          onDelta={(axis, value) => setMoveMode((prev) => {
+            if (!prev) return prev;
+            const updated = { ...prev, [axis]: value };
+            moveModeRef.current = updated;
+            return updated;
+          })}
+          onClear={() => {
+            const next = clearMoveTarget(moveModeRef.current);
+            moveModeRef.current = next;
+            setMoveMode(next);
+            clearHighlight();
+          }}
+          onConfirm={acceptMove}
+          onDismiss={exitMoveMode}
         />
       )}
 

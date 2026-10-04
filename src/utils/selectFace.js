@@ -1,4 +1,6 @@
 import { Vector3 } from 'three';
+import { buildPartGraphPatches } from './partGraphPatches.js';
+import { meshBodyComponents } from './cutMode.js';
 
 // Configuration constants
 const NORMAL_THRESHOLD = 0.001; // Element-wise tolerance for normal comparison (coplanar)
@@ -317,10 +319,142 @@ export function getEdgesFromTriangles(triangleIndices, geometry) {
  * Selection mode enum for clarity
  */
 export const SelectionMode = {
-  COPLANAR: 'coplanar',           // Single click - exact coplanar faces
-  ANGULAR_TOLERANCE: 'tolerance', // Double click - faces within angle tolerance
-  ALL_CONNECTED: 'connected'      // Triple click - all connected faces
+  COPLANAR: 'coplanar',           // Flat face — coplanar region
+  ANGULAR_TOLERANCE: 'tolerance', // Curved face — neighbour angle walk (shell/draft/cut taps)
+  ALL_CONNECTED: 'connected'      // Whole connected body
 };
+
+/** One PartGraph per geometry. Rebuilt when the mesh or its faceID buffer changes. */
+const faceGraphCache = new WeakMap();
+
+function faceGraphFor(geometry, faceIDs) {
+  const positions = geometry?.attributes?.position?.array;
+  const indices = geometry?.index?.array;
+  if (!positions || !indices || !indices.length) return null;
+  const cached = faceGraphCache.get(geometry);
+  if (cached && cached.faceIDs === faceIDs) return cached.graph;
+  const graph = buildPartGraphPatches({
+    positions,
+    indices,
+    faceIDs: faceIDs && faceIDs.length ? faceIDs : null,
+  });
+  faceGraphCache.set(geometry, { faceIDs, graph });
+  return graph;
+}
+
+/**
+ * Every triangle of the face-graph component that owns the seed.
+ *
+ * A component is one PartGraph patch: coplanar triangles of a flat face, or
+ * the curvature-merged band of a curved face (fillet, cylinder wall). The
+ * hit triangle alone is not a face, and neither is one coplanar mesh facet
+ * when the face continues around a curve.
+ *
+ * @param {BufferGeometry} geometry
+ * @param {number} seedFaceIndex
+ * @param {ArrayLike<number>|null} [faceIDs] per-triangle Manifold faceID
+ * @returns {{ indices: number[], kind: string }}
+ */
+export function selectGraphFace(geometry, seedFaceIndex, faceIDs = null) {
+  const seed = Number(seedFaceIndex);
+  const graph = faceGraphFor(geometry, faceIDs);
+  const triPatch = graph?.triPatch;
+  if (!graph || !triPatch || seed < 0 || seed >= triPatch.length) {
+    return { indices: Number.isFinite(seed) ? [seed] : [], kind: 'planar' };
+  }
+  const patch = graph.patches[triPatch[seed]];
+  if (!patch?.tris?.length) {
+    return { indices: [seed], kind: 'planar' };
+  }
+  return { indices: patch.tris.slice(), kind: patch.kind || 'general' };
+}
+
+/**
+ * Every triangle of the solid that owns the seed face.
+ * Shared vertex indices join one body — the same split Cut uses — so a
+ * second solid in the mesh stays unselected.
+ * @param {BufferGeometry} geometry
+ * @param {number} seedFaceIndex
+ * @returns {number[]}
+ */
+export function selectOwningBody(geometry, seedFaceIndex) {
+  const seed = Number(seedFaceIndex);
+  const positions = geometry?.attributes?.position;
+  const index = geometry?.index;
+  const bodies = meshBodyComponents(positions, index);
+  for (const body of bodies) {
+    if (body.triangles.includes(seed)) return body.triangles.slice();
+  }
+  return selectAllConnected(geometry, seed);
+}
+
+/**
+ * Default viewport: one click is the face-graph component, two clicks are
+ * the body that owns it. Shell, Draft, and Cut pass `legacy` so a tap still
+ * adds or removes the coplanar (or tolerance) region and a double click
+ * does not become the body.
+ *
+ * @param {{
+ *   geometry: object,
+ *   seedFaceIndex: number,
+ *   faceNormal?: number[],
+ *   clickCount?: number,
+ *   faceIDs?: ArrayLike<number>|null,
+ *   angleTolerance?: number,
+ *   legacy?: boolean,
+ * }} args
+ * @returns {{ indices: number[], selectionMode: string, kind: string }}
+ */
+export function resolveViewportFaceClick({
+  geometry,
+  seedFaceIndex,
+  faceNormal,
+  clickCount = 1,
+  faceIDs = null,
+  angleTolerance = DEFAULT_ANGLE_TOLERANCE_DEGREES,
+  legacy = false,
+}) {
+  const clicks = Number(clickCount) || 1;
+  if (legacy) {
+    if (clicks >= 3) {
+      return {
+        indices: selectAllConnected(geometry, seedFaceIndex),
+        selectionMode: 'all-connected',
+        kind: 'body',
+      };
+    }
+    if (clicks === 2) {
+      return {
+        indices: selectFaceWithTolerance(
+          geometry,
+          seedFaceIndex,
+          { normal: faceNormal },
+          angleTolerance,
+        ),
+        selectionMode: 'angular-tolerance',
+        kind: 'tolerance',
+      };
+    }
+    return {
+      indices: selectFaceByID(geometry, seedFaceIndex, { normal: faceNormal }),
+      selectionMode: 'coplanar',
+      kind: 'planar',
+    };
+  }
+  if (clicks >= 2) {
+    return {
+      indices: selectOwningBody(geometry, seedFaceIndex),
+      selectionMode: 'all-connected',
+      kind: 'body',
+    };
+  }
+  const face = selectGraphFace(geometry, seedFaceIndex, faceIDs);
+  return {
+    indices: face.indices,
+    selectionMode: face.kind === 'planar' ? 'coplanar' : 'angular-tolerance',
+    kind: face.kind,
+  };
+}
 
 /**
  * Unified selection function that handles all selection modes

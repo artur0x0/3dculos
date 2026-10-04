@@ -57,6 +57,7 @@ import { composeFilletCommit, composeChamferCommit } from './utils/filletMode';
 import { composeShellCommit } from './utils/shellMode';
 import { composeDraftCommit } from './utils/draftMode';
 import { composeCutCommit } from './utils/cutMode';
+import { composeMoveCommit } from './utils/moveMode';
 
 const App = () => {
   const [currentScript, setCurrentScript] = useState('');
@@ -1230,6 +1231,29 @@ const App = () => {
     return true;
   };
 
+  /** Move body Confirm — one move() + MOVE markers; Auto-Run. */
+  const handleCommitMove = (payload) => {
+    const buf = codeEditorRef.current?.getContent?.() || '';
+    const result = composeMoveCommit(buf, payload?.state || payload || {});
+    if (!result.ok) {
+      viewportRef.current?.softFailMove?.(result.message);
+      return false;
+    }
+    const wrote = codeEditorRef.current?.applyBuffer?.(result.buffer, 'Move');
+    if (!wrote) {
+      viewportRef.current?.softFailMove?.(
+        'Could not write Move into the editor — try again.',
+      );
+      return false;
+    }
+    if (result.run) {
+      setTimeout(() => {
+        handleGameRun();
+      }, 0);
+    }
+    return true;
+  };
+
   const handleExecute = (script, autoExecute=false) => {
     // The editor has produced a real buffer — the draft autosave may now
     // treat currentScript as authoritative (before this, '' is just "Monaco
@@ -1599,6 +1623,7 @@ const App = () => {
               onCommitShell={handleCommitShell}
               onCommitDraft={handleCommitDraft}
               onCommitCut={handleCommitCut}
+              onCommitMove={handleCommitMove}
               getHelperBuffer={() => codeEditorRef.current?.getContent?.() || ''}
               cadToolbarHost={cadToolbarHost}
               featureSheetEnabled={useStages && isCadStage && !featureSheet}
@@ -1970,6 +1995,7 @@ const App = () => {
               onCommitShell={handleCommitShell}
               onCommitDraft={handleCommitDraft}
               onCommitCut={handleCommitCut}
+              onCommitMove={handleCommitMove}
             getHelperBuffer={() => codeEditorRef.current?.getContent?.() || ''}
             cadToolbarHost={cadToolbarHost}
           />

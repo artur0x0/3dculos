@@ -31,6 +31,11 @@ over inventing a new modal layout.
   color; tap hides that piece, tap again brings it back, Undo drops the last
   hide, Clear unhides every piece and keeps the plane. No shift-click.
   Confirm writes one `cut()`; grey X exits with no write.
+- **`MoveModeChip.jsx`** — cyan glass card (same shell as Shell). Double-click
+  selects the body (one click still selects the full face and does not change
+  the target). X, Y, and Z are `NumberField` deltas, slider and type-in. No
+  viewport arrows. Confirm writes one `move()` and replaces a previous Move
+  block; grey X exits with no write.
 
 ## Placement
 
