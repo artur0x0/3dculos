@@ -185,6 +185,7 @@ import {
   validateDeleteFaceAccept,
 } from '../utils/deleteFaceMode';
 import { contactSeamSegments } from '../utils/contactSeam';
+import { dropPlanarFins } from '../utils/planarSeam';
 import { classifySelectedFace } from '../utils/faceFeaturePlacement';
 import { classifyFilletEdges, countDegenerateTriangles } from '../utils/filletEdgeClass';
 import {
@@ -303,7 +304,8 @@ function geometryFromMeshData(meshData) {
     positions[i * 3 + 2] = src[i * np + 2];
   }
   geometry.setAttribute('position', new BufferAttribute(positions, 3));
-  geometry.setIndex(new BufferAttribute(new Uint32Array(meshData.triVerts), 1));
+  const fin = dropPlanarFins(positions, new Uint32Array(meshData.triVerts));
+  geometry.setIndex(new BufferAttribute(fin.indices, 1));
   geometry.computeVertexNormals();
   return geometry;
 }
@@ -5260,20 +5262,29 @@ const Viewport = forwardRef(({
 
     const geometry = new BufferGeometry();
     
-    // Convert arrays to typed arrays
+    // Convert arrays to typed arrays. The needle between two copies of a
+    // cap vertex is not part of the face: drop it so the seam is not drawn
+    // and is not an edge of the face graph built from this geometry.
     const vertProperties = new Float32Array(meshData.vertProperties);
-    const triVerts = new Uint32Array(meshData.triVerts);
+    const srcIndex = new Uint32Array(meshData.triVerts);
+    const srcFaceID = meshData.faceID && meshData.faceID.length > 0 ? meshData.faceID : null;
+    const fin = dropPlanarFins(vertProperties, srcIndex, srcFaceID);
+    const triVerts = fin.indices;
     
     geometry.setAttribute('position', new BufferAttribute(vertProperties, 3));
     geometry.setIndex(new BufferAttribute(triVerts, 1));
 
-    faceIDsRef.current = meshData.faceID && meshData.faceID.length > 0 ? meshData.faceID : null;
+    faceIDsRef.current = fin.faceIDs && fin.faceIDs.length > 0 ? fin.faceIDs : null;
     if (faceIDsRef.current) {
-      geometry.setAttribute('faceID', new BufferAttribute(new Float32Array(meshData.faceID), 1));
+      geometry.setAttribute('faceID', new BufferAttribute(new Float32Array(faceIDsRef.current), 1));
     }
 
-    // Set up material groups
-    if (meshData.runIndex) {
+    // Set up material groups. A dropped needle makes the old run ranges
+    // point at removed triangles; matIndex is always 0, so one group covers
+    // the kept mesh.
+    if (fin.dropped > 0) {
+      geometry.addGroup(0, triVerts.length, 0);
+    } else if (meshData.runIndex) {
       const runIndex = meshData.runIndex;
       
       let start = runIndex[0];
