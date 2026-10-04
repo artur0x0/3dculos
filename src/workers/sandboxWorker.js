@@ -6671,6 +6671,13 @@ function cut(manifold, plane, opts = {}) {
  * Same Manifold.translate center() already uses, and the same decompose /
  * centroid / compose split cut() uses. Not a second kernel. The named body
  * moves; every other body stays. A zero delta returns the input solid.
+ *
+ * The { at } point is that body's vertex centroid. cut() requires squared
+ * distance ≤ 1e-4. A fillet does not retessellate the same way on the next
+ * run, so that average can move by a few hundredths and a valid pick would
+ * miss the tight gate. move() still takes the exact match, and otherwise
+ * the nearest body within 1% of its radius (at least 0.05) when the next
+ * body is farther than that. A point that is not near a centroid throws.
  */
 function move(manifold, delta, opts = {}) {
   if (!manifoldModule) throw new Error('Manifold not initialized');
@@ -6692,7 +6699,7 @@ function move(manifold, delta, opts = {}) {
   let selected;
   try {
     bodies = _cutBodiesOf(manifold);
-    selected = _cutSelected(bodies, options.bodies);
+    selected = _moveSelected(bodies, options.bodies);
   } catch (err) {
     const msg = err && err.message ? String(err.message) : String(err);
     throw new Error(msg.replace(/^cut:/, 'move:'));
@@ -6888,6 +6895,85 @@ function _cutBodyIndex(bodies, at) {
     throw new Error('cut: that point matches more than one body');
   }
   return best;
+}
+
+/** Vertex centroid plus the farthest vertex, for move()'s looser match. */
+function _moveCentroidSpan(body) {
+  const mesh = body.getMesh();
+  const vp = mesh.vertProperties;
+  const np = mesh.numProp || 3;
+  const n = Math.floor(vp.length / np);
+  if (!n) return { at: [0, 0, 0], radius: 0 };
+  let sx = 0;
+  let sy = 0;
+  let sz = 0;
+  for (let i = 0; i < n; i++) {
+    sx += vp[i * np];
+    sy += vp[i * np + 1];
+    sz += vp[i * np + 2];
+  }
+  const at = [sx / n, sy / n, sz / n];
+  let max2 = 0;
+  for (let i = 0; i < n; i++) {
+    const dx = vp[i * np] - at[0];
+    const dy = vp[i * np + 1] - at[1];
+    const dz = vp[i * np + 2] - at[2];
+    const d2 = dx * dx + dy * dy + dz * dz;
+    if (d2 > max2) max2 = d2;
+  }
+  return { at, radius: Math.sqrt(max2) };
+}
+
+/**
+ * Body named by { at }. Exact literals use cut()'s 1e-4 gate. A drifted
+ * pick still names the nearest body when it sits within 1% of that body's
+ * radius (at least 0.05) and the next body is outside that distance.
+ */
+function _moveBodyIndex(bodies, at) {
+  const point = [Number(at[0]), Number(at[1]), Number(at[2])];
+  if (point.some((v) => !Number.isFinite(v))) {
+    throw new Error('move: body point must be finite [x, y, z]');
+  }
+  const spans = bodies.map((body) => _moveCentroidSpan(body));
+  let best = -1;
+  let bestD = Infinity;
+  let second = Infinity;
+  for (let i = 0; i < spans.length; i++) {
+    const d = _cutDist2(spans[i].at, point);
+    if (d < bestD) {
+      second = bestD;
+      bestD = d;
+      best = i;
+    } else if (d < second) {
+      second = d;
+    }
+  }
+  if (best < 0) {
+    throw new Error('move: that point is not a body centroid — re-pick the body');
+  }
+  if (bestD <= 1e-4) {
+    if (second <= 1e-4 && Math.sqrt(second) - Math.sqrt(bestD) < 1e-4) {
+      throw new Error('move: that point matches more than one body');
+    }
+    return best;
+  }
+  const tol = Math.max(0.05, spans[best].radius * 0.01);
+  const tol2 = tol * tol;
+  if (bestD <= tol2 && !(second <= tol2)) return best;
+  if (bestD <= tol2) {
+    throw new Error('move: that point matches more than one body');
+  }
+  throw new Error('move: that point is not a body centroid — re-pick the body');
+}
+
+function _moveSelected(bodies, spec) {
+  if (!Array.isArray(spec) || spec.length !== 1) {
+    throw new Error('move: name one body with { bodies: [{ at }] }');
+  }
+  const entry = spec[0];
+  const at = entry && (entry.at || entry.center);
+  if (!Array.isArray(at)) throw new Error('move: name one body with { bodies: [{ at }] }');
+  return new Set([_moveBodyIndex(bodies, at)]);
 }
 
 function _cutSelected(bodies, spec) {
