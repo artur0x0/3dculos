@@ -10,9 +10,11 @@
  *
  * This lists only that boundary — a feature edge (not a coplanar diagonal)
  * that two different bodies occupy in the same place, with side faces
- * agreeing and cap faces opposing. One body (uncut, or a cut that keeps one
- * side) has no such pair, so it grows no extra edge. The viewport paints
- * these contours as a 1px black line on the edge itself.
+ * agreeing and cap faces opposing. Which triangle was stored first does not
+ * matter: a drafted side is tilted off the cap, and the same edge still
+ * counts. One body (uncut, or a cut that keeps one side) has no such pair,
+ * so it grows no extra edge. The viewport paints these contours as a 1px
+ * black line on the edge itself.
  */
 
 const QUANT = 1e4;
@@ -148,12 +150,33 @@ export function contactSeamSegments(vertProperties, triVerts, numProp = 3) {
 }
 
 function pairFaces(a, b) {
-  const options = [
-    { side: a.n0, cap: a.n1, sd: dot(a.n0, b.n0), cd: dot(a.n1, b.n1) },
-    { side: a.n0, cap: a.n1, sd: dot(a.n0, b.n1), cd: dot(a.n1, b.n0) },
+  // Either correspondence can be the side pair. Picking the larger dot and
+  // calling it the side fails once a draft tilts the side toward the cap:
+  // the cross-pair dot becomes positive and beats the cap-vs-cap dot of -1
+  // whenever the two bodies stored their triangles in opposite order.
+  const pairings = [
+    [[a.n0, b.n0], [a.n1, b.n1]],
+    [[a.n0, b.n1], [a.n1, b.n0]],
   ];
-  const best = options[0].sd >= options[1].sd ? options[0] : options[1];
-  if (best.sd < 0.85 || best.cd > -0.85) return null;
+  let best = null;
+  for (const [p, q] of pairings) {
+    const d0 = dot(p[0], p[1]);
+    const d1 = dot(q[0], q[1]);
+    let side = null;
+    let cap = null;
+    let score = -Infinity;
+    if (d0 >= 0.85 && d1 <= -0.85) {
+      side = p[0];
+      cap = q[0];
+      score = d0 - d1;
+    } else if (d1 >= 0.85 && d0 <= -0.85) {
+      side = q[0];
+      cap = p[0];
+      score = d1 - d0;
+    }
+    if (side && (!best || score > best.score)) best = { side, cap, score };
+  }
+  if (!best) return null;
   const side = norm(best.side);
   const cap = norm(best.cap);
   if (!side || !cap) return null;

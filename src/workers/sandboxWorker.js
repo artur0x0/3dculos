@@ -1000,9 +1000,128 @@ function addDraft(manifold, draftDeg, axis = "z") {
 }
 
 /**
+ * Rigid offset of a tangent blend that shares an edge with the selection.
+ *
+ * An internal fillet is one body with the wall, but its facets are their own
+ * faces. Leaving them stationary pins the shared vertices (the facet is
+ * almost the wall's plane, with a zero offset) and the wall cannot move, so
+ * the fillet stays where it was. A circular blend between planar faces
+ * translates with the moved plane and stays tangent to the planes that do
+ * not move. Facets much smaller than the picked face, starting within 18°
+ * of it and continuing within 28°, are that blend. The next wall is not.
+ *
+ * @returns {Map<number, number[]>|null} vertex index → displacement
+ */
+function _c4BlendCarryDelta(md, sel, signed) {
+  const adj = _c4FaceAdj(md);
+  const area = md.faces.map((face) => {
+    let a = 0;
+    for (const t of face.tris) {
+      const i0 = md.T[t * 3];
+      const i1 = md.T[t * 3 + 1];
+      const i2 = md.T[t * 3 + 2];
+      a += 0.5 * _c4Len(_c4Cross(_c4Sub(md.V[i1], md.V[i0]), _c4Sub(md.V[i2], md.V[i0])));
+    }
+    return a;
+  });
+  const tangent = Math.cos((18 * Math.PI) / 180);
+  const smooth = Math.cos((28 * Math.PI) / 180);
+  const carry = new Set();
+  const seedOf = new Map();
+  const stack = [];
+  for (const fi of sel) {
+    const limit = Math.max(area[fi] * 0.5, 12);
+    for (const nb of adj.get(fi) || []) {
+      if (sel.has(nb) || carry.has(nb)) continue;
+      if (!(area[nb] < limit)) continue;
+      if (_c4Dot(md.faces[fi].normal, md.faces[nb].normal) < tangent) continue;
+      carry.add(nb);
+      seedOf.set(nb, fi);
+      stack.push(nb);
+    }
+  }
+  while (stack.length) {
+    const fi = stack.pop();
+    const seed = seedOf.get(fi);
+    const limit = Math.max(area[seed] * 0.5, 12);
+    for (const nb of adj.get(fi) || []) {
+      if (sel.has(nb) || carry.has(nb)) continue;
+      if (!(area[nb] < limit)) continue;
+      if (_c4Dot(md.faces[fi].normal, md.faces[nb].normal) < smooth) continue;
+      carry.add(nb);
+      seedOf.set(nb, seed);
+      stack.push(nb);
+    }
+  }
+  if (!carry.size) return null;
+
+  const seen = new Set();
+  const vertDelta = new Map();
+  for (const start of carry) {
+    if (seen.has(start)) continue;
+    const comp = [];
+    const seeds = new Set();
+    const st = [start];
+    seen.add(start);
+    while (st.length) {
+      const fi = st.pop();
+      comp.push(fi);
+      seeds.add(seedOf.get(fi));
+      for (const nb of adj.get(fi) || []) {
+        if (!carry.has(nb) || seen.has(nb)) continue;
+        seen.add(nb);
+        st.push(nb);
+      }
+    }
+    const faceSet = new Set(comp);
+    const stationary = [];
+    const statSeen = new Set();
+    for (const e of md.edges) {
+      const a = e.faces[0];
+      const b = e.faces[1];
+      let other = -1;
+      if (faceSet.has(a) && !faceSet.has(b)) other = b;
+      else if (faceSet.has(b) && !faceSet.has(a)) other = a;
+      else continue;
+      if (other < 0 || sel.has(other) || statSeen.has(other)) continue;
+      if (area[other] < Math.max(area[seeds.values().next().value] * 0.5, 12)) continue;
+      statSeen.add(other);
+      stationary.push(other);
+    }
+    const normals = [];
+    const rhs = [];
+    const pushPlane = (n, r) => {
+      for (let k = 0; k < normals.length; k++) {
+        const d = _c4Dot(normals[k], n);
+        if (d > 0.999) return;
+        if (d < -0.999) return;
+      }
+      normals.push(n);
+      rhs.push(r);
+    };
+    for (const fi of seeds) pushPlane(md.faces[fi].normal, signed);
+    for (const fi of stationary) pushPlane(md.faces[fi].normal, 0);
+    let delta = _c4SolvePlaneMoves(normals, rhs);
+    let worst = 0;
+    for (let k = 0; k < normals.length; k++) {
+      worst = Math.max(worst, Math.abs(_c4Dot(delta, normals[k]) - rhs[k]));
+    }
+    if (worst > Math.max(1e-3, Math.abs(signed) * 0.02)) {
+      delta = _c4Mul(signed, md.faces[seeds.values().next().value].normal);
+    }
+    for (const fi of comp) {
+      for (const vi of _c4FaceVertIndices(md, md.faces[fi])) vertDelta.set(vi, delta);
+    }
+  }
+  return vertDelta.size ? vertDelta : null;
+}
+
+/**
  * moveFace(manifold, faces, distance, opts) — offset the selected faces along
- * their own normals. Adjacent faces stay on their planes, so they extend or
- * trim and the result is still one closed solid.
+ * their own normals. Adjacent planar faces stay on their planes, so they
+ * extend or trim and the result is still one closed solid. A tangent blend
+ * on the picked face (an internal fillet) translates with that face instead
+ * of staying behind.
  *
  * This is not move(). move() translates a whole body. A vertex on a selected
  * face is solved against every plane that meets it: selected planes move by
@@ -1034,6 +1153,8 @@ function moveFace(manifold, faces, distance, opts = {}) {
   }
   if (signed === 0) return manifold;
 
+  const carried = _c4BlendCarryDelta(md, sel, signed);
+
   const vertFaces = new Map();
   for (let fi = 0; fi < md.faces.length; fi++) {
     for (const vi of _c4FaceVertIndices(md, md.faces[fi])) {
@@ -1050,6 +1171,7 @@ function moveFace(manifold, faces, distance, opts = {}) {
   const moved = md.V.map((v) => v.slice());
   const tol = Math.max(1e-3, Math.abs(signed) * 1e-3);
   for (const vi of touched) {
+    if (carried && carried.has(vi)) continue;
     const normals = [];
     const rhs = [];
     for (const fi of vertFaces.get(vi) || []) {
@@ -1080,6 +1202,9 @@ function moveFace(manifold, faces, distance, opts = {}) {
       );
     }
     moved[vi] = _c4Add(md.V[vi], d);
+  }
+  if (carried) {
+    for (const [vi, delta] of carried) moved[vi] = _c4Add(md.V[vi], delta);
   }
 
   let acc = 0;
