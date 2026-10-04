@@ -23,6 +23,7 @@ import {
   NotebookPen,
   Route,
   Scissors,
+  Move,
 } from 'lucide-react';
 import SquareRoundCorner from './icons/SquareRoundCorner';
 import Angle from './icons/Angle';
@@ -56,6 +57,7 @@ const ICONS = {
   cskHole: Cone,
   shell: PackageOpen,
   cut: Scissors,
+  move: Move,
   addDraft: Angle,
   center: Focus,
   align: AlignVerticalJustifyCenter,
@@ -109,6 +111,7 @@ const HelperInsertPalette = ({
   onEnterShellMode = null,
   onEnterDraftMode = null,
   onEnterCutMode = null,
+  onEnterMoveMode = null,
   compact = false,
   /** 'game' keeps Advanced. 'cad' promotes that set into Model. */
   layout = 'game',
@@ -164,6 +167,12 @@ const HelperInsertPalette = ({
     // XY / YZ / ZX is chosen in the chip. Not a world-axis guess.
     if (item.id === 'cut' && typeof onEnterCutMode === 'function') {
       onEnterCutMode({ entry: 'cut' });
+      return;
+    }
+    // Move enters body-pick mode. Deltas live on the chip. The axis helper
+    // stays a visual AxesHelper — it does not move a body.
+    if (item.id === 'move' && typeof onEnterMoveMode === 'function') {
+      onEnterMoveMode({ entry: 'move' });
       return;
     }
     // Workplane enters plane-only contour mode (Face / construction plane +

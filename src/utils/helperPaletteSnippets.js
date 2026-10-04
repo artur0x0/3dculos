@@ -125,6 +125,8 @@ export const DRAFT_BEGIN = '// --- draft begin ---';
 export const DRAFT_END = '// --- draft end ---';
 export const CUT_BEGIN = '// --- cut begin ---';
 export const CUT_END = '// --- cut end ---';
+export const MOVE_BEGIN = '// --- move begin ---';
+export const MOVE_END = '// --- move end ---';
 export const CENTER_BEGIN = '// --- center begin ---';
 export const CENTER_END = '// --- center end ---';
 export const ALIGN_BEGIN = '// --- align begin ---';
@@ -162,6 +164,7 @@ export const FEATURE_BLOCK_END_MARKERS = Object.freeze([
   SHELL_END,
   DRAFT_END,
   CUT_END,
+  MOVE_END,
   CENTER_END,
   ALIGN_END,
   MIRROR_END,
@@ -1869,6 +1872,32 @@ export const HELPER_PALETTE_ITEMS = [
   },
 
   // ── Transforms / layout ─────────────────────────────────────
+  {
+    id: 'move',
+    label: 'Move',
+    group: 'Transforms',
+    title: 'move(manifold, [dx, dy, dz], { bodies }) — translate one body by a delta',
+    params: [
+      { name: 'body', type: 'body', default: 'part', label: 'Body' },
+      { name: 'dx', type: 'number', default: 0, label: 'X', min: -1000, max: 1000, step: 0.5, slider: true },
+      { name: 'dy', type: 'number', default: 0, label: 'Y', min: -1000, max: 1000, step: 0.5, slider: true },
+      { name: 'dz', type: 'number', default: 0, label: 'Z', min: -1000, max: 1000, step: 0.5, slider: true },
+    ],
+    build: (empty, p, names, buffer, faceCtx = null) => {
+      const lines = [...ensurePartPrefix(empty, names)];
+      const body = resolveBody(p, names, empty ? lines.join('\n') : buffer);
+      const dx = num(p.dx, 0);
+      const dy = num(p.dy, 0);
+      const dz = num(p.dz, 0);
+      const at = (faceCtx && Array.isArray(faceCtx.center)) ? faceCtx.center : [0, 0, 0];
+      const feat = [
+        `${body} = move(${body}, [${dx}, ${dy}, ${dz}], { bodies: [{ at: ${formatVec3(at)} }] });`,
+        ...syncPartLines(body, names, /(?:let|const|var)\s+part\b/.test(lines.join('\n')) || !empty),
+      ];
+      lines.push(...wrapFeatureBlock(MOVE_BEGIN, MOVE_END, feat));
+      return withReturn(lines, empty);
+    },
+  },
   {
     id: 'center',
     label: 'Center',
