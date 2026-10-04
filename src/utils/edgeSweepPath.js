@@ -534,6 +534,49 @@ function _restoreShortArcSpan(pts, kept, ib, ic) {
 }
 
 /**
+ * Index of the vertex where a circular run meets a long straight, or -1.
+ * Same detection as the short-quarter restore (short chords, then a segment
+ * much longer than their median, and the short run sits on one circle).
+ * A long quarter that already has its samples is not re-seeded here — the
+ * caller only puts this one joint back.
+ */
+function _arcStraightJointIndex(pts, ib, ic) {
+  if (ic <= ib + 1) return -1;
+  const segLen = (i) => _dist(pts[i], pts[i + 1]);
+  const shorts = [];
+  let junction = ic;
+  for (let i = ib; i < ic; i++) {
+    const L = segLen(i);
+    if (shorts.length >= 2) {
+      const sorted = shorts.slice().sort((a, b) => a - b);
+      const med = sorted[sorted.length >> 1];
+      if (L > med * 2.5 && L > shorts[shorts.length - 1] * 2.5) {
+        junction = i;
+        break;
+      }
+    }
+    shorts.push(L);
+  }
+  if (!(junction > ib && junction < ic)) return -1;
+  const seqIdx = [];
+  for (let i = ib; i <= junction; i++) seqIdx.push(i);
+  if (seqIdx.length < 3) return -1;
+  const fit = _circFit3(
+    pts[seqIdx[0]],
+    pts[seqIdx[seqIdx.length >> 1]],
+    pts[seqIdx[seqIdx.length - 1]],
+  );
+  if (!fit) return -1;
+  const tol = Math.max(0.35, 0.08 * fit.R);
+  for (const i of seqIdx) {
+    const p = pts[i];
+    const d = Math.hypot(p[0] - fit.C[0], p[1] - fit.C[1], p[2] - fit.C[2]);
+    if (Math.abs(d - fit.R) > tol) return -1;
+  }
+  return junction;
+}
+
+/**
  * Cap path sample density after pts expansion.
  *
  * Slice B+C expands pre-RDP `pts` so fillets follow real curvature instead of
@@ -551,7 +594,10 @@ function _restoreShortArcSpan(pts, kept, ib, ic) {
  * dropped samples lie on a circle, restore the arc at ~15° steps (at least
  * three interior samples on a quarter, which is what the arc fitter needs
  * before it will extend to the tangency vertices) so the fillet arc resample
- * (≤5°) can refit it. SWEEP_PATH_MIN_SEG is unchanged.
+ * (≤5°) can refit it. That full restore stays behind the 18° kink gate.
+ * A circle that already has its samples, running into a long straight, only
+ * gets the joint vertex back, and only when the thinned shortcut turns more
+ * than 5° — the corner-split gate. SWEEP_PATH_MIN_SEG is unchanged.
  *
  * Long straight edges are unchanged (already one segment). Closed paths keep
  * first ≠ last.
@@ -600,16 +646,31 @@ export function thinSweepPathPoints(points, closed, opts = {}) {
     restored.push(ib);
     if (ic <= ib + 1) continue;
     const thinTurn = _turnDeg(pts[ia], pts[ib], pts[ic]);
-    if (thinTurn < KINK_DEG) continue;
+    const joint = _arcStraightJointIndex(pts, ib, ic);
+    const pushJoint = () => {
+      // Greater than 5°: a turn at the split gate. The 18° gate below is
+      // unchanged and still owns the full quarter re-seed.
+      if (!(thinTurn > 5)) return;
+      if (!(joint > restored[restored.length - 1] && joint < ic)) return;
+      restored.push(joint);
+    };
+    if (thinTurn < KINK_DEG) {
+      pushJoint();
+      continue;
+    }
     let maxOrig = 0;
     for (let i = ib + 1; i < ic; i++) {
       if (i - 1 < 0 || i + 1 >= pts.length) continue;
       maxOrig = Math.max(maxOrig, _turnDeg(pts[i - 1], pts[i], pts[i + 1]));
     }
-    if (thinTurn < maxOrig + 8) continue;
+    if (thinTurn < maxOrig + 8) {
+      pushJoint();
+      continue;
+    }
     for (const j of _restoreShortArcSpan(pts, kept, ib, ic)) {
       if (j > restored[restored.length - 1] && j < ic) restored.push(j);
     }
+    pushJoint();
   }
   restored.push(kept[kept.length - 1]);
 

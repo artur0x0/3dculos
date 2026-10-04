@@ -4918,6 +4918,10 @@ function _s23SplitRunsAtCorners(runs) {
       const b = dirOf(run[i]);
       const sharp = a && b && _c4Dot(a, b) < cosGate;
       if (sharp) {
+        const turnDeg = (Math.acos(Math.max(-1, Math.min(1, _c4Dot(a, b)))) * 180) / Math.PI;
+        const prev = cur[cur.length - 1];
+        if (prev) prev._splitOutDeg = turnDeg;
+        if (run[i]) run[i]._splitInDeg = turnDeg;
         out.push(cur);
         cur = [run[i]];
       } else {
@@ -5261,12 +5265,12 @@ function _s23ExtendConcaveOpenEnds(part, segs, closed, radius) {
 /**
  * How far an open cutter end must travel along its outward tangent so the
  * whole end profile clears a face that is not perpendicular to the path.
- * A 90° end face already contains the end cap, so the distance is 0.
- * A drafted face is tilted: the profile still sits inside that plane, and
- * the boolean stops short of the face. Clearance is the worst profile
- * point, then the sweep expand pad. Not a sphere cap, and not the concave
- * open-end pad above (that one runs on every concave end and is clipped
- * back to the bbox).
+ * A face the end profile already clears (clearance about 0) needs no
+ * extension — a perpendicular cap, including a 90° end. Alignment with the
+ * face normal is not that test: a 2° draft is tighter than cos(2°) and the
+ * profile still stops short. Clearance is the worst profile point, then the
+ * sweep expand pad. Not a sphere cap, and not the concave open-end pad
+ * above (that one runs on every concave end and is clipped back to the bbox).
  */
 // Plain-JS copy of the faces c4MeshData already walked. A second getMesh()
 // on the live fillet input shifts a later decompose by ~0.01 and fails the
@@ -5327,8 +5331,6 @@ function _s23DraftEndExtension(part, origin, tout, N, B, theta, radius, profileK
     }
   }
   if (!faceN) return 0;
-  // Parallel to the path: the end cap already lies in the face.
-  if (bestAlign > Math.cos((2 * Math.PI) / 180)) return 0;
   const contour = _s23DihedralContour(radius, theta, profileKind, arcSegs, 1);
   let geom = 0;
   for (const uv of contour) {
@@ -5346,6 +5348,72 @@ function _s23DraftEndExtension(part, origin, tout, N, B, theta, radius, profileK
   const pad = filletSweepCutterExpand(radius);
   const cap = 2 * radius + pad;
   return Math.min(geom, cap) + pad;
+}
+
+/**
+ * Internal splits milder than a real corner. Same-radius semi-arc cuts and
+ * a shallow arc-to-straight kink (over the 5° corner gate, under ~20°) both
+ * leave two open ends. Their face alignment is often under the 0.2 draft
+ * gate, so the geometric extension stays 0 and the cutters meet with no
+ * overlap. Push those ends by the sweep expand pad. A 90° corner split is
+ * not this case.
+ */
+const _S23_SHALLOW_SPLIT_DEG = 20;
+
+/** Turn (degrees) where two open runs meet, or null when they do not share an end. */
+function _s23RunJunctionTurn(prev, next) {
+  if (!Array.isArray(prev) || !Array.isArray(next) || prev.length < 2 || next.length < 2) return null;
+  const a = prev[prev.length - 1];
+  const b = next[0];
+  if (!a || !b) return null;
+  if (Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) > 1e-3) return null;
+  const da = [
+    a[0] - prev[prev.length - 2][0],
+    a[1] - prev[prev.length - 2][1],
+    a[2] - prev[prev.length - 2][2],
+  ];
+  const db = [next[1][0] - b[0], next[1][1] - b[1], next[1][2] - b[2]];
+  const la = Math.hypot(da[0], da[1], da[2]);
+  const lb = Math.hypot(db[0], db[1], db[2]);
+  if (!(la > 1e-12) || !(lb > 1e-12)) return null;
+  const dot = (da[0] * db[0] + da[1] * db[1] + da[2] * db[2]) / (la * lb);
+  return (Math.acos(Math.max(-1, Math.min(1, dot))) * 180) / Math.PI;
+}
+
+function _s23StampJunctionTurns(segs, junction) {
+  if (!junction || !Array.isArray(segs) || !segs.length) return;
+  if (Number.isFinite(junction.in) && junction.in <= _S23_SHALLOW_SPLIT_DEG && segs[0]) {
+    segs[0]._splitInDeg = junction.in;
+  }
+  const last = segs[segs.length - 1];
+  if (Number.isFinite(junction.out) && junction.out <= _S23_SHALLOW_SPLIT_DEG && last) {
+    last._splitOutDeg = junction.out;
+  }
+}
+
+function _s23PadShallowSplitEnd(seg, which, turnDeg, radius) {
+  // No tag: this is an original path end (the draft extension owns it).
+  // Above ~20°: a hard corner split, left to the two cutters' own overlap.
+  // A same-radius joint can be far under the 5° corner gate after densify
+  // and still meets as two open ends with no overlap.
+  if (!Number.isFinite(turnDeg) || turnDeg > _S23_SHALLOW_SPLIT_DEG) return 0;
+  if (!seg?.T || !seg.p0 || !seg.p1) return 0;
+  const pad = filletSweepCutterExpand(radius);
+  if (!(pad > 1e-9)) return 0;
+  const tLen = Math.hypot(seg.T[0], seg.T[1], seg.T[2]);
+  if (!(tLen > 1e-12)) return 0;
+  const T = [seg.T[0] / tLen, seg.T[1] / tLen, seg.T[2] / tLen];
+  const tout = which === 'end' ? T : [-T[0], -T[1], -T[2]];
+  const origin = which === 'end' ? seg.p1 : seg.p0;
+  const moved = [
+    origin[0] + tout[0] * pad,
+    origin[1] + tout[1] * pad,
+    origin[2] + tout[2] * pad,
+  ];
+  if (which === 'end') seg.p1 = moved;
+  else seg.p0 = moved;
+  seg.length = (Number(seg.length) || 0) + pad;
+  return pad;
 }
 
 /** A run whose ends do not share a tangent is a rounded path. */
@@ -5372,6 +5440,7 @@ function _s23ExtendOpenRunEnds(part, segs, radius, profileKind, arcSegs) {
   if (segs.some((s) => s && s.convex === false)) return 0;
   const whichEnds = _s23RunRounded(segs) ? ['end'] : ['start', 'end'];
   let applied = 0;
+  const drafted = new Set();
   for (const which of whichEnds) {
     const seg = which === 'end' ? segs[segs.length - 1] : segs[0];
     if (!seg?.T || !seg.N || !seg.B || !seg.p0 || !seg.p1) continue;
@@ -5392,13 +5461,25 @@ function _s23ExtendOpenRunEnds(part, segs, radius, profileKind, arcSegs) {
     if (which === 'end') seg.p1 = moved;
     else seg.p0 = moved;
     seg.length = (Number(seg.length) || 0) + dist;
+    drafted.add(which);
     if (dist > applied) applied = dist;
+  }
+  // Shallow internal splits only. Original path ends have no split tag, and
+  // an end the draft extension already moved is left at that distance.
+  const shallow = [
+    ['start', segs[0], segs[0] && segs[0]._splitInDeg],
+    ['end', segs[segs.length - 1], segs[segs.length - 1] && segs[segs.length - 1]._splitOutDeg],
+  ];
+  for (const [which, seg, turn] of shallow) {
+    if (drafted.has(which)) continue;
+    const pad = _s23PadShallowSplitEnd(seg, which, turn, radius);
+    if (pad > applied) applied = pad;
   }
   return applied;
 }
 
 function _s23BuildVariableProfileCutter(
-  M, CrossSection, part, points, closed, radius, profileKind, arcSegs, testScale, rawSegCount,
+  M, CrossSection, part, points, closed, radius, profileKind, arcSegs, testScale, rawSegCount, junction,
 ) {
   const { segmentNormals, seedNormals, segmentConvex } = _s23ProbeKnotNormals(part, points, closed);
   const built = buildVariableProfileFrames(points, closed, {
@@ -5438,6 +5519,7 @@ function _s23BuildVariableProfileCutter(
       convex: segmentConvex[i] !== false,
     });
   }
+  _s23StampJunctionTurns(segs, junction);
   // Open-shell concave ends: pad past the open face so the filler cap is not
   // coplanar with it (the inner-corner triangle). Convex runs are left alone.
   const openEndBBox = _s23ExtendConcaveOpenEnds(part, segs, closed, radius);
@@ -5472,8 +5554,9 @@ function _s23BuildVariableProfileCutter(
   return cut;
 }
 
-function _s23BuildDihedralCutter(M, CrossSection, part, points, closed, radius, profileKind, arcSegs, testScale) {
+function _s23BuildDihedralCutter(M, CrossSection, part, points, closed, radius, profileKind, arcSegs, testScale, junction) {
   const segs = _s23ProbeSegments(part, points, closed);
+  _s23StampJunctionTurns(segs, junction);
   return _s23CuttersFromSegs(M, CrossSection, segs, closed, radius, profileKind, arcSegs, testScale, { part });
 }
 
@@ -5727,13 +5810,17 @@ function filletAlongPath(part, path, radius, opts = {}) {
         if (!Array.isArray(run) || run.length < 2) continue;
         const runClosed = closedRuns ? !!closedRuns[ri] : false;
         let built;
+        const junction = {
+          in: ri > 0 ? _s23RunJunctionTurn(plan.runs[ri - 1], run) : null,
+          out: ri + 1 < plan.runs.length ? _s23RunJunctionTurn(run, plan.runs[ri + 1]) : null,
+        };
         try {
           built = variableProfile
             ? _s23BuildVariableProfileCutter(
-              M, CrossSection, part, run, runClosed, radius, profileKind, arcSegs, scale, rawSegCount,
+              M, CrossSection, part, run, runClosed, radius, profileKind, arcSegs, scale, rawSegCount, junction,
             )
             : _s23BuildDihedralCutter(
-              M, CrossSection, part, run, runClosed, radius, profileKind, arcSegs, scale,
+              M, CrossSection, part, run, runClosed, radius, profileKind, arcSegs, scale, junction,
             );
         } catch (_) {
           continue;
