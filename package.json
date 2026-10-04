@@ -76,6 +76,8 @@
         "golden:slice-a-feature-ribbon": "node scripts/golden/smoke_slice_a_feature_ribbon.mjs",
         "golden:slice-bc-edge-chip-tracking": "node scripts/golden/smoke_slice_bc_edge_chip_tracking.mjs",
         "golden:cut-plane": "node scripts/golden/smoke_cut_plane.mjs",
+        "golden:fillet-after-cut": "node scripts/golden/smoke_fillet_after_cut.mjs",
+        "golden:fillet-wrap-draft": "node scripts/golden/smoke_fillet_wrap_draft.mjs",
         "golden:face-click": "node scripts/golden/smoke_face_click_graph.mjs",
         "golden:move-body": "node scripts/golden/smoke_move_body.mjs",
         "golden:helper-binding-clash": "node scripts/golden/smoke_helper_binding_clash.mjs"

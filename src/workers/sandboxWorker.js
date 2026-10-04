@@ -4697,7 +4697,32 @@ function _s23VaryingProfileCutter(segs, closed, radius, profileKind, arcSegs, te
     runs[0].segs = runs[runs.length - 1].segs.concat(runs[0].segs);
     runs.pop();
   }
-  const wrapClosed = closed && runs.length === 1;
+  // Same corner split the easy path already applies. A 90° wrap was one
+  // varying-profile tube, and on a drafted face that tube self-intersects
+  // (shredded mesh, crease left on the second leg). Smooth runs stay one
+  // piece: the gate is FRAME_DENSIFY_MAX_TURN_DEG, and densify already holds
+  // per-segment turns to that. No draft flag — the turn is the corner.
+  const splitRuns = [];
+  for (const run of runs) {
+    const pieces = _s23SplitRunsAtCorners([run.segs]);
+    for (const segs of pieces) {
+      if (segs && segs.length) splitRuns.push({ convex: run.convex, segs });
+    }
+  }
+  let wrapClosed = closed && splitRuns.length === 1;
+  if (wrapClosed && splitRuns[0].segs.length >= 2) {
+    const segs = splitRuns[0].segs;
+    const dirOf = (s) => {
+      if (!s?.p0 || !s?.p1) return null;
+      const d = [s.p1[0] - s.p0[0], s.p1[1] - s.p0[1], s.p1[2] - s.p0[2]];
+      const L = Math.hypot(d[0], d[1], d[2]);
+      return L > 1e-12 ? [d[0] / L, d[1] / L, d[2] / L] : null;
+    };
+    const a = dirOf(segs[segs.length - 1]);
+    const b = dirOf(segs[0]);
+    const cosGate = Math.cos((_S23_RUN_CORNER_DEG * Math.PI) / 180);
+    if (a && b && _c4Dot(a, b) < cosGate) wrapClosed = false;
+  }
 
   const cutters = [];
   const fillers = [];
@@ -4706,7 +4731,7 @@ function _s23VaryingProfileCutter(segs, closed, radius, profileKind, arcSegs, te
   let clampedKnots = 0;
   let ringCount = 0;
   const allThetas = [];
-  for (const run of runs) {
+  for (const run of splitRuns) {
     const t = _s23VaryingProfileTube(
       run.segs, wrapClosed, radius, profileKind, arcSegs, testScale,
     );
@@ -4736,11 +4761,11 @@ function _s23VaryingProfileCutter(segs, closed, radius, profileKind, arcSegs, te
     filler: merge(fillers, 'filler'),
     expectVol: expectRemove,
     expectAdd,
-    runCount: runs.length,
-    convexRuns: runs.filter((r) => r.convex).length,
-    concaveRuns: runs.filter((r) => !r.convex).length,
+    runCount: splitRuns.length,
+    convexRuns: splitRuns.filter((r) => r.convex).length,
+    concaveRuns: splitRuns.filter((r) => !r.convex).length,
     thetaRunCount: countThetaRuns(segs),
-    singleRun: runs.length === 1,
+    singleRun: splitRuns.length === 1,
     varyingProfile: true,
     ringCount,
     clampedKnots,
@@ -4899,6 +4924,142 @@ function _s23BuildDihedralCutter(M, CrossSection, part, points, closed, radius, 
   return _s23CuttersFromSegs(M, CrossSection, segs, closed, radius, profileKind, arcSegs, testScale);
 }
 
+/** Up to 48 samples along an already-normalized path, endpoints included. */
+function _filletPathSamples(points) {
+  const n = points.length;
+  if (n <= 48) return points;
+  const out = [];
+  const last = n - 1;
+  for (let i = 0; i < 48; i++) out.push(points[Math.round((i * last) / 47)]);
+  return out;
+}
+
+/** Squared distance from p to triangle abc (Ericson, closest point on the triangle). */
+function _pointTriDist2(p, a, b, c) {
+  const ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+  const ac = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+  const ap = [p[0] - a[0], p[1] - a[1], p[2] - a[2]];
+  const d1 = _c4Dot(ab, ap);
+  const d2 = _c4Dot(ac, ap);
+  if (d1 <= 0 && d2 <= 0) return _c4Dot(ap, ap);
+  const bp = [p[0] - b[0], p[1] - b[1], p[2] - b[2]];
+  const d3 = _c4Dot(ab, bp);
+  const d4 = _c4Dot(ac, bp);
+  if (d3 >= 0 && d4 <= d3) return _c4Dot(bp, bp);
+  const cp = [p[0] - c[0], p[1] - c[1], p[2] - c[2]];
+  const d5 = _c4Dot(ab, cp);
+  const d6 = _c4Dot(ac, cp);
+  if (d6 >= 0 && d5 <= d6) return _c4Dot(cp, cp);
+  const vc = d1 * d4 - d3 * d2;
+  if (vc <= 0 && d1 >= 0 && d3 <= 0) {
+    const v = d1 / (d1 - d3);
+    const proj = [a[0] + ab[0] * v - p[0], a[1] + ab[1] * v - p[1], a[2] + ab[2] * v - p[2]];
+    return _c4Dot(proj, proj);
+  }
+  const vb = d5 * d2 - d1 * d6;
+  if (vb <= 0 && d2 >= 0 && d6 <= 0) {
+    const w = d2 / (d2 - d6);
+    const proj = [a[0] + ac[0] * w - p[0], a[1] + ac[1] * w - p[1], a[2] + ac[2] * w - p[2]];
+    return _c4Dot(proj, proj);
+  }
+  const va = d3 * d6 - d5 * d4;
+  if (va <= 0 && (d4 - d3) >= 0 && (d5 - d6) >= 0) {
+    const w = (d4 - d3) / ((d4 - d3) + (d5 - d6));
+    const edge = [c[0] - b[0], c[1] - b[1], c[2] - b[2]];
+    const proj = [b[0] + edge[0] * w - p[0], b[1] + edge[1] * w - p[1], b[2] + edge[2] * w - p[2]];
+    return _c4Dot(proj, proj);
+  }
+  const denom = va + vb + vc;
+  if (!(Math.abs(denom) > 1e-20)) return _c4Dot(ap, ap);
+  const v = vb / denom;
+  const w = vc / denom;
+  const proj = [
+    a[0] + ab[0] * v + ac[0] * w - p[0],
+    a[1] + ab[1] * v + ac[1] * w - p[1],
+    a[2] + ab[2] * v + ac[2] * w - p[2],
+  ];
+  return _c4Dot(proj, proj);
+}
+
+/** Max, over samples, of the min squared distance to this body's triangles. */
+function _filletBodyWorstDist2(body, samples) {
+  const mesh = body.getMesh();
+  const vp = mesh.vertProperties;
+  const np = mesh.numProp || 3;
+  const tv = mesh.triVerts;
+  const nTri = Math.floor(tv.length / 3);
+  if (!nTri || !samples.length) return Infinity;
+  let worst = 0;
+  for (const p of samples) {
+    let best = Infinity;
+    for (let t = 0; t < nTri; t++) {
+      const i0 = tv[t * 3];
+      const i1 = tv[t * 3 + 1];
+      const i2 = tv[t * 3 + 2];
+      const a = [vp[i0 * np], vp[i0 * np + 1], vp[i0 * np + 2]];
+      const b = [vp[i1 * np], vp[i1 * np + 1], vp[i1 * np + 2]];
+      const c = [vp[i2 * np], vp[i2 * np + 1], vp[i2 * np + 2]];
+      const d = _pointTriDist2(p, a, b, c);
+      if (d < best) best = d;
+      if (best === 0) break;
+    }
+    if (best > worst) worst = best;
+  }
+  return worst;
+}
+
+/**
+ * Multi-body input: fillet only the body that owns the path, then compose
+ * the untouched bodies back. The scrap check inside the recursive call then
+ * sees one result. A bad path throws before decompose. One body returns null
+ * so the caller runs the existing path unchanged. Ties (shared cut edge,
+ * both distances ~0) keep the first decompose index.
+ * Returns null when there is nothing to split.
+ */
+function _filletOnlyOwningBody(M, part, path, radius, opts) {
+  const norm = _s23NormalizePath(path, opts);
+  const bodies = _cutBodiesOf(part);
+  if (!bodies || bodies.length < 2) return null;
+  const samples = _filletPathSamples(norm.points);
+  let owner = 0;
+  let best = Infinity;
+  for (let i = 0; i < bodies.length; i++) {
+    const w = _filletBodyWorstDist2(bodies[i], samples);
+    if (i === 0 || w < best - 1e-8) {
+      best = w;
+      owner = i;
+    }
+  }
+  let filleted = null;
+  try {
+    filleted = filletAlongPath(
+      bodies[owner],
+      path,
+      radius,
+      Object.assign({}, opts, { _filletBodySplit: true }),
+    );
+    const kept = [];
+    for (let i = 0; i < bodies.length; i++) kept.push(i === owner ? filleted : bodies[i]);
+    const result = M.compose(kept);
+    const status = _c4StatusError(result);
+    if (status) {
+      if (result && result !== filleted && result !== part) _safeDeleteManifold(result);
+      throw new Error(`filletAlongPath: bad compose (${status})`);
+    }
+    const ownerBody = bodies[owner];
+    if (ownerBody && ownerBody !== part && ownerBody !== filleted && ownerBody !== result) {
+      _safeDeleteManifold(ownerBody);
+    }
+    return result;
+  } catch (err) {
+    if (filleted && filleted !== part) _safeDeleteManifold(filleted);
+    for (const b of bodies) {
+      if (b && b !== part && b !== filleted) _safeDeleteManifold(b);
+    }
+    throw err;
+  }
+}
+
 /**
  * filletAlongPath(part, path, radius, opts?)
  * Sweep a dihedral fillet (or equal-leg chamfer) along path → boolean subtract.
@@ -4928,6 +5089,14 @@ function filletAlongPath(part, path, radius, opts = {}) {
   const M = manifoldModule.Manifold;
   const { CrossSection } = manifoldModule;
   _c4RequirePositive('filletAlongPath', 'radius', radius);
+
+  // Keep-both siblings are real components. Filleting the whole compose makes
+  // the scrap check name the other body. Fillet the owner, compose the rest,
+  // and leave the 5% / 0.01 test on the single result.
+  if (!opts._filletBodySplit) {
+    const owned = _filletOnlyOwningBody(M, part, path, radius, opts);
+    if (owned) return owned;
+  }
 
   const profileKind = (opts.profile === 'chamfer') ? 'chamfer' : 'fillet';
   const arcSegs = opts.segments != null ? opts.segments : FILLET_ARC_SEGMENTS;
