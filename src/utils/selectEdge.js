@@ -10,6 +10,7 @@ import {
   TANGENCY_PROP_DEG,
   TANGENCY_NORMAL_ALIGN,
 } from './edgeTangencyField.js';
+import { meshBodyComponents } from './cutMode.js';
 
 const DEFAULT_FEATURE_DEG = 2;
 
@@ -47,6 +48,11 @@ export function buildFeatureEdges(geometry, minAngleDeg = DEFAULT_FEATURE_DEG) {
   }
 
   const cosMin = Math.cos((minAngleDeg * Math.PI) / 180);
+  const bodies = meshBodyComponents(positions, geometry.index);
+  const triBody = new Int32Array(numTri).fill(-1);
+  bodies.forEach((body, id) => {
+    for (const t of body.triangles) triBody[t] = id;
+  });
   const out = [];
   for (const e of edgeMap.values()) {
     if (e.tris.length !== 2) continue;
@@ -71,6 +77,7 @@ export function buildFeatureEdges(geometry, minAngleDeg = DEFAULT_FEATURE_DEG) {
       tangent: [tangent.x, tangent.y, tangent.z],
       n0: [n0.x, n0.y, n0.z],
       n1: [n1.x, n1.y, n1.z],
+      bodyId: triBody[e.tris[0]],
     });
   }
   return out;
@@ -706,6 +713,8 @@ function mergeCollinearEdges(edges) {
     used[i] = true;
     for (let j = i + 1; j < edges.length; j++) {
       if (used[j]) continue;
+      if (Number.isFinite(edges[i].bodyId) && Number.isFinite(edges[j].bodyId)
+        && edges[i].bodyId !== edges[j].bodyId) continue;
       if (!_sameLine(edges[i], edges[j])) continue;
       used[j] = true;
       group.push(edges[j]);
@@ -750,6 +759,7 @@ function mergeCollinearEdges(edges) {
         faceA: span.faceA,
         faceB: span.faceB,
         pairCount: span.pairCount,
+        bodyId: span.src.bodyId,
         _sources: span.sources,
       });
     };
@@ -1149,6 +1159,7 @@ export function buildCoherentEdges(featureEdges, opts = {}) {
     const faceA = _uniqueFinite(chain, 'faceA');
     const faceB = _uniqueFinite(chain, 'faceB');
     const pairCount = _uniqueFinite(chain, 'pairCount');
+    const bodyId = _uniqueFinite(chain, 'bodyId');
     segs.forEach((seg, i) => {
       // C3: nearest-source normals (not a single first-hit stamp).
       let best = null;
@@ -1171,6 +1182,7 @@ export function buildCoherentEdges(featureEdges, opts = {}) {
         faceA,
         faceB,
         pairCount,
+        bodyId,
         n0: n0 ? n0.slice() : undefined,
         n1: n1 ? n1.slice() : undefined,
       });

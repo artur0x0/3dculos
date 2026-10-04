@@ -366,7 +366,16 @@ export function selectGraphFace(geometry, seedFaceIndex, faceIDs = null) {
   if (!patch?.tris?.length) {
     return { indices: [seed], kind: 'planar' };
   }
-  return { indices: patch.tris.slice(), kind: patch.kind || 'general' };
+  let indices = patch.tris.slice();
+  const bodies = meshBodyComponents(geometry.attributes?.position, geometry.index);
+  if (bodies.length > 1) {
+    const owner = bodies.find((b) => b.triangles.includes(seed));
+    if (owner) {
+      const allow = new Set(owner.triangles);
+      indices = indices.filter((t) => allow.has(t));
+    }
+  }
+  return { indices: indices.length ? indices : [seed], kind: patch.kind || 'general' };
 }
 
 /**

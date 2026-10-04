@@ -157,7 +157,15 @@ import {
   CUT_PIECE_COLORS,
   CUT_PIECE_OPACITY,
 } from '../utils/cutMode';
-import { emptyMoveState, clearMoveTarget, validateMoveAccept, MOVE_MODE_NEED_BODY } from '../utils/moveMode';
+import {
+  emptyMoveState,
+  clearMoveTarget,
+  validateMoveAccept,
+  movePreviewOffset,
+  resolveMoveBodyAt,
+  cutNormalFromScript,
+  MOVE_MODE_NEED_BODY,
+} from '../utils/moveMode';
 import { contactSeamSegments } from '../utils/contactSeam';
 import { classifySelectedFace } from '../utils/faceFeaturePlacement';
 import { classifyFilletEdges, countDegenerateTriangles } from '../utils/filletEdgeClass';
@@ -265,13 +273,6 @@ function disposeEdgeOverlayObject(scene, obj) {
   disposeOne(obj);
 }
 
-/**
- * Sit the shared cut just proud of the side face so the depth test keeps it,
- * without opening a gap. 0.03 on a 40-unit part is a fraction of a pixel at
- * the fitted camera — not a second, thicker edge.
- */
-const CONTACT_SEAM_LIFT = 0.03;
-
 function removeContactSeam(mesh) {
   const prev = mesh?.getObjectByName?.('contactSeam');
   if (!prev) return;
@@ -281,10 +282,11 @@ function removeContactSeam(mesh) {
 }
 
 /**
- * Draw the flush cut with the same coloring as every other body edge:
- * MeshNormalMaterial's view-space normal (pack normal * 0.5 + 0.5). A 1px
- * line, not the fat selection overlay. Only contactSeamSegments qualify, so
- * an uncut body and a one-sided cut grow nothing.
+ * The flush cut is each body's own contour, drawn as a 1px black line on
+ * that contour. Not lifted onto the side face, and not a second edge.
+ * A small view-space bias keeps the line from losing the depth test against
+ * the face it lies on (far plane is 2000). Only contactSeamSegments qualify,
+ * so an uncut body and a one-sided cut grow nothing.
  */
 function attachContactSeam(mesh, meshData) {
   removeContactSeam(mesh);
@@ -296,55 +298,33 @@ function attachContactSeam(mesh, meshData) {
   );
   if (!segs.length) return;
   const pos = new Float32Array(segs.length * 6);
-  const cap = new Float32Array(segs.length * 6);
   for (let i = 0; i < segs.length; i++) {
     const s = segs[i];
-    const ox = s.sideNormal[0] * CONTACT_SEAM_LIFT;
-    const oy = s.sideNormal[1] * CONTACT_SEAM_LIFT;
-    const oz = s.sideNormal[2] * CONTACT_SEAM_LIFT;
     const o = i * 6;
-    pos[o] = s.a[0] + ox;
-    pos[o + 1] = s.a[1] + oy;
-    pos[o + 2] = s.a[2] + oz;
-    pos[o + 3] = s.b[0] + ox;
-    pos[o + 4] = s.b[1] + oy;
-    pos[o + 5] = s.b[2] + oz;
-    cap[o] = s.capNormal[0];
-    cap[o + 1] = s.capNormal[1];
-    cap[o + 2] = s.capNormal[2];
-    cap[o + 3] = s.capNormal[0];
-    cap[o + 4] = s.capNormal[1];
-    cap[o + 5] = s.capNormal[2];
+    pos[o] = s.a[0];
+    pos[o + 1] = s.a[1];
+    pos[o + 2] = s.a[2];
+    pos[o + 3] = s.b[0];
+    pos[o + 4] = s.b[1];
+    pos[o + 5] = s.b[2];
   }
   const geom = new BufferGeometry();
   geom.setAttribute('position', new BufferAttribute(pos, 3));
-  geom.setAttribute('capNormal', new BufferAttribute(cap, 3));
   const material = new ShaderMaterial({
     vertexShader: `
-      attribute vec3 capNormal;
-      varying vec3 vColor;
       void main() {
-        vec3 n = normalize(normalMatrix * capNormal);
-        vColor = n * 0.5 + 0.5;
-        // View-space bias toward the camera. A flush seam otherwise loses the
-        // depth test against the face it lies on (far plane is 2000). This is
-        // not a wider stroke — gl.LINES stays 1px.
         vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-        mvPosition.z += 1.0;
+        mvPosition.z += 0.5;
         gl_Position = projectionMatrix * mvPosition;
       }
     `,
     fragmentShader: `
-      varying vec3 vColor;
       void main() {
-        gl_FragColor = vec4(vColor, 1.0);
+        gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
       }
     `,
     depthTest: true,
     depthWrite: false,
-    polygonOffset: true,
-    polygonOffsetFactor: -2,
-    polygonOffsetUnits: -2,
   });
   const line = new LineSegments(geom, material);
   line.name = 'contactSeam';
@@ -671,6 +651,9 @@ const Viewport = forwardRef(({
   const cutModeRef = useRef(null);
   const [moveMode, setMoveMode] = useState(null);
   const moveModeRef = useRef(null);
+  /** Kernel centroids from the last execute. move() matches these, not the viewport average. */
+  const bodyCentroidsRef = useRef([]);
+  const movePreviewRef = useRef(null);
   const cutPlaneWidgetRef = useRef(null);
   const cutPiecesPreviewRef = useRef(null);
   const cutBaseMaterialRef = useRef(null);
@@ -3369,8 +3352,58 @@ const Viewport = forwardRef(({
     }
   }, [onCommitCut, exitCutMode, onFaceSelected, clearHighlight]);
 
+  const clearMovePreview = useCallback(() => {
+    const mesh = movePreviewRef.current;
+    movePreviewRef.current = null;
+    if (!mesh) return;
+    if (sceneRef.current) sceneRef.current.remove(mesh);
+    mesh.geometry?.dispose?.();
+    mesh.material?.dispose?.();
+  }, []);
+
+  const paintMovePreview = useCallback((state) => {
+    clearMovePreview();
+    const tris = state?.target?.triangles;
+    const geom = resultRef.current?.geometry;
+    const positions = geom?.attributes?.position;
+    const index = geom?.index?.array;
+    const scene = sceneRef.current;
+    if (!tris?.length || !positions || !index || !scene) return;
+    const buf = (typeof getHelperBuffer === 'function' ? getHelperBuffer() : '') || '';
+    const offset = movePreviewOffset(state, buf);
+    if (!offset) return;
+    const [dx, dy, dz] = offset;
+    if (dx === 0 && dy === 0 && dz === 0) return;
+    const pos = [];
+    for (const t of tris) {
+      for (let k = 0; k < 3; k++) {
+        const v = index[t * 3 + k];
+        pos.push(positions.getX(v) + dx, positions.getY(v) + dy, positions.getZ(v) + dz);
+      }
+    }
+    if (pos.length < 9) return;
+    const geometry = new BufferGeometry();
+    geometry.setAttribute('position', new BufferAttribute(new Float32Array(pos), 3));
+    geometry.computeVertexNormals();
+    const mesh = new ThreeMesh(geometry, new MeshBasicMaterial({
+      color: 0x22d3ee,
+      transparent: true,
+      opacity: 0.45,
+      depthTest: true,
+      side: FrontSide,
+    }));
+    mesh.name = 'move-preview';
+    mesh.raycast = () => {};
+    scene.add(mesh);
+    movePreviewRef.current = mesh;
+    const renderer = rendererRef.current;
+    const camera = cameraRef.current;
+    if (renderer && camera) renderer.render(scene, camera);
+  }, [clearMovePreview, getHelperBuffer]);
+
   const exitMoveMode = useCallback(() => {
     const was = moveModeRef.current;
+    clearMovePreview();
     setMoveMode(null);
     moveModeRef.current = null;
     if (was) clearHighlight();
@@ -3379,7 +3412,7 @@ const Viewport = forwardRef(({
       shellToastTimerRef.current = null;
     }
     setShellToast(null);
-  }, [clearHighlight]);
+  }, [clearHighlight, clearMovePreview]);
 
   const enterMoveMode = useCallback(() => {
     exitContourMode();
@@ -4005,8 +4038,9 @@ const Viewport = forwardRef(({
           }
           const prev = moveModeRef.current.target;
           const same = prev && cutBodyKey(prev) === cutBodyKey(hit);
+          const buf = (typeof getHelperBuffer === 'function' ? getHelperBuffer() : '') || '';
           const target = same ? null : {
-            at: hit.at.slice(),
+            at: resolveMoveBodyAt(hit.at, bodyCentroidsRef.current, buf),
             minTri: hit.minTri,
             triangles: hit.triangles.slice(),
           };
@@ -4017,9 +4051,39 @@ const Viewport = forwardRef(({
           if (target) {
             highlightFace(target.triangles, geometry, positions, index, 0x22d3ee, 'move-body');
           }
+          paintMovePreview(next);
           return;
         }
         publishFacePicks([entry], geometry, positions, index, faceData);
+        {
+          let nx = 0;
+          let ny = 0;
+          let nz = 0;
+          for (const faceIdx of faceIndices) {
+            const i0 = index[faceIdx * 3];
+            const i1 = index[faceIdx * 3 + 1];
+            const i2 = index[faceIdx * 3 + 2];
+            const ax = positions.getX(i1) - positions.getX(i0);
+            const ay = positions.getY(i1) - positions.getY(i0);
+            const az = positions.getZ(i1) - positions.getZ(i0);
+            const bx = positions.getX(i2) - positions.getX(i0);
+            const by = positions.getY(i2) - positions.getY(i0);
+            const bz = positions.getZ(i2) - positions.getZ(i0);
+            nx += ay * bz - az * by;
+            ny += az * bx - ax * bz;
+            nz += ax * by - ay * bx;
+          }
+          const len = Math.hypot(nx, ny, nz);
+          if (len > 1e-12) {
+            const next = {
+              ...moveModeRef.current,
+              faceNormal: [nx / len, ny / len, nz / len],
+            };
+            moveModeRef.current = next;
+            setMoveMode(next);
+            paintMovePreview(next);
+          }
+        }
         return;
       }
       if (cutModeRef.current) {
@@ -4059,7 +4123,7 @@ const Viewport = forwardRef(({
       }
     }
     
-  }, [measurementEnabled, measurementFaces, onFaceSelected, clearHighlight, clearEdgeHighlight, highlightFace, publishFacePicks, paintDraftPicks, commitCutState]);
+  }, [measurementEnabled, measurementFaces, onFaceSelected, clearHighlight, clearEdgeHighlight, highlightFace, publishFacePicks, paintDraftPicks, commitCutState, paintMovePreview, getHelperBuffer]);
 
   /**
    * Handle face selection in measurement mode
@@ -5123,7 +5187,8 @@ const Viewport = forwardRef(({
         return false;
       }
       
-      const { mesh: meshData, memoryUsedMB } = result;
+      const { mesh: meshData, memoryUsedMB, bodyCentroids } = result;
+      bodyCentroidsRef.current = Array.isArray(bodyCentroids) ? bodyCentroids : [];
       
       if (!meshData || !meshData.vertProperties) {
         throw new Error('Script must return a Manifold object');
@@ -5440,8 +5505,11 @@ const Viewport = forwardRef(({
           verticalRail
         />
       
-      {executionError && (
-        <div className="absolute top-16 right-4 max-w-md z-10">
+      {executionError && createPortal(
+        <div
+          className="fixed top-16 left-1/2 -translate-x-1/2 z-50 max-w-[min(22rem,calc(100%-2rem))] pointer-events-auto"
+          data-execution-error=""
+        >
           <ErrorPopup
             tone="error"
             title="Execution Error"
@@ -5452,7 +5520,8 @@ const Viewport = forwardRef(({
           >
             {executionError}
           </ErrorPopup>
-        </div>
+        </div>,
+        document.body,
       )}
       
       {/* Slice Mobile C.1: face-selected info popup removed (was under-title B.1).
@@ -5678,24 +5747,39 @@ const Viewport = forwardRef(({
         />
       )}
 
-      {/* Move body chip — delta X/Y/Z. Confirm writes one move(). No viewport arrows. */}
+      {/* Move body chip — deltas or one distance. Confirm writes one move(). No viewport arrows. */}
       {moveMode && (
         <MoveModeChip
           target={moveMode.target}
           dx={moveMode.dx}
           dy={moveMode.dy}
           dz={moveMode.dz}
+          direction={moveMode.direction}
+          distance={moveMode.distance}
+          cutNormal={cutNormalFromScript((typeof getHelperBuffer === 'function' ? getHelperBuffer() : '') || '')}
+          faceNormal={moveMode.faceNormal}
           compact={isMobile}
-          onDelta={(axis, value) => setMoveMode((prev) => {
-            if (!prev) return prev;
+          onDelta={(axis, value) => {
+            const prev = moveModeRef.current;
+            if (!prev) return;
             const updated = { ...prev, [axis]: value };
             moveModeRef.current = updated;
-            return updated;
-          })}
+            setMoveMode(updated);
+            paintMovePreview(updated);
+          }}
+          onDirection={(direction, cutNormal) => {
+            const prev = moveModeRef.current;
+            if (!prev) return;
+            const updated = { ...prev, direction, cutNormal: cutNormal || prev.cutNormal };
+            moveModeRef.current = updated;
+            setMoveMode(updated);
+            paintMovePreview(updated);
+          }}
           onClear={() => {
             const next = clearMoveTarget(moveModeRef.current);
             moveModeRef.current = next;
             setMoveMode(next);
+            clearMovePreview();
             clearHighlight();
           }}
           onConfirm={acceptMove}

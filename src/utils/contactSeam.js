@@ -11,7 +11,8 @@
  * This lists only that boundary — a feature edge (not a coplanar diagonal)
  * that two different bodies occupy in the same place, with side faces
  * agreeing and cap faces opposing. One body (uncut, or a cut that keeps one
- * side) has no such pair, so it grows no extra edge.
+ * side) has no such pair, so it grows no extra edge. The viewport paints
+ * these contours as a 1px black line on the edge itself.
  */
 
 const QUANT = 1e4;
