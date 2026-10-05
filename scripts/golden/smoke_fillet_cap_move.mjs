@@ -12,6 +12,9 @@
  * That cut also leaves a planar cap at the same XY, z=-1.5, normal -Z.
  * A corner of it sits on several wall facets a few degrees apart. Offset 2
  * moves that cap and leaves the bottom cap on the other body.
+ *
+ * The inner ceiling is one click, but a fillet boolean leaves scraps a few
+ * degrees off that plane. Offset 2 on a scrap moves the whole ceiling.
  */
 import { register } from 'node:module';
 import { readFileSync } from 'node:fs';
@@ -283,6 +286,9 @@ function planeBand(solid, z0, z1, nzSign) {
 }
 const cutShifted = moveFace(part, [{ center: [8.6429, 6.4902, -1.5], normal: [0, 0, -1] }], 2);
 const shifted = moveFace(part, [{ center: [8.6429, 6.4902, -10.0001], normal: [0, 0, -1] }], 2);
+const ceiling = moveFace(part, [{ center: [13.2327, -2.4253, 7.4953], normal: [-0.0403, 0, -0.9992] }], 2);
+const ceilingFar = moveFace(part, [{ center: [13.1918, 10.3982, 7.4968], normal: [-0.0403, -0.0003, -0.9992] }], 2);
+const ceilingSide = moveFace(part, [{ center: [-7.8069, 11.0596, 7.4993], normal: [0, -0.0419, -0.9991] }], 2);
 const postLarge = ballVol(shifted, mainPt);
 const postIsland = ballVol(shifted, islePt);
 globalThis.__note = {
@@ -301,6 +307,13 @@ globalThis.__note = {
   cutGone: +planeBand(cutShifted, -1.7, -1.3, -1).toFixed(2),
   cutMate: +planeBand(cutShifted, -1.7, -1.3, 1).toFixed(2),
   cutMoved: +planeBand(cutShifted, -3.7, -3.3, -1).toFixed(2),
+  ceilN: ceiling.decompose().length,
+  ceilDVol: +(ceiling.volume() - preVol).toFixed(3),
+  ceilGone: +planeBand(ceiling, 7.35, 7.65, -1).toFixed(2),
+  ceilMoved: +planeBand(ceiling, 5.35, 5.65, -1).toFixed(2),
+  ceilBottom: +planeBand(ceiling, -10.2, -9.8, -1).toFixed(2),
+  ceilFar: +(ceilingFar.volume() - preVol).toFixed(3),
+  ceilSide: +(ceilingSide.volume() - preVol).toFixed(3),
 };
 return shifted;
 `);
@@ -320,6 +333,12 @@ return shifted;
       `gone=${n.cutGone} moved=${n.cutMoved}`);
     check('that offset leaves the bottom cap and the other cut face', n.cutBottom > 180 && n.cutMate > 180,
       `bottom=${n.cutBottom} mate=${n.cutMate}`);
+    check('a ceiling scrap offsets the whole plane and stays two bodies',
+      n.ceilN === 2 && n.ceilDVol > 1400 && n.ceilDVol < 2600 && n.ceilFar > 1400 && n.ceilSide > 1400,
+      `n=${n.ceilN} dVol=${n.ceilDVol} far=${n.ceilFar} side=${n.ceilSide}`);
+    check('that ceiling left z=7.5 and the bottom cap stayed',
+      n.ceilGone < 30 && n.ceilMoved > 800 && n.ceilBottom > 180,
+      `gone=${n.ceilGone} moved=${n.ceilMoved} bottom=${n.ceilBottom}`);
   }
 
   const mesh = r.payload?.mesh;
@@ -504,8 +523,8 @@ return shifted;
   check('scrap gate is unchanged', scraps.length === 2, `n=${scraps.length}`);
   check('Move Face still forces the legacy walk',
     /legacy: legacyTap \|\| !!moveFaceModeRef\.current/.test(vp));
-  check('moveFace includes the coplanar seam',
-    /const sel = _c4ExpandCoplanarSeam\(md, _c4ResolveFaceSelection\(/.test(worker));
+  check('moveFace includes the coplanar seam and the plane that scrap was cut from',
+    /_c4ExpandSamePlane\(md, _c4ExpandCoplanarSeam\(md, _c4ResolveFaceSelection\(/.test(worker));
   check('the drawn mesh drops the needle before the face graph',
     /dropPlanarFins\(vertProperties, srcIndex, srcFaceID\)/.test(vp)
     && /warmFaceGraph\(geometry, faceIDsRef\.current\)/.test(vp));

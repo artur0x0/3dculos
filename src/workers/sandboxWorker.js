@@ -1126,7 +1126,9 @@ function _c4BlendCarryDelta(md, sel, signed) {
  * This is not move(). move() translates a whole body. A vertex on a selected
  * face is solved against every plane that meets it: selected planes move by
  * the signed distance, the others stay. Facets within 10° on the same side
- * of that offset are one plane. A distance the walls cannot absorb throws.
+ * of that offset are one plane. A thin facet a few degrees off that plane,
+ * sharing its vertices, is the same face: the pick includes the larger plane
+ * it was cut from. A distance the walls cannot absorb throws.
  * It does not return a folded mesh.
  *
  * @param {Manifold} manifold
@@ -1210,6 +1212,74 @@ function _c4ExpandCoplanarSeam(md, sel) {
   return out;
 }
 
+/**
+ * A fillet boolean can leave a thin facet a few degrees off a planar face,
+ * sharing that face's vertices. The click treats them as one plane. Pairwise
+ * 0.5° seam expansion does not: the worker faces are the merged ends of that
+ * chain, and the leftover step is wider than 0.5°. Moving only the scrap
+ * pins the real plane (offset 0 against offset d) and every distance throws.
+ * The larger face on the same body, within 10°, that shares a vertex and
+ * still contains the scrap (the scrap lies within 0.012mm of its plane) is
+ * that plane. A similar-sized neighbor is the next fillet step and stays out.
+ */
+function _c4FaceArea(md, face) {
+  let a = 0;
+  for (const t of face.tris) {
+    const i0 = md.T[t * 3];
+    const i1 = md.T[t * 3 + 1];
+    const i2 = md.T[t * 3 + 2];
+    a += 0.5 * _c4Len(_c4Cross(_c4Sub(md.V[i1], md.V[i0]), _c4Sub(md.V[i2], md.V[i0])));
+  }
+  return a;
+}
+
+function _c4MaxPlaneOff(md, face, normal, off) {
+  let far = 0;
+  for (const vi of _c4FaceVertIndices(md, face)) {
+    const p = md.V[vi];
+    const d = Math.abs(normal[0] * p[0] + normal[1] * p[1] + normal[2] * p[2] - off);
+    if (d > far) far = d;
+  }
+  return far;
+}
+
+function _c4ExpandSamePlane(md, sel) {
+  const COS = Math.cos((10 * Math.PI) / 180);
+  const ON_PLANE = 0.012;
+  const seeds = [...sel];
+  const out = new Set(sel);
+  const vertToSeed = new Map();
+  for (const fi of seeds) {
+    for (const vi of _c4FaceVertIndices(md, md.faces[fi])) vertToSeed.set(vi, fi);
+  }
+  for (let fj = 0; fj < md.faces.length; fj++) {
+    if (out.has(fj)) continue;
+    const other = md.faces[fj];
+    let seedFi = -1;
+    for (const vi of _c4FaceVertIndices(md, other)) {
+      if (vertToSeed.has(vi)) { seedFi = vertToSeed.get(vi); break; }
+    }
+    if (seedFi < 0) continue;
+    const face = md.faces[seedFi];
+    if (other.body !== face.body) continue;
+    const nd = face.normal[0] * other.normal[0]
+      + face.normal[1] * other.normal[1]
+      + face.normal[2] * other.normal[2];
+    if (nd < COS) continue;
+    // Only the plane this scrap was cut from. A similar-sized neighbor is the
+    // next fillet step; pulling it in leaves a new edge the walls cannot meet.
+    const aSeed = _c4FaceArea(md, face);
+    const aOther = _c4FaceArea(md, other);
+    if (!(aOther > aSeed * 4)) continue;
+    const n = other.normal;
+    const p0 = md.V[_c4FaceVertIndices(md, other)[0]];
+    const off = n[0] * p0[0] + n[1] * p0[1] + n[2] * p0[2];
+    if (_c4MaxPlaneOff(md, face, n, off) > ON_PLANE) continue;
+    out.add(fj);
+  }
+  return out;
+}
+
 function moveFace(manifold, faces, distance, opts = {}) {
   if (!manifoldModule) throw new Error('Manifold not initialized');
   if (typeof distance !== 'number' || !Number.isFinite(distance)) {
@@ -1218,7 +1288,7 @@ function moveFace(manifold, faces, distance, opts = {}) {
   const flip = !!(opts && opts.flip);
   const signed = flip ? -distance : distance;
   const md = c4MeshData(manifold);
-  const sel = _c4ExpandCoplanarSeam(md, _c4ResolveFaceSelection(md, faces, { label: 'moveFace: faces' }));
+  const sel = _c4ExpandSamePlane(md, _c4ExpandCoplanarSeam(md, _c4ResolveFaceSelection(md, faces, { label: 'moveFace: faces' })));
   if (!sel.size) throw new Error('moveFace: face selection is empty — nothing to move');
   for (const fi of sel) {
     if (_c4Len(md.faces[fi].normal) < 1e-8) {
