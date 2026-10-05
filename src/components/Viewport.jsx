@@ -212,6 +212,7 @@ import { downloadModelFromMesh, get3MFBase64FromMesh } from '../utils/exportMode
 import { parseImportedModels, loadCachedModel } from '../utils/importModel';
 import { calculateQuote } from '../utils/quoting';
 import { resolveViewportFaceClick, warmFaceGraph } from '../utils/selectFace';
+import { formatViewerTitle } from '../utils/assembly.js';
 import { buildPartGraphPatches, buildPatchOverlayArrays, PARTGRAPH_MAX_TRIANGLES } from '../utils/partGraphPatches';
 import { createCuttingPlaneWidget, updateCuttingPlaneWidget } from '../utils/cuttingPlaneWidget';
 import { AxesHelper } from 'three';
@@ -290,6 +291,19 @@ function disposeEdgeOverlayObject(scene, obj) {
     });
   }
   disposeOne(obj);
+}
+
+/** Assembly position is on the mesh, not in the script. Overlays and picks add it. */
+function partWorldOffset(mesh) {
+  const p = mesh?.position;
+  if (!p || (p.x === 0 && p.y === 0 && p.z === 0)) return null;
+  return p;
+}
+
+function shiftEdgeForWorld(edge, p) {
+  if (!p || !edge) return edge;
+  const s = (v) => (v ? [v[0] + p.x, v[1] + p.y, v[2] + p.z] : v);
+  return { ...edge, va: s(edge.va), vb: s(edge.vb), mid: s(edge.mid) };
 }
 
 function geometryFromMeshData(meshData) {
@@ -447,10 +461,11 @@ const TITLE_CHIP = 'text-xs font-medium text-center truncate px-3 py-1.5 rounded
  * reverts. An empty or all-junk name commits nothing, so the part falls back to
  * "Untitled" rather than becoming nameless.
  *
- * `inline` sits in the CAD title row (assembly bubble, dash, this chip).
+ * `inline` sits in the CAD title row (part, then "in", then the assembly).
  * The floating form is the game puzzle name, alone at the top.
+ * `noun` is "Part" or "Assembly" — same commit rules, different label.
  */
-function ViewportTitleChip({ children, value = null, onRename = null, inline = false }) {
+function ViewportTitleChip({ children, value = null, onRename = null, inline = false, noun = 'Part' }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   const inputRef = useRef(null);
@@ -473,6 +488,9 @@ function ViewportTitleChip({ children, value = null, onRename = null, inline = f
   };
 
   const shell = TITLE_CHIP;
+  const role = noun === 'Assembly' ? 'assembly' : 'part';
+  const renameTitle = noun === 'Assembly' ? 'Click to rename this assembly' : 'Click to rename this part';
+  const shown = value || (noun === 'Assembly' ? '' : 'Untitled');
   const frame = inline
     ? `relative z-10 min-w-0 max-w-[min(14rem,42vw)] ${onRename ? 'pointer-events-auto' : 'pointer-events-none'}`
     : `absolute top-4 left-1/2 -translate-x-1/2 z-10 max-w-[min(20rem,calc(100%-2rem))] ${
@@ -493,22 +511,33 @@ function ViewportTitleChip({ children, value = null, onRename = null, inline = f
             e.stopPropagation(); // viewport hotkeys must not eat the typing
           }}
           className={`${shell} w-48 outline-none border-blue-400/80 bg-gray-900`}
-          aria-label="Part name"
+          aria-label={noun === 'Assembly' ? 'Assembly name' : 'Part name'}
           data-title-chip="input"
+          data-title-role={role}
+          {...(role === 'assembly' ? { 'data-assembly-name': '' } : {})}
         />
       ) : onRename ? (
         <button
           type="button"
           onClick={start}
           className={`${shell} hover:border-blue-400/70 hover:text-white cursor-text`}
-          title="Click to rename this part"
-          aria-label={`Part name: ${value || 'Untitled'}. Click to rename.`}
+          title={renameTitle}
+          aria-label={`${noun} name: ${shown}. Click to rename.`}
           data-title-chip="button"
+          data-title-role={role}
+          {...(role === 'assembly' ? { 'data-assembly-name': '' } : {})}
         >
           {children}
         </button>
       ) : (
-        <div className={shell} data-title-chip="static">{children}</div>
+        <div
+          className={shell}
+          data-title-chip="static"
+          data-title-role={role}
+          {...(role === 'assembly' ? { 'data-assembly-name': '' } : {})}
+        >
+          {children}
+        </div>
       )}
     </div>
   );
@@ -533,9 +562,11 @@ const Viewport = forwardRef(({
   canUndo,
   canRedo,
   currentFilename,
-  /** Assembly document name. Blank leaves the CAD title as the part bubble only. */
+  /** Assembly document name. Blank leaves the CAD title as the part alone. */
   assemblyName = '',
   onRenameFile = null,
+  /** Same click-to-edit as the part chip. Writes the document name. */
+  onRenameAssembly = null,
   isUploading,
   mode = 'cad',
   ghostMeshData = null,
@@ -640,6 +671,9 @@ const Viewport = forwardRef(({
   const runTimingStartRef = useRef(0);
   /** Geometry identity that featureEdgesRef was built from — invalidate on replace. */
   const featureEdgesSourceRef = useRef(null);
+  /** Mesh object the face/edge/contour graphs were last built for. */
+  const graphsBoundMeshRef = useRef(null);
+  const adoptActiveSolidRef = useRef(() => false);
   /** Per-triangle Manifold faceID from the last worker mesh (not a per-vertex attribute). */
   const faceIDsRef = useRef(null);
   /**
@@ -991,10 +1025,12 @@ const Viewport = forwardRef(({
     getCurrentMeshData: () => cachedMeshData,
     /**
      * Place visible assembly solids that are not the active part, and move
-     * the active solid when the row stores a position. Graphs stay on the
-     * active mesh; this does not rebuild them.
+     * the active solid when the row stores a position. Graphs rebind to the
+     * active mesh only. The extra parts are not the pick mesh.
      */
     placeAssembly: (payload) => placeAssemblyRef.current(payload),
+    /** Install one part's solid and rebuild face, edge, and contour graphs. */
+    adoptActiveSolid: (payload) => adoptActiveSolidRef.current(payload),
     /**
      * Mobile C.2 — tween the part away from an open under-title feature sheet.
      * `ndcY` is the target lift in NDC-Y units (positive → part moves DOWN on
@@ -1098,7 +1134,11 @@ const Viewport = forwardRef(({
         el.style.visibility = 'hidden';
         continue;
       }
-      const scr = projectWorldToCanvas(cam, track, w, h, tmp);
+      const shift = partWorldOffset(resultRef.current);
+      const worldTrack = shift && track
+        ? [track[0] + shift.x, track[1] + shift.y, track[2] + shift.z]
+        : track;
+      const scr = projectWorldToCanvas(cam, worldTrack, w, h, tmp);
       if (!scr) {
         el.style.visibility = 'hidden';
         continue;
@@ -1175,6 +1215,8 @@ const Viewport = forwardRef(({
     // Soft transparent halo first (under), then brighter core on top.
     group.add(makeSeg(haloPx, Math.min(0.2, opacity * 0.28), 10));
     group.add(makeSeg(corePx, opacity, 11));
+    const shift = partWorldOffset(resultRef.current);
+    if (shift) group.position.set(shift.x, shift.y, shift.z);
     sceneRef.current.add(group);
     return group;
   }, [edgeLineResolution]);
@@ -3059,6 +3101,8 @@ const Viewport = forwardRef(({
       color, transparent: true, opacity: 0.3, depthTest: true, side: 2
     }));
     highlightMesh.name = name;
+    const shift = partWorldOffset(resultRef.current);
+    if (shift) highlightMesh.position.set(shift.x, shift.y, shift.z);
     
     // Create boundary edge lines only
     if (boundaryEdgePositions.length > 0) {
@@ -3911,6 +3955,9 @@ const Viewport = forwardRef(({
   const pickEdgeAtClient = useCallback((clientX, clientY, { occlude = true } = {}) => {
     if (!canvasRef.current || !cameraRef.current || !resultRef.current) return null;
     syncFeatureEdges(resultRef.current.geometry);
+    const shift = partWorldOffset(resultRef.current);
+    const localEdges = featureEdgesRef.current;
+    const pickEdges = shift ? localEdges.map((edge) => shiftEdgeForWorld(edge, shift)) : localEdges;
     const canvas = canvasRef.current;
     const rect = canvas.getBoundingClientRect();
     const px = clientX - rect.left;
@@ -3933,8 +3980,8 @@ const Viewport = forwardRef(({
         opts.meshHitPoint = [p.x, p.y, p.z];
       }
     }
-    return pickNearestEdgeScreen(
-      featureEdgesRef.current,
+    const picked = pickNearestEdgeScreen(
+      pickEdges,
       cameraRef.current,
       rect.width,
       rect.height,
@@ -3943,6 +3990,8 @@ const Viewport = forwardRef(({
       slop,
       opts,
     );
+    if (!picked || pickEdges === localEdges) return picked;
+    return localEdges.find((edge) => edge.key === picked.key) || null;
   }, [syncFeatureEdges]);
 
   /**
@@ -5698,6 +5747,7 @@ const Viewport = forwardRef(({
       featureEdgesRef.current = [];
       featureEdgesSourceRef.current = null;
       syncFeatureEdges(resultRef.current?.geometry ?? null);
+      graphsBoundMeshRef.current = meshData;
       if (inFilletMode || keepSweepPath) {
         clearEdgeHover();
         // Re-paint the kept selection on the new mesh (world va/vb still draw).
@@ -5800,6 +5850,7 @@ const Viewport = forwardRef(({
         onFaceSelected?.(null);
         featureEdgesRef.current = [];
         featureEdgesSourceRef.current = null;
+        graphsBoundMeshRef.current = null;
         partGraphRef.current = null;
         partGraphSourceRef.current = null;
         faceIDsRef.current = null;
@@ -5825,6 +5876,40 @@ const Viewport = forwardRef(({
       if (mesh.material?.dispose) mesh.material.dispose();
     }
     assemblyExtrasRef.current.clear();
+  };
+
+  /**
+   * Show this part's solid as the pick mesh and rebuild face, edge, and
+   * contour graphs on it before a pick. Contours are buildCoherentEdges
+   * inside syncFeatureEdges. Other assembly meshes are not the pick mesh.
+   */
+  adoptActiveSolidRef.current = ({ mesh, position }) => {
+    if (!resultRef.current || !mesh?.vertProperties) return false;
+    clearHighlight();
+    clearEdgeHighlight();
+    clearEdgeHover();
+    setSelectedFace(null);
+    setSelectedEdges([]);
+    onFaceSelected?.(null);
+    const same = cachedMeshDataRef.current === mesh
+      && resultRef.current.geometry?.attributes?.position;
+    if (!same) {
+      renderMeshData(mesh);
+      setCachedMeshData(mesh);
+      cachedMeshDataRef.current = mesh;
+    } else {
+      warmFaceGraph(resultRef.current.geometry, faceIDsRef.current);
+    }
+    const p = Array.isArray(position) ? position : [0, 0, 0];
+    resultRef.current.position.set(p[0] || 0, p[1] || 0, p[2] || 0);
+    featureEdgesSourceRef.current = null;
+    syncFeatureEdges(resultRef.current.geometry ?? null);
+    graphsBoundMeshRef.current = mesh;
+    const renderer = rendererRef.current;
+    const scene = sceneRef.current;
+    const camera = cameraRef.current;
+    if (renderer && scene && camera) renderer.render(scene, camera);
+    return true;
   };
 
   placeAssemblyRef.current = (payload) => {
@@ -5876,6 +5961,7 @@ const Viewport = forwardRef(({
       resultRef.current.position.set(0, 0, 0);
       featureEdgesRef.current = [];
       featureEdgesSourceRef.current = null;
+      graphsBoundMeshRef.current = null;
       partGraphRef.current = null;
       partGraphSourceRef.current = null;
       faceIDsRef.current = null;
@@ -5883,6 +5969,9 @@ const Viewport = forwardRef(({
       const active = solids.find((solid) => solid.id === activeId);
       const p = active?.position || [0, 0, 0];
       resultRef.current.position.set(p[0], p[1], p[2]);
+      if (active?.mesh?.vertProperties && graphsBoundMeshRef.current !== active.mesh) {
+        adoptActiveSolidRef.current({ mesh: active.mesh, position: p });
+      }
     }
     if (autoFitEnabled && solids.length && cameraRef.current) {
       const geom = new BufferGeometry();
@@ -5970,7 +6059,10 @@ const Viewport = forwardRef(({
     }
   }, [cachedMeshData, currentFilename]);
 
-  const assemblyLabel = typeof assemblyName === 'string' ? assemblyName.trim() : '';
+  const titleParts = formatViewerTitle(
+    currentFilename,
+    typeof assemblyName === 'string' ? assemblyName : '',
+  );
 
   return (
     <div ref={containerRef} className="viewport-shell relative w-full h-full bg-[#1e1e1e] overflow-hidden">
@@ -6009,7 +6101,7 @@ const Viewport = forwardRef(({
         cadToolbarHost,
       )}
 
-      {/* Title row. Game: puzzle name. CAD: assembly bubble, dash, part bubble. */}
+      {/* Title row. Game: puzzle name. CAD: part, then "in", then assembly. */}
       {mode === 'game' && (
         <ViewportTitleChip>{gamePuzzleTitle || 'Puzzle'}</ViewportTitleChip>
       )}
@@ -6017,28 +6109,29 @@ const Viewport = forwardRef(({
         <div
           className="pointer-events-none absolute top-4 left-1/2 z-10 flex max-w-[min(36rem,calc(100%-2rem))] -translate-x-1/2 items-center gap-2"
           data-viewer-title=""
+          data-viewer-title-text={titleParts.text}
         >
-          {assemblyLabel ? (
-            <div
-              className={`${TITLE_CHIP} pointer-events-none max-w-[min(14rem,42vw)]`}
-              data-title-chip="assembly"
-              data-assembly-name=""
-            >
-              {assemblyLabel}
-            </div>
-          ) : null}
-          {assemblyLabel ? (
+          <ViewportTitleChip inline value={currentFilename} onRename={onRenameFile}>
+            {titleParts.part}
+          </ViewportTitleChip>
+          {titleParts.connector ? (
             <span
               className="shrink-0 text-xs font-medium text-gray-300"
-              data-title-dash=""
-              aria-hidden="true"
+              data-title-in=""
             >
-              —
+              {titleParts.connector}
             </span>
           ) : null}
-          <ViewportTitleChip inline value={currentFilename} onRename={onRenameFile}>
-            {currentFilename || 'Untitled'}
-          </ViewportTitleChip>
+          {titleParts.assembly ? (
+            <ViewportTitleChip
+              inline
+              noun="Assembly"
+              value={titleParts.assembly}
+              onRename={onRenameAssembly}
+            >
+              {titleParts.assembly}
+            </ViewportTitleChip>
+          ) : null}
         </div>
       )}
 

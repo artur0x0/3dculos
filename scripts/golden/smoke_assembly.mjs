@@ -15,20 +15,31 @@
  */
 import { readFileSync } from 'node:fs';
 import { register } from 'node:module';
+import { BufferAttribute, BufferGeometry } from 'three';
 import {
   assemblyName,
   assemblyNameFromFile,
   composeViewportParts,
   dropPartRecord,
   feedRows,
+  formatViewerTitle,
   parseAssemblyDocument,
+  partListDeleteAction,
   recordPartRun,
   removePart,
   resolvePartId,
+  sanitizeAssemblyName,
   scriptForRow,
   serializeAssembly,
   setPartVisible,
 } from '../../src/utils/assembly.js';
+import {
+  historyForPart,
+  pushPartHistory,
+  undoPartHistory,
+} from '../../src/utils/partHistory.js';
+import { buildCoherentEdges, buildFeatureEdges, pickNearestEdge } from '../../src/utils/selectEdge.js';
+import { selectGraphFace, warmFaceGraph } from '../../src/utils/selectFace.js';
 import { runAssemblyParts } from '../../src/utils/assemblyRun.js';
 import {
   composeHelperInsert,
@@ -111,24 +122,91 @@ const BAD = 'let part = Manifold.cube([10, 10, 10], true);\nreturn part.missingM
     })());
   const titleStart = view.indexOf('data-viewer-title');
   const title = view.slice(titleStart, view.indexOf("mode === 'game' && gameSuccess", titleStart));
-  check('CAD title is an assembly bubble, a dash, then a separate part bubble',
+  const namedTitle = formatViewerTitle('Bracket', 'Gearbox');
+  const bareTitle = formatViewerTitle('Bracket', '');
+  const blankTitle = formatViewerTitle('Bracket', '   ');
+  check('CAD title with an assembly name reads part in assembly',
     titleStart >= 0
-    && title.indexOf('data-title-chip="assembly"') >= 0
-    && title.indexOf('data-title-chip="assembly"') < title.indexOf('data-title-dash')
-    && title.indexOf('data-title-dash') < title.indexOf('ViewportTitleChip inline')
-    && /\{assemblyLabel\}/.test(title)
+    && namedTitle.text === 'Bracket in Gearbox'
+    && namedTitle.connector === 'in'
+    && namedTitle.part === 'Bracket'
+    && namedTitle.assembly === 'Gearbox'
+    && title.indexOf('ViewportTitleChip inline value={currentFilename}') >= 0
+    && title.indexOf('ViewportTitleChip inline value={currentFilename}') < title.indexOf('data-title-in')
+    && title.indexOf('data-title-in') < title.indexOf('noun="Assembly"')
+    && /\{titleParts\.connector\}/.test(title)
+    && /\{titleParts\.assembly\}/.test(title)
+    && !/data-title-dash/.test(view)
     && !/Untitled Assembly/.test(view)
     && !/>\s*Assembly\s*</.test(title));
-  check('a missing assembly name leaves only the part bubble',
-    /assemblyLabel \? \(/.test(view)
-    && /data-title-dash/.test(view));
-  check('parts ribbon centers the assembly name',
-    /data-parts-ribbon-center/.test(feed)
-    && /data-assembly-name/.test(feed)
-    && /\{ribbonName\}/.test(feed)
-    && /absolute inset-0 z-\[1\] flex items-center justify-center/.test(feed)
-    && /data-parts-ribbon-center/.test(feed)
+  check('a missing assembly name leaves only the part, with no empty in',
+    bareTitle.text === 'Bracket'
+    && bareTitle.connector === ''
+    && bareTitle.assembly === ''
+    && !bareTitle.text.includes(' in')
+    && blankTitle.text === 'Bracket'
+    && blankTitle.connector === ''
+    && formatViewerTitle('Part 1', null).text === 'Part 1'
+    && /titleParts\.connector \?/.test(title));
+  const ribbonStart = feed.indexOf('data-parts-feed-ribbon');
+  const ribbon = feed.slice(ribbonStart, feed.indexOf('data-parts-rows'));
+  const toolbar = ribbon.slice(ribbon.indexOf('data-parts-feed-toolbar'), ribbon.indexOf('data-parts-ribbon-end'));
+  const ribbonEnd = ribbon.slice(ribbon.indexOf('data-parts-ribbon-end'));
+  check('parts ribbon centers the assembly name and parks Local or Git on the right',
+    /data-parts-ribbon-center/.test(ribbon)
+    && /RibbonAssemblyName name=\{ribbonName\}/.test(ribbon)
+    && /data-parts-ribbon-end/.test(ribbon)
+    && /ml-auto/.test(ribbonEnd.slice(0, 180))
+    && ribbon.indexOf('data-parts-feed-toolbar') < ribbon.indexOf('data-parts-ribbon-end')
+    && !/data-parts-source-label/.test(toolbar)
+    && /data-parts-source-label/.test(ribbonEnd)
+    && /source === 'git' \? 'Git' : 'Local'/.test(ribbonEnd)
     && /assemblyName=\{assemblyLabel\}/.test(app));
+  const ask = feed.slice(feed.indexOf('const askDeletePart'), feed.indexOf('const cancelDeletePart'));
+  const cancel = feed.slice(feed.indexOf('const cancelDeletePart'), feed.indexOf('const confirmDeletePart'));
+  const confirmAt = feed.indexOf('const confirmDeletePart');
+  const confirmDel = feed.slice(confirmAt, feed.indexOf('return (', confirmAt));
+  check('delete asks before it drops',
+    /setPendingDelete\(/.test(ask)
+    && !/onDeletePart/.test(ask)
+    && /partListDeleteAction\('cancel'\) !== 'keep'/.test(cancel)
+    && !/onDeletePart/.test(cancel)
+    && !/removePart/.test(cancel)
+    && /data-part-delete-cancel/.test(feed)
+    && /askDeletePart\(row\.id/.test(feed));
+  check('confirm drops through the existing handler and cancel keeps the part',
+    partListDeleteAction('cancel') === 'keep'
+    && partListDeleteAction('dismiss') === 'keep'
+    && partListDeleteAction(undefined) === 'keep'
+    && partListDeleteAction('confirm') === 'drop'
+    && /partListDeleteAction\('confirm'\) !== 'drop'/.test(confirmDel)
+    && /onDeletePart\?\.\(pending\.id\)/.test(confirmDel)
+    && /data-part-delete-confirm/.test(feed));
+  check('assembly name in the title and the ribbon uses the same commit rules',
+    /onRenameAssembly/.test(view)
+    && /noun="Assembly"/.test(view)
+    && /if \(e\.key === 'Enter'\)/.test(feed)
+    && /if \(e\.key === 'Escape'\)/.test(feed)
+    && /onBlur=\{commit\}/.test(feed)
+    && /sanitizeAssemblyName\(draft\)/.test(feed)
+    && /if \(next && next !== \(name \|\| ''\)\) onRename\(next\)/.test(feed)
+    && /handleRenameAssembly/.test(app)
+    && sanitizeAssemblyName('  Gear/box  ') === 'Gearbox'
+    && sanitizeAssemblyName('') === ''
+    && sanitizeAssemblyName('x'.repeat(80)).length === 60);
+  const adoptStart = view.indexOf('adoptActiveSolidRef.current =');
+  const adopt = view.slice(adoptStart, view.indexOf('placeAssemblyRef.current', adoptStart));
+  check('part switch rebinds face, edge, and contour graphs on the active solid',
+    adoptStart >= 0
+    && /warmFaceGraph\(/.test(adopt)
+    && /featureEdgesSourceRef\.current = null/.test(adopt)
+    && /syncFeatureEdges\(/.test(adopt)
+    && /adoptActiveSolid/.test(selectFn)
+    && selectFn.indexOf('adoptActiveSolid') < selectFn.indexOf('loadContent')
+    && /focusPartHistory\(/.test(selectFn)
+    && selectFn.indexOf('focusPartHistory') < selectFn.indexOf('loadContent')
+    && /adoptActiveSolidRef\.current/.test(place)
+    && !/syncFeatureEdges\(/.test(place));
   check('a failed assembly part drops the cached solid and does not rebuild from it',
     /noShadow/.test(view)
     && /cachedMeshDataRef\.current = null/.test(fail)
@@ -143,6 +221,34 @@ const BAD = 'let part = Manifold.cube([10, 10, 10], true);\nreturn part.missingM
     && /IndexedDB key/.test(arch)
     && /no shadow solid/.test(arch)
     && /does not rebuild from a previous solid/.test(arch));
+  const undoFn = app.slice(app.indexOf('const handleUndo = '), app.indexOf('const handleRedo = '));
+  check('undo steps only the active part stack',
+    /const id = historyKey\(\)/.test(undoFn)
+    && /undoPartHistory\(/.test(undoFn)
+    && /partHistoriesRef/.test(undoFn)
+    && /\.setTextOnly\s*\?/.test(undoFn)
+    && !/\.loadContent\s*\(/.test(undoFn));
+}
+
+{
+  const SCRIPT_A = 'let part = cubeA;\nreturn part;\n';
+  const SCRIPT_B = 'let part = cubeB;\nreturn part;\n';
+  const FEATURE = `${SCRIPT_A}// fillet on A\n`;
+  const histories = {};
+  histories.A = historyForPart(histories, 'A', SCRIPT_A);
+  histories.B = historyForPart(histories, 'B', SCRIPT_B);
+  histories.A = historyForPart(histories, 'A', SCRIPT_B);
+  histories.A = pushPartHistory(histories.A, FEATURE, 'fillet');
+  const undone = undoPartHistory(histories.A);
+  const undoneB = undoPartHistory(histories.B);
+  check('undo after A→B→A restores A and leaves B',
+    undone.code === SCRIPT_A
+    && undone.code !== SCRIPT_B
+    && !String(undone.code).includes('cubeB')
+    && undoneB.code == null
+    && histories.B.commits[histories.B.head].code === SCRIPT_B
+    && undone.history.head === 0
+    && histories.A.head === 1);
 }
 
 {
@@ -384,6 +490,65 @@ async function execute(script) {
     && both.solids[0].position[0] === 30
     && both.solids[0].mesh.vertProperties.length > 0
     && both.solids[1].id === 'local:wide');
+
+  function geomFromMesh(mesh) {
+    const np = mesh.numProp || 3;
+    const src = mesh.vertProperties;
+    const nVert = Math.floor(src.length / np);
+    const positions = new Float32Array(nVert * 3);
+    for (let i = 0; i < nVert; i++) {
+      positions[i * 3] = src[i * np];
+      positions[i * 3 + 1] = src[i * np + 1];
+      positions[i * 3 + 2] = src[i * np + 2];
+    }
+    const geometry = new BufferGeometry();
+    geometry.setAttribute('position', new BufferAttribute(positions, 3));
+    geometry.setIndex(new BufferAttribute(Uint32Array.from(mesh.triVerts), 1));
+    return geometry;
+  }
+  const meshA = both.runs['local:box'].mesh;
+  const meshB = both.runs['local:wide'].mesh;
+  const geomA = geomFromMesh(meshA);
+  const geomB = geomFromMesh(meshB);
+  const faceA = warmFaceGraph(geomA, meshA.faceID);
+  const faceB = warmFaceGraph(geomB, meshB.faceID);
+  const edgesA = buildFeatureEdges(geomA);
+  const edgesB = buildFeatureEdges(geomB);
+  const contoursA = buildCoherentEdges(edgesA);
+  const contoursB = buildCoherentEdges(edgesB);
+  const edgeSig = (edges) => edges.map((e) => {
+    const a = e.va || [];
+    const b = e.vb || [];
+    return [a[0], a[1], a[2], b[0], b[1], b[2]].map((n) => Number(n).toFixed(3)).join(',');
+  }).sort().join('|');
+  const span = (edges) => {
+    let max = 0;
+    for (const e of edges) {
+      for (const v of [e.va, e.vb]) {
+        if (!v) continue;
+        max = Math.max(max, Math.abs(v[0]), Math.abs(v[1]), Math.abs(v[2]));
+      }
+    }
+    return max;
+  };
+  const midB = edgesB[0]?.mid;
+  const hitB = midB ? pickNearestEdge(edgesB, midB, 0.5) : null;
+  const hitA = midB ? pickNearestEdge(edgesA, midB, 0.5) : null;
+  const facePick = selectGraphFace(geomB, 0, meshB.faceID);
+  const tri = facePick.indices[0];
+  const vert = geomB.index.array[tri * 3];
+  const faceX = geomB.attributes.position.array[vert * 3];
+  check('selecting B rebuilds graphs that pick B, not A',
+    faceA && faceB && faceA !== faceB
+    && edgesA.length > 0 && edgesB.length > 0
+    && contoursA.length > 0 && contoursB.length > 0
+    && edgeSig(edgesA) !== edgeSig(edgesB)
+    && edgeSig(contoursA) !== edgeSig(contoursB)
+    && span(edgesA) > 4 && span(edgesB) <= 2.01
+    && span(contoursB) <= 2.01
+    && hitB && hitB.key === edgesB[0].key
+    && hitA == null
+    && Number.isFinite(faceX) && Math.abs(faceX) <= 2.01);
 
   const hidden = await runAssemblyParts({
     doc: setPartVisible(doc, 'local:box', false),
