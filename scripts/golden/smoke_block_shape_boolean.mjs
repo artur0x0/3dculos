@@ -166,7 +166,7 @@ const SHAPES = ['makeExtrude', 'makeRevolve', 'makeSweep', 'makeLoft'];
   };
   const refused = composeBooleanCommit('', droppedAll, 'a', { pieceCount: 1 });
   check('deleting every piece refuses', !refused.ok && refused.message === BOOLEAN_MODE_ALL_DROPPED, refused.message);
-  check('hiding one piece of two still confirms', allGone.ok, allGone.message || '');
+  check('intersect with pieces still showing confirms', allGone.ok, allGone.message || '');
 
   const union = composeBooleanCommit('let part = Manifold.cube([20, 20, 20], true);', tap.state, 'a');
   check('union is one booleanBodies and a Boolean chip',
