@@ -90,6 +90,7 @@ export default function PartFeed({
   onAddPart,
   onAddGitPart,
   onDeletePart,
+  assemblyName = '',
 }) {
   const loadRef = useRef(null);
   const resolveRef = useRef(null);
@@ -143,15 +144,16 @@ export default function PartFeed({
   const shell = placement === 'mobile'
     ? 'flex h-full w-full flex-col bg-[#1e1e1e] text-gray-100'
     : 'flex h-full w-72 shrink-0 flex-col border-r border-white/10 bg-[#1e1e1e] text-gray-100';
+  const ribbonName = typeof assemblyName === 'string' ? assemblyName.trim() : '';
 
   return (
     <aside className={shell} data-parts-feed="" data-parts-source={source}>
       <div
         data-ribbon-bg="editor"
         data-parts-feed-ribbon=""
-        className="relative z-30 w-full flex items-center gap-1 px-1 py-0.5 border-b border-gray-700/60 bg-gray-900 shrink-0"
+        className="relative z-30 flex w-full items-center border-b border-gray-700/60 bg-gray-900 px-1 py-0.5 shrink-0"
       >
-        <div className={STRIP_ROW} data-parts-feed-toolbar="">
+        <div className={`${STRIP_ROW} relative z-10`} data-parts-feed-toolbar="">
           <button
             type="button"
             className={STRIP_BTN}
@@ -208,6 +210,20 @@ export default function PartFeed({
             </form>
           )}
         </div>
+        {ribbonName ? (
+          <div
+            className="pointer-events-none absolute inset-0 z-[1] flex items-center justify-center"
+            data-parts-ribbon-center=""
+          >
+            <span
+              className="max-w-[45%] truncate bg-gray-900 px-2 text-center text-xs font-medium text-gray-100"
+              data-assembly-name=""
+              title={ribbonName}
+            >
+              {ribbonName}
+            </span>
+          </div>
+        ) : null}
         <input
           ref={loadRef}
           type="file"

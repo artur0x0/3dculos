@@ -68,11 +68,30 @@ export function newLocalPartId() {
  * {
  *   version: 1,
  *   source: 'git' | 'local',
+ *   name?: string,
  *   activeId: string | null,
  *   parts: [{ id, name, visible, order, position? }]
  * }
+ * `name`, when present, is the assembly name. A blank name is omitted.
  * `script` and any other fields are dropped.
  */
+
+/** Trimmed assembly name, or '' when the document has none. */
+export function assemblyName(doc) {
+  if (!doc || typeof doc.name !== 'string') return '';
+  return doc.name.trim();
+}
+
+/**
+ * Basename of a loaded assembly file, without a trailing `.json`.
+ * '' when that file has no name of its own.
+ */
+export function assemblyNameFromFile(filename) {
+  const base = String(filename || '').replace(/\\/g, '/').split('/').pop().trim();
+  if (!base || base === '.' || base === '..') return '';
+  return base.replace(/\.json$/i, '').trim();
+}
+
 export function serializeAssembly(doc) {
   const source = doc?.source === 'git' ? 'git' : 'local';
   const parts = sortParts(doc?.parts).map((part, index) => {
@@ -90,12 +109,15 @@ export function serializeAssembly(doc) {
   const activeId = parts.some((part) => part.id === wanted)
     ? wanted
     : (parts[0]?.id || null);
-  return {
+  const name = assemblyName(doc);
+  const out = {
     version: ASSEMBLY_VERSION,
     source,
     activeId,
     parts,
   };
+  if (name) out.name = name;
+  return out;
 }
 
 export function parseAssemblyDocument(input) {
@@ -106,6 +128,7 @@ export function parseAssemblyDocument(input) {
   return serializeAssembly({
     version: ASSEMBLY_VERSION,
     source: raw.source,
+    name: raw.name,
     activeId: raw.activeId,
     parts: raw.parts.map((part, index) => ({
       id: part?.id,

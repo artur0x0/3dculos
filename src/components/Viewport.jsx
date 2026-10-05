@@ -438,13 +438,19 @@ function sanitizePartName(raw) {
     .slice(0, 60);
 }
 
+const TITLE_CHIP = 'text-xs font-medium text-center truncate px-3 py-1.5 rounded-lg shadow'
+  + ' bg-gray-900/80 surface-glass-chip border border-gray-500/50 text-gray-100';
+
 /**
  * Title chip. With `onRename` it is also the rename control: click (or Enter /
  * Space on the focused chip) swaps in an input. Enter or blur commits, Escape
  * reverts. An empty or all-junk name commits nothing, so the part falls back to
  * "Untitled" rather than becoming nameless.
+ *
+ * `inline` sits in the CAD title row (assembly bubble, dash, this chip).
+ * The floating form is the game puzzle name, alone at the top.
  */
-function ViewportTitleChip({ children, value = null, onRename = null }) {
+function ViewportTitleChip({ children, value = null, onRename = null, inline = false }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   const inputRef = useRef(null);
@@ -466,15 +472,15 @@ function ViewportTitleChip({ children, value = null, onRename = null }) {
     if (next && next !== (value || '')) onRename(next);
   };
 
-  const shell = 'text-xs font-medium text-center truncate px-3 py-1.5 rounded-lg shadow'
-    + ' bg-gray-900/80 surface-glass-chip border border-gray-500/50 text-gray-100';
+  const shell = TITLE_CHIP;
+  const frame = inline
+    ? `relative z-10 min-w-0 max-w-[min(14rem,42vw)] ${onRename ? 'pointer-events-auto' : 'pointer-events-none'}`
+    : `absolute top-4 left-1/2 -translate-x-1/2 z-10 max-w-[min(20rem,calc(100%-2rem))] ${
+      onRename ? '' : 'pointer-events-none'
+    }`;
 
   return (
-    <div
-      className={`absolute top-4 left-1/2 -translate-x-1/2 z-10 max-w-[min(20rem,calc(100%-2rem))] ${
-        onRename ? '' : 'pointer-events-none'
-      }`}
-    >
+    <div className={frame}>
       {editing ? (
         <input
           ref={inputRef}
@@ -527,6 +533,8 @@ const Viewport = forwardRef(({
   canUndo,
   canRedo,
   currentFilename,
+  /** Assembly document name. Blank leaves the CAD title as the part bubble only. */
+  assemblyName = '',
   onRenameFile = null,
   isUploading,
   mode = 'cad',
@@ -5916,6 +5924,8 @@ const Viewport = forwardRef(({
     }
   }, [cachedMeshData, currentFilename]);
 
+  const assemblyLabel = typeof assemblyName === 'string' ? assemblyName.trim() : '';
+
   return (
     <div ref={containerRef} className="viewport-shell relative w-full h-full bg-[#1e1e1e] overflow-hidden">
       {/* CAD chrome lives in the editor mid-strip in BOTH shells (desktop matches
@@ -5953,14 +5963,37 @@ const Viewport = forwardRef(({
         cadToolbarHost,
       )}
 
-      {/* Title-only top chrome. Game: puzzle name. Mobile CAD: filename. */}
+      {/* Title row. Game: puzzle name. CAD: assembly bubble, dash, part bubble. */}
       {mode === 'game' && (
         <ViewportTitleChip>{gamePuzzleTitle || 'Puzzle'}</ViewportTitleChip>
       )}
       {mode !== 'game' && (
-        <ViewportTitleChip value={currentFilename} onRename={onRenameFile}>
-          {currentFilename || 'Untitled'}
-        </ViewportTitleChip>
+        <div
+          className="pointer-events-none absolute top-4 left-1/2 z-10 flex max-w-[min(36rem,calc(100%-2rem))] -translate-x-1/2 items-center gap-2"
+          data-viewer-title=""
+        >
+          {assemblyLabel ? (
+            <div
+              className={`${TITLE_CHIP} pointer-events-none max-w-[min(14rem,42vw)]`}
+              data-title-chip="assembly"
+              data-assembly-name=""
+            >
+              {assemblyLabel}
+            </div>
+          ) : null}
+          {assemblyLabel ? (
+            <span
+              className="shrink-0 text-xs font-medium text-gray-300"
+              data-title-dash=""
+              aria-hidden="true"
+            >
+              —
+            </span>
+          ) : null}
+          <ViewportTitleChip inline value={currentFilename} onRename={onRenameFile}>
+            {currentFilename || 'Untitled'}
+          </ViewportTitleChip>
+        </div>
       )}
 
       {mode === 'game' && gameSuccess && (

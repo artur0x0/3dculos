@@ -37,6 +37,8 @@ import {
 } from './utils/editorStorage';
 import { saveEditorDraft, loadEditorDraft } from './utils/editorDraft';
 import {
+  assemblyName,
+  assemblyNameFromFile,
   composeViewportParts,
   dropPartRecord,
   feedRows,
@@ -1198,13 +1200,17 @@ const App = () => {
     rememberAssembly(reorderParts(assemblyRef.current, from, to));
   };
 
-  const handleLoadAssembly = async (text) => {
+  const handleLoadAssembly = async (text, filename) => {
     let doc;
     try {
       doc = parseAssemblyDocument(text);
     } catch (err) {
       setUploadError(err.message || 'Could not read assembly');
       return;
+    }
+    if (!doc.name) {
+      const fromFile = assemblyNameFromFile(filename);
+      if (fromFile) doc = serializeAssembly({ ...doc, name: fromFile });
     }
     const scripts = await loadPartScripts(doc.parts.map((part) => part.id));
     rememberScripts(scripts);
@@ -2042,10 +2048,12 @@ const App = () => {
       : Math.round(Math.min(Math.max(vv.height * 0.32, 160), vv.height * 0.38)));
 
   const partRows = assemblyDoc ? feedRows(assemblyDoc, partRuns, partScripts) : [];
+  const assemblyLabel = assemblyName(assemblyDoc);
   const partFeed = appMode !== 'game' && assemblyDoc ? (
     <PartFeed
       placement={isMobile ? 'mobile' : 'desktop'}
       source={assemblyDoc.source}
+      assemblyName={assemblyLabel}
       rows={partRows}
       activeId={assemblyDoc.activeId}
       onSelect={handleSelectPart}
@@ -2094,6 +2102,7 @@ const App = () => {
               canUndo={canUndo()}
               canRedo={canRedo()}
               currentFilename={currentFilename}
+              assemblyName={assemblyLabel}
               onRenameFile={handleRenameFile}
               onSelectAll={handleSelectAll}
               isUploading={isUploading || gameLoading}
@@ -2494,6 +2503,7 @@ const App = () => {
             canUndo={canUndo()}
             canRedo={canRedo()}
             currentFilename={currentFilename}
+            assemblyName={assemblyLabel}
             onRenameFile={handleRenameFile}
             onSelectAll={handleSelectAll}
             isUploading={isUploading || gameLoading}
