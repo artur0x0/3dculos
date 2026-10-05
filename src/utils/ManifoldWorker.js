@@ -459,6 +459,40 @@ class ManifoldWorker {
    * @param {{ at: number[] }[]} bodies - Bodies to cut. Omit to cut every body.
    * @returns {Promise<{ pieces: object[] }>}
    */
+  /** One request/response round trip. */
+  _request(type, payload, options = {}) {
+    if (!this.isReady) {
+      return Promise.reject(new Error('ManifoldWorker not initialized'));
+    }
+    const timeoutMs = options.timeoutMs || this.config.timeoutMs;
+    return new Promise((resolve, reject) => {
+      const requestId = this._generateRequestId();
+      const timeoutId = setTimeout(() => {
+        this.pendingRequests.delete(requestId);
+        reject(new Error(`${type} timed out after ${timeoutMs / 1000}s`));
+      }, timeoutMs);
+      this.pendingRequests.set(requestId, {
+        resolve: (result) => {
+          clearTimeout(timeoutId);
+          resolve(result);
+        },
+        reject: (error) => {
+          clearTimeout(timeoutId);
+          reject(error);
+        },
+      });
+      this.worker.postMessage({ type, id: requestId, payload });
+    });
+  }
+
+  /**
+   * Which parts a subtract cutter overlaps. The cutter script runs on the
+   * worker without replacing the cached solid.
+   */
+  async probeOverlap(cutterScript, parts, options = {}) {
+    return this._request('probeOverlap', { cutterScript, parts }, options);
+  }
+
   async previewBoolean(op, bodies, options = {}) {
     if (!this.isReady) {
       throw new Error('ManifoldWorker not initialized');
@@ -483,7 +517,12 @@ class ManifoldWorker {
       this.worker.postMessage({
         type: 'previewBoolean',
         id: requestId,
-        payload: { op, bodies }
+        payload: {
+          op,
+          bodies,
+          tools: Array.isArray(options.tools) ? options.tools : undefined,
+          targetScript: typeof options.targetScript === 'string' ? options.targetScript : undefined,
+        }
       });
     });
   }
@@ -885,11 +924,22 @@ class ManifoldContext {
    * Pieces preview. Runs the real cut on a clone of the last solid and
    * returns each piece mesh. The cached solid is left as it was.
    */
-  async previewBoolean({ op, bodies } = {}) {
+  async previewBoolean({ op, bodies, tools, targetScript } = {}) {
     if (!this.worker || !this.worker.isReady) {
       throw new Error('ManifoldContext not initialized');
     }
-    return await this.worker.previewBoolean(op, bodies);
+    return await this.worker.previewBoolean(op, bodies, { tools, targetScript });
+  }
+
+  /**
+   * Cross-part subtract: which part meshes the frozen cutter overlaps.
+   * @param {{ cutterScript: string, parts: { id: string, mesh: object, offset: number[] }[] }} args
+   */
+  async probeOverlap({ cutterScript, parts } = {}) {
+    if (!this.worker || !this.worker.isReady) {
+      throw new Error('ManifoldContext not initialized');
+    }
+    return await this.worker.probeOverlap(cutterScript, parts);
   }
 
   async previewCut({ plane, bodies } = {}) {

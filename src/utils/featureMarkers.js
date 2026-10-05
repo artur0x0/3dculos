@@ -77,6 +77,9 @@ import {
   WORKPLANE_END,
 } from './helperPaletteSnippets.js';
 
+/** externalBody() inside a block = a cross-part copy (see externalCopy.js). */
+const EXTERNAL_COPY_CALL = /\bexternalBody\s*\(/;
+
 /** Ordered kinds the strip cares about (label is the chip text). */
 export const FEATURE_MARKER_KINDS = Object.freeze([
   { begin: CONTOUR_PROFILE_BEGIN, end: CONTOUR_PROFILE_END, kind: 'profile', label: 'Profile' },
@@ -116,7 +119,7 @@ export const FEATURE_MARKER_KINDS = Object.freeze([
 /**
  * Scan `script` for every complete begin…end marker pair.
  * Returns blocks sorted by start offset:
- *   { id, kind, label, chipLabel, startOffset, endOffset, index, typeIndex }
+ *   { id, kind, label, chipLabel, startOffset, endOffset, external, index, typeIndex }
  */
 export function parseFeatureMarkers(script) {
   if (typeof script !== 'string' || script.length === 0) return [];
@@ -158,6 +161,8 @@ export function parseFeatureMarkers(script) {
       chipLabel,
       startOffset: h.startOffset,
       endOffset: h.endOffset,
+      /** Holds a frozen copy of another part's geometry (yellow chip border). */
+      external: EXTERNAL_COPY_CALL.test(script.slice(h.startOffset, h.endOffset)),
       index,
       /** 1-based index within this kind (badge on strip / sheet icons). */
       typeIndex,

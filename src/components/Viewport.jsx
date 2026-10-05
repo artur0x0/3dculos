@@ -180,6 +180,8 @@ import {
   booleanPieceHidden,
   validateBooleanAccept,
   noteBooleanPartHidden,
+  booleanPicksInOrder,
+  booleanPreviewRequest,
   BOOLEAN_PIECE_COLORS,
 } from '../utils/booleanMode';
 import {
@@ -622,6 +624,12 @@ const Viewport = forwardRef(({
   onCommitDraft = null,
   onCommitCut = null,
   onCommitBoolean = null,
+  /**
+   * Cross-part Boolean: `{ parts: { [id]: { script, name, position, ok } } }`
+   * so the intersect Pieces preview can run the frozen copies the same way
+   * Confirm will write them.
+   */
+  getBooleanContext = null,
   onCommitMove = null,
   onCommitMoveFace = null,
   onCommitDeleteFace = null,
@@ -792,6 +800,9 @@ const Viewport = forwardRef(({
   const [booleanMode, setBooleanMode] = useState(null);
   const booleanModeRef = useRef(null);
   const booleanPiecesPreviewRef = useRef(null);
+  /** Picks on parts that are not the pick mesh, drawn from their soup. */
+  const booleanRemotePicksRef = useRef(null);
+  const getBooleanContextRef = useRef(null);
   const booleanBaseMaterialRef = useRef(null);
   const booleanBaseHiddenMatRef = useRef(null);
   const booleanPreviewGenRef = useRef(0);
@@ -996,6 +1007,7 @@ const Viewport = forwardRef(({
   onPickRetargetRef.current = onPickRetarget;
   onFeatureSessionChangeRef.current = onFeatureSessionChange;
   partLabelsRef.current = partLabels || {};
+  getBooleanContextRef.current = getBooleanContext;
   featureSessionRef.current = !!(
     contourMode || filletMode || shellMode || draftMode || cutMode
     || booleanMode || moveMode || moveFaceMode || deleteFaceMode
@@ -1132,6 +1144,10 @@ const Viewport = forwardRef(({
     },
     softFailBoolean: (msg) => {
       showShellToast(msg || 'Boolean refused — pick a target and a tool body.');
+    },
+    /** Short note in the picker toast slot (cross-part writes). */
+    notify: (msg) => {
+      if (msg) showShellToast(msg);
     },
     softFailMove: (msg) => {
       showShellToast(msg || 'Move refused — double-click a body, then Confirm.');
@@ -3716,6 +3732,57 @@ const Viewport = forwardRef(({
     }
   }, [onCommitCut, exitCutMode, onFaceSelected, clearHighlight]);
 
+  const clearBooleanRemotePicks = useCallback(() => {
+    const group = booleanRemotePicksRef.current;
+    if (!group) return;
+    group.parent?.remove(group);
+    group.traverse((obj) => {
+      if (obj === group) return;
+      obj.geometry?.dispose?.();
+      obj.material?.dispose?.();
+    });
+    booleanRemotePicksRef.current = null;
+  }, []);
+
+  /**
+   * A Boolean pick on a part that is not the pick mesh right now. Drawn from
+   * the triangles stored with that pick, at that part's assembly position.
+   * A hidden part has no mesh here, so its picks are kept but not drawn.
+   */
+  const paintBooleanRemotePicks = useCallback((state) => {
+    clearBooleanRemotePicks();
+    const scene = sceneRef.current;
+    if (!scene || !state) return;
+    const active = String(activePartIdRef.current ?? '__active__');
+    const group = new Group();
+    group.name = 'booleanRemotePicks';
+    for (const pick of booleanPicksInOrder(state)) {
+      if (String(pick.partId) === active) continue;
+      const soup = pick.body?.soup;
+      const host = assemblyExtrasRef.current.get(pick.partId);
+      if (!soup || !soup.length || !host) continue;
+      const geom = new BufferGeometry();
+      geom.setAttribute('position', new BufferAttribute(new Float32Array(soup), 3));
+      const mesh = new ThreeMesh(geom, new MeshBasicMaterial({
+        color: 0x22d3ee,
+        transparent: true,
+        opacity: 0.45,
+        depthWrite: false,
+        polygonOffset: true,
+        polygonOffsetFactor: -2,
+        polygonOffsetUnits: -2,
+        side: FrontSide,
+      }));
+      mesh.position.copy(host.position);
+      mesh.raycast = () => {};
+      mesh.userData.booleanRemotePart = pick.partId;
+      group.add(mesh);
+    }
+    if (!group.children.length) return;
+    scene.add(group);
+    booleanRemotePicksRef.current = group;
+  }, [clearBooleanRemotePicks]);
+
   const removeBooleanPreviewGroup = useCallback(() => {
     const group = booleanPiecesPreviewRef.current;
     if (!group) return;
@@ -3751,7 +3818,8 @@ const Viewport = forwardRef(({
   useEffect(() => {
     if (booleanMode) return;
     clearBooleanPiecePreview();
-  }, [booleanMode, clearBooleanPiecePreview]);
+    clearBooleanRemotePicks();
+  }, [booleanMode, clearBooleanPiecePreview, clearBooleanRemotePicks]);
 
   const hideBooleanBaseMesh = useCallback(() => {
     const mesh = resultRef.current;
@@ -3796,6 +3864,8 @@ const Viewport = forwardRef(({
       mesh.raycast = ThreeMesh.prototype.raycast;
       group.add(mesh);
     }
+    // Pieces are in the target part's frame; the pick mesh carries its offset.
+    if (resultRef.current) group.position.copy(resultRef.current.position);
     scene.add(group);
     booleanPiecesPreviewRef.current = group;
     const renderer = rendererRef.current;
@@ -3805,9 +3875,22 @@ const Viewport = forwardRef(({
 
   const ensureBooleanPreview = useCallback((state) => {
     const partId = activePartIdRef.current;
-    const slot = booleanSlot(state, partId);
-    if (booleanOp(state?.op) !== 'intersect' || state?.pick !== 'pieces' || slot.bodies.length < 2) {
+    const ctx = getBooleanContextRef.current?.() || {};
+    const req = booleanPreviewRequest(state, partId, ctx);
+    if (booleanOp(state?.op) !== 'intersect' || state?.pick !== 'pieces' || !req.ok) {
       clearBooleanPiecePreview();
+      if (state?.pick === 'pieces' && req && !req.ok && req.message) showShellToast(req.message);
+      return;
+    }
+    // Pieces live on the target. Put its mesh under the cursor first so the
+    // piece taps and the drop list are that part's.
+    if (req.targetPartId && partId != null
+      && String(req.targetPartId) !== String(partId)
+      && req.targetPartId !== '__active__') {
+      onPickRetargetRef.current?.({ partId: String(req.targetPartId), kind: 'face', syncScript: false });
+      // The swap repaints Boolean picks on the new mesh, which lands back
+      // here with the target active. Nothing more to do on this pass.
+      if (String(activePartIdRef.current) !== String(req.targetPartId)) clearBooleanPiecePreview();
       return;
     }
     if (!resultRef.current?.geometry?.attributes?.position?.count) {
@@ -3815,8 +3898,13 @@ const Viewport = forwardRef(({
       return;
     }
     const gen = ++booleanPreviewGenRef.current;
-    const bodies = slot.bodies.map((b) => ({ at: b.at }));
-    manifoldContext.previewBoolean({ op: 'intersect', bodies }).then((payload) => {
+    const bodies = req.bodies;
+    manifoldContext.previewBoolean({
+      op: 'intersect',
+      bodies,
+      tools: req.tools,
+      targetScript: req.targetScript,
+    }).then((payload) => {
       if (gen !== booleanPreviewGenRef.current) return;
       const live = booleanModeRef.current;
       if (!live || live.pick !== 'pieces' || booleanOp(live.op) !== 'intersect') return;
@@ -3849,21 +3937,25 @@ const Viewport = forwardRef(({
     if (!state) {
       owned?.dispose?.();
       clearBooleanPiecePreview();
+      clearBooleanRemotePicks();
       return;
     }
     if (state.pick === 'pieces' && booleanOp(state.op) === 'intersect') {
       owned?.dispose?.();
+      clearBooleanRemotePicks();
       ensureBooleanPreview(state);
       return;
     }
     clearBooleanPiecePreview();
+    paintBooleanRemotePicks(state);
     const slot = booleanSlot(state, activePartIdRef.current);
     const tris = slot.bodies.flatMap((b) => b.triangles || []);
     if (geom && positions && index && tris.length) {
       highlightFace(tris, geom, positions, index, 0x22d3ee, 'boolean-bodies');
     }
     owned?.dispose?.();
-  }, [clearHighlight, highlightFace, clearBooleanPiecePreview, ensureBooleanPreview, crossSectionEnabled]);
+  }, [clearHighlight, highlightFace, clearBooleanPiecePreview, ensureBooleanPreview, crossSectionEnabled,
+    paintBooleanRemotePicks, clearBooleanRemotePicks]);
   paintBooleanPicksRef.current = paintBooleanPicks;
 
   const exitBooleanMode = useCallback(() => {
@@ -7433,6 +7525,7 @@ const Viewport = forwardRef(({
           partId={activePartIdRef.current}
           compact={isMobile}
           pieceCount={booleanPieceCount}
+          partNames={partLabels}
           onOp={(op) => commitBooleanState(setBooleanOp(booleanModeRef.current, op))}
           onPickTarget={(pick) => commitBooleanState(setBooleanPickTarget(booleanModeRef.current, pick))}
           onUndo={() => commitBooleanState(popLastBooleanPick(booleanModeRef.current, activePartIdRef.current))}

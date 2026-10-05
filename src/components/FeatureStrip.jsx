@@ -87,6 +87,21 @@ const FEATURE_ICONS = Object.freeze({
   workplane: Layers3,
 });
 
+/**
+ * Chip colours. A feature that holds a frozen copy of another part's
+ * geometry (externalBody) gets a yellow border, active or not.
+ */
+function chipTone(active, external = false) {
+  if (active) {
+    return external
+      ? 'bg-cyan-600 text-white border-2 border-yellow-400 shadow'
+      : 'bg-cyan-600 text-white border-cyan-400/70 shadow';
+  }
+  return external
+    ? 'bg-gray-800/70 text-gray-200 border-2 border-yellow-400 hover:text-white'
+    : 'bg-gray-800/70 text-gray-200 border-gray-500/40 hover:text-white';
+}
+
 function TypeBadge({ index }) {
   if (!index) return null;
   return (
@@ -279,16 +294,14 @@ export default function FeatureStrip({
                   data-feature-chip={f.kind}
                   data-feature-id={f.id}
                   data-feature-type-index={typeIndex}
+                  data-feature-external={f.external ? '1' : undefined}
                   aria-pressed={active}
                   aria-label={f.chipLabel}
-                  title={f.chipLabel}
+                  aria-description={f.external ? 'External copy, not linked' : undefined}
+                  title={f.external ? `${f.chipLabel} — external copy, not linked` : f.chipLabel}
                   onClick={() => onJump?.(f)}
                   className={`relative shrink-0 rounded-lg p-1.5 flex items-center justify-center
-                    border transition-colors active:opacity-80 ${
-                    active
-                      ? 'bg-cyan-600 text-white border-cyan-400/70 shadow'
-                      : 'bg-gray-800/70 text-gray-200 border-gray-500/40 hover:text-white'
-                  }`}
+                    border transition-colors active:opacity-80 ${chipTone(active, f.external)}`}
                 >
                   <Icon size={16} strokeWidth={2} aria-hidden="true" />
                   <TypeBadge index={typeIndex} />
@@ -347,16 +360,14 @@ export default function FeatureStrip({
             data-feature-chip={f.kind}
             data-feature-id={f.id}
             data-feature-type-index={typeIndex}
+            data-feature-external={f.external ? '1' : undefined}
             aria-pressed={active}
             aria-label={f.chipLabel}
-            title={f.chipLabel}
+                  aria-description={f.external ? 'External copy, not linked' : undefined}
+            title={f.external ? `${f.chipLabel} — external copy, not linked` : f.chipLabel}
             onClick={() => onJump?.(f)}
             className={`relative shrink-0 rounded-lg p-1.5 flex items-center justify-center
-              border transition-colors active:opacity-80 ${
-              active
-                ? 'bg-cyan-600 text-white border-cyan-400/70 shadow'
-                : 'bg-gray-800/70 text-gray-200 border-gray-500/40 hover:text-white'
-            }`}
+              border transition-colors active:opacity-80 ${chipTone(active, f.external)}`}
           >
             <Icon size={16} strokeWidth={2} aria-hidden="true" />
             <TypeBadge index={typeIndex} />

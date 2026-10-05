@@ -91,7 +91,9 @@ import { composeFilletCommit, composeChamferCommit } from './utils/filletMode';
 import { composeShellCommit } from './utils/shellMode';
 import { composeDraftCommit } from './utils/draftMode';
 import { composeCutCommit } from './utils/cutMode';
-import { composeBooleanCommit } from './utils/booleanMode';
+import { composeBooleanCommit, validateBooleanAccept } from './utils/booleanMode';
+import { planCrossPartSubtract, crossPartSubtractWrites } from './utils/externalCopy';
+import { FEATURE_MARKER_KINDS } from './utils/featureMarkers';
 import { composeMoveCommit } from './utils/moveMode';
 import { composeMoveFaceCommit } from './utils/moveFaceMode';
 import { composeDeleteFaceCommit } from './utils/deleteFaceMode';
@@ -1661,12 +1663,118 @@ const App = () => {
   };
 
   /**
+   * Scripts, names, positions, and last-run status of every part, for
+   * cross-part writes. The active part's script is the live editor buffer.
+   */
+  const assemblyPartContext = () => {
+    const doc = assemblyRef.current;
+    const parts = {};
+    if (!doc) return { parts };
+    const live = codeEditorRef.current?.getContent?.();
+    for (const row of doc.parts) {
+      const run = partRunsRef.current?.[row.id];
+      const script = row.id === doc.activeId && typeof live === 'string' && !suppressPartSaveRef.current
+        ? live
+        : partScriptsRef.current[row.id];
+      parts[row.id] = {
+        script: typeof script === 'string' ? script : null,
+        name: row.name || row.id,
+        position: partPosition(row) || [0, 0, 0],
+        visible: row.visible !== false,
+        ok: !(run && run.ok === false && run.error && !run.skipped),
+      };
+    }
+    return { parts };
+  };
+
+  /**
+   * Write scripts into parts that are not in the editor. Each write is one
+   * feature step on that part's own undo stack. Then every visible part is
+   * run again, so the active part's graphs rebuild on the success path and
+   * the other parts show their new solids.
+   */
+  const writeOtherPartScripts = (writes) => {
+    const doc = assemblyRef.current;
+    if (!doc || !Array.isArray(writes) || !writes.length) return false;
+    let scripts = { ...partScriptsRef.current };
+    let wrote = 0;
+    for (const w of writes) {
+      if (!w?.id || typeof w.buffer !== 'string' || w.id === doc.activeId) continue;
+      if (!doc.parts.some((row) => row.id === w.id)) continue;
+      const prevScript = typeof scripts[w.id] === 'string' ? scripts[w.id] : '';
+      scripts = { ...scripts, [w.id]: w.buffer };
+      savePartScript(w.id, w.buffer);
+      partHistoriesRef.current[w.id] = pushPartHistory(
+        historyForPart(partHistoriesRef.current, w.id, prevScript),
+        w.buffer,
+        w.message || 'External copy',
+      );
+      wrote += 1;
+    }
+    if (!wrote) return false;
+    rememberScripts(scripts);
+    refreshAssemblyRef.current?.(codeEditorRef.current?.getContent?.());
+    return true;
+  };
+
+  /**
+   * Subtract mode on a Block or Shape: the active part keeps its own block
+   * (already written). Every other visible part the cutter overlaps gets a
+   * frozen copy of that cutter, posed into its frame, as one feature step
+   * with a yellow-bordered chip. Re-confirming the same feature replaces
+   * that copy; a cutter moved off a part drops it there.
+   */
+  const crossPartSubtract = async (before, after) => {
+    const doc = assemblyRef.current;
+    if (!doc || appModeRef.current === 'game' || doc.parts.length < 2) return;
+    if (typeof before !== 'string' || typeof after !== 'string' || before === after) return;
+    const sourceRow = doc.parts.find((row) => row.id === doc.activeId);
+    if (!sourceRow) return;
+    const ctx = assemblyPartContext();
+    const parts = doc.parts.map((row) => ({ id: row.id, ...ctx.parts[row.id] }));
+    const source = {
+      id: sourceRow.id,
+      name: sourceRow.name || sourceRow.id,
+      position: partPosition(sourceRow) || [0, 0, 0],
+    };
+    const plan = planCrossPartSubtract({ before, after, source, parts, markers: FEATURE_MARKER_KINDS });
+    if (!plan || !plan.candidates.length) return;
+    const probeParts = plan.candidates
+      .map((c) => ({ id: c.id, mesh: meshForPart(c.id), offset: c.offset }))
+      .filter((p) => p.mesh?.vertProperties);
+    let overlapIds = [];
+    try {
+      const res = await manifoldContext.probeOverlap({ cutterScript: plan.cutterScript, parts: probeParts });
+      overlapIds = (res?.overlaps || []).map((o) => String(o.id));
+    } catch (err) {
+      console.warn('[App] cross-part subtract probe failed', err);
+      return;
+    }
+    // The user may have switched parts while the probe ran.
+    if (assemblyRef.current?.activeId !== source.id) return;
+    const fresh = assemblyPartContext();
+    const freshParts = doc.parts.map((row) => ({ id: row.id, ...fresh.parts[row.id] }));
+    const writes = crossPartSubtractWrites(plan, { source, parts: freshParts, overlapIds });
+    if (!writes.length) return;
+    if (writeOtherPartScripts(writes)) {
+      const names = writes
+        .filter((w) => w.message === 'External copy')
+        .map((w) => fresh.parts[w.id]?.name || w.id);
+      if (names.length) viewportRef.current?.notify?.(`Also cut ${names.join(', ')} (external copy).`);
+    }
+  };
+
+  /**
    * Slice 09/10/11: palette Confirm → compose at caret with params (+ optional
    * faceContext from selected face), then Auto-Run via handleGameRun.
    */
   const handleInsertHelper = (helperId, params = null, faceContext = null, edgeContext = null) => {
+    const beforeInsert = codeEditorRef.current?.getContent?.();
     const ok = codeEditorRef.current?.insertHelper?.(helperId, params, faceContext, edgeContext);
     if (ok) {
+      if (params && params.combine === 'subtract') {
+        crossPartSubtract(beforeInsert, codeEditorRef.current?.getContent?.());
+      }
       // Defer so Monaco state + currentScript settle before execute+compare.
       setTimeout(() => {
         handleGameRun();
@@ -1736,6 +1844,7 @@ const App = () => {
       setTimeout(() => {
         handleGameRun();
       }, 0);
+      crossPartSubtract(buf, result.buffer);
     }
     return true;
   };
@@ -1841,14 +1950,40 @@ const App = () => {
     return true;
   };
 
-  /** Boolean Confirm — one booleanBodies() + markers; Auto-Run. */
+  /**
+   * Boolean Confirm — one booleanBodies() + markers; Auto-Run.
+   * The first pick's part is written. When that is not the part in the
+   * editor, it is loaded first, so the write is one feature step on its
+   * own stack. Tool bodies from other parts are frozen copies (externalBody).
+   */
   const handleCommitBoolean = (payload) => {
+    const state = payload?.state || payload || {};
+    const gate = validateBooleanAccept(state, payload?.partId, payload?.mesh || null);
+    if (!gate.ok) {
+      viewportRef.current?.softFailBoolean?.(gate.message);
+      return false;
+    }
+    const ctx = assemblyPartContext();
+    const doc = assemblyRef.current;
+    const target = gate.targetPartId;
+    if (doc && target && target !== doc.activeId && doc.parts.some((row) => row.id === target)) {
+      if (typeof ctx.parts[target]?.script !== 'string') {
+        viewportRef.current?.softFailBoolean?.('Boolean: the target part has no script yet.');
+        return false;
+      }
+      handleSelectPart(target, { keepPicks: true });
+      if (assemblyRef.current?.activeId !== target) {
+        viewportRef.current?.softFailBoolean?.('Could not open the target part — try again.');
+        return false;
+      }
+    }
     const buf = codeEditorRef.current?.getContent?.() || '';
     const result = composeBooleanCommit(
       buf,
-      payload?.state || payload || {},
+      state,
       payload?.partId,
       payload?.mesh || null,
+      ctx,
     );
     if (!result.ok) {
       viewportRef.current?.softFailBoolean?.(result.message);
@@ -2343,6 +2478,7 @@ const App = () => {
               featureSheetEnabled={useStages && isCadStage && !featureSheet}
               onFeatureLongPress={openFeatureSheetFromCad}
               onPickRetarget={handlePickRetarget}
+              getBooleanContext={assemblyPartContext}
               onFeatureSessionChange={handleFeatureSession}
               partLabels={partLabels}
             />
@@ -2750,6 +2886,7 @@ const App = () => {
               return refreshAssemblyRef.current?.(code);
             }}
             onPickRetarget={handlePickRetarget}
+            getBooleanContext={assemblyPartContext}
             onFeatureSessionChange={handleFeatureSession}
             partLabels={partLabels}
           />
