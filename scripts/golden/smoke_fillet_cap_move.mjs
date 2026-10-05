@@ -8,6 +8,10 @@
  * The two regions are already one body and one plane. c4MeshData still sees
  * two faces because the vertices are copies about 0.001mm apart. The second
  * decompose component is the keep-both cut; its contact line is not this cap.
+ *
+ * That cut also leaves a planar cap at the same XY, z=-1.5, normal -Z.
+ * A corner of it sits on several wall facets a few degrees apart. Offset 2
+ * moves that cap and leaves the bottom cap on the other body.
  */
 import { register } from 'node:module';
 import { readFileSync } from 'node:fs';
@@ -256,6 +260,28 @@ const preN = part.decompose().length;
 const preVol = part.volume();
 const preLarge = ballVol(part, mainPt);
 const preIsland = ballVol(part, islePt);
+function planeBand(solid, z0, z1, nzSign) {
+  const mesh = solid.getMesh();
+  const vp = mesh.vertProperties;
+  const tv = mesh.triVerts;
+  const np = mesh.numProp || 3;
+  let area = 0;
+  const nTri = tv.length / 3;
+  for (let ti = 0; ti < nTri; ti++) {
+    const i0 = tv[ti * 3], i1 = tv[ti * 3 + 1], i2 = tv[ti * 3 + 2];
+    const zA = vp[i0 * np + 2], zB = vp[i1 * np + 2], zC = vp[i2 * np + 2];
+    if (Math.max(zA, zB, zC) < z0 || Math.min(zA, zB, zC) > z1) continue;
+    const ax = vp[i1 * np] - vp[i0 * np], ay = vp[i1 * np + 1] - vp[i0 * np + 1], az = zB - zA;
+    const bx = vp[i2 * np] - vp[i0 * np], by = vp[i2 * np + 1] - vp[i0 * np + 1], bz = zC - zA;
+    const nz = ax * by - ay * bx;
+    const ar = 0.5 * Math.hypot(ay * bz - az * by, az * bx - ax * bz, nz);
+    if (nzSign < 0 && !(nz < -0.99 * ar * 2)) continue;
+    if (nzSign > 0 && !(nz > 0.99 * ar * 2)) continue;
+    area += ar;
+  }
+  return area;
+}
+const cutShifted = moveFace(part, [{ center: [8.6429, 6.4902, -1.5], normal: [0, 0, -1] }], 2);
 const shifted = moveFace(part, [{ center: [8.6429, 6.4902, -10.0001], normal: [0, 0, -1] }], 2);
 const postLarge = ballVol(shifted, mainPt);
 const postIsland = ballVol(shifted, islePt);
@@ -269,6 +295,12 @@ globalThis.__note = {
   postLarge: +postLarge.toFixed(6),
   preIsland: +preIsland.toFixed(6),
   postIsland: +postIsland.toFixed(6),
+  cutN: cutShifted.decompose().length,
+  cutDVol: +(cutShifted.volume() - preVol).toFixed(3),
+  cutBottom: +planeBand(cutShifted, -10.2, -9.8, -1).toFixed(2),
+  cutGone: +planeBand(cutShifted, -1.7, -1.3, -1).toFixed(2),
+  cutMate: +planeBand(cutShifted, -1.7, -1.3, 1).toFixed(2),
+  cutMoved: +planeBand(cutShifted, -3.7, -3.3, -1).toFixed(2),
 };
 return shifted;
 `);
@@ -282,6 +314,12 @@ return shifted;
       `pre=${n.preLarge} post=${n.postLarge}`);
     check('the fillet side was empty just outside and is solid after', n.preIsland < 1e-6 && n.postIsland > 1e-4,
       `pre=${n.preIsland} post=${n.postIsland}`);
+    check('the cut cap offsets and stays two bodies', n.cutN === 2 && n.cutDVol > 360 && n.cutDVol < 380,
+      `n=${n.cutN} dVol=${n.cutDVol}`);
+    check('the cut cap left z=-1.5 and landed 2mm down', n.cutGone < 0.5 && n.cutMoved > 180,
+      `gone=${n.cutGone} moved=${n.cutMoved}`);
+    check('that offset leaves the bottom cap and the other cut face', n.cutBottom > 180 && n.cutMate > 180,
+      `bottom=${n.cutBottom} mate=${n.cutMate}`);
   }
 
   const mesh = r.payload?.mesh;
