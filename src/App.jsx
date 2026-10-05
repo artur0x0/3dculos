@@ -2104,10 +2104,11 @@ const App = () => {
                 {/* Slice Mobile C.2: CAD feature strip HORIZONTAL under top ribbon. */}
                 {isCadStage && (
                   <div
-                    className="absolute left-2 right-2 top-20 z-20 pointer-events-auto flex justify-center"
+                    className="absolute inset-x-0 top-20 z-20 pointer-events-auto flex"
                     data-cad-feature-strip=""
                     data-feature-strip-placement="under-ribbon-horizontal"
                     data-feature-strip-gap="name-2x"
+                    data-feature-bar-row="full"
                   >
                     <FeatureStrip
                       orientation="horizontal"
@@ -2115,6 +2116,10 @@ const App = () => {
                       activeId={featureSheet?.feature?.id || featureStripActiveId}
                       hideWhenEmpty
                       onJump={(f) => openFeatureSheetFor(f)}
+                      onUndo={handleUndo}
+                      onRedo={handleRedo}
+                      canUndo={canUndo()}
+                      canRedo={canRedo()}
                     />
                   </div>
                 )}

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowUpFromLine,
   Rotate3d,
@@ -6,6 +6,8 @@ import {
   Route,
   NotebookPen,
   TriangleRight,
+  Undo,
+  Redo,
   Box,
   Cylinder,
   Circle,
@@ -30,12 +32,14 @@ import {
 import SquareRoundCorner from './icons/SquareRoundCorner';
 import Angle from './icons/Angle';
 import { parseFeatureMarkers } from '../utils/featureMarkers';
+import { featureBarWindowMode } from '../utils/featureBarLayout';
 
 /**
  * Slice Mobile B.1 → C.2 — feature strip (+ desktop seam).
  *
  * C.2:
- *   - CAD (mobile): horizontal left-to-right under the top ribbon.
+ *   - CAD (mobile): full-width bar under the top ribbon. Fixed Undo, centered
+ *     feature chips (tail window once they overflow), fixed Redo.
  *   - Script (mobile): vertical on the right, starting below the ribbon.
  *   - Desktop: vertical between editor and viewer (`side="between"`).
  *
@@ -108,49 +112,67 @@ export default function FeatureStrip({
    * 'between' (desktop seam between editor and viewer). Defaults from orientation.
    */
   side,
+  /** Same history handlers as the editor toolbar. Mobile CAD bar only. */
+  onUndo,
+  onRedo,
+  canUndo = false,
+  canRedo = false,
 }) {
   const features = useMemo(() => parseFeatureMarkers(script), [script]);
   const horizontal = orientation === 'horizontal';
   const stripSide = side || (horizontal ? 'top' : 'right');
   const between = stripSide === 'between';
   const scrollRef = useRef(null);
+  const trackRef = useRef(null);
+  const [featureWindow, setFeatureWindow] = useState('fit');
   const lastFeatureId = features.length ? features[features.length - 1].id : null;
 
-  // When the feature list grows/changes, scroll so the last chip is visible.
-  // Key off length + last id so unrelated re-renders don't yank mid-scroll.
+  // Vertical rails: when the feature list grows, scroll so the last chip is
+  // visible. Key off length + last id so unrelated re-renders don't yank
+  // mid-scroll. The mobile bar pins its own window in the layout effect.
   useEffect(() => {
     const el = scrollRef.current;
-    if (!el || !lastFeatureId) return;
+    if (!el || !lastFeatureId || horizontal) return;
     const chips = el.querySelectorAll('[data-feature-id]');
     const lastChip = chips.length ? chips[chips.length - 1] : null;
     if (lastChip && typeof lastChip.scrollIntoView === 'function') {
       lastChip.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
       return;
     }
-    if (horizontal) el.scrollLeft = el.scrollWidth;
-    else el.scrollTop = el.scrollHeight;
+    el.scrollTop = el.scrollHeight;
   }, [features.length, lastFeatureId, horizontal]);
 
-  if (features.length === 0) {
+  // Mobile bar: center the chips while they fit. Once they overflow, the
+  // visible window is the tail (latest features); earlier chips sit to the start.
+  useLayoutEffect(() => {
+    if (!horizontal) return undefined;
+    const scroller = scrollRef.current;
+    const track = trackRef.current;
+    if (!scroller || !track) return undefined;
+
+    const pin = () => {
+      // Padding lives on the section around this scroller, so it stays put
+      // when the chips scroll. Measure the scrollport itself.
+      const next = featureBarWindowMode(track.scrollWidth, scroller.clientWidth);
+      setFeatureWindow((prev) => (prev === next ? prev : next));
+      if (next === 'tail') {
+        const max = scroller.scrollWidth - scroller.clientWidth;
+        if (Math.abs(scroller.scrollLeft - max) > 1) scroller.scrollLeft = max;
+      } else if (scroller.scrollLeft !== 0) {
+        scroller.scrollLeft = 0;
+      }
+    };
+
+    pin();
+    if (typeof ResizeObserver === 'undefined') return undefined;
+    const ro = new ResizeObserver(pin);
+    ro.observe(scroller);
+    ro.observe(track);
+    return () => ro.disconnect();
+  }, [horizontal, features.length, lastFeatureId, featureWindow]);
+
+  if (!horizontal && features.length === 0) {
     if (hideWhenEmpty) return null;
-    if (horizontal) {
-      return (
-        <div
-          className="flex flex-row items-center gap-1.5 overflow-x-auto
-            border border-gray-700/40 bg-gray-900/70 surface-glass-chip
-            rounded-lg px-2 py-1.5 max-w-full"
-          data-feature-strip=""
-          data-feature-strip-empty=""
-          data-feature-strip-orientation="horizontal"
-          data-feature-strip-side="top"
-          title="No marked features yet"
-        >
-          <div className="text-[9px] text-gray-400 font-sans whitespace-nowrap px-1">
-            No features
-          </div>
-        </div>
-      );
-    }
     return (
       <div
         className={between
@@ -179,45 +201,104 @@ export default function FeatureStrip({
   }
 
   if (horizontal) {
+    const historyBtn = 'shrink-0 rounded-lg p-1.5 flex items-center justify-center text-blue-400 hover:bg-gray-700/60 disabled:opacity-30 active:opacity-80';
     return (
       <div
-        ref={scrollRef}
-        className="flex flex-row items-center gap-1.5 overflow-x-auto rail-scroll
-          border border-gray-700/40 bg-gray-900/70 surface-glass-chip
-          rounded-lg px-2 py-1.5 max-w-full"
+        className="flex w-full min-w-0 flex-row items-center
+          border border-gray-700/40 bg-gray-900/70 surface-glass-chip py-1.5"
         data-feature-strip=""
         data-feature-strip-orientation="horizontal"
         data-feature-strip-side="top"
+        data-feature-strip-empty={features.length === 0 ? '' : undefined}
+        data-feature-bar-layout="undo-features-redo"
         role="navigation"
         aria-label="Modeling features"
       >
-        {features.map((f) => {
-          const active = activeId === f.id;
-          const Icon = FEATURE_ICONS[f.kind] || NotebookPen;
-          const typeIndex = f.typeIndex || 1;
-          return (
-            <button
-              key={f.id}
-              type="button"
-              data-feature-chip={f.kind}
-              data-feature-id={f.id}
-              data-feature-type-index={typeIndex}
-              aria-pressed={active}
-              aria-label={f.chipLabel}
-              title={f.chipLabel}
-              onClick={() => onJump?.(f)}
-              className={`relative shrink-0 rounded-lg p-1.5 flex items-center justify-center
-                border transition-colors active:opacity-80 ${
-                active
-                  ? 'bg-cyan-600 text-white border-cyan-400/70 shadow'
-                  : 'bg-gray-800/70 text-gray-200 border-gray-500/40 hover:text-white'
-              }`}
+        <div
+          className="shrink-0 pl-[max(0.5rem,env(safe-area-inset-left))]"
+          data-feature-bar-section="undo"
+        >
+          <button
+            type="button"
+            onClick={onUndo}
+            disabled={!canUndo}
+            className={historyBtn}
+            title="Undo"
+            aria-label="Undo"
+            data-feature-bar-undo=""
+          >
+            <Undo size={16} strokeWidth={2} aria-hidden="true" />
+          </button>
+        </div>
+        <div
+          className="min-w-0 flex-1 px-3"
+          data-feature-bar-section="features"
+          data-feature-bar-window={featureWindow}
+          data-feature-bar-justify={featureWindow === 'tail' ? 'tail' : 'center'}
+        >
+          <div
+            ref={scrollRef}
+            className={`flex flex-row items-center overflow-x-auto rail-scroll ${
+              featureWindow === 'tail' ? 'justify-start' : 'justify-center'
+            }`}
+            data-feature-bar-scroller=""
+          >
+            <div
+              ref={trackRef}
+              className="flex w-max flex-row items-center gap-1.5"
+              data-feature-bar-track=""
             >
-              <Icon size={16} strokeWidth={2} aria-hidden="true" />
-              <TypeBadge index={typeIndex} />
-            </button>
-          );
-        })}
+            {features.length === 0 && !hideWhenEmpty && (
+              <div className="text-[9px] text-gray-400 font-sans whitespace-nowrap px-1">
+                No features
+              </div>
+            )}
+            {features.map((f) => {
+              const active = activeId === f.id;
+              const Icon = FEATURE_ICONS[f.kind] || NotebookPen;
+              const typeIndex = f.typeIndex || 1;
+              return (
+                <button
+                  key={f.id}
+                  type="button"
+                  data-feature-chip={f.kind}
+                  data-feature-id={f.id}
+                  data-feature-type-index={typeIndex}
+                  aria-pressed={active}
+                  aria-label={f.chipLabel}
+                  title={f.chipLabel}
+                  onClick={() => onJump?.(f)}
+                  className={`relative shrink-0 rounded-lg p-1.5 flex items-center justify-center
+                    border transition-colors active:opacity-80 ${
+                    active
+                      ? 'bg-cyan-600 text-white border-cyan-400/70 shadow'
+                      : 'bg-gray-800/70 text-gray-200 border-gray-500/40 hover:text-white'
+                  }`}
+                >
+                  <Icon size={16} strokeWidth={2} aria-hidden="true" />
+                  <TypeBadge index={typeIndex} />
+                </button>
+              );
+            })}
+            </div>
+          </div>
+        </div>
+        <div
+          className="shrink-0 pr-[max(0.5rem,env(safe-area-inset-right))]"
+          data-feature-bar-section="redo"
+        >
+          <button
+            type="button"
+            onClick={onRedo}
+            disabled={!canRedo}
+            className={historyBtn}
+            title="Redo"
+            aria-label="Redo"
+            data-feature-bar-redo=""
+          >
+            <Redo size={16} strokeWidth={2} aria-hidden="true" />
+          </button>
+        </div>
       </div>
     );
   }
