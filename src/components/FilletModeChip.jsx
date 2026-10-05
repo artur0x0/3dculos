@@ -9,10 +9,12 @@ const ACCENT = 'amber';
  * Tangent (default-on) / Clear / Accept / Back. Live radius while edges accumulate.
  * Slice B: a hard edge shows a red banner (same red strip as the feature-modal
  * size guard) and Accept stays enabled. Mobile-first compact card.
+ * Picks can span parts; `partCount` > 1 says so, and Accept writes each part.
  */
 const FilletModeChip = ({
   kind = 'fillet',
   edgeCount = 0,
+  partCount = 1,
   tangentOn = true,
   params = {},
   pathOk = false,
@@ -87,6 +89,9 @@ const FilletModeChip = ({
         <div className="min-w-0">
           <div className="font-bold font-sans text-amber-200">
             {title} · {edgeCount} edge{edgeCount === 1 ? '' : 's'}
+            {partCount > 1 && (
+              <span data-fillet-part-count={partCount}> · {partCount} parts</span>
+            )}
           </div>
           <div className="text-[11px] text-amber-100/90 normal-case font-sans mt-0.5">
             {pathOk

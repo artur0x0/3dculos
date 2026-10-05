@@ -87,7 +87,13 @@ import GameHintsModal from './components/GameHintsModal';
 import PuzzlePickerModal from './components/PuzzlePickerModal';
 import GameConfetti from './components/GameConfetti';
 import { composeContourCommit } from './utils/contourMode';
-import { composeFilletCommit, composeChamferCommit } from './utils/filletMode';
+import {
+  composeFilletCommit,
+  composeChamferCommit,
+  hasFilletModeBlock,
+  hasChamferModeBlock,
+} from './utils/filletMode';
+import { composeMultiPartEdgeCommit } from './utils/multiPartEdges';
 import { composeShellCommit } from './utils/shellMode';
 import { composeDraftCommit } from './utils/draftMode';
 import { composeCutCommit } from './utils/cutMode';
@@ -1851,29 +1857,77 @@ const App = () => {
 
   /**
    * Slice 27: in-mode Fillet Accept. Writes makeSweepPath + filletAlongPath
-   * and Auto-Runs. Second Accept replaces the same marked block.
+   * and Auto-Runs. A second Accept appends to the marked block.
+   * Picks can span parts: the editor part is written through the editor;
+   * each other part with picks gets its own block in its own script, as one
+   * feature step on that part's stack (writeOtherPartScripts). Every part is
+   * composed first, so a refusal writes nothing.
    */
   const handleCommitFillet = (payload) => {
-    const buf = codeEditorRef.current?.getContent?.() || '';
     const chamfer = payload?.entry === 'chamferEdges';
-    const result = chamfer
-      ? composeChamferCommit(buf, payload || {})
-      : composeFilletCommit(buf, payload || {});
-    if (!result.ok) {
-      viewportRef.current?.softFailFillet?.(result.message);
-      return false;
+    const label = chamfer ? 'Chamfer' : 'Fillet';
+    const others = Array.isArray(payload?.otherParts) ? payload.otherParts : [];
+    const doc = assemblyRef.current;
+    const editorId = doc?.activeId ?? null;
+    const buf = codeEditorRef.current?.getContent?.() || '';
+    let editorBuffer = null;
+    let writes = [];
+    if (!others.length) {
+      const result = chamfer
+        ? composeChamferCommit(buf, payload || {})
+        : composeFilletCommit(buf, payload || {});
+      if (!result.ok) {
+        viewportRef.current?.softFailFillet?.(result.message);
+        return false;
+      }
+      editorBuffer = result.buffer;
+    } else {
+      const ctx = assemblyPartContext();
+      const ownId = payload?.partId ?? editorId;
+      const plan = composeMultiPartEdgeCommit({
+        chamfer,
+        groups: [
+          {
+            partId: ownId,
+            edges: payload?.edges || [],
+            params: payload?.params || {},
+            filletClass: payload?.filletClass ?? null,
+            geometry: payload?.geometry ?? null,
+          },
+          ...others,
+        ],
+        editorId,
+        editorBuffer: buf,
+        parts: ctx.parts,
+        compose: chamfer ? composeChamferCommit : composeFilletCommit,
+        hasBlock: chamfer ? hasChamferModeBlock : hasFilletModeBlock,
+      });
+      if (!plan.ok) {
+        viewportRef.current?.softFailFillet?.(plan.message);
+        return false;
+      }
+      editorBuffer = plan.editor ? plan.editor.buffer : null;
+      writes = plan.writes;
     }
-    const wrote = codeEditorRef.current?.applyBuffer?.(
-      result.buffer,
-      chamfer ? 'Chamfer mode' : 'Fillet mode',
-    );
-    if (!wrote) {
-      viewportRef.current?.softFailFillet?.(
-        `Could not write ${chamfer ? 'Chamfer' : 'Fillet'} into the editor — try again.`,
-      );
-      return false;
+    if (editorBuffer != null) {
+      const wrote = codeEditorRef.current?.applyBuffer?.(editorBuffer, `${label} mode`);
+      if (!wrote) {
+        viewportRef.current?.softFailFillet?.(
+          `Could not write ${label} into the editor — try again.`,
+        );
+        return false;
+      }
     }
-    if (result.run) {
+    // writeOtherPartScripts re-runs every visible part with the live editor
+    // buffer, so the editor part does not need a second Auto-Run.
+    if (writes.length && writeOtherPartScripts(writes)) {
+      const live = codeEditorRef.current?.getContent?.();
+      if (typeof live === 'string') setCurrentScript(live);
+      const names = writes.map((w) => w.name || w.id);
+      viewportRef.current?.notify?.(`${label} also written to ${names.join(', ')}.`);
+      return true;
+    }
+    if (editorBuffer != null) {
       setTimeout(() => {
         handleGameRun();
       }, 0);

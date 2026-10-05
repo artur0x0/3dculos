@@ -171,12 +171,34 @@ export function edgeKey(edge) {
 }
 
 /**
- * Toggle edge in selection list (by key). Returns new array.
+ * The same picked edge on the same part. Vertex-index keys collide across
+ * parts (both solids have an edge "0-1"), so the part id is part of the
+ * identity. An untagged edge (single-part viewport) matches on key alone.
+ */
+export function sameSelectedEdge(a, b) {
+  if (!a || !b) return false;
+  if (edgeKey(a) !== edgeKey(b)) return false;
+  const pa = a.partId == null ? '' : String(a.partId);
+  const pb = b.partId == null ? '' : String(b.partId);
+  if (!pa || !pb) return true;
+  return pa === pb;
+}
+
+/** Part-scoped key for chips and React lists: `partId::a-b`, or `a-b` untagged. */
+export function selectionEdgeKey(edge) {
+  if (!edge) return '';
+  const p = edge.partId == null ? '' : String(edge.partId);
+  return p ? `${p}::${edgeKey(edge)}` : edgeKey(edge);
+}
+
+/**
+ * Toggle edge in selection list (by part + key). Returns new array.
+ * Picks on other parts are left alone.
  */
 export function toggleEdgeSelection(selected, edge) {
   const key = edgeKey(edge);
   const list = Array.isArray(selected) ? [...selected] : [];
-  const idx = list.findIndex((e) => edgeKey(e) === key);
+  const idx = list.findIndex((e) => sameSelectedEdge(e, edge));
   if (idx >= 0) list.splice(idx, 1);
   else {
     list.push(copyPickEdge(edge, key));
@@ -1375,9 +1397,8 @@ export function buildCoherentEdges(featureEdges, opts = {}) {
 }
 
 export function toggleEdgeSelectionPropagated(selected, edge, opts = {}) {
-  const key = edgeKey(edge);
   const list = Array.isArray(selected) ? [...selected] : [];
-  const idx = list.findIndex((e) => edgeKey(e) === key);
+  const idx = list.findIndex((e) => sameSelectedEdge(e, edge));
   if (idx >= 0) {
     list.splice(idx, 1);
     return list;
@@ -1429,12 +1450,16 @@ export function toggleEdgeSelectionPropagated(selected, edge, opts = {}) {
   if (toAdd.length > TANGENT_PROP_FLOOD_MAX) {
     return toggleEdgeSelection(list, edge);
   }
-  const have = new Set(list.map((e) => edgeKey(e)));
+  // Dedupe against picks on this edge's part only. Another part's "0-1" is
+  // a different edge and stays selected.
+  const have = new Set(list.map((e) => selectionEdgeKey(e)));
+  const untagged = new Set(list.filter((e) => e.partId == null || e.partId === '').map((e) => edgeKey(e)));
   for (const e of toAdd) {
     const k = edgeKey(e);
-    if (have.has(k)) continue;
+    const sk = selectionEdgeKey(e);
+    if (have.has(sk) || untagged.has(k)) continue;
     list.push(copyPickEdge(e, k));
-    have.add(k);
+    have.add(sk);
   }
   return list;
 }

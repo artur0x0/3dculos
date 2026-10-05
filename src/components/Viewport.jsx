@@ -209,18 +209,25 @@ import {
   clearDeleteFaces,
   validateDeleteFaceAccept,
 } from '../utils/deleteFaceMode';
-import { contactSeamSegments } from '../utils/contactSeam';
+import {
+  PREWARM_MAX_TRIS,
+  cachedSolidGeometry,
+  contactSeamFor,
+  createSolidCache,
+  featureGraphFor,
+  pruneSolidCacheIn,
+  releaseGeometryIn,
+  solidEntryForGeometry,
+} from '../utils/partSolidCache';
 import { dropPlanarFins, highlightBoundaryPositions } from '../utils/planarSeam';
 import { classifySelectedFace } from '../utils/faceFeaturePlacement';
 import { classifyFilletEdges, countDegenerateTriangles } from '../utils/filletEdgeClass';
 import {
-  buildFeatureEdges,
-  buildCoherentEdges,
   pickNearestEdgeScreen,
   resolveEdgePickSlopPx,
   toggleEdgeSelectionPropagated,
   popLastEdgeSelection,
-  edgeKey,
+  selectionEdgeKey,
   pathLengthFromEdges,
   sweepBlendHardMax,
   projectWorldToCanvas,
@@ -238,8 +245,13 @@ import {
   shouldSyncScript,
 } from '../utils/pickRetarget';
 import {
-  annotateFeatureEdges,
-  indexBoundaryEdgesFromGeometry,
+  activePartEdges,
+  foreignPartEdgeGroups,
+  groupEdgesByPart,
+  planMultiPartEdgeAccept,
+  retargetKeepsEdgePicks,
+} from '../utils/multiPartEdges';
+import {
   stampBoundaryOnSelection,
   filletOverlayTargets,
 } from '../utils/boundaryEdgeIds';
@@ -377,11 +389,8 @@ function removeContactSeam(mesh) {
 function attachContactSeam(mesh, meshData) {
   removeContactSeam(mesh);
   if (!mesh || !meshData?.vertProperties || !meshData?.triVerts) return;
-  const segs = contactSeamSegments(
-    meshData.vertProperties,
-    meshData.triVerts,
-    meshData.numProp || 3,
-  );
+  // Same mesh data, same seam: a part switch back does not re-scan it.
+  const segs = contactSeamFor(meshData);
   if (!segs.length) return;
   const pos = new Float32Array(segs.length * 6);
   for (let i = 0; i < segs.length; i++) {
@@ -657,7 +666,13 @@ const Viewport = forwardRef(({
   const resultRef = useRef(null);
   const assemblyGroupRef = useRef(null);
   const assemblyExtrasRef = useRef(new Map());
+  /** Built solid geometry per mesh data (pick mesh + other parts). */
+  const solidCacheRef = useRef(null);
+  if (!solidCacheRef.current) solidCacheRef.current = createSolidCache();
+  /** Idle pre-build of other parts' graphs; bumped to cancel a stale pass. */
+  const prewarmGenRef = useRef(0);
   const clearAssemblyExtrasRef = useRef(() => {});
+  const prewarmPartGraphsRef = useRef(() => {});
   const placeAssemblyRef = useRef(() => false);
   const ghostMeshRef = useRef(null);
   const raycasterRef = useRef(new Raycaster());
@@ -748,6 +763,8 @@ const Viewport = forwardRef(({
   const boundaryTopoRef = useRef(null);
   const idLabelGroupRef = useRef(null);
   const edgeHighlightRef = useRef(null);
+  /** Fillet / Chamfer picks kept on other parts, drawn at that part's position. */
+  const edgeHighlightForeignRef = useRef([]);
   const edgeHoverRef = useRef(null);
   /** Slice 21: plane+profile preview overlay while HelperParamModal is open. */
   const xsPreviewRef = useRef(null);
@@ -1254,11 +1271,29 @@ const Viewport = forwardRef(({
   const clearEdgeHighlight = useCallback(() => {
     disposeEdgeOverlayObject(sceneRef.current, edgeHighlightRef.current);
     edgeHighlightRef.current = null;
+    for (const obj of edgeHighlightForeignRef.current) disposeEdgeOverlayObject(sceneRef.current, obj);
+    edgeHighlightForeignRef.current = [];
   }, []);
 
   const clearEdgeHover = useCallback(() => {
     disposeEdgeOverlayObject(sceneRef.current, edgeHoverRef.current);
     edgeHoverRef.current = null;
+  }, []);
+
+  /**
+   * Assembly translation of a part in the viewport. The active part (or an
+   * untagged pick) reads the pick mesh. Another part reads its own mesh.
+   * A part that is not drawn (hidden) returns null.
+   */
+  const partOffsetFor = useCallback((partId) => {
+    const active = activePartIdRef.current;
+    if (partId == null || partId === '' || !active || String(partId) === String(active)) {
+      const p = partWorldOffset(resultRef.current);
+      return p ? [p.x, p.y, p.z] : [0, 0, 0];
+    }
+    const extra = assemblyExtrasRef.current.get(String(partId)) || assemblyExtrasRef.current.get(partId);
+    if (!extra || extra.visible === false) return null;
+    return [extra.position.x, extra.position.y, extra.position.z];
   }, []);
 
   /**
@@ -1275,11 +1310,13 @@ const Viewport = forwardRef(({
     const tmp = edgeChipProjectTmpRef.current;
     const edges = selectedEdgesRef.current || [];
     const live = new Set();
-    const activePart = activePartIdRef.current;
     for (let i = 0; i < edges.length; i++) {
       const e = edges[i];
-      const key = edgeKey(e);
-      if (activePart && e.partId && e.partId !== activePart) continue;
+      const key = selectionEdgeKey(e);
+      // A pick kept on another part (Fillet / Chamfer) tracks that part's
+      // position. A hidden part has no position here, so its chip hides.
+      const shift = partOffsetFor(e.partId);
+      if (!shift) continue;
       live.add(key);
       const el = map.get(key);
       if (!el) continue;
@@ -1288,9 +1325,8 @@ const Viewport = forwardRef(({
         el.style.visibility = 'hidden';
         continue;
       }
-      const shift = partWorldOffset(resultRef.current);
-      const worldTrack = shift && track
-        ? [track[0] + shift.x, track[1] + shift.y, track[2] + shift.z]
+      const worldTrack = track
+        ? [track[0] + shift[0], track[1] + shift[1], track[2] + shift[2]]
         : track;
       const scr = projectWorldToCanvas(cam, worldTrack, w, h, tmp);
       if (!scr) {
@@ -1304,7 +1340,7 @@ const Viewport = forwardRef(({
     for (const [key, el] of map) {
       if (!live.has(key) && el) el.style.visibility = 'hidden';
     }
-  }, []);
+  }, [partOffsetFor]);
 
   const edgeLineResolution = useCallback(() => {
     const r = rendererRef.current;
@@ -1323,6 +1359,7 @@ const Viewport = forwardRef(({
    */
   const paintEdgeLines = useCallback((edges, {
     color, name, opacity = 1, corePx = EDGE_CORE_PX, haloPx = EDGE_HALO_PX,
+    position = null,
   }) => {
     if (!edges?.length || !sceneRef.current) return null;
     const positions = [];
@@ -1369,7 +1406,12 @@ const Viewport = forwardRef(({
     // Soft transparent halo first (under), then brighter core on top.
     group.add(makeSeg(haloPx, Math.min(0.2, opacity * 0.28), 10));
     group.add(makeSeg(corePx, opacity, 11));
-    anchorToActivePart(group);
+    if (position) {
+      // Another part's picks: fixed at that part's translation, not the pick mesh.
+      group.position.set(position[0] || 0, position[1] || 0, position[2] || 0);
+    } else {
+      anchorToActivePart(group);
+    }
     sceneRef.current.add(group);
     return group;
   }, [edgeLineResolution, anchorToActivePart]);
@@ -2453,18 +2495,49 @@ const Viewport = forwardRef(({
     const edges = (selectedEdges && selectedEdges.length)
       ? selectedEdges
       : (state.lastEdges || []);
-    if (state.entry === 'chamferEdges') {
-      const gate = validateChamferAccept(edges, state.params);
-      if (!gate.ok) {
-        showFilletToast(gate.message);
-        return;
-      }
-      const buf = (typeof getHelperBuffer === 'function' ? getHelperBuffer() : '') || '';
+    const chamfer = state.entry === 'chamferEdges';
+    const activeId = activePartIdRef.current;
+    // Picks may span parts. Validate each part's chain before anything is
+    // written: one bad part fails the whole Accept.
+    const plan = planMultiPartEdgeAccept({
+      edges,
+      activeId,
+      validate: (list) => (chamfer
+        ? validateChamferAccept(list, state.params)
+        : validateFilletAccept(list, state.params)),
+      partName: (id) => partLabelsRef.current?.[id] || id,
+    });
+    if (!plan.ok) {
+      showFilletToast(plan.message);
+      return;
+    }
+    const onActive = (id) => !activeId || !id || String(id) === String(activeId);
+    const own = plan.groups.find((group) => onActive(group.partId)) || null;
+    // Other parts: same kind of block, written into that part's own script
+    // (App writes it in the background as one step on that part's stack).
+    // Their points and face ids are in that part's frame and mesh.
+    const otherParts = plan.groups
+      .filter((group) => !onActive(group.partId))
+      .map((group) => {
+        const geometry = assemblyExtrasRef.current.get(group.partId)?.geometry || null;
+        return {
+          partId: group.partId,
+          edges: group.edges,
+          params: group.gate.normalized,
+          filletClass: !chamfer && geometry
+            ? classifyFilletEdges(group.edges, { radius: group.gate.normalized.radius, geometry }).klass
+            : null,
+        };
+      });
+    const buf = (typeof getHelperBuffer === 'function' ? getHelperBuffer() : '') || '';
+    if (chamfer) {
       const ok = onCommitFillet?.({
         entry: 'chamferEdges',
-        edges,
-        params: gate.normalized,
+        partId: activeId,
+        edges: own ? own.edges : [],
+        params: own ? own.gate.normalized : state.params,
         commitMode: hasChamferModeBlock(buf) ? 'append' : 'replace',
+        otherParts,
       });
       if (ok) {
         edgeRematchToastSuppressRef.current = true;
@@ -2475,25 +2548,26 @@ const Viewport = forwardRef(({
       }
       return;
     }
-    const gate = validateFilletAccept(edges, state.params);
-    if (!gate.ok) {
-      showFilletToast(gate.message);
-      return;
+    // No picks on the active part: nothing to classify on this mesh.
+    const edgeClass = own
+      ? classifyFilletEdges(own.edges, {
+        radius: own.gate.normalized.radius,
+        geometry: resultRef.current?.geometry,
+      })
+      : { klass: null };
+    if (own) {
+      filletQualityWatchRef.current = {
+        preDeg: countDegenerateTriangles(resultRef.current?.geometry),
+      };
     }
-    const buf = (typeof getHelperBuffer === 'function' ? getHelperBuffer() : '') || '';
-    const edgeClass = classifyFilletEdges(edges, {
-      radius: gate.normalized.radius,
-      geometry: resultRef.current?.geometry,
-    });
-    filletQualityWatchRef.current = {
-      preDeg: countDegenerateTriangles(resultRef.current?.geometry),
-    };
     const ok = onCommitFillet?.({
-      edges,
-      params: gate.normalized,
+      partId: activeId,
+      edges: own ? own.edges : [],
+      params: own ? own.gate.normalized : state.params,
       filletClass: edgeClass.klass,
-      geometry: resultRef.current?.geometry,
+      geometry: own ? resultRef.current?.geometry : null,
       commitMode: hasFilletModeBlock(buf) ? 'append' : 'replace',
+      otherParts,
     });
     if (!ok) filletQualityWatchRef.current = null;
     if (ok) {
@@ -2592,42 +2666,68 @@ const Viewport = forwardRef(({
   // Live sweep-fillet blend as edges accumulate. The payload is memoized so the
   // chip's pathOk flag and the painter share ONE build per input (Slice 27 nit:
   // the chip used to re-run buildFilletBlendPreview on every render just for .ok).
+  // Fillet / Chamfer picks can span parts. The live blend, the easy/hard
+  // class, and the seeded radius read the active part's picks only: those
+  // are the points in the pick mesh's frame. Picks kept on other parts are
+  // still highlighted and still written on Accept.
+  const filletActiveEdges = useMemo(
+    () => activePartEdges(selectedEdges, activePartIdRef.current),
+    // meshEpoch: a retarget swaps the active part without touching the picks.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [selectedEdges, meshEpoch],
+  );
+  const filletPartCount = useMemo(
+    () => groupEdgesByPart(selectedEdges, activePartIdRef.current).length,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [selectedEdges, meshEpoch],
+  );
   const filletEdgeClass = useMemo(() => {
-    if (!filletMode || !selectedEdges?.length) return null;
-    const overlay = resolveActivePartOverlay({
-      edges: selectedEdges,
-      activeId: activePartIdRef.current,
-    });
-    if (overlay.foreign) return null;
-    const params = normalizeFilletParams(filletMode.params || {}, selectedEdges);
-    return classifyFilletEdges(selectedEdges, {
+    if (!filletMode || !filletActiveEdges.length) return null;
+    const params = normalizeFilletParams(filletMode.params || {}, filletActiveEdges);
+    return classifyFilletEdges(filletActiveEdges, {
       radius: params.radius,
       geometry: resultRef.current?.geometry,
     });
-  }, [filletMode, selectedEdges, meshEpoch]);
+  }, [filletMode, filletActiveEdges]);
 
-  const filletBlendPayload = useMemo(() => {
-    if (!filletMode) return null;
-    if (filletMode.entry === 'chamferEdges') {
-      return buildFilletBlendPreview(selectedEdges, {
-        ...(filletMode.params || {}),
+  const filletPreviewParams = useCallback((mode) => (
+    mode.entry === 'chamferEdges'
+      ? {
+        ...(mode.params || {}),
         strategy: 'sweep',
         profile: 'chamfer',
-        radius: filletMode.params?.chamfer,
-      });
+        radius: mode.params?.chamfer,
+      }
+      : mode.params
+  ), []);
+  const filletBlendPayload = useMemo(() => {
+    if (!filletMode) return null;
+    return buildFilletBlendPreview(filletActiveEdges, filletPreviewParams(filletMode));
+  }, [filletMode, filletActiveEdges, filletPreviewParams]);
+  // Chip status across every part with picks: each part's chain must build.
+  const filletChipStatus = useMemo(() => {
+    if (!filletMode) return { ok: false, componentCount: 0 };
+    if (filletPartCount <= 1) {
+      return {
+        ok: filletBlendPayload?.ok === true,
+        componentCount: filletBlendPayload?.componentCount || 0,
+      };
     }
-    return buildFilletBlendPreview(selectedEdges, filletMode.params);
-  }, [filletMode, selectedEdges]);
+    let ok = true;
+    let componentCount = 0;
+    for (const group of groupEdgesByPart(selectedEdges, activePartIdRef.current)) {
+      const payload = buildFilletBlendPreview(group.edges, filletPreviewParams(filletMode));
+      if (payload?.ok !== true) ok = false;
+      componentCount += payload?.componentCount || 0;
+    }
+    return { ok, componentCount };
+  }, [filletMode, filletPartCount, filletBlendPayload, selectedEdges, filletPreviewParams]);
   useEffect(() => {
     if (!filletMode) {
       clearFilletBlendPreview();
       return;
     }
-    const overlay = resolveActivePartOverlay({
-      edges: selectedEdges,
-      activeId: activePartIdRef.current,
-    });
-    if (overlay.foreign) {
+    if (!filletActiveEdges.length) {
       clearFilletBlendPreview();
       return;
     }
@@ -2636,7 +2736,7 @@ const Viewport = forwardRef(({
       return;
     }
     if (!filletMode.radiusTouched) {
-      const seeded = defaultFilletParams(selectedEdges);
+      const seeded = defaultFilletParams(filletActiveEdges);
       if (Number(filletMode.params?.radius) !== seeded.radius) {
         setFilletMode((prev) => (
           prev && !prev.radiusTouched
@@ -2647,7 +2747,7 @@ const Viewport = forwardRef(({
       }
     }
     paintFilletBlendPreview(filletBlendPayload);
-  }, [filletMode, selectedEdges, filletBlendPayload, paintFilletBlendPreview, clearFilletBlendPreview]);
+  }, [filletMode, filletActiveEdges, filletBlendPayload, paintFilletBlendPreview, clearFilletBlendPreview]);
 
   const clearIdLabels = useCallback(() => {
     const group = idLabelGroupRef.current;
@@ -3014,22 +3114,41 @@ const Viewport = forwardRef(({
   const highlightSelectedEdges = useCallback((edges) => {
     clearEdgeHighlight();
     const activePart = activePartIdRef.current;
-    const overlay = resolveActivePartOverlay({ edges, activeId: activePart });
-    const shown = overlay.foreign ? [] : edges;
-    edgeHighlightRef.current = paintEdgeLines(shown, {
+    const style = {
       color: 0xff9900,
-      name: 'edgeSelection',
       opacity: EDGE_SELECT_OPACITY,
       corePx: EDGE_CORE_PX,
       haloPx: EDGE_HALO_PX,
+    };
+    // Picks on the active part ride its anchor. Fillet / Chamfer picks kept
+    // on another part are drawn in that part's frame, at its position, so
+    // they never land on whatever part sits at the origin.
+    edgeHighlightRef.current = paintEdgeLines(activePartEdges(edges, activePart), {
+      ...style,
+      name: 'edgeSelection',
     });
-  }, [clearEdgeHighlight, paintEdgeLines]);
+    const foreign = [];
+    for (const group of foreignPartEdgeGroups(edges, activePart)) {
+      const position = partOffsetFor(group.partId);
+      if (!position) continue;
+      const obj = paintEdgeLines(group.edges, {
+        ...style,
+        name: 'edgeSelectionOtherPart',
+        position,
+      });
+      if (obj) {
+        obj.userData.edgeSelectionPart = group.partId;
+        foreign.push(obj);
+      }
+    }
+    edgeHighlightForeignRef.current = foreign;
+  }, [clearEdgeHighlight, paintEdgeLines, partOffsetFor]);
 
   const highlightHoverEdge = useCallback((edge, selectedKeys) => {
     clearEdgeHover();
     if (!edge) return;
     // Do not pre-highlight an already-selected edge (selection orange wins).
-    if (selectedKeys?.has(edgeKey(edge))) return;
+    if (selectedKeys?.has(selectionEdgeKey(edge))) return;
     edgeHoverRef.current = paintEdgeLines([edge], {
       color: 0xffcc66,
       name: 'edgeHover',
@@ -3053,37 +3172,20 @@ const Viewport = forwardRef(({
    */
   const syncFeatureEdges = useCallback((geom) => {
     if (featureEdgesSourceRef.current === geom && featureEdgesRef.current) return;
-    const faceIDs = faceIDsRef.current;
-    const tFeat = performance.now();
-    const raw = geom ? buildFeatureEdges(geom) : [];
-    const featureMs = performance.now() - tFeat;
-    let topoMs = 0;
-    let annotateMs = 0;
-    let coherentMs = 0;
-    if (geom && faceIDs && faceIDs.length) {
-      const tTopo = performance.now();
-      const topo = indexBoundaryEdgesFromGeometry(geom, faceIDs);
-      topoMs = performance.now() - tTopo;
-      const tAnn = performance.now();
-      const annotated = annotateFeatureEdges(raw, topo);
-      annotateMs = performance.now() - tAnn;
-      boundaryTopoRef.current = topo;
-      const tCoh = performance.now();
-      featureEdgesRef.current = buildCoherentEdges(annotated);
-      coherentMs = performance.now() - tCoh;
-    } else {
-      boundaryTopoRef.current = null;
-      const tCoh = performance.now();
-      featureEdgesRef.current = buildCoherentEdges(raw);
-      coherentMs = performance.now() - tCoh;
-    }
+    // Same geometry + faceIDs → same graph. A part switch back onto a solid
+    // that is already built (or pre-built in idle time) is a cache hit.
+    const graph = featureGraphFor(geom ?? null, faceIDsRef.current);
+    boundaryTopoRef.current = graph.topo;
+    featureEdgesRef.current = graph.featureEdges;
     const partId = activePartIdRef.current;
     if (partId && featureEdgesRef.current) {
       for (const edge of featureEdgesRef.current) edge.partId = partId;
     }
     featureEdgesSourceRef.current = geom ?? null;
     const prev = graphTimingRef.current || {};
-    graphTimingRef.current = { ...prev, featureMs, topoMs, annotateMs, coherentMs };
+    graphTimingRef.current = graph.cached
+      ? { ...prev, featureMs: 0, topoMs: 0, annotateMs: 0, coherentMs: 0, edgeGraphCached: true }
+      : { ...prev, ...(graph.timing || {}), edgeGraphCached: false };
   }, []);
 
   // Fillet mode: face ids (fN) and boundary-edge ids (eN) for the Accept helpers.
@@ -4757,7 +4859,7 @@ const Viewport = forwardRef(({
     ) {
       const edge = pickEdgeAtClient(event.clientX, event.clientY, { occlude: false });
       const selectedKeys = new Set(
-        (Array.isArray(selectedEdges) ? selectedEdges : []).map((e) => edgeKey(e)),
+        (Array.isArray(selectedEdges) ? selectedEdges : []).map((e) => selectionEdgeKey(e)),
       );
       highlightHoverEdge(edge, selectedKeys);
     } else if (pickModeRef.current !== 'edge') {
@@ -6182,44 +6284,13 @@ const Viewport = forwardRef(({
     // viewport shows that result in the normal body color.
     clearCutPiecePreviewRef.current();
 
-    const geometry = new BufferGeometry();
-    
-    // Convert arrays to typed arrays. The needle between two copies of a
-    // cap vertex is not part of the face: drop it so the seam is not drawn
-    // and is not an edge of the face graph built from this geometry.
-    const vertProperties = new Float32Array(meshData.vertProperties);
-    const srcIndex = new Uint32Array(meshData.triVerts);
-    const srcFaceID = meshData.faceID && meshData.faceID.length > 0 ? meshData.faceID : null;
-    const fin = dropPlanarFins(vertProperties, srcIndex, srcFaceID);
-    const triVerts = fin.indices;
-    
-    geometry.setAttribute('position', new BufferAttribute(vertProperties, 3));
-    geometry.setIndex(new BufferAttribute(triVerts, 1));
-
-    faceIDsRef.current = fin.faceIDs && fin.faceIDs.length > 0 ? fin.faceIDs : null;
-    if (faceIDsRef.current) {
-      geometry.setAttribute('faceID', new BufferAttribute(new Float32Array(faceIDsRef.current), 1));
-    }
-
-    // Set up material groups. A dropped needle makes the old run ranges
-    // point at removed triangles; matIndex is always 0, so one group covers
-    // the kept mesh.
-    if (fin.dropped > 0) {
-      geometry.addGroup(0, triVerts.length, 0);
-    } else if (meshData.runIndex) {
-      const runIndex = meshData.runIndex;
-      
-      let start = runIndex[0];
-      for (let run = 0; run < meshData.numRun; ++run) {
-        const end = runIndex[run + 1];
-        // Map original ID to material index (simplified - use 0 for unknown)
-        const matIndex = 0;
-        geometry.addGroup(start, end - start, matIndex);
-        start = end;
-      }
-    }
-
-    geometry.computeVertexNormals();
+    // The needle between two copies of a cap vertex is not part of the
+    // face: buildSolidGeometry drops it so the seam is not drawn and is not
+    // an edge of the face graph. A solid already built for this mesh data
+    // (another assembly part, or this part before a switch) is reused.
+    const solid = cachedSolidGeometry(solidCacheRef.current, meshData);
+    const geometry = solid.geometry;
+    faceIDsRef.current = solid.faceIDs;
 
     // Drop any patch-overlay material before swapping geometry — vertexColors
     // without a color attribute paints black (esp. iOS). Overlay effect will
@@ -6240,8 +6311,10 @@ const Viewport = forwardRef(({
     partGraphSourceRef.current = null;
     patchOverlayActiveRef.current = false;
 
-    resultRef.current.geometry?.dispose();
+    const prevGeometry = resultRef.current.geometry;
     resultRef.current.geometry = geometry;
+    if (prevGeometry !== geometry) releaseGeometryIn(solidCacheRef.current, prevGeometry);
+    pruneSolidCacheIn(solidCacheRef.current, resultRef.current, assemblyExtrasRef.current);
     // New mesh, including after fillet. Coplanar caps join here; the blend
     // stays its own patch.
     const tFace = performance.now();
@@ -6609,7 +6682,9 @@ const Viewport = forwardRef(({
       const liveEdges = selectedEdgesRef.current || [];
       const activePart = activePartIdRef.current;
       const foreignEdges = !!(activePart && liveEdges.some((edge) => edge.partId && edge.partId !== activePart));
-      const hadEdges = liveEdges.length > 0 && !foreignEdges;
+      // Fillet / Chamfer keep picks on other parts; highlightSelectedEdges
+      // draws those at their own part's position.
+      const hadEdges = liveEdges.length > 0 && (!foreignEdges || inFilletMode);
       const wasEdgeMode = pickModeRef.current === 'edge';
       const preservePicks = opts.preservePicks === true && featureHideKeepsPicks(featureSessionRef.current);
       const savedFaces = preservePicks ? facePickGroupRef.current : null;
@@ -6636,7 +6711,7 @@ const Viewport = forwardRef(({
           highlightFace(shown, geom, positions, index, 0xffff00);
         }
         if (containerRef.current) containerRef.current.setAttribute('data-feature-picks', 'kept');
-      } else if (foreignEdges) {
+      } else if (foreignEdges && !inFilletMode) {
         clearEdgeHighlight();
         clearEdgeHover();
         clearFilletBlendPreview();
@@ -6767,12 +6842,57 @@ const Viewport = forwardRef(({
 
   clearAssemblyExtrasRef.current = () => {
     const group = assemblyGroupRef.current;
+    prewarmGenRef.current += 1;
     for (const mesh of assemblyExtrasRef.current.values()) {
       group?.remove(mesh);
-      mesh.geometry?.dispose();
+      releaseGeometryIn(solidCacheRef.current, mesh.geometry);
       if (mesh.material?.dispose) mesh.material.dispose();
     }
     assemblyExtrasRef.current.clear();
+    pruneSolidCacheIn(solidCacheRef.current, resultRef.current, assemblyExtrasRef.current);
+  };
+
+  /**
+   * Pre-build face and edge graphs of the other visible parts in idle time,
+   * one part per slice, so the first pick that retargets onto one of them
+   * finds its graphs ready. Graphs are cached by geometry; nothing here
+   * touches the pick mesh, the selection, or the active part's graphs.
+   * A new placement cancels a pass in flight. Very large parts are skipped.
+   */
+  prewarmPartGraphsRef.current = () => {
+    const gen = ++prewarmGenRef.current;
+    const idle = typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function'
+      ? (fn) => window.requestIdleCallback(fn, { timeout: 3000 })
+      : (fn) => setTimeout(() => fn(null), 120);
+    // One graph per slice (face, then edges, then seam) keeps each idle task short.
+    const jobs = [];
+    for (const mesh of assemblyExtrasRef.current.values()) {
+      const geom = mesh?.geometry;
+      if (!geom?.index || mesh.userData?.leftover) continue;
+      if (geom.index.count / 3 > PREWARM_MAX_TRIS) continue;
+      jobs.push({ geom, kind: 'face' }, { geom, kind: 'edge' }, { geom, kind: 'seam' });
+    }
+    const step = (deadline) => {
+      if (gen !== prewarmGenRef.current) return;
+      // Not while the user is orbiting or dragging, and not into a busy frame.
+      const busy = isDraggingRef.current
+        || (deadline && !deadline.didTimeout && deadline.timeRemaining() < 8);
+      if (!busy) {
+        const job = jobs.shift();
+        const entry = job ? solidEntryForGeometry(solidCacheRef.current, job.geom) : null;
+        if (entry) {
+          try {
+            if (job.kind === 'face') warmFaceGraph(job.geom, entry.faceIDs);
+            else if (job.kind === 'edge') featureGraphFor(job.geom, entry.faceIDs);
+            else contactSeamFor(entry.meshData);
+          } catch (err) {
+            console.warn('[Viewport] part graph prewarm skipped:', err?.message || err);
+          }
+        }
+      }
+      if (jobs.length) idle(step);
+    };
+    if (jobs.length) idle(step);
   };
 
   /**
@@ -6784,13 +6904,16 @@ const Viewport = forwardRef(({
   adoptActiveSolidRef.current = ({ mesh, position, partId }) => {
     if (!resultRef.current || !mesh?.vertProperties) return false;
     if (partId !== undefined) activePartIdRef.current = partId ?? null;
+    // Fillet / Chamfer picks accumulate across parts: a switch keeps the
+    // edges already picked on the previous part (each edge carries its part).
+    const keepEdges = retargetKeepsEdgePicks({ filletMode: filletModeRef.current });
     clearHighlight();
     clearEdgeHighlight();
     clearEdgeHover();
     clearFilletBlendPreview();
     clearIdLabels();
     setSelectedFace(null);
-    setSelectedEdges([]);
+    if (!keepEdges) setSelectedEdges([]);
     onFaceSelected?.(null);
     const same = cachedMeshDataRef.current === mesh
       && resultRef.current.geometry?.attributes?.position;
@@ -6810,6 +6933,12 @@ const Viewport = forwardRef(({
     const scene = sceneRef.current;
     const camera = cameraRef.current;
     syncAnchoredOverlays();
+    if (keepEdges && selectedEdgesRef.current?.length) {
+      // Repaint now (no frame without the kept picks), then hand the effects
+      // a new reference so the blend preview re-reads the active part.
+      highlightSelectedEdges(selectedEdgesRef.current);
+      setSelectedEdges((prev) => (prev.length ? prev.slice() : prev));
+    }
     if (renderer && scene && camera) renderer.render(scene, camera);
     if (booleanModeRef.current) paintBooleanPicksRef.current(booleanModeRef.current);
     return true;
@@ -6832,9 +6961,13 @@ const Viewport = forwardRef(({
       group.add(mesh);
       assemblyExtrasRef.current.set(id, mesh);
     }
-    const geom = geometryFromMeshData(meshData);
-    mesh.geometry?.dispose();
-    mesh.geometry = geom;
+    // The solid this part just showed as the pick mesh: same cached
+    // geometry, handed over instead of rebuilt.
+    const { geometry: geom } = cachedSolidGeometry(solidCacheRef.current, meshData);
+    if (mesh.geometry !== geom) {
+      releaseGeometryIn(solidCacheRef.current, mesh.geometry);
+      mesh.geometry = geom;
+    }
     const p = position || [0, 0, 0];
     mesh.position.set(p[0] || 0, p[1] || 0, p[2] || 0);
   };
@@ -6858,7 +6991,8 @@ const Viewport = forwardRef(({
     const extra = assemblyExtrasRef.current.get(partId);
     if (extra) {
       assemblyGroupRef.current?.remove(extra);
-      extra.geometry?.dispose();
+      // Its geometry is usually the cached solid this switch is about to show.
+      releaseGeometryIn(solidCacheRef.current, extra.geometry);
       if (extra.material?.dispose) extra.material.dispose();
       assemblyExtrasRef.current.delete(partId);
     }
@@ -6899,9 +7033,11 @@ const Viewport = forwardRef(({
         group.add(mesh);
         assemblyExtrasRef.current.set(solid.id, mesh);
       }
-      const geom = geometryFromMeshData(solid.mesh);
-      mesh.geometry?.dispose();
-      mesh.geometry = geom;
+      const { geometry: geom } = cachedSolidGeometry(solidCacheRef.current, solid.mesh);
+      if (mesh.geometry !== geom) {
+        releaseGeometryIn(solidCacheRef.current, mesh.geometry);
+        mesh.geometry = geom;
+      }
       const p = solid.position || [0, 0, 0];
       mesh.position.set(p[0], p[1], p[2]);
     }
@@ -6920,16 +7056,18 @@ const Viewport = forwardRef(({
       }
       mesh.userData.assemblyPartId = solid.id;
       mesh.userData.leftover = true;
-      const geom = geometryFromMeshData(solid.mesh);
-      mesh.geometry?.dispose();
-      mesh.geometry = geom;
+      const { geometry: geom } = cachedSolidGeometry(solidCacheRef.current, solid.mesh);
+      if (mesh.geometry !== geom) {
+        releaseGeometryIn(solidCacheRef.current, mesh.geometry);
+        mesh.geometry = geom;
+      }
       const p = solid.position || [0, 0, 0];
       mesh.position.set(p[0], p[1], p[2]);
     }
     for (const [id, mesh] of assemblyExtrasRef.current) {
       if (keep.has(id)) continue;
       group.remove(mesh);
-      mesh.geometry?.dispose();
+      releaseGeometryIn(solidCacheRef.current, mesh.geometry);
       if (mesh.material?.dispose) mesh.material.dispose();
       assemblyExtrasRef.current.delete(id);
     }
@@ -6938,7 +7076,7 @@ const Viewport = forwardRef(({
       setCachedMeshData(null);
       cachedMeshDataRef.current = null;
       removeContactSeam(resultRef.current);
-      resultRef.current.geometry?.dispose();
+      releaseGeometryIn(solidCacheRef.current, resultRef.current.geometry);
       resultRef.current.geometry = new BufferGeometry();
       resultRef.current.position.set(0, 0, 0);
       clearFilletBlendPreview();
@@ -6968,6 +7106,8 @@ const Viewport = forwardRef(({
         for (const edge of featureEdgesRef.current || []) edge.partId = activeId;
       }
     }
+    pruneSolidCacheIn(solidCacheRef.current, resultRef.current, assemblyExtrasRef.current);
+    prewarmPartGraphsRef.current();
     syncAnchoredOverlays();
     if (autoFitEnabled && solids.length && cameraRef.current) {
       const geom = new BufferGeometry();
@@ -7420,15 +7560,16 @@ const Viewport = forwardRef(({
         <FilletModeChip
           kind={filletMode.entry === 'chamferEdges' ? 'chamfer' : 'fillet'}
           edgeCount={selectedEdges.length}
+          partCount={filletPartCount}
           tangentOn={tangentProp}
           params={{
             ...filletMode.params,
             _sweepMax: (filletBlendPayload?.sweepMax > 0
               ? filletBlendPayload.sweepMax
-              : sweepBlendHardMax(pathLengthFromEdges(selectedEdges))),
+              : sweepBlendHardMax(pathLengthFromEdges(filletActiveEdges.length ? filletActiveEdges : selectedEdges))),
           }}
-          pathOk={filletBlendPayload?.ok === true}
-          componentCount={filletBlendPayload?.componentCount || 0}
+          pathOk={filletChipStatus.ok}
+          componentCount={filletChipStatus.componentCount}
           edgeClass={filletEdgeClass}
           compact={isMobile}
           onToggleTangent={() => setTangentProp((v) => !v)}
@@ -7612,7 +7753,7 @@ const Viewport = forwardRef(({
           aria-hidden="true"
         >
           {selectedEdges.map((e, i) => {
-            const key = edgeKey(e);
+            const key = selectionEdgeKey(e);
             return (
               <div
                 key={key}
