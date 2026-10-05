@@ -45,12 +45,20 @@ import {
   newLocalPartId,
   normalizeRepoPath,
   parseAssemblyDocument,
+  partPosition,
   removePart,
   reorderParts,
+  sanitizeAssemblyName,
   scriptForRow,
   serializeAssembly,
   setPartVisible,
 } from './utils/assembly';
+import {
+  historyForPart,
+  pushPartHistory,
+  redoPartHistory,
+  undoPartHistory,
+} from './utils/partHistory';
 import { runAssemblyParts } from './utils/assemblyRun';
 import {
   deletePartScript,
@@ -438,6 +446,10 @@ const App = () => {
     },
     currentBranch: 'main'
   });
+  /** One undo stack per part id. Game uses its own key. */
+  const partHistoriesRef = useRef({});
+  const historyRef = useRef(history);
+  historyRef.current = history;
 
   // Headless review bridge for harness/stage_shot.mjs (dev-only).
   // Lets automation inject a script and run it through the exact same
@@ -1083,6 +1095,46 @@ const App = () => {
     return clean;
   };
 
+  const historyKey = () => {
+    if (appModeRef.current === 'game') return '__game__';
+    const id = assemblyRef.current?.activeId;
+    return id ? String(id) : '__cad__';
+  };
+
+  const applyPartHistory = (entry) => {
+    const state = {
+      branches: { main: { commits: entry.commits, head: entry.head } },
+      currentBranch: 'main',
+    };
+    historyRef.current = state;
+    setHistory(state);
+  };
+
+  const focusPartHistory = (partId, script) => {
+    if (appModeRef.current === 'game') return;
+    const key = partId ? String(partId) : '__cad__';
+    const next = historyForPart(partHistoriesRef.current, key, script ?? '');
+    partHistoriesRef.current[key] = next;
+    applyPartHistory(next);
+  };
+
+  const dropPartHistory = (partId) => {
+    if (partId == null) return;
+    delete partHistoriesRef.current[String(partId)];
+  };
+
+  // The editor buffer is this part's latest script. Keep it on that part's
+  // stack before the active id changes, so a later Undo cannot see another part.
+  const stashPartHistory = (partId, script) => {
+    if (appModeRef.current === 'game' || partId == null || typeof script !== 'string') return;
+    const key = String(partId);
+    partHistoriesRef.current[key] = pushPartHistory(
+      historyForPart(partHistoriesRef.current, key, script),
+      script,
+      'Part',
+    );
+  };
+
   /**
    * Run every visible part. The active part goes through executeScript so
    * face and edge graphs still rebuild on that solid alone. A failed active
@@ -1168,11 +1220,24 @@ const App = () => {
       const nextScripts = { ...partScriptsRef.current, [prev]: live };
       rememberScripts(nextScripts);
       savePartScript(prev, live);
+      stashPartHistory(prev, live);
     }
+    // Drop an in-flight refresh of the part we are leaving so it cannot
+    // paint that solid back over the one we are about to show.
+    refreshGenRef.current += 1;
     const nextDoc = rememberAssembly({ ...doc, activeId: id });
     const part = nextDoc.parts.find((row) => row.id === id);
     setCurrentFilename(part?.name || null);
     const picked = scriptForRow(nextDoc, partScriptsRef.current, id);
+    const nextScript = picked.ok ? picked.script : '';
+    focusPartHistory(id, nextScript);
+    const cached = partRunsRef.current?.[id];
+    if (cached?.ok && cached.mesh?.vertProperties) {
+      viewportRef.current?.adoptActiveSolid?.({
+        mesh: cached.mesh,
+        position: partPosition(part) || [0, 0, 0],
+      });
+    }
     if (picked.ok) {
       suppressPartSaveRef.current = false;
       codeEditorRef.current?.loadContent(picked.script, part?.name || 'Part', false);
@@ -1212,13 +1277,19 @@ const App = () => {
       const fromFile = assemblyNameFromFile(filename);
       if (fromFile) doc = serializeAssembly({ ...doc, name: fromFile });
     }
+    refreshGenRef.current += 1;
     const scripts = await loadPartScripts(doc.parts.map((part) => part.id));
     rememberScripts(scripts);
     const saved = rememberAssembly(doc);
+    const keep = new Set(saved.parts.map((part) => String(part.id)));
+    for (const key of Object.keys(partHistoriesRef.current)) {
+      if (key !== '__game__' && !keep.has(key)) delete partHistoriesRef.current[key];
+    }
     const active = saved.parts.find((part) => part.id === saved.activeId) || saved.parts[0];
     if (!active) return;
     setCurrentFilename(active.name);
     const picked = scriptForRow(saved, scripts, active.id);
+    focusPartHistory(active.id, picked.ok ? picked.script : '');
     if (picked.ok) {
       suppressPartSaveRef.current = false;
       codeEditorRef.current?.loadContent(picked.script, active.name, false);
@@ -1251,6 +1322,7 @@ const App = () => {
     if (prev && !suppressPartSaveRef.current && typeof live === 'string') {
       scripts[prev] = live;
       savePartScript(prev, live);
+      stashPartHistory(prev, live);
     }
     const id = newLocalPartId();
     const order = doc.parts.length;
@@ -1265,7 +1337,9 @@ const App = () => {
     scripts[id] = starter;
     await savePartScript(id, starter);
     rememberScripts(scripts);
+    refreshGenRef.current += 1;
     rememberAssembly({ ...doc, activeId: id, parts: [...doc.parts, part] });
+    focusPartHistory(id, starter);
     suppressPartSaveRef.current = false;
     setCurrentFilename(part.name);
     codeEditorRef.current?.loadContent(starter, part.name, false);
@@ -1292,7 +1366,9 @@ const App = () => {
         order: doc.parts.length,
       }];
     const source = doc.source === 'git' ? 'git' : doc.source;
+    refreshGenRef.current += 1;
     rememberAssembly({ ...doc, source, activeId: id, parts });
+    focusPartHistory(id, text);
     suppressPartSaveRef.current = false;
     setCurrentFilename(id.split('/').pop() || id);
     codeEditorRef.current?.loadContent(text, id, false);
@@ -1326,19 +1402,29 @@ const App = () => {
     scripts = dropPartRecord(scripts, key);
     rememberScripts(scripts);
     deletePartScript(key);
+    dropPartHistory(key);
 
     const nextDoc = rememberAssembly(removePart(doc, key));
     const runs = dropPartRecord(partRunsRef.current, key);
     commitPartRuns(runs);
 
     const nextActive = nextDoc.activeId;
+    const nextPart = nextDoc.parts.find((row) => row.id === nextActive);
+    const nextRun = nextActive ? runs[nextActive] : null;
+    if (deletingActive && nextRun?.ok && nextRun.mesh?.vertProperties) {
+      viewportRef.current?.adoptActiveSolid?.({
+        mesh: nextRun.mesh,
+        position: partPosition(nextPart) || [0, 0, 0],
+      });
+    }
     viewportRef.current?.placeAssembly?.({
       solids: composeViewportParts(nextDoc, runs),
-      activeId: deletingActive ? null : nextActive,
-      blankActive: deletingActive || !nextActive,
+      activeId: deletingActive && !(nextRun?.ok && nextRun.mesh) ? null : nextActive,
+      blankActive: (deletingActive && !(nextRun?.ok && nextRun.mesh?.vertProperties)) || !nextActive,
     });
 
     if (!nextActive) {
+      applyPartHistory({ commits: [], head: -1 });
       const note = '// No parts.\n';
       setCurrentFilename(null);
       saveEditorDraft({ script: note, filename: null });
@@ -1352,9 +1438,10 @@ const App = () => {
       return;
     }
 
-    const part = nextDoc.parts.find((row) => row.id === nextActive);
+    const part = nextPart;
     setCurrentFilename(part?.name || null);
     const picked = scriptForRow(nextDoc, scripts, nextActive);
+    focusPartHistory(nextActive, picked.ok ? picked.script : '');
     if (picked.ok) {
       suppressPartSaveRef.current = false;
       if (codeEditorRef.current?.loadContent) {
@@ -1740,29 +1827,16 @@ const App = () => {
     if (suppressPartSaveRef.current && message === 'Manual edit') {
       suppressPartSaveRef.current = false;
     }
-    setHistory(prev => {
-      const branch = prev.branches[prev.currentBranch];
-      const newCommit = {
-        code,
-        message,
-        timestamp: Date.now(),
-        id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
-      };
-
-      return {
-        ...prev,
-        branches: {
-          ...prev.branches,
-          [prev.currentBranch]: {
-            commits: [...branch.commits.slice(0, branch.head + 1), newCommit],
-            head: branch.head + 1
-          }
-        }
-      };
-    });
-    
-    // Log after setHistory call (outside the updater)
-    console.log('[App] handleCodeChange added commit:', { message, codeLength: code?.length });
+    const id = historyKey();
+    const branch = historyRef.current?.branches?.main;
+    const prev = partHistoriesRef.current[id] || {
+      commits: branch?.commits || [],
+      head: Number.isInteger(branch?.head) ? branch.head : -1,
+    };
+    const pushed = pushPartHistory(prev, code, message);
+    partHistoriesRef.current[id] = pushed;
+    applyPartHistory(pushed);
+    console.log('[App] handleCodeChange added commit:', { message, codeLength: code?.length, partId: id });
   };
 
   const handleCodeGenerated = (code, promptMessage) => {
@@ -1772,69 +1846,52 @@ const App = () => {
   };
 
   const handleUndo = () => {
-    const branch = history.branches[history.currentBranch];
-
-    if (branch.head > 0) {
-      const newHead = branch.head - 1;
-      const commit = branch.commits[newHead];
-      
-      console.log('[App] Undoing to commit:', {
-        newHead,
-        commitMessage: commit.message,
-        codeLength: commit.code?.length,
-      });
-      
-      setHistory(prev => ({
-        ...prev,
-        branches: {
-          ...prev.branches,
-          [prev.currentBranch]: {
-            ...branch,
-            head: newHead
-          }
-        }
-      }));
-
-      // Restore editor without loadContent autoExecute (CAD-only; game skips).
-      // Auto-Run via handleGameRun — same path as palette insert / Confirm.
-      codeEditorRef.current?.setTextOnly?.(commit.code);
-      setTimeout(() => {
-        handleGameRun();
-      }, 0);
-    }
+    const id = historyKey();
+    const branch = historyRef.current?.branches?.main;
+    const current = partHistoriesRef.current[id] || {
+      commits: branch?.commits || [],
+      head: Number.isInteger(branch?.head) ? branch.head : -1,
+    };
+    const undone = undoPartHistory(current);
+    if (undone.code == null) return;
+    partHistoriesRef.current[id] = undone.history;
+    applyPartHistory(undone.history);
+    console.log('[App] Undoing to commit:', {
+      partId: id,
+      head: undone.history.head,
+      codeLength: undone.code?.length,
+    });
+    // Restore editor without loadContent autoExecute (CAD-only; game skips).
+    // Auto-Run via handleGameRun — same path as palette insert / Confirm.
+    // Only this part's stack moves, so the script written here is this part's.
+    codeEditorRef.current?.setTextOnly?.(undone.code);
+    setTimeout(() => {
+      handleGameRun();
+    }, 0);
   };
 
   const handleRedo = () => {
-    const branch = history.branches[history.currentBranch];
-
-    if (branch.head < branch.commits.length - 1) {
-      const newHead = branch.head + 1;
-      const commit = branch.commits[newHead];
-      
-      console.log('[App] Redoing to commit:', {
-        newHead,
-        commitMessage: commit.message,
-        codeLength: commit.code?.length,
-      });
-      
-      setHistory(prev => ({
-        ...prev,
-        branches: {
-          ...prev.branches,
-          [prev.currentBranch]: {
-            ...branch,
-            head: newHead
-          }
-        }
-      }));
-
-      // Restore editor without loadContent autoExecute (CAD-only; game skips).
-      // Auto-Run via handleGameRun — same path as palette insert / Confirm.
-      codeEditorRef.current?.setTextOnly?.(commit.code);
-      setTimeout(() => {
-        handleGameRun();
-      }, 0);
-    }
+    const id = historyKey();
+    const branch = historyRef.current?.branches?.main;
+    const current = partHistoriesRef.current[id] || {
+      commits: branch?.commits || [],
+      head: Number.isInteger(branch?.head) ? branch.head : -1,
+    };
+    const redone = redoPartHistory(current);
+    if (redone.code == null) return;
+    partHistoriesRef.current[id] = redone.history;
+    applyPartHistory(redone.history);
+    console.log('[App] Redoing to commit:', {
+      partId: id,
+      head: redone.history.head,
+      codeLength: redone.code?.length,
+    });
+    // Restore editor without loadContent autoExecute (CAD-only; game skips).
+    // Auto-Run via handleGameRun — same path as palette insert / Confirm.
+    codeEditorRef.current?.setTextOnly?.(redone.code);
+    setTimeout(() => {
+      handleGameRun();
+    }, 0);
   };
 
   const canUndo = () => {
@@ -1903,6 +1960,14 @@ const App = () => {
         part.id === doc.activeId ? { ...part, name: next } : part
       )),
     });
+  };
+
+  const handleRenameAssembly = (name) => {
+    const next = sanitizeAssemblyName(name);
+    if (!next) return;
+    const doc = assemblyRef.current;
+    if (!doc || next === assemblyName(doc)) return;
+    rememberAssembly({ ...doc, name: next });
   };
 
   const handleSave = () => {
@@ -2054,6 +2119,7 @@ const App = () => {
       placement={isMobile ? 'mobile' : 'desktop'}
       source={assemblyDoc.source}
       assemblyName={assemblyLabel}
+      onRenameAssembly={handleRenameAssembly}
       rows={partRows}
       activeId={assemblyDoc.activeId}
       onSelect={handleSelectPart}
@@ -2104,6 +2170,7 @@ const App = () => {
               currentFilename={currentFilename}
               assemblyName={assemblyLabel}
               onRenameFile={handleRenameFile}
+              onRenameAssembly={handleRenameAssembly}
               onSelectAll={handleSelectAll}
               isUploading={isUploading || gameLoading}
               mode={appMode}
@@ -2505,6 +2572,7 @@ const App = () => {
             currentFilename={currentFilename}
             assemblyName={assemblyLabel}
             onRenameFile={handleRenameFile}
+            onRenameAssembly={handleRenameAssembly}
             onSelectAll={handleSelectAll}
             isUploading={isUploading || gameLoading}
             mode={appMode}

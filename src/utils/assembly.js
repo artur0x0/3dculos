@@ -83,6 +83,34 @@ export function assemblyName(doc) {
 }
 
 /**
+ * Path-safe label for a part or an assembly. Same rules as the title chip:
+ * no path characters, collapsed whitespace, 60 characters.
+ */
+export function sanitizeAssemblyName(raw) {
+  return String(raw ?? '')
+    .replace(/[/\\:*?"<>|]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 60);
+}
+
+/**
+ * CAD title. With an assembly name: "Bracket in Gearbox".
+ * With none: the part alone. No empty "in", no dash.
+ */
+export function formatViewerTitle(partName, assemblyNameValue) {
+  const part = String(partName ?? '').trim() || 'Untitled';
+  const assembly = String(assemblyNameValue ?? '').trim();
+  if (!assembly) return { part, assembly: '', connector: '', text: part };
+  return { part, assembly, connector: 'in', text: `${part} in ${assembly}` };
+}
+
+/** Delete asks first. Only Confirm drops the part. Cancel keeps it. */
+export function partListDeleteAction(choice) {
+  return choice === 'confirm' ? 'drop' : 'keep';
+}
+
+/**
  * Basename of a loaded assembly file, without a trailing `.json`.
  * '' when that file has no name of its own.
  */

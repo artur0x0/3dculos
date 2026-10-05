@@ -31,7 +31,7 @@ one shell you must change the other.
 │ CodeEditor (splitPct)      │▓▓▓│ Viewport (rest)              │
 │                            │ ║ │   ↑ FeatureStrip (vertical   │
 │ ┌────────────────────────┐ │ ║ │     seam) + SplitDivider     │
-│ │ mid-strip: [Toolbar]   │ │ ║ │  top-center: [assembly] — [part] │
+│ │ mid-strip: [Toolbar]   │ │ ║ │  top-center: [part] in [assembly] │
 │ ├────────────────────────┤ │ ║ │                              │
 │ │ Monaco (vs-dark, 12px) │ │ ║ │  left: HelperInsertPalette   │
 │ ├────────────────────────┤ │ ║ │  right: CrossSection cluster │
@@ -49,16 +49,16 @@ clamped so neither pane collapses; an open keyboard still overrides it).
 behind `hidden` + `data-ai-prompt-row="hidden"` in both shells while a tighter
 editor integration is designed. Remove the `hidden` class to bring it back.
 
-**The CAD title is two bubbles.** Assembly name, then a dash, then the part
-name (`data-viewer-title`, `data-title-chip="assembly"`, `data-title-dash`,
-part chip). They are separate labels. The assembly bubble is the document
-`name` (or the loaded file's name when the document has none). When there is
-no assembly name, that bubble and the dash are omitted and only the part
-bubble shows. The part bubble still renames the part: click it (or the
-"Untitled" placeholder) and it becomes an input. Enter or blur commits,
-Escape reverts, empty commits nothing. Names are sanitised
-(`sanitizePartName`) because they end up in `${name}.js` downloads. Wired
-through `onRenameFile` → `setCurrentFilename`. Game keeps a single puzzle-name
+**The CAD title reads "part in assembly".** Part name, the word in, then the
+assembly name (`data-viewer-title`, `data-title-in`, `data-viewer-title-text`).
+Example: Bracket in Gearbox. The assembly name is the document `name` (or the
+loaded file's name when the document has none). When there is no assembly
+name, the word in and the assembly chip are omitted and only the part chip
+shows. Both chips rename in place: click, then an input. Enter or blur
+commits, Escape reverts, empty commits nothing. Part names are sanitised
+(`sanitizePartName`) because they end up in `${name}.js` downloads. The part
+chip is `onRenameFile` → `setCurrentFilename`. The assembly chip is
+`onRenameAssembly` → the document `name`. Game keeps a single puzzle-name
 chip.
 
 Desktop specifics:
@@ -80,12 +80,12 @@ Desktop specifics:
 - Info chips (Selected Face, Edge pick, measurement readout) sit **bottom-left at
   `left-[4.5rem] lg:left-[5.25rem]`** so they clear the helper rail
   (`src/components/Viewport.jsx:3682`, `:3848`, `:3937`).
-- CAD title is the same two bubbles as mobile: assembly name, a dash, then
-  the part name. No toolbar carries them.
+- CAD title is the same "part in assembly" line as mobile. No toolbar carries it.
 - **Parts feed:** the same list as the mobile Parts stage, mounted to the left
   of the editor (`data-parts-feed-placement="desktop-left"`). The assembly
-  name sits in the middle of the ribbon (`data-parts-ribbon-center`). Delete
-  on a row removes that part only.
+  name sits in the middle of the ribbon (`data-parts-ribbon-center`). Local
+  or Git is right-justified (`data-parts-ribbon-end`). Delete asks first;
+  Cancel keeps the part, Confirm removes that part only.
 - `PromptInput` is passed `isMobile={false}` explicitly (`src/App.jsx:1345`).
 
 ### Mobile shell (`src/App.jsx` mobile branch) — CAD stages + game stack
@@ -98,7 +98,7 @@ Slice C adds CAD-stage feature sheets (default edit path without Monaco).
 ```
 CAD stage                          Script stage
 ┌─────────────────────────────┐   ┌─────────────────────────────┐
-│ [assembly] — [part]         │   ││feat│ mid-strip: Toolbar    │
+│ [part] in [assembly]        │   ││feat│ mid-strip: Toolbar    │
 │ [Undo | features… | Redo]   │   ││strip mid: Monaco (full)   │
 │ Viewport + rails            │   ││icons PromptInput (hidden) │
 │ feature sheet (glass)       │   ││vert  (viewport mounted)   │
@@ -127,8 +127,9 @@ Mobile specifics:
   (`LayoutList`), Script (`square-text`). Tap a third to switch stage.
   Desktop has no mode toggle; the parts list and the script editor sit side
   by side.
-  The Parts stage is the part list; each row has a delete control that
-  removes that part only (its script, its row, and its solid).
+  The Parts stage is the part list. Delete asks first. Confirm removes that
+  part only (its script, its row, and its solid). Cancel leaves it. The
+  ribbon centers the assembly name and keeps Local or Git on the right.
   Session-sticky via `3dculos.mobileStage`.
   Top CAD|Script text chrome is gone. Inert `data-ai-prompt-hook` marks a
   future AI-on-tap site (not wired). Contour/Fillet chips use `bottom-14` on
@@ -254,7 +255,7 @@ All of these are absolutely positioned inside the shell at
 | Screen position | What | Component | Site in Viewport.jsx |
 | --- | --- | --- | --- |
 | *editor header* (portal) | Toolbar, all CAD | `Toolbar.jsx` `variant="strip"` | `:3530` |
-| top-center | CAD: assembly bubble, dash, part bubble. Game: puzzle name | `data-viewer-title` / `ViewportTitleChip` | Viewport |
+| top-center | CAD: part, the word in, assembly. Game: puzzle name | `data-viewer-title` / `ViewportTitleChip` | Viewport |
 | centered | "Match!" success banner | inline | `:3595` |
 | left-2/4 bottom-2.5 | helper insert rail (height paired to right) | `HelperInsertPalette.jsx` | Viewport |
 | left-2/4 bottom-2.5 | contour tool rail (replaces the helper rail) | `ContourModeRail.jsx` | Viewport |

@@ -1,5 +1,7 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Eye, EyeOff, FilePlus, FolderOpen, GripVertical, Plus, Trash2 } from 'lucide-react';
+import { partListDeleteAction, sanitizeAssemblyName } from '../utils/assembly.js';
 
 // Same ribbon and strip buttons as the script editor top bar
 // (CodeEditor `data-editor-ribbon` + Toolbar `variant="strip"`).
@@ -61,6 +63,74 @@ function drawThumbnail(canvas, mesh) {
   }
 }
 
+/**
+ * Assembly name in the ribbon. Same commit rules as the CAD title chip:
+ * click edits, Enter or blur commits, Escape reverts, empty commits nothing.
+ */
+function RibbonAssemblyName({ name, onRename }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const inputRef = useRef(null);
+
+  useEffect(() => {
+    if (editing) inputRef.current?.select();
+  }, [editing]);
+
+  const start = () => {
+    if (!onRename) return;
+    setDraft(name || '');
+    setEditing(true);
+  };
+
+  const commit = () => {
+    if (!editing) return;
+    setEditing(false);
+    const next = sanitizeAssemblyName(draft);
+    if (next && next !== (name || '')) onRename(next);
+  };
+
+  const label = 'max-w-[45%] truncate bg-gray-900 px-2 text-center text-xs font-medium text-gray-100';
+  if (editing) {
+    return (
+      <input
+        ref={inputRef}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') { e.preventDefault(); commit(); }
+          if (e.key === 'Escape') { e.preventDefault(); setEditing(false); }
+          e.stopPropagation();
+        }}
+        className={`${label} pointer-events-auto w-40 outline-none`}
+        aria-label="Assembly name"
+        data-assembly-name=""
+        data-assembly-rename="input"
+      />
+    );
+  }
+  if (!onRename) {
+    return (
+      <span className={`${label} pointer-events-none`} data-assembly-name="" title={name}>
+        {name}
+      </span>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={start}
+      className={`${label} pointer-events-auto cursor-text hover:text-white`}
+      title="Click to rename this assembly"
+      aria-label={`Assembly name: ${name}. Click to rename.`}
+      data-assembly-name=""
+      data-assembly-rename="button"
+    >
+      {name}
+    </button>
+  );
+}
+
 function PartThumbnail({ mesh }) {
   const ref = useRef(null);
   useEffect(() => {
@@ -91,6 +161,7 @@ export default function PartFeed({
   onAddGitPart,
   onDeletePart,
   assemblyName = '',
+  onRenameAssembly = null,
 }) {
   const loadRef = useRef(null);
   const resolveRef = useRef(null);
@@ -141,10 +212,32 @@ export default function PartFeed({
     }).catch((err) => console.error('[PartFeed] git add failed', err));
   };
 
+  const [pendingDelete, setPendingDelete] = useState(null);
+  const cancelBtnRef = useRef(null);
   const shell = placement === 'mobile'
     ? 'flex h-full w-full flex-col bg-[#1e1e1e] text-gray-100'
     : 'flex h-full w-72 shrink-0 flex-col border-r border-white/10 bg-[#1e1e1e] text-gray-100';
   const ribbonName = typeof assemblyName === 'string' ? assemblyName.trim() : '';
+
+  useEffect(() => {
+    if (pendingDelete) cancelBtnRef.current?.focus();
+  }, [pendingDelete]);
+
+  const askDeletePart = (partId, name) => {
+    setPendingDelete({ id: partId, name: name || 'this part' });
+  };
+
+  const cancelDeletePart = () => {
+    if (partListDeleteAction('cancel') !== 'keep') return;
+    setPendingDelete(null);
+  };
+
+  const confirmDeletePart = () => {
+    const pending = pendingDelete;
+    setPendingDelete(null);
+    if (partListDeleteAction('confirm') !== 'drop' || !pending?.id) return;
+    onDeletePart?.(pending.id);
+  };
 
   return (
     <aside className={shell} data-parts-feed="" data-parts-source={source}>
@@ -176,13 +269,6 @@ export default function PartFeed({
               <Plus size={STRIP_ICON} />
             </button>
           )}
-          <div className={STRIP_DIVIDER} />
-          <span
-            className="shrink-0 px-1 text-[11px] font-mono text-gray-300"
-            data-parts-source-label=""
-          >
-            {source === 'git' ? 'Git' : 'Local'}
-          </span>
           {source === 'git' && (
             <form className="flex items-center gap-0.5 sm:gap-1 min-w-0 flex-1" data-git-add="" onSubmit={submitGit}>
               <div className={STRIP_DIVIDER} />
@@ -210,18 +296,24 @@ export default function PartFeed({
             </form>
           )}
         </div>
+        <div
+          data-parts-ribbon-end=""
+          className="relative z-10 ml-auto flex shrink-0 items-center"
+        >
+          <div className={STRIP_DIVIDER} />
+          <span
+            className="shrink-0 px-1 text-[11px] font-mono text-gray-300"
+            data-parts-source-label=""
+          >
+            {source === 'git' ? 'Git' : 'Local'}
+          </span>
+        </div>
         {ribbonName ? (
           <div
-            className="pointer-events-none absolute inset-0 z-[1] flex items-center justify-center"
+            className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center"
             data-parts-ribbon-center=""
           >
-            <span
-              className="max-w-[45%] truncate bg-gray-900 px-2 text-center text-xs font-medium text-gray-100"
-              data-assembly-name=""
-              title={ribbonName}
-            >
-              {ribbonName}
-            </span>
+            <RibbonAssemblyName name={ribbonName} onRename={onRenameAssembly} />
           </div>
         ) : null}
         <input
@@ -336,7 +428,7 @@ export default function PartFeed({
                 onKeyDown={(event) => event.stopPropagation()}
                 onClick={(event) => {
                   event.stopPropagation();
-                  onDeletePart?.(row.id);
+                  askDeletePart(row.id, row.name);
                 }}
               >
                 <Trash2 size={16} />
@@ -345,6 +437,54 @@ export default function PartFeed({
           );
         })}
       </div>
+      {pendingDelete && typeof document !== 'undefined' && createPortal(
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center surface-scrim p-4"
+          data-part-delete-dialog=""
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="part-delete-title"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) cancelDeletePart();
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') {
+              event.preventDefault();
+              cancelDeletePart();
+            }
+          }}
+        >
+          <div className="w-full max-w-sm rounded-lg surface-glass border border-gray-700 p-4 shadow-xl">
+            <h2 id="part-delete-title" className="text-sm font-semibold text-gray-100">
+              Delete part
+            </h2>
+            <p className="mt-2 text-xs text-gray-300">
+              {`Remove ${pendingDelete.name} from this assembly? This drops the row, its script, and its solid.`}
+              {source === 'git' ? ' The git file is left where it is.' : ''}
+            </p>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                ref={cancelBtnRef}
+                type="button"
+                data-part-delete-cancel=""
+                className="rounded-md px-3 py-1.5 text-xs text-gray-200 hover:bg-white/10"
+                onClick={cancelDeletePart}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                data-part-delete-confirm=""
+                className="rounded-md bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-500"
+                onClick={confirmDeletePart}
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
     </aside>
   );
 }
