@@ -562,7 +562,7 @@ const Viewport = forwardRef(({
   canUndo,
   canRedo,
   currentFilename,
-  /** Assembly document name. Blank leaves the CAD title as the part alone. */
+  /** Assembly document name. Blank documents resolve to Assembly before this. */
   assemblyName = '',
   onRenameFile = null,
   /** Same click-to-edit as the part chip. Writes the document name. */

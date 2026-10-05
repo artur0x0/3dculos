@@ -2,6 +2,15 @@ import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Eye, EyeOff, FilePlus, FolderOpen, GripVertical, Plus, Trash2 } from 'lucide-react';
 import { partListDeleteAction, sanitizeAssemblyName } from '../utils/assembly.js';
+import {
+  PART_PREVIEW_SIZE,
+  blitPartPreview,
+  meshPreviewKey,
+  paintEmptyPreview,
+  partPreviewKind,
+  peekPartPreview,
+  takePartPreview,
+} from '../utils/partPreview.js';
 
 // Same ribbon and strip buttons as the script editor top bar
 // (CodeEditor `data-editor-ribbon` + Toolbar `variant="strip"`).
@@ -12,56 +21,10 @@ const STRIP_ICON = 18;
 
 /**
  * Parts feed. Desktop mounts it to the left of the editor. Mobile mounts it
- * as the Parts stage. Each row is a thumbnail and a name. A red bar marks
- * the selected row. The eye toggles visibility. Delete drops that part.
- * Load lives in this pane.
+ * as the Parts stage. Each row is a snapshot of that part's solid and a name.
+ * A red bar marks the selected row. The eye toggles visibility. Delete drops
+ * that part. Load lives in this pane.
  */
-function drawThumbnail(canvas, mesh) {
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return;
-  const w = canvas.width;
-  const h = canvas.height;
-  ctx.clearRect(0, 0, w, h);
-  ctx.fillStyle = '#2a2a2a';
-  ctx.fillRect(0, 0, w, h);
-  const src = mesh?.vertProperties;
-  const np = mesh?.numProp || 3;
-  if (!src || src.length < np * 3) {
-    ctx.strokeStyle = '#6b7280';
-    ctx.strokeRect(18, 18, 28, 28);
-    return;
-  }
-  const n = Math.min(Math.floor(src.length / np), 2500);
-  const pts = new Array(n);
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-  for (let i = 0; i < n; i++) {
-    const x = src[i * np];
-    const y = src[i * np + 1];
-    const z = src[i * np + 2];
-    const px = (x - y) * 0.866;
-    const py = -((x + y) * 0.5 - z);
-    pts[i] = [px, py];
-    if (px < minX) minX = px;
-    if (py < minY) minY = py;
-    if (px > maxX) maxX = px;
-    if (py > maxY) maxY = py;
-  }
-  const span = Math.max(maxX - minX, maxY - minY, 1e-6);
-  const pad = 6;
-  const scale = (Math.min(w, h) - pad * 2) / span;
-  const cx = (minX + maxX) / 2;
-  const cy = (minY + maxY) / 2;
-  ctx.fillStyle = '#e8eef7';
-  const step = Math.max(1, Math.floor(n / 400));
-  for (let i = 0; i < n; i += step) {
-    const sx = w / 2 + (pts[i][0] - cx) * scale;
-    const sy = h / 2 + (pts[i][1] - cy) * scale;
-    ctx.fillRect(sx, sy, 1.4, 1.4);
-  }
-}
 
 /**
  * Assembly name in the ribbon. Same commit rules as the CAD title chip:
@@ -133,16 +96,50 @@ function RibbonAssemblyName({ name, onRename }) {
 
 function PartThumbnail({ mesh }) {
   const ref = useRef(null);
+  const meshRef = useRef(mesh);
+  meshRef.current = mesh;
+  const previewKey = meshPreviewKey(mesh);
+
   useEffect(() => {
-    if (ref.current) drawThumbnail(ref.current, mesh);
-  }, [mesh]);
+    const canvas = ref.current;
+    if (!canvas) return undefined;
+    if (!previewKey) {
+      paintEmptyPreview(canvas);
+      return undefined;
+    }
+    const cached = peekPartPreview(previewKey);
+    if (cached) {
+      blitPartPreview(canvas, cached);
+      return undefined;
+    }
+    let cancel = false;
+    const frame = requestAnimationFrame(() => {
+      if (cancel || !ref.current) return;
+      try {
+        const shot = takePartPreview(meshRef.current);
+        if (cancel || !ref.current) return;
+        if (shot?.canvas) blitPartPreview(ref.current, shot.canvas);
+        else paintEmptyPreview(ref.current);
+      } catch (err) {
+        console.error('[PartFeed] preview failed', err);
+        if (ref.current) paintEmptyPreview(ref.current);
+      }
+    });
+    return () => {
+      cancel = true;
+      cancelAnimationFrame(frame);
+    };
+  }, [previewKey]);
+
   return (
     <canvas
       ref={ref}
-      width={64}
-      height={64}
-      className="h-12 w-12 shrink-0 rounded-md bg-neutral-800"
+      width={PART_PREVIEW_SIZE}
+      height={PART_PREVIEW_SIZE}
+      className="h-12 w-12 shrink-0 rounded-md bg-[#1e1e1e]"
       data-part-thumbnail=""
+      data-part-preview={partPreviewKind(mesh)}
+      data-part-preview-key={previewKey || ''}
     />
   );
 }
