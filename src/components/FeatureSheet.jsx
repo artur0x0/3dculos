@@ -329,7 +329,12 @@ export default function FeatureSheet({
         className="flex flex-row flex-wrap items-center gap-x-2 gap-y-1.5 w-full min-w-0"
         data-feature-sheet-row="identity"
       >
-        <span className="relative inline-flex items-center justify-center rounded-lg bg-cyan-900/70 p-1.5 border border-cyan-500/40 shrink-0">
+        <span
+          className={`relative inline-flex items-center justify-center rounded-lg bg-cyan-900/70 p-1.5 shrink-0 ${
+            feature.external ? 'border-2 border-yellow-400' : 'border border-cyan-500/40'
+          }`}
+          data-feature-sheet-external={feature.external ? '1' : undefined}
+        >
           <Icon size={18} strokeWidth={2} aria-hidden="true" />
           <TypeBadge index={typeIndex} />
         </span>
@@ -339,7 +344,9 @@ export default function FeatureSheet({
             shrink; the action buttons are the ones that hold their size. */}
         <div className="min-w-0 flex-1">
           <div className={`${POPUP_TEXT.title} text-white truncate`}>{feature.chipLabel}</div>
-          <div className={`${POPUP_TEXT.subtitle} text-cyan-100/80 truncate`}>Feature sheet</div>
+          <div className={`${POPUP_TEXT.subtitle} text-cyan-100/80 truncate`}>
+            {feature.external ? 'External copy · not linked · Delete removes it' : 'Feature sheet'}
+          </div>
         </div>
         {/* The four actions are ~315px on their own, which is more than a 360px
             phone has left after the icon — so the cluster wraps to its own line

@@ -45,3 +45,4 @@ requires `test_real_worker.mjs` via `npm run verify` once the harness is present
 
 | `smoke_fillet_chamfer_rounded_wrap.mjs` | Fillet-on-fillet rounded-rect wrap + path chamfer quality |
 | `smoke_block_pose_preview.mjs` | Block pop: position and rotation on all six solids, preview mesh matches the script, identity pose is omitted, Subtract preview is the cutter and does not replace the cached solid |
+| `smoke_cross_part_clone.mjs` | Edit-touch C: cross-part Boolean (union / difference / intersect with piece delete) and Subtract Block copies via `externalBody`, frozen and posed into the target frame; yellow external chip; copy deleted with the feature; one undo step per written part |

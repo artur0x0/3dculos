@@ -7417,18 +7417,26 @@ function booleanBodies(manifold, opts = {}) {
   const { Manifold } = manifoldModule;
   const options = (opts && typeof opts === 'object' && !Array.isArray(opts)) ? opts : {};
   const op = _booleanOp(options.op);
+  const tools = _booleanExternalTools(options.tools);
   const bodies = _cutBodiesOf(manifold);
   let selected;
   try {
-    selected = _booleanSelected(bodies, options.bodies);
+    // With external tools, an omitted list is the first body only (the target),
+    // not every body: the tools come from another part.
+    const spec = (tools.length && (!Array.isArray(options.bodies) || !options.bodies.length))
+      ? [{ at: _cutCentroid(bodies[0]) }]
+      : options.bodies;
+    selected = _booleanSelected(bodies, spec);
   } catch (err) {
     const msg = err && err.message ? String(err.message) : String(err);
     throw new Error(msg.replace(/^cut:/, 'booleanBodies:'));
   }
-  if (selected.length < 2) {
+  if (selected.length + tools.length < 2) {
     throw new Error('booleanBodies: pick a target and at least one tool body');
   }
-  const picked = selected.map((i) => bodies[i]);
+  // External tools (frozen copies from another part) follow the named
+  // bodies. The first named body is still the target.
+  const picked = [...selected.map((i) => bodies[i]), ...tools];
   const sel = new Set(selected);
   const rest = [];
   for (let i = 0; i < bodies.length; i++) {
@@ -7437,6 +7445,9 @@ function booleanBodies(manifold, opts = {}) {
   const combined = _booleanCombine(op, picked);
   let shaped = combined.result;
   const discard = combined.temps.slice();
+  for (const tool of tools) {
+    if (tool !== shaped) discard.push(tool);
+  }
   if (op === 'intersect' && Array.isArray(options.drop) && options.drop.length) {
     const dropped = _booleanDropPieces(shaped, options.drop);
     shaped = dropped.kept;
@@ -7466,6 +7477,81 @@ function booleanBodies(manifold, opts = {}) {
   const status = _c4StatusError(result);
   if (status) throw new Error(`booleanBodies: result is not a valid solid (${status})`);
   return result;
+}
+
+function _booleanExternalTools(list) {
+  if (list == null) return [];
+  const arr = Array.isArray(list) ? list : [list];
+  const out = [];
+  for (const m of arr) {
+    if (!m || typeof m.decompose !== 'function') {
+      throw new Error('booleanBodies: tools entries must be solids (externalBody(...))');
+    }
+    out.push(m);
+  }
+  return out;
+}
+
+/**
+ * Pick bodies out of a copied solid and pose them into the target frame.
+ * `bodies` are [{ at }] vertex centroids in the source part's frame.
+ * Omit them to keep the whole solid. `offset` is source position − target
+ * position (assembly placement is a translation).
+ */
+function _externalPick(solid, bodies, offset, label = 'externalBody') {
+  const { Manifold } = manifoldModule;
+  if (!solid || typeof solid.decompose !== 'function') {
+    throw new Error(`${label}: the copied script must return a Manifold`);
+  }
+  let picked = solid;
+  if (Array.isArray(bodies) && bodies.length) {
+    const all = _cutBodiesOf(solid);
+    const idx = [];
+    for (const entry of bodies) {
+      const at = entry && (entry.at || entry.center);
+      if (!Array.isArray(at)) throw new Error(`${label}: bodies entries need { at: [x, y, z] }`);
+      let i;
+      try {
+        i = _cutBodyIndex(all, at);
+      } catch (err) {
+        const msg = err && err.message ? String(err.message) : String(err);
+        throw new Error(msg.replace(/^cut:/, `${label}:`));
+      }
+      if (!idx.includes(i)) idx.push(i);
+    }
+    const keep = idx.map((i) => all[i]);
+    for (let i = 0; i < all.length; i++) {
+      if (!idx.includes(i) && all[i] !== solid) _safeDeleteManifold(all[i]);
+    }
+    picked = keep.length === 1 ? keep[0] : Manifold.compose(keep);
+    if (keep.length > 1) {
+      for (const k of keep) if (k !== solid) _safeDeleteManifold(k);
+    }
+  }
+  const off = Array.isArray(offset) ? offset.map(Number) : [0, 0, 0];
+  if (off.some((v) => !Number.isFinite(v))) throw new Error(`${label}: offset must be finite [dx, dy, dz]`);
+  if (off[0] || off[1] || off[2]) {
+    const moved = picked.translate(off);
+    if (picked !== solid) _safeDeleteManifold(picked);
+    picked = moved;
+  }
+  return picked;
+}
+
+/**
+ * externalBody(source, { bodies, offset }) — a frozen copy of geometry from
+ * another part. `source` is a function holding that part's script text as
+ * it was at Accept (or a Manifold). It is not linked: editing the source part
+ * later does not change this copy. `bodies` picks bodies by vertex centroid
+ * in the source frame; `offset` poses the copy into this part's frame.
+ */
+function externalBody(source, opts = {}) {
+  if (!manifoldModule) throw new Error('Manifold not initialized');
+  const options = (opts && typeof opts === 'object' && !Array.isArray(opts)) ? opts : {};
+  const solid = typeof source === 'function' ? source() : source;
+  const posed = _externalPick(solid, options.bodies, options.offset);
+  if (posed !== solid && typeof source === 'function') _safeDeleteManifold(solid);
+  return posed;
 }
 
 function _booleanOp(op) {
@@ -7574,6 +7660,7 @@ const HELPER_FUNCTIONS = {
   draftFaces,
   cut,
   booleanBodies,
+  externalBody,
   move,
   moveFace,
   deleteFace,
@@ -8519,7 +8606,9 @@ self.onmessage = async (event) => {
       // without Confirm leaves the model whole and the editor gains no cut().
       case 'previewCut': {
         if (!isInitialized) throw new Error('Worker not initialized');
-        if (!cachedManifold) throw new Error('No cached manifold - execute a script first');
+        if (!cachedManifold && !(typeof payload?.targetScript === 'string' && payload.targetScript.trim())) {
+          throw new Error('No cached manifold - execute a script first');
+        }
         const created = [];
         const track = (m) => {
           if (!m || m === cachedManifold) return;
@@ -8578,11 +8667,31 @@ self.onmessage = async (event) => {
         try {
           const options = (payload && typeof payload === 'object') ? payload : {};
           const op = _booleanOp(options.op);
-          const clone = cachedManifold.clone();
+          // Cross-part: the target part's script runs here (not cached) and
+          // each external tool is that part's script, frozen and posed into
+          // the target frame, exactly as Accept will write it.
+          const ownRun = typeof options.targetScript === 'string' && options.targetScript.trim();
+          const clone = ownRun
+            ? executeScript(options.targetScript, {})
+            : cachedManifold.clone();
+          if (!clone || typeof clone.decompose !== 'function') {
+            throw new Error('previewBoolean: target script must return a Manifold');
+          }
           track(clone);
+          const external = [];
+          for (const tool of Array.isArray(options.tools) ? options.tools : []) {
+            const src = executeScript(String(tool?.script || ''), {});
+            const posed = _externalPick(src, tool?.bodies, tool?.offset, 'previewBoolean');
+            if (posed !== src) track(src);
+            track(posed);
+            external.push(posed);
+          }
           const bodies = _cutBodiesOf(clone);
           for (const body of bodies) track(body);
-          const selected = _booleanSelected(bodies, options.bodies);
+          const spec = (external.length && (!Array.isArray(options.bodies) || !options.bodies.length))
+            ? [{ at: _cutCentroid(bodies[0]) }]
+            : options.bodies;
+          const selected = _booleanSelected(bodies, spec);
           const sel = new Set(selected);
           pieces = [];
           for (let i = 0; i < bodies.length; i++) {
@@ -8594,8 +8703,8 @@ self.onmessage = async (event) => {
               mesh: serializeResult(bodies[i]),
             });
           }
-          if (selected.length >= 2) {
-            const picked = selected.map((i) => bodies[i]);
+          if (selected.length + external.length >= 2) {
+            const picked = [...selected.map((i) => bodies[i]), ...external];
             const combined = _booleanCombine(op, picked);
             track(combined.result);
             for (const extra of combined.temps) track(extra);
@@ -8614,6 +8723,47 @@ self.onmessage = async (event) => {
           for (const m of created) _safeDeleteManifold(m);
         }
         self.postMessage({ type: 'result', id, payload: { pieces } });
+        break;
+      }
+
+      // Which parts a subtract cutter actually overlaps. The cutter script
+      // runs here (frozen text, not cached) and each part is rebuilt from its
+      // last mesh. cachedManifold is not read or assigned.
+      case 'probeOverlap': {
+        if (!isInitialized) throw new Error('Worker not initialized');
+        const options = (payload && typeof payload === 'object') ? payload : {};
+        const created = [];
+        const overlaps = [];
+        try {
+          const cutter = executeScript(String(options.cutterScript || ''), {});
+          if (!cutter || typeof cutter.intersect !== 'function') {
+            throw new Error('probeOverlap: cutter script must return a Manifold');
+          }
+          created.push(cutter);
+          for (const part of Array.isArray(options.parts) ? options.parts : []) {
+            if (!part?.mesh?.vertProperties || !part?.mesh?.triVerts) continue;
+            let solid = null;
+            let posed = null;
+            let both = null;
+            try {
+              solid = reconstructManifold(part.mesh);
+              const off = Array.isArray(part.offset) ? part.offset.map(Number) : [0, 0, 0];
+              posed = (off[0] || off[1] || off[2]) ? cutter.translate(off) : cutter;
+              both = manifoldModule.Manifold.intersection(posed, solid);
+              const vol = _cutVol(both);
+              if (vol > 1e-6) overlaps.push({ id: part.id, volume: vol });
+            } catch (_) {
+              // A part whose mesh will not rebuild is not cut.
+            } finally {
+              _safeDeleteManifold(both);
+              if (posed && posed !== cutter) _safeDeleteManifold(posed);
+              _safeDeleteManifold(solid);
+            }
+          }
+        } finally {
+          for (const m of created) _safeDeleteManifold(m);
+        }
+        self.postMessage({ type: 'result', id, payload: { overlaps } });
         break;
       }
 

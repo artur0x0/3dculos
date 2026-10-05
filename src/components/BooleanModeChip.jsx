@@ -1,6 +1,12 @@
 import React from 'react';
 import { Check, X } from 'lucide-react';
-import { booleanOp, booleanSlot } from '../utils/booleanMode';
+import {
+  booleanOp,
+  booleanSlot,
+  booleanPicksInOrder,
+  booleanTargetPartId,
+  booleanCrossPart,
+} from '../utils/booleanMode';
 
 /**
  * Boolean chip — same shell as CutModeChip.
@@ -9,12 +15,18 @@ import { booleanOp, booleanSlot } from '../utils/booleanMode';
  * The chip is not a modal. The cross-section rail (z-40) and the part
  * manager stay reachable, and hiding a part does not clear its picks.
  * Confirm writes one booleanBodies(); grey X exits with no write.
+ *
+ * Picks span parts. The first tap is the target and its part is written.
+ * A tool body on another part is copied into the target at Confirm (frozen,
+ * not linked) and that Boolean chip gets a yellow border.
  */
 const BooleanModeChip = ({
   state = null,
   partId = null,
   compact = false,
   pieceCount = 0,
+  /** part id → display name, for the cross-part line. */
+  partNames = null,
   onOp,
   onPickTarget,
   onUndo,
@@ -24,9 +36,13 @@ const BooleanModeChip = ({
 }) => {
   const op = booleanOp(state?.op);
   const pick = state?.pick === 'pieces' && op === 'intersect' ? 'pieces' : 'bodies';
-  const slot = booleanSlot(state, partId);
-  const bodyCount = slot.bodies.length;
+  const picks = booleanPicksInOrder(state);
+  const targetId = booleanTargetPartId(state) ?? partId;
+  const crossPart = booleanCrossPart(state);
+  const slot = booleanSlot(state, targetId);
+  const bodyCount = picks.length;
   const dropCount = slot.drop.length;
+  const nameOf = (id) => (partNames && partNames[id]) || id;
   const canConfirm = bodyCount >= 2 && !(op === 'intersect' && pieceCount > 0 && dropCount >= pieceCount);
 
   let status;
@@ -152,6 +168,14 @@ const BooleanModeChip = ({
             </>
           )}
         </div>
+        {crossPart && (
+          <p
+            className="text-[11px] text-yellow-200 leading-snug m-0 border-l-2 border-yellow-400 pl-1.5"
+            data-boolean-cross-part="1"
+          >
+            Writes {nameOf(targetId)}. Tool bodies from other parts are copied in at Confirm — not linked.
+          </p>
+        )}
         <p className="text-[11px] text-cyan-200/80 leading-snug m-0">
           Section and the part list stay open. Hiding a part keeps its picks.
         </p>

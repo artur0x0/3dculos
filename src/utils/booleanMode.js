@@ -11,10 +11,23 @@
  * unsectioned body so the script still names the real centroid.
  *
  * Confirm writes one booleanBodies() and replaces the previous Boolean block.
+ *
+ * Cross-part (edit-what-you-touch C): picks may span parts. The first pick,
+ * in tap order across every part, is the target, and Confirm writes the
+ * target's part. A tool body in another part is frozen into the target at
+ * Confirm: that part's script text is embedded in the Boolean block as
+ * externalBody(function () { … }, { bodies, offset }), posed by the
+ * assembly offset. Not linked; deleting the Boolean deletes the copy.
  */
 
 import { BOOLEAN_BEGIN, BOOLEAN_END } from './helperPaletteSnippets.js';
 import { meshBodyComponents, bodyContainingTriangle, cutBodyKey } from './cutMode.js';
+import {
+  EXTERNAL_COPY_FAILED_SOURCE,
+  externalCopyHeader,
+  frozenScriptFunction,
+  partOffset,
+} from './externalCopy.js';
 
 export { meshBodyComponents, bodyContainingTriangle, cutBodyKey };
 
@@ -87,6 +100,8 @@ export function emptyBooleanState() {
     pick: 'bodies',
     /** part id → { bodies, drop }. Hiding a part must not rewrite its slot. */
     byPart: {},
+    /** Tap counter. Each body pick carries `seq` so order spans parts. */
+    seq: 0,
     body: 'part',
   };
 }
@@ -123,13 +138,73 @@ function withSlot(state, partId, slot) {
   };
 }
 
-function copyBody(body) {
-  return {
+function copyBody(body, seq) {
+  const out = {
     center: (body.center || body.at).map(Number),
     at: (body.at || body.center).map(Number),
     triangles: (body.triangles || []).slice(),
     minTri: body.minTri,
   };
+  if (Number.isFinite(seq)) out.seq = seq;
+  if (body.soup) out.soup = body.soup;
+  return out;
+}
+
+/**
+ * The body's triangles as a flat xyz list in that part's frame. Lets the
+ * viewport keep showing a pick on a part that is no longer the pick mesh.
+ */
+export function bodySoup(body, positions, index) {
+  const tris = body?.triangles || [];
+  if (!tris.length || !positions || !index) return null;
+  const out = new Float32Array(tris.length * 9);
+  let k = 0;
+  for (const tri of tris) {
+    const verts = triVerts(tri, positions, index);
+    if (!verts) continue;
+    for (const v of verts) {
+      out[k] = v[0];
+      out[k + 1] = v[1];
+      out[k + 2] = v[2];
+      k += 3;
+    }
+  }
+  return k === out.length ? out : out.slice(0, k);
+}
+
+/**
+ * Every body pick across parts, in tap order. Picks without `seq` (older
+ * state) keep their slot order after the numbered ones.
+ */
+export function booleanPicksInOrder(state) {
+  const byPart = state?.byPart || {};
+  const out = [];
+  let n = 0;
+  for (const [partId, slot] of Object.entries(byPart)) {
+    const bodies = Array.isArray(slot?.bodies) ? slot.bodies : [];
+    for (const body of bodies) {
+      out.push({
+        partId,
+        body,
+        order: Number.isFinite(body?.seq) ? body.seq : 1e9 + n,
+      });
+      n += 1;
+    }
+  }
+  out.sort((a, b) => a.order - b.order);
+  return out;
+}
+
+/** Part of the first pick (the target), or null. */
+export function booleanTargetPartId(state) {
+  const first = booleanPicksInOrder(state)[0];
+  return first ? first.partId : null;
+}
+
+/** More than one part holds body picks. */
+export function booleanCrossPart(state) {
+  const parts = new Set(booleanPicksInOrder(state).map((p) => p.partId));
+  return parts.size > 1;
 }
 
 /**
@@ -349,28 +424,47 @@ export function applyBooleanTap(state, tap = {}) {
     list.splice(idx, 1);
     return { state: withSlot(s, partId, { bodies: list, drop: [] }) };
   }
-  list.push(copyBody(hit));
-  return { state: withSlot(s, partId, { bodies: list, drop: slot.drop }) };
+  const seq = (Number.isFinite(s.seq) ? s.seq : 0) + 1;
+  const soupPos = tap.sectioned ? tap.basePositions : tap.positions;
+  const soupIdx = tap.sectioned ? tap.baseIndex : tap.index;
+  const picked = copyBody(hit, seq);
+  if (!picked.soup) {
+    const soup = bodySoup(picked, soupPos, soupIdx);
+    if (soup) picked.soup = soup;
+  }
+  list.push(picked);
+  return { state: { ...withSlot(s, partId, { bodies: list, drop: slot.drop }), seq } };
 }
 
 export function popLastBooleanPick(state, partId) {
   const s = state || emptyBooleanState();
-  const slot = booleanSlot(s, partId);
   if (s.pick === 'pieces') {
+    const slot = booleanSlot(s, partId);
     const drop = slot.drop.slice();
     drop.pop();
     return withSlot(s, partId, { bodies: slot.bodies, drop });
   }
+  // Undo drops the latest body pick, whichever part it is on.
+  const picks = booleanPicksInOrder(s);
+  const last = picks[picks.length - 1];
+  const owner = last ? last.partId : booleanPartKey(partId);
+  const slot = booleanSlot(s, owner);
   const bodies = slot.bodies.slice();
-  bodies.pop();
-  return withSlot(s, partId, { bodies, drop: [] });
+  const at = last ? bodies.indexOf(last.body) : bodies.length - 1;
+  if (at >= 0) bodies.splice(at, 1);
+  return withSlot(s, owner, { bodies, drop: [] });
 }
 
 export function clearBooleanPicks(state, partId) {
   const s = state || emptyBooleanState();
   const slot = booleanSlot(s, partId);
   if (s.pick === 'pieces') return withSlot(s, partId, { bodies: slot.bodies, drop: [] });
-  return withSlot(s, partId, { bodies: [], drop: [] });
+  // Clear drops the body picks on every part (they are one Boolean).
+  let next = s;
+  for (const key of Object.keys(s.byPart || {})) {
+    next = withSlot(next, key, { bodies: [], drop: [] });
+  }
+  return withSlot(next, partId, { bodies: [], drop: [] });
 }
 
 export function booleanPieceHidden(state, partId, at) {
@@ -396,28 +490,103 @@ export function stripBooleanBlock(buffer) {
 }
 
 /**
- * Confirm uses the active part's slot. Other parts' picks stay in the mode
- * until dismiss; they are not written, because the editor holds one part.
+ * Confirm uses every body pick, in tap order across parts. The first is the
+ * target and its part is the one written (`targetPartId`). Tools in that part
+ * are named by centroid. Tools in other parts are `external`, grouped by part
+ * in first-tap order, and become frozen copies. Intersect drops are the
+ * target part's slot.
  */
 export function validateBooleanAccept(state, partId, mesh = null) {
   const s = state || emptyBooleanState();
   const op = booleanOp(s.op);
-  const slot = booleanSlot(s, partId);
-  const bodies = slot.bodies;
-  if (bodies.length < 1) return { ok: false, message: BOOLEAN_MODE_NEED_BODIES };
-  if (bodies.length < 2) return { ok: false, message: BOOLEAN_MODE_NEED_TOOL };
+  const picks = booleanPicksInOrder(s);
+  if (picks.length < 1) return { ok: false, message: BOOLEAN_MODE_NEED_BODIES };
+  if (picks.length < 2) return { ok: false, message: BOOLEAN_MODE_NEED_TOOL };
+  const targetPartId = picks[0].partId;
+  const bodies = picks.filter((p) => p.partId === targetPartId).map((p) => p.body);
+  const external = [];
+  for (const p of picks) {
+    if (p.partId === targetPartId) continue;
+    let group = external.find((g) => g.partId === p.partId);
+    if (!group) {
+      group = { partId: p.partId, bodies: [] };
+      external.push(group);
+    }
+    group.bodies.push(p.body);
+  }
+  const slot = booleanSlot(s, targetPartId);
   const pieceCount = Number(mesh?.pieceCount);
   if (op === 'intersect' && pieceCount > 0 && slot.drop.length >= pieceCount) {
     return { ok: false, message: BOOLEAN_MODE_ALL_DROPPED };
   }
-  return { ok: true, op, bodies, drop: op === 'intersect' ? slot.drop : [] };
+  return {
+    ok: true,
+    op,
+    targetPartId: targetPartId === '__active__' ? (partId ?? null) : targetPartId,
+    bodies,
+    external,
+    crossPart: external.length > 0,
+    drop: op === 'intersect' ? slot.drop : [],
+  };
+}
+
+function contextPart(ctx, id) {
+  const parts = ctx?.parts || {};
+  return parts[id] || parts[String(id)] || null;
+}
+
+/**
+ * External tools for the worker preview and for the script, posed into the
+ * target frame. `ctx.parts[id]` is `{ script, name, position, ok }`.
+ */
+export function booleanExternalTools(gate, ctx = {}) {
+  if (!gate?.ok) return { ok: false, message: gate?.message || BOOLEAN_MODE_NEED_TOOL };
+  const target = contextPart(ctx, gate.targetPartId);
+  const tools = [];
+  for (const group of gate.external || []) {
+    const src = contextPart(ctx, group.partId);
+    if (!src || typeof src.script !== 'string') {
+      return { ok: false, message: 'Boolean: that tool part has no script to copy.' };
+    }
+    if (src.ok === false) {
+      return { ok: false, message: EXTERNAL_COPY_FAILED_SOURCE(src.name) };
+    }
+    tools.push({
+      partId: group.partId,
+      name: src.name || group.partId,
+      script: src.script,
+      bodies: group.bodies.map((b) => ({ at: b.at.map(Number) })),
+      offset: partOffset(src.position, target?.position),
+    });
+  }
+  return { ok: true, tools };
+}
+
+/** Worker payload for the intersect Pieces preview. */
+export function booleanPreviewRequest(state, partId, ctx = {}) {
+  const gate = validateBooleanAccept(state, partId);
+  if (!gate.ok) return gate;
+  const bodies = gate.bodies.map((b) => ({ at: b.at.map(Number) }));
+  if (!gate.crossPart) return { ok: true, op: gate.op, bodies, targetPartId: gate.targetPartId };
+  const ext = booleanExternalTools(gate, ctx);
+  if (!ext.ok) return ext;
+  const target = contextPart(ctx, gate.targetPartId);
+  return {
+    ok: true,
+    op: gate.op,
+    bodies,
+    targetPartId: gate.targetPartId,
+    targetScript: typeof target?.script === 'string' ? target.script : undefined,
+    tools: ext.tools.map((t) => ({ script: t.script, bodies: t.bodies, offset: t.offset })),
+  };
 }
 
 /**
  * Confirm → one booleanBodies() wrapped in Boolean markers.
- * Always replaces the last marked Boolean block.
+ * Always replaces the last marked Boolean block. `buffer` is the target
+ * part's script. A cross-part pick embeds each tool part's script.
  */
-export function composeBooleanCommit(buffer, state, partId, mesh = null) {
+export function composeBooleanCommit(buffer, state, partId, mesh = null, ctx = {}) {
   const gate = validateBooleanAccept(state, partId, mesh);
   if (!gate.ok) return gate;
   const bodyName = state?.body || 'part';
@@ -427,15 +596,31 @@ export function composeBooleanCommit(buffer, state, partId, mesh = null) {
     const drops = gate.drop.map((d) => `{ at: ${formatVec(d.at)} }`).join(', ');
     optParts.push(`drop: [${drops}]`);
   }
-  const call = `${bodyName} = booleanBodies(${bodyName}, { ${optParts.join(', ')} });`;
-  const base = stripReturn(stripBooleanBlock(String(buffer || '')));
-  const block = [BOOLEAN_BEGIN, call, BOOLEAN_END].join('\n');
-  const composed = base ? `${base}\n${block}\nreturn part;\n` : `${block}\nreturn part;\n`;
-  const ownedStart = composed.lastIndexOf(BOOLEAN_BEGIN);
-  const ownedEnd = composed.indexOf(BOOLEAN_END, ownedStart);
-  const owned = composed.slice(ownedStart, ownedEnd + BOOLEAN_END.length);
-  if ((owned.match(/booleanBodies\s*\(/g) || []).length !== 1) {
+  let tools = [];
+  if (gate.crossPart) {
+    const ext = booleanExternalTools(gate, ctx);
+    if (!ext.ok) return ext;
+    tools = ext.tools;
+    optParts.push('tools: [__TOOLS__]');
+  }
+  const skeleton = `${bodyName} = booleanBodies(${bodyName}, { ${optParts.join(', ')} });`;
+  if ((skeleton.match(/booleanBodies\s*\(/g) || []).length !== 1) {
     return { ok: false, message: 'composeBooleanCommit: Boolean must emit exactly one booleanBodies().' };
   }
-  return { ok: true, buffer: composed, run: true };
+  const headers = tools.map((t) => externalCopyHeader({ sourceName: t.name, sourceId: t.partId }));
+  const toolText = tools.map((t) => {
+    const at = t.bodies.map((b) => `{ at: ${formatVec(b.at)} }`).join(', ');
+    return `externalBody(${frozenScriptFunction(t.script)}, { bodies: [${at}], offset: ${formatVec(t.offset)} })`;
+  }).join(',\n');
+  const call = tools.length ? skeleton.replace('__TOOLS__', `\n${toolText}\n`) : skeleton;
+  const base = stripReturn(stripBooleanBlock(String(buffer || '')));
+  const block = [BOOLEAN_BEGIN, ...headers, call, BOOLEAN_END].join('\n');
+  const composed = base ? `${base}\n${block}\nreturn part;\n` : `${block}\nreturn part;\n`;
+  return {
+    ok: true,
+    buffer: composed,
+    run: true,
+    targetPartId: gate.targetPartId,
+    external: tools.length,
+  };
 }

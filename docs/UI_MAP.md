@@ -156,7 +156,10 @@ Mobile specifics:
   Undo and Redo stay visible, call the same `handleUndo` / `handleRedo` as the
   editor toolbar, and do not change which chips appear. Strip taps / long-press
   still open a **feature sheet**. `hideWhenEmpty` skips the "No features" caption;
-  the bar itself stays mounted so Undo and Redo remain. Chip highlight (`featureStripActiveId`)
+  the bar itself stays mounted so Undo and Redo remain. A chip whose block holds a
+  frozen copy of another part's geometry (`externalBody`) has a 2px yellow border
+  (`data-feature-external="1"`), active or not; its feature sheet says External copy.
+  Chip highlight (`featureStripActiveId`)
   clears on sheet cancel/accept/delete (and after script jump). C.4+: Script-stage
   editor stack is full-bleed (`absolute inset-0`) so the top ribbon
   (`data-editor-ribbon`, `w-full`) spans the viewport; the vertical strip overlays
@@ -402,8 +405,11 @@ Import `src/utils/importModel.js` (+ `POST /api/convert/step`); export
   `CutModeChip` (plane cut — a face plane or an explicit XY/YZ/ZX, offset along
   the normal, Shell sticky picker for bodies and pieces, one `cut()`),
   `BooleanModeChip` (Union / Difference / Intersect, same sticky body picker,
-  Intersect pieces, one `booleanBodies()`). Contour Extrude / Revolve / Sweep /
+  Intersect pieces, one `booleanBodies()`; picks may span parts and tools from
+  another part are copied into the target). Contour Extrude / Revolve / Sweep /
   Loft and every Block solid share an Add / Subtract mode on that same feature.
+  Subtract also cuts every other visible part the cutter overlaps (a yellow
+  chip on each of those parts).
 - **Feature popups all use `src/components/controls/popupUI.jsx`** — one type
   scale (`POPUP_TEXT`), one set of fields, accents per surface (`cyan` contour,
   `amber` fillet, `slate` helper sheets). **Every number renders a slider AND a

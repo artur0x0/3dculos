@@ -36,8 +36,12 @@ over inventing a new modal layout.
   is the target, later taps are tools, tap again removes. Intersect opens
   Pieces: tap hides a leftover, tap again brings it back (the hidden piece
   stays in the scene at opacity 0 so it still hits). Undo and Clear follow
-  Cut. No shift-click. Confirm writes one `booleanBodies()` for the active
-  part and replaces a previous Boolean block; grey X exits with no write.
+  Cut. No shift-click. Picks may span parts: the first tap is still the
+  target and Confirm writes that target's part (it is loaded into the editor
+  first). A tool on another part shows a yellow-edged line on the chip
+  (`data-boolean-cross-part="1"`) and is copied into the target at Confirm.
+  Confirm writes one `booleanBodies()` and replaces a previous Boolean
+  block; grey X exits with no write. Undo drops the latest pick on any part.
   The chip is not a scrim (`z-20`, `pointer-events-auto` on the card only).
   The cross-section panel stays at `z-40`, so section stays usable while
   picking. Hiding a part in the part manager does not clear that part's picks.
