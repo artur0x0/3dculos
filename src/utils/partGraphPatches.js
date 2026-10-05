@@ -329,16 +329,25 @@ export function buildPartGraphPatches(mesh, opts = {}) {
 
   // κ for unlocked (curved-candidate) atoms: mean smooth dihedral to other
   // unlocked atoms. Locked flats do not inflate the proxy.
+  // Neighbor lists keep atomAdj insertion order, so the mean matches the
+  // old scan of every record (Manifold's per-triangle faceID makes one atom
+  // per triangle, and that scan was quadratic in the fillet).
+  const adjByAtom = Array.from({ length: atomCount }, () => []);
+  for (const rec of atomAdj) {
+    adjByAtom[rec.a].push(rec);
+    if (rec.b !== rec.a) adjByAtom[rec.b].push(rec);
+  }
   const atomK = new Float64Array(atomCount);
   for (let a = 0; a < atomCount; a++) {
     if (atomLockedFlat[a]) {
       atomK[a] = 0;
       continue;
     }
+    const recs = adjByAtom[a];
     let sum = 0;
     let n = 0;
-    for (const rec of atomAdj) {
-      if (rec.a !== a && rec.b !== a) continue;
+    for (let i = 0; i < recs.length; i++) {
+      const rec = recs[i];
       const other = rec.a === a ? rec.b : rec.a;
       if (atomLockedFlat[other]) continue;
       if (rec.max >= kFeatureDeg) continue;
@@ -348,8 +357,8 @@ export function buildPartGraphPatches(mesh, opts = {}) {
     // Fall back to any smooth boundary (incl. to flats) so isolated shreds
     // still get a rate signal relative to their blend neighbours.
     if (n === 0) {
-      for (const rec of atomAdj) {
-        if (rec.a !== a && rec.b !== a) continue;
+      for (let i = 0; i < recs.length; i++) {
+        const rec = recs[i];
         if (rec.max >= kFeatureDeg) continue;
         sum += rec.sum / rec.n;
         n++;
@@ -479,11 +488,27 @@ export function buildPartGraphPatches(mesh, opts = {}) {
     const inv = 1 / SEAM_VERTEX_MM;
     const cosSeam = Math.cos((PATCH_PLANAR_DEG * Math.PI) / 180);
     const buckets = new Map();
+    // 17 bits per axis stays inside the 53-bit mantissa (2^51). Cells outside
+    // ±65536 (±1310 mm at this pitch) fall back to a string so a large part
+    // still finds the same neighbors.
+    const CELL = 131072;
+    const CELL_BIAS = 65536;
+    const cellKey = (x, y, z) => {
+      if (x < -CELL_BIAS || y < -CELL_BIAS || z < -CELL_BIAS
+        || x >= CELL_BIAS || y >= CELL_BIAS || z >= CELL_BIAS) {
+        return `${x}|${y}|${z}`;
+      }
+      return ((x + CELL_BIAS) * CELL + (y + CELL_BIAS)) * CELL + (z + CELL_BIAS);
+    };
     for (let t = 0; t < numTri; t++) {
       if (triArea[t] < 1e-8) continue;
       for (let k = 0; k < 3; k++) {
         const i = indices[t * 3 + k];
-        const key = `${Math.floor(positions[i * 3] * inv)}|${Math.floor(positions[i * 3 + 1] * inv)}|${Math.floor(positions[i * 3 + 2] * inv)}`;
+        const key = cellKey(
+          Math.floor(positions[i * 3] * inv),
+          Math.floor(positions[i * 3 + 1] * inv),
+          Math.floor(positions[i * 3 + 2] * inv),
+        );
         let list = buckets.get(key);
         if (!list) {
           list = [];
@@ -492,13 +517,19 @@ export function buildPartGraphPatches(mesh, opts = {}) {
         list.push(t);
       }
     }
-    const linked = seamTouch.map(() => new Set());
+    // One stamp per triangle replaces a Set: a neighbor is tested once, and
+    // a failed test is not retried from another vertex of the same triangle.
+    const seenStamp = new Int32Array(numTri);
+    let stamp = 1;
     for (let t = 0; t < numTri; t++) {
       if (triArea[t] < 1e-8) continue;
+      if (++stamp === 0x7fffffff) {
+        seenStamp.fill(0);
+        stamp = 1;
+      }
       const n = triN[t];
       const c = triCent[t];
       const off = c[0] * n[0] + c[1] * n[1] + c[2] * n[2];
-      const seen = new Set();
       for (let k = 0; k < 3; k++) {
         const i = indices[t * 3 + k];
         const cx = Math.floor(positions[i * 3] * inv);
@@ -507,12 +538,12 @@ export function buildPartGraphPatches(mesh, opts = {}) {
         for (let dx = -1; dx <= 1; dx++) {
           for (let dy = -1; dy <= 1; dy++) {
             for (let dz = -1; dz <= 1; dz++) {
-              const list = buckets.get(`${cx + dx}|${cy + dy}|${cz + dz}`);
+              const list = buckets.get(cellKey(cx + dx, cy + dy, cz + dz));
               if (!list) continue;
               for (let li = 0; li < list.length; li++) {
                 const nb = list[li];
-                if (nb === t || seen.has(nb) || linked[t].has(nb)) continue;
-                seen.add(nb);
+                if (nb === t || seenStamp[nb] === stamp) continue;
+                seenStamp[nb] = stamp;
                 if (triArea[nb] < 1e-8 || !sameBody(t, nb)) continue;
                 const nd = n[0] * triN[nb][0] + n[1] * triN[nb][1] + n[2] * triN[nb][2];
                 if (nd < cosSeam) continue;
@@ -535,7 +566,6 @@ export function buildPartGraphPatches(mesh, opts = {}) {
                 }
                 if (!close) continue;
                 seamTouch[t].push(nb);
-                linked[t].add(nb);
               }
             }
           }
@@ -571,26 +601,95 @@ export function buildPartGraphPatches(mesh, opts = {}) {
   const planarOrder = patches
     .filter((p) => p.kind === 'planar' && p.tris.length)
     .sort((a, b) => b.area - a.area);
+  // Triangles that can be claimed by a plane sit in a tight normal/offset
+  // bin (onPlane is 0.5° and 0.05 mm). The bridge flood is the same no-op
+  // when that bin has nothing claimable, which is the common case for a
+  // fillet facet. Bins are a superset: cell size is coarser than the test,
+  // and the search covers every adjacent cell, so a real on-plane triangle
+  // is never missed. The flood and the seam walk still run when any
+  // candidate passes the exact test.
+  const NBIN = 0.02;
+  const OBIN = 0.05;
+  const planeBins = new Map();
+  const packBin = (ix, iy, iz, io) => (
+    (((ix + 80) * 160 + (iy + 80)) * 160 + (iz + 80)) * 400001 + (io + 200000)
+  );
+  for (let t = 0; t < numTri; t++) {
+    if (triArea[t] < 1e-8) continue;
+    const n = triN[t];
+    const c = triCent[t];
+    const key = packBin(
+      Math.floor(n[0] / NBIN),
+      Math.floor(n[1] / NBIN),
+      Math.floor(n[2] / NBIN),
+      Math.floor((c[0] * n[0] + c[1] * n[1] + c[2] * n[2]) / OBIN),
+    );
+    let list = planeBins.get(key);
+    if (!list) {
+      list = [];
+      planeBins.set(key, list);
+    }
+    list.push(t);
+  }
+  // One stamp for every planar patch. A fresh Uint8Array per patch was a
+  // large allocation on a filleted solid (hundreds of flats).
+  const bridgeSeen = new Int32Array(numTri);
+  let bridgeGen = 1;
   for (const p of planarOrder) {
     const seed = p.tris.filter((t) => triPatch[t] === p.id);
     if (!seed.length) continue;
     const offP = planeOffset(p);
+    const pn = p.normal;
+    const pix = Math.floor(pn[0] / NBIN);
+    const piy = Math.floor(pn[1] / NBIN);
+    const piz = Math.floor(pn[2] / NBIN);
+    const pio = Math.floor(offP / OBIN);
+    let claimable = false;
+    scan: for (let dx = -1; dx <= 1 && !claimable; dx++) {
+      for (let dy = -1; dy <= 1 && !claimable; dy++) {
+        for (let dz = -1; dz <= 1 && !claimable; dz++) {
+          for (let dOff = -2; dOff <= 2 && !claimable; dOff++) {
+            const list = planeBins.get(packBin(pix + dx, piy + dy, piz + dz, pio + dOff));
+            if (!list) continue;
+            for (let li = 0; li < list.length; li++) {
+              const nb = list[li];
+              if (!onPlane(nb, p, offP) || triPatch[nb] === p.id) continue;
+              const owner = patches[triPatch[nb]];
+              if (owner && owner.kind === 'planar' && owner.area > p.area) continue;
+              claimable = true;
+              break scan;
+            }
+          }
+        }
+      }
+    }
+    if (!claimable) continue;
     const stack = seed.slice();
-    const seen = new Uint8Array(numTri);
-    for (const t of stack) seen[t] = 1;
+    // Triangles that belong to this patch after the bridge walk. Starts as
+    // the seed (every triangle still labelled p, since each triangle begins
+    // in exactly one patch) and grows when the walk claims one. Avoids a
+    // scan of the whole mesh once per planar patch.
+    const members = seed.slice();
+    if (++bridgeGen === 0x7fffffff) {
+      bridgeSeen.fill(0);
+      bridgeGen = 1;
+    }
+    const gen = bridgeGen;
+    for (const t of stack) bridgeSeen[t] = gen;
     while (stack.length) {
       const t = stack.pop();
       const nbs = neighbors[t];
       for (let i = 0; i < nbs.length; i++) {
         const nb = nbs[i];
-        if (seen[nb]) continue;
-        seen[nb] = 1;
+        if (bridgeSeen[nb] === gen) continue;
+        bridgeSeen[nb] = gen;
         if (bridgeOff(nb, p.normal, offP) > PLANE_BRIDGE_MM) continue;
         stack.push(nb);
         if (!onPlane(nb, p, offP) || triPatch[nb] === p.id) continue;
         const owner = patches[triPatch[nb]];
         if (owner && owner.kind === 'planar' && owner.area > p.area) continue;
         triPatch[nb] = p.id;
+        members.push(nb);
       }
     }
     // The needle between two copies of a cap vertex is not an edge, and it
@@ -600,7 +699,8 @@ export function buildPartGraphPatches(mesh, opts = {}) {
     // path leaves the plane.
     const seamStack = [];
     const seamSeen = new Uint8Array(numTri);
-    for (let t = 0; t < numTri; t++) {
+    for (let i = 0; i < members.length; i++) {
+      const t = members[i];
       if (triPatch[t] !== p.id) continue;
       seamSeen[t] = 1;
       seamStack.push(t);

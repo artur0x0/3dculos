@@ -99,6 +99,7 @@ class ManifoldWorker {
       
       // Store request
       this.pendingRequests.set(requestId, {
+        sentAt: performance.now(),
         resolve: (result) => {
           clearTimeout(timeoutId);
           resolve(result);
@@ -616,6 +617,13 @@ class ManifoldWorker {
         const request = this.pendingRequests.get(id);
         if (request) {
           this.pendingRequests.delete(id);
+          if (payload && payload.timing && request.sentAt != null) {
+            const roundTripMs = performance.now() - request.sentAt;
+            const execMs = Number(payload.timing.execMs) || 0;
+            const serializeMs = Number(payload.timing.serializeMs) || 0;
+            payload.timing.roundTripMs = roundTripMs;
+            payload.timing.transferMs = Math.max(0, roundTripMs - execMs - serializeMs);
+          }
           request.resolve(payload);
         }
         break;

@@ -2752,9 +2752,11 @@ function c4MeshData(m) {
       const c = [0, 0, 0];
       let areaSum = 0;
       const all = [];
+      const seenVert = new Set();
       const trisSub = gis.map(gi => tris[gi]);
       for (const t of trisSub) {
-        const v0 = V[mesh.triVerts[t*3]], v1 = V[mesh.triVerts[t*3+1]], v2 = V[mesh.triVerts[t*3+2]];
+        const i0 = mesh.triVerts[t*3], i1 = mesh.triVerts[t*3+1], i2 = mesh.triVerts[t*3+2];
+        const v0 = V[i0], v1 = V[i1], v2 = V[i2];
         const cxv = _c4Cross(_c4Sub(v1, v0), _c4Sub(v2, v0));
         const area = 0.5 * _c4Len(cxv);
         const tn = _c4Norm(cxv);
@@ -2763,8 +2765,8 @@ function c4MeshData(m) {
         const tc = [(v0[0]+v1[0]+v2[0])/3, (v0[1]+v1[1]+v2[1])/3, (v0[2]+v1[2]+v2[2])/3];
         c[0] += tc[0]*area; c[1] += tc[1]*area; c[2] += tc[2]*area;
         areaSum += area;
-        for (const v of [v0, v1, v2]) {
-          if (!all.includes(v)) all.push(v);
+        for (const id of [i0, i1, i2]) {
+          if (!seenVert.has(id)) { seenVert.add(id); all.push(V[id]); }
         }
       }
       const center = areaSum > 1e-18 ? _c4Mul(1/areaSum, c) : [0, 0, 0];
@@ -2844,13 +2846,15 @@ function c4MeshData(m) {
           const c = [0, 0, 0];
           let areaSum = 0;
           const all = [];
+          const seenVert = new Set();
           const trisSub = [];
           let id = faces[members[0]].id;
           for (const fi of members) {
             id = Math.min(id, faces[fi].id);
             for (const t of faces[fi].tris) {
               trisSub.push(t);
-              const v0 = V[mesh.triVerts[t*3]], v1 = V[mesh.triVerts[t*3+1]], v2 = V[mesh.triVerts[t*3+2]];
+              const i0 = mesh.triVerts[t*3], i1 = mesh.triVerts[t*3+1], i2 = mesh.triVerts[t*3+2];
+              const v0 = V[i0], v1 = V[i1], v2 = V[i2];
               const cxv = _c4Cross(_c4Sub(v1, v0), _c4Sub(v2, v0));
               const area = 0.5 * _c4Len(cxv);
               const tn = _c4Norm(cxv);
@@ -2858,8 +2862,8 @@ function c4MeshData(m) {
               const tc = [(v0[0]+v1[0]+v2[0])/3, (v0[1]+v1[1]+v2[1])/3, (v0[2]+v1[2]+v2[2])/3];
               c[0] += tc[0]*area; c[1] += tc[1]*area; c[2] += tc[2]*area;
               areaSum += area;
-              for (const v of [v0, v1, v2]) {
-                if (!all.includes(v)) all.push(v);
+              for (const vi of [i0, i1, i2]) {
+                if (!seenVert.has(vi)) { seenVert.add(vi); all.push(V[vi]); }
               }
             }
           }
@@ -5030,65 +5034,283 @@ function _s23DihedralContour(radius, theta, profileKind, arcSegs, testScale) {
   return contour;
 }
 
-/** Extrude + warp with one (N,B) frame per segment. Not an RMF from path start. */
-function _s23SweepExplicit(Manifold, profile, points, frames, extrudeSegments) {
+/**
+ * One dihedral sweep's ring stations, for the quality golden.
+ * Each filletAlongPath call appends `{ knots, origins }`. `knots` are the
+ * path points after densify (the 5° stations). `origins` are the cutter-ring
+ * centers actually placed. A uniform extrude can skip a short chord; this
+ * log is how the golden checks that did not happen.
+ */
+function _s23BeginSweepRingCall() {
+  if (typeof globalThis === 'undefined') return;
+  if (!globalThis.__filletSweepRingLog) globalThis.__filletSweepRingLog = [];
+  const call = { knots: [], origins: [] };
+  globalThis.__filletSweepRingLog.push(call);
+  globalThis.__filletSweepRingCall = call;
+}
+
+function _s23SetSweepRingKnots(points) {
+  const call = typeof globalThis !== 'undefined' ? globalThis.__filletSweepRingCall : null;
+  if (!call || !Array.isArray(points)) return;
+  call.knots = points.map((p) => [p[0], p[1], p[2]]);
+}
+
+function _s23AddRingOrigins(origins) {
+  const call = typeof globalThis !== 'undefined' ? globalThis.__filletSweepRingCall : null;
+  if (!call || !origins) return;
+  for (let i = 0; i < origins.length; i++) {
+    const p = origins[i];
+    call.origins.push([p[0], p[1], p[2]]);
+  }
+}
+
+/**
+ * Weld tolerance for the fillet result. Long "fins" on the wrap are
+ * triangles with a short edge under this distance and a long edge along a
+ * ruling; the rounded-wrap rim comes back as several chains because those
+ * duplicated vertices are not shared by index. Snapping them does not move
+ * a real feature: arc chords at FILLET_ARC_SEGMENTS are ~0.2 mm.
+ */
+const _S23_RESULT_WELD_MM = 0.001;
+
+/**
+ * A straight fillet whose ruling is the whole edge (30 mm on the playtest
+ * cube) comes back with the cap loop in three chains. One interpolated
+ * ring on a span longer than this, still on the ruled quad, makes that
+ * loop a single chain. The volume is unchanged. Path knots are not moved
+ * and arcs under this length stay one quad. `__FILLET_REF_STATION_MM`,
+ * when set, replaces this step with a finer measurement grid.
+ */
+const _S23_LONG_CHORD_MM = 29;
+
+/**
+ * Fill spans longer than the chord step with linearly interpolated rings.
+ * New vertices lie on the ruled quad between the knots.
+ */
+function _s23RefineReferenceRings(rings, closed) {
+  const ref = typeof globalThis !== 'undefined' ? Number(globalThis.__FILLET_REF_STATION_MM) : 0;
+  const step = ref > 0 ? ref : _S23_LONG_CHORD_MM;
+  if (!(step > 0) || !Array.isArray(rings) || rings.length < 2) return rings;
+  const n = rings.length;
+  const spans = closed ? n : n - 1;
+  const out = [];
+  for (let i = 0; i < spans; i++) {
+    const a = rings[i];
+    const b = rings[(i + 1) % n];
+    if (!out.length) out.push(a);
+    const K = a.length;
+    let span = 0;
+    for (let k = 0; k < K; k++) {
+      const d = Math.hypot(b[k][0] - a[k][0], b[k][1] - a[k][1], b[k][2] - a[k][2]);
+      if (d > span) span = d;
+    }
+    const cuts = Math.max(1, Math.ceil(span / step - 1e-9));
+    for (let s = 1; s < cuts; s++) {
+      const t = s / cuts;
+      const ring = new Array(K);
+      for (let k = 0; k < K; k++) {
+        ring[k] = [
+          a[k][0] + (b[k][0] - a[k][0]) * t,
+          a[k][1] + (b[k][1] - a[k][1]) * t,
+          a[k][2] + (b[k][2] - a[k][2]) * t,
+        ];
+      }
+      out.push(ring);
+    }
+    if (!closed || i < spans - 1) out.push(b);
+  }
+  return out;
+}
+
+/**
+ * Drop triangles out of their original runs. runIndex counts halfedges
+ * (3 per triangle). A run that loses every triangle is removed; the
+ * survivors keep that run's originalID and each triangle's faceID.
+ * @returns {object|null}
+ */
+function _s23CompactFilletRuns(mesh, triVerts, keptTri) {
+  const runIndex = mesh.runIndex;
+  const runOriginalID = mesh.runOriginalID;
+  const faceID = mesh.faceID;
+  const nTri = triVerts.length / 3;
+  if (!runIndex || !runOriginalID || runIndex.length !== runOriginalID.length + 1) return null;
+  const nRun = runOriginalID.length;
+  const triRun = new Int32Array(nTri);
+  triRun.fill(-1);
+  for (let r = 0; r < nRun; r++) {
+    const a = runIndex[r];
+    const b = runIndex[r + 1];
+    if ((a % 3) !== 0 || (b % 3) !== 0 || b < a) return null;
+    const t0 = a / 3;
+    const t1 = b / 3;
+    if (t1 > nTri) return null;
+    for (let t = t0; t < t1; t++) triRun[t] = r;
+  }
+  const groups = Array.from({ length: nRun }, () => []);
+  for (let i = 0; i < keptTri.length; i++) {
+    const t = keptTri[i];
+    const r = triRun[t];
+    if (r < 0) return null;
+    groups[r].push(t);
+  }
+  const outTri = [];
+  const outFace = [];
+  const outRunIndex = [0];
+  const outRunId = [];
+  const outTransform = [];
+  const transforms = mesh.runTransform;
+  const hasXform = transforms && transforms.length === nRun;
+  for (let r = 0; r < nRun; r++) {
+    const g = groups[r];
+    if (!g.length) continue;
+    for (let i = 0; i < g.length; i++) {
+      const t = g[i];
+      outTri.push(triVerts[t * 3], triVerts[t * 3 + 1], triVerts[t * 3 + 2]);
+      outFace.push(faceID[t] >>> 0);
+    }
+    outRunIndex.push(outTri.length);
+    outRunId.push(runOriginalID[r] >>> 0);
+    if (hasXform) outTransform.push(transforms[r]);
+  }
+  if (outRunId.length < 1) return null;
+  return {
+    triVerts: new Uint32Array(outTri),
+    faceID: new Uint32Array(outFace),
+    runIndex: new Uint32Array(outRunIndex),
+    runOriginalID: new Uint32Array(outRunId),
+    runTransform: hasXform ? outTransform : null,
+  };
+}
+
+/**
+ * Snap vertices closer than `_S23_RESULT_WELD_MM` and drop the collapsed
+ * triangles. A rebuild that is not a strict solid, or that moves the volume
+ * by more than 0.001 mm³, is discarded and the boolean result stands.
+ */
+function _s23WeldFilletResult(manifold) {
+  let mesh;
+  try {
+    mesh = manifold.getMesh();
+  } catch {
+    return manifold;
+  }
+  const np = mesh.numProp || 3;
+  const src = mesh.vertProperties;
+  const n = src.length / np;
+  if (!(n >= 4) || !mesh.triVerts || mesh.triVerts.length < 3) return manifold;
+  const xyz = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) {
+    xyz[i * 3] = src[i * np];
+    xyz[i * 3 + 1] = src[i * np + 1];
+    xyz[i * 3 + 2] = src[i * np + 2];
+  }
+  const welded = _weldMeshData(xyz, mesh.triVerts, _S23_RESULT_WELD_MM);
+  const T = welded.triVerts;
+  const nTri = T.length / 3;
+  if (!mesh.faceID || mesh.faceID.length < nTri) return manifold;
+  const keptTri = [];
+  for (let t = 0; t < nTri; t++) {
+    const a = T[t * 3];
+    const b = T[t * 3 + 1];
+    const c = T[t * 3 + 2];
+    if (a === b || b === c || c === a) continue;
+    keptTri.push(t);
+  }
+  if (keptTri.length < 1 || keptTri.length === nTri) {
+    // Nothing collapsed, or the whole mesh did. Identical vertices are not
+    // a fin until a triangle loses a corner, so an unchanged set is a no-op.
+    if (keptTri.length === nTri) return manifold;
+    return manifold;
+  }
+  const packed = _s23CompactFilletRuns(mesh, T, keptTri);
+  if (!packed) return manifold;
+  let builtManifold;
+  try {
+    const { Mesh, Manifold } = manifoldModule;
+    const meshIn = {
+      numProp: 3,
+      vertProperties: welded.vertProperties,
+      triVerts: packed.triVerts,
+      faceID: packed.faceID,
+      runIndex: packed.runIndex,
+      runOriginalID: packed.runOriginalID,
+    };
+    if (packed.runTransform) meshIn.runTransform = packed.runTransform;
+    builtManifold = new Manifold(new Mesh(meshIn));
+  } catch {
+    return manifold;
+  }
+  if (_c4StatusError(builtManifold)) return manifold;
+  const v0 = manifold.volume();
+  const v1 = builtManifold.volume();
+  if (!(Number.isFinite(v1) && Math.abs(v1 - v0) < 1e-3)) return manifold;
+  return builtManifold;
+}
+
+function _s23PlaceContourRing(contour, origin, N, B) {
+  const ring = new Array(contour.length);
+  const ox = origin[0];
+  const oy = origin[1];
+  const oz = origin[2];
+  const Nx = N[0];
+  const Ny = N[1];
+  const Nz = N[2];
+  const Bx = B[0];
+  const By = B[1];
+  const Bz = B[2];
+  for (let k = 0; k < contour.length; k++) {
+    const u = contour[k][0];
+    const v = contour[k][1];
+    ring[k] = [
+      ox + u * Nx + v * Bx,
+      oy + u * Ny + v * By,
+      oz + u * Nz + v * Bz,
+    ];
+  }
+  return ring;
+}
+
+/**
+ * Dihedral cutter as one ring per path point. The ring at knot i uses that
+ * segment's frame; the end knot reuses the last frame. Nothing is inserted
+ * between knots — a long straight and a 0.3 mm arc chord both get exactly
+ * their own stations, which a uniform extrude slice count does not.
+ * Caps come from varyingProfileTubeMesh (fan from the rear bumper).
+ */
+function _s23SweepKnotRings(points, frames, contour) {
   const nSeg = points.length - 1;
   if (nSeg < 1 || frames.length !== nSeg) {
     throw new Error('filletAlongPath: sweep frame count does not match the path');
   }
-  const segLens = [];
-  const cum = [0];
+  const rings = new Array(nSeg + 1);
+  const origins = new Array(nSeg + 1);
   for (let i = 0; i < nSeg; i++) {
-    const a = points[i];
-    const b = points[i + 1];
-    const L = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
-    segLens.push(L);
-    cum.push(cum[cum.length - 1] + L);
+    const fr = frames[i];
+    origins[i] = points[i];
+    rings[i] = _s23PlaceContourRing(contour, points[i], fr.N, fr.B);
   }
-  const total = cum[cum.length - 1];
-  if (!(total > 1e-12)) throw new Error('filletAlongPath: polyline path has zero length');
-  const straight = Manifold.extrude(profile, total, extrudeSegments);
-  const warp = (v) => {
-    let x = v[0];
-    let y = v[1];
-    let s = v[2];
-    if (s < 0) s = 0;
-    if (s > total) s = total;
-    let i = 0;
-    while (i < nSeg - 1 && cum[i + 1] < s - 1e-12) i++;
-    const L = segLens[i] || 1;
-    const frac = Math.max(0, Math.min(1, (s - cum[i]) / L));
-    const a = points[i];
-    const b = points[i + 1];
-    const P0 = a[0] + frac * (b[0] - a[0]);
-    const P1 = a[1] + frac * (b[1] - a[1]);
-    const P2 = a[2] + frac * (b[2] - a[2]);
-    // C3.1/C3.2: lerp N/B toward next frame, then Gram-Schmidt so the ridge
-    // frame stays orthonormal between knots (linear N+B lerp alone shears).
-    const fr0 = frames[i];
-    const fr1 = frames[Math.min(i + 1, frames.length - 1)];
-    let Nx = fr0.N[0], Ny = fr0.N[1], Nz = fr0.N[2];
-    let Bx = fr0.B[0], By = fr0.B[1], Bz = fr0.B[2];
-    if (fr1 && fr1 !== fr0) {
-      Nx += frac * (fr1.N[0] - fr0.N[0]);
-      Ny += frac * (fr1.N[1] - fr0.N[1]);
-      Nz += frac * (fr1.N[2] - fr0.N[2]);
-      Bx += frac * (fr1.B[0] - fr0.B[0]);
-      By += frac * (fr1.B[1] - fr0.B[1]);
-      Bz += frac * (fr1.B[2] - fr0.B[2]);
-      const nL = Math.hypot(Nx, Ny, Nz) || 1;
-      Nx /= nL; Ny /= nL; Nz /= nL;
-      // Drop B onto plane ⊥ N, then renorm (preserves handedness via lerp hint).
-      const nb = Nx * Bx + Ny * By + Nz * Bz;
-      Bx -= nb * Nx; By -= nb * Ny; Bz -= nb * Nz;
-      const bL = Math.hypot(Bx, By, Bz) || 1;
-      Bx /= bL; By /= bL; Bz /= bL;
-    }
-    v[0] = P0 + x * Nx + y * Bx;
-    v[1] = P1 + x * Ny + y * By;
-    v[2] = P2 + x * Nz + y * Bz;
-  };
-  return straight.warp(warp);
+  const frLast = frames[nSeg - 1];
+  origins[nSeg] = points[nSeg];
+  rings[nSeg] = _s23PlaceContourRing(contour, points[nSeg], frLast.N, frLast.B);
+  _s23AddRingOrigins(origins);
+  const mesh = varyingProfileTubeMesh(_s23RefineReferenceRings(rings, false), false);
+  let solid;
+  let repair;
+  try {
+    ({ manifold: solid, repair } = _meshDataToManifold(mesh.vertProperties, mesh.triVerts));
+  } catch (e) {
+    throw new Error(
+      `filletAlongPath: sweep cutter is not a valid solid (${e && e.message ? e.message : e})`,
+    );
+  }
+  // Same loud fail as the varying-profile tube: a weld means two rings collided.
+  if (repair !== 'strict') {
+    throw new Error(
+      `filletAlongPath: sweep cutter needed mesh repair (${repair}) — `
+      + 'rings collide along the path. Reduce radius or re-pick edges.',
+    );
+  }
+  return solid;
 }
 
 function _s23SweepRun(Manifold, CrossSection, runGeom, radius, profileKind, arcSegs, testScale) {
@@ -5121,9 +5343,12 @@ function _s23SweepRun(Manifold, CrossSection, runGeom, radius, profileKind, arcS
     sweepFrames = runGeom.frames.concat([runGeom.frames[0]]);
   }
   const contour = _s23DihedralContour(radius, thetaUse, profileKind, arcSegs, testScale);
-  const cs = new CrossSection([contour]);
-  const extrudeSegments = Math.min(256, Math.max(48, sweepFrames.length * 4));
-  return _s23SweepExplicit(Manifold, cs, sweepPts, sweepFrames, extrudeSegments);
+  // One ring at every knot of this run, including the closed-loop overlap
+  // stations appended above. Uniform Manifold.extrude slices space themselves
+  // by arc length, so a 28 mm straight in the same run as 0.3 mm arc chords
+  // leaves the turns unsampled. The cross-section between knots is the
+  // contour itself (FILLET_ARC_SEGMENTS), not a second densify.
+  return _s23SweepKnotRings(sweepPts, sweepFrames, contour);
 }
 
 /** Last variable-profile framing meta — golden pin (m3 bypass → missing / undensified). */
@@ -5387,7 +5612,11 @@ function _s23VaryingProfileTube(runSegs, wrapClosed, radius, profileKind, arcSeg
       tail.p1, tail.N, tail.B,
     ));
   }
-  const mesh = varyingProfileTubeMesh(rings, wrapClosed);
+  const ringOrigins = [];
+  for (let i = 0; i < runSegs.length; i++) ringOrigins.push(runSegs[i].p0);
+  if (!wrapClosed) ringOrigins.push(runSegs[runSegs.length - 1].p1);
+  _s23AddRingOrigins(ringOrigins);
+  const mesh = varyingProfileTubeMesh(_s23RefineReferenceRings(rings, wrapClosed), wrapClosed);
   let solid;
   let repair;
   try {
@@ -5624,10 +5853,21 @@ let _s23CaptureFaceSoupOn = false;
 let _s23FaceSoupPart = null;
 let _s23FaceSoup = null;
 
+// One fillet builds every cutter against the same solid. signedFeatureEdges
+// walks the whole mesh. Cache that walk on the part object so each semi-arc
+// run does not rebuild it. The boolean result is a different object, so the
+// next fillet misses and rebuilds.
+let _s23FeatureEdgePart = null;
+let _s23FeatureEdges = null;
+
 function _s23ProbeFeatureEdges(part) {
+  if (part && part === _s23FeatureEdgePart && _s23FeatureEdges) return _s23FeatureEdges;
   _s23CaptureFaceSoupOn = true;
   try {
-    return signedFeatureEdges(part);
+    const edges = signedFeatureEdges(part);
+    _s23FeatureEdgePart = part;
+    _s23FeatureEdges = edges;
+    return edges;
   } finally {
     _s23CaptureFaceSoupOn = false;
   }
@@ -5736,29 +5976,52 @@ function _s23StampJunctionTurns(segs, junction) {
   }
 }
 
-function _s23PadShallowSplitEnd(seg, which, turnDeg, radius) {
+/**
+ * Extend an open run end without moving the knot. The original station stays
+ * a cutter ring; the pad is a new colinear station past it, same frame.
+ * Moving the knot instead left that 5° station with no ring (the quality
+ * golden) and pulled the junction off the neighbor run.
+ */
+function _s23SpliceOpenEnd(segs, which, dist) {
+  if (!Array.isArray(segs) || !segs.length || !(dist > 1e-4)) return 0;
+  const seg = which === 'end' ? segs[segs.length - 1] : segs[0];
+  if (!seg?.T || !seg.N || !seg.B || !seg.p0 || !seg.p1) return 0;
+  const tLen = Math.hypot(seg.T[0], seg.T[1], seg.T[2]);
+  if (!(tLen > 1e-12)) return 0;
+  const T = [seg.T[0] / tLen, seg.T[1] / tLen, seg.T[2] / tLen];
+  const tout = which === 'end' ? T : [-T[0], -T[1], -T[2]];
+  const origin = (which === 'end' ? seg.p1 : seg.p0).slice();
+  const moved = [
+    origin[0] + tout[0] * dist,
+    origin[1] + tout[1] * dist,
+    origin[2] + tout[2] * dist,
+  ];
+  const ext = {
+    T: seg.T.slice(),
+    N: seg.N.slice(),
+    B: seg.B.slice(),
+    theta: seg.theta,
+    length: dist,
+    f0: seg.f0,
+    f1: seg.f1,
+    convex: seg.convex,
+    p0: which === 'end' ? origin : moved,
+    p1: which === 'end' ? moved : origin.slice(),
+  };
+  if (which === 'end') segs.push(ext);
+  else segs.unshift(ext);
+  return dist;
+}
+
+function _s23PadShallowSplitEnd(segs, which, turnDeg, radius) {
   // No tag: this is an original path end (the draft extension owns it).
   // Above ~20°: a hard corner split, left to the two cutters' own overlap.
   // A same-radius joint can be far under the 5° corner gate after densify
   // and still meets as two open ends with no overlap.
   if (!Number.isFinite(turnDeg) || turnDeg > _S23_SHALLOW_SPLIT_DEG) return 0;
-  if (!seg?.T || !seg.p0 || !seg.p1) return 0;
   const pad = filletSweepCutterExpand(radius);
   if (!(pad > 1e-9)) return 0;
-  const tLen = Math.hypot(seg.T[0], seg.T[1], seg.T[2]);
-  if (!(tLen > 1e-12)) return 0;
-  const T = [seg.T[0] / tLen, seg.T[1] / tLen, seg.T[2] / tLen];
-  const tout = which === 'end' ? T : [-T[0], -T[1], -T[2]];
-  const origin = which === 'end' ? seg.p1 : seg.p0;
-  const moved = [
-    origin[0] + tout[0] * pad,
-    origin[1] + tout[1] * pad,
-    origin[2] + tout[2] * pad,
-  ];
-  if (which === 'end') seg.p1 = moved;
-  else seg.p0 = moved;
-  seg.length = (Number(seg.length) || 0) + pad;
-  return pad;
+  return _s23SpliceOpenEnd(segs, which, pad);
 }
 
 /** A run whose ends do not share a tangent is a rounded path. */
@@ -5798,26 +6061,20 @@ function _s23ExtendOpenRunEnds(part, segs, radius, profileKind, arcSegs) {
       part, origin, tout, seg.N, seg.B, seg.theta, radius, profileKind, arcSegs,
     );
     if (!(dist > 1e-4)) continue;
-    const moved = [
-      origin[0] + tout[0] * dist,
-      origin[1] + tout[1] * dist,
-      origin[2] + tout[2] * dist,
-    ];
-    if (which === 'end') seg.p1 = moved;
-    else seg.p0 = moved;
-    seg.length = (Number(seg.length) || 0) + dist;
+    const spliced = _s23SpliceOpenEnd(segs, which, dist);
+    if (!(spliced > 0)) continue;
     drafted.add(which);
-    if (dist > applied) applied = dist;
+    if (spliced > applied) applied = spliced;
   }
   // Shallow internal splits only. Original path ends have no split tag, and
   // an end the draft extension already moved is left at that distance.
   const shallow = [
-    ['start', segs[0], segs[0] && segs[0]._splitInDeg],
-    ['end', segs[segs.length - 1], segs[segs.length - 1] && segs[segs.length - 1]._splitOutDeg],
+    ['start', segs[0] && segs[0]._splitInDeg],
+    ['end', segs[segs.length - 1] && segs[segs.length - 1]._splitOutDeg],
   ];
-  for (const [which, seg, turn] of shallow) {
+  for (const [which, turn] of shallow) {
     if (drafted.has(which)) continue;
-    const pad = _s23PadShallowSplitEnd(seg, which, turn, radius);
+    const pad = _s23PadShallowSplitEnd(segs, which, turn, radius);
     if (pad > applied) applied = pad;
   }
   return applied;
@@ -6101,6 +6358,7 @@ function filletAlongPath(part, path, radius, opts = {}) {
     const owned = _filletOnlyOwningBody(M, part, path, radius, opts);
     if (owned) return owned;
   }
+  _s23BeginSweepRingCall();
 
   const profileKind = (opts.profile === 'chamfer') ? 'chamfer' : 'fillet';
   const arcSegs = opts.segments != null ? opts.segments : FILLET_ARC_SEGMENTS;
@@ -6157,6 +6415,7 @@ function filletAlongPath(part, path, radius, opts = {}) {
       length = pathPolylineLength(points, closed);
     }
   }
+  _s23SetSweepRingKnots(points);
 
   // Sweep-path policy seam (planFilletSweepPath): keep the full wire by
   // default (never skip-micro). Corner arcs (same-r or R≠cutter) return
@@ -6210,19 +6469,15 @@ function filletAlongPath(part, path, radius, opts = {}) {
       if (!cutters.length) {
         throw new Error('filletAlongPath: corner-arc semi-arc split produced no valid cutters');
       }
-      let tool = cutters[0];
-      for (let i = 1; i < cutters.length; i++) {
-        try {
-          tool = M.union([tool, cutters[i]]);
-        } catch (e) {
-          throw new Error(`filletAlongPath: semi-arc cutter union failed — ${e && e.message ? e.message : e}`);
-        }
-      }
-      const seTool = _c4StatusError(tool);
-      if (seTool) throw new Error(`filletAlongPath: bad semi-arc cutter union (${seTool})`);
+      // One n-way subtract. A − (C1 ∪ C2 ∪ …) is the same solid as A − C1 − C2 − …,
+      // and Manifold evaluates that as a single arrangement. Chaining
+      // union(union(C1, C2), C3) … forced a full boolean per semi-arc on the
+      // growing cutter. Each cutter was already status-checked when it was swept.
       let out;
       try {
-        out = M.difference(part, tool);
+        out = cutters.length === 1
+          ? M.difference(part, cutters[0])
+          : M.difference([part, ...cutters]);
       } catch (e) {
         throw new Error(`filletAlongPath: semi-arc subtract failed — ${e && e.message ? e.message : e}`);
       }
@@ -6564,6 +6819,9 @@ function filletAlongPath(part, path, radius, opts = {}) {
   } catch (e) {
     if (/decompose found|dirty solid/i.test(String(e && e.message))) throw e;
   }
+  // Duplicated vertices along a ruling split the convex rim and leave
+  // long degenerate fins. The weld is index-only; volume must stay put.
+  out = _s23WeldFilletResult(out);
   // Loud fail if the kept solid still has many degenerate tris (attached slivers).
   try {
     const mesh = out.getMesh();
@@ -7242,6 +7500,13 @@ const initializeManifold = async () => {
   }
 };
 
+// Captured before lockdown. The lockdown spreads `performance` into a frozen
+// object, which drops `now` (it lives on the prototype), so a later
+// `performance.now()` throws and the script never runs.
+const _perfNow = (typeof performance !== 'undefined' && typeof performance.now === 'function')
+  ? performance.now.bind(performance)
+  : () => Date.now();
+
 /**
  * Block dangerous globals
  */
@@ -7634,12 +7899,19 @@ self.onmessage = async (event) => {
         }
         
         const { script, importedModels, memoryLimitMB, nonce } = payload;
+        if (typeof globalThis !== 'undefined') {
+          globalThis.__filletSweepRingLog = [];
+          globalThis.__filletSweepRingCall = null;
+        }
         
         // Check memory before execution
         checkMemoryUsage(memoryLimitMB || 512);
         
-        // Execute the script
+        // Execute the script. execMs is the kernel; serializeMs is the mesh
+        // copy that follows. The main thread adds the postMessage gap.
+        const _execT0 = _perfNow();
         const result = executeScript(script, importedModels);
+        const _execMs = _perfNow() - _execT0;
         
         // Cache the manifold for cross-section operations (+ nonce for game compare)
         cachedManifold = result;
@@ -7654,7 +7926,9 @@ self.onmessage = async (event) => {
         const memoryUsed = checkMemoryUsage(memoryLimitMB || 512);
         
         // Serialize result for transfer
+        const _serT0 = _perfNow();
         const meshData = serializeResult(result);
+        const _serializeMs = _perfNow() - _serT0;
         
         // Get metadata for quoting/display
         const volume = result.volume();
@@ -7677,6 +7951,7 @@ self.onmessage = async (event) => {
             },
             nonce: cachedExecuteNonce,
             bodyCentroids,
+            timing: { execMs: _execMs, serializeMs: _serializeMs },
           }
         });
         break;
