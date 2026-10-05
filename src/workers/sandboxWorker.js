@@ -7314,6 +7314,13 @@ const initializeManifold = async () => {
   }
 };
 
+// Captured before lockdown. The lockdown spreads `performance` into a frozen
+// object, which drops `now` (it lives on the prototype), so a later
+// `performance.now()` throws and the script never runs.
+const _perfNow = (typeof performance !== 'undefined' && typeof performance.now === 'function')
+  ? performance.now.bind(performance)
+  : () => Date.now();
+
 /**
  * Block dangerous globals
  */
@@ -7716,9 +7723,9 @@ self.onmessage = async (event) => {
         
         // Execute the script. execMs is the kernel; serializeMs is the mesh
         // copy that follows. The main thread adds the postMessage gap.
-        const _execT0 = performance.now();
+        const _execT0 = _perfNow();
         const result = executeScript(script, importedModels);
-        const _execMs = performance.now() - _execT0;
+        const _execMs = _perfNow() - _execT0;
         
         // Cache the manifold for cross-section operations (+ nonce for game compare)
         cachedManifold = result;
@@ -7733,9 +7740,9 @@ self.onmessage = async (event) => {
         const memoryUsed = checkMemoryUsage(memoryLimitMB || 512);
         
         // Serialize result for transfer
-        const _serT0 = performance.now();
+        const _serT0 = _perfNow();
         const meshData = serializeResult(result);
-        const _serializeMs = performance.now() - _serT0;
+        const _serializeMs = _perfNow() - _serT0;
         
         // Get metadata for quoting/display
         const volume = result.volume();
