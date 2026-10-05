@@ -6,7 +6,7 @@ import SquareText from './icons/SquareText';
  * Slice Mobile B — iPhone Home Screen–style stage control.
  *
  * Bottom translucent glass pill. Three Lucide icons, in order: CAD (box),
- * Script (square-text), Parts (layout-list). Tap a third to switch stage;
+ * Parts (layout-list), Script (square-text). Tap a third to switch stage;
  * session sticky via the caller (`3dculos.mobileStage`). Desktop never
  * mounts this.
  *
@@ -31,7 +31,7 @@ export default function MobileStageToggle({ stage = 'cad', onChange }) {
       data-mobile-stage-toggle=""
       data-home-indicator=""
       role="group"
-      aria-label="CAD, Script, or Parts"
+      aria-label="CAD, Parts, or Script"
       style={{ paddingBottom: 'max(8px, env(safe-area-inset-bottom, 0px))' }}
     >
       <div
@@ -49,18 +49,18 @@ export default function MobileStageToggle({ stage = 'cad', onChange }) {
         />
         <button
           type="button"
-          data-stage-btn="script"
-          aria-label="Script stage"
-          aria-pressed={isScript}
-          onClick={goScript}
-          className="absolute inset-y-0 left-1/3 w-1/3 z-10 active:bg-white/10"
-        />
-        <button
-          type="button"
           data-stage-btn="parts"
           aria-label="Parts stage"
           aria-pressed={isParts}
           onClick={goParts}
+          className="absolute inset-y-0 left-1/3 w-1/3 z-10 active:bg-white/10"
+        />
+        <button
+          type="button"
+          data-stage-btn="script"
+          aria-label="Script stage"
+          aria-pressed={isScript}
+          onClick={goScript}
           className="absolute inset-y-0 right-0 w-1/3 z-10 rounded-r-full active:bg-white/10"
         />
 
@@ -83,11 +83,11 @@ export default function MobileStageToggle({ stage = 'cad', onChange }) {
           <span data-stage-dot="cad" data-stage-icon="box" className={`flex items-center ${glyph(isCad)}`}>
             <Box size={16} strokeWidth={isCad ? 2.25 : 1.75} />
           </span>
-          <span data-stage-dot="script" data-stage-icon="square-text" className={`flex items-center ${glyph(isScript)}`}>
-            <SquareText size={16} strokeWidth={isScript ? 2.25 : 1.75} />
-          </span>
           <span data-stage-dot="parts" data-stage-icon="layout-list" className={`flex items-center ${glyph(isParts)}`}>
             <LayoutList size={16} strokeWidth={isParts ? 2.25 : 1.75} />
+          </span>
+          <span data-stage-dot="script" data-stage-icon="square-text" className={`flex items-center ${glyph(isScript)}`}>
+            <SquareText size={16} strokeWidth={isScript ? 2.25 : 1.75} />
           </span>
         </div>
       </div>

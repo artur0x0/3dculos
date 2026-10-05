@@ -16,6 +16,8 @@
 import { readFileSync } from 'node:fs';
 import { register } from 'node:module';
 import {
+  assemblyName,
+  assemblyNameFromFile,
   composeViewportParts,
   dropPartRecord,
   feedRows,
@@ -92,15 +94,41 @@ const BAD = 'let part = Manifold.cube([10, 10, 10], true);\nreturn part.missingM
     && /Find in repo/.test(feed)
     && /Upload/.test(feed)
     && /data-assembly-load/.test(feed));
-  check('mobile pager order is CAD, Script, then Parts',
+  check('mobile pager order is CAD, Parts, then Script',
     (() => {
       const cad = toggle.indexOf('data-stage-dot="cad"');
       const script = toggle.indexOf('data-stage-dot="script"');
       const parts = toggle.indexOf('data-stage-dot="parts"');
-      return cad >= 0 && cad < script && script < parts
-        && /data-stage-pane="parts"/.test(app)
-        && /data-stage-btn="parts"/.test(toggle);
+      const cadBtn = toggle.indexOf('data-stage-btn="cad"');
+      const partsBtn = toggle.indexOf('data-stage-btn="parts"');
+      const scriptBtn = toggle.indexOf('data-stage-btn="script"');
+      return cad >= 0 && cad < parts && parts < script
+        && cadBtn >= 0 && cadBtn < partsBtn && partsBtn < scriptBtn
+        && /data-stage-icon="box"/.test(toggle)
+        && /data-stage-icon="layout-list"/.test(toggle)
+        && /data-stage-icon="square-text"/.test(toggle)
+        && /data-stage-pane="parts"/.test(app);
     })());
+  const titleStart = view.indexOf('data-viewer-title');
+  const title = view.slice(titleStart, view.indexOf("mode === 'game' && gameSuccess", titleStart));
+  check('CAD title is an assembly bubble, a dash, then a separate part bubble',
+    titleStart >= 0
+    && title.indexOf('data-title-chip="assembly"') >= 0
+    && title.indexOf('data-title-chip="assembly"') < title.indexOf('data-title-dash')
+    && title.indexOf('data-title-dash') < title.indexOf('ViewportTitleChip inline')
+    && /\{assemblyLabel\}/.test(title)
+    && !/Untitled Assembly/.test(view)
+    && !/>\s*Assembly\s*</.test(title));
+  check('a missing assembly name leaves only the part bubble',
+    /assemblyLabel \? \(/.test(view)
+    && /data-title-dash/.test(view));
+  check('parts ribbon centers the assembly name',
+    /data-parts-ribbon-center/.test(feed)
+    && /data-assembly-name/.test(feed)
+    && /\{ribbonName\}/.test(feed)
+    && /absolute inset-0 z-\[1\] flex items-center justify-center/.test(feed)
+    && /data-parts-ribbon-center/.test(feed)
+    && /assemblyName=\{assemblyLabel\}/.test(app));
   check('a failed assembly part drops the cached solid and does not rebuild from it',
     /noShadow/.test(view)
     && /cachedMeshDataRef\.current = null/.test(fail)
@@ -184,6 +212,33 @@ const BAD = 'let part = Manifold.cube([10, 10, 10], true);\nreturn part.missingM
   check('a stored position is kept and a missing one is omitted',
     doc.parts.find((part) => part.id === 'local:box').position[0] === 30
     && !('position' in doc.parts.find((part) => part.id === 'local:wide')));
+  check('a document with no assembly name does not gain one',
+    !('name' in doc) && assemblyName(doc) === '' && assemblyName(null) === '');
+  const named = serializeAssembly({ ...doc, name: '  Gearbox  ' });
+  const blankName = serializeAssembly({ ...doc, name: '   ' });
+  check('a real assembly name is kept and a blank one is omitted',
+    named.name === 'Gearbox'
+    && assemblyName(named) === 'Gearbox'
+    && !('name' in blankName)
+    && assemblyName(blankName) === '');
+  const round = parseAssemblyDocument(JSON.stringify({
+    name: 'Gearbox',
+    source: 'local',
+    activeId: 'local:wide',
+    parts: [{ id: 'local:wide', name: 'Wide', visible: true, order: 0 }],
+  }));
+  check('parse keeps the assembly name and drops a blank one',
+    round.name === 'Gearbox'
+    && !('name' in parseAssemblyDocument({
+      name: '  ',
+      source: 'local',
+      parts: [{ id: 'local:wide', name: 'Wide' }],
+    })));
+  check('a loaded file name is used only when the document has none',
+    assemblyNameFromFile('projects/Gearbox.json') === 'Gearbox'
+    && assemblyNameFromFile('notes.txt') === 'notes.txt'
+    && assemblyNameFromFile('.json') === ''
+    && assemblyNameFromFile('') === '');
 
   const picked = scriptForRow(doc, scripts, 'local:box');
   check('selecting a row resolves that script from the id, not the document',
