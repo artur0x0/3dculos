@@ -74,6 +74,9 @@ Desktop specifics:
   `left-[4.5rem] lg:left-[5.25rem]`** so they clear the helper rail
   (`src/components/Viewport.jsx:3682`, `:3848`, `:3937`).
 - Title chip shows the filename, same as mobile — no toolbar carries it now.
+- **Parts feed:** the same list as the mobile Parts stage, mounted to the left
+  of the editor (`data-parts-feed-placement="desktop-left"`). Delete on a row
+  removes that part only.
 - `PromptInput` is passed `isMobile={false}` explicitly (`src/App.jsx:1345`).
 
 ### Mobile shell (`src/App.jsx` mobile branch) — CAD stages + game stack
@@ -113,6 +116,8 @@ Mobile specifics:
   iPhone Home Screen–style glass pill (`data-mobile-stage-home-indicator`,
   `data-home-indicator-pill`) with three Lucide icons: CAD (`Box`), Script
   (`square-text`), Parts (`LayoutList`). Tap a third to switch stage.
+  The Parts stage is the part list; each row has a delete control that
+  removes that part only (its script, its row, and its solid).
   Session-sticky via `3dculos.mobileStage`.
   Top CAD|Script text chrome is gone. Inert `data-ai-prompt-hook` marks a
   future AI-on-tap site (not wired). Contour/Fillet chips use `bottom-14` on

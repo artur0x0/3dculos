@@ -186,11 +186,12 @@ Fillet's marker comment still says the second Accept replaces. The call site pas
 
 The viewport can show more than the script in Monaco. An assembly is a list of parts. The editor still holds one part at a time.
 
-- **Desktop.** A feed pane sits to the left of the editor. Each row is a thumbnail and the part name, in feed order. A red bar marks the selected row and loads that part's script into Monaco. An eye on the row shows or hides that part.
+- **Desktop.** A feed pane sits to the left of the editor. Each row is a thumbnail and the part name, in feed order. A red bar marks the selected row and loads that part's script into Monaco. An eye on the row shows or hides that part. Delete on the row removes that part.
 - **Mobile.** The home-indicator pill uses Lucide icons. The order is CAD (box), then Script (square-text), then Parts (layout-list). The Parts stage is the same feed. Its top bar uses the script editor ribbon. Load lives in the feed pane.
 - **Document.** The saved assembly lists `id`, `name`, `visible`, and `order`. An optional `position` `[x, y, z]` is a translation the viewport applies. There are no mates. The script source is not in the JSON.
 - **Row id.** In git mode the id is a repo path and the part is that file. A path with no file yet offers Find in repo. In local mode the id is an IndexedDB key. A missing key offers Upload. Nothing else talks to git.
 - **Visibility and failure.** The viewport draws every visible part whose latest run returned a solid. A hidden row is left out. A failed script highlights that row and contributes no solid. The previous mesh is not kept.
+- **Delete.** That control drops one part: its row, its script, and its solid. The other parts stay. The active id stays on a remaining part, or is empty when none remain. A git file is left where it is.
 - **Graphs.** Face, edge, and body-contour graphs stay on the active part. They rebuild when that part's script succeeds, on the same path as a single script (edge graph and contours at the end of the run; face graph when the new mesh is shown). A failed or hidden active part clears its mesh and does not rebuild those graphs from a previous solid. The other visible parts are drawn beside it and are not the pick mesh, so they do not rebuild graphs.
 
 ## Goldens and fixtures
@@ -203,4 +204,4 @@ The viewport can show more than the script in Monaco. An assembly is a list of p
 - `golden:fillet-face-pick` is one click on a coplanar cap split by a fillet. The pick covers both former bodies and does not include the curved fillet. The two regions are one body.
 - `golden:fillet-cap-move` is Move Face on that cap when a fillet boolean left two copies of the vertices. Both sides offset. The drawn face has no needle between them. The highlight outline has no segment between the fillet side and the main side, and the curved fillet stays out of the pick. The cut cap at the same XY offsets too; the bottom cap stays where it is.
 - `golden:delete-face` removes a planar chamfer whose neighbors meet again, and throws when deleting a cube face would leave the solid open.
-- `golden:assembly` loads the selected row's script, drops a hidden row from the composed viewport, omits a failed script with no previous solid, and saves ids rather than inline scripts.
+- `golden:assembly` loads the selected row's script, drops a hidden row from the composed viewport, omits a failed script with no previous solid, saves ids rather than inline scripts, and drops a deleted part from the list and from the composed viewport.

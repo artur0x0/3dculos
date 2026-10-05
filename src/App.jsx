@@ -38,10 +38,12 @@ import {
 import { saveEditorDraft, loadEditorDraft } from './utils/editorDraft';
 import {
   composeViewportParts,
+  dropPartRecord,
   feedRows,
   newLocalPartId,
   normalizeRepoPath,
   parseAssemblyDocument,
+  removePart,
   reorderParts,
   scriptForRow,
   serializeAssembly,
@@ -49,6 +51,7 @@ import {
 } from './utils/assembly';
 import { runAssemblyParts } from './utils/assemblyRun';
 import {
+  deletePartScript,
   loadAssemblyDocument,
   loadPartScripts,
   saveAssemblyDocument,
@@ -92,6 +95,9 @@ const App = () => {
   const [partRuns, setPartRuns] = useState({});
   const assemblyRef = useRef(null);
   const partScriptsRef = useRef({});
+  const partRunsRef = useRef({});
+  /** Bumped when the active part changes out from under a pending autosave. */
+  const partSaveEpochRef = useRef(0);
   const refreshGenRef = useRef(0);
   const refreshAssemblyRef = useRef(async () => false);
   /** Missing-row placeholder must not become that part's stored script. */
@@ -817,7 +823,9 @@ const App = () => {
   useEffect(() => {
     if (!manifoldReady || editorInitialScript === null) return undefined;
     if (appMode === 'game' || !editorLiveRef.current) return undefined;
+    const epoch = partSaveEpochRef.current;
     const timer = setTimeout(() => {
+      if (epoch !== partSaveEpochRef.current) return;
       saveEditorDraft({ script: currentScript, filename: currentFilename });
       const id = assemblyRef.current?.activeId;
       if (id && !suppressPartSaveRef.current && typeof currentScript === 'string') {
@@ -1060,6 +1068,11 @@ const App = () => {
     setPartScripts(next);
   };
 
+  const commitPartRuns = (runs) => {
+    partRunsRef.current = runs || {};
+    setPartRuns(partRunsRef.current);
+  };
+
   const rememberAssembly = (doc) => {
     const clean = serializeAssembly(doc);
     assemblyRef.current = clean;
@@ -1132,7 +1145,7 @@ const App = () => {
     }
 
     if (gen !== refreshGenRef.current) return false;
-    setPartRuns(runs);
+    commitPartRuns(runs);
     const solids = composeViewportParts(doc, runs);
     const activeOk = !!(activeId && runs[activeId]?.ok === true && activeVisible);
     viewportRef.current?.placeAssembly?.({
@@ -1277,6 +1290,79 @@ const App = () => {
     suppressPartSaveRef.current = false;
     setCurrentFilename(id.split('/').pop() || id);
     codeEditorRef.current?.loadContent(text, id, false);
+  };
+
+  const handleDeletePart = (id) => {
+    const doc = assemblyRef.current;
+    if (!doc || id == null) return;
+    const key = String(id);
+    if (!doc.parts.some((part) => part.id === key)) return;
+
+    // An in-flight refresh still has the old document. Drop it so it cannot
+    // put this part's solid back.
+    refreshGenRef.current += 1;
+
+    const live = codeEditorRef.current?.getContent?.();
+    const prevActive = doc.activeId;
+    const deletingActive = prevActive === key;
+    let scripts = { ...partScriptsRef.current };
+    if (!deletingActive && prevActive && !suppressPartSaveRef.current && typeof live === 'string') {
+      scripts[prevActive] = live;
+      savePartScript(prevActive, live);
+    }
+    if (deletingActive) {
+      // The pending autosave still holds this part's script. Do not write it
+      // onto whichever row becomes active.
+      partSaveEpochRef.current += 1;
+      suppressPartSaveRef.current = true;
+    }
+
+    scripts = dropPartRecord(scripts, key);
+    rememberScripts(scripts);
+    deletePartScript(key);
+
+    const nextDoc = rememberAssembly(removePart(doc, key));
+    const runs = dropPartRecord(partRunsRef.current, key);
+    commitPartRuns(runs);
+
+    const nextActive = nextDoc.activeId;
+    viewportRef.current?.placeAssembly?.({
+      solids: composeViewportParts(nextDoc, runs),
+      activeId: deletingActive ? null : nextActive,
+      blankActive: deletingActive || !nextActive,
+    });
+
+    if (!nextActive) {
+      const note = '// No parts.\n';
+      setCurrentFilename(null);
+      saveEditorDraft({ script: note, filename: null });
+      codeEditorRef.current?.setTextOnly?.(note);
+      setCurrentScript(note);
+      return;
+    }
+
+    if (!deletingActive) {
+      refreshAssemblyRef.current?.(live, { persistActive: !suppressPartSaveRef.current });
+      return;
+    }
+
+    const part = nextDoc.parts.find((row) => row.id === nextActive);
+    setCurrentFilename(part?.name || null);
+    const picked = scriptForRow(nextDoc, scripts, nextActive);
+    if (picked.ok) {
+      suppressPartSaveRef.current = false;
+      if (codeEditorRef.current?.loadContent) {
+        codeEditorRef.current.loadContent(picked.script, part?.name || 'Part', false);
+      } else {
+        setCurrentScript(picked.script);
+        refreshAssemblyRef.current?.(picked.script);
+      }
+      return;
+    }
+    const note = '// This part has no file yet.\n';
+    codeEditorRef.current?.setTextOnly?.(note);
+    setCurrentScript(note);
+    refreshAssemblyRef.current?.(undefined, { persistActive: false });
   };
 
   const handleGameRun = async () => {
@@ -1969,6 +2055,7 @@ const App = () => {
       onResolveFile={handleResolvePartFile}
       onAddPart={handleAddPart}
       onAddGitPart={handleAddGitPart}
+      onDeletePart={handleDeletePart}
     />
   ) : null;
 

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { Eye, EyeOff, FilePlus, FolderOpen, GripVertical, Plus } from 'lucide-react';
+import { Eye, EyeOff, FilePlus, FolderOpen, GripVertical, Plus, Trash2 } from 'lucide-react';
 
 // Same ribbon and strip buttons as the script editor top bar
 // (CodeEditor `data-editor-ribbon` + Toolbar `variant="strip"`).
@@ -11,7 +11,8 @@ const STRIP_ICON = 18;
 /**
  * Parts feed. Desktop mounts it to the left of the editor. Mobile mounts it
  * as the Parts stage. Each row is a thumbnail and a name. A red bar marks
- * the selected row. The eye toggles visibility. Load lives in this pane.
+ * the selected row. The eye toggles visibility. Delete drops that part.
+ * Load lives in this pane.
  */
 function drawThumbnail(canvas, mesh) {
   const ctx = canvas.getContext('2d');
@@ -88,6 +89,7 @@ export default function PartFeed({
   onResolveFile,
   onAddPart,
   onAddGitPart,
+  onDeletePart,
 }) {
   const loadRef = useRef(null);
   const resolveRef = useRef(null);
@@ -306,6 +308,22 @@ export default function PartFeed({
                 }}
               >
                 {row.visible ? <Eye size={16} /> : <EyeOff size={16} />}
+              </button>
+              <button
+                type="button"
+                data-part-delete={row.id}
+                aria-label="Delete part"
+                title="Delete part"
+                className="shrink-0 rounded-full p-1.5 text-gray-400 hover:bg-white/10 hover:text-red-300"
+                onPointerDown={(event) => event.stopPropagation()}
+                onDragStart={(event) => event.stopPropagation()}
+                onKeyDown={(event) => event.stopPropagation()}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onDeletePart?.(row.id);
+                }}
+              >
+                <Trash2 size={16} />
               </button>
             </div>
           );
