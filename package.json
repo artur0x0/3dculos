@@ -90,6 +90,7 @@
         "golden:fillet-box-stack-and-loft": "node scripts/golden/smoke_fillet_box_stack_and_loft.mjs",
         "golden:fillet-wrap-draft": "node scripts/golden/smoke_fillet_wrap_draft.mjs",
         "golden:fillet-sweep-quality": "node scripts/golden/smoke_fillet_sweep_quality.mjs",
+        "golden:edge-contour-identity": "node scripts/golden/smoke_edge_contour_identity.mjs",
         "golden:playtest-draft-fillet-tear": "node scripts/golden/smoke_playtest_draft_fillet_tear.mjs",
         "golden:playtest-concave-fillet-tangency": "node scripts/golden/smoke_playtest_concave_fillet_tangency.mjs",
         "golden:face-click": "node scripts/golden/smoke_face_click_graph.mjs",

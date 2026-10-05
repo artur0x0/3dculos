@@ -36,16 +36,6 @@ export const FILLET_OVERLAY_LABEL_CAP = 240;
 function sub(a, b) {
   return [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 }
-function dot(a, b) {
-  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-}
-function cross(a, b) {
-  return [
-    a[1] * b[2] - a[2] * b[1],
-    a[2] * b[0] - a[0] * b[2],
-    a[0] * b[1] - a[1] * b[0],
-  ];
-}
 function len(v) {
   return Math.hypot(v[0], v[1], v[2]);
 }
@@ -74,6 +64,14 @@ function findOf(parent) {
  * @param {{ positions: ArrayLike<number>, indices: ArrayLike<number>, faceIDs: ArrayLike<number> }} mesh
  * @returns {{ faces: object[], edges: object[] }}
  */
+/** 26 bits per vertex index. Past that, the key falls back to a string. */
+const EDGE_PACK = 0x4000000;
+
+function packedEdgeKey(a, b) {
+  if (b >= EDGE_PACK) return `${a}-${b}`;
+  return a * EDGE_PACK + b;
+}
+
 export function indexBoundaryEdges(mesh) {
   const positions = mesh?.positions;
   const indices = mesh?.indices;
@@ -87,93 +85,153 @@ export function indexBoundaryEdges(mesh) {
     return [positions[o], positions[o + 1], positions[o + 2]];
   };
 
-  const tris = [];
+  const triA = new Int32Array(numTri);
+  const triB = new Int32Array(numTri);
+  const triC = new Int32Array(numTri);
+  const triNx = new Float64Array(numTri);
+  const triNy = new Float64Array(numTri);
+  const triNz = new Float64Array(numTri);
+  const triArea = new Float64Array(numTri);
+  const triCx = new Float64Array(numTri);
+  const triCy = new Float64Array(numTri);
+  const triCz = new Float64Array(numTri);
+  const triV0x = new Float64Array(numTri);
+  const triV0y = new Float64Array(numTri);
+  const triV0z = new Float64Array(numTri);
+  const triRaw = new Float64Array(numTri);
   for (let t = 0; t < numTri; t++) {
     const a = indices[t * 3];
     const b = indices[t * 3 + 1];
     const c = indices[t * 3 + 2];
-    const v0 = posAt(a);
-    const v1 = posAt(b);
-    const v2 = posAt(c);
-    const cr = cross(sub(v1, v0), sub(v2, v0));
-    const area = 0.5 * len(cr);
-    const n = area > 1e-18 ? norm(cr) : [0, 0, 1];
+    triA[t] = a;
+    triB[t] = b;
+    triC[t] = c;
+    const oa = a * 3;
+    const ob = b * 3;
+    const oc = c * 3;
+    const v0x = positions[oa];
+    const v0y = positions[oa + 1];
+    const v0z = positions[oa + 2];
+    const e1x = positions[ob] - v0x;
+    const e1y = positions[ob + 1] - v0y;
+    const e1z = positions[ob + 2] - v0z;
+    const e2x = positions[oc] - v0x;
+    const e2y = positions[oc + 1] - v0y;
+    const e2z = positions[oc + 2] - v0z;
+    const crx = e1y * e2z - e1z * e2y;
+    const cry = e1z * e2x - e1x * e2z;
+    const crz = e1x * e2y - e1y * e2x;
+    const crLen = Math.hypot(crx, cry, crz);
+    const area = 0.5 * crLen;
+    triArea[t] = area;
+    if (area > 1e-18) {
+      const inv = 1 / (crLen || 1);
+      triNx[t] = crx * inv;
+      triNy[t] = cry * inv;
+      triNz[t] = crz * inv;
+    } else {
+      triNx[t] = 0;
+      triNy[t] = 0;
+      triNz[t] = 1;
+    }
+    triV0x[t] = v0x;
+    triV0y[t] = v0y;
+    triV0z[t] = v0z;
+    triCx[t] = (v0x + positions[ob] + positions[oc]) / 3;
+    triCy[t] = (v0y + positions[ob + 1] + positions[oc + 1]) / 3;
+    triCz[t] = (v0z + positions[ob + 2] + positions[oc + 2]) / 3;
     const raw = Number(faceIDs[t]);
-    tris.push({
-      a, b, c, v0, v1, v2, n, area,
-      raw: Number.isFinite(raw) ? raw : t,
-      centroid: [
-        (v0[0] + v1[0] + v2[0]) / 3,
-        (v0[1] + v1[1] + v2[1]) / 3,
-        (v0[2] + v1[2] + v2[2]) / 3,
-      ],
-    });
+    triRaw[t] = Number.isFinite(raw) ? raw : t;
   }
 
-  const parent = tris.map((_, i) => i);
+  const parent = new Array(numTri);
+  for (let i = 0; i < numTri; i++) parent[i] = i;
   const { find, union } = findOf(parent);
   const edgeTris = new Map();
   const addE = (u, w, t) => {
-    const key = u < w ? `${u}-${w}` : `${w}-${u}`;
-    if (!edgeTris.has(key)) edgeTris.set(key, []);
-    edgeTris.get(key).push(t);
+    const lo = u < w ? u : w;
+    const hi = u < w ? w : u;
+    const key = packedEdgeKey(lo, hi);
+    let list = edgeTris.get(key);
+    if (!list) {
+      list = [];
+      edgeTris.set(key, list);
+    }
+    list.push(t);
   };
-  tris.forEach((tri, i) => {
-    addE(tri.a, tri.b, i);
-    addE(tri.b, tri.c, i);
-    addE(tri.c, tri.a, i);
-  });
+  for (let i = 0; i < numTri; i++) {
+    addE(triA[i], triB[i], i);
+    addE(triB[i], triC[i], i);
+    addE(triC[i], triA[i], i);
+  }
   for (const list of edgeTris.values()) {
     if (list.length !== 2) continue;
     const i0 = list[0];
     const i1 = list[1];
-    const A = tris[i0];
-    const B = tris[i1];
-    if (dot(A.n, B.n) < PLANAR_COS) continue;
-    const offA = dot(A.v0, A.n);
-    const offB = dot(B.v0, A.n);
+    const ndp = triNx[i0] * triNx[i1] + triNy[i0] * triNy[i1] + triNz[i0] * triNz[i1];
+    if (ndp < PLANAR_COS) continue;
+    const offA = triV0x[i0] * triNx[i0] + triV0y[i0] * triNy[i0] + triV0z[i0] * triNz[i0];
+    const offB = triV0x[i1] * triNx[i0] + triV0y[i1] * triNy[i0] + triV0z[i1] * triNz[i0];
     if (Math.abs(offA - offB) > 1e-3) continue;
     union(i0, i1);
   }
 
   const groups = new Map();
-  tris.forEach((_, i) => {
+  for (let i = 0; i < numTri; i++) {
     const r = find(i);
-    if (!groups.has(r)) groups.set(r, []);
-    groups.get(r).push(i);
-  });
+    let g = groups.get(r);
+    if (!g) {
+      g = [];
+      groups.set(r, g);
+    }
+    g.push(i);
+  }
 
   const faceOfTri = new Array(numTri);
   const faces = [];
   for (const members of groups.values()) {
     let id = Infinity;
     let areaSum = 0;
-    const c = [0, 0, 0];
-    const nsum = [0, 0, 0];
-    for (const i of members) {
-      const tri = tris[i];
-      if (tri.raw < id) id = tri.raw;
-      areaSum += tri.area;
-      c[0] += tri.centroid[0] * tri.area;
-      c[1] += tri.centroid[1] * tri.area;
-      c[2] += tri.centroid[2] * tri.area;
-      nsum[0] += tri.n[0] * tri.area;
-      nsum[1] += tri.n[1] * tri.area;
-      nsum[2] += tri.n[2] * tri.area;
+    let cx = 0;
+    let cy = 0;
+    let cz = 0;
+    let nsx = 0;
+    let nsy = 0;
+    let nsz = 0;
+    for (let k = 0; k < members.length; k++) {
+      const i = members[k];
+      const raw = triRaw[i];
+      if (raw < id) id = raw;
+      const area = triArea[i];
+      areaSum += area;
+      cx += triCx[i] * area;
+      cy += triCy[i] * area;
+      cz += triCz[i] * area;
+      nsx += triNx[i] * area;
+      nsy += triNy[i] * area;
+      nsz += triNz[i] * area;
     }
+    const nLen = Math.hypot(nsx, nsy, nsz) || 1;
     const face = {
       id: Number.isFinite(id) ? id : 0,
       area: areaSum,
       center: areaSum > 1e-18
-        ? [c[0] / areaSum, c[1] / areaSum, c[2] / areaSum]
-        : tris[members[0]].centroid.slice(),
-      normal: norm(nsum),
+        ? [cx / areaSum, cy / areaSum, cz / areaSum]
+        : [triCx[members[0]], triCy[members[0]], triCz[members[0]]],
+      normal: [nsx / nLen, nsy / nLen, nsz / nLen],
     };
     const fi = faces.length;
     faces.push(face);
-    for (const i of members) faceOfTri[i] = fi;
+    for (let k = 0; k < members.length; k++) faceOfTri[members[k]] = fi;
   }
 
+  let maxAreaPre = 0;
+  for (let fi = 0; fi < faces.length; fi++) {
+    const a = Number(faces[fi].area) || 0;
+    if (a > maxAreaPre) maxAreaPre = a;
+  }
+  const smallLimitPre = BOUNDARY_SMALL_FACE_FRAC * maxAreaPre;
+  const cosBoundary = Math.cos((BOUNDARY_SHALLOW_DEG * Math.PI) / 180);
   const segments = [];
   for (const [key, list] of edgeTris) {
     if (list.length !== 2) continue;
@@ -182,23 +240,26 @@ export function indexBoundaryEdges(mesh) {
     const f0 = faceOfTri[i0];
     const f1 = faceOfTri[i1];
     if (f0 === f1) continue;
-    const A = tris[i0];
-    const B = tris[i1];
-    if (dot(A.n, B.n) > FEATURE_COS) continue;
-    const parts = key.split('-');
-    const ia = Number(parts[0]);
-    const ib = Number(parts[1]);
+    const tdot = triNx[i0] * triNx[i1] + triNy[i0] * triNy[i1] + triNz[i0] * triNz[i1];
+    if (tdot > FEATURE_COS) continue;
+    const nA = faces[f0].normal;
+    const nB = faces[f1].normal;
+    const nd = Math.min(1, Math.max(-1, nA[0] * nB[0] + nA[1] * nB[1] + nA[2] * nB[2]));
+    // acos is decreasing, so dihedral >= 15° is exactly nd <= cos(15°).
+    if (nd > cosBoundary) continue;
+    const minFaceArea = Math.min(faces[f0].area || 0, faces[f1].area || 0);
+    if (maxAreaPre > 0 && minFaceArea < smallLimitPre) continue;
+    const dihedralDeg = Math.acos(nd) * 180 / Math.PI;
+    const ia = typeof key === 'number' ? (key / EDGE_PACK) | 0 : Number(key.slice(0, key.indexOf('-')));
+    const ib = typeof key === 'number' ? key % EDGE_PACK : Number(key.slice(key.indexOf('-') + 1));
     const va = posAt(ia);
     const vb = posAt(ib);
     const L = Math.hypot(vb[0] - va[0], vb[1] - va[1], vb[2] - va[2]);
     if (!(L > 1e-9)) continue;
     const faceA = faces[f0].id;
     const faceB = faces[f1].id;
-    const nA = faces[f0].normal;
-    const nB = faces[f1].normal;
-    const dihedralDeg = Math.acos(Math.min(1, Math.max(-1, dot(nA, nB)))) * 180 / Math.PI;
     segments.push({
-      key,
+      key: `${ia}-${ib}`,
       a: ia,
       b: ib,
       va,
@@ -209,7 +270,7 @@ export function indexBoundaryEdges(mesh) {
       faceB,
       pairKey: faceA < faceB ? `${faceA}:${faceB}` : `${faceB}:${faceA}`,
       dihedralDeg,
-      minFaceArea: Math.min(faces[f0].area || 0, faces[f1].area || 0),
+      minFaceArea,
       n0: nA.slice(),
       n1: nB.slice(),
     });

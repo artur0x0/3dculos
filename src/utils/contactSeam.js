@@ -43,6 +43,13 @@ function geoKey(ax, ay, az, bx, by, bz) {
  * @param {number} [numProp]
  * @returns {{ a: number[], b: number[], capNormal: number[], sideNormal: number[] }[]}
  */
+const EDGE_PACK = 0x4000000;
+
+function packedEdgeKey(lo, hi) {
+  if (hi >= EDGE_PACK) return `${lo}-${hi}`;
+  return lo * EDGE_PACK + hi;
+}
+
 export function contactSeamSegments(vertProperties, triVerts, numProp = 3) {
   const vp = vertProperties;
   const idx = triVerts;
@@ -78,6 +85,17 @@ export function contactSeamSegments(vertProperties, triVerts, numProp = 3) {
       else unite(prev, t);
     }
   }
+  // One vertex-connected body has no flush pair with another body.
+  let bodies = 0;
+  const seenBody = new Uint8Array(nTri);
+  for (let t = 0; t < nTri; t++) {
+    const r = find(t);
+    if (seenBody[r]) continue;
+    seenBody[r] = 1;
+    bodies++;
+    if (bodies > 1) break;
+  }
+  if (bodies < 2) return [];
 
   const at = (v) => [vp[v * np], vp[v * np + 1], vp[v * np + 2]];
   const triN = new Array(nTri);
@@ -103,7 +121,7 @@ export function contactSeamSegments(vertProperties, triVerts, numProp = 3) {
     for (const [u, v] of pairs) {
       const lo = u < v ? u : v;
       const hi = u < v ? v : u;
-      const key = `${lo}-${hi}`;
+      const key = packedEdgeKey(lo, hi);
       let e = edgeMap.get(key);
       if (!e) {
         e = { u: lo, v: hi, tris: [] };
