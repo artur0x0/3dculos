@@ -91,11 +91,14 @@ const BAD = 'let part = Manifold.cube([10, 10, 10], true);\nreturn part.missingM
     /scriptForRow\(/.test(selectFn) && /loadContent\(picked\.script/.test(selectFn));
   check('an eye toggles visibility and the viewport is recomposed',
     /setPartVisible\(/.test(app) && /composeViewportParts\(/.test(app) && /placeAssembly/.test(app));
-  check('feed row has a thumbnail, a red selection bar, an eye, and delete',
+  check('feed row has a thumbnail, a blue selection bar, an eye, and delete',
     /data-part-thumbnail/.test(feed)
     && /data-part-preview=\{partPreviewKind\(mesh\)\}/.test(feed)
     && /data-part-selected-bar/.test(feed)
-    && /bg-red-500/.test(feed)
+    && /data-part-selected-bar=""\s*className="[^"]*bg-blue-500/.test(feed)
+    && /selected && !row\.error \? 'bg-blue-950\/50'/.test(feed)
+    && !/selected && !row\.error \? 'bg-red/.test(feed)
+    && /row\.error \? 'bg-red-950\/55 ring-1 ring-inset ring-red-500\/80'/.test(feed)
     && /data-part-visibility=/.test(feed)
     && /data-part-delete=/.test(feed)
     && !/fillRect\(sx, sy/.test(feed));

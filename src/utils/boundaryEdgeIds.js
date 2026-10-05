@@ -444,6 +444,10 @@ export function stampBoundaryOnSelection(selected, featureEdges) {
       ? (a < b ? `${a}-${b}` : `${b}-${a}`)
       : '');
     const src = byKey.get(key);
+    // A pick kept on another part (Fillet / Chamfer across parts) keeps its
+    // own ids: this graph is the active part's mesh, not that one.
+    if (src && edge.partId != null && edge.partId !== '' && src.partId != null && src.partId !== ''
+      && String(edge.partId) !== String(src.partId)) return edge;
     // Vertex indices collide across parts. Only copy ids when this is the
     // same segment on the active mesh, so a previous solid's edge cannot
     // inherit the other body's face pair.

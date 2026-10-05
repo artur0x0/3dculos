@@ -525,8 +525,12 @@ return shifted;
     /legacy: legacyTap \|\| !!moveFaceModeRef\.current/.test(vp));
   check('moveFace includes the coplanar seam and the plane that scrap was cut from',
     /_c4ExpandSamePlane\(md, _c4ExpandCoplanarSeam\(md, _c4ResolveFaceSelection\(/.test(worker));
+  // The pick-mesh build lives in partSolidCache (shared with the other
+  // assembly parts so a part switch can reuse it).
+  const solidCache = readFileSync(new URL('../../src/utils/partSolidCache.js', import.meta.url), 'utf8');
   check('the drawn mesh drops the needle before the face graph',
-    /dropPlanarFins\(vertProperties, srcIndex, srcFaceID\)/.test(vp)
+    /dropPlanarFins\(vertProperties, srcIndex, srcFaceID\)/.test(solidCache)
+    && /cachedSolidGeometry\(solidCacheRef\.current, meshData\)/.test(vp)
     && /warmFaceGraph\(geometry, faceIDsRef\.current\)/.test(vp));
   check('the highlight outline drops a seam that already lies on the face',
     /highlightBoundaryPositions\(positions, index, faceIndices\)/.test(vp));

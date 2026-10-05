@@ -22,7 +22,7 @@ const STRIP_ICON = 18;
 /**
  * Parts feed. Desktop mounts it to the left of the editor. Mobile mounts it
  * as the Parts stage. Each row is a snapshot of that part's solid and a name.
- * A red bar marks the selected row. The eye toggles visibility. Delete drops
+ * A blue bar marks the selected row (red is kept for a failed script). The eye toggles visibility. Delete drops
  * that part. Load lives in this pane.
  */
 
@@ -362,14 +362,14 @@ export default function PartFeed({
               }}
               className={`relative flex w-full cursor-pointer items-center gap-2 border-b border-white/5 px-2 py-2 text-left ${
                 row.error ? 'bg-red-950/55 ring-1 ring-inset ring-red-500/80' : ''
-              } ${selected && !row.error ? 'bg-red-950/45' : ''} ${
+              } ${selected && !row.error ? 'bg-blue-950/50' : ''} ${
                 !selected && !row.error ? 'hover:bg-white/5' : ''
               }`}
             >
               {selected && (
                 <span
                   data-part-selected-bar=""
-                  className="absolute bottom-1 left-0 top-1 w-1 rounded-full bg-red-500"
+                  className="absolute bottom-1 left-0 top-1 w-1 rounded-full bg-blue-500"
                 />
               )}
               <GripVertical

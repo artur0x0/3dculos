@@ -1,0 +1,179 @@
+/**
+ * Built solids and their pick graphs, cached so a part switch is cheap.
+ *
+ * A part switch used to rebuild everything: the previous part's mesh for the
+ * assembly layer, the new part's pick mesh, its face graph, its edge graph
+ * and body contours (twice in Fillet), and its contact seam. The geometry
+ * depends only on the mesh data a run returned, and the graphs only on that
+ * geometry and its faceID array, so they are cached by those objects. A new
+ * run returns new mesh data, so a stale entry is never reused.
+ */
+import { BufferAttribute, BufferGeometry } from 'three';
+import { dropPlanarFins } from './planarSeam.js';
+import { contactSeamSegments } from './contactSeam.js';
+import { buildCoherentEdges, buildFeatureEdges } from './selectEdge.js';
+import { annotateFeatureEdges, indexBoundaryEdgesFromGeometry } from './boundaryEdgeIds.js';
+
+/**
+ * One part's solid as a BufferGeometry: the planar needle between two copies
+ * of a cap vertex is dropped, faceID is kept, normals are computed. The pick
+ * mesh and the other assembly parts use the same build, so a part switch can
+ * hand the geometry over instead of rebuilding it.
+ * @returns {{ geometry: BufferGeometry, faceIDs: ArrayLike<number>|null }}
+ */
+export function buildSolidGeometry(meshData) {
+  const geometry = new BufferGeometry();
+  const np = meshData.numProp || 3;
+  const src = meshData.vertProperties;
+  let vertProperties;
+  if (np === 3) {
+    vertProperties = new Float32Array(src);
+  } else {
+    const nVert = Math.floor(src.length / np);
+    vertProperties = new Float32Array(nVert * 3);
+    for (let i = 0; i < nVert; i++) {
+      vertProperties[i * 3] = src[i * np];
+      vertProperties[i * 3 + 1] = src[i * np + 1];
+      vertProperties[i * 3 + 2] = src[i * np + 2];
+    }
+  }
+  const srcIndex = new Uint32Array(meshData.triVerts);
+  const srcFaceID = meshData.faceID && meshData.faceID.length > 0 ? meshData.faceID : null;
+  const fin = dropPlanarFins(vertProperties, srcIndex, srcFaceID);
+  const triVerts = fin.indices;
+  geometry.setAttribute('position', new BufferAttribute(vertProperties, 3));
+  geometry.setIndex(new BufferAttribute(triVerts, 1));
+  const faceIDs = fin.faceIDs && fin.faceIDs.length > 0 ? fin.faceIDs : null;
+  if (faceIDs) {
+    geometry.setAttribute('faceID', new BufferAttribute(new Float32Array(faceIDs), 1));
+  }
+  // A dropped needle makes the old run ranges point at removed triangles;
+  // matIndex is always 0, so one group covers the kept mesh.
+  if (fin.dropped > 0) {
+    geometry.addGroup(0, triVerts.length, 0);
+  } else if (meshData.runIndex) {
+    const runIndex = meshData.runIndex;
+    let start = runIndex[0];
+    for (let run = 0; run < meshData.numRun; ++run) {
+      const end = runIndex[run + 1];
+      geometry.addGroup(start, end - start, 0);
+      start = end;
+    }
+  }
+  geometry.computeVertexNormals();
+  return { geometry, faceIDs };
+}
+
+/**
+ * Edge graph + body contours for one geometry. Keyed by the geometry object
+ * and the faceID array it was built with, so showing a part's solid again
+ * (a part switch, Fillet enter) reuses the graph instead of rebuilding it.
+ * A new run is a new geometry, so it always misses.
+ */
+const featureGraphCache = new WeakMap();
+
+export function featureGraphFor(geom, faceIDs) {
+  if (!geom) return { featureEdges: [], topo: null, timing: null, cached: false };
+  const hit = featureGraphCache.get(geom);
+  if (hit && hit.faceIDs === faceIDs) return { ...hit, cached: true };
+  const tFeat = performance.now();
+  const raw = buildFeatureEdges(geom);
+  const featureMs = performance.now() - tFeat;
+  let topoMs = 0;
+  let annotateMs = 0;
+  let coherentMs = 0;
+  let topo = null;
+  let featureEdges;
+  if (faceIDs && faceIDs.length) {
+    const tTopo = performance.now();
+    topo = indexBoundaryEdgesFromGeometry(geom, faceIDs);
+    topoMs = performance.now() - tTopo;
+    const tAnn = performance.now();
+    const annotated = annotateFeatureEdges(raw, topo);
+    annotateMs = performance.now() - tAnn;
+    const tCoh = performance.now();
+    featureEdges = buildCoherentEdges(annotated);
+    coherentMs = performance.now() - tCoh;
+  } else {
+    const tCoh = performance.now();
+    featureEdges = buildCoherentEdges(raw);
+    coherentMs = performance.now() - tCoh;
+  }
+  const entry = {
+    faceIDs,
+    featureEdges,
+    topo,
+    timing: { featureMs, topoMs, annotateMs, coherentMs },
+  };
+  featureGraphCache.set(geom, entry);
+  return { ...entry, cached: false };
+}
+
+/**
+ * Built solids by mesh data object. `cache.entries` maps meshData → entry;
+ * `cache.geoms` is every cached geometry, so a swap does not dispose one that
+ * another part (or the pick mesh, after a switch back) still shows.
+ */
+export function createSolidCache() {
+  return { entries: new Map(), geoms: new WeakSet() };
+}
+
+export function cachedSolidGeometry(cache, meshData) {
+  let entry = cache.entries.get(meshData);
+  if (!entry) {
+    entry = buildSolidGeometry(meshData);
+    cache.entries.set(meshData, entry);
+    cache.geoms.add(entry.geometry);
+  }
+  return entry;
+}
+
+/** Dispose a geometry unless the solid cache owns it (pruned later). */
+export function releaseGeometryIn(cache, geom) {
+  if (!geom || cache.geoms.has(geom)) return;
+  geom.dispose?.();
+}
+
+/**
+ * Drop cached solids that nothing shows any more: not the pick mesh, not
+ * another assembly part. A new run is new mesh data, so the old entry goes
+ * here instead of piling up.
+ */
+export function pruneSolidCacheIn(cache, pickMesh, extras) {
+  const shown = new Set();
+  if (pickMesh?.geometry) shown.add(pickMesh.geometry);
+  for (const mesh of extras?.values?.() || []) {
+    if (mesh?.geometry) shown.add(mesh.geometry);
+  }
+  for (const [meshData, entry] of cache.entries) {
+    if (shown.has(entry.geometry)) continue;
+    cache.entries.delete(meshData);
+    cache.geoms.delete(entry.geometry);
+    entry.geometry.dispose?.();
+  }
+}
+
+/** Parts above this many triangles are not pre-built in idle time. */
+export const PREWARM_MAX_TRIS = 40000;
+
+/** The cache entry (and its mesh data) that owns this geometry, or null. */
+export function solidEntryForGeometry(cache, geom) {
+  if (!geom) return null;
+  for (const [meshData, entry] of cache.entries) {
+    if (entry.geometry === geom) return { meshData, ...entry };
+  }
+  return null;
+}
+
+const contactSeamCache = new WeakMap();
+
+/** contactSeamSegments for this mesh data, scanned once. */
+export function contactSeamFor(meshData) {
+  if (!meshData?.vertProperties || !meshData?.triVerts) return [];
+  let segs = contactSeamCache.get(meshData);
+  if (!segs) {
+    segs = contactSeamSegments(meshData.vertProperties, meshData.triVerts, meshData.numProp || 3);
+    contactSeamCache.set(meshData, segs);
+  }
+  return segs;
+}
