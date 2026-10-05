@@ -390,6 +390,7 @@ Import `src/utils/importModel.js` (+ `POST /api/convert/step`); export
   still the first solid, including Subtract on an empty script. Default Mode
   is Add. Emitting a bare `part = <newSolid>` strands whatever was there as
   dead code; that was a real bug in all six Block solids until it was fixed.
+  A Block pop previews that solid before Confirm (flat normal shading, the CAD mesh). Position and rotation are fields on the sheet; Subtract keeps the cutter translucent. Cancel clears the preview.
   Sweep's one-shot fallback stays a replace when Mode is Add. Mutating
   an existing body (holes, shell, transforms, Boolean) is different — that keeps
   `syncPartLines`, which points `part` at the body you edited.

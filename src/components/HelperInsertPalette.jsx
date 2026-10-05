@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Box,
   Cylinder,
@@ -40,6 +40,7 @@ import {
 import { resolveFaceModal } from '../utils/faceFeaturePlacement';
 import { canBuildFilletAlongPath, resolveFilletStrategy } from '../utils/filletAlongPath';
 import { isContourEntry } from '../utils/contourMode';
+import { blockParamsPending, isBlockSolidId } from '../utils/blockSolid';
 import { isFilletEntry, isChamferEntry } from '../utils/filletMode';
 import HelperParamModal from './HelperParamModal';
 
@@ -114,6 +115,7 @@ const HelperInsertPalette = ({
   onStaleEdgesClear = null,
   onProfilePreview = null,
   onPathPreview = null,
+  onBlockPreview = null,
   onEnterContourMode = null,
   onEnterFilletMode = null,
   onEnterShellMode = null,
@@ -139,6 +141,12 @@ const HelperInsertPalette = ({
   const [modalMode, setModalMode] = useState('default'); // default | params | refuse
   const [refuseMessage, setRefuseMessage] = useState(null);
   const [refuseTitle, setRefuseTitle] = useState(null);
+  const onBlockPreviewRef = useRef(onBlockPreview);
+  onBlockPreviewRef.current = onBlockPreview;
+  // Leaving the rail (another mode mounts over it) must drop the ghost.
+  useEffect(() => () => {
+    onBlockPreviewRef.current?.(null);
+  }, []);
 
   const openParams = (item) => {
     // Labeled slots with no builder stay a refuse — Sweep is a real contour entry.
@@ -253,6 +261,7 @@ const HelperInsertPalette = ({
     setModalMode('default');
     onProfilePreview?.(null);
     onPathPreview?.(null);
+    onBlockPreview?.(null);
   };
 
   const sections = paletteRailSections(layout, grouped).map((section) => ({
@@ -334,6 +343,13 @@ const HelperInsertPalette = ({
           edgeInfo={edgeSnapshot}
           onCancel={close}
           onValuesChange={(values, item) => {
+            if (isBlockSolidId(item?.id)) {
+              onProfilePreview?.(null);
+              onPathPreview?.(null);
+              if (!blockParamsPending(values)) onBlockPreview?.({ id: item.id, params: values });
+              return;
+            }
+            onBlockPreview?.(null);
             if (item?.id === 'crossSection') {
               onPathPreview?.(null);
               onProfilePreview?.({

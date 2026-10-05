@@ -44,7 +44,7 @@ over inventing a new modal layout.
   `data-boolean-allow-section` and `data-boolean-survives-parts` mark that contract.
 - **Contour Add / Subtract** — Extrude, Revolve, Sweep, and Loft (not Profile
   or Workplane) show Add and Subtract on `ContourModeChip` (`data-contour-combine`).
-  Block solids use the same Mode select on the helper sheet. Default is Add.
+  Block solids (cube, rounded box, cylinder, sphere, tube, hex prism) use the same Mode select on the helper sheet. Default is Add. The sheet also has Pos X Y Z and Rot X Y Z (degrees). While it is open the viewport shows that Manifold solid with the CAD flat normal shading, and edits update it live. Subtract draws the cutter translucent, in front of the host. Confirm writes size, pose, and Add or Subtract. Cancel and the grey X clear the preview and write nothing. An identity pose is left off the script.
 - **`MoveModeChip.jsx`** — cyan glass card (same shell as Shell). Double-click
   selects the body (one click still selects the full face and does not change
   the target). XYZ are `NumberField` deltas, slider and type-in. Cut (when the

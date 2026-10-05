@@ -62,6 +62,7 @@ import {
   DRAFT_REFERENCE_OPTIONS,
 } from './faceFeaturePlacement.js';
 import { resolveFilletStrategy } from './filletAlongPath.js';
+import { BLOCK_POSE_PARAMS, blockSpec, blockSolidExpression } from './blockSolid.js';
 import { splitEdgePathComponents } from './edgeSweepPath.js';
 import { planeFrameFromFaceData } from './crossSectionSubstrate.js';
 
@@ -1182,20 +1183,18 @@ export const HELPER_PALETTE_ITEMS = [
       { name: 'depth', type: 'number', default: 30, label: 'Depth', min: 0.1, step: 1 },
       { name: 'height', type: 'number', default: 20, label: 'Height', min: 0.1, step: 1 },
       { name: 'center', type: 'bool', default: true, label: 'Centered' },
+      ...BLOCK_POSE_PARAMS,
       SOLID_COMBINE_PARAM,
     ],
     build: (empty, p, names) => {
       const box = allocateUniqueName(names, 'box');
-      const w = num(p.width, 40);
-      const d = num(p.depth, 30);
-      const h = num(p.height, 20);
-      const c = bool(p.center, true);
+      const spec = blockSpec('cube', p);
       const lines = wrapFeatureBlock(CUBE_BEGIN, CUBE_END, [
-        `let ${box} = Manifold.cube([${w}, ${d}, ${h}], ${c});`,
+        `let ${box} = ${blockSolidExpression(spec)};`,
         // Append, never replace: a second shape unions onto the part, or
         // cuts it out when Mode is Subtract. Overwriting here used to
         // strand the previous solid as dead code.
-        emitPartPlace(names, box, !empty && names.has('part'), true, solidCombineOp(p)),
+        emitPartPlace(names, box, !empty && names.has('part'), true, spec.combine),
       ]);
       return withReturn(lines, empty);
     },
@@ -1212,18 +1211,15 @@ export const HELPER_PALETTE_ITEMS = [
       { name: 'sz', type: 'number', default: 20, label: 'Size Z', min: 0.1, step: 1 },
       { name: 'edgeRadius', type: 'number', default: 4, label: 'Edge R', min: 0, step: 0.5 },
       { name: 'segments', type: 'number', default: 16, label: 'Segments', min: 1, step: 1 },
+      ...BLOCK_POSE_PARAMS,
       SOLID_COMBINE_PARAM,
     ],
     build: (empty, p, names) => {
       const rbox = allocateUniqueName(names, 'rbox');
-      const sx = num(p.sx, 50);
-      const sy = num(p.sy, 30);
-      const sz = num(p.sz, 20);
-      const er = num(p.edgeRadius, 4);
-      const seg = Math.max(1, Math.round(num(p.segments, 16)));
+      const spec = blockSpec('roundedBox', p);
       const lines = wrapFeatureBlock(ROUNDED_BOX_BEGIN, ROUNDED_BOX_END, [
-        `let ${rbox} = roundedBox([${sx}, ${sy}, ${sz}], ${er}, ${seg});`,
-        emitPartPlace(names, rbox, !empty && names.has('part'), true, solidCombineOp(p)),
+        `let ${rbox} = ${blockSolidExpression(spec)};`,
+        emitPartPlace(names, rbox, !empty && names.has('part'), true, spec.combine),
       ]);
       return withReturn(lines, empty);
     },
@@ -1238,16 +1234,15 @@ export const HELPER_PALETTE_ITEMS = [
       { name: 'height', type: 'number', default: 20, label: 'Height', min: 0.1, step: 1 },
       { name: 'radius', type: 'number', default: 10, label: 'Radius', min: 0.1, step: 0.5 },
       { name: 'segments', type: 'number', default: 64, label: 'Segments', min: 3, step: 1 },
+      ...BLOCK_POSE_PARAMS,
       SOLID_COMBINE_PARAM,
     ],
     build: (empty, p, names) => {
       const cyl = allocateUniqueName(names, 'cyl');
-      const h = num(p.height, 20);
-      const r = num(p.radius, 10);
-      const seg = Math.max(3, Math.round(num(p.segments, 64)));
+      const spec = blockSpec('cylinder', p);
       const lines = wrapFeatureBlock(CYLINDER_BEGIN, CYLINDER_END, [
-        `let ${cyl} = Manifold.cylinder(${h}, ${r}, ${r}, ${seg});`,
-        emitPartPlace(names, cyl, !empty && names.has('part'), true, solidCombineOp(p)),
+        `let ${cyl} = ${blockSolidExpression(spec)};`,
+        emitPartPlace(names, cyl, !empty && names.has('part'), true, spec.combine),
       ]);
       return withReturn(lines, empty);
     },
@@ -1261,15 +1256,15 @@ export const HELPER_PALETTE_ITEMS = [
     params: [
       { name: 'radius', type: 'number', default: 15, label: 'Radius', min: 0.1, step: 0.5 },
       { name: 'segments', type: 'number', default: 64, label: 'Segments', min: 3, step: 1, max: 128 },
+      ...BLOCK_POSE_PARAMS,
       SOLID_COMBINE_PARAM,
     ],
     build: (empty, p, names) => {
       const sph = allocateUniqueName(names, 'sphere');
-      const r = num(p.radius, 15);
-      const seg = Math.max(3, Math.round(num(p.segments, 64)));
+      const spec = blockSpec('sphere', p);
       const lines = wrapFeatureBlock(SPHERE_BEGIN, SPHERE_END, [
-        `let ${sph} = Manifold.sphere(${r}, ${seg});`,
-        emitPartPlace(names, sph, !empty && names.has('part'), true, solidCombineOp(p)),
+        `let ${sph} = ${blockSolidExpression(spec)};`,
+        emitPartPlace(names, sph, !empty && names.has('part'), true, spec.combine),
       ]);
       return withReturn(lines, empty);
     },
@@ -1315,26 +1310,16 @@ export const HELPER_PALETTE_ITEMS = [
         name: 'cornerRadius', type: 'number', default: 0, label: 'Corner R', min: 0, step: 0.5,
         showWhen: { field: 'section', values: ['rect'] },
       },
+      ...BLOCK_POSE_PARAMS,
       SOLID_COMBINE_PARAM,
     ],
     build: (empty, p, names) => {
-      const tube = allocateUniqueName(names, 'tube');
-      const h = num(p.height, 40);
-      const lines = [];
-      if (str(p.section, 'round') === 'rect') {
-        const w = num(p.width, 40);
-        const d = num(p.depth, 20);
-        const wall = num(p.wall, 2.5);
-        const cr = num(p.cornerRadius, 0);
-        const opts = cr > 0 ? `, { cornerRadius: ${cr} }` : '';
-        lines.push(`let ${tube} = tube([${w}, ${d}], ${wall}, ${h}${opts});`);
-      } else {
-        const o = num(p.outerRadius, 15);
-        const i = num(p.innerRadius, 10);
-        const seg = Math.max(3, Math.round(num(p.segments, 64)));
-        lines.push(`let ${tube} = tube(${o}, ${i}, ${h}, ${seg});`);
-      }
-      lines.push(emitPartPlace(names, tube, !empty && names.has('part'), true, solidCombineOp(p)));
+      const tubeName = allocateUniqueName(names, 'tube');
+      const spec = blockSpec('tube', p);
+      const lines = [
+        `let ${tubeName} = ${blockSolidExpression(spec)};`,
+        emitPartPlace(names, tubeName, !empty && names.has('part'), true, spec.combine),
+      ];
       return withReturn(wrapFeatureBlock(TUBE_BEGIN, TUBE_END, lines), empty);
     },
   },
@@ -1347,15 +1332,15 @@ export const HELPER_PALETTE_ITEMS = [
     params: [
       { name: 'radius', type: 'number', default: 12, label: 'Radius', min: 0.1, step: 0.5 },
       { name: 'height', type: 'number', default: 8, label: 'Height', min: 0.1, step: 0.5 },
+      ...BLOCK_POSE_PARAMS,
       SOLID_COMBINE_PARAM,
     ],
     build: (empty, p, names) => {
       const hex = allocateUniqueName(names, 'hex');
-      const r = num(p.radius, 12);
-      const h = num(p.height, 8);
+      const spec = blockSpec('hexPrism', p);
       const lines = wrapFeatureBlock(HEX_PRISM_BEGIN, HEX_PRISM_END, [
-        `let ${hex} = hexPrism(${r}, ${h});`,
-        emitPartPlace(names, hex, !empty && names.has('part'), true, solidCombineOp(p)),
+        `let ${hex} = ${blockSolidExpression(spec)};`,
+        emitPartPlace(names, hex, !empty && names.has('part'), true, spec.combine),
       ]);
       return withReturn(lines, empty);
     },
