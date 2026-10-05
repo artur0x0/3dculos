@@ -636,6 +636,8 @@ const Viewport = forwardRef(({
   const edgeChipElsRef = useRef(new Map());
   const edgeChipProjectTmpRef = useRef(new Vector3());
   const featureEdgesRef = useRef([]);
+  const graphTimingRef = useRef(null);
+  const runTimingStartRef = useRef(0);
   /** Geometry identity that featureEdgesRef was built from — invalidate on replace. */
   const featureEdgesSourceRef = useRef(null);
   /** Per-triangle Manifold faceID from the last worker mesh (not a per-vertex attribute). */
@@ -2812,16 +2814,32 @@ const Viewport = forwardRef(({
   const syncFeatureEdges = useCallback((geom) => {
     if (featureEdgesSourceRef.current === geom && featureEdgesRef.current) return;
     const faceIDs = faceIDsRef.current;
+    const tFeat = performance.now();
     const raw = geom ? buildFeatureEdges(geom) : [];
+    const featureMs = performance.now() - tFeat;
+    let topoMs = 0;
+    let annotateMs = 0;
+    let coherentMs = 0;
     if (geom && faceIDs && faceIDs.length) {
+      const tTopo = performance.now();
       const topo = indexBoundaryEdgesFromGeometry(geom, faceIDs);
+      topoMs = performance.now() - tTopo;
+      const tAnn = performance.now();
+      const annotated = annotateFeatureEdges(raw, topo);
+      annotateMs = performance.now() - tAnn;
       boundaryTopoRef.current = topo;
-      featureEdgesRef.current = buildCoherentEdges(annotateFeatureEdges(raw, topo));
+      const tCoh = performance.now();
+      featureEdgesRef.current = buildCoherentEdges(annotated);
+      coherentMs = performance.now() - tCoh;
     } else {
       boundaryTopoRef.current = null;
+      const tCoh = performance.now();
       featureEdgesRef.current = buildCoherentEdges(raw);
+      coherentMs = performance.now() - tCoh;
     }
     featureEdgesSourceRef.current = geom ?? null;
+    const prev = graphTimingRef.current || {};
+    graphTimingRef.current = { ...prev, featureMs, topoMs, annotateMs, coherentMs };
   }, []);
 
   // Fillet mode: face ids (fN) and boundary-edge ids (eN) for the Accept helpers.
@@ -5310,8 +5328,14 @@ const Viewport = forwardRef(({
     resultRef.current.geometry = geometry;
     // New mesh, including after fillet. Coplanar caps join here; the blend
     // stays its own patch.
+    const tFace = performance.now();
     warmFaceGraph(geometry, faceIDsRef.current);
+    const faceMs = performance.now() - tFace;
+    const tSeam = performance.now();
     attachContactSeam(resultRef.current, meshData);
+    const seamMs = performance.now() - tSeam;
+    const prevTiming = graphTimingRef.current || {};
+    graphTimingRef.current = { ...prevTiming, faceMs, seamMs };
     setMeshEpoch((n) => n + 1);
 
     // Dev-only: the single choke point where geometry reaches the scene. Report the exact
@@ -5564,6 +5588,8 @@ const Viewport = forwardRef(({
     }
 
     if (!script) return false;
+    runTimingStartRef.current = performance.now();
+    graphTimingRef.current = {};
     
     // Cancel any pending execution
     if (executionAbortRef.current) {
@@ -5706,6 +5732,26 @@ const Viewport = forwardRef(({
       }
       
       console.log('[Viewport] Script executed successfully');
+      const g = graphTimingRef.current || {};
+      const workerTiming = result.timing || {};
+      const totalMs = performance.now() - runTimingStartRef.current;
+      const report = {
+        seq: (typeof window !== 'undefined' ? (window.__SURFCAD_RUN_TIMING?.seq || 0) : 0) + 1,
+        totalMs,
+        workerExecMs: workerTiming.execMs ?? null,
+        serializeMs: workerTiming.serializeMs ?? null,
+        transferMs: workerTiming.transferMs ?? null,
+        roundTripMs: workerTiming.roundTripMs ?? null,
+        faceGraphMs: g.faceMs ?? null,
+        edgeGraphMs: (g.featureMs || 0) + (g.topoMs || 0) + (g.annotateMs || 0),
+        contourGraphMs: (g.coherentMs || 0) + (g.seamMs || 0),
+        featureMs: g.featureMs ?? null,
+        topoMs: g.topoMs ?? null,
+        annotateMs: g.annotateMs ?? null,
+        coherentMs: g.coherentMs ?? null,
+        seamMs: g.seamMs ?? null,
+      };
+      if (typeof window !== 'undefined') window.__SURFCAD_RUN_TIMING = report;
       // Truthy object: callers that only check success keep working; game compare needs nonce.
       return { ok: true, nonce, mesh: meshData };
 

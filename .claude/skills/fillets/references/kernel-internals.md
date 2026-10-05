@@ -105,10 +105,14 @@ material-remove only.
 
 Segments whose θ agrees within `_S23_THETA_TOL` (3°) group into runs
 (`_s23GroupRuns`; a closed path also merges head into tail when they match).
-Each run sweeps via `_s23SweepExplicit`: extrude the profile straight to the run
-length, then warp — per-segment frames lerped toward the next, then
-Gram-Schmidt re-orthonormalized. Linear N+B lerp alone shears the section
-(C3.1/C3.2 fix). Runs are unioned into one cutter.
+Each run sweeps via `_s23SweepKnotRings`: one cross-section ring at every path
+knot (that segment's frame; the end knot reuses the last frame), stitched by
+`varyingProfileTubeMesh` and capped. Nothing is inserted between knots. A
+uniform `Manifold.extrude` slice count spaces samples by arc length, so a long
+straight in the same run as a short arc chord skips the 5° knots. Runs are
+unioned into one cutter. A closed loop still sweeps one lap plus an 8% overlap
+as an open tube. An open-end extension inserts a station beyond the knot
+instead of moving it, so the knot still has a ring.
 
 ## 4. Framing — hard path (C3 variable profile)
 
@@ -195,8 +199,8 @@ Try the exact revolve fast path first (`_s23TryRevolveCutter`): the 2D profile
 revolved about the rim axis. It throws "too large for this rim" when the radius
 would revolve through the axis — that throw propagates, it is not swallowed.
 
-Otherwise sweep **one lap + 8% overlap as an open path**. A true closed
-extrude+warp leaves an RMF seam that triangulates into purple sliver sheets.
+Otherwise sweep **one lap + 8% overlap as an open path** of knot rings. A true
+closed tube leaves a seam that triangulates into purple sliver sheets.
 
 ## 6. Legacy RMF
 

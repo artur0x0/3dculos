@@ -5034,65 +5034,100 @@ function _s23DihedralContour(radius, theta, profileKind, arcSegs, testScale) {
   return contour;
 }
 
-/** Extrude + warp with one (N,B) frame per segment. Not an RMF from path start. */
-function _s23SweepExplicit(Manifold, profile, points, frames, extrudeSegments) {
+/**
+ * One dihedral sweep's ring stations, for the quality golden.
+ * Each filletAlongPath call appends `{ knots, origins }`. `knots` are the
+ * path points after densify (the 5° stations). `origins` are the cutter-ring
+ * centers actually placed. A uniform extrude can skip a short chord; this
+ * log is how the golden checks that did not happen.
+ */
+function _s23BeginSweepRingCall() {
+  if (typeof globalThis === 'undefined') return;
+  if (!globalThis.__filletSweepRingLog) globalThis.__filletSweepRingLog = [];
+  const call = { knots: [], origins: [] };
+  globalThis.__filletSweepRingLog.push(call);
+  globalThis.__filletSweepRingCall = call;
+}
+
+function _s23SetSweepRingKnots(points) {
+  const call = typeof globalThis !== 'undefined' ? globalThis.__filletSweepRingCall : null;
+  if (!call || !Array.isArray(points)) return;
+  call.knots = points.map((p) => [p[0], p[1], p[2]]);
+}
+
+function _s23AddRingOrigins(origins) {
+  const call = typeof globalThis !== 'undefined' ? globalThis.__filletSweepRingCall : null;
+  if (!call || !origins) return;
+  for (let i = 0; i < origins.length; i++) {
+    const p = origins[i];
+    call.origins.push([p[0], p[1], p[2]]);
+  }
+}
+
+function _s23PlaceContourRing(contour, origin, N, B) {
+  const ring = new Array(contour.length);
+  const ox = origin[0];
+  const oy = origin[1];
+  const oz = origin[2];
+  const Nx = N[0];
+  const Ny = N[1];
+  const Nz = N[2];
+  const Bx = B[0];
+  const By = B[1];
+  const Bz = B[2];
+  for (let k = 0; k < contour.length; k++) {
+    const u = contour[k][0];
+    const v = contour[k][1];
+    ring[k] = [
+      ox + u * Nx + v * Bx,
+      oy + u * Ny + v * By,
+      oz + u * Nz + v * Bz,
+    ];
+  }
+  return ring;
+}
+
+/**
+ * Dihedral cutter as one ring per path point. The ring at knot i uses that
+ * segment's frame; the end knot reuses the last frame. Nothing is inserted
+ * between knots — a long straight and a 0.3 mm arc chord both get exactly
+ * their own stations, which a uniform extrude slice count does not.
+ * Caps come from varyingProfileTubeMesh (fan from the rear bumper).
+ */
+function _s23SweepKnotRings(points, frames, contour) {
   const nSeg = points.length - 1;
   if (nSeg < 1 || frames.length !== nSeg) {
     throw new Error('filletAlongPath: sweep frame count does not match the path');
   }
-  const segLens = [];
-  const cum = [0];
+  const rings = new Array(nSeg + 1);
+  const origins = new Array(nSeg + 1);
   for (let i = 0; i < nSeg; i++) {
-    const a = points[i];
-    const b = points[i + 1];
-    const L = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
-    segLens.push(L);
-    cum.push(cum[cum.length - 1] + L);
+    const fr = frames[i];
+    origins[i] = points[i];
+    rings[i] = _s23PlaceContourRing(contour, points[i], fr.N, fr.B);
   }
-  const total = cum[cum.length - 1];
-  if (!(total > 1e-12)) throw new Error('filletAlongPath: polyline path has zero length');
-  const straight = Manifold.extrude(profile, total, extrudeSegments);
-  const warp = (v) => {
-    let x = v[0];
-    let y = v[1];
-    let s = v[2];
-    if (s < 0) s = 0;
-    if (s > total) s = total;
-    let i = 0;
-    while (i < nSeg - 1 && cum[i + 1] < s - 1e-12) i++;
-    const L = segLens[i] || 1;
-    const frac = Math.max(0, Math.min(1, (s - cum[i]) / L));
-    const a = points[i];
-    const b = points[i + 1];
-    const P0 = a[0] + frac * (b[0] - a[0]);
-    const P1 = a[1] + frac * (b[1] - a[1]);
-    const P2 = a[2] + frac * (b[2] - a[2]);
-    // C3.1/C3.2: lerp N/B toward next frame, then Gram-Schmidt so the ridge
-    // frame stays orthonormal between knots (linear N+B lerp alone shears).
-    const fr0 = frames[i];
-    const fr1 = frames[Math.min(i + 1, frames.length - 1)];
-    let Nx = fr0.N[0], Ny = fr0.N[1], Nz = fr0.N[2];
-    let Bx = fr0.B[0], By = fr0.B[1], Bz = fr0.B[2];
-    if (fr1 && fr1 !== fr0) {
-      Nx += frac * (fr1.N[0] - fr0.N[0]);
-      Ny += frac * (fr1.N[1] - fr0.N[1]);
-      Nz += frac * (fr1.N[2] - fr0.N[2]);
-      Bx += frac * (fr1.B[0] - fr0.B[0]);
-      By += frac * (fr1.B[1] - fr0.B[1]);
-      Bz += frac * (fr1.B[2] - fr0.B[2]);
-      const nL = Math.hypot(Nx, Ny, Nz) || 1;
-      Nx /= nL; Ny /= nL; Nz /= nL;
-      // Drop B onto plane ⊥ N, then renorm (preserves handedness via lerp hint).
-      const nb = Nx * Bx + Ny * By + Nz * Bz;
-      Bx -= nb * Nx; By -= nb * Ny; Bz -= nb * Nz;
-      const bL = Math.hypot(Bx, By, Bz) || 1;
-      Bx /= bL; By /= bL; Bz /= bL;
-    }
-    v[0] = P0 + x * Nx + y * Bx;
-    v[1] = P1 + x * Ny + y * By;
-    v[2] = P2 + x * Nz + y * Bz;
-  };
-  return straight.warp(warp);
+  const frLast = frames[nSeg - 1];
+  origins[nSeg] = points[nSeg];
+  rings[nSeg] = _s23PlaceContourRing(contour, points[nSeg], frLast.N, frLast.B);
+  _s23AddRingOrigins(origins);
+  const mesh = varyingProfileTubeMesh(rings, false);
+  let solid;
+  let repair;
+  try {
+    ({ manifold: solid, repair } = _meshDataToManifold(mesh.vertProperties, mesh.triVerts));
+  } catch (e) {
+    throw new Error(
+      `filletAlongPath: sweep cutter is not a valid solid (${e && e.message ? e.message : e})`,
+    );
+  }
+  // Same loud fail as the varying-profile tube: a weld means two rings collided.
+  if (repair !== 'strict') {
+    throw new Error(
+      `filletAlongPath: sweep cutter needed mesh repair (${repair}) — `
+      + 'rings collide along the path. Reduce radius or re-pick edges.',
+    );
+  }
+  return solid;
 }
 
 function _s23SweepRun(Manifold, CrossSection, runGeom, radius, profileKind, arcSegs, testScale) {
@@ -5125,15 +5160,12 @@ function _s23SweepRun(Manifold, CrossSection, runGeom, radius, profileKind, arcS
     sweepFrames = runGeom.frames.concat([runGeom.frames[0]]);
   }
   const contour = _s23DihedralContour(radius, thetaUse, profileKind, arcSegs, testScale);
-  const cs = new CrossSection([contour]);
-  // One extrusion slice per path chord. Those chords are already limited to
-  // FRAME_DENSIFY_MAX_TURN_DEG (5°), and the cross-section stays
-  // FILLET_ARC_SEGMENTS. A floor of 48 and a ×4 multiplier cut each chord
-  // again, so a straight edge and every semi-arc carried ~48 rings into the
-  // boolean. That was the wrap. The extra rings were uniform samples between
-  // knots the 5° pass already placed, not a tighter densify.
-  const extrudeSegments = Math.max(1, sweepFrames.length);
-  return _s23SweepExplicit(Manifold, cs, sweepPts, sweepFrames, extrudeSegments);
+  // One ring at every knot of this run, including the closed-loop overlap
+  // stations appended above. Uniform Manifold.extrude slices space themselves
+  // by arc length, so a 28 mm straight in the same run as 0.3 mm arc chords
+  // leaves the turns unsampled. The cross-section between knots is the
+  // contour itself (FILLET_ARC_SEGMENTS), not a second densify.
+  return _s23SweepKnotRings(sweepPts, sweepFrames, contour);
 }
 
 /** Last variable-profile framing meta — golden pin (m3 bypass → missing / undensified). */
@@ -5397,6 +5429,10 @@ function _s23VaryingProfileTube(runSegs, wrapClosed, radius, profileKind, arcSeg
       tail.p1, tail.N, tail.B,
     ));
   }
+  const ringOrigins = [];
+  for (let i = 0; i < runSegs.length; i++) ringOrigins.push(runSegs[i].p0);
+  if (!wrapClosed) ringOrigins.push(runSegs[runSegs.length - 1].p1);
+  _s23AddRingOrigins(ringOrigins);
   const mesh = varyingProfileTubeMesh(rings, wrapClosed);
   let solid;
   let repair;
@@ -5757,29 +5793,52 @@ function _s23StampJunctionTurns(segs, junction) {
   }
 }
 
-function _s23PadShallowSplitEnd(seg, which, turnDeg, radius) {
+/**
+ * Extend an open run end without moving the knot. The original station stays
+ * a cutter ring; the pad is a new colinear station past it, same frame.
+ * Moving the knot instead left that 5° station with no ring (the quality
+ * golden) and pulled the junction off the neighbor run.
+ */
+function _s23SpliceOpenEnd(segs, which, dist) {
+  if (!Array.isArray(segs) || !segs.length || !(dist > 1e-4)) return 0;
+  const seg = which === 'end' ? segs[segs.length - 1] : segs[0];
+  if (!seg?.T || !seg.N || !seg.B || !seg.p0 || !seg.p1) return 0;
+  const tLen = Math.hypot(seg.T[0], seg.T[1], seg.T[2]);
+  if (!(tLen > 1e-12)) return 0;
+  const T = [seg.T[0] / tLen, seg.T[1] / tLen, seg.T[2] / tLen];
+  const tout = which === 'end' ? T : [-T[0], -T[1], -T[2]];
+  const origin = (which === 'end' ? seg.p1 : seg.p0).slice();
+  const moved = [
+    origin[0] + tout[0] * dist,
+    origin[1] + tout[1] * dist,
+    origin[2] + tout[2] * dist,
+  ];
+  const ext = {
+    T: seg.T.slice(),
+    N: seg.N.slice(),
+    B: seg.B.slice(),
+    theta: seg.theta,
+    length: dist,
+    f0: seg.f0,
+    f1: seg.f1,
+    convex: seg.convex,
+    p0: which === 'end' ? origin : moved,
+    p1: which === 'end' ? moved : origin.slice(),
+  };
+  if (which === 'end') segs.push(ext);
+  else segs.unshift(ext);
+  return dist;
+}
+
+function _s23PadShallowSplitEnd(segs, which, turnDeg, radius) {
   // No tag: this is an original path end (the draft extension owns it).
   // Above ~20°: a hard corner split, left to the two cutters' own overlap.
   // A same-radius joint can be far under the 5° corner gate after densify
   // and still meets as two open ends with no overlap.
   if (!Number.isFinite(turnDeg) || turnDeg > _S23_SHALLOW_SPLIT_DEG) return 0;
-  if (!seg?.T || !seg.p0 || !seg.p1) return 0;
   const pad = filletSweepCutterExpand(radius);
   if (!(pad > 1e-9)) return 0;
-  const tLen = Math.hypot(seg.T[0], seg.T[1], seg.T[2]);
-  if (!(tLen > 1e-12)) return 0;
-  const T = [seg.T[0] / tLen, seg.T[1] / tLen, seg.T[2] / tLen];
-  const tout = which === 'end' ? T : [-T[0], -T[1], -T[2]];
-  const origin = which === 'end' ? seg.p1 : seg.p0;
-  const moved = [
-    origin[0] + tout[0] * pad,
-    origin[1] + tout[1] * pad,
-    origin[2] + tout[2] * pad,
-  ];
-  if (which === 'end') seg.p1 = moved;
-  else seg.p0 = moved;
-  seg.length = (Number(seg.length) || 0) + pad;
-  return pad;
+  return _s23SpliceOpenEnd(segs, which, pad);
 }
 
 /** A run whose ends do not share a tangent is a rounded path. */
@@ -5819,26 +5878,20 @@ function _s23ExtendOpenRunEnds(part, segs, radius, profileKind, arcSegs) {
       part, origin, tout, seg.N, seg.B, seg.theta, radius, profileKind, arcSegs,
     );
     if (!(dist > 1e-4)) continue;
-    const moved = [
-      origin[0] + tout[0] * dist,
-      origin[1] + tout[1] * dist,
-      origin[2] + tout[2] * dist,
-    ];
-    if (which === 'end') seg.p1 = moved;
-    else seg.p0 = moved;
-    seg.length = (Number(seg.length) || 0) + dist;
+    const spliced = _s23SpliceOpenEnd(segs, which, dist);
+    if (!(spliced > 0)) continue;
     drafted.add(which);
-    if (dist > applied) applied = dist;
+    if (spliced > applied) applied = spliced;
   }
   // Shallow internal splits only. Original path ends have no split tag, and
   // an end the draft extension already moved is left at that distance.
   const shallow = [
-    ['start', segs[0], segs[0] && segs[0]._splitInDeg],
-    ['end', segs[segs.length - 1], segs[segs.length - 1] && segs[segs.length - 1]._splitOutDeg],
+    ['start', segs[0] && segs[0]._splitInDeg],
+    ['end', segs[segs.length - 1] && segs[segs.length - 1]._splitOutDeg],
   ];
-  for (const [which, seg, turn] of shallow) {
+  for (const [which, turn] of shallow) {
     if (drafted.has(which)) continue;
-    const pad = _s23PadShallowSplitEnd(seg, which, turn, radius);
+    const pad = _s23PadShallowSplitEnd(segs, which, turn, radius);
     if (pad > applied) applied = pad;
   }
   return applied;
@@ -6122,6 +6175,7 @@ function filletAlongPath(part, path, radius, opts = {}) {
     const owned = _filletOnlyOwningBody(M, part, path, radius, opts);
     if (owned) return owned;
   }
+  _s23BeginSweepRingCall();
 
   const profileKind = (opts.profile === 'chamfer') ? 'chamfer' : 'fillet';
   const arcSegs = opts.segments != null ? opts.segments : FILLET_ARC_SEGMENTS;
@@ -6178,6 +6232,7 @@ function filletAlongPath(part, path, radius, opts = {}) {
       length = pathPolylineLength(points, closed);
     }
   }
+  _s23SetSweepRingKnots(points);
 
   // Sweep-path policy seam (planFilletSweepPath): keep the full wire by
   // default (never skip-micro). Corner arcs (same-r or R≠cutter) return
@@ -7651,12 +7706,19 @@ self.onmessage = async (event) => {
         }
         
         const { script, importedModels, memoryLimitMB, nonce } = payload;
+        if (typeof globalThis !== 'undefined') {
+          globalThis.__filletSweepRingLog = [];
+          globalThis.__filletSweepRingCall = null;
+        }
         
         // Check memory before execution
         checkMemoryUsage(memoryLimitMB || 512);
         
-        // Execute the script
+        // Execute the script. execMs is the kernel; serializeMs is the mesh
+        // copy that follows. The main thread adds the postMessage gap.
+        const _execT0 = performance.now();
         const result = executeScript(script, importedModels);
+        const _execMs = performance.now() - _execT0;
         
         // Cache the manifold for cross-section operations (+ nonce for game compare)
         cachedManifold = result;
@@ -7671,7 +7733,9 @@ self.onmessage = async (event) => {
         const memoryUsed = checkMemoryUsage(memoryLimitMB || 512);
         
         // Serialize result for transfer
+        const _serT0 = performance.now();
         const meshData = serializeResult(result);
+        const _serializeMs = performance.now() - _serT0;
         
         // Get metadata for quoting/display
         const volume = result.volume();
@@ -7694,6 +7758,7 @@ self.onmessage = async (event) => {
             },
             nonce: cachedExecuteNonce,
             bodyCentroids,
+            timing: { execMs: _execMs, serializeMs: _serializeMs },
           }
         });
         break;
