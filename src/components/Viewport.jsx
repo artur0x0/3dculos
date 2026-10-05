@@ -4109,6 +4109,9 @@ const Viewport = forwardRef(({
   const removeBlockPreviewMesh = useCallback(() => {
     disposeEdgeOverlayObject(sceneRef.current, blockPreviewRef.current);
     blockPreviewRef.current = null;
+    if (containerRef.current?.dataset?.blockPreview) {
+      delete containerRef.current.dataset.blockPreview;
+    }
   }, []);
 
   const clearBlockPreview = useCallback(() => {
@@ -4163,6 +4166,9 @@ const Viewport = forwardRef(({
     anchorToActivePart(group);
     scene.add(group);
     blockPreviewRef.current = group;
+    if (containerRef.current) {
+      containerRef.current.dataset.blockPreview = subtract ? 'subtract' : 'add';
+    }
     const renderer = rendererRef.current;
     const camera = cameraRef.current;
     if (renderer && camera) renderer.render(scene, camera);

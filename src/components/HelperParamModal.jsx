@@ -188,6 +188,9 @@ const HelperParamModal = ({
     onConfirm?.(out);
   };
 
+  // Hole sheets hide Depth while Through is on. Cube and tube also have a
+  // Depth field and no Through switch — those stay visible.
+  const hasThrough = params.some((x) => x.name === 'through');
   const showDepth = values.through === false || values.through === 'false';
   const showPattern = !!values.usePattern;
   const placementCenter = !values.placement || values.placement === 'center';
@@ -201,7 +204,7 @@ const HelperParamModal = ({
   const optionLabel = (opt) => (opt && typeof opt === 'object' ? (opt.label ?? opt.value) : opt);
   const visibleParams = params.filter((p) => {
     if (p.showWhen && !ruleHolds(p.showWhen)) return false;
-    if (p.name === 'depth' && !showDepth) return false;
+    if (hasThrough && p.name === 'depth' && !showDepth) return false;
     if (['n', 'm', 'spacingU', 'spacingV'].includes(p.name) && params.some((x) => x.name === 'usePattern') && !showPattern) {
       return false;
     }

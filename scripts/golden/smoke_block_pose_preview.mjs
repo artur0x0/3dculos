@@ -94,6 +94,9 @@ const LINES = {
     && !/part\.subtract\(box2\.rotate/.test(cut),
     cut);
 
+  const modal = readFileSync(new URL('../../src/components/HelperParamModal.jsx', import.meta.url), 'utf8');
+  check('cube Depth stays visible (Through only hides hole depth)',
+    /hasThrough && p\.name === 'depth' && !showDepth/.test(modal));
   const palette = readFileSync(new URL('../../src/components/HelperInsertPalette.jsx', import.meta.url), 'utf8');
   const view = readFileSync(new URL('../../src/components/Viewport.jsx', import.meta.url), 'utf8');
   const worker = readFileSync(new URL('../../src/workers/sandboxWorker.js', import.meta.url), 'utf8');
@@ -107,6 +110,7 @@ const LINES = {
     && /new MeshNormalMaterial\(/.test(paint)
     && /BLOCK_SUBTRACT_OPACITY/.test(paint)
     && /depthTest: false/.test(paint)
+    && /dataset\.blockPreview = subtract \? 'subtract' : 'add'/.test(paint)
     && /raycast = \(\) => \{\}/.test(paint));
   const previewCase = worker.slice(
     worker.indexOf("case 'previewBlock'"),
