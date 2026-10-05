@@ -57,6 +57,7 @@ import {
 import PartFeed from './components/PartFeed';
 import manifoldContext from './utils/ManifoldWorker';
 import DEFAULT_SCRIPT from './utils/defaultScript';
+import { newPartStarterScript } from './utils/helperPaletteSnippets';
 import {
   DEMO_PUZZLE,
   DEFAULT_PUZZLE_ID,
@@ -1234,7 +1235,7 @@ const App = () => {
     }
     const id = newLocalPartId();
     const order = doc.parts.length;
-    const starter = 'let part = Manifold.cube([20, 20, 20], true);\nreturn part;\n';
+    const starter = newPartStarterScript();
     const part = {
       id,
       name: `Part ${order + 1}`,
