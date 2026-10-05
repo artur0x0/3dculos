@@ -91,6 +91,7 @@ function stubRunner(source) {
     addDraft: (p) => p,
     draftFaces: (p) => p,
     cut: (p) => p,
+    booleanBodies: (p) => p,
     move: (p) => p,
     moveFace: (p) => p,
     deleteFace: (p) => p,

@@ -52,6 +52,8 @@ const ContourModeChip = ({
   onToggleTangent,
   onClearEdges,
   onPopEdge,
+  combine = 'add',
+  onCombineChange,
   compact = false,
 }) => {
   const isExtrude = entry === 'makeExtrude';
@@ -62,6 +64,8 @@ const ContourModeChip = ({
   const commitName = isWorkplane
     ? 'Workplane'
     : isSweep ? 'Sweep' : isLoft ? 'Loft' : isRevolve ? 'Revolve' : isExtrude ? 'Extrude' : null;
+  const solidEntry = !!(commitName && !isWorkplane);
+  const combineOp = combine === 'subtract' ? 'subtract' : 'add';
   const loftProfiles = Array.isArray(loft.profiles) ? loft.profiles : [];
   const loftSelected = Number.isInteger(loft.selected) ? loft.selected : 0;
   const loftOffset = Number(loftProfiles[loftSelected]?.offset);
@@ -598,12 +602,39 @@ const ContourModeChip = ({
       </>
       )}
       </div>
+      {solidEntry && (
+        <div className="mt-1.5 flex gap-1 shrink-0" role="group" aria-label="Add or subtract">
+          {[
+            { id: 'add', label: 'Add' },
+            { id: 'subtract', label: 'Subtract' },
+          ].map((opt) => {
+            const on = combineOp === opt.id;
+            return (
+              <button
+                key={opt.id}
+                type="button"
+                onClick={() => onCombineChange?.(opt.id)}
+                aria-pressed={on}
+                data-contour-combine={opt.id}
+                className={`flex-1 px-2 py-1 rounded text-[13px] ${
+                  on ? 'bg-cyan-600 text-white' : 'bg-cyan-950/80 text-cyan-100 border border-cyan-700/70'
+                }`}
+                title={opt.id === 'subtract'
+                  ? 'Cut this solid out of the part'
+                  : 'Union this solid onto the part'}
+              >
+                {opt.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
       <div className="mt-2 flex items-center justify-between gap-2 shrink-0">
         <span className="text-[11px] text-cyan-200/70 leading-tight">
           {isWorkplane
             ? 'Confirm writes a construction plane'
             : commitName
-              ? `Confirm writes ${commitName} (adds if part exists)`
+              ? `Confirm writes ${commitName} (${combineOp === 'subtract' ? 'cuts' : 'adds'} if part exists)`
               : 'Confirm writes Profile only'}
         </span>
         <button

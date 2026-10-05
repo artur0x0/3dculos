@@ -382,13 +382,16 @@ Import `src/utils/importModel.js` (+ `POST /api/convert/step`); export
 
 - **Tailwind only**, no CSS modules. Overlay idiom:
   `absolute … bg-white/60 backdrop-blur-sm rounded-lg shadow-lg z-10`.
-- **Inserting a solid APPENDS, it never replaces.** Every build that creates a
-  new solid — the six Shapes and the one-shot Extrude / Revolve / Loft — goes
-  through `emitPartPlace(names, expr, partDeclared, true)`, which emits
-  `part = part.add(expr)` when a part already exists and `let part = expr` when
-  it does not. Emitting a bare `part = <newSolid>` strands whatever was there as
-  dead code; that was a real bug in all six Shapes until it was fixed. Mutating
-  an existing body (holes, shell, transforms) is different — that keeps
+- **Inserting a solid merges with the part.** Add unions. Subtract cuts. Every build that creates a
+  new solid — the six Block solids and Extrude / Revolve / Loft / Sweep — goes
+  through `emitPartPlace(names, expr, partDeclared, true, op)`, which emits
+  `part = part.add(expr)` when a part already exists and Mode is Add, and
+  `part = part.subtract(expr)` when Mode is Subtract. `let part = expr` is
+  still the first solid, including Subtract on an empty script. Default Mode
+  is Add. Emitting a bare `part = <newSolid>` strands whatever was there as
+  dead code; that was a real bug in all six Block solids until it was fixed.
+  Sweep's one-shot fallback stays a replace when Mode is Add. Mutating
+  an existing body (holes, shell, transforms, Boolean) is different — that keeps
   `syncPartLines`, which points `part` at the body you edited.
 - **Mode-chip popup style** (placement, cyan/amber glass, mobile
   `max-h-[calc(100dvh-12rem)]` + `rail-scroll`, Confirm/X): see
@@ -396,7 +399,10 @@ Import `src/utils/importModel.js` (+ `POST /api/convert/step`); export
   Loft / Workplane), `FilletModeChip`, `ShellModeChip` (face-pick opening —
   not axis X/Y/Z), `DraftModeChip` (neutral-plane draft, not a world-axis guess),
   `CutModeChip` (plane cut — a face plane or an explicit XY/YZ/ZX, offset along
-  the normal, Shell sticky picker for bodies and pieces, one `cut()`).
+  the normal, Shell sticky picker for bodies and pieces, one `cut()`),
+  `BooleanModeChip` (Union / Difference / Intersect, same sticky body picker,
+  Intersect pieces, one `booleanBodies()`). Contour Extrude / Revolve / Sweep /
+  Loft and every Block solid share an Add / Subtract mode on that same feature.
 - **Feature popups all use `src/components/controls/popupUI.jsx`** — one type
   scale (`POPUP_TEXT`), one set of fields, accents per surface (`cyan` contour,
   `amber` fillet, `slate` helper sheets). **Every number renders a slider AND a
@@ -459,8 +465,10 @@ Import `src/utils/importModel.js` (+ `POST /api/convert/step`); export
 - **Rail sections are Block / Build / Shape / Polish / Move**, in that order
   (`CAD_RAIL_ORDER` in `helperPaletteSnippets.js` for the order,
   `GROUP_SHORT_LABEL` in `HelperInsertPalette.jsx` for the captions). Shape is
-  the old Model section, same buttons. Build is hole, cut, shell, draft,
-  pattern. Polish is fillet, chamfer, move face, delete face. Move is every
+  the old Model section, same buttons. Build is hole, cut, boolean, shell, draft,
+  pattern. Boolean (`Combine`) is the body boolean: Union, Difference, or
+  Intersect, then leftover pieces on Intersect. It is not a second glyph of Cut.
+  Polish is fillet, chamfer, move face, delete face. Move is every
   remaining button. The first button in Move is Move (`Move` glyph, directly
   above Center): it opens the delta X/Y/Z chip and translates one body. Move
   Face (`SquareArrowOutUpRight`) offsets the picked faces along their normals.

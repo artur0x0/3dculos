@@ -31,6 +31,20 @@ over inventing a new modal layout.
   color; tap hides that piece, tap again brings it back, Undo drops the last
   hide, Clear unhides every piece and keeps the plane. No shift-click.
   Confirm writes one `cut()`; grey X exits with no write.
+- **`BooleanModeChip.jsx`** — cyan glass card (same shell as Cut). Union,
+  Difference, or Intersect. Bodies use the Shell sticky picker: the first tap
+  is the target, later taps are tools, tap again removes. Intersect opens
+  Pieces: tap hides a leftover, tap again brings it back (the hidden piece
+  stays in the scene at opacity 0 so it still hits). Undo and Clear follow
+  Cut. No shift-click. Confirm writes one `booleanBodies()` for the active
+  part and replaces a previous Boolean block; grey X exits with no write.
+  The chip is not a scrim (`z-20`, `pointer-events-auto` on the card only).
+  The cross-section panel stays at `z-40`, so section stays usable while
+  picking. Hiding a part in the part manager does not clear that part's picks.
+  `data-boolean-allow-section` and `data-boolean-survives-parts` mark that contract.
+- **Contour Add / Subtract** — Extrude, Revolve, Sweep, and Loft (not Profile
+  or Workplane) show Add and Subtract on `ContourModeChip` (`data-contour-combine`).
+  Block solids use the same Mode select on the helper sheet. Default is Add.
 - **`MoveModeChip.jsx`** — cyan glass card (same shell as Shell). Double-click
   selects the body (one click still selects the full face and does not change
   the target). XYZ are `NumberField` deltas, slider and type-in. Cut (when the

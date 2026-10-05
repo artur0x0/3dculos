@@ -7396,6 +7396,164 @@ function _cutSplitOrOriginal(body, plane) {
   };
 }
 
+/**
+ * booleanBodies(manifold, { op, bodies, drop }) — union, difference, or
+ * intersect of named bodies. The first { at } is the target. Later entries
+ * are tools, unioned together, then subtracted from or intersected with the
+ * target. Bodies that were not named stay in the solid.
+ *
+ * op: 'union' | 'difference' | 'intersect'.
+ * bodies: [{ at }] near each body's vertex centroid, in pick order.
+ *   Omit to use every body, in decompose order.
+ * drop: intersect only. [{ at }] centroids of leftover pieces to delete.
+ *   A piece that is not listed stays. Deleting every piece throws.
+ */
+function booleanBodies(manifold, opts = {}) {
+  if (!manifoldModule) throw new Error('Manifold not initialized');
+  if (!manifold || typeof manifold.decompose !== 'function') {
+    throw new Error('booleanBodies: expected a Manifold');
+  }
+  const { Manifold } = manifoldModule;
+  const options = (opts && typeof opts === 'object' && !Array.isArray(opts)) ? opts : {};
+  const op = _booleanOp(options.op);
+  const bodies = _cutBodiesOf(manifold);
+  let selected;
+  try {
+    selected = _booleanSelected(bodies, options.bodies);
+  } catch (err) {
+    const msg = err && err.message ? String(err.message) : String(err);
+    throw new Error(msg.replace(/^cut:/, 'booleanBodies:'));
+  }
+  if (selected.length < 2) {
+    throw new Error('booleanBodies: pick a target and at least one tool body');
+  }
+  const picked = selected.map((i) => bodies[i]);
+  const sel = new Set(selected);
+  const rest = [];
+  for (let i = 0; i < bodies.length; i++) {
+    if (!sel.has(i)) rest.push(bodies[i]);
+  }
+  const combined = _booleanCombine(op, picked);
+  let shaped = combined.result;
+  const discard = combined.temps.slice();
+  if (op === 'intersect' && Array.isArray(options.drop) && options.drop.length) {
+    const dropped = _booleanDropPieces(shaped, options.drop);
+    shaped = dropped.kept;
+    for (const extra of dropped.discard) discard.push(extra);
+  }
+  if (_booleanEmpty(shaped)) {
+    for (const extra of discard) _safeDeleteManifold(extra);
+    for (const body of bodies) {
+      if (body && body !== manifold) _safeDeleteManifold(body);
+    }
+    throw new Error(op === 'intersect'
+      ? 'booleanBodies: intersection is empty'
+      : 'booleanBodies: result is empty');
+  }
+  const kept = [shaped, ...rest];
+  const keepSet = new Set(kept);
+  for (const body of bodies) {
+    if (body && body !== manifold && !keepSet.has(body)) discard.push(body);
+  }
+  if (combined.result && combined.result !== shaped && !keepSet.has(combined.result)) {
+    discard.push(combined.result);
+  }
+  for (const extra of discard) {
+    if (extra && extra !== manifold && !keepSet.has(extra)) _safeDeleteManifold(extra);
+  }
+  const result = kept.length === 1 ? kept[0] : Manifold.compose(kept);
+  const status = _c4StatusError(result);
+  if (status) throw new Error(`booleanBodies: result is not a valid solid (${status})`);
+  return result;
+}
+
+function _booleanOp(op) {
+  const v = op == null ? 'union' : String(op).toLowerCase();
+  if (v === 'union' || v === 'add') return 'union';
+  if (v === 'difference' || v === 'subtract' || v === 'cut') return 'difference';
+  if (v === 'intersect' || v === 'intersection') return 'intersect';
+  throw new Error(`booleanBodies: op must be 'union', 'difference', or 'intersect' (got ${op})`);
+}
+
+function _booleanSelected(bodies, spec) {
+  if (!Array.isArray(spec) || !spec.length) {
+    return bodies.map((_, i) => i);
+  }
+  const selected = [];
+  const seen = new Set();
+  for (const entry of spec) {
+    const at = entry && (entry.at || entry.center);
+    if (!Array.isArray(at)) throw new Error('booleanBodies: bodies entries need { at: [x, y, z] }');
+    let idx;
+    try {
+      idx = _cutBodyIndex(bodies, at);
+    } catch (err) {
+      const msg = err && err.message ? String(err.message) : String(err);
+      throw new Error(msg.replace(/^cut:/, 'booleanBodies:'));
+    }
+    if (seen.has(idx)) continue;
+    seen.add(idx);
+    selected.push(idx);
+  }
+  return selected;
+}
+
+function _booleanCombine(op, picked) {
+  const { Manifold } = manifoldModule;
+  if (op === 'union') {
+    if (picked.length === 1) return { result: picked[0], temps: [] };
+    return { result: Manifold.union(picked), temps: [] };
+  }
+  const target = picked[0];
+  const tools = picked.slice(1);
+  const temps = [];
+  let tool = tools[0];
+  if (tools.length > 1) {
+    tool = Manifold.union(tools);
+    temps.push(tool);
+  }
+  const result = op === 'difference'
+    ? Manifold.difference(target, tool)
+    : Manifold.intersection(target, tool);
+  return { result, temps };
+}
+
+function _booleanEmpty(m) {
+  if (!m) return true;
+  if (typeof m.isEmpty === 'function') {
+    try { if (m.isEmpty()) return true; } catch (_) { /* volume floor below */ }
+  }
+  return !(_cutVol(m) > 1e-8);
+}
+
+function _booleanDropPieces(result, spec) {
+  const pieces = _cutBodiesOf(result);
+  const dropIdx = new Set();
+  for (const entry of spec) {
+    const at = entry && (entry.at || entry.center);
+    if (!Array.isArray(at)) throw new Error('booleanBodies: drop entries need { at: [x, y, z] }');
+    try {
+      dropIdx.add(_cutBodyIndex(pieces, at));
+    } catch (err) {
+      const msg = err && err.message ? String(err.message) : String(err);
+      throw new Error(msg.replace(/^cut:/, 'booleanBodies:'));
+    }
+  }
+  const kept = [];
+  const discard = [];
+  for (let i = 0; i < pieces.length; i++) {
+    if (dropIdx.has(i)) {
+      if (pieces[i] !== result) discard.push(pieces[i]);
+      continue;
+    }
+    kept.push(pieces[i]);
+  }
+  if (!kept.length) throw new Error('booleanBodies: every piece was deleted');
+  if (kept.length === 1) return { kept: kept[0], discard };
+  const { Manifold } = manifoldModule;
+  return { kept: Manifold.compose(kept), discard };
+}
+
 // Collection of all helper functions to inject
 const HELPER_FUNCTIONS = {
   shell,
@@ -7414,6 +7572,7 @@ const HELPER_FUNCTIONS = {
   addDraft,
   draftFaces,
   cut,
+  booleanBodies,
   move,
   moveFace,
   deleteFace,
@@ -8358,6 +8517,62 @@ self.onmessage = async (event) => {
               });
             }
             for (const extra of split.discard) track(extra);
+          }
+        } finally {
+          for (const m of created) _safeDeleteManifold(m);
+        }
+        self.postMessage({ type: 'result', id, payload: { pieces } });
+        break;
+      }
+
+      // Boolean preview. Clone the cached solid and run the same combine
+      // booleanBodies() uses, without drop, so every leftover piece is listed.
+      // The clone and every temporary are deleted before this returns.
+      // cachedManifold is not assigned, so leaving without Confirm writes nothing.
+      case 'previewBoolean': {
+        if (!isInitialized) throw new Error('Worker not initialized');
+        if (!cachedManifold) throw new Error('No cached manifold - execute a script first');
+        const created = [];
+        const track = (m) => {
+          if (!m || m === cachedManifold) return;
+          if (created.indexOf(m) >= 0) return;
+          created.push(m);
+        };
+        let pieces;
+        try {
+          const options = (payload && typeof payload === 'object') ? payload : {};
+          const op = _booleanOp(options.op);
+          const clone = cachedManifold.clone();
+          track(clone);
+          const bodies = _cutBodiesOf(clone);
+          for (const body of bodies) track(body);
+          const selected = _booleanSelected(bodies, options.bodies);
+          const sel = new Set(selected);
+          pieces = [];
+          for (let i = 0; i < bodies.length; i++) {
+            if (sel.has(i)) continue;
+            pieces.push({
+              at: _cutCentroid(bodies[i]),
+              selected: false,
+              kind: 'body',
+              mesh: serializeResult(bodies[i]),
+            });
+          }
+          if (selected.length >= 2) {
+            const picked = selected.map((i) => bodies[i]);
+            const combined = _booleanCombine(op, picked);
+            track(combined.result);
+            for (const extra of combined.temps) track(extra);
+            const parts = _cutBodiesOf(combined.result);
+            for (const part of parts) track(part);
+            for (const part of parts) {
+              pieces.push({
+                at: _cutCentroid(part),
+                selected: true,
+                kind: 'piece',
+                mesh: serializeResult(part),
+              });
+            }
           }
         } finally {
           for (const m of created) _safeDeleteManifold(m);

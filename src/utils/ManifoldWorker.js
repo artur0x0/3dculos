@@ -459,6 +459,35 @@ class ManifoldWorker {
    * @param {{ at: number[] }[]} bodies - Bodies to cut. Omit to cut every body.
    * @returns {Promise<{ pieces: object[] }>}
    */
+  async previewBoolean(op, bodies, options = {}) {
+    if (!this.isReady) {
+      throw new Error('ManifoldWorker not initialized');
+    }
+    const timeoutMs = options.timeoutMs || this.config.timeoutMs;
+    return new Promise((resolve, reject) => {
+      const requestId = this._generateRequestId();
+      const timeoutId = setTimeout(() => {
+        this.pendingRequests.delete(requestId);
+        reject(new Error(`previewBoolean timed out after ${timeoutMs / 1000}s`));
+      }, timeoutMs);
+      this.pendingRequests.set(requestId, {
+        resolve: (result) => {
+          clearTimeout(timeoutId);
+          resolve(result);
+        },
+        reject: (error) => {
+          clearTimeout(timeoutId);
+          reject(error);
+        }
+      });
+      this.worker.postMessage({
+        type: 'previewBoolean',
+        id: requestId,
+        payload: { op, bodies }
+      });
+    });
+  }
+
   async previewCut(plane, bodies, options = {}) {
     if (!this.isReady) {
       throw new Error('ManifoldWorker not initialized');
@@ -819,6 +848,13 @@ class ManifoldContext {
    * Pieces preview. Runs the real cut on a clone of the last solid and
    * returns each piece mesh. The cached solid is left as it was.
    */
+  async previewBoolean({ op, bodies } = {}) {
+    if (!this.worker || !this.worker.isReady) {
+      throw new Error('ManifoldContext not initialized');
+    }
+    return await this.worker.previewBoolean(op, bodies);
+  }
+
   async previewCut({ plane, bodies } = {}) {
     if (!this.worker || !this.worker.isReady) {
       throw new Error('ManifoldContext not initialized');

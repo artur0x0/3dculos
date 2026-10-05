@@ -23,6 +23,7 @@ import {
   NotebookPen,
   Route,
   Scissors,
+  Combine,
   Move,
   SquareArrowOutUpRight,
   SquareX,
@@ -59,6 +60,7 @@ const ICONS = {
   cskHole: Cone,
   shell: PackageOpen,
   cut: Scissors,
+  boolean: Combine,
   move: Move,
   moveFace: SquareArrowOutUpRight,
   deleteFace: SquareX,
@@ -117,6 +119,7 @@ const HelperInsertPalette = ({
   onEnterShellMode = null,
   onEnterDraftMode = null,
   onEnterCutMode = null,
+  onEnterBooleanMode = null,
   onEnterMoveMode = null,
   onEnterMoveFaceMode = null,
   onEnterDeleteFaceMode = null,
@@ -175,6 +178,12 @@ const HelperInsertPalette = ({
     // XY / YZ / ZX is chosen in the chip. Not a world-axis guess.
     if (item.id === 'cut' && typeof onEnterCutMode === 'function') {
       onEnterCutMode({ entry: 'cut' });
+      return;
+    }
+    // Boolean enters body pick. Union, difference, or intersect. Intersect
+    // then lists leftover pieces. Not a second tool.
+    if (item.id === 'boolean' && typeof onEnterBooleanMode === 'function') {
+      onEnterBooleanMode({ entry: 'boolean' });
       return;
     }
     // Move enters body-pick mode. Deltas live on the chip. The axis helper

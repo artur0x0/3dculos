@@ -295,8 +295,8 @@ console.log('cut plane');
   const bridge = read('../../src/utils/ManifoldWorker.js');
   check('the worker bridge exposes previewCut', /previewCut/.test(bridge));
   check('a cut tap is not swallowed by a contour or a construction plane',
-    /!cutModeRef\.current && showContoursRef/.test(view)
-    && /!cutModeRef\.current && planeHits/.test(view));
+    /!cutModeRef\.current && !booleanModeRef\.current && showContoursRef/.test(view)
+    && /!cutModeRef\.current && !booleanModeRef\.current && planeHits/.test(view));
   check('chip does not ask for shift-click', !/shift-click/.test(chip) && !/shiftKey/.test(chip));
   check('POPUP_STYLE documents CutModeChip', /CutModeChip/.test(popup) && /sticky picker/.test(popup));
 }
