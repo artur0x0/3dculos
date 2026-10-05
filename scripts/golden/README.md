@@ -31,6 +31,7 @@ requires `test_real_worker.mjs` via `npm run verify` once the harness is present
 | `smoke_slice27_fillet_mode.mjs` | Slice 27 Fillet-in-mode: enter without edges, live blend preview as edges accumulate, Accept compose (makeSweepPath + filletAlongPath) + replace-in-place, Back/no-commit, disjoint edges → independent fillets (2+ components), #27–#30 sweep stack |
 | `smoke_fillet_followup.mjs` | Fillet follow-up: loft overlay stays bounded, blend strips are not candidates, sequential sharp-edge Accept appends, blend-only Accept fails loud |
 | `smoke_fillet_easy_hard.mjs` | Slice B: box / extrude edges easy (no warn reason); circle↔square loft generator hard with a stable reason; Accept stays allowed; huge radius and long chains warn |
+| `smoke_fillet_box_corners.mjs` | Four vertical corners of a plain box: picker Accept and a script fillet both run, and fail if `no boundary between faces` would toast |
 | `smoke_fillet_kernel_spike_c.mjs` | Slice C/C2: hard kernel recommendation + production flag; hard Accept emits filletEdges+relaxPlanar; pick-mode restore + selector gap |
 | `smoke_fillet_c2_rolling_ball.mjs` | Slice C2/C3: hard loft Accept path + scrap guard; C3 supersedes rolling-ball with variableProfile; known-scrap relaxPlanar loud-fails /sliver scraps/ |
 | `smoke_fillet_c3_variable_sweep.mjs` | Slice C3: tangency field G1 vs zig-zag; loft Tangent-on human-scale; hard Accept → variableProfile sweep; R≈1.6 no zero-area banner delta; easy cube clean |

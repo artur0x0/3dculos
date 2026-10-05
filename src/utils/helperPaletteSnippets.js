@@ -23,6 +23,8 @@
  * in revolve markers (same additive rule when `part` already exists).
  * Slice 27: Fillet-in-mode Accept wraps makeSweepPath + filletAlongPath in fillet markers
  * (one pair per contiguous component when the edge pick is disconnected).
+ * Disjoint corners resolve every edge before the first blend: a fillet boolean
+ * merges or splits face ids, and a later edgesBetween of the next corner throws.
  * Slice 28/hotfix: Loft Confirm wraps ≥2 makeCrossSection + makeLoft / placeInFrame
  * in loft markers (additive when `part` already exists).
  * Slice 29: rail groups Prim / Advanced / Features / Xforms. Profile, Workplane,
@@ -1118,6 +1120,27 @@ function emitUnifiedHole(lines, body, p, names, faceCtx) {
   }
 }
 
+/**
+ * One sweep blend per disjoint component. Every edge lookup is written
+ * before the first filletAlongPath. That boolean merges or splits Manifold
+ * faceIDs, so a later edgesBetween of the next corner throws
+ * "no boundary between faces".
+ * @returns {boolean} false when a component cannot be emitted
+ */
+function appendResolvedSweepBlends(feat, comps, emitEdge, emitBlend) {
+  const prepared = [];
+  for (const comp of comps) {
+    if (!Array.isArray(comp) || !comp.length) continue;
+    const edge = emitEdge(comp);
+    if (!edge || !edge.ok) return false;
+    prepared.push(edge);
+  }
+  if (!prepared.length) return false;
+  for (const edge of prepared) feat.push(...edge.lines);
+  for (const edge of prepared) emitBlend(edge);
+  return true;
+}
+
 /** @type {PaletteItem[]} */
 export const HELPER_PALETTE_ITEMS = [
   // ── Primitives ──────────────────────────────────────────────
@@ -1358,18 +1381,20 @@ export const HELPER_PALETTE_ITEMS = [
         const sweepNote = hardVariable
           ? ' // hard: variable-profile inscribed-arc sweep (C3)'
           : ' // sweep fillet wedge';
-        for (const comp of comps) {
-          if (!Array.isArray(comp) || !comp.length) continue;
-          const edge = emitFilletBoundaryLines(body, comp, names, allocateUniqueName)
-            || emitSelectedEdgeLiteralLines(body, comp, names, allocateUniqueName);
-          if (!edge || !edge.ok) return null;
-          feat.push(...edge.lines);
-          const path = allocateUniqueName(names, 'path');
-          feat.push(`const ${path} = makeSweepPath(${edge.edgesExpr}${optsPath}); // edge→sweep path`);
-          feat.push(
-            `${body} = filletAlongPath(${body}, ${path}, ${r}${sweepOpts});${sweepNote}`,
-          );
-        }
+        const wrote = appendResolvedSweepBlends(
+          feat,
+          comps,
+          (comp) => emitFilletBoundaryLines(body, comp, names, allocateUniqueName)
+            || emitSelectedEdgeLiteralLines(body, comp, names, allocateUniqueName),
+          (edge) => {
+            const path = allocateUniqueName(names, 'path');
+            feat.push(`const ${path} = makeSweepPath(${edge.edgesExpr}${optsPath}); // edge→sweep path`);
+            feat.push(
+              `${body} = filletAlongPath(${body}, ${path}, ${r}${sweepOpts});${sweepNote}`,
+            );
+          },
+        );
+        if (!wrote) return null;
         if (!feat.some((ln) => /filletAlongPath\s*\(/.test(ln))) return null;
         feat.push(...syncPartLines(body, names, hasPartDecl([...lines, ...feat], empty)));
       } else {
@@ -1424,18 +1449,20 @@ export const HELPER_PALETTE_ITEMS = [
         if (!split.ok) return null;
         const comps = split.components;
         if (!comps.length || !comps.some((comp) => Array.isArray(comp) && comp.length)) return null;
-        for (const comp of comps) {
-          if (!Array.isArray(comp) || !comp.length) continue;
-          const edge = emitFilletBoundaryLines(body, comp, names, allocateUniqueName)
-            || emitSelectedEdgeLiteralLines(body, comp, names, allocateUniqueName);
-          if (!edge || !edge.ok) return null;
-          feat.push(...edge.lines);
-          const path = allocateUniqueName(names, 'path');
-          feat.push(`const ${path} = makeSweepPath(${edge.edgesExpr}); // edge→sweep path`);
-          feat.push(
-            `${body} = filletAlongPath(${body}, ${path}, ${c}, { profile: 'chamfer' }); // sweep chamfer wedge`,
-          );
-        }
+        const wrote = appendResolvedSweepBlends(
+          feat,
+          comps,
+          (comp) => emitFilletBoundaryLines(body, comp, names, allocateUniqueName)
+            || emitSelectedEdgeLiteralLines(body, comp, names, allocateUniqueName),
+          (edge) => {
+            const path = allocateUniqueName(names, 'path');
+            feat.push(`const ${path} = makeSweepPath(${edge.edgesExpr}); // edge→sweep path`);
+            feat.push(
+              `${body} = filletAlongPath(${body}, ${path}, ${c}, { profile: 'chamfer' }); // sweep chamfer wedge`,
+            );
+          },
+        );
+        if (!wrote) return null;
         if (!feat.some((ln) => /filletAlongPath\s*\(/.test(ln))) return null;
         feat.push(...syncPartLines(body, names, hasPartDecl([...lines, ...feat], empty)));
       } else {
