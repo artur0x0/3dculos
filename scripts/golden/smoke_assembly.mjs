@@ -269,6 +269,11 @@ async function execute(script) {
     ],
   });
   const scripts = { 'local:box': BOX, 'local:wide': WIDE };
+  const dropped = await execute(newPartStarterScript());
+  check('the auto-dropped box is still a 20 mm cube solid',
+    Math.abs(dropped.volume - 8000) < 1e-3
+    && dropped.mesh?.vertProperties?.length > 0,
+    `vol=${dropped.volume}`);
   const both = await runAssemblyParts({ doc, scripts, execute });
   check('both visible parts become solids',
     both.solids.length === 2
