@@ -4,7 +4,6 @@
  * enough to be a feature edge (not a planar tessellation seam).
  */
 
-import { Vector3 } from 'three';
 import {
   propagateTrueTangentEdges,
   TANGENCY_PROP_DEG,
@@ -20,37 +19,74 @@ const DEFAULT_FEATURE_DEG = 2;
  * Build feature edges from a BufferGeometry (indexed).
  * @returns {{ key: string, a: number, b: number, va: number[], vb: number[], mid: number[], length: number, tangent: number[], n0: number[], n1: number[] }[]}
  */
+/** 26 bits per vertex index. Past that, the key falls back to a string. */
+const EDGE_PACK = 0x4000000;
+
+function packedEdgeKey(a, b) {
+  const lo = a < b ? a : b;
+  const hi = a < b ? b : a;
+  if (hi >= EDGE_PACK) return `${lo}-${hi}`;
+  return lo * EDGE_PACK + hi;
+}
+
 export function buildFeatureEdges(geometry, minAngleDeg = DEFAULT_FEATURE_DEG) {
   if (!geometry?.index || !geometry.attributes?.position) return [];
-  const positions = geometry.attributes.position;
+  const attr = geometry.attributes.position;
   const index = geometry.index.array;
   const numTri = index.length / 3;
-  const edgeMap = new Map();
-
-  const getN = (t) => {
-    const i0 = index[t * 3], i1 = index[t * 3 + 1], i2 = index[t * 3 + 2];
-    const v0 = new Vector3().fromBufferAttribute(positions, i0);
-    const v1 = new Vector3().fromBufferAttribute(positions, i1);
-    const v2 = new Vector3().fromBufferAttribute(positions, i2);
-    return new Vector3().subVectors(v1, v0).cross(new Vector3().subVectors(v2, v0)).normalize();
-  };
-
+  const arr = attr.array;
+  const item = attr.itemSize || 3;
+  const nx = new Float64Array(numTri);
+  const ny = new Float64Array(numTri);
+  const nz = new Float64Array(numTri);
   for (let t = 0; t < numTri; t++) {
-    const i0 = index[t * 3], i1 = index[t * 3 + 1], i2 = index[t * 3 + 2];
-    const edges = [
-      [Math.min(i0, i1), Math.max(i0, i1)],
-      [Math.min(i1, i2), Math.max(i1, i2)],
-      [Math.min(i2, i0), Math.max(i2, i0)],
-    ];
-    for (const [a, b] of edges) {
-      const key = `${a}-${b}`;
-      if (!edgeMap.has(key)) edgeMap.set(key, { a, b, tris: [] });
-      edgeMap.get(key).tris.push(t);
+    const i0 = index[t * 3] * item;
+    const i1 = index[t * 3 + 1] * item;
+    const i2 = index[t * 3 + 2] * item;
+    const ax = arr[i0];
+    const ay = arr[i0 + 1];
+    const az = arr[i0 + 2];
+    const bx = arr[i1] - ax;
+    const by = arr[i1 + 1] - ay;
+    const bz = arr[i1 + 2] - az;
+    const cx = arr[i2] - ax;
+    const cy = arr[i2 + 1] - ay;
+    const cz = arr[i2 + 2] - az;
+    let x = by * cz - bz * cy;
+    let y = bz * cx - bx * cz;
+    let z = bx * cy - by * cx;
+    const len = Math.hypot(x, y, z) || 1;
+    nx[t] = x / len;
+    ny[t] = y / len;
+    nz[t] = z / len;
+  }
+
+  const edgeMap = new Map();
+  for (let t = 0; t < numTri; t++) {
+    const i0 = index[t * 3];
+    const i1 = index[t * 3 + 1];
+    const i2 = index[t * 3 + 2];
+    const pairs = [i0, i1, i1, i2, i2, i0];
+    for (let k = 0; k < 6; k += 2) {
+      let a = pairs[k];
+      let b = pairs[k + 1];
+      if (a > b) {
+        const s = a;
+        a = b;
+        b = s;
+      }
+      const key = packedEdgeKey(a, b);
+      let e = edgeMap.get(key);
+      if (!e) {
+        e = { a, b, tris: [] };
+        edgeMap.set(key, e);
+      }
+      e.tris.push(t);
     }
   }
 
   const cosMin = Math.cos((minAngleDeg * Math.PI) / 180);
-  const bodies = meshBodyComponents(positions, geometry.index);
+  const bodies = meshBodyComponents(attr, geometry.index);
   const triBody = new Int32Array(numTri).fill(-1);
   bodies.forEach((body, id) => {
     for (const t of body.triangles) triBody[t] = id;
@@ -58,28 +94,34 @@ export function buildFeatureEdges(geometry, minAngleDeg = DEFAULT_FEATURE_DEG) {
   const out = [];
   for (const e of edgeMap.values()) {
     if (e.tris.length !== 2) continue;
-    const n0 = getN(e.tris[0]);
-    const n1 = getN(e.tris[1]);
-    if (n0.dot(n1) > cosMin) continue; // coplanar / seam
-    const va = new Vector3().fromBufferAttribute(positions, e.a);
-    const vb = new Vector3().fromBufferAttribute(positions, e.b);
-    const mid = va.clone().add(vb).multiplyScalar(0.5);
-    const tangent = vb.clone().sub(va);
-    const length = tangent.length();
+    const t0 = e.tris[0];
+    const t1 = e.tris[1];
+    if (nx[t0] * nx[t1] + ny[t0] * ny[t1] + nz[t0] * nz[t1] > cosMin) continue;
+    const oa = e.a * item;
+    const ob = e.b * item;
+    const vax = arr[oa];
+    const vay = arr[oa + 1];
+    const vaz = arr[oa + 2];
+    const vbx = arr[ob];
+    const vby = arr[ob + 1];
+    const vbz = arr[ob + 2];
+    const dx = vbx - vax;
+    const dy = vby - vay;
+    const dz = vbz - vaz;
+    const length = Math.hypot(dx, dy, dz);
     if (length < 1e-9) continue;
-    tangent.normalize();
     out.push({
       key: `${e.a}-${e.b}`,
       a: e.a,
       b: e.b,
-      va: [va.x, va.y, va.z],
-      vb: [vb.x, vb.y, vb.z],
-      mid: [mid.x, mid.y, mid.z],
+      va: [vax, vay, vaz],
+      vb: [vbx, vby, vbz],
+      mid: [(vax + vbx) / 2, (vay + vby) / 2, (vaz + vbz) / 2],
       length,
-      tangent: [tangent.x, tangent.y, tangent.z],
-      n0: [n0.x, n0.y, n0.z],
-      n1: [n1.x, n1.y, n1.z],
-      bodyId: triBody[e.tris[0]],
+      tangent: [dx / length, dy / length, dz / length],
+      n0: [nx[t0], ny[t0], nz[t0]],
+      n1: [nx[t1], ny[t1], nz[t1]],
+      bodyId: triBody[t0],
     });
   }
   return out;
@@ -707,16 +749,85 @@ function _uniqueFinite(edges, field) {
 function mergeCollinearEdges(edges) {
   // Group against the seed line only. Union-find would walk a curve
   // (each 6° step collinear with the last) and erase a loft generator.
-  const used = new Array(edges.length).fill(false);
+  // The foot of the perpendicular from the origin is constant on one line.
+  // A partner within COLLINEAR_DEG and LINE_OFFSET_EPS lands in this cell
+  // or a neighbor (cell size is that slack). The exact test still decides,
+  // and candidates are taken in index order so the seed grouping stays put.
+  const n = edges.length;
+  const used = new Array(n).fill(false);
   const groups = [];
-  for (let i = 0; i < edges.length; i++) {
+  const feet = new Float64Array(n * 3);
+  let reach2 = 0;
+  for (let i = 0; i < n; i++) {
+    const e = edges[i];
+    const t = e.tangent;
+    const s = e.va[0] * t[0] + e.va[1] * t[1] + e.va[2] * t[2];
+    feet[i * 3] = e.va[0] - t[0] * s;
+    feet[i * 3 + 1] = e.va[1] - t[1] * s;
+    feet[i * 3 + 2] = e.va[2] - t[2] * s;
+    const rva = e.va[0] * e.va[0] + e.va[1] * e.va[1] + e.va[2] * e.va[2];
+    const rvb = e.vb[0] * e.vb[0] + e.vb[1] * e.vb[1] + e.vb[2] * e.vb[2];
+    if (rva > reach2) reach2 = rva;
+    if (rvb > reach2) reach2 = rvb;
+  }
+  const reach = Math.sqrt(reach2);
+  const slack = LINE_OFFSET_EPS + reach * Math.sin((COLLINEAR_DEG * Math.PI) / 180) + 1e-4;
+  const Q = slack;
+  const BIAS = 65536;
+  const CELL = 131072;
+  const pack = (ix, iy, iz) => {
+    if (ix < -BIAS || iy < -BIAS || iz < -BIAS || ix >= BIAS || iy >= BIAS || iz >= BIAS) {
+      return `${ix}|${iy}|${iz}`;
+    }
+    return ((ix + BIAS) * CELL + (iy + BIAS)) * CELL + (iz + BIAS);
+  };
+  const bins = new Map();
+  const bix = new Int32Array(n);
+  const biy = new Int32Array(n);
+  const biz = new Int32Array(n);
+  for (let i = 0; i < n; i++) {
+    const ix = Math.round(feet[i * 3] / Q);
+    const iy = Math.round(feet[i * 3 + 1] / Q);
+    const iz = Math.round(feet[i * 3 + 2] / Q);
+    bix[i] = ix;
+    biy[i] = iy;
+    biz[i] = iz;
+    const key = pack(ix, iy, iz);
+    let list = bins.get(key);
+    if (!list) {
+      list = [];
+      bins.set(key, list);
+    }
+    list.push(i);
+  }
+  const cands = [];
+  for (let i = 0; i < n; i++) {
     if (used[i]) continue;
     const group = [edges[i]];
     used[i] = true;
-    for (let j = i + 1; j < edges.length; j++) {
+    cands.length = 0;
+    const ix = bix[i];
+    const iy = biy[i];
+    const iz = biz[i];
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dz = -1; dz <= 1; dz++) {
+          const list = bins.get(pack(ix + dx, iy + dy, iz + dz));
+          if (!list) continue;
+          for (let p = 0; p < list.length; p++) {
+            const j = list[p];
+            if (j > i && !used[j]) cands.push(j);
+          }
+        }
+      }
+    }
+    cands.sort((a, b) => a - b);
+    const seedBody = edges[i].bodyId;
+    const seedFinite = Number.isFinite(seedBody);
+    for (let p = 0; p < cands.length; p++) {
+      const j = cands[p];
       if (used[j]) continue;
-      if (Number.isFinite(edges[i].bodyId) && Number.isFinite(edges[j].bodyId)
-        && edges[i].bodyId !== edges[j].bodyId) continue;
+      if (seedFinite && Number.isFinite(edges[j].bodyId) && seedBody !== edges[j].bodyId) continue;
       if (!_sameLine(edges[i], edges[j])) continue;
       used[j] = true;
       group.push(edges[j]);

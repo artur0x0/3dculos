@@ -68,6 +68,8 @@ There is no `rebuildGraphs()` and no per-op hook. Cut, Draft, Move Face, and Del
 
 `indexBoundaryEdges` (worker `edge()` and viewport labels) keeps a boundary when dihedral ≥ 15° **and** the smaller face is ≥ 5% of the largest face. That is a stricter set than the coherent chains. Shallow blend facets stay out of both.
 
+On that rebuild, triangle edges are indexed by a packed integer (`lo * 2^26 + hi`), with a string only when a vertex index does not fit in 26 bits — the same kind of numeric key the face graph uses. The 15° / 5% gate runs before segment records are allocated; the kept boundary set is unchanged. Collinear copies in `buildCoherentEdges` are still grouped against the first unused seed, not unioned along a curve. That seed only consults numeric bins of the line's perpendicular foot (the cell is at least the 6° / 0.45 mm slack, and the neighbor cells are included). A contact seam needs two vertex-connected bodies, so one body stops after that count.
+
 **After Cut confirm and after Draft confirm** the path is the same: Confirm writes one call, Auto-Run, `renderMeshData`, then `syncFeatureEdges` on the new geometry.
 
 - Edge graph and body contours are rebuilt in that success path.
