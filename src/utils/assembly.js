@@ -68,18 +68,40 @@ export function newLocalPartId() {
  * {
  *   version: 1,
  *   source: 'git' | 'local',
- *   name?: string,
+ *   name: string,
  *   activeId: string | null,
  *   parts: [{ id, name, visible, order, position? }]
  * }
- * `name`, when present, is the assembly name. A blank name is omitted.
+ * `name` is the assembly name. A blank name is saved as Assembly.
  * `script` and any other fields are dropped.
  */
 
-/** Trimmed assembly name, or '' when the document has none. */
-export function assemblyName(doc) {
+/** Shown and saved when a document has no name of its own. */
+export const DEFAULT_ASSEMBLY_NAME = 'Assembly';
+
+/** Trimmed name stored on the document, or '' when it has none. */
+function storedAssemblyName(doc) {
   if (!doc || typeof doc.name !== 'string') return '';
   return doc.name.trim();
+}
+
+/**
+ * Assembly name for a document. A blank or whitespace name is Assembly.
+ * No document stays ''. A custom name is returned unchanged, aside from trim.
+ */
+export function assemblyName(doc) {
+  if (!doc || typeof doc !== 'object') return '';
+  return storedAssemblyName(doc) || DEFAULT_ASSEMBLY_NAME;
+}
+
+/**
+ * Name to store when a file is opened.
+ * A custom document name wins. A blank document takes the file name, then Assembly.
+ */
+export function assemblyNameForLoad(raw, filename) {
+  const stored = storedAssemblyName(raw);
+  if (stored) return stored;
+  return assemblyNameFromFile(filename) || DEFAULT_ASSEMBLY_NAME;
 }
 
 /**
@@ -95,8 +117,9 @@ export function sanitizeAssemblyName(raw) {
 }
 
 /**
- * CAD title. With an assembly name: "Bracket in Gearbox".
- * With none: the part alone. No empty "in", no dash.
+ * CAD title. With an assembly name: "part1 in Assembly".
+ * With a blank string: the part alone. No empty "in", no dash.
+ * Callers pass assemblyName(), which turns a blank document into Assembly.
  */
 export function formatViewerTitle(partName, assemblyNameValue) {
   const part = String(partName ?? '').trim() || 'Untitled';
@@ -137,15 +160,14 @@ export function serializeAssembly(doc) {
   const activeId = parts.some((part) => part.id === wanted)
     ? wanted
     : (parts[0]?.id || null);
-  const name = assemblyName(doc);
-  const out = {
+  const name = storedAssemblyName(doc) || DEFAULT_ASSEMBLY_NAME;
+  return {
     version: ASSEMBLY_VERSION,
     source,
+    name,
     activeId,
     parts,
   };
-  if (name) out.name = name;
-  return out;
 }
 
 export function parseAssemblyDocument(input) {

@@ -51,11 +51,12 @@ editor integration is designed. Remove the `hidden` class to bring it back.
 
 **The CAD title reads "part in assembly".** Part name, the word in, then the
 assembly name (`data-viewer-title`, `data-title-in`, `data-viewer-title-text`).
-Example: Bracket in Gearbox. The assembly name is the document `name` (or the
-loaded file's name when the document has none). When there is no assembly
-name, the word in and the assembly chip are omitted and only the part chip
-shows. Both chips rename in place: click, then an input. Enter or blur
-commits, Escape reverts, empty commits nothing. Part names are sanitised
+Example: part1 in Assembly. The assembly name is the document `name`. A new
+assembly starts as Assembly. A blank or whitespace name is saved as Assembly
+when the document is loaded. A custom name is kept. A file name is used only
+when the saved document has none. Both chips rename in place: click, then an
+input. Enter or blur commits, Escape reverts, empty commits nothing. Part
+names are sanitised
 (`sanitizePartName`) because they end up in `${name}.js` downloads. The part
 chip is `onRenameFile` → `setCurrentFilename`. The assembly chip is
 `onRenameAssembly` → the document `name`. Game keeps a single puzzle-name
@@ -84,8 +85,10 @@ Desktop specifics:
 - **Parts feed:** the same list as the mobile Parts stage, mounted to the left
   of the editor (`data-parts-feed-placement="desktop-left"`). The assembly
   name sits in the middle of the ribbon (`data-parts-ribbon-center`). Local
-  or Git is right-justified (`data-parts-ribbon-end`). Delete asks first;
-  Cancel keeps the part, Confirm removes that part only.
+  or Git is right-justified (`data-parts-ribbon-end`). Each row thumbnail
+  (`data-part-thumbnail`, `data-part-preview="manifold"`) is a cached snapshot
+  of that part's solid. No solid is `data-part-preview="empty"`. Delete asks
+  first; Cancel keeps the part, Confirm removes that part only.
 - `PromptInput` is passed `isMobile={false}` explicitly (`src/App.jsx:1345`).
 
 ### Mobile shell (`src/App.jsx` mobile branch) — CAD stages + game stack
@@ -127,9 +130,11 @@ Mobile specifics:
   (`LayoutList`), Script (`square-text`). Tap a third to switch stage.
   Desktop has no mode toggle; the parts list and the script editor sit side
   by side.
-  The Parts stage is the part list. Delete asks first. Confirm removes that
-  part only (its script, its row, and its solid). Cancel leaves it. The
-  ribbon centers the assembly name and keeps Local or Git on the right.
+  The Parts stage is the part list. Each row shows the same cached solid
+  snapshot as desktop. Delete asks first. Confirm removes that part only
+  (its script, its row, and its solid). Cancel leaves it. The ribbon centers
+  the assembly name (Assembly when the document has none) and keeps Local or
+  Git on the right.
   Session-sticky via `3dculos.mobileStage`.
   Top CAD|Script text chrome is gone. Inert `data-ai-prompt-hook` marks a
   future AI-on-tap site (not wired). Contour/Fillet chips use `bottom-14` on

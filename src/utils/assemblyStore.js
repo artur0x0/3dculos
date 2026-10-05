@@ -88,7 +88,12 @@ export async function loadAssemblyDocument() {
   const { ok, value } = await runTx(DOC_STORE, 'readonly', (store) => store.get(DOC_KEY));
   if (!ok || !value) return null;
   try {
-    return serializeAssembly(value);
+    const clean = serializeAssembly(value);
+    const raw = typeof value.name === 'string' ? value.name.trim() : '';
+    // Older documents omitted a blank name. Write Assembly back so the next
+    // load already has it.
+    if (!raw && clean.name) await saveAssemblyDocument(clean);
+    return clean;
   } catch {
     return null;
   }

@@ -18,6 +18,7 @@ import { register } from 'node:module';
 import { BufferAttribute, BufferGeometry } from 'three';
 import {
   assemblyName,
+  assemblyNameForLoad,
   assemblyNameFromFile,
   composeViewportParts,
   dropPartRecord,
@@ -33,6 +34,7 @@ import {
   serializeAssembly,
   setPartVisible,
 } from '../../src/utils/assembly.js';
+import { meshPreviewKey, partPreviewKind } from '../../src/utils/partPreview.js';
 import {
   historyForPart,
   pushPartHistory,
@@ -67,6 +69,8 @@ const BAD = 'let part = Manifold.cube([10, 10, 10], true);\nreturn part.missingM
 {
   const app = read('src/App.jsx');
   const feed = read('src/components/PartFeed.jsx');
+  const preview = read('src/utils/partPreview.js');
+  const store = read('src/utils/assemblyStore.js');
   const view = read('src/components/Viewport.jsx');
   const toggle = read('src/components/MobileStageToggle.jsx');
   const arch = read('docs/architecture.md');
@@ -87,10 +91,24 @@ const BAD = 'let part = Manifold.cube([10, 10, 10], true);\nreturn part.missingM
     /setPartVisible\(/.test(app) && /composeViewportParts\(/.test(app) && /placeAssembly/.test(app));
   check('feed row has a thumbnail, a red selection bar, an eye, and delete',
     /data-part-thumbnail/.test(feed)
+    && /data-part-preview=\{partPreviewKind\(mesh\)\}/.test(feed)
     && /data-part-selected-bar/.test(feed)
     && /bg-red-500/.test(feed)
     && /data-part-visibility=/.test(feed)
-    && /data-part-delete=/.test(feed));
+    && /data-part-delete=/.test(feed)
+    && !/fillRect\(sx, sy/.test(feed));
+  check('part snapshot uses the viewer material, light, and background, and caches the mesh',
+    /MeshNormalMaterial\(\{ flatShading: true \}\)/.test(preview)
+    && /new PointLight\(0xffffff, 1\)/.test(preview)
+    && /0x1e1e1e/.test(preview)
+    && /fitView\(/.test(preview)
+    && /peekPartPreview\(/.test(preview)
+    && /cache\.get\(key\)/.test(preview)
+    && !/requestAnimationFrame/.test(preview)
+    && /takePartPreview\(meshRef\.current\)/.test(feed)
+    && /\[previewKey\]/.test(feed)
+    && /assemblyNameForLoad\(raw, filename\)/.test(app)
+    && /saveAssemblyDocument\(clean\)/.test(store));
   const del = app.slice(app.indexOf('const handleDeletePart'), app.indexOf('const handleGameRun'));
   check('delete removes that part from the document, the script, and the viewport',
     /removePart\(/.test(del)
@@ -123,6 +141,7 @@ const BAD = 'let part = Manifold.cube([10, 10, 10], true);\nreturn part.missingM
   const titleStart = view.indexOf('data-viewer-title');
   const title = view.slice(titleStart, view.indexOf("mode === 'game' && gameSuccess", titleStart));
   const namedTitle = formatViewerTitle('Bracket', 'Gearbox');
+  const defaultTitle = formatViewerTitle('part1', 'Assembly');
   const bareTitle = formatViewerTitle('Bracket', '');
   const blankTitle = formatViewerTitle('Bracket', '   ');
   check('CAD title with an assembly name reads part in assembly',
@@ -131,6 +150,9 @@ const BAD = 'let part = Manifold.cube([10, 10, 10], true);\nreturn part.missingM
     && namedTitle.connector === 'in'
     && namedTitle.part === 'Bracket'
     && namedTitle.assembly === 'Gearbox'
+    && defaultTitle.text === 'part1 in Assembly'
+    && defaultTitle.connector === 'in'
+    && defaultTitle.assembly === 'Assembly'
     && title.indexOf('ViewportTitleChip inline value={currentFilename}') >= 0
     && title.indexOf('ViewportTitleChip inline value={currentFilename}') < title.indexOf('data-title-in')
     && title.indexOf('data-title-in') < title.indexOf('noun="Assembly"')
@@ -139,7 +161,7 @@ const BAD = 'let part = Manifold.cube([10, 10, 10], true);\nreturn part.missingM
     && !/data-title-dash/.test(view)
     && !/Untitled Assembly/.test(view)
     && !/>\s*Assembly\s*</.test(title));
-  check('a missing assembly name leaves only the part, with no empty in',
+  check('a blank title string still omits an empty in',
     bareTitle.text === 'Bracket'
     && bareTitle.connector === ''
     && bareTitle.assembly === ''
@@ -318,33 +340,84 @@ const BAD = 'let part = Manifold.cube([10, 10, 10], true);\nreturn part.missingM
   check('a stored position is kept and a missing one is omitted',
     doc.parts.find((part) => part.id === 'local:box').position[0] === 30
     && !('position' in doc.parts.find((part) => part.id === 'local:wide')));
-  check('a document with no assembly name does not gain one',
-    !('name' in doc) && assemblyName(doc) === '' && assemblyName(null) === '');
+  const created = serializeAssembly({
+    source: 'local',
+    activeId: 'local:box',
+    parts: [{ id: 'local:box', name: 'part1', visible: true, order: 0 }],
+  });
+  check('a new assembly is named Assembly',
+    created.name === 'Assembly'
+    && assemblyName(created) === 'Assembly'
+    && formatViewerTitle('part1', assemblyName(created)).text === 'part1 in Assembly'
+    && assemblyName(null) === '');
+  check('a document with no assembly name is saved as Assembly',
+    doc.name === 'Assembly' && assemblyName(doc) === 'Assembly');
   const named = serializeAssembly({ ...doc, name: '  Gearbox  ' });
   const blankName = serializeAssembly({ ...doc, name: '   ' });
-  check('a real assembly name is kept and a blank one is omitted',
+  check('a real assembly name is kept and a blank one becomes Assembly',
     named.name === 'Gearbox'
     && assemblyName(named) === 'Gearbox'
-    && !('name' in blankName)
-    && assemblyName(blankName) === '');
+    && blankName.name === 'Assembly'
+    && assemblyName(blankName) === 'Assembly'
+    && assemblyName({ name: 'Gearbox', parts: [] }) === 'Gearbox');
   const round = parseAssemblyDocument(JSON.stringify({
     name: 'Gearbox',
     source: 'local',
     activeId: 'local:wide',
     parts: [{ id: 'local:wide', name: 'Wide', visible: true, order: 0 }],
   }));
-  check('parse keeps the assembly name and drops a blank one',
+  const blankRound = parseAssemblyDocument({
+    name: '  ',
+    source: 'local',
+    parts: [{ id: 'local:wide', name: 'Wide' }],
+  });
+  const missingRound = parseAssemblyDocument({
+    source: 'local',
+    parts: [{ id: 'local:wide', name: 'Wide' }],
+  });
+  check('parse keeps a custom name and migrates a blank one to Assembly',
     round.name === 'Gearbox'
-    && !('name' in parseAssemblyDocument({
-      name: '  ',
-      source: 'local',
-      parts: [{ id: 'local:wide', name: 'Wide' }],
-    })));
+    && blankRound.name === 'Assembly'
+    && missingRound.name === 'Assembly');
   check('a loaded file name is used only when the document has none',
     assemblyNameFromFile('projects/Gearbox.json') === 'Gearbox'
     && assemblyNameFromFile('notes.txt') === 'notes.txt'
     && assemblyNameFromFile('.json') === ''
-    && assemblyNameFromFile('') === '');
+    && assemblyNameFromFile('') === ''
+    && assemblyNameForLoad({ name: 'Gearbox' }, 'Other.json') === 'Gearbox'
+    && assemblyNameForLoad({ name: '   ' }, 'projects/Gearbox.json') === 'Gearbox'
+    && assemblyNameForLoad({}, 'notes.txt') === 'notes.txt'
+    && assemblyNameForLoad({}, '') === 'Assembly'
+    && assemblyNameForLoad({ name: '' }, '.json') === 'Assembly');
+  const solidMesh = {
+    numProp: 3,
+    vertProperties: [0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1],
+    triVerts: [0, 1, 2, 0, 2, 3],
+  };
+  const previewKey = meshPreviewKey(solidMesh);
+  const movedVerts = solidMesh.vertProperties.slice();
+  movedVerts[0] = 5;
+  check('a part with a solid gets a stable preview key and an empty solid does not',
+    partPreviewKind(solidMesh) === 'manifold'
+    && typeof previewKey === 'string'
+    && previewKey.length > 0
+    && meshPreviewKey(solidMesh) === previewKey
+    && meshPreviewKey({
+      numProp: 3,
+      vertProperties: solidMesh.vertProperties.slice(),
+      triVerts: solidMesh.triVerts.slice(),
+    }) === previewKey
+    && meshPreviewKey({
+      numProp: 3,
+      vertProperties: movedVerts,
+      triVerts: solidMesh.triVerts,
+    }) !== previewKey
+    && partPreviewKind(null) === 'empty'
+    && partPreviewKind({}) === 'empty'
+    && meshPreviewKey({ vertProperties: [] }) == null
+    && feedRows(doc, {
+      'local:box': { ok: true, mesh: solidMesh },
+    }, scripts).find((row) => row.id === 'local:box').mesh === solidMesh);
 
   const picked = scriptForRow(doc, scripts, 'local:box');
   check('selecting a row resolves that script from the id, not the document',
@@ -490,6 +563,14 @@ async function execute(script) {
     && both.solids[0].position[0] === 30
     && both.solids[0].mesh.vertProperties.length > 0
     && both.solids[1].id === 'local:wide');
+  const liveKey = meshPreviewKey(both.solids[0].mesh);
+  check('a manifold solid drives a preview key and a different solid does not share it',
+    partPreviewKind(both.solids[0].mesh) === 'manifold'
+    && liveKey
+    && meshPreviewKey(both.solids[0].mesh) === liveKey
+    && partPreviewKind(both.solids[1].mesh) === 'manifold'
+    && meshPreviewKey(both.solids[1].mesh) !== liveKey
+    && partPreviewKind(null) === 'empty');
 
   function geomFromMesh(mesh) {
     const np = mesh.numProp || 3;

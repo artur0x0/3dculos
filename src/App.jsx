@@ -38,7 +38,7 @@ import {
 import { saveEditorDraft, loadEditorDraft } from './utils/editorDraft';
 import {
   assemblyName,
-  assemblyNameFromFile,
+  assemblyNameForLoad,
   composeViewportParts,
   dropPartRecord,
   feedRows,
@@ -1267,16 +1267,16 @@ const App = () => {
 
   const handleLoadAssembly = async (text, filename) => {
     let doc;
+    let raw;
     try {
-      doc = parseAssemblyDocument(text);
+      raw = typeof text === 'string' ? JSON.parse(text) : text;
+      doc = parseAssemblyDocument(raw);
     } catch (err) {
       setUploadError(err.message || 'Could not read assembly');
       return;
     }
-    if (!doc.name) {
-      const fromFile = assemblyNameFromFile(filename);
-      if (fromFile) doc = serializeAssembly({ ...doc, name: fromFile });
-    }
+    const loadedName = assemblyNameForLoad(raw, filename);
+    if (loadedName !== doc.name) doc = serializeAssembly({ ...doc, name: loadedName });
     refreshGenRef.current += 1;
     const scripts = await loadPartScripts(doc.parts.map((part) => part.id));
     rememberScripts(scripts);
