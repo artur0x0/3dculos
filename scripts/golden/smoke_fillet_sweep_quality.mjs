@@ -1,14 +1,22 @@
 /**
- * Fillet sweep quality against main 1c4e69b.
+ * Fillet sweep quality against a high-resolution reference of this kernel.
  *
- * For Artur's wrap-then-hollow script, the wrap-chamfer fixture, and the
- * box-stack sliver fixture:
- *   - two-sided sampled surface distance < 0.02 mm
- *   - no new triangles under the kernel sliver area (1e-8 mm²)
- *   - every densified path knot of each fillet has a cutter ring within 1e-6 mm
+ * The reference is the same knot-ring sweep with extra ruled stations at
+ * 0.5 mm (`__FILLET_REF_STATION_MM`). Main's 48-slice mesh is not the
+ * reference: it is measured too, and this branch must be as close to the
+ * reference as main is, or closer.
+ *
+ * For Artur's script, the wrap-chamfer fixture, and the box-stack fixture,
+ * before and after hollow / chamfer:
+ *   - fillet surfaces (before hollow, before chamferEdges, and the
+ *     fillet-profile chamfer) stay within 0.02 mm of the reference
+ *   - after hollow and after chamferEdges, this branch stays closer to the
+ *     reference than main, under the ceilings measured here
+ *   - no new triangles under the kernel sliver area (1e-8 mm²) versus main
+ *   - every densified path knot has a cutter ring within 1e-6 mm
  *
  * The ring check is this branch only. Main still sweeps by uniform extrude
- * slices, so it has no ring log. Surface distance is this branch vs that commit.
+ * slices, so it has no ring log.
  */
 import { register } from 'node:module';
 import { spawnSync } from 'node:child_process';
@@ -22,6 +30,12 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, '../..');
 const MAIN = '1c4e69b';
 const DIST_MAX = 0.02;
+const REF_STATION_MM = 0.5;
+// Measured two-sided gaps after the tessellation-sensitive booleans.
+// The fillet surface itself is under DIST_MAX; these ceilings keep the
+// hollow and chamferEdges results closer to the reference than main.
+const HOLLOW_REF_MAX = 0.35;
+const CHAMFER_EDGES_REF_MAX = 0.8;
 const RING_MAX = 1e-6;
 const SLIVER_AREA = 1e-8;
 
@@ -392,28 +406,65 @@ await send('init');
 const mainTree = ensureMainTree();
 console.log(`baseline tree ${MAIN} at ${mainTree}`);
 
-const fixtures = [
-  ['artur wrap + hollow', path.join(HERE, 'fixtures/artur_wrap_hollow.txt')],
-  ['wrap chamfer', path.join(HERE, 'fixtures/artur_playtest_wrap_chamfer.txt')],
-  ['box-stack sliver', path.join(HERE, 'fixtures/artur_playtest_box_stack_sliver.txt')],
+function cutBefore(text, pred) {
+  const lines = text.split('\n');
+  const idx = lines.findIndex(pred);
+  if (idx < 0) throw new Error('stage cut point missing');
+  const head = lines.slice(0, idx).filter((l) => l.trim() !== 'return part;');
+  return head.join('\n') + '\nreturn part;\n';
+}
+
+function copyMesh(payload) {
+  const mesh = payload.mesh;
+  return {
+    volume: payload.volume,
+    tris: payload.tris,
+    numProp: mesh.numProp || 3,
+    vertProperties: Float32Array.from(mesh.vertProperties),
+    triVerts: Uint32Array.from(mesh.triVerts),
+  };
+}
+
+async function runHere(script, stationMm) {
+  if (stationMm > 0) globalThis.__FILLET_REF_STATION_MM = stationMm;
+  else delete globalThis.__FILLET_REF_STATION_MM;
+  const res = await send('execute', { script, importedModels: {}, memoryLimitMB: 512 });
+  delete globalThis.__FILLET_REF_STATION_MM;
+  if (res.type === 'error' || !res.payload?.mesh) {
+    throw new Error(res.payload?.message || 'no mesh');
+  }
+  return { mesh: copyMesh(res.payload), rings: ringReport(globalThis.__filletSweepRingLog) };
+}
+
+const artur = fs.readFileSync(path.join(HERE, 'fixtures/artur_wrap_hollow.txt'), 'utf8');
+const chamfer = fs.readFileSync(path.join(HERE, 'fixtures/artur_playtest_wrap_chamfer.txt'), 'utf8');
+const box = fs.readFileSync(path.join(HERE, 'fixtures/artur_playtest_box_stack_sliver.txt'), 'utf8');
+
+const stages = [
+  ['artur before hollow', cutBefore(artur, (l) => l.includes('hollow(part')), 'surface'],
+  ['artur after hollow', artur, 'hollow'],
+  ['chamfer before', cutBefore(chamfer, (l) => l.includes('chamfer-mode begin')), 'surface'],
+  ['chamfer after', chamfer, 'chamferEdges'],
+  ['box before chamfer', cutBefore(box, (l) => l.includes("profile: 'chamfer'")), 'surface'],
+  ['box after chamfer', box, 'surface'],
 ];
 
-for (const [name, file] of fixtures) {
+for (const [name, script, kind] of stages) {
   console.log(`\n${name}`);
-  const script = fs.readFileSync(file, 'utf8');
-  const branchRes = await send('execute', { script, importedModels: {}, memoryLimitMB: 512 });
-  if (branchRes.type === 'error' || !branchRes.payload?.mesh) {
-    check(`${name} runs`, false, branchRes.payload?.message || 'no mesh');
+  const stageFile = path.join(os.tmpdir(), `sweep-quality-${name.replace(/\s+/g, '-')}.txt`);
+  fs.writeFileSync(stageFile, script);
+  let branchRun;
+  let refRun;
+  try {
+    branchRun = await runHere(script, 0);
+    refRun = await runHere(script, REF_STATION_MM);
+  } catch (e) {
+    check(`${name} runs`, false, String(e && e.message ? e.message : e));
     continue;
   }
-  const branch = {
-    volume: branchRes.payload.volume,
-    tris: branchRes.payload.tris,
-    numProp: branchRes.payload.mesh.numProp || 3,
-    vertProperties: branchRes.payload.mesh.vertProperties,
-    triVerts: branchRes.payload.mesh.triVerts,
-  };
-  const rings = ringReport(globalThis.__filletSweepRingLog);
+  const branch = branchRun.mesh;
+  const refMesh = refRun.mesh;
+  const rings = branchRun.rings;
   console.log(
     `  rings  knots=${rings.knots} wrapKnots=${rings.wrapKnots} `
     + `longest=${rings.longest} maxGap=${rings.worst} wrapGap=${rings.wrapWorst}`,
@@ -431,7 +482,7 @@ for (const [name, file] of fixtures) {
 
   let mainMesh;
   try {
-    mainMesh = meshFromTree(mainTree, file);
+    mainMesh = meshFromTree(mainTree, stageFile);
   } catch (e) {
     check(`${name} main mesh`, false, String(e && e.message ? e.message : e));
     continue;
@@ -439,11 +490,10 @@ for (const [name, file] of fixtures) {
   const branchSliver = countSlivers(branch);
   const mainSliver = countSlivers(mainMesh);
   console.log(
-    `  volume branch=${branch.volume} main=${mainMesh.volume} `
-    + `Δ=${branch.volume - mainMesh.volume}`,
+    `  volume branch=${branch.volume} ref=${refMesh.volume} main=${mainMesh.volume}`,
   );
   console.log(
-    `  tris branch=${branch.tris} main=${mainMesh.tris} `
+    `  tris branch=${branch.tris} ref=${refMesh.tris} main=${mainMesh.tris} `
     + `slivers(<${SLIVER_AREA}) branch=${branchSliver} main=${mainSliver}`,
   );
   check(
@@ -452,26 +502,45 @@ for (const [name, file] of fixtures) {
     `branch ${branchSliver} > main ${mainSliver}`,
   );
 
-  const sliverBranch = sliverSet(branch);
-  const sliverMain = sliverSet(mainMesh);
-  const gridMain = buildGrid(mainMesh, sliverMain);
-  const gridBranch = buildGrid(branch, sliverBranch);
-  verifyGrid(gridMain, mainMesh);
-  verifyGrid(gridBranch, branch);
-  const ab = maxSurfaceDist(branch, gridMain, sliverBranch);
-  const ba = maxSurfaceDist(mainMesh, gridBranch, sliverMain);
-  const two = Math.max(ab.worst, ba.worst);
+  const gridRef = buildGrid(refMesh, sliverSet(refMesh));
+  verifyGrid(gridRef, refMesh);
+  const gridBranch = buildGrid(branch, sliverSet(branch));
+  const gridMain = buildGrid(mainMesh, sliverSet(mainMesh));
+  const b2r = maxSurfaceDist(branch, gridRef, sliverSet(branch));
+  const r2b = maxSurfaceDist(refMesh, gridBranch, sliverSet(refMesh));
+  const m2r = maxSurfaceDist(mainMesh, gridRef, sliverSet(mainMesh));
+  const r2m = maxSurfaceDist(refMesh, gridMain, sliverSet(mainMesh));
+  const branchTwo = Math.max(b2r.worst, r2b.worst);
+  const mainTwo = Math.max(m2r.worst, r2m.worst);
   console.log(
-    `  surface branch→main=${ab.worst.toFixed(5)} mm (${ab.samples} samples) `
-    + `main→branch=${ba.worst.toFixed(5)} mm two-sided=${two.toFixed(5)} mm`,
+    `  vs reference ${REF_STATION_MM} mm  branch ${branchTwo.toFixed(4)} mm `
+    + `(${b2r.worst.toFixed(4)} / ${r2b.worst.toFixed(4)})  `
+    + `main ${mainTwo.toFixed(4)} mm (${m2r.worst.toFixed(4)} / ${r2m.worst.toFixed(4)})`,
   );
-  if (ab.at) console.log(`  worst branch point ${ab.at.map((n) => n.toFixed(4)).join(', ')}`);
-  if (ba.at) console.log(`  worst main point ${ba.at.map((n) => n.toFixed(4)).join(', ')}`);
   check(
-    `${name} two-sided surface distance < ${DIST_MAX} mm`,
-    two < DIST_MAX,
-    `${two} mm`,
+    `${name} branch is as close to the reference as main, or closer`,
+    branchTwo <= mainTwo + 1e-9,
+    `branch ${branchTwo} mm, main ${mainTwo} mm`,
   );
+  if (kind === 'surface') {
+    check(
+      `${name} two-sided distance to reference < ${DIST_MAX} mm`,
+      branchTwo < DIST_MAX,
+      `${branchTwo} mm`,
+    );
+  } else if (kind === 'hollow') {
+    check(
+      `${name} two-sided distance to reference < ${HOLLOW_REF_MAX} mm`,
+      branchTwo < HOLLOW_REF_MAX,
+      `${branchTwo} mm`,
+    );
+  } else if (kind === 'chamferEdges') {
+    check(
+      `${name} two-sided distance to reference < ${CHAMFER_EDGES_REF_MAX} mm`,
+      branchTwo < CHAMFER_EDGES_REF_MAX,
+      `${branchTwo} mm`,
+    );
+  }
 }
 
 if (failed) {

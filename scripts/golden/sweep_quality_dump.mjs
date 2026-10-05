@@ -40,6 +40,9 @@ function send(type, payload = {}) {
   });
 }
 
+const stationMm = Number(process.env.FILLET_REF_STATION_MM);
+if (stationMm > 0) globalThis.__FILLET_REF_STATION_MM = stationMm;
+
 const script = fs.readFileSync(scriptPath, 'utf8');
 await import(pathToFileURL(workerPath).href);
 await send('init');

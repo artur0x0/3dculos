@@ -112,7 +112,14 @@ uniform `Manifold.extrude` slice count spaces samples by arc length, so a long
 straight in the same run as a short arc chord skips the 5° knots. Runs are
 unioned into one cutter. A closed loop still sweeps one lap plus an 8% overlap
 as an open tube. An open-end extension inserts a station beyond the knot
-instead of moving it, so the knot still has a ring.
+instead of moving it, so the knot still has a ring. A span longer than
+29 mm (`_S23_LONG_CHORD_MM`) is filled with linearly interpolated rings on
+that ruled quad so a full-height fillet meets the cap as one loop; shorter
+chords, including the 28 mm wrap straights, stay one quad. After the boolean,
+`_s23WeldFilletResult` snaps vertices within 0.001 mm and drops the collapsed
+triangles, keeping the original runs and faceIDs, and keeps that mesh only
+when the volume moves by less than 0.001 mm³. A measurement flag
+`__FILLET_REF_STATION_MM` replaces the 29 mm step with a finer grid.
 
 ## 4. Framing — hard path (C3 variable profile)
 

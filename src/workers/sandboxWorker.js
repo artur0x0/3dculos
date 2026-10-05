@@ -5064,6 +5064,189 @@ function _s23AddRingOrigins(origins) {
   }
 }
 
+/**
+ * Weld tolerance for the fillet result. Long "fins" on the wrap are
+ * triangles with a short edge under this distance and a long edge along a
+ * ruling; the rounded-wrap rim comes back as several chains because those
+ * duplicated vertices are not shared by index. Snapping them does not move
+ * a real feature: arc chords at FILLET_ARC_SEGMENTS are ~0.2 mm.
+ */
+const _S23_RESULT_WELD_MM = 0.001;
+
+/**
+ * A straight fillet whose ruling is the whole edge (30 mm on the playtest
+ * cube) comes back with the cap loop in three chains. One interpolated
+ * ring on a span longer than this, still on the ruled quad, makes that
+ * loop a single chain. The volume is unchanged. Path knots are not moved
+ * and arcs under this length stay one quad. `__FILLET_REF_STATION_MM`,
+ * when set, replaces this step with a finer measurement grid.
+ */
+const _S23_LONG_CHORD_MM = 29;
+
+/**
+ * Fill spans longer than the chord step with linearly interpolated rings.
+ * New vertices lie on the ruled quad between the knots.
+ */
+function _s23RefineReferenceRings(rings, closed) {
+  const ref = typeof globalThis !== 'undefined' ? Number(globalThis.__FILLET_REF_STATION_MM) : 0;
+  const step = ref > 0 ? ref : _S23_LONG_CHORD_MM;
+  if (!(step > 0) || !Array.isArray(rings) || rings.length < 2) return rings;
+  const n = rings.length;
+  const spans = closed ? n : n - 1;
+  const out = [];
+  for (let i = 0; i < spans; i++) {
+    const a = rings[i];
+    const b = rings[(i + 1) % n];
+    if (!out.length) out.push(a);
+    const K = a.length;
+    let span = 0;
+    for (let k = 0; k < K; k++) {
+      const d = Math.hypot(b[k][0] - a[k][0], b[k][1] - a[k][1], b[k][2] - a[k][2]);
+      if (d > span) span = d;
+    }
+    const cuts = Math.max(1, Math.ceil(span / step - 1e-9));
+    for (let s = 1; s < cuts; s++) {
+      const t = s / cuts;
+      const ring = new Array(K);
+      for (let k = 0; k < K; k++) {
+        ring[k] = [
+          a[k][0] + (b[k][0] - a[k][0]) * t,
+          a[k][1] + (b[k][1] - a[k][1]) * t,
+          a[k][2] + (b[k][2] - a[k][2]) * t,
+        ];
+      }
+      out.push(ring);
+    }
+    if (!closed || i < spans - 1) out.push(b);
+  }
+  return out;
+}
+
+/**
+ * Drop triangles out of their original runs. runIndex counts halfedges
+ * (3 per triangle). A run that loses every triangle is removed; the
+ * survivors keep that run's originalID and each triangle's faceID.
+ * @returns {object|null}
+ */
+function _s23CompactFilletRuns(mesh, triVerts, keptTri) {
+  const runIndex = mesh.runIndex;
+  const runOriginalID = mesh.runOriginalID;
+  const faceID = mesh.faceID;
+  const nTri = triVerts.length / 3;
+  if (!runIndex || !runOriginalID || runIndex.length !== runOriginalID.length + 1) return null;
+  const nRun = runOriginalID.length;
+  const triRun = new Int32Array(nTri);
+  triRun.fill(-1);
+  for (let r = 0; r < nRun; r++) {
+    const a = runIndex[r];
+    const b = runIndex[r + 1];
+    if ((a % 3) !== 0 || (b % 3) !== 0 || b < a) return null;
+    const t0 = a / 3;
+    const t1 = b / 3;
+    if (t1 > nTri) return null;
+    for (let t = t0; t < t1; t++) triRun[t] = r;
+  }
+  const groups = Array.from({ length: nRun }, () => []);
+  for (let i = 0; i < keptTri.length; i++) {
+    const t = keptTri[i];
+    const r = triRun[t];
+    if (r < 0) return null;
+    groups[r].push(t);
+  }
+  const outTri = [];
+  const outFace = [];
+  const outRunIndex = [0];
+  const outRunId = [];
+  const outTransform = [];
+  const transforms = mesh.runTransform;
+  const hasXform = transforms && transforms.length === nRun;
+  for (let r = 0; r < nRun; r++) {
+    const g = groups[r];
+    if (!g.length) continue;
+    for (let i = 0; i < g.length; i++) {
+      const t = g[i];
+      outTri.push(triVerts[t * 3], triVerts[t * 3 + 1], triVerts[t * 3 + 2]);
+      outFace.push(faceID[t] >>> 0);
+    }
+    outRunIndex.push(outTri.length);
+    outRunId.push(runOriginalID[r] >>> 0);
+    if (hasXform) outTransform.push(transforms[r]);
+  }
+  if (outRunId.length < 1) return null;
+  return {
+    triVerts: new Uint32Array(outTri),
+    faceID: new Uint32Array(outFace),
+    runIndex: new Uint32Array(outRunIndex),
+    runOriginalID: new Uint32Array(outRunId),
+    runTransform: hasXform ? outTransform : null,
+  };
+}
+
+/**
+ * Snap vertices closer than `_S23_RESULT_WELD_MM` and drop the collapsed
+ * triangles. A rebuild that is not a strict solid, or that moves the volume
+ * by more than 0.001 mm³, is discarded and the boolean result stands.
+ */
+function _s23WeldFilletResult(manifold) {
+  let mesh;
+  try {
+    mesh = manifold.getMesh();
+  } catch {
+    return manifold;
+  }
+  const np = mesh.numProp || 3;
+  const src = mesh.vertProperties;
+  const n = src.length / np;
+  if (!(n >= 4) || !mesh.triVerts || mesh.triVerts.length < 3) return manifold;
+  const xyz = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) {
+    xyz[i * 3] = src[i * np];
+    xyz[i * 3 + 1] = src[i * np + 1];
+    xyz[i * 3 + 2] = src[i * np + 2];
+  }
+  const welded = _weldMeshData(xyz, mesh.triVerts, _S23_RESULT_WELD_MM);
+  const T = welded.triVerts;
+  const nTri = T.length / 3;
+  if (!mesh.faceID || mesh.faceID.length < nTri) return manifold;
+  const keptTri = [];
+  for (let t = 0; t < nTri; t++) {
+    const a = T[t * 3];
+    const b = T[t * 3 + 1];
+    const c = T[t * 3 + 2];
+    if (a === b || b === c || c === a) continue;
+    keptTri.push(t);
+  }
+  if (keptTri.length < 1 || keptTri.length === nTri) {
+    // Nothing collapsed, or the whole mesh did. Identical vertices are not
+    // a fin until a triangle loses a corner, so an unchanged set is a no-op.
+    if (keptTri.length === nTri) return manifold;
+    return manifold;
+  }
+  const packed = _s23CompactFilletRuns(mesh, T, keptTri);
+  if (!packed) return manifold;
+  let builtManifold;
+  try {
+    const { Mesh, Manifold } = manifoldModule;
+    const meshIn = {
+      numProp: 3,
+      vertProperties: welded.vertProperties,
+      triVerts: packed.triVerts,
+      faceID: packed.faceID,
+      runIndex: packed.runIndex,
+      runOriginalID: packed.runOriginalID,
+    };
+    if (packed.runTransform) meshIn.runTransform = packed.runTransform;
+    builtManifold = new Manifold(new Mesh(meshIn));
+  } catch {
+    return manifold;
+  }
+  if (_c4StatusError(builtManifold)) return manifold;
+  const v0 = manifold.volume();
+  const v1 = builtManifold.volume();
+  if (!(Number.isFinite(v1) && Math.abs(v1 - v0) < 1e-3)) return manifold;
+  return builtManifold;
+}
+
 function _s23PlaceContourRing(contour, origin, N, B) {
   const ring = new Array(contour.length);
   const ox = origin[0];
@@ -5110,7 +5293,7 @@ function _s23SweepKnotRings(points, frames, contour) {
   origins[nSeg] = points[nSeg];
   rings[nSeg] = _s23PlaceContourRing(contour, points[nSeg], frLast.N, frLast.B);
   _s23AddRingOrigins(origins);
-  const mesh = varyingProfileTubeMesh(rings, false);
+  const mesh = varyingProfileTubeMesh(_s23RefineReferenceRings(rings, false), false);
   let solid;
   let repair;
   try {
@@ -5433,7 +5616,7 @@ function _s23VaryingProfileTube(runSegs, wrapClosed, radius, profileKind, arcSeg
   for (let i = 0; i < runSegs.length; i++) ringOrigins.push(runSegs[i].p0);
   if (!wrapClosed) ringOrigins.push(runSegs[runSegs.length - 1].p1);
   _s23AddRingOrigins(ringOrigins);
-  const mesh = varyingProfileTubeMesh(rings, wrapClosed);
+  const mesh = varyingProfileTubeMesh(_s23RefineReferenceRings(rings, wrapClosed), wrapClosed);
   let solid;
   let repair;
   try {
@@ -6636,6 +6819,9 @@ function filletAlongPath(part, path, radius, opts = {}) {
   } catch (e) {
     if (/decompose found|dirty solid/i.test(String(e && e.message))) throw e;
   }
+  // Duplicated vertices along a ruling split the convex rim and leave
+  // long degenerate fins. The weld is index-only; volume must stay put.
+  out = _s23WeldFilletResult(out);
   // Loud fail if the kept solid still has many degenerate tris (attached slivers).
   try {
     const mesh = out.getMesh();
