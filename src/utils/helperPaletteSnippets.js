@@ -961,6 +961,25 @@ export function composeHelperInsert(buffer, id, caretOffset = null, params = nul
   return `${body}\nreturn part;\n`;
 }
 
+/**
+ * Script for a newly spawned local part.
+ * The auto-dropped 20 mm box is the same Cube feature a user places from
+ * the palette (begin/end markers, `box1`, `let part = box1`). Without those
+ * markers the solid still runs, but the feature strip has nothing to select.
+ */
+export function newPartStarterScript() {
+  const script = composeHelperInsert('', 'cube', null, {
+    width: 20,
+    depth: 20,
+    height: 20,
+    center: true,
+  });
+  if (!script || !script.includes(CUBE_BEGIN) || !script.includes(CUBE_END)) {
+    throw new Error('newPartStarterScript: cube feature markers missing');
+  }
+  return script;
+}
+
 /** Default params object for an item (for modal initial state). */
 export function defaultParamsFor(id) {
   const item = HELPER_PALETTE_ITEMS.find((h) => h.id === id);

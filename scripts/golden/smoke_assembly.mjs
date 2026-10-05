@@ -7,6 +7,10 @@
  * composed viewport. A failed script highlights the row and contributes no
  * solid, including no previous solid. The saved assembly lists ids, never
  * inline scripts.
+ *
+ * Spawning a new part still auto-drops a 20 mm box, and that box is a Cube
+ * feature (same markers as a palette Cube). An unmarked `let part = cube`
+ * would run the solid and leave the feature strip empty.
  */
 import { readFileSync } from 'node:fs';
 import { register } from 'node:module';
@@ -21,6 +25,13 @@ import {
   setPartVisible,
 } from '../../src/utils/assembly.js';
 import { runAssemblyParts } from '../../src/utils/assemblyRun.js';
+import {
+  composeHelperInsert,
+  newPartStarterScript,
+  CUBE_BEGIN,
+  CUBE_END,
+} from '../../src/utils/helperPaletteSnippets.js';
+import { parseFeatureMarkers } from '../../src/utils/featureMarkers.js';
 
 const read = (rel) => readFileSync(new URL(`../../${rel}`, import.meta.url), 'utf8');
 
@@ -92,6 +103,53 @@ const BAD = 'let part = Manifold.cube([10, 10, 10], true);\nreturn part.missingM
     && /IndexedDB key/.test(arch)
     && /no shadow solid/.test(arch)
     && /does not rebuild from a previous solid/.test(arch));
+}
+
+{
+  const starter = newPartStarterScript();
+  const feats = parseFeatureMarkers(starter);
+  const cubes = feats.filter((f) => f.kind === 'cube');
+  const placed = composeHelperInsert('', 'cube', null, {
+    width: 20,
+    depth: 20,
+    height: 20,
+    center: true,
+  });
+  const placedFeats = parseFeatureMarkers(placed || '');
+  check('new-part starter still drops a 20 mm box',
+    /Manifold\.cube\(\[20,\s*20,\s*20\],\s*true\)/.test(starter)
+    && /return part;/.test(starter));
+  check('new-part starter box registers as a cube feature',
+    cubes.length === 1
+    && cubes[0].kind === 'cube'
+    && starter.includes(CUBE_BEGIN)
+    && starter.includes(CUBE_END),
+    `kinds=${feats.map((f) => f.kind).join(',') || '(none)'}`);
+  check('starter feature matches a user-placed 20 mm cube',
+    starter === placed
+    && placedFeats.length === 1
+    && placedFeats[0].kind === 'cube'
+    && placedFeats[0].chipLabel === cubes[0]?.chipLabel);
+
+  const app = read('src/App.jsx');
+  const add = app.slice(app.indexOf('const handleAddPart'), app.indexOf('const handleAddGitPart'));
+  check('spawn writes the marked starter, not an unmarked cube',
+    /newPartStarterScript\(/.test(add)
+    && !/let part = Manifold\.cube\(\[20,\s*20,\s*20\]/.test(add));
+
+  let ops = composeHelperInsert('', 'cube');
+  ops = composeHelperInsert(ops, 'filletEdges', null, { radius: 2, strategy: 'planar' });
+  const opFeats = parseFeatureMarkers(ops || '');
+  check('a user cube then a fillet still both register',
+    opFeats.some((f) => f.kind === 'cube') && opFeats.some((f) => f.kind === 'fillet'),
+    `kinds=${opFeats.map((f) => f.kind).join(',') || '(none)'}`);
+
+  const after = composeHelperInsert(starter, 'cylinder');
+  const afterFeats = parseFeatureMarkers(after || '');
+  check('starter cube stays a feature after a later operation',
+    afterFeats.filter((f) => f.kind === 'cube').length === 1
+    && afterFeats.some((f) => f.kind === 'cylinder'),
+    `kinds=${afterFeats.map((f) => f.kind).join(',') || '(none)'}`);
 }
 
 {
