@@ -203,6 +203,10 @@ import {
   edgePolyline,
 } from '../utils/selectEdge';
 import {
+  applyActivePartAnchor,
+  resolveActivePartOverlay,
+} from '../utils/activePartOverlay';
+import {
   annotateFeatureEdges,
   indexBoundaryEdgesFromGeometry,
   stampBoundaryOnSelection,
@@ -673,6 +677,8 @@ const Viewport = forwardRef(({
   const featureEdgesSourceRef = useRef(null);
   /** Mesh object the face/edge/contour graphs were last built for. */
   const graphsBoundMeshRef = useRef(null);
+  /** Part id the pick graphs and overlays are bound to. Null outside an assembly. */
+  const activePartIdRef = useRef(null);
   const adoptActiveSolidRef = useRef(() => false);
   /** Per-triangle Manifold faceID from the last worker mesh (not a per-vertex attribute). */
   const faceIDsRef = useRef(null);
@@ -769,6 +775,49 @@ const Viewport = forwardRef(({
   /** Slice C: restore Face/Edge after Fillet Accept / exit (do not snap to default). */
   const filletPriorPickModeRef = useRef('face');
   const filletBlendPreviewRef = useRef(null);
+
+  const anchorToActivePart = useCallback((obj) => {
+    const p = partWorldOffset(resultRef.current);
+    return applyActivePartAnchor(obj, p ? [p.x, p.y, p.z] : [0, 0, 0]);
+  }, []);
+
+  /**
+   * Assembly translation changed, or a new part became active. Overlays keep
+   * local coordinates and only the anchor moves, so a preview cannot stay
+   * on the part that occupies the origin.
+   */
+  const syncAnchoredOverlays = useCallback(() => {
+    const p = partWorldOffset(resultRef.current);
+    const position = p ? [p.x, p.y, p.z] : [0, 0, 0];
+    const visit = (obj) => {
+      if (!obj) return;
+      if (obj.userData?.anchorToActivePart) applyActivePartAnchor(obj, position);
+      const kids = obj.children;
+      if (!kids) return;
+      for (let i = 0; i < kids.length; i++) visit(kids[i]);
+    };
+    const roots = [
+      edgeHighlightRef.current,
+      edgeHoverRef.current,
+      filletBlendPreviewRef.current,
+      idLabelGroupRef.current,
+      pathPreviewRef.current,
+      xsPreviewRef.current,
+      extrudePreviewRef.current,
+      revolvePreviewRef.current,
+      loftPreviewRef.current,
+      sweepPreviewRef.current,
+      workplaneOverlayRef.current,
+      constructionPlaneRef.current,
+      polylineDraftRef.current,
+      savedContourGhostRef.current,
+      measurementLinesRef.current,
+    ];
+    const highlights = highlightMeshRef.current;
+    if (Array.isArray(highlights)) roots.push(...highlights);
+    else if (highlights) roots.push(highlights);
+    for (const root of roots) visit(root);
+  }, []);
   const [filletToast, setFilletToast] = useState(null);
   const filletToastTimerRef = useRef(null);
   /** Bumps when the solid mesh is replaced so fillet easy/hard recomputes. */
@@ -1123,9 +1172,11 @@ const Viewport = forwardRef(({
     const tmp = edgeChipProjectTmpRef.current;
     const edges = selectedEdgesRef.current || [];
     const live = new Set();
+    const activePart = activePartIdRef.current;
     for (let i = 0; i < edges.length; i++) {
       const e = edges[i];
       const key = edgeKey(e);
+      if (activePart && e.partId && e.partId !== activePart) continue;
       live.add(key);
       const el = map.get(key);
       if (!el) continue;
@@ -1215,11 +1266,10 @@ const Viewport = forwardRef(({
     // Soft transparent halo first (under), then brighter core on top.
     group.add(makeSeg(haloPx, Math.min(0.2, opacity * 0.28), 10));
     group.add(makeSeg(corePx, opacity, 11));
-    const shift = partWorldOffset(resultRef.current);
-    if (shift) group.position.set(shift.x, shift.y, shift.z);
+    anchorToActivePart(group);
     sceneRef.current.add(group);
     return group;
-  }, [edgeLineResolution]);
+  }, [edgeLineResolution, anchorToActivePart]);
 
   const clearXsPreview = useCallback(() => {
     if (!xsPreviewRef.current) return;
@@ -1338,9 +1388,10 @@ const Viewport = forwardRef(({
       group.add(makeAxis(plane.x));
       group.add(makeAxis(plane.y));
     }
+    anchorToActivePart(group);
     sceneRef.current.add(group);
     xsPreviewRef.current = group;
-  }, [clearXsPreview]);
+  }, [clearXsPreview, anchorToActivePart]);
 
   // Dispose cross-section preview on unmount (route change / modal still open).
   useEffect(() => () => clearXsPreview(), [clearXsPreview]);
@@ -1438,9 +1489,10 @@ const Viewport = forwardRef(({
       line.frustumCulled = false;
       group.add(line);
     }
+    anchorToActivePart(group);
     sceneRef.current.add(group);
     extrudePreviewRef.current = group;
-  }, [clearExtrudePreview]);
+  }, [clearExtrudePreview, anchorToActivePart]);
 
   const clearRevolvePreview = useCallback(() => {
     disposeEdgeOverlayObject(sceneRef.current, revolvePreviewRef.current);
@@ -1520,9 +1572,10 @@ const Viewport = forwardRef(({
     const group = new Group();
     group.name = 'contourRevolvePreviewGroup';
     group.add(mesh);
+    anchorToActivePart(group);
     sceneRef.current.add(group);
     revolvePreviewRef.current = group;
-  }, [clearRevolvePreview]);
+  }, [clearRevolvePreview, anchorToActivePart]);
 
   const clearLoftPreview = useCallback(() => {
     disposeEdgeOverlayObject(sceneRef.current, loftPreviewRef.current);
@@ -1597,10 +1650,11 @@ const Viewport = forwardRef(({
       group.add(mesh);
     }
     if (group.children.length) {
+      anchorToActivePart(group);
       sceneRef.current.add(group);
       loftPreviewRef.current = group;
     }
-  }, [clearLoftPreview]);
+  }, [clearLoftPreview, anchorToActivePart]);
 
   const clearSweepPreview = useCallback(() => {
     disposeEdgeOverlayObject(sceneRef.current, sweepPreviewRef.current);
@@ -1670,10 +1724,11 @@ const Viewport = forwardRef(({
     for (let s = 0; s < rings.length - 1; s++) addSkin(rings[s], rings[s + 1]);
     if (payload.closed && rings.length > 2) addSkin(rings[rings.length - 1], rings[0]);
     if (group.children.length) {
+      anchorToActivePart(group);
       sceneRef.current.add(group);
       sweepPreviewRef.current = group;
     }
-  }, [clearSweepPreview]);
+  }, [clearSweepPreview, anchorToActivePart]);
 
   const applyContourPartGhost = useCallback((on) => {
     const mesh = resultRef.current;
@@ -1754,9 +1809,10 @@ const Viewport = forwardRef(({
       loop.frustumCulled = false;
       group.add(loop);
     } catch { /* overlay outline is best-effort */ }
+    anchorToActivePart(group);
     sceneRef.current.add(group);
     workplaneOverlayRef.current = group;
-  }, [clearWorkplaneOverlay]);
+  }, [clearWorkplaneOverlay, anchorToActivePart]);
 
   const clearConstructionPlanes = useCallback(() => {
     if (!constructionPlaneRef.current) return;
@@ -1794,9 +1850,10 @@ const Viewport = forwardRef(({
       group.add(quad);
     }
     if (!group.children.length) return;
+    anchorToActivePart(group);
     sceneRef.current.add(group);
     constructionPlaneRef.current = group;
-  }, [clearConstructionPlanes]);
+  }, [clearConstructionPlanes, anchorToActivePart]);
 
   /**
    * Per-frame handle animation: ease every handle toward its state's scale, and
@@ -1900,22 +1957,26 @@ const Viewport = forwardRef(({
     group.userData.handles = handles;
     group.userData.line = line;
     group.userData.plane = plane;
+    anchorToActivePart(group);
     sceneRef.current.add(group);
     polylineDraftRef.current = group;
     polylinePointHoverRef.current = keepHover < handles.length ? keepHover : -1;
     paintPolylineHandleStates();
-  }, [clearPolylineDraft, paintPolylineHandleStates]);
+  }, [clearPolylineDraft, paintPolylineHandleStates, anchorToActivePart]);
 
   /** Move one handle (and its wire vertex) without rebuilding the draft. */
   const movePolylineHandle = useCallback((index, worldPoint) => {
     const group = polylineDraftRef.current;
     const handle = group?.userData?.handles?.[index];
     if (!handle) return;
-    handle.position.set(worldPoint[0], worldPoint[1], worldPoint[2]);
+    const ox = group.position?.x || 0;
+    const oy = group.position?.y || 0;
+    const oz = group.position?.z || 0;
+    handle.position.set(worldPoint[0] - ox, worldPoint[1] - oy, worldPoint[2] - oz);
     const line = group.userData.line;
     const attr = line?.geometry?.getAttribute('position');
     if (attr) {
-      attr.setXYZ(index, worldPoint[0], worldPoint[1], worldPoint[2]);
+      attr.setXYZ(index, worldPoint[0] - ox, worldPoint[1] - oy, worldPoint[2] - oz);
       attr.needsUpdate = true;
       line.geometry.computeBoundingSphere?.();
     }
@@ -1939,7 +2000,8 @@ const Viewport = forwardRef(({
     let best = -1;
     let bestD = slop * slop;
     for (let i = 0; i < handles.length; i++) {
-      const v = polylineProjectScratch.current.copy(handles[i].position).project(camera);
+      handles[i].getWorldPosition(polylineProjectScratch.current);
+      const v = polylineProjectScratch.current.project(camera);
       if (v.z > 1) continue; // behind the camera
       const sx = (v.x * 0.5 + 0.5) * rect.width;
       const sy = (-v.y * 0.5 + 0.5) * rect.height;
@@ -2077,10 +2139,11 @@ const Viewport = forwardRef(({
     }
 
     if (group.children.length) {
+      anchorToActivePart(group);
       sceneRef.current.add(group);
       filletBlendPreviewRef.current = group;
     }
-  }, [clearFilletBlendPreview]);
+  }, [clearFilletBlendPreview, anchorToActivePart]);
 
   const exitContourMode = useCallback(() => {
     setContourMode(null);
@@ -2421,6 +2484,11 @@ const Viewport = forwardRef(({
   // the chip used to re-run buildFilletBlendPreview on every render just for .ok).
   const filletEdgeClass = useMemo(() => {
     if (!filletMode || !selectedEdges?.length) return null;
+    const overlay = resolveActivePartOverlay({
+      edges: selectedEdges,
+      activeId: activePartIdRef.current,
+    });
+    if (overlay.foreign) return null;
     const params = normalizeFilletParams(filletMode.params || {}, selectedEdges);
     return classifyFilletEdges(selectedEdges, {
       radius: params.radius,
@@ -2442,6 +2510,14 @@ const Viewport = forwardRef(({
   }, [filletMode, selectedEdges]);
   useEffect(() => {
     if (!filletMode) {
+      clearFilletBlendPreview();
+      return;
+    }
+    const overlay = resolveActivePartOverlay({
+      edges: selectedEdges,
+      activeId: activePartIdRef.current,
+    });
+    if (overlay.foreign) {
       clearFilletBlendPreview();
       return;
     }
@@ -2797,15 +2873,24 @@ const Viewport = forwardRef(({
       group.add(endMesh);
     }
 
+    anchorToActivePart(group);
     sceneRef.current.add(group);
     pathPreviewRef.current = group;
-  }, [clearPathPreview]);
+  }, [clearPathPreview, anchorToActivePart]);
 
   // Sweep contour: path order preview (green → magenta) while edges accumulate.
   // Other contour entries clear it. A null contour mode leaves the Path modal preview alone.
   useEffect(() => {
     if (!contourMode || !isSweepEntry(contourMode.entry)) {
       if (contourMode) clearPathPreview();
+      return;
+    }
+    const overlay = resolveActivePartOverlay({
+      edges: selectedEdges,
+      activeId: activePartIdRef.current,
+    });
+    if (overlay.foreign) {
+      clearPathPreview();
       return;
     }
     setPathPreview({
@@ -2818,7 +2903,10 @@ const Viewport = forwardRef(({
 
   const highlightSelectedEdges = useCallback((edges) => {
     clearEdgeHighlight();
-    edgeHighlightRef.current = paintEdgeLines(edges, {
+    const activePart = activePartIdRef.current;
+    const overlay = resolveActivePartOverlay({ edges, activeId: activePart });
+    const shown = overlay.foreign ? [] : edges;
+    edgeHighlightRef.current = paintEdgeLines(shown, {
       color: 0xff9900,
       name: 'edgeSelection',
       opacity: EDGE_SELECT_OPACITY,
@@ -2878,6 +2966,10 @@ const Viewport = forwardRef(({
       const tCoh = performance.now();
       featureEdgesRef.current = buildCoherentEdges(raw);
       coherentMs = performance.now() - tCoh;
+    }
+    const partId = activePartIdRef.current;
+    if (partId && featureEdgesRef.current) {
+      for (const edge of featureEdgesRef.current) edge.partId = partId;
     }
     featureEdgesSourceRef.current = geom ?? null;
     const prev = graphTimingRef.current || {};
@@ -2945,10 +3037,11 @@ const Viewport = forwardRef(({
       note(err?.message || 'Could not label edges — pick still uses the sharp set.');
       return undefined;
     }
+    anchorToActivePart(group);
     sceneRef.current.add(group);
     idLabelGroupRef.current = group;
     return () => clearIdLabels();
-  }, [filletActive, cachedMeshData, modelBounds, syncFeatureEdges, clearIdLabels]);
+  }, [filletActive, cachedMeshData, modelBounds, syncFeatureEdges, clearIdLabels, anchorToActivePart]);
 
   const rebuildFeatureEdges = useCallback(() => {
     syncFeatureEdges(resultRef.current?.geometry ?? null);
@@ -3101,8 +3194,7 @@ const Viewport = forwardRef(({
       color, transparent: true, opacity: 0.3, depthTest: true, side: 2
     }));
     highlightMesh.name = name;
-    const shift = partWorldOffset(resultRef.current);
-    if (shift) highlightMesh.position.set(shift.x, shift.y, shift.z);
+    anchorToActivePart(highlightMesh);
     
     // Create boundary edge lines only
     if (boundaryEdgePositions.length > 0) {
@@ -3944,6 +4036,7 @@ const Viewport = forwardRef(({
     if (face1 && face2 && sceneRef.current) {
       // Create new measurement lines
       const lines = createMeasurementLines(face1, face2);
+      anchorToActivePart(lines);
       sceneRef.current.add(lines);
       measurementLinesRef.current = lines;
     }
@@ -5739,7 +5832,10 @@ const Viewport = forwardRef(({
       // Clearing the path on Auto-Run made a second Confirm a loud empty-path fail.
       const inFilletMode = !!filletModeRef.current;
       const keepSweepPath = isSweepEntry(contourModeRef.current?.entry);
-      const hadEdges = Array.isArray(selectedEdges) && selectedEdges.length > 0;
+      const liveEdges = selectedEdgesRef.current || [];
+      const activePart = activePartIdRef.current;
+      const foreignEdges = !!(activePart && liveEdges.some((edge) => edge.partId && edge.partId !== activePart));
+      const hadEdges = liveEdges.length > 0 && !foreignEdges;
       const wasEdgeMode = pickModeRef.current === 'edge';
       clearHighlight();
       setSelectedFace(null);
@@ -5748,13 +5844,18 @@ const Viewport = forwardRef(({
       featureEdgesSourceRef.current = null;
       syncFeatureEdges(resultRef.current?.geometry ?? null);
       graphsBoundMeshRef.current = meshData;
-      if (inFilletMode || keepSweepPath) {
+      if (foreignEdges) {
+        clearEdgeHighlight();
+        clearEdgeHover();
+        clearFilletBlendPreview();
+        setSelectedEdges([]);
+      } else if (inFilletMode || keepSweepPath) {
         clearEdgeHover();
         // Re-paint the kept selection on the new mesh (world va/vb still draw).
         // The selectedEdges effect only fires on reference change, which a kept
         // wire does not produce across an Auto-Run — repaint explicitly so the
         // orange halo cannot go stale against the replaced geometry.
-        if (hadEdges) highlightSelectedEdges(selectedEdges);
+        if (hadEdges) highlightSelectedEdges(liveEdges);
         if (inFilletMode) {
           setSelectedEdges((prev) => stampBoundaryOnSelection(prev, featureEdgesRef.current));
         }
@@ -5883,11 +5984,14 @@ const Viewport = forwardRef(({
    * contour graphs on it before a pick. Contours are buildCoherentEdges
    * inside syncFeatureEdges. Other assembly meshes are not the pick mesh.
    */
-  adoptActiveSolidRef.current = ({ mesh, position }) => {
+  adoptActiveSolidRef.current = ({ mesh, position, partId }) => {
     if (!resultRef.current || !mesh?.vertProperties) return false;
+    if (partId !== undefined) activePartIdRef.current = partId ?? null;
     clearHighlight();
     clearEdgeHighlight();
     clearEdgeHover();
+    clearFilletBlendPreview();
+    clearIdLabels();
     setSelectedFace(null);
     setSelectedEdges([]);
     onFaceSelected?.(null);
@@ -5908,6 +6012,7 @@ const Viewport = forwardRef(({
     const renderer = rendererRef.current;
     const scene = sceneRef.current;
     const camera = cameraRef.current;
+    syncAnchoredOverlays();
     if (renderer && scene && camera) renderer.render(scene, camera);
     return true;
   };
@@ -5917,6 +6022,7 @@ const Viewport = forwardRef(({
     if (!scene || !resultRef.current) return false;
     const solids = Array.isArray(payload?.solids) ? payload.solids : [];
     const activeId = payload?.activeId ?? null;
+    activePartIdRef.current = activeId;
     const blankActive = payload?.blankActive === true;
     if (!assemblyGroupRef.current) {
       const group = new Group();
@@ -5959,6 +6065,10 @@ const Viewport = forwardRef(({
       resultRef.current.geometry?.dispose();
       resultRef.current.geometry = new BufferGeometry();
       resultRef.current.position.set(0, 0, 0);
+      clearFilletBlendPreview();
+      clearIdLabels();
+      clearEdgeHighlight();
+      clearEdgeHover();
       featureEdgesRef.current = [];
       featureEdgesSourceRef.current = null;
       graphsBoundMeshRef.current = null;
@@ -5970,9 +6080,15 @@ const Viewport = forwardRef(({
       const p = active?.position || [0, 0, 0];
       resultRef.current.position.set(p[0], p[1], p[2]);
       if (active?.mesh?.vertProperties && graphsBoundMeshRef.current !== active.mesh) {
-        adoptActiveSolidRef.current({ mesh: active.mesh, position: p });
+        adoptActiveSolidRef.current({ mesh: active.mesh, position: p, partId: activeId });
+      } else if (activeId) {
+        // The graph was built for this mesh before the part id was known
+        // (the run finishes, then the assembly is placed). Tag it now so a
+        // later switch can tell these edges from the other part's.
+        for (const edge of featureEdgesRef.current || []) edge.partId = activeId;
       }
     }
+    syncAnchoredOverlays();
     if (autoFitEnabled && solids.length && cameraRef.current) {
       const geom = new BufferGeometry();
       const chunks = [];

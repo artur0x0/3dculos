@@ -1236,6 +1236,7 @@ const App = () => {
       viewportRef.current?.adoptActiveSolid?.({
         mesh: cached.mesh,
         position: partPosition(part) || [0, 0, 0],
+        partId: id,
       });
     }
     if (picked.ok) {
@@ -1415,6 +1416,7 @@ const App = () => {
       viewportRef.current?.adoptActiveSolid?.({
         mesh: nextRun.mesh,
         position: partPosition(nextPart) || [0, 0, 0],
+        partId: nextActive,
       });
     }
     viewportRef.current?.placeAssembly?.({

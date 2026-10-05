@@ -41,6 +41,8 @@ import {
   undoPartHistory,
 } from '../../src/utils/partHistory.js';
 import { buildCoherentEdges, buildFeatureEdges, pickNearestEdge } from '../../src/utils/selectEdge.js';
+import { pickActivePartEdge, resolveActivePartOverlay } from '../../src/utils/activePartOverlay.js';
+import { stampBoundaryOnSelection } from '../../src/utils/boundaryEdgeIds.js';
 import { selectGraphFace, warmFaceGraph } from '../../src/utils/selectFace.js';
 import { runAssemblyParts } from '../../src/utils/assemblyRun.js';
 import {
@@ -218,6 +220,13 @@ const BAD = 'let part = Manifold.cube([10, 10, 10], true);\nreturn part.missingM
     && sanitizeAssemblyName('x'.repeat(80)).length === 60);
   const adoptStart = view.indexOf('adoptActiveSolidRef.current =');
   const adopt = view.slice(adoptStart, view.indexOf('placeAssemblyRef.current', adoptStart));
+  const filletPaint = view.slice(view.indexOf('const paintFilletBlendPreview'), view.indexOf('const exitContourMode'));
+  const filletLabels = view.slice(view.indexOf("group.name = 'filletIdLabels'"), view.indexOf('const rebuildFeatureEdges'));
+  check('fillet preview and id labels anchor to the active part',
+    filletPaint.includes('anchorToActivePart(group)')
+    && filletLabels.includes('anchorToActivePart(group)')
+    && /resolveActivePartOverlay\(/.test(view)
+    && /overlay\.foreign/.test(view));
   check('part switch rebinds face, edge, and contour graphs on the active solid',
     adoptStart >= 0
     && /warmFaceGraph\(/.test(adopt)
@@ -503,6 +512,44 @@ const BAD = 'let part = Manifold.cube([10, 10, 10], true);\nreturn part.missingM
     && !JSON.stringify(emptied).includes('local:box'));
 }
 
+{
+  const onA = {
+    key: '0-1',
+    a: 0,
+    b: 1,
+    va: [0, 0, 0],
+    vb: [12, 0, 0],
+    mid: [6, 0, 0],
+    faceA: 1,
+    faceB: 2,
+    boundaryId: 4,
+  };
+  const onB = {
+    key: '0-1',
+    a: 0,
+    b: 1,
+    va: [40, 0, 0],
+    vb: [50, 0, 0],
+    mid: [45, 0, 0],
+    faceA: 9,
+    faceB: 8,
+    boundaryId: 7,
+    pairCount: 1,
+  };
+  const stamped = stampBoundaryOnSelection([onA], [onB]);
+  check('a shared vertex key does not retarget an edge onto the other solid',
+    stamped[0].faceA === 1
+    && stamped[0].faceB === 2
+    && stamped[0].boundaryId === 4
+    && stamped[0].va[0] === 0);
+  const same = stampBoundaryOnSelection(
+    [{ ...onA, faceA: undefined, faceB: undefined, boundaryId: undefined }],
+    [{ ...onB, va: [0, 0, 0], vb: [12, 0, 0], mid: [6, 0, 0], faceA: 3, faceB: 5, boundaryId: 1 }],
+  );
+  check('the same segment still receives its boundary ids',
+    same[0].faceA === 3 && same[0].faceB === 5 && same[0].boundaryId === 1);
+}
+
 const pending = new Map();
 let msgId = 0;
 const workerSelf = {
@@ -630,6 +677,55 @@ async function execute(script) {
     && hitB && hitB.key === edgesB[0].key
     && hitA == null
     && Number.isFinite(faceX) && Math.abs(faceX) <= 2.01);
+
+  // Box is the active solid, translated to x=30. Wide sits at the origin.
+  // Box-local edges occupy that origin, which is where an unanchored preview
+  // paints on the wrong part.
+  const activePreview = resolveActivePartOverlay({
+    edges: edgesA.map((edge) => ({ ...edge, partId: 'local:box' })),
+    sourceId: 'local:box',
+    activeId: 'local:box',
+    position: [30, 0, 0],
+  });
+  const unshifted = resolveActivePartOverlay({
+    edges: edgesA,
+    position: null,
+  });
+  check('unanchored active edges sit on the part at the origin',
+    unshifted.points.length > 0
+    && unshifted.points.every((p) => Math.abs(p[0]) <= 6));
+  check('active preview resolves to the translated solid, not the origin part',
+    activePreview.foreign === false
+    && activePreview.partId === 'local:box'
+    && activePreview.points.length > 0
+    && activePreview.points.every((p) => p[0] > 20));
+  const foreignPreview = resolveActivePartOverlay({
+    edges: edgesB.map((edge) => ({ ...edge, partId: 'local:wide' })),
+    sourceId: 'local:wide',
+    activeId: 'local:box',
+    position: [30, 0, 0],
+  });
+  check('the other part graph is not painted while the box is active',
+    foreignPreview.foreign === true
+    && foreignPreview.points.length === 0
+    && foreignPreview.partId == null);
+  const mid = edgesA[0].mid;
+  const pickedOnActive = pickActivePartEdge(
+    [
+      { id: 'local:wide', edges: edgesB, position: [0, 0, 0] },
+      { id: 'local:box', edges: edgesA, position: [30, 0, 0] },
+    ],
+    'local:box',
+    [mid[0] + 30, mid[1], mid[2]],
+    0.5,
+  );
+  check('a world pick on the active solid resolves to that mesh, not the other',
+    pickedOnActive
+    && pickedOnActive.partId === 'local:box'
+    && Math.abs(pickedOnActive.edge.mid[0] - mid[0]) < 1e-4
+    && Math.abs(pickedOnActive.edge.mid[1] - mid[1]) < 1e-4
+    && pickedOnActive.points.length >= 2
+    && pickedOnActive.points.every((p) => p[0] > 20));
 
   const hidden = await runAssemblyParts({
     doc: setPartVisible(doc, 'local:box', false),

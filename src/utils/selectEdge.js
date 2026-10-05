@@ -202,6 +202,7 @@ function copyPickEdge(edge, key) {
     boundaryId: Number.isFinite(edge.boundaryId) ? edge.boundaryId : undefined,
     pairCount: Number.isFinite(edge.pairCount) ? edge.pairCount : undefined,
     chainId: Number.isFinite(edge.chainId) ? edge.chainId : undefined,
+    partId: edge.partId != null && edge.partId !== '' ? edge.partId : undefined,
     // Slice B+C: dense pre-RDP polyline for chip tracking + makeSweepPath fidelity.
     pts: Array.isArray(edge.pts) && edge.pts.length >= 2
       ? edge.pts.map((p) => p.slice())
