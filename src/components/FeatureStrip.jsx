@@ -119,6 +119,8 @@ export default function FeatureStrip({
   onRedo,
   canUndo = false,
   canRedo = false,
+  /** A feature session hides the strip. Undo stays on the feature chip. */
+  hidden = false,
 }) {
   const features = useMemo(() => parseFeatureMarkers(script), [script]);
   const horizontal = orientation === 'horizontal';
@@ -172,6 +174,17 @@ export default function FeatureStrip({
     ro.observe(track);
     return () => ro.disconnect();
   }, [horizontal, features.length, lastFeatureId, featureWindow]);
+
+  if (hidden) {
+    return (
+      <div
+        data-feature-strip=""
+        data-feature-strip-hidden="feature"
+        data-feature-strip-orientation={orientation}
+        hidden
+      />
+    );
+  }
 
   if (!horizontal && features.length === 0) {
     if (hideWhenEmpty) return null;

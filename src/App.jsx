@@ -60,6 +60,7 @@ import {
   undoPartHistory,
 } from './utils/partHistory';
 import { runAssemblyParts } from './utils/assemblyRun';
+import { leftoverPickSolids, shouldSyncScript } from './utils/pickRetarget';
 import {
   deletePartScript,
   loadAssemblyDocument,
@@ -107,6 +108,14 @@ const App = () => {
   const assemblyRef = useRef(null);
   const partScriptsRef = useRef({});
   const partRunsRef = useRef({});
+  /** Last successful mesh per part. A failed row can still be picked from this. */
+  const partLeftoversRef = useRef({});
+  /** CAD pick target. Monaco stays on assembly.activeId until a sync. */
+  const cadPartIdRef = useRef(null);
+  const [cadPartId, setCadPartId] = useState(null);
+  const featureSessionRef = useRef(false);
+  const [featureSession, setFeatureSession] = useState(false);
+  const syncCadScriptRef = useRef(() => {});
   /** Bumped when the active part changes out from under a pending autosave. */
   const partSaveEpochRef = useRef(0);
   const refreshGenRef = useRef(0);
@@ -130,6 +139,7 @@ const App = () => {
     const next = stage === 'parts' ? 'parts' : stage === 'script' ? 'script' : 'cad';
     setMobileStage(next);
     try { sessionStorage.setItem('3dculos.mobileStage', next); } catch { /* private mode */ }
+    if (shouldSyncScript({ surface: next })) syncCadScriptRef.current();
   };
   /** Script-stage feature strip: which chip is selected (null = none). */
   const [featureStripActiveId, setFeatureStripActiveId] = useState(null);
@@ -1147,16 +1157,18 @@ const App = () => {
     const persistActive = opts.persistActive !== false && !suppressPartSaveRef.current;
     let scripts = { ...partScriptsRef.current };
     const activeId = doc.activeId;
+    const wanted = cadPartIdRef.current;
+    const viewId = wanted && doc.parts.some((part) => part.id === wanted) ? wanted : activeId;
     if (typeof activeScript === 'string' && activeId && persistActive) {
       scripts = { ...scripts, [activeId]: activeScript };
       rememberScripts(scripts);
       savePartScript(activeId, activeScript);
     }
     const gen = ++refreshGenRef.current;
-    const activePart = doc.parts.find((part) => part.id === activeId);
+    const activePart = doc.parts.find((part) => part.id === viewId);
     const activeVisible = !!(activePart && activePart.visible !== false);
     const otherIds = doc.parts
-      .filter((part) => part.visible !== false && part.id !== activeId)
+      .filter((part) => part.visible !== false && part.id !== viewId)
       .map((part) => part.id);
     let other;
     try {
@@ -1173,48 +1185,84 @@ const App = () => {
     if (gen !== refreshGenRef.current) return false;
 
     const runs = { ...(other.runs || {}) };
-    if (activeId && activeVisible && typeof scripts[activeId] === 'string') {
-      let run = await viewportRef.current?.executeScript(scripts[activeId], { noShadow: true });
+    if (viewId && activeVisible && typeof scripts[viewId] === 'string') {
+      const runOpts = { noShadow: true, preservePicks: opts.preservePicks === true };
+      let run = await viewportRef.current?.executeScript(scripts[viewId], runOpts);
       if (run == null || run === false) {
         await new Promise((resolve) => { setTimeout(resolve, 200); });
         if (gen !== refreshGenRef.current) return false;
-        run = await viewportRef.current?.executeScript(scripts[activeId], { noShadow: true });
+        run = await viewportRef.current?.executeScript(scripts[viewId], runOpts);
       }
       if (gen !== refreshGenRef.current) return false;
       if (run?.cleared) {
-        runs[activeId] = { ok: false, mesh: null, empty: true, error: null };
+        runs[viewId] = { ok: false, mesh: null, empty: true, error: null };
       } else if (run?.ok && run.mesh?.vertProperties) {
-        runs[activeId] = { ok: true, mesh: run.mesh, error: null };
+        runs[viewId] = { ok: true, mesh: run.mesh, error: null };
       } else if (run && run.ok === false) {
-        runs[activeId] = { ok: false, mesh: null, error: run.error || 'Script failed' };
+        runs[viewId] = { ok: false, mesh: null, error: run.error || 'Script failed' };
         manifoldContext.clearResult().catch(() => {});
       }
-    } else if (activeId) {
-      runs[activeId] = {
+    } else if (viewId) {
+      runs[viewId] = {
         ok: false,
         mesh: null,
         skipped: !activeVisible,
-        missing: typeof scripts[activeId] !== 'string',
-        error: typeof scripts[activeId] === 'string' ? null : 'missing',
+        missing: typeof scripts[viewId] !== 'string',
+        error: typeof scripts[viewId] === 'string' ? null : 'missing',
       };
     }
 
     if (gen !== refreshGenRef.current) return false;
+    for (const [id, run] of Object.entries(runs)) {
+      if (run?.ok && run.mesh?.vertProperties) partLeftoversRef.current[id] = run.mesh;
+    }
     commitPartRuns(runs);
     const solids = composeViewportParts(doc, runs);
-    const activeOk = !!(activeId && runs[activeId]?.ok === true && activeVisible);
+    const leftovers = leftoverPickSolids(doc, runs, partLeftoversRef.current);
+    const activeOk = !!(viewId && runs[viewId]?.ok === true && activeVisible);
     viewportRef.current?.placeAssembly?.({
       solids,
-      activeId,
+      leftovers,
+      activeId: viewId,
       blankActive: !activeOk,
     });
     return true;
   };
   refreshAssemblyRef.current = refreshAssembly;
 
-  const handleSelectPart = (id) => {
+  const rememberCadPart = (id) => {
+    const next = id || null;
+    cadPartIdRef.current = next;
+    setCadPartId(next);
+  };
+
+  const meshForPart = (id) => {
+    const run = partRunsRef.current?.[id];
+    if (run?.ok && run.mesh?.vertProperties) return run.mesh;
+    const leftover = partLeftoversRef.current?.[id];
+    if (leftover?.vertProperties) return leftover;
+    return null;
+  };
+
+  const handleSelectPart = (id, opts = {}) => {
     const doc = assemblyRef.current;
-    if (!doc || id == null || id === doc.activeId) return;
+    if (!doc || id == null) return;
+    rememberCadPart(id);
+    const partNow = doc.parts.find((row) => row.id === id);
+    if (id === doc.activeId) {
+      // A face or edge pick can show another part's mesh while Monaco stays
+      // here. Clicking this row brings that mesh back.
+      const mesh = meshForPart(id);
+      if (mesh?.vertProperties) {
+        viewportRef.current?.swapPickPart?.({
+          partId: id,
+          mesh,
+          position: partPosition(partNow) || [0, 0, 0],
+        });
+      }
+      if (!opts.keepPicks || opts.bodyHighlight) viewportRef.current?.showCadBodyHighlight?.();
+      return;
+    }
     const live = codeEditorRef.current?.getContent?.();
     const prev = doc.activeId;
     if (prev && !suppressPartSaveRef.current && typeof live === 'string') {
@@ -1232,17 +1280,27 @@ const App = () => {
     const picked = scriptForRow(nextDoc, partScriptsRef.current, id);
     const nextScript = picked.ok ? picked.script : '';
     focusPartHistory(id, nextScript);
-    const cached = partRunsRef.current?.[id];
-    if (cached?.ok && cached.mesh?.vertProperties) {
+    const cachedMesh = meshForPart(id);
+    if (!opts.keepPicks && cachedMesh?.vertProperties) {
       viewportRef.current?.adoptActiveSolid?.({
-        mesh: cached.mesh,
+        mesh: cachedMesh,
         position: partPosition(part) || [0, 0, 0],
         partId: id,
       });
     }
+    if (opts.keepPicks) {
+      if (picked.ok) {
+        suppressPartSaveRef.current = false;
+        codeEditorRef.current?.setTextOnly?.(picked.script);
+        setCurrentScript(picked.script);
+      }
+      if (opts.bodyHighlight) viewportRef.current?.showCadBodyHighlight?.();
+      return;
+    }
     if (picked.ok) {
       suppressPartSaveRef.current = false;
       codeEditorRef.current?.loadContent(picked.script, part?.name || 'Part', false);
+      viewportRef.current?.showCadBodyHighlight?.();
       return;
     }
     suppressPartSaveRef.current = true;
@@ -1252,6 +1310,42 @@ const App = () => {
     refreshAssemblyRef.current?.(undefined, { persistActive: false });
   };
 
+  const handlePickRetarget = ({ partId, syncScript = false, kind = 'face' } = {}) => {
+    if (!partId || !assemblyRef.current) return false;
+    rememberCadPart(partId);
+    const part = assemblyRef.current.parts.find((row) => row.id === partId);
+    if (part?.name) setCurrentFilename(part.name);
+    if (syncScript) {
+      handleSelectPart(partId, {
+        keepPicks: true,
+        bodyHighlight: kind === 'body',
+      });
+      return true;
+    }
+    const mesh = meshForPart(partId);
+    if (mesh?.vertProperties) {
+      viewportRef.current?.swapPickPart?.({
+        partId,
+        mesh,
+        position: partPosition(part) || [0, 0, 0],
+      });
+    }
+    return true;
+  };
+
+  const handleFeatureSession = (active) => {
+    const on = !!active;
+    featureSessionRef.current = on;
+    setFeatureSession((prev) => (prev === on ? prev : on));
+  };
+
+  syncCadScriptRef.current = () => {
+    const id = cadPartIdRef.current;
+    const doc = assemblyRef.current;
+    if (!id || !doc || id === doc.activeId) return;
+    handleSelectPart(id);
+  };
+
   const handleTogglePartVisible = (id) => {
     const doc = assemblyRef.current;
     if (!doc) return;
@@ -1259,7 +1353,10 @@ const App = () => {
     const next = setPartVisible(doc, id, part?.visible === false);
     rememberAssembly(next);
     const live = codeEditorRef.current?.getContent?.();
-    refreshAssemblyRef.current?.(live, { persistActive: !suppressPartSaveRef.current });
+    refreshAssemblyRef.current?.(live, {
+      persistActive: !suppressPartSaveRef.current,
+      preservePicks: featureSessionRef.current,
+    });
   };
 
   const handleReorderParts = (from, to) => {
@@ -1405,12 +1502,14 @@ const App = () => {
     rememberScripts(scripts);
     deletePartScript(key);
     dropPartHistory(key);
+    delete partLeftoversRef.current[key];
 
     const nextDoc = rememberAssembly(removePart(doc, key));
     const runs = dropPartRecord(partRunsRef.current, key);
     commitPartRuns(runs);
 
     const nextActive = nextDoc.activeId;
+    if (cadPartIdRef.current === key) rememberCadPart(nextActive);
     const nextPart = nextDoc.parts.find((row) => row.id === nextActive);
     const nextRun = nextActive ? runs[nextActive] : null;
     if (deletingActive && nextRun?.ok && nextRun.mesh?.vertProperties) {
@@ -1422,6 +1521,7 @@ const App = () => {
     }
     viewportRef.current?.placeAssembly?.({
       solids: composeViewportParts(nextDoc, runs),
+      leftovers: leftoverPickSolids(nextDoc, runs, partLeftoversRef.current),
       activeId: deletingActive && !(nextRun?.ok && nextRun.mesh) ? null : nextActive,
       blankActive: (deletingActive && !(nextRun?.ok && nextRun.mesh?.vertProperties)) || !nextActive,
     });
@@ -2144,6 +2244,12 @@ const App = () => {
       : Math.round(Math.min(Math.max(vv.height * 0.32, 160), vv.height * 0.38)));
 
   const partRows = assemblyDoc ? feedRows(assemblyDoc, partRuns, partScripts) : [];
+  const cadHighlightId = cadPartId || assemblyDoc?.activeId || null;
+  const stripScript = (
+    cadHighlightId && assemblyDoc && cadHighlightId !== assemblyDoc.activeId
+  ) ? (partScripts[cadHighlightId] || '') : currentScript;
+  const partLabels = {};
+  for (const row of assemblyDoc?.parts || []) partLabels[row.id] = row.name || row.id;
   const assemblyLabel = assemblyName(assemblyDoc);
   const partFeed = appMode !== 'game' && assemblyDoc ? (
     <PartFeed
@@ -2152,7 +2258,7 @@ const App = () => {
       assemblyName={assemblyLabel}
       onRenameAssembly={handleRenameAssembly}
       rows={partRows}
-      activeId={assemblyDoc.activeId}
+      activeId={cadHighlightId}
       onSelect={handleSelectPart}
       onToggleVisible={handleTogglePartVisible}
       onReorder={handleReorderParts}
@@ -2236,6 +2342,9 @@ const App = () => {
               }}
               featureSheetEnabled={useStages && isCadStage && !featureSheet}
               onFeatureLongPress={openFeatureSheetFromCad}
+              onPickRetarget={handlePickRetarget}
+              onFeatureSessionChange={handleFeatureSession}
+              partLabels={partLabels}
             />
     );
 
@@ -2308,7 +2417,8 @@ const App = () => {
                   >
                     <FeatureStrip
                       orientation="horizontal"
-                      script={currentScript}
+                      script={stripScript}
+                      hidden={featureSession}
                       activeId={featureSheet?.feature?.id || featureStripActiveId}
                       hideWhenEmpty
                       onJump={(f) => openFeatureSheetFor(f)}
@@ -2352,7 +2462,8 @@ const App = () => {
                       <div className="pointer-events-auto flex-1 min-h-0 flex flex-col">
                         <FeatureStrip
                           orientation="vertical"
-                          script={currentScript}
+                          script={stripScript}
+                          hidden={featureSession}
                           activeId={featureSheet?.feature?.id || featureStripActiveId}
                           onJump={handleFeatureStripJump}
                         />
@@ -2579,7 +2690,8 @@ const App = () => {
               <FeatureStrip
                 orientation="vertical"
                 side="between"
-                script={currentScript}
+                script={stripScript}
+                hidden={featureSession}
                 activeId={featureStripActiveId}
                 onJump={handleDesktopFeatureStripJump}
               />
@@ -2637,6 +2749,9 @@ const App = () => {
               setCurrentScript(code);
               return refreshAssemblyRef.current?.(code);
             }}
+            onPickRetarget={handlePickRetarget}
+            onFeatureSessionChange={handleFeatureSession}
+            partLabels={partLabels}
           />
           {/* Feature sheets live INSIDE the viewer on desktop: the seam strip
               stays put, and editing a feature happens over the model it

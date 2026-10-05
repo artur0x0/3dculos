@@ -230,6 +230,12 @@ import {
   resolveActivePartOverlay,
 } from '../utils/activePartOverlay';
 import {
+  emptyClickClearsSelection,
+  featureHideKeepsPicks,
+  resolvePartPick,
+  shouldSyncScript,
+} from '../utils/pickRetarget';
+import {
   annotateFeatureEdges,
   indexBoundaryEdgesFromGeometry,
   stampBoundaryOnSelection,
@@ -627,6 +633,12 @@ const Viewport = forwardRef(({
   /** Slice Mobile C: long-press on body opens feature sheet (mobile CAD only). */
   featureSheetEnabled = false,
   onFeatureLongPress = null,
+  /** Face / edge / body hit. App retargets the CAD part and may sync Monaco. */
+  onPickRetarget = null,
+  /** True while any feature session is open. App hides the feature strip. */
+  onFeatureSessionChange = null,
+  /** id → display name for the which-part chip. */
+  partLabels = null,
 }, ref) => {
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
@@ -703,6 +715,15 @@ const Viewport = forwardRef(({
   const graphsBoundMeshRef = useRef(null);
   /** Part id the pick graphs and overlays are bound to. Null outside an assembly. */
   const activePartIdRef = useRef(null);
+  const onPickRetargetRef = useRef(null);
+  const onFeatureSessionChangeRef = useRef(null);
+  const partLabelsRef = useRef(null);
+  const featureSessionRef = useRef(false);
+  const cadBodyStickyRef = useRef(false);
+  const showCadBodyHighlightRef = useRef(() => false);
+  const swapPickPartRef = useRef(() => false);
+  const ambiguousPickRef = useRef(null);
+  const [partChoice, setPartChoice] = useState(null);
   const adoptActiveSolidRef = useRef(() => false);
   /** Per-triangle Manifold faceID from the last worker mesh (not a per-vertex attribute). */
   const faceIDsRef = useRef(null);
@@ -972,6 +993,20 @@ const Viewport = forwardRef(({
   moveModeRef.current = moveMode;
   moveFaceModeRef.current = moveFaceMode;
   deleteFaceModeRef.current = deleteFaceMode;
+  onPickRetargetRef.current = onPickRetarget;
+  onFeatureSessionChangeRef.current = onFeatureSessionChange;
+  partLabelsRef.current = partLabels || {};
+  featureSessionRef.current = !!(
+    contourMode || filletMode || shellMode || draftMode || cutMode
+    || booleanMode || moveMode || moveFaceMode || deleteFaceMode
+  );
+
+  useEffect(() => {
+    onFeatureSessionChangeRef.current?.(featureSessionRef.current);
+  }, [
+    contourMode, filletMode, shellMode, draftMode, cutMode,
+    booleanMode, moveMode, moveFaceMode, deleteFaceMode,
+  ]);
 
   useImperativeHandle(ref, () => ({
     executeScript,
@@ -1122,9 +1157,14 @@ const Viewport = forwardRef(({
     /**
      * Place visible assembly solids that are not the active part, and move
      * the active solid when the row stores a position. Graphs rebind to the
-     * active mesh only. The extra parts are not the pick mesh.
+     * active mesh only. Other visible parts and failed-row leftovers raycast;
+     * a pick retargets onto that part before the graphs are used.
      */
     placeAssembly: (payload) => placeAssemblyRef.current(payload),
+    /** Move the pick mesh onto a part the user just touched. */
+    swapPickPart: (payload) => swapPickPartRef.current(payload),
+    /** Highlight the whole active solid. Parts-row and body picks use this. */
+    showCadBodyHighlight: () => showCadBodyHighlightRef.current(),
     /** Install one part's solid and rebuild face, edge, and contour graphs. */
     adoptActiveSolid: (payload) => adoptActiveSolidRef.current(payload),
     /**
@@ -3268,6 +3308,21 @@ const Viewport = forwardRef(({
     highlightMeshRef.current.push(highlightMesh);
   }, []);
 
+  const showCadBodyHighlight = useCallback(() => {
+    const geom = resultRef.current?.geometry;
+    const positions = geom?.attributes?.position;
+    const index = geom?.index?.array;
+    if (!geom || !positions || !index?.length) return false;
+    const count = Math.floor(index.length / 3);
+    const indices = [];
+    for (let i = 0; i < count; i++) indices.push(i);
+    cadBodyStickyRef.current = true;
+    clearHighlight();
+    highlightFace(indices, geom, positions, index, 0x22d3ee, 'cad-body');
+    return true;
+  }, [clearHighlight, highlightFace]);
+  showCadBodyHighlightRef.current = showCadBodyHighlight;
+
   // Below highlightFace on purpose. These dep arrays run during render; listing
   // highlightFace above its const throws and the viewport never mounts.
   const paintDraftPicks = useCallback((state) => {
@@ -4630,6 +4685,78 @@ const Viewport = forwardRef(({
   /**
    * Handle mouse up - process click only if not dragging
    */
+  const collectPartHits = useCallback(() => {
+    const hits = [];
+    const pushMesh = (mesh, partId) => {
+      if (!mesh?.geometry?.attributes?.position?.count || partId == null || partId === '') return;
+      const found = raycasterRef.current.intersectObject(mesh, false);
+      for (const hit of found) {
+        hits.push({
+          partId: String(partId),
+          distance: hit.distance,
+          point: [hit.point.x, hit.point.y, hit.point.z],
+          faceIndex: hit.faceIndex,
+          face: hit.face,
+          mesh,
+        });
+      }
+    };
+    if (activePartIdRef.current) pushMesh(resultRef.current, activePartIdRef.current);
+    for (const [id, mesh] of assemblyExtrasRef.current) {
+      pushMesh(mesh, mesh?.userData?.assemblyPartId || id);
+    }
+    return hits;
+  }, []);
+
+  const retargetPickPart = useCallback((partId) => {
+    if (partId == null || partId === '') return false;
+    cadBodyStickyRef.current = false;
+    if (String(partId) === String(activePartIdRef.current || '')) return true;
+    onPickRetargetRef.current?.({ partId: String(partId), kind: 'face', syncScript: false });
+    return String(activePartIdRef.current || '') === String(partId);
+  }, []);
+
+  const showPartChoice = useCallback((choice, event, kind) => {
+    if (!choice?.ambiguous) {
+      setPartChoice(null);
+      ambiguousPickRef.current = null;
+      return;
+    }
+    const rect = containerRef.current?.getBoundingClientRect();
+    const left = rect ? event.clientX - rect.left : event.clientX;
+    const top = rect ? event.clientY - rect.top : event.clientY;
+    ambiguousPickRef.current = {
+      clientX: event.clientX,
+      clientY: event.clientY,
+      kind,
+      additive: !!(event.shiftKey || event.metaKey || event.ctrlKey),
+    };
+    setPartChoice({
+      choices: choice.choices.map((item) => ({
+        partId: item.partId,
+        name: partLabelsRef.current?.[item.partId] || item.partId,
+      })),
+      left,
+      top,
+      kind,
+    });
+  }, []);
+
+  const dismissPartChoice = useCallback(() => {
+    setPartChoice(null);
+    ambiguousPickRef.current = null;
+  }, []);
+
+  const clearGeomSelection = useCallback(() => {
+    cadBodyStickyRef.current = false;
+    clearHighlight();
+    setSelectedFace(null);
+    onFaceSelected?.(null);
+    clearEdgeHighlight();
+    clearEdgeHover();
+    setSelectedEdges([]);
+  }, [clearHighlight, clearEdgeHighlight, clearEdgeHover, onFaceSelected]);
+
   const handleMouseUp = useCallback((event) => {
     if (polylinePointDragRef.current) {
       endPolylinePointDrag(event);
@@ -4714,6 +4841,7 @@ const Viewport = forwardRef(({
 
     // Slice 12 hotfix: Edge mode short-circuits face selection entirely.
     // Screen-space pick with finger slop — no mesh-face hit required.
+    // A hit on another part retargets first so the edge graph is that part's.
     if (pickModeRef.current === 'edge') {
       if (clickTimerRef.current) {
         clearTimeout(clickTimerRef.current);
@@ -4722,12 +4850,22 @@ const Viewport = forwardRef(({
       clickCountRef.current = 0;
       pendingClickDataRef.current = null;
 
+      raycasterRef.current.setFromCamera(mouseRef.current, cameraRef.current);
+      const choice = resolvePartPick(collectPartHits());
+      showPartChoice(choice, event, 'edge');
+      if (choice.partId && !retargetPickPart(choice.partId)) {
+        clearEdgeHover();
+        return;
+      }
+
       const slop = resolveEdgePickSlopPx();
       const edge = pickEdgeAtClient(event.clientX, event.clientY);
       if (!edge) {
-        // Preserve multi-selection on miss (same as #14) — stray taps must not wipe the set.
         console.log('[Edge Selection] No feature edge within', slop, 'px');
         clearEdgeHover();
+        if (!choice.partId && emptyClickClearsSelection({ featureSession: featureSessionRef.current })) {
+          clearGeomSelection();
+        }
         return;
       }
       clearEdgeHover();
@@ -4739,6 +4877,13 @@ const Viewport = forwardRef(({
       clearHighlight();
       setSelectedFace(null);
       onFaceSelected?.(null);
+      if (shouldSyncScript({ kind: 'edge', featureSession: featureSessionRef.current })) {
+        onPickRetargetRef.current?.({
+          partId: activePartIdRef.current,
+          kind: 'edge',
+          syncScript: true,
+        });
+      }
       return;
     }
 
@@ -4768,8 +4913,9 @@ const Viewport = forwardRef(({
         });
         if (tap.toast) showShellToast(tap.toast);
         commitBooleanState(tap.state);
+        return;
       }
-      return;
+      // No piece under the cursor. Fall through so another part can be picked.
     }
     // Cut and Boolean own the canvas: a saved contour under the cursor must
     // not eat the piece tap (same as a construction plane sitting on the cut).
@@ -4790,11 +4936,9 @@ const Viewport = forwardRef(({
     const planeHits = (showPlanesRef.current && constructionPlaneRef.current)
       ? raycasterRef.current.intersectObject(constructionPlaneRef.current, true)
       : [];
-    const solidHits = resultRef.current?.geometry?.attributes?.position
-      ? raycasterRef.current.intersectObject(resultRef.current)
-      : [];
+    const partChoiceHit = resolvePartPick(collectPartHits());
     const planeD = planeHits[0]?.distance ?? Infinity;
-    const solidD = solidHits[0]?.distance ?? Infinity;
+    const solidD = partChoiceHit.hit?.distance ?? Infinity;
     // Cut taps a body or a piece. A construction plane that sits on the cut
     // (the XY plane through a centered part) must not swallow that click.
     if (!cutModeRef.current && !booleanModeRef.current && planeHits.length && !moveModeRef.current && !moveFaceModeRef.current && !deleteFaceModeRef.current && planeD <= solidD + 0.5) {
@@ -4813,48 +4957,46 @@ const Viewport = forwardRef(({
         return;
       }
     }
-    const intersects = solidHits;
-
     // Handle click on empty space (only if not dragging)
-    if (intersects.length === 0) {
+    if (!partChoiceHit.partId) {
       if (clickTimerRef.current) {
         clearTimeout(clickTimerRef.current);
         clickTimerRef.current = null;
       }
       clickCountRef.current = 0;
       pendingClickDataRef.current = null;
-      
+      dismissPartChoice();
+
       if (measurementEnabled) {
         console.log("[Measurement] Keeping face selected for measurement");
-      } else if (contourModeRef.current) {
-        // Keep the contour workplane — empty taps must not drop the plane.
-      } else if (draftModeRef.current) {
-        // Preserve draft face selection — stray taps must not wipe the set.
-      } else if (shellModeRef.current) {
+      } else if (!emptyClickClearsSelection({ featureSession: featureSessionRef.current })) {
         // Preserve shell face selection — stray taps must not wipe the set.
-      } else if (cutModeRef.current) {
+        // Preserve draft face selection — stray taps must not wipe the set.
         // Preserve cut body selection — stray taps must not wipe the set.
-      } else if (booleanModeRef.current) {
-        // Preserve boolean picks — stray taps must not wipe the set.
-      } else if (moveModeRef.current) {
-        // Preserve the picked body — stray taps must not wipe the target.
-      } else if (moveFaceModeRef.current) {
-        // Preserve the picked faces — stray taps must not wipe the set.
-      } else if (deleteFaceModeRef.current) {
-        // Preserve the picked faces — stray taps must not wipe the set.
+        // A feature session keeps its picks. Hiding that part does too.
       } else {
-        clearHighlight();
-        setSelectedFace(null);
-        onFaceSelected?.(null);
+        clearGeomSelection();
       }
       return;
     }
-    
-    // Capture intersection data
-    const intersection = intersects[0];
-    const geometry = resultRef.current.geometry;
 
+    showPartChoice(partChoiceHit, event, 'face');
+    if (!retargetPickPart(partChoiceHit.partId)) return;
+    const again = resultRef.current?.geometry?.attributes?.position
+      ? raycasterRef.current.intersectObject(resultRef.current, false)
+      : [];
+    if (!again.length) {
+      if (emptyClickClearsSelection({ featureSession: featureSessionRef.current }) && !measurementEnabled) {
+        clearGeomSelection();
+      }
+      return;
+    }
+
+    // Capture intersection data on the part that now owns the pick mesh.
+    const intersection = again[0];
+    const geometry = resultRef.current.geometry;
     const clickedFace = intersection.face;
+    if (!clickedFace || !geometry?.attributes?.position || !geometry.index) return;
     const seedFaceIndex = intersection.faceIndex;
     const positions = geometry.attributes.position;
     const index = geometry.index.array;
@@ -4869,6 +5011,7 @@ const Viewport = forwardRef(({
       hitPoint: [intersection.point.x, intersection.point.y, intersection.point.z],
       // Shift (or ⌘/Ctrl) adds this face to the pick instead of replacing it.
       additive: !!(event.shiftKey || event.metaKey || event.ctrlKey),
+      partId: activePartIdRef.current,
     };
     
     // Multi-click detection
@@ -4890,8 +5033,9 @@ const Viewport = forwardRef(({
       processClick();
     }, MULTI_CLICK_DELAY);
     
-  }, [onFaceSelected, measurementEnabled, clearHighlight, clearEdgeHover, pickEdgeAtClient,
-    endPolylinePointDrag, pickPolylinePointAtClient, commitBooleanState]);
+  }, [onFaceSelected, measurementEnabled, clearHighlight, clearEdgeHover, clearEdgeHighlight,
+    pickEdgeAtClient, endPolylinePointDrag, pickPolylinePointAtClient, commitBooleanState,
+    collectPartHits, retargetPickPart, showPartChoice, dismissPartChoice, clearGeomSelection]);
 
 
   /**
@@ -4955,6 +5099,18 @@ const Viewport = forwardRef(({
     
     const { clickedFace, seedFaceIndex, geometry, positions, index, faceNormal, additive, hitPoint } = clickData;
     const clickCount = clickCountRef.current;
+    const legacyTapNow = !!(
+      shellModeRef.current || draftModeRef.current || cutModeRef.current
+      || booleanModeRef.current || moveFaceModeRef.current || deleteFaceModeRef.current
+    );
+    const pickKind = (!legacyTapNow && clickCount >= 2) ? 'body' : 'face';
+    if (shouldSyncScript({ kind: pickKind, featureSession: featureSessionRef.current })) {
+      onPickRetargetRef.current?.({
+        partId: clickData.partId || activePartIdRef.current,
+        kind: pickKind,
+        syncScript: true,
+      });
+    }
 
     if (booleanModeRef.current && booleanModeRef.current.pick !== 'pieces') {
       const sectioned = !!(crossSectionEnabled && cachedMeshDataRef.current?.vertProperties);
@@ -4996,7 +5152,7 @@ const Viewport = forwardRef(({
     // Shell, Draft, and Cut keep tap-to-add / tap-to-remove. A double click
     // there must stay the old tolerance walk — not the owning body — so
     // confirm still writes the face that was tapped.
-    const legacyTap = !!(shellModeRef.current || draftModeRef.current || cutModeRef.current || booleanModeRef.current);
+    const legacyTap = !!(shellModeRef.current || draftModeRef.current || cutModeRef.current) || !!booleanModeRef.current;
     const resolved = resolveViewportFaceClick({
       geometry,
       seedFaceIndex,
@@ -5174,6 +5330,61 @@ const Viewport = forwardRef(({
     }
     
   }, [measurementEnabled, measurementFaces, onFaceSelected, clearHighlight, clearEdgeHighlight, highlightFace, publishFacePicks, paintDraftPicks, commitCutState, paintMovePreview, commitMoveFaceState, commitDeleteFaceState, getHelperBuffer, commitBooleanState, crossSectionEnabled]);
+
+  const chooseAmbiguousPart = useCallback((partId) => {
+    const pending = ambiguousPickRef.current;
+    setPartChoice(null);
+    ambiguousPickRef.current = null;
+    if (!partId) return;
+    retargetPickPart(partId);
+    if (!pending) return;
+    if (pending.kind === 'edge') {
+      const edge = pickEdgeAtClient(pending.clientX, pending.clientY);
+      if (edge) {
+        clearEdgeHover();
+        setSelectedEdges((prev) => toggleEdgeSelectionPropagated(prev, edge, {
+          propagate: tangentPropRef.current,
+          featureEdges: featureEdgesRef.current,
+        }));
+        clearHighlight();
+        setSelectedFace(null);
+        onFaceSelected?.(null);
+      }
+      if (shouldSyncScript({ kind: 'edge', featureSession: featureSessionRef.current })) {
+        onPickRetargetRef.current?.({ partId, kind: 'edge', syncScript: true });
+      }
+      return;
+    }
+    const canvas = canvasRef.current;
+    const camera = cameraRef.current;
+    if (!canvas || !camera || !resultRef.current?.geometry?.attributes?.position) return;
+    const rect = canvas.getBoundingClientRect();
+    mouseRef.current.x = ((pending.clientX - rect.left) / rect.width) * 2 - 1;
+    mouseRef.current.y = -((pending.clientY - rect.top) / rect.height) * 2 + 1;
+    raycasterRef.current.setFromCamera(mouseRef.current, camera);
+    const hits = raycasterRef.current.intersectObject(resultRef.current, false);
+    if (!hits.length || !hits[0].face) return;
+    const intersection = hits[0];
+    const geometry = resultRef.current.geometry;
+    const clickedFace = intersection.face;
+    clickCountRef.current = 1;
+    lastClickTimeRef.current = Date.now();
+    pendingClickDataRef.current = {
+      clickedFace,
+      seedFaceIndex: intersection.faceIndex,
+      geometry,
+      positions: geometry.attributes.position,
+      index: geometry.index.array,
+      faceNormal: [clickedFace.normal.x, clickedFace.normal.y, clickedFace.normal.z],
+      hitPoint: [intersection.point.x, intersection.point.y, intersection.point.z],
+      additive: !!pending.additive,
+      partId: activePartIdRef.current,
+    };
+    if (clickTimerRef.current) clearTimeout(clickTimerRef.current);
+    clickTimerRef.current = setTimeout(() => {
+      processClick();
+    }, MULTI_CLICK_DELAY);
+  }, [retargetPickPart, pickEdgeAtClient, clearEdgeHover, clearHighlight, onFaceSelected, processClick]);
 
   /**
    * Handle face selection in measurement mode
@@ -6308,14 +6519,32 @@ const Viewport = forwardRef(({
       const foreignEdges = !!(activePart && liveEdges.some((edge) => edge.partId && edge.partId !== activePart));
       const hadEdges = liveEdges.length > 0 && !foreignEdges;
       const wasEdgeMode = pickModeRef.current === 'edge';
-      clearHighlight();
-      setSelectedFace(null);
-      onFaceSelected?.(null);
+      const preservePicks = opts.preservePicks === true && featureHideKeepsPicks(featureSessionRef.current);
+      const savedFaces = preservePicks ? facePickGroupRef.current : null;
+      if (!preservePicks) {
+        clearHighlight();
+        setSelectedFace(null);
+        onFaceSelected?.(null);
+      }
       featureEdgesRef.current = [];
       featureEdgesSourceRef.current = null;
       syncFeatureEdges(resultRef.current?.geometry ?? null);
       graphsBoundMeshRef.current = meshData;
-      if (foreignEdges) {
+      if (preservePicks) {
+        facePickGroupRef.current = savedFaces;
+        if (hadEdges) highlightSelectedEdges(liveEdges);
+        const geom = resultRef.current?.geometry;
+        const positions = geom?.attributes?.position;
+        const index = geom?.index?.array;
+        const shown = [...new Set((savedFaces?.picks || []).flatMap((face) => face.indices || []))];
+        if (geom && positions && index && shown.length) {
+          const savedGroup = facePickGroupRef.current;
+          clearHighlight();
+          facePickGroupRef.current = savedGroup;
+          highlightFace(shown, geom, positions, index, 0xffff00);
+        }
+        if (containerRef.current) containerRef.current.setAttribute('data-feature-picks', 'kept');
+      } else if (foreignEdges) {
         clearEdgeHighlight();
         clearEdgeHover();
         clearFilletBlendPreview();
@@ -6341,6 +6570,8 @@ const Viewport = forwardRef(({
           armEdgeModeToastClear();
         }
       }
+
+      if (!preservePicks && cadBodyStickyRef.current) showCadBodyHighlightRef.current?.();
 
       // Auto scale: re-frame the part after every successful run so the new geometry is
       // never left off-screen or tiny. Keeps the user's current orbit direction.
@@ -6455,7 +6686,8 @@ const Viewport = forwardRef(({
   /**
    * Show this part's solid as the pick mesh and rebuild face, edge, and
    * contour graphs on it before a pick. Contours are buildCoherentEdges
-   * inside syncFeatureEdges. Other assembly meshes are not the pick mesh.
+   * inside syncFeatureEdges. Other assembly meshes raycast; a hit retargets
+   * onto that part and rebinds these graphs before the pick is resolved.
    */
   adoptActiveSolidRef.current = ({ mesh, position, partId }) => {
     if (!resultRef.current || !mesh?.vertProperties) return false;
@@ -6488,6 +6720,58 @@ const Viewport = forwardRef(({
     syncAnchoredOverlays();
     if (renderer && scene && camera) renderer.render(scene, camera);
     if (booleanModeRef.current) paintBooleanPicksRef.current(booleanModeRef.current);
+    return true;
+  };
+
+  const upsertAssemblyExtra = (id, meshData, position) => {
+    if (!id || !meshData?.vertProperties || !sceneRef.current) return;
+    if (!assemblyGroupRef.current) {
+      const group = new Group();
+      group.name = 'assembly-parts';
+      sceneRef.current.add(group);
+      assemblyGroupRef.current = group;
+    }
+    const group = assemblyGroupRef.current;
+    let mesh = assemblyExtrasRef.current.get(id);
+    if (!mesh) {
+      mesh = new ThreeMesh(undefined, new MeshNormalMaterial({ flatShading: true }));
+      mesh.name = 'assembly-part';
+      mesh.userData.assemblyPartId = id;
+      group.add(mesh);
+      assemblyExtrasRef.current.set(id, mesh);
+    }
+    const geom = geometryFromMeshData(meshData);
+    mesh.geometry?.dispose();
+    mesh.geometry = geom;
+    const p = position || [0, 0, 0];
+    mesh.position.set(p[0] || 0, p[1] || 0, p[2] || 0);
+  };
+
+  swapPickPartRef.current = ({ partId, mesh, position }) => {
+    if (!partId || !mesh?.vertProperties || !resultRef.current) return false;
+    const prevId = activePartIdRef.current;
+    if (prevId && String(prevId) === String(partId) && cachedMeshDataRef.current === mesh) {
+      activePartIdRef.current = partId;
+      return true;
+    }
+    const prevMesh = cachedMeshDataRef.current;
+    const prevPos = [
+      resultRef.current.position.x,
+      resultRef.current.position.y,
+      resultRef.current.position.z,
+    ];
+    if (prevId && String(prevId) !== String(partId) && prevMesh?.vertProperties) {
+      upsertAssemblyExtra(prevId, prevMesh, prevPos);
+    }
+    const extra = assemblyExtrasRef.current.get(partId);
+    if (extra) {
+      assemblyGroupRef.current?.remove(extra);
+      extra.geometry?.dispose();
+      if (extra.material?.dispose) extra.material.dispose();
+      assemblyExtrasRef.current.delete(partId);
+    }
+    adoptActiveSolidRef.current({ mesh, position: position || [0, 0, 0], partId });
+    resultRef.current.updateMatrixWorld(true);
     return true;
   };
 
@@ -6529,6 +6813,27 @@ const Viewport = forwardRef(({
       const p = solid.position || [0, 0, 0];
       mesh.position.set(p[0], p[1], p[2]);
     }
+    const leftoverList = Array.isArray(payload?.leftovers) ? payload.leftovers : [];
+    for (const solid of leftoverList) {
+      if (!solid?.id || !solid.mesh?.vertProperties || !solid.mesh?.triVerts) continue;
+      if (solid.id === activeId && !blankActive) continue;
+      keep.add(solid.id);
+      let mesh = assemblyExtrasRef.current.get(solid.id);
+      if (!mesh) {
+        mesh = new ThreeMesh(undefined, new MeshNormalMaterial({ flatShading: true }));
+        mesh.name = 'assembly-part';
+        mesh.userData.assemblyPartId = solid.id;
+        group.add(mesh);
+        assemblyExtrasRef.current.set(solid.id, mesh);
+      }
+      mesh.userData.assemblyPartId = solid.id;
+      mesh.userData.leftover = true;
+      const geom = geometryFromMeshData(solid.mesh);
+      mesh.geometry?.dispose();
+      mesh.geometry = geom;
+      const p = solid.position || [0, 0, 0];
+      mesh.position.set(p[0], p[1], p[2]);
+    }
     for (const [id, mesh] of assemblyExtrasRef.current) {
       if (keep.has(id)) continue;
       group.remove(mesh);
@@ -6546,8 +6851,12 @@ const Viewport = forwardRef(({
       resultRef.current.position.set(0, 0, 0);
       clearFilletBlendPreview();
       clearIdLabels();
-      clearEdgeHighlight();
-      clearEdgeHover();
+      // Mid-feature hide keeps the picked faces and edges. The mesh is gone
+      // until the part is shown again; the pick status stays.
+      if (!featureHideKeepsPicks(featureSessionRef.current)) {
+        clearEdgeHighlight();
+        clearEdgeHover();
+      }
       featureEdgesRef.current = [];
       featureEdgesSourceRef.current = null;
       graphsBoundMeshRef.current = null;
@@ -6606,6 +6915,9 @@ const Viewport = forwardRef(({
     if (containerRef.current) {
       containerRef.current.setAttribute('data-assembly-solids', String(solids.length));
       containerRef.current.setAttribute('data-assembly-active', blankActive ? 'omitted' : 'shown');
+      if (blankActive && featureHideKeepsPicks(featureSessionRef.current)) {
+        containerRef.current.setAttribute('data-feature-picks', 'kept');
+      }
     }
     const renderer = rendererRef.current;
     const camera = cameraRef.current;
@@ -6673,6 +6985,29 @@ const Viewport = forwardRef(({
 
   return (
     <div ref={containerRef} className="viewport-shell relative w-full h-full bg-[#1e1e1e] overflow-hidden">
+      {partChoice?.choices?.length > 1 && (
+        <div
+          data-which-part-chip=""
+          className="absolute z-30 w-44 rounded-lg surface-glass-chip border border-white/15 p-2 shadow-lg"
+          style={{ left: partChoice.left, top: partChoice.top }}
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          <div className="px-1 pb-1 text-[10px] font-medium uppercase tracking-wide text-gray-300">
+            Which part?
+          </div>
+          {partChoice.choices.map((item) => (
+            <button
+              key={item.partId}
+              type="button"
+              data-which-part={item.partId}
+              className="block w-full truncate rounded-md px-2 py-1 text-left text-xs text-gray-100 hover:bg-white/10"
+              onClick={() => chooseAmbiguousPart(item.partId)}
+            >
+              {item.name}
+            </button>
+          ))}
+        </div>
+      )}
       {/* CAD chrome lives in the editor mid-strip in BOTH shells (desktop matches
           phone now): rendered here so download/export busy state stays local —
           and so Run can execute the live buffer without a round trip via App. */}
