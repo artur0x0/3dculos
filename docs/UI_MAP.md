@@ -86,11 +86,11 @@ Slice C adds CAD-stage feature sheets (default edit path without Monaco).
 ```
 CAD stage                          Script stage
 ┌─────────────────────────────┐   ┌─────────────────────────────┐
-││feat│ Viewport + rails      │   ││feat│ mid-strip: Toolbar    │
-││strip Contour/Fillet chips  │   ││strip mid: Monaco (full)   │
-││(edit) title chip           │   ││icons PromptInput (hidden) │
-││      feature sheet (glass) │   ││vert  (viewport mounted)   │
-│         (box script parts)  │   ││      pager icons          │
+│ title chip                  │   ││feat│ mid-strip: Toolbar    │
+│ [Undo | features… | Redo]   │   ││strip mid: Monaco (full)   │
+│ Viewport + rails            │   ││icons PromptInput (hidden) │
+│ feature sheet (glass)       │   ││vert  (viewport mounted)   │
+│                             │   ││      pager icons          │
 └─────────────────────────────┘   └─────────────────────────────┘
 ```
 
@@ -117,13 +117,24 @@ Mobile specifics:
   Top CAD|Script text chrome is gone. Inert `data-ai-prompt-hook` marks a
   future AI-on-tap site (not wired). Contour/Fillet chips use `bottom-14` on
   mobile so they clear the pill. Shell exposes `data-mobile-stage="cad"|"script"`.
-- **Feature strip (Slice Mobile B → B.1 → C → C.1 → C.4 + UI polish):** `FeatureStrip.jsx` mounts as a
-  **vertical right rail** (`data-feature-strip-side="right"`), starting below the
-  top ribbon. **Script stage:** icon chips **jump caret only** (`handleFeatureStripJump`
-  → `revealRange`; no FeatureSheet). **CAD stage:** strip taps / long-press open a
-  **feature sheet** (`hideWhenEmpty`). Strip scroll uses `rail-scroll` (visible thin
-  thumb; horizontal CAD strip shows a bottom bar on overflow) and auto-scrolls to the
-  **last** chip when the feature list grows. Chip highlight (`featureStripActiveId`)
+- **Feature strip (Slice Mobile B → B.1 → C → C.1 → C.4 + UI polish):** `FeatureStrip.jsx`.
+  **Script stage:** vertical right rail (`data-feature-strip-side="right"`), starting
+  below the top ribbon. Icon chips **jump caret only** (`handleFeatureStripJump`
+  → `revealRange`; no FeatureSheet). Rail scroll uses `rail-scroll` and auto-scrolls
+  to the **last** chip when the feature list grows.
+  **CAD stage (mobile feature bar):** full width of its row (`inset-x-0`, strip
+  `w-full`, `data-feature-bar-row="full"`, `data-feature-bar-layout="undo-features-redo"`).
+  Three sections: fixed **Undo** at the start (`data-feature-bar-section="undo"`),
+  a middle section (`data-feature-bar-section="features"`, `px-3` on both sides so
+  chips do not collide with the history buttons), and fixed **Redo** at the end
+  (`data-feature-bar-section="redo"`). While the chips fit they are centered in
+  the middle (`justify-center`, `data-feature-bar-window="fit"`). When they
+  overflow, the visible window is the **tail** (`data-feature-bar-window="tail"`):
+  the latest chips stay on screen and earlier ones sit outside that window.
+  Undo and Redo stay visible, call the same `handleUndo` / `handleRedo` as the
+  editor toolbar, and do not change which chips appear. Strip taps / long-press
+  still open a **feature sheet**. `hideWhenEmpty` skips the "No features" caption;
+  the bar itself stays mounted so Undo and Redo remain. Chip highlight (`featureStripActiveId`)
   clears on sheet cancel/accept/delete (and after script jump). C.4+: Script-stage
   editor stack is full-bleed (`absolute inset-0`) so the top ribbon
   (`data-editor-ribbon`, `w-full`) spans the viewport; the vertical strip overlays
