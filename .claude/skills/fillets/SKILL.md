@@ -82,6 +82,11 @@ Kernel choice is one function: `filletKernelSpike.js` →
    A second Accept **appends** a block (`commitMode: 'append'`, chosen by
    `hasFilletModeBlock`) so it fillets the already-filleted solid.
 
+   Several disjoint corners are separate pairs in that one block. Every
+   `edgesBetween` / `edge` is written before the first `filletAlongPath`.
+   The first blend rewrites face ids, so a lookup of the next corner after
+   that blend throws `no boundary between faces`.
+
 5. **Execute** — `src/workers/sandboxWorker.js` against WASM Manifold.
 
 ## Invariants — do not "fix" these
@@ -174,6 +179,7 @@ npm run golden:slice27                        # fillet-in-mode
 npm run golden:fillet-dihedral                # dihedral profile math
 npm run golden:fillet-followup                # fillet-on-fillet
 npm run golden:fillet-easy-hard               # classification + Accept gates
+npm run golden:fillet-box-corners             # four vertical box corners; no face-boundary toast
 npm run golden:fillet-kernel-spike-c
 npm run golden:fillet-c2-rolling-ball
 npm run golden:fillet-c3-variable-sweep
