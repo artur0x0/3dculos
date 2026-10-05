@@ -102,6 +102,7 @@
         "golden:delete-face": "node scripts/golden/smoke_delete_face.mjs",
         "golden:assembly": "node scripts/golden/smoke_assembly.mjs",
         "golden:pick-retarget": "node scripts/golden/smoke_pick_retarget.mjs",
+        "golden:per-part-undo": "node scripts/golden/smoke_per_part_undo.mjs",
         "golden:helper-binding-clash": "node scripts/golden/smoke_helper_binding_clash.mjs"
     },
     "dependencies": {
