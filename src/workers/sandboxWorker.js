@@ -27,6 +27,7 @@ import { densifyPathPoints, buildVariableProfileFrames, maxConsecutiveFrameAngle
 import { indexBoundaryEdges } from '../utils/boundaryEdgeIds.js';
 import { assembleSweepPath } from '../utils/edgeSweepPath.js';
 import { buildMakeLoftSolid, offsetPlaneFrame } from '../utils/makeLoft.js';
+import { blockSpec, buildBlockManifold } from '../utils/blockSolid.js';
 
 /**
  * List of globals to block/remove in the worker context
@@ -8474,6 +8475,41 @@ self.onmessage = async (event) => {
           for (const m of created) _safeDeleteManifold(m);
         }
         self.postMessage({ type: 'result', id, payload: { mesh } });
+        break;
+      }
+
+      // Block pop preview. Builds the new solid only — cube, rounded box,
+      // cylinder, sphere, tube, hex prism — with the same pose the sheet
+      // would write. cachedManifold is not read or assigned, so Cancel
+      // leaves the part and the editor untouched.
+      case 'previewBlock': {
+        if (!isInitialized) throw new Error('Worker not initialized');
+        const { Manifold } = manifoldModule;
+        const spec = blockSpec(payload && payload.id, payload && payload.params);
+        const created = [];
+        const track = (m) => {
+          if (!m || m === cachedManifold) return;
+          if (created.indexOf(m) >= 0) return;
+          created.push(m);
+        };
+        let mesh;
+        let volume;
+        let boundingBox;
+        try {
+          const solid = buildBlockManifold(spec, {
+            Manifold, roundedBox, tube, hexPrism, track,
+          });
+          volume = solid.volume();
+          boundingBox = _bboxArray(solid);
+          mesh = serializeResult(solid);
+        } finally {
+          for (const m of created) _safeDeleteManifold(m);
+        }
+        self.postMessage({
+          type: 'result',
+          id,
+          payload: { mesh, volume, boundingBox, combine: spec.combine },
+        });
         break;
       }
 

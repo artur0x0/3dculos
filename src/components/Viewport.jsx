@@ -31,6 +31,7 @@ import {
   LineBasicMaterial,
   ShaderMaterial,
   FrontSide,
+  DoubleSide,
   SphereGeometry,
   Group,
   Sprite,
@@ -74,6 +75,13 @@ import {
   withAutoPickedContour,
 } from '../utils/savedContours';
 import { shouldClearViewportScript } from '../utils/helperPaletteSnippets';
+import {
+  BLOCK_SUBTRACT_OPACITY,
+  blockGeomKey,
+  blockParamsPending,
+  blockSpec,
+  isBlockSolidId,
+} from '../utils/blockSolid';
 import {
   addLoftProfile,
   buildContourPreview,
@@ -784,6 +792,13 @@ const Viewport = forwardRef(({
   const moveFaceLiveKeyRef = useRef('');
   const moveFacePreviewGenRef = useRef(0);
   const moveFacePreviewTimerRef = useRef(null);
+  const blockPreviewRef = useRef(null);
+  const blockPreviewGenRef = useRef(0);
+  const blockPreviewTimerRef = useRef(null);
+  const blockPreviewKeyRef = useRef('');
+  const blockPreviewGeomKeyRef = useRef('');
+  const blockPreviewMeshRef = useRef(null);
+  const clearBlockPreviewRef = useRef(() => {});
   const clearMoveFacePreviewRef = useRef(() => {});
   const clearDeleteFacePreviewRef = useRef(() => {});
   const cutPlaneWidgetRef = useRef(null);
@@ -832,6 +847,7 @@ const Viewport = forwardRef(({
       revolvePreviewRef.current,
       loftPreviewRef.current,
       sweepPreviewRef.current,
+      blockPreviewRef.current,
       workplaneOverlayRef.current,
       constructionPlaneRef.current,
       polylineDraftRef.current,
@@ -4090,6 +4106,123 @@ const Viewport = forwardRef(({
     }, 60);
   }, [clearMoveFacePreview, paintMoveFacePreview, removeMoveFacePreview]);
 
+  const removeBlockPreviewMesh = useCallback(() => {
+    disposeEdgeOverlayObject(sceneRef.current, blockPreviewRef.current);
+    blockPreviewRef.current = null;
+    if (containerRef.current?.dataset?.blockPreview) {
+      delete containerRef.current.dataset.blockPreview;
+    }
+  }, []);
+
+  const clearBlockPreview = useCallback(() => {
+    blockPreviewGenRef.current += 1;
+    blockPreviewKeyRef.current = '';
+    blockPreviewGeomKeyRef.current = '';
+    blockPreviewMeshRef.current = null;
+    if (blockPreviewTimerRef.current) {
+      clearTimeout(blockPreviewTimerRef.current);
+      blockPreviewTimerRef.current = null;
+    }
+    removeBlockPreviewMesh();
+  }, [removeBlockPreviewMesh]);
+  clearBlockPreviewRef.current = clearBlockPreview;
+
+  /**
+   * Live Block solid. Add uses the CAD flat normal material. Subtract stays
+   * translucent and skips the depth test so a cutter inside the host is
+   * still obvious. Neither mesh raycasts, and neither replaces the part.
+   */
+  const paintBlockPreview = useCallback((meshData, combine) => {
+    const scene = sceneRef.current;
+    removeBlockPreviewMesh();
+    if (!scene || !meshData) return;
+    const geom = geometryFromPreviewMesh(meshData);
+    if (!geom) return;
+    const subtract = combine === 'subtract';
+    const group = new Group();
+    group.name = 'blockSolidPreview';
+    const pullForward = (mat) => {
+      mat.polygonOffset = true;
+      mat.polygonOffsetFactor = -1;
+      mat.polygonOffsetUnits = -1;
+      return mat;
+    };
+    const skinMat = subtract
+      ? pullForward(new MeshNormalMaterial({
+        flatShading: true,
+        transparent: true,
+        opacity: BLOCK_SUBTRACT_OPACITY,
+        depthWrite: false,
+        depthTest: false,
+        side: DoubleSide,
+      }))
+      : pullForward(new MeshNormalMaterial({ flatShading: true }));
+    const skin = new ThreeMesh(geom, skinMat);
+    skin.name = 'blockSolidPreviewSkin';
+    skin.raycast = () => {};
+    skin.renderOrder = subtract ? 6 : 2;
+    skin.frustumCulled = false;
+    group.add(skin);
+    anchorToActivePart(group);
+    scene.add(group);
+    blockPreviewRef.current = group;
+    if (containerRef.current) {
+      containerRef.current.dataset.blockPreview = subtract ? 'subtract' : 'add';
+    }
+    const renderer = rendererRef.current;
+    const camera = cameraRef.current;
+    if (renderer && camera) renderer.render(scene, camera);
+  }, [anchorToActivePart, removeBlockPreviewMesh]);
+
+  const setBlockPreview = useCallback((payload) => {
+    if (!payload || !isBlockSolidId(payload.id)) {
+      clearBlockPreview();
+      return;
+    }
+    if (blockParamsPending(payload.params)) return;
+    let spec;
+    try {
+      spec = blockSpec(payload.id, payload.params);
+    } catch {
+      clearBlockPreview();
+      return;
+    }
+    const geomKey = blockGeomKey(spec);
+    const fullKey = `${geomKey}|${spec.combine}`;
+    if (blockPreviewKeyRef.current === fullKey && blockPreviewRef.current) return;
+    if (blockPreviewGeomKeyRef.current === geomKey && blockPreviewMeshRef.current) {
+      blockPreviewKeyRef.current = fullKey;
+      paintBlockPreview(blockPreviewMeshRef.current, spec.combine);
+      return;
+    }
+    const gen = ++blockPreviewGenRef.current;
+    blockPreviewKeyRef.current = '';
+    if (blockPreviewTimerRef.current) clearTimeout(blockPreviewTimerRef.current);
+    blockPreviewTimerRef.current = setTimeout(() => {
+      blockPreviewTimerRef.current = null;
+      if (gen !== blockPreviewGenRef.current) return;
+      manifoldContext.previewBlock({ id: spec.id, params: payload.params }).then((res) => {
+        if (gen !== blockPreviewGenRef.current) return;
+        const mesh = res?.mesh;
+        if (!mesh) {
+          removeBlockPreviewMesh();
+          return;
+        }
+        blockPreviewKeyRef.current = fullKey;
+        blockPreviewGeomKeyRef.current = geomKey;
+        blockPreviewMeshRef.current = mesh;
+        paintBlockPreview(mesh, spec.combine);
+      }).catch((err) => {
+        if (gen !== blockPreviewGenRef.current) return;
+        removeBlockPreviewMesh();
+        blockPreviewKeyRef.current = '';
+        blockPreviewGeomKeyRef.current = '';
+        blockPreviewMeshRef.current = null;
+        showShellToast(err?.message || 'Block preview failed');
+      });
+    }, 60);
+  }, [clearBlockPreview, paintBlockPreview, removeBlockPreviewMesh]);
+
   const paintMoveFacePicks = useCallback((state) => {
     const geom = resultRef.current?.geometry;
     const positions = geom?.attributes?.position;
@@ -5571,6 +5704,7 @@ const Viewport = forwardRef(({
         resultRef.current.geometry.dispose();
       }
       clearAssemblyExtrasRef.current();
+      clearBlockPreviewRef.current();
       if (ghostMeshRef.current) {
         sceneRef.current?.remove(ghostMeshRef.current);
         ghostMeshRef.current.geometry?.dispose();
@@ -6637,6 +6771,7 @@ const Viewport = forwardRef(({
           }}
           onProfilePreview={setXsPreview}
           onPathPreview={setPathPreview}
+          onBlockPreview={setBlockPreview}
           onEnterContourMode={enterContourMode}
           onEnterFilletMode={enterFilletMode}
           onEnterShellMode={enterShellMode}

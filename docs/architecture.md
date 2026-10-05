@@ -78,6 +78,7 @@ On that rebuild, triangle edges are indexed by a packed integer (`lo * 2^26 + hi
 - In that rebuild, coplanar pieces of one plane in the same body become one face when a fillet sits between them, even if the face ids still differ. Vertices within 0.02mm count as touching, so a duplicate-vertex seam on that plane is the same face after the needle between the copies is dropped from the drawn mesh. The curved blend stays its own patch. Coplanar walls whose path leaves the plane stay separate faces.
 - Face and edge picks are cleared, except Fillet mode and Sweep contour mode, which keep the edge wire and re-stamp boundary ids.
 - The live Cut preview (`previewCut` on a clone) and the Move preview (translated triangles) do not replace `resultRef.geometry`. Graphs stay on the uncut / unmoved solid. Preview meshes do not raycast.
+- The Block preview (`previewBlock`) builds only the new solid. It does not read or assign `cachedManifold` and does not replace `resultRef.geometry`. Graphs stay on the host. The preview does not raycast. Subtract draws that cutter translucent, in front of the host.
 - The Boolean preview (`previewBoolean` on a clone) does the same: `cachedManifold` is not assigned. Intersect piece meshes do raycast, including a hidden piece drawn at opacity 0, so a second tap brings it back. Body picks do not.
 - Draft highlights do not change the mesh. Taps before Confirm still read the pre-draft graphs.
 - Shell confirm uses this same run path. Nothing in the graph code special-cases shell.
@@ -163,6 +164,8 @@ Sticky pickers (Shell, Draft, Cut, Boolean, Move, Move Face, Delete Face) write 
 
 Block solids (cube, rounded box, cylinder, sphere, tube, hex prism) and Shape solids (Extrude, Revolve, Sweep, Loft) share one Mode: Add or Subtract. It is the same feature, not a second tool. Profile and Workplane do not create a solid, so they have no mode. Polish (fillet, chamfer, move face, delete face) mutates. Default Mode is Add, so an existing script that does not set it still unions. Subtract cuts the new solid out of `part` only when `part` already exists. The first solid is always `let part = …`. Sweep's one-shot fallback stays a replace when Mode is Add; contour Confirm for Sweep adds or subtracts.
 
+Opening a Block pop shows that solid in the viewport before Confirm: the Manifold mesh, flat normal shading, same as the CAD solid. Position and rotation on the sheet move it live (rotate about the origin, then translate, degrees). Confirm writes the size, that pose, and Add or Subtract. An identity pose is left off the line. Cancel drops the preview and writes nothing. Subtract draws the cutter translucent so it stays visible on the host.
+
 | Mode | Tap | Confirm emits | Next confirm |
 | --- | --- | --- | --- |
 | Shell | add / remove opening faces. Closed → `'none'`. | one `hollow()` | replace |
@@ -220,6 +223,7 @@ The viewport can show more than the script in Monaco. An assembly is a list of p
 - Each runner is a `package.json` script named `golden:…` (`node scripts/golden/smoke_….mjs`). `npm run verify` is the full gate (`VALIDATION.md`).
 - `golden:helper-binding-clash` scans those fixtures. The user script is still the body of `new Function(...helperNames, script)`. A top-level `const cut` in a fixture is a SyntaxError because `cut` is already a parameter. Nesting the script in another function would hide that and is not the fix. Do not name a fixture binding after an injected helper (`cut`, `booleanBodies`, `move`, `shell`, `hollow`, `draftFaces`, `moveFace`, `deleteFace`, …).
 - `golden:block-shape-boolean` is Add and Subtract on a Block (cube) and a Shape (extrude), then Boolean union, difference, and intersect with one leftover piece deleted. Hiding a part keeps that part's pick arrays. A section point maps to the unsectioned body.
+- `golden:block-pose-preview` is position and rotation on all six Block solids. The preview mesh matches the script the pop would write. An identity pose adds no transform. Subtract preview is the cutter, and it does not replace the cached solid.
 - `golden:move-one-axis` moves one picked body along a single axis when the named point has drifted off the vertex centroid the way a re-run of a fillet does. A point that is not near a centroid still throws. The user script is not nested, and it does not declare `cut`, `hollow`, `move`, `moveFace`, `draftFaces`, or `deleteFace`.
 - `golden:move-face` offsets picked faces along their normals. Flip reverses each normal. Adjacent planar faces extend or trim. A tangent fillet on the picked face is carried with that offset (`golden:fillet-move-seam`).
 - `golden:fillet-box-corners` fillets the four vertical corners of a plain box from the edge-picker Accept script and from a script `filletEdges` / `edge` call. It fails if that run throws `no boundary between faces`.
