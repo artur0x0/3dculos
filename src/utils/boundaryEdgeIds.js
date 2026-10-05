@@ -19,6 +19,8 @@
  * between substantial faces stay, and ids are assigned only to that set.
  */
 
+import { sameLocalSegment } from './activePartOverlay.js';
+
 const PLANAR_COS = Math.cos((0.1 * Math.PI) / 180);
 const FEATURE_COS = Math.cos((2 * Math.PI) / 180);
 
@@ -442,7 +444,10 @@ export function stampBoundaryOnSelection(selected, featureEdges) {
       ? (a < b ? `${a}-${b}` : `${b}-${a}`)
       : '');
     const src = byKey.get(key);
-    if (!src) return edge;
+    // Vertex indices collide across parts. Only copy ids when this is the
+    // same segment on the active mesh, so a previous solid's edge cannot
+    // inherit the other body's face pair.
+    if (!src || !sameLocalSegment(edge, src)) return edge;
     if (edge.boundaryId === src.boundaryId
       && edge.faceA === src.faceA
       && edge.faceB === src.faceB
