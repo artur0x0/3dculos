@@ -1125,8 +1125,9 @@ function _c4BlendCarryDelta(md, sel, signed) {
  *
  * This is not move(). move() translates a whole body. A vertex on a selected
  * face is solved against every plane that meets it: selected planes move by
- * the signed distance, the others stay. A distance the walls cannot absorb
- * throws. It does not return a folded mesh.
+ * the signed distance, the others stay. Facets within 10° on the same side
+ * of that offset are one plane. A distance the walls cannot absorb throws.
+ * It does not return a folded mesh.
  *
  * @param {Manifold} manifold
  * @param {*} faces face selection: a viewport pick `{ center, normal }`, a
@@ -1243,25 +1244,32 @@ function moveFace(manifold, faces, distance, opts = {}) {
 
   const moved = md.V.map((v) => v.slice());
   const tol = Math.max(1e-3, Math.abs(signed) * 1e-3);
+  // Same 10° cone as the shell offset. A fillet leaves several facets of one
+  // wall on a corner; they are one plane. A real corner is wider and stays.
+  const COS_CLUSTER = Math.cos((10 * Math.PI) / 180);
+  const faceArea = md.faces.map((face) => {
+    let a = 0;
+    for (const t of face.tris) {
+      const i0 = md.T[t * 3];
+      const i1 = md.T[t * 3 + 1];
+      const i2 = md.T[t * 3 + 2];
+      a += 0.5 * _c4Len(_c4Cross(_c4Sub(md.V[i1], md.V[i0]), _c4Sub(md.V[i2], md.V[i0])));
+    }
+    return a;
+  });
   for (const vi of touched) {
     if (carried && carried.has(vi)) continue;
-    const normals = [];
-    const rhs = [];
+    const held = [];
+    const moving = [];
     for (const fi of vertFaces.get(vi) || []) {
       const n = md.faces[fi].normal;
       if (_c4Len(n) < 1e-8) continue;
-      const r = sel.has(fi) ? signed : 0;
-      let dup = false;
-      for (let k = 0; k < normals.length; k++) {
-        const m = normals[k];
-        if (Math.abs(m[0] - n[0]) < 1e-6 && Math.abs(m[1] - n[1]) < 1e-6 && Math.abs(m[2] - n[2]) < 1e-6
-          && Math.abs(rhs[k] - r) < 1e-9) {
-          dup = true;
-          break;
-        }
-      }
-      if (!dup) { normals.push(n); rhs.push(r); }
+      _c4PushCluster(sel.has(fi) ? moving : held, n, faceArea[fi], COS_CLUSTER);
     }
+    const heldN = _c4FinalizeClusters(held);
+    const movingN = _c4FinalizeClusters(moving);
+    const normals = heldN.concat(movingN);
+    const rhs = heldN.map(() => 0).concat(movingN.map(() => signed));
     if (!normals.length) continue;
     const d = _c4SolvePlaneMoves(normals, rhs);
     let worst = 0;
