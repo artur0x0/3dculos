@@ -90,6 +90,7 @@ import { composeFilletCommit, composeChamferCommit } from './utils/filletMode';
 import { composeShellCommit } from './utils/shellMode';
 import { composeDraftCommit } from './utils/draftMode';
 import { composeCutCommit } from './utils/cutMode';
+import { composeBooleanCommit } from './utils/booleanMode';
 import { composeMoveCommit } from './utils/moveMode';
 import { composeMoveFaceCommit } from './utils/moveFaceMode';
 import { composeDeleteFaceCommit } from './utils/deleteFaceMode';
@@ -1740,6 +1741,34 @@ const App = () => {
     return true;
   };
 
+  /** Boolean Confirm — one booleanBodies() + markers; Auto-Run. */
+  const handleCommitBoolean = (payload) => {
+    const buf = codeEditorRef.current?.getContent?.() || '';
+    const result = composeBooleanCommit(
+      buf,
+      payload?.state || payload || {},
+      payload?.partId,
+      payload?.mesh || null,
+    );
+    if (!result.ok) {
+      viewportRef.current?.softFailBoolean?.(result.message);
+      return false;
+    }
+    const wrote = codeEditorRef.current?.applyBuffer?.(result.buffer, 'Boolean');
+    if (!wrote) {
+      viewportRef.current?.softFailBoolean?.(
+        'Could not write Boolean into the editor — try again.',
+      );
+      return false;
+    }
+    if (result.run) {
+      setTimeout(() => {
+        handleGameRun();
+      }, 0);
+    }
+    return true;
+  };
+
   /** Delete Face Confirm — one deleteFace() + markers; Auto-Run. */
   const handleCommitDeleteFace = (payload) => {
     const buf = codeEditorRef.current?.getContent?.() || '';
@@ -2193,6 +2222,7 @@ const App = () => {
               onCommitShell={handleCommitShell}
               onCommitDraft={handleCommitDraft}
               onCommitCut={handleCommitCut}
+              onCommitBoolean={handleCommitBoolean}
               onCommitMove={handleCommitMove}
               onCommitMoveFace={handleCommitMoveFace}
               onCommitDeleteFace={handleCommitDeleteFace}
@@ -2595,6 +2625,7 @@ const App = () => {
               onCommitShell={handleCommitShell}
               onCommitDraft={handleCommitDraft}
               onCommitCut={handleCommitCut}
+              onCommitBoolean={handleCommitBoolean}
               onCommitMove={handleCommitMove}
               onCommitMoveFace={handleCommitMoveFace}
               onCommitDeleteFace={handleCommitDeleteFace}

@@ -60,6 +60,7 @@ import FilletModeChip from './FilletModeChip';
 import ShellModeChip from './ShellModeChip';
 import DraftModeChip from './DraftModeChip';
 import CutModeChip from './CutModeChip';
+import BooleanModeChip from './BooleanModeChip';
 import MoveModeChip from './MoveModeChip';
 import MoveFaceModeChip from './MoveFaceModeChip';
 import DeleteFaceModeChip from './DeleteFaceModeChip';
@@ -159,6 +160,20 @@ import {
   CUT_PIECE_COLORS,
   CUT_PIECE_OPACITY,
 } from '../utils/cutMode';
+import {
+  emptyBooleanState,
+  applyBooleanTap,
+  popLastBooleanPick,
+  clearBooleanPicks,
+  setBooleanOp,
+  setBooleanPickTarget,
+  booleanOp,
+  booleanSlot,
+  booleanPieceHidden,
+  validateBooleanAccept,
+  noteBooleanPartHidden,
+  BOOLEAN_PIECE_COLORS,
+} from '../utils/booleanMode';
 import {
   emptyMoveState,
   clearMoveTarget,
@@ -592,6 +607,7 @@ const Viewport = forwardRef(({
   onCommitShell = null,
   onCommitDraft = null,
   onCommitCut = null,
+  onCommitBoolean = null,
   onCommitMove = null,
   onCommitMoveFace = null,
   onCommitDeleteFace = null,
@@ -744,6 +760,15 @@ const Viewport = forwardRef(({
   const draftModeRef = useRef(null);
   const [cutMode, setCutMode] = useState(null);
   const cutModeRef = useRef(null);
+  const [booleanMode, setBooleanMode] = useState(null);
+  const booleanModeRef = useRef(null);
+  const booleanPiecesPreviewRef = useRef(null);
+  const booleanBaseMaterialRef = useRef(null);
+  const booleanBaseHiddenMatRef = useRef(null);
+  const booleanPreviewGenRef = useRef(0);
+  const booleanPieceCountRef = useRef(0);
+  const [booleanPieceCount, setBooleanPieceCount] = useState(0);
+  const paintBooleanPicksRef = useRef(() => {});
   const [moveMode, setMoveMode] = useState(null);
   const moveModeRef = useRef(null);
   const [moveFaceMode, setMoveFaceMode] = useState(null);
@@ -927,6 +952,7 @@ const Viewport = forwardRef(({
   shellModeRef.current = shellMode;
   draftModeRef.current = draftMode;
   cutModeRef.current = cutMode;
+  booleanModeRef.current = booleanMode;
   moveModeRef.current = moveMode;
   moveFaceModeRef.current = moveFaceMode;
   deleteFaceModeRef.current = deleteFaceMode;
@@ -968,6 +994,8 @@ const Viewport = forwardRef(({
       draftModeRef.current = null;
       setCutMode(null);
       cutModeRef.current = null;
+      setBooleanMode(null);
+      booleanModeRef.current = null;
       setMoveMode(null);
       moveModeRef.current = null;
       clearMoveFacePreviewRef.current();
@@ -1050,6 +1078,9 @@ const Viewport = forwardRef(({
     },
     softFailCut: (msg) => {
       showShellToast(msg || 'Cut refused — pick a plane and the bodies to cut.');
+    },
+    softFailBoolean: (msg) => {
+      showShellToast(msg || 'Boolean refused — pick a target and a tool body.');
     },
     softFailMove: (msg) => {
       showShellToast(msg || 'Move refused — double-click a body, then Confirm.');
@@ -2177,6 +2208,8 @@ const Viewport = forwardRef(({
     draftModeRef.current = null;
     setCutMode(null);
     cutModeRef.current = null;
+    setBooleanMode(null);
+    booleanModeRef.current = null;
     setMoveMode(null);
     moveModeRef.current = null;
     clearMoveFacePreviewRef.current();
@@ -2286,6 +2319,7 @@ const Viewport = forwardRef(({
       loft: loftState.loft,
       sweep: loftState.sweep,
       edges: selectedEdges,
+      combine: loftState.combine === 'subtract' ? 'subtract' : 'add',
     });
     if (ok) {
       exitContourMode();
@@ -2318,6 +2352,8 @@ const Viewport = forwardRef(({
     draftModeRef.current = null;
     setCutMode(null);
     cutModeRef.current = null;
+    setBooleanMode(null);
+    booleanModeRef.current = null;
     setMoveMode(null);
     moveModeRef.current = null;
     clearMoveFacePreviewRef.current();
@@ -2418,6 +2454,8 @@ const Viewport = forwardRef(({
     if (cutModeRef.current || moveModeRef.current || moveFaceModeRef.current || deleteFaceModeRef.current) clearHighlight();
     setCutMode(null);
     cutModeRef.current = null;
+    setBooleanMode(null);
+    booleanModeRef.current = null;
     setMoveMode(null);
     moveModeRef.current = null;
     clearMoveFacePreviewRef.current();
@@ -3253,6 +3291,8 @@ const Viewport = forwardRef(({
     if (cutModeRef.current || moveModeRef.current || moveFaceModeRef.current || deleteFaceModeRef.current) clearHighlight();
     setCutMode(null);
     cutModeRef.current = null;
+    setBooleanMode(null);
+    booleanModeRef.current = null;
     setMoveMode(null);
     moveModeRef.current = null;
     clearMoveFacePreviewRef.current();
@@ -3521,6 +3561,8 @@ const Viewport = forwardRef(({
     const was = cutModeRef.current;
     setCutMode(null);
     cutModeRef.current = null;
+    setBooleanMode(null);
+    booleanModeRef.current = null;
     clearCutPlaneWidget();
     clearCutPiecePreview();
     if (was) clearHighlight();
@@ -3603,6 +3645,237 @@ const Viewport = forwardRef(({
     }
   }, [onCommitCut, exitCutMode, onFaceSelected, clearHighlight]);
 
+  const removeBooleanPreviewGroup = useCallback(() => {
+    const group = booleanPiecesPreviewRef.current;
+    if (!group) return;
+    sceneRef.current?.remove(group);
+    group.traverse((obj) => {
+      if (obj === group) return;
+      obj.geometry?.dispose?.();
+      obj.material?.dispose?.();
+    });
+    booleanPiecesPreviewRef.current = null;
+  }, []);
+
+  const restoreBooleanBaseMesh = useCallback(() => {
+    const mesh = resultRef.current;
+    if (mesh && booleanBaseMaterialRef.current) {
+      mesh.material = booleanBaseMaterialRef.current;
+      booleanBaseMaterialRef.current = null;
+    }
+  }, []);
+
+  const clearBooleanPiecePreview = useCallback(() => {
+    booleanPreviewGenRef.current += 1;
+    removeBooleanPreviewGroup();
+    restoreBooleanBaseMesh();
+    if (booleanPieceCountRef.current !== 0) {
+      booleanPieceCountRef.current = 0;
+      setBooleanPieceCount(0);
+    }
+  }, [removeBooleanPreviewGroup, restoreBooleanBaseMesh]);
+
+  // clearAttempt and the other modes null the state without exitBooleanMode.
+  // Drop the piece clone when the chip is gone.
+  useEffect(() => {
+    if (booleanMode) return;
+    clearBooleanPiecePreview();
+  }, [booleanMode, clearBooleanPiecePreview]);
+
+  const hideBooleanBaseMesh = useCallback(() => {
+    const mesh = resultRef.current;
+    if (!mesh) return;
+    if (!booleanBaseHiddenMatRef.current) {
+      booleanBaseHiddenMatRef.current = new MeshBasicMaterial({
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+        colorWrite: false,
+      });
+    }
+    if (!booleanBaseMaterialRef.current) booleanBaseMaterialRef.current = mesh.material;
+    mesh.material = booleanBaseHiddenMatRef.current;
+  }, []);
+
+  const paintBooleanPieces = useCallback((state, pieces) => {
+    const scene = sceneRef.current;
+    if (!scene) return;
+    removeBooleanPreviewGroup();
+    hideBooleanBaseMesh();
+    const group = new Group();
+    group.name = 'booleanPiecesPreview';
+    const partId = activePartIdRef.current;
+    let colorI = 0;
+    const shown = (pieces || []).filter((piece) => piece.selected);
+    for (const piece of shown) {
+      const geom = geometryFromPreviewMesh(piece.mesh);
+      if (!geom) continue;
+      const color = BOOLEAN_PIECE_COLORS[colorI % BOOLEAN_PIECE_COLORS.length];
+      colorI += 1;
+      const hidden = booleanPieceHidden(state, partId, piece.at);
+      const mesh = new ThreeMesh(geom, new MeshBasicMaterial({
+        color,
+        transparent: true,
+        opacity: hidden ? 0 : 0.78,
+        depthWrite: !hidden,
+        depthTest: true,
+        side: FrontSide,
+      }));
+      mesh.userData.booleanPieceAt = piece.at;
+      mesh.raycast = ThreeMesh.prototype.raycast;
+      group.add(mesh);
+    }
+    scene.add(group);
+    booleanPiecesPreviewRef.current = group;
+    const renderer = rendererRef.current;
+    const camera = cameraRef.current;
+    if (renderer && camera) renderer.render(scene, camera);
+  }, [hideBooleanBaseMesh, removeBooleanPreviewGroup]);
+
+  const ensureBooleanPreview = useCallback((state) => {
+    const partId = activePartIdRef.current;
+    const slot = booleanSlot(state, partId);
+    if (booleanOp(state?.op) !== 'intersect' || state?.pick !== 'pieces' || slot.bodies.length < 2) {
+      clearBooleanPiecePreview();
+      return;
+    }
+    if (!resultRef.current?.geometry?.attributes?.position?.count) {
+      clearBooleanPiecePreview();
+      return;
+    }
+    const gen = ++booleanPreviewGenRef.current;
+    const bodies = slot.bodies.map((b) => ({ at: b.at }));
+    manifoldContext.previewBoolean({ op: 'intersect', bodies }).then((payload) => {
+      if (gen !== booleanPreviewGenRef.current) return;
+      const live = booleanModeRef.current;
+      if (!live || live.pick !== 'pieces' || booleanOp(live.op) !== 'intersect') return;
+      const pieces = payload?.pieces || [];
+      const n = pieces.filter((p) => p.selected).length;
+      booleanPieceCountRef.current = n;
+      setBooleanPieceCount(n);
+      paintBooleanPieces(live, pieces);
+    }).catch((err) => {
+      if (gen !== booleanPreviewGenRef.current) return;
+      clearBooleanPiecePreview();
+      showShellToast(err?.message || 'Boolean preview failed');
+    });
+  }, [clearBooleanPiecePreview, paintBooleanPieces]);
+
+  const paintBooleanPicks = useCallback((state) => {
+    let geom = resultRef.current?.geometry;
+    let positions = geom?.attributes?.position;
+    let index = geom?.index?.array;
+    let owned = null;
+    // A section replaces the drawn mesh. Highlights use the unsectioned body
+    // the script will boolean, so the pick stays on the real solid.
+    if (crossSectionEnabled && cachedMeshDataRef.current?.vertProperties) {
+      owned = geometryFromMeshData(cachedMeshDataRef.current);
+      geom = owned;
+      positions = owned.attributes?.position;
+      index = owned.index?.array;
+    }
+    clearHighlight();
+    if (!state) {
+      owned?.dispose?.();
+      clearBooleanPiecePreview();
+      return;
+    }
+    if (state.pick === 'pieces' && booleanOp(state.op) === 'intersect') {
+      owned?.dispose?.();
+      ensureBooleanPreview(state);
+      return;
+    }
+    clearBooleanPiecePreview();
+    const slot = booleanSlot(state, activePartIdRef.current);
+    const tris = slot.bodies.flatMap((b) => b.triangles || []);
+    if (geom && positions && index && tris.length) {
+      highlightFace(tris, geom, positions, index, 0x22d3ee, 'boolean-bodies');
+    }
+    owned?.dispose?.();
+  }, [clearHighlight, highlightFace, clearBooleanPiecePreview, ensureBooleanPreview, crossSectionEnabled]);
+  paintBooleanPicksRef.current = paintBooleanPicks;
+
+  const exitBooleanMode = useCallback(() => {
+    const was = booleanModeRef.current;
+    setBooleanMode(null);
+    booleanModeRef.current = null;
+    clearBooleanPiecePreview();
+    if (was) clearHighlight();
+    if (shellToastTimerRef.current) {
+      clearTimeout(shellToastTimerRef.current);
+      shellToastTimerRef.current = null;
+    }
+    setShellToast(null);
+  }, [clearHighlight, clearBooleanPiecePreview]);
+
+  const commitBooleanState = useCallback((next) => {
+    booleanModeRef.current = next;
+    setBooleanMode(next);
+    paintBooleanPicks(next);
+  }, [paintBooleanPicks]);
+
+  const enterBooleanMode = useCallback(() => {
+    exitContourMode();
+    setFilletMode(null);
+    filletModeRef.current = null;
+    clearFilletBlendPreview();
+    setShellMode(null);
+    shellModeRef.current = null;
+    setDraftMode(null);
+    draftModeRef.current = null;
+    if (cutModeRef.current) {
+      clearHighlight();
+      clearCutPlaneWidget();
+      clearCutPiecePreview();
+    }
+    setCutMode(null);
+    cutModeRef.current = null;
+    setMoveMode(null);
+    moveModeRef.current = null;
+    clearMoveFacePreviewRef.current();
+    setMoveFaceMode(null);
+    moveFaceModeRef.current = null;
+    clearDeleteFacePreviewRef.current();
+    setDeleteFaceMode(null);
+    deleteFaceModeRef.current = null;
+    setPickMode('face');
+    clearEdgeHover();
+    clearEdgeHighlight();
+    setSelectedEdges([]);
+    const next = emptyBooleanState();
+    commitBooleanState(next);
+  }, [
+    exitContourMode,
+    clearFilletBlendPreview,
+    clearCutPlaneWidget,
+    clearCutPiecePreview,
+    clearEdgeHover,
+    clearEdgeHighlight,
+    commitBooleanState,
+  ]);
+
+  const acceptBoolean = useCallback(() => {
+    const state = booleanModeRef.current;
+    if (!state) return;
+    const partId = activePartIdRef.current;
+    const gate = validateBooleanAccept(state, partId, { pieceCount: booleanPieceCountRef.current });
+    if (!gate.ok) {
+      showShellToast(gate.message);
+      return;
+    }
+    const ok = onCommitBoolean?.({
+      state,
+      partId,
+      mesh: { pieceCount: booleanPieceCountRef.current },
+    });
+    if (ok) {
+      clearHighlight();
+      setSelectedFace(null);
+      onFaceSelected?.(null);
+      exitBooleanMode();
+    }
+  }, [onCommitBoolean, exitBooleanMode, onFaceSelected, clearHighlight]);
+
   const clearMovePreview = useCallback(() => {
     const mesh = movePreviewRef.current;
     movePreviewRef.current = null;
@@ -3681,6 +3954,8 @@ const Viewport = forwardRef(({
     }
     setCutMode(null);
     cutModeRef.current = null;
+    setBooleanMode(null);
+    booleanModeRef.current = null;
     if (moveFaceModeRef.current || deleteFaceModeRef.current) clearHighlight();
     clearMoveFacePreviewRef.current();
     setMoveFaceMode(null);
@@ -3861,6 +4136,8 @@ const Viewport = forwardRef(({
     }
     setCutMode(null);
     cutModeRef.current = null;
+    setBooleanMode(null);
+    booleanModeRef.current = null;
     if (moveModeRef.current) {
       clearHighlight();
       clearMovePreview();
@@ -3970,6 +4247,8 @@ const Viewport = forwardRef(({
     }
     setCutMode(null);
     cutModeRef.current = null;
+    setBooleanMode(null);
+    booleanModeRef.current = null;
     if (moveModeRef.current) {
       clearHighlight();
       clearMovePreview();
@@ -4335,9 +4614,33 @@ const Viewport = forwardRef(({
     const origin = [ray.origin.x, ray.origin.y, ray.origin.z];
     const dir = [ray.direction.x, ray.direction.y, ray.direction.z];
     const camDist = Math.hypot(ray.origin.x, ray.origin.y, ray.origin.z) || 80;
-    // Cut owns the canvas: a saved contour under the cursor must not eat the
-    // piece tap (same as a construction plane sitting on the cut).
-    if (!moveFaceModeRef.current && !deleteFaceModeRef.current && !cutModeRef.current && showContoursRef.current && !moveModeRef.current && contourModeRef.current?.tool !== 'polyline') {
+    // Intersect pieces are the leftover solids, not the original triangles.
+    // Raycast that clone first. A miss keeps the hide list.
+    if (booleanModeRef.current?.pick === 'pieces') {
+      if (clickTimerRef.current) {
+        clearTimeout(clickTimerRef.current);
+        clickTimerRef.current = null;
+      }
+      clickCountRef.current = 0;
+      pendingClickDataRef.current = null;
+      const group = booleanPiecesPreviewRef.current;
+      const pieceHits = group
+        ? raycasterRef.current.intersectObject(group, true)
+        : [];
+      if (pieceHits.length) {
+        const at = pieceHits[0].object.userData?.booleanPieceAt;
+        const tap = applyBooleanTap(booleanModeRef.current, {
+          at,
+          partId: activePartIdRef.current,
+        });
+        if (tap.toast) showShellToast(tap.toast);
+        commitBooleanState(tap.state);
+      }
+      return;
+    }
+    // Cut and Boolean own the canvas: a saved contour under the cursor must
+    // not eat the piece tap (same as a construction plane sitting on the cut).
+    if (!moveFaceModeRef.current && !deleteFaceModeRef.current && !cutModeRef.current && !booleanModeRef.current && showContoursRef.current && !moveModeRef.current && contourModeRef.current?.tool !== 'polyline') {
       const hitC = pickContourByRay(
         origin,
         dir,
@@ -4361,7 +4664,7 @@ const Viewport = forwardRef(({
     const solidD = solidHits[0]?.distance ?? Infinity;
     // Cut taps a body or a piece. A construction plane that sits on the cut
     // (the XY plane through a centered part) must not swallow that click.
-    if (!cutModeRef.current && planeHits.length && !moveModeRef.current && !moveFaceModeRef.current && !deleteFaceModeRef.current && planeD <= solidD + 0.5) {
+    if (!cutModeRef.current && !booleanModeRef.current && planeHits.length && !moveModeRef.current && !moveFaceModeRef.current && !deleteFaceModeRef.current && planeD <= solidD + 0.5) {
       const ud = planeHits[0].object.userData?.plane
         ? planeHits[0].object.userData
         : planeHits[0].object.parent?.userData;
@@ -4398,6 +4701,8 @@ const Viewport = forwardRef(({
         // Preserve shell face selection — stray taps must not wipe the set.
       } else if (cutModeRef.current) {
         // Preserve cut body selection — stray taps must not wipe the set.
+      } else if (booleanModeRef.current) {
+        // Preserve boolean picks — stray taps must not wipe the set.
       } else if (moveModeRef.current) {
         // Preserve the picked body — stray taps must not wipe the target.
       } else if (moveFaceModeRef.current) {
@@ -4453,7 +4758,7 @@ const Viewport = forwardRef(({
     }, MULTI_CLICK_DELAY);
     
   }, [onFaceSelected, measurementEnabled, clearHighlight, clearEdgeHover, pickEdgeAtClient,
-    endPolylinePointDrag, pickPolylinePointAtClient]);
+    endPolylinePointDrag, pickPolylinePointAtClient, commitBooleanState]);
 
 
   /**
@@ -4515,8 +4820,40 @@ const Viewport = forwardRef(({
     const clickData = pendingClickDataRef.current;
     if (!clickData) return;
     
-    const { clickedFace, seedFaceIndex, geometry, positions, index, faceNormal, additive } = clickData;
+    const { clickedFace, seedFaceIndex, geometry, positions, index, faceNormal, additive, hitPoint } = clickData;
     const clickCount = clickCountRef.current;
+
+    if (booleanModeRef.current && booleanModeRef.current.pick !== 'pieces') {
+      const sectioned = !!(crossSectionEnabled && cachedMeshDataRef.current?.vertProperties);
+      let owned = null;
+      let point = hitPoint;
+      let basePositions = null;
+      let baseIndex = null;
+      if (sectioned && resultRef.current && Array.isArray(hitPoint)) {
+        owned = geometryFromMeshData(cachedMeshDataRef.current);
+        basePositions = owned.attributes?.position;
+        baseIndex = owned.index?.array;
+        const local = resultRef.current.worldToLocal(new Vector3(hitPoint[0], hitPoint[1], hitPoint[2]));
+        point = [local.x, local.y, local.z];
+      }
+      const tap = applyBooleanTap(booleanModeRef.current, {
+        triangle: seedFaceIndex,
+        point,
+        sectioned,
+        positions: sectioned ? null : positions,
+        index: sectioned ? null : index,
+        basePositions,
+        baseIndex,
+        partId: activePartIdRef.current,
+      });
+      owned?.dispose?.();
+      clickCountRef.current = 0;
+      clickTimerRef.current = null;
+      pendingClickDataRef.current = null;
+      if (tap.toast) showShellToast(tap.toast);
+      commitBooleanState(tap.state);
+      return;
+    }
     
     // Reset click tracking
     clickCountRef.current = 0;
@@ -4526,7 +4863,7 @@ const Viewport = forwardRef(({
     // Shell, Draft, and Cut keep tap-to-add / tap-to-remove. A double click
     // there must stay the old tolerance walk — not the owning body — so
     // confirm still writes the face that was tapped.
-    const legacyTap = !!(shellModeRef.current || draftModeRef.current || cutModeRef.current);
+    const legacyTap = !!(shellModeRef.current || draftModeRef.current || cutModeRef.current || booleanModeRef.current);
     const resolved = resolveViewportFaceClick({
       geometry,
       seedFaceIndex,
@@ -4703,7 +5040,7 @@ const Viewport = forwardRef(({
       }
     }
     
-  }, [measurementEnabled, measurementFaces, onFaceSelected, clearHighlight, clearEdgeHighlight, highlightFace, publishFacePicks, paintDraftPicks, commitCutState, paintMovePreview, commitMoveFaceState, commitDeleteFaceState, getHelperBuffer]);
+  }, [measurementEnabled, measurementFaces, onFaceSelected, clearHighlight, clearEdgeHighlight, highlightFace, publishFacePicks, paintDraftPicks, commitCutState, paintMovePreview, commitMoveFaceState, commitDeleteFaceState, getHelperBuffer, commitBooleanState, crossSectionEnabled]);
 
   /**
    * Handle face selection in measurement mode
@@ -5878,6 +6215,8 @@ const Viewport = forwardRef(({
         if (bounds) handleZoomToFit();
       }
       
+      if (booleanModeRef.current) paintBooleanPicksRef.current(booleanModeRef.current);
+
       if (memoryUsedMB) {
         console.log(`[Viewport] Memory after execution: ${memoryUsedMB.toFixed(1)}MB`);
       }
@@ -6014,6 +6353,7 @@ const Viewport = forwardRef(({
     const camera = cameraRef.current;
     syncAnchoredOverlays();
     if (renderer && scene && camera) renderer.render(scene, camera);
+    if (booleanModeRef.current) paintBooleanPicksRef.current(booleanModeRef.current);
     return true;
   };
 
@@ -6022,6 +6362,11 @@ const Viewport = forwardRef(({
     if (!scene || !resultRef.current) return false;
     const solids = Array.isArray(payload?.solids) ? payload.solids : [];
     const activeId = payload?.activeId ?? null;
+    const prevVisible = new Set(assemblyExtrasRef.current.keys());
+    const prevActive = activePartIdRef.current;
+    if (resultRef.current.geometry?.attributes?.position?.count && prevActive) {
+      prevVisible.add(prevActive);
+    }
     activePartIdRef.current = activeId;
     const blankActive = payload?.blankActive === true;
     if (!assemblyGroupRef.current) {
@@ -6131,6 +6476,18 @@ const Viewport = forwardRef(({
     const renderer = rendererRef.current;
     const camera = cameraRef.current;
     if (renderer && camera) renderer.render(scene, camera);
+    if (booleanModeRef.current) {
+      const nowVisible = new Set(keep);
+      if (!blankActive && activeId) nowVisible.add(activeId);
+      let next = booleanModeRef.current;
+      for (const id of prevVisible) {
+        if (!nowVisible.has(id)) next = noteBooleanPartHidden(next, id);
+      }
+      if (blankActive && activeId) next = noteBooleanPartHidden(next, activeId);
+      booleanModeRef.current = next;
+      setBooleanMode(next);
+      paintBooleanPicksRef.current(next);
+    }
     return true;
   };
 
@@ -6262,7 +6619,7 @@ const Viewport = forwardRef(({
       )}
       
       {/* Left helper rail. Block, Build, Shape, Polish, Move. */}
-      {onInsertHelper && !contourMode && !filletMode && !shellMode && !draftMode && !cutMode && !moveMode && !moveFaceMode && !deleteFaceMode && (
+      {onInsertHelper && !contourMode && !filletMode && !shellMode && !draftMode && !cutMode && !booleanMode && !moveMode && !moveFaceMode && !deleteFaceMode && (
         <HelperInsertPalette
           layout={mode === 'game' ? 'game' : 'cad'}
           onInsert={onInsertHelper}
@@ -6285,6 +6642,7 @@ const Viewport = forwardRef(({
           onEnterShellMode={enterShellMode}
           onEnterDraftMode={enterDraftMode}
           onEnterCutMode={enterCutMode}
+          onEnterBooleanMode={enterBooleanMode}
           onEnterMoveMode={enterMoveMode}
           onEnterMoveFaceMode={enterMoveFaceMode}
           onEnterDeleteFaceMode={enterDeleteFaceMode}
@@ -6476,6 +6834,10 @@ const Viewport = forwardRef(({
             if (!hit) return;
             setContourMode((prev) => (prev ? applySavedContour(prev, hit) : prev));
           }}
+          combine={contourMode.combine === 'subtract' ? 'subtract' : 'add'}
+          onCombineChange={(combine) => setContourMode((prev) => (
+            prev ? { ...prev, combine: combine === 'subtract' ? 'subtract' : 'add' } : prev
+          ))}
           onConfirm={confirmContourProfile}
           onUndoPoint={() => setContourMode((prev) => {
             if (!prev || prev.tool !== 'polyline') return prev;
@@ -6591,6 +6953,22 @@ const Viewport = forwardRef(({
           onClear={() => commitCutState(clearCutPicks(cutModeRef.current))}
           onConfirm={acceptCut}
           onDismiss={exitCutMode}
+        />
+      )}
+
+      {/* Boolean bodies. Confirm writes one booleanBodies(). Pieces hide leftovers. */}
+      {booleanMode && (
+        <BooleanModeChip
+          state={booleanMode}
+          partId={activePartIdRef.current}
+          compact={isMobile}
+          pieceCount={booleanPieceCount}
+          onOp={(op) => commitBooleanState(setBooleanOp(booleanModeRef.current, op))}
+          onPickTarget={(pick) => commitBooleanState(setBooleanPickTarget(booleanModeRef.current, pick))}
+          onUndo={() => commitBooleanState(popLastBooleanPick(booleanModeRef.current, activePartIdRef.current))}
+          onClear={() => commitBooleanState(clearBooleanPicks(booleanModeRef.current, activePartIdRef.current))}
+          onConfirm={acceptBoolean}
+          onDismiss={exitBooleanMode}
         />
       )}
 

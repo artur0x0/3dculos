@@ -128,6 +128,8 @@ export const DRAFT_BEGIN = '// --- draft begin ---';
 export const DRAFT_END = '// --- draft end ---';
 export const CUT_BEGIN = '// --- cut begin ---';
 export const CUT_END = '// --- cut end ---';
+export const BOOLEAN_BEGIN = '// --- boolean begin ---';
+export const BOOLEAN_END = '// --- boolean end ---';
 export const MOVE_BEGIN = '// --- move begin ---';
 export const MOVE_END = '// --- move end ---';
 export const MOVE_FACE_BEGIN = '// --- move-face begin ---';
@@ -171,6 +173,7 @@ export const FEATURE_BLOCK_END_MARKERS = Object.freeze([
   SHELL_END,
   DRAFT_END,
   CUT_END,
+  BOOLEAN_END,
   MOVE_END,
   MOVE_FACE_END,
   DELETE_FACE_END,
@@ -785,7 +788,31 @@ function emitPartReplace(names, expr, partDeclared) {
  * Part already exists: `part = part.add(placeInFrame(...))` so prior solids stay.
  * Second Confirm still replaces only the marked block (the add is inside it).
  */
-function emitPartPlace(names, expr, partDeclared, additive) {
+/** Add unions onto the host. Subtract cuts the new solid out of it. */
+export const SOLID_COMBINE_PARAM = {
+  name: 'combine',
+  type: 'select',
+  default: 'add',
+  label: 'Mode',
+  options: [
+    { value: 'add', label: 'Add' },
+    { value: 'subtract', label: 'Subtract' },
+  ],
+};
+
+/** 'add' | 'subtract'. A params object or a bare string both work. */
+export function solidCombineOp(value) {
+  const raw = value && typeof value === 'object' ? value.combine : value;
+  const v = String(raw ?? 'add').toLowerCase();
+  return v === 'subtract' || v === 'cut' ? 'subtract' : 'add';
+}
+
+function emitPartPlace(names, expr, partDeclared, additive, op = 'add') {
+  const subtract = op === 'subtract' && partDeclared;
+  if (subtract) {
+    names.add('part');
+    return `part = part.subtract(${expr});`;
+  }
   if (additive && partDeclared) {
     names.add('part');
     return `part = part.add(${expr});`;
@@ -806,14 +833,14 @@ function emitWorldToFrameExpr(pt, plane) {
 }
 
 /** sweepPoints in the plane frame, then frame-only placeInFrame replace. */
-function emitSweepSolidTail(names, xs, path, partDeclared, additive = false) {
+function emitSweepSolidTail(names, xs, path, partDeclared, additive = false, op = 'add') {
   const local = allocateUniqueName(names, 'sweepLocal');
   const swept = allocateUniqueName(names, 'swept');
   return [
     `const ${local} = ${path}.points.map((pt) => ${emitWorldToFrameExpr('pt', `${xs}.plane`)});`,
     `const ${swept} = sweepPoints(new CrossSection(${xs}.contours), ${local}, { closed: !!${path}.closed, initialNormal: [1, 0, 0] });`,
     `if (!(${swept}.volume() > 1e-8)) throw new Error('sweep: result is EMPTY (volume 0) — check profile area and path');`,
-    emitPartPlace(names, `placeInFrame(${xs}.plane, ${swept})`, partDeclared, additive),
+    emitPartPlace(names, `placeInFrame(${xs}.plane, ${swept})`, partDeclared, additive, op),
   ];
 }
 
@@ -1155,6 +1182,7 @@ export const HELPER_PALETTE_ITEMS = [
       { name: 'depth', type: 'number', default: 30, label: 'Depth', min: 0.1, step: 1 },
       { name: 'height', type: 'number', default: 20, label: 'Height', min: 0.1, step: 1 },
       { name: 'center', type: 'bool', default: true, label: 'Centered' },
+      SOLID_COMBINE_PARAM,
     ],
     build: (empty, p, names) => {
       const box = allocateUniqueName(names, 'box');
@@ -1164,10 +1192,10 @@ export const HELPER_PALETTE_ITEMS = [
       const c = bool(p.center, true);
       const lines = wrapFeatureBlock(CUBE_BEGIN, CUBE_END, [
         `let ${box} = Manifold.cube([${w}, ${d}, ${h}], ${c});`,
-        // Append, never replace: a second shape unions onto the part, the
-        // same rule Extrude / Revolve / Loft / Sweep follow. Overwriting
-        // here used to strand the previous solid as dead code.
-        emitPartPlace(names, box, !empty && names.has('part'), true),
+        // Append, never replace: a second shape unions onto the part, or
+        // cuts it out when Mode is Subtract. Overwriting here used to
+        // strand the previous solid as dead code.
+        emitPartPlace(names, box, !empty && names.has('part'), true, solidCombineOp(p)),
       ]);
       return withReturn(lines, empty);
     },
@@ -1184,6 +1212,7 @@ export const HELPER_PALETTE_ITEMS = [
       { name: 'sz', type: 'number', default: 20, label: 'Size Z', min: 0.1, step: 1 },
       { name: 'edgeRadius', type: 'number', default: 4, label: 'Edge R', min: 0, step: 0.5 },
       { name: 'segments', type: 'number', default: 16, label: 'Segments', min: 1, step: 1 },
+      SOLID_COMBINE_PARAM,
     ],
     build: (empty, p, names) => {
       const rbox = allocateUniqueName(names, 'rbox');
@@ -1194,7 +1223,7 @@ export const HELPER_PALETTE_ITEMS = [
       const seg = Math.max(1, Math.round(num(p.segments, 16)));
       const lines = wrapFeatureBlock(ROUNDED_BOX_BEGIN, ROUNDED_BOX_END, [
         `let ${rbox} = roundedBox([${sx}, ${sy}, ${sz}], ${er}, ${seg});`,
-        emitPartPlace(names, rbox, !empty && names.has('part'), true),
+        emitPartPlace(names, rbox, !empty && names.has('part'), true, solidCombineOp(p)),
       ]);
       return withReturn(lines, empty);
     },
@@ -1209,6 +1238,7 @@ export const HELPER_PALETTE_ITEMS = [
       { name: 'height', type: 'number', default: 20, label: 'Height', min: 0.1, step: 1 },
       { name: 'radius', type: 'number', default: 10, label: 'Radius', min: 0.1, step: 0.5 },
       { name: 'segments', type: 'number', default: 64, label: 'Segments', min: 3, step: 1 },
+      SOLID_COMBINE_PARAM,
     ],
     build: (empty, p, names) => {
       const cyl = allocateUniqueName(names, 'cyl');
@@ -1217,7 +1247,7 @@ export const HELPER_PALETTE_ITEMS = [
       const seg = Math.max(3, Math.round(num(p.segments, 64)));
       const lines = wrapFeatureBlock(CYLINDER_BEGIN, CYLINDER_END, [
         `let ${cyl} = Manifold.cylinder(${h}, ${r}, ${r}, ${seg});`,
-        emitPartPlace(names, cyl, !empty && names.has('part'), true),
+        emitPartPlace(names, cyl, !empty && names.has('part'), true, solidCombineOp(p)),
       ]);
       return withReturn(lines, empty);
     },
@@ -1231,6 +1261,7 @@ export const HELPER_PALETTE_ITEMS = [
     params: [
       { name: 'radius', type: 'number', default: 15, label: 'Radius', min: 0.1, step: 0.5 },
       { name: 'segments', type: 'number', default: 64, label: 'Segments', min: 3, step: 1, max: 128 },
+      SOLID_COMBINE_PARAM,
     ],
     build: (empty, p, names) => {
       const sph = allocateUniqueName(names, 'sphere');
@@ -1238,7 +1269,7 @@ export const HELPER_PALETTE_ITEMS = [
       const seg = Math.max(3, Math.round(num(p.segments, 64)));
       const lines = wrapFeatureBlock(SPHERE_BEGIN, SPHERE_END, [
         `let ${sph} = Manifold.sphere(${r}, ${seg});`,
-        emitPartPlace(names, sph, !empty && names.has('part'), true),
+        emitPartPlace(names, sph, !empty && names.has('part'), true, solidCombineOp(p)),
       ]);
       return withReturn(lines, empty);
     },
@@ -1284,6 +1315,7 @@ export const HELPER_PALETTE_ITEMS = [
         name: 'cornerRadius', type: 'number', default: 0, label: 'Corner R', min: 0, step: 0.5,
         showWhen: { field: 'section', values: ['rect'] },
       },
+      SOLID_COMBINE_PARAM,
     ],
     build: (empty, p, names) => {
       const tube = allocateUniqueName(names, 'tube');
@@ -1302,7 +1334,7 @@ export const HELPER_PALETTE_ITEMS = [
         const seg = Math.max(3, Math.round(num(p.segments, 64)));
         lines.push(`let ${tube} = tube(${o}, ${i}, ${h}, ${seg});`);
       }
-      lines.push(emitPartPlace(names, tube, !empty && names.has('part'), true));
+      lines.push(emitPartPlace(names, tube, !empty && names.has('part'), true, solidCombineOp(p)));
       return withReturn(wrapFeatureBlock(TUBE_BEGIN, TUBE_END, lines), empty);
     },
   },
@@ -1315,6 +1347,7 @@ export const HELPER_PALETTE_ITEMS = [
     params: [
       { name: 'radius', type: 'number', default: 12, label: 'Radius', min: 0.1, step: 0.5 },
       { name: 'height', type: 'number', default: 8, label: 'Height', min: 0.1, step: 0.5 },
+      SOLID_COMBINE_PARAM,
     ],
     build: (empty, p, names) => {
       const hex = allocateUniqueName(names, 'hex');
@@ -1322,7 +1355,7 @@ export const HELPER_PALETTE_ITEMS = [
       const h = num(p.height, 8);
       const lines = wrapFeatureBlock(HEX_PRISM_BEGIN, HEX_PRISM_END, [
         `let ${hex} = hexPrism(${r}, ${h});`,
-        emitPartPlace(names, hex, !empty && names.has('part'), true),
+        emitPartPlace(names, hex, !empty && names.has('part'), true, solidCombineOp(p)),
       ]);
       return withReturn(lines, empty);
     },
@@ -1571,7 +1604,7 @@ export const HELPER_PALETTE_ITEMS = [
         const placed = Math.abs(w) < 1e-12
           ? `placeInFrame(${fr}, ${solidExpr})`
           : `placeInFrame(${fr}, ${solidExpr}, [0, 0, ${w}])`;
-        lines.push(emitPartPlace(names, placed, partDeclared, partDeclared));
+        lines.push(emitPartPlace(names, placed, partDeclared, partDeclared, solidCombineOp(p._contourLoft)));
         lines.push(CONTOUR_LOFT_END);
       } else if (p._contourRevolve) {
         const rev = p._contourRevolve;
@@ -1591,7 +1624,7 @@ export const HELPER_PALETTE_ITEMS = [
         lines.push(CONTOUR_REVOLVE_BEGIN);
         lines.push(...wp.lines);
         lines.push(profileLine);
-        lines.push(emitPartPlace(names, `placeInFrame(${frame}, ${solidExpr})`, partDeclared, partDeclared));
+        lines.push(emitPartPlace(names, `placeInFrame(${frame}, ${solidExpr})`, partDeclared, partDeclared, solidCombineOp(p._contourRevolve)));
         lines.push(CONTOUR_REVOLVE_END);
       } else if (p._contourExtrude) {
         const ext = p._contourExtrude;
@@ -1609,6 +1642,7 @@ export const HELPER_PALETTE_ITEMS = [
           `placeInFrame(${xs}.plane, makeExtrude(${xs}.contours, ${distance}), [0, 0, ${w}])`,
           partDeclared,
           partDeclared,
+          solidCombineOp(p._contourExtrude),
         ));
         lines.push(CONTOUR_EXTRUDE_END);
       } else if (p._contourSweep) {
@@ -1622,7 +1656,7 @@ export const HELPER_PALETTE_ITEMS = [
         lines.push(profileLine);
         lines.push(...edge.lines);
         lines.push(`const ${path} = makeSweepPath(${edge.edgesExpr}${opts}); // edge→sweep path`);
-        lines.push(...emitSweepSolidTail(names, xs, path, partDeclared, partDeclared));
+        lines.push(...emitSweepSolidTail(names, xs, path, partDeclared, partDeclared, solidCombineOp(p._contourSweep)));
         lines.push(CONTOUR_SWEEP_END);
       } else if (p._contourMode) {
         // Slice 24: wrap in-mode Profile so Confirm replaces the region (no Extrude).
@@ -1923,6 +1957,36 @@ export const HELPER_PALETTE_ITEMS = [
       return withReturn(lines, empty);
     },
   },
+  {
+    id: 'boolean',
+    label: 'Boolean',
+    group: 'Features',
+    title: 'booleanBodies(manifold, { op, bodies, drop }) — union, difference, or intersect. Intersect can drop leftover pieces.',
+    params: [
+      { name: 'body', type: 'body', default: 'part', label: 'Body' },
+      {
+        name: 'op', type: 'select', default: 'union', label: 'Operation',
+        options: [
+          { value: 'union', label: 'Union' },
+          { value: 'difference', label: 'Difference' },
+          { value: 'intersect', label: 'Intersect' },
+        ],
+      },
+    ],
+    // The rail enters Boolean mode. This build is the sequential-compose
+    // fallback: every body, in decompose order. The mode chip names the bodies.
+    build: (empty, p, names, buffer) => {
+      const lines = [...ensurePartPrefix(empty, names)];
+      const body = resolveBody(p, names, empty ? lines.join('\n') : buffer);
+      const op = ['difference', 'intersect'].includes(String(p.op)) ? String(p.op) : 'union';
+      const feat = [
+        `${body} = booleanBodies(${body}, { op: '${op}' });`,
+        ...syncPartLines(body, names, /(?:let|const|var)\s+part\b/.test(lines.join('\n')) || !empty),
+      ];
+      lines.push(...wrapFeatureBlock(BOOLEAN_BEGIN, BOOLEAN_END, feat));
+      return withReturn(lines, empty);
+    },
+  },
 
   // ── Transforms / layout ─────────────────────────────────────
   {
@@ -2188,10 +2252,11 @@ export const HELPER_PALETTE_ITEMS = [
     id: 'makeExtrude',
     label: 'Extrude',
     group: 'Advanced',
-    title: 'Extrude — contour mode (profile + makeExtrude). Confirm unions onto part when part already exists.',
+    title: 'Extrude — contour mode (profile + makeExtrude). Confirm adds or subtracts when part already exists.',
     bodyBase: 'extrude',
     params: [
       { name: 'height', type: 'number', default: 10, label: 'Height', min: 0.1, step: 1 },
+      SOLID_COMBINE_PARAM,
     ],
     // UI always enters contour mode (Slice 24/25). This build is only the
     // sequential-compose / golden fallback — not a one-shot hardcoded plate.
@@ -2205,7 +2270,7 @@ export const HELPER_PALETTE_ITEMS = [
         // Append, never replace — same rule this entry's contour-mode Confirm
         // already follows. The one-shot path used to overwrite `part`, which
         // stranded the previous solid as dead code.
-        emitPartPlace(names, extrude, !empty && names.has('part'), true),
+        emitPartPlace(names, extrude, !empty && names.has('part'), true, solidCombineOp(p)),
       ]);
       return withReturn(lines, empty);
     },
@@ -2214,10 +2279,11 @@ export const HELPER_PALETTE_ITEMS = [
     id: 'makeRevolve',
     label: 'Revolve',
     group: 'Advanced',
-    title: 'Revolve — contour mode (profile + makeRevolve). Confirm unions onto part when part already exists.',
+    title: 'Revolve — contour mode (profile + makeRevolve). Confirm adds or subtracts when part already exists.',
     bodyBase: 'revolve',
     params: [
       { name: 'segments', type: 'number', default: 64, label: 'Segments', min: 3, step: 1 },
+      SOLID_COMBINE_PARAM,
     ],
     build: (empty, p, names) => {
       const revolve = allocateUniqueName(names, 'revolve');
@@ -2226,7 +2292,7 @@ export const HELPER_PALETTE_ITEMS = [
         `let ${revolve} = makeRevolve([`,
         '  [[8, 0], [25, 0], [25, 6], [12, 6], [12, 40], [8, 40]]',
         `], ${seg});`,
-        emitPartPlace(names, revolve, !empty && names.has('part'), true),
+        emitPartPlace(names, revolve, !empty && names.has('part'), true, solidCombineOp(p)),
       ]);
       return withReturn(lines, empty);
     },
@@ -2235,13 +2301,12 @@ export const HELPER_PALETTE_ITEMS = [
     id: 'makeSweep',
     label: 'Sweep',
     group: 'Advanced',
-    title: 'Sweep — contour mode (profile + path + sweepPoints). Confirm unions onto part when part already exists.',
+    title: 'Sweep — contour mode (profile + path + sweepPoints). Confirm adds or subtracts when part already exists.',
     bodyBase: 'swept',
-    params: [],
+    params: [SOLID_COMBINE_PARAM],
     // UI always enters contour mode (Slice 30). This build is the sequential /
     // golden fallback — circle profile swept along a straight +Z edge.
     build: (empty, p, names) => {
-      void p;
       const partDeclared = names.has('part');
       const xs = allocateUniqueName(names, 'xs');
       const edges = allocateUniqueName(names, 'selEdges');
@@ -2250,7 +2315,9 @@ export const HELPER_PALETTE_ITEMS = [
         `const ${xs} = makeCrossSection({ center: [0, 0, 0], normal: [0, 0, 1], x: [1, 0, 0], y: [0, 1, 0] }, profileCircle(2, 16));`,
         `const ${edges} = [{ a: 0, b: 1, va: [0, 0, 0], vb: [0, 0, 20], length: 20, key: 'sweep-fallback' }];`,
         `const ${path} = makeSweepPath(${edges}); // edge→sweep path`,
-        ...emitSweepSolidTail(names, xs, path, partDeclared),
+        // Fallback stays a replace when Mode is Add (contour Confirm is the
+        // additive path). Subtract still cuts the sweep out of the host.
+        ...emitSweepSolidTail(names, xs, path, partDeclared, false, solidCombineOp(p)),
       ]);
       return withReturn(lines, empty);
     },
@@ -2259,10 +2326,11 @@ export const HELPER_PALETTE_ITEMS = [
     id: 'makeLoft',
     label: 'Loft',
     group: 'Advanced',
-    title: 'Loft — contour mode (multi-profile makeCrossSection + makeLoft). Confirm unions onto part when part already exists.',
+    title: 'Loft — contour mode (multi-profile makeCrossSection + makeLoft). Confirm adds or subtracts when part already exists.',
     bodyBase: 'lofted',
     params: [
       { name: 'height', type: 'number', default: 20, label: 'Offset', min: 0.1, step: 1 },
+      SOLID_COMBINE_PARAM,
     ],
     // UI always enters contour mode (Slice 28). This build is the sequential /
     // golden fallback — two circles on +Z, same-plane + offset.
@@ -2275,7 +2343,7 @@ export const HELPER_PALETTE_ITEMS = [
         `const ${xs0} = makeCrossSection({ center: [0, 0, 0], normal: [0, 0, 1], x: [1, 0, 0], y: [0, 1, 0] }, profileCircle(5, 64));`,
         `const ${xs1} = makeCrossSection({ center: [0, 0, ${h}], normal: [0, 0, 1], x: [1, 0, 0], y: [0, 1, 0] }, profileCircle(8, 64));`,
         `let ${lofted} = makeLoft([${xs0}, ${xs1}]);`,
-        emitPartPlace(names, lofted, !empty && names.has('part'), true),
+        emitPartPlace(names, lofted, !empty && names.has('part'), true, solidCombineOp(p)),
       ]);
       return withReturn(lines, empty);
     },
@@ -2338,7 +2406,7 @@ export const HELPER_PALETTE_GROUPS = ['Primitives', 'Advanced', 'Features', 'Tra
  */
 export const CAD_RAIL_ORDER = ['Primitives', 'Build', 'Shape', 'Features', 'Transforms'];
 
-const RAIL_BUILD_IDS = ['hole', 'cut', 'shell', 'addDraft', 'array3D'];
+const RAIL_BUILD_IDS = ['hole', 'cut', 'boolean', 'shell', 'addDraft', 'array3D'];
 const RAIL_POLISH_IDS = ['filletEdges', 'chamferEdges', 'moveFace', 'deleteFace'];
 const RAIL_MOVE_FIRST = ['move', 'center', 'align', 'mirror'];
 
@@ -2354,8 +2422,8 @@ export function itemsByGroup() {
 /**
  * Visible rail sections, both layouts. Order is Block, Build, Shape, Polish,
  * Move. Shape is the old Model section (Profile / Workplane / Extrude /
- * Revolve / Sweep / Loft), same buttons. Build is hole, cut, shell, draft,
- * pattern. Polish is fillet, chamfer, move face, delete face. Move is every
+ * Revolve / Sweep / Loft), same buttons. Build is hole, cut, boolean, shell,
+ * draft, pattern. Polish is fillet, chamfer, move face, delete face. Move is every
  * remaining button, with Move directly above Center.
  *
  * `railHidden` items keep their group membership and their build(); they get

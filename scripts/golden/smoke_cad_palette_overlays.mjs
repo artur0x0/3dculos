@@ -110,8 +110,8 @@ console.log('cad palette + plane/contour toggles');
   // ── Build / Polish / Move ──
   {
     const build = cad.find((s) => s.key === 'Build').items.map((i) => i.id);
-    check('Build is hole, cut, shell, draft, pattern',
-      build.join(',') === 'hole,cut,shell,addDraft,array3D', build.join(','));
+    check('Build is hole, cut, boolean, shell, draft, pattern',
+      build.join(',') === 'hole,cut,boolean,shell,addDraft,array3D', build.join(','));
     const polish = cad.find((s) => s.key === 'Features').items.map((i) => i.id);
     check('Polish is fillet, chamfer, move face, delete face',
       polish.join(',') === 'filletEdges,chamferEdges,moveFace,deleteFace', polish.join(','));

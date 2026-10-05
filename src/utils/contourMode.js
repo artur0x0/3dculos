@@ -34,6 +34,7 @@ import {
 } from './crossSectionSubstrate.js';
 import {
   composeHelperInsert,
+  solidCombineOp,
   CONTOUR_PROFILE_BEGIN,
   CONTOUR_PROFILE_END,
   CONTOUR_EXTRUDE_BEGIN,
@@ -496,6 +497,7 @@ export function enterContourState(entry, faceData = null) {
     planeAngles: { x: 0, y: 0, z: 0 },
     planeBase: resolved.source === 'face' ? resolved.plane : null,
     planeOffset: 0,
+    combine: 'add',
     enterRefuse: resolved.ok ? null : resolved.message,
   };
 }
@@ -1337,18 +1339,23 @@ export function countMakeLoft(buffer) {
  * no placeOnFace). When `part` already exists, Confirm must union
  * `part.add(placeInFrame(...))` — a bare replace wipes prior geometry.
  */
-function advancedPlaceError(owned, prior, label) {
+function advancedPlaceError(owned, prior, label, combine = 'add') {
   if (/placeOnFace\s*\(/.test(owned)) {
     return `${label}: placeOnFace is the host path — refusing leftover host.`;
   }
-  const unioned = /part\s*=\s*part\.add\(\s*placeInFrame\s*\(/.test(owned);
+  const op = solidCombineOp(combine);
+  const wanted = new RegExp(`part\\s*=\\s*part\\.${op}\\(\\s*placeInFrame\\s*\\(`);
+  const other = op === 'subtract' ? 'add' : 'subtract';
+  const unwanted = new RegExp(`part\\s*=\\s*part\\.${other}\\(\\s*placeInFrame\\s*\\(`);
   if (prior) {
-    if (!unioned) {
-      return `${label}: existing part must union the new solid — refusing wipe.`;
+    if (!wanted.test(owned) || unwanted.test(owned)) {
+      return op === 'subtract'
+        ? `${label}: existing part must subtract the new solid.`
+        : `${label}: existing part must union the new solid — refusing wipe.`;
     }
     return null;
   }
-  if (/part\s*=\s*part\.add\(/.test(owned)) {
+  if (/part\s*=\s*part\.(?:add|subtract)\(/.test(owned)) {
     return `${label}: host-add is not the new-body path — refusing leftover host.`;
   }
   return null;
@@ -1402,6 +1409,7 @@ export function composeContourExtrude(buffer, {
   tool = 'circle',
   params = {},
   extrude = {},
+  combine,
 } = {}) {
   const gate = validateContourProfile(tool, params);
   if (!gate.ok) return gate;
@@ -1423,12 +1431,14 @@ export function composeContourExtrude(buffer, {
 
   const planar = face && face.type === 'planar' ? face : null;
   const stripped = stripContourSiblingBlocks(buffer);
+  const combineOp = solidCombineOp(combine ?? extrude?.combine);
   const profileParams = {
     ...toolToProfileParams(tool, params),
     body: params.body || 'part',
     _contourExtrude: {
       ...extGate.normalized,
       plane,
+      combine: combineOp,
     },
   };
   const composed = composeHelperInsert(
@@ -1464,7 +1474,7 @@ export function composeContourExtrude(buffer, {
       message: 'composeContourExtrude: placeInFrame missing — refusing unscoped insert.',
     };
   }
-  const placeErr = advancedPlaceError(owned, scriptHasPriorSolid(stripped), 'composeContourExtrude');
+  const placeErr = advancedPlaceError(owned, scriptHasPriorSolid(stripped), 'composeContourExtrude', combineOp);
   if (placeErr) return { ok: false, message: placeErr };
   if (!hasContourExtrudeBlock(composed)) {
     return {
@@ -1525,6 +1535,7 @@ export function composeContourRevolve(buffer, {
   tool = 'circle',
   params = {},
   revolve = {},
+  combine,
 } = {}) {
   const gate = validateContourProfile(tool, params);
   if (!gate.ok) return gate;
@@ -1555,6 +1566,7 @@ export function composeContourRevolve(buffer, {
 
   const planar = face && face.type === 'planar' ? face : null;
   const stripped = stripContourSiblingBlocks(buffer);
+  const combineOp = solidCombineOp(combine ?? revolve?.combine);
   const profileParams = {
     ...toolToProfileParams(tool, params),
     body: params.body || 'part',
@@ -1567,6 +1579,7 @@ export function composeContourRevolve(buffer, {
       aU: mapped.aU,
       aV: mapped.aV,
       plane,
+      combine: combineOp,
     },
   };
   const composed = composeHelperInsert(
@@ -1602,7 +1615,7 @@ export function composeContourRevolve(buffer, {
       message: 'composeContourRevolve: placeInFrame missing — refusing unscoped insert.',
     };
   }
-  const placeErr = advancedPlaceError(owned, scriptHasPriorSolid(stripped), 'composeContourRevolve');
+  const placeErr = advancedPlaceError(owned, scriptHasPriorSolid(stripped), 'composeContourRevolve', combineOp);
   if (placeErr) return { ok: false, message: placeErr };
   if (!hasContourRevolveBlock(composed)) {
     return {
@@ -1704,6 +1717,7 @@ export function composeContourLoft(buffer, {
   profiles = null,
   tool = null,
   params = null,
+  combine,
 } = {}) {
   const raw = profiles || loft.profiles || defaultLoftProfiles();
   // Clone every station so Confirm cannot alias two profiles to one params
@@ -1746,11 +1760,13 @@ export function composeContourLoft(buffer, {
   }));
   // Do not spread station 0 onto the helper params object — that was rewriting
   // every makeCrossSection from one profile when emit fell back to parent fields.
+  const combineOp = solidCombineOp(combine ?? loft?.combine);
   const profileParams = {
     body: 'part',
     _contourLoft: {
       plane: planeFromContourFace(face),
       profiles: stationParams,
+      combine: combineOp,
     },
   };
   const composed = composeHelperInsert(
@@ -1792,7 +1808,7 @@ export function composeContourLoft(buffer, {
       message: 'composeContourLoft: placeInFrame missing — refusing unscoped insert.',
     };
   }
-  const placeErr = advancedPlaceError(owned, scriptHasPriorSolid(stripped), 'composeContourLoft');
+  const placeErr = advancedPlaceError(owned, scriptHasPriorSolid(stripped), 'composeContourLoft', combineOp);
   if (placeErr) return { ok: false, message: placeErr };
   if (!hasContourLoftBlock(composed)) {
     return {
@@ -1860,6 +1876,7 @@ export function composeContourSweep(buffer, {
   params = {},
   edges = null,
   sweep = {},
+  combine,
 } = {}) {
   const gate = validateContourProfile(tool, params);
   if (!gate.ok) return gate;
@@ -1883,6 +1900,7 @@ export function composeContourSweep(buffer, {
     _contourSweep: {
       plane,
       reverse: pathGate.normalized.reverse,
+      combine: solidCombineOp(combine ?? sweep?.combine),
     },
   };
   const composed = composeHelperInsert(
@@ -1924,7 +1942,7 @@ export function composeContourSweep(buffer, {
       message: 'composeContourSweep: placeInFrame missing — refusing unscoped insert.',
     };
   }
-  const placeErr = advancedPlaceError(owned, scriptHasPriorSolid(stripped), 'composeContourSweep');
+  const placeErr = advancedPlaceError(owned, scriptHasPriorSolid(stripped), 'composeContourSweep', solidCombineOp(combine ?? sweep?.combine));
   if (placeErr) return { ok: false, message: placeErr };
   if (!hasContourSweepBlock(composed)) {
     return {
