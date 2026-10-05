@@ -234,7 +234,7 @@ console.log('cad palette + plane/contour toggles');
   check(
     'saved contour pick gated',
     /showContoursRef\.current && !moveModeRef\.current && contourModeRef\.current\?\.tool !== 'polyline'/.test(view)
-      && /!cutModeRef\.current && showContoursRef\.current/.test(view),
+      && /!cutModeRef\.current && !booleanModeRef\.current && showContoursRef\.current/.test(view),
   );
   check(
     'construction plane pick gated',

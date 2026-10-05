@@ -98,7 +98,17 @@ const SHAPES = ['makeExtrude', 'makeRevolve', 'makeSweep', 'makeLoft'];
   check('extrude Subtract writes part.subtract(placeInFrame',
     extruded.ok && /part = part\.subtract\(\s*placeInFrame\(/.test(extruded.buffer),
     extruded.buffer || extruded.message);
+  const stickOut = {
+    type: 'planar',
+    planeFrame: {
+      center: [0, 0, 10],
+      normal: [0, 0, 1],
+      x: [1, 0, 0],
+      y: [0, 1, 0],
+    },
+  };
   const extrudedAdd = composeContourExtrude(host, {
+    face: stickOut,
     tool: 'circle',
     params: defaultContourParams('circle'),
     extrude: defaultExtrudeParams(),
@@ -146,8 +156,9 @@ const SHAPES = ['makeExtrude', 'makeRevolve', 'makeSweep', 'makeLoft'];
     keptBodies.byPart.a.drop === marked.state.byPart.a.drop
     && booleanSlot(keptBodies, 'a').drop.length === 1);
 
-  const need = composeBooleanCommit('let part = 1;', tap.state, 'missing');
-  check('confirm without two bodies refuses', !need.ok && need.message === BOOLEAN_MODE_NEED_TOOL);
+  const one = applyBooleanTap(emptyBooleanState(), { triangle: 0, positions, index, partId: 'a' });
+  const need = composeBooleanCommit('let part = 1;', one.state, 'a');
+  check('confirm with one body refuses', !need.ok && need.message === BOOLEAN_MODE_NEED_TOOL, need.message);
   const allGone = composeBooleanCommit('', pieces, 'a', { pieceCount: 2 });
   const droppedAll = {
     ...pieces,
@@ -265,7 +276,10 @@ function near(a, b, eps = 1e-2) {
   const cube = composeHelperInsert('', 'cube', null, {});
   const added = composeHelperInsert(cube, 'cube', null, {
     width: 10, depth: 10, height: 10, combine: 'add',
-  });
+  }).replace(
+    'Manifold.cube([10, 10, 10], true)',
+    'Manifold.cube([10, 10, 10], true).translate([30, 0, 0])',
+  );
   const subtracted = composeHelperInsert(cube, 'cube', null, {
     width: 10, depth: 10, height: 10, combine: 'subtract',
   });
@@ -285,6 +299,15 @@ function near(a, b, eps = 1e-2) {
   check('extrude Subtract removes volume from the cube',
     extrude.ok && extRes.volume < 24000 - 1, `vol=${extRes.volume} ${extrude.message || ''}`);
   const extrudeAdd = composeContourExtrude(host, {
+    face: {
+      type: 'planar',
+      planeFrame: {
+        center: [0, 0, 10],
+        normal: [0, 0, 1],
+        x: [1, 0, 0],
+        y: [0, 1, 0],
+      },
+    },
     tool: 'circle',
     params: defaultContourParams('circle'),
     extrude: defaultExtrudeParams(),

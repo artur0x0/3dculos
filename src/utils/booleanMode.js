@@ -221,15 +221,51 @@ function triVerts(tri, positions, index) {
   return [readPos(positions, i0), readPos(positions, i1), readPos(positions, i2)];
 }
 
-function pointTriDist2(point, a, b, c) {
-  // Distance to the triangle plane is enough to tell "on this surface".
+function pointTriDist2(p, a, b, c) {
+  // Distance to the triangle, not its infinite plane. Two bodies that share
+  // a plane (a section through both) must not both claim the hit.
   const ab = sub(b, a);
   const ac = sub(c, a);
-  const n = cross(ab, ac);
-  const len = Math.hypot(n[0], n[1], n[2]);
-  if (!(len > 1e-12)) return Infinity;
-  const d = dot(sub(point, a), n) / len;
-  return d * d;
+  const ap = sub(p, a);
+  const d1 = dot(ab, ap);
+  const d2 = dot(ac, ap);
+  if (d1 <= 0 && d2 <= 0) return dot(ap, ap);
+  const bp = sub(p, b);
+  const d3 = dot(ab, bp);
+  const d4 = dot(ac, bp);
+  if (d3 >= 0 && d4 <= d3) return dot(bp, bp);
+  const vc = d1 * d4 - d3 * d2;
+  if (vc <= 0 && d1 >= 0 && d3 <= 0) {
+    const v = d1 / (d1 - d3);
+    const q = sub(p, [a[0] + ab[0] * v, a[1] + ab[1] * v, a[2] + ab[2] * v]);
+    return dot(q, q);
+  }
+  const cp = sub(p, c);
+  const d5 = dot(ab, cp);
+  const d6 = dot(ac, cp);
+  if (d6 >= 0 && d5 <= d6) return dot(cp, cp);
+  const vb = d5 * d2 - d1 * d6;
+  if (vb <= 0 && d2 >= 0 && d6 <= 0) {
+    const w = d2 / (d2 - d6);
+    const q = sub(p, [a[0] + ac[0] * w, a[1] + ac[1] * w, a[2] + ac[2] * w]);
+    return dot(q, q);
+  }
+  const va = d3 * d6 - d5 * d4;
+  if (va <= 0 && (d4 - d3) >= 0 && (d5 - d6) >= 0) {
+    const w = (d4 - d3) / ((d4 - d3) + (d5 - d6));
+    const bc = sub(c, b);
+    const q = sub(p, [b[0] + bc[0] * w, b[1] + bc[1] * w, b[2] + bc[2] * w]);
+    return dot(q, q);
+  }
+  const denom = 1 / (va + vb + vc);
+  const v = vb * denom;
+  const w = vc * denom;
+  const q = sub(p, [
+    a[0] + ab[0] * v + ac[0] * w,
+    a[1] + ab[1] * v + ac[1] * w,
+    a[2] + ab[2] * v + ac[2] * w,
+  ]);
+  return dot(q, q);
 }
 
 /**
