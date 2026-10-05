@@ -126,6 +126,24 @@ export function setPartVisible(doc, id, visible) {
   });
 }
 
+/**
+ * Drop one part. Other rows stay, including position.
+ * The active id stays on a remaining row, or is empty when none remain.
+ */
+export function removePart(doc, id) {
+  const key = id == null ? '' : String(id);
+  const parts = (doc?.parts || []).filter((part) => String(part?.id || '') !== key);
+  return serializeAssembly({ ...doc, parts });
+}
+
+/** Copy a script map or a run map without one part id. */
+export function dropPartRecord(map, id) {
+  const key = id == null ? '' : String(id);
+  const next = { ...(map || {}) };
+  delete next[key];
+  return next;
+}
+
 export function reorderParts(doc, fromIndex, toIndex) {
   const parts = sortParts(doc?.parts);
   const from = Number(fromIndex);

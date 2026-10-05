@@ -6,7 +6,8 @@
  * Selecting a row loads that part's script. Hiding a row drops it from the
  * composed viewport. A failed script highlights the row and contributes no
  * solid, including no previous solid. The saved assembly lists ids, never
- * inline scripts.
+ * inline scripts. Deleting a row drops that part from the list and from the
+ * composed viewport. The other parts stay.
  *
  * Spawning a new part still auto-drops a 20 mm box, and that box is a Cube
  * feature (same markers as a palette Cube). An unmarked `let part = cube`
@@ -16,9 +17,11 @@ import { readFileSync } from 'node:fs';
 import { register } from 'node:module';
 import {
   composeViewportParts,
+  dropPartRecord,
   feedRows,
   parseAssemblyDocument,
   recordPartRun,
+  removePart,
   resolvePartId,
   scriptForRow,
   serializeAssembly,
@@ -69,11 +72,20 @@ const BAD = 'let part = Manifold.cube([10, 10, 10], true);\nreturn part.missingM
     /scriptForRow\(/.test(selectFn) && /loadContent\(picked\.script/.test(selectFn));
   check('an eye toggles visibility and the viewport is recomposed',
     /setPartVisible\(/.test(app) && /composeViewportParts\(/.test(app) && /placeAssembly/.test(app));
-  check('feed row has a thumbnail, a red selection bar, and an eye',
+  check('feed row has a thumbnail, a red selection bar, an eye, and delete',
     /data-part-thumbnail/.test(feed)
     && /data-part-selected-bar/.test(feed)
     && /bg-red-500/.test(feed)
-    && /data-part-visibility=/.test(feed));
+    && /data-part-visibility=/.test(feed)
+    && /data-part-delete=/.test(feed));
+  const del = app.slice(app.indexOf('const handleDeletePart'), app.indexOf('const handleGameRun'));
+  check('delete removes that part from the document, the script, and the viewport',
+    /removePart\(/.test(del)
+    && /dropPartRecord\(/.test(del)
+    && /deletePartScript\(/.test(del)
+    && /composeViewportParts\(/.test(del)
+    && /placeAssembly/.test(del)
+    && /onDeletePart=\{handleDeletePart\}/.test(app));
   check('a failed row is highlighted and a missing row offers find or upload',
     /data-part-status=\{status\}/.test(feed)
     && /data-part-error/.test(feed)
@@ -219,6 +231,42 @@ const BAD = 'let part = Manifold.cube([10, 10, 10], true);\nreturn part.missingM
   });
   check('the viewport uses a stored position',
     placed[0].id === 'local:box' && placed[0].position[0] === 30 && placed[0].position[1] === 0);
+
+  const removed = removePart(doc, 'local:box');
+  const removedRows = feedRows(removed, hiddenRuns, scripts);
+  const removedSolids = composeViewportParts(removed, hiddenRuns);
+  check('deleting a part drops it from the list',
+    removed.parts.length === 1
+    && removed.parts[0].id === 'local:wide'
+    && removed.parts[0].name === 'Wide'
+    && removed.activeId === 'local:wide'
+    && !removedRows.some((row) => row.id === 'local:box')
+    && removedRows.some((row) => row.id === 'local:wide'));
+  check('deleting a part drops its solid even when the old run is still around',
+    !removedSolids.some((solid) => solid.id === 'local:box')
+    && removedSolids.length === 1
+    && removedSolids[0].id === 'local:wide');
+  const scriptsLeft = dropPartRecord(scripts, 'local:box');
+  const runsLeft = dropPartRecord(hiddenRuns, 'local:box');
+  check('the deleted part script and run are not kept',
+    !Object.prototype.hasOwnProperty.call(scriptsLeft, 'local:box')
+    && scriptsLeft['local:wide'] === WIDE
+    && !Object.prototype.hasOwnProperty.call(runsLeft, 'local:box')
+    && runsLeft['local:wide'].ok === true
+    && scriptForRow(removed, scriptsLeft, 'local:box').reason === 'unknown-row');
+  const activeGone = removePart(doc, 'local:wide');
+  check('deleting the active part leaves the other part active, position included',
+    activeGone.activeId === 'local:box'
+    && activeGone.parts.length === 1
+    && activeGone.parts[0].position[0] === 30
+    && !JSON.stringify(activeGone).includes('local:wide'));
+  const emptied = removePart(activeGone, 'local:box');
+  check('deleting the last part leaves no dangling id and no solid',
+    emptied.parts.length === 0
+    && emptied.activeId == null
+    && composeViewportParts(emptied, hiddenRuns).length === 0
+    && feedRows(emptied, hiddenRuns, scripts).length === 0
+    && !JSON.stringify(emptied).includes('local:box'));
 }
 
 const pending = new Map();
@@ -305,6 +353,26 @@ async function execute(script) {
     .find((entry) => entry.id === 'local:box');
   check('the failed row is marked and carries no mesh',
     row.error === true && row.mesh == null);
+
+  const removed = removePart(doc, 'local:box');
+  const scriptsLeft = dropPartRecord(scripts, 'local:box');
+  const listed = feedRows(removed, both.runs, scripts);
+  const stillThere = composeViewportParts(removed, both.runs);
+  check('a deleted part is not listed after a real run',
+    !listed.some((entry) => entry.id === 'local:box')
+    && listed.some((entry) => entry.id === 'local:wide')
+    && listed.length === 1);
+  check('a deleted part is not composed after a real run',
+    !stillThere.some((solid) => solid.id === 'local:box')
+    && stillThere.some((solid) => solid.id === 'local:wide')
+    && stillThere[0].mesh.vertProperties.length > 0);
+  const again = await runAssemblyParts({ doc: removed, scripts: scriptsLeft, execute });
+  const againRows = feedRows(removed, again.runs, scriptsLeft);
+  check('the next compose still omits the deleted part and keeps the other',
+    !again.solids.some((solid) => solid.id === 'local:box')
+    && again.solids.some((solid) => solid.id === 'local:wide')
+    && !againRows.some((entry) => entry.id === 'local:box')
+    && againRows.some((entry) => entry.id === 'local:wide'));
 }
 
 if (failed) {

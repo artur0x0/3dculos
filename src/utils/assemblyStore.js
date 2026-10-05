@@ -114,6 +114,12 @@ export async function savePartScript(id, script) {
   return ok;
 }
 
+export async function deletePartScript(id) {
+  if (!id) return false;
+  const { ok } = await runTx(PART_STORE, 'readwrite', (store) => store.delete(String(id)));
+  return ok;
+}
+
 export async function loadPartScripts(ids) {
   const out = {};
   for (const id of ids || []) {
