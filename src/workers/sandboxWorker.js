@@ -2752,9 +2752,11 @@ function c4MeshData(m) {
       const c = [0, 0, 0];
       let areaSum = 0;
       const all = [];
+      const seenVert = new Set();
       const trisSub = gis.map(gi => tris[gi]);
       for (const t of trisSub) {
-        const v0 = V[mesh.triVerts[t*3]], v1 = V[mesh.triVerts[t*3+1]], v2 = V[mesh.triVerts[t*3+2]];
+        const i0 = mesh.triVerts[t*3], i1 = mesh.triVerts[t*3+1], i2 = mesh.triVerts[t*3+2];
+        const v0 = V[i0], v1 = V[i1], v2 = V[i2];
         const cxv = _c4Cross(_c4Sub(v1, v0), _c4Sub(v2, v0));
         const area = 0.5 * _c4Len(cxv);
         const tn = _c4Norm(cxv);
@@ -2763,8 +2765,8 @@ function c4MeshData(m) {
         const tc = [(v0[0]+v1[0]+v2[0])/3, (v0[1]+v1[1]+v2[1])/3, (v0[2]+v1[2]+v2[2])/3];
         c[0] += tc[0]*area; c[1] += tc[1]*area; c[2] += tc[2]*area;
         areaSum += area;
-        for (const v of [v0, v1, v2]) {
-          if (!all.includes(v)) all.push(v);
+        for (const id of [i0, i1, i2]) {
+          if (!seenVert.has(id)) { seenVert.add(id); all.push(V[id]); }
         }
       }
       const center = areaSum > 1e-18 ? _c4Mul(1/areaSum, c) : [0, 0, 0];
@@ -2844,13 +2846,15 @@ function c4MeshData(m) {
           const c = [0, 0, 0];
           let areaSum = 0;
           const all = [];
+          const seenVert = new Set();
           const trisSub = [];
           let id = faces[members[0]].id;
           for (const fi of members) {
             id = Math.min(id, faces[fi].id);
             for (const t of faces[fi].tris) {
               trisSub.push(t);
-              const v0 = V[mesh.triVerts[t*3]], v1 = V[mesh.triVerts[t*3+1]], v2 = V[mesh.triVerts[t*3+2]];
+              const i0 = mesh.triVerts[t*3], i1 = mesh.triVerts[t*3+1], i2 = mesh.triVerts[t*3+2];
+              const v0 = V[i0], v1 = V[i1], v2 = V[i2];
               const cxv = _c4Cross(_c4Sub(v1, v0), _c4Sub(v2, v0));
               const area = 0.5 * _c4Len(cxv);
               const tn = _c4Norm(cxv);
@@ -2858,8 +2862,8 @@ function c4MeshData(m) {
               const tc = [(v0[0]+v1[0]+v2[0])/3, (v0[1]+v1[1]+v2[1])/3, (v0[2]+v1[2]+v2[2])/3];
               c[0] += tc[0]*area; c[1] += tc[1]*area; c[2] += tc[2]*area;
               areaSum += area;
-              for (const v of [v0, v1, v2]) {
-                if (!all.includes(v)) all.push(v);
+              for (const vi of [i0, i1, i2]) {
+                if (!seenVert.has(vi)) { seenVert.add(vi); all.push(V[vi]); }
               }
             }
           }
@@ -5122,7 +5126,13 @@ function _s23SweepRun(Manifold, CrossSection, runGeom, radius, profileKind, arcS
   }
   const contour = _s23DihedralContour(radius, thetaUse, profileKind, arcSegs, testScale);
   const cs = new CrossSection([contour]);
-  const extrudeSegments = Math.min(256, Math.max(48, sweepFrames.length * 4));
+  // One extrusion slice per path chord. Those chords are already limited to
+  // FRAME_DENSIFY_MAX_TURN_DEG (5°), and the cross-section stays
+  // FILLET_ARC_SEGMENTS. A floor of 48 and a ×4 multiplier cut each chord
+  // again, so a straight edge and every semi-arc carried ~48 rings into the
+  // boolean. That was the wrap. The extra rings were uniform samples between
+  // knots the 5° pass already placed, not a tighter densify.
+  const extrudeSegments = Math.max(1, sweepFrames.length);
   return _s23SweepExplicit(Manifold, cs, sweepPts, sweepFrames, extrudeSegments);
 }
 
@@ -5624,10 +5634,21 @@ let _s23CaptureFaceSoupOn = false;
 let _s23FaceSoupPart = null;
 let _s23FaceSoup = null;
 
+// One fillet builds every cutter against the same solid. signedFeatureEdges
+// walks the whole mesh. Cache that walk on the part object so each semi-arc
+// run does not rebuild it. The boolean result is a different object, so the
+// next fillet misses and rebuilds.
+let _s23FeatureEdgePart = null;
+let _s23FeatureEdges = null;
+
 function _s23ProbeFeatureEdges(part) {
+  if (part && part === _s23FeatureEdgePart && _s23FeatureEdges) return _s23FeatureEdges;
   _s23CaptureFaceSoupOn = true;
   try {
-    return signedFeatureEdges(part);
+    const edges = signedFeatureEdges(part);
+    _s23FeatureEdgePart = part;
+    _s23FeatureEdges = edges;
+    return edges;
   } finally {
     _s23CaptureFaceSoupOn = false;
   }
@@ -6210,19 +6231,15 @@ function filletAlongPath(part, path, radius, opts = {}) {
       if (!cutters.length) {
         throw new Error('filletAlongPath: corner-arc semi-arc split produced no valid cutters');
       }
-      let tool = cutters[0];
-      for (let i = 1; i < cutters.length; i++) {
-        try {
-          tool = M.union([tool, cutters[i]]);
-        } catch (e) {
-          throw new Error(`filletAlongPath: semi-arc cutter union failed — ${e && e.message ? e.message : e}`);
-        }
-      }
-      const seTool = _c4StatusError(tool);
-      if (seTool) throw new Error(`filletAlongPath: bad semi-arc cutter union (${seTool})`);
+      // One n-way subtract. A − (C1 ∪ C2 ∪ …) is the same solid as A − C1 − C2 − …,
+      // and Manifold evaluates that as a single arrangement. Chaining
+      // union(union(C1, C2), C3) … forced a full boolean per semi-arc on the
+      // growing cutter. Each cutter was already status-checked when it was swept.
       let out;
       try {
-        out = M.difference(part, tool);
+        out = cutters.length === 1
+          ? M.difference(part, cutters[0])
+          : M.difference([part, ...cutters]);
       } catch (e) {
         throw new Error(`filletAlongPath: semi-arc subtract failed — ${e && e.message ? e.message : e}`);
       }
