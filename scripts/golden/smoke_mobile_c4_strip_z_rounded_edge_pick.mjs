@@ -51,7 +51,8 @@ console.log('mobile C.4: strip z + rounded edge pick');
     /data-script-editor-stack/.test(app) &&
       /overflow-hidden/.test(app) &&
       /data-script-feature-strip/.test(app) &&
-      /relative z-20 flex flex-col shrink-0/.test(app) &&
+      // febc887: strip is an absolute right overlay (was a shrink-0 flex child).
+      /absolute right-0 bottom-0 z-20 flex flex-col/.test(app) &&
       /data-feature-strip-below-ribbon/.test(app) &&
       /data-feature-strip-ribbon-spacer/.test(app) &&
       // Spacer height is measured off the ribbon, so no h-11 literal.

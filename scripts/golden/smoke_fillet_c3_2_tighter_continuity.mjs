@@ -99,8 +99,13 @@ console.log('fillet C3.2 tighter continuity — helpers + source pins');
     /singleRunCutter\s*:/.test(workerSrc) && /thetaRunCount\s*:/.test(workerSrc),
   );
   check(
-    'sandboxWorker sweep Gram-Schmidt after N/B lerp',
-    /nb \*=|const nb = Nx \* Bx/.test(workerSrc) || /Nx \* Bx \+ Ny \* By/.test(workerSrc),
+    // f29fad2 dropped the between-knot N/B lerp (one ring per knot), so the
+    // Gram-Schmidt now lives where frames are carried: N loses its T component
+    // and B = T × N, keeping each knot frame orthonormal.
+    'sandboxWorker carried sweep frame is Gram-Schmidt orthonormal',
+    /function _s23CarryFrame\(src, T\)/.test(workerSrc)
+      && /_s23Dot\(src\.N, Tn\) \* Tn\[0\]/.test(workerSrc)
+      && /let B = _s23Norm\(_s23Cross\(Tn, N\)\)/.test(workerSrc),
   );
 }
 

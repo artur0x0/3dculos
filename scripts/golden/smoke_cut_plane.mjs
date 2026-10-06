@@ -281,10 +281,16 @@ console.log('cut plane');
     && /bring it back/.test(chip));
   check('face and named planes share the offset field',
     /id="cut-offset"/.test(chip) && /along the plane normal/.test(chip));
+  // Scope the material checks to the Cut preview painters: #161 added a Block
+  // subtract preview that is legitimately DoubleSide elsewhere in Viewport.
+  const cutPaintStart = view.indexOf('const hideCutBaseMesh = useCallback');
+  const cutPaintEnd = view.indexOf('const ensureLiveCutPreview = useCallback');
+  const cutPaint = cutPaintStart >= 0 && cutPaintEnd > cutPaintStart
+    ? view.slice(cutPaintStart, cutPaintEnd) : '';
   check('pieces preview runs the real cut and tints those bodies',
-    /previewCut/.test(view) && /colorWrite: false/.test(view)
-    && /CUT_PIECE_OPACITY/.test(view) && /cutPreviewPieceHidden/.test(view)
-    && /side: FrontSide/.test(view) && !/side: DoubleSide/.test(view)
+    /previewCut/.test(view) && /colorWrite: false/.test(cutPaint)
+    && /CUT_PIECE_OPACITY/.test(cutPaint) && /cutPreviewPieceHidden/.test(cutPaint)
+    && /side: FrontSide/.test(cutPaint) && !/side: DoubleSide/.test(cutPaint)
     && !/buildCutPiecePositions/.test(view) && !/cutPieceMesh/.test(view)
     && /cutMode\?\.pick === 'pieces'/.test(view));
   const workerSrc = read('../../src/workers/sandboxWorker.js');

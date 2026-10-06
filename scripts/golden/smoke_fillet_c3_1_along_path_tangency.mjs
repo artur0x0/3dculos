@@ -73,9 +73,14 @@ console.log('fillet C3.1 along-path tangency / frame transport');
     /alongPathTransport\s*:/.test(workerSrc) && /maxFrameJumpDeg/.test(workerSrc),
   );
   check(
-    'sandboxWorker sweep lerps consecutive frames (ridge continuity)',
-    /fr1\.N\[0\]\s*-\s*fr0\.N\[0\]/.test(workerSrc)
-      || /frac\s*\*\s*\(fr1\.N/.test(workerSrc),
+    // f29fad2 replaced the warp-time N/B lerp between frames with one cutter
+    // ring per densified knot, each placed from that knot's own frame. Ridge
+    // continuity now comes from the 5° knot density + along-path transport,
+    // not from interpolating between knots.
+    'sandboxWorker sweep places one ring per knot from its own frame (ridge continuity)',
+    /function _s23SweepKnotRings\(points, frames, contour\)/.test(workerSrc)
+      && /_s23PlaceContourRing\(contour, points\[i\], fr\.N, fr\.B\)/.test(workerSrc)
+      && /frames\.length !== nSeg/.test(workerSrc),
   );
   check('FRAME_TRANSPORT_DAMP_DEG is finite', Number.isFinite(FRAME_TRANSPORT_DAMP_DEG) && FRAME_TRANSPORT_DAMP_DEG > 0);
 }

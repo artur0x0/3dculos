@@ -195,8 +195,9 @@ return part;
   check('HELPER notes additive Confirm',
     /when `part` already exists/i.test(docs) && /part\.add\(placeInFrame/.test(docs));
   const palette = readFileSync(join(here, '../../src/utils/helperPaletteSnippets.js'), 'utf8');
-  check('palette copy says Confirm unions',
-    /Confirm unions onto part when part already exists/.test(palette));
+  // Block/Shape subtract mode (dcf0c0b) made Confirm add OR subtract; default stays add.
+  check('palette copy says Confirm adds or subtracts onto an existing part',
+    /Confirm adds or subtracts when part already exists/.test(palette));
 }
 
 // ── (d) additive Confirm keeps cube volume + new feature ──────

@@ -68,8 +68,13 @@ console.log('mobile B.1: vertical strip icons + face popup under title + view zo
       /pb-\[max\(3\.5rem/.test(strip),
   );
   check(
-    'App mounts strip as left rail beside Monaco (flex-row), Script-stage jump intact',
-    /flex flex-row/.test(app) &&
+    // febc887 (UI polish) made the Script editor full-bleed; the vertical strip
+    // now overlays the right edge below the measured ribbon instead of a flex-row
+    // side-by-side rail.
+    'App mounts vertical strip as right overlay over Monaco (below ribbon), Script-stage jump intact',
+    /absolute right-0 bottom-0 z-20 flex flex-col/.test(app) &&
+      /data-script-feature-strip/.test(app) &&
+      /orientation="vertical"/.test(app) &&
       /isScriptStage && \(/.test(app) &&
       /handleFeatureStripJump/.test(app) &&
       /<FeatureStrip[\s\S]*?script=\{currentScript\}/.test(app) &&

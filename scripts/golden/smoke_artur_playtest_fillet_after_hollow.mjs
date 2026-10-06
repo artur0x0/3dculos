@@ -4,7 +4,7 @@
  *
  * Fixture `fixtures/artur_playtest_fillet_after_hollow.txt` is the exact
  * script: cube → straight fillet r=4 → variable-profile wrap r=4.83 →
- * hollow 2.5 open toward -Z → fillet r=1.75 on edgesBetween faces 2 and 35.
+ * hollow 2.5 open toward -Z → fillet r=1.75 on edgesBetween faces 2 and 31.
  *
  * That edge is the cavity's inner vertical corner (concave), not the wrap.
  * On #114 main the filler wedge stops on the open face, so its end cap is
@@ -25,7 +25,8 @@
  * junction. The +X corner's interior stray triangle (a facet bridging the
  * inner r=1.5 cylinder and the outer r=4 fillet) must also stay 0.
  * Lattice-aligned wrap chords shifted that cavity edge's face id 34 → 35;
- * selEdges2 is unchanged.
+ * the #136 draft-tear kernel work shifted it again 35 → 31 (same edge:
+ * mid [-17.5, -12.5, -1.25], length 17.5). selEdges2 is unchanged.
  */
 import { register } from 'node:module';
 import { readFileSync } from 'node:fs';
@@ -291,8 +292,10 @@ check('concave fillet arc is present inside the cavity', got && got.arcVerts >= 
 check('not sliver-dirty', got && !got.dirty, `tiny=${got?.tiny}/${got?.nTri}`);
 // Cavity walls point toward the origin, so a radial inward test is not zero on a
 // shell. #115 open-end pad: 336 (ceiling 338). Inner-end pad retessellates
-// those same cavity faces: measured 358. Not the lip (that probe is `lip`).
-check('inward-visible count does not rise', got && got.inwardVis <= 358, `inwardVis=${got?.inwardVis}`);
+// those same cavity faces: measured 358. The #136/#154 kernels retessellate
+// again: 360 inward-visible of 5432 tris (was 358 of 5710; fins 62 → 29).
+// Not the lip (that probe is `lip`).
+check('inward-visible count does not rise', got && got.inwardVis <= 360, `inwardVis=${got?.inwardVis}`);
 // Pre-fix fins=39 (the fan). Open-end pad: 41. Quarter-arc lattice
 // (3.75° instead of ~4.92°) adds zero-area slivers along the r=4 cylinder:
 // measured fins=62. Not the interior stray triangle (that probe is `stray`).
