@@ -3,19 +3,18 @@
  * Multi-part easy fillet: each part comes out the way a solo Fillet of that
  * part would.
  *
- * Fillet mode seeds an untouched radius from the active part's picks (0.1 ×
- * path length, clamped). A multi-part Accept used to validate every part
- * with that one session radius, so the part that was not active took the
- * active part's seed: a 40 mm edge on A filleted at B's 2 mm, or a 4 mm
- * plate filleted at a 6 mm rim seed (classed hard, variable-profile, and
- * cut deeper than the plate). One part right, the other wrong, on every
- * multi-part pick whose chains differ in length.
+ * An untouched Fillet radius is the fixed 2 mm default, clamped down only on
+ * a part too thin for it (defaultFilletRadius: 0.45 × the part's thinnest
+ * extent). A multi-part Accept used to validate every part with the active
+ * part's one session radius, so a thin part took a thicker part's seed. Each
+ * part now reseeds against its own solid: 2 mm on the 40 × 30 × 20 block,
+ * the 20 mm cube and the cylinder rim; 1.8 mm on the 4 mm plate.
  *
  * The Accept below is the viewport's: picks from each part's pick graph,
  * the session seeded from the active part's picks, planMultiPartEdgeAccept
  * with partEdgeParams, a class per part from that part's own geometry, then
  * composeMultiPartEdgeCommit. Each composed script runs and must match the
- * solo Fillet of that part (seed from its own picks): same radius, class,
+ * solo Fillet of that part (seed from its own solid): same radius, class,
  * volume, surface area, triangle count and genus. Both directions (A or B
  * active), and a typed radius still applies to every part.
  */
@@ -31,7 +30,9 @@ import {
   composeFilletCommit,
   defaultFilletParams,
   enterFilletState,
+  FILLET_DEFAULT_RADIUS,
   hasFilletModeBlock,
+  solidMinExtent,
   validateFilletAccept,
 } from '../../src/utils/filletMode.js';
 import { classifyFilletEdges } from '../../src/utils/filletEdgeClass.js';
@@ -153,13 +154,18 @@ const along = (id, axis, at = null) => graphs[id].edges.find((e) => Math.abs(e.t
   && (!at || at(e.mid)));
 const topRim = (id) => graphs[id].edges.find((e) => Math.abs(e.tangent?.[2] || 0) < 0.01 && e.mid[2] > 9.9);
 
-/** The session params after the radius seed effect ran on the active part's picks. */
+/** Default seed for one part's picks: 2 mm, thin-clamped by that part's solid. */
+const seedFor = (id, picks = []) => defaultFilletParams(picks, {
+  minExtent: solidMinExtent(graphs[id].geometry),
+}).radius;
+
+/** The session params after the radius seed effect ran on the active part. */
 function sessionParams(sel, activeId, typed = null) {
   const state = enterFilletState([]);
   const active = sel.filter((e) => e.partId === activeId);
   if (typed != null) return { state: { ...state, params: { ...state.params, radius: typed }, radiusTouched: true } };
   return {
-    state: { ...state, params: { ...state.params, radius: defaultFilletParams(active).radius } },
+    state: { ...state, params: { ...state.params, radius: seedFor(activeId, active) } },
   };
 }
 
@@ -170,7 +176,7 @@ function multiAccept(sel, activeId, state) {
     activeId,
     validate: (list) => validateFilletAccept(list, partEdgeParams(state.params, list, {
       touched: !!state.radiusTouched,
-      seed: (picks) => defaultFilletParams(picks).radius,
+      seed: (picks) => seedFor(picks[0].partId, picks),
     })),
   });
   if (!plan.ok) return { ok: false, message: plan.message };
@@ -206,7 +212,7 @@ function multiAccept(sel, activeId, state) {
 /** A solo Fillet of one part: its own picks, its own seed (or the typed radius). */
 function soloAccept(id, edges, typed = null) {
   const state = enterFilletState([]);
-  const params = { ...state.params, radius: typed != null ? typed : defaultFilletParams(edges).radius };
+  const params = { ...state.params, radius: typed != null ? typed : seedFor(id, edges) };
   const gate = validateFilletAccept(edges, params);
   const klass = classifyFilletEdges(edges, { radius: gate.normalized.radius, geometry: graphs[id].geometry }).klass;
   const res = composeFilletCommit(graphs[id].script, {
@@ -241,20 +247,23 @@ async function compare(label, picksByPart, activeId, typed = null) {
   }
 }
 
-const edgeA = along('A', 0, (m) => m[1] < -14 && m[2] > 9);    // 40 mm edge: seed 4
+const edgeA = along('A', 0, (m) => m[1] < -14 && m[2] > 9);    // 40 mm edge: seed 2
 const edgeB = along('B', 2, (m) => m[0] > 9 && m[1] < -9);     // 20 mm edge: seed 2
-const edgeP = along('P', 0, (m) => m[1] < -14 && m[2] > 1.9);  // 40 mm edge on a 4 mm plate
-const rimC = topRim('C');                                       // rim loop: seed 6
+const edgeP = along('P', 0, (m) => m[1] < -14 && m[2] > 1.9);  // 40 mm edge on a 4 mm plate: 1.8
+const rimC = topRim('C');                                       // 62.8 mm rim loop: seed 2
 check('fixture edges found', !!(edgeA && edgeB && edgeP && rimC));
-check('fixture seeds differ per part (A 4, B 2, rim 6)',
-  defaultFilletParams([edgeA]).radius === 4 && defaultFilletParams([edgeB]).radius === 2
-  && defaultFilletParams(pick([], 'C', rimC)).radius === 6);
+check('untouched seed is 2 mm whatever the path length (A, B, rim)',
+  FILLET_DEFAULT_RADIUS === 2 && seedFor('A', [edgeA]) === 2 && seedFor('B', [edgeB]) === 2
+  && seedFor('C', pick([], 'C', rimC)) === 2,
+  `A ${seedFor('A', [edgeA])} B ${seedFor('B', [edgeB])} C ${seedFor('C', pick([], 'C', rimC))}`);
+check('the 4 mm plate clamps the seed down (1.8 mm)', seedFor('P', [edgeP]) === 1.8,
+  `P ${seedFor('P', [edgeP])}`);
 
-// The bug: B active (seed 2) left A at 2; A active (seed 4) gave B 4.
 await compare('A then B, B active', [['A', [edgeA]], ['B', [edgeB]]], 'B');
 await compare('B then A, A active', [['B', [edgeB]], ['A', [edgeA]]], 'A');
-// A 6 mm rim seed used to land on the 4 mm plate (hard, cut through).
+// The rim's 2 mm session seed must not land on the 4 mm plate: P reseeds to 1.8.
 await compare('plate + rim, rim active', [['P', [edgeP]], ['C', [rimC]]], 'C');
+await compare('plate + rim, plate active', [['C', [rimC]], ['P', [edgeP]]], 'P');
 // A typed radius applies to every part, as a typed solo Fillet would.
 await compare('typed radius 3, B active', [['A', [edgeA]], ['B', [edgeB]]], 'B', 3);
 
@@ -267,10 +276,11 @@ await compare('typed radius 3, B active', [['A', [edgeA]], ['B', [edgeB]]], 'B',
     /validateFilletAccept\(list, partEdgeParams\(state\.params, list/.test(body));
   check('a typed radius (radiusTouched) skips the per-part reseed',
     /touched: !!state\.radiusTouched/.test(body));
-  check('the per-part seed is defaultFilletParams(picks).radius',
-    /seed: \(picks\) => defaultFilletParams\(picks\)\.radius/.test(body));
+  check('the per-part seed is the fixed default, thin-clamped by that part\'s solid',
+    /seed: \(picks\) => defaultFilletParams\(picks, \{\s*minExtent: solidMinExtent\(pickPartGeometry\(picks\[0\]\?\.partId/.test(body));
   const arch = read('docs/architecture.md');
-  check('architecture.md documents the per-part seed', /partEdgeParams/.test(arch));
+  check('architecture.md documents the per-part seed', /partEdgeParams/.test(arch)
+    && /2 mm/.test(arch));
 }
 
 if (failed) {

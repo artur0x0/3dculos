@@ -378,6 +378,12 @@ export const SWEEP_BLEND_DEFAULT_MIN = 1;
 export const SWEEP_BLEND_DEFAULT_MAX = 6;
 
 /**
+ * Untouched Fillet radius: a fixed 2 mm, however many edges are picked.
+ * (Fillet mode thin-clamps it per part: see defaultFilletRadius in filletMode.js.)
+ */
+export const FILLET_DEFAULT_RADIUS = 2;
+
+/**
  * Sweep fillet default radius from path length (not 0.45·minL).
  * Caps at SWEEP_BLEND_DEFAULT_MAX so box-scale perimeter picks get a usable
  * thumb without the planar 0.45·L clamp. Empty L → 3 (planar fillet seed);
