@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Eye, EyeOff, FilePlus, FolderOpen, GripVertical, Plus, Trash2 } from 'lucide-react';
+import { Eye, EyeOff, FolderOpen, GripVertical, Plus, Trash2 } from 'lucide-react';
 import { partListDeleteAction, sanitizeAssemblyName, sanitizePartName } from '../utils/assembly.js';
 import {
   PART_PREVIEW_SIZE,
@@ -204,6 +204,43 @@ function PartThumbnail({ mesh }) {
   );
 }
 
+
+/** Small glass dialog shared by Open / New part / Add existing. */
+function VaultPickerDialog({
+  title,
+  labelledBy,
+  dataAttr,
+  onClose,
+  children,
+  footer = null,
+}) {
+  return createPortal(
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center surface-scrim p-4"
+      data-git-dialog={dataAttr}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={labelledBy}
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose?.();
+      }}
+      onKeyDown={(event) => {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          onClose?.();
+        }
+      }}
+    >
+      <div className="w-full max-w-sm rounded-lg surface-glass border border-gray-700 p-4 shadow-xl">
+        <h2 id={labelledBy} className="text-sm font-semibold text-gray-100">{title}</h2>
+        <div className="mt-3">{children}</div>
+        {footer}
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 export default function PartFeed({
   placement = 'desktop',
   source = 'local',
@@ -215,18 +252,27 @@ export default function PartFeed({
   onLoadFile,
   onResolveFile,
   onAddPart,
-  onAddGitPart,
   onDeletePart,
   assemblyName = '',
   onRenameAssembly = null,
   onRenamePart = null,
+  onToggleSource = null,
+  sourceDirty = false,
+  onListVaultAssemblies = null,
+  onOpenVaultAssembly = null,
+  onListAddableParts = null,
+  onAddExistingPart = null,
+  onFindInRepo = null,
+  suggestNewPartPath = '',
 }) {
   const [renamingId, setRenamingId] = useState(null);
   const loadRef = useRef(null);
   const resolveRef = useRef(null);
   const resolveIdRef = useRef(null);
-  const gitPathRef = useRef(null);
-  const gitFileRef = useRef(null);
+  const [pendingDelete, setPendingDelete] = useState(null);
+  const cancelBtnRef = useRef(null);
+  const [openPicker, setOpenPicker] = useState(null); // null | { kind, items, loading, error, draft }
+  const pathInputRef = useRef(null);
 
   const onLoadPicked = async (event) => {
     const file = event.target.files?.[0];
@@ -255,24 +301,62 @@ export default function PartFeed({
   };
 
   const offerResolve = (id) => {
+    if (source === 'git' && onFindInRepo) {
+      onFindInRepo(id);
+      return;
+    }
     resolveIdRef.current = id;
     resolveRef.current?.click();
   };
 
-  const submitGit = (event) => {
-    event.preventDefault();
-    const path = gitPathRef.current?.value || '';
-    const file = gitFileRef.current?.files?.[0];
-    if (!file) return;
-    file.text().then((text) => {
-      onAddGitPart?.(path, text, file.name);
-      if (gitPathRef.current) gitPathRef.current.value = '';
-      if (gitFileRef.current) gitFileRef.current.value = '';
-    }).catch((err) => console.error('[PartFeed] git add failed', err));
+  const closePicker = () => setOpenPicker(null);
+
+  const startOpenAssembly = async () => {
+    if (source !== 'git') {
+      loadRef.current?.click();
+      return;
+    }
+    setOpenPicker({ kind: 'open', items: [], loading: true, error: '' });
+    try {
+      const items = (await onListVaultAssemblies?.()) || [];
+      setOpenPicker({ kind: 'open', items, loading: false, error: items.length ? '' : 'No assemblies in the vault yet.' });
+    } catch (err) {
+      setOpenPicker({ kind: 'open', items: [], loading: false, error: err?.message || 'Could not list assemblies' });
+    }
   };
 
-  const [pendingDelete, setPendingDelete] = useState(null);
-  const cancelBtnRef = useRef(null);
+  const startNewPart = () => {
+    if (source !== 'git') {
+      onAddPart?.();
+      return;
+    }
+    setOpenPicker({
+      kind: 'new-part',
+      items: [],
+      loading: false,
+      error: '',
+      draft: suggestNewPartPath || '',
+    });
+  };
+
+  const startAddExisting = async () => {
+    setOpenPicker({ kind: 'add-existing', items: [], loading: true, error: '' });
+    try {
+      const items = (await onListAddableParts?.()) || [];
+      setOpenPicker({
+        kind: 'add-existing',
+        items,
+        loading: false,
+        error: items.length ? '' : 'No other part scripts in the vault.',
+      });
+    } catch (err) {
+      setOpenPicker({ kind: 'add-existing', items: [], loading: false, error: err?.message || 'Could not list parts' });
+    }
+  };
+
+  useEffect(() => {
+    if (openPicker?.kind === 'new-part') pathInputRef.current?.select();
+  }, [openPicker?.kind]);
   const shell = placement === 'mobile'
     ? 'flex h-full w-full flex-col bg-[#1e1e1e] text-gray-100'
     : 'flex h-full w-72 shrink-0 flex-col border-r border-white/10 bg-[#1e1e1e] text-gray-100';
@@ -310,49 +394,33 @@ export default function PartFeed({
             type="button"
             className={STRIP_BTN}
             data-assembly-load=""
-            title="Load assembly"
-            aria-label="Load assembly"
-            onClick={() => loadRef.current?.click()}
+            title={source === 'git' ? 'Open assembly from vault' : 'Load assembly'}
+            aria-label={source === 'git' ? 'Open assembly from vault' : 'Load assembly'}
+            onClick={startOpenAssembly}
           >
             <FolderOpen size={STRIP_ICON} />
           </button>
-          {source === 'local' && (
+          <button
+            type="button"
+            className={STRIP_BTN}
+            data-part-add=""
+            title="New part"
+            aria-label="New part"
+            onClick={startNewPart}
+          >
+            <Plus size={STRIP_ICON} />
+          </button>
+          {source === 'git' && (
             <button
               type="button"
               className={STRIP_BTN}
-              data-part-add=""
-              title="New part"
-              aria-label="New part"
-              onClick={() => onAddPart?.()}
+              data-git-add-existing=""
+              title="Add existing part from vault"
+              aria-label="Add existing part from vault"
+              onClick={startAddExisting}
             >
-              <Plus size={STRIP_ICON} />
+              <span className="px-0.5 text-[10px] font-medium leading-none">Add</span>
             </button>
-          )}
-          {source === 'git' && (
-            <form className="flex items-center gap-0.5 sm:gap-1 min-w-0 flex-1" data-git-add="" onSubmit={submitGit}>
-              <div className={STRIP_DIVIDER} />
-              <input
-                ref={gitPathRef}
-                data-git-path=""
-                placeholder="parts/name.js"
-                className="min-w-0 flex-1 bg-transparent px-1 py-0.5 text-xs text-gray-100 outline-none"
-              />
-              <input
-                ref={gitFileRef}
-                data-git-file=""
-                type="file"
-                accept=".js,.txt"
-                className="min-w-0 w-24 text-[10px] text-gray-400"
-              />
-              <button
-                type="submit"
-                className={STRIP_BTN}
-                title="Add git part"
-                aria-label="Add git part"
-              >
-                <FilePlus size={STRIP_ICON} />
-              </button>
-            </form>
           )}
         </div>
         <div
@@ -373,12 +441,26 @@ export default function PartFeed({
             </button>
           )}
           <div className={STRIP_DIVIDER} />
-          <span
-            className="shrink-0 px-1 text-[11px] font-mono text-gray-300"
+          <button
+            type="button"
             data-parts-source-label=""
+            data-parts-source-toggle=""
+            data-git-dirty={sourceDirty ? 'true' : 'false'}
+            title={source === 'git' ? 'Switch to Local mode' : 'Switch to Git mode'}
+            aria-label={source === 'git' ? 'Git mode' : 'Local mode'}
+            aria-pressed={source === 'git'}
+            className="relative shrink-0 rounded px-1 py-0.5 text-[11px] font-mono text-gray-300 hover:bg-gray-700/60"
+            onClick={() => onToggleSource?.()}
           >
             {source === 'git' ? 'Git' : 'Local'}
-          </span>
+            {sourceDirty ? (
+              <span
+                data-git-dirty-badge=""
+                className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-amber-400"
+                title="Uncommitted changes"
+              />
+            ) : null}
+          </button>
         </div>
         {ribbonName ? (
           <div
@@ -417,6 +499,7 @@ export default function PartFeed({
               data-part-row={row.id}
               data-part-selected={selected ? 'true' : 'false'}
               data-part-status={status}
+              data-part-dirty={row.dirty ? 'true' : 'false'}
               draggable={renamingId !== row.id}
               onDragStart={(event) => {
                 event.dataTransfer.setData('text/plain', String(index));
@@ -466,7 +549,16 @@ export default function PartFeed({
                   editing={renamingId === row.id}
                   setEditing={(on) => setRenamingId(on ? row.id : null)}
                 />
-                <div className="truncate text-[10px] text-gray-500">{row.id}</div>
+                <div className="flex items-center gap-1 truncate text-[10px] text-gray-500">
+                  <span className="truncate">{row.id}</span>
+                  {row.dirty ? (
+                    <span
+                      data-part-dirty=""
+                      title="Uncommitted changes"
+                      className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400"
+                    />
+                  ) : null}
+                </div>
                 {row.missing && (
                   <button
                     type="button"
@@ -519,6 +611,135 @@ export default function PartFeed({
           );
         })}
       </div>
+
+      {openPicker && typeof document !== 'undefined' && openPicker.kind === 'open' && (
+        <VaultPickerDialog
+          title="Open assembly"
+          labelledBy="git-open-title"
+          dataAttr="open"
+          onClose={closePicker}
+          footer={(
+            <div className="mt-4 flex justify-end">
+              <button type="button" className="rounded-md px-3 py-1.5 text-xs text-gray-200 hover:bg-white/10" onClick={closePicker} data-git-dialog-cancel="">
+                Cancel
+              </button>
+            </div>
+          )}
+        >
+          {openPicker.loading && <p className="text-xs text-gray-400" data-git-dialog-loading="">Loading…</p>}
+          {openPicker.error && !openPicker.loading && (
+            <p className="text-xs text-amber-300" data-git-dialog-empty="">{openPicker.error}</p>
+          )}
+          {!openPicker.loading && openPicker.items.length > 0 && (
+            <ul className="max-h-56 space-y-1 overflow-y-auto" data-git-open-list="">
+              {openPicker.items.map((name) => (
+                <li key={name}>
+                  <button
+                    type="button"
+                    data-git-open-item={name}
+                    className="w-full rounded-md px-2 py-1.5 text-left text-xs text-gray-100 hover:bg-white/10"
+                    onClick={async () => {
+                      closePicker();
+                      await onOpenVaultAssembly?.(name);
+                    }}
+                  >
+                    {name}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </VaultPickerDialog>
+      )}
+      {openPicker && typeof document !== 'undefined' && openPicker.kind === 'new-part' && (
+        <VaultPickerDialog
+          title="New part path"
+          labelledBy="git-new-part-title"
+          dataAttr="new-part"
+          onClose={closePicker}
+          footer={(
+            <div className="mt-4 flex justify-end gap-2">
+              <button type="button" className="rounded-md px-3 py-1.5 text-xs text-gray-200 hover:bg-white/10" onClick={closePicker} data-git-dialog-cancel="">
+                Cancel
+              </button>
+              <button
+                type="button"
+                data-git-new-part-confirm=""
+                className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-500"
+                onClick={() => {
+                  const path = openPicker.draft || '';
+                  closePicker();
+                  onAddPart?.(path);
+                }}
+              >
+                Create
+              </button>
+            </div>
+          )}
+        >
+          <p className="mb-2 text-[11px] text-gray-400">
+            Repo path under this assembly or shared parts/.
+          </p>
+          <input
+            ref={pathInputRef}
+            data-git-new-part-path=""
+            value={openPicker.draft || ''}
+            onChange={(e) => setOpenPicker({ ...openPicker, draft: e.target.value })}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                const path = openPicker.draft || '';
+                closePicker();
+                onAddPart?.(path);
+              }
+            }}
+            className="w-full rounded-md border border-gray-600 bg-black/30 px-2 py-1.5 text-xs text-gray-100 outline-none focus:border-blue-500"
+            placeholder="assemblies/Name/parts/Bracket.js"
+          />
+        </VaultPickerDialog>
+      )}
+      {openPicker && typeof document !== 'undefined' && openPicker.kind === 'add-existing' && (
+        <VaultPickerDialog
+          title="Add existing part"
+          labelledBy="git-add-existing-title"
+          dataAttr="add-existing"
+          onClose={closePicker}
+          footer={(
+            <div className="mt-4 flex justify-end">
+              <button type="button" className="rounded-md px-3 py-1.5 text-xs text-gray-200 hover:bg-white/10" onClick={closePicker} data-git-dialog-cancel="">
+                Cancel
+              </button>
+            </div>
+          )}
+        >
+          {openPicker.loading && <p className="text-xs text-gray-400" data-git-dialog-loading="">Loading…</p>}
+          {openPicker.error && !openPicker.loading && (
+            <p className="text-xs text-amber-300" data-git-dialog-empty="">{openPicker.error}</p>
+          )}
+          {!openPicker.loading && openPicker.items.length > 0 && (
+            <ul className="max-h-56 space-y-1 overflow-y-auto" data-git-add-list="">
+              {openPicker.items.map((item) => (
+                <li key={item.path}>
+                  <button
+                    type="button"
+                    data-git-add-item={item.path}
+                    className="w-full rounded-md px-2 py-1.5 text-left text-xs text-gray-100 hover:bg-white/10"
+                    onClick={async () => {
+                      closePicker();
+                      await onAddExistingPart?.(item.path);
+                    }}
+                  >
+                    <span className="block truncate">{item.label || item.path}</span>
+                    {item.kind === 'shared-part' ? (
+                      <span className="text-[10px] text-gray-500">shared</span>
+                    ) : null}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </VaultPickerDialog>
+      )}
       {pendingDelete && typeof document !== 'undefined' && createPortal(
         <div
           className="fixed inset-0 z-50 flex items-center justify-center surface-scrim p-4"

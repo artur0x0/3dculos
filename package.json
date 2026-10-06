@@ -117,7 +117,8 @@
         "golden:fillet-chamfer-multi-rotation": "node scripts/golden/smoke_fillet_chamfer_multi_rotation.mjs",
         "golden:helper-binding-clash": "node scripts/golden/smoke_helper_binding_clash.mjs",
         "golden:merge-bodies-toggle": "node scripts/golden/smoke_merge_bodies_toggle.mjs",
-        "golden:git-g1-vault-layout": "node scripts/golden/smoke_git_g1_vault_layout.mjs"
+        "golden:git-g1-vault-layout": "node scripts/golden/smoke_git_g1_vault_layout.mjs",
+        "golden:git-g2-open-save": "node scripts/golden/smoke_git_g2_open_save.mjs"
     },
     "dependencies": {
         "@monaco-editor/react": "^4.6.0",
