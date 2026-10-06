@@ -66,6 +66,29 @@ export function retargetKeepsEdgePicks({ filletMode = null } = {}) {
 }
 
 /**
+ * Params one part's picks are validated and written with.
+ *
+ * A radius the user set applies to every part. A radius the user never
+ * touched is only a seed: Fillet mode seeds it from the active part's
+ * picks (path length). Every part reseeds from its own picks, so each part
+ * gets the radius, class and block it would get if it were filleted alone.
+ * Before this, every other part took the active part's seed.
+ *
+ * @param {object} params    session params (Fillet mode state.params)
+ * @param {object[]} edges   picks of one part
+ * @param {{ touched?: boolean, seed?: (edges: object[]) => number }} [opts]
+ * @returns {object}
+ */
+export function partEdgeParams(params, edges, { touched = false, seed = null } = {}) {
+  const base = params || {};
+  if (touched || typeof seed !== 'function') return base;
+  if (!Array.isArray(edges) || !edges.length) return base;
+  const radius = Number(seed(edges));
+  if (!(Number.isFinite(radius) && radius > 0)) return base;
+  return { ...base, radius };
+}
+
+/**
  * Validate a multi-part Fillet / Chamfer Accept before anything is written.
  * One failing part fails the whole Accept, so a part is never half done.
  *

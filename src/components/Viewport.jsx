@@ -248,6 +248,7 @@ import {
   activePartEdges,
   foreignPartEdgeGroups,
   groupEdgesByPart,
+  partEdgeParams,
   planMultiPartEdgeAccept,
   retargetKeepsEdgePicks,
 } from '../utils/multiPartEdges';
@@ -2502,9 +2503,16 @@ const Viewport = forwardRef(({
     const plan = planMultiPartEdgeAccept({
       edges,
       activeId,
+      // An untouched radius is a seed from the active part's picks. Each
+      // part reseeds from its own picks, so it commits what a solo Fillet
+      // of that part would (radius, class, block). A typed radius applies
+      // to every part.
       validate: (list) => (chamfer
         ? validateChamferAccept(list, state.params)
-        : validateFilletAccept(list, state.params)),
+        : validateFilletAccept(list, partEdgeParams(state.params, list, {
+          touched: !!state.radiusTouched,
+          seed: (picks) => defaultFilletParams(picks).radius,
+        }))),
       partName: (id) => partLabelsRef.current?.[id] || id,
     });
     if (!plan.ok) {
