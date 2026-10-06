@@ -265,8 +265,11 @@ const contourRail = read('../../src/components/ContourModeRail.jsx');
       && /if \(e\.key === 'Escape'\)[\s\S]{0,60}setEditing\(false\)/.test(view));
   check('blur commits too', /onBlur=\{commit\}/.test(view));
   check('typing does not leak to viewport hotkeys', /e\.stopPropagation\(\)/.test(view));
+  // sanitizePartName moved to utils/assembly.js (shared with the Parts feed row rename).
+  const asm = read('../../src/utils/assembly.js');
   check('names are path-safe and bounded',
-    /function sanitizePartName/.test(view) && /slice\(0, 60\)/.test(view));
+    /export function sanitizePartName/.test(asm) && /slice\(0, 60\)/.test(asm)
+      && /import \{[^}]*sanitizePartName[^}]*\} from '\.\.\/utils\/assembly\.js'/.test(view));
   check('an empty name is not committed', /if \(next && next !== \(value \|\| ''\)\) onRename\(next\)/.test(view));
 }
 

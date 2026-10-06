@@ -49,6 +49,8 @@ import {
   parseAssemblyDocument,
   partPosition,
   removePart,
+  renamePart,
+  renameTargetId,
   reorderParts,
   sanitizeAssemblyName,
   scriptForRow,
@@ -1274,6 +1276,8 @@ const App = () => {
     rememberCadPart(id);
     const partNow = doc.parts.find((row) => row.id === id);
     if (id === doc.activeId) {
+      // The title may still show a part picked in the viewer; bring it back.
+      setCurrentFilename(partNow?.name || null);
       // A face or edge pick can show another part's mesh while Monaco stays
       // here. Clicking this row brings that mesh back.
       const mesh = meshForPart(id);
@@ -2283,20 +2287,32 @@ const App = () => {
     codeEditorRef.current?.selectAll?.();
   };
 
-  // Rename from the viewport title chip. Only app state — the name is read by
-  // save/export and by the OAuth-redirect snapshot, so nothing else to write.
-  const handleRenameFile = (name) => {
-    const next = String(name || '').trim();
-    if (!next) return;
-    setCurrentFilename(next);
+  // Rename one part by id (Parts feed row). The title follows when that part
+  // is the one it shows. The name is read by save/export and by the
+  // OAuth-redirect snapshot, so nothing else to write.
+  const handleRenamePart = (id, name) => {
     const doc = assemblyRef.current;
-    if (!doc?.activeId) return;
-    rememberAssembly({
-      ...doc,
-      parts: doc.parts.map((part) => (
-        part.id === doc.activeId ? { ...part, name: next } : part
-      )),
-    });
+    if (!doc) return;
+    const nextDoc = renamePart(doc, id, name);
+    if (nextDoc === doc) return;
+    rememberAssembly(nextDoc);
+    if (renameTargetId(nextDoc, cadPartIdRef.current) === id) {
+      setCurrentFilename(nextDoc.parts.find((part) => part.id === id)?.name || null);
+    }
+  };
+
+  // Rename from the viewer title chip. It lands on the part the title shows:
+  // a pick on another part moves the title (cadPartId) but not the editor's
+  // activeId, so writing to activeId renamed the wrong part.
+  const handleRenameFile = (name) => {
+    const doc = assemblyRef.current;
+    const id = renameTargetId(doc, cadPartIdRef.current);
+    if (!doc || id == null) {
+      const next = String(name || '').trim();
+      if (next) setCurrentFilename(next);
+      return;
+    }
+    handleRenamePart(id, name);
   };
 
   const handleRenameAssembly = (name) => {
@@ -2464,6 +2480,7 @@ const App = () => {
       source={assemblyDoc.source}
       assemblyName={assemblyLabel}
       onRenameAssembly={handleRenameAssembly}
+      onRenamePart={handleRenamePart}
       rows={partRows}
       activeId={cadHighlightId}
       onSelect={handleSelectPart}

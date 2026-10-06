@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Eye, EyeOff, FilePlus, FolderOpen, GripVertical, Plus, Trash2 } from 'lucide-react';
-import { partListDeleteAction, sanitizeAssemblyName } from '../utils/assembly.js';
+import { partListDeleteAction, sanitizeAssemblyName, sanitizePartName } from '../utils/assembly.js';
 import {
   PART_PREVIEW_SIZE,
   blitPartPreview,
@@ -94,6 +94,66 @@ function RibbonAssemblyName({ name, onRename }) {
   );
 }
 
+/**
+ * Part name on a feed row. Double-click (or F2 on the focused row) edits it;
+ * a single click still selects the row. Enter or blur commits, Escape
+ * reverts, a blank name commits nothing. The rename targets this row's id.
+ */
+function RowPartName({ id, name, onRename, editing, setEditing }) {
+  const [draft, setDraft] = useState('');
+  const inputRef = useRef(null);
+
+  useEffect(() => {
+    if (editing) {
+      setDraft(name || '');
+      inputRef.current?.select();
+    }
+  }, [editing]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const commit = () => {
+    if (!editing) return;
+    setEditing(false);
+    const next = sanitizePartName(draft);
+    if (next && next !== (name || '')) onRename?.(id, next);
+  };
+
+  const label = 'truncate text-sm font-medium text-gray-100';
+  if (editing) {
+    const stop = (event) => event.stopPropagation();
+    return (
+      <input
+        ref={inputRef}
+        value={draft}
+        draggable={false}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onClick={stop}
+        onDoubleClick={stop}
+        onPointerDown={stop}
+        onDragStart={(e) => { e.preventDefault(); e.stopPropagation(); }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') { e.preventDefault(); commit(); }
+          if (e.key === 'Escape') { e.preventDefault(); setEditing(false); }
+          e.stopPropagation();
+        }}
+        className={`${label} w-full rounded border border-blue-400/80 bg-gray-900 px-1 outline-none`}
+        aria-label="Part name"
+        data-part-name-input={id}
+      />
+    );
+  }
+  return (
+    <div
+      className={`${label} ${onRename ? 'cursor-text' : ''}`}
+      data-part-name={id}
+      title={onRename ? 'Double-click to rename this part' : undefined}
+      onDoubleClick={onRename ? (event) => { event.stopPropagation(); setEditing(true); } : undefined}
+    >
+      {name}
+    </div>
+  );
+}
+
 function PartThumbnail({ mesh }) {
   const ref = useRef(null);
   const meshRef = useRef(mesh);
@@ -159,7 +219,9 @@ export default function PartFeed({
   onDeletePart,
   assemblyName = '',
   onRenameAssembly = null,
+  onRenamePart = null,
 }) {
+  const [renamingId, setRenamingId] = useState(null);
   const loadRef = useRef(null);
   const resolveRef = useRef(null);
   const resolveIdRef = useRef(null);
@@ -342,7 +404,7 @@ export default function PartFeed({
               data-part-row={row.id}
               data-part-selected={selected ? 'true' : 'false'}
               data-part-status={status}
-              draggable
+              draggable={renamingId !== row.id}
               onDragStart={(event) => {
                 event.dataTransfer.setData('text/plain', String(index));
                 event.dataTransfer.effectAllowed = 'move';
@@ -358,6 +420,10 @@ export default function PartFeed({
                 if (event.key === 'Enter' || event.key === ' ') {
                   event.preventDefault();
                   onSelect?.(row.id);
+                }
+                if (event.key === 'F2' && onRenamePart) {
+                  event.preventDefault();
+                  setRenamingId(row.id);
                 }
               }}
               className={`relative flex w-full cursor-pointer items-center gap-2 border-b border-white/5 px-2 py-2 text-left ${
@@ -380,7 +446,13 @@ export default function PartFeed({
               />
               <PartThumbnail mesh={row.mesh} />
               <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-medium text-gray-100">{row.name}</div>
+                <RowPartName
+                  id={row.id}
+                  name={row.name}
+                  onRename={onRenamePart}
+                  editing={renamingId === row.id}
+                  setEditing={(on) => setRenamingId(on ? row.id : null)}
+                />
                 <div className="truncate text-[10px] text-gray-500">{row.id}</div>
                 {row.missing && (
                   <button

@@ -268,7 +268,7 @@ import { downloadModelFromMesh, get3MFBase64FromMesh } from '../utils/exportMode
 import { parseImportedModels, loadCachedModel } from '../utils/importModel';
 import { calculateQuote } from '../utils/quoting';
 import { resolveViewportFaceClick, warmFaceGraph } from '../utils/selectFace';
-import { formatViewerTitle } from '../utils/assembly.js';
+import { formatViewerTitle, sanitizePartName } from '../utils/assembly.js';
 import { buildPartGraphPatches, buildPatchOverlayArrays, PARTGRAPH_MAX_TRIANGLES } from '../utils/partGraphPatches';
 import { createCuttingPlaneWidget, updateCuttingPlaneWidget } from '../utils/cuttingPlaneWidget';
 import { AxesHelper } from 'three';
@@ -496,14 +496,6 @@ function geometryFromPreviewMesh(mesh) {
 }
 
 /** Shared top title. Puzzle name in game; filename on mobile CAD. */
-/** Filenames land in `${name}.js` downloads, so keep them path-safe and short. */
-function sanitizePartName(raw) {
-  return String(raw ?? '')
-    .replace(/[/\\:*?"<>|]/g, '')   // path + Windows-illegal characters
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 60);
-}
 
 const TITLE_CHIP = 'text-xs font-medium text-center truncate px-3 py-1.5 rounded-lg shadow'
   + ' bg-gray-900/80 surface-glass-chip border border-gray-500/50 text-gray-100';
