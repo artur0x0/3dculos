@@ -359,6 +359,19 @@ export default function PartFeed({
           data-parts-ribbon-end=""
           className="relative z-10 ml-auto flex shrink-0 items-center"
         >
+          {source === 'git' && (
+            <button
+              type="button"
+              disabled
+              data-git-connect=""
+              data-git-adapter="mock"
+              title="GitHub sign-in is coming. Git mode uses a local mock vault for now."
+              aria-label="Connect GitHub"
+              className="shrink-0 rounded border border-gray-700 px-1.5 py-0.5 text-[10px] text-gray-400 opacity-80 cursor-not-allowed"
+            >
+              Connect GitHub
+            </button>
+          )}
           <div className={STRIP_DIVIDER} />
           <span
             className="shrink-0 px-1 text-[11px] font-mono text-gray-300"
