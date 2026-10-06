@@ -106,6 +106,7 @@
         "golden:per-part-undo": "node scripts/golden/smoke_per_part_undo.mjs",
         "golden:cross-part-clone": "node scripts/golden/smoke_cross_part_clone.mjs",
         "golden:multi-part-fillet": "node scripts/golden/smoke_multi_part_fillet.mjs",
+        "golden:multi-part-easy-fillet": "node scripts/golden/smoke_multi_part_easy_fillet.mjs",
         "golden:helper-binding-clash": "node scripts/golden/smoke_helper_binding_clash.mjs"
     },
     "dependencies": {
