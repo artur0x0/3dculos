@@ -2742,13 +2742,40 @@ function c4MeshData(m) {
       const v0 = V[mesh.triVerts[t*3]];
       return nrm[0]*v0[0] + nrm[1]*v0[1] + nrm[2]*v0[2];
     });
-    const planeGroups = new Map(); // offsetKey -> [gi...]
+    // The offset alone is not a plane test. faceID is only unique within one
+    // source mesh, and every swept fillet cutter is built with the same
+    // triangle numbering, so faceID k is a facet of EACH earlier fillet. On a
+    // symmetric part two such facets on different fillets can sit at the same
+    // offset along their averaged normal (measured: a +x top fillet facet and
+    // a −x vertical fillet facet, normals 90° apart). Merged, the group normal
+    // was 45° off both, signedFeatureEdges handed that to the next fillet as
+    // the edge dihedral, and the variable-profile cutter cut a wrong section
+    // there (the three-fillet corner blob). Re-merge only components whose
+    // own normals agree.
+    const compNormal = (gis) => {
+      const n = [0, 0, 0];
+      for (const gi of gis) {
+        const t = tris[gi];
+        const v0 = V[mesh.triVerts[t*3]], v1 = V[mesh.triVerts[t*3+1]], v2 = V[mesh.triVerts[t*3+2]];
+        const tn = _c4Norm(_c4Cross(_c4Sub(v1, v0), _c4Sub(v2, v0)));
+        n[0] += tn[0]; n[1] += tn[1]; n[2] += tn[2];
+      }
+      return _c4Norm(n);
+    };
+    const cosSamePlane = Math.cos((COPLANAR_PAIR_MIN_DEG * Math.PI) / 180);
+    const planeGroups = new Map(); // offsetKey -> [{ n, gis }]
     for (const gis of byRoot.values()) {
       const key = `${triBody[tris[gis[0]]]}:${Math.round(offs[gis[0]] * 1e3)}`;
       if (!planeGroups.has(key)) planeGroups.set(key, []);
-      planeGroups.get(key).push(...gis);
+      const bucket = planeGroups.get(key);
+      const cn = compNormal(gis);
+      const hit = bucket.find((g) => _c4Dot(g.n, cn) > cosSamePlane);
+      if (hit) hit.gis.push(...gis);
+      else bucket.push({ n: cn, gis: gis.slice() });
     }
-    for (const gis of planeGroups.values()) {
+    const planeGroupList = [];
+    for (const bucket of planeGroups.values()) for (const g of bucket) planeGroupList.push(g.gis);
+    for (const gis of planeGroupList) {
       const cn = [0, 0, 0];
       const c = [0, 0, 0];
       let areaSum = 0;
@@ -5352,6 +5379,76 @@ function _s23SweepRun(Manifold, CrossSection, runGeom, radius, profileKind, arcS
   return _s23SweepKnotRings(sweepPts, sweepFrames, contour);
 }
 
+/**
+ * Minimum spacing between variable-profile knots after densify. Arc chords at
+ * FILLET_ARC_SEGMENTS are ~0.2 mm, so nothing real lives below this.
+ */
+const _S23_MICRO_KNOT_MM = 0.05;
+/** Turn above which a knot is a real corner and is never dropped. */
+const _S23_MICRO_KEEP_TURN_DEG = 20;
+
+/**
+ * Drop knots closer than `gap` to the previous kept knot; path ends stay.
+ * densifyPathByMaxTurn bisects both segments at any turn above 5° for up to
+ * 8 passes, and bisecting cannot reduce the turn AT a true corner vertex, so
+ * each such corner (and each prior-fillet arc whose raw chords did not
+ * resample) grows a cluster of 0.001–0.05 mm segments. Every one of them
+ * gets its own probe, frame and cutter ring, with a tangent set by the
+ * corner, and the rings fold over each other where three cutters meet
+ * (a genus-1 handle on the three-fillet corner wrap).
+ */
+function _s23DropMicroKnots(points, closed, gap = _S23_MICRO_KNOT_MM) {
+  if (!Array.isArray(points) || points.length < 3 || !(gap > 0)) return points;
+  const d = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+  const n = points.length;
+  // A real corner vertex stays: dropping it would chamfer the path across
+  // the turn. Only the bisection debris around it goes.
+  const cosCorner = Math.cos((_S23_MICRO_KEEP_TURN_DEG * Math.PI) / 180);
+  const corner = (i) => {
+    const a = points[(i - 1 + n) % n];
+    const b = points[i];
+    const c = points[(i + 1) % n];
+    const u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+    const v = [c[0] - b[0], c[1] - b[1], c[2] - b[2]];
+    const lu = Math.hypot(u[0], u[1], u[2]);
+    const lv = Math.hypot(v[0], v[1], v[2]);
+    if (!(lu > 1e-12) || !(lv > 1e-12)) return false;
+    return (u[0] * v[0] + u[1] * v[1] + u[2] * v[2]) / (lu * lv) < cosCorner;
+  };
+  const keep = [points[0]];
+  const pinned = [true];
+  const lastIdx = closed ? n : n - 1;
+  for (let i = 1; i < lastIdx; i++) {
+    if (corner(i)) {
+      while (keep.length > 1 && !pinned[pinned.length - 1] && d(keep[keep.length - 1], points[i]) < gap) {
+        keep.pop();
+        pinned.pop();
+      }
+      keep.push(points[i]);
+      pinned.push(true);
+      continue;
+    }
+    if (d(keep[keep.length - 1], points[i]) >= gap) {
+      keep.push(points[i]);
+      pinned.push(false);
+    }
+  }
+  if (closed) {
+    while (keep.length > 3 && !pinned[pinned.length - 1] && d(keep[keep.length - 1], keep[0]) < gap) {
+      keep.pop();
+      pinned.pop();
+    }
+    return keep.length >= 3 ? keep : points;
+  }
+  const end = points[n - 1];
+  while (keep.length > 1 && !pinned[pinned.length - 1] && d(keep[keep.length - 1], end) < gap) {
+    keep.pop();
+    pinned.pop();
+  }
+  keep.push(end);
+  return keep.length >= 2 ? keep : points;
+}
+
 /** Last variable-profile framing meta — golden pin (m3 bypass → missing / undensified). */
 let _filletVariableProfileMeta = null;
 
@@ -6412,7 +6509,7 @@ function filletAlongPath(part, path, radius, opts = {}) {
       maxTurnDeg: FRAME_DENSIFY_MAX_TURN_DEG,
     });
     if (dense.length > points.length) {
-      points = dense;
+      points = _s23DropMicroKnots(dense, closed);
       length = pathPolylineLength(points, closed);
     }
   }

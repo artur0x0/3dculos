@@ -94,6 +94,7 @@
         "golden:fillet-sweep-quality": "node scripts/golden/smoke_fillet_sweep_quality.mjs",
         "golden:edge-contour-identity": "node scripts/golden/smoke_edge_contour_identity.mjs",
         "golden:playtest-draft-fillet-tear": "node scripts/golden/smoke_playtest_draft_fillet_tear.mjs",
+        "golden:fillet-three-corner-wrap": "node scripts/golden/smoke_fillet_three_corner_wrap.mjs",
         "golden:playtest-concave-fillet-tangency": "node scripts/golden/smoke_playtest_concave_fillet_tangency.mjs",
         "golden:face-click": "node scripts/golden/smoke_face_click_graph.mjs",
         "golden:move-body": "node scripts/golden/smoke_move_body.mjs",

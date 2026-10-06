@@ -120,16 +120,20 @@ function expectIdentity(name, got, want) {
   }
 }
 
+// Re-pinned for the three-fillet corner fix: worker face groups no longer
+// re-merge same-offset facets of different fillets, so the r=6 wrap probes
+// the true dihedral on a few facets. 12096 → 12100 tris, Δvolume 0.017 mm³,
+// same genus and zero-area count; 758 → 729 contour chains.
 const ARTUR = {
-  featureN: 10762,
+  featureN: 10746,
   boundaryN: 13,
   faceN: 8373,
-  contourN: 971,
-  chains: 758,
+  contourN: 907,
+  chains: 729,
   seamN: 0,
-  chainHash: '60da513c',
-  boundaryHash: '1927f413',
-  featureHash: '77efb611',
+  chainHash: '8a1c2ec4',
+  boundaryHash: '145b1a64',
+  featureHash: '264b1ad2',
 };
 
 const DENSE = {
@@ -189,7 +193,7 @@ for (let i = 0; i < nVert; i++) {
   positions[i * 3 + 2] = src[i * np + 2];
 }
 const indices = new Uint32Array(mesh.triVerts);
-check('Artur mesh stays 12096 tris', indices.length / 3 === 12096, `tris=${indices.length / 3}`);
+check('Artur mesh stays 12100 tris', indices.length / 3 === 12100, `tris=${indices.length / 3}`);
 const artur = identityOf(positions, indices, mesh.faceID, src, np);
 expectIdentity('Artur', artur, ARTUR);
 
