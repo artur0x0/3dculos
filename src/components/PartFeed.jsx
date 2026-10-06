@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Eye, EyeOff, FolderOpen, GripVertical, Plus, Trash2 } from 'lucide-react';
+import { Eye, EyeOff, FolderOpen, GitCommitHorizontal, Github, GripVertical, Plus, Trash2 } from 'lucide-react';
 import { partListDeleteAction, sanitizeAssemblyName, sanitizePartName } from '../utils/assembly.js';
 import {
   PART_PREVIEW_SIZE,
@@ -264,6 +264,9 @@ export default function PartFeed({
   onAddExistingPart = null,
   onFindInRepo = null,
   suggestNewPartPath = '',
+  canCommit = false,
+  onGitCommit = null,
+  onForceMerge = null,
 }) {
   const [renamingId, setRenamingId] = useState(null);
   const loadRef = useRef(null);
@@ -273,6 +276,9 @@ export default function PartFeed({
   const cancelBtnRef = useRef(null);
   const [openPicker, setOpenPicker] = useState(null); // null | { kind, items, loading, error, draft }
   const pathInputRef = useRef(null);
+  // G3 commit flow: null | { stage: 'message'|'busy'|'ask-force'|'done'|'error', ... }
+  const [commitFlow, setCommitFlow] = useState(null);
+  const commitInputRef = useRef(null);
 
   const onLoadPicked = async (event) => {
     const file = event.target.files?.[0];
@@ -357,6 +363,43 @@ export default function PartFeed({
   useEffect(() => {
     if (openPicker?.kind === 'new-part') pathInputRef.current?.select();
   }, [openPicker?.kind]);
+
+  const startCommit = () => {
+    if (source !== 'git' || !canCommit) return;
+    setCommitFlow({ stage: 'message', draft: '', result: null, error: '' });
+  };
+
+  const closeCommit = () => setCommitFlow(null);
+
+  const runCommit = async () => {
+    const draft = commitFlow?.draft || '';
+    setCommitFlow({ stage: 'busy', draft, result: null, error: '' });
+    const result = (await onGitCommit?.(draft)) || { status: 'error', error: 'Commit unavailable' };
+    if (result.status === 'branched') {
+      setCommitFlow({ stage: 'ask-force', draft, result, error: '' });
+    } else if (result.status === 'error') {
+      setCommitFlow({ stage: 'error', draft, result, error: result.error || 'Commit failed' });
+    } else {
+      setCommitFlow({ stage: 'done', draft, result, error: '' });
+    }
+  };
+
+  const runForceMerge = async () => {
+    const branched = commitFlow?.result;
+    setCommitFlow({ ...commitFlow, stage: 'busy' });
+    const result = (await onForceMerge?.(branched)) || { status: 'error', error: 'Force merge unavailable' };
+    if (result.status === 'moved-again') {
+      setCommitFlow({ ...commitFlow, stage: 'error', error: 'Main moved again. Your commit is still on the branch; commit again to retry.' });
+    } else if (result.status === 'error') {
+      setCommitFlow({ ...commitFlow, stage: 'error', error: result.error || 'Force merge failed' });
+    } else {
+      setCommitFlow({ stage: 'done', draft: '', result, error: '' });
+    }
+  };
+
+  useEffect(() => {
+    if (commitFlow?.stage === 'message') commitInputRef.current?.focus();
+  }, [commitFlow?.stage]);
   const shell = placement === 'mobile'
     ? 'flex h-full w-full flex-col bg-[#1e1e1e] text-gray-100'
     : 'flex h-full w-72 shrink-0 flex-col border-r border-white/10 bg-[#1e1e1e] text-gray-100';
@@ -430,14 +473,29 @@ export default function PartFeed({
           {source === 'git' && (
             <button
               type="button"
+              className={`${STRIP_BTN} disabled:cursor-not-allowed disabled:opacity-40`}
+              data-git-commit=""
+              disabled={!canCommit}
+              title={canCommit ? 'Commit changes to main' : 'Nothing to commit'}
+              aria-label="Commit"
+              onClick={startCommit}
+            >
+              <GitCommitHorizontal size={STRIP_ICON} />
+            </button>
+          )}
+          {source === 'git' && (
+            <button
+              type="button"
               disabled
               data-git-connect=""
               data-git-adapter="mock"
-              title="GitHub sign-in is coming. Git mode uses a local mock vault for now."
+              title="Connect GitHub — sign-in is coming. Git mode uses a local mock vault for now."
               aria-label="Connect GitHub"
-              className="shrink-0 rounded border border-gray-700 px-1.5 py-0.5 text-[10px] text-gray-400 opacity-80 cursor-not-allowed"
+              className="shrink-0 rounded border border-gray-700 p-1 text-gray-400 opacity-80 cursor-not-allowed"
             >
-              Connect GitHub
+              {/* Icon-only so the ribbon fits Commit beside the centered name. */}
+              <Github size={14} aria-hidden="true" />
+              <span className="sr-only">Connect GitHub</span>
             </button>
           )}
           <div className={STRIP_DIVIDER} />
@@ -737,6 +795,98 @@ export default function PartFeed({
                 </li>
               ))}
             </ul>
+          )}
+        </VaultPickerDialog>
+      )}
+      {commitFlow && typeof document !== 'undefined' && (
+        <VaultPickerDialog
+          title={commitFlow.stage === 'ask-force' ? 'Main has moved' : 'Commit to main'}
+          labelledBy="git-commit-title"
+          dataAttr="commit"
+          onClose={commitFlow.stage === 'busy' ? undefined : closeCommit}
+          footer={(
+            <div className="mt-4 flex justify-end gap-2" data-git-commit-stage={commitFlow.stage}>
+              {commitFlow.stage === 'message' && (
+                <>
+                  <button type="button" className="rounded-md px-3 py-1.5 text-xs text-gray-200 hover:bg-white/10" onClick={closeCommit} data-git-dialog-cancel="">
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    data-git-commit-confirm=""
+                    className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-500"
+                    onClick={runCommit}
+                  >
+                    Commit
+                  </button>
+                </>
+              )}
+              {commitFlow.stage === 'ask-force' && (
+                <>
+                  <button type="button" className="rounded-md px-3 py-1.5 text-xs text-gray-200 hover:bg-white/10" onClick={closeCommit} data-git-keep-branch="">
+                    Keep on branch
+                  </button>
+                  <button
+                    type="button"
+                    data-git-force-merge=""
+                    className="rounded-md bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-500"
+                    onClick={runForceMerge}
+                  >
+                    Force merge
+                  </button>
+                </>
+              )}
+              {(commitFlow.stage === 'done' || commitFlow.stage === 'error') && (
+                <button type="button" className="rounded-md px-3 py-1.5 text-xs text-gray-200 hover:bg-white/10" onClick={closeCommit} data-git-dialog-cancel="">
+                  Close
+                </button>
+              )}
+            </div>
+          )}
+        >
+          {commitFlow.stage === 'message' && (
+            <>
+              <p className="mb-2 text-[11px] text-gray-400">
+                Changed parts and the assembly go to main as one commit.
+              </p>
+              <input
+                ref={commitInputRef}
+                data-git-commit-message=""
+                value={commitFlow.draft || ''}
+                onChange={(e) => setCommitFlow({ ...commitFlow, draft: e.target.value })}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    runCommit();
+                  }
+                }}
+                className="w-full rounded-md border border-gray-600 bg-black/30 px-2 py-1.5 text-xs text-gray-100 outline-none focus:border-blue-500"
+                placeholder={`Update ${ribbonName || 'assembly'}`}
+              />
+            </>
+          )}
+          {commitFlow.stage === 'busy' && <p className="text-xs text-gray-400" data-git-dialog-loading="">Committing…</p>}
+          {commitFlow.stage === 'ask-force' && (
+            <div data-git-force-merge-ask="" data-git-branch={commitFlow.result?.branch || ''}>
+              <p className="text-xs text-gray-300">
+                {'Your changes were committed to '}
+                <span className="font-mono text-gray-100">{commitFlow.result?.branch}</span>
+                {` (from base ${String(commitFlow.result?.baseSha || '').slice(0, 7)}).`}
+              </p>
+              <p className="mt-2 text-xs text-amber-300" data-git-force-merge-warning="">
+                {commitFlow.result?.warning || 'Force merge overwrites main; main\'s diff in these files will be lost.'}
+              </p>
+            </div>
+          )}
+          {commitFlow.stage === 'done' && (
+            <p className="text-xs text-gray-300" data-git-commit-done={commitFlow.result?.status || ''}>
+              {commitFlow.result?.status === 'clean'
+                ? 'Nothing to commit.'
+                : `${commitFlow.result?.status === 'merged' ? 'Force merged' : 'Committed'} ${(commitFlow.result?.files || []).length} file(s) to ${commitFlow.result?.branch || 'main'} (${String(commitFlow.result?.sha || '').slice(0, 7)}).`}
+            </p>
+          )}
+          {commitFlow.stage === 'error' && (
+            <p className="text-xs text-amber-300" data-git-commit-error="">{commitFlow.error}</p>
           )}
         </VaultPickerDialog>
       )}

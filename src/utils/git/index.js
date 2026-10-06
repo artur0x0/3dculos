@@ -4,3 +4,4 @@ export * from './vaultLayout.js';
 export * from './surfJson.js';
 export * from './vault.js';
 export * from './gitWorkspace.js';
+export * from './gitCommit.js';
