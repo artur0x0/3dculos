@@ -66,6 +66,7 @@ import MoveModeChip from './MoveModeChip';
 import MoveFaceModeChip from './MoveFaceModeChip';
 import DeleteFaceModeChip from './DeleteFaceModeChip';
 import { buildCrossSectionPreview, defaultTopPlaneFrame } from '../utils/crossSectionSubstrate';
+import { setFailedPartOutline } from '../utils/failedPartOutline';
 import {
   overlayHitPartId,
   partOverlayAnchor,
@@ -760,6 +761,27 @@ const Viewport = forwardRef(({
   const ambiguousPickRef = useRef(null);
   const [partChoice, setPartChoice] = useState(null);
   const adoptActiveSolidRef = useRef(() => false);
+  /**
+   * Failed parts (red outline + tint on their solid). `failedPartIdsRef` is
+   * set by each assembly placement; `soloRunFailedRef` covers a run outside
+   * an assembly that restored the last good mesh.
+   */
+  const failedPartIdsRef = useRef(new Set());
+  const soloRunFailedRef = useRef(false);
+  const syncFailedPartOutlinesRef = useRef(() => {});
+  syncFailedPartOutlinesRef.current = () => {
+    const failed = failedPartIdsRef.current;
+    for (const [id, mesh] of assemblyExtrasRef.current) {
+      setFailedPartOutline(mesh, failed.has(String(id)));
+    }
+    const active = activePartIdRef.current;
+    if (resultRef.current) {
+      setFailedPartOutline(
+        resultRef.current,
+        active != null && active !== '' ? failed.has(String(active)) : soloRunFailedRef.current,
+      );
+    }
+  };
   /** Per-triangle Manifold faceID from the last worker mesh (not a per-vertex attribute). */
   const faceIDsRef = useRef(null);
   /**
@@ -6437,6 +6459,8 @@ const Viewport = forwardRef(({
     const prevTiming = graphTimingRef.current || {};
     graphTimingRef.current = { ...prevTiming, faceMs, seamMs };
     setMeshEpoch((n) => n + 1);
+    // New solid geometry: rebuild (or drop) the failed outline on it.
+    syncFailedPartOutlinesRef.current();
 
     // Dev-only: the single choke point where geometry reaches the scene. Report the exact
     // meshData object we just painted so automation can prove, by identity, that what is on
@@ -6887,6 +6911,10 @@ const Viewport = forwardRef(({
       };
       if (typeof window !== 'undefined') window.__SURFCAD_RUN_TIMING = report;
       onRunOutcomeRef.current?.({ script, ok: true, scriptLine: null });
+      if (soloRunFailedRef.current) {
+        soloRunFailedRef.current = false;
+        syncFailedPartOutlinesRef.current();
+      }
       // Truthy object: callers that only check success keep working; game compare needs nonce.
       return { ok: true, nonce, mesh: meshData };
 
@@ -6920,6 +6948,8 @@ const Viewport = forwardRef(({
       // An assembly part must not: noShadow drops the solid and does not
       // rebuild graphs from that previous mesh.
       const prev = noShadow ? null : cachedMeshDataRef.current;
+      // The restored last good mesh is stale: draw it as a failed part.
+      soloRunFailedRef.current = !!prev?.vertProperties;
       if (prev?.vertProperties && resultRef.current) {
         renderMeshData(prev);
         featureEdgesSourceRef.current = null;
@@ -7112,6 +7142,7 @@ const Viewport = forwardRef(({
     }
     const extra = assemblyExtrasRef.current.get(partId);
     if (extra) {
+      setFailedPartOutline(extra, false);
       assemblyGroupRef.current?.remove(extra);
       // Its geometry is usually the cached solid this switch is about to show.
       releaseGeometryIn(solidCacheRef.current, extra.geometry);
@@ -7119,6 +7150,8 @@ const Viewport = forwardRef(({
       assemblyExtrasRef.current.delete(partId);
     }
     adoptActiveSolidRef.current({ mesh, position: position || [0, 0, 0], partId });
+    // The part left behind and the part picked keep their failed state.
+    syncFailedPartOutlinesRef.current();
     resultRef.current.updateMatrixWorld(true);
     return true;
   };
@@ -7135,6 +7168,13 @@ const Viewport = forwardRef(({
     }
     activePartIdRef.current = activeId;
     const blankActive = payload?.blankActive === true;
+    // Visible parts whose latest run failed: App's list, else the leftovers
+    // (a failed part's last good mesh).
+    const failedIds = Array.isArray(payload?.failedIds)
+      ? payload.failedIds
+      : (Array.isArray(payload?.leftovers) ? payload.leftovers.map((solid) => solid?.id) : []);
+    failedPartIdsRef.current = new Set(failedIds.filter((id) => id != null).map(String));
+    soloRunFailedRef.current = false;
     if (!assemblyGroupRef.current) {
       const group = new Group();
       group.name = 'assembly-parts';
@@ -7155,6 +7195,7 @@ const Viewport = forwardRef(({
         group.add(mesh);
         assemblyExtrasRef.current.set(solid.id, mesh);
       }
+      mesh.userData.leftover = false;
       const { geometry: geom } = cachedSolidGeometry(solidCacheRef.current, solid.mesh);
       if (mesh.geometry !== geom) {
         releaseGeometryIn(solidCacheRef.current, mesh.geometry);
@@ -7188,6 +7229,7 @@ const Viewport = forwardRef(({
     }
     for (const [id, mesh] of assemblyExtrasRef.current) {
       if (keep.has(id)) continue;
+      setFailedPartOutline(mesh, false);
       group.remove(mesh);
       releaseGeometryIn(solidCacheRef.current, mesh.geometry);
       if (mesh.material?.dispose) mesh.material.dispose();
@@ -7267,8 +7309,10 @@ const Viewport = forwardRef(({
         geom.dispose();
       }
     }
+    syncFailedPartOutlinesRef.current();
     if (containerRef.current) {
       containerRef.current.setAttribute('data-assembly-solids', String(solids.length));
+      containerRef.current.setAttribute('data-failed-parts', [...failedPartIdsRef.current].join(','));
       containerRef.current.setAttribute('data-assembly-active', blankActive ? 'omitted' : 'shown');
       if (blankActive && featureHideKeepsPicks(featureSessionRef.current)) {
         containerRef.current.setAttribute('data-feature-picks', 'kept');
