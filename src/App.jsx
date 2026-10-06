@@ -74,6 +74,20 @@ import {
   saveAssemblyDocument,
   savePartScript,
 } from './utils/assemblyStore';
+import {
+  createMockGithubAdapter,
+  findOrCreateVault,
+  dirtyPartIds,
+  isWorkspaceDirty,
+  listVaultAssemblies,
+  listAddableVaultParts,
+  openVaultAssembly,
+  readVaultPart,
+  resolveNewPartPath,
+  suggestNewPartPath,
+  partPathAllowedFor,
+  vaultSegment,
+} from './utils/git';
 import PartFeed from './components/PartFeed';
 import manifoldContext from './utils/ManifoldWorker';
 import DEFAULT_SCRIPT from './utils/defaultScript';
@@ -122,6 +136,11 @@ const App = () => {
   const assemblyRef = useRef(null);
   const partScriptsRef = useRef({});
   const partRunsRef = useRef({});
+  /** Git mode: mock adapter + vault handle + dirty baseline (G2; Commit is G3). */
+  const gitAdapterRef = useRef(null);
+  const gitVaultRef = useRef(null);
+  const [gitBaseline, setGitBaseline] = useState(null);
+  const gitBaselineRef = useRef(null);
   /** Last successful mesh per part. A failed row can still be picked from this. */
   const partLeftoversRef = useRef({});
   /** CAD pick target. Monaco stays on assembly.activeId until a sync. */
@@ -1488,9 +1507,178 @@ const App = () => {
     refreshAssemblyRef.current?.(codeEditorRef.current?.getContent?.());
   };
 
-  const handleAddPart = async () => {
+  const rememberGitBaseline = (baseline) => {
+    gitBaselineRef.current = baseline;
+    setGitBaseline(baseline);
+  };
+
+  const ensureGitVault = async () => {
+    if (!gitAdapterRef.current) {
+      gitAdapterRef.current = createMockGithubAdapter({ login: 'local-user' });
+    }
+    if (gitVaultRef.current) return gitVaultRef.current;
+    const result = await findOrCreateVault(gitAdapterRef.current);
+    if (result.status === 'invalid-name' || result.status === 'not-a-vault' || result.status === 'missing') {
+      throw new Error(`Vault unavailable (${result.status})`);
+    }
+    const vault = {
+      repo: result.repo,
+      defaultBranch: result.defaultBranch || 'main',
+      headSha: result.headSha || null,
+      private: result.private !== false,
+    };
+    gitVaultRef.current = vault;
+    return vault;
+  };
+
+  const handleToggleSource = async () => {
     const doc = assemblyRef.current;
-    if (!doc || doc.source === 'git') return;
+    if (!doc) return;
+    if (doc.source === 'git') {
+      rememberAssembly({ ...doc, source: 'local' });
+      rememberGitBaseline(null);
+      return;
+    }
+    try {
+      await ensureGitVault();
+    } catch (err) {
+      setUploadError(err.message || 'Could not open vault');
+      return;
+    }
+    // Keep current rows; paths that are not repo-safe stay until Open replaces them.
+    rememberAssembly({ ...doc, source: 'git' });
+    // No baseline until a vault Open — dirty badges stay off.
+    rememberGitBaseline(null);
+  };
+
+  const handleListVaultAssemblies = async () => {
+    const vault = await ensureGitVault();
+    return listVaultAssemblies(gitAdapterRef.current, vault.repo, vault.defaultBranch);
+  };
+
+  const handleOpenVaultAssembly = async (name) => {
+    try {
+      const vault = await ensureGitVault();
+      const opened = await openVaultAssembly(
+        gitAdapterRef.current,
+        vault.repo,
+        name,
+        { branch: vault.defaultBranch, headSha: vault.headSha },
+      );
+      refreshGenRef.current += 1;
+      for (const [id, script] of Object.entries(opened.scripts)) {
+        await savePartScript(id, script);
+      }
+      rememberScripts(opened.scripts);
+      const saved = rememberAssembly(opened.doc);
+      rememberGitBaseline(opened.baseline);
+      gitVaultRef.current = { ...vault, headSha: opened.baseline.headSha };
+      const keep = new Set(saved.parts.map((part) => String(part.id)));
+      for (const key of Object.keys(partHistoriesRef.current)) {
+        if (key !== '__game__' && !keep.has(key)) delete partHistoriesRef.current[key];
+      }
+      const active = saved.parts.find((part) => part.id === saved.activeId) || saved.parts[0];
+      if (!active) return;
+      setCurrentFilename(active.name);
+      const picked = scriptForRow(saved, opened.scripts, active.id);
+      focusPartHistory(active.id, picked.ok ? picked.script : '');
+      if (picked.ok) {
+        suppressPartSaveRef.current = false;
+        codeEditorRef.current?.loadContent(picked.script, active.name, false);
+      } else {
+        suppressPartSaveRef.current = true;
+        codeEditorRef.current?.setTextOnly?.('// This part has no file yet.\n');
+        refreshAssemblyRef.current?.(undefined, { persistActive: false });
+      }
+    } catch (err) {
+      setUploadError(err.message || 'Could not open assembly');
+    }
+  };
+
+  const handleListAddableParts = async () => {
+    const doc = assemblyRef.current;
+    if (!doc) return [];
+    const vault = await ensureGitVault();
+    const name = vaultSegment(doc.name) || doc.name;
+    return listAddableVaultParts(gitAdapterRef.current, vault.repo, name, {
+      branch: vault.defaultBranch,
+      existingIds: doc.parts.map((p) => p.id),
+    });
+  };
+
+  const handleAddExistingPart = async (path) => {
+    const doc = assemblyRef.current;
+    if (!doc || doc.source !== 'git') return;
+    try {
+      const vault = await ensureGitVault();
+      const id = normalizeRepoPath(path);
+      if (!id || !partPathAllowedFor(doc.name, id)) {
+        setUploadError('That path is not allowed for this assembly');
+        return;
+      }
+      const got = await readVaultPart(gitAdapterRef.current, vault.repo, id, vault.defaultBranch);
+      if (!got) {
+        setUploadError(`Missing in vault: ${id}`);
+        return;
+      }
+      const live = codeEditorRef.current?.getContent?.();
+      const prev = doc.activeId;
+      const scripts = { ...partScriptsRef.current };
+      if (prev && !suppressPartSaveRef.current && typeof live === 'string') {
+        scripts[prev] = live;
+        savePartScript(prev, live);
+        stashPartHistory(prev, live);
+      }
+      scripts[id] = got.content;
+      await savePartScript(id, got.content);
+      rememberScripts(scripts);
+      const existing = doc.parts.some((part) => part.id === id);
+      const parts = existing
+        ? doc.parts
+        : [...doc.parts, {
+          id,
+          name: id.split('/').pop()?.replace(/\.js$/i, '') || id,
+          visible: true,
+          order: doc.parts.length,
+        }];
+      refreshGenRef.current += 1;
+      rememberAssembly({ ...doc, source: 'git', activeId: id, parts });
+      focusPartHistory(id, got.content);
+      suppressPartSaveRef.current = false;
+      setCurrentFilename(id.split('/').pop() || id);
+      codeEditorRef.current?.loadContent(got.content, id, false);
+    } catch (err) {
+      setUploadError(err.message || 'Could not add part');
+    }
+  };
+
+  const handleFindInRepo = async (id) => {
+    const doc = assemblyRef.current;
+    if (!doc || doc.source !== 'git') return;
+    try {
+      const vault = await ensureGitVault();
+      const got = await readVaultPart(gitAdapterRef.current, vault.repo, id, vault.defaultBranch);
+      if (!got) {
+        setUploadError(`Not in vault: ${id}`);
+        return;
+      }
+      await savePartScript(id, got.content);
+      const scripts = { ...partScriptsRef.current, [id]: got.content };
+      rememberScripts(scripts);
+      suppressPartSaveRef.current = false;
+      if (doc.activeId === id) {
+        codeEditorRef.current?.loadContent(got.content, id, false);
+      } else {
+        refreshAssemblyRef.current?.(codeEditorRef.current?.getContent?.());
+      }
+    } catch (err) {
+      setUploadError(err.message || 'Find in repo failed');
+    }
+  };
+
+  const handleAddPart = async (gitPath) => {
+    const doc = assemblyRef.current;
+    if (!doc) return;
     const live = codeEditorRef.current?.getContent?.();
     const prev = doc.activeId;
     const scripts = { ...partScriptsRef.current };
@@ -1499,12 +1687,28 @@ const App = () => {
       savePartScript(prev, live);
       stashPartHistory(prev, live);
     }
-    const id = newLocalPartId();
+    let id;
+    let name;
+    if (doc.source === 'git') {
+      id = resolveNewPartPath(doc.name, gitPath);
+      if (!id) {
+        setUploadError('Enter a path under this assembly parts/ or shared parts/');
+        return;
+      }
+      if (doc.parts.some((part) => part.id === id)) {
+        setUploadError(`Part already in assembly: ${id}`);
+        return;
+      }
+      name = id.split('/').pop()?.replace(/\.js$/i, '') || id;
+    } else {
+      id = newLocalPartId();
+      name = `Part ${doc.parts.length + 1}`;
+    }
     const order = doc.parts.length;
     const starter = newPartStarterScript();
     const part = {
       id,
-      name: `Part ${order + 1}`,
+      name,
       visible: true,
       order,
       position: order === 0 ? undefined : [order * 40, 0, 0],
@@ -1518,35 +1722,6 @@ const App = () => {
     suppressPartSaveRef.current = false;
     setCurrentFilename(part.name);
     codeEditorRef.current?.loadContent(starter, part.name, false);
-  };
-
-  const handleAddGitPart = async (path, text) => {
-    const doc = assemblyRef.current;
-    if (!doc || typeof text !== 'string') return;
-    const id = normalizeRepoPath(path);
-    if (!id) {
-      setUploadError('Enter a repo path such as parts/name.js');
-      return;
-    }
-    await savePartScript(id, text);
-    const scripts = { ...partScriptsRef.current, [id]: text };
-    rememberScripts(scripts);
-    const existing = doc.parts.some((part) => part.id === id);
-    const parts = existing
-      ? doc.parts
-      : [...doc.parts, {
-        id,
-        name: id.split('/').pop() || id,
-        visible: true,
-        order: doc.parts.length,
-      }];
-    const source = doc.source === 'git' ? 'git' : doc.source;
-    refreshGenRef.current += 1;
-    rememberAssembly({ ...doc, source, activeId: id, parts });
-    focusPartHistory(id, text);
-    suppressPartSaveRef.current = false;
-    setCurrentFilename(id.split('/').pop() || id);
-    codeEditorRef.current?.loadContent(text, id, false);
   };
 
   const handleDeletePart = (id) => {
@@ -2554,8 +2729,32 @@ const App = () => {
       ? Math.round(Math.min(Math.max(mobileEditorPxOverride, 120), Math.max(160, vv.height - 160)))
       : Math.round(Math.min(Math.max(vv.height * 0.32, 160), vv.height * 0.38)));
 
-  const partRows = assemblyDoc ? feedRows(assemblyDoc, partRuns, partScripts) : [];
   const cadHighlightId = cadPartId || assemblyDoc?.activeId || null;
+  const liveDirtyScript = (
+    assemblyDoc?.source === 'git'
+    && cadHighlightId
+    && assemblyDoc.activeId === cadHighlightId
+    && typeof currentScript === 'string'
+  ) ? currentScript : null;
+  const gitDirtyIds = (
+    assemblyDoc?.source === 'git' && gitBaseline
+  ) ? dirtyPartIds(assemblyDoc, partScripts, gitBaseline, {
+    liveId: assemblyDoc.activeId,
+    liveScript: liveDirtyScript,
+  }) : new Set();
+  const sourceDirty = (
+    assemblyDoc?.source === 'git'
+    && isWorkspaceDirty(assemblyDoc, partScripts, gitBaseline, {
+      liveId: assemblyDoc.activeId,
+      liveScript: liveDirtyScript,
+    })
+  );
+  const partRows = assemblyDoc
+    ? feedRows(assemblyDoc, partRuns, partScripts).map((row) => ({
+      ...row,
+      dirty: gitDirtyIds.has(row.id),
+    }))
+    : [];
   const stripScript = (
     cadHighlightId && assemblyDoc && cadHighlightId !== assemblyDoc.activeId
   ) ? (partScripts[cadHighlightId] || '') : currentScript;
@@ -2587,8 +2786,19 @@ const App = () => {
       onLoadFile={handleLoadAssembly}
       onResolveFile={handleResolvePartFile}
       onAddPart={handleAddPart}
-      onAddGitPart={handleAddGitPart}
       onDeletePart={handleDeletePart}
+      onToggleSource={handleToggleSource}
+      sourceDirty={!!sourceDirty}
+      onListVaultAssemblies={handleListVaultAssemblies}
+      onOpenVaultAssembly={handleOpenVaultAssembly}
+      onListAddableParts={handleListAddableParts}
+      onAddExistingPart={handleAddExistingPart}
+      onFindInRepo={handleFindInRepo}
+      suggestNewPartPath={
+        assemblyDoc.source === 'git'
+          ? suggestNewPartPath(assemblyDoc.name, assemblyDoc.parts)
+          : ''
+      }
     />
   ) : null;
 

@@ -3,3 +3,4 @@ export * from './mockGithubAdapter.js';
 export * from './vaultLayout.js';
 export * from './surfJson.js';
 export * from './vault.js';
+export * from './gitWorkspace.js';

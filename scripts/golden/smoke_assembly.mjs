@@ -312,7 +312,7 @@ const BAD = 'let part = Manifold.cube([10, 10, 10], true);\nreturn part.missingM
     && placedFeats[0].chipLabel === cubes[0]?.chipLabel);
 
   const app = read('src/App.jsx');
-  const add = app.slice(app.indexOf('const handleAddPart'), app.indexOf('const handleAddGitPart'));
+  const add = app.slice(app.indexOf('const handleAddPart'), app.indexOf('const handleDeletePart'));
   check('spawn writes the marked starter, not an unmarked cube',
     /newPartStarterScript\(/.test(add)
     && !/let part = Manifold\.cube\(\[20,\s*20,\s*20\]/.test(add));
