@@ -2673,6 +2673,55 @@ function _triComponentIds(triVerts, numTri) {
 // ---------------------------------------------------------------- mesh data
 // c4MeshData(m) -> { V:[[x,y,z]...], faces:[{id, tris, normal, center, verts}],
 //                    edges:[{a, b, va, vb, tris, tangent, faces:[faceIdx,faceIdx]}] }
+/** In-plane share of a face group's area for its normal to drop foreign facets. */
+const _C4_PLANAR_INLIER_FRAC = 0.9;
+/** A triangle within this of the area-weighted normal is in the group's plane. */
+const _C4_PLANAR_INLIER_DEG = 2;
+
+/**
+ * Face-group normal that ignores foreign facets on a planar face.
+ *
+ * faceID is only unique within one source mesh, and every swept fillet cutter
+ * is built with the same triangle numbering, so a cutter facet can carry the
+ * same faceID as the flat face it touches. When it shares an edge with that
+ * face it lands in the same connected component, and the old unweighted sum
+ * of unit normals counted a 1.3 mm² fillet facet (normal 80° off) as much as
+ * each big face triangle: on the three-fillet cube the +y wall read
+ * (0.070, 0.997, 0.012), 4° off, and the next variable-profile fillet cut a
+ * 94° section along it. When ≥ 90% of the group's area lies within 2° of its
+ * area-weighted normal, the group is a plane: average only those triangles.
+ * Curved groups (and clean planes, where every triangle is an inlier) keep
+ * the plain sum `cn` exactly as before.
+ */
+function _c4PlanarGroupNormal(trisSub, mesh, V, cn, areaSum) {
+  if (!(areaSum > 1e-18) || trisSub.length < 2) return _c4Norm(cn);
+  const tns = [];
+  const aw = [0, 0, 0];
+  for (const t of trisSub) {
+    const v0 = V[mesh.triVerts[t*3]], v1 = V[mesh.triVerts[t*3+1]], v2 = V[mesh.triVerts[t*3+2]];
+    const cxv = _c4Cross(_c4Sub(v1, v0), _c4Sub(v2, v0));
+    const area = 0.5 * _c4Len(cxv);
+    aw[0] += cxv[0]; aw[1] += cxv[1]; aw[2] += cxv[2];
+    tns.push({ n: _c4Norm(cxv), area });
+  }
+  if (_c4Len(aw) < 1e-18) return _c4Norm(cn);
+  const awn = _c4Norm(aw);
+  const cosIn = Math.cos((_C4_PLANAR_INLIER_DEG * Math.PI) / 180);
+  const sum = [0, 0, 0];
+  let inArea = 0;
+  let outliers = 0;
+  for (const { n, area } of tns) {
+    if (_c4Dot(n, awn) > cosIn) {
+      sum[0] += n[0]; sum[1] += n[1]; sum[2] += n[2];
+      inArea += area;
+    } else {
+      outliers++;
+    }
+  }
+  if (!outliers || inArea < _C4_PLANAR_INLIER_FRAC * areaSum || _c4Len(sum) < 0.5) return _c4Norm(cn);
+  return _c4Norm(sum);
+}
+
 function c4MeshData(m) {
   const mesh = m.getMesh();
   const triBody = _triComponentIds(mesh.triVerts, mesh.numTri);
@@ -2802,7 +2851,7 @@ function c4MeshData(m) {
       faces.push({
         id: fid,
         tris: trisSub,
-        normal: _c4Norm(cn),
+        normal: _c4PlanarGroupNormal(trisSub, mesh, V, cn, areaSum),
         center,
         verts: all,
         body: triBody[trisSub[0]],
@@ -3643,6 +3692,77 @@ function _c6InFaceFromNormal(n, d, nOther) {
   return f;
 }
 
+/**
+ * Sine floor for reading an in-face ray off a triangle's third vertex. Below
+ * it the vertex sits (almost) on the edge line, so the component ⊥ the edge
+ * is rounding noise and its direction is arbitrary.
+ */
+const _C6_IN_FACE_MIN_SIN = 0.02;
+
+/**
+ * In-face ray of one edge triangle, robust to sliver triangles.
+ *
+ * The ray is the third vertex's offset ⊥ the edge. Boolean seams leave
+ * slivers whose third vertex is almost on the edge line: on the three-fillet
+ * cube the y = −10 top edge (−8.02 → 8.02) has a front-face triangle whose
+ * third vertex is (8.13, −10, 9.9957), 0.004 mm off a 16 mm edge. Measured
+ * against the path segment instead of the edge, a segment tilted 0.015° (its
+ * start knot sits on the resampled corner arc, y = −9.9957) adds a ⊥ error
+ * of the same size, and the ray came out 45° off the face: the whole leg's
+ * chamfer section turned 45° (the lip and step). Below the sine floor the
+ * ray is the face normal × the edge, signed toward the vertex while it still
+ * has a side, else away from the other face (convex edge); then put back ⊥
+ * `d`. Well-conditioned triangles return exactly what they always did.
+ *
+ * `d` is the direction the ray must be ⊥ to; `dEdge` (default `d`) is the
+ * mesh edge the triangle actually sits on.
+ */
+function _c6InFaceDirSafe(X, P0, d, nFace, nOther, dEdge = null) {
+  const e = dEdge || d;
+  const v = [X[0]-P0[0], X[1]-P0[1], X[2]-P0[2]];
+  const L = Math.hypot(v[0], v[1], v[2]);
+  const s = v[0]*e[0] + v[1]*e[1] + v[2]*e[2];
+  const w = [v[0]-s*e[0], v[1]-s*e[1], v[2]-s*e[2]];
+  const wl = Math.hypot(w[0], w[1], w[2]);
+  // Well-conditioned (the usual case): unchanged, against the caller's `d`.
+  if (L > 1e-12 && wl >= _C6_IN_FACE_MIN_SIN * L && wl > 1e-6) return _c6InFaceDir(X, P0, d);
+  // Sliver: direction from the face normal about the EDGE, side from the
+  // vertex while it still has one (near-tangent seams, where the other face
+  // cannot tell the sides apart), else away from the other face.
+  let f = _c6InFaceFromNormal(nFace, e, wl > 1e-9 ? null : nOther);
+  if (!f) return _c6InFaceDir(X, P0, d);
+  if (wl > 1e-9 && f[0]*w[0] + f[1]*w[1] + f[2]*w[2] < 0) f = [-f[0], -f[1], -f[2]];
+  // Back into the plane ⊥ d (d is the path segment for the sweep probes).
+  const t = f[0]*d[0] + f[1]*d[1] + f[2]*d[2];
+  const g = [f[0]-t*d[0], f[1]-t*d[1], f[2]-t*d[2]];
+  const gl = Math.hypot(g[0], g[1], g[2]);
+  return gl > 1e-9 ? [g[0]/gl, g[1]/gl, g[2]/gl] : f;
+}
+
+/**
+ * Face normals for the two triangles on an edge: the triangles' own normals.
+ * The face-group normals (n0/n1) are a stand-in only for a triangle too
+ * degenerate to have one — on a curved group they are an average over the
+ * whole blend, not the local surface.
+ */
+function _c6EdgeTriNormals(e, triA, triB) {
+  const own = (tri) => {
+    if (!tri?.v) return null;
+    const [v0, v1, v2] = tri.v;
+    const c = _c6Cross([v1[0]-v0[0], v1[1]-v0[1], v1[2]-v0[2]], [v2[0]-v0[0], v2[1]-v0[1], v2[2]-v0[2]]);
+    return Math.hypot(c[0], c[1], c[2]) > 1e-12 ? _c6Norm(c) : null;
+  };
+  let a = own(triA);
+  let b = own(triB);
+  if ((!a || !b) && e && Array.isArray(e.n0) && Array.isArray(e.n1)) {
+    const d = (p, q) => p[0]*q[0] + p[1]*q[1] + p[2]*q[2];
+    if (a && !b) b = d(a, e.n0) >= d(a, e.n1) ? e.n1 : e.n0;
+    else if (b && !a) a = d(b, e.n0) >= d(b, e.n1) ? e.n1 : e.n0;
+    else { a = e.n0; b = e.n1; }
+  }
+  return [a, b];
+}
+
 function _c6EdgeGeom(M, part, mesh, e, r, opts = {}) {
   const relaxPlanar = !!opts.relaxPlanar;
   const P0 = e.va, P1 = e.vb;
@@ -3662,8 +3782,9 @@ function _c6EdgeGeom(M, part, mesh, e, r, opts = {}) {
       for (let k = 0; k < 3; k++) if (tri.vs[k] !== e.a && tri.vs[k] !== e.b) return tri.v[k];
       throw new Error('filletEdges: degenerate edge triangle');
     };
-    f0 = _c6InFaceDir(thirdVertex(mesh.tris[ti[0]]), P0, d);
-    f1 = _c6InFaceDir(thirdVertex(mesh.tris[ti[1]]), P0, d);
+    const [nA, nB] = _c6EdgeTriNormals(e, mesh.tris[ti[0]], mesh.tris[ti[1]]);
+    f0 = _c6InFaceDirSafe(thirdVertex(mesh.tris[ti[0]]), P0, d, nA, nB);
+    f1 = _c6InFaceDirSafe(thirdVertex(mesh.tris[ti[1]]), P0, d, nB, nA);
   } else if (relaxPlanar && e.n0 && e.n1) {
     f0 = _c6InFaceFromNormal(e.n0, d, e.n1);
     f1 = _c6InFaceFromNormal(e.n1, d, e.n0);
@@ -4673,8 +4794,10 @@ function _s23ProbeFrame(M, part, points) {
   const X0 = thirdVertex(mesh.tris[ti[0]]);
   const X1 = thirdVertex(mesh.tris[ti[1]]);
   if (!X0 || !X1) return null;
-  const f0 = _c6InFaceDir(X0, P0, T);
-  const f1 = _c6InFaceDir(X1, P0, T);
+  const [nA, nB] = _c6EdgeTriNormals(best, mesh.tris[ti[0]], mesh.tris[ti[1]]);
+  const eDir = _s23EdgeDirAlong(best, T);
+  const f0 = _c6InFaceDirSafe(X0, P0, T, nA, nB, eDir);
+  const f1 = _c6InFaceDirSafe(X1, P0, T, nB, nA, eDir);
   // Convexity: ball at mid should be mostly outside (same criterion as filletEdges).
   const rProbe = Math.min(0.05, segL * 0.25);
   const sp = M.sphere(rProbe, 12, 6).transform(
@@ -4874,6 +4997,22 @@ function _s23CarryFrame(src, T) {
   return { N, B, theta: src.theta, f0: src.f0, f1: src.f1, T: Tn };
 }
 
+/** cos 2°: the matched edge must run within this of the segment to lend its direction. */
+const _S23_EDGE_DIR_MIN_COS = Math.cos((2 * Math.PI) / 180);
+
+/** Unit direction of a mesh edge, signed to run with `T` (falls back to T). */
+function _s23EdgeDirAlong(edge, T) {
+  const d = _s23Sub(edge.vb, edge.va);
+  const L = Math.hypot(d[0], d[1], d[2]);
+  if (!(L > 1e-9)) return T;
+  const u = [d[0] / L, d[1] / L, d[2] / L];
+  const c = _s23Dot(u, T);
+  // Only a matched edge that runs WITH the segment: a loose mid match onto a
+  // crossing seam must not lend its direction.
+  if (Math.abs(c) < _S23_EDGE_DIR_MIN_COS) return T;
+  return c < 0 ? [-u[0], -u[1], -u[2]] : u;
+}
+
 function _s23NearestMatched(raw, i, closed) {
   for (let d = 1; d < raw.length; d++) {
     const idxs = closed
@@ -4948,8 +5087,14 @@ function _s23ProbeSegments(part, points, closed) {
     const X0 = thirdVertex(mesh.tris[ti[0]], best);
     const X1 = thirdVertex(mesh.tris[ti[1]], best);
     if (!X0 || !X1) continue;
-    const f0 = _c6InFaceDir(X0, best.va, seg.T);
-    const f1 = _c6InFaceDir(X1, best.va, seg.T);
+    // Read the in-face rays against the matched MESH edge, not the path
+    // segment. A knot off the resampled corner arc tilts the next straight
+    // leg's segment ~0.015° off its edge; against a sliver third vertex
+    // (0.004 mm off a 16 mm edge) that tilt alone swung the ray 45°.
+    const [nA, nB] = _c6EdgeTriNormals(best, mesh.tris[ti[0]], mesh.tris[ti[1]]);
+    const eDir = _s23EdgeDirAlong(best, seg.T);
+    const f0 = _c6InFaceDirSafe(X0, best.va, seg.T, nA, nB, eDir);
+    const f1 = _c6InFaceDirSafe(X1, best.va, seg.T, nB, nA, eDir);
     // Per-segment, not once-per-path: a chain that changes sign mid-way used to
     // be classified by its first matched segment and silently got the wrong
     // cutter for the rest. The dihedral sweep is material-remove only, so any
@@ -6469,10 +6614,13 @@ function filletAlongPath(part, path, radius, opts = {}) {
   // which handles convex, concave and mixed chains. Cheap now that the sign is
   // a local test rather than a per-edge CSG probe.
   let variableProfile = !!opts.variableProfile;
-  if (!variableProfile && !opts._rawPath) {
+  // Every segment convex (material remove only)? Gates the tight-arc split.
+  let pathConvex = false;
+  if (!opts._rawPath) {
     try {
       const scan = _s23ProbeKnotNormals(part, points, closed);
-      if (scan.segmentConvex.some((c) => c === false)) variableProfile = true;
+      pathConvex = scan.segmentConvex.every((c) => c !== false);
+      if (!variableProfile && !pathConvex) variableProfile = true;
     } catch (e) {
       // No match / unorientable — let the normal builder raise the real error.
     }
@@ -6521,7 +6669,10 @@ function filletAlongPath(part, path, radius, opts = {}) {
   // mode:'runs' — each straight / semi-arc is an independent cutter.
 
   if (!opts._rawPath) {
-    const plan = planFilletSweepPath(points, closed, radius, { profile: profileKind });
+    const plan = planFilletSweepPath(points, closed, radius, {
+      profile: profileKind,
+      splitTighterArcs: pathConvex,
+    });
     if (plan.mode === 'runs') {
       // Build each straight / semi-arc cutter independently against the ORIGINAL
       // part (so probes see pre-fillet faces), union, then ONE subtract.
