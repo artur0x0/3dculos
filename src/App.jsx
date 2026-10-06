@@ -1675,7 +1675,7 @@ const App = () => {
   const assemblyPartContext = () => {
     const doc = assemblyRef.current;
     const parts = {};
-    if (!doc) return { parts };
+    if (!doc) return { parts, activeId: null };
     const live = codeEditorRef.current?.getContent?.();
     for (const row of doc.parts) {
       const run = partRunsRef.current?.[row.id];
@@ -1690,7 +1690,7 @@ const App = () => {
         ok: !(run && run.ok === false && run.error && !run.skipped),
       };
     }
-    return { parts };
+    return { parts, activeId: doc.activeId ?? null };
   };
 
   /**
