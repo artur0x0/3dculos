@@ -35,6 +35,7 @@ import {
 import {
   composeHelperInsert,
   solidCombineOp,
+  solidMergeOn,
   CONTOUR_PROFILE_BEGIN,
   CONTOUR_PROFILE_END,
   CONTOUR_EXTRUDE_BEGIN,
@@ -498,6 +499,7 @@ export function enterContourState(entry, faceData = null) {
     planeBase: resolved.source === 'face' ? resolved.plane : null,
     planeOffset: 0,
     combine: 'add',
+    merge: true,
     enterRefuse: resolved.ok ? null : resolved.message,
   };
 }
@@ -1410,6 +1412,7 @@ export function composeContourExtrude(buffer, {
   params = {},
   extrude = {},
   combine,
+  merge,
 } = {}) {
   const gate = validateContourProfile(tool, params);
   if (!gate.ok) return gate;
@@ -1439,6 +1442,7 @@ export function composeContourExtrude(buffer, {
       ...extGate.normalized,
       plane,
       combine: combineOp,
+      merge: solidMergeOn(merge ?? extrude?.merge),
     },
   };
   const composed = composeHelperInsert(
@@ -1536,6 +1540,7 @@ export function composeContourRevolve(buffer, {
   params = {},
   revolve = {},
   combine,
+  merge,
 } = {}) {
   const gate = validateContourProfile(tool, params);
   if (!gate.ok) return gate;
@@ -1580,6 +1585,7 @@ export function composeContourRevolve(buffer, {
       aV: mapped.aV,
       plane,
       combine: combineOp,
+      merge: solidMergeOn(merge ?? revolve?.merge),
     },
   };
   const composed = composeHelperInsert(
@@ -1718,6 +1724,7 @@ export function composeContourLoft(buffer, {
   tool = null,
   params = null,
   combine,
+  merge,
 } = {}) {
   const raw = profiles || loft.profiles || defaultLoftProfiles();
   // Clone every station so Confirm cannot alias two profiles to one params
@@ -1767,6 +1774,7 @@ export function composeContourLoft(buffer, {
       plane: planeFromContourFace(face),
       profiles: stationParams,
       combine: combineOp,
+      merge: solidMergeOn(merge ?? loft?.merge),
     },
   };
   const composed = composeHelperInsert(
@@ -1877,6 +1885,7 @@ export function composeContourSweep(buffer, {
   edges = null,
   sweep = {},
   combine,
+  merge,
 } = {}) {
   const gate = validateContourProfile(tool, params);
   if (!gate.ok) return gate;
@@ -1901,6 +1910,7 @@ export function composeContourSweep(buffer, {
       plane,
       reverse: pathGate.normalized.reverse,
       combine: solidCombineOp(combine ?? sweep?.combine),
+      merge: solidMergeOn(merge ?? sweep?.merge),
     },
   };
   const composed = composeHelperInsert(

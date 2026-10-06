@@ -36,6 +36,7 @@ import {
 } from '../utils/featureFailure.js';
 import { buildMakeLoftSolid, offsetPlaneFrame } from '../utils/makeLoft.js';
 import { blockSpec, buildBlockManifold } from '../utils/blockSolid.js';
+import { installSeparateBodies, overlappingBodies } from './separateBodies.js';
 
 /**
  * List of globals to block/remove in the worker context
@@ -665,6 +666,94 @@ function _c4OffsetCavity(md, thickness, openSet, label) {
   return _c4RebuildWithVerts(md, out, label);
 }
 
+
+/**
+ * Face features on a part whose bodies overlap (Merge bodies off).
+ *
+ * hollow / draftFaces / moveFace / deleteFace read the whole mesh. With two
+ * overlapping bodies that is wrong: a hollow's cavity of one body cuts the
+ * other's walls, a coplanar seam expansion can reach the other body, and a
+ * draft's neutral plane comes from the whole part's box. So each named face
+ * ({ center }) goes to the body whose surface is closest to it, and the
+ * feature runs on that body alone. Unnamed selectors ('z', 'all', 'sides',
+ * a bare normal, or none) run on every body. Bodies that get no face are
+ * kept as they are, and the results are composed again.
+ *
+ * A part that is one body, or whose bodies do not overlap, takes the
+ * feature exactly as before.
+ */
+function _perBodyFaceOp(manifold, faces, run) {
+  const split = manifold && typeof manifold.decompose === 'function'
+    ? overlappingBodies(manifold)
+    : null;
+  if (!split) return run(manifold, faces);
+  const { Manifold } = manifoldModule;
+  const bodies = split.bodies;
+  const named = bodies.map(() => []);
+  const shared = [];
+  const flat = [];
+  const walk = (s) => {
+    if (Array.isArray(s) && !(s.length === 3 && s.every((n) => typeof n === 'number'))) {
+      s.forEach(walk);
+      return;
+    }
+    flat.push(s);
+  };
+  walk(faces);
+  let meshes = null;
+  for (const entry of flat) {
+    if (entry && typeof entry === 'object' && !Array.isArray(entry) && Array.isArray(entry.center)) {
+      if (!meshes) meshes = bodies.map((b) => b.getMesh());
+      let best = 0;
+      let bestD = Infinity;
+      const want = Array.isArray(entry.normal) && entry.normal.length >= 3 ? _c4Norm(entry.normal.map(Number)) : null;
+      for (let bi = 0; bi < bodies.length; bi++) {
+        const mesh = meshes[bi];
+        const np = mesh.numProp;
+        const vp = mesh.vertProperties;
+        const tv = mesh.triVerts;
+        const at = (k) => [vp[k * np], vp[k * np + 1], vp[k * np + 2]];
+        for (let t = 0; t < mesh.numTri; t++) {
+          const a = at(tv[t * 3]);
+          const b = at(tv[t * 3 + 1]);
+          const c = at(tv[t * 3 + 2]);
+          // A pick on the seam where two bodies cross is 0 from both; the
+          // facing triangle (same normal as the pick) decides.
+          if (want) {
+            const tn = _c4Norm(_c4Cross(_c4Sub(b, a), _c4Sub(c, a)));
+            if (_c4Dot(tn, want) < 0.99) continue;
+          }
+          const d = _c4DistPointTri(entry.center, a, b, c);
+          if (d < bestD) { bestD = d; best = bi; }
+        }
+      }
+      named[best].push(entry);
+    } else {
+      shared.push(entry);
+    }
+  }
+  const out = [];
+  const temps = [];
+  for (let bi = 0; bi < bodies.length; bi++) {
+    const mine = named[bi];
+    const anyNamed = flat.some((e) => e && typeof e === 'object' && Array.isArray(e.center));
+    // Only named picks, none on this body → leave it alone.
+    if (!mine.length && anyNamed && !shared.length) {
+      out.push(bodies[bi]);
+      continue;
+    }
+    const spec = [...mine, ...shared];
+    const arg = Array.isArray(faces) || spec.length !== 1 ? spec : spec[0];
+    const res = run(bodies[bi], flat.length ? arg : faces);
+    out.push(res);
+    if (res !== bodies[bi]) temps.push(bodies[bi]);
+  }
+  const result = Manifold.compose(out);
+  for (const m of out) _safeDeleteManifold(m);
+  for (const m of temps) _safeDeleteManifold(m);
+  return result;
+}
+
 /**
  * shell(manifold, thickness, opening) — the CAVITY tool.
  *
@@ -706,6 +795,10 @@ function shell(manifold, thickness, opening = 'z') {
  * @see shell for the `opening` forms.
  */
 function hollow(manifold, thickness, opening = 'z') {
+  return _perBodyFaceOp(manifold, opening, (body, sel) => _hollowOne(body, thickness, sel));
+}
+
+function _hollowOne(manifold, thickness, opening) {
   const out = _c4RequireValidSolid(manifold.subtract(shell(manifold, thickness, opening)), 'hollow');
   // A wall thicker than half the part can leave the solid untouched — a silent
   // no-op that reads as a kernel bug. Say it instead.
@@ -867,6 +960,10 @@ function _c4PushDraftDir(list, n, tRef) {
  * @returns {Manifold}
  */
 function draftFaces(manifold, faces, angleDeg, opts = {}) {
+  return _perBodyFaceOp(manifold, faces, (body, sel) => _draftFacesOne(body, sel, angleDeg, opts));
+}
+
+function _draftFacesOne(manifold, faces, angleDeg, opts = {}) {
   if (!manifoldModule) throw new Error('Manifold not initialized');
   if (typeof angleDeg !== 'number' || !Number.isFinite(angleDeg)) {
     throw new Error(`draftFaces: angleDeg must be a finite number (got ${angleDeg})`);
@@ -1290,6 +1387,10 @@ function _c4ExpandSamePlane(md, sel) {
 }
 
 function moveFace(manifold, faces, distance, opts = {}) {
+  return _perBodyFaceOp(manifold, faces, (body, sel) => _moveFaceOne(body, sel, distance, opts));
+}
+
+function _moveFaceOne(manifold, faces, distance, opts = {}) {
   if (!manifoldModule) throw new Error('Manifold not initialized');
   if (typeof distance !== 'number' || !Number.isFinite(distance)) {
     throw new Error(`moveFace: distance must be a finite number (got ${distance})`);
@@ -1412,6 +1513,10 @@ function moveFace(manifold, faces, distance, opts = {}) {
  * @returns {Manifold}
  */
 function deleteFace(manifold, faces) {
+  return _perBodyFaceOp(manifold, faces, (body, sel) => _deleteFaceOne(body, sel));
+}
+
+function _deleteFaceOne(manifold, faces) {
   if (!manifoldModule) throw new Error('Manifold not initialized');
   const md = c4MeshData(manifold);
   const sel = _c4ResolveFaceSelection(md, faces, { label: 'deleteFace: faces' });
@@ -7994,6 +8099,8 @@ const initializeManifold = async () => {
   try {
     manifoldModule = await Module();
     manifoldModule.setup();
+    // part.add(solid, { merge: false }) + per-body booleans on overlapping bodies.
+    installSeparateBodies(manifoldModule);
     
     isInitialized = true;
     console.log('[SandboxWorker] Manifold initialized');
