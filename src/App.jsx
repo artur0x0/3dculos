@@ -87,10 +87,17 @@ import {
   suggestNewPartPath,
   partPathAllowedFor,
   vaultSegment,
+  assemblyFilePath,
   commitWorkspace,
   forceMergeCommit,
   forceMergeWarning,
   firstCommitBaseline,
+  checkRemoteBehind,
+  behindToastMessage,
+  remainingBehindMarkers,
+  reloadFromRemote,
+  advanceBaselineHead,
+  checkInMineToBranch,
 } from './utils/git';
 import PartFeed from './components/PartFeed';
 import manifoldContext from './utils/ManifoldWorker';
@@ -145,6 +152,13 @@ const App = () => {
   const gitVaultRef = useRef(null);
   const [gitBaseline, setGitBaseline] = useState(null);
   const gitBaselineRef = useRef(null);
+  /** G4: last remote-behind check + paths the user already resolved. */
+  const [gitBehind, setGitBehind] = useState(null); // checkRemoteBehind result | null
+  const gitBehindRef = useRef(null);
+  const [gitBehindResolved, setGitBehindResolved] = useState([]); // path strings
+  const gitBehindResolvedRef = useRef([]);
+  const [gitBehindToast, setGitBehindToast] = useState(null); // { message, behindBy } | null
+  const gitCheckGenRef = useRef(0);
   /** Last successful mesh per part. A failed row can still be picked from this. */
   const partLeftoversRef = useRef({});
   /** CAD pick target. Monaco stays on assembly.activeId until a sync. */
@@ -1516,6 +1530,66 @@ const App = () => {
     setGitBaseline(baseline);
   };
 
+  const rememberGitBehind = (check, { showToast = true, resetResolved = true } = {}) => {
+    gitBehindRef.current = check;
+    setGitBehind(check);
+    if (resetResolved) {
+      gitBehindResolvedRef.current = [];
+      setGitBehindResolved([]);
+    }
+    if (check && check.behindBy > 0) {
+      if (showToast) {
+        setGitBehindToast({
+          message: behindToastMessage({ behindBy: check.behindBy }),
+          behindBy: check.behindBy,
+        });
+      }
+    } else {
+      setGitBehindToast(null);
+    }
+  };
+
+  const markBehindResolved = (path) => {
+    if (!path) return;
+    const next = gitBehindResolvedRef.current.includes(path)
+      ? gitBehindResolvedRef.current
+      : [...gitBehindResolvedRef.current, path];
+    gitBehindResolvedRef.current = next;
+    setGitBehindResolved(next);
+    const markers = remainingBehindMarkers(gitBehindRef.current, next);
+    if (!markers.any) setGitBehindToast(null);
+  };
+
+  /** G4: compare baseline head to main; show toast + markers when behind. */
+  const checkGitRemoteBehind = async ({ showToast = true, reason = 'manual' } = {}) => {
+    const doc = assemblyRef.current;
+    const baseline = gitBaselineRef.current;
+    if (!doc || doc.source !== 'git' || !baseline?.headSha) return null;
+    const gen = ++gitCheckGenRef.current;
+    try {
+      const vault = await ensureGitVault();
+      const asmPath = baseline.assemblyPath
+        || assemblyFilePath(vaultSegment(doc.name) || doc.name);
+      const check = await checkRemoteBehind(gitAdapterRef.current, vault.repo, {
+        branch: baseline.branch || vault.defaultBranch || 'main',
+        baselineSha: baseline.headSha,
+        assemblyPath: asmPath,
+        partIds: (doc.parts || []).map((p) => p.id),
+      });
+      if (gen !== gitCheckGenRef.current) return null; // stale
+      // Preserve already-resolved paths across focus rechecks of the same remote tip.
+      const sameTip = gitBehindRef.current?.remoteSha === check.remoteSha;
+      rememberGitBehind(check, {
+        showToast: showToast && check.behindBy > 0,
+        resetResolved: !sameTip,
+      });
+      return check;
+    } catch (err) {
+      console.warn('[git] behind check failed', reason, err);
+      return null;
+    }
+  };
+
   const ensureGitVault = async () => {
     if (!gitAdapterRef.current) {
       gitAdapterRef.current = createMockGithubAdapter({ login: 'local-user' });
@@ -1541,6 +1615,8 @@ const App = () => {
     if (doc.source === 'git') {
       rememberAssembly({ ...doc, source: 'local' });
       rememberGitBaseline(null);
+      rememberGitBehind(null, { showToast: false, resetResolved: true });
+      setGitBehindToast(null);
       return;
     }
     try {
@@ -1553,6 +1629,8 @@ const App = () => {
     rememberAssembly({ ...doc, source: 'git' });
     // No baseline until a vault Open — dirty badges stay off.
     rememberGitBaseline(null);
+    rememberGitBehind(null, { showToast: false, resetResolved: true });
+    setGitBehindToast(null);
   };
 
   const handleListVaultAssemblies = async () => {
@@ -1577,6 +1655,8 @@ const App = () => {
       const saved = rememberAssembly(opened.doc);
       rememberGitBaseline(opened.baseline);
       gitVaultRef.current = { ...vault, headSha: opened.baseline.headSha };
+      // G4: check remote on open (usually current; catches a race with a push).
+      void checkGitRemoteBehind({ showToast: true, reason: 'open' });
       const keep = new Set(saved.parts.map((part) => String(part.id)));
       for (const key of Object.keys(partHistoriesRef.current)) {
         if (key !== '__game__' && !keep.has(key)) delete partHistoriesRef.current[key];
@@ -1712,6 +1792,8 @@ const App = () => {
       if (result.status === 'committed') {
         rememberGitBaseline(result.baseline);
         gitVaultRef.current = { ...vault, headSha: result.sha };
+        rememberGitBehind(null, { showToast: false, resetResolved: true });
+        setGitBehindToast(null);
       } else if (result.status === 'branched') {
         return { ...result, warning: forceMergeWarning(result) };
       }
@@ -1729,12 +1811,152 @@ const App = () => {
       if (result.status === 'merged') {
         rememberGitBaseline(result.baseline);
         gitVaultRef.current = { ...vault, headSha: result.sha };
+        rememberGitBehind(null, { showToast: false, resetResolved: true });
+        setGitBehindToast(null);
       }
       return result;
     } catch (err) {
       return { status: 'error', error: err.message || 'Force merge failed' };
     }
   };
+
+  /**
+   * G4 conflict choice for one behind path: reload | keep | branch.
+   * Reload updates working copy + baseline for that path; keep / branch only
+   * clear the marker (branch also parks mine on surfcad/<asm>-<date>).
+   */
+  const handleBehindChoice = async ({ action, path, kind }) => {
+    const doc = assemblyRef.current;
+    const baseline = gitBaselineRef.current;
+    if (!doc || doc.source !== 'git' || !baseline || !path) {
+      return { status: 'error', error: 'Not in Git mode' };
+    }
+    try {
+      const vault = await ensureGitVault();
+      const branch = baseline.branch || vault.defaultBranch || 'main';
+      if (action === 'keep') {
+        markBehindResolved(path);
+        return { status: 'kept', path };
+      }
+      if (action === 'branch') {
+        const live = codeEditorRef.current?.getContent?.();
+        const scripts = { ...partScriptsRef.current };
+        if (doc.activeId && !suppressPartSaveRef.current && typeof live === 'string') {
+          scripts[doc.activeId] = live;
+        }
+        const result = await checkInMineToBranch(gitAdapterRef.current, vault.repo, {
+          doc,
+          scripts,
+          baseline,
+          path,
+          kind: kind === 'assembly' ? 'assembly' : 'part',
+        });
+        markBehindResolved(path);
+        return result;
+      }
+      if (action === 'reload') {
+        const live = codeEditorRef.current?.getContent?.();
+        const scripts = { ...partScriptsRef.current };
+        if (doc.activeId && !suppressPartSaveRef.current && typeof live === 'string') {
+          scripts[doc.activeId] = live;
+        }
+        const reloaded = await reloadFromRemote(gitAdapterRef.current, vault.repo, {
+          path,
+          kind: kind === 'assembly' ? 'assembly' : 'part',
+          branch,
+          doc,
+          scripts,
+          baseline,
+        });
+        if (reloaded.kind === 'assembly') {
+          // Replace assembly document; keep scripts for ids still present.
+          const nextDoc = reloaded.doc;
+          const keepScripts = {};
+          for (const part of nextDoc.parts || []) {
+            keepScripts[part.id] = reloaded.scripts[part.id] ?? scripts[part.id] ?? '';
+          }
+          // Fetch any part scripts the remote assembly lists that we do not have.
+          for (const part of nextDoc.parts || []) {
+            if (keepScripts[part.id] === '' || keepScripts[part.id] == null) {
+              const got = await readVaultPart(gitAdapterRef.current, vault.repo, part.id, branch);
+              if (got) keepScripts[part.id] = got.content;
+            }
+          }
+          for (const [id, script] of Object.entries(keepScripts)) {
+            await savePartScript(id, script);
+          }
+          rememberScripts(keepScripts);
+          const saved = rememberAssembly(nextDoc);
+          let nextBaseline = reloaded.baseline;
+          // Refresh baseline scripts to match what we loaded.
+          nextBaseline = {
+            ...nextBaseline,
+            scripts: { ...keepScripts },
+            partIds: (nextDoc.parts || []).map((p) => p.id),
+          };
+          markBehindResolved(path);
+          const markers = remainingBehindMarkers(gitBehindRef.current, gitBehindResolvedRef.current);
+          if (!markers.any && gitBehindRef.current?.remoteSha) {
+            nextBaseline = advanceBaselineHead(nextBaseline, gitBehindRef.current.remoteSha);
+            rememberGitBehind(null, { showToast: false, resetResolved: true });
+            setGitBehindToast(null);
+          }
+          rememberGitBaseline(nextBaseline);
+          const active = saved.parts.find((p) => p.id === saved.activeId) || saved.parts[0];
+          if (active) {
+            const picked = scriptForRow(saved, keepScripts, active.id);
+            focusPartHistory(active.id, picked.ok ? picked.script : '');
+            setCurrentFilename(active.name);
+            if (picked.ok) {
+              suppressPartSaveRef.current = false;
+              codeEditorRef.current?.loadContent(picked.script, active.name, false);
+            }
+          }
+          return { status: 'reloaded', path, kind: 'assembly' };
+        }
+        // Part reload
+        await savePartScript(path, reloaded.content);
+        const nextScripts = reloaded.scripts;
+        rememberScripts(nextScripts);
+        let nextBaseline = reloaded.baseline;
+        markBehindResolved(path);
+        const markers = remainingBehindMarkers(gitBehindRef.current, gitBehindResolvedRef.current);
+        if (!markers.any && gitBehindRef.current?.remoteSha) {
+          nextBaseline = advanceBaselineHead(nextBaseline, gitBehindRef.current.remoteSha);
+          rememberGitBehind(null, { showToast: false, resetResolved: true });
+          setGitBehindToast(null);
+        }
+        rememberGitBaseline(nextBaseline);
+        if (doc.activeId === path) {
+          suppressPartSaveRef.current = false;
+          codeEditorRef.current?.loadContent(reloaded.content, path, false);
+        } else {
+          refreshAssemblyRef.current?.(codeEditorRef.current?.getContent?.());
+        }
+        return { status: 'reloaded', path, kind: 'part' };
+      }
+      return { status: 'error', error: `Unknown action: ${action}` };
+    } catch (err) {
+      return { status: 'error', error: err.message || 'Behind action failed' };
+    }
+  };
+
+  // G4: re-check remote when the window is focused / tab becomes visible.
+  useEffect(() => {
+    const onFocus = () => {
+      if (assemblyRef.current?.source !== 'git' || !gitBaselineRef.current?.headSha) return;
+      void checkGitRemoteBehind({ showToast: true, reason: 'focus' });
+    };
+    const onVis = () => {
+      if (document.visibilityState === 'visible') onFocus();
+    };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVis);
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps -- refs + stable helpers
 
   const handleAddPart = async (gitPath) => {
     const doc = assemblyRef.current;
@@ -2809,10 +3031,21 @@ const App = () => {
       liveScript: liveDirtyScript,
     })
   );
+  const behindMarkers = (
+    assemblyDoc?.source === 'git' && gitBehind
+  ) ? remainingBehindMarkers(gitBehind, gitBehindResolved) : { assemblyBehind: false, partIds: [], any: false };
+  const behindPartIdSet = new Set(behindMarkers.partIds || []);
+  const gitAssemblyPath = (
+    gitBaseline?.assemblyPath
+    || (assemblyDoc?.source === 'git'
+      ? assemblyFilePath(vaultSegment(assemblyDoc.name) || assemblyDoc.name)
+      : '')
+  );
   const partRows = assemblyDoc
     ? feedRows(assemblyDoc, partRuns, partScripts).map((row) => ({
       ...row,
       dirty: gitDirtyIds.has(row.id),
+      behind: behindPartIdSet.has(row.id),
     }))
     : [];
   const stripScript = (
@@ -2857,6 +3090,10 @@ const App = () => {
       canCommit={assemblyDoc.source === 'git' && (!gitBaseline || !!sourceDirty)}
       onGitCommit={handleGitCommit}
       onForceMerge={handleForceMerge}
+      behindPartIds={behindPartIdSet}
+      assemblyBehind={!!behindMarkers.assemblyBehind}
+      assemblyPath={gitAssemblyPath || ''}
+      onBehindChoice={handleBehindChoice}
       suggestNewPartPath={
         assemblyDoc.source === 'git'
           ? suggestNewPartPath(assemblyDoc.name, assemblyDoc.parts)
@@ -3223,6 +3460,30 @@ const App = () => {
               </ErrorPopup>
             </div>
           )}
+          {gitBehindToast && !uploadError && (
+            <div className="absolute top-4 left-1/2 transform -translate-x-1/2 z-50 max-w-md" data-git-behind-toast="">
+              <ErrorPopup
+                tone="warn"
+                onDismiss={() => setGitBehindToast(null)}
+                className="px-4 py-2"
+              >
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                  <span data-git-behind-toast-msg="">{gitBehindToast.message}</span>
+                  <button
+                    type="button"
+                    data-git-behind-toast-parts=""
+                    className="shrink-0 rounded-md bg-amber-500/30 px-2 py-0.5 text-[11px] font-semibold text-amber-50 hover:bg-amber-500/45"
+                    onClick={() => {
+                      setMobileStageSticky('parts');
+                      setGitBehindToast(null);
+                    }}
+                  >
+                    Parts
+                  </button>
+                </div>
+              </ErrorPopup>
+            </div>
+          )}
         </div>
     );
   }
@@ -3462,6 +3723,30 @@ const App = () => {
                 className="px-4 py-2"
               >
                 Upload Error: {uploadError}
+              </ErrorPopup>
+            </div>
+          )}
+          {gitBehindToast && !uploadError && (
+            <div className="absolute top-4 left-1/2 transform -translate-x-1/2 z-50 max-w-md" data-git-behind-toast="">
+              <ErrorPopup
+                tone="warn"
+                onDismiss={() => setGitBehindToast(null)}
+                className="px-4 py-2"
+              >
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                  <span data-git-behind-toast-msg="">{gitBehindToast.message}</span>
+                  <button
+                    type="button"
+                    data-git-behind-toast-parts=""
+                    className="shrink-0 rounded-md bg-amber-500/30 px-2 py-0.5 text-[11px] font-semibold text-amber-50 hover:bg-amber-500/45"
+                    onClick={() => {
+                      setMobileStageSticky('parts');
+                      setGitBehindToast(null);
+                    }}
+                  >
+                    Parts
+                  </button>
+                </div>
               </ErrorPopup>
             </div>
           )}

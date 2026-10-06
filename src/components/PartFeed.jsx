@@ -30,7 +30,7 @@ const STRIP_ICON = 18;
  * Assembly name in the ribbon. Same commit rules as the CAD title chip:
  * click edits, Enter or blur commits, Escape reverts, empty commits nothing.
  */
-function RibbonAssemblyName({ name, onRename }) {
+function RibbonAssemblyName({ name, onRename, behind = false, onBehindClick = null }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   const inputRef = useRef(null);
@@ -72,25 +72,45 @@ function RibbonAssemblyName({ name, onRename }) {
       />
     );
   }
+  const behindBadge = behind ? (
+    <button
+      type="button"
+      data-assembly-behind=""
+      title="Remote changed this assembly — click for Reload / Keep mine / Check in mine"
+      aria-label="Assembly behind remote"
+      className="pointer-events-auto ml-1 inline-block h-2 w-2 shrink-0 rounded-full bg-amber-400 ring-1 ring-amber-200/80"
+      onClick={(event) => {
+        event.stopPropagation();
+        onBehindClick?.();
+      }}
+    />
+  ) : null;
+
   if (!onRename) {
     return (
-      <span className={`${label} pointer-events-none`} data-assembly-name="" title={name}>
-        {name}
+      <span className="pointer-events-none inline-flex max-w-[45%] items-center" data-assembly-behind-wrap={behind ? 'true' : 'false'}>
+        <span className={`${label} pointer-events-none`} data-assembly-name="" title={name}>
+          {name}
+        </span>
+        {behindBadge}
       </span>
     );
   }
   return (
-    <button
-      type="button"
-      onClick={start}
-      className={`${label} pointer-events-auto cursor-text hover:text-white`}
-      title="Click to rename this assembly"
-      aria-label={`Assembly name: ${name}. Click to rename.`}
-      data-assembly-name=""
-      data-assembly-rename="button"
-    >
-      {name}
-    </button>
+    <span className="pointer-events-auto inline-flex max-w-[45%] items-center" data-assembly-behind-wrap={behind ? 'true' : 'false'}>
+      <button
+        type="button"
+        onClick={start}
+        className={`${label} cursor-text hover:text-white`}
+        title="Click to rename this assembly"
+        aria-label={`Assembly name: ${name}. Click to rename.`}
+        data-assembly-name=""
+        data-assembly-rename="button"
+      >
+        {name}
+      </button>
+      {behindBadge}
+    </span>
   );
 }
 
@@ -267,6 +287,11 @@ export default function PartFeed({
   canCommit = false,
   onGitCommit = null,
   onForceMerge = null,
+  // G4 pull/conflicts
+  behindPartIds = null,
+  assemblyBehind = false,
+  assemblyPath = '',
+  onBehindChoice = null,
 }) {
   const [renamingId, setRenamingId] = useState(null);
   const loadRef = useRef(null);
@@ -279,6 +304,11 @@ export default function PartFeed({
   // G3 commit flow: null | { stage: 'message'|'busy'|'ask-force'|'done'|'error', ... }
   const [commitFlow, setCommitFlow] = useState(null);
   const commitInputRef = useRef(null);
+  // G4 conflict choice: null | { path, kind: 'part'|'assembly', name, stage, error, result }
+  const [conflictFlow, setConflictFlow] = useState(null);
+  const behindSet = behindPartIds instanceof Set
+    ? behindPartIds
+    : new Set(behindPartIds || []);
 
   const onLoadPicked = async (event) => {
     const file = event.target.files?.[0];
@@ -394,6 +424,28 @@ export default function PartFeed({
       setCommitFlow({ ...commitFlow, stage: 'error', error: result.error || 'Force merge failed' });
     } else {
       setCommitFlow({ stage: 'done', draft: '', result, error: '' });
+    }
+  };
+
+  const openConflict = (path, kind, name) => {
+    if (source !== 'git' || !path) return;
+    setConflictFlow({ path, kind, name: name || path, stage: 'choose', error: '', result: null });
+  };
+
+  const closeConflict = () => setConflictFlow(null);
+
+  const runConflict = async (action) => {
+    if (!conflictFlow) return;
+    setConflictFlow({ ...conflictFlow, stage: 'busy', error: '' });
+    const result = (await onBehindChoice?.({
+      action,
+      path: conflictFlow.path,
+      kind: conflictFlow.kind,
+    })) || { status: 'error', error: 'Action unavailable' };
+    if (result.status === 'error') {
+      setConflictFlow({ ...conflictFlow, stage: 'error', error: result.error || 'Failed', result });
+    } else {
+      setConflictFlow({ ...conflictFlow, stage: 'done', result, error: '' });
     }
   };
 
@@ -525,7 +577,11 @@ export default function PartFeed({
             className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center"
             data-parts-ribbon-center=""
           >
-            <RibbonAssemblyName name={ribbonName} onRename={onRenameAssembly} />
+            <RibbonAssemblyName name={ribbonName}
+              onRename={onRenameAssembly}
+              behind={!!assemblyBehind}
+              onBehindClick={() => openConflict(assemblyPath || '', 'assembly', ribbonName)}
+            />
           </div>
         ) : null}
         <input
@@ -558,6 +614,7 @@ export default function PartFeed({
               data-part-selected={selected ? 'true' : 'false'}
               data-part-status={status}
               data-part-dirty={row.dirty ? 'true' : 'false'}
+              data-part-behind={behindSet.has(row.id) ? 'true' : 'false'}
               draggable={renamingId !== row.id}
               onDragStart={(event) => {
                 event.dataTransfer.setData('text/plain', String(index));
@@ -614,6 +671,19 @@ export default function PartFeed({
                       data-part-dirty=""
                       title="Uncommitted changes"
                       className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400"
+                    />
+                  ) : null}
+                  {behindSet.has(row.id) ? (
+                    <button
+                      type="button"
+                      data-part-behind=""
+                      title="Remote changed this part — click for Reload / Keep mine / Check in mine"
+                      aria-label="Part behind remote"
+                      className="inline-block h-2 w-2 shrink-0 rounded-full bg-amber-400 ring-1 ring-amber-200/80"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        openConflict(row.id, 'part', row.name);
+                      }}
                     />
                   ) : null}
                 </div>
@@ -887,6 +957,83 @@ export default function PartFeed({
           )}
           {commitFlow.stage === 'error' && (
             <p className="text-xs text-amber-300" data-git-commit-error="">{commitFlow.error}</p>
+          )}
+        </VaultPickerDialog>
+      )}
+      {conflictFlow && typeof document !== 'undefined' && (
+        <VaultPickerDialog
+          title={conflictFlow.kind === 'assembly' ? 'Assembly behind remote' : 'Part behind remote'}
+          labelledBy="git-behind-title"
+          dataAttr="behind"
+          onClose={conflictFlow.stage === 'busy' ? undefined : closeConflict}
+          footer={(
+            <div className="mt-4 flex flex-wrap justify-end gap-2" data-git-behind-stage={conflictFlow.stage}>
+              {conflictFlow.stage === 'choose' && (
+                <>
+                  <button type="button" className="rounded-md px-3 py-1.5 text-xs text-gray-200 hover:bg-white/10" onClick={closeConflict} data-git-dialog-cancel="">
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    data-git-behind-reload=""
+                    className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-500"
+                    onClick={() => runConflict('reload')}
+                  >
+                    Reload
+                  </button>
+                  <button
+                    type="button"
+                    data-git-behind-keep=""
+                    className="rounded-md px-3 py-1.5 text-xs text-gray-100 hover:bg-white/10 border border-gray-600"
+                    onClick={() => runConflict('keep')}
+                  >
+                    Keep mine
+                  </button>
+                  <button
+                    type="button"
+                    data-git-behind-branch=""
+                    className="rounded-md px-3 py-1.5 text-xs text-amber-100 hover:bg-amber-900/40 border border-amber-500/50"
+                    onClick={() => runConflict('branch')}
+                  >
+                    Check in mine to a branch
+                  </button>
+                </>
+              )}
+              {(conflictFlow.stage === 'done' || conflictFlow.stage === 'error') && (
+                <button type="button" className="rounded-md px-3 py-1.5 text-xs text-gray-200 hover:bg-white/10" onClick={closeConflict} data-git-dialog-cancel="">
+                  Close
+                </button>
+              )}
+            </div>
+          )}
+        >
+          {conflictFlow.stage === 'choose' && (
+            <div data-git-behind-ask="" data-git-behind-path={conflictFlow.path} data-git-behind-kind={conflictFlow.kind}>
+              <p className="text-xs text-gray-300">
+                {'Remote changed '}
+                <span className="font-medium text-gray-100">{conflictFlow.name}</span>
+                {'. Reload takes the remote version, Keep mine keeps yours, or Check in mine parks yours on a new branch (base auto-detected).'}
+              </p>
+              <p className="mt-2 truncate font-mono text-[10px] text-gray-500" title={conflictFlow.path}>{conflictFlow.path}</p>
+            </div>
+          )}
+          {conflictFlow.stage === 'busy' && <p className="text-xs text-gray-400" data-git-dialog-loading="">Working…</p>}
+          {conflictFlow.stage === 'done' && (
+            <p className="text-xs text-gray-300" data-git-behind-done={conflictFlow.result?.status || ''}>
+              {conflictFlow.result?.status === 'reloaded' && 'Reloaded from remote.'}
+              {conflictFlow.result?.status === 'kept' && 'Keeping your version. Marker cleared.'}
+              {conflictFlow.result?.status === 'branched' && (
+                <>
+                  {'Parked on '}
+                  <span className="font-mono">{conflictFlow.result?.branch}</span>
+                  {'. Your working copy is unchanged; marker cleared.'}
+                </>
+              )}
+              {!['reloaded', 'kept', 'branched'].includes(conflictFlow.result?.status) && 'Done.'}
+            </p>
+          )}
+          {conflictFlow.stage === 'error' && (
+            <p className="text-xs text-amber-300" data-git-behind-error="">{conflictFlow.error}</p>
           )}
         </VaultPickerDialog>
       )}
