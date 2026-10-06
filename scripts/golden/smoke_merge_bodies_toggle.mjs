@@ -13,6 +13,9 @@
  *   merge off → 2 bodies; Boolean union of the two → 1; merge on → 1.
  * Then every follow-up feature on the 2-body part: per-body booleans keep the
  * overlap from fusing them, face features run on the picked body only.
+ *
+ * Slice O: the violet strip marker derives from live body count — present at
+ * 2 bodies, cleared after Boolean union to 1 — not from the script alone.
  */
 import { register } from 'node:module';
 import { readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
@@ -35,7 +38,7 @@ import {
   defaultExtrudeParams,
   defaultLoftProfiles,
 } from '../../src/utils/contourMode.js';
-import { parseFeatureMarkers } from '../../src/utils/featureMarkers.js';
+import { parseFeatureMarkers, featureShowsSeparateBody } from '../../src/utils/featureMarkers.js';
 import {
   emptyBooleanState,
   applyBooleanTap,
@@ -348,15 +351,22 @@ const after = async (line) => run(`${two}${line}\nreturn part;\n`);
   check('face-to-face bare add still fuses', k.ok && k.bodies === 1 && near(k.volume, 2000, 1e-6));
 }
 
-// ── Strip chip marker ───────────────────────────────────────────────────
+// ── Strip chip marker (live body state) ─────────────────────────────────
 {
   const feats = parseFeatureMarkers(offScript);
   const cubes = feats.filter((f) => f.kind === 'cube');
   check('strip: the merge-off Cube is marked separate, the founding Cube is not',
     cubes.length === 2 && !cubes[0].separate && cubes[1].separate === true);
   check('strip: merge-on script marks nothing', parseFeatureMarkers(onScript).every((f) => !f.separate));
-  check('strip: after Boolean the Cube chip still shows it was written separate',
-    parseFeatureMarkers(unionScript).filter((f) => f.separate).length === 1);
+  // AST still records how the block wrote; the live marker uses bodyCount.
+  const afterUnion = parseFeatureMarkers(unionScript);
+  check('strip: after Boolean the Cube chip still wrote merge:false (AST)',
+    afterUnion.filter((f) => f.separate).length === 1);
+  check('live: marker on at 2 bodies, off at 1 (Boolean union clears it)',
+    featureShowsSeparateBody(cubes[1], 2) === true
+    && featureShowsSeparateBody(cubes[1], 1) === false
+    && featureShowsSeparateBody(cubes[0], 2) === false
+    && featureShowsSeparateBody(afterUnion.find((f) => f.separate), 1) === false);
 
   const dir = mkdtempSync(join(tmpdir(), 'merge-bodies-'));
   const out = join(dir, 'ui.mjs');
@@ -395,13 +405,18 @@ export { default as ContourModeChip } from './src/components/ContourModeChip.jsx
     ['mobile top strip', { orientation: 'horizontal', side: 'top' }],
     ['script rail strip', { orientation: 'vertical', side: 'right' }],
   ]) {
-    const html = h(ui.FeatureStrip, { script: offScript, onJump: () => {}, ...props });
-    const sep = chipOf(html, cubes[1].id);
-    const plain = chipOf(html, cubes[0].id);
-    check(`${label}: separate-body marker on the merge-off chip only`,
+    const html2 = h(ui.FeatureStrip, { script: offScript, bodyCount: 2, onJump: () => {}, ...props });
+    const sep = chipOf(html2, cubes[1].id);
+    const plain = chipOf(html2, cubes[0].id);
+    check(`${label}: separate-body marker on the merge-off chip only (2 bodies)`,
       /data-feature-separate="1"/.test(sep) && /data-feature-separate-body/.test(sep)
       && !/data-feature-separate/.test(plain), sep.slice(0, 200));
     check(`${label}: title says separate body`, /separate body \(merge off\)/.test(sep));
+    const html1 = h(ui.FeatureStrip, { script: unionScript, bodyCount: 1, onJump: () => {}, ...props });
+    const cleared = chipOf(html1, afterUnion.find((f) => f.kind === 'cube' && f.separate).id);
+    check(`${label}: marker cleared after Boolean union (1 body)`,
+      !/data-feature-separate/.test(cleared) && !/data-feature-separate-body/.test(cleared)
+      && !/separate body \(merge off\)/.test(cleared), cleared.slice(0, 200));
   }
   const addChip = h(ui.ContourModeChip, { entry: 'makeExtrude', tool: 'circle', params: defaultContourParams('circle'), combine: 'add', merge: true });
   const offChip = h(ui.ContourModeChip, { entry: 'makeExtrude', tool: 'circle', params: defaultContourParams('circle'), combine: 'add', merge: false });
@@ -422,6 +437,9 @@ export { default as ContourModeChip } from './src/components/ContourModeChip.jsx
   }
   const arch = read('docs/architecture.md');
   check('architecture.md documents Merge bodies', /Merge bodies/.test(arch) && /merge: false/.test(arch));
+  check('architecture.md: strip marker follows live bodyCount',
+    /featureShowsSeparateBody/.test(arch) && /live part still has more than one body/.test(arch)
+    && !/It stays after a later Boolean union/.test(arch));
   const pkg = JSON.parse(read('package.json'));
   check('package.json registers golden:merge-bodies-toggle',
     pkg.scripts['golden:merge-bodies-toggle'] === 'node scripts/golden/smoke_merge_bodies_toggle.mjs');

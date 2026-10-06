@@ -36,8 +36,11 @@ export async function runAssemblyParts({ doc, scripts, execute, ids = null }) {
     try {
       const result = await execute(resolved.script);
       const mesh = result?.mesh && result.mesh.vertProperties ? result.mesh : null;
+      const bodyCount = Array.isArray(result?.bodyCentroids)
+        ? result.bodyCentroids.length
+        : (Number.isFinite(result?.bodyCount) ? result.bodyCount : undefined);
       outcome = mesh
-        ? { ok: true, mesh }
+        ? { ok: true, mesh, bodyCount }
         : { ok: false, error: 'Script must return a Manifold object' };
     } catch (err) {
       outcome = { ok: false, error: err?.message || String(err) };

@@ -32,7 +32,7 @@ import {
 import SquareRoundCorner from './icons/SquareRoundCorner';
 import RectangleCircle from './icons/RectangleCircle';
 import Angle from './icons/Angle';
-import { parseFeatureMarkers } from '../utils/featureMarkers';
+import { parseFeatureMarkers, featureShowsSeparateBody } from '../utils/featureMarkers';
 import { featureBarWindowMode } from '../utils/featureBarLayout';
 import { chipTone } from '../utils/featureChipTone';
 
@@ -89,10 +89,12 @@ const FEATURE_ICONS = Object.freeze({
 });
 
 /** Title text for one chip. */
-function chipTitle(f, failed) {
+function chipTitle(f, failed, bodyCount) {
   if (failed) return `${f.chipLabel} — failed on the last run`;
   if (f.external) return `${f.chipLabel} — external copy, not linked`;
-  return f.separate ? `${f.chipLabel} — separate body (merge off)` : f.chipLabel;
+  return featureShowsSeparateBody(f, bodyCount)
+    ? `${f.chipLabel} — separate body (merge off)`
+    : f.chipLabel;
 }
 
 /** Merge bodies off: two small offset squares, top-left of the chip. */
@@ -149,6 +151,12 @@ export default function FeatureStrip({
   hidden = false,
   /** Ids of features the last run failed in (red chip border). */
   failedIds = null,
+  /**
+   * Live body count of the strip's part (from the last successful run).
+   * Separate-body marker shows only when a chip wrote merge:false AND this
+   * is greater than 1 — so a later Boolean union clears it.
+   */
+  bodyCount = 0,
 }) {
   const features = useMemo(() => parseFeatureMarkers(script), [script]);
   const horizontal = orientation === 'horizontal';
@@ -301,6 +309,7 @@ export default function FeatureStrip({
               const failed = !!failedIds?.has?.(f.id);
               const Icon = FEATURE_ICONS[f.kind] || NotebookPen;
               const typeIndex = f.typeIndex || 1;
+              const separateLive = featureShowsSeparateBody(f, bodyCount);
               return (
                 <button
                   key={f.id}
@@ -309,21 +318,20 @@ export default function FeatureStrip({
                   data-feature-id={f.id}
                   data-feature-type-index={typeIndex}
                   data-feature-external={f.external ? '1' : undefined}
-            data-feature-separate={f.separate ? '1' : undefined}
-                  data-feature-separate={f.separate ? '1' : undefined}
+                  data-feature-separate={separateLive ? '1' : undefined}
                   data-feature-failed={failed ? '1' : undefined}
                   aria-pressed={active}
                   aria-label={f.chipLabel}
                   aria-invalid={failed || undefined}
                   aria-description={f.external ? 'External copy, not linked' : undefined}
-                  title={chipTitle(f, failed)}
+                  title={chipTitle(f, failed, bodyCount)}
                   onClick={() => onJump?.(f)}
                   className={`relative shrink-0 rounded-lg p-1.5 flex items-center justify-center
                     border transition-colors active:opacity-80 ${chipTone(active, f.external, failed)}`}
                 >
                   <Icon size={16} strokeWidth={2} aria-hidden="true" />
                   <TypeBadge index={typeIndex} />
-                  <SeparateBodyMarker on={!!f.separate} />
+                  <SeparateBodyMarker on={separateLive} />
                 </button>
               );
             })}
@@ -373,6 +381,7 @@ export default function FeatureStrip({
         const failed = !!failedIds?.has?.(f.id);
         const Icon = FEATURE_ICONS[f.kind] || NotebookPen;
         const typeIndex = f.typeIndex || 1;
+        const separateLive = featureShowsSeparateBody(f, bodyCount);
         return (
           <button
             key={f.id}
@@ -381,20 +390,20 @@ export default function FeatureStrip({
             data-feature-id={f.id}
             data-feature-type-index={typeIndex}
             data-feature-external={f.external ? '1' : undefined}
-            data-feature-separate={f.separate ? '1' : undefined}
+            data-feature-separate={separateLive ? '1' : undefined}
             data-feature-failed={failed ? '1' : undefined}
             aria-pressed={active}
             aria-label={f.chipLabel}
             aria-invalid={failed || undefined}
             aria-description={f.external ? 'External copy, not linked' : undefined}
-            title={chipTitle(f, failed)}
+            title={chipTitle(f, failed, bodyCount)}
             onClick={() => onJump?.(f)}
             className={`relative shrink-0 rounded-lg p-1.5 flex items-center justify-center
               border transition-colors active:opacity-80 ${chipTone(active, f.external, failed)}`}
           >
             <Icon size={16} strokeWidth={2} aria-hidden="true" />
             <TypeBadge index={typeIndex} />
-            <SeparateBodyMarker on={!!f.separate} />
+            <SeparateBodyMarker on={separateLive} />
           </button>
         );
       })}
