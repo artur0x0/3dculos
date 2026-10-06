@@ -5,7 +5,7 @@ import PromptInput from './components/PromptInput';
 import SplitDivider from './components/SplitDivider';
 import MobileStageToggle from './components/MobileStageToggle';
 import FeatureStrip from './components/FeatureStrip';
-import { failedFeatureFor, failedFeatureIds } from './utils/featureFailure';
+import { failedFeatureFromOutcome, failedFeatureIds } from './utils/featureFailure';
 import { failedPartIdsFor } from './utils/failedPartOutline';
 import ErrorPopup from './components/ErrorPopup';
 import FeatureSheet from './components/FeatureSheet';
@@ -161,8 +161,9 @@ const App = () => {
    * block text is unchanged; the next good run clears it.
    */
   const [runFailure, setRunFailure] = useState(null);
-  const handleRunOutcome = ({ script, ok, scriptLine } = {}) => {
-    const next = ok ? null : failedFeatureFor(script, scriptLine);
+  const handleRunOutcome = ({ script, ok, scriptLine, featureId, featureBlock } = {}) => {
+    // Tracked block first (works on Safari), the stack's line second.
+    const next = ok ? null : failedFeatureFromOutcome(script, { featureId, featureBlock, scriptLine });
     setRunFailure((prev) => (
       (prev?.id ?? null) === (next?.id ?? null) && (prev?.block ?? null) === (next?.block ?? null) ? prev : next
     ));
@@ -2471,6 +2472,8 @@ const App = () => {
     cadHighlightId && assemblyDoc && cadHighlightId !== assemblyDoc.activeId
   ) ? (partScripts[cadHighlightId] || '') : currentScript;
   const stripFailedIds = failedFeatureIds(stripScript, runFailure);
+  // Feature sheets read the editor's script, so match the failure there.
+  const sheetFailedIds = failedFeatureIds(currentScript, runFailure);
   const partLabels = {};
   for (const row of assemblyDoc?.parts || []) partLabels[row.id] = row.name || row.id;
   const assemblyLabel = assemblyName(assemblyDoc);
@@ -2716,6 +2719,7 @@ const App = () => {
                 <FeatureSheet
                   features={listFeatureSheetTargets(currentScript)}
                   script={currentScript}
+                  failedIds={sheetFailedIds}
                   onCancel={closeFeatureSheet}
                   onPickFeature={(f) => openFeatureSheetFor(f)}
                 />
@@ -2724,6 +2728,7 @@ const App = () => {
                 <FeatureSheet
                   feature={featureSheet.feature}
                   script={currentScript}
+                  failedIds={sheetFailedIds}
                   onAccept={handleFeatureSheetAccept}
                   onCancel={closeFeatureSheet}
                   onDelete={handleFeatureSheetDelete}
@@ -2992,6 +2997,7 @@ const App = () => {
               placement="viewport"
               feature={featureSheet.feature}
               script={currentScript}
+              failedIds={sheetFailedIds}
               onAccept={handleFeatureSheetAccept}
               onCancel={closeFeatureSheet}
               onDelete={handleFeatureSheetDelete}

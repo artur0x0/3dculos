@@ -655,8 +655,10 @@ const Viewport = forwardRef(({
   /** Face / edge / body hit. App retargets the CAD part and may sync Monaco. */
   onPickRetarget = null,
   /**
-   * Every run of a script here reports its outcome: `{ script, ok, scriptLine }`.
-   * App maps a failed line to the feature block it sits in (strip red border).
+   * Every run of a script here reports its outcome:
+   * `{ script, ok, scriptLine, featureId, featureBlock }`. App maps a failure
+   * to its feature block (tracked id first, stack line second) for the strip
+   * and sheet red border.
    */
   onRunOutcome = null,
   /** True while any feature session is open. App hides the feature strip. */
@@ -6927,13 +6929,16 @@ const Viewport = forwardRef(({
       const msg = error.message || 'Script execution failed';
       stageExecErrorRef.current = msg;
       setExecutionError(msg);
-      // The worker names the script line of the failing call (when the stack
-      // has one); App marks the feature chip that holds it.
+      // The worker names the marked feature block that was running
+      // (featureId, every engine) and the script line of the failing call
+      // (when the stack has one); App marks that feature's chip.
       if (!abortController.aborted) {
         onRunOutcomeRef.current?.({
           script,
           ok: false,
           scriptLine: Number.isFinite(error?.scriptLine) ? error.scriptLine : null,
+          featureId: typeof error?.featureId === 'string' ? error.featureId : null,
+          featureBlock: typeof error?.featureBlock === 'string' ? error.featureBlock : null,
         });
       }
 

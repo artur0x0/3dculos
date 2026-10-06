@@ -125,6 +125,18 @@ body {
   }
 }
 
+/* Failed feature chip / sheet badge (featureChipTone.js FAILED_RING_CLASS).
+   Same red-400 as `border-2 border-red-400`, written out in full and outside
+   any layer so WebKit (iPhone Safari) keeps it over `border` utilities and
+   native button chrome. */
+.feature-failed-ring {
+  border-width: 2px !important;
+  border-style: solid !important;
+  border-color: #f87171 !important;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
 /* Safari < 18 and any browser without backdrop-filter: fall back to a more
    opaque tint so text stays legible over a busy viewport. */
 @supports not (backdrop-filter: blur(1px)) {

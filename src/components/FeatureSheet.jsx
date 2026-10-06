@@ -28,6 +28,7 @@ import {
   Boxes,
   Move,
 } from 'lucide-react';
+import { sheetIdentityTone, sheetPickTone } from '../utils/featureChipTone';
 import SquareRoundCorner from './icons/SquareRoundCorner';
 import RectangleCircle from './icons/RectangleCircle';
 import Angle from './icons/Angle';
@@ -155,6 +156,8 @@ export default function FeatureSheet({
   onDelete,
   onEditScript,
   onPickFeature,
+  /** Ids the last run failed in (red border, wins over the external yellow). */
+  failedIds = null,
   /** 'stage' (phone) | 'viewport' (desktop, inside the 3D pane). */
   placement = 'stage',
 }) {
@@ -190,6 +193,7 @@ export default function FeatureSheet({
             {features.map((f) => {
               const Icon = FEATURE_ICONS[f.kind] || NotebookPen;
               const editable = isFeatureSheetEditable(f.kind);
+              const failed = !!failedIds?.has?.(f.id);
               const typeIndex = f.typeIndex || ((f.index ?? 0) + 1);
               return (
                 <button
@@ -199,10 +203,11 @@ export default function FeatureSheet({
                   data-feature-kind={f.kind}
                   data-feature-type-index={typeIndex}
                   onClick={() => onPickFeature?.(f)}
-                  className={`relative shrink-0 flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-left border
-                    ${editable
-                      ? 'bg-cyan-950/60 border-cyan-600/50 text-white'
-                      : 'bg-gray-900/60 border-gray-600/50 text-gray-300'}`}
+                  data-feature-sheet-failed={failed ? '1' : undefined}
+                  aria-invalid={failed || undefined}
+                  title={failed ? `${f.chipLabel} — failed on the last run` : undefined}
+                  className={`relative shrink-0 flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-left
+                    ${sheetPickTone(editable, failed)}`}
                 >
                   <span className="relative inline-flex">
                     <Icon size={16} strokeWidth={2} aria-hidden="true" />
@@ -236,6 +241,8 @@ export default function FeatureSheet({
   const editable = !!(parsed && parsed.editable);
   const stub = !editable;
   const typeIndex = feature.typeIndex || ((feature.index ?? 0) + 1);
+  // Same red as the strip chip (failedFeatureIds on this script).
+  const failed = !!failedIds?.has?.(feature.id);
 
   const setNum = (key, raw, fallback) => {
     let next = raw;
@@ -331,9 +338,10 @@ export default function FeatureSheet({
       >
         <span
           className={`relative inline-flex items-center justify-center rounded-lg bg-cyan-900/70 p-1.5 shrink-0 ${
-            feature.external ? 'border-2 border-yellow-400' : 'border border-cyan-500/40'
+            sheetIdentityTone(feature.external, failed)
           }`}
           data-feature-sheet-external={feature.external ? '1' : undefined}
+          data-feature-sheet-failed={failed ? '1' : undefined}
         >
           <Icon size={18} strokeWidth={2} aria-hidden="true" />
           <TypeBadge index={typeIndex} />
@@ -345,7 +353,9 @@ export default function FeatureSheet({
         <div className="min-w-0 flex-1">
           <div className={`${POPUP_TEXT.title} text-white truncate`}>{feature.chipLabel}</div>
           <div className={`${POPUP_TEXT.subtitle} text-cyan-100/80 truncate`}>
-            {feature.external ? 'External copy · not linked · Delete removes it' : 'Feature sheet'}
+            {failed
+              ? 'Failed on the last run · fix and Accept, or Edit script'
+              : feature.external ? 'External copy · not linked · Delete removes it' : 'Feature sheet'}
           </div>
         </div>
         {/* The four actions are ~315px on their own, which is more than a 360px

@@ -751,6 +751,9 @@ class ManifoldWorker {
           error.stack = payload.stack;
           // Script line of the failing call (feature strip red border).
           if (Number.isFinite(payload.scriptLine)) error.scriptLine = payload.scriptLine;
+          // Marked feature block that was running (engine-independent).
+          if (typeof payload.featureId === 'string') error.featureId = payload.featureId;
+          if (typeof payload.featureBlock === 'string') error.featureBlock = payload.featureBlock;
           request.reject(error);
         }
         
