@@ -25,12 +25,12 @@ import {
   Boxes,
   Layers3,
   Scissors,
-  Combine,
   Move,
   SquareArrowOutUpRight,
   SquareX,
 } from 'lucide-react';
 import SquareRoundCorner from './icons/SquareRoundCorner';
+import RectangleCircle from './icons/RectangleCircle';
 import Angle from './icons/Angle';
 import { parseFeatureMarkers } from '../utils/featureMarkers';
 import { featureBarWindowMode } from '../utils/featureBarLayout';
@@ -76,7 +76,7 @@ const FEATURE_ICONS = Object.freeze({
   shell: PackageOpen,
   draft: Angle,
   cut: Scissors,
-  boolean: Combine,
+  boolean: RectangleCircle,
   move: Move,
   moveFace: SquareArrowOutUpRight,
   deleteFace: SquareX,

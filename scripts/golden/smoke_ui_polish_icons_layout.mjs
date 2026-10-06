@@ -150,6 +150,20 @@ const contourRail = read('../../src/components/ContourModeRail.jsx');
     /M21 11a8 8 0 0 0-8-8/.test(filletIcon)
       && /M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4/.test(filletIcon),
   );
+  // Boolean wears lucide `rectangle-circle` (vendored: not in lucide-react 0.469).
+  const boolIcon = read('../../src/components/icons/RectangleCircle.jsx');
+  const strip = read('../../src/components/FeatureStrip.jsx');
+  const sheet = read('../../src/components/FeatureSheet.jsx');
+  check('boolean uses RectangleCircle on the rail, strip, and sheet',
+    /boolean: RectangleCircle,/.test(palette) && /boolean: RectangleCircle,/.test(strip)
+      && /boolean: RectangleCircle,/.test(sheet)
+      && ![palette, strip, sheet].some((src) => /\bCombine\b/.test(src.replace(/onCombine\w*/g, ''))));
+  check(
+    'the vendored boolean glyph carries lucide\'s own paths',
+    /M14 4v16H3a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z/.test(boolIcon)
+      && /<circle cx="14" cy="12" r="8" \/>/.test(boolIcon)
+      && /lucide-rectangle-circle/.test(boolIcon),
+  );
   check('the vendored glyph takes lucide\'s size prop', /size = 24/.test(filletIcon));
   check('the retired stacked-layers glyph is gone', !/\bLayers\b/.test(palette));
   check(

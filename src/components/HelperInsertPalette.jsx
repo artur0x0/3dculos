@@ -23,12 +23,12 @@ import {
   NotebookPen,
   Route,
   Scissors,
-  Combine,
   Move,
   SquareArrowOutUpRight,
   SquareX,
 } from 'lucide-react';
 import SquareRoundCorner from './icons/SquareRoundCorner';
+import RectangleCircle from './icons/RectangleCircle';
 import Angle from './icons/Angle';
 import { itemsByGroup, paletteRailSections } from '../utils/helperPaletteSnippets';
 import {
@@ -61,7 +61,7 @@ const ICONS = {
   cskHole: Cone,
   shell: PackageOpen,
   cut: Scissors,
-  boolean: Combine,
+  boolean: RectangleCircle,
   move: Move,
   moveFace: SquareArrowOutUpRight,
   deleteFace: SquareX,
