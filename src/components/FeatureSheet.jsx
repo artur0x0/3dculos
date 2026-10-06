@@ -22,7 +22,6 @@ import {
   Cone,
   PackageOpen,
   Scissors,
-  Combine,
   Focus,
   AlignVerticalJustifyCenter,
   FlipHorizontal2,
@@ -30,6 +29,7 @@ import {
   Move,
 } from 'lucide-react';
 import SquareRoundCorner from './icons/SquareRoundCorner';
+import RectangleCircle from './icons/RectangleCircle';
 import Angle from './icons/Angle';
 import {
   NumberField,
@@ -77,7 +77,7 @@ const FEATURE_ICONS = Object.freeze({
   shell: PackageOpen,
   draft: Angle,
   cut: Scissors,
-  boolean: Combine,
+  boolean: RectangleCircle,
   move: Move,
   center: Focus,
   align: AlignVerticalJustifyCenter,

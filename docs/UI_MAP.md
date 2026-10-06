@@ -473,7 +473,7 @@ Import `src/utils/importModel.js` (+ `POST /api/convert/step`); export
   (`CAD_RAIL_ORDER` in `helperPaletteSnippets.js` for the order,
   `GROUP_SHORT_LABEL` in `HelperInsertPalette.jsx` for the captions). Shape is
   the old Model section, same buttons. Build is hole, cut, boolean, shell, draft,
-  pattern. Boolean (`Combine`) is the body boolean: Union, Difference, or
+  pattern. Boolean (`RectangleCircle`, lucide `rectangle-circle`, vendored in `icons/`) is the body boolean: Union, Difference, or
   Intersect, then leftover pieces on Intersect. It is not a second glyph of Cut.
   Polish is fillet, chamfer, move face, delete face. Move is every
   remaining button. The first button in Move is Move (`Move` glyph, directly
