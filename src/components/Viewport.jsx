@@ -136,6 +136,7 @@ import {
   validateFilletAccept,
   validateChamferAccept,
   defaultFilletParams,
+  solidMinExtent,
   normalizeFilletParams,
   hasFilletModeBlock,
   hasChamferModeBlock,
@@ -2572,6 +2573,15 @@ const Viewport = forwardRef(({
     // No informational toast on successful Fillet/Chamfer UI open — soft-fail/accept gates still toast.
   }, [exitContourMode, onFaceSelected, selectedEdges, clearHighlight]);
 
+  /** Solid geometry of a part: the pick mesh when active, else its assembly mesh. */
+  const pickPartGeometry = (partId) => {
+    const active = activePartIdRef.current;
+    if (partId == null || partId === '' || active == null || String(partId) === String(active)) {
+      return resultRef.current?.geometry || null;
+    }
+    return assemblyExtrasRef.current?.get(String(partId))?.geometry || null;
+  };
+
   const acceptFillet = useCallback(() => {
     const state = filletModeRef.current;
     if (!state) return;
@@ -2585,15 +2595,17 @@ const Viewport = forwardRef(({
     const plan = planMultiPartEdgeAccept({
       edges,
       activeId,
-      // An untouched radius is a seed from the active part's picks. Each
-      // part reseeds from its own picks, so it commits what a solo Fillet
-      // of that part would (radius, class, block). A typed radius applies
-      // to every part.
+      // An untouched radius is the fixed 2 mm default. Each part reseeds it
+      // against its own solid, so only a part too thin for 2 mm clamps it
+      // down (what a solo Fillet of that part would commit). A typed radius
+      // applies to every part.
       validate: (list) => (chamfer
         ? validateChamferAccept(list, state.params)
         : validateFilletAccept(list, partEdgeParams(state.params, list, {
           touched: !!state.radiusTouched,
-          seed: (picks) => defaultFilletParams(picks).radius,
+          seed: (picks) => defaultFilletParams(picks, {
+            minExtent: solidMinExtent(pickPartGeometry(picks[0]?.partId ?? activeId)),
+          }).radius,
         }))),
       partName: (id) => partLabelsRef.current?.[id] || id,
     });
@@ -2826,7 +2838,10 @@ const Viewport = forwardRef(({
       return;
     }
     if (!filletMode.radiusTouched) {
-      const seeded = defaultFilletParams(filletActiveEdges);
+      // Fixed 2 mm; only a part too thin for it clamps down. Picks no longer grow it.
+      const seeded = defaultFilletParams(filletActiveEdges, {
+        minExtent: solidMinExtent(resultRef.current?.geometry),
+      });
       if (Number(filletMode.params?.radius) !== seeded.radius) {
         setFilletMode((prev) => (
           prev && !prev.radiusTouched

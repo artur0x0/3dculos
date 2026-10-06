@@ -110,6 +110,7 @@
         "golden:part-overlays-stick": "node scripts/golden/smoke_part_overlays_stick.mjs",
         "golden:feature-failed-chip": "node scripts/golden/smoke_feature_failed_chip.mjs",
         "golden:failed-part-outline": "node scripts/golden/smoke_failed_part_outline.mjs",
+        "golden:fillet-default-radius": "node scripts/golden/smoke_fillet_default_radius.mjs",
         "golden:helper-binding-clash": "node scripts/golden/smoke_helper_binding_clash.mjs"
     },
     "dependencies": {

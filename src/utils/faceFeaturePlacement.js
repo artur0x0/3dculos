@@ -27,7 +27,7 @@ import {
   edgeBlendHardMax,
   blendSliderStep,
   pathLengthFromEdges,
-  defaultSweepBlendSize,
+  FILLET_DEFAULT_RADIUS,
   sweepBlendHardMax,
 } from './selectEdge.js';
 import { resolveFilletStrategy } from './filletAlongPath.js';
@@ -1003,16 +1003,15 @@ export function resolveFaceModal(paletteItem, selectedFace, selectedEdges = null
     };
     const minL = effectiveBlendEdgeLength(selectedEdges) ?? minSelectedEdgeLength(selectedEdges);
     const pathLen = pathLengthFromEdges(selectedEdges);
-    // Fillet: sweep is the universal default — open with path-length radius.
+    // Fillet: sweep is the universal default — open at the fixed 2 mm radius
+    // (not 0.1 × path length, which grew with every picked edge).
     // Chamfer stays planar-guarded (no sweep strategy).
     const resolved = id === 'filletEdges'
       ? resolveFilletStrategy('sweep', selectedEdges)
       : 'planar';
     const useSweepSize = resolved === 'sweep';
     const blendDefault = useSweepSize
-      ? ((pathLen ?? minL) != null
-        ? defaultSweepBlendSize(pathLen ?? minL)
-        : (id === 'filletEdges' ? 3 : 2))
+      ? FILLET_DEFAULT_RADIUS
       : (minL != null ? defaultEdgeBlendSize(minL) : (id === 'filletEdges' ? 3 : 2));
     const blendMax = useSweepSize
       ? sweepBlendHardMax(pathLen ?? minL)
@@ -1124,9 +1123,7 @@ export function resolveFaceModal(paletteItem, selectedFace, selectedEdges = null
   const useSweepSizeFace = id === 'filletEdges' && hasEdges
     && resolveFilletStrategy('sweep', selectedEdges) === 'sweep';
   const blendDefault = useSweepSizeFace
-    ? ((pathLenFace ?? minL) != null
-      ? defaultSweepBlendSize(pathLenFace ?? minL)
-      : (id === 'filletEdges' ? 3 : 2))
+    ? FILLET_DEFAULT_RADIUS
     : (minL != null ? defaultEdgeBlendSize(minL) : null);
   const blendMax = useSweepSizeFace
     ? sweepBlendHardMax(pathLenFace ?? minL)

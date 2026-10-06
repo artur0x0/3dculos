@@ -44,10 +44,10 @@ import {
   splitEdgePathComponents,
 } from './edgeSweepPath.js';
 import {
-  defaultSweepBlendSize,
   defaultEdgeBlendSize,
   edgeKey,
   pathLengthFromEdges,
+  FILLET_DEFAULT_RADIUS,
   sweepBlendHardMax,
 } from './selectEdge.js';
 import { classifyFilletEdges } from './filletEdgeClass.js';
@@ -210,9 +210,63 @@ export function composeChamferCommit(buffer, {
   return { ok: true, buffer: composed, run: true, kernel: 'sweep-chamfer' };
 }
 
-export function defaultFilletParams(edges = null) {
-  const pathLen = pathLengthFromEdges(edges);
-  const radius = defaultSweepBlendSize(pathLen);
+/**
+ * Untouched Fillet radius (FILLET_DEFAULT_RADIUS, selectEdge.js): a fixed
+ * 2 mm, however many edges are picked and on however many parts. It used to
+ * be 0.1 × the picked path length (clamped 1–6), so every extra edge grew it.
+ */
+export { FILLET_DEFAULT_RADIUS };
+/** A part thinner than 2 mm / this fraction clamps the default down. */
+export const FILLET_THIN_FRACTION = 0.45;
+/** Smallest default after a thin clamp. */
+export const FILLET_DEFAULT_MIN_RADIUS = 0.1;
+
+/**
+ * Smallest bounding-box extent of a solid (mm), or null.
+ * Accepts a three.js BufferGeometry (boundingBox or position attribute)
+ * or a plain `{ min: [x,y,z], max: [x,y,z] }` box.
+ */
+export function solidMinExtent(geometryOrBox) {
+  const g = geometryOrBox;
+  if (!g) return null;
+  let min = null;
+  let max = null;
+  if (Array.isArray(g.min) && Array.isArray(g.max)) {
+    min = g.min;
+    max = g.max;
+  } else {
+    if (!g.boundingBox && typeof g.computeBoundingBox === 'function' && g.attributes?.position?.count) {
+      g.computeBoundingBox();
+    }
+    const b = g.boundingBox;
+    if (!b || (typeof b.isEmpty === 'function' && b.isEmpty())) return null;
+    min = [b.min.x, b.min.y, b.min.z];
+    max = [b.max.x, b.max.y, b.max.z];
+  }
+  const e = [0, 1, 2].map((i) => Number(max[i]) - Number(min[i]));
+  if (!e.every((v) => Number.isFinite(v) && v >= 0)) return null;
+  const m = Math.min(...e);
+  return m > 0 ? m : null;
+}
+
+/**
+ * Default Fillet radius: 2 mm, clamped down only when the part is too thin
+ * for it (FILLET_THIN_FRACTION × its smallest extent).
+ * @param {{ minExtent?: number|null }} [opts]
+ */
+export function defaultFilletRadius({ minExtent = null } = {}) {
+  const t = Number(minExtent);
+  if (!(Number.isFinite(t) && t > 0)) return FILLET_DEFAULT_RADIUS;
+  const cap = Math.floor(FILLET_THIN_FRACTION * t * 100) / 100;
+  return Math.max(FILLET_DEFAULT_MIN_RADIUS, Math.min(FILLET_DEFAULT_RADIUS, cap));
+}
+
+/**
+ * Fillet mode defaults. `edges` no longer sizes the radius (kept for the
+ * call sites); `minExtent` is the part's thinnest extent for the thin clamp.
+ */
+export function defaultFilletParams(_edges, { minExtent = null } = {}) {
+  const radius = defaultFilletRadius({ minExtent });
   return {
     body: 'part',
     strategy: 'sweep',

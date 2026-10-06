@@ -364,8 +364,8 @@ console.log('slice-23 fillet via sweep smoke');
   const resolvedMulti = resolveFaceModal(item, null, multi);
   const rParam = resolvedMulti.item?.params?.find((x) => x.name === 'radius');
   // Pinned for fixture lengths 0.08/2.0/2.1/1.9 → eff=1.9 (not mirror of helpers)
-  // Sweep-default size: pathLen=6.08 → defaultSweepBlendSize=1, max=6
-  check('multi-edge radius default from path length', rParam?.default === 1,
+  // Fixed 2 mm Fillet default (was 0.1 × pathLen 6.08 → 1); max stays sweep hard max 6
+  check('multi-edge radius default is the fixed 2 mm', rParam?.default === 2,
     `got ${rParam?.default}`);
   check('multi-edge slider max from sweep hard max', rParam?.max === 6,
     `got ${rParam?.max}`);
