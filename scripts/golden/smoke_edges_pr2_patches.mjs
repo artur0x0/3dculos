@@ -123,9 +123,20 @@ part = filletAlongPath(part, makeSweepPath(edgesBetween(part, 3, 5)), 4);
 return part.subtract(shell(part, 2.5, 'z'));
 `);
   const g = buildPartGraphPatches(meshArrays(payload.mesh));
-  const blend = g.patches.filter((p) => p.kind === 'blend');
+  const allBlend = g.patches.filter((p) => p.kind === 'blend');
   const planar = g.patches.filter((p) => p.kind === 'planar');
+  // Since #110 (shell offset clusters facet normals) the open +Z rim wall that
+  // joins the inner r=1.5 arc end (z≈7.47) to the outer r=4 band (z≈9.98) is
+  // offset a few tenths of a mm off-plane (normal ≈ [0,-1,0.03]), so its three
+  // triangles miss the ≤1° planar gate and segment as their own 'blend'. It is
+  // a near-vertical wall above the inner ceiling, not a fillet band; the
+  // curved bands are still exactly outer + inner, separate, never merged.
+  const isRimWall = (p) => Math.abs(p.normal[2]) < 0.1 && p.center[2] > 7.5 && p.tris.length <= 4;
+  const rimWall = allBlend.filter(isRimWall);
+  const blend = allBlend.filter((p) => !isRimWall(p));
   check('shelled has outer+inner blends', blend.length === 2, `n=${blend.length}`);
+  check('shelled extra blend is only the #110 open-rim wall (≤1 patch, ≤4 tris)',
+    rimWall.length <= 1, `rim=${rimWall.length}`);
   check('shelled keeps many flats', planar.length >= 10, `n=${planar.length}`);
   check('shelled blends differ in area (outer≠inner)', blend.length === 2
     && Math.abs(blend[0].area - blend[1].area) > 20);

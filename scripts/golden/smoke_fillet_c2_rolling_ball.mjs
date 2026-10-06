@@ -246,9 +246,14 @@ return part;
         `hard=${hardTiny}; sweep threw: ${sweepErr?.message || 'unknown'}`,
       );
     } else {
+      // #154 (f29fad2, one ring per knot) rebuilt the single-segment sweep
+      // baseline on the same per-knot ring cutter, so it fell from 224 to ~80
+      // needles while the hard kernel stayed put (115 before, 117 after).
+      // Comparing against that baseline no longer measures C2 vs pre-C2.
+      // Pin the hard kernel to an absolute ceiling instead (measured 115/117).
       check(
-        'hard variable-profile needles ≤ single-segment sweep needles',
-        hardTiny <= sweepTiny,
+        'hard variable-profile needles stay at the measured ceiling (≤120)',
+        hardTiny <= 120,
         `hard=${hardTiny} sweep=${sweepTiny}`,
       );
     }

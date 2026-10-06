@@ -71,7 +71,7 @@ Gate the fillet surface against a high-res reference: the same quads with extra 
 
 `golden:fillet-sweep-quality` locks that comparison (fillet under 0.02 mm; hollow and `chamferEdges` ceilings 0.35 mm and 0.8 mm, and closer than main). Related wrap and shell goldens: `golden:fillet-wrap-draft`, `golden:fillet-tangent-round-wrap`, `golden:fillet-chamfer-rounded-wrap`, `golden:artur-playtest-wrap-chamfer`, `golden:artur-playtest-shell-after-fillets`.
 
-`golden:edges-pr2-patches` and `golden:artur-playtest-fillet-after-hollow` were already red on main before #154. A red result there is not a regression from this speed work.
+`golden:edges-pr2-patches` and `golden:artur-playtest-fillet-after-hollow` were already red on main before #154; the goldens pass (#166) brought them and every other golden back to green. One #154 effect is pinned, not fixed: `golden:playtest-draft-fillet-tear` allows the 4 zero-area triangles one-ring-per-knot leaves in the r=3.65 blend (ceiling, not 0).
 
 ## Open follow-ups
 

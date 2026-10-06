@@ -217,9 +217,15 @@ return after;`);
       [0.291, 1.262, 2.354, 3.294].every((exp, i) => Math.abs(q[i] - exp) <= 0.25 * exp + 0.05),
       `q=${q.map((v) => v.toFixed(3)).join(',')}`);
 
-    check('meta reports a varying profile with one ring per knot',
-      !!meta && meta.varyingProfile === true && meta.ringCount === meta.frameCount + 1,
-      JSON.stringify(meta));
+    // f29fad2: an open-end pad (endExtend > 0) is a NEW colinear station past
+    // the end knot, so that knot keeps its own ring. Every knot still gets
+    // exactly one ring; each padded open end adds one more (≤ 2 per run).
+    const padRings = meta ? meta.ringCount - (meta.frameCount + 1) : NaN;
+    check('meta reports a varying profile with one ring per knot (+1 per padded open end)',
+      !!meta && meta.varyingProfile === true
+        && meta.densifiedPoints === meta.frameCount + 1
+        && (meta.endExtend > 0 ? padRings >= 1 && padRings <= 2 : padRings === 0),
+      `padRings=${padRings} ${JSON.stringify(meta)}`);
     check('no knot needed θ clamping on a normal loft ridge',
       !!meta && meta.clampedKnots === 0);
     check('meta records the real θ span (not a collapsed median)',

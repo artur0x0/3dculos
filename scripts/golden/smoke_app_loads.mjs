@@ -117,6 +117,17 @@ try {
     consoleErrors.push(text);
   });
 
+  // `vite preview` proxies /api to the backend on :3000, which this smoke does
+  // not start, so the boot-time auth probe got a proxy 500 and logged
+  // "Auth check failed" on every machine without a backend. Answer that one
+  // probe as a signed-out visitor so the run is hermetic; every other console
+  // error still fails the test.
+  await page.route('**/api/auth/me', (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ authenticated: false }),
+  }));
+
   await page.goto(APP_URL, { waitUntil: 'load', timeout: 45000 });
 
   // The blank screen was React bailing out: #root existed but stayed empty.
