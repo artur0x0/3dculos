@@ -127,9 +127,9 @@ console.log('\nmobile C.4: post-fillet rounded rail pick + Tangent');
 {
   await import('../../src/workers/sandboxWorker.js');
   await send('init');
-  async function exec(script) {
+  const exec = async (script) => {
     return (await send('execute', { script, importedModels: {}, memoryLimitMB: 512 })).payload;
-  }
+  };
 
   const filleted = await exec(`
 let box1 = Manifold.cube([40, 30, 20], true);

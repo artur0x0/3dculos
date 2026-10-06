@@ -3,6 +3,8 @@
  * G3 commit/push: changed parts + assembly as one commit to main; when main
  * moved, detect the base, branch to surfcad/<assembly>-<date>, and ask to
  * force merge (warning: main's diff in those files is lost).
+ * Assembly rename moves paths in the same commit (see G5 golden for full
+ * rename-on-Commit coverage).
  * Mock adapter only — no network, no tokens.
  */
 import { readFileSync } from 'node:fs';
@@ -179,6 +181,23 @@ console.log('\ngit G3 — first commit of a new assembly (no Open)');
   const reopened = await openVaultAssembly(gh, vault.repo, 'Widget');
   eq('reopens from vault', reopened.scripts[P], 'return Manifold.cube([5,5,5], true);');
   ok('clean vs new baseline', !isWorkspaceDirty(doc, { [P]: 'return Manifold.cube([5,5,5], true);' }, res.baseline));
+}
+
+console.log('\ngit G3 — assembly rename moves in one commit');
+{
+  const { gh, repo, opened } = await seedVault();
+  const renamed = { ...opened.doc, name: 'Transmission' };
+  const res = await commitWorkspace(gh, repo, {
+    doc: renamed, scripts: opened.scripts, baseline: opened.baseline,
+    message: 'rename',
+  });
+  eq('rename commit status', res.status, 'committed');
+  const NEW_ASM = assemblyFilePath('Transmission');
+  const NEW_BRACKET = assemblyPartPath('Transmission', 'Bracket');
+  ok('new assembly path written', !!(await gh.readFile(repo, NEW_ASM, 'main')));
+  ok('old assembly path deleted', !(await gh.readFile(repo, ASM, 'main')));
+  ok('bracket moved', !!(await gh.readFile(repo, NEW_BRACKET, 'main')) && !(await gh.readFile(repo, BRACKET, 'main')));
+  ok('shared bolt stays', !!(await gh.readFile(repo, BOLT, 'main')));
 }
 
 console.log('\ngit G3 — UI wiring (PartFeed + App)');

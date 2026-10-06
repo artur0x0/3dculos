@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Eye, EyeOff, FolderOpen, GitCommitHorizontal, Github, GripVertical, Plus, Trash2 } from 'lucide-react';
+import { Eye, EyeOff, FolderOpen, GitBranch, GitCommitHorizontal, Github, GripVertical, Plus, Trash2 } from 'lucide-react';
 import { partListDeleteAction, sanitizeAssemblyName, sanitizePartName } from '../utils/assembly.js';
 import {
   PART_PREVIEW_SIZE,
@@ -292,6 +292,10 @@ export default function PartFeed({
   assemblyBehind = false,
   assemblyPath = '',
   onBehindChoice = null,
+  // G5 branch view
+  currentBranch = '',
+  onListBranches = null,
+  onSwitchBranch = null,
 }) {
   const [renamingId, setRenamingId] = useState(null);
   const loadRef = useRef(null);
@@ -306,9 +310,48 @@ export default function PartFeed({
   const commitInputRef = useRef(null);
   // G4 conflict choice: null | { path, kind: 'part'|'assembly', name, stage, error, result }
   const [conflictFlow, setConflictFlow] = useState(null);
+  // G5: null | { stage: 'list'|'busy'|'confirm'|'error', items, loading, error, pending }
+  const [branchFlow, setBranchFlow] = useState(null);
   const behindSet = behindPartIds instanceof Set
     ? behindPartIds
     : new Set(behindPartIds || []);
+
+  // G5: keep the branch list populated while in Git mode.
+  useEffect(() => {
+    if (source !== 'git' || !onListBranches) {
+      setBranchFlow(null);
+      return undefined;
+    }
+    let cancelled = false;
+    (async () => {
+      setBranchFlow((prev) => ({
+        stage: 'list',
+        items: prev?.items || [],
+        loading: true,
+        error: '',
+        pending: null,
+      }));
+      try {
+        const items = (await onListBranches()) || [];
+        if (cancelled) return;
+        setBranchFlow({
+          stage: 'list', items, loading: false,
+          error: items.length ? '' : 'No branches yet.',
+          pending: null,
+        });
+      } catch (err) {
+        if (cancelled) return;
+        setBranchFlow({
+          stage: 'list', items: [], loading: false,
+          error: err.message || 'Could not list branches',
+          pending: null,
+        });
+      }
+    })();
+    return () => { cancelled = true; };
+    // onListBranches is an App render callback; reload on source/branch only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [source, currentBranch]);
 
   const onLoadPicked = async (event) => {
     const file = event.target.files?.[0];
@@ -400,6 +443,58 @@ export default function PartFeed({
   };
 
   const closeCommit = () => setCommitFlow(null);
+
+  const closeBranches = () => setBranchFlow(null);
+
+  const startBranchView = async () => {
+    if (source !== 'git') return;
+    setBranchFlow({ stage: 'list', items: [], loading: true, error: '', pending: null });
+    try {
+      const items = (await onListBranches?.()) || [];
+      setBranchFlow({
+        stage: 'list', items, loading: false,
+        error: items.length ? '' : 'No branches yet.',
+        pending: null,
+      });
+    } catch (err) {
+      setBranchFlow({
+        stage: 'error', items: [], loading: false,
+        error: err.message || 'Could not list branches', pending: null,
+      });
+    }
+  };
+
+  const requestSwitchBranch = (name) => {
+    if (!name || name === currentBranch) return;
+    if (sourceDirty) {
+      setBranchFlow((prev) => ({
+        ...(prev || { items: [], loading: false, error: '' }),
+        stage: 'confirm', pending: name,
+      }));
+      return;
+    }
+    void runSwitchBranch(name);
+  };
+
+  const runSwitchBranch = async (name) => {
+    const target = name || branchFlow?.pending;
+    if (!target) return;
+    setBranchFlow((prev) => ({
+      ...(prev || { items: [], loading: false, error: '' }),
+      stage: 'busy', pending: target,
+    }));
+    const result = (await onSwitchBranch?.(target)) || { status: 'error', error: 'Switch unavailable' };
+    if (result.status === 'switched' || result.status === 'same') {
+      setBranchFlow(null);
+      return;
+    }
+    setBranchFlow((prev) => ({
+      ...(prev || { items: [], loading: false }),
+      stage: 'error',
+      error: result.error || 'Could not switch branch',
+      pending: target,
+    }));
+  };
 
   const runCommit = async () => {
     const draft = commitFlow?.draft || '';
@@ -525,10 +620,22 @@ export default function PartFeed({
           {source === 'git' && (
             <button
               type="button"
+              className={STRIP_BTN}
+              data-git-branches=""
+              title={currentBranch ? `Branches (on ${currentBranch})` : 'Branches'}
+              aria-label="Branches"
+              onClick={startBranchView}
+            >
+              <GitBranch size={STRIP_ICON} />
+            </button>
+          )}
+          {source === 'git' && (
+            <button
+              type="button"
               className={`${STRIP_BTN} disabled:cursor-not-allowed disabled:opacity-40`}
               data-git-commit=""
               disabled={!canCommit}
-              title={canCommit ? 'Commit changes to main' : 'Nothing to commit'}
+              title={canCommit ? `Commit changes to ${currentBranch || 'main'}` : 'Nothing to commit'}
               aria-label="Commit"
               onClick={startCommit}
             >
@@ -738,6 +845,53 @@ export default function PartFeed({
             </div>
           );
         })}
+        {source === 'git' && (
+          <div className="border-t border-gray-700/80 px-2 py-2" data-git-branch-section="">
+            <div className="mb-1 flex items-center justify-between gap-2">
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+                Branches
+              </span>
+              <button
+                type="button"
+                className="rounded px-1.5 py-0.5 text-[10px] text-blue-400 hover:bg-white/5"
+                data-git-branches-refresh=""
+                onClick={startBranchView}
+              >
+                {currentBranch ? `on ${currentBranch}` : 'List'}
+              </button>
+            </div>
+            {branchFlow?.stage === 'list' && !branchFlow.loading && (branchFlow.items || []).map((b) => {
+              const current = !!b.current || b.name === currentBranch;
+              return (
+                <button
+                  key={b.name}
+                  type="button"
+                  data-git-branch-row={b.name}
+                  data-git-branch-current={current ? 'true' : 'false'}
+                  className={`flex w-full items-center justify-between rounded px-1.5 py-1 text-left text-[11px] ${
+                    current
+                      ? 'bg-blue-600/20 text-blue-200'
+                      : 'text-gray-300 hover:bg-white/5'
+                  }`}
+                  onClick={() => requestSwitchBranch(b.name)}
+                >
+                  <span className="truncate font-mono">{b.name}</span>
+                  {current ? (
+                    <span className="shrink-0 text-[9px] uppercase tracking-wide text-blue-300" data-git-branch-marker="">
+                      current
+                    </span>
+                  ) : null}
+                </button>
+              );
+            })}
+            {branchFlow?.loading && (
+              <p className="text-[10px] text-gray-500" data-git-branch-loading="">Loading…</p>
+            )}
+            {branchFlow?.error && branchFlow.stage === 'list' && (
+              <p className="text-[10px] text-amber-300" data-git-branch-list-error="">{branchFlow.error}</p>
+            )}
+          </div>
+        )}
       </div>
 
       {openPicker && typeof document !== 'undefined' && openPicker.kind === 'open' && (
@@ -1037,6 +1191,55 @@ export default function PartFeed({
           )}
         </VaultPickerDialog>
       )}
+      {branchFlow && (branchFlow.stage === 'confirm' || branchFlow.stage === 'busy' || branchFlow.stage === 'error')
+        && typeof document !== 'undefined' && (
+        <VaultPickerDialog
+          title={branchFlow.stage === 'confirm' ? 'Switch branch?' : 'Branches'}
+          labelledBy="git-branch-title"
+          dataAttr="branch"
+          onClose={branchFlow.stage === 'busy' ? undefined : closeBranches}
+          footer={(
+            <div className="mt-4 flex flex-wrap justify-end gap-2" data-git-branch-stage={branchFlow.stage}>
+              {branchFlow.stage === 'confirm' && (
+                <>
+                  <button type="button" className="rounded-md px-3 py-1.5 text-xs text-gray-200 hover:bg-white/10" onClick={closeBranches} data-git-branch-cancel="">
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-md bg-amber-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-500"
+                    data-git-branch-confirm=""
+                    onClick={() => runSwitchBranch(branchFlow.pending)}
+                  >
+                    Switch anyway
+                  </button>
+                </>
+              )}
+              {branchFlow.stage === 'error' && (
+                <button type="button" className="rounded-md px-3 py-1.5 text-xs text-gray-200 hover:bg-white/10" onClick={closeBranches} data-git-dialog-cancel="">
+                  Close
+                </button>
+              )}
+            </div>
+          )}
+        >
+          {branchFlow.stage === 'confirm' && (
+            <p className="text-xs text-gray-300" data-git-branch-dirty-warn="">
+              Uncommitted changes will be lost when switching to
+              {' '}
+              <span className="font-mono text-gray-100">{branchFlow.pending}</span>
+              .
+            </p>
+          )}
+          {branchFlow.stage === 'busy' && (
+            <p className="text-xs text-gray-400" data-git-branch-switching="">Switching…</p>
+          )}
+          {branchFlow.stage === 'error' && (
+            <p className="text-xs text-amber-300" data-git-branch-error="">{branchFlow.error}</p>
+          )}
+        </VaultPickerDialog>
+      )}
+
       {pendingDelete && typeof document !== 'undefined' && createPortal(
         <div
           className="fixed inset-0 z-50 flex items-center justify-center surface-scrim p-4"

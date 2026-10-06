@@ -122,7 +122,7 @@ check('blend end-cap arc survives into the pick graph', arc.length >= 3, `n=${ar
 
 // The curve must be tracked, not chorded flat: every kept chord stays under the
 // walk tolerance, so a G1 walk can cross it. 45° chords were the bug.
-const cosTol = Math.cos((TANGENT_PROP_DEG * Math.PI) / 180);
+const _cosTol = Math.cos((TANGENT_PROP_DEG * Math.PI) / 180);
 const turns = [];
 for (const a of arc) {
   for (const b of arc) {

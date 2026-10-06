@@ -11,11 +11,22 @@
  * writes the same files on top of the current main; whatever main changed
  * in those files since the base is lost (the warning lists them).
  *
+ * When the assembly was renamed, the same commit moves the `.surf.json`
+ * and assembly-owned parts to the new folder (deletes the old paths);
+ * shared `parts/…` stay. Orphan blobs under the old assembly folder are
+ * cleared via listTree.
+ *
  * Mock adapter only for now; nothing here talks to the network.
  */
-import { GitAdapterError, assertGithubAdapter, fileWrite } from './githubAdapter.js';
+import { GitAdapterError, assertGithubAdapter, fileWrite, fileDelete } from './githubAdapter.js';
 import { captureBaseline, dirtyPartIds } from './gitWorkspace.js';
-import { assemblyFilePath, partPathAllowedFor, vaultSegment } from './vaultLayout.js';
+import {
+  ASSEMBLIES_DIR,
+  assemblyFilePath,
+  assemblyPartPath,
+  parseVaultPath,
+  vaultSegment,
+} from './vaultLayout.js';
 import { stringifySurfJson } from './surfJson.js';
 
 export const COMMIT_BRANCH_PREFIX = 'surfcad/';
@@ -28,27 +39,134 @@ export function effectiveScripts(scripts, { liveId = null, liveScript = null } =
 }
 
 /**
+ * Remap assembly-owned part paths when the assembly was renamed.
+ * Shared `parts/…` stay put. Returns { doc, scripts, moved: [{ from, to }] }.
+ */
+export function remapAssemblyPaths(doc, scripts, oldName, newName) {
+  const oldSeg = vaultSegment(oldName);
+  const newSeg = vaultSegment(newName);
+  const moved = [];
+  const nextScripts = {};
+  const nextParts = [];
+  for (const part of doc?.parts || []) {
+    const info = parseVaultPath(part.id);
+    let nextId = part.id;
+    if (info?.kind === 'assembly-part' && info.assembly === oldSeg && oldSeg !== newSeg) {
+      nextId = assemblyPartPath(newSeg, info.part);
+      if (nextId !== part.id) moved.push({ from: part.id, to: nextId });
+    }
+    nextParts.push({ ...part, id: nextId });
+    const text = scripts?.[part.id];
+    nextScripts[nextId] = typeof text === 'string' ? text : (scripts?.[nextId] ?? '');
+  }
+  let activeId = doc?.activeId;
+  const hit = moved.find((m) => m.from === activeId);
+  if (hit) activeId = hit.to;
+  return {
+    doc: { ...doc, parts: nextParts, activeId },
+    scripts: nextScripts,
+    moved,
+  };
+}
+
+/**
  * Files for one commit: every dirty part still in the document (script
  * changed or added) plus the assembly `.surf.json`. Parts removed from the
  * document are NOT deleted from git (the file may be shared or reused).
- * -> { files, partPaths, assemblyPath, scripts } ; files is [] when clean.
+ *
+ * When the assembly was renamed since the baseline Open, the commit also
+ * moves to the new path in the same commit: write the new `.surf.json` and
+ * remapped assembly-owned parts, and delete the old assembly file (plus old
+ * part paths that moved). Shared `parts/…` stay. Orphan files left under the
+ * old `assemblies/<old>/` tree are deleted by `commitWorkspace` via listTree.
+ * -> { files, partPaths, assemblyPath, scripts, doc, renamed, oldName, moved }
  */
 export function buildCommitFiles(doc, scripts, baseline, opts = {}) {
-  if (!doc || !baseline) return { files: [], partPaths: [], assemblyPath: null, scripts: {} };
+  const empty = {
+    files: [], partPaths: [], assemblyPath: null, scripts: {},
+    doc: doc || null, renamed: false, oldName: null, moved: [],
+  };
+  if (!doc || !baseline) return empty;
   const eff = effectiveScripts(scripts, opts);
-  const inDoc = new Set((doc.parts || []).map((p) => p.id));
-  const dirty = dirtyPartIds(doc, eff, baseline);
-  const partPaths = [...dirty].filter((id) => inDoc.has(id)).sort();
-  const assemblyText = stringifySurfJson({ ...doc, source: 'git' });
-  const assemblyPath = assemblyFilePath(vaultSegment(doc.name) || baseline.assemblyName);
-  const assemblyChanged = assemblyText !== baseline.assemblyText || assemblyPath !== baseline.assemblyPath;
-  const anyRemoved = [...dirty].some((id) => !inDoc.has(id));
-  if (!partPaths.length && !assemblyChanged && !anyRemoved) {
-    return { files: [], partPaths: [], assemblyPath, scripts: eff };
+  const newName = vaultSegment(doc.name) || baseline.assemblyName || '';
+  const oldName = baseline.assemblyName || '';
+  const renaming = !!(baseline.assemblyPath && oldName && newName && oldName !== newName);
+
+  let workDoc = { ...doc, source: 'git' };
+  let workScripts = eff;
+  let moved = [];
+  if (renaming) {
+    const remapped = remapAssemblyPaths(doc, eff, oldName, newName);
+    workDoc = { ...remapped.doc, source: 'git' };
+    workScripts = remapped.scripts;
+    moved = remapped.moved;
   }
-  const files = partPaths.map((id) => fileWrite(id, eff[id] ?? ''));
-  files.push(fileWrite(assemblyPath, assemblyText));
-  return { files, partPaths, assemblyPath, scripts: eff };
+
+  const inDocOrig = new Set((doc.parts || []).map((p) => p.id));
+  const dirty = dirtyPartIds(doc, eff, baseline);
+  const movedFrom = new Map(moved.map((m) => [m.from, m.to]));
+  const writes = new Map(); // path -> content
+  const deletes = new Set();
+
+  for (const { from, to } of moved) {
+    writes.set(to, workScripts[to] ?? '');
+    deletes.add(from);
+  }
+
+  const partPaths = [];
+  for (const id of [...dirty].sort()) {
+    if (!inDocOrig.has(id)) continue; // removed from doc — do not delete from git
+    const dest = movedFrom.get(id) || id;
+    writes.set(dest, workScripts[dest] ?? eff[id] ?? '');
+    partPaths.push(dest);
+  }
+
+  const assemblyText = stringifySurfJson(workDoc);
+  const assemblyPath = assemblyFilePath(newName || baseline.assemblyName);
+  const assemblyChanged = (
+    assemblyText !== baseline.assemblyText
+    || assemblyPath !== baseline.assemblyPath
+    || renaming
+  );
+  const anyRemoved = [...dirty].some((id) => !inDocOrig.has(id));
+  // Always include the assembly whenever anything is committed (same as G3),
+  // so a part-only edit still refreshes `.surf.json` in the same commit.
+  const needAssembly = assemblyChanged || writes.size > 0 || deletes.size > 0 || anyRemoved;
+  if (needAssembly) {
+    writes.set(assemblyPath, assemblyText);
+    if (renaming && baseline.assemblyPath && baseline.assemblyPath !== assemblyPath) {
+      deletes.add(baseline.assemblyPath);
+    }
+  }
+
+  if (!writes.size && !deletes.size) {
+    return {
+      files: [], partPaths: [], assemblyPath, scripts: workScripts,
+      doc: workDoc, renamed: renaming, oldName: renaming ? oldName : null, moved,
+    };
+  }
+
+  for (const path of [...deletes]) {
+    if (writes.has(path)) deletes.delete(path);
+  }
+
+  // Parts (sorted), then assembly, then deletes — matches G3 golden order.
+  const partWritePaths = [...writes.keys()].filter((path) => path !== assemblyPath).sort();
+  const files = [
+    ...partWritePaths.map((path) => fileWrite(path, writes.get(path))),
+    ...(writes.has(assemblyPath) ? [fileWrite(assemblyPath, writes.get(assemblyPath))] : []),
+    ...[...deletes].sort().map((path) => fileDelete(path)),
+  ];
+    return {
+    files,
+    partPaths: [...new Set(partPaths)].sort(),
+    assemblyPath,
+    scripts: workScripts,
+    doc: workDoc,
+    renamed: renaming,
+    oldName: renaming ? oldName : null,
+    moved,
+  };
 }
 
 /**
@@ -152,15 +270,43 @@ export async function commitWorkspace(adapter, repo, {
 } = {}) {
   assertGithubAdapter(adapter);
   if (!baseline) throw new Error('Open an assembly from the vault before committing');
-  const stray = (doc?.parts || []).filter((p) => !partPathAllowedFor(doc.name, p.id));
+  // Refuse non-repo rows before buildCommitFiles stringifies `.surf.json`
+  // (invalid ids throw inside stringify). Assembly-owned paths under the
+  // baseline name are allowed when a rename-on-Commit is about to move them.
+  const newSeg = vaultSegment(doc?.name) || baseline.assemblyName || '';
+  const oldSeg = baseline.assemblyName || '';
+  const stray = (doc?.parts || []).filter((p) => {
+    const info = parseVaultPath(p.id);
+    if (!info || (info.kind !== 'assembly-part' && info.kind !== 'shared-part')) return true;
+    if (info.kind === 'shared-part') return false;
+    if (info.assembly === newSeg) return false;
+    if (oldSeg && info.assembly === oldSeg) return false;
+    return true;
+  });
   if (stray.length) {
     throw new Error(`No repo path for ${stray.map((p) => p.name || p.id).join(', ')}. `
       + 'Remove it, or add parts under this assembly\'s parts/ or shared parts/.');
   }
   const built = buildCommitFiles(doc, scripts, baseline, { liveId, liveScript });
+  const workDoc = built.doc || doc;
+  // Rename move: delete any leftover blobs under the old assemblies/<old>/ tree
+  // (Spare.js etc.) so the old folder does not linger after the move.
+  if (built.renamed && built.oldName) {
+    const ref = baseline.branch || 'main';
+    const prefix = `${ASSEMBLIES_DIR}/${built.oldName}/`;
+    const tree = await adapter.listTree(repo, ref, { prefix });
+    const scheduled = new Set(built.files.map((f) => f.path));
+    for (const entry of tree) {
+      const p = entry?.path;
+      if (!p || scheduled.has(p)) continue;
+      built.files.push(fileDelete(p));
+      scheduled.add(p);
+    }
+  }
   if (!built.files.length) return { status: 'clean' };
   const branch = baseline.branch || 'main';
-  const msg = String(message || '').trim() || `Update ${vaultSegment(doc.name) || 'assembly'}`;
+  const msg = String(message || '').trim() || `Update ${vaultSegment(workDoc.name) || 'assembly'}`;
+  const filePaths = () => built.files.map((f) => f.path);
   try {
     const res = await adapter.commitFiles(repo, {
       branch,
@@ -172,15 +318,19 @@ export async function commitWorkspace(adapter, repo, {
       status: 'committed',
       sha: res.sha,
       branch,
-      files: built.files.map((f) => f.path),
-      baseline: nextBaseline(doc, built.scripts, baseline, built.assemblyPath, branch, res.sha),
+      files: filePaths(),
+      baseline: nextBaseline(workDoc, built.scripts, baseline, built.assemblyPath, branch, res.sha),
+      doc: workDoc,
+      scripts: built.scripts,
+      renamed: built.renamed,
+      moved: built.moved,
     };
   } catch (err) {
     if (!(err instanceof GitAdapterError) || err.code !== 'non_fast_forward') throw err;
   }
-  // Main moved: detect base, park the commit on a side branch, then ask.
+  // Branch tip moved: detect base, park the commit on a side branch, then ask.
   const base = await detectCommitBase(adapter, repo, { branch, baselineSha: baseline.headSha });
-  const sideName = await freeBranchName(adapter, repo, commitBranchName(doc.name, now));
+  const sideName = await freeBranchName(adapter, repo, commitBranchName(workDoc.name, now));
   await adapter.createBranch(repo, sideName, base.baseSha);
   const side = await adapter.commitFiles(repo, {
     branch: sideName,
@@ -200,13 +350,15 @@ export async function commitWorkspace(adapter, repo, {
     behindBy: base.behindBy,
     remoteFiles: base.remoteFiles,
     overlap,
-    files: built.files.map((f) => f.path),
+    files: filePaths(),
     message: msg,
+    renamed: built.renamed,
+    moved: built.moved,
     pending: {
       files: built.files,
       scripts: built.scripts,
       assemblyPath: built.assemblyPath,
-      doc,
+      doc: workDoc,
       baseline,
     },
   };
@@ -251,6 +403,8 @@ export async function forceMergeCommit(adapter, repo, result) {
       branch: target,
       files: files.map((f) => f.path),
       baseline: nextBaseline(doc, scripts, baseline, assemblyPath, target, res.sha),
+      doc,
+      scripts,
     };
   } catch (err) {
     if (err instanceof GitAdapterError && err.code === 'non_fast_forward') {

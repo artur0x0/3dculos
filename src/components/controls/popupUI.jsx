@@ -19,6 +19,9 @@
 //      colour by extending ACCENTS, never by interpolating.
 import React from 'react';
 
+/* Shared accent/text tokens are imported by chips; keep them here. */
+/* eslint-disable react-refresh/only-export-components */
+
 export const ACCENTS = {
   cyan: {
     panel: 'bg-cyan-950/80 border-cyan-400/70',

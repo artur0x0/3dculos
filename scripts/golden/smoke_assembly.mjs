@@ -622,7 +622,7 @@ async function execute(script) {
     && meshPreviewKey(both.solids[1].mesh) !== liveKey
     && partPreviewKind(null) === 'empty');
 
-  function geomFromMesh(mesh) {
+  const geomFromMesh = (mesh) => {
     const np = mesh.numProp || 3;
     const src = mesh.vertProperties;
     const nVert = Math.floor(src.length / np);
@@ -636,7 +636,7 @@ async function execute(script) {
     geometry.setAttribute('position', new BufferAttribute(positions, 3));
     geometry.setIndex(new BufferAttribute(Uint32Array.from(mesh.triVerts), 1));
     return geometry;
-  }
+  };
   const meshA = both.runs['local:box'].mesh;
   const meshB = both.runs['local:wide'].mesh;
   const geomA = geomFromMesh(meshA);

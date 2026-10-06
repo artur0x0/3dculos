@@ -2776,12 +2776,10 @@ const Viewport = forwardRef(({
   const filletActiveEdges = useMemo(
     () => activePartEdges(selectedEdges, activePartIdRef.current),
     // meshEpoch: a retarget swaps the active part without touching the picks.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [selectedEdges, meshEpoch],
   );
   const filletPartCount = useMemo(
     () => groupEdgesByPart(selectedEdges, activePartIdRef.current).length,
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [selectedEdges, meshEpoch],
   );
   const filletEdgeClass = useMemo(() => {
