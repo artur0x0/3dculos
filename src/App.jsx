@@ -7,6 +7,7 @@ import MobileStageToggle from './components/MobileStageToggle';
 import FeatureStrip from './components/FeatureStrip';
 import { failedFeatureFromOutcome, failedFeatureIds } from './utils/featureFailure';
 import { failedPartIdsFor } from './utils/failedPartOutline';
+import { bodyCountOfWorkerMesh } from './utils/meshBodyComponents';
 import ErrorPopup from './components/ErrorPopup';
 import FeatureSheet from './components/FeatureSheet';
 import {
@@ -1235,7 +1236,10 @@ const App = () => {
       if (run?.cleared) {
         runs[viewId] = { ok: false, mesh: null, empty: true, error: null };
       } else if (run?.ok && run.mesh?.vertProperties) {
-        runs[viewId] = { ok: true, mesh: run.mesh, error: null };
+        const bodyCount = Number.isFinite(run.bodyCount)
+          ? run.bodyCount
+          : (Array.isArray(run.bodyCentroids) ? run.bodyCentroids.length : undefined);
+        runs[viewId] = { ok: true, mesh: run.mesh, error: null, bodyCount };
       } else if (run && run.ok === false) {
         runs[viewId] = { ok: false, mesh: null, error: run.error || 'Script failed' };
         manifoldContext.clearResult().catch(() => {});
@@ -2556,6 +2560,13 @@ const App = () => {
     cadHighlightId && assemblyDoc && cadHighlightId !== assemblyDoc.activeId
   ) ? (partScripts[cadHighlightId] || '') : currentScript;
   const stripFailedIds = failedFeatureIds(stripScript, runFailure);
+  // Live body count for the separate-body chip marker (clears after Boolean union).
+  const stripRun = cadHighlightId ? partRuns[cadHighlightId] : null;
+  const stripBodyCount = (stripRun?.ok && stripRun.mesh)
+    ? (Number.isFinite(stripRun.bodyCount)
+      ? stripRun.bodyCount
+      : bodyCountOfWorkerMesh(stripRun.mesh))
+    : 0;
   // Feature sheets read the editor's script, so match the failure there.
   const sheetFailedIds = failedFeatureIds(currentScript, runFailure);
   const partLabels = {};
@@ -2732,6 +2743,7 @@ const App = () => {
                     <FeatureStrip
                       orientation="horizontal"
                       script={stripScript}
+                      bodyCount={stripBodyCount}
                       failedIds={stripFailedIds}
                       hidden={featureSession}
                       activeId={featureSheet?.feature?.id || featureStripActiveId}
@@ -2778,6 +2790,7 @@ const App = () => {
                         <FeatureStrip
                           orientation="vertical"
                           script={stripScript}
+                          bodyCount={stripBodyCount}
                           failedIds={stripFailedIds}
                           hidden={featureSession}
                           activeId={featureSheet?.feature?.id || featureStripActiveId}
@@ -3009,6 +3022,7 @@ const App = () => {
                 orientation="vertical"
                 side="between"
                 script={stripScript}
+                bodyCount={stripBodyCount}
                 failedIds={stripFailedIds}
                 hidden={featureSession}
                 activeId={featureStripActiveId}

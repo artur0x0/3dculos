@@ -6927,7 +6927,7 @@ const Viewport = forwardRef(({
         syncFailedPartOutlinesRef.current();
       }
       // Truthy object: callers that only check success keep working; game compare needs nonce.
-      return { ok: true, nonce, mesh: meshData };
+      return { ok: true, nonce, mesh: meshData, bodyCount: bodyCentroidsRef.current.length };
 
     } catch (error) {
       filletQualityWatchRef.current = null;

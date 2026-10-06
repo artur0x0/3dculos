@@ -83,6 +83,16 @@ const EXTERNAL_COPY_CALL = /\bexternalBody\s*\(/;
 /** `.add(solid, { merge: false })` inside a block = Merge bodies off (separate body). */
 export const SEPARATE_BODY_CALL = /\.add\s*\([\s\S]*?,\s*\{\s*merge\s*:\s*false\s*\}\s*\)/;
 
+/**
+ * Violet strip marker: the block wrote `{ merge: false }`, and the live part
+ * still has more than one body. After a Boolean union (or any fuse to one
+ * body) bodyCount is 1 and the marker clears even though the script still
+ * says merge: false.
+ */
+export function featureShowsSeparateBody(feature, bodyCount) {
+  return !!(feature && feature.separate && Number(bodyCount) > 1);
+}
+
 /** Ordered kinds the strip cares about (label is the chip text). */
 export const FEATURE_MARKER_KINDS = Object.freeze([
   { begin: CONTOUR_PROFILE_BEGIN, end: CONTOUR_PROFILE_END, kind: 'profile', label: 'Profile' },
@@ -166,7 +176,7 @@ export function parseFeatureMarkers(script) {
       endOffset: h.endOffset,
       /** Holds a frozen copy of another part's geometry (yellow chip border). */
       external: EXTERNAL_COPY_CALL.test(script.slice(h.startOffset, h.endOffset)),
-      /** Wrote its solid with Merge bodies off (strip separate-body marker). */
+      /** Wrote its solid with Merge bodies off. Live marker also needs bodyCount > 1. */
       separate: SEPARATE_BODY_CALL.test(script.slice(h.startOffset, h.endOffset)),
       index,
       /** 1-based index within this kind (badge on strip / sheet icons). */

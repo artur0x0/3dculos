@@ -97,3 +97,28 @@ export function meshBodyComponents(positions, index) {
   bodies.sort((a, b) => a.minTri - b.minTri);
   return bodies;
 }
+
+/**
+ * Body count for a worker mesh (`vertProperties` / `triVerts` / `numProp`).
+ * Same connected-component count as meshBodyComponents on the drawn mesh.
+ */
+export function bodyCountOfWorkerMesh(mesh) {
+  if (!mesh?.vertProperties || !mesh?.triVerts) return 0;
+  const np = mesh.numProp || 3;
+  const src = mesh.vertProperties;
+  if (!src.length || np < 3) return 0;
+  const nVert = Math.floor(src.length / np);
+  if (nVert <= 0) return 0;
+  // meshBodyComponents only reads xyz; pass a view that looks like a flat xyz buffer
+  // by copying when numProp !== 3, otherwise reuse vertProperties directly.
+  let positions = src;
+  if (np !== 3) {
+    positions = new Float32Array(nVert * 3);
+    for (let i = 0; i < nVert; i++) {
+      positions[i * 3] = src[i * np];
+      positions[i * 3 + 1] = src[i * np + 1];
+      positions[i * 3 + 2] = src[i * np + 2];
+    }
+  }
+  return meshBodyComponents(positions, mesh.triVerts).length;
+}
