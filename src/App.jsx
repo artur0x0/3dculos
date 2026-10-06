@@ -6,6 +6,7 @@ import SplitDivider from './components/SplitDivider';
 import MobileStageToggle from './components/MobileStageToggle';
 import FeatureStrip from './components/FeatureStrip';
 import { failedFeatureFor, failedFeatureIds } from './utils/featureFailure';
+import { failedPartIdsFor } from './utils/failedPartOutline';
 import ErrorPopup from './components/ErrorPopup';
 import FeatureSheet from './components/FeatureSheet';
 import {
@@ -1246,6 +1247,8 @@ const App = () => {
       leftovers,
       activeId: viewId,
       blankActive: !activeOk,
+      // Red outline in the viewer, same rule as the Parts feed's red row.
+      failedIds: failedPartIdsFor(doc, runs),
     });
     return true;
   };
@@ -1545,6 +1548,7 @@ const App = () => {
       leftovers: leftoverPickSolids(nextDoc, runs, partLeftoversRef.current),
       activeId: deletingActive && !(nextRun?.ok && nextRun.mesh) ? null : nextActive,
       blankActive: (deletingActive && !(nextRun?.ok && nextRun.mesh?.vertProperties)) || !nextActive,
+      failedIds: failedPartIdsFor(nextDoc, runs),
     });
 
     if (!nextActive) {
