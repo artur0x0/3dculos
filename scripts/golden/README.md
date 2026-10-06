@@ -44,7 +44,7 @@ requires `test_real_worker.mjs` via `npm run verify` once the harness is present
 | `smoke_cad_mobile_chrome.mjs` | CAD phone shell matches puzzle: viewport top, Monaco bottom budget, keyboard pin, mid-strip actions, vertical right rail |
 
 | `smoke_fillet_chamfer_rounded_wrap.mjs` | Fillet-on-fillet rounded-rect wrap + path chamfer quality |
-| `smoke_block_pose_preview.mjs` | Block pop: position and rotation on all six solids, preview mesh matches the script, identity pose is omitted, Subtract preview is the cutter and does not replace the cached solid |
+| `smoke_block_pose_preview.mjs` | Block pop: position and rotation on all six solids, preview mesh matches the script, identity pose is omitted, Subtract preview is the cutter and does not replace the cached solid; Add and Subtract paint with the previewStyle cyan skin + crease outline (Loft's look), never the CAD normal material |
 | `smoke_cross_part_clone.mjs` | Edit-touch C: cross-part Boolean (union / difference / intersect with piece delete) and Subtract Block copies via `externalBody`, frozen and posed into the target frame; yellow external chip; copy deleted with the feature; one undo step per written part |
 | `smoke_fillet_three_corner_wrap.mjs` | Three-fillet corner wrap (r=3.73 variable-profile chain through three r=2 fillets): true ~90° per-knot θ, one genus-0 body, volume window, no nested shell inside, every picked edge rounded, flat walls solid |
 | `smoke_multi_part_easy_fillet.mjs` | Multi-part easy fillet: each part of a multi-part Fillet Accept matches its solo Fillet (untouched seed 2 mm, a 4 mm plate clamps to 1.8, radius + class from its own solid unless typed; volume, area, tris, genus), both active directions, plate + rim, typed radius |
