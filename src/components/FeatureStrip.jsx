@@ -34,6 +34,7 @@ import SquareRoundCorner from './icons/SquareRoundCorner';
 import Angle from './icons/Angle';
 import { parseFeatureMarkers } from '../utils/featureMarkers';
 import { featureBarWindowMode } from '../utils/featureBarLayout';
+import { chipTone } from '../utils/featureChipTone';
 
 /**
  * Slice Mobile B.1 → C.2 — feature strip (+ desktop seam).
@@ -87,19 +88,10 @@ const FEATURE_ICONS = Object.freeze({
   workplane: Layers3,
 });
 
-/**
- * Chip colours. A feature that holds a frozen copy of another part's
- * geometry (externalBody) gets a yellow border, active or not.
- */
-function chipTone(active, external = false) {
-  if (active) {
-    return external
-      ? 'bg-cyan-600 text-white border-2 border-yellow-400 shadow'
-      : 'bg-cyan-600 text-white border-cyan-400/70 shadow';
-  }
-  return external
-    ? 'bg-gray-800/70 text-gray-200 border-2 border-yellow-400 hover:text-white'
-    : 'bg-gray-800/70 text-gray-200 border-gray-500/40 hover:text-white';
+/** Title text for one chip. */
+function chipTitle(f, failed) {
+  if (failed) return `${f.chipLabel} — failed on the last run`;
+  return f.external ? `${f.chipLabel} — external copy, not linked` : f.chipLabel;
 }
 
 function TypeBadge({ index }) {
@@ -136,6 +128,8 @@ export default function FeatureStrip({
   canRedo = false,
   /** A feature session hides the strip. Undo stays on the feature chip. */
   hidden = false,
+  /** Ids of features the last run failed in (red chip border). */
+  failedIds = null,
 }) {
   const features = useMemo(() => parseFeatureMarkers(script), [script]);
   const horizontal = orientation === 'horizontal';
@@ -285,6 +279,7 @@ export default function FeatureStrip({
             )}
             {features.map((f) => {
               const active = activeId === f.id;
+              const failed = !!failedIds?.has?.(f.id);
               const Icon = FEATURE_ICONS[f.kind] || NotebookPen;
               const typeIndex = f.typeIndex || 1;
               return (
@@ -295,13 +290,15 @@ export default function FeatureStrip({
                   data-feature-id={f.id}
                   data-feature-type-index={typeIndex}
                   data-feature-external={f.external ? '1' : undefined}
+                  data-feature-failed={failed ? '1' : undefined}
                   aria-pressed={active}
                   aria-label={f.chipLabel}
+                  aria-invalid={failed || undefined}
                   aria-description={f.external ? 'External copy, not linked' : undefined}
-                  title={f.external ? `${f.chipLabel} — external copy, not linked` : f.chipLabel}
+                  title={chipTitle(f, failed)}
                   onClick={() => onJump?.(f)}
                   className={`relative shrink-0 rounded-lg p-1.5 flex items-center justify-center
-                    border transition-colors active:opacity-80 ${chipTone(active, f.external)}`}
+                    border transition-colors active:opacity-80 ${chipTone(active, f.external, failed)}`}
                 >
                   <Icon size={16} strokeWidth={2} aria-hidden="true" />
                   <TypeBadge index={typeIndex} />
@@ -351,6 +348,7 @@ export default function FeatureStrip({
     >
       {features.map((f) => {
         const active = activeId === f.id;
+        const failed = !!failedIds?.has?.(f.id);
         const Icon = FEATURE_ICONS[f.kind] || NotebookPen;
         const typeIndex = f.typeIndex || 1;
         return (
@@ -361,13 +359,15 @@ export default function FeatureStrip({
             data-feature-id={f.id}
             data-feature-type-index={typeIndex}
             data-feature-external={f.external ? '1' : undefined}
+            data-feature-failed={failed ? '1' : undefined}
             aria-pressed={active}
             aria-label={f.chipLabel}
-                  aria-description={f.external ? 'External copy, not linked' : undefined}
-            title={f.external ? `${f.chipLabel} — external copy, not linked` : f.chipLabel}
+            aria-invalid={failed || undefined}
+            aria-description={f.external ? 'External copy, not linked' : undefined}
+            title={chipTitle(f, failed)}
             onClick={() => onJump?.(f)}
             className={`relative shrink-0 rounded-lg p-1.5 flex items-center justify-center
-              border transition-colors active:opacity-80 ${chipTone(active, f.external)}`}
+              border transition-colors active:opacity-80 ${chipTone(active, f.external, failed)}`}
           >
             <Icon size={16} strokeWidth={2} aria-hidden="true" />
             <TypeBadge index={typeIndex} />

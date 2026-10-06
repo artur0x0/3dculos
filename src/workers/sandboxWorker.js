@@ -26,6 +26,7 @@ import {
 import { densifyPathPoints, buildVariableProfileFrames, maxConsecutiveFrameAngleDeg, countThetaRuns, variableProfileDensifyStep, pathPolylineLength, FRAME_DENSIFY_MAX_TURN_DEG } from '../utils/edgeTangencyField.js';
 import { indexBoundaryEdges } from '../utils/boundaryEdgeIds.js';
 import { assembleSweepPath } from '../utils/edgeSweepPath.js';
+import { calibrateScriptLineOffset, scriptLineFromStack } from '../utils/featureFailure.js';
 import { buildMakeLoftSolid, offsetPlaneFrame } from '../utils/makeLoft.js';
 import { blockSpec, buildBlockManifold } from '../utils/blockSolid.js';
 
@@ -7940,8 +7941,22 @@ const executeScript = (script, importedModels) => {
   
   // Create and execute the function
   const fn = new Function(...scopeKeys, wrappedScript);
-  return fn(...scopeValues);
+  try {
+    return fn(...scopeValues);
+  } catch (err) {
+    // Script line of the failing call, so the feature strip can mark the
+    // feature block it sits in (red border).
+    if (_scriptLineOffset === undefined) _scriptLineOffset = calibrateScriptLineOffset();
+    const line = scriptLineFromStack(err?.stack, _scriptLineOffset);
+    if (line != null && err && typeof err === 'object') {
+      try { err.scriptLine = line; } catch { /* frozen error */ }
+    }
+    throw err;
+  }
 };
+
+/** Engine header lines before the script in a `new Function` body (lazy). */
+let _scriptLineOffset;
 
 /**
  * Serialize a Manifold result to mesh data for transfer
@@ -8898,7 +8913,8 @@ self.onmessage = async (event) => {
       id,
       payload: {
         message: error.message,
-        stack: error.stack
+        stack: error.stack,
+        scriptLine: Number.isFinite(error?.scriptLine) ? error.scriptLine : null,
       }
     });
   }

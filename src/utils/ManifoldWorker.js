@@ -749,6 +749,8 @@ class ManifoldWorker {
           this.pendingRequests.delete(id);
           const error = new Error(payload.message);
           error.stack = payload.stack;
+          // Script line of the failing call (feature strip red border).
+          if (Number.isFinite(payload.scriptLine)) error.scriptLine = payload.scriptLine;
           request.reject(error);
         }
         
