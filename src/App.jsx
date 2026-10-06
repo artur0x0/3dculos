@@ -15,6 +15,7 @@ import {
   listFeatureSheetTargets,
   pickDefaultFeatureSheetTarget,
   isFeatureSheetEditable,
+  liveSheetFeature,
 } from './utils/featureSheetWriteback';
 import { saveAs } from 'file-saver';
 import QuoteModal from './components/QuoteModal';
@@ -64,7 +65,7 @@ import {
   undoPartHistory,
 } from './utils/partHistory';
 import { runAssemblyParts } from './utils/assemblyRun';
-import { leftoverPickSolids, shouldSyncScript } from './utils/pickRetarget';
+import { featureWriteTarget, leftoverPickSolids, shouldSyncScript } from './utils/pickRetarget';
 import {
   deletePartScript,
   loadAssemblyDocument,
@@ -128,6 +129,8 @@ const App = () => {
   const featureSessionRef = useRef(false);
   const [featureSession, setFeatureSession] = useState(false);
   const syncCadScriptRef = useRef(() => {});
+  /** focusWritePart, for handlers declared above it. */
+  const focusWritePartRef = useRef(() => true);
   /** Bumped when the active part changes out from under a pending autosave. */
   const partSaveEpochRef = useRef(0);
   const refreshGenRef = useRef(0);
@@ -178,6 +181,8 @@ const App = () => {
   /** Script-stage strip: caret jump only (no FeatureSheet — CAD strip / long-press keep the sheet). */
   const handleFeatureStripJump = (feature) => {
     if (!feature) return;
+    // Chips are the picked part's features; jump in that part's buffer.
+    focusWritePartRef.current(null);
     setFeatureStripActiveId(feature.id);
     codeEditorRef.current?.revealRange?.(feature.startOffset, feature.endOffset);
     // Jump-only: clear highlight so the chip does not stay stuck cyan.
@@ -192,6 +197,7 @@ const App = () => {
    */
   const handleDesktopFeatureStripJump = (feature) => {
     if (!feature) return;
+    focusWritePartRef.current(null);
     setFeatureStripActiveId(feature.id);
     codeEditorRef.current?.revealRange?.(feature.startOffset, feature.endOffset);
     setFeatureSheet({ mode: 'edit', feature });
@@ -215,10 +221,13 @@ const App = () => {
   };
   const openFeatureSheetFor = (feature) => {
     if (!feature) return;
+    // The sheet reads and writes the editor buffer: make it the picked part's.
+    focusWritePartRef.current(null);
     setFeatureStripActiveId(feature.id);
     setFeatureSheet({ mode: 'edit', feature });
   };
   const openFeatureSheetFromCad = () => {
+    focusWritePartRef.current(null);
     const buf = codeEditorRef.current?.getContent?.() || currentScript || '';
     const features = listFeatureSheetTargets(buf);
     if (!features.length) {
@@ -239,15 +248,19 @@ const App = () => {
     }
     setFeatureSheet({ mode: 'picker' });
   };
+  const STALE_FEATURE_MSG = 'That feature is not in this part\'s script any more — pick it again.';
   const handleFeatureSheetAccept = (feature, params) => {
     if (!feature) return;
+    focusWritePartRef.current(null);
     const buf = codeEditorRef.current?.getContent?.() || currentScript || '';
     // Re-parse markers against live buffer so offsets stay valid after prior edits.
-    const live = listFeatureSheetTargets(buf).find((f) => f.id === feature.id)
-      || listFeatureSheetTargets(buf).find(
-        (f) => f.kind === feature.kind && f.index === feature.index,
-      )
-      || feature;
+    // Only a block of this kind in THIS buffer. The stale chip's own offsets
+    // (another part's script) used to fall through here: "invalid range".
+    const live = liveSheetFeature(buf, feature);
+    if (!live) {
+      viewportRef.current?.softFailContour?.(STALE_FEATURE_MSG);
+      return;
+    }
     const result = writeFeatureSheetParams(buf, live, params || {});
     if (!result.ok) {
       viewportRef.current?.softFailContour?.(result.message);
@@ -273,12 +286,15 @@ const App = () => {
   };
   const handleFeatureSheetDelete = (feature) => {
     if (!feature) return;
+    focusWritePartRef.current(null);
     const buf = codeEditorRef.current?.getContent?.() || currentScript || '';
-    const live = listFeatureSheetTargets(buf).find((f) => f.id === feature.id)
-      || listFeatureSheetTargets(buf).find(
-        (f) => f.kind === feature.kind && f.index === feature.index,
-      )
-      || feature;
+    // Only a block of this kind in THIS buffer. The stale chip's own offsets
+    // (another part's script) used to fall through here: "invalid range".
+    const live = liveSheetFeature(buf, feature);
+    if (!live) {
+      viewportRef.current?.softFailContour?.(STALE_FEATURE_MSG);
+      return;
+    }
     const result = deleteFeatureBlock(buf, live);
     if (!result.ok) {
       viewportRef.current?.softFailContour?.(result.message);
@@ -311,12 +327,9 @@ const App = () => {
     // Defer reveal until Script pane is interactive; then clear highlight.
     setTimeout(() => {
       const buf = codeEditorRef.current?.getContent?.() || currentScript || '';
-      const live = listFeatureSheetTargets(buf).find((f) => f.id === feature.id)
-        || listFeatureSheetTargets(buf).find(
-          (f) => f.kind === feature.kind && f.index === feature.index,
-        )
-        || feature;
-      codeEditorRef.current?.revealRange?.(live.startOffset, live.endOffset);
+      // The Script stage loaded the picked part; reveal the block as it is there.
+      const live = liveSheetFeature(buf, feature);
+      if (live) codeEditorRef.current?.revealRange?.(live.startOffset, live.endOffset);
       setFeatureStripActiveId((cur) => (cur === feature.id ? null : cur));
     }, 50);
   };
@@ -1362,11 +1375,41 @@ const App = () => {
     return true;
   };
 
+  /** A palette tap opens a Block sheet or feature mode: edit the picked part. */
+  const handleFeatureOpen = () => {
+    focusWritePart(null);
+  };
+
   const handleFeatureSession = (active) => {
     const on = !!active;
+    // Opening a feature on a picked part edits that part from the start, so
+    // its buffer, commit mode and Undo stack are the ones the feature sees.
+    if (on && !featureSessionRef.current) focusWritePart(null);
     featureSessionRef.current = on;
     setFeatureSession((prev) => (prev === on ? prev : on));
   };
+
+  /**
+   * Load the part a feature acts on into the editor before it writes, opens
+   * a feature sheet or undoes. A face / edge pick on part B moves the viewer
+   * (and the Block preview anchor) to B but leaves the editor on A; every
+   * writer writes the editor buffer, so without this a Block confirmed on B
+   * landed in A, the strip showed B, and B's sheet Delete hit A's offsets
+   * ("invalid range"). Target: the viewport's part for this payload, else the
+   * picked part (featureWriteTarget). Loading keeps the picks and focuses that
+   * part's own Undo stack. Returns false when that part cannot be loaded.
+   */
+  const focusWritePart = (payloadPartId = null) => {
+    const doc = assemblyRef.current;
+    if (!doc || appModeRef.current === 'game') return true;
+    const target = featureWriteTarget(doc, { pickedId: cadPartIdRef.current, payloadPartId });
+    if (!target.load) return true;
+    if (!scriptForRow(doc, partScriptsRef.current, target.id).ok) return false;
+    handleSelectPart(target.id, { keepPicks: true });
+    return assemblyRef.current?.activeId === target.id;
+  };
+  focusWritePartRef.current = focusWritePart;
+  const PICKED_PART_FAIL = 'Could not open the picked part in the editor — try again.';
 
   syncCadScriptRef.current = () => {
     const id = cadPartIdRef.current;
@@ -1797,6 +1840,11 @@ const App = () => {
    * faceContext from selected face), then Auto-Run via handleGameRun.
    */
   const handleInsertHelper = (helperId, params = null, faceContext = null, edgeContext = null) => {
+    // The Block preview is drawn on the picked part; Confirm writes there too.
+    if (!focusWritePart(null)) {
+      viewportRef.current?.notify?.(PICKED_PART_FAIL);
+      return;
+    }
     const beforeInsert = codeEditorRef.current?.getContent?.();
     const ok = codeEditorRef.current?.insertHelper?.(helperId, params, faceContext, edgeContext);
     if (ok) {
@@ -1831,6 +1879,10 @@ const App = () => {
    * (no Auto-Run). Extrude / Revolve / Loft / Sweep write the solid and Auto-Run.
    */
   const handleCommitContourProfile = (payload) => {
+    if (!focusWritePart(payload?.partId)) {
+      viewportRef.current?.softFailContour?.(PICKED_PART_FAIL);
+      return false;
+    }
     const buf = codeEditorRef.current?.getContent?.() || '';
     const result = composeContourCommit(buf, payload || {});
     if (!result.ok) {
@@ -1888,6 +1940,11 @@ const App = () => {
   const handleCommitFillet = (payload) => {
     const chamfer = payload?.entry === 'chamferEdges';
     const label = chamfer ? 'Chamfer' : 'Fillet';
+    // The viewport's own part is the editor part; other picks stay "others".
+    if (!focusWritePart(payload?.partId)) {
+      viewportRef.current?.softFailFillet?.(PICKED_PART_FAIL);
+      return false;
+    }
     const others = Array.isArray(payload?.otherParts) ? payload.otherParts : [];
     const doc = assemblyRef.current;
     const editorId = doc?.activeId ?? null;
@@ -1959,6 +2016,10 @@ const App = () => {
 
   /** Shell face-pick Confirm — hollow() + SHELL markers; Auto-Run. */
   const handleCommitShell = (payload) => {
+    if (!focusWritePart(payload?.partId)) {
+      viewportRef.current?.softFailShell?.(PICKED_PART_FAIL);
+      return false;
+    }
     const buf = codeEditorRef.current?.getContent?.() || '';
     const result = composeShellCommit(buf, payload || {});
     if (!result.ok) {
@@ -1982,6 +2043,10 @@ const App = () => {
 
   /** Draft face-pick Confirm — one draftFaces() + DRAFT markers; Auto-Run. */
   const handleCommitDraft = (payload) => {
+    if (!focusWritePart(payload?.partId)) {
+      viewportRef.current?.softFailDraft?.(PICKED_PART_FAIL);
+      return false;
+    }
     const buf = codeEditorRef.current?.getContent?.() || '';
     const result = composeDraftCommit(buf, payload?.state || payload || {});
     if (!result.ok) {
@@ -2005,6 +2070,10 @@ const App = () => {
 
   /** Cut plane Confirm — one cut() + CUT markers; Auto-Run. */
   const handleCommitCut = (payload) => {
+    if (!focusWritePart(payload?.partId)) {
+      viewportRef.current?.softFailCut?.(PICKED_PART_FAIL);
+      return false;
+    }
     const buf = codeEditorRef.current?.getContent?.() || '';
     const result = composeCutCommit(buf, payload?.state || payload || {}, payload?.mesh || null);
     if (!result.ok) {
@@ -2082,6 +2151,10 @@ const App = () => {
 
   /** Delete Face Confirm — one deleteFace() + markers; Auto-Run. */
   const handleCommitDeleteFace = (payload) => {
+    if (!focusWritePart(payload?.partId)) {
+      viewportRef.current?.softFailDeleteFace?.(PICKED_PART_FAIL);
+      return false;
+    }
     const buf = codeEditorRef.current?.getContent?.() || '';
     const result = composeDeleteFaceCommit(buf, payload?.state || payload || {});
     if (!result.ok) {
@@ -2105,6 +2178,10 @@ const App = () => {
 
   /** Move Face Confirm — one moveFace() + markers; Auto-Run. Not body move(). */
   const handleCommitMoveFace = (payload) => {
+    if (!focusWritePart(payload?.partId)) {
+      viewportRef.current?.softFailMoveFace?.(PICKED_PART_FAIL);
+      return false;
+    }
     const buf = codeEditorRef.current?.getContent?.() || '';
     const result = composeMoveFaceCommit(buf, payload?.state || payload || {});
     if (!result.ok) {
@@ -2128,6 +2205,10 @@ const App = () => {
 
   /** Move body Confirm — one move() + MOVE markers; Auto-Run. */
   const handleCommitMove = (payload) => {
+    if (!focusWritePart(payload?.partId)) {
+      viewportRef.current?.softFailMove?.(PICKED_PART_FAIL);
+      return false;
+    }
     const buf = codeEditorRef.current?.getContent?.() || '';
     const result = composeMoveCommit(buf, payload?.state || payload || {});
     if (!result.ok) {
@@ -2188,6 +2269,8 @@ const App = () => {
   };
 
   const handleUndo = () => {
+    // Undo the part the strip and title show (the picked part).
+    if (!focusWritePart(null)) return;
     const id = historyKey();
     const branch = historyRef.current?.branches?.main;
     const current = partHistoriesRef.current[id] || {
@@ -2213,6 +2296,7 @@ const App = () => {
   };
 
   const handleRedo = () => {
+    if (!focusWritePart(null)) return;
     const id = historyKey();
     const branch = historyRef.current?.branches?.main;
     const current = partHistoriesRef.current[id] || {
@@ -2550,6 +2634,7 @@ const App = () => {
               gameBestTimeMs={gameBestTimeMs}
               isMobile={isMobile}
               onInsertHelper={handleInsertHelper}
+              onFeatureOpen={handleFeatureOpen}
               onCommitContourProfile={handleCommitContourProfile}
               onCommitFillet={handleCommitFillet}
               onCommitShell={handleCommitShell}
@@ -2966,6 +3051,7 @@ const App = () => {
             gameBestTimeMs={gameBestTimeMs}
             isMobile={false}
             onInsertHelper={handleInsertHelper}
+            onFeatureOpen={handleFeatureOpen}
             onCommitContourProfile={handleCommitContourProfile}
             onCommitFillet={handleCommitFillet}
               onCommitShell={handleCommitShell}

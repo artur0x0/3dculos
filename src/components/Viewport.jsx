@@ -629,6 +629,8 @@ const Viewport = forwardRef(({
   gameBestTimeMs = null,
   isMobile = false,
   onInsertHelper = null,
+  /** A palette tap is opening a sheet or mode (App: edit the picked part). */
+  onFeatureOpen = null,
   onCommitContourProfile = null,
   onCommitFillet = null,
   onCommitShell = null,
@@ -2503,6 +2505,7 @@ const Viewport = forwardRef(({
       })
       : state;
     const ok = onCommitContourProfile?.({
+      partId: activePartIdRef.current,
       face: loftState.planeFace || commitFace,
       tool: loftState.tool,
       params: loftState.params,
@@ -2729,6 +2732,7 @@ const Viewport = forwardRef(({
       return;
     }
     const ok = onCommitShell?.({
+      partId: activePartIdRef.current,
       face: gate.face,
       params: gate.normalized,
       // One Shell feature. Replacing the marked block keeps a single hollow()
@@ -3663,7 +3667,7 @@ const Viewport = forwardRef(({
       showShellToast(gate.message);
       return;
     }
-    const ok = onCommitDraft?.({ state });
+    const ok = onCommitDraft?.({ state, partId: activePartIdRef.current });
     if (ok) {
       clearHighlight();
       setSelectedFace(null);
@@ -3964,7 +3968,7 @@ const Viewport = forwardRef(({
       showShellToast(gate.message);
       return;
     }
-    const ok = onCommitCut?.({ state, mesh: { positions, index, bodyCount } });
+    const ok = onCommitCut?.({ state, mesh: { positions, index, bodyCount }, partId: activePartIdRef.current });
     if (ok) {
       clearHighlight();
       setSelectedFace(null);
@@ -4393,7 +4397,7 @@ const Viewport = forwardRef(({
       showShellToast(gate.message);
       return;
     }
-    const ok = onCommitMove?.({ state });
+    const ok = onCommitMove?.({ state, partId: activePartIdRef.current });
     if (ok) {
       clearHighlight();
       setSelectedFace(null);
@@ -4695,7 +4699,7 @@ const Viewport = forwardRef(({
       showShellToast(gate.message);
       return;
     }
-    const ok = onCommitMoveFace?.({ state });
+    const ok = onCommitMoveFace?.({ state, partId: activePartIdRef.current });
     if (ok) {
       clearHighlight();
       setSelectedFace(null);
@@ -4807,7 +4811,7 @@ const Viewport = forwardRef(({
       showShellToast(gate.message);
       return;
     }
-    const ok = onCommitDeleteFace?.({ state });
+    const ok = onCommitDeleteFace?.({ state, partId: activePartIdRef.current });
     if (ok) {
       clearHighlight();
       setSelectedFace(null);
@@ -7499,6 +7503,7 @@ const Viewport = forwardRef(({
         <HelperInsertPalette
           layout={mode === 'game' ? 'game' : 'cad'}
           onInsert={onInsertHelper}
+          onOpen={onFeatureOpen}
           getBuffer={getHelperBuffer}
           selectedFace={selectedFace}
           selectedEdges={selectedEdges}

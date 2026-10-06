@@ -52,6 +52,28 @@ export function resolvePartPick(hits, gap = AMBIGUOUS_HIT_GAP) {
 }
 
 /**
+ * The part a feature write, feature sheet or Undo acts on.
+ *
+ * A face / edge pick moves the CAD selection (`pickedId`, App's cadPartId)
+ * and the viewer to that part but leaves the editor on `doc.activeId`. Every
+ * writer used to write the editor buffer, so a Block confirmed on a picked
+ * part B landed in A. The target is the part the viewer shows: the viewport's
+ * own part for this payload (`payloadPartId`) when it is a row, else the
+ * picked part, else the editor's. `load` is true when that is not the
+ * editor's part, so the caller loads it into the editor (its own script and
+ * Undo stack) before it writes.
+ *
+ * @returns {{ id: string|null, load: boolean }}
+ */
+export function featureWriteTarget(doc, { pickedId = null, payloadPartId = null } = {}) {
+  if (!doc || !Array.isArray(doc.parts)) return { id: null, load: false };
+  const active = doc.activeId ?? null;
+  const isRow = (id) => id != null && doc.parts.some((row) => row.id === id);
+  const id = isRow(payloadPartId) ? payloadPartId : isRow(pickedId) ? pickedId : active;
+  return { id, load: id != null && id !== active };
+}
+
+/**
  * Monaco follows a body click, opening Script or Parts, or a pick made
  * while a feature session is open. A face or edge pick outside a feature
  * leaves the script pane pinned.
