@@ -80,6 +80,9 @@ import {
 /** externalBody() inside a block = a cross-part copy (see externalCopy.js). */
 const EXTERNAL_COPY_CALL = /\bexternalBody\s*\(/;
 
+/** `.add(solid, { merge: false })` inside a block = Merge bodies off (separate body). */
+export const SEPARATE_BODY_CALL = /\.add\s*\([\s\S]*?,\s*\{\s*merge\s*:\s*false\s*\}\s*\)/;
+
 /** Ordered kinds the strip cares about (label is the chip text). */
 export const FEATURE_MARKER_KINDS = Object.freeze([
   { begin: CONTOUR_PROFILE_BEGIN, end: CONTOUR_PROFILE_END, kind: 'profile', label: 'Profile' },
@@ -163,6 +166,8 @@ export function parseFeatureMarkers(script) {
       endOffset: h.endOffset,
       /** Holds a frozen copy of another part's geometry (yellow chip border). */
       external: EXTERNAL_COPY_CALL.test(script.slice(h.startOffset, h.endOffset)),
+      /** Wrote its solid with Merge bodies off (strip separate-body marker). */
+      separate: SEPARATE_BODY_CALL.test(script.slice(h.startOffset, h.endOffset)),
       index,
       /** 1-based index within this kind (badge on strip / sheet icons). */
       typeIndex,

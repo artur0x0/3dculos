@@ -91,7 +91,26 @@ const FEATURE_ICONS = Object.freeze({
 /** Title text for one chip. */
 function chipTitle(f, failed) {
   if (failed) return `${f.chipLabel} — failed on the last run`;
-  return f.external ? `${f.chipLabel} — external copy, not linked` : f.chipLabel;
+  if (f.external) return `${f.chipLabel} — external copy, not linked`;
+  return f.separate ? `${f.chipLabel} — separate body (merge off)` : f.chipLabel;
+}
+
+/** Merge bodies off: two small offset squares, top-left of the chip. */
+function SeparateBodyMarker({ on }) {
+  if (!on) return null;
+  return (
+    <span
+      className="absolute -top-0.5 -left-0.5 w-[0.8rem] h-[0.8rem] rounded-sm
+        bg-violet-500 shadow pointer-events-none flex items-center justify-center"
+      data-feature-separate-body=""
+      aria-hidden="true"
+    >
+      <svg viewBox="0 0 10 10" width="8" height="8" fill="none" stroke="white" strokeWidth="1.3">
+        <rect x="1" y="1" width="5" height="5" />
+        <rect x="4" y="4" width="5" height="5" />
+      </svg>
+    </span>
+  );
 }
 
 function TypeBadge({ index }) {
@@ -290,6 +309,8 @@ export default function FeatureStrip({
                   data-feature-id={f.id}
                   data-feature-type-index={typeIndex}
                   data-feature-external={f.external ? '1' : undefined}
+            data-feature-separate={f.separate ? '1' : undefined}
+                  data-feature-separate={f.separate ? '1' : undefined}
                   data-feature-failed={failed ? '1' : undefined}
                   aria-pressed={active}
                   aria-label={f.chipLabel}
@@ -302,6 +323,7 @@ export default function FeatureStrip({
                 >
                   <Icon size={16} strokeWidth={2} aria-hidden="true" />
                   <TypeBadge index={typeIndex} />
+                  <SeparateBodyMarker on={!!f.separate} />
                 </button>
               );
             })}
@@ -359,6 +381,7 @@ export default function FeatureStrip({
             data-feature-id={f.id}
             data-feature-type-index={typeIndex}
             data-feature-external={f.external ? '1' : undefined}
+            data-feature-separate={f.separate ? '1' : undefined}
             data-feature-failed={failed ? '1' : undefined}
             aria-pressed={active}
             aria-label={f.chipLabel}
@@ -371,6 +394,7 @@ export default function FeatureStrip({
           >
             <Icon size={16} strokeWidth={2} aria-hidden="true" />
             <TypeBadge index={typeIndex} />
+            <SeparateBodyMarker on={!!f.separate} />
           </button>
         );
       })}

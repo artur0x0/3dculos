@@ -54,6 +54,9 @@ const ContourModeChip = ({
   onPopEdge,
   combine = 'add',
   onCombineChange,
+  /** Merge bodies (Add only): false keeps the solid as a separate body. */
+  merge = true,
+  onMergeChange,
   compact = false,
 }) => {
   const isExtrude = entry === 'makeExtrude';
@@ -629,12 +632,27 @@ const ContourModeChip = ({
           })}
         </div>
       )}
+      {solidEntry && combineOp === 'add' && (
+        <label
+          className="mt-1.5 flex items-center gap-2 text-[13px] text-cyan-100 shrink-0"
+          title="On: union into the part. Off: keep this solid as a separate body in the same part."
+        >
+          <input
+            type="checkbox"
+            checked={merge !== false}
+            onChange={(e) => onMergeChange?.(e.target.checked)}
+            data-contour-merge={merge !== false ? 'on' : 'off'}
+            className="h-3.5 w-3.5 accent-cyan-400"
+          />
+          Merge bodies
+        </label>
+      )}
       <div className="mt-2 flex items-center justify-between gap-2 shrink-0">
         <span className="text-[11px] text-cyan-200/70 leading-tight">
           {isWorkplane
             ? 'Confirm writes a construction plane'
             : commitName
-              ? `Confirm writes ${commitName} (${combineOp === 'subtract' ? 'cuts' : 'adds'} if part exists)`
+              ? `Confirm writes ${commitName} (${combineOp === 'subtract' ? 'cuts' : merge === false ? 'separate body' : 'adds'} if part exists)`
               : 'Confirm writes Profile only'}
         </span>
         <button

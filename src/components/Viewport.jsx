@@ -2516,6 +2516,8 @@ const Viewport = forwardRef(({
       sweep: loftState.sweep,
       edges: selectedEdges,
       combine: loftState.combine === 'subtract' ? 'subtract' : 'add',
+      // Merge bodies is an Add option; Subtract always cuts.
+      merge: loftState.combine === 'subtract' ? true : loftState.merge !== false,
     });
     if (ok) {
       exitContourMode();
@@ -7719,6 +7721,10 @@ const Viewport = forwardRef(({
           combine={contourMode.combine === 'subtract' ? 'subtract' : 'add'}
           onCombineChange={(combine) => setContourMode((prev) => (
             prev ? { ...prev, combine: combine === 'subtract' ? 'subtract' : 'add' } : prev
+          ))}
+          merge={contourMode.merge !== false}
+          onMergeChange={(merge) => setContourMode((prev) => (
+            prev ? { ...prev, merge: merge !== false } : prev
           ))}
           onConfirm={confirmContourProfile}
           onUndoPoint={() => setContourMode((prev) => {
