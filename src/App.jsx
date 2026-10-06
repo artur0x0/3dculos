@@ -100,6 +100,10 @@ import {
   checkInMineToBranch,
   listVaultBranches,
   switchVaultBranch,
+  DEFAULT_VAULT_NAME,
+  sanitizeVaultName,
+  planMoveToGit,
+  moveToGit,
 } from './utils/git';
 import PartFeed from './components/PartFeed';
 import manifoldContext from './utils/ManifoldWorker';
@@ -1592,10 +1596,16 @@ const App = () => {
     }
   };
 
-  const ensureGitVault = async () => {
+  /** Mock adapter until the real GitHub App adapter lands (no tokens here). */
+  const ensureGitAdapter = () => {
     if (!gitAdapterRef.current) {
       gitAdapterRef.current = createMockGithubAdapter({ login: 'local-user' });
     }
+    return gitAdapterRef.current;
+  };
+
+  const ensureGitVault = async () => {
+    ensureGitAdapter();
     if (gitVaultRef.current) return gitVaultRef.current;
     const result = await findOrCreateVault(gitAdapterRef.current);
     if (result.status === 'invalid-name' || result.status === 'not-a-vault' || result.status === 'missing') {
@@ -1675,6 +1685,85 @@ const App = () => {
     rememberGitBaseline(null);
     rememberGitBehind(null, { showToast: false, resetResolved: true });
     setGitBehindToast(null);
+  };
+
+  /** G6: vault name the Move to Git dialog starts with (current vault, else surfcad). */
+  const gitDefaultVaultName = () => gitVaultRef.current?.repo?.name || DEFAULT_VAULT_NAME;
+
+  /** Live editor text for the active part, unless the editor shows a placeholder. */
+  const liveEditorScript = (doc) => {
+    const live = codeEditorRef.current?.getContent?.();
+    const liveId = (!suppressPartSaveRef.current && typeof live === 'string') ? doc?.activeId : null;
+    return { liveId: liveId || null, liveScript: liveId ? live : null };
+  };
+
+  /** G6 preview: where each Local part lands in the vault (no writes). */
+  const handlePlanMoveToGit = ({ sharedIds = [] } = {}) => {
+    const doc = assemblyRef.current;
+    if (!doc || doc.source === 'git') return null;
+    try {
+      return planMoveToGit(doc, partScriptsRef.current, { sharedIds, ...liveEditorScript(doc) });
+    } catch (err) {
+      return { error: err.message || 'Cannot plan the move' };
+    }
+  };
+
+  /**
+   * G6 Move to Git: find-or-create the vault (rename field), write the
+   * IndexedDB parts + assembly into the layout as one commit, then switch the
+   * working copy to Git mode with a clean baseline.
+   */
+  const handleMoveToGit = async ({ vaultName = DEFAULT_VAULT_NAME, sharedIds = [] } = {}) => {
+    const doc = assemblyRef.current;
+    if (!doc) return { status: 'error', error: 'No assembly' };
+    if (doc.source === 'git') return { status: 'error', error: 'Already in Git mode' };
+    try {
+      const live = liveEditorScript(doc);
+      if (live.liveId) {
+        savePartScript(live.liveId, live.liveScript);
+        rememberScripts({ ...partScriptsRef.current, [live.liveId]: live.liveScript });
+      }
+      const result = await moveToGit(ensureGitAdapter(), {
+        vaultName,
+        doc,
+        scripts: partScriptsRef.current,
+        sharedIds,
+        ...live,
+      });
+      if (result.status !== 'moved') return result;
+      // Carry runs / leftovers / undo history / CAD pick over to the new ids.
+      const remap = (map) => {
+        const next = { ...(map || {}) };
+        for (const { from, to } of result.idMap) {
+          if (from !== to && Object.prototype.hasOwnProperty.call(next, from)) {
+            next[to] = next[from];
+            delete next[from];
+          }
+        }
+        return next;
+      };
+      commitPartRuns(remap(partRunsRef.current));
+      partLeftoversRef.current = remap(partLeftoversRef.current);
+      const histories = remap(partHistoriesRef.current);
+      for (const key of Object.keys(partHistoriesRef.current)) delete partHistoriesRef.current[key];
+      Object.assign(partHistoriesRef.current, histories);
+      const pick = result.idMap.find((m) => m.from === cadPartIdRef.current);
+      if (pick) rememberCadPart(pick.to);
+      gitVaultRef.current = {
+        repo: result.vault.repo,
+        defaultBranch: result.vault.defaultBranch,
+        headSha: result.sha,
+        private: result.vault.private,
+      };
+      await applyCommittedWorkspace({ doc: result.doc, scripts: result.scripts });
+      rememberGitBaseline(result.baseline);
+      rememberGitBehind(null, { showToast: false, resetResolved: true });
+      setGitBehindToast(null);
+      refreshAssemblyRef.current?.(undefined, { persistActive: false });
+      return result;
+    } catch (err) {
+      return { status: 'error', error: err.message || 'Move to Git failed' };
+    }
   };
 
   const handleListVaultAssemblies = async () => {
@@ -3196,6 +3285,10 @@ const App = () => {
       onAddPart={handleAddPart}
       onDeletePart={handleDeletePart}
       onToggleSource={handleToggleSource}
+      onPlanMoveToGit={handlePlanMoveToGit}
+      onMoveToGit={handleMoveToGit}
+      defaultVaultName={gitDefaultVaultName()}
+      sanitizeVaultName={sanitizeVaultName}
       sourceDirty={!!sourceDirty}
       onListVaultAssemblies={handleListVaultAssemblies}
       onOpenVaultAssembly={handleOpenVaultAssembly}
