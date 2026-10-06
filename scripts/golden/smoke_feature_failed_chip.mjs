@@ -152,7 +152,7 @@ const GOOD = `${CUBE}\n${GOOD_FILLET}\nreturn part;\n`;
     (vp.match(/onRunOutcomeRef\.current\?\.\(\{ script, ok: true, scriptLine: null \}\)/g) || []).length === 2
     && /ok: false,\s*scriptLine: Number\.isFinite\(error\?\.scriptLine\)/.test(vp));
   check('App maps the outcome and feeds every strip',
-    /failedFeatureFor\(script, scriptLine\)/.test(app)
+    /failedFeatureFromOutcome\(script, \{ featureId, featureBlock, scriptLine \}\)/.test(app)
     && (app.match(/failedIds=\{stripFailedIds\}/g) || []).length === 3
     && (app.match(/onRunOutcome=\{handleRunOutcome\}/g) || []).length === 2);
   check('both strip layouts mark failed chips',

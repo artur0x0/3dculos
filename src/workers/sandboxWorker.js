@@ -26,7 +26,14 @@ import {
 import { densifyPathPoints, buildVariableProfileFrames, maxConsecutiveFrameAngleDeg, countThetaRuns, variableProfileDensifyStep, pathPolylineLength, FRAME_DENSIFY_MAX_TURN_DEG } from '../utils/edgeTangencyField.js';
 import { indexBoundaryEdges } from '../utils/boundaryEdgeIds.js';
 import { assembleSweepPath } from '../utils/edgeSweepPath.js';
-import { calibrateScriptLineOffset, scriptLineFromStack } from '../utils/featureFailure.js';
+import {
+  calibrateScriptLineOffset,
+  createFeatureTracker,
+  FEATURE_TRACE_ENTER,
+  FEATURE_TRACE_LEAVE,
+  instrumentFeatureBlocks,
+  scriptLineFromStack,
+} from '../utils/featureFailure.js';
 import { buildMakeLoftSolid, offsetPlaneFrame } from '../utils/makeLoft.js';
 import { blockSpec, buildBlockManifold } from '../utils/blockSolid.js';
 
@@ -8077,30 +8084,59 @@ const executeScript = (script, importedModels) => {
     __importedManifolds: importedManifolds
   };
   
+  // Which marked feature block is running (feature strip red border). This
+  // does not depend on the engine's stack format, unlike `scriptLine`.
+  const tracker = createFeatureTracker();
+  const traced = instrumentFeatureBlocks(script);
+
   // Build the execution scope with Manifold API + helper functions
   const scope = {
     ...manifoldModule,        // Core Manifold API (Manifold, CrossSection, etc.)
     ...HELPER_FUNCTIONS,      // Extended helper functions
     window: limitedWindow,    // Limited window object for imports
+    [FEATURE_TRACE_ENTER]: tracker.enter,
+    [FEATURE_TRACE_LEAVE]: tracker.leave,
   };
   
   const scopeKeys = Object.keys(scope);
   const scopeValues = Object.values(scope);
   
-  // Wrap script in strict mode
+  // Create the function (strict mode). The instrumented body keeps every
+  // line where it was; if it does not compile (a marker inside an
+  // expression), run the script as written, untracked.
+  // Both stay a plain top-level function body (no wrapper function), so a
+  // user `let cut` still shadows the helper the way it always did.
   const wrappedScript = `"use strict";\n${script}`;
-  
-  // Create and execute the function
-  const fn = new Function(...scopeKeys, wrappedScript);
+  const tracedScript = `"use strict";\n${traced.script}`;
+  let fn;
+  let features = traced.features;
+  try {
+    fn = new Function(...scopeKeys, tracedScript);
+  } catch (compileErr) {
+    if (tracedScript === wrappedScript) throw compileErr;
+    fn = new Function(...scopeKeys, wrappedScript);
+    features = [];
+  }
   try {
     return fn(...scopeValues);
   } catch (err) {
-    // Script line of the failing call, so the feature strip can mark the
-    // feature block it sits in (red border).
-    if (_scriptLineOffset === undefined) _scriptLineOffset = calibrateScriptLineOffset();
-    const line = scriptLineFromStack(err?.stack, _scriptLineOffset);
-    if (line != null && err && typeof err === 'object') {
-      try { err.scriptLine = line; } catch { /* frozen error */ }
+    if (err && typeof err === 'object') {
+      // Primary: the open feature block (works on every engine).
+      const open = tracker.current();
+      const hit = open != null ? features[open] : null;
+      if (hit) {
+        try {
+          err.featureId = hit.id;
+          err.featureBlock = hit.block;
+        } catch { /* frozen error */ }
+      }
+      // Fallback: script line of the failing call from the stack (V8 /
+      // Firefox; Safari frames often do not match).
+      if (_scriptLineOffset === undefined) _scriptLineOffset = calibrateScriptLineOffset();
+      const line = scriptLineFromStack(err?.stack, _scriptLineOffset);
+      if (line != null) {
+        try { err.scriptLine = line; } catch { /* frozen error */ }
+      }
     }
     throw err;
   }
@@ -9066,6 +9102,8 @@ self.onmessage = async (event) => {
         message: error.message,
         stack: error.stack,
         scriptLine: Number.isFinite(error?.scriptLine) ? error.scriptLine : null,
+        featureId: typeof error?.featureId === 'string' ? error.featureId : null,
+        featureBlock: typeof error?.featureBlock === 'string' ? error.featureBlock : null,
       }
     });
   }
