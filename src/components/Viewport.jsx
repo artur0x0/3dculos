@@ -67,6 +67,12 @@ import MoveFaceModeChip from './MoveFaceModeChip';
 import DeleteFaceModeChip from './DeleteFaceModeChip';
 import { buildCrossSectionPreview, defaultTopPlaneFrame } from '../utils/crossSectionSubstrate';
 import {
+  overlayHitPartId,
+  partOverlayAnchor,
+  partOverlaySources,
+  toPartLocal,
+} from '../utils/partOverlays';
+import {
   applySavedContour,
   listConstructionPlanes,
   listSavedContours,
@@ -790,6 +796,9 @@ const Viewport = forwardRef(({
   const constructionPlaneRef = useRef(null);
   const savedContoursRef = useRef([]);
   const savedContourHostPlaneRef = useRef(null);
+  /** Editor part's overlay translation and id (contour / plane picks hit only its overlays). */
+  const savedContourOffsetRef = useRef([0, 0, 0]);
+  const editorOverlayPartIdRef = useRef(null);
   const polylineDraftRef = useRef(null);
   /** Scratch for projecting handles to screen space (no per-frame alloc). */
   const polylineProjectScratch = useRef(new Vector3());
@@ -866,6 +875,20 @@ const Viewport = forwardRef(({
   const filletPriorPickModeRef = useRef('face');
   const filletBlendPreviewRef = useRef(null);
 
+  /** Live translation of one part's solid (pick mesh or assembly mesh). */
+  const overlayAnchorForRef = useRef(() => [0, 0, 0]);
+  overlayAnchorForRef.current = (partId, rowPosition = null) => {
+    const p = resultRef.current?.position;
+    return partOverlayAnchor(partId, {
+      activeId: activePartIdRef.current,
+      activePosition: p ? [p.x, p.y, p.z] : null,
+      solidPosition: (id) => {
+        const q = assemblyExtrasRef.current?.get(id)?.position;
+        return q ? [q.x, q.y, q.z] : null;
+      },
+      rowPosition,
+    });
+  };
   const anchorToActivePart = useCallback((obj) => {
     const p = partWorldOffset(resultRef.current);
     return applyActivePartAnchor(obj, p ? [p.x, p.y, p.z] : [0, 0, 0]);
@@ -882,6 +905,11 @@ const Viewport = forwardRef(({
     const visit = (obj) => {
       if (!obj) return;
       if (obj.userData?.anchorToActivePart) applyActivePartAnchor(obj, position);
+      else if (obj.userData && Object.prototype.hasOwnProperty.call(obj.userData, 'overlayPartId')) {
+        // Contours / work planes: that part's own translation, not the active part's.
+        const at = overlayAnchorForRef.current(obj.userData.overlayPartId, obj.userData.rowPosition);
+        obj.position.set(at[0], at[1], at[2]);
+      }
       const kids = obj.children;
       if (!kids) return;
       for (let i = 0; i < kids.length; i++) visit(kids[i]);
@@ -913,6 +941,8 @@ const Viewport = forwardRef(({
   const filletToastTimerRef = useRef(null);
   /** Bumps when the solid mesh is replaced so fillet easy/hard recomputes. */
   const [meshEpoch, setMeshEpoch] = useState(0);
+  /** Bumps after each assembly placement so part overlays re-read scripts and poses. */
+  const [overlayEpoch, setOverlayEpoch] = useState(0);
   /** Set on Fillet Accept with preDeg; next successful run reports NEW scrap only. */
   const filletQualityWatchRef = useRef(null);
   const [filletScrapNotice, setFilletScrapNotice] = useState(null);
@@ -1433,42 +1463,56 @@ const Viewport = forwardRef(({
    * Wire ghosts for every saved contour. Selected pick is amber; the rest
    * stay readable but dim so an empty menu is not the only signal.
    */
-  const paintSavedContourGhosts = useCallback((contours, pickedId, hostPlane) => {
+  const paintSavedContourGhosts = useCallback((entries) => {
     clearSavedContourGhosts();
-    if (!contours?.length || !sceneRef.current) return;
-    const selected = [];
-    const rest = [];
-    for (const contour of contours) {
-      const rings = savedContourRings(contour, hostPlane);
-      const bucket = contour.id === pickedId ? selected : rest;
-      for (const ring of rings) {
-        if (!ring || ring.length < 2) continue;
-        for (let i = 0; i < ring.length; i++) {
-          bucket.push({ va: ring[i], vb: ring[(i + 1) % ring.length] });
+    if (!entries?.length || !sceneRef.current) return;
+    const root = new Group();
+    root.name = 'savedContourGhosts';
+    // One group per part, in that part's local frame, moved with that part.
+    for (const entry of entries) {
+      const selected = [];
+      const rest = [];
+      for (const contour of entry.contours || []) {
+        const rings = savedContourRings(contour, entry.hostPlane);
+        const bucket = entry.editor && contour.id === entry.pickedId ? selected : rest;
+        for (const ring of rings) {
+          if (!ring || ring.length < 2) continue;
+          for (let i = 0; i < ring.length; i++) {
+            bucket.push({ va: ring[i], vb: ring[(i + 1) % ring.length] });
+          }
         }
       }
+      const group = new Group();
+      group.name = 'savedContourGhostsPart';
+      group.userData = { overlayPartId: entry.partId, rowPosition: entry.position };
+      const sel = paintEdgeLines(selected, {
+        color: 0xff9900,
+        name: 'contourSelected',
+        // Local to the part group below, not anchored to the pick mesh.
+        position: [0, 0, 0],
+        opacity: 0.75,
+        corePx: EDGE_CORE_PX,
+        haloPx: EDGE_HALO_PX,
+      });
+      const idle = paintEdgeLines(rest, {
+        color: 0xe2e8f0,
+        name: 'contourIdle',
+        // Local to the part group below, not anchored to the pick mesh.
+        position: [0, 0, 0],
+        opacity: 0.55,
+        corePx: 1.5,
+        haloPx: 5,
+      });
+      if (sel) group.add(sel);
+      if (idle) group.add(idle);
+      if (!group.children.length) continue;
+      const at = overlayAnchorForRef.current(entry.partId, entry.position);
+      group.position.set(at[0], at[1], at[2]);
+      root.add(group);
     }
-    const group = new Group();
-    group.name = 'savedContourGhosts';
-    const sel = paintEdgeLines(selected, {
-      color: 0xff9900,
-      name: 'contourSelected',
-      opacity: 0.75,
-      corePx: EDGE_CORE_PX,
-      haloPx: EDGE_HALO_PX,
-    });
-    const idle = paintEdgeLines(rest, {
-      color: 0xe2e8f0,
-      name: 'contourIdle',
-      opacity: 0.55,
-      corePx: 1.5,
-      haloPx: 5,
-    });
-    if (sel) group.add(sel);
-    if (idle) group.add(idle);
-    if (!group.children.length) return;
-    sceneRef.current.add(group);
-    savedContourGhostRef.current = group;
+    if (!root.children.length) return;
+    sceneRef.current.add(root);
+    savedContourGhostRef.current = root;
   }, [clearSavedContourGhosts, paintEdgeLines]);
 
   /**
@@ -1966,40 +2010,49 @@ const Viewport = forwardRef(({
     constructionPlaneRef.current = null;
   }, []);
 
-  const paintConstructionPlanes = useCallback((planes, activeId) => {
+  const paintConstructionPlanes = useCallback((entries) => {
     clearConstructionPlanes();
-    if (!planes?.length || !sceneRef.current) return;
-    const group = new Group();
-    group.name = 'constructionPlanes';
-    for (const p of planes) {
-      const plane = p.plane;
-      if (!plane?.center || !plane?.x || !plane?.y || !plane?.normal) continue;
-      const size = 48;
-      const geom = new PlaneGeometry(size, size);
-      const selected = p.id === activeId;
-      // Same translucent recipe as the tool previews, amber when active.
-      const mat = makePreviewSkinMaterial(selected
-        ? { color: PREVIEW_COLORS.selected, opacity: PREVIEW_OPACITY.selected }
-        : { color: PREVIEW_COLORS.outline, opacity: PREVIEW_OPACITY.ghost });
-      const quad = new ThreeMesh(geom, mat);
-      quad.position.set(plane.center[0], plane.center[1], plane.center[2]);
-      const q = new Quaternion();
-      q.setFromRotationMatrix(new Matrix4().makeBasis(
-        new Vector3(plane.x[0], plane.x[1], plane.x[2]),
-        new Vector3(plane.y[0], plane.y[1], plane.y[2]),
-        new Vector3(plane.normal[0], plane.normal[1], plane.normal[2]),
-      ));
-      quad.quaternion.copy(q);
-      quad.renderOrder = 7;
-      quad.frustumCulled = false;
-      quad.userData = { planeId: p.id, plane, kind: 'constructionPlane' };
-      group.add(quad);
+    if (!entries?.length || !sceneRef.current) return;
+    const root = new Group();
+    root.name = 'constructionPlanes';
+    // One group per part, in that part's local frame, moved with that part.
+    for (const entry of entries) {
+      const group = new Group();
+      group.name = 'constructionPlanesPart';
+      group.userData = { overlayPartId: entry.partId, rowPosition: entry.position };
+      for (const p of entry.planes || []) {
+        const plane = p.plane;
+        if (!plane?.center || !plane?.x || !plane?.y || !plane?.normal) continue;
+        const size = 48;
+        const geom = new PlaneGeometry(size, size);
+        const selected = entry.editor && p.id === entry.selectedId;
+        // Same translucent recipe as the tool previews, amber when active.
+        const mat = makePreviewSkinMaterial(selected
+          ? { color: PREVIEW_COLORS.selected, opacity: PREVIEW_OPACITY.selected }
+          : { color: PREVIEW_COLORS.outline, opacity: PREVIEW_OPACITY.ghost });
+        const quad = new ThreeMesh(geom, mat);
+        quad.position.set(plane.center[0], plane.center[1], plane.center[2]);
+        const q = new Quaternion();
+        q.setFromRotationMatrix(new Matrix4().makeBasis(
+          new Vector3(plane.x[0], plane.x[1], plane.x[2]),
+          new Vector3(plane.y[0], plane.y[1], plane.y[2]),
+          new Vector3(plane.normal[0], plane.normal[1], plane.normal[2]),
+        ));
+        quad.quaternion.copy(q);
+        quad.renderOrder = 7;
+        quad.frustumCulled = false;
+        quad.userData = { planeId: p.id, plane, kind: 'constructionPlane', partId: entry.partId };
+        group.add(quad);
+      }
+      if (!group.children.length) continue;
+      const at = overlayAnchorForRef.current(entry.partId, entry.position);
+      group.position.set(at[0], at[1], at[2]);
+      root.add(group);
     }
-    if (!group.children.length) return;
-    anchorToActivePart(group);
-    sceneRef.current.add(group);
-    constructionPlaneRef.current = group;
-  }, [clearConstructionPlanes, anchorToActivePart]);
+    if (!root.children.length) return;
+    sceneRef.current.add(root);
+    constructionPlaneRef.current = root;
+  }, [clearConstructionPlanes]);
 
   /**
    * Per-frame handle animation: ease every handle toward its state's scale, and
@@ -2797,18 +2850,54 @@ const Viewport = forwardRef(({
     return defaultTopPlaneFrame([0, 0, 0]);
   }, [modelBounds]);
 
+  /**
+   * Contours and work planes of every visible part, each from its own
+   * script (the editor part from the live buffer) and in its own frame.
+   */
+  const partOverlayEntries = useCallback(() => {
+    const ctx = getBooleanContextRef.current?.() || {};
+    const editorId = ctx.activeId ?? activePartIdRef.current ?? null;
+    const sources = partOverlaySources({
+      parts: ctx.parts || null,
+      editorId,
+      editorScript: currentScript || '',
+    });
+    const hostPlaneFor = (id) => {
+      const geom = (id == null || id === activePartIdRef.current)
+        ? resultRef.current?.geometry
+        : assemblyExtrasRef.current?.get(id)?.geometry;
+      if (geom?.attributes?.position) {
+        if (!geom.boundingBox) geom.computeBoundingBox();
+        const b = geom.boundingBox;
+        if (b && !b.isEmpty()) {
+          return defaultTopPlaneFrame([(b.min.x + b.max.x) / 2, (b.min.y + b.max.y) / 2, b.max.z]);
+        }
+      }
+      return id == null || id === editorId ? savedContourHostPlane : defaultTopPlaneFrame([0, 0, 0]);
+    };
+    return sources.map((src) => ({
+      ...src,
+      contours: src.editor ? savedContours : listSavedContours(src.script),
+      planes: src.editor ? constructionPlanes : listConstructionPlanes(src.script),
+      hostPlane: hostPlaneFor(src.partId),
+    }));
+  }, [currentScript, savedContours, constructionPlanes, savedContourHostPlane]);
+
   useEffect(() => {
+    const entries = partOverlayEntries();
+    const editor = entries.find((entry) => entry.editor) || null;
     savedContoursRef.current = savedContours;
-    savedContourHostPlaneRef.current = savedContourHostPlane;
+    savedContourHostPlaneRef.current = editor?.hostPlane || savedContourHostPlane;
+    editorOverlayPartIdRef.current = editor ? editor.partId : null;
+    savedContourOffsetRef.current = editor
+      ? overlayAnchorForRef.current(editor.partId, editor.position)
+      : [0, 0, 0];
     if (!showContours) {
       clearSavedContourGhosts();
       return;
     }
-    paintSavedContourGhosts(
-      savedContours,
-      contourMode?.pickedContourId || armedContourId,
-      savedContourHostPlane,
-    );
+    const pickedId = contourMode?.pickedContourId || armedContourId;
+    paintSavedContourGhosts(entries.map((entry) => ({ ...entry, pickedId })));
   }, [
     contourMode,
     armedContourId,
@@ -2817,6 +2906,9 @@ const Viewport = forwardRef(({
     showContours,
     paintSavedContourGhosts,
     clearSavedContourGhosts,
+    partOverlayEntries,
+    meshEpoch,
+    overlayEpoch,
     sceneReady,
   ]);
 
@@ -2825,8 +2917,8 @@ const Viewport = forwardRef(({
       clearConstructionPlanes();
       return;
     }
-    paintConstructionPlanes(constructionPlanes, selectedPlaneId);
-  }, [constructionPlanes, selectedPlaneId, showPlanes, paintConstructionPlanes, clearConstructionPlanes, sceneReady]);
+    paintConstructionPlanes(partOverlayEntries().map((entry) => ({ ...entry, selectedId: selectedPlaneId })));
+  }, [selectedPlaneId, showPlanes, paintConstructionPlanes, clearConstructionPlanes, partOverlayEntries, meshEpoch, overlayEpoch, sceneReady]);
 
   useEffect(() => () => {
     clearConstructionPlanes();
@@ -5122,8 +5214,9 @@ const Viewport = forwardRef(({
     // Cut and Boolean own the canvas: a saved contour under the cursor must
     // not eat the piece tap (same as a construction plane sitting on the cut).
     if (!moveFaceModeRef.current && !deleteFaceModeRef.current && !cutModeRef.current && !booleanModeRef.current && showContoursRef.current && !moveModeRef.current && contourModeRef.current?.tool !== 'polyline') {
+      // Saved contours are in the editor part's frame.
       const hitC = pickContourByRay(
-        origin,
+        toPartLocal(origin, savedContourOffsetRef.current),
         dir,
         savedContoursRef.current,
         savedContourHostPlaneRef.current,
@@ -5135,8 +5228,11 @@ const Viewport = forwardRef(({
         return;
       }
     }
+    // Only the editor part's planes are pickable: another part's plane is in
+    // that part's frame and would edit the wrong script.
     const planeHits = (showPlanesRef.current && constructionPlaneRef.current)
       ? raycasterRef.current.intersectObject(constructionPlaneRef.current, true)
+        .filter((hit) => (overlayHitPartId(hit.object) ?? null) === (editorOverlayPartIdRef.current ?? null))
       : [];
     const partChoiceHit = resolvePartPick(collectPartHits());
     const planeD = planeHits[0]?.distance ?? Infinity;
@@ -7117,6 +7213,7 @@ const Viewport = forwardRef(({
     pruneSolidCacheIn(solidCacheRef.current, resultRef.current, assemblyExtrasRef.current);
     prewarmPartGraphsRef.current();
     syncAnchoredOverlays();
+    setOverlayEpoch((n) => n + 1);
     if (autoFitEnabled && solids.length && cameraRef.current) {
       const geom = new BufferGeometry();
       const chunks = [];
