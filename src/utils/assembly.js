@@ -190,6 +190,37 @@ export function parseAssemblyDocument(input) {
   });
 }
 
+/** Part names land in `${name}.js` downloads, so keep them path-safe and short. */
+export function sanitizePartName(raw) {
+  return String(raw ?? '')
+    .replace(/[/\\:*?"<>|]/g, '')   // path + Windows-illegal characters
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 60);
+}
+
+/**
+ * The part a rename from the viewer title lands on: the part the title shows
+ * (the CAD-selected part, which a face / edge / body pick on another part
+ * moves without moving the editor), else the editor's active part.
+ */
+export function renameTargetId(doc, shownId = null) {
+  const parts = doc?.parts || [];
+  if (shownId != null && parts.some((part) => part.id === shownId)) return shownId;
+  return doc?.activeId && parts.some((part) => part.id === doc.activeId) ? doc.activeId : null;
+}
+
+/** Rename one part by id. Other rows are untouched; unknown id or blank name → same doc. */
+export function renamePart(doc, id, name) {
+  const next = sanitizePartName(name);
+  const parts = doc?.parts || [];
+  if (!next || id == null || !parts.some((part) => part.id === id)) return doc;
+  return serializeAssembly({
+    ...doc,
+    parts: parts.map((part) => (part.id === id ? { ...part, name: next } : part)),
+  });
+}
+
 export function setPartVisible(doc, id, visible) {
   return serializeAssembly({
     ...doc,
