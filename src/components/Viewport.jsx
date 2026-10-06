@@ -659,6 +659,11 @@ const Viewport = forwardRef(({
   onFeatureLongPress = null,
   /** Face / edge / body hit. App retargets the CAD part and may sync Monaco. */
   onPickRetarget = null,
+  /**
+   * Every run of a script here reports its outcome: `{ script, ok, scriptLine }`.
+   * App maps a failed line to the feature block it sits in (strip red border).
+   */
+  onRunOutcome = null,
   /** True while any feature session is open. App hides the feature strip. */
   onFeatureSessionChange = null,
   /** id → display name for the which-part chip. */
@@ -1056,6 +1061,8 @@ const Viewport = forwardRef(({
   onFeatureSessionChangeRef.current = onFeatureSessionChange;
   partLabelsRef.current = partLabels || {};
   getBooleanContextRef.current = getBooleanContext;
+  const onRunOutcomeRef = useRef(null);
+  onRunOutcomeRef.current = onRunOutcome;
   featureSessionRef.current = !!(
     contourMode || filletMode || shellMode || draftMode || cutMode
     || booleanMode || moveMode || moveFaceMode || deleteFaceMode
@@ -6629,6 +6636,7 @@ const Viewport = forwardRef(({
     // solid-derived overlays — would hand the last object back through
     // cross-section, model info, quoting, game compare or the stage hooks.
     if (shouldClearViewportScript(script)) {
+      onRunOutcomeRef.current?.({ script, ok: true, scriptLine: null });
       setExecutionError(null);
       setCachedMeshData(null);
       cachedMeshDataRef.current = null;
@@ -6878,6 +6886,7 @@ const Viewport = forwardRef(({
         seamMs: g.seamMs ?? null,
       };
       if (typeof window !== 'undefined') window.__SURFCAD_RUN_TIMING = report;
+      onRunOutcomeRef.current?.({ script, ok: true, scriptLine: null });
       // Truthy object: callers that only check success keep working; game compare needs nonce.
       return { ok: true, nonce, mesh: meshData };
 
@@ -6887,6 +6896,15 @@ const Viewport = forwardRef(({
       const msg = error.message || 'Script execution failed';
       stageExecErrorRef.current = msg;
       setExecutionError(msg);
+      // The worker names the script line of the failing call (when the stack
+      // has one); App marks the feature chip that holds it.
+      if (!abortController.aborted) {
+        onRunOutcomeRef.current?.({
+          script,
+          ok: false,
+          scriptLine: Number.isFinite(error?.scriptLine) ? error.scriptLine : null,
+        });
+      }
 
       // Soft-fail stale edge IDs: clear selection + prompt re-pick (never leave armed chip).
       const staleEdges = /Selected edges not found|stale selection|re-pick after geometry/i.test(msg);

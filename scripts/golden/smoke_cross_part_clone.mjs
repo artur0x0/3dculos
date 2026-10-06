@@ -363,7 +363,8 @@ const meshOf = async (script) => (await exec(script)).mesh;
 {
   const app = read('src/App.jsx');
   const view = read('src/components/Viewport.jsx');
-  const strip = read('src/components/FeatureStrip.jsx');
+  // Chip classes live in featureChipTone.js (shared with the failed-chip border).
+  const strip = read('src/components/FeatureStrip.jsx') + read('src/utils/featureChipTone.js');
   const chip = read('src/components/BooleanModeChip.jsx');
   const arch = read('docs/architecture.md');
   const pkg = JSON.parse(read('package.json'));

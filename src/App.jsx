@@ -5,6 +5,7 @@ import PromptInput from './components/PromptInput';
 import SplitDivider from './components/SplitDivider';
 import MobileStageToggle from './components/MobileStageToggle';
 import FeatureStrip from './components/FeatureStrip';
+import { failedFeatureFor, failedFeatureIds } from './utils/featureFailure';
 import ErrorPopup from './components/ErrorPopup';
 import FeatureSheet from './components/FeatureSheet';
 import {
@@ -151,6 +152,18 @@ const App = () => {
   };
   /** Script-stage feature strip: which chip is selected (null = none). */
   const [featureStripActiveId, setFeatureStripActiveId] = useState(null);
+  /**
+   * Feature block the last viewport run failed in ({ id, kind, typeIndex,
+   * block }), or null. The strip draws that chip with a red border while its
+   * block text is unchanged; the next good run clears it.
+   */
+  const [runFailure, setRunFailure] = useState(null);
+  const handleRunOutcome = ({ script, ok, scriptLine } = {}) => {
+    const next = ok ? null : failedFeatureFor(script, scriptLine);
+    setRunFailure((prev) => (
+      (prev?.id ?? null) === (next?.id ?? null) && (prev?.block ?? null) === (next?.block ?? null) ? prev : next
+    ));
+  };
   /**
    * Height of the editor ribbon, MEASURED. Mobile Script-stage strip overlays
    * with `top: ribbonPx`; desktop seam strip uses a matching spacer so chips
@@ -2437,6 +2450,7 @@ const App = () => {
   const stripScript = (
     cadHighlightId && assemblyDoc && cadHighlightId !== assemblyDoc.activeId
   ) ? (partScripts[cadHighlightId] || '') : currentScript;
+  const stripFailedIds = failedFeatureIds(stripScript, runFailure);
   const partLabels = {};
   for (const row of assemblyDoc?.parts || []) partLabels[row.id] = row.name || row.id;
   const assemblyLabel = assemblyName(assemblyDoc);
@@ -2532,6 +2546,7 @@ const App = () => {
               featureSheetEnabled={useStages && isCadStage && !featureSheet}
               onFeatureLongPress={openFeatureSheetFromCad}
               onPickRetarget={handlePickRetarget}
+              onRunOutcome={handleRunOutcome}
               getBooleanContext={assemblyPartContext}
               onFeatureSessionChange={handleFeatureSession}
               partLabels={partLabels}
@@ -2608,6 +2623,7 @@ const App = () => {
                     <FeatureStrip
                       orientation="horizontal"
                       script={stripScript}
+                      failedIds={stripFailedIds}
                       hidden={featureSession}
                       activeId={featureSheet?.feature?.id || featureStripActiveId}
                       hideWhenEmpty
@@ -2653,6 +2669,7 @@ const App = () => {
                         <FeatureStrip
                           orientation="vertical"
                           script={stripScript}
+                          failedIds={stripFailedIds}
                           hidden={featureSession}
                           activeId={featureSheet?.feature?.id || featureStripActiveId}
                           onJump={handleFeatureStripJump}
@@ -2881,6 +2898,7 @@ const App = () => {
                 orientation="vertical"
                 side="between"
                 script={stripScript}
+                failedIds={stripFailedIds}
                 hidden={featureSession}
                 activeId={featureStripActiveId}
                 onJump={handleDesktopFeatureStripJump}
@@ -2940,6 +2958,7 @@ const App = () => {
               return refreshAssemblyRef.current?.(code);
             }}
             onPickRetarget={handlePickRetarget}
+            onRunOutcome={handleRunOutcome}
             getBooleanContext={assemblyPartContext}
             onFeatureSessionChange={handleFeatureSession}
             partLabels={partLabels}
