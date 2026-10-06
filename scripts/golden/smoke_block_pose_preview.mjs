@@ -6,6 +6,11 @@
  * A pose is rotate, then translate. The preview mesh matches that script.
  * Subtract preview is the cutter (10³ → 1000), not the cut part, and it
  * does not replace the cached solid.
+ *
+ * Look: Add and Subtract both paint with the shared preview recipe
+ * (utils/previewStyle — unlit translucent cyan skin, no depth write, both
+ * sides, plus a brighter cyan crease outline), the same as Loft. Never the
+ * opaque CAD flat normal material. Subtract also skips the depth test.
  */
 import { register } from 'node:module';
 import { readFileSync } from 'node:fs';
@@ -14,7 +19,25 @@ import {
   defaultParamsFor,
   HELPER_PALETTE_ITEMS,
 } from '../../src/utils/helperPaletteSnippets.js';
-import { BLOCK_SOLID_IDS } from '../../src/utils/blockSolid.js';
+import * as blockSolid from '../../src/utils/blockSolid.js';
+import {
+  BLOCK_PREVIEW_EDGE_ANGLE,
+  makeBlockPreviewSkinMaterial,
+  makePreviewOutlineMaterial,
+  makePreviewSkinMaterial,
+  PREVIEW_COLORS,
+  PREVIEW_OPACITY,
+  PREVIEW_RENDER_ORDER,
+} from '../../src/utils/previewStyle.js';
+import {
+  BufferAttribute,
+  BufferGeometry,
+  DoubleSide,
+  EdgesGeometry,
+  MeshBasicMaterial,
+} from 'three';
+
+const { BLOCK_SOLID_IDS } = blockSolid;
 
 let failed = 0;
 function check(name, cond, detail = '') {
@@ -107,11 +130,21 @@ const LINES = {
   check('viewport paints the block preview',
     /onBlockPreview=\{setBlockPreview\}/.test(view)
     && /name = 'blockSolidPreviewSkin'/.test(paint)
-    && /new MeshNormalMaterial\(/.test(paint)
-    && /BLOCK_SUBTRACT_OPACITY/.test(paint)
-    && /depthTest: false/.test(paint)
-    && /dataset\.blockPreview = subtract \? 'subtract' : 'add'/.test(paint)
-    && /raycast = \(\) => \{\}/.test(paint));
+    && /dataset\.blockPreview = subtract \? 'subtract' : 'add'/.test(paint));
+  check('block preview skin is the shared preview recipe for Add and Subtract',
+    /new ThreeMesh\(geom, makeBlockPreviewSkinMaterial\(\{ subtract \}\)\)/.test(paint)
+    && /skin\.renderOrder = PREVIEW_RENDER_ORDER\.skin/.test(paint),
+    paint.slice(0, 400));
+  check('block preview has the cyan crease outline (previewStyle)',
+    /new EdgesGeometry\(geom, BLOCK_PREVIEW_EDGE_ANGLE\)/.test(paint)
+    && /makePreviewOutlineMaterial\(\)/.test(paint)
+    && /outline\.renderOrder = PREVIEW_RENDER_ORDER\.outline/.test(paint)
+    && /group\.add\(outline\)/.test(paint));
+  check('block preview never uses the CAD material or a hand-rolled one',
+    !/MeshNormalMaterial|MeshLambertMaterial|MeshStandardMaterial|MeshPhongMaterial|new MeshBasicMaterial|opacity:/.test(paint)
+    && !('BLOCK_SUBTRACT_OPACITY' in blockSolid));
+  check('neither block preview mesh raycasts',
+    /skin\.raycast = \(\) => \{\}/.test(paint) && /outline\.raycast = \(\) => \{\}/.test(paint));
   const previewCase = worker.slice(
     worker.indexOf("case 'previewBlock'"),
     worker.indexOf("case 'previewCut'"),
@@ -121,6 +154,34 @@ const LINES = {
     && !/cachedManifold\s*=/.test(previewCase)
     && !/cachedManifold\.clone\(/.test(previewCase),
     previewCase.slice(0, 240));
+}
+
+// ── Preview look: the real materials, Add and Subtract ─────────
+{
+  const loft = makePreviewSkinMaterial();
+  for (const subtract of [false, true]) {
+    const tag = subtract ? 'subtract' : 'add';
+    const m = makeBlockPreviewSkinMaterial({ subtract });
+    check(`${tag} skin is unlit translucent cyan (MeshBasicMaterial 0x22d3ee @ ${PREVIEW_OPACITY.skin})`,
+      m instanceof MeshBasicMaterial && m.type === 'MeshBasicMaterial'
+      && m.color.getHex() === PREVIEW_COLORS.skin && m.color.getHex() === 0x22d3ee
+      && m.transparent === true && m.opacity === PREVIEW_OPACITY.skin && m.opacity < 0.5,
+      `${m.type} ${m.color.getHexString()} ${m.opacity}`);
+    check(`${tag} skin is both sides, no depth write (same as Loft's skin)`,
+      m.side === DoubleSide && m.depthWrite === false
+      && m.side === loft.side && m.depthWrite === loft.depthWrite && m.blending === loft.blending);
+    check(`${tag} skin depth test ${subtract ? 'off (cutter shows through the host)' : 'on (like Loft)'}`,
+      m.depthTest === !subtract);
+    check(`${tag} skin is not the opaque CAD material`,
+      m.type !== 'MeshNormalMaterial' && !m.flatShading && m.opacity !== 1);
+    m.dispose();
+  }
+  const o = makePreviewOutlineMaterial();
+  check('outline is the brighter cyan preview line',
+    o.color.getHex() === PREVIEW_COLORS.outline && o.depthTest === false && o.transparent);
+  check('skin renders under the outline', PREVIEW_RENDER_ORDER.skin < PREVIEW_RENDER_ORDER.outline);
+  o.dispose();
+  loft.dispose();
 }
 
 const pending = new Map();
@@ -194,6 +255,32 @@ const cases = [
       near(cached.payload.volume, ran.volume),
       `cached=${cached.payload?.volume} script=${ran.volume}`);
   }
+
+  // Outline built the way the viewport builds it, from the real preview mesh.
+  const geomOf = (mesh) => {
+    const np = mesh.numProp || 3;
+    const n = Math.floor(mesh.vertProperties.length / np);
+    const pos = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) for (let k = 0; k < 3; k++) pos[i * 3 + k] = mesh.vertProperties[i * np + k];
+    const g = new BufferGeometry();
+    g.setAttribute('position', new BufferAttribute(pos, 3));
+    g.setIndex(new BufferAttribute(Uint32Array.from(mesh.triVerts), 1));
+    return g;
+  };
+  const edgeCount = async (id, params = {}) => {
+    const res = await send('previewBlock', { id, params });
+    const mesh = res.payload?.mesh;
+    if (!mesh?.vertProperties) return -1;
+    return new EdgesGeometry(geomOf(mesh), BLOCK_PREVIEW_EDGE_ANGLE).attributes.position.count / 2;
+  };
+  const cubeEdges = await edgeCount('cube', { x: 12, rz: 90 });
+  check('cube preview outline is its 12 edges', cubeEdges === 12, `edges=${cubeEdges}`);
+  const cutEdges = await edgeCount('cube', { width: 10, depth: 10, height: 10, combine: 'subtract' });
+  check('subtract cutter preview outline is its 12 edges', cutEdges === 12, `edges=${cutEdges}`);
+  const sphereEdges = await edgeCount('sphere', {});
+  check('sphere preview outline does not trace every facet', sphereEdges >= 0 && sphereEdges < 64, `edges=${sphereEdges}`);
+  const hexEdges = await edgeCount('hexPrism', {});
+  check('hex prism preview outline is its 18 edges', hexEdges === 18, `edges=${hexEdges}`);
 
   const host = composeHelperInsert('', 'cube', null, {});
   await exec(host);

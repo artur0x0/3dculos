@@ -16,9 +16,6 @@ export const BLOCK_SOLID_IDS = Object.freeze([
   'hexPrism',
 ]);
 
-/** Subtract cutter opacity. High enough to read flat normal shading on the host. */
-export const BLOCK_SUBTRACT_OPACITY = 0.55;
-
 export const BLOCK_POSE_PARAMS = Object.freeze([
   { name: 'x', type: 'number', default: 0, label: 'Pos X', min: -500, max: 500, step: 1 },
   { name: 'y', type: 'number', default: 0, label: 'Pos Y', min: -500, max: 500, step: 1 },

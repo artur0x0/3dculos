@@ -26,12 +26,12 @@ import {
   Matrix4,
   Triangle,
   LineSegments,
+  EdgesGeometry,
   LineLoop,
   Line,
   LineBasicMaterial,
   ShaderMaterial,
   FrontSide,
-  DoubleSide,
   SphereGeometry,
   Group,
   Sprite,
@@ -40,6 +40,8 @@ import {
   Color,
 } from 'three';
 import {
+  BLOCK_PREVIEW_EDGE_ANGLE,
+  makeBlockPreviewSkinMaterial,
   makePreviewSkinMaterial,
   makePreviewOutlineMaterial,
   PREVIEW_COLORS,
@@ -83,7 +85,6 @@ import {
 } from '../utils/savedContours';
 import { shouldClearViewportScript } from '../utils/helperPaletteSnippets';
 import {
-  BLOCK_SUBTRACT_OPACITY,
   blockGeomKey,
   blockParamsPending,
   blockSpec,
@@ -4513,9 +4514,11 @@ const Viewport = forwardRef(({
   clearBlockPreviewRef.current = clearBlockPreview;
 
   /**
-   * Live Block solid. Add uses the CAD flat normal material. Subtract stays
-   * translucent and skips the depth test so a cutter inside the host is
-   * still obvious. Neither mesh raycasts, and neither replaces the part.
+   * Live Block solid, painted like every other preview (utils/previewStyle):
+   * unlit translucent cyan skin plus a brighter cyan crease outline, Add and
+   * Subtract alike, so it never reads as committed CAD. Subtract also skips
+   * the depth test, so a cutter inside the host is still obvious. Neither
+   * mesh raycasts, and neither replaces the part.
    */
   const paintBlockPreview = useCallback((meshData, combine) => {
     const scene = sceneRef.current;
@@ -4526,28 +4529,21 @@ const Viewport = forwardRef(({
     const subtract = combine === 'subtract';
     const group = new Group();
     group.name = 'blockSolidPreview';
-    const pullForward = (mat) => {
-      mat.polygonOffset = true;
-      mat.polygonOffsetFactor = -1;
-      mat.polygonOffsetUnits = -1;
-      return mat;
-    };
-    const skinMat = subtract
-      ? pullForward(new MeshNormalMaterial({
-        flatShading: true,
-        transparent: true,
-        opacity: BLOCK_SUBTRACT_OPACITY,
-        depthWrite: false,
-        depthTest: false,
-        side: DoubleSide,
-      }))
-      : pullForward(new MeshNormalMaterial({ flatShading: true }));
-    const skin = new ThreeMesh(geom, skinMat);
+    const skin = new ThreeMesh(geom, makeBlockPreviewSkinMaterial({ subtract }));
     skin.name = 'blockSolidPreviewSkin';
     skin.raycast = () => {};
-    skin.renderOrder = subtract ? 6 : 2;
+    skin.renderOrder = PREVIEW_RENDER_ORDER.skin;
     skin.frustumCulled = false;
     group.add(skin);
+    const outline = new LineSegments(
+      new EdgesGeometry(geom, BLOCK_PREVIEW_EDGE_ANGLE),
+      makePreviewOutlineMaterial(),
+    );
+    outline.name = 'blockSolidPreviewOutline';
+    outline.raycast = () => {};
+    outline.renderOrder = PREVIEW_RENDER_ORDER.outline;
+    outline.frustumCulled = false;
+    group.add(outline);
     anchorToActivePart(group);
     scene.add(group);
     blockPreviewRef.current = group;

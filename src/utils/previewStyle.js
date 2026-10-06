@@ -1,8 +1,9 @@
 /**
  * previewStyle — one recipe for every in-viewport preview skin and outline.
  *
- * Every contour-mode preview (Extrude / Revolve / Loft / Sweep) and the fillet
- * blend preview paint the same way, so a preview always reads as "not committed
+ * Every contour-mode preview (Extrude / Revolve / Loft / Sweep), the Block
+ * solid preview (Add and Subtract) and the fillet blend preview paint the
+ * same way, so a preview always reads as "not committed
  * geometry yet" no matter which tool drew it:
  *
  *   skin    unlit translucent cyan, both sides, no depth write
@@ -44,6 +45,20 @@ export function makePreviewSkinMaterial({
     side: DoubleSide,
   });
 }
+
+/**
+ * Block pop preview skin (Add and Subtract): the same cyan skin as Loft.
+ * Subtract also skips the depth test, so a cutter buried in the host still
+ * shows through it. Add keeps the depth test, like the contour previews.
+ */
+export function makeBlockPreviewSkinMaterial({ subtract = false } = {}) {
+  const mat = makePreviewSkinMaterial();
+  if (subtract) mat.depthTest = false;
+  return mat;
+}
+
+/** Crease angle (deg) for the Block preview outline: box / prism edges, not the facets of a sphere. */
+export const BLOCK_PREVIEW_EDGE_ANGLE = 20;
 
 /** Profile/station outline. Drawn over the skin, so depthTest stays off. */
 export function makePreviewOutlineMaterial({
