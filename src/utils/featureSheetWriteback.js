@@ -250,3 +250,18 @@ export function pickDefaultFeatureSheetTarget(script) {
 export function listFeatureSheetTargets(script) {
   return parseFeatureMarkers(script);
 }
+
+/**
+ * The sheet's `feature` as it is in `script` now: the same id and kind, else
+ * the same kind at the same index. Null when that block is not in this
+ * script. Never the caller's own offsets: those can come from another part's
+ * script (the strip shows the picked part), and a Delete with them either
+ * hit "invalid range" or cut the wrong text out of this part.
+ */
+export function liveSheetFeature(script, feature) {
+  if (!feature || typeof script !== 'string') return null;
+  const list = parseFeatureMarkers(script);
+  return list.find((f) => f.id === feature.id && f.kind === feature.kind)
+    || list.find((f) => f.kind === feature.kind && f.index === feature.index)
+    || null;
+}

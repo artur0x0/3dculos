@@ -116,6 +116,8 @@ const HelperInsertPalette = ({
   onProfilePreview = null,
   onPathPreview = null,
   onBlockPreview = null,
+  /** Before a tap opens a sheet or mode: App loads the picked part into the editor. */
+  onOpen = null,
   onEnterContourMode = null,
   onEnterFilletMode = null,
   onEnterShellMode = null,
@@ -149,6 +151,8 @@ const HelperInsertPalette = ({
   }, []);
 
   const openParams = (item) => {
+    // First, so the buffer snapshot, preview and Confirm are all the picked part's.
+    onOpen?.(item);
     // Labeled slots with no builder stay a refuse — Sweep is a real contour entry.
     if (item.placeholder) {
       setPending(null);
