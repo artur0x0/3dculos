@@ -105,9 +105,9 @@ check(
 {
   await import('../../src/workers/sandboxWorker.js');
   await send('init');
-  async function exec(script) {
+  const exec = async (script) => {
     return (await send('execute', { script, importedModels: {}, memoryLimitMB: 512 })).payload;
-  }
+  };
 
   const box = await exec('return roundedBox([50, 30, 20], 4, 16);');
   const edges = coherentOf(box);

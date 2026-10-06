@@ -392,7 +392,7 @@ function near(a, b, eps = 1e-2) {
     selected.length >= 1 && near(before.payload.volume, after.payload.volume) && near(after.payload.volume, 16000),
     `pieces=${selected.length} vol=${after.payload?.volume}`);
 
-  function geometryFromMesh(mesh) {
+  const geometryFromMesh = (mesh) => {
     const np = mesh.numProp || 3;
     const src = mesh.vertProperties;
     const nVert = Math.floor(src.length / np);
@@ -406,7 +406,7 @@ function near(a, b, eps = 1e-2) {
     geometry.setAttribute('position', new BufferAttribute(positions, 3));
     geometry.setIndex(new BufferAttribute(new Uint32Array(mesh.triVerts), 1));
     return geometry;
-  }
+  };
   const meshRes = await exec(pair + '\nreturn part;');
   const geom = geometryFromMesh(meshRes.mesh);
   const pos = geom.attributes.position;

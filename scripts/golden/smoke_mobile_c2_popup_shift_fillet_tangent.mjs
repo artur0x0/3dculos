@@ -115,7 +115,7 @@ console.log('mobile C.2: popup shift + fillet tangent + strip polish');
 
 {
   console.log('\ntangent propagation (coherent + 64-gon)');
-  function rimRaw(N, R = 10) {
+  const rimRaw = (N, R = 10) => {
     const edges = [];
     for (let i = 0; i < N; i++) {
       const a0 = (i / N) * Math.PI * 2;
@@ -141,7 +141,7 @@ console.log('mobile C.2: popup shift + fillet tangent + strip polish');
       });
     }
     return edges;
-  }
+  };
 
   const coherent = buildCoherentEdges(rimRaw(64));
   check('64-seg rim stays in coherent pick graph', coherent.length >= 8, `n=${coherent.length}`);
@@ -168,7 +168,7 @@ console.log('mobile C.2: popup shift + fillet tangent + strip polish');
   );
 
   const noId = coherent.map((e) => {
-    const { chainId, ...rest } = e;
+    const { chainId: _chainId, ...rest } = e;
     return rest;
   });
   // With normals, true-G1 (skipNormals false) often fails on RDP chords —

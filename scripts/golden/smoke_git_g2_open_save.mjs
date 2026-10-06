@@ -13,7 +13,7 @@ import {
 import { stringifySurfJson, parseSurfJson } from '../../src/utils/git/surfJson.js';
 import { fileWrite } from '../../src/utils/git/githubAdapter.js';
 import {
-  captureBaseline, dirtyPartIds, isAssemblyDirty, isPartDirty, isWorkspaceDirty,
+  dirtyPartIds, isAssemblyDirty, isPartDirty, isWorkspaceDirty,
   listVaultAssemblies, listAddableVaultParts, openVaultAssembly, readVaultPart,
   resolveNewPartPath, suggestNewPartPath,
 } from '../../src/utils/git/gitWorkspace.js';

@@ -98,6 +98,8 @@ import {
   reloadFromRemote,
   advanceBaselineHead,
   checkInMineToBranch,
+  listVaultBranches,
+  switchVaultBranch,
 } from './utils/git';
 import PartFeed from './components/PartFeed';
 import manifoldContext from './utils/ManifoldWorker';
@@ -1609,6 +1611,48 @@ const App = () => {
     return vault;
   };
 
+  /** Branch the working copy is on (baseline), else the vault default. */
+  const gitWorkingBranch = () => {
+    const baseline = gitBaselineRef.current;
+    const vault = gitVaultRef.current;
+    return baseline?.branch || vault?.defaultBranch || 'main';
+  };
+
+  /**
+   * After a rename-on-Commit (or any commit that remaps paths), fold the new
+   * doc/scripts into the working copy and IndexedDB so part ids match git.
+   */
+  const applyCommittedWorkspace = async (result) => {
+    if (!result?.doc || !result?.scripts) return;
+    const nextDoc = result.doc;
+    const nextScripts = result.scripts;
+    for (const [id, script] of Object.entries(nextScripts)) {
+      await savePartScript(id, script);
+    }
+    // Drop IndexedDB keys for old paths that moved away.
+    const keep = new Set(Object.keys(nextScripts));
+    for (const id of Object.keys(partScriptsRef.current || {})) {
+      if (!keep.has(id)) {
+        try { await deletePartScript(id); } catch { /* ignore */ }
+      }
+    }
+    for (const key of Object.keys(partHistoriesRef.current)) {
+      if (key !== '__game__' && !keep.has(key)) delete partHistoriesRef.current[key];
+    }
+    rememberScripts(nextScripts);
+    const saved = rememberAssembly(nextDoc);
+    const active = saved.parts.find((part) => part.id === saved.activeId) || saved.parts[0];
+    if (active) {
+      setCurrentFilename(active.name);
+      const picked = scriptForRow(saved, nextScripts, active.id);
+      focusPartHistory(active.id, picked.ok ? picked.script : '');
+      if (picked.ok) {
+        suppressPartSaveRef.current = false;
+        codeEditorRef.current?.loadContent(picked.script, active.name, false);
+      }
+    }
+  };
+
   const handleToggleSource = async () => {
     const doc = assemblyRef.current;
     if (!doc) return;
@@ -1635,17 +1679,19 @@ const App = () => {
 
   const handleListVaultAssemblies = async () => {
     const vault = await ensureGitVault();
-    return listVaultAssemblies(gitAdapterRef.current, vault.repo, vault.defaultBranch);
+    return listVaultAssemblies(gitAdapterRef.current, vault.repo, gitWorkingBranch());
   };
 
   const handleOpenVaultAssembly = async (name) => {
     try {
       const vault = await ensureGitVault();
+      const branch = gitWorkingBranch();
+      const tip = (await gitAdapterRef.current.getBranch(vault.repo, branch))?.sha || null;
       const opened = await openVaultAssembly(
         gitAdapterRef.current,
         vault.repo,
         name,
-        { branch: vault.defaultBranch, headSha: vault.headSha },
+        { branch, headSha: tip },
       );
       refreshGenRef.current += 1;
       for (const [id, script] of Object.entries(opened.scripts)) {
@@ -1685,7 +1731,7 @@ const App = () => {
     const vault = await ensureGitVault();
     const name = vaultSegment(doc.name) || doc.name;
     return listAddableVaultParts(gitAdapterRef.current, vault.repo, name, {
-      branch: vault.defaultBranch,
+      branch: gitWorkingBranch(),
       existingIds: doc.parts.map((p) => p.id),
     });
   };
@@ -1700,7 +1746,7 @@ const App = () => {
         setUploadError('That path is not allowed for this assembly');
         return;
       }
-      const got = await readVaultPart(gitAdapterRef.current, vault.repo, id, vault.defaultBranch);
+      const got = await readVaultPart(gitAdapterRef.current, vault.repo, id, gitWorkingBranch());
       if (!got) {
         setUploadError(`Missing in vault: ${id}`);
         return;
@@ -1741,7 +1787,7 @@ const App = () => {
     if (!doc || doc.source !== 'git') return;
     try {
       const vault = await ensureGitVault();
-      const got = await readVaultPart(gitAdapterRef.current, vault.repo, id, vault.defaultBranch);
+      const got = await readVaultPart(gitAdapterRef.current, vault.repo, id, gitWorkingBranch());
       if (!got) {
         setUploadError(`Not in vault: ${id}`);
         return;
@@ -1760,10 +1806,73 @@ const App = () => {
     }
   };
 
+  /** G5: list vault branches with the current working branch marked. */
+  const handleListBranches = async () => {
+    const vault = await ensureGitVault();
+    return listVaultBranches(gitAdapterRef.current, vault.repo, {
+      current: gitWorkingBranch(),
+    });
+  };
+
   /**
-   * G3 Commit: changed parts + assembly as one commit to main. When main has
-   * moved, the commit lands on surfcad/<assembly>-<date> and the result asks
-   * (in PartFeed) whether to force merge.
+   * G5: switch working branch — reload the open assembly from that tip.
+   * Dirty working copy is replaced (PartFeed confirms first when dirty).
+   */
+  const handleSwitchBranch = async (branchName) => {
+    const doc = assemblyRef.current;
+    if (!doc || doc.source !== 'git') {
+      return { status: 'error', error: 'Not in Git mode' };
+    }
+    const name = vaultSegment(doc.name) || doc.name;
+    if (!name) return { status: 'error', error: 'No assembly open' };
+    const current = gitWorkingBranch();
+    if (!branchName || branchName === current) {
+      return { status: 'same', branch: current };
+    }
+    try {
+      const vault = await ensureGitVault();
+      const opened = await switchVaultBranch(
+        gitAdapterRef.current, vault.repo, name, branchName,
+      );
+      refreshGenRef.current += 1;
+      for (const [id, script] of Object.entries(opened.scripts)) {
+        await savePartScript(id, script);
+      }
+      rememberScripts(opened.scripts);
+      const saved = rememberAssembly(opened.doc);
+      rememberGitBaseline(opened.baseline);
+      gitVaultRef.current = { ...vault, headSha: opened.baseline.headSha };
+      rememberGitBehind(null, { showToast: false, resetResolved: true });
+      setGitBehindToast(null);
+      void checkGitRemoteBehind({ showToast: true, reason: 'branch-switch' });
+      const keep = new Set(saved.parts.map((part) => String(part.id)));
+      for (const key of Object.keys(partHistoriesRef.current)) {
+        if (key !== '__game__' && !keep.has(key)) delete partHistoriesRef.current[key];
+      }
+      const active = saved.parts.find((part) => part.id === saved.activeId) || saved.parts[0];
+      if (active) {
+        setCurrentFilename(active.name);
+        const picked = scriptForRow(saved, opened.scripts, active.id);
+        focusPartHistory(active.id, picked.ok ? picked.script : '');
+        if (picked.ok) {
+          suppressPartSaveRef.current = false;
+          codeEditorRef.current?.loadContent(picked.script, active.name, false);
+        } else {
+          suppressPartSaveRef.current = true;
+          codeEditorRef.current?.setTextOnly?.('// This part has no file yet.\n');
+          refreshAssemblyRef.current?.(undefined, { persistActive: false });
+        }
+      }
+      return { status: 'switched', branch: branchName, baseline: opened.baseline };
+    } catch (err) {
+      return { status: 'error', error: err.message || 'Could not switch branch' };
+    }
+  };
+
+  /**
+   * G3 Commit: changed parts + assembly as one commit to the current branch.
+   * When the tip has moved, the commit lands on surfcad/<assembly>-<date> and
+   * the result asks (in PartFeed) whether to force merge.
    */
   const handleGitCommit = async (message) => {
     const doc = assemblyRef.current;
@@ -1790,6 +1899,9 @@ const App = () => {
         liveScript: liveId ? live : null,
       });
       if (result.status === 'committed') {
+        if (result.renamed || result.moved?.length) {
+          await applyCommittedWorkspace(result);
+        }
         rememberGitBaseline(result.baseline);
         gitVaultRef.current = { ...vault, headSha: result.sha };
         rememberGitBehind(null, { showToast: false, resetResolved: true });
@@ -1809,6 +1921,9 @@ const App = () => {
       const vault = await ensureGitVault();
       const result = await forceMergeCommit(gitAdapterRef.current, vault.repo, branched);
       if (result.status === 'merged') {
+        if (result.doc && result.scripts) {
+          await applyCommittedWorkspace(result);
+        }
         rememberGitBaseline(result.baseline);
         gitVaultRef.current = { ...vault, headSha: result.sha };
         rememberGitBehind(null, { showToast: false, resetResolved: true });
@@ -3094,6 +3209,9 @@ const App = () => {
       assemblyBehind={!!behindMarkers.assemblyBehind}
       assemblyPath={gitAssemblyPath || ''}
       onBehindChoice={handleBehindChoice}
+      currentBranch={assemblyDoc.source === 'git' ? (gitBaseline?.branch || 'main') : ''}
+      onListBranches={handleListBranches}
+      onSwitchBranch={handleSwitchBranch}
       suggestNewPartPath={
         assemblyDoc.source === 'git'
           ? suggestNewPartPath(assemblyDoc.name, assemblyDoc.parts)

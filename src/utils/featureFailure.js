@@ -38,7 +38,6 @@ export function anonymousFrameLine(stack) {
  */
 export function calibrateScriptLineOffset() {
   try {
-    // eslint-disable-next-line no-new-func
     new Function('a', '"use strict";\nthrow new Error("probe");')();
   } catch (err) {
     const line = anonymousFrameLine(err?.stack);

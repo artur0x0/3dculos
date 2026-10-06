@@ -38,7 +38,7 @@ function check(name, cond, detail = '') {
 console.log('slice A: feature ribbon completeness');
 
 {
-  const markers = read('../../src/utils/featureMarkers.js');
+  const _markers = read('../../src/utils/featureMarkers.js');
   const strip = read('../../src/components/FeatureStrip.jsx');
   const snippets = read('../../src/utils/helperPaletteSnippets.js');
 

@@ -50,7 +50,7 @@ const {
 const Zp = { center: [0, 0, 10], normal: [0, 0, 1] };
 const Zm = { center: [0, 0, -10], normal: [0, 0, -1] };
 const Xp = { center: [20, 0, 0], normal: [1, 0, 0] };
-const Xm = { center: [-20, 0, 0], normal: [-1, 0, 0] };
+const _Xm = { center: [-20, 0, 0], normal: [-1, 0, 0] };
 const Yp = { center: [0, 15, 0], normal: [0, 1, 0] };
 
 {
