@@ -87,6 +87,10 @@ import {
   suggestNewPartPath,
   partPathAllowedFor,
   vaultSegment,
+  commitWorkspace,
+  forceMergeCommit,
+  forceMergeWarning,
+  firstCommitBaseline,
 } from './utils/git';
 import PartFeed from './components/PartFeed';
 import manifoldContext from './utils/ManifoldWorker';
@@ -136,7 +140,7 @@ const App = () => {
   const assemblyRef = useRef(null);
   const partScriptsRef = useRef({});
   const partRunsRef = useRef({});
-  /** Git mode: mock adapter + vault handle + dirty baseline (G2; Commit is G3). */
+  /** Git mode: mock adapter + vault handle + dirty baseline (G2) + Commit (G3). */
   const gitAdapterRef = useRef(null);
   const gitVaultRef = useRef(null);
   const [gitBaseline, setGitBaseline] = useState(null);
@@ -1676,6 +1680,62 @@ const App = () => {
     }
   };
 
+  /**
+   * G3 Commit: changed parts + assembly as one commit to main. When main has
+   * moved, the commit lands on surfcad/<assembly>-<date> and the result asks
+   * (in PartFeed) whether to force merge.
+   */
+  const handleGitCommit = async (message) => {
+    const doc = assemblyRef.current;
+    if (!doc || doc.source !== 'git') return { status: 'error', error: 'Not in Git mode' };
+    try {
+      const vault = await ensureGitVault();
+      // No Open yet: first commit of this assembly onto the vault head.
+      const baseline = gitBaselineRef.current || firstCommitBaseline({
+        branch: vault.defaultBranch,
+        headSha: (await gitAdapterRef.current.getBranch(vault.repo, vault.defaultBranch))?.sha || vault.headSha,
+      });
+      const live = codeEditorRef.current?.getContent?.();
+      const liveId = (!suppressPartSaveRef.current && typeof live === 'string') ? doc.activeId : null;
+      if (liveId) {
+        savePartScript(liveId, live);
+        rememberScripts({ ...partScriptsRef.current, [liveId]: live });
+      }
+      const result = await commitWorkspace(gitAdapterRef.current, vault.repo, {
+        doc,
+        scripts: partScriptsRef.current,
+        baseline,
+        message,
+        liveId,
+        liveScript: liveId ? live : null,
+      });
+      if (result.status === 'committed') {
+        rememberGitBaseline(result.baseline);
+        gitVaultRef.current = { ...vault, headSha: result.sha };
+      } else if (result.status === 'branched') {
+        return { ...result, warning: forceMergeWarning(result) };
+      }
+      return result;
+    } catch (err) {
+      return { status: 'error', error: err.message || 'Commit failed' };
+    }
+  };
+
+  /** G3 force merge after a branched commit (user confirmed the warning). */
+  const handleForceMerge = async (branched) => {
+    try {
+      const vault = await ensureGitVault();
+      const result = await forceMergeCommit(gitAdapterRef.current, vault.repo, branched);
+      if (result.status === 'merged') {
+        rememberGitBaseline(result.baseline);
+        gitVaultRef.current = { ...vault, headSha: result.sha };
+      }
+      return result;
+    } catch (err) {
+      return { status: 'error', error: err.message || 'Force merge failed' };
+    }
+  };
+
   const handleAddPart = async (gitPath) => {
     const doc = assemblyRef.current;
     if (!doc) return;
@@ -2794,6 +2854,9 @@ const App = () => {
       onListAddableParts={handleListAddableParts}
       onAddExistingPart={handleAddExistingPart}
       onFindInRepo={handleFindInRepo}
+      canCommit={assemblyDoc.source === 'git' && (!gitBaseline || !!sourceDirty)}
+      onGitCommit={handleGitCommit}
+      onForceMerge={handleForceMerge}
       suggestNewPartPath={
         assemblyDoc.source === 'git'
           ? suggestNewPartPath(assemblyDoc.name, assemblyDoc.parts)
