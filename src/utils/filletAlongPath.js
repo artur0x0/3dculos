@@ -242,18 +242,32 @@ export function chamferWedgeArea(c) {
  * @param {number} [radius]
  * @param {object} [opts]
  * @param {'fillet'|'chamfer'} [opts.profile='fillet'] — chamfer enables R≠cutter arc split
+ * @param {boolean} [opts.splitTighterArcs=false] — fillet: also split arcs with R < r (all-convex path)
  * @returns {{ mode:'as-is' } | { mode:'empty' } | { mode:'runs', runs: number[][][] }}
  */
 export function planFilletSweepPath(points, closed, radius, opts = {}) {
   if (!Array.isArray(points) || points.length < 2) return { mode: 'empty' };
   const r = Number(radius);
   if (Number.isFinite(r) && r > 0) {
-    // Fillet: same-r arcs only (wrap r≠path-R stays as-is — fin-safe).
+    // Fillet: same-r arcs, plus — on an all-convex path (opts.splitTighterArcs)
+    // — arcs TIGHTER than the cutter (R < r). A wrap around a looser arc
+    // (R > r) stays as-is — fin-safe. A concave (material-add) run keeps its
+    // tight arc whole: its filler sits outside the bend, and splitting it
+    // left zero-area cracks on the hollow/draft playtests.
     // Chamfer: any corner arc (chamfer-along-prior-fillet, path R ≠ cutter).
+    //
+    // Why tighter arcs split: one tube swept round an arc of radius R turns
+    // every ring about the arc's center, and when R < r that center lies
+    // INSIDE the r-section. Rings on the inside of the bend then cross each
+    // other — the tube self-intersects. Artur's three-fillet wrap (r=3.73)
+    // turns 90° round each R=2 prior-fillet arc, four times along one chain;
+    // each turn left a bow-tie notch / fin on the top face. Semi-arc runs
+    // (each its own cutter, unioned) are what the chamfer already does.
     const matchCutterRadius = opts.profile !== 'chamfer';
     const runs = splitSameRadiusArcsIntoSemiArcRuns(points, !!closed, r, {
       arcsOnly: false,
       matchCutterRadius,
+      splitTighterArcs: matchCutterRadius && opts.splitTighterArcs === true,
     });
     if (runs && runs.length >= 2) return { mode: 'runs', runs };
   }
@@ -1044,6 +1058,7 @@ function _densifySweepArcTurns(points, isClosed, maxTurnDeg, rotated, opts) {
  * @param {number} [opts.tol=0.25] — relative |R − R_med| / R_med consistency
  * @param {number} [opts.minVerts=3] — minimum consistent-arc vertices per site
  * @param {boolean} [opts.matchCutterRadius=false] — also require |R_med − r|/r ≤ tol
+ * @param {boolean} [opts.splitTighterArcs=false] — with matchCutterRadius, also keep R_med < r
  * @returns {Array<{ C: number[], R: number, n: number[], A: number[], B: number[], O: number[], P: number[], idxs: number[] }>}
  */
 export function detectSameRadiusArcSites(points, closed, radius, opts = {}) {
@@ -1054,6 +1069,8 @@ export function detectSameRadiusArcSites(points, closed, radius, opts = {}) {
   const tol = opts.tol != null ? Number(opts.tol) : 0.25;
   const minVerts = opts.minVerts != null ? Math.max(2, opts.minVerts | 0) : 3;
   const matchCutter = opts.matchCutterRadius === true;
+  // With matchCutterRadius: also keep arcs tighter than the cutter (R < r).
+  const tighter = opts.splitTighterArcs === true;
   const n = points.length;
   const isCurved = (R) => Number.isFinite(R) && R > 1e-12;
   const nearMed = (R, med) => Number.isFinite(R) && Number.isFinite(med) && med > 0
@@ -1107,7 +1124,7 @@ export function detectSameRadiusArcSites(points, closed, radius, opts = {}) {
     if (sortedR.length < minVerts) continue;
     const med = sortedR[Math.floor(sortedR.length / 2)];
     if (!(med > 0) || !Number.isFinite(med)) continue;
-    if (matchCutter && Math.abs(med - r) > tol * r) continue;
+    if (matchCutter && Math.abs(med - r) > tol * r && !(tighter && med < r)) continue;
     const idxs = rawIdxs.filter((i) => nearMed(localR[i], med));
     if (idxs.length < minVerts) continue;
     // Uniform all-arc rim: whole path is one arc → leave as-is.
