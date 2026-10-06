@@ -7,3 +7,4 @@ export * from './gitWorkspace.js';
 export * from './gitCommit.js';
 export * from './gitPull.js';
 export * from './gitBranch.js';
+export * from './gitMoveToGit.js';
