@@ -20,6 +20,10 @@ export const GITHUB_OAUTH_STATE_KEY = 'surfcad.github.oauth.state';
 export const GITHUB_CALLBACK_PATH = '/git/callback';
 export const GITHUB_AUTHORIZE_URL = 'https://github.com/login/oauth/authorize';
 export const GITHUB_TOKEN_EXCHANGE_PATH = '/api/github/oauth/token';
+/** App-user session upsert after OAuth (G8) — mirrors Apple/Google login. */
+export const GITHUB_SESSION_PATH = '/api/auth/github';
+/** Subtitle under Sign in with GitHub (exact copy). */
+export const GITHUB_SIGNIN_SUBTITLE = 'Enables free part revision control';
 
 /** Shown when sessionStorage has no state (wrong origin / fresh tab / Strict remount after clear). */
 export const GITHUB_OAUTH_STATE_MISSING_HINT =
@@ -228,4 +232,64 @@ export async function completeGithubCallback(search, options = {}) {
   } finally {
     callbackInflight.delete(key);
   }
+}
+
+/**
+ * Start GitHub OAuth (Connect or Sign in). Same authorize URL, state, and
+ * /git/callback as G7. Returns false when Client ID is missing.
+ */
+export function startGithubOAuth({
+  clientId,
+  redirectUri,
+  assign = typeof window !== 'undefined' ? (url) => window.location.assign(url) : null,
+} = {}) {
+  const id = resolveGithubClientId({ configClientId: clientId });
+  if (!id) return false;
+  const state = createOAuthState();
+  const url = buildAuthorizeUrl({
+    clientId: id,
+    redirectUri: redirectUri || githubRedirectUri(),
+    state,
+  });
+  if (!url || typeof assign !== 'function') return false;
+  assign(url);
+  return true;
+}
+
+/**
+ * After token exchange: POST access_token to /api/auth/github so the server
+ * can verify with GitHub, upsert User.githubId (findOrCreateOAuth), and set
+ * the Express session. Token is not stored server-side.
+ * Returns `{ ok: true, user, isNew }` or `{ ok: false, error }`.
+ */
+export async function establishGithubSession({
+  accessToken,
+  fetchImpl = globalThis.fetch,
+  sessionPath = GITHUB_SESSION_PATH,
+} = {}) {
+  if (!accessToken) return { ok: false, error: 'Missing access token' };
+  let res;
+  try {
+    res = await fetchImpl(sessionPath, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ access_token: String(accessToken) }),
+    });
+  } catch (e) {
+    return { ok: false, error: e?.message || 'Session upsert unreachable' };
+  }
+  let body = null;
+  try {
+    body = await res.json();
+  } catch {
+    body = null;
+  }
+  if (!res.ok) {
+    return { ok: false, error: body?.error || body?.message || `Session upsert failed (${res.status})` };
+  }
+  if (!body?.user) {
+    return { ok: false, error: body?.error || 'Session upsert returned no user' };
+  }
+  return { ok: true, user: body.user, isNew: !!body.isNew };
 }

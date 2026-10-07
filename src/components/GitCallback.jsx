@@ -1,7 +1,8 @@
 /**
  * SPA page at /git/callback — receives ?code=&state= from GitHub OAuth,
  * POSTs the code to the stateless exchange endpoint, stores the token in
- * sessionStorage, then hands off to App. Never persists the token server-side.
+ * sessionStorage, upserts the app User (githubId) via /api/auth/github, then
+ * hands off to App. Never persists the token server-side.
  *
  * Mounted outside React StrictMode (see main.jsx) so the effect does not
  * double-fire and clear OAuth state before exchange. completeGithubCallback
@@ -10,10 +11,15 @@
  * Success uses onComplete (soft navigate) when provided so the already-loaded
  * module graph mounts App once. Falls back to location.replace('/') only when
  * mounted without a parent router (tests / unexpected entry).
+ *
+ * Session upsert (G8) is best-effort after a successful token exchange: git
+ * Connect still soft-navs when the app DB is down; Sign-in simply has no
+ * Express session until upsert succeeds on a later Connect.
  */
 import { useEffect, useState } from 'react';
 import {
   completeGithubCallback,
+  establishGithubSession,
   githubRedirectUri,
   GITHUB_OAUTH_STATE_MISSING_HINT,
 } from '../utils/git/githubAuth.js';
@@ -29,18 +35,28 @@ export default function GitCallback({ onComplete } = {}) {
         redirectUri: githubRedirectUri(window.location.origin),
       });
       if (cancelled) return;
-      if (result.ok) {
-        setStatus('ok');
-        // Drop ?code=&state= from the URL, then mount App without a full reload.
-        window.history.replaceState({}, '', '/');
-        if (typeof onComplete === 'function') {
-          onComplete();
-        } else {
-          window.location.replace('/');
-        }
-      } else {
+      if (!result.ok) {
         setStatus('error');
         setError(result.error || 'OAuth failed');
+        return;
+      }
+
+      // G8: upsert app user with githubId (mirrors Apple/Google). Token stays
+      // in sessionStorage for git; server verifies then discards it.
+      const session = await establishGithubSession({ accessToken: result.token });
+      if (cancelled) return;
+      if (!session.ok) {
+        // Soft-fail: keep git token; App can still use Connect without a session.
+        console.warn('[GitCallback] app session upsert failed:', session.error);
+      }
+
+      setStatus('ok');
+      // Drop ?code=&state= from the URL, then mount App without a full reload.
+      window.history.replaceState({}, '', '/');
+      if (typeof onComplete === 'function') {
+        onComplete();
+      } else {
+        window.location.replace('/');
       }
     })();
     return () => { cancelled = true; };

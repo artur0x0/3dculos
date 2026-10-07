@@ -9,6 +9,7 @@ import ConfirmationStep from './order/ConfirmationStep';
 import ConvertAccountStep from './order/ConvertAccountStep';
 import { saveCheckoutState, getOAuthReturnUrl } from '../utils/checkoutStorage';
 import { saveEditorState } from '../utils/editorStorage';
+import { startGithubOAuth } from '../utils/git/githubAuth.js';
 
 const STEPS = {
   AUTH: 'auth',
@@ -101,6 +102,14 @@ const OrderModal = ({
       guestEmail,
       checkout
     });
+
+    // G8: GitHub reuses githubAuth → /git/callback (not passport /api/auth/github)
+    if (provider === 'github') {
+      if (!startGithubOAuth()) {
+        setError('GitHub sign-in is not configured (set GITHUB_APP_CLIENT_ID)');
+      }
+      return;
+    }
 
     const returnUrl = encodeURIComponent(getOAuthReturnUrl());
     const authUrl = `/api/auth/${provider}?returnTo=${returnUrl}`;
