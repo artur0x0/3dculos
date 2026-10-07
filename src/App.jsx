@@ -2090,7 +2090,9 @@ const App = () => {
    */
   const handleAddToRepo = async (id) => {
     const doc = assemblyRef.current;
-    if (!doc || doc.source !== 'git' || !id) return;
+    if (!doc || doc.source !== 'git' || !id) {
+      return { status: 'error', error: 'Not in Git mode' };
+    }
     try {
       const vault = await ensureGitVault();
       let scripts = { ...partScriptsRef.current };
@@ -2125,10 +2127,10 @@ const App = () => {
       });
       if (result.status === 'error') {
         setUploadError(result.error || 'Add to Repo failed');
-        return;
+        return result;
       }
       if (result.status === 'clean') {
-        return;
+        return result;
       }
       if (result.doc && result.fromId) {
         // Remapped local:/foreign id → repo path.
@@ -2151,8 +2153,11 @@ const App = () => {
         rememberGitBaseline(result.baseline);
         gitVaultRef.current = { ...vault, headSha: result.sha };
       }
+      return result;
     } catch (err) {
-      setUploadError(err.message || 'Add to Repo failed');
+      const error = err.message || 'Add to Repo failed';
+      setUploadError(error);
+      return { status: 'error', error };
     }
   };
 
@@ -2509,7 +2514,12 @@ const App = () => {
       }
       return result;
     } catch (err) {
-      return { status: 'error', error: err.message || 'Commit failed' };
+      return {
+        status: 'error',
+        error: err.message || 'Commit failed',
+        code: err.code || null,
+        stray: Array.isArray(err.stray) ? err.stray : null,
+      };
     }
   };
 
