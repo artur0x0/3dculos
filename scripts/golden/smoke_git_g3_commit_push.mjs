@@ -174,10 +174,19 @@ console.log('\ngit G3 — first commit of a new assembly (no Open)');
   eq('first commit writes part + assembly', [res.status, res.files], ['committed', [P, assemblyFilePath('Widget')]]);
   const mixed = { ...doc, parts: [...doc.parts, { id: 'local-abc', name: 'part1', visible: true, order: 1 }] };
   let strayErr = '';
+  let strayCode = '';
+  let strayIds = null;
   try {
     await commitWorkspace(gh, vault.repo, { doc: mixed, scripts: {}, baseline: firstCommitBaseline({ headSha: res.sha }) });
-  } catch (err) { strayErr = err.message; }
+  } catch (err) {
+    strayErr = err.message;
+    strayCode = err.code || '';
+    strayIds = err.stray;
+  }
   ok('local (non-repo) row refused with a clear message', /No repo path for part1/.test(strayErr), strayErr);
+  ok('no_repo_path carries stray ids for Add to Repo', strayCode === 'no_repo_path'
+    && Array.isArray(strayIds) && strayIds[0]?.id === 'local-abc' && strayIds[0]?.name === 'part1',
+  strayCode);
   const reopened = await openVaultAssembly(gh, vault.repo, 'Widget');
   eq('reopens from vault', reopened.scripts[P], 'return Manifold.cube([5,5,5], true);');
   ok('clean vs new baseline', !isWorkspaceDirty(doc, { [P]: 'return Manifold.cube([5,5,5], true);' }, res.baseline));
@@ -216,6 +225,10 @@ const app = readFileSync(new URL('../../src/App.jsx', import.meta.url), 'utf8');
 ok('Commit button git-only, gated', /data-git-commit=""/.test(feed) && /disabled=\{!canCommit\}/.test(feed)
   && /canCommit=\{assemblyDoc\.source === 'git' && \(!gitBaseline \|\| !!sourceDirty\)\}/.test(app));
 ok('commit message dialog', /data-git-commit-message/.test(feed) && /data-git-commit-confirm/.test(feed));
+ok('commit message prompts + no iOS zoom', /Enter a commit message/.test(feed)
+  && /data-git-commit-message[\s\S]*?fontSize: '16px'/.test(feed));
+ok('no-repo-path commit error offers Add to Repo', /data-git-commit-add-to-repo/.test(feed)
+  && /no_repo_path/.test(feed) && /runAddStrayToRepo/.test(feed));
 ok('force merge ask', /data-git-force-merge-ask/.test(feed) && /data-git-force-merge=""/.test(feed)
   && /data-git-keep-branch/.test(feed) && /data-git-force-merge-warning/.test(feed));
 ok('G13 conflict popup options', /data-git-conflict-popup/.test(feed)

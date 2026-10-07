@@ -31,6 +31,9 @@ import { stringifySurfJson } from './surfJson.js';
 
 export const COMMIT_BRANCH_PREFIX = 'surfcad/';
 
+/** Commit refused: working copy has parts without a vault path. */
+export const NO_REPO_PATH = 'no_repo_path';
+
 /** Scripts with the live editor text folded in for the active part. */
 export function effectiveScripts(scripts, { liveId = null, liveScript = null } = {}) {
   const out = { ...(scripts || {}) };
@@ -415,8 +418,11 @@ export async function commitWorkspace(adapter, repo, {
     return true;
   });
   if (stray.length) {
-    throw new Error(`No repo path for ${stray.map((p) => p.name || p.id).join(', ')}. `
+    const err = new Error(`No repo path for ${stray.map((p) => p.name || p.id).join(', ')}. `
       + 'Remove it, or add parts under this assembly\'s parts/ or shared parts/.');
+    err.code = NO_REPO_PATH;
+    err.stray = stray.map((p) => ({ id: p.id, name: p.name || p.id }));
+    throw err;
   }
   const built = buildCommitFiles(doc, scripts, baseline, { liveId, liveScript });
   const workDoc = built.doc || doc;

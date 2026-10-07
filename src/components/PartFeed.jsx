@@ -875,7 +875,13 @@ export default function PartFeed({
     } else if (result.status === 'error') {
       setCommitFlow({ stage: 'error', draft, result, error: result.error || 'Commit failed' });
       if (leaveGuard?.stage === 'commit') {
-        setLeaveGuard({ ...leaveGuard, stage: 'ask', error: result.error || 'Commit failed' });
+        setLeaveGuard({
+          ...leaveGuard,
+          stage: 'ask',
+          error: result.error || 'Commit failed',
+          code: result.code || null,
+          stray: result.stray || null,
+        });
       }
     } else {
       setCommitFlow({ stage: 'done', draft, result, error: '' });
@@ -904,6 +910,53 @@ export default function PartFeed({
         queueMicrotask(() => proceedAssemblyAction(pending));
       }
     }
+  };
+
+  /** Save/commit refused for parts without a vault path — reuse Add to Repo. */
+  const runAddStrayToRepo = async (strayParts, { fromLeave = false } = {}) => {
+    const list = Array.isArray(strayParts) ? strayParts.filter((p) => p?.id) : [];
+    if (!list.length || !onAddToRepo) return;
+    if (fromLeave) {
+      setCommitFlow(null);
+      setLeaveGuard((prev) => (prev ? { ...prev, stage: 'busy', error: '' } : prev));
+    } else {
+      setCommitFlow((prev) => (prev
+        ? { ...prev, stage: 'busy', error: '', result: prev.result }
+        : prev));
+    }
+    let last = null;
+    for (const part of list) {
+      last = (await onAddToRepo(part.id)) || { status: 'error', error: 'Add to Repo failed' };
+      if (last.status === 'error') {
+        const error = last.error || 'Add to Repo failed';
+        if (fromLeave) {
+          setLeaveGuard((prev) => (prev
+            ? { ...prev, stage: 'ask', error, code: 'no_repo_path', stray: list }
+            : prev));
+          setCommitFlow(null);
+        } else {
+          setCommitFlow((prev) => (prev
+            ? { ...prev, stage: 'error', error, result: { ...(prev.result || {}), code: 'no_repo_path', stray: list } }
+            : prev));
+        }
+        return;
+      }
+    }
+    const names = list.map((p) => p.name || p.id).join(', ');
+    const done = {
+      status: 'committed',
+      files: list.map((p) => p.id),
+      addedNames: names,
+    };
+    // Clear any leave-guard dead-end; keep pending New/Existing if present.
+    setLeaveGuard((prev) => {
+      if (!prev) return prev;
+      if (fromLeave || prev.code === 'no_repo_path') {
+        return { pending: prev.pending, stage: 'ask', error: '', code: null, stray: null };
+      }
+      return prev;
+    });
+    setCommitFlow({ stage: 'done', draft: '', result: done, error: '' });
   };
 
   const openConflict = (path, kind, name) => {
@@ -1554,9 +1607,24 @@ export default function PartFeed({
                 </>
               )}
               {(commitFlow.stage === 'done' || commitFlow.stage === 'error') && (
-                <button type="button" className="rounded-md px-3 py-1.5 text-xs text-gray-200 hover:bg-white/10" onClick={closeCommit} data-git-dialog-cancel="">
-                  Close
-                </button>
+                <>
+                  {commitFlow.stage === 'error'
+                    && commitFlow.result?.code === 'no_repo_path'
+                    && (commitFlow.result?.stray || []).length > 0
+                    && onAddToRepo && (
+                    <button
+                      type="button"
+                      className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-500"
+                      data-git-commit-add-to-repo=""
+                      onClick={() => { void runAddStrayToRepo(commitFlow.result.stray); }}
+                    >
+                      Add to Repo
+                    </button>
+                  )}
+                  <button type="button" className="rounded-md px-3 py-1.5 text-xs text-gray-200 hover:bg-white/10" onClick={closeCommit} data-git-dialog-cancel="">
+                    Close
+                  </button>
+                </>
               )}
             </div>
           )}
@@ -1577,8 +1645,9 @@ export default function PartFeed({
                     runCommit();
                   }
                 }}
-                className="w-full rounded-md border border-gray-600 bg-black/30 px-2 py-1.5 text-xs text-gray-100 outline-none focus:border-blue-500"
-                placeholder={`Update ${ribbonName || 'assembly'}`}
+                className="w-full rounded-md border border-gray-600 bg-black/30 px-2 py-1.5 text-base text-gray-100 outline-none focus:border-blue-500"
+                style={{ fontSize: '16px' }}
+                placeholder="Enter a commit message"
               />
             </>
           )}
@@ -1603,7 +1672,9 @@ export default function PartFeed({
             <p className="text-xs text-gray-300" data-git-commit-done={commitFlow.result?.status || ''}>
               {commitFlow.result?.status === 'clean'
                 ? 'Nothing to commit.'
-                : `${commitFlow.result?.status === 'merged' ? 'Force merged' : 'Committed'} ${(commitFlow.result?.files || []).length} file(s) to ${commitFlow.result?.branch || 'main'} (${String(commitFlow.result?.sha || '').slice(0, 7)}).`}
+                : commitFlow.result?.addedNames
+                  ? `Added ${commitFlow.result.addedNames} to the repo.`
+                  : `${commitFlow.result?.status === 'merged' ? 'Force merged' : 'Committed'} ${(commitFlow.result?.files || []).length} file(s) to ${commitFlow.result?.branch || 'main'} (${String(commitFlow.result?.sha || '').slice(0, 7)}).`}
             </p>
           )}
           {commitFlow.stage === 'error' && (
@@ -1713,14 +1784,27 @@ export default function PartFeed({
               >
                 Discard
               </button>
-              <button
-                type="button"
-                className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-500"
-                data-assembly-leave-save=""
-                onClick={() => { void runLeaveSave(); }}
-              >
-                Save
-              </button>
+              {leaveGuard.code === 'no_repo_path'
+                && (leaveGuard.stray || []).length > 0
+                && onAddToRepo ? (
+                <button
+                  type="button"
+                  className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-500"
+                  data-assembly-leave-add-to-repo=""
+                  onClick={() => { void runAddStrayToRepo(leaveGuard.stray, { fromLeave: true }); }}
+                >
+                  Add to Repo
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-500"
+                  data-assembly-leave-save=""
+                  onClick={() => { void runLeaveSave(); }}
+                >
+                  Save
+                </button>
+              )}
             </div>
           )}
         >
