@@ -72,9 +72,9 @@ Desktop specifics:
   the viewer (`handleDesktopFeatureStripJump`). The old vertical seam strip
   between editor and viewer is gone. Hidden in game mode. SplitDivider sits
   directly between editor and viewer.
-- **Profile chip:** CAD viewport + Parts ribbon (playtest unify). **No** profile
-  chip on the Monaco/script ribbon on desktop (Parts ribbon chip is enough
-  there); mobile keeps the CAD viewport chip.
+- **Profile chip:** CAD viewport + Parts ribbon + Script toolbar (same
+  `ProfileChip`). Signed-out = grey User icon; signed-in = green initials.
+  GitHub Sign-in uses the runtime Client ID cache from `/api/config`.
 - **The Toolbar is portaled into the editor mid-strip, exactly like mobile.**
   There is no floating overlay bar and no collapse chevron for CAD any more;
   `Toolbar.jsx` renders only the dark `variant="strip"` markup for CAD.

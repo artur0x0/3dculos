@@ -183,12 +183,12 @@ const BAD = 'let part = Manifold.cube([10, 10, 10], true);\nreturn part.missingM
     /data-parts-ribbon-center/.test(ribbon)
     && /RibbonAssemblyName name=\{ribbonName\}/.test(ribbon)
     && /data-parts-ribbon-end/.test(ribbon)
-    && /ml-auto/.test(ribbonEnd.slice(0, 180))
+    && /shrink-0/.test(ribbonEnd.slice(0, 180))
     && ribbon.indexOf('data-parts-feed-toolbar') < ribbon.indexOf('data-parts-ribbon-end')
     && !/data-parts-source-label/.test(toolbar)
     && !/data-parts-source-label/.test(ribbonEnd)
     && /data-parts-profile-chip/.test(ribbonEnd)
-    && /max-w-\[70%\]/.test(feed)
+    && /max-w-full/.test(feed) && /data-parts-ribbon-center/.test(ribbon) && /flex-1/.test(ribbon)
     && /data-part-add-menu/.test(toolbar)
     && /assemblyName=\{assemblyLabel\}/.test(app));
   const ask = feed.slice(feed.indexOf('const askDeletePart'), feed.indexOf('const cancelDeletePart'));

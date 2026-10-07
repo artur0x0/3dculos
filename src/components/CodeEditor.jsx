@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, forwardRef, useImperativeHandle } from 'react';
 import Editor from '@monaco-editor/react';
 import Toolbar from './Toolbar';
+import ProfileChip from './ProfileChip';
 import { composeHelperInsert } from '../utils/helperPaletteSnippets';
 
 // "Select All" in the (long-press) context menu. Monaco 0.52 removed
@@ -54,6 +55,8 @@ const CodeEditor = forwardRef(({
   onCadToolbarHost = null,
   /** Right padding on Monaco only (Script-stage strip overlay); ribbon stays w-full. */
   monacoEndPadClassName = '',
+  /** Same profile chip as CAD / Parts — right of Script toolbar. */
+  onAccount = null,
 }, ref) => {
   const [editorValue, setEditorValue] = useState(initialScript);
   const editorRef = useRef(null);
@@ -448,9 +451,8 @@ const CodeEditor = forwardRef(({
       <div
         data-ribbon-bg="editor"
         data-editor-ribbon=""
-        className={`relative z-30 w-full flex items-center gap-1 px-1 py-0.5 border-b border-gray-700/60 bg-gray-900 shrink-0 ${
-        isGame || showCadStrip ? 'justify-between' : 'justify-end'
-      }`}>
+        className="relative z-30 w-full flex items-center gap-1 px-1 py-0.5 border-b border-gray-700/60 bg-gray-900 shrink-0"
+      >
         {isGame && (
           <Toolbar
             mode="game"
@@ -475,6 +477,14 @@ const CodeEditor = forwardRef(({
             className="flex flex-1 min-w-0 items-center overflow-hidden"
             data-cad-toolbar-host=""
           />
+        )}
+        {!isGame && (
+          <div
+            data-script-profile-chip=""
+            className="ml-auto flex shrink-0 items-center pl-0.5"
+          >
+            <ProfileChip variant="inline" onAccount={onAccount} />
+          </div>
         )}
       </div>
       <div className={`flex-1 min-h-0 ${monacoEndPadClassName || ''}`.trim()}>

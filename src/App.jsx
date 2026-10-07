@@ -81,6 +81,8 @@ import {
   loadGithubToken,
   clearGithubToken,
   resolveGithubClientId,
+  rememberGithubClientId,
+  establishGithubSession,
   buildAuthorizeUrl,
   createOAuthState,
   githubRedirectUri,
@@ -482,7 +484,23 @@ const App = () => {
   }, [cadToolbarHost]);
 
 
-  const { user, isAuthenticated, checkAuth } = useAuth();
+  const { user, isAuthenticated, isLoading: authLoading, checkAuth } = useAuth();
+
+  // GitHub vault token without Express session (upsert soft-failed earlier):
+  // retry session so ProfileChip gets initials + green after /api/config path.
+  useEffect(() => {
+    if (authLoading || isAuthenticated) return undefined;
+    if (!hasGithubToken()) return undefined;
+    const token = loadGithubToken();
+    if (!token) return undefined;
+    let cancelled = false;
+    (async () => {
+      const session = await establishGithubSession({ accessToken: token });
+      if (cancelled || !session.ok) return;
+      await checkAuth();
+    })();
+    return () => { cancelled = true; };
+  }, [authLoading, isAuthenticated, checkAuth]);
 
   const viewportRef = useRef(null);
 
@@ -817,7 +835,10 @@ const App = () => {
         const cfg = await res.json();
         if (cancelled) return;
         const id = resolveGithubClientId({ configClientId: cfg.githubAppClientId });
-        if (id) setGithubClientId(id);
+        if (id) {
+          rememberGithubClientId(id);
+          setGithubClientId(id);
+        }
       } catch {
         // Offline / no backend — VITE_GITHUB_APP_CLIENT_ID still works.
       }
@@ -3690,6 +3711,7 @@ const App = () => {
                   gameBestTimeMs={gameBestTimeMs}
                   onCadToolbarHost={setCadToolbarHost}
                   monacoEndPadClassName={isScriptStage ? 'pr-11' : ''}
+                  onAccount={handleAccount}
                 />
     );
 
@@ -4002,6 +4024,7 @@ const App = () => {
               gameSuccess={gameSuccess}
               gameBestTimeMs={gameBestTimeMs}
               onCadToolbarHost={setCadToolbarHost}
+              onAccount={handleAccount}
             />
           </div>
           {/* AI prompt row is HIDDEN, not removed: it stays mounted (and keeps

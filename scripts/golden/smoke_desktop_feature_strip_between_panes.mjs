@@ -5,7 +5,7 @@
  * Replaces the old vertical seam strip between editor and viewer.
  * Chips jump Monaco caret + open the feature sheet in the viewer.
  * Mobile CAD/Script strips must remain unchanged.
- * Desktop Monaco/script ribbon does not mount a profile chip (Parts + CAD only).
+ * Script toolbar mounts the same ProfileChip as CAD/Parts.
  */
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -112,9 +112,10 @@ console.log('desktop: feature strip on CAD viewer');
     })(),
   );
   check(
-    'Monaco/CodeEditor has no profile chip (mobile-only concern; desktop Parts OK)',
-    !/ProfileChip/.test(editor) &&
-      !/onAccount/.test(editor) &&
+    'Script toolbar mounts same ProfileChip (CAD/Parts/Script unify)',
+    /data-script-profile-chip/.test(editor) &&
+      /ProfileChip variant="inline"/.test(editor) &&
+      /onAccount/.test(editor) &&
       /data-parts-profile-chip/.test(feed) &&
       /ProfileChip variant="viewport"/.test(viewport),
   );
