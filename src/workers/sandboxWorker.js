@@ -36,6 +36,7 @@ import {
 } from '../utils/featureFailure.js';
 import { buildMakeLoftSolid, offsetPlaneFrame } from '../utils/makeLoft.js';
 import { blockSpec, buildBlockManifold } from '../utils/blockSolid.js';
+import { buildSheetMetalSolid } from '../utils/sheetMetal/sheetSolid.js';
 import { installSeparateBodies, overlappingBodies } from './separateBodies.js';
 
 /**
@@ -4591,6 +4592,16 @@ function makeExtrude(contours, height) {
 }
 
 /**
+ * sheetMetalSolid(spec) — SendCutSend sheet-metal part from its JSON spec
+ * (base flange, bends, tabs, holes, automatic corner reliefs). Written by
+ * Sheet Metal mode inside the sheet-metal markers; see utils/sheetMetal.
+ */
+function sheetMetalSolid(spec) {
+  const { Manifold, CrossSection } = manifoldModule;
+  return _c8CheckValid(buildSheetMetalSolid(Manifold, CrossSection, spec), 'sheetMetalSolid');
+}
+
+/**
  * makeLoft(sections, opts?) — loft ≥2 makeCrossSection values.
  * v1: parallel planes (same workplane + offset along the normal).
  * Result is local (z=0 at the lowest station). Confirm places it with
@@ -8071,6 +8082,8 @@ const HELPER_FUNCTIONS = {
   makeExtrude,
   makeLoft,
   offsetPlaneFrame,
+  // SCS sheet metal
+  sheetMetalSolid,
   // Slice 21 cross-section substrate (plane + 2D profile)
   profileCircle,
   profileRectangle,

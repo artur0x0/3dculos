@@ -64,8 +64,9 @@ import FilletModeChip from './FilletModeChip';
 import ShellModeChip from './ShellModeChip';
 import SheetMetalPicker from './sheetMetal/SheetMetalPicker';
 import SheetMetalRail from './sheetMetal/SheetMetalRail';
-import SheetMetalModeChip from './sheetMetal/SheetMetalModeChip';
-import { enterSheetMetalMode } from '../utils/sheetMetal/sheetMetalMode';
+import SheetMetalFlow from './sheetMetal/SheetMetalFlow';
+import { baseDraftSpec, enterSheetMetalMode, pickSheetPlane } from '../utils/sheetMetal/sheetMetalMode';
+import { buildSheetOverlay, disposeSheetOverlay, sheetPickFromHits } from '../utils/sheetMetal/sheetOverlay';
 import DraftModeChip from './DraftModeChip';
 import CutModeChip from './CutModeChip';
 import BooleanModeChip from './BooleanModeChip';
@@ -657,6 +658,8 @@ const Viewport = forwardRef(({
   getSheetMetalReady = null,
   /** S1: (skuRecord) => { ok, partId } — bind SKU to the part (or a new one). */
   onBindSheetMetal = null,
+  /** S2+: (spec, { partId, step }) => boolean — write the sheet-metal block. */
+  onCommitSheetMetal = null,
   getHelperBuffer = null,
   /** Mobile CAD mid-strip host (CodeEditor). Null on desktop and in game. */
   cadToolbarHost = null,
@@ -861,6 +864,7 @@ const Viewport = forwardRef(({
   const [sheetMetalMode, setSheetMetalMode] = useState(null);
   const sheetMetalModeRef = useRef(null);
   sheetMetalModeRef.current = sheetMetalMode;
+  const sheetMetalOverlayRef = useRef(null);
   const [draftMode, setDraftMode] = useState(null);
   const draftModeRef = useRef(null);
   const [cutMode, setCutMode] = useState(null);
@@ -4543,6 +4547,52 @@ const Viewport = forwardRef(({
   clearBlockPreviewRef.current = clearBlockPreview;
 
   /**
+   * SCS sheet metal overlay: plane quads / live spec preview / edge handles,
+   * anchored to the active part. The part's own mesh hides while the flow is
+   * open (the overlay is the draft) and comes back on exit.
+   */
+  const sheetMetalTapRef = useRef(null);
+  sheetMetalTapRef.current = (pick) => {
+    setSheetMetalMode((prev) => {
+      if (!prev) return prev;
+      if (pick.kind === 'plane' && prev.stage === 'plane') return pickSheetPlane(prev, pick.plane);
+      return prev;
+    });
+  };
+  useEffect(() => {
+    const scene = sceneRef.current;
+    disposeSheetOverlay(scene, sheetMetalOverlayRef.current);
+    sheetMetalOverlayRef.current = null;
+    const mesh = resultRef.current;
+    if (!sheetMetalMode) {
+      if (mesh && mesh.userData.sheetMetalHidden) {
+        mesh.visible = true;
+        delete mesh.userData.sheetMetalHidden;
+      }
+      if (containerRef.current?.dataset) delete containerRef.current.dataset.sheetMetal;
+    } else {
+      if (mesh && mesh.visible) {
+        mesh.visible = false;
+        mesh.userData.sheetMetalHidden = true;
+      }
+      const group = buildSheetOverlay({
+        ...sheetMetalMode,
+        previewSpec: sheetMetalMode.stage === 'base' ? baseDraftSpec(sheetMetalMode) : null,
+        draft: sheetMetalMode.stage === 'base' ? { id: 'base' } : sheetMetalMode.draft,
+      });
+      if (group && scene) {
+        anchorToActivePart(group);
+        scene.add(group);
+        sheetMetalOverlayRef.current = group;
+      }
+      if (containerRef.current?.dataset) containerRef.current.dataset.sheetMetal = sheetMetalMode.stage;
+    }
+    const renderer = rendererRef.current;
+    const camera = cameraRef.current;
+    if (renderer && camera && scene) renderer.render(scene, camera);
+  }, [sheetMetalMode, anchorToActivePart]);
+
+  /**
    * Live Block solid, painted like every other preview (utils/previewStyle):
    * unlit translucent cyan skin plus a brighter cyan crease outline, Add and
    * Subtract alike, so it never reads as committed CAD. Subtract also skips
@@ -5133,8 +5183,9 @@ const Viewport = forwardRef(({
     }
     
     if (!canvasRef.current || !cameraRef.current) return;
-    // Face/edge pick still needs a part mesh; polyline workplane taps do not.
-    if (!resultRef.current && contourModeRef.current?.tool !== 'polyline') return;
+    // Face/edge pick still needs a part mesh; polyline workplane taps and
+    // sheet metal (its own overlay) do not.
+    if (!resultRef.current && contourModeRef.current?.tool !== 'polyline' && !sheetMetalModeRef.current) return;
     
     const canvas = canvasRef.current;
     const rect = canvas.getBoundingClientRect();
@@ -5142,6 +5193,28 @@ const Viewport = forwardRef(({
     const py = event.clientY - rect.top;
     mouseRef.current.x = (px / rect.width) * 2 - 1;
     mouseRef.current.y = -(py / rect.height) * 2 + 1;
+
+    // SCS sheet metal owns the canvas: taps hit only its overlay (planes,
+    // edge handles, features). A miss does nothing.
+    if (sheetMetalModeRef.current) {
+      if (clickTimerRef.current) {
+        clearTimeout(clickTimerRef.current);
+        clickTimerRef.current = null;
+      }
+      clickCountRef.current = 0;
+      pendingClickDataRef.current = null;
+      const overlay = sheetMetalOverlayRef.current;
+      if (!overlay) return;
+      raycasterRef.current.setFromCamera(mouseRef.current, cameraRef.current);
+      const pick = sheetPickFromHits(raycasterRef.current.intersectObject(overlay, true));
+      if (!pick) return;
+      if (pick.point) {
+        const o = overlay.position;
+        pick.point = [pick.point[0] - o.x, pick.point[1] - o.y, pick.point[2] - o.z];
+      }
+      sheetMetalTapRef.current?.(pick);
+      return;
+    }
 
     // Slice 24: polyline tool — tap the workplane to add UV points (cheap draw).
     if (contourModeRef.current?.tool === 'polyline' && pickModeRef.current !== 'edge') {
@@ -5799,7 +5872,7 @@ const Viewport = forwardRef(({
     const onPointerDown = (event) => {
       if (!featureSheetEnabledRef.current) return;
       if (event.button != null && event.button !== 0) return;
-      if (contourModeRef.current || filletModeRef.current || shellModeRef.current || draftModeRef.current || moveModeRef.current || moveFaceModeRef.current || deleteFaceModeRef.current) return;
+      if (contourModeRef.current || filletModeRef.current || shellModeRef.current || draftModeRef.current || moveModeRef.current || moveFaceModeRef.current || deleteFaceModeRef.current || sheetMetalModeRef.current) return;
       if (measurementEnabled) return;
       CLEAR_LP();
       featureLongPressFiredRef.current = false;
@@ -5809,7 +5882,7 @@ const Viewport = forwardRef(({
         const origin = featureLongPressOriginRef.current;
         featureLongPressOriginRef.current = null;
         if (!origin || !featureSheetEnabledRef.current) return;
-        if (contourModeRef.current || filletModeRef.current || shellModeRef.current || draftModeRef.current || moveModeRef.current || moveFaceModeRef.current || deleteFaceModeRef.current) return;
+        if (contourModeRef.current || filletModeRef.current || shellModeRef.current || draftModeRef.current || moveModeRef.current || moveFaceModeRef.current || deleteFaceModeRef.current || sheetMetalModeRef.current) return;
         featureLongPressFiredRef.current = true;
         onFeatureLongPressRef.current?.({ clientX: origin.x, clientY: origin.y });
       }, 450);
@@ -7564,11 +7637,13 @@ const Viewport = forwardRef(({
         <SheetMetalRail onExit={() => setSheetMetalMode(null)} />
       )}
       {sheetMetalMode && (
-        <SheetMetalModeChip mode={sheetMetalMode} compact={isMobile} onDismiss={() => setSheetMetalMode(null)}>
-          <div className="text-[12px] text-orange-100 font-sans mt-1.5" data-sheet-metal-next="base-flange">
-            SKU bound to this part. Base flange: pick a plane next.
-          </div>
-        </SheetMetalModeChip>
+        <SheetMetalFlow
+          mode={sheetMetalMode}
+          setMode={(fn) => setSheetMetalMode((prev) => (prev ? fn(prev) : prev))}
+          onCommit={(spec, meta) => onCommitSheetMetal?.(spec, { ...meta, partId: sheetMetalMode.partId }) ?? false}
+          onExit={() => setSheetMetalMode(null)}
+          compact={isMobile}
+        />
       )}
       {sheetMetalPicker && (
         <SheetMetalPicker
@@ -7579,7 +7654,12 @@ const Viewport = forwardRef(({
             const bound = onBindSheetMetal?.(record);
             setSheetMetalPicker(null);
             if (!bound?.ok) return;
-            setSheetMetalMode(enterSheetMetalMode(record, bound.partId));
+            const next = enterSheetMetalMode(record, bound.partId, bound.spec || null);
+            // Re-binding a part that already has sheet metal re-thicknesses it now.
+            if (next?.stage === 'edit' && next.spec) {
+              onCommitSheetMetal?.(next.spec, { partId: bound.partId, step: 'rebind' });
+            }
+            setSheetMetalMode(next);
           }}
         />
       )}

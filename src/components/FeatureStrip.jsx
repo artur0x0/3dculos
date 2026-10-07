@@ -24,6 +24,7 @@ import {
   FlipHorizontal2,
   Boxes,
   Layers3,
+  FoldVertical,
   Scissors,
   Move,
   SquareArrowOutUpRight,
@@ -86,6 +87,7 @@ const FEATURE_ICONS = Object.freeze({
   array: Boxes,
   polarArray: Boxes,
   workplane: Layers3,
+  sheetMetal: FoldVertical,
 });
 
 /** Title text for one chip. */

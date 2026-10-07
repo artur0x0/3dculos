@@ -27,6 +27,7 @@ import {
   FlipHorizontal2,
   Boxes,
   Move,
+  FoldVertical,
 } from 'lucide-react';
 import { sheetIdentityTone, sheetPickTone } from '../utils/featureChipTone';
 import SquareRoundCorner from './icons/SquareRoundCorner';
@@ -85,6 +86,7 @@ const FEATURE_ICONS = Object.freeze({
   mirror: FlipHorizontal2,
   array: Boxes,
   polarArray: Boxes,
+  sheetMetal: FoldVertical,
 });
 
 const ACCENT = 'cyan';
