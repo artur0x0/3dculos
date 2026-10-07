@@ -29,15 +29,16 @@ one shell you must change the other.
 ```
 ┌────────────────────────────┬───┬──────────────────────────────┐
 │ CodeEditor (splitPct)      │▓▓▓│ Viewport (rest)              │
-│                            │ ║ │   ↑ FeatureStrip (vertical   │
-│ ┌────────────────────────┐ │ ║ │     seam) + SplitDivider     │
-│ │ mid-strip: [Toolbar]   │ │ ║ │  top-center: [part] in [assembly] │
-│ ├────────────────────────┤ │ ║ │                              │
-│ │ Monaco (vs-dark, 12px) │ │ ║ │  left: HelperInsertPalette   │
-│ ├────────────────────────┤ │ ║ │  right: CrossSection cluster │
-│ │ PromptInput (hidden)   │ │ ║ │  info chips bottom-left      │
+│                            │ ║ │  top-center: [part] in [asm] │
+│ ┌────────────────────────┐ │ ║ │  under title: FeatureStrip   │
+│ │ mid-strip: [Toolbar]   │ │ ║ │    (horizontal CAD bar)      │
+│ ├────────────────────────┤ │ ║ │  left: HelperInsertPalette   │
+│ │ Monaco (vs-dark, 12px) │ │ ║ │  right: CrossSection cluster │
+│ ├────────────────────────┤ │ ║ │  info chips bottom-left      │
+│ │ PromptInput (hidden)   │ │ ║ │  profile chip top-right      │
 │ └────────────────────────┘ │ ║ │                              │
 └────────────────────────────┴───┴──────────────────────────────┘
+  Parts feed sits left of the editor; its ribbon has the profile chip.
 ```
 
 **The seam between the two panes is draggable** in both shells
@@ -63,15 +64,17 @@ chip is `onRenameFile` → `setCurrentFilename`. The assembly chip is
 chip.
 
 Desktop specifics:
-- **Feature strip (desktop seam):** `FeatureStrip.jsx` mounts **between** the
-  editor column and the viewport (`data-desktop-feature-strip`,
-  `data-feature-strip-placement="desktop-seam"`, `side="between"`). Starts
-  **below the measured editor ribbon** (`data-feature-strip-below-ribbon`,
-  spacer `height: ribbonPx`) so chips do not overlap the top toolbar. Vertical
-  chips match mobile (cube / fillet / … from `parseFeatureMarkers`); tap jumps
-  Monaco caret via `handleDesktopFeatureStripJump` (no feature sheet — sheets
-  stay mobile-only). Hidden in game mode. SplitDivider stays immediately to the
-  right of the strip.
+- **Feature strip (desktop CAD viewer):** `FeatureStrip.jsx` mounts as a
+  **horizontal** bar on the CAD viewport under the title
+  (`data-desktop-feature-strip`, `data-cad-feature-strip="desktop"`,
+  `data-feature-strip-placement="viewer-under-title-horizontal"`). Same chip
+  set as mobile CAD; tap jumps the Monaco caret and opens the feature sheet in
+  the viewer (`handleDesktopFeatureStripJump`). The old vertical seam strip
+  between editor and viewer is gone. Hidden in game mode. SplitDivider sits
+  directly between editor and viewer.
+- **Profile chip:** CAD viewport + Parts ribbon (playtest unify). **No** profile
+  chip on the Monaco/script ribbon on desktop (Parts ribbon chip is enough
+  there); mobile keeps the CAD viewport chip.
 - **The Toolbar is portaled into the editor mid-strip, exactly like mobile.**
   There is no floating overlay bar and no collapse chevron for CAD any more;
   `Toolbar.jsx` renders only the dark `variant="strip"` markup for CAD.
@@ -84,8 +87,8 @@ Desktop specifics:
 - CAD title is the same "part in assembly" line as mobile. No toolbar carries it.
 - **Parts feed:** the same list as the mobile Parts stage, mounted to the left
   of the editor (`data-parts-feed-placement="desktop-left"`). The assembly
-  name sits in the middle of the ribbon (`data-parts-ribbon-center`). Local
-  or Git is right-justified (`data-parts-ribbon-end`). Each row thumbnail
+  name sits in the middle of the ribbon (`data-parts-ribbon-center`). The
+  profile chip is right-justified (`data-parts-ribbon-end`). Each row thumbnail
   (`data-part-thumbnail`, `data-part-preview="manifold"`) is a cached snapshot
   of that part's solid. No solid is `data-part-preview="empty"`. Delete asks
   first; Cancel keeps the part, Confirm removes that part only.
