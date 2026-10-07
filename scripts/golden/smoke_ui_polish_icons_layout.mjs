@@ -65,6 +65,21 @@ const contourRail = read('../../src/components/ContourModeRail.jsx');
     glyphs.length > 6 && new Set(glyphs).size === glyphs.length,
     glyphs.join(','),
   );
+  // Playtest: zoom-fit directly under view-change. Lucide Frame (# / auto-fit)
+  // stays lower on the strip; Maximize2 no longer sits two slots below it.
+  const zoomAt = rail.indexOf('data-zoom-to-fit');
+  const viewAt = rail.indexOf('<ViewSnapControl');
+  const frameAt = rail.indexOf('<Frame size={20} />');
+  check(
+    'zoom-to-fit directly under view-snap',
+    viewAt >= 0 && zoomAt > viewAt && /data-zoom-to-fit=""/.test(rail)
+      && glyphs[0] === 'Maximize2',
+  );
+  check(
+    'Frame (#) auto-fit kept; only one zoom-fit; zoom above Frame',
+    frameAt > zoomAt && glyphs.includes('Frame')
+      && glyphs.filter((g) => g === 'Maximize2').length === 1,
+  );
 }
 
 // ── AC2: iso moved into the popup; trigger became a labelled toggle ──
