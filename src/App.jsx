@@ -1091,8 +1091,14 @@ const App = () => {
       lastCheck = now;
       busy = true;
       try {
+        // #211 put ensureAlive on ManifoldWorker; App talks to ManifoldContext.
+        // Guard so a missing method never surfaces as Initialization Failed.
+        if (typeof manifoldContext.ensureAlive !== 'function') {
+          console.warn('[App] ensureAlive unavailable; skipping soft-recover');
+          return;
+        }
         const result = await manifoldContext.ensureAlive(reason);
-        if (result.status === 'restarted') {
+        if (result?.status === 'restarted') {
           manifoldReadyRef.current = true;
           setManifoldReady(true);
           setInitError(null);

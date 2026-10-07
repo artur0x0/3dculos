@@ -1106,6 +1106,33 @@ class ManifoldContext {
   }
   
   /**
+   * Cheap alive check — delegates to the underlying ManifoldWorker.
+   * App soft-recover must call this on the context singleton, not the class.
+   */
+  async ping(timeoutMs = 2000) {
+    if (!this.worker) return false;
+    return await this.worker.ping(timeoutMs);
+  }
+
+  /**
+   * Soft-recover after Safari freeze / bfcache: ping the worker, else
+   * restart in place (or re-init if the worker handle is gone). Never
+   * location.reload — tab discard is a real navigation we cannot fake.
+   */
+  async ensureAlive(reason = 'lifecycle') {
+    if (this.worker) {
+      const result = await this.worker.ensureAlive(reason);
+      if (result.status === 'restarted') {
+        window.ManifoldContext = this;
+      }
+      return result;
+    }
+    console.warn(`[ManifoldContext] No worker (${reason}); soft restart via init`);
+    await this.init();
+    return { status: 'restarted', reason };
+  }
+
+  /**
    * Check if initialized
    * @returns {boolean}
    */
