@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 /**
  * SCS S5 — DFM + export. Hard DFM fails block DXF / STEP / Order; soft
- * issues warn. Flat pattern (BA unfold) → cut-only DXF (mm); the built mesh
- * → STEP AP214 B-rep (merged planar faces). Order opens app.sendcutsend.com.
+ * issues warn. Flat pattern (BA unfold) → cut-only DXF (mm); the spec → exact
+ * STEP B-rep (smoke_scs_true_curve_step); the mesh writer stays as the
+ * fallback and is still checked here. Order opens app.sendcutsend.com.
  */
 import { readFileSync } from 'node:fs';
 import { joinScsCatalog, findScsSku, SCS_ORDER_URL } from '../../src/utils/scs/scsCatalog.js';
@@ -143,11 +144,16 @@ console.log('SCS S5 — STEP from the real sandbox mesh');
   const okBundle = buildSheetExport(tray, { mesh, partName: 'Sheet 1', timestamp: 'x' });
   check('clean tray: not blocked, DXF + STEP files named part-sku', !okBundle.blocked && okBundle.files.dxf.name === 'Sheet-1-ALU-090-flat.dxf' && okBundle.files.step.name === 'Sheet-1-ALU-090.step');
   check('fresh mesh is not stale', !okBundle.meshStale);
+  check('STEP is built from the spec (exact bends)', okBundle.stepSource === 'spec' && /CYLINDRICAL_SURFACE/.test(okBundle.files.step.text));
   const staleMesh = buildSheetExport({ ...tray, width: 140 }, { mesh });
-  check('mesh from a different spec → stale warn', staleMesh.meshStale && staleMesh.dfm.issues.some((i) => i.rule === 'mesh-stale' && i.level === 'warn'));
+  check('a stale mesh no longer warns: STEP comes from the spec', !staleMesh.meshStale && staleMesh.stepSource === 'spec' && !staleMesh.dfm.issues.some((i) => i.rule === 'mesh-stale'));
+  const fallback = buildSheetExport({ ...tray, width: 140 }, { mesh, exactStep: false });
+  check('mesh fallback: faceted warn + mesh-stale only on that path', fallback.stepSource === 'mesh' && fallback.meshStale
+    && fallback.dfm.issues.some((i) => i.rule === 'step-faceted') && fallback.dfm.issues.some((i) => i.rule === 'mesh-stale' && i.level === 'warn'));
   const bad = buildSheetExport({ ...tray, holes: [{ id: 'h9', panel: 'base', u: 0, v: 0, d: 0.2 }] }, { mesh });
   check('hard fail blocks export', bad.blocked && bad.dfm.fails >= 1);
-  check('no mesh yet → no STEP, DXF still built', buildSheetExport(tray).files.step === null && !!buildSheetExport(tray).files.dxf);
+  check('no mesh yet → STEP and DXF still built from the spec', !!buildSheetExport(tray).files.step && !!buildSheetExport(tray).files.dxf);
+  check('no mesh and no exact STEP → no STEP', buildSheetExport(tray, { exactStep: false }).files.step === null);
   check('file base sanitises names', sheetFileBase('My part / v2', 'ALU-090') === 'My-part-v2-ALU-090');
 }
 

@@ -7661,6 +7661,7 @@ const Viewport = forwardRef(({
           onExit={() => setSheetMetalMode(null)}
           compact={isMobile}
           mesh={cachedMeshData}
+          script={sheetMetalMode.exportOpen && typeof getHelperBuffer === 'function' ? getHelperBuffer() : null}
           partName={partLabelsRef.current?.[sheetMetalMode.partId] || ''}
         />
       )}
