@@ -9,13 +9,21 @@
  *   1. runtime `/api/config`.githubAppClientId (from GITHUB_APP_CLIENT_ID)
  *   2. import.meta.env.VITE_GITHUB_APP_CLIENT_ID (static build inject)
  *
- * Callback path is always `/git/callback` (prod https://surfcad.com/git/callback).
+ * Callback path is always `/git/callback`. redirect_uri is always
+ * `window.location.origin + '/git/callback'` — register that exact URL
+ * on the GitHub App for every host you use (prod, localhost, Tailscale IP).
+ * OAuth `state` is sessionStorage (origin-scoped): Connect and callback
+ * must share the same origin.
  */
 export const GITHUB_TOKEN_STORAGE_KEY = 'surfcad.github.token';
 export const GITHUB_OAUTH_STATE_KEY = 'surfcad.github.oauth.state';
 export const GITHUB_CALLBACK_PATH = '/git/callback';
 export const GITHUB_AUTHORIZE_URL = 'https://github.com/login/oauth/authorize';
 export const GITHUB_TOKEN_EXCHANGE_PATH = '/api/github/oauth/token';
+
+/** Shown when sessionStorage has no state (wrong origin / fresh tab / Strict remount after clear). */
+export const GITHUB_OAUTH_STATE_MISSING_HINT =
+  'OAuth state missing — open Connect and complete authorization on the same origin (same host and port)';
 
 /** Build absolute redirect_uri for the current origin + /git/callback. */
 export function githubRedirectUri(origin = typeof window !== 'undefined' ? window.location.origin : '') {
@@ -152,9 +160,24 @@ export async function exchangeCodeForToken({
   };
 }
 
+/** In-flight + completed results keyed by OAuth code (Strict Mode remount / double effect). */
+const callbackInflight = new Map();
+const callbackDone = new Map();
+
+/** Test hook — clear callback dedupe maps between golden cases. */
+export function resetGithubCallbackDedupe() {
+  callbackInflight.clear();
+  callbackDone.clear();
+}
+
 /**
  * Handle `/git/callback?code=&state=`: validate state, exchange, store token.
  * Returns `{ ok: true, token }` or `{ ok: false, error }`.
+ *
+ * Safe under React Strict Mode: the same `code` reuses one in-flight / done
+ * result so a remount cannot clear sessionStorage state then fail validation.
+ * State is cleared only after a definitive outcome (success or exchange error
+ * with a matched state), not on peek.
  */
 export async function completeGithubCallback(search, options = {}) {
   const params = typeof search === 'string'
@@ -167,19 +190,42 @@ export async function completeGithubCallback(search, options = {}) {
     return { ok: false, error: String(params.get?.('error_description') || err) };
   }
   if (!code) return { ok: false, error: 'Missing code' };
-  if (!consumeOAuthState(state)) {
-    return { ok: false, error: 'Invalid or missing OAuth state' };
-  }
+
+  const key = String(code);
+  if (callbackDone.has(key)) return callbackDone.get(key);
+  if (callbackInflight.has(key)) return callbackInflight.get(key);
+
+  const run = (async () => {
+    const expected = peekOAuthState();
+    if (!expected) {
+      return { ok: false, error: GITHUB_OAUTH_STATE_MISSING_HINT };
+    }
+    if (!state || expected !== String(state)) {
+      clearOAuthState();
+      return { ok: false, error: 'Invalid or missing OAuth state' };
+    }
+    try {
+      const token = await exchangeCodeForToken({
+        code,
+        redirectUri: options.redirectUri || githubRedirectUri(options.origin),
+        fetchImpl: options.fetchImpl,
+        exchangePath: options.exchangePath,
+      });
+      clearOAuthState();
+      saveGithubToken(token.access_token);
+      return { ok: true, token: token.access_token };
+    } catch (e) {
+      clearOAuthState();
+      return { ok: false, error: e?.message || String(e) };
+    }
+  })();
+
+  callbackInflight.set(key, run);
   try {
-    const token = await exchangeCodeForToken({
-      code,
-      redirectUri: options.redirectUri || githubRedirectUri(options.origin),
-      fetchImpl: options.fetchImpl,
-      exchangePath: options.exchangePath,
-    });
-    saveGithubToken(token.access_token);
-    return { ok: true, token: token.access_token };
-  } catch (e) {
-    return { ok: false, error: e?.message || String(e) };
+    const result = await run;
+    callbackDone.set(key, result);
+    return result;
+  } finally {
+    callbackInflight.delete(key);
   }
 }

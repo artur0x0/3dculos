@@ -19,10 +19,11 @@ import { createMockGithubAdapter } from '../../src/utils/git/mockGithubAdapter.j
 import { createRealGithubAdapter } from '../../src/utils/git/realGithubAdapter.js';
 import {
   GITHUB_CALLBACK_PATH, GITHUB_TOKEN_STORAGE_KEY, GITHUB_TOKEN_EXCHANGE_PATH,
+  GITHUB_OAUTH_STATE_MISSING_HINT,
   buildAuthorizeUrl, githubRedirectUri, resolveGithubClientId,
   createOAuthState, consumeOAuthState, peekOAuthState,
   saveGithubToken, loadGithubToken, clearGithubToken, hasGithubToken,
-  exchangeCodeForToken, completeGithubCallback,
+  exchangeCodeForToken, completeGithubCallback, resetGithubCallbackDedupe,
 } from '../../src/utils/git/githubAuth.js';
 import { exchangeGithubOAuthToken } from '../../backend/services/githubOAuth.js';
 import * as gitIndex from '../../src/utils/git/index.js';
@@ -61,6 +62,9 @@ eq('callback path', GITHUB_CALLBACK_PATH, '/git/callback');
 eq('exchange path', GITHUB_TOKEN_EXCHANGE_PATH, '/api/github/oauth/token');
 eq('redirect uri', githubRedirectUri('https://surfcad.com'), 'https://surfcad.com/git/callback');
 eq('redirect strips trailing slash', githubRedirectUri('http://localhost:5173/'), 'http://localhost:5173/git/callback');
+eq('redirect Tailscale IP', githubRedirectUri('http://100.106.101.1:5173'), 'http://100.106.101.1:5173/git/callback');
+eq('redirect LAN IP any port', githubRedirectUri('http://192.168.1.10:4173'), 'http://192.168.1.10:4173/git/callback');
+ok('missing-state hint mentions same origin', /same origin/i.test(GITHUB_OAUTH_STATE_MISSING_HINT));
 eq('authorize null without client id', buildAuthorizeUrl({ clientId: '' }), null);
 {
   const url = buildAuthorizeUrl({
@@ -116,21 +120,64 @@ ok('cleared', !hasGithubToken() && !memStore.has(GITHUB_TOKEN_STORAGE_KEY));
 // completeGithubCallback
 {
   memStore.clear();
+  resetGithubCallbackDedupe();
   createOAuthState(() => 'cb-state');
-  const fakeFetch = async () => ({
-    ok: true,
-    json: async () => ({ access_token: 'ghu_cb', token_type: 'bearer' }),
-  });
+  let exchangeCalls = 0;
+  const fakeFetch = async () => {
+    exchangeCalls += 1;
+    return {
+      ok: true,
+      json: async () => ({ access_token: 'ghu_cb', token_type: 'bearer' }),
+    };
+  };
   const result = await completeGithubCallback('?code=thecode&state=cb-state', {
     fetchImpl: fakeFetch,
     redirectUri: 'https://surfcad.com/git/callback',
   });
   eq('callback ok', [result.ok, result.token, loadGithubToken()], [true, 'ghu_cb', 'ghu_cb']);
+  // Strict Mode remount: same code must reuse the done result (no second exchange, no missing-state).
+  const again = await completeGithubCallback('?code=thecode&state=cb-state', {
+    fetchImpl: fakeFetch,
+    redirectUri: 'https://surfcad.com/git/callback',
+  });
+  eq('callback dedupe remount', [again.ok, again.token, exchangeCalls], [true, 'ghu_cb', 1]);
   clearGithubToken();
 
+  resetGithubCallbackDedupe();
+  memStore.clear();
   createOAuthState(() => 'cb-state');
   const bad = await completeGithubCallback('?code=x&state=wrong', { fetchImpl: fakeFetch });
   eq('callback bad state', [bad.ok, bad.error], [false, 'Invalid or missing OAuth state']);
+
+  resetGithubCallbackDedupe();
+  memStore.clear();
+  const missing = await completeGithubCallback('?code=orphan&state=anything', { fetchImpl: fakeFetch });
+  eq('callback missing state hint', [missing.ok, missing.error], [false, GITHUB_OAUTH_STATE_MISSING_HINT]);
+
+  // Concurrent double-invoke (Strict effect: run → cleanup → run overlapping).
+  resetGithubCallbackDedupe();
+  memStore.clear();
+  createOAuthState(() => 'race-state');
+  let resolveFetch;
+  const slowFetch = () => new Promise((resolve) => {
+    resolveFetch = () => resolve({
+      ok: true,
+      json: async () => ({ access_token: 'ghu_race', token_type: 'bearer' }),
+    });
+  });
+  const p1 = completeGithubCallback('?code=race&state=race-state', {
+    fetchImpl: slowFetch,
+    redirectUri: 'http://100.106.101.1:5173/git/callback',
+  });
+  const p2 = completeGithubCallback('?code=race&state=race-state', {
+    fetchImpl: slowFetch,
+    redirectUri: 'http://100.106.101.1:5173/git/callback',
+  });
+  resolveFetch();
+  const [r1, r2] = await Promise.all([p1, p2]);
+  eq('callback concurrent ok', [r1.ok, r1.token, r2.ok, r2.token, loadGithubToken()],
+    [true, 'ghu_race', true, 'ghu_race', 'ghu_race']);
+  clearGithubToken();
 
   const denied = await completeGithubCallback('?error=access_denied&error_description=Nope', {});
   eq('callback error param', [denied.ok, denied.error], [false, 'Nope']);
@@ -543,9 +590,18 @@ console.log('\ngit G7 — Connect wiring + no client secrets');
     && /buildAuthorizeUrl/.test(app));
   ok('adapter switches on token', /loadGithubToken\(\)/.test(app) && /kind === 'real'/.test(app));
   ok('callback page routed', /GitCallback/.test(main) && /GITHUB_CALLBACK_PATH/.test(main));
+  ok('callback outside StrictMode',
+    /isGitCallback \? \([\s\S]*?<GitCallback \/>[\s\S]*?\) : \([\s\S]*?<StrictMode>/.test(main)
+    || (/isGitCallback \?/.test(main) && /<GitCallback \/>/.test(main)
+      && main.indexOf('<GitCallback') < main.indexOf('<StrictMode>')));
   ok('callback exchanges + stores', /completeGithubCallback/.test(cb) && /sessionStorage/.test(auth));
+  ok('callback shows same-origin hint', /data-git-callback-origin-hint/.test(cb)
+    && /GITHUB_OAUTH_STATE_MISSING_HINT/.test(cb));
+  ok('redirect_uri from window.origin', /githubRedirectUri\(window\.location\.origin\)/.test(cb)
+    && /githubRedirectUri\(\)/.test(app));
   ok('token in sessionStorage not localStorage',
     /sessionStorage/.test(auth) && !/localStorage/.test(auth));
+  ok('auth documents Tailscale / same-origin', /Tailscale/.test(auth) && /same origin/.test(auth));
   ok('exchange route mounted', /\/api\/github/.test(srv) && /oauth\/token/.test(route));
   ok('config exposes client id only', /githubAppClientId/.test(srv) && /GITHUB_APP_CLIENT_SECRET/.test(cfg));
   ok('client secret not in src/', (() => {
