@@ -686,9 +686,13 @@ console.log('\ngit G7 — Connect wiring + no client secrets');
   ok('adapter switches on token', /loadGithubToken\(\)/.test(app) && /kind === 'real'/.test(app));
   ok('callback page routed', /GitCallback/.test(main) && /GITHUB_CALLBACK_PATH/.test(main));
   ok('callback outside StrictMode',
-    /isGitCallback \? \([\s\S]*?<GitCallback \/>[\s\S]*?\) : \([\s\S]*?<StrictMode>/.test(main)
-    || (/isGitCallback \?/.test(main) && /<GitCallback \/>/.test(main)
-      && main.indexOf('<GitCallback') < main.indexOf('<StrictMode>')));
+    /<GitCallback/.test(main) && /<StrictMode>/.test(main)
+    && main.indexOf('<GitCallback') < main.indexOf('<StrictMode>'));
+  ok('callback soft-nav via onComplete',
+    /onComplete=\{goHome\}/.test(main)
+    && /onComplete/.test(cb)
+    && /history\.replaceState/.test(cb)
+    && /typeof onComplete === 'function'/.test(cb));
   ok('callback exchanges + stores', /completeGithubCallback/.test(cb) && /sessionStorage/.test(auth));
   ok('callback shows same-origin hint', /data-git-callback-origin-hint/.test(cb)
     && /GITHUB_OAUTH_STATE_MISSING_HINT/.test(cb));

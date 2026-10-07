@@ -766,34 +766,37 @@ const App = () => {
     setTimeout(() => clearInterval(poll), 60000);
   }, []);
 
-  // Initialize ManifoldWorkerand handle script restoration
+  // Initialize ManifoldWorker and handle script restoration.
+  // StrictMode remount terminates the first worker; cancelled ignores that
+  // rejection so the second mount can init cleanly. Worker init itself times out.
   useEffect(() => {
+    let cancelled = false;
     const initManifold = async () => {
       try {
         console.log('[App] Initializing Manifold Sandbox Worker...');
-        
-        // Initialize the custom Manifold worker
+
         await manifoldContext.init();
-        
-        // Expose context globally
+        if (cancelled) return;
+
         window.ManifoldContext = manifoldContext;
-        
-        // Log available helper functions
+
         const helpers = await manifoldContext.getHelperFunctions();
+        if (cancelled) return;
         console.log('[App] Available helper functions:', helpers);
-        
+
         setManifoldReady(true);
         console.log('[App] Manifold Sandbox Worker ready');
       } catch (error) {
+        if (cancelled) return;
         console.error('[App] Failed to initialize Manifold Sandbox:', error);
-        setInitError(error.message);
+        setInitError(error.message || 'Manifold init failed');
       }
     };
-    
+
     initManifold();
-    
-    // Cleanup on unmount
+
     return () => {
+      cancelled = true;
       manifoldContext.terminate();
     };
   }, []);
@@ -1667,7 +1670,15 @@ const App = () => {
   const ensureGitVault = async () => {
     ensureGitAdapter();
     if (gitVaultRef.current) return gitVaultRef.current;
-    const result = await findOrCreateVault(gitAdapterRef.current);
+    const VAULT_TIMEOUT_MS = 45000;
+    const result = await Promise.race([
+      findOrCreateVault(gitAdapterRef.current),
+      new Promise((_, reject) => {
+        setTimeout(() => reject(new Error(
+          'Vault lookup timed out — check network / GitHub Connect and try again',
+        )), VAULT_TIMEOUT_MS);
+      }),
+    ]);
     if (result.status === 'invalid-name' || result.status === 'not-a-vault' || result.status === 'missing') {
       throw new Error(`Vault unavailable (${result.status})`);
     }
@@ -1723,21 +1734,22 @@ const App = () => {
     }
   };
 
+  /** @returns {Promise<boolean>} true when the source flip applied */
   const handleToggleSource = async () => {
     const doc = assemblyRef.current;
-    if (!doc) return;
+    if (!doc) return false;
     if (doc.source === 'git') {
       rememberAssembly({ ...doc, source: 'local' });
       rememberGitBaseline(null);
       rememberGitBehind(null, { showToast: false, resetResolved: true });
       setGitBehindToast(null);
-      return;
+      return true;
     }
     try {
       await ensureGitVault();
     } catch (err) {
       setUploadError(err.message || 'Could not open vault');
-      return;
+      return false;
     }
     // Keep current rows; paths that are not repo-safe stay until Open replaces them.
     rememberAssembly({ ...doc, source: 'git' });
@@ -1745,6 +1757,7 @@ const App = () => {
     rememberGitBaseline(null);
     rememberGitBehind(null, { showToast: false, resetResolved: true });
     setGitBehindToast(null);
+    return true;
   };
 
   /** G6: vault name the Move to Git dialog starts with (current vault, else surfcad). */
