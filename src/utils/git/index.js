@@ -10,3 +10,7 @@ export * from './gitCommit.js';
 export * from './gitPull.js';
 export * from './gitBranch.js';
 export * from './gitMoveToGit.js';
+export * from './surfId.js';
+export * from './gitRename.js';
+export * from './syncStore.js';
+export * from './syncWorker.js';

@@ -8,30 +8,31 @@
  *   "name": "Gearbox",
  *   "activeId": "assemblies/Gearbox/Bracket.js" | null,
  *   "parts": [
- *     { "path": "assemblies/Gearbox/Bracket.js", "name": "Bracket",
- *       "visible": true, "order": 0, "position": [x, y, z]? },
+ *     { "id": "2026-10-07-20-56-31-0423-a3f9", "path": "assemblies/Gearbox/Bracket.js",
+ *       "name": "Bracket", "visible": true, "order": 0, "position": [x, y, z]? },
  *     { "path": "parts/M3 bolt.js", "name": "M3 bolt", "visible": true, "order": 1 },
- *     { "path": "parts/Plate.js", "name": "Plate", "visible": true, "order": 2,
- *       "sheetMetal": { "sku": "ALU-090", "name": "…", "thicknessIn": 0.09, "gauge": 11 }? }
+ *     { "id": "2026-10-07-20-56-31-0424-b10c", "path": "assemblies/Cover/Plate.js",
+ *       "name": "Plate", "visible": true, "order": 2, "copiedFrom": "2026-10-07-20-56-31-0999-abcd"? }
  *   ]
  * }
  *
- * `path` is a full repo path: this assembly's folder (next to `.surf.json`)
- * or the shared top-level `parts/`. Legacy `assemblies/<Name>/parts/<P>.js`
- * paths are accepted on read (read-compat); writers should emit the flat
- * layout. Path is also the row id in the in-app assembly document
- * (source 'git'). No script source in the file. Unknown top-level keys are
- * rejected so a typo cannot silently drop data.
+ * `id` is the stable surf id (optional on read so older repos still load).
+ * `path` is a full repo path: this assembly's folder, another assembly's
+ * folder (linked external part), or the shared top-level `parts/`. Legacy
+ * `assemblies/<Name>/parts/<P>.js` paths are accepted on read. The in-app
+ * row id stays the path; `surfId` carries `id`. No script source in the
+ * file. Unknown top-level keys are rejected so a typo cannot silently drop data.
  */
 import { ASSEMBLY_VERSION, partPosition, serializeAssembly } from '../assembly.js';
 import { normalizeRepoPath } from '../assembly.js';
 import { normalizeSheetMetalBinding } from '../scs/scsCatalog.js';
-import { PART_EXT, partPathAllowedFor, vaultSegment } from './vaultLayout.js';
+import { PART_EXT, isVaultPartPath, vaultSegment } from './vaultLayout.js';
+import { isSurfId } from './surfId.js';
 
 export const SURF_JSON_FORMAT = 'surfcad.assembly';
 export const SURF_JSON_VERSION = 1;
 const TOP_KEYS = new Set(['format', 'version', 'name', 'activeId', 'parts']);
-const PART_KEYS = new Set(['path', 'name', 'visible', 'order', 'position', 'sheetMetal']);
+const PART_KEYS = new Set(['id', 'path', 'name', 'visible', 'order', 'position', 'sheetMetal', 'copiedFrom']);
 
 /** { ok, errors: [string] } — every problem, not just the first. */
 export function validateSurfJson(input) {
@@ -57,6 +58,7 @@ export function validateSurfJson(input) {
     errors.push('parts must be an array');
   } else {
     const seen = new Set();
+    const seenIds = new Set();
     raw.parts.forEach((part, i) => {
       const at = `parts[${i}]`;
       if (!part || typeof part !== 'object' || Array.isArray(part)) {
@@ -67,9 +69,15 @@ export function validateSurfJson(input) {
       const path = normalizeRepoPath(part.path);
       if (!path || path !== part.path) errors.push(`${at}.path must be a repo-relative path`);
       else if (!path.endsWith(PART_EXT)) errors.push(`${at}.path must end in ${PART_EXT}`);
-      else if (name && !partPathAllowedFor(name, path)) {
-        errors.push(`${at}.path must be under assemblies/${name}/ or parts/`);
+      else if (!isVaultPartPath(path)) {
+        errors.push(`${at}.path must be a vault part script`);
       }
+      if (part.id !== undefined && !isSurfId(part.id)) errors.push(`${at}.id must be a surf id`);
+      if (part.copiedFrom !== undefined && !isSurfId(part.copiedFrom)) {
+        errors.push(`${at}.copiedFrom must be a surf id`);
+      }
+      if (part.id && seenIds.has(part.id)) errors.push(`${at}.id duplicates ${part.id}`);
+      if (part.id) seenIds.add(part.id);
       if (path && seen.has(path)) errors.push(`${at}.path duplicates ${path}`);
       if (path) seen.add(path);
       if (typeof part.name !== 'string' || !part.name.trim()) errors.push(`${at}.name must be a non-empty string`);
@@ -101,9 +109,15 @@ export function toSurfJson(doc) {
     name,
     activeId: flat.activeId,
     parts: flat.parts.map((p) => {
-      const row = { path: p.id, name: p.name, visible: p.visible, order: p.order };
+      const row = {};
+      if (p.surfId) row.id = p.surfId;
+      row.path = p.id;
+      row.name = p.name;
+      row.visible = p.visible;
+      row.order = p.order;
       if (p.position) row.position = p.position;
       if (p.sheetMetal) row.sheetMetal = p.sheetMetal;
+      if (p.copiedFrom) row.copiedFrom = p.copiedFrom;
       return row;
     }),
   };
@@ -128,7 +142,13 @@ export function parseSurfJson(input) {
     name: raw.name,
     activeId: raw.activeId,
     parts: raw.parts.map((p) => ({
-      id: p.path, name: p.name, visible: p.visible, order: p.order, position: p.position,
+      id: p.path,
+      surfId: p.id,
+      copiedFrom: p.copiedFrom,
+      name: p.name,
+      visible: p.visible,
+      order: p.order,
+      position: p.position,
       sheetMetal: p.sheetMetal,
     })),
   });

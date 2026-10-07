@@ -1,0 +1,270 @@
+/**
+ * Atomic rename: one commit moves the file or folder and rewrites every
+ * `.surf.json` that references that part id (or the old path, for repos
+ * that have not been backfilled yet).
+ */
+import { fileDelete, fileWrite } from './githubAdapterInterface.js';
+import { assemblyDir, assemblyFilePath, assemblyPartPath, isAssemblyFile, parseVaultPath, sharedPartPath, vaultSegment } from './vaultLayout.js';
+import { isSurfJsonPath, readSurfId } from './surfId.js';
+
+/**
+ * New repo path for a renamed part. The file stays in its current folder
+ * (this assembly, another assembly, or loose `parts/`). Null when the path
+ * cannot move (local row, empty name, unchanged).
+ */
+export function planPartPath(fromPath, newName) {
+  const info = parseVaultPath(fromPath);
+  const name = vaultSegment(String(newName || '').replace(/\.js$/i, ''));
+  if (!info || !name) return null;
+  if (info.kind === 'shared-part') return sharedPartPath(name);
+  if (info.kind === 'assembly-part') return assemblyPartPath(info.assembly, name);
+  return null;
+}
+
+/**
+ * Rewrite paths (and an assembly display name) inside one `.surf.json`.
+ * `pathMap` is old path → new path. A part rename can also pass surfId +
+ * from/to so a reference is updated even when the stored path drifted.
+ */
+export function rewriteSurfText(text, {
+  pathMap = null,
+  surfId = null,
+  from = null,
+  to = null,
+  renameAssembly = null,
+} = {}) {
+  let raw;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    return text;
+  }
+  if (!raw || typeof raw !== 'object') return text;
+  const mapPath = (value) => {
+    if (pathMap && pathMap.has(value)) return pathMap.get(value);
+    if (from && to && value === from) return to;
+    return value;
+  };
+  let changed = false;
+  if (Array.isArray(raw.parts)) {
+    for (const part of raw.parts) {
+      const byId = !!(surfId && part?.id === surfId);
+      const mapped = mapPath(part?.path);
+      const next = byId && to ? to : mapped;
+      if (next && next !== part.path) {
+        part.path = next;
+        changed = true;
+      }
+    }
+  }
+  if (typeof raw.activeId === 'string') {
+    const next = mapPath(raw.activeId);
+    if (next !== raw.activeId) {
+      raw.activeId = next;
+      changed = true;
+    }
+  }
+  if (renameAssembly && raw.name === renameAssembly.from && renameAssembly.to) {
+    raw.name = renameAssembly.to;
+    changed = true;
+  }
+  if (!changed) return text;
+  return `${JSON.stringify(raw, null, 2)}\n`;
+}
+
+/**
+ * Files for one atomic rename commit.
+ * entries: [{ path, content }] of part scripts and `.surf.json` files.
+ * plan.kind 'part': { surfId, from, to, content }
+ * plan.kind 'assembly': { fromName, toName, assemblyPath, assemblyText, localFiles }
+ * -> { files: [{ path, content } | { path, delete: true }] }
+ */
+export function buildRenameCommitFiles({ entries, plan } = {}) {
+  const byPath = new Map();
+  for (const entry of entries || []) {
+    if (entry?.path) byPath.set(entry.path, entry.content ?? '');
+  }
+  const writes = new Map();
+  const deletes = new Set();
+
+  if (plan?.kind === 'part') {
+    const body = plan.content != null ? plan.content : (byPath.get(plan.from) ?? '');
+    if (plan.to) writes.set(plan.to, body);
+    if (plan.from && plan.from !== plan.to) deletes.add(plan.from);
+    for (const [path, text] of byPath) {
+      if (!isAssemblyFile(path) && !isSurfJsonPath(path)) continue;
+      const next = rewriteSurfText(text, { surfId: plan.surfId, from: plan.from, to: plan.to });
+      if (next !== text) writes.set(path, next);
+    }
+  } else if (plan?.kind === 'assembly') {
+    const fromName = vaultSegment(plan.fromName);
+    const toName = vaultSegment(plan.toName);
+    const fromDir = `${assemblyDir(fromName)}/`;
+    const toDir = `${assemblyDir(toName)}/`;
+    const pathMap = new Map();
+    for (const [path, text] of byPath) {
+      if (!path.startsWith(fromDir)) continue;
+      const dest = `${toDir}${path.slice(fromDir.length)}`;
+      pathMap.set(path, dest);
+      writes.set(dest, text);
+      deletes.add(path);
+    }
+    for (const local of plan.localFiles || []) {
+      if (local?.path && typeof local.content === 'string') writes.set(local.path, local.content);
+    }
+    if (plan.assemblyPath && typeof plan.assemblyText === 'string') {
+      writes.set(plan.assemblyPath, plan.assemblyText);
+    } else if (toName) {
+      const meta = assemblyFilePath(toName);
+      if (writes.has(meta)) {
+        writes.set(meta, rewriteSurfText(writes.get(meta), {
+          pathMap,
+          renameAssembly: { from: fromName, to: toName },
+        }));
+      }
+    }
+    for (const path of writes.keys()) {
+      if (!isAssemblyFile(path) || path === plan.assemblyPath) continue;
+      if ([...pathMap.keys()].includes(path)) continue;
+      const next = rewriteSurfText(writes.get(path), {
+        pathMap,
+        renameAssembly: path === assemblyFilePath(toName) ? { from: fromName, to: toName } : null,
+      });
+      if (next !== writes.get(path)) writes.set(path, next);
+    }
+    for (const [path, text] of byPath) {
+      if (!isAssemblyFile(path) || pathMap.has(path)) continue;
+      const next = rewriteSurfText(text, { pathMap });
+      if (next !== text) writes.set(path, next);
+    }
+  }
+
+  for (const path of [...deletes]) {
+    if (writes.has(path)) deletes.delete(path);
+  }
+  const files = [
+    ...[...writes.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([path, content]) => fileWrite(path, content)),
+    ...[...deletes].sort().map((path) => fileDelete(path)),
+  ];
+  return { files };
+}
+
+/** Apply a commit file list onto a path→content snapshot (cache or a test tree). */
+export function projectFiles(entries, files) {
+  const map = new Map((entries || []).map((entry) => [entry.path, entry.content ?? '']));
+  for (const file of files || []) {
+    if (!file?.path) continue;
+    if (file.delete) map.delete(file.path);
+    else map.set(file.path, file.content ?? '');
+  }
+  return [...map.entries()].map(([path, content]) => ({ path, content }));
+}
+
+/**
+ * Working copy after a part path change. Script bytes move with the path.
+ * surfId is left alone (serialize keeps it).
+ */
+export function applyPartPathChange(doc, scripts, from, to, name) {
+  const nextScripts = { ...(scripts || {}) };
+  if (from !== to) {
+    nextScripts[to] = nextScripts[from] ?? nextScripts[to] ?? '';
+    delete nextScripts[from];
+  }
+  const parts = (doc?.parts || []).map((part) => (
+    part.id === from ? { ...part, id: to, name: name || part.name } : part
+  ));
+  const activeId = doc?.activeId === from ? to : doc?.activeId;
+  return { doc: { ...doc, parts, activeId }, scripts: nextScripts };
+}
+
+/**
+ * A reload that still sees the old path (git not pushed yet, or a stale
+ * cache row) must follow the pending rename instead of forking a new part.
+ * Pending ops carry `{ op:'rename', payload:{ kind:'part', from, to, surfId } }`.
+ */
+export function overlayPendingPartRenames(doc, scripts, ops) {
+  let nextDoc = doc;
+  let nextScripts = { ...(scripts || {}) };
+  for (const op of ops || []) {
+    if (op?.op !== 'rename' || op.payload?.kind !== 'part') continue;
+    if (op.status === 'done') continue;
+    const { from, to, surfId } = op.payload;
+    if (!from || !to || from === to) continue;
+    const parts = nextDoc?.parts || [];
+    const hasTo = parts.some((part) => part.id === to);
+    const hit = parts.find((part) => part.id === from || (surfId && part.surfId === surfId && part.id !== to));
+    if (!hit) continue;
+    if (hasTo && hit.id !== to) {
+      const dropped = parts.filter((part) => part.id !== hit.id);
+      nextDoc = {
+        ...nextDoc,
+        parts: dropped,
+        activeId: nextDoc.activeId === hit.id ? to : nextDoc.activeId,
+      };
+      if (nextScripts[hit.id] != null && nextScripts[to] == null) nextScripts[to] = nextScripts[hit.id];
+      delete nextScripts[hit.id];
+      continue;
+    }
+    if (hit.id === to) continue;
+    const applied = applyPartPathChange(nextDoc, nextScripts, hit.id, to, op.payload.label || hit.name);
+    nextDoc = applied.doc;
+    nextScripts = applied.scripts;
+  }
+  return { doc: nextDoc, scripts: nextScripts };
+}
+
+/** Read part scripts and assembly metadata the rename commit has to rewrite. */
+export async function readRenameEntries(adapter, repo, branch) {
+  const tree = await adapter.listTree(repo, branch);
+  const entries = [];
+  for (const entry of tree || []) {
+    const path = entry?.path ?? entry;
+    if (!isAssemblyFile(path) && !isPartScriptPath(path)) continue;
+    // eslint-disable-next-line no-await-in-loop
+    const file = await adapter.readFile(repo, path, branch);
+    if (file) entries.push({ path, content: file.content, sha: file.sha || entry.sha || null });
+  }
+  return entries;
+}
+
+function isPartScriptPath(path) {
+  const info = parseVaultPath(path);
+  return info?.kind === 'assembly-part' || info?.kind === 'shared-part';
+}
+
+/**
+ * Build the rename commit from the remote tree, with local script bytes
+ * winning for the moved part. Used by the sync worker at flush time so an
+ * offline rename still rewrites every assembly that references the id.
+ */
+export async function materializeRename(adapter, repo, branch, payload) {
+  const entries = await readRenameEntries(adapter, repo, branch);
+  const plan = payload?.kind === 'assembly'
+    ? {
+      kind: 'assembly',
+      fromName: payload.fromName,
+      toName: payload.toName,
+      assemblyPath: payload.assemblyPath,
+      assemblyText: payload.assemblyText,
+      localFiles: payload.localFiles || [],
+    }
+    : {
+      kind: 'part',
+      surfId: payload?.surfId || readSurfId(payload?.content || '') || null,
+      from: payload?.from,
+      to: payload?.to,
+      content: payload?.content,
+    };
+  return buildRenameCommitFiles({ entries, plan });
+}
+
+export function renameFailureToast(item, err) {
+  const label = item?.payload?.label || item?.payload?.to || 'item';
+  return {
+    kind: 'rename-failed',
+    message: `Could not rename ${label}: ${err?.message || 'failed'}`,
+    actions: ['retry', 'revert'],
+    opId: item?.id ?? null,
+    partId: item?.payload?.partId || item?.payload?.to || null,
+  };
+}

@@ -140,6 +140,7 @@
     "golden:git-open-lists": "node scripts/golden/smoke_git_open_lists.mjs",
     "golden:git-g12-script-upload-download": "node scripts/golden/smoke_git_g12_script_upload_download.mjs",
     "golden:git-g13-vault-create-conflict": "node scripts/golden/smoke_git_g13_vault_create_conflict.mjs",
+    "golden:git-cache-sync": "node scripts/golden/smoke_git_cache_sync.mjs",
     "golden:face-select-boundaries": "node scripts/golden/smoke_face_select_boundaries.mjs"
     },
     "dependencies": {

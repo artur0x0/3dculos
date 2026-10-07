@@ -230,6 +230,8 @@ export function serializeAssembly(doc) {
     if (position) row.position = position;
     const sheetMetal = normalizeSheetMetalBinding(part?.sheetMetal);
     if (sheetMetal) row.sheetMetal = sheetMetal;
+    if (typeof part?.surfId === 'string' && part.surfId) row.surfId = part.surfId;
+    if (typeof part?.copiedFrom === 'string' && part.copiedFrom) row.copiedFrom = part.copiedFrom;
     return row;
   }).filter((part) => part.id);
   const wanted = doc?.activeId != null ? String(doc.activeId) : '';
@@ -263,6 +265,8 @@ export function parseAssemblyDocument(input) {
       order: part?.order ?? index,
       position: part?.position,
       sheetMetal: part?.sheetMetal,
+      surfId: part?.surfId,
+      copiedFrom: part?.copiedFrom,
     })),
   });
 }
@@ -437,6 +441,8 @@ export function feedRows(doc, runs, scripts) {
       missing,
       action: missing ? missingRowAction(source) : null,
       mesh: !missing && run && run.ok === true ? run.mesh : null,
+      surfId: part.surfId || null,
+      copiedFrom: part.copiedFrom || null,
     };
   });
 }

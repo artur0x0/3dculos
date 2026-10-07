@@ -13,6 +13,7 @@
  */
 import { clearEditorDraft } from './editorDraft.js';
 import { clearAssemblyStore } from './assemblyStore.js';
+import { clearSyncStore } from './git/syncStore.js';
 import { clearModelCache } from './importModel.js';
 import { clearEditorState } from './editorStorage.js';
 
@@ -35,6 +36,13 @@ export async function clearLocalCadData() {
     results.assembly = await clearAssemblyStore();
   } catch (err) {
     console.warn('[ClearLocalCad] assembly:', err);
+  }
+
+  try {
+    await clearSyncStore();
+    results.sync = true;
+  } catch (err) {
+    console.warn('[ClearLocalCad] sync:', err);
   }
 
   try {

@@ -29,6 +29,8 @@ import {
   vaultSegment,
 } from './vaultLayout.js';
 import { stringifySurfJson } from './surfJson.js';
+import { applyIdPromotion, isSurfId, promoteFiles, readSurfId, rewriteSurfIdFields, withSurfId } from './surfId.js';
+import { isAssemblyFile } from './vaultLayout.js';
 
 export const COMMIT_BRANCH_PREFIX = 'surfcad/';
 
@@ -150,6 +152,18 @@ export function buildCommitFiles(doc, scripts, baseline, opts = {}) {
     };
   }
 
+  for (const part of workDoc.parts || []) {
+    if (!part?.surfId || !isSurfId(part.surfId)) continue;
+    const dest = movedFrom.get(part.id) || part.id;
+    const info = parseVaultPath(dest);
+    if (!info || (info.kind !== 'assembly-part' && info.kind !== 'shared-part')) continue;
+    const text = writes.has(dest) ? writes.get(dest) : (workScripts[dest] ?? workScripts[part.id]);
+    if (typeof text !== 'string' || readSurfId(text) === part.surfId) continue;
+    const stamped = withSurfId(text, part.surfId);
+    writes.set(dest, stamped);
+    workScripts[dest] = stamped;
+  }
+
   for (const path of [...deletes]) {
     if (writes.has(path)) deletes.delete(path);
   }
@@ -170,6 +184,31 @@ export function buildCommitFiles(doc, scripts, baseline, opts = {}) {
     renamed: renaming,
     oldName: renaming ? oldName : null,
     moved,
+  };
+}
+
+/**
+ * Drop `local-` prefixes in this commit and rewrite every `.surf.json` in
+ * the repo that still cites them. No-op (same file list) when nothing is local.
+ */
+async function filesForPush(adapter, repo, branch, files) {
+  const promoted = promoteFiles(files);
+  if (!Object.keys(promoted.map).length) return { files, map: {} };
+  const have = new Set(promoted.files.map((file) => file.path));
+  const extra = [];
+  const tree = await adapter.listTree(repo, branch);
+  for (const entry of tree || []) {
+    const path = entry?.path;
+    if (!path || !isAssemblyFile(path) || have.has(path)) continue;
+    // eslint-disable-next-line no-await-in-loop
+    const file = await adapter.readFile(repo, path, branch);
+    if (!file?.content) continue;
+    const content = rewriteSurfIdFields(file.content, promoted.map);
+    if (content !== file.content) extra.push(fileWrite(path, content));
+  }
+  return {
+    files: extra.length ? [...promoted.files, ...extra] : promoted.files,
+    map: promoted.map,
   };
 }
 
@@ -282,18 +321,23 @@ export async function commitPartToRepo(adapter, repo, {
     expectedBase = tip?.sha || null;
   }
 
+  const prepared = await filesForPush(adapter, repo, branch, files);
+  const promoted = applyIdPromotion(workDoc, workScripts, prepared.map);
+  const pushDoc = promoted.changed ? promoted.doc : workDoc;
+  const pushScripts = promoted.changed ? promoted.scripts : workScripts;
+  const pushContent = pushScripts[destId] ?? content;
   try {
     const res = await adapter.commitFiles(repo, {
       branch,
       message: msg,
-      files,
+      files: prepared.files,
       baseSha: expectedBase,
     });
-    const nextScripts = { ...(base.scripts || {}), ...workScripts, [destId]: content };
+    const nextScripts = { ...(base.scripts || {}), ...pushScripts, [destId]: pushContent };
     const next = captureBaseline({
       assemblyPath,
       assemblyName: asmName,
-      doc: workDoc,
+      doc: pushDoc,
       scripts: nextScripts,
       branch,
       headSha: res.sha,
@@ -304,10 +348,11 @@ export async function commitPartToRepo(adapter, repo, {
       branch,
       partId: destId,
       fromId: id !== destId ? id : null,
-      files: files.map((f) => f.path),
+      files: prepared.files.map((f) => f.path),
       baseline: next,
-      doc: workDoc,
-      scripts: workScripts,
+      doc: pushDoc,
+      scripts: pushScripts,
+      promoted: prepared.map,
     };
   } catch (err) {
     if (err instanceof GitAdapterError && err.code === 'non_fast_forward') {
@@ -496,17 +541,13 @@ export async function commitWorkspace(adapter, repo, {
   assertGithubAdapter(adapter);
   if (!baseline) throw new Error('Open an assembly from the vault before committing');
   // Refuse non-repo rows before buildCommitFiles stringifies `.surf.json`
-  // (invalid ids throw inside stringify). Assembly-owned paths under the
-  // baseline name are allowed when a rename-on-Commit is about to move them.
-  const newSeg = vaultSegment(doc?.name) || baseline.assemblyName || '';
-  const oldSeg = baseline.assemblyName || '';
+  // (invalid ids throw inside stringify). Linked parts in another assembly
+  // are real vault paths and are kept.
   const stray = (doc?.parts || []).filter((p) => {
     const info = parseVaultPath(p.id);
+    // Linked external parts are real vault paths. Only local / non-path rows are stray.
     if (!info || (info.kind !== 'assembly-part' && info.kind !== 'shared-part')) return true;
-    if (info.kind === 'shared-part') return false;
-    if (info.assembly === newSeg) return false;
-    if (oldSeg && info.assembly === oldSeg) return false;
-    return true;
+    return false;
   });
   if (stray.length) {
     const err = new Error(`No repo path for ${stray.map((p) => p.name || p.id).join(', ')}. `
@@ -566,6 +607,11 @@ export async function commitWorkspace(adapter, repo, {
     const tip = await adapter.getBranch(repo, branch);
     expectedBase = tip?.sha || null;
   }
+  const prepared = await filesForPush(adapter, repo, branch, built.files);
+  built.files = prepared.files;
+  const promoted = applyIdPromotion(workDoc, built.scripts, prepared.map);
+  const pushDoc = promoted.changed ? promoted.doc : workDoc;
+  const pushScripts = promoted.changed ? promoted.scripts : built.scripts;
   try {
     const res = await adapter.commitFiles(repo, {
       branch,
@@ -578,11 +624,12 @@ export async function commitWorkspace(adapter, repo, {
       sha: res.sha,
       branch,
       files: filePaths(),
-      baseline: nextBaseline(workDoc, built.scripts, baseline, built.assemblyPath, branch, res.sha),
-      doc: workDoc,
-      scripts: built.scripts,
+      baseline: nextBaseline(pushDoc, pushScripts, baseline, built.assemblyPath, branch, res.sha),
+      doc: pushDoc,
+      scripts: pushScripts,
       renamed: built.renamed,
       moved: built.moved,
+      promoted: prepared.map,
     };
   } catch (err) {
     if (!(err instanceof GitAdapterError) || err.code !== 'non_fast_forward') throw err;
