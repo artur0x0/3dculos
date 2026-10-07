@@ -21,7 +21,8 @@ import {
   rememberGithubClientId, peekGithubClientId,
   resetGithubCallbackDedupe,
 } from '../../src/utils/git/githubAuth.js';
-import { fetchGithubUserProfile } from '../../backend/services/githubUser.js';
+import { fetchGithubUserProfile, splitGithubDisplayName } from '../../backend/services/githubUser.js';
+import { deleteGithubVaultRepo } from '../../backend/services/githubVaultDelete.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -158,6 +159,19 @@ console.log('\ngit G8 — fetchGithubUserProfile');
   eq('profile email from emails API', r.profile.email, 'octo@example.com');
   eq('profile login', r.profile.login, 'octocat');
   eq('profile displayName', r.profile.displayName, 'The Octocat');
+  eq('profile givenName', r.profile.name.givenName, 'The');
+  eq('profile familyName', r.profile.name.familyName, 'Octocat');
+}
+{
+  eq('split full name', splitGithubDisplayName('Ada Lovelace', 'ada'), {
+    displayName: 'Ada Lovelace', givenName: 'Ada', familyName: 'Lovelace',
+  });
+  eq('split login fallback', splitGithubDisplayName('', 'octocat'), {
+    displayName: 'octocat', givenName: 'octocat', familyName: null,
+  });
+  eq('split single word', splitGithubDisplayName('Prince', 'x'), {
+    displayName: 'Prince', givenName: 'Prince', familyName: null,
+  });
 }
 {
   const fetchImpl = async (url) => {
@@ -171,10 +185,47 @@ console.log('\ngit G8 — fetchGithubUserProfile');
   };
   const r = await fetchGithubUserProfile({ accessToken: 'tok', fetchImpl });
   ok('noreply fallback', r.ok && r.profile.email === 'hidden@users.noreply.github.com');
+  eq('name fallback to login', r.profile.name.givenName, 'hidden');
+  eq('no family when no name', r.profile.name.familyName, null);
 }
 {
   const r = await fetchGithubUserProfile({ accessToken: '' });
   ok('empty token rejected', r.ok === false && r.status === 400);
+}
+
+
+console.log('\ngit G8 — deleteGithubVaultRepo');
+{
+  const fetchImpl = async (url, opts) => {
+    ok('DELETE method', opts?.method === 'DELETE');
+    return { status: 204, json: async () => ({}) };
+  };
+  const r = await deleteGithubVaultRepo({
+    accessToken: 'tok', owner: 'octo', name: 'surfcad', fetchImpl,
+  });
+  ok('204 deleted', r.ok && r.deleted === true && r.repo === 'octo/surfcad');
+}
+{
+  const r = await deleteGithubVaultRepo({
+    accessToken: 'tok', owner: 'octo', name: 'surfcad',
+    fetchImpl: async () => ({ status: 404, json: async () => ({ message: 'Not Found' }) }),
+  });
+  ok('404 treated as ok (already gone)', r.ok && r.deleted === false);
+}
+{
+  const r = await deleteGithubVaultRepo({
+    accessToken: 'tok', owner: 'octo', name: 'surfcad',
+    fetchImpl: async () => ({
+      status: 403,
+      json: async () => ({ message: 'Must have admin rights to Repository.' }),
+    }),
+  });
+  ok('403 missing delete permission', r.ok === false && r.code === 'missing_delete_permission'
+    && /delete_repo|Administration/.test(r.error));
+}
+{
+  const r = await deleteGithubVaultRepo({ accessToken: '', owner: 'o', name: 'n' });
+  ok('empty token rejected', r.ok === false && r.code === 'missing_token');
 }
 
 console.log('\ngit G8 — UI + wiring (source)');
@@ -247,6 +298,9 @@ console.log('\ngit G8 — UI + wiring (source)');
     || /user\.githubId = String\(id\)/.test(userModel));
   ok('auth route POST /github', /router\.post\('\/github'/.test(authRoutes));
   ok('auth route uses fetchGithubUserProfile', /fetchGithubUserProfile/.test(authRoutes));
+  ok('auth route deletes account + vault', /router\.delete\('\/account'/.test(authRoutes)
+    && /deleteGithubVaultRepo/.test(authRoutes));
+  ok('findOrCreateOAuth backfills names', /Backfill names from GitHub/.test(readFileSync(join(root, 'backend/db/models/User.js'), 'utf8')));
   ok('auth route findOrCreateOAuth github', /findOrCreateOAuth\(profile,\s*'github'\)/.test(authRoutes));
   ok('auth route does not store token', !/access_token.*=.*user/.test(authRoutes)
     && /Does NOT store the token/.test(authRoutes));

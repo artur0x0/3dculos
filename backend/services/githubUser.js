@@ -7,6 +7,24 @@ export const GITHUB_API_USER = 'https://api.github.com/user';
 export const GITHUB_API_USER_EMAILS = 'https://api.github.com/user/emails';
 
 /**
+ * Split GitHub `user.name` into first/last. No name → first = login, last empty.
+ * Multi-word: first token = firstName, remainder = lastName.
+ */
+export function splitGithubDisplayName(name, login = '') {
+  const loginStr = String(login || '').trim();
+  const display = (typeof name === 'string' && name.trim()) ? name.trim() : '';
+  if (!display) {
+    return { displayName: loginStr || null, givenName: loginStr || null, familyName: null };
+  }
+  const parts = display.split(/\s+/).filter(Boolean);
+  return {
+    displayName: display,
+    givenName: parts[0] || loginStr || null,
+    familyName: parts.length > 1 ? parts.slice(1).join(' ') : null,
+  };
+}
+
+/**
  * @returns {{ ok: true, profile: object } | { ok: false, status: number, error: string }}
  */
 export async function fetchGithubUserProfile({
@@ -78,12 +96,7 @@ export async function fetchGithubUserProfile({
     email = `${login}@users.noreply.github.com`;
   }
 
-  const displayName = (typeof user.name === 'string' && user.name.trim())
-    ? user.name.trim()
-    : (login || null);
-  const parts = displayName ? displayName.split(/\s+/) : [];
-  const givenName = parts[0] || login || null;
-  const familyName = parts.length > 1 ? parts.slice(1).join(' ') : null;
+  const { displayName, givenName, familyName } = splitGithubDisplayName(user.name, login);
 
   return {
     ok: true,

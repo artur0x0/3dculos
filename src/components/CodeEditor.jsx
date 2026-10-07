@@ -56,6 +56,8 @@ const CodeEditor = forwardRef(({
   /** Right padding on Monaco only (Script-stage strip overlay); ribbon stays w-full. */
   monacoEndPadClassName = '',
   /** Same profile chip as CAD / Parts — right of Script toolbar. */
+  onSignedOut = null,
+  profileVaultName = null,
   onAccount = null,
 }, ref) => {
   const [editorValue, setEditorValue] = useState(initialScript);
@@ -483,7 +485,7 @@ const CodeEditor = forwardRef(({
             data-script-profile-chip=""
             className="ml-auto flex shrink-0 items-center pl-0.5"
           >
-            <ProfileChip variant="inline" onAccount={onAccount} />
+            <ProfileChip variant="inline" onAccount={onAccount} onSignedOut={onSignedOut} vaultName={profileVaultName} />
           </div>
         )}
       </div>

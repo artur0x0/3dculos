@@ -298,10 +298,25 @@ userSchema.statics.findOrCreateOAuth = async function(profile, provider) {
   }
   
   if (user) {
+    let dirty = false;
     if (provider === 'github' && !user.githubId) {
       user.githubId = String(id);
-      await user.save();
+      dirty = true;
     }
+    // Backfill names from GitHub / OAuth profile when missing.
+    if (!user.firstName && name?.givenName) {
+      user.firstName = name.givenName;
+      dirty = true;
+    }
+    if (!user.lastName && name?.familyName) {
+      user.lastName = name.familyName;
+      dirty = true;
+    }
+    if (!user.name && displayName) {
+      user.name = displayName;
+      dirty = true;
+    }
+    if (dirty) await user.save();
     return { user, isNew: false };
   }
   

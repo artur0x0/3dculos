@@ -5,7 +5,7 @@
  * - profileInitials helper (name / email / guest / signed-out)
  * - ProfileChip mounted in Viewport (not game), top-right absolute
  * - Toolbar CAD strip no longer has Account / User icon
- * - Click still routes through onAccount → Login / Account
+ * - Signed out → onAccount (Login); signed in → ProfilePanel (Sign out / Delete)
  */
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -121,6 +121,20 @@ console.log('\nG9 — UI wiring (source)');
     && /setShowLoginModal\(true\)/.test(app)
     && /setShowAccountModal\(true\)/.test(app));
 
+  ok('signed-in chip opens ProfilePanel', /ProfilePanel/.test(chip)
+    && /data-profile-panel/.test(readFileSync(join(root, 'src/components/ProfilePanel.jsx'), 'utf8'))
+    && /data-profile-sign-out/.test(readFileSync(join(root, 'src/components/ProfilePanel.jsx'), 'utf8'))
+    && /data-profile-danger-zone/.test(readFileSync(join(root, 'src/components/ProfilePanel.jsx'), 'utf8'))
+    && /data-profile-delete-account/.test(readFileSync(join(root, 'src/components/ProfilePanel.jsx'), 'utf8'))
+    && /data-profile-delete-confirm/.test(readFileSync(join(root, 'src/components/ProfilePanel.jsx'), 'utf8')));
+  ok('delete confirm warns account + vault',
+    /SurfCAD account/.test(readFileSync(join(root, 'src/components/ProfilePanel.jsx'), 'utf8'))
+    && /vault repo/.test(readFileSync(join(root, 'src/components/ProfilePanel.jsx'), 'utf8')));
+  ok('DELETE /api/auth/account wired',
+    /router\.delete\('\/account'/.test(readFileSync(join(root, 'backend/routes/auth.js'), 'utf8'))
+    && /deleteGithubVaultRepo/.test(readFileSync(join(root, 'backend/routes/auth.js'), 'utf8')));
+  ok('App clears vault state on profile sign-out',
+    /handleProfileSignedOut/.test(app) && /setGithubConnected\(false\)/.test(app));
   ok('architecture documents G9', /Profile chip \(G9\)/.test(arch)
     && /top-right of the CAD viewport/.test(arch));
   ok('UI_MAP mentions profile chip', /profile chip/i.test(ui));
