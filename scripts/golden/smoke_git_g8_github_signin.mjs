@@ -230,9 +230,14 @@ console.log('\ngit G8 — UI + wiring (source)');
   ok('establishGithubSession has timeout budget',
     /GITHUB_SESSION_TIMEOUT_MS/.test(readFileSync(join(root, 'src/utils/git/githubAuth.js'), 'utf8'))
     && /withTimeout/.test(readFileSync(join(root, 'src/utils/git/githubAuth.js'), 'utf8')));
-  ok('App Loading has editor-init + watchdog timeouts',
-    /EDITOR_INIT_TIMEOUT_MS/.test(app) && /LOADING_WATCHDOG_MS/.test(app)
+  ok('App Loading unblocks without awaiting IndexedDB',
+    /Unblock Loading THIS tick/.test(app)
+    && /pendingOAuthEditor|hasPendingEditorState/.test(app)
+    && /setEditorInitialScript\(script\)/.test(app)
+    && /LOADING_WATCHDOG_MS/.test(app)
     && /data-app-loading/.test(app));
+  ok('OAuth editor hand-off works without ?auth=success (GitHub soft-nav)',
+    /pendingOAuthEditor/.test(app) && /soft-nav lands on/.test(app));
   ok('callback outside StrictMode (soft-nav #191)',
     main.indexOf('<GitCallback') < main.indexOf('<StrictMode>'));
 

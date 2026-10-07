@@ -8,6 +8,7 @@
  * schemas do not fight.
  */
 import { serializeAssembly } from './assembly.js';
+import { idbWithTimeout, IDB_OP_TIMEOUT_MS } from './idbWithTimeout.js';
 
 const DB_NAME = 'surfcad-assembly';
 const DB_VERSION = 1;
@@ -56,11 +57,15 @@ function openDB() {
     };
     req.onblocked = () => resolve(null);
   });
-  return dbPromise;
+  return idbWithTimeout(dbPromise, IDB_OP_TIMEOUT_MS, 'Assembly open').catch((err) => {
+    console.warn('[Assembly] indexedDB.open timed out:', err?.message || err);
+    dbPromise = null;
+    return null;
+  });
 }
 
 function runTx(storeName, mode, work) {
-  return openDB().then((db) => {
+  const op = openDB().then((db) => {
     if (!db) return { ok: false, value: null };
     return new Promise((resolve) => {
       let tx;
@@ -71,15 +76,25 @@ function runTx(storeName, mode, work) {
         resolve({ ok: false, value: null });
         return;
       }
+      let settled = false;
+      const finish = (result) => {
+        if (settled) return;
+        settled = true;
+        resolve(result);
+      };
       let out;
       const req = work(tx.objectStore(storeName));
       if (req) req.onsuccess = () => { out = req.result; };
-      tx.oncomplete = () => resolve({ ok: true, value: out });
-      tx.onabort = () => resolve({ ok: false, value: null });
-      tx.onerror = () => resolve({ ok: false, value: null });
+      tx.oncomplete = () => finish({ ok: true, value: out });
+      tx.onabort = () => finish({ ok: false, value: null });
+      tx.onerror = () => finish({ ok: false, value: null });
     });
   }).catch((err) => {
     console.warn('[Assembly] store unavailable:', err);
+    return { ok: false, value: null };
+  });
+  return idbWithTimeout(op, IDB_OP_TIMEOUT_MS, 'Assembly tx').catch((err) => {
+    console.warn('[Assembly] tx timed out:', err?.message || err);
     return { ok: false, value: null };
   });
 }
