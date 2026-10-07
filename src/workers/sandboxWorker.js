@@ -8014,6 +8014,49 @@ function _booleanDropPieces(result, spec) {
 }
 
 // Collection of all helper functions to inject
+/**
+ * Feature-op brackets for the face graph. Manifold hands out originalIDs in
+ * order, so the IDs reserved while one fillet / chamfer call ran are exactly
+ * that op's cutter pieces (legs, corner patches, welded rebuilds). The face
+ * graph never merges a curved patch across two feature keys, so a fillet
+ * stays one face and does not spill onto a tangent loft wall or the next
+ * fillet. Reset per execute.
+ */
+let _featureOps = [];
+function _probeOriginalID() {
+  try {
+    const probe = manifoldModule.Manifold.cube([1e-3, 1e-3, 1e-3]);
+    const id = probe.originalID();
+    probe.delete?.();
+    return Number.isFinite(id) ? id : -1;
+  } catch {
+    return -1;
+  }
+}
+function _featureOp(fn) {
+  return function featureOp(...args) {
+    const lo = _probeOriginalID();
+    const out = fn.apply(this, args);
+    const hi = _probeOriginalID();
+    if (lo >= 0 && hi > lo + 1) _featureOps.push([lo, hi]);
+    return out;
+  };
+}
+/** Per run: the outermost op that reserved its originalID (−(op+1)), else the originalID. */
+function _runFeatureKeys(runOriginalID) {
+  const out = new Array(runOriginalID.length);
+  for (let r = 0; r < runOriginalID.length; r++) {
+    const id = runOriginalID[r];
+    let key = id;
+    for (let k = 0; k < _featureOps.length; k++) {
+      const [lo, hi] = _featureOps[k];
+      if (id > lo && id < hi) { key = -(k + 1); break; }
+    }
+    out[r] = key;
+  }
+  return out;
+}
+
 const HELPER_FUNCTIONS = {
   shell,
   hollow,
@@ -8062,7 +8105,7 @@ const HELPER_FUNCTIONS = {
   holeSpan,
   cboreHole,
   cskHole,
-  chamferEdges,
+  chamferEdges: _featureOp(chamferEdges),
   convexEdges,
   concaveEdges,
   signedFeatureEdges,
@@ -8076,7 +8119,7 @@ const HELPER_FUNCTIONS = {
   listFastenerSizes,
   resolveFastenerSize,
   // C6 fillet (see block above)
-  filletEdges,
+  filletEdges: _featureOp(filletEdges),
   // C8 revolve/extrude with safe winding (see block above)
   makeRevolve,
   makeExtrude,
@@ -8092,7 +8135,7 @@ const HELPER_FUNCTIONS = {
   // Slice 22 edge → sweep path / wire
   makeSweepPath,
   // Slice 23 fillet via swept cross-section
-  filletAlongPath,
+  filletAlongPath: _featureOp(filletAlongPath),
   // Fillet-mode edge ids
   edge,
   edgesBetween,
@@ -8282,6 +8325,7 @@ const serializeResult = (manifold) => {
     numRun: mesh.numRun,
     runIndex: Array.from(mesh.runIndex),
     runOriginalID: Array.from(mesh.runOriginalID),
+    runFeature: _runFeatureKeys(mesh.runOriginalID),
     faceID: mesh.faceID ? Array.from(mesh.faceID) : null,
   };
 };
@@ -8582,6 +8626,7 @@ self.onmessage = async (event) => {
         // Execute the script. execMs is the kernel; serializeMs is the mesh
         // copy that follows. The main thread adds the postMessage gap.
         const _execT0 = _perfNow();
+        _featureOps = [];
         const result = executeScript(script, importedModels);
         const _execMs = _perfNow() - _execT0;
         
