@@ -1893,7 +1893,7 @@ const App = () => {
     }
     // Keep current rows; paths that are not repo-safe stay until Open replaces them.
     rememberAssembly({ ...doc, source: 'git' });
-    // No baseline until a vault Open — UI treats that as fully dirty (first commit).
+    // No baseline until Open / tip reseed — local: rows show first-commit dirty.
     rememberGitBaseline(null);
     rememberGitBehind(null, { showToast: false, resetResolved: true });
     setGitBehindToast(null);
@@ -2731,6 +2731,46 @@ const App = () => {
     }
     return undefined;
   }, [githubConnected, assemblyDoc]); // eslint-disable-line react-hooks/exhaustive-deps -- vault helpers via refs
+
+  // After reload, baseline is gone but IndexedDB may still hold an in-repo
+  // assembly. Reseed baseline from the current branch tip (do not replace the
+  // working copy) so dirty = IDB vs tip — in-sync open stays clean.
+  useEffect(() => {
+    if (!githubConnected) return undefined;
+    const doc = assemblyRef.current;
+    if (!doc || doc.source !== 'git') return undefined;
+    if (gitBaselineRef.current) return undefined;
+    const parts = doc.parts || [];
+    const allLocal = parts.length > 0
+      && parts.every((p) => String(p.id).startsWith('local:'));
+    if (allLocal) return undefined; // true first-commit; keep null baseline
+    const name = vaultSegment(doc.name) || doc.name;
+    if (!name) return undefined;
+    let cancelled = false;
+    (async () => {
+      try {
+        const vault = await ensureGitVault();
+        if (cancelled || gitBaselineRef.current) return;
+        const branch = gitWorkingBranch();
+        const tip = (await gitAdapterRef.current.getBranch(vault.repo, branch))?.sha || null;
+        const opened = await openVaultAssembly(
+          gitAdapterRef.current,
+          vault.repo,
+          name,
+          { branch, headSha: tip },
+        );
+        if (cancelled || gitBaselineRef.current) return;
+        // Tip content only — leave IDB working copy alone so real edits stay dirty.
+        rememberGitBaseline(opened.baseline);
+        gitVaultRef.current = { ...vault, headSha: opened.baseline.headSha };
+        void checkGitRemoteBehind({ showToast: true, reason: 'reseed' });
+      } catch (err) {
+        // Missing assembly on tip → stay without baseline (local: chrome / first commit).
+        console.warn('[git] baseline reseed skipped', err?.message || err);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [githubConnected, assemblyDoc, gitBaseline]); // eslint-disable-line react-hooks/exhaustive-deps -- vault helpers via refs
 
   /** Flush working copy to IndexedDB (local Save for assembly leave guard). */
   const handleFlushLocalAssembly = async () => {
@@ -3850,10 +3890,19 @@ const App = () => {
     && assemblyDoc.activeId === cadHighlightId
     && typeof currentScript === 'string'
   ) ? currentScript : null;
-  // No vault Open yet → empty firstCommitBaseline so every part + assembly
-  // count as dirty (yellow dots). Helpers still treat null baseline as clean.
-  const dirtyBaseline = gitBaseline || (
+  // Yellow dots only when content differs from baseline, or the row is still
+  // local: / missing from the vault. Do NOT treat a null in-memory baseline as
+  // fully dirty — that falsely dotted every in-repo part after reload (#215).
+  // firstCommitBaseline is for true first-commit chrome (local: rows only).
+  const gitParts = assemblyDoc?.parts || [];
+  const hasLocalPartIds = gitParts.some((p) => String(p.id).startsWith('local:'));
+  const needsFirstCommitChrome = (
     assemblyDoc?.source === 'git'
+    && !gitBaseline
+    && hasLocalPartIds
+  );
+  const dirtyBaseline = gitBaseline || (
+    needsFirstCommitChrome
       ? firstCommitBaseline({
         branch: gitVaultRef.current?.defaultBranch || 'main',
         headSha: gitVaultRef.current?.headSha || null,
@@ -3865,15 +3914,22 @@ const App = () => {
   ) ? dirtyPartIds(assemblyDoc, partScripts, dirtyBaseline, {
     liveId: assemblyDoc.activeId,
     liveScript: liveDirtyScript,
-  }) : new Set();
+  }) : (
+    // Awaiting tip reseed: only local: rows; repo paths stay clean until
+    // baseline arrives and a real content diff can run.
+    assemblyDoc?.source === 'git'
+      ? new Set(gitParts.filter((p) => String(p.id).startsWith('local:')).map((p) => p.id))
+      : new Set()
+  );
   const sourceDirty = (
     assemblyDoc?.source === 'git'
     && (
-      !gitBaseline
-      || isWorkspaceDirty(assemblyDoc, partScripts, gitBaseline, {
-        liveId: assemblyDoc.activeId,
-        liveScript: liveDirtyScript,
-      })
+      needsFirstCommitChrome
+      || (gitBaseline
+        && isWorkspaceDirty(assemblyDoc, partScripts, gitBaseline, {
+          liveId: assemblyDoc.activeId,
+          liveScript: liveDirtyScript,
+        }))
     )
   );
   const behindMarkers = (
@@ -3963,7 +4019,7 @@ const App = () => {
       onListAddableParts={handleListAddableParts}
       onAddExistingPart={handleAddExistingPart}
       onAddToRepo={handleAddToRepo}
-      canCommit={assemblyDoc.source === 'git' && (!gitBaseline || !!sourceDirty)}
+      canCommit={assemblyDoc.source === 'git' && !!sourceDirty}
       onGitCommit={handleGitCommit}
       onForceMerge={handleForceMerge}
       behindPartIds={behindPartIdSet}

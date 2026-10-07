@@ -1149,7 +1149,7 @@ export default function PartFeed({
               {sourceDirty ? (
                 <span
                   data-git-dirty-badge=""
-                  className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-amber-400"
+                  className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-amber-400"
                   title="Uncommitted changes"
                 />
               ) : null}
