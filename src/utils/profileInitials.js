@@ -1,8 +1,8 @@
 /**
- * Initials for the CAD viewport profile chip (G9).
+ * Initials for the profile chip (CAD / Parts / Script).
  *
- * Priority when signed in: first+last → name words → email local-part → "?".
- * Guest → "G". Signed out → "?".
+ * Priority when signed in: first+last → name words → email local-part → "".
+ * Guest → "G". Signed out → "" (chip renders a User icon, not "?").
  */
 export function profileInitials({
   user = null,
@@ -33,12 +33,13 @@ export function profileInitials({
         return `${segs[0][0]}${segs[1][0]}`.toUpperCase();
       }
       const two = local.slice(0, 2).toUpperCase();
-      return two || '?';
+      if (two) return two;
     }
 
-    return '?';
+    // githubId-only / empty profile — chip shows User icon while green
+    return '';
   }
 
   if (guest) return 'G';
-  return '?';
+  return '';
 }

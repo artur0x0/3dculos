@@ -26,7 +26,7 @@ function eq(name, got, want) {
 }
 
 console.log('G9 — profileInitials');
-eq('signed out', profileInitials({}), '?');
+eq('signed out', profileInitials({}), '');
 eq('guest object', profileInitials({ guest: { email: 'g@x.com' } }), 'G');
 eq('guest true', profileInitials({ guest: true }), 'G');
 eq('first+last', profileInitials({
@@ -60,7 +60,7 @@ eq('email only one char local', profileInitials({
 eq('auth but empty user fields', profileInitials({
   isAuthenticated: true,
   user: {},
-}), '?');
+}), '');
 eq('prefers name over email', profileInitials({
   isAuthenticated: true,
   user: { firstName: 'Tom', lastName: 'Bombadil', email: 'x@y.com' },
@@ -100,6 +100,14 @@ console.log('\nG9 — UI wiring (source)');
   ok('Parts mounts inline ProfileChip',
     /data-parts-profile-chip/.test(readFileSync(join(root, 'src/components/PartFeed.jsx'), 'utf8'))
     && /variant="inline"/.test(readFileSync(join(root, 'src/components/PartFeed.jsx'), 'utf8')));
+  ok('Script toolbar mounts inline ProfileChip',
+    /data-script-profile-chip/.test(readFileSync(join(root, 'src/components/CodeEditor.jsx'), 'utf8'))
+    && /ProfileChip variant="inline"/.test(readFileSync(join(root, 'src/components/CodeEditor.jsx'), 'utf8'))
+    && /onAccount=\{handleAccount\}/.test(app));
+  ok('chip falls back to User icon when no initials',
+    /from 'lucide-react'/.test(chip) && /<User /.test(chip));
+  ok('chip treats github token as signed-in affordance',
+    /hasGithubToken/.test(chip) && /github-token|githubLinked/.test(chip));
   ok('Toolbar portal no longer gets onAccount',
     !/createPortal\(\s*<Toolbar[\s\S]*?onAccount=\{onAccount\}/.test(view));
 

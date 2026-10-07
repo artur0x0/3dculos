@@ -18,6 +18,7 @@ import {
   GITHUB_CALLBACK_PATH, GITHUB_SESSION_PATH, GITHUB_SIGNIN_SUBTITLE,
   buildAuthorizeUrl, createOAuthState, peekOAuthState,
   startGithubOAuth, establishGithubSession, resolveGithubClientId,
+  rememberGithubClientId, peekGithubClientId,
   resetGithubCallbackDedupe,
 } from '../../src/utils/git/githubAuth.js';
 import { fetchGithubUserProfile } from '../../backend/services/githubUser.js';
@@ -68,6 +69,15 @@ ok('start without client id fails', startGithubOAuth({
   assign: () => {},
 }) === false);
 ok('resolve empty without env', resolveGithubClientId({ configClientId: '', viteClientId: '' }) === '');
+rememberGithubClientId('Iv1.from-runtime');
+ok('resolve uses runtime cache', resolveGithubClientId({ configClientId: '', viteClientId: '' }) === 'Iv1.from-runtime');
+eq('peek runtime cache', peekGithubClientId(), 'Iv1.from-runtime');
+rememberGithubClientId('');
+ok('resolve empty after cache clear', resolveGithubClientId({ configClientId: '', viteClientId: '' }) === '');
+ok('App remembers client id from /api/config',
+  /rememberGithubClientId/.test(readFileSync(join(root, 'src/App.jsx'), 'utf8')));
+ok('LoginModal startGithubOAuth uses resolve (cache)',
+  /startGithubOAuth\(\)/.test(readFileSync(join(root, 'src/components/LoginModal.jsx'), 'utf8')));
 
 console.log('\ngit G8 — establishGithubSession');
 {

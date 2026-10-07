@@ -113,9 +113,26 @@ export function hasGithubToken() {
  * Resolve Client ID from runtime config and/or Vite env.
  * Returns '' when unset — Connect stays disabled with a setup hint.
  */
+/**
+ * Runtime Client ID from GET /api/config (App fills this). AuthStep / LoginModal
+ * call resolveGithubClientId() without props — without this cache they only see
+ * VITE_* and Sign-in stays dead when the ID is server-only (Tailscale / prod).
+ */
+let runtimeGithubClientId = '';
+
+export function rememberGithubClientId(clientId) {
+  runtimeGithubClientId = String(clientId || '').trim();
+  return runtimeGithubClientId;
+}
+
+export function peekGithubClientId() {
+  return runtimeGithubClientId;
+}
+
 export function resolveGithubClientId({ configClientId, viteClientId } = {}) {
   const fromConfig = String(configClientId || '').trim();
   if (fromConfig) return fromConfig;
+  if (runtimeGithubClientId) return runtimeGithubClientId;
   const fromVite = String(
     viteClientId
     ?? (typeof import.meta !== 'undefined' && import.meta.env?.VITE_GITHUB_APP_CLIENT_ID)

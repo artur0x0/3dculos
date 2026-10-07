@@ -15,7 +15,6 @@ import {
 
 // Same ribbon and strip buttons as the script editor top bar
 // (CodeEditor `data-editor-ribbon` + Toolbar `variant="strip"`).
-const STRIP_ROW = 'flex items-center gap-0.5 sm:gap-1 flex-1 min-w-0 overflow-x-auto';
 const STRIP_BTN = 'shrink-0 p-1.5 flex items-center rounded active:opacity-80 hover:bg-gray-700/60 text-blue-400';
 const STRIP_DIVIDER = 'shrink-0 w-px bg-gray-600 mx-0.5 self-stretch my-1';
 const STRIP_ICON = 18;
@@ -53,7 +52,7 @@ function RibbonAssemblyName({ name, onRename, behind = false, onBehindClick = nu
     if (next && next !== (name || '')) onRename(next);
   };
 
-  const label = 'max-w-[70%] truncate bg-gray-900 px-2 text-center text-xs font-medium text-gray-100';
+  const label = 'max-w-full truncate bg-gray-900 px-1.5 text-center text-xs font-medium text-gray-100';
   if (editing) {
     return (
       <input
@@ -66,7 +65,7 @@ function RibbonAssemblyName({ name, onRename, behind = false, onBehindClick = nu
           if (e.key === 'Escape') { e.preventDefault(); setEditing(false); }
           e.stopPropagation();
         }}
-        className={`${label} pointer-events-auto w-52 outline-none`}
+        className={`${label} pointer-events-auto w-full min-w-[6rem] outline-none`}
         aria-label="Assembly name"
         data-assembly-name=""
         data-assembly-rename="input"
@@ -89,7 +88,7 @@ function RibbonAssemblyName({ name, onRename, behind = false, onBehindClick = nu
 
   if (!onRename) {
     return (
-      <span className="pointer-events-none inline-flex max-w-[70%] items-center" data-assembly-behind-wrap={behind ? 'true' : 'false'}>
+      <span className="pointer-events-none inline-flex max-w-full min-w-0 items-center" data-assembly-behind-wrap={behind ? 'true' : 'false'}>
         <span className={`${label} pointer-events-none`} data-assembly-name="" title={name}>
           {name}
         </span>
@@ -98,7 +97,7 @@ function RibbonAssemblyName({ name, onRename, behind = false, onBehindClick = nu
     );
   }
   return (
-    <span className="pointer-events-auto inline-flex max-w-[70%] items-center" data-assembly-behind-wrap={behind ? 'true' : 'false'}>
+    <span className="pointer-events-auto inline-flex max-w-full min-w-0 items-center" data-assembly-behind-wrap={behind ? 'true' : 'false'}>
       <button
         type="button"
         onClick={start}
@@ -884,7 +883,7 @@ export default function PartFeed({
         data-parts-feed-ribbon=""
         className="relative z-30 flex w-full items-center border-b border-gray-700/60 bg-gray-900 px-1 py-0.5 shrink-0"
       >
-        <div className={`${STRIP_ROW} relative z-10`} data-parts-feed-toolbar="">
+        <div className="relative z-10 flex shrink-0 items-center gap-0.5 sm:gap-1" data-parts-feed-toolbar="">
           <button
             type="button"
             className={STRIP_BTN}
@@ -946,8 +945,20 @@ export default function PartFeed({
           </div>
         </div>
         <div
+          className="relative z-10 flex min-w-0 flex-1 items-center justify-center px-1"
+          data-parts-ribbon-center=""
+        >
+          {ribbonName ? (
+            <RibbonAssemblyName name={ribbonName}
+              onRename={onRenameAssembly}
+              behind={!!assemblyBehind}
+              onBehindClick={() => openConflict(assemblyPath || '', 'assembly', ribbonName)}
+            />
+          ) : null}
+        </div>
+        <div
           data-parts-ribbon-end=""
-          className="relative z-10 ml-auto flex shrink-0 items-center"
+          className="relative z-10 flex shrink-0 items-center"
         >
           {source === 'git' && (
             <button
@@ -1060,18 +1071,7 @@ export default function PartFeed({
             <ProfileChip variant="inline" onAccount={onAccount} />
           </div>
         </div>
-        {ribbonName ? (
-          <div
-            className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center"
-            data-parts-ribbon-center=""
-          >
-            <RibbonAssemblyName name={ribbonName}
-              onRename={onRenameAssembly}
-              behind={!!assemblyBehind}
-              onBehindClick={() => openConflict(assemblyPath || '', 'assembly', ribbonName)}
-            />
-          </div>
-        ) : null}
+
         <input
           ref={loadRef}
           type="file"
