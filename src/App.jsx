@@ -88,14 +88,17 @@ import {
   dirtyPartIds,
   isWorkspaceDirty,
   listVaultAssemblies,
+  listVaultBrowseItems,
   listAddableVaultParts,
   openVaultAssembly,
+  planInsertVaultAssemblyParts,
   readVaultPart,
   resolveNewPartPath,
   suggestNewPartPath,
   partPathAllowedFor,
   vaultSegment,
   assemblyFilePath,
+  assemblyPartPath,
   commitWorkspace,
   forceMergeCommit,
   forceMergeWarning,
@@ -108,6 +111,10 @@ import {
   checkInMineToBranch,
   listVaultBranches,
   switchVaultBranch,
+  createVaultBranch,
+  deleteVaultBranch,
+  githubCompareUrl,
+  canDeleteVaultBranch,
   DEFAULT_VAULT_NAME,
   sanitizeVaultName,
   planMoveToGit,
@@ -2039,7 +2046,173 @@ const App = () => {
     }
   };
 
+  /** G11: browse vault assemblies + parts for Open. */
+  const handleListVaultBrowse = async () => {
+    const vault = await ensureGitVault();
+    return listVaultBrowseItems(gitAdapterRef.current, vault.repo, gitWorkingBranch());
+  };
+
   /**
+   * G11: insert another assembly's parts into the current document
+   * (shared keep path; other-assembly parts remap under this assembly).
+   */
+  const handleInsertVaultAssemblyParts = async (sourceName) => {
+    const doc = assemblyRef.current;
+    if (!doc || doc.source !== 'git') {
+      return { status: 'error', error: 'Not in Git mode' };
+    }
+    try {
+      const vault = await ensureGitVault();
+      const planned = await planInsertVaultAssemblyParts(
+        gitAdapterRef.current, vault.repo, sourceName, doc,
+        { branch: gitWorkingBranch() },
+      );
+      if (!planned.additions.length) {
+        return { status: 'empty', error: 'No new parts to insert' };
+      }
+      const live = codeEditorRef.current?.getContent?.();
+      const prev = doc.activeId;
+      const scripts = { ...partScriptsRef.current };
+      if (prev && !suppressPartSaveRef.current && typeof live === 'string') {
+        scripts[prev] = live;
+        savePartScript(prev, live);
+        stashPartHistory(prev, live);
+      }
+      let parts = [...doc.parts];
+      let activeId = doc.activeId;
+      for (const add of planned.additions) {
+        scripts[add.id] = add.content;
+        await savePartScript(add.id, add.content);
+        if (!parts.some((p) => p.id === add.id)) {
+          parts = [...parts, {
+            id: add.id,
+            name: add.name,
+            visible: true,
+            order: parts.length,
+          }];
+        }
+        activeId = add.id;
+      }
+      rememberScripts(scripts);
+      refreshGenRef.current += 1;
+      rememberAssembly({ ...doc, source: 'git', activeId, parts });
+      const focus = parts.find((p) => p.id === activeId) || parts[parts.length - 1];
+      if (focus) {
+        focusPartHistory(focus.id, scripts[focus.id] || '');
+        suppressPartSaveRef.current = false;
+        setCurrentFilename(focus.name);
+        codeEditorRef.current?.loadContent(scripts[focus.id] || '', focus.id, false);
+      }
+      return { status: 'inserted', count: planned.additions.length, sourceName: planned.sourceName };
+    } catch (err) {
+      return { status: 'error', error: err.message || 'Could not insert parts' };
+    }
+  };
+
+  /** G11: open/add a single vault part into the current assembly (remap if needed). */
+  const handleOpenVaultPart = async (path) => {
+    const doc = assemblyRef.current;
+    if (!doc || doc.source !== 'git') {
+      return { status: 'error', error: 'Not in Git mode' };
+    }
+    try {
+      const vault = await ensureGitVault();
+      const branch = gitWorkingBranch();
+      const got = await readVaultPart(gitAdapterRef.current, vault.repo, path, branch);
+      if (!got) return { status: 'error', error: `Missing in vault: ${path}` };
+      let id = got.path;
+      if (!partPathAllowedFor(doc.name, id)) {
+        const baseName = id.split('/').pop()?.replace(/\.js$/i, '') || 'Part';
+        let toPath = assemblyPartPath(doc.name, baseName);
+        let n = 2;
+        const have = new Set(doc.parts.map((p) => p.id));
+        while (have.has(toPath)) {
+          toPath = assemblyPartPath(doc.name, `${baseName} ${n}`);
+          n += 1;
+        }
+        id = toPath;
+      }
+      // Reuse add-existing path when already allowed / remapped.
+      const live = codeEditorRef.current?.getContent?.();
+      const prev = doc.activeId;
+      const scripts = { ...partScriptsRef.current };
+      if (prev && !suppressPartSaveRef.current && typeof live === 'string') {
+        scripts[prev] = live;
+        savePartScript(prev, live);
+        stashPartHistory(prev, live);
+      }
+      scripts[id] = got.content;
+      await savePartScript(id, got.content);
+      rememberScripts(scripts);
+      const existing = doc.parts.some((part) => part.id === id);
+      const parts = existing
+        ? doc.parts
+        : [...doc.parts, {
+          id,
+          name: id.split('/').pop()?.replace(/\.js$/i, '') || id,
+          visible: true,
+          order: doc.parts.length,
+        }];
+      refreshGenRef.current += 1;
+      rememberAssembly({ ...doc, source: 'git', activeId: id, parts });
+      focusPartHistory(id, got.content);
+      suppressPartSaveRef.current = false;
+      setCurrentFilename(id.split('/').pop() || id);
+      codeEditorRef.current?.loadContent(got.content, id, false);
+      return { status: 'opened', path: id };
+    } catch (err) {
+      return { status: 'error', error: err.message || 'Could not open part' };
+    }
+  };
+
+  /** G11: create a branch from the current working tip. */
+  const handleCreateBranch = async (branchName) => {
+    try {
+      const vault = await ensureGitVault();
+      const from = gitWorkingBranch();
+      const created = await createVaultBranch(
+        gitAdapterRef.current, vault.repo, branchName,
+        { fromBranch: from },
+      );
+      return { status: 'created', branch: created.name, sha: created.sha };
+    } catch (err) {
+      return { status: 'error', error: err.message || 'Could not create branch' };
+    }
+  };
+
+  /** G11: delete a branch (refuses main + current). */
+  const handleDeleteBranch = async (branchName) => {
+    const current = gitWorkingBranch();
+    if (!canDeleteVaultBranch(branchName, { current })) {
+      return { status: 'error', error: 'Cannot delete the current branch or main' };
+    }
+    try {
+      const vault = await ensureGitVault();
+      await deleteVaultBranch(gitAdapterRef.current, vault.repo, branchName, { current });
+      return { status: 'deleted', branch: branchName };
+    } catch (err) {
+      return { status: 'error', error: err.message || 'Could not delete branch' };
+    }
+  };
+
+  /**
+   * G11: open GitHub compare/PR URL for merging `head` into `base` (default main).
+   * SurfCAD does not merge server-side.
+   */
+  const handleMergeBranch = ({ head = null, base = 'main' } = {}) => {
+    const vault = gitVaultRef.current;
+    const headBranch = head || gitWorkingBranch();
+    if (!vault?.repo) return { status: 'error', error: 'No vault' };
+    if (!headBranch || headBranch === base) {
+      return { status: 'error', error: 'Pick a branch other than the merge base' };
+    }
+    const url = githubCompareUrl(vault.repo, { base, head: headBranch });
+    if (!url) return { status: 'error', error: 'Could not build compare URL' };
+    if (typeof window !== 'undefined') window.open(url, '_blank', 'noopener,noreferrer');
+    return { status: 'opened', url, base, head: headBranch };
+  };
+
+    /**
    * G3 Commit: changed parts + assembly as one commit to the current branch.
    * When the tip has moved, the commit lands on surfcad/<assembly>-<date> and
    * the result asks (in PartFeed) whether to force merge.
@@ -3406,7 +3579,10 @@ const App = () => {
       sanitizeVaultName={sanitizeVaultName}
       sourceDirty={!!sourceDirty}
       onListVaultAssemblies={handleListVaultAssemblies}
+      onListVaultBrowse={handleListVaultBrowse}
       onOpenVaultAssembly={handleOpenVaultAssembly}
+      onInsertVaultAssemblyParts={handleInsertVaultAssemblyParts}
+      onOpenVaultPart={handleOpenVaultPart}
       onListAddableParts={handleListAddableParts}
       onAddExistingPart={handleAddExistingPart}
       onFindInRepo={handleFindInRepo}
@@ -3420,6 +3596,9 @@ const App = () => {
       currentBranch={assemblyDoc.source === 'git' ? (gitBaseline?.branch || 'main') : ''}
       onListBranches={handleListBranches}
       onSwitchBranch={handleSwitchBranch}
+      onCreateBranch={handleCreateBranch}
+      onDeleteBranch={handleDeleteBranch}
+      onMergeBranch={handleMergeBranch}
       githubConnectReady={!!githubClientId}
       githubConnected={githubConnected}
       onGitConnect={handleGitConnect}

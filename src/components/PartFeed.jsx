@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Eye, EyeOff, FolderOpen, GitBranch, GitCommitHorizontal, Github, GripVertical, Plus, Trash2, User } from 'lucide-react';
+import { Eye, EyeOff, FolderOpen, GitBranch, Github, GripVertical, Plus, Save, Trash2, User } from 'lucide-react';
 import { partListDeleteAction, sanitizeAssemblyName, sanitizePartName } from '../utils/assembly.js';
 import { useAuth } from '../hooks/useAuth';
 import { sessionIdentity } from '../utils/sessionIdentity.js';
@@ -305,7 +305,10 @@ export default function PartFeed({
   onToggleSource = null,
   sourceDirty = false,
   onListVaultAssemblies = null,
+  onListVaultBrowse = null,
   onOpenVaultAssembly = null,
+  onInsertVaultAssemblyParts = null,
+  onOpenVaultPart = null,
   onListAddableParts = null,
   onAddExistingPart = null,
   onFindInRepo = null,
@@ -318,10 +321,13 @@ export default function PartFeed({
   assemblyBehind = false,
   assemblyPath = '',
   onBehindChoice = null,
-  // G5 branch view
+  // G5/G11 branch view
   currentBranch = '',
   onListBranches = null,
   onSwitchBranch = null,
+  onCreateBranch = null,
+  onDeleteBranch = null,
+  onMergeBranch = null,
   // G6 Local → Git
   onPlanMoveToGit = null,
   onMoveToGit = null,
@@ -346,8 +352,11 @@ export default function PartFeed({
   const commitInputRef = useRef(null);
   // G4 conflict choice: null | { path, kind: 'part'|'assembly', name, stage, error, result }
   const [conflictFlow, setConflictFlow] = useState(null);
-  // G5: null | { stage: 'list'|'busy'|'confirm'|'error', items, loading, error, pending }
+  // G5/G11: null | { stage: 'list'|'create'|'delete'|'delete-confirm'|'busy'|'confirm'|'error'|'merge-pick', ... }
   const [branchFlow, setBranchFlow] = useState(null);
+  const [branchMenuOpen, setBranchMenuOpen] = useState(false);
+  const branchMenuRef = useRef(null);
+  const branchCreateInputRef = useRef(null);
   const behindSet = behindPartIds instanceof Set
     ? behindPartIds
     : new Set(behindPartIds || []);
@@ -438,13 +447,77 @@ export default function PartFeed({
       loadRef.current?.click();
       return;
     }
-    setOpenPicker({ kind: 'open', items: [], loading: true, error: '' });
+    setOpenPicker({
+      kind: 'open', assemblies: [], parts: [], loading: true, error: '',
+    });
     try {
-      const items = (await onListVaultAssemblies?.()) || [];
-      setOpenPicker({ kind: 'open', items, loading: false, error: items.length ? '' : 'No assemblies in the vault yet.' });
+      let browse = null;
+      if (onListVaultBrowse) {
+        browse = await onListVaultBrowse();
+      } else {
+        const names = (await onListVaultAssemblies?.()) || [];
+        browse = { assemblies: names.map((name) => ({ kind: 'assembly', name, label: name })), parts: [] };
+      }
+      const assemblies = browse?.assemblies || [];
+      const parts = browse?.parts || [];
+      const empty = !assemblies.length && !parts.length;
+      setOpenPicker({
+        kind: 'open',
+        assemblies,
+        parts,
+        loading: false,
+        error: empty ? 'Nothing in the vault yet.' : '',
+      });
     } catch (err) {
-      setOpenPicker({ kind: 'open', items: [], loading: false, error: err?.message || 'Could not list assemblies' });
+      setOpenPicker({
+        kind: 'open', assemblies: [], parts: [], loading: false,
+        error: err?.message || 'Could not browse vault',
+      });
     }
+  };
+
+  const askOpenAssemblyChoice = (name) => {
+    setOpenPicker({
+      kind: 'open-choice',
+      assemblyName: name,
+      loading: false,
+      error: '',
+    });
+  };
+
+  const runOpenAssembly = async (name) => {
+    closePicker();
+    await onOpenVaultAssembly?.(name);
+  };
+
+  const runInsertAssemblyParts = async (name) => {
+    setOpenPicker({
+      kind: 'open-choice',
+      assemblyName: name,
+      loading: true,
+      error: '',
+    });
+    const result = (await onInsertVaultAssemblyParts?.(name))
+      || { status: 'error', error: 'Insert unavailable' };
+    if (result.status === 'inserted') {
+      closePicker();
+      return;
+    }
+    setOpenPicker({
+      kind: 'open-choice',
+      assemblyName: name,
+      loading: false,
+      error: result.error || 'Could not insert parts',
+    });
+  };
+
+  const runOpenPart = async (partPath) => {
+    closePicker();
+    if (onOpenVaultPart) {
+      await onOpenVaultPart(partPath);
+      return;
+    }
+    await onAddExistingPart?.(partPath);
   };
 
   const startNewPart = () => {
@@ -533,20 +606,93 @@ export default function PartFeed({
     setMoveFlow((prev) => ({ ...(prev || {}), stage: 'form', result, error }));
   };
 
+  const closeBranchMenu = () => setBranchMenuOpen(false);
+
+  const startBranchMenu = () => {
+    if (source !== 'git') return;
+    setBranchMenuOpen((open) => !open);
+  };
+
   const startBranchView = async () => {
     if (source !== 'git') return;
-    setBranchFlow({ stage: 'list', items: [], loading: true, error: '', pending: null });
+    closeBranchMenu();
+    setBranchFlow({ stage: 'switch-list', items: [], loading: true, error: '', pending: null });
     try {
       const items = (await onListBranches?.()) || [];
       setBranchFlow({
-        stage: 'list', items, loading: false,
+        stage: 'switch-list',
+        items,
+        loading: false,
         error: items.length ? '' : 'No branches yet.',
         pending: null,
       });
     } catch (err) {
       setBranchFlow({
-        stage: 'error', items: [], loading: false,
-        error: err.message || 'Could not list branches', pending: null,
+        stage: 'switch-list', items: [], loading: false,
+        error: err?.message || 'Could not list branches',
+        pending: null,
+      });
+    }
+  };
+
+  const startCreateBranch = async () => {
+    closeBranchMenu();
+    setBranchFlow({
+      stage: 'create', draft: '', items: [], loading: false, error: '', pending: null,
+    });
+  };
+
+  const startDeleteBranch = async () => {
+    closeBranchMenu();
+    setBranchFlow({ stage: 'delete', items: [], loading: true, error: '', pending: null });
+    try {
+      const items = (await onListBranches?.()) || [];
+      setBranchFlow({
+        stage: 'delete',
+        items,
+        loading: false,
+        error: items.length ? '' : 'No branches yet.',
+        pending: null,
+      });
+    } catch (err) {
+      setBranchFlow({
+        stage: 'delete', items: [], loading: false,
+        error: err?.message || 'Could not list branches',
+        pending: null,
+      });
+    }
+  };
+
+  const startMergeBranch = async () => {
+    closeBranchMenu();
+    const current = currentBranch || 'main';
+    if (current !== 'main') {
+      const result = onMergeBranch?.({ head: current, base: 'main' })
+        || { status: 'error', error: 'Merge unavailable' };
+      if (result.status !== 'opened') {
+        setBranchFlow({
+          stage: 'error', items: [], loading: false,
+          error: result.error || 'Could not open compare URL',
+          pending: null,
+        });
+      }
+      return;
+    }
+    setBranchFlow({ stage: 'merge-pick', items: [], loading: true, error: '', pending: null });
+    try {
+      const items = ((await onListBranches?.()) || []).filter((b) => b.name !== 'main');
+      setBranchFlow({
+        stage: 'merge-pick',
+        items,
+        loading: false,
+        error: items.length ? '' : 'No side branches to merge.',
+        pending: null,
+      });
+    } catch (err) {
+      setBranchFlow({
+        stage: 'merge-pick', items: [], loading: false,
+        error: err?.message || 'Could not list branches',
+        pending: null,
       });
     }
   };
@@ -556,7 +702,8 @@ export default function PartFeed({
     if (sourceDirty) {
       setBranchFlow((prev) => ({
         ...(prev || { items: [], loading: false, error: '' }),
-        stage: 'confirm', pending: name,
+        stage: 'confirm',
+        pending: name,
       }));
       return;
     }
@@ -567,8 +714,10 @@ export default function PartFeed({
     const target = name || branchFlow?.pending;
     if (!target) return;
     setBranchFlow((prev) => ({
-      ...(prev || { items: [], loading: false, error: '' }),
-      stage: 'busy', pending: target,
+      ...(prev || {}),
+      stage: 'busy',
+      error: '',
+      pending: target,
     }));
     const result = (await onSwitchBranch?.(target)) || { status: 'error', error: 'Switch unavailable' };
     if (result.status === 'switched' || result.status === 'same') {
@@ -576,14 +725,105 @@ export default function PartFeed({
       return;
     }
     setBranchFlow((prev) => ({
-      ...(prev || { items: [], loading: false }),
+      ...(prev || {}),
       stage: 'error',
-      error: result.error || 'Could not switch branch',
+      error: result.error || 'Switch failed',
       pending: target,
     }));
   };
 
-  const runCommit = async () => {
+  const runCreateBranch = async () => {
+    const draft = String(branchFlow?.draft || '').trim();
+    if (!draft) {
+      setBranchFlow((prev) => ({ ...(prev || {}), error: 'Enter a branch name' }));
+      return;
+    }
+    setBranchFlow((prev) => ({ ...(prev || {}), stage: 'busy', error: '' }));
+    const result = (await onCreateBranch?.(draft)) || { status: 'error', error: 'Create unavailable' };
+    if (result.status === 'created') {
+      setBranchFlow(null);
+      try {
+        const items = (await onListBranches?.()) || [];
+        setBranchFlow({
+          stage: 'list', items, loading: false,
+          error: items.length ? '' : 'No branches yet.', pending: null,
+        });
+      } catch { /* side list refresh best-effort */ }
+      return;
+    }
+    setBranchFlow({
+      stage: 'create', draft, items: [], loading: false,
+      error: result.error || 'Create failed', pending: null,
+    });
+  };
+
+  const requestDeleteBranch = (name) => {
+    if (!name || name === 'main' || name === currentBranch) return;
+    setBranchFlow((prev) => ({
+      ...(prev || { items: [], loading: false, error: '' }),
+      stage: 'delete-confirm',
+      pending: name,
+    }));
+  };
+
+  const runDeleteBranch = async (name) => {
+    const target = name || branchFlow?.pending;
+    if (!target) return;
+    setBranchFlow((prev) => ({
+      ...(prev || {}),
+      stage: 'busy',
+      error: '',
+      pending: target,
+    }));
+    const result = (await onDeleteBranch?.(target)) || { status: 'error', error: 'Delete unavailable' };
+    if (result.status === 'deleted') {
+      setBranchFlow(null);
+      try {
+        const items = (await onListBranches?.()) || [];
+        setBranchFlow({
+          stage: 'list', items, loading: false,
+          error: items.length ? '' : 'No branches yet.', pending: null,
+        });
+      } catch { /* side list refresh best-effort */ }
+      return;
+    }
+    setBranchFlow({
+      stage: 'error', items: [], loading: false,
+      error: result.error || 'Delete failed', pending: target,
+    });
+  };
+
+  const runMergePick = (name) => {
+    if (!name) return;
+    const result = onMergeBranch?.({ head: name, base: 'main' })
+      || { status: 'error', error: 'Merge unavailable' };
+    if (result.status === 'opened') {
+      setBranchFlow(null);
+      return;
+    }
+    setBranchFlow((prev) => ({
+      ...(prev || {}),
+      stage: 'error',
+      error: result.error || 'Could not open compare URL',
+    }));
+  };
+
+  useEffect(() => {
+    if (branchFlow?.stage === 'create') branchCreateInputRef.current?.focus();
+  }, [branchFlow?.stage]);
+
+  useEffect(() => {
+    if (!branchMenuOpen) return undefined;
+    const onDoc = (event) => {
+      if (branchMenuRef.current && !branchMenuRef.current.contains(event.target)) {
+        setBranchMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [branchMenuOpen]);
+
+    const runCommit = async () => {
     const draft = commitFlow?.draft || '';
     setCommitFlow({ stage: 'busy', draft, result: null, error: '' });
     const result = (await onGitCommit?.(draft)) || { status: 'error', error: 'Commit unavailable' };
@@ -671,8 +911,8 @@ export default function PartFeed({
             type="button"
             className={STRIP_BTN}
             data-assembly-load=""
-            title={source === 'git' ? 'Open assembly from vault' : 'Load assembly'}
-            aria-label={source === 'git' ? 'Open assembly from vault' : 'Load assembly'}
+            title={source === 'git' ? 'Open from vault' : 'Load assembly'}
+            aria-label={source === 'git' ? 'Open from vault' : 'Load assembly'}
             onClick={startOpenAssembly}
           >
             <FolderOpen size={STRIP_ICON} />
@@ -707,27 +947,16 @@ export default function PartFeed({
           {source === 'git' && (
             <button
               type="button"
-              className={STRIP_BTN}
-              data-git-branches=""
-              title={currentBranch ? `Branches (on ${currentBranch})` : 'Branches'}
-              aria-label="Branches"
-              onClick={startBranchView}
-            >
-              <GitBranch size={STRIP_ICON} />
-            </button>
-          )}
-          {source === 'git' && (
-            <button
-              type="button"
               className={`relative ${STRIP_BTN} disabled:cursor-not-allowed disabled:opacity-40`}
               data-git-commit=""
+              data-git-save=""
               data-git-dirty={sourceDirty ? 'true' : 'false'}
               disabled={!canCommit}
-              title={canCommit ? `Commit changes to ${currentBranch || 'main'}` : 'Nothing to commit'}
-              aria-label="Commit"
+              title={canCommit ? `Save (commit) to ${currentBranch || 'main'}` : 'Nothing to save'}
+              aria-label="Save"
               onClick={startCommit}
             >
-              <GitCommitHorizontal size={STRIP_ICON} />
+              <Save size={STRIP_ICON} />
               {sourceDirty ? (
                 <span
                   data-git-dirty-badge=""
@@ -737,8 +966,62 @@ export default function PartFeed({
               ) : null}
             </button>
           )}
+          {source === 'git' && (
+            <div className="relative" ref={branchMenuRef} data-git-branch-menu="">
+              <button
+                type="button"
+                className={STRIP_BTN}
+                data-git-branches=""
+                title={currentBranch ? `Branch (on ${currentBranch})` : 'Branch'}
+                aria-label="Branch"
+                aria-expanded={branchMenuOpen ? 'true' : 'false'}
+                onClick={startBranchMenu}
+              >
+                <GitBranch size={STRIP_ICON} />
+              </button>
+              {branchMenuOpen && (
+                <div
+                  data-git-branch-dropdown=""
+                  className="absolute right-0 top-full z-50 mt-1 min-w-[9rem] rounded-md border border-gray-600 bg-gray-900 py-1 shadow-lg"
+                >
+                  <button
+                    type="button"
+                    data-git-branch-action="switch"
+                    className="block w-full px-3 py-1.5 text-left text-xs text-gray-100 hover:bg-white/10"
+                    onClick={() => { void startBranchView(); }}
+                  >
+                    Switch
+                  </button>
+                  <button
+                    type="button"
+                    data-git-branch-action="create"
+                    className="block w-full px-3 py-1.5 text-left text-xs text-gray-100 hover:bg-white/10"
+                    onClick={() => { void startCreateBranch(); }}
+                  >
+                    Create
+                  </button>
+                  <button
+                    type="button"
+                    data-git-branch-action="delete"
+                    className="block w-full px-3 py-1.5 text-left text-xs text-gray-100 hover:bg-white/10"
+                    onClick={() => { void startDeleteBranch(); }}
+                  >
+                    Delete
+                  </button>
+                  <button
+                    type="button"
+                    data-git-branch-action="merge"
+                    className="block w-full px-3 py-1.5 text-left text-xs text-gray-100 hover:bg-white/10"
+                    onClick={() => { void startMergeBranch(); }}
+                  >
+                    Merge
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
           {/* Connect stays reachable so a GitHub token can be established; vault
-              Commit/Branches/Add only appear once source is git (token sync). */}
+              Save/Branch/Add only appear once source is git (token sync). */}
           {(githubConnected || githubConnectReady || source === 'git') && (
             <button
               type="button"
@@ -1012,7 +1295,7 @@ export default function PartFeed({
 
       {openPicker && typeof document !== 'undefined' && openPicker.kind === 'open' && (
         <VaultPickerDialog
-          title="Open assembly"
+          title="Open from vault"
           labelledBy="git-open-title"
           dataAttr="open"
           onClose={closePicker}
@@ -1028,24 +1311,102 @@ export default function PartFeed({
           {openPicker.error && !openPicker.loading && (
             <p className="text-xs text-amber-300" data-git-dialog-empty="">{openPicker.error}</p>
           )}
-          {!openPicker.loading && openPicker.items.length > 0 && (
-            <ul className="max-h-56 space-y-1 overflow-y-auto" data-git-open-list="">
-              {openPicker.items.map((name) => (
-                <li key={name}>
-                  <button
-                    type="button"
-                    data-git-open-item={name}
-                    className="w-full rounded-md px-2 py-1.5 text-left text-xs text-gray-100 hover:bg-white/10"
-                    onClick={async () => {
-                      closePicker();
-                      await onOpenVaultAssembly?.(name);
-                    }}
-                  >
-                    {name}
-                  </button>
-                </li>
-              ))}
-            </ul>
+          {!openPicker.loading && (openPicker.assemblies || []).length > 0 && (
+            <div className="mb-3" data-git-open-assemblies="">
+              <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-gray-500">Assemblies</p>
+              <ul className="max-h-40 space-y-1 overflow-y-auto" data-git-open-list="">
+                {(openPicker.assemblies || []).map((item) => {
+                  const name = typeof item === 'string' ? item : item.name;
+                  return (
+                    <li key={`asm-${name}`}>
+                      <button
+                        type="button"
+                        data-git-open-item={name}
+                        data-git-open-kind="assembly"
+                        className="w-full rounded-md px-2 py-1.5 text-left text-xs text-gray-100 hover:bg-white/10"
+                        onClick={() => askOpenAssemblyChoice(name)}
+                      >
+                        {name}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          )}
+          {!openPicker.loading && (openPicker.parts || []).length > 0 && (
+            <div data-git-open-parts="">
+              <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-gray-500">Parts</p>
+              <ul className="max-h-40 space-y-1 overflow-y-auto" data-git-open-part-list="">
+                {(openPicker.parts || []).map((item) => (
+                  <li key={item.path}>
+                    <button
+                      type="button"
+                      data-git-open-part={item.path}
+                      data-git-open-kind="part"
+                      className="w-full rounded-md px-2 py-1.5 text-left text-xs text-gray-100 hover:bg-white/10"
+                      onClick={() => { void runOpenPart(item.path); }}
+                    >
+                      <span className="block truncate">{item.label || item.path}</span>
+                      {item.scope ? (
+                        <span className="text-[10px] text-gray-500">{item.scope}</span>
+                      ) : null}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </VaultPickerDialog>
+      )}
+      {openPicker && typeof document !== 'undefined' && openPicker.kind === 'open-choice' && (
+        <VaultPickerDialog
+          title="Open assembly?"
+          labelledBy="git-open-choice-title"
+          dataAttr="open-choice"
+          onClose={openPicker.loading ? undefined : closePicker}
+          footer={(
+            <div className="mt-4 flex flex-wrap justify-end gap-2" data-git-open-choice-stage="">
+              <button
+                type="button"
+                className="rounded-md px-3 py-1.5 text-xs text-gray-200 hover:bg-white/10"
+                onClick={closePicker}
+                data-git-dialog-cancel=""
+                disabled={!!openPicker.loading}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                data-git-open-insert=""
+                className="rounded-md px-3 py-1.5 text-xs text-gray-100 hover:bg-white/10 border border-gray-600"
+                disabled={!!openPicker.loading}
+                onClick={() => { void runInsertAssemblyParts(openPicker.assemblyName); }}
+              >
+                Insert parts into current
+              </button>
+              <button
+                type="button"
+                data-git-open-replace=""
+                className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-500"
+                disabled={!!openPicker.loading}
+                onClick={() => { void runOpenAssembly(openPicker.assemblyName); }}
+              >
+                Open assembly
+              </button>
+            </div>
+          )}
+        >
+          {openPicker.loading && <p className="text-xs text-gray-400" data-git-dialog-loading="">Inserting…</p>}
+          {!openPicker.loading && (
+            <p className="text-xs text-gray-300" data-git-open-choice-ask="">
+              {'Open '}
+              <span className="font-medium text-gray-100">{openPicker.assemblyName}</span>
+              {' as the working assembly, or insert its parts into the current one?'}
+            </p>
+          )}
+          {openPicker.error && (
+            <p className="mt-2 text-xs text-amber-300" data-git-open-choice-error="">{openPicker.error}</p>
           )}
         </VaultPickerDialog>
       )}
@@ -1140,7 +1501,7 @@ export default function PartFeed({
       )}
       {commitFlow && typeof document !== 'undefined' && (
         <VaultPickerDialog
-          title={commitFlow.stage === 'ask-force' ? 'Main has moved' : 'Commit to main'}
+          title={commitFlow.stage === 'ask-force' ? 'Main has moved' : 'Save to vault'}
           labelledBy="git-commit-title"
           dataAttr="commit"
           onClose={commitFlow.stage === 'busy' ? undefined : closeCommit}
@@ -1157,7 +1518,7 @@ export default function PartFeed({
                     className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-500"
                     onClick={runCommit}
                   >
-                    Commit
+                    Save
                   </button>
                 </>
               )}
@@ -1187,7 +1548,7 @@ export default function PartFeed({
           {commitFlow.stage === 'message' && (
             <>
               <p className="mb-2 text-[11px] text-gray-400">
-                Changed parts and the assembly go to main as one commit.
+                Saving commits changed parts and the assembly to the vault.
               </p>
               <input
                 ref={commitInputRef}
@@ -1307,10 +1668,25 @@ export default function PartFeed({
           )}
         </VaultPickerDialog>
       )}
-      {branchFlow && (branchFlow.stage === 'confirm' || branchFlow.stage === 'busy' || branchFlow.stage === 'error')
-        && typeof document !== 'undefined' && (
+      {branchFlow && (
+        branchFlow.stage === 'confirm'
+        || branchFlow.stage === 'busy'
+        || branchFlow.stage === 'error'
+        || branchFlow.stage === 'switch-list'
+        || branchFlow.stage === 'create'
+        || branchFlow.stage === 'delete'
+        || branchFlow.stage === 'delete-confirm'
+        || branchFlow.stage === 'merge-pick'
+      ) && typeof document !== 'undefined' && (
         <VaultPickerDialog
-          title={branchFlow.stage === 'confirm' ? 'Switch branch?' : 'Branches'}
+          title={
+            branchFlow.stage === 'confirm' ? 'Switch branch?'
+              : branchFlow.stage === 'create' ? 'Create branch'
+                : branchFlow.stage === 'delete' || branchFlow.stage === 'delete-confirm' ? 'Delete branch'
+                  : branchFlow.stage === 'merge-pick' ? 'Merge branch'
+                    : branchFlow.stage === 'switch-list' ? 'Switch branch'
+                      : 'Branches'
+          }
           labelledBy="git-branch-title"
           dataAttr="branch"
           onClose={branchFlow.stage === 'busy' ? undefined : closeBranches}
@@ -1331,7 +1707,37 @@ export default function PartFeed({
                   </button>
                 </>
               )}
-              {branchFlow.stage === 'error' && (
+              {branchFlow.stage === 'create' && (
+                <>
+                  <button type="button" className="rounded-md px-3 py-1.5 text-xs text-gray-200 hover:bg-white/10" onClick={closeBranches} data-git-branch-cancel="">
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-500"
+                    data-git-branch-create-confirm=""
+                    onClick={() => { void runCreateBranch(); }}
+                  >
+                    Create
+                  </button>
+                </>
+              )}
+              {branchFlow.stage === 'delete-confirm' && (
+                <>
+                  <button type="button" className="rounded-md px-3 py-1.5 text-xs text-gray-200 hover:bg-white/10" onClick={closeBranches} data-git-branch-cancel="">
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-md bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-500"
+                    data-git-branch-delete-confirm=""
+                    onClick={() => { void runDeleteBranch(branchFlow.pending); }}
+                  >
+                    Delete
+                  </button>
+                </>
+              )}
+              {(branchFlow.stage === 'switch-list' || branchFlow.stage === 'delete' || branchFlow.stage === 'merge-pick' || branchFlow.stage === 'error') && (
                 <button type="button" className="rounded-md px-3 py-1.5 text-xs text-gray-200 hover:bg-white/10" onClick={closeBranches} data-git-dialog-cancel="">
                   Close
                 </button>
@@ -1348,10 +1754,94 @@ export default function PartFeed({
             </p>
           )}
           {branchFlow.stage === 'busy' && (
-            <p className="text-xs text-gray-400" data-git-branch-switching="">Switching…</p>
+            <p className="text-xs text-gray-400" data-git-branch-switching="">Working…</p>
           )}
           {branchFlow.stage === 'error' && (
             <p className="text-xs text-amber-300" data-git-branch-error="">{branchFlow.error}</p>
+          )}
+          {branchFlow.stage === 'create' && (
+            <>
+              <p className="mb-2 text-[11px] text-gray-400">
+                {'New branch from '}
+                <span className="font-mono text-gray-200">{currentBranch || 'main'}</span>
+                .
+              </p>
+              <input
+                ref={branchCreateInputRef}
+                data-git-branch-create-name=""
+                value={branchFlow.draft || ''}
+                onChange={(e) => setBranchFlow({ ...branchFlow, draft: e.target.value, error: '' })}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    void runCreateBranch();
+                  }
+                }}
+                className="w-full rounded-md border border-gray-600 bg-black/30 px-2 py-1.5 text-xs text-gray-100 outline-none focus:border-blue-500"
+                placeholder="feature/my-change"
+              />
+              {branchFlow.error ? (
+                <p className="mt-2 text-xs text-amber-300" data-git-branch-create-error="">{branchFlow.error}</p>
+              ) : null}
+            </>
+          )}
+          {branchFlow.stage === 'delete-confirm' && (
+            <p className="text-xs text-gray-300" data-git-branch-delete-warn="">
+              {'Delete branch '}
+              <span className="font-mono text-gray-100">{branchFlow.pending}</span>
+              {'? This cannot be undone from SurfCAD.'}
+            </p>
+          )}
+          {(branchFlow.stage === 'switch-list' || branchFlow.stage === 'delete' || branchFlow.stage === 'merge-pick') && (
+            <>
+              {branchFlow.loading && (
+                <p className="text-xs text-gray-400" data-git-branch-loading="">Loading…</p>
+              )}
+              {branchFlow.error && !branchFlow.loading && (
+                <p className="text-xs text-amber-300" data-git-branch-list-error="">{branchFlow.error}</p>
+              )}
+              {!branchFlow.loading && (branchFlow.items || []).length > 0 && (
+                <ul className="max-h-56 space-y-1 overflow-y-auto" data-git-branch-dialog-list="">
+                  {(branchFlow.items || []).map((b) => {
+                    const current = !!b.current || b.name === currentBranch;
+                    const canDelete = b.name !== 'main' && !current;
+                    return (
+                      <li key={b.name}>
+                        <button
+                          type="button"
+                          data-git-branch-row={b.name}
+                          data-git-branch-current={current ? 'true' : 'false'}
+                          disabled={
+                            (branchFlow.stage === 'delete' && !canDelete)
+                            || (branchFlow.stage === 'switch-list' && current)
+                          }
+                          className={`flex w-full items-center justify-between rounded px-2 py-1.5 text-left text-xs ${
+                            current
+                              ? 'bg-blue-600/20 text-blue-200'
+                              : 'text-gray-100 hover:bg-white/10'
+                          } disabled:cursor-not-allowed disabled:opacity-40`}
+                          onClick={() => {
+                            if (branchFlow.stage === 'switch-list') requestSwitchBranch(b.name);
+                            else if (branchFlow.stage === 'delete') requestDeleteBranch(b.name);
+                            else if (branchFlow.stage === 'merge-pick') runMergePick(b.name);
+                          }}
+                        >
+                          <span className="truncate font-mono">{b.name}</span>
+                          {current ? (
+                            <span className="shrink-0 text-[9px] uppercase tracking-wide text-blue-300" data-git-branch-marker="">
+                              current
+                            </span>
+                          ) : null}
+                          {branchFlow.stage === 'delete' && !canDelete ? (
+                            <span className="shrink-0 text-[9px] text-gray-500">protected</span>
+                          ) : null}
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </>
           )}
         </VaultPickerDialog>
       )}

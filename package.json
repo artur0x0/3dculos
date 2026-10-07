@@ -126,7 +126,8 @@
         "golden:git-g7-real-adapter": "node scripts/golden/smoke_git_g7_real_adapter.mjs",
         "golden:git-g8-github-signin": "node scripts/golden/smoke_git_g8_github_signin.mjs",
         "golden:profile-chip": "node scripts/golden/smoke_profile_chip.mjs",
-        "golden:session-identity": "node scripts/golden/smoke_session_identity.mjs"
+        "golden:session-identity": "node scripts/golden/smoke_session_identity.mjs",
+    "golden:git-g11-parts-vault-chrome": "node scripts/golden/smoke_git_g11_parts_vault_chrome.mjs"
     },
     "dependencies": {
         "@monaco-editor/react": "^4.6.0",

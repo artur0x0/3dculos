@@ -16,6 +16,8 @@
  *   listBranches(repo)                           -> [{ name, sha }]
  *   getBranch(repo, branch)                      -> { name, sha } | null
  *   createBranch(repo, branch, fromSha)          -> { name, sha }
+ *   deleteBranch(repo, branch)                   -> void
+ *       Refuses 'main' and missing branches (not_found / invalid).
  *   listTree(repo, ref, { prefix }?)             -> [{ path, type: 'blob', sha }]
  *   readFile(repo, path, ref?)                   -> { path, content, sha } | null
  *   commitFiles(repo, { branch, message, files, baseSha? })
@@ -40,6 +42,7 @@ export const GITHUB_ADAPTER_METHODS = Object.freeze([
   'listBranches',
   'getBranch',
   'createBranch',
+  'deleteBranch',
   'listTree',
   'readFile',
   'commitFiles',

@@ -142,6 +142,17 @@ export function createMockGithubAdapter(options = {}) {
       return { name: branch, sha };
     },
 
+    async deleteBranch(repo, branch) {
+      const state = repoState(repo);
+      if (!branch) throw new GitAdapterError('invalid', 'Branch name required');
+      if (branch === 'main') throw new GitAdapterError('invalid', 'Cannot delete main');
+      if (!state.branches.has(branch)) {
+        throw new GitAdapterError('not_found', `Branch ${branch} not found`);
+      }
+      state.branches.delete(branch);
+      log.push({ op: 'deleteBranch', repo: key(repo), branch });
+    },
+
     async listTree(repo, ref, { prefix = '' } = {}) {
       const state = repoState(repo);
       const sha = resolveRef(state, ref);

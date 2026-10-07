@@ -296,6 +296,24 @@ export function createGithubAdapter({ token, fetchImpl = globalThis.fetch, apiBa
       return { name: branch, sha: data.object?.sha || fromSha };
     },
 
+    async deleteBranch(repo, branch) {
+      if (!branch) throw new GitAdapterError('invalid', 'Branch name required');
+      if (branch === 'main') throw new GitAdapterError('invalid', 'Cannot delete main');
+      const { res, data } = await json(
+        `${repoPath(repo)}/git/refs/heads/${encodeURIComponent(branch)}`,
+        { method: 'DELETE' },
+      );
+      if (res.status === 404) {
+        throw new GitAdapterError('not_found', data?.message || `Branch ${branch} not found`);
+      }
+      if (res.status === 401 || res.status === 403) {
+        throw new GitAdapterError('unauthorized', data?.message || 'deleteBranch unauthorized');
+      }
+      if (!res.ok && res.status !== 204) {
+        throw new GitAdapterError('invalid', data?.message || 'deleteBranch failed');
+      }
+    },
+
     async listTree(repo, ref, { prefix = '' } = {}) {
       const sha = await resolveSha(repo, ref);
       if (!sha) return [];

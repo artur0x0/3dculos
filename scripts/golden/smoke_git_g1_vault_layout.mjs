@@ -39,7 +39,7 @@ async function throwsCode(name, fn, code) {
 }
 
 console.log('git G1 — interface contract');
-eq('interface methods', [...GITHUB_ADAPTER_METHODS], ['getViewer', 'getRepo', 'createRepo', 'listBranches', 'getBranch', 'createBranch', 'listTree', 'readFile', 'commitFiles', 'compare']);
+eq('interface methods', [...GITHUB_ADAPTER_METHODS], ['getViewer', 'getRepo', 'createRepo', 'listBranches', 'getBranch', 'createBranch', 'deleteBranch', 'listTree', 'readFile', 'commitFiles', 'compare']);
 eq('missing on {}', missingAdapterMethods({}).length, GITHUB_ADAPTER_METHODS.length);
 eq('missing on partial', missingAdapterMethods({ getViewer() {}, readFile() {} }).length, GITHUB_ADAPTER_METHODS.length - 2);
 await throwsCode('assert rejects partial adapter', () => assertGithubAdapter({ getViewer() {} }), 'invalid');
@@ -84,6 +84,11 @@ await throwsCode('unknown branch', () => mock.commitFiles(repo, { branch: 'nope'
 const br = await mock.createBranch(repo, 'feature', c1.sha);
 eq('branch from c1', br, { name: 'feature', sha: c1.sha });
 await throwsCode('duplicate branch', () => mock.createBranch(repo, 'feature', c1.sha), 'name_exists');
+await throwsCode('cannot delete main', () => mock.deleteBranch(repo, 'main'), 'invalid');
+await mock.createBranch(repo, 'tmp-del', c1.sha);
+await mock.deleteBranch(repo, 'tmp-del');
+eq('deleted branch gone', await mock.getBranch(repo, 'tmp-del'), null);
+await throwsCode('delete missing', () => mock.deleteBranch(repo, 'tmp-del'), 'not_found');
 eq('compare identical', (await mock.compare(repo, 'main', 'main')).status, 'identical');
 const behind = await mock.compare(repo, 'main', 'feature');
 eq('feature behind main', [behind.status, behind.aheadBy, behind.behindBy, behind.mergeBaseSha], ['behind', 0, 1, c1.sha]);
