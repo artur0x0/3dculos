@@ -40,9 +40,10 @@ ok('Viewport Toolbar no longer gets onOpen/onSave',
   !/createPortal\([\s\S]*?<Toolbar[\s\S]*?onOpen=\{onOpen\}/.test(view)
   && !/<Toolbar[\s\S]{0,400}onSave=\{onSave\}/.test(view));
 
-ok('Parts chrome untouched (Save/Branch/Open)', /data-git-save=""/.test(feed)
+ok('Parts chrome untouched (Save/title-branch/Open)', /data-git-save=""/.test(feed)
   && /data-git-commit=""/.test(feed) && /data-git-branches=""/.test(feed)
-  && /data-assembly-load=""/.test(feed) && /data-git-branch-dropdown/.test(feed));
+  && /data-assembly-branch=""/.test(feed) && /data-git-branch-pane=""/.test(feed)
+  && /data-assembly-load=""/.test(feed) && !/data-git-branch-dropdown/.test(feed));
 
 ok('architecture notes G12 Script role', /G12/.test(arch)
   && /Upload \+ Download|Upload and Download|Upload\/Download/.test(arch));

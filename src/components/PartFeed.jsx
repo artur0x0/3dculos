@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Eye, EyeOff, FolderOpen, GitBranch, GripVertical, Plus, Save, Trash2 } from 'lucide-react';
+import { Eye, EyeOff, FolderOpen, GripVertical, Plus, Save, Trash2 } from 'lucide-react';
 import { partListDeleteAction, sanitizeAssemblyName, sanitizePartName } from '../utils/assembly.js';
 import ProfileChip from './ProfileChip';
 import {
@@ -30,10 +30,18 @@ const STRIP_ICON = 18;
  * Assembly name in the ribbon. Same commit rules as the CAD title chip:
  * click edits, Enter or blur commits, Escape reverts, empty commits nothing.
  */
-function RibbonAssemblyName({ name, onRename, behind = false, onBehindClick = null }) {
+function RibbonAssemblyName({
+  name,
+  branch = null,
+  onRename,
+  onBranchClick = null,
+  behind = false,
+  onBehindClick = null,
+}) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   const inputRef = useRef(null);
+  const branchLabel = typeof branch === 'string' ? branch.trim() : '';
 
   useEffect(() => {
     if (editing) inputRef.current?.select();
@@ -53,25 +61,6 @@ function RibbonAssemblyName({ name, onRename, behind = false, onBehindClick = nu
   };
 
   const label = 'max-w-full truncate bg-gray-900 px-1.5 text-center text-xs font-medium text-gray-100';
-  if (editing) {
-    return (
-      <input
-        ref={inputRef}
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') { e.preventDefault(); commit(); }
-          if (e.key === 'Escape') { e.preventDefault(); setEditing(false); }
-          e.stopPropagation();
-        }}
-        className={`${label} pointer-events-auto w-full min-w-[6rem] outline-none`}
-        aria-label="Assembly name"
-        data-assembly-name=""
-        data-assembly-rename="input"
-      />
-    );
-  }
   const behindBadge = behind ? (
     <button
       type="button"
@@ -86,39 +75,86 @@ function RibbonAssemblyName({ name, onRename, behind = false, onBehindClick = nu
     />
   ) : null;
 
-  if (!onRename) {
+  if (editing) {
     return (
-      <span className="pointer-events-none inline-flex max-w-full min-w-0 items-center" data-assembly-behind-wrap={behind ? 'true' : 'false'}>
-        <span className={`${label} pointer-events-none`} data-assembly-name="" title={name}>
-          {name}
-        </span>
+      <span className="pointer-events-auto inline-flex max-w-full min-w-0 items-center" data-assembly-behind-wrap={behind ? 'true' : 'false'}>
+        <input
+          ref={inputRef}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') { e.preventDefault(); commit(); }
+            if (e.key === 'Escape') { e.preventDefault(); setEditing(false); }
+            e.stopPropagation();
+          }}
+          className={`${label} pointer-events-auto w-full min-w-[6rem] outline-none`}
+          aria-label="Assembly name"
+          data-assembly-name=""
+          data-assembly-rename="input"
+        />
         {behindBadge}
       </span>
     );
   }
+
+  const nameBtn = onRename ? (
+    <button
+      type="button"
+      onClick={start}
+      className={`${label} min-w-0 cursor-text hover:text-white`}
+      title="Click to rename this assembly"
+      aria-label={`Assembly name: ${name}. Click to rename.`}
+      data-assembly-name=""
+      data-assembly-rename="button"
+    >
+      {name}
+    </button>
+  ) : (
+    <span className={`${label} pointer-events-none min-w-0`} data-assembly-name="" title={name}>
+      {name}
+    </span>
+  );
+
+  const branchChip = branchLabel ? (
+    <>
+      <span className="shrink-0 px-0.5 text-xs text-gray-500" aria-hidden="true">on</span>
+      {onBranchClick ? (
+        <button
+          type="button"
+          data-assembly-branch=""
+          data-git-branches=""
+          title={`Branch: ${branchLabel}. Click to manage branches.`}
+          aria-label={`On branch ${branchLabel}. Open branch list.`}
+          className="pointer-events-auto max-w-[40%] truncate rounded px-1 text-xs font-medium text-blue-300 hover:bg-white/10 hover:text-blue-200"
+          onClick={(event) => {
+            event.stopPropagation();
+            onBranchClick();
+          }}
+        >
+          {branchLabel}
+        </button>
+      ) : (
+        <span className="max-w-[40%] truncate px-1 text-xs font-medium text-blue-300/80" data-assembly-branch="">
+          {branchLabel}
+        </span>
+      )}
+    </>
+  ) : null;
+
   return (
-    <span className="pointer-events-auto inline-flex max-w-full min-w-0 items-center" data-assembly-behind-wrap={behind ? 'true' : 'false'}>
-      <button
-        type="button"
-        onClick={start}
-        className={`${label} cursor-text hover:text-white`}
-        title="Click to rename this assembly"
-        aria-label={`Assembly name: ${name}. Click to rename.`}
-        data-assembly-name=""
-        data-assembly-rename="button"
-      >
-        {name}
-      </button>
+    <span
+      className={`inline-flex max-w-full min-w-0 items-center ${onRename || onBranchClick ? 'pointer-events-auto' : 'pointer-events-none'}`}
+      data-assembly-behind-wrap={behind ? 'true' : 'false'}
+      data-assembly-title-with-branch={branchLabel ? 'true' : 'false'}
+    >
+      {nameBtn}
+      {branchChip}
       {behindBadge}
     </span>
   );
 }
 
-/**
- * Part name on a feed row. Double-click (or F2 on the focused row) edits it;
- * a single click still selects the row. Enter or blur commits, Escape
- * reverts, a blank name commits nothing. The rename targets this row's id.
- */
 function RowPartName({ id, name, onRename, editing, setEditing }) {
   const [draft, setDraft] = useState('');
   const inputRef = useRef(null);
@@ -305,6 +341,7 @@ export default function PartFeed({
   onCreateBranch = null,
   onDeleteBranch = null,
   onMergeBranch = null,
+  onSquashMerge = null,
   // G6 Local → Git
   onMoveToGit = null,
   defaultVaultName = 'surfcad',
@@ -332,55 +369,16 @@ export default function PartFeed({
   const commitInputRef = useRef(null);
   // G4 conflict choice: null | { path, kind: 'part'|'assembly', name, stage, error, result }
   const [conflictFlow, setConflictFlow] = useState(null);
-  // G5/G11: null | { stage: 'list'|'create'|'delete'|'delete-confirm'|'busy'|'confirm'|'error'|'merge-pick', ... }
+  // G5/G11: null | { stage: 'pane'|'create'|'delete-confirm'|'busy'|'confirm'|'error'|'merge-conflict', ... }
   const [branchFlow, setBranchFlow] = useState(null);
-  const [branchMenuOpen, setBranchMenuOpen] = useState(false);
   const [plusMenuOpen, setPlusMenuOpen] = useState(false);
   // Assembly New/Existing leave guard: null | { pending: 'new'|'existing', stage: 'ask'|'busy'|'commit', error }
   const [leaveGuard, setLeaveGuard] = useState(null);
-  const branchMenuRef = useRef(null);
   const plusMenuRef = useRef(null);
   const branchCreateInputRef = useRef(null);
   const behindSet = behindPartIds instanceof Set
     ? behindPartIds
     : new Set(behindPartIds || []);
-
-  // G5: keep the branch list populated while in Git mode.
-  useEffect(() => {
-    if (source !== 'git' || !onListBranches) {
-      setBranchFlow(null);
-      return undefined;
-    }
-    let cancelled = false;
-    (async () => {
-      setBranchFlow((prev) => ({
-        stage: 'list',
-        items: prev?.items || [],
-        loading: true,
-        error: '',
-        pending: null,
-      }));
-      try {
-        const items = (await onListBranches()) || [];
-        if (cancelled) return;
-        setBranchFlow({
-          stage: 'list', items, loading: false,
-          error: items.length ? '' : 'No branches yet.',
-          pending: null,
-        });
-      } catch (err) {
-        if (cancelled) return;
-        setBranchFlow({
-          stage: 'list', items: [], loading: false,
-          error: err.message || 'Could not list branches',
-          pending: null,
-        });
-      }
-    })();
-    return () => { cancelled = true; };
-    // onListBranches is an App render callback; reload on source/branch only.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [source, currentBranch]);
 
   const onLoadPicked = async (event) => {
     const file = event.target.files?.[0];
@@ -642,95 +640,99 @@ export default function PartFeed({
     onMergeBranch?.({ head, base: 'main' });
   };
 
-  const closeBranchMenu = () => setBranchMenuOpen(false);
-
-  const startBranchMenu = () => {
-    if (source !== 'git') return;
-    setBranchMenuOpen((open) => !open);
-  };
-
-  const startBranchView = async () => {
-    if (source !== 'git') return;
-    closeBranchMenu();
-    setBranchFlow({ stage: 'switch-list', items: [], loading: true, error: '', pending: null });
+  const refreshBranchPane = async (preserveError = '') => {
+    setBranchFlow((prev) => ({
+      stage: 'pane',
+      items: prev?.items || [],
+      loading: true,
+      error: '',
+      pending: null,
+    }));
     try {
       const items = (await onListBranches?.()) || [];
       setBranchFlow({
-        stage: 'switch-list',
+        stage: 'pane',
         items,
         loading: false,
-        error: items.length ? '' : 'No branches yet.',
+        error: preserveError || (items.length ? '' : 'No branches yet.'),
         pending: null,
       });
     } catch (err) {
       setBranchFlow({
-        stage: 'switch-list', items: [], loading: false,
+        stage: 'pane', items: [], loading: false,
         error: err?.message || 'Could not list branches',
         pending: null,
       });
     }
   };
 
-  const startCreateBranch = async () => {
-    closeBranchMenu();
+  /** Title branch chip → branch list pane (Switch / Create / Delete / Merge). */
+  const openBranchPane = async () => {
+    if (source !== 'git') return;
+    await refreshBranchPane();
+  };
+
+  const startCreateBranch = () => {
     setBranchFlow({
-      stage: 'create', draft: '', items: [], loading: false, error: '', pending: null,
+      stage: 'create', draft: '', items: branchFlow?.items || [], loading: false, error: '', pending: null,
     });
   };
 
-  const startDeleteBranch = async () => {
-    closeBranchMenu();
-    setBranchFlow({ stage: 'delete', items: [], loading: true, error: '', pending: null });
-    try {
-      const items = (await onListBranches?.()) || [];
-      setBranchFlow({
-        stage: 'delete',
-        items,
-        loading: false,
-        error: items.length ? '' : 'No branches yet.',
-        pending: null,
-      });
-    } catch (err) {
-      setBranchFlow({
-        stage: 'delete', items: [], loading: false,
-        error: err?.message || 'Could not list branches',
-        pending: null,
-      });
-    }
-  };
-
-  const startMergeBranch = async () => {
-    closeBranchMenu();
+  const startMergeFromPane = async () => {
     const current = currentBranch || 'main';
-    if (current !== 'main') {
-      const result = onMergeBranch?.({ head: current, base: 'main' })
-        || { status: 'error', error: 'Merge unavailable' };
-      if (result.status !== 'opened') {
-        setBranchFlow({
-          stage: 'error', items: [], loading: false,
-          error: result.error || 'Could not open compare URL',
-          pending: null,
-        });
-      }
+    if (current === 'main') return;
+    if (sourceDirty) {
+      setBranchFlow((prev) => ({
+        ...(prev || { items: [], loading: false }),
+        stage: 'error',
+        error: 'Save your changes before merging into main.',
+        pending: null,
+      }));
       return;
     }
-    setBranchFlow({ stage: 'merge-pick', items: [], loading: true, error: '', pending: null });
-    try {
-      const items = ((await onListBranches?.()) || []).filter((b) => b.name !== 'main');
-      setBranchFlow({
-        stage: 'merge-pick',
-        items,
-        loading: false,
-        error: items.length ? '' : 'No side branches to merge.',
-        pending: null,
-      });
-    } catch (err) {
-      setBranchFlow({
-        stage: 'merge-pick', items: [], loading: false,
-        error: err?.message || 'Could not list branches',
-        pending: null,
-      });
+    setBranchFlow((prev) => ({
+      ...(prev || { items: [] }),
+      stage: 'busy',
+      error: '',
+      pending: current,
+    }));
+    const result = (await onSquashMerge?.({ head: current, base: 'main' }))
+      || { status: 'error', error: 'Merge unavailable' };
+    if (result.status === 'merged' || result.status === 'up-to-date') {
+      setBranchFlow(null);
+      return;
     }
+    if (result.status === 'conflict') {
+      setBranchFlow({
+        stage: 'merge-conflict',
+        items: [],
+        loading: false,
+        error: '',
+        pending: current,
+        url: result.url || null,
+      });
+      return;
+    }
+    setBranchFlow({
+      stage: 'error', items: [], loading: false,
+      error: result.error || 'Merge failed',
+      pending: current,
+    });
+  };
+
+  const resolveMergeOnGithub = () => {
+    const head = branchFlow?.pending || currentBranch;
+    const result = onMergeBranch?.({ head, base: 'main' })
+      || { status: 'error', error: 'Could not open compare URL' };
+    if (result.status === 'opened') {
+      setBranchFlow(null);
+      return;
+    }
+    setBranchFlow((prev) => ({
+      ...(prev || {}),
+      stage: 'error',
+      error: result.error || 'Could not open compare URL',
+    }));
   };
 
   const requestSwitchBranch = (name) => {
@@ -777,14 +779,7 @@ export default function PartFeed({
     setBranchFlow((prev) => ({ ...(prev || {}), stage: 'busy', error: '' }));
     const result = (await onCreateBranch?.(draft)) || { status: 'error', error: 'Create unavailable' };
     if (result.status === 'created') {
-      setBranchFlow(null);
-      try {
-        const items = (await onListBranches?.()) || [];
-        setBranchFlow({
-          stage: 'list', items, loading: false,
-          error: items.length ? '' : 'No branches yet.', pending: null,
-        });
-      } catch { /* side list refresh best-effort */ }
+      await refreshBranchPane();
       return;
     }
     setBranchFlow({
@@ -813,14 +808,7 @@ export default function PartFeed({
     }));
     const result = (await onDeleteBranch?.(target)) || { status: 'error', error: 'Delete unavailable' };
     if (result.status === 'deleted') {
-      setBranchFlow(null);
-      try {
-        const items = (await onListBranches?.()) || [];
-        setBranchFlow({
-          stage: 'list', items, loading: false,
-          error: items.length ? '' : 'No branches yet.', pending: null,
-        });
-      } catch { /* side list refresh best-effort */ }
+      await refreshBranchPane();
       return;
     }
     setBranchFlow({
@@ -829,35 +817,9 @@ export default function PartFeed({
     });
   };
 
-  const runMergePick = (name) => {
-    if (!name) return;
-    const result = onMergeBranch?.({ head: name, base: 'main' })
-      || { status: 'error', error: 'Merge unavailable' };
-    if (result.status === 'opened') {
-      setBranchFlow(null);
-      return;
-    }
-    setBranchFlow((prev) => ({
-      ...(prev || {}),
-      stage: 'error',
-      error: result.error || 'Could not open compare URL',
-    }));
-  };
-
   useEffect(() => {
     if (branchFlow?.stage === 'create') branchCreateInputRef.current?.focus();
   }, [branchFlow?.stage]);
-
-  useEffect(() => {
-    if (!branchMenuOpen) return undefined;
-    const onDoc = (event) => {
-      if (branchMenuRef.current && !branchMenuRef.current.contains(event.target)) {
-        setBranchMenuOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', onDoc);
-    return () => document.removeEventListener('mousedown', onDoc);
-  }, [branchMenuOpen]);
 
   useEffect(() => {
     if (!plusMenuOpen) return undefined;
@@ -1070,8 +1032,11 @@ export default function PartFeed({
           data-parts-ribbon-center=""
         >
           {ribbonName ? (
-            <RibbonAssemblyName name={ribbonName}
+            <RibbonAssemblyName
+              name={ribbonName}
+              branch={source === 'git' ? (currentBranch || 'main') : null}
               onRename={onRenameAssembly}
+              onBranchClick={source === 'git' ? () => { void openBranchPane(); } : null}
               behind={!!assemblyBehind}
               onBehindClick={() => openConflict(assemblyPath || '', 'assembly', ribbonName)}
             />
@@ -1102,60 +1067,6 @@ export default function PartFeed({
                 />
               ) : null}
             </button>
-          )}
-          {source === 'git' && (
-            <div className="relative" ref={branchMenuRef} data-git-branch-menu="">
-              <button
-                type="button"
-                className={STRIP_BTN}
-                data-git-branches=""
-                title={currentBranch ? `Branch (on ${currentBranch})` : 'Branch'}
-                aria-label="Branch"
-                aria-expanded={branchMenuOpen ? 'true' : 'false'}
-                onClick={startBranchMenu}
-              >
-                <GitBranch size={STRIP_ICON} />
-              </button>
-              {branchMenuOpen && (
-                <div
-                  data-git-branch-dropdown=""
-                  className="absolute right-0 top-full z-50 mt-1 min-w-[9rem] rounded-md border border-gray-600 bg-gray-900 py-1 shadow-lg"
-                >
-                  <button
-                    type="button"
-                    data-git-branch-action="switch"
-                    className="block w-full px-3 py-1.5 text-left text-xs text-gray-100 hover:bg-white/10"
-                    onClick={() => { void startBranchView(); }}
-                  >
-                    Switch
-                  </button>
-                  <button
-                    type="button"
-                    data-git-branch-action="create"
-                    className="block w-full px-3 py-1.5 text-left text-xs text-gray-100 hover:bg-white/10"
-                    onClick={() => { void startCreateBranch(); }}
-                  >
-                    Create
-                  </button>
-                  <button
-                    type="button"
-                    data-git-branch-action="delete"
-                    className="block w-full px-3 py-1.5 text-left text-xs text-gray-100 hover:bg-white/10"
-                    onClick={() => { void startDeleteBranch(); }}
-                  >
-                    Delete
-                  </button>
-                  <button
-                    type="button"
-                    data-git-branch-action="merge"
-                    className="block w-full px-3 py-1.5 text-left text-xs text-gray-100 hover:bg-white/10"
-                    onClick={() => { void startMergeBranch(); }}
-                  >
-                    Merge
-                  </button>
-                </div>
-              )}
-            </div>
           )}
           <div className={STRIP_DIVIDER} />
           {/* G6 Move-to-Git kept available off-strip (not a mode toggle). */}
@@ -1347,54 +1258,7 @@ export default function PartFeed({
             </div>
           );
         })}
-        {source === 'git' && (
-          <div className="border-t border-gray-700/80 px-2 py-2" data-git-branch-section="">
-            <div className="mb-1 flex items-center justify-between gap-2">
-              <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
-                Branches
-              </span>
-              <button
-                type="button"
-                className="rounded px-1.5 py-0.5 text-[10px] text-blue-400 hover:bg-white/5"
-                data-git-branches-refresh=""
-                onClick={startBranchView}
-              >
-                {currentBranch ? `on ${currentBranch}` : 'List'}
-              </button>
-            </div>
-            {branchFlow?.stage === 'list' && !branchFlow.loading && (branchFlow.items || []).map((b) => {
-              const current = !!b.current || b.name === currentBranch;
-              return (
-                <button
-                  key={b.name}
-                  type="button"
-                  data-git-branch-row={b.name}
-                  data-git-branch-current={current ? 'true' : 'false'}
-                  className={`flex w-full items-center justify-between rounded px-1.5 py-1 text-left text-[11px] ${
-                    current
-                      ? 'bg-blue-600/20 text-blue-200'
-                      : 'text-gray-300 hover:bg-white/5'
-                  }`}
-                  onClick={() => requestSwitchBranch(b.name)}
-                >
-                  <span className="truncate font-mono">{b.name}</span>
-                  {current ? (
-                    <span className="shrink-0 text-[9px] uppercase tracking-wide text-blue-300" data-git-branch-marker="">
-                      current
-                    </span>
-                  ) : null}
-                </button>
-              );
-            })}
-            {branchFlow?.loading && (
-              <p className="text-[10px] text-gray-500" data-git-branch-loading="">Loading…</p>
-            )}
-            {branchFlow?.error && branchFlow.stage === 'list' && (
-              <p className="text-[10px] text-amber-300" data-git-branch-list-error="">{branchFlow.error}</p>
-            )}
-          </div>
-        )}
-      </div>
+              </div>
 
       {openPicker && typeof document !== 'undefined' && openPicker.kind === 'open' && (
         <VaultPickerDialog
@@ -1853,20 +1717,18 @@ export default function PartFeed({
         branchFlow.stage === 'confirm'
         || branchFlow.stage === 'busy'
         || branchFlow.stage === 'error'
-        || branchFlow.stage === 'switch-list'
+        || branchFlow.stage === 'pane'
         || branchFlow.stage === 'create'
-        || branchFlow.stage === 'delete'
         || branchFlow.stage === 'delete-confirm'
-        || branchFlow.stage === 'merge-pick'
+        || branchFlow.stage === 'merge-conflict'
       ) && typeof document !== 'undefined' && (
         <VaultPickerDialog
           title={
             branchFlow.stage === 'confirm' ? 'Switch branch?'
               : branchFlow.stage === 'create' ? 'Create branch'
-                : branchFlow.stage === 'delete' || branchFlow.stage === 'delete-confirm' ? 'Delete branch'
-                  : branchFlow.stage === 'merge-pick' ? 'Merge branch'
-                    : branchFlow.stage === 'switch-list' ? 'Switch branch'
-                      : 'Branches'
+                : branchFlow.stage === 'delete-confirm' ? 'Delete branch'
+                  : branchFlow.stage === 'merge-conflict' ? 'Cannot squash merge'
+                    : 'Branches'
           }
           labelledBy="git-branch-title"
           dataAttr="branch"
@@ -1890,7 +1752,12 @@ export default function PartFeed({
               )}
               {branchFlow.stage === 'create' && (
                 <>
-                  <button type="button" className="rounded-md px-3 py-1.5 text-xs text-gray-200 hover:bg-white/10" onClick={closeBranches} data-git-branch-cancel="">
+                  <button
+                    type="button"
+                    className="rounded-md px-3 py-1.5 text-xs text-gray-200 hover:bg-white/10"
+                    onClick={() => { void refreshBranchPane(); }}
+                    data-git-branch-cancel=""
+                  >
                     Cancel
                   </button>
                   <button
@@ -1905,7 +1772,12 @@ export default function PartFeed({
               )}
               {branchFlow.stage === 'delete-confirm' && (
                 <>
-                  <button type="button" className="rounded-md px-3 py-1.5 text-xs text-gray-200 hover:bg-white/10" onClick={closeBranches} data-git-branch-cancel="">
+                  <button
+                    type="button"
+                    className="rounded-md px-3 py-1.5 text-xs text-gray-200 hover:bg-white/10"
+                    onClick={() => { void refreshBranchPane(); }}
+                    data-git-branch-cancel=""
+                  >
                     Cancel
                   </button>
                   <button
@@ -1918,7 +1790,22 @@ export default function PartFeed({
                   </button>
                 </>
               )}
-              {(branchFlow.stage === 'switch-list' || branchFlow.stage === 'delete' || branchFlow.stage === 'merge-pick' || branchFlow.stage === 'error') && (
+              {branchFlow.stage === 'merge-conflict' && (
+                <>
+                  <button type="button" className="rounded-md px-3 py-1.5 text-xs text-gray-200 hover:bg-white/10" onClick={closeBranches} data-git-branch-cancel="">
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-500"
+                    data-git-branch-resolve-github=""
+                    onClick={resolveMergeOnGithub}
+                  >
+                    Resolve on Git
+                  </button>
+                </>
+              )}
+              {(branchFlow.stage === 'pane' || branchFlow.stage === 'error') && (
                 <button type="button" className="rounded-md px-3 py-1.5 text-xs text-gray-200 hover:bg-white/10" onClick={closeBranches} data-git-dialog-cancel="">
                   Close
                 </button>
@@ -1973,8 +1860,38 @@ export default function PartFeed({
               {'? This cannot be undone from SurfCAD.'}
             </p>
           )}
-          {(branchFlow.stage === 'switch-list' || branchFlow.stage === 'delete' || branchFlow.stage === 'merge-pick') && (
-            <>
+          {branchFlow.stage === 'merge-conflict' && (
+            <p className="text-xs text-gray-300" data-git-branch-merge-conflict="">
+              {'This branch has diverged from '}
+              <span className="font-mono text-gray-100">main</span>
+              {'. Resolve the merge on GitHub, then switch back to main.'}
+            </p>
+          )}
+          {branchFlow.stage === 'pane' && (
+            <div data-git-branch-pane="">
+              <div className="mb-2 flex items-center gap-2" data-git-branch-pane-toolbar="">
+                {(currentBranch || 'main') !== 'main' ? (
+                  <button
+                    type="button"
+                    data-git-branch-action="merge"
+                    className="rounded-md bg-blue-600/80 px-2.5 py-1 text-[11px] font-medium text-white hover:bg-blue-500"
+                    onClick={() => { void startMergeFromPane(); }}
+                  >
+                    Merge
+                  </button>
+                ) : null}
+                <div className="flex-1" />
+                <button
+                  type="button"
+                  data-git-branch-action="create"
+                  className="rounded p-1 text-blue-400 hover:bg-white/10"
+                  title="Create branch"
+                  aria-label="Create branch"
+                  onClick={startCreateBranch}
+                >
+                  <Plus size={16} />
+                </button>
+              </div>
               {branchFlow.loading && (
                 <p className="text-xs text-gray-400" data-git-branch-loading="">Loading…</p>
               )}
@@ -1987,25 +1904,18 @@ export default function PartFeed({
                     const current = !!b.current || b.name === currentBranch;
                     const canDelete = b.name !== 'main' && !current;
                     return (
-                      <li key={b.name}>
+                      <li key={b.name} className="flex items-center gap-1">
                         <button
                           type="button"
                           data-git-branch-row={b.name}
                           data-git-branch-current={current ? 'true' : 'false'}
-                          disabled={
-                            (branchFlow.stage === 'delete' && !canDelete)
-                            || (branchFlow.stage === 'switch-list' && current)
-                          }
-                          className={`flex w-full items-center justify-between rounded px-2 py-1.5 text-left text-xs ${
+                          disabled={current}
+                          className={`flex min-w-0 flex-1 items-center justify-between rounded px-2 py-1.5 text-left text-xs ${
                             current
                               ? 'bg-blue-600/20 text-blue-200'
                               : 'text-gray-100 hover:bg-white/10'
-                          } disabled:cursor-not-allowed disabled:opacity-40`}
-                          onClick={() => {
-                            if (branchFlow.stage === 'switch-list') requestSwitchBranch(b.name);
-                            else if (branchFlow.stage === 'delete') requestDeleteBranch(b.name);
-                            else if (branchFlow.stage === 'merge-pick') runMergePick(b.name);
-                          }}
+                          } disabled:cursor-default`}
+                          onClick={() => requestSwitchBranch(b.name)}
                         >
                           <span className="truncate font-mono">{b.name}</span>
                           {current ? (
@@ -2013,16 +1923,28 @@ export default function PartFeed({
                               current
                             </span>
                           ) : null}
-                          {branchFlow.stage === 'delete' && !canDelete ? (
-                            <span className="shrink-0 text-[9px] text-gray-500">protected</span>
-                          ) : null}
                         </button>
+                        {canDelete ? (
+                          <button
+                            type="button"
+                            data-git-branch-action="delete"
+                            data-git-branch-delete-row={b.name}
+                            title={`Delete ${b.name}`}
+                            aria-label={`Delete branch ${b.name}`}
+                            className="shrink-0 rounded p-1 text-gray-500 hover:bg-red-500/15 hover:text-red-300"
+                            onClick={() => requestDeleteBranch(b.name)}
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        ) : (
+                          <span className="w-6 shrink-0 text-center text-[9px] text-gray-600" title="protected">·</span>
+                        )}
                       </li>
                     );
                   })}
                 </ul>
               )}
-            </>
+            </div>
           )}
         </VaultPickerDialog>
       )}

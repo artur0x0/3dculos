@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 /**
- * G11 Parts vault chrome: Save=Commit label, Branch dropdown (Switch/Create/
- * Delete/Merge), Open browse + assembly choice (Open vs Insert), adapter
- * deleteBranch + branch helpers. Mock only — no network, no tokens.
+ * G11 Parts vault chrome: Save=Commit label, title branch chip → pane
+ * (list / Create / Delete / Merge squash), Open browse + assembly choice
+ * (Open vs Insert), adapter deleteBranch + squashMerge + branch helpers.
+ * Mock only — no network, no tokens.
  */
 import { readFileSync } from 'node:fs';
 import { createMockGithubAdapter } from '../../src/utils/git/mockGithubAdapter.js';
@@ -18,6 +19,7 @@ import {
 import {
   listVaultBranches, createVaultBranch, deleteVaultBranch,
   githubCompareUrl, canDeleteVaultBranch, switchVaultBranch,
+  squashMergeVaultBranch,
 } from '../../src/utils/git/gitBranch.js';
 import * as gitIndex from '../../src/utils/git/index.js';
 
@@ -93,6 +95,42 @@ console.log('git G11 — branch helpers (create / delete / compare URL)');
   ok('compare null without head', githubCompareUrl({ owner: 'a', name: 'b' }, { base: 'main' }) === null);
 }
 
+console.log('\ngit G11 — squash merge into main');
+{
+  const { gh, repo, seedSha } = await seedVault();
+  await createVaultBranch(gh, repo, 'feature/squash', { fromSha: seedSha });
+  // Ahead-only: commit on feature, then squash into main.
+  const ahead = await gh.commitFiles(repo, {
+    branch: 'feature/squash', message: 'side work',
+    baseSha: seedSha,
+    files: [fileWrite(BRACKET, 'return Manifold.cube([11,11,11], true);')],
+  });
+  const merged = await squashMergeVaultBranch(gh, repo, { head: 'feature/squash', base: 'main' });
+  eq('squash status', merged.status, 'merged');
+  ok('main advanced', merged.sha && merged.sha !== seedSha);
+  eq('main tip is squash', (await gh.getBranch(repo, 'main')).sha, merged.sha);
+  eq('main has side content', (await gh.readFile(repo, BRACKET, 'main')).content,
+    'return Manifold.cube([11,11,11], true);');
+  const up = await squashMergeVaultBranch(gh, repo, { head: 'feature/squash', base: 'main' });
+  // feature tip still points at ahead.sha; main is ahead of it → behindBy > 0 → conflict
+  // or if compare sees identical trees via ancestry — expect conflict when behind.
+  ok('re-squash after main moved is conflict or up-to-date',
+    up.status === 'conflict' || up.status === 'up-to-date', up.status);
+  // Diverged: commit on main and on another branch from seed.
+  await createVaultBranch(gh, repo, 'feature/diverge', { fromSha: seedSha });
+  await gh.commitFiles(repo, {
+    branch: 'main', message: 'main only', baseSha: (await gh.getBranch(repo, 'main')).sha,
+    files: [fileWrite(BOLT, 'return Manifold.cylinder(7, 1.5, 1.5, 24);')],
+  });
+  await gh.commitFiles(repo, {
+    branch: 'feature/diverge', message: 'side only', baseSha: seedSha,
+    files: [fileWrite(BRACKET, 'return Manifold.cube([12,12,12], true);')],
+  });
+  const conflict = await squashMergeVaultBranch(gh, repo, { head: 'feature/diverge', base: 'main' });
+  eq('diverged is conflict', conflict.status, 'conflict');
+  ok('conflict has compare URL', typeof conflict.url === 'string' && /compare/.test(conflict.url), conflict.url);
+}
+
 console.log('\ngit G11 — Open browse + insert parts');
 {
   const { gh, repo, gearbox } = await seedVault();
@@ -114,17 +152,25 @@ const app = readFileSync(new URL('../../src/App.jsx', import.meta.url), 'utf8');
 const arch = readFileSync(new URL('../../docs/architecture.md', import.meta.url), 'utf8');
 ok('Save = Commit chrome', /data-git-save=""/.test(feed) && /data-git-commit=""/.test(feed)
   && /aria-label="Save"/.test(feed) && /Save to vault/.test(feed));
-ok('Branch dropdown actions', /data-git-branch-dropdown/.test(feed)
-  && /data-git-branch-action="switch"/.test(feed)
+ok('title chip → pane actions', /data-assembly-branch=""/.test(feed)
+  && /data-git-branches=""/.test(feed) && /data-git-branch-pane=""/.test(feed)
   && /data-git-branch-action="create"/.test(feed)
   && /data-git-branch-action="delete"/.test(feed)
-  && /data-git-branch-action="merge"/.test(feed));
-ok('Save before Branch in ribbon end', (() => {
+  && /data-git-branch-action="merge"/.test(feed)
+  && !/data-git-branch-dropdown/.test(feed)
+  && !/data-git-branch-section/.test(feed));
+ok('Save still on ribbon end (no Branch button)', (() => {
   const end = feed.indexOf('data-parts-ribbon-end');
   const save = feed.indexOf('data-git-save=""', end);
-  const branch = feed.indexOf('data-git-branches=""', end);
-  return end >= 0 && save > end && branch > save;
+  const branchInRibbon = feed.indexOf('data-git-branches=""', end);
+  // Branch chip lives on the title, before ribbon-end.
+  const titleChip = feed.indexOf('data-assembly-branch=""');
+  return end >= 0 && save > end && (branchInRibbon < 0 || branchInRibbon < end)
+    && titleChip >= 0 && titleChip < end;
 })());
+ok('merge conflict → Resolve on Git', /data-git-branch-merge-conflict/.test(feed)
+  && /data-git-branch-resolve-github/.test(feed)
+  && /startMergeFromPane/.test(feed) && /onSquashMerge/.test(feed));
 ok('Open assembly choice', (/data-git-dialog="open-choice"/.test(feed) || /dataAttr="open-choice"/.test(feed))
   && /data-git-open-replace/.test(feed) && /data-git-open-insert/.test(feed)
   && /Insert parts into current/.test(feed) && /Open assembly/.test(feed));
@@ -132,20 +178,24 @@ ok('Open browses parts + assemblies', /data-git-open-assemblies/.test(feed) && /
   && /data-git-open-part=/.test(feed));
 ok('delete confirm + protected', /data-git-branch-delete-confirm/.test(feed)
   && /data-git-branch-delete-warn/.test(feed) && /protected/.test(feed));
-ok('App wires create/delete/merge/insert/browse', /handleCreateBranch/.test(app)
+ok('App wires create/delete/merge/squash/insert/browse', /handleCreateBranch/.test(app)
   && /handleDeleteBranch/.test(app) && /handleMergeBranch/.test(app)
+  && /handleSquashMerge/.test(app) && /squashMergeVaultBranch\(/.test(app)
   && /handleInsertVaultAssemblyParts/.test(app) && /handleListVaultBrowse/.test(app)
   && /handleOpenVaultPart/.test(app)
   && /onCreateBranch=\{handleCreateBranch\}/.test(app)
   && /onMergeBranch=\{handleMergeBranch\}/.test(app)
+  && /onSquashMerge=\{handleSquashMerge\}/.test(app)
   && /githubCompareUrl\(/.test(app) && /window\.open\(url/.test(app));
 ok('index exports G11 helpers', typeof gitIndex.createVaultBranch === 'function'
   && typeof gitIndex.deleteVaultBranch === 'function'
   && typeof gitIndex.githubCompareUrl === 'function'
+  && typeof gitIndex.squashMergeVaultBranch === 'function'
   && typeof gitIndex.listVaultBrowseItems === 'function'
   && typeof gitIndex.planInsertVaultAssemblyParts === 'function'
   && typeof gitIndex.canDeleteVaultBranch === 'function');
-ok('adapter has deleteBranch', typeof gitIndex.createMockGithubAdapter({}).deleteBranch === 'function');
+ok('adapter has deleteBranch + squashMerge', typeof gitIndex.createMockGithubAdapter({}).deleteBranch === 'function'
+  && typeof gitIndex.createMockGithubAdapter({}).squashMerge === 'function');
 ok('architecture mentions G11 Parts chrome', /G11/.test(arch) && /Save = Commit|Save \(commit\)|Parts vault chrome/i.test(arch));
 ok('Toolbar Script is Upload+Download only (G12)', (() => {
   const toolbar = readFileSync(new URL('../../src/components/Toolbar.jsx', import.meta.url), 'utf8');

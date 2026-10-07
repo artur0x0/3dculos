@@ -133,9 +133,12 @@ console.log('\ngit G5 — rename-on-Commit moves paths');
 console.log('\ngit G5 — UI wiring (PartFeed + App)');
 const feed = readFileSync(new URL('../../src/components/PartFeed.jsx', import.meta.url), 'utf8');
 const app = readFileSync(new URL('../../src/App.jsx', import.meta.url), 'utf8');
-ok('branch section + rows', /data-git-branch-section/.test(feed) && /data-git-branch-row=/.test(feed)
-  && /data-git-branch-current=/.test(feed) && /data-git-branch-marker/.test(feed));
-ok('branch ribbon button', /data-git-branches=""/.test(feed) && /GitBranch/.test(feed));
+ok('title branch chip + pane rows', /data-assembly-branch=""/.test(feed) && /data-git-branches=""/.test(feed)
+  && /data-git-branch-pane=""/.test(feed) && /data-git-branch-row=/.test(feed)
+  && /data-git-branch-current=/.test(feed) && /data-git-branch-marker/.test(feed)
+  && !/data-git-branch-section/.test(feed));
+ok('title opens branch pane', /openBranchPane/.test(feed) && /onBranchClick=/.test(feed)
+  && !/GitBranch/.test(feed) && !/data-git-branch-dropdown/.test(feed));
 ok('dirty switch confirm', /data-git-branch-dirty-warn/.test(feed) && /data-git-branch-confirm/.test(feed));
 ok('App wires list + switch', /handleListBranches/.test(app) && /handleSwitchBranch/.test(app)
   && /listVaultBranches\(/.test(app) && /switchVaultBranch\(/.test(app)

@@ -26,6 +26,8 @@
  *       ONE commit. With baseSha, the write is refused (GitAdapterError
  *       code 'non_fast_forward') when the branch head is not baseSha.
  *   compare(repo, base, head)                    -> CompareResult
+ *   squashMerge(repo, { base, head, message })   -> { sha, base, head }
+ *       Squash head onto base (single commit, parent = base tip).
  *       base/head are branch names or commit shas.
  *       { status: 'identical'|'ahead'|'behind'|'diverged',
  *         aheadBy, behindBy, mergeBaseSha, baseSha, headSha,
@@ -47,6 +49,7 @@ export const GITHUB_ADAPTER_METHODS = Object.freeze([
   'readFile',
   'commitFiles',
   'compare',
+  'squashMerge',
 ]);
 
 export const GIT_ADAPTER_ERROR_CODES = Object.freeze([

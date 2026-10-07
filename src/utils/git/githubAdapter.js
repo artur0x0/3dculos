@@ -459,6 +459,51 @@ export function createGithubAdapter({ token, fetchImpl = globalThis.fetch, apiBa
       return { sha: newSha, parents: [head], branch: target };
     },
 
+    /**
+     * Squash `head` onto `base`: one new commit on base with head's tree and
+     * parent = base tip. Caller must ensure head is ahead-only (not behind).
+     */
+    async squashMerge(repo, { base = 'main', head, message } = {}) {
+      if (!head) throw new GitAdapterError('invalid', 'squashMerge needs head');
+      const baseBr = await getBranchInner(repo, base);
+      const headBr = await getBranchInner(repo, head);
+      if (!baseBr?.sha) throw new GitAdapterError('not_found', `Branch ${base} not found`);
+      if (!headBr?.sha) throw new GitAdapterError('not_found', `Branch ${head} not found`);
+
+      const { res: cRes, data: cData } = await json(
+        `${repoPath(repo)}/git/commits/${encodeURIComponent(headBr.sha)}`,
+      );
+      if (!cRes.ok) throw new GitAdapterError('invalid', cData?.message || 'head commit failed');
+      const treeSha = cData?.tree?.sha;
+      if (!treeSha) throw new GitAdapterError('invalid', 'head commit has no tree');
+
+      const msg = String(message || '').trim() || `Squash merge ${head} into ${base}`;
+      const { res: commitRes, data: commitData } = await json(`${repoPath(repo)}/git/commits`, {
+        method: 'POST',
+        body: {
+          message: msg,
+          tree: treeSha,
+          parents: [baseBr.sha],
+        },
+      });
+      if (!commitRes.ok) {
+        throw new GitAdapterError('invalid', commitData?.message || 'squash commit failed');
+      }
+      const newSha = commitData.sha;
+
+      const { res: refRes, data: refData } = await json(
+        `${repoPath(repo)}/git/refs/heads/${encodeURIComponent(base)}`,
+        { method: 'PATCH', body: { sha: newSha, force: false } },
+      );
+      if (refRes.status === 422) {
+        throw new GitAdapterError('non_fast_forward', refData?.message || `${base} moved`);
+      }
+      if (!refRes.ok) {
+        throw new GitAdapterError('invalid', refData?.message || 'ref update failed');
+      }
+      return { sha: newSha, base, head, parents: [baseBr.sha] };
+    },
+
     async compare(repo, base, head) {
       const { res, data } = await json(
         `${repoPath(repo)}/compare/${encodeURIComponent(base)}...${encodeURIComponent(head)}`,
