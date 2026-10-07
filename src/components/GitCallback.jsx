@@ -1,11 +1,15 @@
 /**
  * SPA page at /git/callback — receives ?code=&state= from GitHub OAuth,
  * POSTs the code to the stateless exchange endpoint, stores the token in
- * sessionStorage, then redirects home. Never persists the token server-side.
+ * sessionStorage, then hands off to App. Never persists the token server-side.
  *
  * Mounted outside React StrictMode (see main.jsx) so the effect does not
  * double-fire and clear OAuth state before exchange. completeGithubCallback
  * also dedupes by code for defense in depth.
+ *
+ * Success uses onComplete (soft navigate) when provided so the already-loaded
+ * module graph mounts App once. Falls back to location.replace('/') only when
+ * mounted without a parent router (tests / unexpected entry).
  */
 import { useEffect, useState } from 'react';
 import {
@@ -14,7 +18,7 @@ import {
   GITHUB_OAUTH_STATE_MISSING_HINT,
 } from '../utils/git/githubAuth.js';
 
-export default function GitCallback() {
+export default function GitCallback({ onComplete } = {}) {
   const [status, setStatus] = useState('exchanging'); // exchanging | ok | error
   const [error, setError] = useState('');
 
@@ -27,16 +31,20 @@ export default function GitCallback() {
       if (cancelled) return;
       if (result.ok) {
         setStatus('ok');
-        // Clean URL then go home so App picks up the token.
+        // Drop ?code=&state= from the URL, then mount App without a full reload.
         window.history.replaceState({}, '', '/');
-        window.location.replace('/');
+        if (typeof onComplete === 'function') {
+          onComplete();
+        } else {
+          window.location.replace('/');
+        }
       } else {
         setStatus('error');
         setError(result.error || 'OAuth failed');
       }
     })();
     return () => { cancelled = true; };
-  }, []);
+  }, [onComplete]);
 
   const sameOriginHint = error === GITHUB_OAUTH_STATE_MISSING_HINT
     || /OAuth state/i.test(error);

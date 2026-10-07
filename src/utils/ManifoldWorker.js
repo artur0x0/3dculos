@@ -32,42 +32,71 @@ class ManifoldWorker {
       console.log('[ManifoldWorker] Already initialized');
       return;
     }
-    
-    return new Promise((resolve, reject) => {
+    // Dedupe concurrent init (StrictMode remount / overlapping callers).
+    if (this._initPromise) return this._initPromise;
+
+    const INIT_TIMEOUT_MS = 60000;
+    this._initPromise = new Promise((resolve, reject) => {
+      let settled = false;
+      const settle = (fn) => (value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeoutId);
+        this._initCancel = null;
+        fn(value);
+      };
+      const resolveInit = settle(resolve);
+      const rejectInit = settle(reject);
+      this._initCancel = (reason) => rejectInit(reason instanceof Error ? reason : new Error(String(reason || 'Worker init cancelled')));
+
+      const timeoutId = setTimeout(() => {
+        rejectInit(new Error(`Manifold worker init timed out after ${INIT_TIMEOUT_MS / 1000}s`));
+        try {
+          if (this.worker) {
+            this.worker.terminate();
+            this.worker = null;
+          }
+        } catch { /* ignore */ }
+        this.isReady = false;
+      }, INIT_TIMEOUT_MS);
+
       try {
         // Create worker using Vite's import
         this.worker = new SandboxWorker();
-        
+
         this.worker.onmessage = (event) => this._handleMessage(event);
-        
+
         this.worker.onerror = (error) => {
           console.error('[ManifoldWorker] Worker error:', error);
-          reject(new Error(`Worker error: ${error.message}`));
+          rejectInit(new Error(`Worker error: ${error.message || 'unknown'}`));
         };
-        
+
         // Wait for 'loaded' signal, then send init
         const initHandler = (event) => {
-          if (event.data.type === 'loaded') {
-            console.log('[ManifoldWorker] Worker loaded, sending init...');
-            
-            const initId = this._generateRequestId();
-            this.pendingRequests.set(initId, { resolve, reject });
-            
-            // No payload needed - worker imports WASM directly
-            this.worker.postMessage({
-              type: 'init',
-              id: initId,
-              payload: {}
-            });
-          }
+          if (event.data.type !== 'loaded') return;
+          this.worker.removeEventListener('message', initHandler);
+          console.log('[ManifoldWorker] Worker loaded, sending init...');
+
+          const initId = this._generateRequestId();
+          this.pendingRequests.set(initId, { resolve: resolveInit, reject: rejectInit });
+
+          // No payload needed - worker imports WASM directly
+          this.worker.postMessage({
+            type: 'init',
+            id: initId,
+            payload: {}
+          });
         };
-        
+
         this.worker.addEventListener('message', initHandler);
-        
       } catch (error) {
-        reject(error);
+        rejectInit(error);
       }
+    }).finally(() => {
+      this._initPromise = null;
     });
+
+    return this._initPromise;
   }
   
   /**
@@ -389,12 +418,20 @@ class ManifoldWorker {
     if (!this.isReady) {
       throw new Error('ManifoldWorker not initialized');
     }
-    
+
+    const timeoutMs = 15000;
     return new Promise((resolve, reject) => {
       const requestId = this._generateRequestId();
-      
-      this.pendingRequests.set(requestId, { resolve, reject });
-      
+      const timeoutId = setTimeout(() => {
+        this.pendingRequests.delete(requestId);
+        reject(new Error(`getHelperList timed out after ${timeoutMs / 1000}s`));
+      }, timeoutMs);
+
+      this.pendingRequests.set(requestId, {
+        resolve: (result) => { clearTimeout(timeoutId); resolve(result); },
+        reject: (error) => { clearTimeout(timeoutId); reject(error); },
+      });
+
       this.worker.postMessage({
         type: 'getHelperList',
         id: requestId
@@ -671,13 +708,21 @@ class ManifoldWorker {
    * Terminate the worker
    */
   terminate() {
-    if (this.worker) {
-      this.worker.terminate();
-      this.worker = null;
-      this.isReady = false;
-      this.pendingRequests.clear();
-      console.log('[ManifoldWorker] Terminated');
+    if (this._initCancel) {
+      try { this._initCancel(new Error('Worker terminated')); } catch { /* ignore */ }
+      this._initCancel = null;
     }
+    for (const [, request] of this.pendingRequests) {
+      try { request.reject?.(new Error('Worker terminated')); } catch { /* ignore */ }
+    }
+    this.pendingRequests.clear();
+    this._initPromise = null;
+    if (this.worker) {
+      try { this.worker.terminate(); } catch { /* ignore */ }
+      this.worker = null;
+    }
+    this.isReady = false;
+    console.log('[ManifoldWorker] Terminated');
   }
   
   /**
@@ -790,13 +835,25 @@ class ManifoldContext {
    * Initialize the context
    */
   async init() {
-    this.worker = new ManifoldWorker();
-    await this.worker.init();
-    
-    // Expose on window for backward compatibility
-    window.ManifoldContext = this;
-    
-    console.log('[ManifoldContext] Initialized');
+    if (this.worker?.isReady) {
+      window.ManifoldContext = this;
+      return;
+    }
+    if (this._initPromise) return this._initPromise;
+
+    this._initPromise = (async () => {
+      this.worker = new ManifoldWorker();
+      await this.worker.init();
+      // Expose on window for backward compatibility
+      window.ManifoldContext = this;
+      console.log('[ManifoldContext] Initialized');
+    })();
+
+    try {
+      await this._initPromise;
+    } finally {
+      this._initPromise = null;
+    }
   }
   
   /**
@@ -1034,6 +1091,7 @@ class ManifoldContext {
    * Terminate the context
    */
   terminate() {
+    this._initPromise = null;
     if (this.worker) {
       this.worker.terminate();
       this.worker = null;

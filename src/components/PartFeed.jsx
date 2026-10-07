@@ -1336,7 +1336,20 @@ export default function PartFeed({
                     className="rounded-md px-3 py-1.5 text-xs text-gray-200 hover:bg-white/10"
                     data-git-move-switch-only=""
                     title="Switch to Git mode without writing these parts to the vault"
-                    onClick={() => { closeMove(); onToggleSource?.(); }}
+                    onClick={async () => {
+                      // Keep the dialog open with a busy state while find-or-create
+                      // runs — closing first left the phone on Local with no feedback
+                      // when the real GitHub adapter hung.
+                      setMoveFlow((prev) => (prev ? { ...prev, stage: 'busy', error: '' } : prev));
+                      const ok = await onToggleSource?.();
+                      if (ok === false) {
+                        setMoveFlow((prev) => (prev
+                          ? { ...prev, stage: 'form', error: 'Could not open the vault. Connect GitHub or try again.' }
+                          : prev));
+                        return;
+                      }
+                      closeMove();
+                    }}
                   >
                     Switch only
                   </button>
@@ -1419,7 +1432,9 @@ export default function PartFeed({
               {moveFlow.error && <p className="text-xs text-amber-300" data-git-move-error="">{moveFlow.error}</p>}
             </div>
           )}
-          {moveFlow.stage === 'busy' && <p className="text-xs text-gray-400" data-git-dialog-loading="">Moving…</p>}
+          {moveFlow.stage === 'busy' && (
+            <p className="text-xs text-gray-400" data-git-dialog-loading="">Working…</p>
+          )}
           {moveFlow.stage === 'done' && (
             <p className="text-xs text-gray-300" data-git-move-done={moveFlow.result?.vault?.repo?.name || ''}>
               {`${moveFlow.result?.files?.length || 0} files committed to ${moveFlow.result?.vault?.repo?.name || 'the vault'}/${moveFlow.result?.vault?.defaultBranch || 'main'}. You are in Git mode.`}
