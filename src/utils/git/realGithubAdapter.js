@@ -11,6 +11,45 @@ import { normalizeRepoPath } from '../assembly.js';
 const API = 'https://api.github.com';
 const REPO_NAME_RE = /^[A-Za-z0-9._-]{1,100}$/;
 
+
+/**
+ * Build unauthorized GitAdapterError from a 401/403 Response.
+ * Surfaces GitHub `message` and `X-Accepted-GitHub-Permissions` when present
+ * (needed when App lacks Administration R/W for POST /user/repos).
+ */
+async function unauthorizedFromResponse(res) {
+  let data = null;
+  try {
+    const bodyText = await res.text();
+    if (bodyText) {
+      try { data = JSON.parse(bodyText); } catch { data = { message: bodyText }; }
+    }
+  } catch { /* ignore body read failures */ }
+  const accepted = headerGet(res, 'X-Accepted-GitHub-Permissions')
+    || headerGet(res, 'x-accepted-github-permissions');
+  const githubMessage = (data && typeof data.message === 'string' && data.message.trim())
+    ? data.message.trim()
+    : null;
+  const parts = [githubMessage || `GitHub ${res.status}`];
+  if (accepted) parts.push(`required permissions: ${accepted}`);
+  if (res.status === 403 && /not accessible by integration|Resource not accessible/i.test(githubMessage || '')) {
+    parts.push('GitHub App needs Administration R/W (and Contents R/W to seed); approve updated permissions / re-authorize, then Connect again');
+  }
+  return new GitAdapterError('unauthorized', parts.join(' — '), {
+    status: res.status,
+    acceptedPermissions: accepted || null,
+    githubMessage,
+  });
+}
+
+function headerGet(res, name) {
+  try {
+    return res.headers?.get?.(name) || null;
+  } catch {
+    return null;
+  }
+}
+
 export function createRealGithubAdapter({ token, fetchImpl = globalThis.fetch, apiBase = API } = {}) {
   if (!token) {
     throw new GitAdapterError('unauthorized', 'GitHub token required');
@@ -36,7 +75,7 @@ export function createRealGithubAdapter({ token, fetchImpl = globalThis.fetch, a
       throw new GitAdapterError('invalid', `GitHub network error: ${err?.message || err}`);
     }
     if (res.status === 401 || res.status === 403) {
-      throw new GitAdapterError('unauthorized', `GitHub ${res.status}`);
+      throw await unauthorizedFromResponse(res);
     }
     return res;
   }

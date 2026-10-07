@@ -55,10 +55,22 @@ export const GIT_ADAPTER_ERROR_CODES = Object.freeze([
 ]);
 
 export class GitAdapterError extends Error {
-  constructor(code, message) {
+  /**
+   * @param {string} code one of GIT_ADAPTER_ERROR_CODES
+   * @param {string} [message]
+   * @param {{ status?: number, acceptedPermissions?: string|null, githubMessage?: string|null }} [details]
+   */
+  constructor(code, message, details = {}) {
     super(message || code);
     this.name = 'GitAdapterError';
     this.code = code;
+    if (details.status != null) this.status = details.status;
+    if (details.acceptedPermissions !== undefined) {
+      this.acceptedPermissions = details.acceptedPermissions;
+    }
+    if (details.githubMessage !== undefined) {
+      this.githubMessage = details.githubMessage;
+    }
   }
 }
 

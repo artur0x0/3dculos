@@ -262,18 +262,40 @@ function makeFakeGithub() {
     const method = (opts.method || 'GET').toUpperCase();
     const auth = opts.headers?.Authorization || '';
     const token = auth.replace(/^Bearer\s+/i, '');
-    if (!tokens.has(token)) {
-      return { status: 401, text: async () => JSON.stringify({ message: 'Bad credentials' }) };
-    }
     const { path, search } = parseUrl(url);
     const body = opts.body ? JSON.parse(opts.body) : null;
 
-    const json = (status, data) => ({
+    const json = (status, data, extraHeaders = {}) => ({
       status,
       ok: status >= 200 && status < 300,
+      headers: {
+        get: (name) => {
+          const want = String(name || '').toLowerCase();
+          for (const [k, v] of Object.entries(extraHeaders)) {
+            if (k.toLowerCase() === want) return v;
+          }
+          return null;
+        },
+      },
       text: async () => (data == null ? '' : JSON.stringify(data)),
       json: async () => data,
     });
+
+    if (!tokens.has(token) && token !== 'no-admin') {
+      return json(401, { message: 'Bad credentials' });
+    }
+    // Can GET /user but POST /user/repos → 403 (App missing Administration R/W).
+    if (token === 'no-admin') {
+      if (path === '/user' && method === 'GET') return json(200, { login: 'octo-user' });
+      if (path === '/user/repos' && method === 'POST') {
+        return json(403, {
+          message: 'Resource not accessible by integration',
+          documentation_url: 'https://docs.github.com/rest/repos/repos#create-a-repository-for-the-authenticated-user',
+        }, { 'X-Accepted-GitHub-Permissions': 'administration=write' });
+      }
+      return json(403, { message: 'Resource not accessible by integration' },
+        { 'X-Accepted-GitHub-Permissions': 'administration=write' });
+    }
 
     if (path === '/user' && method === 'GET') {
       return json(200, { login: 'octo-user' });
@@ -552,6 +574,27 @@ function makeFakeGithub() {
   // unauthorized
   const bad = createRealGithubAdapter({ token: 'nope', fetchImpl, apiBase: 'https://api.github.com' });
   await throwsCode('bad token', () => bad.getViewer(), 'unauthorized');
+  try {
+    await bad.getViewer();
+    ok('bad token message', false, 'did not throw');
+  } catch (err) {
+    ok('bad token surfaces GitHub message', /Bad credentials/.test(err.message));
+    eq('bad token status', err.status, 401);
+  }
+
+  const noAdmin = createRealGithubAdapter({ token: 'no-admin', fetchImpl, apiBase: 'https://api.github.com' });
+  eq('no-admin can getViewer', await noAdmin.getViewer(), { login: 'octo-user' });
+  try {
+    await noAdmin.createRepo({ name: 'blocked', private: true });
+    ok('createRepo 403', false, 'did not throw');
+  } catch (err) {
+    ok('createRepo 403 code', err instanceof GitAdapterError && err.code === 'unauthorized');
+    ok('createRepo 403 message', /Resource not accessible by integration/.test(err.message));
+    ok('createRepo 403 accepted perms', /administration=write/.test(err.message)
+      && err.acceptedPermissions === 'administration=write');
+    ok('createRepo 403 hints App fix', /Administration R\/W/i.test(err.message));
+    eq('createRepo 403 status', err.status, 403);
+  }
 }
 
 // Mock still works
@@ -604,6 +647,13 @@ console.log('\ngit G7 — Connect wiring + no client secrets');
   ok('auth documents Tailscale / same-origin', /Tailscale/.test(auth) && /same origin/.test(auth));
   ok('exchange route mounted', /\/api\/github/.test(srv) && /oauth\/token/.test(route));
   ok('config exposes client id only', /githubAppClientId/.test(srv) && /GITHUB_APP_CLIENT_SECRET/.test(cfg));
+  ok('createRepo uses POST /user/repos', /\/user\/repos/.test(realSrc) && /method: 'POST'/.test(realSrc));
+  ok('auth headers include Accept + Api-Version', /application\/vnd\.github\+json/.test(realSrc)
+    && /X-GitHub-Api-Version/.test(realSrc) && /2022-11-28/.test(realSrc));
+  ok('403 surfaces X-Accepted-GitHub-Permissions', /X-Accepted-GitHub-Permissions/.test(realSrc)
+    && /unauthorizedFromResponse/.test(realSrc));
+  ok('docs cover Administration R\/W', /Administration/.test(readFileSync(join(root, 'docs/architecture.md'), 'utf8'))
+    && /Approve.*updated permissions/i.test(readFileSync(join(root, 'docs/architecture.md'), 'utf8')));
   ok('client secret not in src/', (() => {
     const walk = (dir) => {
       for (const ent of readdirSync(dir, { withFileTypes: true })) {
