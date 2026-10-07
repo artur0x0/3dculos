@@ -81,7 +81,7 @@ export default function ProfilePanel({
       data-profile-panel=""
       role="dialog"
       aria-label="Account"
-      className={`absolute ${alignClass} top-full z-50 mt-1 w-64 rounded-md border border-gray-600
+      className={`absolute ${alignClass} top-full z-[60] mt-1 w-64 rounded-md border border-gray-600
         bg-gray-900 py-2 shadow-xl`}
       onPointerDown={(e) => e.stopPropagation()}
     >
