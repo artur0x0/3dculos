@@ -129,7 +129,7 @@ const BAD = 'let part = Manifold.cube([10, 10, 10], true);\nreturn part.missingM
   check('a failed row is highlighted and a missing row offers find or upload',
     /data-part-status=\{status\}/.test(feed)
     && /data-part-error/.test(feed)
-    && /Find in repo/.test(feed)
+    && /Add to Repo/.test(feed)
     && /Upload/.test(feed)
     && /data-assembly-load/.test(feed));
   check('mobile pager order is CAD, Parts, then Script',
@@ -185,7 +185,7 @@ const BAD = 'let part = Manifold.cube([10, 10, 10], true);\nreturn part.missingM
   const ribbonEnd = ribbon.slice(ribbon.indexOf('data-parts-ribbon-end'));
   check('parts ribbon centers the assembly name; profile chip on the right',
     /data-parts-ribbon-center/.test(ribbon)
-    && /RibbonAssemblyName name=\{ribbonName\}/.test(ribbon)
+    && /RibbonAssemblyName[\s\S]{0,120}name=\{ribbonName\}/.test(ribbon)
     && /data-parts-ribbon-end/.test(ribbon)
     && /shrink-0/.test(ribbonEnd.slice(0, 180))
     && ribbon.indexOf('data-parts-feed-toolbar') < ribbon.indexOf('data-parts-ribbon-end')
@@ -474,7 +474,7 @@ const BAD = 'let part = Manifold.cube([10, 10, 10], true);\nreturn part.missingM
     git.source === 'git'
     && git.parts[0].id === 'parts/arm.js'
     && !JSON.stringify(git).includes('Manifold')
-    && resolvePartId('git', 'parts/arm.js', {}).action === 'find-in-repo');
+    && resolvePartId('git', 'parts/arm.js', {}).action === 'add-to-repo');
   check('local id is an IndexedDB key and a missing row asks to upload',
     resolvePartId('local', 'local:gone', {}).action === 'upload'
     && feedRows(doc, {}, {})[0].action === 'upload');

@@ -186,6 +186,137 @@ export function firstCommitBaseline({ branch = 'main', headSha = null } = {}) {
   };
 }
 
+/**
+ * Instantly commit one part (plus the assembly `.surf.json`) to the working
+ * branch. Used by Parts "Add to Repo" for local content not yet in the vault.
+ * Remaps `local:` / foreign ids to `assemblies/<asm>/parts/<name>.js`.
+ * -> { status: 'committed'|'clean'|'error', ... } (branched on non_fast_forward)
+ */
+export async function commitPartToRepo(adapter, repo, {
+  doc,
+  scripts,
+  baseline,
+  partId,
+  message = null,
+  liveId = null,
+  liveScript = null,
+} = {}) {
+  assertGithubAdapter(adapter);
+  if (!doc || doc.source !== 'git') {
+    return { status: 'error', error: 'Not in Git mode' };
+  }
+  const id = String(partId || '');
+  if (!id) return { status: 'error', error: 'Part required' };
+
+  const row = (doc.parts || []).find((p) => p.id === id);
+  if (!row) return { status: 'error', error: 'Part not in assembly' };
+
+  const asmName = vaultSegment(doc.name) || baseline?.assemblyName || 'Assembly';
+  let destId = id;
+  let workDoc = { ...doc, source: 'git' };
+  let workScripts = effectiveScripts(scripts, { liveId, liveScript });
+
+  const info = parseVaultPath(destId);
+  const allowed = info
+    && ((info.kind === 'assembly-part' && info.assembly === asmName)
+      || info.kind === 'shared-part');
+  if (!allowed) {
+    const base = vaultSegment(String(row.name || '').replace(/\.js$/i, '')) || 'Part';
+    let candidate = assemblyPartPath(asmName, base);
+    const taken = new Set((workDoc.parts || []).map((p) => p.id));
+    if (taken.has(candidate) && candidate !== id) {
+      for (let n = 2; n < 1000; n += 1) {
+        const alt = assemblyPartPath(asmName, `${base} ${n}`);
+        if (!taken.has(alt)) { candidate = alt; break; }
+      }
+    }
+    destId = candidate;
+    workDoc = {
+      ...workDoc,
+      parts: workDoc.parts.map((p) => (p.id === id ? { ...p, id: destId } : p)),
+      activeId: workDoc.activeId === id ? destId : workDoc.activeId,
+    };
+    const text = workScripts[id];
+    workScripts = { ...workScripts };
+    delete workScripts[id];
+    workScripts[destId] = typeof text === 'string' ? text : '';
+  }
+
+  let content = workScripts[destId];
+  if (typeof content !== 'string') {
+    content = '';
+    workScripts = { ...workScripts, [destId]: content };
+  }
+
+  const base = baseline || firstCommitBaseline({
+    branch: baseline?.branch || 'main',
+    headSha: baseline?.headSha || null,
+  });
+  const branch = base.branch || 'main';
+  const assemblyPath = assemblyFilePath(asmName);
+  const assemblyText = stringifySurfJson(workDoc);
+  const files = [
+    fileWrite(destId, content),
+    fileWrite(assemblyPath, assemblyText),
+  ];
+  // Skip no-op when baseline already has identical content.
+  if (
+    base.scripts
+    && Object.prototype.hasOwnProperty.call(base.scripts, destId)
+    && base.scripts[destId] === content
+    && base.assemblyText === assemblyText
+  ) {
+    return { status: 'clean', partId: destId, doc: workDoc, scripts: workScripts };
+  }
+
+  const msg = String(message || '').trim()
+    || `Add ${vaultSegment(row.name) || destId.split('/').pop() || 'part'}`;
+
+  let expectedBase = base.headSha || null;
+  if (!expectedBase) {
+    const tip = await adapter.getBranch(repo, branch);
+    expectedBase = tip?.sha || null;
+  }
+
+  try {
+    const res = await adapter.commitFiles(repo, {
+      branch,
+      message: msg,
+      files,
+      baseSha: expectedBase,
+    });
+    const nextScripts = { ...(base.scripts || {}), ...workScripts, [destId]: content };
+    const next = captureBaseline({
+      assemblyPath,
+      assemblyName: asmName,
+      doc: workDoc,
+      scripts: nextScripts,
+      branch,
+      headSha: res.sha,
+    });
+    return {
+      status: 'committed',
+      sha: res.sha,
+      branch,
+      partId: destId,
+      fromId: id !== destId ? id : null,
+      files: files.map((f) => f.path),
+      baseline: next,
+      doc: workDoc,
+      scripts: workScripts,
+    };
+  } catch (err) {
+    if (err instanceof GitAdapterError && err.code === 'non_fast_forward') {
+      return {
+        status: 'error',
+        error: 'Repo moved — Save the assembly (or resolve the conflict), then try again.',
+        code: 'non_fast_forward',
+      };
+    }
+    return { status: 'error', error: err?.message || 'Add to Repo failed' };
+  }
+}
+
 function pad(n) {
   return String(n).padStart(2, '0');
 }

@@ -40,7 +40,7 @@ export default function ProfileChip({
   const title = isAuthenticated
     ? (user?.email || user?.name || 'Account')
     : githubLinked
-      ? 'GitHub connected — completing sign-in…'
+      ? 'GitHub connected — account'
       : (isGuest || guest)
         ? 'Guest — sign in'
         : 'Sign in';
@@ -74,7 +74,9 @@ export default function ProfileChip({
     : 'pointer-events-auto absolute top-4 right-4 z-20';
 
   const handleClick = () => {
-    if (isAuthenticated) {
+    // Green chip = signed in (session and/or GitHub token). Always open the
+    // account panel — never bounce a green chip to Login/AuthStep.
+    if (signedIn) {
       setPanelOpen((open) => !open);
       return;
     }
@@ -116,8 +118,8 @@ export default function ProfileChip({
         data-profile-chip-variant={variant}
         data-profile-initials={label || (signedIn ? 'user' : 'out')}
         data-profile-auth={authState}
-        aria-expanded={isAuthenticated ? (panelOpen ? 'true' : 'false') : undefined}
-        aria-haspopup={isAuthenticated ? 'dialog' : undefined}
+        aria-expanded={signedIn ? (panelOpen ? 'true' : 'false') : undefined}
+        aria-haspopup={signedIn ? 'dialog' : undefined}
         onClick={handleClick}
         onPointerDown={(e) => e.stopPropagation()}
         title={title}
@@ -132,7 +134,7 @@ export default function ProfileChip({
           <User size={iconSize} aria-hidden="true" strokeWidth={2.25} data-profile-icon="user" />
         )}
       </button>
-      {isAuthenticated && (
+      {signedIn && (
         <ProfilePanel
           open={panelOpen}
           onClose={() => setPanelOpen(false)}

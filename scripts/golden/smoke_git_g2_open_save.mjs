@@ -15,8 +15,10 @@ import { fileWrite } from '../../src/utils/git/githubAdapterInterface.js';
 import {
   dirtyPartIds, isAssemblyDirty, isPartDirty, isWorkspaceDirty,
   listVaultAssemblies, listAddableVaultParts, openVaultAssembly, readVaultPart,
+  captureBaseline,
   resolveNewPartPath, suggestNewPartPath,
 } from '../../src/utils/git/gitWorkspace.js';
+import { commitPartToRepo } from '../../src/utils/git/gitCommit.js';
 import * as gitIndex from '../../src/utils/git/index.js';
 
 let failed = 0;
@@ -155,6 +157,45 @@ const addableCover = await listAddableVaultParts(gh, vault.repo, 'Cover', {
 ok('Cover can add shared bolt', addableCover.some((a) => a.path === sharedPartPath('M3 bolt')));
 ok('Cover cannot add Gearbox Spare', !addableCover.some((a) => a.path === assemblyPartPath('Gearbox', 'Spare')));
 
+
+console.log('\ngit G2 — Add to Repo (instant single-part commit)');
+{
+  const gh = createMockGithubAdapter({ login: 'artur' });
+  const vault = await findOrCreateVault(gh);
+  const ASM = assemblyFilePath('Gearbox');
+  const BRACKET = assemblyPartPath('Gearbox', 'Bracket');
+  const NEWP = assemblyPartPath('Gearbox', 'NewLocal');
+  const seed = await gh.commitFiles(vault.repo, {
+    branch: 'main', message: 'seed', baseSha: vault.headSha,
+    files: [
+      fileWrite(ASM, stringifySurfJson({
+        source: 'git', name: 'Gearbox', activeId: BRACKET,
+        parts: [{ id: BRACKET, name: 'Bracket', visible: true, order: 0 }],
+      })),
+      fileWrite(BRACKET, 'return Manifold.cube([10,10,10], true);'),
+    ],
+  });
+  const opened = await openVaultAssembly(gh, vault.repo, 'Gearbox', {
+    branch: 'main', headSha: seed.sha,
+  });
+  const doc = {
+    ...opened.doc,
+    parts: [
+      ...opened.doc.parts,
+      { id: NEWP, name: 'NewLocal', visible: true, order: 1 },
+    ],
+  };
+  const scripts = { ...opened.scripts, [NEWP]: 'return Manifold.cube([2,2,2], true);' };
+  const added = await commitPartToRepo(gh, vault.repo, {
+    doc, scripts, baseline: opened.baseline, partId: NEWP,
+  });
+  eq('add status', added.status, 'committed');
+  eq('new part in repo', (await gh.readFile(vault.repo, NEWP, 'main')).content,
+    'return Manifold.cube([2,2,2], true);');
+  ok('baseline has new part', Object.prototype.hasOwnProperty.call(added.baseline.scripts, NEWP));
+  ok('index exports commitPartToRepo', typeof gitIndex.commitPartToRepo === 'function');
+}
+
 console.log('\ngit G2 — UI wiring (PartFeed + App)');
 const feed = readFileSync(new URL('../../src/components/PartFeed.jsx', import.meta.url), 'utf8');
 const app = readFileSync(new URL('../../src/App.jsx', import.meta.url), 'utf8');
@@ -201,7 +242,8 @@ ok('App wires vault open + dirty; source follows GitHub token (G10)',
   && /findOrCreateVault/.test(app));
 ok('App new part resolveNewPartPath in git',
   /resolveNewPartPath\(doc\.name, gitPath\)/.test(app));
-ok('Find in repo uses vault', /handleFindInRepo/.test(app) && /onFindInRepo/.test(feed));
+ok('Add to Repo wires commit', /handleAddToRepo/.test(app) && /onAddToRepo/.test(feed)
+  && /commitPartToRepo/.test(app) && /Add to Repo/.test(feed));
 const srcFiles = ['gitWorkspace', 'githubAdapterInterface', 'mockGithubAdapter', 'vaultLayout', 'surfJson', 'vault']
   .map((f) => readFileSync(new URL(`../../src/utils/git/${f}.js`, import.meta.url), 'utf8')).join('\n');
 ok('no network or token use in G2', !/\bfetch\(|api\.github\.com|XMLHttpRequest|Authorization:\s*['"]Bearer/.test(srcFiles));

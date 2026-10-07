@@ -18,7 +18,7 @@ const arch = readFileSync(new URL('../../docs/architecture.md', import.meta.url)
 
 console.log('git G13 — slim vault create + conflict popup');
 
-ok('vault create modal title + markers', /Create vault/.test(feed)
+ok('vault create modal title + markers', /Create repo/.test(feed)
   && /data-git-vault-create/.test(feed) && /data-git-vault-name/.test(feed)
   && /data-git-vault-save/.test(feed));
 ok('Save + Cancel only (no plan/shared/switch)', /data-git-move-confirm/.test(feed)
@@ -44,7 +44,7 @@ ok('warning copy preserved via forceMergeWarning', /data-git-conflict-warning/.t
 ok('G4 behind toast unchanged (separate flow)', /data-git-behind-toast/.test(app)
   && /data-git-behind-reload/.test(feed));
 
-ok('light vocab: Vault label, + Part|Assembly New|Existing', /htmlFor="git-move-vault-name"[\s\S]{0,80}Vault/.test(feed)
+ok('light vocab: Repo label, + Part|Assembly New|Existing', /htmlFor="git-move-vault-name"[\s\S]{0,80}Repo/.test(feed)
   && /data-part-add-action="new"/.test(feed)
   && /data-part-add-action="existing"/.test(feed)
   && /data-part-add-section="part"/.test(feed)
@@ -52,7 +52,7 @@ ok('light vocab: Vault label, + Part|Assembly New|Existing', /htmlFor="git-move-
   && /title="Add part or assembly"/.test(feed));
 
 ok('architecture documents G13', /G13/.test(arch)
-  && /Create vault|vault create|slim vault/i.test(arch)
+  && /Create repo|Create vault|repo create|vault create|slim/i.test(arch)
   && /Stay on branch|Overwrite main|Open on GitHub/.test(arch));
 
 console.log(failed ? `\n❌ FAIL (${failed} failed, ${passed} passed)` : `\n✅ PASS (${passed})`);
