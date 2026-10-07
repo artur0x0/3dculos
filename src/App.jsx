@@ -935,6 +935,9 @@ const App = () => {
     setEditorInitialScript(script);
 
     const hydrate = async () => {
+      // Capture generation so a vault Open / branch switch / New assembly that
+      // lands while IDB is slow cannot be clobbered by a stale local document.
+      const genAtStart = refreshGenRef.current;
       let nextScript = script;
       let nextFilename = filename;
       let nextRestoredEditor = restoredEditor;
@@ -992,6 +995,15 @@ const App = () => {
       }
       if (!nextFilename) nextFilename = active.name;
       if (cancelled) return;
+      if (genAtStart !== refreshGenRef.current) {
+        console.log('[App] Skipping stale IDB hydrate; assembly already replaced');
+        return;
+      }
+      // Vault-backed working copy won the race — never re-inject IndexedDB local parts.
+      if (gitBaselineRef.current?.headSha) {
+        console.log('[App] Skipping IDB hydrate; vault baseline already set');
+        return;
+      }
 
       assemblyRef.current = doc;
       partScriptsRef.current = scripts;
@@ -2269,6 +2281,48 @@ const App = () => {
       return { status: 'created', branch: created.name, sha: created.sha };
     } catch (err) {
       return { status: 'error', error: err.message || 'Could not create branch' };
+    }
+  };
+
+  /**
+   * Branch pane closed: if a vault baseline is active but IndexedDB local:
+   * rows leaked into the Parts list, strip them. Keeps repo-path rows (including
+   * dirty / Add-to-Repo paths). No-op when clean or when there is no baseline.
+   */
+  const handleBranchUiClose = () => {
+    const doc = assemblyRef.current;
+    const baseline = gitBaselineRef.current;
+    if (!doc || doc.source !== 'git' || !baseline?.headSha) return;
+    const leaked = doc.parts.filter((part) => String(part.id).startsWith('local:'));
+    if (!leaked.length) return;
+    const nextParts = doc.parts.filter((part) => !String(part.id).startsWith('local:'));
+    if (!nextParts.length) return;
+    const scripts = { ...partScriptsRef.current };
+    for (const part of leaked) {
+      delete scripts[part.id];
+      try { deletePartScript(part.id); } catch { /* ignore */ }
+      dropPartHistory(part.id);
+    }
+    rememberScripts(scripts);
+    let activeId = doc.activeId;
+    if (!nextParts.some((part) => part.id === activeId)) {
+      activeId = nextParts[0].id;
+    }
+    refreshGenRef.current += 1;
+    const saved = rememberAssembly({ ...doc, source: 'git', activeId, parts: nextParts });
+    const focus = saved.parts.find((part) => part.id === saved.activeId) || saved.parts[0];
+    if (focus) {
+      const picked = scriptForRow(saved, scripts, focus.id);
+      focusPartHistory(focus.id, picked.ok ? picked.script : '');
+      setCurrentFilename(focus.name);
+      if (picked.ok) {
+        suppressPartSaveRef.current = false;
+        codeEditorRef.current?.loadContent(picked.script, focus.name, false);
+      } else {
+        suppressPartSaveRef.current = true;
+        codeEditorRef.current?.setTextOnly?.('// This part has no file yet.\n');
+        refreshAssemblyRef.current?.(undefined, { persistActive: false });
+      }
     }
   };
 
@@ -3823,6 +3877,7 @@ const App = () => {
       onDeleteBranch={handleDeleteBranch}
       onMergeBranch={handleMergeBranch}
       onSquashMerge={handleSquashMerge}
+      onBranchUiClose={handleBranchUiClose}
       githubConnectReady={!!githubClientId}
       githubConnected={githubConnected}
       onGitConnect={handleGitConnect}

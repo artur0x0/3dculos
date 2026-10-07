@@ -68,6 +68,9 @@ export function createGithubAdapter({ token, fetchImpl = globalThis.fetch, apiBa
     try {
       res = await doFetch(url, {
         method,
+        // Safari / iOS often HTTP-cache GET /branches; after createBranch the
+        // pane refresh must see the new ref without a full document reload.
+        cache: 'no-store',
         headers: {
           Accept: 'application/vnd.github+json',
           Authorization: `Bearer ${token}`,
