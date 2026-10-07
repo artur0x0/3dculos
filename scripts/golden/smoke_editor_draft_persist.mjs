@@ -104,7 +104,12 @@ console.log('editor draft — IndexedDB round-trip');
   const back = await loadEditorDraft();
   check('load returns the same script', back?.script === script);
   check('load returns the filename', back?.filename === 'bracket.js');
+  check('load returns null partId when omitted', back?.partId === null);
   check('load stamps savedAt', Number.isFinite(back?.savedAt) && back.savedAt > 0);
+
+  await saveEditorDraft({ script, filename: 'bracket.js', partId: 'local:abc' });
+  const bound = await loadEditorDraft();
+  check('load returns bound partId', bound?.partId === 'local:abc');
 
   // An emptied editor is a real state: reload must not resurrect old code.
   await saveEditorDraft({ script: '' });
