@@ -88,10 +88,26 @@ console.log('SCS S1 — catalog parse + join');
     mats.length === 6 && mats[0].bendable && !mats[mats.length - 1].bendable,
     JSON.stringify(mats.map((m) => m.name)));
   const gauges = scsGaugeOptions(records, '5052 H32 Aluminum');
-  check('gauge dropdown: in-stock SKUs of that material, thinnest first',
-    JSON.stringify(gauges.map((g) => g.sku)) === '["ALU-063","ALU-080","ALU-090"]',
-    JSON.stringify(gauges));
-  check('gauge label shows inch, gauge, mm', /0\.090" · 11 ga · 2\.29 mm/.test(gauges[2].label), gauges[2].label);
+  check('gauge dropdown: every SKU, thinnest first, out of stock kept',
+    JSON.stringify(gauges.map((g) => g.sku)) === '["ALU-063","ALU-080","ALU-080-OOS","ALU-090"]',
+    JSON.stringify(gauges.map((g) => g.sku)));
+  const live90 = gauges.find((g) => g.sku === 'ALU-090');
+  const oos = gauges.find((g) => g.sku === 'ALU-080-OOS');
+  check('gauge label shows inch, gauge, mm', /0\.090" · 11 ga · 2\.29 mm/.test(live90?.label), live90?.label);
+  check('out-of-stock gauge is disabled and labeled out of stock',
+    !!oos && oos.disabled === true && oos.inStock === false && /out of stock/.test(oos.label)
+    && gauges.filter((g) => g.inStock).every((g) => g.disabled === false),
+    oos?.label);
+  const ghost = {
+    sku: 'GHOST', name: 'Unobtainium', category: 'Z', thicknessIn: 0.05, thicknessMm: 1.27,
+    gauge: null, inStock: false, bendable: false,
+  };
+  check('out-of-stock-only material is still listed',
+    scsMaterialOptions([...records, ghost]).some((m) => m.name === 'Unobtainium' && m.inStock === false));
+  const ghostGauges = scsGaugeOptions([...records, ghost], 'Unobtainium');
+  check('its gauge is disabled and labeled out of stock',
+    ghostGauges.length === 1 && ghostGauges[0].disabled && /out of stock/.test(ghostGauges[0].label),
+    ghostGauges[0]?.label);
   check('Start needs an in-stock SKU', canStartSheetMetal(records, 'ALU-090')
     && !canStartSheetMetal(records, 'ALU-080-OOS') && !canStartSheetMetal(records, '') && !canStartSheetMetal(records, 'NOPE'));
 }
@@ -185,6 +201,8 @@ console.log('SCS S1 — mode entry + chrome');
   const view = read('src/components/Viewport.jsx');
   const app = read('src/App.jsx');
   check('Start designing disabled until canStart', /disabled=\{!canStart\}/.test(picker) && /canStartSheetMetal/.test(picker));
+  check('picker disables out-of-stock gauge options', /disabled: !!g\.disabled/.test(picker)
+    && /out of stock/.test(read('src/utils/scs/scsCatalog.js')));
   check('picker reads IDB cache + stale/Retry states',
     /scsCatalogCache/.test(picker) && /data-scs-status="stale"/.test(picker) && /load\(true\)/.test(picker));
   check('selects + numbers use the ≥16px token',

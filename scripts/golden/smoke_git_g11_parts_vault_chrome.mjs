@@ -16,6 +16,8 @@ import { fileWrite } from '../../src/utils/git/githubAdapterInterface.js';
 import {
   listVaultBrowseItems, planInsertVaultAssemblyParts, openVaultAssembly,
   filterVaultOpenIndex, filterVaultPartItems,
+  vaultOpenAssemblies, vaultOpenPartRows, groupVaultOpenPartRows, planOpenVaultPart,
+  LOOSE_PARTS_LABEL,
 } from '../../src/utils/git/gitWorkspace.js';
 import {
   listVaultBranches, createVaultBranch, deleteVaultBranch,
@@ -158,7 +160,20 @@ console.log('\ngit G11 — Open browse + insert parts');
   eq('blank query returns full index', [full.assemblies.length, full.parts.length],
     [browse.assemblies.length, browse.parts.length]);
   const addFiltered = filterVaultPartItems(browse.parts, 'Lid');
-  eq('add-existing filter by label/path', addFiltered.map((p) => p.path), [COVER]);
+  eq('part filter by label/path', addFiltered.map((p) => p.path), [COVER]);
+  eq('open assembly lists assemblies only', vaultOpenAssemblies(browse).map((a) => a.name), ['Cover', 'Gearbox']);
+  ok('open assembly has no part rows', vaultOpenAssemblies(browse).every((a) => a.kind === 'assembly' && !a.path));
+  const rows = vaultOpenPartRows(browse.parts, { currentAssembly: 'Gearbox', inDoc: [BRACKET, BOLT] });
+  ok('open part lists every script', rows.length === browse.parts.length && rows.length === 3);
+  const groups = groupVaultOpenPartRows(rows, { currentAssembly: 'Gearbox' });
+  eq('open part groups: current, other, loose', groups.map((g) => g.label), ['Gearbox', 'Cover', LOOSE_PARTS_LABEL]);
+  ok('own part in the doc is not foreign', groups[0].current && groups[0].parts.some((p) => p.path === BRACKET && p.inDoc && !p.foreign));
+  ok('other assembly part is foreign', groups[1].parts.every((p) => p.foreign && p.source === 'Cover'));
+  ok('loose part opens by reference', groups[2].loose && groups[2].parts.some((p) => p.path === BOLT && !p.foreign));
+  const copied = planOpenVaultPart(gearbox, COVER, 'return Manifold.cube([20,20,2], true);', {});
+  ok('foreign part copies under this assembly', copied.mode === 'copy' && copied.id.endsWith('/Gearbox/Lid.js') && copied.id !== COVER);
+  eq('own part focuses', planOpenVaultPart(gearbox, BRACKET, 'x', {}), { id: BRACKET, mode: 'focus' });
+  eq('loose part focuses when already in the doc', planOpenVaultPart(gearbox, BOLT, 'bolt', {}), { id: BOLT, mode: 'focus' });
 }
 
 console.log('\ngit G11 — UI wiring (PartFeed + App + architecture)');
@@ -192,11 +207,15 @@ ok('Open assembly choice', (/data-git-dialog="open-choice"/.test(feed) || /dataA
   && /Insert parts into current/.test(feed) && /Open assembly/.test(feed));
 ok('Open browses parts + assemblies', /data-git-open-assemblies/.test(feed) && /data-git-open-parts/.test(feed)
   && /data-git-open-part=/.test(feed));
+ok('Open Part groups by source; Open Assembly is assemblies only', /data-git-open-group/.test(feed)
+  && /vaultOpenPartRows/.test(feed) && /vaultOpenAssemblies/.test(feed)
+  && /kind === 'open-assembly' \? vaultOpenAssemblies/.test(feed)
+  && /planOpenVaultPart/.test(app));
 ok('Open pane live search filters client index', /data-git-open-search/.test(feed)
   && /filterVaultOpenIndex/.test(feed)
   && /data-git-open-search-empty/.test(feed)
   && /No matches/.test(feed)
-  && /data-git-add-search/.test(feed)
+  && /data-git-open-search-kind/.test(feed)
   && /filterVaultPartItems/.test(feed)
   && /query: ''/.test(feed));
 ok('delete confirm + protected', /data-git-branch-delete-confirm/.test(feed)

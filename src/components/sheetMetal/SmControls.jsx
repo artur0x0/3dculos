@@ -1,5 +1,6 @@
 import React from 'react';
 import { PARTS_TEXT_INPUT_CLASS, PARTS_TEXT_INPUT_STYLE } from '../../utils/partsChrome';
+import { displaySheetNumber, displaySheetStep, displayToMm } from '../../utils/sheetMetal/sheetUnits';
 
 /**
  * Sheet-metal popup controls. Mobile-first: ≥44px tap targets and the shared
@@ -92,6 +93,54 @@ export const SmButton = ({ variant = 'ghost', className = '', children, ...rest 
   );
 };
 
+/**
+ * A length slider stored in millimetres, shown in `unit` ('mm' | 'in').
+ * `onMm` receives millimetres, or '' while the number box is cleared.
+ */
+export const SmMmSlider = ({
+  id, label, mm, onMm, minMm, maxMm, stepMm = 0.5, unit = 'mm',
+}) => {
+  const min = displaySheetNumber(minMm, unit);
+  const max = Math.max(min, displaySheetNumber(maxMm, unit));
+  return (
+    <SmSlider
+      id={id}
+      label={label}
+      value={displaySheetNumber(mm, unit)}
+      min={min}
+      max={max}
+      step={displaySheetStep(stepMm, unit)}
+      unit={unit}
+      onChange={(v) => onMm?.(v === '' ? '' : displayToMm(v, unit))}
+    />
+  );
+};
+
+/** mm | in. Display only — the model stays millimetres. */
+export const SmUnitToggle = ({ unit = 'mm', onChange }) => (
+  <div
+    role="group"
+    aria-label="Display units"
+    data-sm-unit-toggle=""
+    className="inline-flex shrink-0 rounded-md bg-black/30 p-0.5"
+  >
+    {['mm', 'in'].map((u) => (
+      <button
+        key={u}
+        type="button"
+        data-sm-unit={u}
+        aria-pressed={unit === u}
+        onClick={() => onChange?.(u)}
+        className={`min-h-[44px] min-w-[44px] rounded px-2 text-base font-medium ${
+          unit === u ? 'bg-orange-500 text-white' : 'text-gray-300 hover:text-white'
+        }`}
+      >
+        {u}
+      </button>
+    ))}
+  </div>
+);
+
 /** On/off pill (e.g. Tab "Centered"). */
 export const SmToggle = ({ id, label, checked, onChange }) => (
   <button
@@ -111,7 +160,10 @@ export const SmToggle = ({ id, label, checked, onChange }) => (
 );
 
 /** Translucent popup shell shared by the picker and feature popups (✕ top-right). */
-export const SmPopup = ({ title, subtitle, onClose, closeLabel = 'Close', children, footer, dataAttr, short = false }) => (
+export const SmPopup = ({
+  title, subtitle, onClose, closeLabel = 'Close', children, footer, dataAttr, short = false,
+  unit = null, onUnit = null,
+}) => (
   <div className="absolute inset-0 z-50 flex items-end justify-center p-3 pointer-events-none" role="presentation">
     <div
       role="dialog"
@@ -124,16 +176,19 @@ export const SmPopup = ({ title, subtitle, onClose, closeLabel = 'Close', childr
           <h2 className="text-base font-semibold text-white truncate">{title}</h2>
           {subtitle && <p className="text-xs text-gray-300 mt-0.5">{subtitle}</p>}
         </div>
-        <button
-          type="button"
-          onClick={() => onClose?.()}
-          className="-mr-2 -mt-1 h-11 w-11 shrink-0 inline-flex items-center justify-center rounded text-gray-300 hover:text-white hover:bg-white/10"
-          title={closeLabel}
-          aria-label={closeLabel}
-          data-sm-close="1"
-        >
-          <span aria-hidden className="text-xl leading-none">✕</span>
-        </button>
+        <div className="flex shrink-0 items-start gap-1">
+          {onUnit && <SmUnitToggle unit={unit === 'in' ? 'in' : 'mm'} onChange={onUnit} />}
+          <button
+            type="button"
+            onClick={() => onClose?.()}
+            className="-mr-2 -mt-1 h-11 w-11 shrink-0 inline-flex items-center justify-center rounded text-gray-300 hover:text-white hover:bg-white/10"
+            title={closeLabel}
+            aria-label={closeLabel}
+            data-sm-close="1"
+          >
+            <span aria-hidden className="text-xl leading-none">✕</span>
+          </button>
+        </div>
       </div>
       <div className="px-4 py-3 flex flex-col gap-3 overflow-y-auto rail-scroll min-h-0">{children}</div>
       {footer && <div className="px-4 py-3 border-t border-gray-700 shrink-0 flex gap-2 justify-end">{footer}</div>}

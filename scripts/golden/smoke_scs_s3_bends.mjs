@@ -148,7 +148,7 @@ console.log('SCS S3 — overlay edge pick + chrome');
   const flow = read('src/components/sheetMetal/SheetMetalFlow.jsx');
   check('Bend popup: angle + length sliders, Flip, R/K/BD line, Back/Accept/Delete, ✕',
     /sm-bend-angle/.test(flow) && /sm-bend-length/.test(flow) && /data-sm-flip/.test(flow)
-    && /BD \{bd\.toFixed\(2\)\}/.test(flow) && /cancelDraft/.test(flow) && /deleteDraftFeature/.test(flow) && /onClose=\{onExit\}/.test(flow));
+    && /BD \{formatSheetLength\(bd, unit\)\}/.test(flow) && /cancelDraft/.test(flow) && /deleteDraftFeature/.test(flow) && /onClose=\{onExit\}/.test(flow));
   const view = read('src/components/Viewport.jsx');
   check('Viewport routes taps through sheetTap and previews the draft', /sheetTap\(prev, pick\)/.test(view) && /draftPreviewSpec\(sheetMetalMode\)/.test(view));
   check('architecture.md documents bends', /Bends \(S3\)/.test(read('docs/architecture.md')));

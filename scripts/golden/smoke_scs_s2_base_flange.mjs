@@ -15,6 +15,9 @@ import {
   baseDraftSpec,
   BASE_MAX,
 } from '../../src/utils/sheetMetal/sheetMetalMode.js';
+import {
+  loadSheetDisplayUnit, saveSheetDisplayUnit, displayToMm, displaySheetNumber, formatSheetLength,
+} from '../../src/utils/sheetMetal/sheetUnits.js';
 import { createSheetSpec, SHEET_PLANES } from '../../src/utils/sheetMetal/sheetModel.js';
 import {
   composeSheetMetalCommit,
@@ -50,6 +53,18 @@ check('unknown plane ignored', pickSheetPlane(mode, 'QQ') === mode);
 mode = pickSheetPlane(mode, 'XZ');
 check('tap plane → base popup with defaults', mode.stage === 'base' && mode.base.plane === 'XZ'
   && mode.base.width === 100 && mode.base.height === 60);
+const wideSku = { ...alu, bend: { ...alu.bend, minFlatIn: [1.2, 5.2] }, minPartIn: [0.25, 0.375] };
+const wide = pickSheetPlane(enterSheetMetalMode(wideSku, 'p1'), 'XY');
+check('default width clamps up to SKU min flat (5.2 in)', near(wide.base.width, 5.2 * 25.4) && wide.base.height === 60,
+  JSON.stringify(wide.base));
+const bothSku = { ...alu, bend: { ...alu.bend, minFlatIn: [4, 6] }, minPartIn: [0.25, 0.375] };
+const both = pickSheetPlane(enterSheetMetalMode(bothSku, 'p1'), 'XY');
+check('both sides clamp up when min flat exceeds 100×60', near(both.base.width, 6 * 25.4) && near(both.base.height, 4 * 25.4),
+  JSON.stringify(both.base));
+const flatSku = { sku: 'FLAT', name: 'Flat', thicknessMm: 1, bend: null, minPartIn: [3, 5], bendable: false };
+const flatBase = pickSheetPlane(enterSheetMetalMode(flatSku, 'p1'), 'XY');
+check('no bend spec: clamp up to min part size', near(flatBase.base.width, 5 * 25.4) && near(flatBase.base.height, 3 * 25.4),
+  JSON.stringify(flatBase.base));
 mode = setBaseDims(mode, { width: 120, height: '' });
 check('x edits; blank y keeps value', mode.base.width === 120 && mode.base.height === 60);
 check('dims clamp', setBaseDims(mode, { width: 99999 }).base.width === BASE_MAX && setBaseDims(mode, { height: -4 }).base.height === 1);
@@ -121,6 +136,16 @@ console.log('SCS S2 — chrome + wiring');
   const worker = read('src/workers/sandboxWorker.js');
   check('base popup: x/y sliders, Back, Accept, ✕ exits', /sm-base-x/.test(flow) && /sm-base-y/.test(flow)
     && /backToPlanePick/.test(flow) && /acceptBaseFlange/.test(flow) && /onClose=\{onExit\}/.test(flow));
+  check('mm/in toggle on sheet popups; values stay mm', /data-sm-unit-toggle/.test(read('src/components/sheetMetal/SmControls.jsx'))
+    && /loadSheetDisplayUnit/.test(flow) && /saveSheetDisplayUnit/.test(flow) && /SmMmSlider/.test(flow)
+    && /Stored in mm/.test(flow));
+  const mem = { store: {}, getItem(k) { return this.store[k] ?? null; }, setItem(k, v) { this.store[k] = String(v); } };
+  check('display unit defaults to mm and persists', loadSheetDisplayUnit(mem) === 'mm'
+    && saveSheetDisplayUnit('in', mem) === 'in' && loadSheetDisplayUnit(mem) === 'in'
+    && saveSheetDisplayUnit('nope', mem) === 'mm');
+  check('inch display round-trips to mm; mm text stays mm',
+    near(displayToMm(displaySheetNumber(100, 'in'), 'in'), 100, 0.02)
+    && formatSheetLength(25.4, 'in') === '1.000 in' && formatSheetLength(100, 'mm') === '100.00 mm');
   check('plane buttons as big tap fallback', /data-sm-plane/.test(flow));
   check('taps route to the overlay first', /if \(sheetMetalModeRef\.current\) \{[\s\S]{0,600}sheetPickFromHits/.test(view));
   check('part mesh hidden while drafting, restored on exit', /sheetMetalHidden = true/.test(view) && /mesh\.visible = true/.test(view));

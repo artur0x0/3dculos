@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { SHEET_PLANES } from '../../utils/sheetMetal/sheetModel';
 import {
   acceptBaseFlange,
@@ -19,10 +19,11 @@ import {
   updateDraft,
 } from '../../utils/sheetMetal/sheetMetalMode';
 import { buildSheetExport } from '../../utils/sheetMetal/sheetExport';
+import { formatSheetLength, loadSheetDisplayUnit, saveSheetDisplayUnit } from '../../utils/sheetMetal/sheetUnits';
 import { SCS_ORDER_URL } from '../../utils/scs/scsCatalog';
 import { downloadBlob } from '../../utils/model-io';
 import SheetMetalModeChip from './SheetMetalModeChip';
-import { SmButton, SmPopup, SmSelect, SmSlider, SmToggle } from './SmControls';
+import { SmButton, SmMmSlider, SmPopup, SmSelect, SmSlider, SmToggle } from './SmControls';
 
 /**
  * Sheet-metal flow chrome by stage. Viewport owns the mode state, overlay
@@ -61,7 +62,7 @@ const DraftFooter = ({ mode, setMode, onCommit }) => (
   </>
 );
 
-const BendPopup = ({ mode, setMode, onCommit, onExit }) => {
+const BendPopup = ({ mode, setMode, onCommit, onExit, unit, onUnit }) => {
   const d = mode.draft;
   const spec = mode.spec;
   const lim = bendLimits(spec);
@@ -75,6 +76,8 @@ const BendPopup = ({ mode, setMode, onCommit, onExit }) => {
       onClose={onExit}
       closeLabel="Exit sheet metal without writing this bend"
       dataAttr="data-sheet-metal-bend"
+      unit={unit}
+      onUnit={onUnit}
       footer={<DraftFooter mode={mode} setMode={setMode} onCommit={onCommit} />}
     >
       <SmSlider
@@ -87,14 +90,15 @@ const BendPopup = ({ mode, setMode, onCommit, onExit }) => {
         step={1}
         onChange={(v) => setMode((m) => updateDraft(m, { angle: v }))}
       />
-      <SmSlider
+      <SmMmSlider
         id="sm-bend-length"
-        label={`Flange length (min ${lim.lengthMin} mm)`}
-        value={d.length}
-        min={lim.lengthMin}
-        max={lim.lengthMax}
-        step={0.5}
-        onChange={(v) => setMode((m) => updateDraft(m, { length: v }))}
+        label={`Flange length (min ${formatSheetLength(lim.lengthMin, unit)})`}
+        mm={d.length}
+        minMm={lim.lengthMin}
+        maxMm={lim.lengthMax}
+        stepMm={0.5}
+        unit={unit}
+        onMm={(v) => setMode((m) => updateDraft(m, { length: v }))}
       />
       <SmButton
         onClick={() => setMode((m) => updateDraft(m, { flip: !m.draft.flip }))}
@@ -105,13 +109,13 @@ const BendPopup = ({ mode, setMode, onCommit, onExit }) => {
         Flip {d.flip ? '(down)' : '(up)'}
       </SmButton>
       <div className="text-xs text-gray-300 leading-relaxed" data-sm-bend-specs="1">
-        R {spec.r.toFixed(2)} mm · K {spec.k} · BD {bd.toFixed(2)} mm @ {Math.round(d.angle)}° · reliefs automatic
+        R {formatSheetLength(spec.r, unit)} · K {spec.k} · BD {formatSheetLength(bd, unit)} @ {Math.round(d.angle)}° · reliefs automatic
       </div>
     </SmPopup>
   );
 };
 
-const TabPopup = ({ mode, setMode, onCommit, onExit }) => {
+const TabPopup = ({ mode, setMode, onCommit, onExit, unit, onUnit }) => {
   const d = mode.draft;
   const span = Number(d.span) || Math.max(d.width, 1);
   const where = d.panel === 'base' ? `Base ${EDGE_NAMES[d.edge] || d.edge}` : `Flange ${d.panel} ${d.edge === 'u+' ? 'tip' : 'side'}`;
@@ -119,22 +123,24 @@ const TabPopup = ({ mode, setMode, onCommit, onExit }) => {
     <SmPopup
       short
       title={d.isNew ? 'Tab' : `Tab ${d.id}`}
-      subtitle={`${where} · edge ${span.toFixed(1)} mm`}
+      subtitle={`${where} · edge ${formatSheetLength(span, unit, 1)}`}
       onClose={onExit}
       closeLabel="Exit sheet metal without writing this tab"
       dataAttr="data-sheet-metal-tab"
+      unit={unit}
+      onUnit={onUnit}
       footer={<DraftFooter mode={mode} setMode={setMode} onCommit={onCommit} />}
     >
-      <SmSlider id="sm-tab-width" label="Width" value={d.width} min={1} max={span} step={0.5}
-        onChange={(v) => setMode((m) => updateDraft(m, { width: v }))} />
-      <SmSlider id="sm-tab-depth" label="Depth" value={d.depth} min={0.5} max={Math.max(50, d.depth)} step={0.5}
-        onChange={(v) => setMode((m) => updateDraft(m, { depth: v }))} />
+      <SmMmSlider id="sm-tab-width" label="Width" mm={d.width} minMm={1} maxMm={span} stepMm={0.5} unit={unit}
+        onMm={(v) => setMode((m) => updateDraft(m, { width: v }))} />
+      <SmMmSlider id="sm-tab-depth" label="Depth" mm={d.depth} minMm={0.5} maxMm={Math.max(50, d.depth)} stepMm={0.5} unit={unit}
+        onMm={(v) => setMode((m) => updateDraft(m, { depth: v }))} />
       <SmToggle id="sm-tab-centered" label="Centered" checked={d.centered !== false}
         onChange={(v) => setMode((m) => updateDraft(m, { centered: v }))} />
       {d.centered === false && (
-        <SmSlider id="sm-tab-offset" label="Offset from edge start" value={d.offset ?? 0} min={0}
-          max={Math.max(0, span - d.width)} step={0.5}
-          onChange={(v) => setMode((m) => updateDraft(m, { offset: v }))} />
+        <SmMmSlider id="sm-tab-offset" label="Offset from edge start" mm={d.offset ?? 0} minMm={0}
+          maxMm={Math.max(0, span - d.width)} stepMm={0.5} unit={unit}
+          onMm={(v) => setMode((m) => updateDraft(m, { offset: v }))} />
       )}
     </SmPopup>
   );
@@ -142,7 +148,7 @@ const TabPopup = ({ mode, setMode, onCommit, onExit }) => {
 
 const HOLE_TITLES = { hole: 'Hole', countersink: 'Countersunk hole', tapped: 'Tapped hole' };
 
-const HolePopup = ({ mode, setMode, onCommit, onExit }) => {
+const HolePopup = ({ mode, setMode, onCommit, onExit, unit, onUnit }) => {
   const d = mode.draft;
   const range = holeRange(mode) || { u0: -50, u1: 50, v0: -50, v1: 50 };
   const minHole = Number(mode.spec.limits?.minHole) || 0;
@@ -151,28 +157,30 @@ const HolePopup = ({ mode, setMode, onCommit, onExit }) => {
     <SmPopup
       short
       title={d.isNew ? HOLE_TITLES[type] : `${HOLE_TITLES[type]} ${d.id}`}
-      subtitle={`${d.panel === 'base' ? 'Base' : `Flange ${d.panel}`} face${minHole ? ` · SKU min Ø ${minHole.toFixed(2)} mm` : ''}`}
+      subtitle={`${d.panel === 'base' ? 'Base' : `Flange ${d.panel}`} face${minHole ? ` · SKU min Ø ${formatSheetLength(minHole, unit)}` : ''}`}
       onClose={onExit}
       closeLabel="Exit sheet metal without writing this hole"
       dataAttr="data-sheet-metal-hole"
+      unit={unit}
+      onUnit={onUnit}
       footer={<DraftFooter mode={mode} setMode={setMode} onCommit={onCommit} />}
     >
       {type === 'tapped' ? (
         <SmSelect id="sm-hole-thread" label="Thread" value={d.thread}
-          options={TAP_SIZES.map((x) => ({ value: x.id, label: `${x.id} (drill Ø ${x.tap.toFixed(2)} mm)` }))}
+          options={TAP_SIZES.map((x) => ({ value: x.id, label: `${x.id} (drill Ø ${formatSheetLength(x.tap, unit)})` }))}
           onChange={(v) => setMode((m) => updateDraft(m, { thread: v }))} />
       ) : (
-        <SmSlider id="sm-hole-d" label="Diameter" value={d.d} min={Math.max(0.5, minHole)} max={Math.max(40, d.d)} step={0.1}
-          onChange={(v) => setMode((m) => updateDraft(m, { d: v }))} />
+        <SmMmSlider id="sm-hole-d" label="Diameter" mm={d.d} minMm={Math.max(0.5, minHole)} maxMm={Math.max(40, d.d)} stepMm={0.1} unit={unit}
+          onMm={(v) => setMode((m) => updateDraft(m, { d: v }))} />
       )}
       {type === 'countersink' && (
-        <SmSlider id="sm-hole-csk" label="Countersink Ø (82°)" value={d.cskDia} min={d.d} max={Math.max(d.d * 3, d.cskDia)} step={0.1}
-          onChange={(v) => setMode((m) => updateDraft(m, { cskDia: v }))} />
+        <SmMmSlider id="sm-hole-csk" label="Countersink Ø (82°)" mm={d.cskDia} minMm={d.d} maxMm={Math.max(d.d * 3, d.cskDia)} stepMm={0.1} unit={unit}
+          onMm={(v) => setMode((m) => updateDraft(m, { cskDia: v }))} />
       )}
-      <SmSlider id="sm-hole-u" label="Position along U" value={d.u} min={range.u0} max={range.u1} step={0.5}
-        onChange={(v) => setMode((m) => updateDraft(m, { u: v }))} />
-      <SmSlider id="sm-hole-v" label="Position along V" value={d.v} min={range.v0} max={range.v1} step={0.5}
-        onChange={(v) => setMode((m) => updateDraft(m, { v: v }))} />
+      <SmMmSlider id="sm-hole-u" label="Position along U" mm={d.u} minMm={range.u0} maxMm={range.u1} stepMm={0.5} unit={unit}
+        onMm={(v) => setMode((m) => updateDraft(m, { u: v }))} />
+      <SmMmSlider id="sm-hole-v" label="Position along V" mm={d.v} minMm={range.v0} maxMm={range.v1} stepMm={0.5} unit={unit}
+        onMm={(v) => setMode((m) => updateDraft(m, { v: v }))} />
     </SmPopup>
   );
 };
@@ -184,10 +192,10 @@ const downloadText = (file) => {
 };
 
 /** DFM + DXF / STEP / Order on SendCutSend. Hard fails block downloads + order. */
-const ExportPopup = ({ mode, setMode, mesh, script, partName }) => {
+const ExportPopup = ({ mode, setMode, mesh, script, partName, unit, onUnit }) => {
   const bundle = React.useMemo(
-    () => buildSheetExport(mode.spec, { mesh: mesh || null, script: script ?? null, partName: partName || mode.partId || 'sheet' }),
-    [mode.spec, mode.partId, partName, mesh, script],
+    () => buildSheetExport(mode.spec, { mesh: mesh || null, script: script ?? null, partName: partName || mode.partId || 'sheet', unit }),
+    [mode.spec, mode.partId, partName, mesh, script, unit],
   );
   const { dfm, files, blocked, flat, stepSource } = bundle;
   const bendCount = files.step?.stats?.bendFaces ? files.step.stats.bendFaces / 2 : 0;
@@ -206,6 +214,8 @@ const ExportPopup = ({ mode, setMode, mesh, script, partName }) => {
       onClose={close}
       closeLabel="Close export"
       dataAttr="data-sheet-metal-export"
+      unit={unit}
+      onUnit={onUnit}
       footer={(
         <>
           <SmButton onClick={close} data-sm-back="1">Close</SmButton>
@@ -226,7 +236,7 @@ const ExportPopup = ({ mode, setMode, mesh, script, partName }) => {
     >
       {size && (
         <p className="text-xs text-gray-300" data-sm-flat-size="1">
-          Flat {size[0].toFixed(1)} × {size[1].toFixed(1)} mm
+          Flat {formatSheetLength(size[0], unit, 1)} × {formatSheetLength(size[1], unit, 1)}
           {mode.spec?.sku ? ` · ${mode.spec.sku}` : ''}
         </p>
       )}
@@ -290,20 +300,22 @@ const TOOL_HINTS = {
 };
 
 const SheetMetalFlow = ({ mode, setMode, onCommit, onExit, compact = false, mesh = null, script = null, partName = '' }) => {
+  const [unit, setUnit] = useState(() => loadSheetDisplayUnit());
+  const onUnit = (next) => setUnit(saveSheetDisplayUnit(next));
   if (!mode) return null;
 
   if (mode.stage === 'edit' && mode.exportOpen) {
-    return <ExportPopup mode={mode} setMode={setMode} mesh={mesh} script={script} partName={partName} />;
+    return <ExportPopup mode={mode} setMode={setMode} mesh={mesh} script={script} partName={partName} unit={unit} onUnit={onUnit} />;
   }
 
   if (mode.stage === 'edit' && mode.draft?.kind === 'bend') {
-    return <BendPopup mode={mode} setMode={setMode} onCommit={onCommit} onExit={onExit} />;
+    return <BendPopup mode={mode} setMode={setMode} onCommit={onCommit} onExit={onExit} unit={unit} onUnit={onUnit} />;
   }
   if (mode.stage === 'edit' && mode.draft?.kind === 'tab') {
-    return <TabPopup mode={mode} setMode={setMode} onCommit={onCommit} onExit={onExit} />;
+    return <TabPopup mode={mode} setMode={setMode} onCommit={onCommit} onExit={onExit} unit={unit} onUnit={onUnit} />;
   }
   if (mode.stage === 'edit' && mode.draft?.kind === 'hole') {
-    return <HolePopup mode={mode} setMode={setMode} onCommit={onCommit} onExit={onExit} />;
+    return <HolePopup mode={mode} setMode={setMode} onCommit={onCommit} onExit={onExit} unit={unit} onUnit={onUnit} />;
   }
 
   if (mode.stage === 'base' && mode.base) {
@@ -311,10 +323,12 @@ const SheetMetalFlow = ({ mode, setMode, onCommit, onExit, compact = false, mesh
     return (
       <SmPopup
         title="Base flange"
-        subtitle={`${plane?.label || mode.base.plane} plane · ${mode.sku?.thicknessMm?.toFixed(2)} mm ${mode.sku?.name || ''}`}
+        subtitle={`${plane?.label || mode.base.plane} plane · ${formatSheetLength(mode.sku?.thicknessMm, unit)} ${mode.sku?.name || ''}`}
         onClose={onExit}
         closeLabel="Exit sheet metal without writing"
         dataAttr="data-sheet-metal-base"
+        unit={unit}
+        onUnit={onUnit}
         footer={(
           <>
             <SmButton onClick={() => setMode((m) => backToPlanePick(m))} data-sm-back="1">Back</SmButton>
@@ -331,25 +345,27 @@ const SheetMetalFlow = ({ mode, setMode, onCommit, onExit, compact = false, mesh
           </>
         )}
       >
-        <SmSlider
+        <SmMmSlider
           id="sm-base-x"
           label="X (width)"
-          value={mode.base.width}
-          min={BASE_MIN}
-          max={Math.max(300, Number(mode.base.width) || 0)}
-          step={1}
-          onChange={(v) => setMode((m) => setBaseDims(m, { width: v }))}
+          mm={mode.base.width}
+          minMm={BASE_MIN}
+          maxMm={Math.max(300, Number(mode.base.width) || 0)}
+          stepMm={1}
+          unit={unit}
+          onMm={(v) => setMode((m) => setBaseDims(m, { width: v }))}
         />
-        <SmSlider
+        <SmMmSlider
           id="sm-base-y"
           label="Y (height)"
-          value={mode.base.height}
-          min={BASE_MIN}
-          max={Math.max(300, Number(mode.base.height) || 0)}
-          step={1}
-          onChange={(v) => setMode((m) => setBaseDims(m, { height: v }))}
+          mm={mode.base.height}
+          minMm={BASE_MIN}
+          maxMm={Math.max(300, Number(mode.base.height) || 0)}
+          stepMm={1}
+          unit={unit}
+          onMm={(v) => setMode((m) => setBaseDims(m, { height: v }))}
         />
-        <p className="text-xs text-gray-400">Up to {BASE_MAX} mm. Thickness comes from the SKU.</p>
+        <p className="text-xs text-gray-400">Up to {formatSheetLength(BASE_MAX, unit, 0)}. Thickness comes from the SKU. Stored in mm.</p>
       </SmPopup>
     );
   }

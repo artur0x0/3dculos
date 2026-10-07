@@ -2,7 +2,9 @@ import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Eye, EyeOff, FolderOpen, GripVertical, Loader2, Plus, Save, Trash2 } from 'lucide-react';
 import { partCanDeleteFromRepo, partListDeleteAction, sanitizeAssemblyName, sanitizePartName } from '../utils/assembly.js';
-import { filterVaultOpenIndex, filterVaultPartItems } from '../utils/git/gitWorkspace.js';
+import {
+  filterVaultOpenIndex, filterVaultPartItems, groupVaultOpenPartRows, vaultOpenAssemblies, vaultOpenPartRows,
+} from '../utils/git/gitWorkspace.js';
 import { PARTS_TEXT_INPUT_CLASS, PARTS_TEXT_INPUT_STYLE } from '../utils/partsChrome.js';
 import ProfileChip from './ProfileChip';
 import {
@@ -333,7 +335,6 @@ export default function PartFeed({
   onOpenVaultAssembly = null,
   onInsertVaultAssemblyParts = null,
   onOpenVaultPart = null,
-  onListAddableParts = null,
   onAddExistingPart = null,
   onAddToRepo = null,
   onFindInRepo = null,
@@ -433,14 +434,14 @@ export default function PartFeed({
 
   const closePicker = () => setOpenPicker(null);
 
-  const startOpenAssembly = async () => {
-    if (source !== 'git') {
-      loadRef.current?.click();
-      return;
-    }
-    setOpenPicker({
-      kind: 'open', assemblies: [], parts: [], loading: true, error: '', query: '',
-    });
+  /**
+   * Open pickers (git): one repo index per open, filtered client-side.
+   * 'open-assembly' lists assemblies only; 'open-part' lists every part in
+   * the repo grouped by source assembly (+ loose parts/).
+   */
+  const loadOpenIndex = async (kind) => {
+    const blank = { kind, assemblies: [], parts: [], loading: false, error: '', query: '' };
+    setOpenPicker({ ...blank, loading: true });
     try {
       let browse = null;
       if (onListVaultBrowse) {
@@ -449,24 +450,31 @@ export default function PartFeed({
         const names = (await onListVaultAssemblies?.()) || [];
         browse = { assemblies: names.map((name) => ({ kind: 'assembly', name, label: name })), parts: [] };
       }
-      const assemblies = browse?.assemblies || [];
-      const parts = browse?.parts || [];
-      const empty = !assemblies.length && !parts.length;
+      const assemblies = kind === 'open-assembly' ? vaultOpenAssemblies(browse) : [];
+      const parts = kind === 'open-part' ? (browse?.parts || []) : [];
+      const empty = kind === 'open-assembly' ? !assemblies.length : !parts.length;
       setOpenPicker({
-        kind: 'open',
+        ...blank,
         assemblies,
         parts,
-        loading: false,
-        error: empty ? 'Nothing in the repo yet.' : '',
-        query: '',
+        error: empty ? (kind === 'open-assembly' ? 'No assemblies in the repo yet.' : 'No parts in the repo yet.') : '',
       });
     } catch (err) {
-      setOpenPicker({
-        kind: 'open', assemblies: [], parts: [], loading: false,
-        error: err?.message || 'Could not browse repo',
-        query: '',
-      });
+      setOpenPicker({ ...blank, error: err?.message || 'Could not browse repo' });
     }
+  };
+
+  const startOpenAssembly = async () => {
+    if (source !== 'git') {
+      loadRef.current?.click();
+      return;
+    }
+    await loadOpenIndex('open-assembly');
+  };
+
+  const startOpenPart = async () => {
+    if (source !== 'git') return;
+    await loadOpenIndex('open-part');
   };
 
   const askOpenAssemblyChoice = (name) => {
@@ -526,22 +534,6 @@ export default function PartFeed({
       error: '',
       draft,
     });
-  };
-
-  const startAddExisting = async () => {
-    setOpenPicker({ kind: 'add-existing', items: [], loading: true, error: '', query: '' });
-    try {
-      const items = (await onListAddableParts?.()) || [];
-      setOpenPicker({
-        kind: 'add-existing',
-        items,
-        loading: false,
-        error: items.length ? '' : 'No other part scripts in the repo.',
-        query: '',
-      });
-    } catch (err) {
-      setOpenPicker({ kind: 'add-existing', items: [], loading: false, error: err?.message || 'Could not list parts', query: '' });
-    }
   };
 
   useEffect(() => {
@@ -1085,11 +1077,11 @@ export default function PartFeed({
                     type="button"
                     role="menuitem"
                     data-part-open-action="part"
-                    data-git-add-existing=""
+                    data-git-open-part-action=""
                     className="block w-full px-3 py-1.5 text-left text-xs text-gray-100 hover:bg-white/10"
                     onClick={() => {
                       setFolderMenuOpen(false);
-                      void startAddExisting();
+                      void startOpenPart();
                     }}
                   >
                     Part
@@ -1424,11 +1416,11 @@ export default function PartFeed({
         })}
               </div>
 
-      {openPicker && typeof document !== 'undefined' && openPicker.kind === 'open' && (
+      {openPicker && typeof document !== 'undefined' && (openPicker.kind === 'open-assembly' || openPicker.kind === 'open-part') && (
         <VaultPickerDialog
-          title="Open from repo"
+          title={openPicker.kind === 'open-part' ? 'Open part' : 'Open assembly'}
           labelledBy="git-open-title"
-          dataAttr="open"
+          dataAttr={openPicker.kind}
           onClose={closePicker}
           footer={(
             <div className="mt-4 flex justify-end">
@@ -1439,23 +1431,36 @@ export default function PartFeed({
           )}
         >
           {(() => {
-            const openIndex = filterVaultOpenIndex(openPicker, openPicker.query);
+            const isPart = openPicker.kind === 'open-part';
             const openQuery = String(openPicker.query || '').trim();
-            const openEmptyFilter = !openPicker.loading
-              && !openPicker.error
-              && openQuery
-              && openIndex.assemblies.length === 0
-              && openIndex.parts.length === 0;
+            const asmHits = isPart ? [] : filterVaultOpenIndex({ assemblies: openPicker.assemblies, parts: [] }, openPicker.query).assemblies;
+            const partRows = isPart
+              ? vaultOpenPartRows(openPicker.parts, { currentAssembly: assemblyName, inDoc: rows.map((row) => row.id) })
+              : [];
+            // filterVaultOpenIndex (PR #224) filters this list; filterVaultPartItems
+            // is the same haystack on a bare part array (source / "loose" included).
+            const partHits = isPart
+              ? filterVaultPartItems(
+                filterVaultOpenIndex({ assemblies: [], parts: partRows }, openPicker.query).parts,
+                openPicker.query,
+              )
+              : [];
+            const partGroups = isPart
+              ? groupVaultOpenPartRows(partHits, { currentAssembly: assemblyName })
+              : [];
+            const hitCount = isPart ? partGroups.reduce((n, g) => n + g.parts.length, 0) : asmHits.length;
+            const openEmptyFilter = !openPicker.loading && !openPicker.error && openQuery && hitCount === 0;
             return (
               <>
                 {!openPicker.loading && !openPicker.error && (
                   <input
                     type="search"
                     data-git-open-search=""
+                    data-git-open-search-kind={isPart ? 'part' : 'assembly'}
                     value={openPicker.query || ''}
                     onChange={(e) => setOpenPicker({ ...openPicker, query: e.target.value })}
-                    placeholder="Search assemblies and parts…"
-                    aria-label="Search assemblies and parts"
+                    placeholder={isPart ? 'Search parts…' : 'Search assemblies…'}
+                    aria-label={isPart ? 'Search parts' : 'Search assemblies'}
                     className={`mb-3 ${PARTS_TEXT_INPUT_CLASS}`}
                     style={PARTS_TEXT_INPUT_STYLE}
                     autoFocus
@@ -1468,50 +1473,61 @@ export default function PartFeed({
                 {openEmptyFilter && (
                   <p className="text-xs text-amber-300" data-git-open-search-empty="">No matches.</p>
                 )}
-                {!openPicker.loading && openIndex.assemblies.length > 0 && (
-                  <div className="mb-3" data-git-open-assemblies="">
-                    <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-gray-500">Assemblies</p>
-                    <ul className="max-h-40 space-y-1 overflow-y-auto" data-git-open-list="">
-                      {openIndex.assemblies.map((item) => {
-                        const name = typeof item === 'string' ? item : item.name;
-                        return (
-                          <li key={`asm-${name}`}>
-                            <button
-                              type="button"
-                              data-git-open-item={name}
-                              data-git-open-kind="assembly"
-                              className="w-full rounded-md px-2 py-1.5 text-left text-xs text-gray-100 hover:bg-white/10"
-                              onClick={() => askOpenAssemblyChoice(name)}
-                            >
-                              {name}
-                            </button>
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  </div>
-                )}
-                {!openPicker.loading && openIndex.parts.length > 0 && (
-                  <div data-git-open-parts="">
-                    <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-gray-500">Parts</p>
-                    <ul className="max-h-40 space-y-1 overflow-y-auto" data-git-open-part-list="">
-                      {openIndex.parts.map((item) => (
-                        <li key={item.path}>
+                {!openPicker.loading && !isPart && asmHits.length > 0 && (
+                  <div data-git-open-assemblies="">
+                    <ul className="max-h-64 space-y-1 overflow-y-auto" data-git-open-list="">
+                      {asmHits.map((item) => (
+                        <li key={`asm-${item.name}`}>
                           <button
                             type="button"
-                            data-git-open-part={item.path}
-                            data-git-open-kind="part"
+                            data-git-open-item={item.name}
+                            data-git-open-kind="assembly"
+                            data-git-open-current={item.name === assemblyName ? 'true' : undefined}
                             className="w-full rounded-md px-2 py-1.5 text-left text-xs text-gray-100 hover:bg-white/10"
-                            onClick={() => { void runOpenPart(item.path); }}
+                            onClick={() => askOpenAssemblyChoice(item.name)}
                           >
-                            <span className="block truncate">{item.label || item.path}</span>
-                            {item.scope ? (
-                              <span className="text-[10px] text-gray-500">{item.scope}</span>
-                            ) : null}
+                            {item.label || item.name}
+                            {item.name === assemblyName ? <span className="ml-2 text-[10px] text-gray-500">open now</span> : null}
                           </button>
                         </li>
                       ))}
                     </ul>
+                  </div>
+                )}
+                {!openPicker.loading && isPart && partGroups.length > 0 && (
+                  <div className="max-h-72 overflow-y-auto" data-git-open-parts="">
+                    {partGroups.map((group) => (
+                      <div key={group.key} className="mb-2" data-git-open-group={group.label} data-git-open-group-current={group.current ? 'true' : undefined}>
+                        <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+                          {group.label}
+                          {group.current ? ' · this assembly' : ''}
+                        </p>
+                        <ul className="space-y-1" data-git-open-part-list="">
+                          {group.parts.map((item) => (
+                            <li key={item.path}>
+                              <button
+                                type="button"
+                                data-git-open-part={item.path}
+                                data-git-open-kind="part"
+                                data-git-open-part-source={item.source}
+                                data-git-open-part-foreign={item.foreign ? 'true' : undefined}
+                                title={item.path}
+                                className="w-full rounded-md px-2 py-1.5 text-left text-xs text-gray-100 hover:bg-white/10"
+                                onClick={() => { void runOpenPart(item.path); }}
+                              >
+                                <span className="block truncate">
+                                  {item.name}
+                                  {item.sameName ? <span className="ml-1 text-gray-400">· {item.source}</span> : null}
+                                </span>
+                                <span className="text-[10px] text-gray-500">
+                                  {item.inDoc ? 'in this assembly' : item.foreign ? `copies into ${assemblyName || 'this assembly'}` : 'opens by reference'}
+                                </span>
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ))}
                   </div>
                 )}
               </>
@@ -1616,77 +1632,6 @@ export default function PartFeed({
             style={PARTS_TEXT_INPUT_STYLE}
             placeholder="Bracket"
           />
-        </VaultPickerDialog>
-      )}
-      {openPicker && typeof document !== 'undefined' && openPicker.kind === 'add-existing' && (
-        <VaultPickerDialog
-          title="Add existing part"
-          labelledBy="git-add-existing-title"
-          dataAttr="add-existing"
-          onClose={closePicker}
-          footer={(
-            <div className="mt-4 flex justify-end">
-              <button type="button" className="rounded-md px-3 py-1.5 text-xs text-gray-200 hover:bg-white/10" onClick={closePicker} data-git-dialog-cancel="">
-                Cancel
-              </button>
-            </div>
-          )}
-        >
-          {(() => {
-            const addItems = filterVaultPartItems(openPicker.items, openPicker.query);
-            const addQuery = String(openPicker.query || '').trim();
-            const addEmptyFilter = !openPicker.loading
-              && !openPicker.error
-              && addQuery
-              && addItems.length === 0
-              && (openPicker.items || []).length > 0;
-            return (
-              <>
-                {!openPicker.loading && !openPicker.error && (openPicker.items || []).length > 0 && (
-                  <input
-                    type="search"
-                    data-git-add-search=""
-                    value={openPicker.query || ''}
-                    onChange={(e) => setOpenPicker({ ...openPicker, query: e.target.value })}
-                    placeholder="Search parts…"
-                    aria-label="Search parts"
-                    className={`mb-3 ${PARTS_TEXT_INPUT_CLASS}`}
-                    style={PARTS_TEXT_INPUT_STYLE}
-                    autoFocus
-                  />
-                )}
-                {openPicker.loading && <p className="text-xs text-gray-400" data-git-dialog-loading="">Loading…</p>}
-                {openPicker.error && !openPicker.loading && (
-                  <p className="text-xs text-amber-300" data-git-dialog-empty="">{openPicker.error}</p>
-                )}
-                {addEmptyFilter && (
-                  <p className="text-xs text-amber-300" data-git-add-search-empty="">No matches.</p>
-                )}
-                {!openPicker.loading && addItems.length > 0 && (
-                  <ul className="max-h-56 space-y-1 overflow-y-auto" data-git-add-list="">
-                    {addItems.map((item) => (
-                      <li key={item.path}>
-                        <button
-                          type="button"
-                          data-git-add-item={item.path}
-                          className="w-full rounded-md px-2 py-1.5 text-left text-xs text-gray-100 hover:bg-white/10"
-                          onClick={async () => {
-                            closePicker();
-                            await onAddExistingPart?.(item.path);
-                          }}
-                        >
-                          <span className="block truncate">{item.label || item.path}</span>
-                          {item.kind === 'shared-part' ? (
-                            <span className="text-[10px] text-gray-500">shared</span>
-                          ) : null}
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </>
-            );
-          })()}
         </VaultPickerDialog>
       )}
       {commitFlow && typeof document !== 'undefined' && (
