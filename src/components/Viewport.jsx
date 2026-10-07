@@ -7420,7 +7420,7 @@ const Viewport = forwardRef(({
       )}
       {/* G9: circular profile chip — top-right of the CAD viewport. */}
       {mode !== 'game' && (
-        <ProfileChip onAccount={onAccount} />
+        <ProfileChip variant="viewport" onAccount={onAccount} />
       )}
 
       {/* CAD chrome lives in the editor mid-strip in BOTH shells (desktop matches
