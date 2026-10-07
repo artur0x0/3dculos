@@ -53,7 +53,7 @@ function RibbonAssemblyName({ name, onRename, behind = false, onBehindClick = nu
     if (next && next !== (name || '')) onRename(next);
   };
 
-  const label = 'max-w-[45%] truncate bg-gray-900 px-2 text-center text-xs font-medium text-gray-100';
+  const label = 'max-w-[70%] truncate bg-gray-900 px-2 text-center text-xs font-medium text-gray-100';
   if (editing) {
     return (
       <input
@@ -66,7 +66,7 @@ function RibbonAssemblyName({ name, onRename, behind = false, onBehindClick = nu
           if (e.key === 'Escape') { e.preventDefault(); setEditing(false); }
           e.stopPropagation();
         }}
-        className={`${label} pointer-events-auto w-40 outline-none`}
+        className={`${label} pointer-events-auto w-52 outline-none`}
         aria-label="Assembly name"
         data-assembly-name=""
         data-assembly-rename="input"
@@ -89,7 +89,7 @@ function RibbonAssemblyName({ name, onRename, behind = false, onBehindClick = nu
 
   if (!onRename) {
     return (
-      <span className="pointer-events-none inline-flex max-w-[45%] items-center" data-assembly-behind-wrap={behind ? 'true' : 'false'}>
+      <span className="pointer-events-none inline-flex max-w-[70%] items-center" data-assembly-behind-wrap={behind ? 'true' : 'false'}>
         <span className={`${label} pointer-events-none`} data-assembly-name="" title={name}>
           {name}
         </span>
@@ -98,7 +98,7 @@ function RibbonAssemblyName({ name, onRename, behind = false, onBehindClick = nu
     );
   }
   return (
-    <span className="pointer-events-auto inline-flex max-w-[45%] items-center" data-assembly-behind-wrap={behind ? 'true' : 'false'}>
+    <span className="pointer-events-auto inline-flex max-w-[70%] items-center" data-assembly-behind-wrap={behind ? 'true' : 'false'}>
       <button
         type="button"
         onClick={start}
@@ -331,7 +331,9 @@ export default function PartFeed({
   // G5/G11: null | { stage: 'list'|'create'|'delete'|'delete-confirm'|'busy'|'confirm'|'error'|'merge-pick', ... }
   const [branchFlow, setBranchFlow] = useState(null);
   const [branchMenuOpen, setBranchMenuOpen] = useState(false);
+  const [plusMenuOpen, setPlusMenuOpen] = useState(false);
   const branchMenuRef = useRef(null);
+  const plusMenuRef = useRef(null);
   const branchCreateInputRef = useRef(null);
   const behindSet = behindPartIds instanceof Set
     ? behindPartIds
@@ -788,6 +790,17 @@ export default function PartFeed({
     return () => document.removeEventListener('mousedown', onDoc);
   }, [branchMenuOpen]);
 
+  useEffect(() => {
+    if (!plusMenuOpen) return undefined;
+    const onDoc = (event) => {
+      if (plusMenuRef.current && !plusMenuRef.current.contains(event.target)) {
+        setPlusMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [plusMenuOpen]);
+
     const runCommit = async () => {
     const draft = commitFlow?.draft || '';
     setCommitFlow({ stage: 'busy', draft, result: null, error: '' });
@@ -882,28 +895,55 @@ export default function PartFeed({
           >
             <FolderOpen size={STRIP_ICON} />
           </button>
-          <button
-            type="button"
-            className={STRIP_BTN}
-            data-part-add=""
-            title="New part"
-            aria-label="New part"
-            onClick={startNewPart}
-          >
-            <Plus size={STRIP_ICON} />
-          </button>
-          {source === 'git' && (
+          <div className="relative" ref={plusMenuRef} data-part-add-menu="">
             <button
               type="button"
               className={STRIP_BTN}
-              data-git-add-existing=""
-              title="Add from vault assembly"
-              aria-label="Add from vault assembly"
-              onClick={startAddExisting}
+              data-part-add=""
+              title="Add part"
+              aria-label="Add part"
+              aria-expanded={plusMenuOpen ? 'true' : 'false'}
+              aria-haspopup="menu"
+              onClick={() => setPlusMenuOpen((open) => !open)}
             >
-              <span className="px-0.5 text-[10px] font-medium leading-none">Add</span>
+              <Plus size={STRIP_ICON} />
             </button>
-          )}
+            {plusMenuOpen && (
+              <div
+                data-part-add-dropdown=""
+                role="menu"
+                className="absolute left-0 top-full z-50 mt-1 min-w-[7.5rem] rounded-md border border-gray-600 bg-gray-900 py-1 shadow-lg"
+              >
+                <button
+                  type="button"
+                  role="menuitem"
+                  data-part-add-action="new"
+                  className="block w-full px-3 py-1.5 text-left text-xs text-gray-100 hover:bg-white/10"
+                  onClick={() => {
+                    setPlusMenuOpen(false);
+                    startNewPart();
+                  }}
+                >
+                  New
+                </button>
+                {source === 'git' && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    data-part-add-action="existing"
+                    data-git-add-existing=""
+                    className="block w-full px-3 py-1.5 text-left text-xs text-gray-100 hover:bg-white/10"
+                    onClick={() => {
+                      setPlusMenuOpen(false);
+                      void startAddExisting();
+                    }}
+                  >
+                    Existing
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
         </div>
         <div
           data-parts-ribbon-end=""
