@@ -200,6 +200,25 @@ export function createMockGithubAdapter(options = {}) {
       return { sha, parents: head ? [head] : [], branch: target };
     },
 
+    async squashMerge(repo, { base = 'main', head, message } = {}) {
+      const state = repoState(repo);
+      if (!state) throw new GitAdapterError('not_found', `Repo ${repo.owner}/${repo.name} not found`);
+      if (!head) throw new GitAdapterError('invalid', 'squashMerge needs head');
+      const baseSha = resolveRef(state, base);
+      const headSha = resolveRef(state, head);
+      if (!baseSha) throw new GitAdapterError('not_found', `Branch ${base} not found`);
+      if (!headSha) throw new GitAdapterError('not_found', `Branch ${head} not found`);
+      const headCommit = state.commits.get(headSha);
+      if (!headCommit) throw new GitAdapterError('not_found', `Commit ${headSha} not found`);
+      const msg = String(message || '').trim() || `Squash merge ${head} into ${base}`;
+      // Clone head tree Map so base commit owns a distinct snapshot.
+      const tree = new Map(headCommit.tree);
+      const sha = makeCommit(state, baseSha, tree, msg);
+      state.branches.set(base, sha);
+      log.push({ op: 'squashMerge', repo: key(repo), base, head, sha });
+      return { sha, base, head, parents: [baseSha] };
+    },
+
     async compare(repo, base, head) {
       const state = repoState(repo);
       const baseSha = resolveRef(state, base);

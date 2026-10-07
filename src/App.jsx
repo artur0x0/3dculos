@@ -119,6 +119,7 @@ import {
   deleteVaultBranch,
   githubCompareUrl,
   canDeleteVaultBranch,
+  squashMergeVaultBranch,
   DEFAULT_VAULT_NAME,
   sanitizeVaultName,
   planMoveToGit,
@@ -2237,8 +2238,8 @@ const App = () => {
   };
 
   /**
-   * G11: open GitHub compare/PR URL for merging `head` into `base` (default main).
-   * SurfCAD does not merge server-side.
+   * Open GitHub compare/PR URL for merging `head` into `base` (default main).
+   * Used when squash is not clean (Resolve on Git).
    */
   const handleMergeBranch = ({ head = null, base = 'main' } = {}) => {
     const vault = gitVaultRef.current;
@@ -2251,6 +2252,45 @@ const App = () => {
     if (!url) return { status: 'error', error: 'Could not build compare URL' };
     if (typeof window !== 'undefined') window.open(url, '_blank', 'noopener,noreferrer');
     return { status: 'opened', url, base, head: headBranch };
+  };
+
+  /**
+   * Squash current (or given) side branch into main when clean; otherwise
+   * return conflict so the UI can offer Resolve on Git.
+   */
+  const handleSquashMerge = async ({ head = null, base = 'main' } = {}) => {
+    const doc = assemblyRef.current;
+    if (!doc || doc.source !== 'git') {
+      return { status: 'error', error: 'Not in Git mode' };
+    }
+    const headBranch = head || gitWorkingBranch();
+    if (!headBranch || headBranch === base) {
+      return { status: 'error', error: 'Already on the merge target' };
+    }
+    try {
+      const vault = await ensureGitVault();
+      const result = await squashMergeVaultBranch(gitAdapterRef.current, vault.repo, {
+        head: headBranch,
+        base,
+      });
+      if (result.status === 'conflict') {
+        return result;
+      }
+      if (result.status === 'merged' || result.status === 'up-to-date') {
+        if (result.status === 'merged') {
+          gitVaultRef.current = { ...vault, headSha: result.sha };
+        }
+        // Land working copy on base after merge.
+        const switched = await handleSwitchBranch(base);
+        if (switched.status === 'error') {
+          return { ...result, switchError: switched.error };
+        }
+        return { ...result, switched: switched.status };
+      }
+      return result;
+    } catch (err) {
+      return { status: 'error', error: err.message || 'Merge failed' };
+    }
   };
 
     /**
@@ -3723,6 +3763,7 @@ const App = () => {
       onCreateBranch={handleCreateBranch}
       onDeleteBranch={handleDeleteBranch}
       onMergeBranch={handleMergeBranch}
+      onSquashMerge={handleSquashMerge}
       githubConnectReady={!!githubClientId}
       githubConnected={githubConnected}
       onGitConnect={handleGitConnect}

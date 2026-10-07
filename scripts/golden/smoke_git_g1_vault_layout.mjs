@@ -39,7 +39,7 @@ async function throwsCode(name, fn, code) {
 }
 
 console.log('git G1 — interface contract');
-eq('interface methods', [...GITHUB_ADAPTER_METHODS], ['getViewer', 'getRepo', 'createRepo', 'listBranches', 'getBranch', 'createBranch', 'deleteBranch', 'listTree', 'readFile', 'commitFiles', 'compare']);
+eq('interface methods', [...GITHUB_ADAPTER_METHODS], ['getViewer', 'getRepo', 'createRepo', 'listBranches', 'getBranch', 'createBranch', 'deleteBranch', 'listTree', 'readFile', 'commitFiles', 'compare', 'squashMerge']);
 eq('missing on {}', missingAdapterMethods({}).length, GITHUB_ADAPTER_METHODS.length);
 eq('missing on partial', missingAdapterMethods({ getViewer() {}, readFile() {} }).length, GITHUB_ADAPTER_METHODS.length - 2);
 await throwsCode('assert rejects partial adapter', () => assertGithubAdapter({ getViewer() {} }), 'invalid');

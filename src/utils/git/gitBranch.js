@@ -1,8 +1,8 @@
 /**
  * G5/G11: branch view helpers.
  *
- * List / switch / create / delete vault branches. Merge opens a GitHub
- * compare URL in the browser (no server-side merge).
+ * List / switch / create / delete vault branches. Clean side-branch merges
+ * squash onto main via the adapter; conflicts open a GitHub compare URL.
  */
 import { assertGithubAdapter, GitAdapterError } from './githubAdapterInterface.js';
 import { openVaultAssembly } from './gitWorkspace.js';
@@ -85,6 +85,54 @@ export function githubCompareUrl(repo, { base = 'main', head } = {}) {
   const baseEnc = encodeURIComponent(base);
   const headEnc = encodeURIComponent(head);
   return `https://github.com/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/compare/${baseEnc}...${headEnc}?expand=1`;
+}
+
+
+/**
+ * Squash `head` into `base` (default main) when head is strictly ahead.
+ * Diverged / behind → { status: 'conflict' } so the UI can open GitHub.
+ * Identical / nothing ahead → { status: 'up-to-date' }.
+ * Success → { status: 'merged', sha, base, head }.
+ */
+export async function squashMergeVaultBranch(adapter, repo, {
+  head,
+  base = 'main',
+  message = null,
+} = {}) {
+  assertGithubAdapter(adapter);
+  const headName = String(head || '').trim();
+  const baseName = String(base || 'main').trim() || 'main';
+  if (!headName) throw new GitAdapterError('invalid', 'Branch name required');
+  if (headName === baseName) {
+    throw new GitAdapterError('invalid', 'Cannot merge a branch into itself');
+  }
+  const cmp = await adapter.compare(repo, baseName, headName);
+  if (cmp.status === 'identical' || (cmp.aheadBy === 0 && cmp.behindBy === 0)) {
+    return { status: 'up-to-date', base: baseName, head: headName, compare: cmp };
+  }
+  // Head missing commits that base has → not a clean squash; resolve on GitHub.
+  if (cmp.behindBy > 0) {
+    return {
+      status: 'conflict',
+      base: baseName,
+      head: headName,
+      compare: cmp,
+      url: githubCompareUrl(repo, { base: baseName, head: headName }),
+    };
+  }
+  const msg = message || `Squash merge branch '${headName}' into ${baseName}`;
+  const res = await adapter.squashMerge(repo, {
+    base: baseName,
+    head: headName,
+    message: msg,
+  });
+  return {
+    status: 'merged',
+    sha: res.sha,
+    base: baseName,
+    head: headName,
+    compare: cmp,
+  };
 }
 
 /** True when a branch may be deleted (not main, not current). */
