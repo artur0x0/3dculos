@@ -79,6 +79,62 @@ export function newLocalPartId() {
 /** Shown and saved when a document has no name of its own. */
 export const DEFAULT_ASSEMBLY_NAME = 'Assembly';
 
+/** Default part label used when seeding a blank assembly. */
+export const DEFAULT_PART_NAME = 'Part 1';
+
+/**
+ * True when the working copy is blank or still the stock default assembly
+ * (name Assembly / blank, zero or one Part 1, script empty or a known starter).
+ * Used so Assembly New/Existing can skip the Save|Discard leave guard.
+ */
+export function isDefaultBlankAssembly(doc, scripts = {}, {
+  defaultScripts = [],
+  liveId = null,
+  liveScript = null,
+} = {}) {
+  if (!doc || typeof doc !== 'object') return true;
+  const name = storedAssemblyName(doc);
+  if (name && name !== DEFAULT_ASSEMBLY_NAME) return false;
+  const parts = Array.isArray(doc.parts) ? doc.parts : [];
+  if (parts.length === 0) return true;
+  if (parts.length !== 1) return false;
+  const part = parts[0];
+  const pname = String(part?.name || '').trim();
+  if (pname && pname !== DEFAULT_PART_NAME && pname !== 'part1') return false;
+  let script = scripts?.[part.id];
+  if (liveId != null && String(liveId) === String(part.id) && typeof liveScript === 'string') {
+    script = liveScript;
+  }
+  const text = String(script ?? '');
+  if (!text.trim()) return true;
+  const known = (Array.isArray(defaultScripts) ? defaultScripts : [])
+    .map((s) => String(s ?? ''))
+    .filter(Boolean);
+  if (!known.length) return false;
+  return known.some((s) => s === text);
+}
+
+/**
+ * True when leaving the current assembly for New/Existing should ask Save|Discard.
+ * Skip when blank/default, or when Git is known-saved (has baseline and not dirty).
+ */
+export function needsAssemblyLeaveGuard(doc, {
+  sourceDirty = false,
+  hasBaseline = false,
+  source = 'local',
+  scripts = {},
+  defaultScripts = [],
+  liveId = null,
+  liveScript = null,
+} = {}) {
+  if (isDefaultBlankAssembly(doc, scripts, { defaultScripts, liveId, liveScript })) {
+    return false;
+  }
+  if (source === 'git' && hasBaseline && !sourceDirty) return false;
+  return true;
+}
+
+
 /** Trimmed name stored on the document, or '' when it has none. */
 function storedAssemblyName(doc) {
   if (!doc || typeof doc.name !== 'string') return '';
