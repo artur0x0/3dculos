@@ -1,6 +1,6 @@
 import React, { useRef } from 'react';
 import {
-  FolderOpen, Save, Download, Undo, Redo,
+  Download, Undo, Redo,
   Truck, Upload, ArrowLeft, Play, BookOpen, Puzzle, List, SquareDashedBottomCode
 } from 'lucide-react';
 import { formatGameTime } from '../utils/gamePuzzle';
@@ -10,14 +10,14 @@ import { formatGameTime } from '../utils/gamePuzzle';
  * - CAD (both shells): action bar in the Monaco mid-strip, above the editor.
  *   Desktop used to float a collapsible overlay over the viewport; it now matches
  *   phone, so there is no overlay and no collapse chevron for CAD at all.
+ *   G12: Script I/O is Upload + Download only (model import/export). File Open /
+ *   Save and vault chrome live on Parts (G11).
  * - Game: the same strip, rendered inline by CodeEditor (variant="strip"), with an
  *   overlay fallback for any non-strip caller.
  */
 const Toolbar = ({
   mode = 'cad',
   variant = 'overlay',
-  onOpen,
-  onSave,
   onDownload,
   onQuote,
   onUpload,
@@ -28,7 +28,6 @@ const Toolbar = ({
   isExecuting,
   isDownloading,
   isUploading,
-  currentFilename,
   onStartGame,
   onExitGame,
   onRun,
@@ -42,27 +41,10 @@ const Toolbar = ({
   gameSuccess = false,
   gameBestTimeMs = null,
 }) => {
-  const fileInputRef = useRef(null);
   const uploadModelRef = useRef(null);
 
   const isGame = mode === 'game';
   const isStrip = variant === 'strip';
-
-  const handleFileSelect = async (event) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    try {
-      const text = await file.text();
-      onOpen(text, file.name);
-    } catch (err) {
-      console.error('Error reading file:', err);
-    }
-
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
-  };
 
   const handleModelUpload = async (event) => {
     const file = event.target.files?.[0];
@@ -179,7 +161,7 @@ const Toolbar = ({
 
         {/* Slice 07: keep BookOpen as the sole Hint control (removed ⋯ overflow
             that sat next to Hint and felt like a second help entry in playtest).
-            CAD Save/Download remain available after exiting game; Account is the viewport profile chip (G9). */}
+            CAD Upload/Download remain available after exiting game; Account is the viewport profile chip (G9). */}
         <button
           onClick={onHint}
           className={`${btnPad} flex items-center gap-1 ${cyanCls} rounded active:opacity-80`}
@@ -205,22 +187,16 @@ const Toolbar = ({
       >
         <input
           type="file"
-          ref={fileInputRef}
-          onChange={handleFileSelect}
-          className="hidden"
-          accept=".js,.txt"
-        />
-        <input
-          type="file"
           ref={uploadModelRef}
           onChange={handleModelUpload}
           className="hidden"
           accept=".stl,.obj,.3mf,.step,.stp"
+          data-script-upload-input=""
         />
 
         {/* Run is first and sits in its own section: it is the one button you
-            press over and over, and it must not be one slot away from Open or
-            Upload. Green while idle, spinner while the script is executing. */}
+            press over and over, and it must not be one slot away from Upload.
+            Green while idle, spinner while the script is executing. */}
         <button
           type="button"
           onClick={onRunScript}
@@ -243,7 +219,7 @@ const Toolbar = ({
           )}
         </button>
         {/* Select all rides in Run's section, at Run's icon size — it is an
-            editor action, not a file/model one, and it used to sit alone at the
+            editor action, not a model I/O one, and it used to sit alone at the
             far end of the strip at a smaller 16px. */}
         <button
           type="button"
@@ -257,25 +233,36 @@ const Toolbar = ({
         </button>
         <div className={divider} />
 
-        <button
-          type="button"
-          onClick={() => fileInputRef.current?.click()}
-          className={`${btn} ${blue}`}
-          title="Open File"
-        >
-          <FolderOpen size={icon} />
-        </button>
+        {/* G12: Script model I/O is Upload + Download only. File Open/Save and
+            vault Commit/Branch/Open live on Parts (G11). */}
         <button
           type="button"
           onClick={() => uploadModelRef.current?.click()}
           disabled={isUploading || isExecuting}
           className={`${btn} ${blue} disabled:opacity-50`}
-          title="Upload STEP File"
+          title="Upload model (STEP/STL/OBJ/3MF)"
+          aria-label="Upload model"
+          data-script-upload=""
         >
           {isUploading ? (
             <div className="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
           ) : (
             <Upload size={icon} />
+          )}
+        </button>
+        <button
+          type="button"
+          onClick={onDownload}
+          disabled={isDownloading || isExecuting}
+          className={`${btn} ${blue} disabled:opacity-50`}
+          title="Download model"
+          aria-label="Download model"
+          data-script-download=""
+        >
+          {isDownloading ? (
+            <div className="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
+          ) : (
+            <Download size={icon} />
           )}
         </button>
 
@@ -298,30 +285,6 @@ const Toolbar = ({
           title="Redo"
         >
           <Redo size={icon} />
-        </button>
-
-        <div className={divider} />
-
-        <button
-          type="button"
-          onClick={onSave}
-          className={`${btn} ${blue}`}
-          title={currentFilename ? `Save ${currentFilename}` : 'Save As'}
-        >
-          <Save size={icon} />
-        </button>
-        <button
-          type="button"
-          onClick={onDownload}
-          disabled={isDownloading || isExecuting}
-          className={`${btn} ${blue} disabled:opacity-50`}
-          title="Download Model"
-        >
-          {isDownloading ? (
-            <div className="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
-          ) : (
-            <Download size={icon} />
-          )}
         </button>
 
         <div className={divider} />
