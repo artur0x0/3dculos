@@ -2466,8 +2466,25 @@ const App = () => {
         try {
           await ensureGitVault();
         } catch (err) {
-          if (!cancelled) setUploadError(err.message || 'Could not open vault');
-          return;
+          // Vault seed used to throw "main moved: head …, base null" when
+          // GitHub size===0 lied about an existing vault. findOrCreateVault
+          // recovers now; if a race still surfaces, never toast as Upload Error.
+          const msg = err?.message || 'Could not open vault';
+          if (!cancelled && /moved:\s*head/i.test(msg)) {
+            console.warn('[App] Vault open hit main-moved race; clearing vault cache', msg);
+            gitVaultRef.current = null;
+            try {
+              await ensureGitVault();
+            } catch (err2) {
+              if (!cancelled && !/moved:\s*head/i.test(err2?.message || '')) {
+                setUploadError(err2.message || 'Could not open vault');
+              }
+              return;
+            }
+          } else {
+            if (!cancelled) setUploadError(msg);
+            return;
+          }
         }
         if (cancelled) return;
         const latest = assemblyRef.current;

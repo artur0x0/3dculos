@@ -175,6 +175,18 @@ eq('seed is one commit', (await gh.compare(v1.repo, 'main', 'main')).headSha, v1
 const v2 = await findOrCreateVault(gh);
 eq('second call finds it', [v2.status, v2.headSha], ['found', v1.headSha]);
 eq('one createRepo only', gh._log.filter((e) => e.op === 'createRepo').length, 1);
+// GitHub `size === 0` often lies for small vaults; findOrCreate must use getBranch,
+// not info.empty — otherwise seed with baseSha:null throws "main moved… base null".
+{
+  const realGetRepo = gh.getRepo.bind(gh);
+  gh.getRepo = async (repo) => {
+    const info = await realGetRepo(repo);
+    return info ? { ...info, empty: true } : info;
+  };
+  const lied = await findOrCreateVault(gh);
+  eq('size===0 lie still finds vault', [lied.status, lied.headSha], ['found', v1.headSha]);
+  gh.getRepo = realGetRepo;
+}
 const v3 = await findOrCreateVault(gh, { name: 'my parts' });
 eq('rename field', [v3.status, v3.repo.name], ['created', 'my-parts']);
 gh._seedRepo({ name: 'busy', files: { 'index.html': '<p>' } });

@@ -7,6 +7,11 @@
  * the chosen name is initialized in place. An existing non-empty repo
  * without the marker is never written; findOrCreateVault reports
  * 'not-a-vault' so the UI can ask for another name.
+ *
+ * Never trust GitHub's `size === 0` alone for emptiness: small vaults often
+ * report size 0, and seeding with `baseSha: null` then throws
+ * `main moved: head <sha>, base null` (Upload Error toast after OAuth).
+ * Emptiness is "default branch has no commit" via getBranch.
  */
 import { assertGithubAdapter, GitAdapterError } from './githubAdapterInterface.js';
 import { ASSEMBLIES_DIR, SHARED_PARTS_DIR, VAULT_MARKER_PATH, VAULT_README_PATH } from './vaultLayout.js';
@@ -53,6 +58,26 @@ export function vaultSeedFiles(name) {
 }
 
 /**
+ * Classify an existing repo that already has commits on the default branch.
+ * -> found | not-a-vault
+ */
+async function classifyExistingVault(adapter, repo, defaultBranch, isPrivate) {
+  const head = await adapter.getBranch(repo, defaultBranch);
+  if (!head?.sha) return null;
+  const marker = await adapter.readFile(repo, VAULT_MARKER_PATH, defaultBranch);
+  if (!marker || !isVaultMarker(marker.content)) {
+    return { status: 'not-a-vault', repo };
+  }
+  return {
+    status: 'found',
+    repo,
+    defaultBranch,
+    headSha: head.sha,
+    private: isPrivate,
+  };
+}
+
+/**
  * -> { status: 'found' | 'created' | 'initialized', repo: { owner, name },
  *      defaultBranch, headSha, private }
  *  | { status: 'not-a-vault', repo }      (existing repo, has files, no marker)
@@ -68,11 +93,16 @@ export async function findOrCreateVault(adapter, { name = DEFAULT_VAULT_NAME, cr
   const repo = { owner: login, name: repoName };
   let info = await adapter.getRepo(repo);
 
-  if (info && !info.empty) {
-    const marker = await adapter.readFile(repo, VAULT_MARKER_PATH, info.defaultBranch);
-    if (!marker || !isVaultMarker(marker.content)) return { status: 'not-a-vault', repo };
-    const head = await adapter.getBranch(repo, info.defaultBranch);
-    return { status: 'found', repo, defaultBranch: info.defaultBranch, headSha: head?.sha || null, private: info.private };
+  if (info) {
+    // Prefer getBranch over info.empty / size===0 (unreliable on GitHub).
+    const existing = await classifyExistingVault(
+      adapter,
+      repo,
+      info.defaultBranch,
+      info.private,
+    );
+    if (existing) return existing;
+    // Truly no commits on the default branch — seed below.
   }
   if (!info && !create) return { status: 'missing', repo };
 
@@ -89,11 +119,27 @@ export async function findOrCreateVault(adapter, { name = DEFAULT_VAULT_NAME, cr
       throw err;
     }
   }
-  const commit = await adapter.commitFiles(repo, {
-    branch: info.defaultBranch,
-    message: 'Create SurfCAD vault',
-    files: vaultSeedFiles(repoName),
-    baseSha: null,
-  });
-  return { status, repo, defaultBranch: info.defaultBranch, headSha: commit.sha, private: info.private };
+
+  try {
+    const commit = await adapter.commitFiles(repo, {
+      branch: info.defaultBranch,
+      message: 'Create SurfCAD vault',
+      files: vaultSeedFiles(repoName),
+      baseSha: null,
+    });
+    return { status, repo, defaultBranch: info.defaultBranch, headSha: commit.sha, private: info.private };
+  } catch (err) {
+    // Race: commits appeared between getBranch and seed (or size===0 lied).
+    // Re-classify instead of bubbling "main moved… base null" as Upload Error.
+    if (err instanceof GitAdapterError && err.code === 'non_fast_forward') {
+      const again = await classifyExistingVault(
+        adapter,
+        repo,
+        info.defaultBranch,
+        info.private,
+      );
+      if (again) return again;
+    }
+    throw err;
+  }
 }

@@ -181,6 +181,16 @@ console.log('\ngit G3 — first commit of a new assembly (no Open)');
   const reopened = await openVaultAssembly(gh, vault.repo, 'Widget');
   eq('reopens from vault', reopened.scripts[P], 'return Manifold.cube([5,5,5], true);');
   ok('clean vs new baseline', !isWorkspaceDirty(doc, { [P]: 'return Manifold.cube([5,5,5], true);' }, res.baseline));
+  // Null baseline head (post-OAuth, no Open yet) must resolve tip — not throw
+  // "main moved: head …, base null" or falsely return branched.
+  const P2 = assemblyPartPath('Gadget', 'Cap');
+  const doc2 = { source: 'git', name: 'Gadget', activeId: P2, parts: [{ id: P2, name: 'Cap', visible: true, order: 0 }] };
+  const nullBase = await commitWorkspace(gh, vault.repo, {
+    doc: doc2, scripts: { [P2]: 'return Manifold.cube([1,1,1], true);' },
+    baseline: firstCommitBaseline({ branch: 'main', headSha: null }),
+  });
+  eq('null baseline head commits on tip (not branched)', nullBase.status, 'committed');
+  ok('null-base did not invent a side branch', !nullBase.branch || nullBase.branch === 'main');
 }
 
 console.log('\ngit G3 — assembly rename moves in one commit');
@@ -218,6 +228,13 @@ ok('App wires commit + force merge', /handleGitCommit/.test(app) && /handleForce
   && /onGitCommit=\{handleGitCommit\}/.test(app) && /canCommit=/.test(app));
 ok('baseline advances after commit', /rememberGitBaseline\(result\.baseline\)/.test(app));
 ok('index exports G3', typeof gitIndex.commitWorkspace === 'function' && typeof gitIndex.forceMergeCommit === 'function');
+const commitSrc = readFileSync(new URL('../../src/utils/git/gitCommit.js', import.meta.url), 'utf8');
+const vaultSrc = readFileSync(new URL('../../src/utils/git/vault.js', import.meta.url), 'utf8');
+ok('null baseline head resolves tip before commit', /let expectedBase = baseline\.headSha/.test(commitSrc)
+  && /adapter\.getBranch\(repo, branch\)/.test(commitSrc));
+ok('vault findOrCreate prefers getBranch over size===0', /classifyExistingVault/.test(vaultSrc)
+  && /size === 0/.test(vaultSrc) && /non_fast_forward/.test(vaultSrc));
+ok('G10 suppresses Upload Error for main-moved vault race', /moved:\\s\*head/i.test(app));
 ok('Connect still git-only (G7 gates on client id)',
   /data-git-connect=""/.test(feed) && /source === 'git'/.test(feed)
   && /githubConnectReady/.test(feed));
