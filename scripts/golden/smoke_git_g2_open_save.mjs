@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * G2 open/save in Git mode: list/open .surf.json + parts by path, new part
- * path, + New|Existing dropdown, dirty badges, profile chip (playtest unify).
+ * path, + Part|Assembly create; folder Part|Assembly open, dirty badges, profile chip (playtest unify).
  * Mock adapter only — no network, no tokens, no commit (G3).
  */
 import { readFileSync } from 'node:fs';
@@ -226,17 +226,21 @@ ok('git Open lists vault', /data-git-open-list/.test(feed) && /onListVaultAssemb
   && /onOpenVaultAssembly/.test(feed));
 ok('new part asks for name only', /data-git-new-part-name/.test(feed) && /title="New part"/.test(feed)
   && !/New part path/.test(feed) && !/data-git-new-part-path/.test(feed));
-ok('add existing via + dropdown', /data-part-add-menu/.test(feed)
+ok('+ create menu is Part|Assembly only', /data-part-add-menu/.test(feed)
   && /data-part-add-dropdown/.test(feed)
-  && /data-part-add-action="new"/.test(feed)
-  && /data-part-add-action="existing"/.test(feed)
-  && /data-git-add-existing/.test(feed) && /data-git-add-list/.test(feed)
-  && /onAddExistingPart/.test(feed));
-ok('+ menu sections Part + Assembly with New/Existing', /data-part-add-section="part"/.test(feed)
-  && /data-part-add-section="assembly"/.test(feed)
+  && /data-part-add-action="part"/.test(feed)
+  && /data-part-add-action="assembly"/.test(feed)
   && /data-part-add-kind="part"/.test(feed)
   && /data-part-add-kind="assembly"/.test(feed)
-  && /data-assembly-add-existing/.test(feed));
+  && !/data-part-add-action="existing"/.test(feed)
+  && !/data-part-add-section=/.test(feed));
+ok('folder open menu is Part|Assembly; Existing via folder', /data-part-open-menu/.test(feed)
+  && /data-part-open-dropdown/.test(feed)
+  && /data-part-open-action="part"/.test(feed)
+  && /data-part-open-action="assembly"/.test(feed)
+  && /data-git-add-existing/.test(feed) && /data-git-add-list/.test(feed)
+  && /data-assembly-add-existing/.test(feed)
+  && /onAddExistingPart/.test(feed));
 ok('assembly leave Save|Discard guard', /data-assembly-leave-ask/.test(feed)
   && /data-assembly-leave-save/.test(feed)
   && /data-assembly-leave-discard/.test(feed)
