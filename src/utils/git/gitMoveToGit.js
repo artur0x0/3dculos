@@ -24,7 +24,7 @@
  * nothing here talks to the network.
  */
 import { normalizeRepoPath, serializeAssembly } from '../assembly.js';
-import { assertGithubAdapter, fileWrite } from './githubAdapter.js';
+import { assertGithubAdapter, fileWrite } from './githubAdapterInterface.js';
 import { captureBaseline } from './gitWorkspace.js';
 import { effectiveScripts } from './gitCommit.js';
 import { stringifySurfJson } from './surfJson.js';

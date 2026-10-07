@@ -18,7 +18,7 @@
  *
  * Mock adapter only for now; nothing here talks to the network.
  */
-import { GitAdapterError, assertGithubAdapter, fileWrite, fileDelete } from './githubAdapter.js';
+import { GitAdapterError, assertGithubAdapter, fileWrite, fileDelete } from './githubAdapterInterface.js';
 import { captureBaseline, dirtyPartIds } from './gitWorkspace.js';
 import {
   ASSEMBLIES_DIR,

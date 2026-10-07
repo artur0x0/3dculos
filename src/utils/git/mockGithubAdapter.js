@@ -1,5 +1,5 @@
 /**
- * In-memory GitHub adapter. Implements githubAdapter.js for every git-mode
+ * In-memory GitHub adapter. Implements githubAdapterInterface.js for every git-mode
  * slice until the real GitHub App adapter lands. No network, no tokens.
  *
  * Model: repos keyed `owner/name`; each repo has commits (sha -> { parents,
@@ -8,7 +8,7 @@
  * without auto_init; the first commitFiles creates the default branch.
  * Shas are deterministic 40-hex strings, so tests can compare them.
  */
-import { GitAdapterError, assertGithubAdapter } from './githubAdapter.js';
+import { GitAdapterError, assertGithubAdapter } from './githubAdapterInterface.js';
 import { normalizeRepoPath } from '../assembly.js';
 
 function fnv(str, seed) {

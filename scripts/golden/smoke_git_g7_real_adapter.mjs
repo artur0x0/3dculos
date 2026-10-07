@@ -3,6 +3,7 @@
  * G7: real GitHub adapter + stateless token exchange + Connect wiring.
  *
  * - Real adapter method parity vs mock (mocked fetch — no network)
+ * - Empty-repo first commit (Contents API bootstrap; blobs 409 until seeded)
  * - Exchange endpoint (mock GitHub token response; stores nothing)
  * - Connect / callback state handling
  * - No secrets in client bundle except Client ID
@@ -14,9 +15,9 @@ import { dirname, join } from 'node:path';
 import {
   GitAdapterError, assertGithubAdapter, missingAdapterMethods,
   fileWrite, fileDelete,
-} from '../../src/utils/git/githubAdapter.js';
+} from '../../src/utils/git/githubAdapterInterface.js';
 import { createMockGithubAdapter } from '../../src/utils/git/mockGithubAdapter.js';
-import { createRealGithubAdapter } from '../../src/utils/git/realGithubAdapter.js';
+import { createGithubAdapter } from '../../src/utils/git/githubAdapter.js';
 import {
   GITHUB_CALLBACK_PATH, GITHUB_TOKEN_STORAGE_KEY, GITHUB_TOKEN_EXCHANGE_PATH,
   GITHUB_OAUTH_STATE_MISSING_HINT,
@@ -345,6 +346,11 @@ function makeFakeGithub() {
 
     if ((m = path.match(/^\/repos\/([^/]+)\/([^/]+)\/git\/blobs$/)) && method === 'POST') {
       const state = repos.get(key(decodeURIComponent(m[1]), decodeURIComponent(m[2])));
+      if (!state) return json(404, { message: 'Not Found' });
+      // Real GitHub: 409 on empty repos (no refs) — Contents API must seed first.
+      if (state.branches.size === 0) {
+        return json(409, { message: 'Git Repository is empty.' });
+      }
       const s = sha('blob');
       state.blobs.set(s, body.content);
       return json(201, { sha: s });
@@ -435,6 +441,34 @@ function makeFakeGithub() {
       return json(200, { ref: `refs/heads/${name}`, object: { sha: body.sha } });
     }
 
+    if ((m = path.match(/^\/repos\/([^/]+)\/([^/]+)\/contents\/(.+)$/)) && method === 'PUT') {
+      const state = repos.get(key(decodeURIComponent(m[1]), decodeURIComponent(m[2])));
+      if (!state) return json(404, { message: 'Not Found' });
+      const filePath = decodeURIComponent(m[3]);
+      const branch = body.branch || state.default_branch;
+      const content = Buffer.from(body.content, 'base64').toString('utf8');
+      const blobSha = sha('blob');
+      state.blobs.set(blobSha, content);
+      const treeSha = sha('tree');
+      const commitSha = sha('cmt');
+      const tree = new Map([[filePath, content]]);
+      // Parent = current branch head when updating; empty repo → root commit.
+      const parent = state.branches.get(branch) || null;
+      state.commits.set(commitSha, {
+        sha: commitSha,
+        parents: parent ? [parent] : [],
+        tree,
+        treeSha,
+        message: body.message || 'Update',
+      });
+      state.branches.set(branch, commitSha);
+      state.size = 1;
+      return json(201, {
+        content: { type: 'file', path: filePath, sha: blobSha },
+        commit: { sha: commitSha, message: body.message },
+      });
+    }
+
     if ((m = path.match(/^\/repos\/([^/]+)\/([^/]+)\/contents\/(.+)$/)) && method === 'GET') {
       const state = repos.get(key(decodeURIComponent(m[1]), decodeURIComponent(m[2])));
       if (!state) return json(404, { message: 'Not Found' });
@@ -514,13 +548,13 @@ function makeFakeGithub() {
 }
 
 {
-  ok('createReal needs token', (() => {
-    try { createRealGithubAdapter({}); return false; }
+  ok('createGithub needs token', (() => {
+    try { createGithubAdapter({}); return false; }
     catch (e) { return e instanceof GitAdapterError && e.code === 'unauthorized'; }
   })());
 
   const { fetchImpl } = makeFakeGithub();
-  const real = createRealGithubAdapter({ token: 'good-token', fetchImpl, apiBase: 'https://api.github.com' });
+  const real = createGithubAdapter({ token: 'good-token', fetchImpl, apiBase: 'https://api.github.com' });
   eq('real implements interface', missingAdapterMethods(real), []);
   ok('assert passes', assertGithubAdapter(real) === real);
   eq('kind', real.kind, 'real');
@@ -545,6 +579,24 @@ function makeFakeGithub() {
   eq('read missing', await real.readFile(repo, 'nope.txt'), null);
   eq('tree', (await real.listTree(repo, 'main')).map((e) => e.path), ['a.txt', 'dir/b.txt']);
   eq('tree prefix', (await real.listTree(repo, 'main', { prefix: 'dir/' })).map((e) => e.path), ['dir/b.txt']);
+  eq('empty-repo first commit is root', c1.parents, []);
+  ok('empty-repo multi-file landed both paths',
+    (await real.readFile(repo, 'a.txt')).content === 'A'
+    && (await real.readFile(repo, 'dir/b.txt')).content === 'B');
+
+  // Single-file first commit on a fresh empty repo (Contents API only).
+  {
+    const solo = await real.createRepo({ name: 'solo-empty', private: true });
+    eq('solo empty', solo.empty, true);
+    const soloRepo = { owner: 'octo-user', name: 'solo-empty' };
+    const sc = await real.commitFiles(soloRepo, {
+      branch: 'main', message: 'solo', baseSha: null,
+      files: [fileWrite('only.txt', 'ONE')],
+    });
+    ok('solo sha', /^[0-9a-f]{40}$/i.test(sc.sha));
+    eq('solo parents', sc.parents, []);
+    eq('solo content', (await real.readFile(soloRepo, 'only.txt')).content, 'ONE');
+  }
 
   const c2 = await real.commitFiles(repo, {
     branch: 'main', message: 'two', baseSha: c1.sha,
@@ -572,7 +624,7 @@ function makeFakeGithub() {
   ok('diverged has files', div.files.some((f) => f.path === 'f.txt' && f.status === 'added'));
 
   // unauthorized
-  const bad = createRealGithubAdapter({ token: 'nope', fetchImpl, apiBase: 'https://api.github.com' });
+  const bad = createGithubAdapter({ token: 'nope', fetchImpl, apiBase: 'https://api.github.com' });
   await throwsCode('bad token', () => bad.getViewer(), 'unauthorized');
   try {
     await bad.getViewer();
@@ -582,7 +634,7 @@ function makeFakeGithub() {
     eq('bad token status', err.status, 401);
   }
 
-  const noAdmin = createRealGithubAdapter({ token: 'no-admin', fetchImpl, apiBase: 'https://api.github.com' });
+  const noAdmin = createGithubAdapter({ token: 'no-admin', fetchImpl, apiBase: 'https://api.github.com' });
   eq('no-admin can getViewer', await noAdmin.getViewer(), { login: 'octo-user' });
   try {
     await noAdmin.createRepo({ name: 'blocked', private: true });
@@ -603,7 +655,7 @@ console.log('\ngit G7 — mock still available');
   const mock = createMockGithubAdapter({ login: 'local-user' });
   eq('mock interface', missingAdapterMethods(mock), []);
   eq('mock kind', mock.kind, 'mock');
-  ok('index exports real + auth', typeof gitIndex.createRealGithubAdapter === 'function'
+  ok('index exports real + auth', typeof gitIndex.createGithubAdapter === 'function'
     && typeof gitIndex.buildAuthorizeUrl === 'function'
     && typeof gitIndex.exchangeCodeForToken === 'function');
 }
@@ -617,7 +669,7 @@ console.log('\ngit G7 — Connect wiring + no client secrets');
   const app = readFileSync(join(root, 'src/App.jsx'), 'utf8');
   const main = readFileSync(join(root, 'src/main.jsx'), 'utf8');
   const auth = readFileSync(join(root, 'src/utils/git/githubAuth.js'), 'utf8');
-  const realSrc = readFileSync(join(root, 'src/utils/git/realGithubAdapter.js'), 'utf8');
+  const realSrc = readFileSync(join(root, 'src/utils/git/githubAdapter.js'), 'utf8');
   const cb = readFileSync(join(root, 'src/components/GitCallback.jsx'), 'utf8');
   const srv = readFileSync(join(root, 'backend/server.js'), 'utf8');
   const route = readFileSync(join(root, 'backend/routes/github.js'), 'utf8');
@@ -629,7 +681,7 @@ console.log('\ngit G7 — Connect wiring + no client secrets');
     /disabled=\{!githubConnected && !githubConnectReady\}/.test(feed));
   ok('App wires connect handlers', /onGitConnect=\{handleGitConnect\}/.test(app)
     && /onGitDisconnect=\{handleGitDisconnect\}/.test(app)
-    && /createRealGithubAdapter/.test(app)
+    && /createGithubAdapter/.test(app)
     && /buildAuthorizeUrl/.test(app));
   ok('adapter switches on token', /loadGithubToken\(\)/.test(app) && /kind === 'real'/.test(app));
   ok('callback page routed', /GitCallback/.test(main) && /GITHUB_CALLBACK_PATH/.test(main));
@@ -671,6 +723,8 @@ console.log('\ngit G7 — Connect wiring + no client secrets');
     return walk(join(root, 'src'));
   })());
   ok('real adapter uses Bearer', /Authorization.*Bearer/.test(realSrc.replace(/\n/g, ' ')));
+  ok('empty-repo Contents bootstrap', /commitFilesOnEmptyRepo/.test(realSrc)
+    && /\/contents\//.test(realSrc) && /Initialize empty repository/.test(realSrc));
   ok('auth never logs token', !/\bconsole\.(log|info|debug|warn)\([^)]*token/i.test(auth + route));
 }
 

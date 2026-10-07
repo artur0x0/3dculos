@@ -8,7 +8,7 @@
  * without the marker is never written; findOrCreateVault reports
  * 'not-a-vault' so the UI can ask for another name.
  */
-import { assertGithubAdapter, GitAdapterError } from './githubAdapter.js';
+import { assertGithubAdapter, GitAdapterError } from './githubAdapterInterface.js';
 import { ASSEMBLIES_DIR, SHARED_PARTS_DIR, VAULT_MARKER_PATH, VAULT_README_PATH } from './vaultLayout.js';
 
 export const DEFAULT_VAULT_NAME = 'surfcad';

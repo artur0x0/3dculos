@@ -76,7 +76,7 @@ import {
 } from './utils/assemblyStore';
 import {
   createMockGithubAdapter,
-  createRealGithubAdapter,
+  createGithubAdapter,
   findOrCreateVault,
   hasGithubToken,
   loadGithubToken,
@@ -1638,7 +1638,7 @@ const App = () => {
     const haveReal = have?.kind === 'real';
     if (!have || wantReal !== haveReal) {
       gitAdapterRef.current = wantReal
-        ? createRealGithubAdapter({ token })
+        ? createGithubAdapter({ token })
         : createMockGithubAdapter({ login: 'local-user' });
       gitVaultRef.current = null; // vault belongs to the previous adapter
     }

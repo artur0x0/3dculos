@@ -11,7 +11,7 @@ import {
   ASSEMBLIES_DIR, assemblyFilePath, assemblyPartPath, sharedPartPath,
 } from '../../src/utils/git/vaultLayout.js';
 import { stringifySurfJson, parseSurfJson } from '../../src/utils/git/surfJson.js';
-import { fileWrite } from '../../src/utils/git/githubAdapter.js';
+import { fileWrite } from '../../src/utils/git/githubAdapterInterface.js';
 import { openVaultAssembly, isWorkspaceDirty } from '../../src/utils/git/gitWorkspace.js';
 import {
   buildCommitFiles, commitWorkspace, remapAssemblyPaths,
