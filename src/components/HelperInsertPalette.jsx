@@ -26,6 +26,7 @@ import {
   Move,
   SquareArrowOutUpRight,
   SquareX,
+  FoldVertical,
 } from 'lucide-react';
 import SquareRoundCorner from './icons/SquareRoundCorner';
 import RectangleCircle from './icons/RectangleCircle';
@@ -127,6 +128,8 @@ const HelperInsertPalette = ({
   onEnterMoveMode = null,
   onEnterMoveFaceMode = null,
   onEnterDeleteFaceMode = null,
+  /** SCS sheet metal (CAD): opens the material / gauge picker. */
+  onOpenSheetMetal = null,
   compact = false,
   /** Both layouts share Block / Build / Shape / Polish / Move. */
   layout = 'game',
@@ -328,6 +331,29 @@ const HelperInsertPalette = ({
             })}
           </div>
         ))}
+        {onOpenSheetMetal && (
+          <div className="flex flex-col gap-0.5" data-palette-section="sheet">
+            <div className="border-t border-gray-300/70 my-0.5 mx-0.5" aria-hidden />
+            <div
+              className={`text-[9px] font-semibold uppercase tracking-wide text-orange-700 px-1 truncate ${
+                compact ? 'leading-3' : 'leading-4'
+              }`}
+            >
+              Sheet
+            </div>
+            <button
+              type="button"
+              onClick={() => onOpenSheetMetal()}
+              title="Sheet Metal — design against SendCutSend stock"
+              aria-label="Sheet Metal: pick SendCutSend material and gauge"
+              data-sheet-metal-button="1"
+              className={`${pad} rounded text-orange-700 hover:bg-orange-100 active:bg-orange-200
+                flex items-center justify-center transition-colors`}
+            >
+              <FoldVertical size={iconSize} strokeWidth={2} />
+            </button>
+          </div>
+        )}
       </div>
 
       {modalMode === 'refuse' && refuseMessage && (

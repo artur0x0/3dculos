@@ -380,9 +380,21 @@ Git mode talks to GitHub only through an adapter object (`src/utils/git/`). G1 s
 
 - **Vault create + conflict popup (G13).** **Create repo** is name + Save/Cancel only (see G6 slim UI). When Save hits a moved `main`, the conflict **popup** offers Stay on branch / Open on GitHub / Overwrite main (same force-merge warning as G3; no yellow toast for this flow). Light vocab: UI says **Repo** (internal helpers may still say vault); **+** = Part|Assembly create; folder = Part|Assembly open. Closes the G8→G13 chrome chain.
 
+## SendCutSend sheet metal
+
+Touch-first sheet-metal mode that designs against live SendCutSend (SCS) stock. SCS has no quote/cart API; the public catalog + specs JSON is the contract.
+
+- **Data source.** `src/utils/scs/scsCatalog.js`. `https://sendcutsend.com/llm-search-specs/` links `https://cdn.sendcutsend.com/specs/sendcutsend-catalog-v1.2.json` and `…/sendcutsend-specs-v1.2.json`. The CDN sends `Access-Control-Allow-Origin: *`, so the browser fetches directly (no proxy, no credentials). `schema_version` is soft: unknown keys are ignored, missing ones become `null`.
+- **Join.** `joinScsCatalog` joins on `sku`; specs-only SKUs are dropped, catalog rows without specs still load (DFM `null`). Per-SKU record: `{ sku, name, category, thicknessIn, thicknessMm, gauge, inStock, services[], bendable, cuttingProcess, minPartIn, maxPartIn, bend: { radiusIn, kFactor, bendDeductionIn, minFlangeIn, maxAngleDeg, reliefDepthIn, minCornerReliefIn, maxBendLengthIn, minFlatIn, maxFlatIn, … } | null, dfm: { minHoleIn, minBridgeIn, minHoleToEdgeIn, minHoleToBendIn } }`. SCS lengths stay inches; only `thicknessMm` is mm.
+- **Cache.** `loadScsCatalog` + `scsCatalogStore.js` (IndexedDB `surfcad-scs`, one entry, separate from CAD data). Fresh (< 24 h) → cache only. Older → refetch; on failure (offline / CORS / 5xx / timeout) the stale cache is used and the picker says so with Retry. No cache and no network → empty list + Retry. IDB errors never block the network path.
+- **In stock.** Dropdowns list `inStock` SKUs only. Material = distinct `name` (bendable first, flat-only labeled); gauge = that material's SKUs, thinnest first.
+- **SKU on the part.** Start designing binds `part.sheetMetal = { sku, name, thicknessIn, gauge }` on the assembly row (`setPartSheetMetal`). It rides `serializeAssembly` (local IndexedDB doc) and `.surf.json` (git; optional key, validated), so reload and Commit keep it and binding marks the assembly dirty.
+- **Mode entry.** Left rail **Sheet** → `SheetMetalPicker` (≥16px selects, 44px targets). Start designing is disabled until an in-stock SKU is picked. It writes into the editor part when that part is empty / the starter cube / already sheet metal (`sheetMetalReady`); otherwise it creates a new `Sheet N` part and binds there. Then Viewport enters `sheetMetalMode` (`{ stage, sku, partId }`); the FEAT rail swaps to `SheetMetalRail` (✕ exits without writing).
+
 ## Goldens and fixtures
 
 - Runners live in `scripts/golden/`. Playtest scripts live in `scripts/golden/fixtures/*.txt`.
+- `golden:scs-s1`: SCS catalog parse + join on a trimmed real fixture (`fixtures/scs/`), soft schema, in-stock filter + dropdowns, daily cache / stale fallback / offline / broken IDB, SKU on the part (local doc + `.surf.json`), picker + rail wiring.
 - Each runner is a `package.json` script named `golden:…` (`node scripts/golden/smoke_….mjs`). `npm run verify` is the full gate (`VALIDATION.md`).
 - `golden:git-g6-move-to-git`: plan (paths, dedupe, shared, live text, carried paths), Move into a fresh renamed vault (one commit, clean baseline, Open round-trip, Commit after), existing vault / conflicts / non-vault / invalid / empty, UI wiring (G13 slim create modal), no network.
 - `golden:session-identity`: Parts profile chip unify (no Guest strip / visible Connect), no Local|Git toggle, source follows githubConnected, IndexedDB silent autosave noted.
