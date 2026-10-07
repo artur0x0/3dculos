@@ -3579,6 +3579,7 @@ const App = () => {
       githubConnected={githubConnected}
       onGitConnect={handleGitConnect}
       onGitDisconnect={handleGitDisconnect}
+      onAccount={handleAccount}
       suggestNewPartPath={
         assemblyDoc.source === 'git'
           ? suggestNewPartPath(assemblyDoc.name, assemblyDoc.parts)

@@ -92,7 +92,14 @@ console.log('\nG9 — UI wiring (source)');
     || /mode !== 'game' && \(\n\s*<ProfileChip/.test(view));
   ok('Viewport imports ProfileChip', /import ProfileChip from '\.\/ProfileChip'/.test(view));
   ok('Viewport still receives onAccount for the chip',
-    /onAccount/.test(view) && /<ProfileChip onAccount=\{onAccount\}/.test(view));
+    /onAccount/.test(view)
+    && (/<ProfileChip[^>]*onAccount=\{onAccount\}/.test(view)
+      || /<ProfileChip variant="viewport" onAccount=\{onAccount\}/.test(view)));
+  ok('chip green signed-in / grey signed-out',
+    /border-green-500/.test(chip) && /border-gray-500/.test(chip));
+  ok('Parts mounts inline ProfileChip',
+    /data-parts-profile-chip/.test(readFileSync(join(root, 'src/components/PartFeed.jsx'), 'utf8'))
+    && /variant="inline"/.test(readFileSync(join(root, 'src/components/PartFeed.jsx'), 'utf8')));
   ok('Toolbar portal no longer gets onAccount',
     !/createPortal\(\s*<Toolbar[\s\S]*?onAccount=\{onAccount\}/.test(view));
 
