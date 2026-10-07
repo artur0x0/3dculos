@@ -1,16 +1,17 @@
 /**
  * Cache-first sync worker.
  *
- * FIFO per repo. Pushes immediately when online. On reconnect: look at the
- * remote commit SHA first. If it differs from lastSyncedSha, do not push and
- * do not overwrite — the caller routes that to the G13 conflict popup.
+ * FIFO per repo and branch. Ops for another branch stay queued and are not
+ * pushed onto this tip. Pushes immediately when online. On reconnect: look at
+ * the remote commit SHA first. If it differs from lastSyncedSha for this
+ * branch, do not push and do not overwrite — the caller routes that to the
+ * G13 conflict popup.
  * Otherwise push the queue. A `local-` id is promoted in the same commit
  * that first pushes the part.
  */
 import { promoteFiles, rewriteSurfIdFields, isSurfJsonPath } from './surfId.js';
 import { isAssemblyFile } from './vaultLayout.js';
 import { materializeRename, renameFailureToast } from './gitRename.js';
-import { repoKeyOf } from './syncStore.js';
 
 async function expandPromotion(adapter, repo, branch, files) {
   const promoted = promoteFiles(files);
@@ -48,13 +49,12 @@ export async function flushSyncQueue({
 } = {}) {
   if (!store || !adapter || !repo) return { status: 'idle' };
   await store.ready();
-  const key = repoKeyOf(repo);
-  const queued = store.pending(key);
-  if (!online) return { status: 'offline', pending: queued.length };
-  if (!queued.length) return { status: 'idle', sha: store.getLastSyncedSha(key) };
+  const queued = store.pending(repo, branch);
+  if (!online) return { status: 'offline', pending: queued.length, branch };
+  if (!queued.length) return { status: 'idle', sha: store.getLastSyncedSha(repo, branch), branch };
 
   const remote = (await adapter.getBranch(repo, branch))?.sha || null;
-  const synced = store.getLastSyncedSha(key);
+  const synced = store.getLastSyncedSha(repo, branch);
   if (synced && remote && remote !== synced) {
     return {
       status: 'conflict',
@@ -73,7 +73,7 @@ export async function flushSyncQueue({
     // eslint-disable-next-line no-await-in-loop
     await store.setOpStatus(item.id, 'sending');
     // eslint-disable-next-line no-await-in-loop
-    await store.setPartsState(key, item.partIds, 'sending');
+    await store.setPartsState(repo, item.partIds, 'sending', item.branch || branch);
     try {
       let files = item.files || [];
       if (item.op === 'rename') {
@@ -85,7 +85,7 @@ export async function flushSyncQueue({
         // eslint-disable-next-line no-await-in-loop
         await store.setOpStatus(item.id, 'done');
         // eslint-disable-next-line no-await-in-loop
-        await store.setPartsState(key, item.partIds, 'clean');
+        await store.setPartsState(repo, item.partIds, 'clean', item.branch || branch);
         continue;
       }
       // eslint-disable-next-line no-await-in-loop
@@ -100,25 +100,26 @@ export async function flushSyncQueue({
       });
       head = res.sha;
       // eslint-disable-next-line no-await-in-loop
-      await store.setLastSyncedSha(key, head);
+      await store.setLastSyncedSha(repo, head, branch);
       // eslint-disable-next-line no-await-in-loop
       await store.setOpStatus(item.id, 'done');
       // eslint-disable-next-line no-await-in-loop
-      await store.setPartsState(key, item.partIds, 'clean');
+      await store.setPartsState(repo, item.partIds, 'clean', item.branch || branch);
     } catch (err) {
       // eslint-disable-next-line no-await-in-loop
       await store.setOpStatus(item.id, 'failed', err?.message || 'Sync failed');
       // eslint-disable-next-line no-await-in-loop
-      await store.setPartsState(key, item.partIds, 'failed');
+      await store.setPartsState(repo, item.partIds, 'failed', item.branch || branch);
       return {
         status: 'failed',
         op: item,
         error: err?.message || 'Sync failed',
         toast: item.op === 'rename' ? renameFailureToast(item, err) : null,
         sha: head,
+        branch,
         promoted,
       };
     }
   }
-  return { status: 'synced', sha: head, promoted };
+  return { status: 'synced', sha: head, branch, promoted };
 }

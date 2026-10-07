@@ -20,6 +20,7 @@ import {
 import { createSyncStore } from '../../src/utils/git/syncStore.js';
 import { flushSyncQueue } from '../../src/utils/git/syncWorker.js';
 import { openVaultAssembly, planCopyToAssembly, planOpenVaultPart } from '../../src/utils/git/gitWorkspace.js';
+import { assembleCommitFiles, forceMergeCommit } from '../../src/utils/git/gitCommit.js';
 
 let failed = 0;
 let passed = 0;
@@ -176,7 +177,7 @@ console.log('\nrename failure toast');
   eq('rename failed', failedFlush.status, 'failed');
   eq('toast offers retry and revert', failedFlush.toast?.actions, ['retry', 'revert']);
   ok('toast names the part', /Brace/.test(failedFlush.toast?.message || ''));
-  ok('row marked failed', store.partStates()[`${repo.owner}/${repo.name}\0${GB_NEXT}`] === 'failed');
+  ok('row marked failed', store.partStates()[`${repo.owner}/${repo.name}\0main\0${GB_NEXT}`] === 'failed');
   const feed = readFileSync(new URL('../../src/components/PartFeed.jsx', import.meta.url), 'utf8');
   ok('toast has Retry and Revert', /data-rename-toast/.test(feed)
     && /data-rename-retry/.test(feed) && /data-rename-revert/.test(feed)
@@ -284,6 +285,87 @@ console.log('\nremote moved → conflict, nothing overwritten');
   ok('sync hold does not overwrite', conflict.syncHold === true && conflict.remoteSha === moved.sha);
   ok('local edit was not pushed', !/\/\/ local/.test((await gh.readFile(repo, GB, 'main')).content));
   ok('op stays queued', store.pending(repo).length === 1);
+}
+
+console.log('\nSave is queued and never force-merges');
+{
+  const { gh, repo, head } = await seed();
+  const store = createSyncStore({ persist: false });
+  await store.setLastSyncedSha(repo, head);
+  const opened = await openVaultAssembly(gh, repo, 'Gearbox', { branch: 'main', headSha: head });
+  const edited = `${BRACKET_SRC}// queued save\n`;
+  const assembled = await assembleCommitFiles(gh, repo, {
+    doc: opened.doc,
+    scripts: { ...opened.scripts, [GB]: edited },
+    baseline: opened.baseline,
+    message: 'Save bracket',
+  });
+  eq('save is ready to queue', assembled.status, 'ready');
+  await store.enqueue(repo, {
+    op: 'save', branch: 'main', message: assembled.message, partIds: [GB], files: assembled.files,
+  });
+  const offline = await flushSyncQueue({ store, adapter: gh, repo, branch: 'main', online: false });
+  eq('save waits offline', offline.status, 'offline');
+  ok('save not pushed while offline', !/queued save/.test((await gh.readFile(repo, GB, 'main')).content));
+  ok('save row queued', store.partStates()[`${repo.owner}/${repo.name}\0main\0${GB}`] === 'queued');
+  const online = await flushSyncQueue({ store, adapter: gh, repo, branch: 'main', online: true });
+  eq('save syncs', online.status, 'synced');
+  ok('save landed', /queued save/.test((await gh.readFile(repo, GB, 'main')).content));
+  let retired = '';
+  try { await forceMergeCommit(); } catch (err) { retired = err.message || ''; }
+  ok('force merge cannot run', /will not overwrite/.test(retired), retired);
+  const app = readFileSync(new URL('../../src/App.jsx', import.meta.url), 'utf8');
+  const feed = readFileSync(new URL('../../src/components/PartFeed.jsx', import.meta.url), 'utf8');
+  ok('App Save goes through the outbox', /assembleCommitFiles\(gitAdapterRef/.test(app)
+    && /op: 'save'/.test(app)
+    && !/commitWorkspace\(/.test(app)
+    && !/forceMergeCommit\(/.test(app));
+  ok('mismatch opens G13 and Overwrite is refused', /status === 'conflict'/.test(feed)
+    && /Sync will not overwrite the remote repo/.test(feed));
+}
+
+console.log('\nbranch switch with a pending rename does not fork');
+{
+  const { gh, repo, head } = await seed();
+  await gh.createBranch(repo, 'feature', head);
+  const store = createSyncStore({ persist: false });
+  await store.setLastSyncedSha(repo, head, 'main');
+  await store.setLastSyncedSha(repo, head, 'feature');
+  await store.enqueue(repo, {
+    op: 'rename',
+    branch: 'main',
+    message: 'Rename Bracket to Brace',
+    partIds: [GB_NEXT],
+    payload: {
+      kind: 'part', surfId: BRACKET_ID, from: GB, to: GB_NEXT, content: BRACKET_SRC, label: 'Brace', partId: GB_NEXT,
+    },
+  });
+  const featureFlush = await flushSyncQueue({ store, adapter: gh, repo, branch: 'feature', online: true });
+  eq('other branch does not push the rename', featureFlush.status, 'idle');
+  ok('main rename still queued', store.pending(repo, 'main').length === 1);
+  ok('feature queue is empty', store.pending(repo, 'feature').length === 0);
+  ok('remote still has the old path', !!(await gh.readFile(repo, GB, 'feature')));
+  const featureOpened = await openVaultAssembly(gh, repo, 'Gearbox', { branch: 'feature', headSha: head });
+  const featureOverlay = overlayPendingPartRenames(
+    featureOpened.doc,
+    featureOpened.scripts,
+    store.pending(repo, 'feature').concat(store.failed(repo, 'feature')),
+  );
+  eq('feature is not forked by the main rename', featureOverlay.doc.parts.map((part) => part.id), [GB]);
+  const mainOpened = await openVaultAssembly(gh, repo, 'Gearbox', { branch: 'main', headSha: head });
+  const filled = backfillSurfIds(mainOpened.doc, {});
+  const mainOverlay = overlayPendingPartRenames(
+    filled.doc,
+    mainOpened.scripts,
+    store.pending(repo, 'main').concat(store.failed(repo, 'main')),
+  );
+  const hits = mainOverlay.doc.parts.filter((part) => part.surfId === BRACKET_ID || part.id === GB || part.id === GB_NEXT);
+  ok('switch back keeps one part at the new path', hits.length === 1 && hits[0].id === GB_NEXT && hits[0].surfId === BRACKET_ID);
+  ok('backfill did not mint a second id', filled.minted === 0);
+  const app = readFileSync(new URL('../../src/App.jsx', import.meta.url), 'utf8');
+  ok('switch uses the open-path adopt', /const handleSwitchBranch[\s\S]*?adoptVaultOpening\(/.test(app)
+    && /const adoptVaultOpening[\s\S]*?backfillSurfIds\(/.test(app)
+    && /const adoptVaultOpening[\s\S]*?overlayPendingPartRenames\(/.test(app));
 }
 
 console.log(failed ? `\n❌ FAIL (${failed} failed, ${passed} passed)` : `\n✅ PASS (${passed})`);

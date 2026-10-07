@@ -347,7 +347,6 @@ export default function PartFeed({
   suggestNewPartPath = '',
   canCommit = false,
   onGitCommit = null,
-  onForceMerge = null,
   // G4 pull/conflicts
   behindPartIds = null,
   assemblyBehind = false,
@@ -923,9 +922,19 @@ export default function PartFeed({
     const draft = commitFlow?.draft || '';
     setCommitFlow({ stage: 'busy', draft, result: null, error: '' });
     const result = (await onGitCommit?.(draft)) || { status: 'error', error: 'Commit unavailable' };
-    if (result.status === 'branched') {
-      setCommitFlow({ stage: 'ask-force', draft, result, error: '' });
-      // Conflict popup first; leave guard waits until overwrite/stay resolves.
+    if (result.status === 'branched' || result.status === 'conflict' || result.syncHold) {
+      setCommitFlow({
+        stage: 'ask-force',
+        draft,
+        result: {
+          ...result,
+          status: 'branched',
+          syncHold: true,
+          warning: result.warning || 'The repo moved since the last sync. Nothing was overwritten.',
+        },
+        error: '',
+      });
+      // Conflict popup first; leave guard waits until stay resolves.
     } else if (result.status === 'error') {
       setCommitFlow({ stage: 'error', draft, result, error: result.error || 'Commit failed' });
       if (leaveGuard?.stage === 'commit') {
@@ -949,29 +958,11 @@ export default function PartFeed({
   };
 
   const runForceMerge = async () => {
-    const branched = commitFlow?.result;
-    if (branched?.syncHold) {
-      setCommitFlow({
-        ...commitFlow,
-        stage: 'error',
-        error: 'Sync will not overwrite the remote repo. Stay on branch keeps your local changes queued.',
-      });
-      return;
-    }
-    setCommitFlow({ ...commitFlow, stage: 'busy' });
-    const result = (await onForceMerge?.(branched)) || { status: 'error', error: 'Force merge unavailable' };
-    if (result.status === 'moved-again') {
-      setCommitFlow({ ...commitFlow, stage: 'error', error: 'Main moved again. Your commit is still on the branch; commit again to retry.' });
-    } else if (result.status === 'error') {
-      setCommitFlow({ ...commitFlow, stage: 'error', error: result.error || 'Force merge failed' });
-    } else {
-      setCommitFlow({ stage: 'done', draft: '', result, error: '' });
-      if (leaveGuard?.stage === 'commit' && leaveGuard.pending) {
-        const pending = leaveGuard.pending;
-        setLeaveGuard(null);
-        queueMicrotask(() => proceedAssemblyAction(pending));
-      }
-    }
+    setCommitFlow({
+      ...commitFlow,
+      stage: 'error',
+      error: 'Sync will not overwrite the remote repo. Stay on branch keeps your local changes queued.',
+    });
   };
 
   /** Save/commit refused for parts without a vault path — reuse Add to Repo. */
@@ -1823,9 +1814,15 @@ export default function PartFeed({
               data-git-branch={commitFlow.result?.branch || ''}
             >
               <p className="text-xs text-gray-300">
-                {'Your changes were committed to '}
-                <span className="font-mono text-gray-100">{commitFlow.result?.branch}</span>
-                {` (from base ${String(commitFlow.result?.baseSha || '').slice(0, 7)}).`}
+                {commitFlow.result?.syncHold
+                  ? `Nothing was written on ${commitFlow.result?.branch || 'this branch'}. Your local changes stay queued.`
+                  : (
+                    <>
+                      {'Your changes were committed to '}
+                      <span className="font-mono text-gray-100">{commitFlow.result?.branch}</span>
+                      {` (from base ${String(commitFlow.result?.baseSha || '').slice(0, 7)}).`}
+                    </>
+                  )}
               </p>
               <p className="mt-2 text-xs text-amber-300" data-git-force-merge-warning="" data-git-conflict-warning="">
                 {commitFlow.result?.warning || 'Overwrite main replaces tip-side edits in these files; other remote files stay.'}
@@ -1836,9 +1833,11 @@ export default function PartFeed({
             <p className="text-xs text-gray-300" data-git-commit-done={commitFlow.result?.status || ''}>
               {commitFlow.result?.status === 'clean'
                 ? 'Nothing to commit.'
-                : commitFlow.result?.addedNames
-                  ? `Added ${commitFlow.result.addedNames} to the repo.`
-                  : `${commitFlow.result?.status === 'merged' ? 'Force merged' : 'Committed'} ${(commitFlow.result?.files || []).length} file(s) to ${commitFlow.result?.branch || 'main'} (${String(commitFlow.result?.sha || '').slice(0, 7)}).`}
+                : commitFlow.result?.status === 'queued'
+                  ? 'Saved locally. It will sync when you are back online.'
+                  : commitFlow.result?.addedNames
+                    ? `Added ${commitFlow.result.addedNames} to the repo.`
+                    : `Committed ${(commitFlow.result?.files || []).length} file(s) to ${commitFlow.result?.branch || 'main'} (${String(commitFlow.result?.sha || '').slice(0, 7)}).`}
             </p>
           )}
           {commitFlow.stage === 'error' && (

@@ -102,7 +102,7 @@ Desktop specifics:
   (`data-part-copy-to-assembly`). Add to Repo (`data-part-add-to-repo`) shows
   only for a `local-` id. Text inputs on Parts/git
   use `partsChrome.js` `PARTS_TEXT_INPUT_CLASS` (≥16px) to block iOS Safari focus-zoom.
-  Git create (new part / Add to Repo / new assembly seed) shows `data-part-pending` spinner in place of the Save icon while the outbox op is queued or sending. A failed sync shows a red mark (`data-part-sync-failed`). A failed rename shows a toast with Retry and Revert (`data-rename-toast`).
+  Git create, Save, rename, copy, and delete show `data-part-pending` spinner in place of the Save icon while that branch's outbox op is queued or sending. A failed sync shows a red mark (`data-part-sync-failed`). A failed rename shows a toast with Retry and Revert (`data-rename-toast`). A moved remote tip opens the conflict popup and does not overwrite.
 - `PromptInput` is passed `isMobile={false}` explicitly (`src/App.jsx:1345`).
 
 ### Mobile shell (`src/App.jsx` mobile branch) — CAD stages + game stack

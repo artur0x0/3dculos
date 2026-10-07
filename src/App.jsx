@@ -127,10 +127,8 @@ import {
   partPathAllowedFor,
   vaultSegment,
   assemblyFilePath,
-  commitWorkspace,
+  assembleCommitFiles,
   commitPartToRepo,
-  forceMergeCommit,
-  forceMergeWarning,
   firstCommitBaseline,
   checkRemoteBehind,
   behindToastMessage,
@@ -1907,6 +1905,11 @@ const App = () => {
     return gitSyncRef.current;
   };
 
+  const enqueueGit = (repo, op) => gitSync().enqueue(repo, {
+    branch: op?.branch || gitWorkingBranch(),
+    ...op,
+  });
+
   const rekeyRuntime = (pairs) => {
     const remap = (map) => {
       const next = { ...(map || {}) };
@@ -1954,7 +1957,7 @@ const App = () => {
         }
       }
       if (result.sha && vault?.repo) {
-        store.setLastSyncedSha(vault.repo, result.sha);
+        store.setLastSyncedSha(vault.repo, result.sha, result.branch || gitWorkingBranch());
         const doc = assemblyRef.current;
         const base = gitBaselineRef.current;
         if (doc?.source === 'git') {
@@ -2128,7 +2131,7 @@ const App = () => {
       };
       await applyCommittedWorkspace({ doc: result.doc, scripts: result.scripts });
       rememberGitBaseline(result.baseline);
-      if (result.sha) await gitSync().setLastSyncedSha(result.vault.repo, result.sha);
+      if (result.sha) await gitSync().setLastSyncedSha(result.vault.repo, result.sha, 'main');
       rememberGitBehind(null, { showToast: false, resetResolved: true });
       setGitBehindToast(null);
       refreshAssemblyRef.current?.(undefined, { persistActive: false });
@@ -2143,6 +2146,58 @@ const App = () => {
     return listVaultAssemblies(gitAdapterRef.current, vault.repo, gitWorkingBranch());
   };
 
+  /**
+   * Open and branch-switch share this. Backfill ids, then recapture the
+   * baseline so those ids are not dirty. Overlay only this branch's pending
+   * renames so a queued rename is still the same part. The outbox is scoped
+   * per repo+branch: another branch's ops stay queued and are not pushed here.
+   * When this branch has queued ops and the tip moved, lastSyncedSha stays
+   * put so the worker refuses to overwrite.
+   */
+  const adoptVaultOpening = async (opened, vault) => {
+    const store = gitSync();
+    const branch = opened.baseline?.branch || gitWorkingBranch();
+    const filled = backfillSurfIds(opened.doc, store.pathIndexFor(vault.repo));
+    for (const part of filled.doc.parts || []) {
+      if (part.surfId) store.rememberPathId(vault.repo, part.id, part.surfId);
+    }
+    const queued = store.pending(vault.repo, branch).concat(store.failed(vault.repo, branch));
+    const overlaid = overlayPendingPartRenames(filled.doc, opened.scripts, queued);
+    const openedScripts = overlaid.scripts;
+    for (const [id, script] of Object.entries(openedScripts)) {
+      await savePartScript(id, script);
+    }
+    rememberScripts(openedScripts);
+    const saved = rememberAssembly(overlaid.doc);
+    const baseline = captureBaseline({
+      assemblyPath: opened.baseline.assemblyPath,
+      assemblyName: saved.name,
+      doc: saved,
+      scripts: openedScripts,
+      branch,
+      headSha: opened.baseline.headSha,
+    });
+    if (opened.baseline.legacyCleanup) baseline.legacyCleanup = opened.baseline.legacyCleanup;
+    rememberGitBaseline(baseline);
+    const head = opened.baseline.headSha || null;
+    const stored = store.getLastSyncedSha(vault.repo, branch);
+    const held = queued.length > 0 && !!(stored && head && stored !== head);
+    if (!queued.length && head) await store.setLastSyncedSha(vault.repo, head, branch);
+    if (held) {
+      setSyncConflict({
+        status: 'conflict',
+        syncHold: true,
+        branch,
+        lastSyncedSha: stored,
+        remoteSha: head,
+        baseSha: stored,
+        warning: 'The repo moved since the last sync. Nothing was overwritten.',
+      });
+    }
+    gitVaultRef.current = { ...vault, headSha: head || vault.headSha };
+    return { saved, scripts: openedScripts, baseline, branch, held };
+  };
+
   const handleOpenVaultAssembly = async (name) => {
     try {
       const vault = await ensureGitVault();
@@ -2155,35 +2210,10 @@ const App = () => {
         { branch, headSha: tip },
       );
       refreshGenRef.current += 1;
-      const store = gitSync();
-      const filled = backfillSurfIds(opened.doc, store.pathIndexFor(vault.repo));
-      for (const part of filled.doc.parts || []) {
-        if (part.surfId) store.rememberPathId(vault.repo, part.id, part.surfId);
-      }
-      const overlaid = overlayPendingPartRenames(
-        filled.doc,
-        opened.scripts,
-        store.pending(vault.repo).concat(store.failed(vault.repo)),
-      );
-      const openedDoc = overlaid.doc;
-      const openedScripts = overlaid.scripts;
-      for (const [id, script] of Object.entries(openedScripts)) {
-        await savePartScript(id, script);
-      }
-      rememberScripts(openedScripts);
-      const saved = rememberAssembly(openedDoc);
-      const baseline = captureBaseline({
-        assemblyPath: opened.baseline.assemblyPath,
-        assemblyName: saved.name,
-        doc: saved,
-        scripts: openedScripts,
-        branch: opened.baseline.branch,
-        headSha: opened.baseline.headSha,
-      });
-      if (opened.baseline.legacyCleanup) baseline.legacyCleanup = opened.baseline.legacyCleanup;
-      rememberGitBaseline(baseline);
-      if (opened.baseline.headSha) store.setLastSyncedSha(vault.repo, opened.baseline.headSha);
-      gitVaultRef.current = { ...vault, headSha: opened.baseline.headSha };
+      const adopted = await adoptVaultOpening(opened, vault);
+      if (!adopted.held) await flushGitOps();
+      const saved = adopted.saved;
+      const openedScripts = adopted.scripts;
       // G4: check remote on open (usually current; catches a race with a push).
       void checkGitRemoteBehind({ showToast: true, reason: 'open' });
       const keep = new Set(saved.parts.map((part) => String(part.id)));
@@ -2328,7 +2358,7 @@ const App = () => {
         rememberGitBaseline(result.baseline);
         gitVaultRef.current = { ...vault, headSha: result.sha };
       }
-      if (result.sha) await gitSync().setLastSyncedSha(vault.repo, result.sha);
+      if (result.sha) await gitSync().setLastSyncedSha(vault.repo, result.sha, gitWorkingBranch());
       return result;
     } catch (err) {
       const error = err.message || 'Add to Repo failed';
@@ -2373,14 +2403,9 @@ const App = () => {
         gitAdapterRef.current, vault.repo, name, branchName,
       );
       refreshGenRef.current += 1;
-      for (const [id, script] of Object.entries(opened.scripts)) {
-        await savePartScript(id, script);
-      }
-      rememberScripts(opened.scripts);
-      const saved = rememberAssembly(opened.doc);
-      rememberGitBaseline(opened.baseline);
-      gitVaultRef.current = { ...vault, headSha: opened.baseline.headSha };
-      if (opened.baseline.headSha) await gitSync().setLastSyncedSha(vault.repo, opened.baseline.headSha);
+      const adopted = await adoptVaultOpening(opened, vault);
+      if (!adopted.held) await flushGitOps();
+      const saved = adopted.saved;
       rememberGitBehind(null, { showToast: false, resetResolved: true });
       setGitBehindToast(null);
       void checkGitRemoteBehind({ showToast: true, reason: 'branch-switch' });
@@ -2391,7 +2416,7 @@ const App = () => {
       const active = saved.parts.find((part) => part.id === saved.activeId) || saved.parts[0];
       if (active) {
         setCurrentFilename(active.name);
-        const picked = scriptForRow(saved, opened.scripts, active.id);
+        const picked = scriptForRow(saved, adopted.scripts, active.id);
         focusPartHistory(active.id, picked.ok ? picked.script : '');
         if (picked.ok) {
           suppressPartSaveRef.current = false;
@@ -2460,7 +2485,7 @@ const App = () => {
       refreshGenRef.current += 1;
       const inserted = rememberAssembly({ ...doc, source: 'git', activeId, parts });
       if (gitVaultRef.current?.repo) {
-        await gitSync().enqueue(gitVaultRef.current.repo, {
+        await enqueueGit(gitVaultRef.current.repo, {
           op: 'save',
           message: `Link parts from ${planned.sourceName}`,
           partIds: planned.additions.map((add) => add.id),
@@ -2528,7 +2553,7 @@ const App = () => {
       setCurrentFilename(id.split('/').pop() || id);
       codeEditorRef.current?.loadContent(content, id, false);
       if (!existing && gitVaultRef.current?.repo) {
-        await gitSync().enqueue(gitVaultRef.current.repo, {
+        await enqueueGit(gitVaultRef.current.repo, {
           op: 'save',
           message: plan.mode === 'link' ? `Link ${id.split('/').pop()}` : `Add ${id.split('/').pop()}`,
           partIds: [id],
@@ -2572,7 +2597,7 @@ const App = () => {
       codeEditorRef.current?.loadContent(plan.content, plan.name, false);
     }
     if (gitVaultRef.current?.repo) {
-      await gitSync().enqueue(gitVaultRef.current.repo, {
+      await enqueueGit(gitVaultRef.current.repo, {
         op: 'copy',
         message: `Copy ${plan.name} into ${nextDoc.name}`,
         partIds: [plan.path],
@@ -2749,28 +2774,32 @@ const App = () => {
     }
   };
 
-    /**
-   * G3 Commit: changed parts + assembly as one commit to the current branch.
-   * When the tip has moved, the commit lands on surfcad/<assembly>-<date> and
-   * the result asks (in PartFeed) whether to force merge.
+  /**
+   * Save queues one commit on the current branch. The sync worker pushes it.
+   * A moved tip returns conflict (G13) and writes nothing.
    */
   const handleGitCommit = async (message) => {
     const doc = assemblyRef.current;
     if (!doc || doc.source !== 'git') return { status: 'error', error: 'Not in Git mode' };
     try {
       const vault = await ensureGitVault();
-      // No Open yet: first commit of this assembly onto the vault head.
-      const baseline = gitBaselineRef.current || firstCommitBaseline({
-        branch: vault.defaultBranch,
-        headSha: (await gitAdapterRef.current.getBranch(vault.repo, vault.defaultBranch))?.sha || vault.headSha,
-      });
+      const branch = gitWorkingBranch();
+      const store = gitSync();
+      let baseline = gitBaselineRef.current;
+      if (!baseline) {
+        const head = (await gitAdapterRef.current.getBranch(vault.repo, branch))?.sha || vault.headSha || null;
+        baseline = firstCommitBaseline({ branch, headSha: head });
+        if (head && !store.getLastSyncedSha(vault.repo, branch)) {
+          await store.setLastSyncedSha(vault.repo, head, branch);
+        }
+      }
       const live = codeEditorRef.current?.getContent?.();
       const liveId = (!suppressPartSaveRef.current && typeof live === 'string') ? doc.activeId : null;
       if (liveId) {
         savePartScript(liveId, live);
         rememberScripts({ ...partScriptsRef.current, [liveId]: live });
       }
-      const result = await commitWorkspace(gitAdapterRef.current, vault.repo, {
+      const result = await assembleCommitFiles(gitAdapterRef.current, vault.repo, {
         doc,
         scripts: partScriptsRef.current,
         baseline,
@@ -2778,19 +2807,47 @@ const App = () => {
         liveId,
         liveScript: liveId ? live : null,
       });
-      if (result.status === 'committed') {
-        if (result.renamed || result.moved?.length || (result.promoted && Object.keys(result.promoted).length)) {
-          await applyCommittedWorkspace(result);
-        }
-        rememberGitBaseline(result.baseline);
-        gitVaultRef.current = { ...vault, headSha: result.sha };
-        if (result.sha) await gitSync().setLastSyncedSha(vault.repo, result.sha);
-        rememberGitBehind(null, { showToast: false, resetResolved: true });
-        setGitBehindToast(null);
-      } else if (result.status === 'branched') {
-        return { ...result, warning: forceMergeWarning(result) };
+      if (result.status === 'clean') return result;
+      if (result.renamed || result.moved?.length) {
+        await applyCommittedWorkspace(result);
       }
-      return result;
+      await enqueueGit(vault.repo, {
+        op: 'save',
+        branch,
+        message: result.message || message,
+        partIds: result.partIds?.length ? result.partIds : (doc.parts || []).map((part) => part.id),
+        files: result.files,
+        payload: {
+          assemblyPath: result.assemblyPath,
+          renamed: !!result.renamed,
+          moved: result.moved || [],
+        },
+      });
+      setPartSync({ ...store.partStates() });
+      const flushed = await flushGitOps();
+      if (flushed?.status === 'conflict') {
+        return {
+          status: 'conflict',
+          syncHold: true,
+          branch: flushed.branch || branch,
+          baseSha: flushed.lastSyncedSha || flushed.baseSha || '',
+          warning: flushed.warning,
+        };
+      }
+      if (flushed?.status === 'failed') {
+        return { status: 'error', error: flushed.error || 'Save failed' };
+      }
+      if (flushed?.status === 'offline') {
+        return { status: 'queued', branch, files: (result.files || []).map((file) => file.path) };
+      }
+      rememberGitBehind(null, { showToast: false, resetResolved: true });
+      setGitBehindToast(null);
+      return {
+        status: 'committed',
+        sha: flushed?.sha,
+        branch,
+        files: (result.files || []).map((file) => file.path),
+      };
     } catch (err) {
       return {
         status: 'error',
@@ -2798,27 +2855,6 @@ const App = () => {
         code: err.code || null,
         stray: Array.isArray(err.stray) ? err.stray : null,
       };
-    }
-  };
-
-  /** G3 force merge after a branched commit (user confirmed the warning). */
-  const handleForceMerge = async (branched) => {
-    try {
-      const vault = await ensureGitVault();
-      const result = await forceMergeCommit(gitAdapterRef.current, vault.repo, branched);
-      if (result.status === 'merged') {
-        if (result.doc && result.scripts) {
-          await applyCommittedWorkspace(result);
-        }
-        rememberGitBaseline(result.baseline);
-        gitVaultRef.current = { ...vault, headSha: result.sha };
-        if (result.sha) await gitSync().setLastSyncedSha(vault.repo, result.sha);
-        rememberGitBehind(null, { showToast: false, resetResolved: true });
-        setGitBehindToast(null);
-      }
-      return result;
-    } catch (err) {
-      return { status: 'error', error: err.message || 'Force merge failed' };
     }
   };
 
@@ -3174,7 +3210,7 @@ const App = () => {
       if (doc.source === 'git' && surfId) {
         const vault = gitVaultRef.current || await ensureGitVault();
         const nextDoc = assemblyRef.current;
-        await gitSync().enqueue(vault.repo, {
+        await enqueueGit(vault.repo, {
           op: 'create',
           message: `Add ${name}`,
           partIds: [id],
@@ -3250,7 +3286,7 @@ const App = () => {
       }
       void (async () => {
         try {
-          await gitSync().enqueue(gitVaultRef.current.repo, {
+          await enqueueGit(gitVaultRef.current.repo, {
             op: 'delete',
             message: fromRepo ? `Delete ${key.split('/').pop()}` : `Remove ${key.split('/').pop()} from assembly`,
             partIds: [key],
@@ -4155,7 +4191,7 @@ const App = () => {
         previousPath: from,
         content: moved.scripts[to] ?? '',
       });
-      await gitSync().enqueue(vault.repo, {
+      await enqueueGit(vault.repo, {
         op: 'rename',
         message: `Rename ${part.name} to ${nextName}`,
         partIds: [to],
@@ -4221,7 +4257,7 @@ const App = () => {
     const asmPath = assemblyFilePath(newName);
     void (async () => {
       const vault = gitVaultRef.current;
-      await gitSync().enqueue(vault.repo, {
+      await enqueueGit(vault.repo, {
         op: 'rename',
         message: `Rename assembly ${oldName} to ${newName}`,
         partIds: nextDoc.parts.map((part) => part.id),
@@ -4484,7 +4520,7 @@ const App = () => {
   );
   const partRows = assemblyDoc
     ? feedRows(assemblyDoc, partRuns, partScripts).map((row) => {
-      const syncKey = `${gitVaultRef.current?.repo ? `${gitVaultRef.current.repo.owner}/${gitVaultRef.current.repo.name}` : ''}\0${row.id}`;
+      const syncKey = `${gitVaultRef.current?.repo ? `${gitVaultRef.current.repo.owner}/${gitVaultRef.current.repo.name}` : ''}\0${gitWorkingBranch()}\0${row.id}`;
       const sync = partSync[syncKey] || null;
       const queued = sync === 'queued' || sync === 'sending';
       const syncFailed = sync === 'failed';
@@ -4564,7 +4600,6 @@ const App = () => {
       onSyncConflictClear={() => setSyncConflict(null)}
       canCommit={assemblyDoc.source === 'git' && !!sourceDirty}
       onGitCommit={handleGitCommit}
-      onForceMerge={handleForceMerge}
       behindPartIds={behindPartIdSet}
       assemblyBehind={!!behindMarkers.assemblyBehind}
       assemblyPath={gitAssemblyPath || ''}

@@ -2,7 +2,7 @@
  * Durable git outbox + per-part cache.
  *
  * UI reads and writes the local cache. Every git action is appended here
- * (FIFO per repo) before anything is pushed. IndexedDB is the durable copy;
+ * (FIFO per repo and branch) before anything is pushed. IndexedDB is the durable copy;
  * memory is the live copy so a flush in the same turn sees the op.
  * When IndexedDB is missing (goldens, private mode) memory still works.
  */
@@ -86,6 +86,11 @@ export function repoKeyOf(repo) {
   return `${repo.owner}/${repo.name}`;
 }
 
+/** Outbox, part-row state, and lastSyncedSha are scoped per repo and branch. */
+export function branchKeyOf(repo, branch = 'main') {
+  return `${repoKeyOf(repo)}\0${branch || 'main'}`;
+}
+
 export function createSyncStore({ persist = true } = {}) {
   let seq = 1;
   const ops = [];
@@ -155,10 +160,12 @@ export function createSyncStore({ persist = true } = {}) {
   async function enqueue(repo, op) {
     await ready;
     const key = repoKeyOf(repo);
+    const branch = op.branch || 'main';
     const row = {
       id: seq,
       seq,
       repoKey: key,
+      branch,
       op: op.op,
       status: 'queued',
       message: op.message || '',
@@ -170,26 +177,32 @@ export function createSyncStore({ persist = true } = {}) {
     };
     seq += 1;
     ops.push(row);
-    for (const id of row.partIds) partState.set(`${key}\0${id}`, 'queued');
+    for (const id of row.partIds) partState.set(`${key}\0${branch}\0${id}`, 'queued');
     await persistOp(row);
     for (const id of row.partIds) {
       // eslint-disable-next-line no-await-in-loop
-      await persistKv(`state:${key}\0${id}`, 'queued');
+      await persistKv(`state:${key}\0${branch}\0${id}`, 'queued');
     }
     emit();
     return row;
   }
 
-  function pending(repo) {
+  function matchesBranch(op, branch) {
+    if (branch == null) return true;
+    return (op.branch || 'main') === branch;
+  }
+
+  function pending(repo, branch) {
     const key = repoKeyOf(repo);
     return ops
-      .filter((op) => op.repoKey === key && (op.status === 'queued' || op.status === 'sending'))
+      .filter((op) => op.repoKey === key && matchesBranch(op, branch)
+        && (op.status === 'queued' || op.status === 'sending'))
       .sort((a, b) => a.seq - b.seq || a.id - b.id);
   }
 
-  function failed(repo) {
+  function failed(repo, branch) {
     const key = repoKeyOf(repo);
-    return ops.filter((op) => op.repoKey === key && op.status === 'failed');
+    return ops.filter((op) => op.repoKey === key && matchesBranch(op, branch) && op.status === 'failed');
   }
 
   async function setOpStatus(id, status, error = '') {
@@ -202,10 +215,11 @@ export function createSyncStore({ persist = true } = {}) {
     return op;
   }
 
-  async function setPartsState(repo, partIds, state) {
+  async function setPartsState(repo, partIds, state, branch = 'main') {
     const key = repoKeyOf(repo);
+    const on = branch || 'main';
     for (const id of partIds || []) {
-      const slot = `${key}\0${id}`;
+      const slot = `${key}\0${on}\0${id}`;
       if (!state || state === 'clean') partState.delete(slot);
       else partState.set(slot, state);
       // eslint-disable-next-line no-await-in-loop
@@ -216,7 +230,7 @@ export function createSyncStore({ persist = true } = {}) {
 
   async function requeue(id) {
     const op = await setOpStatus(id, 'queued', '');
-    if (op) await setPartsState(op.repoKey, op.partIds, 'queued');
+    if (op) await setPartsState(op.repoKey, op.partIds, 'queued', op.branch || 'main');
     return op;
   }
 
@@ -224,7 +238,7 @@ export function createSyncStore({ persist = true } = {}) {
     const idx = ops.findIndex((row) => row.id === id);
     if (idx < 0) return null;
     const [op] = ops.splice(idx, 1);
-    await setPartsState(op.repoKey, op.partIds, 'clean');
+    await setPartsState(op.repoKey, op.partIds, 'clean', op.branch || 'main');
     if (persistOn) {
       const db = await openDB();
       if (db) await txDone(db, OUTBOX, 'readwrite', (store) => store.delete(id));
@@ -233,16 +247,16 @@ export function createSyncStore({ persist = true } = {}) {
     return op;
   }
 
-  async function setLastSyncedSha(repo, sha) {
+  async function setLastSyncedSha(repo, sha, branch = 'main') {
     await ready;
-    const key = repoKeyOf(repo);
+    const key = branchKeyOf(repo, branch);
     if (sha) repoSha.set(key, sha);
     else repoSha.delete(key);
     await persistKv(`sha:${key}`, sha || null);
   }
 
-  function getLastSyncedSha(repo) {
-    return repoSha.get(repoKeyOf(repo)) || null;
+  function getLastSyncedSha(repo, branch = 'main') {
+    return repoSha.get(branchKeyOf(repo, branch)) || null;
   }
 
   async function putPart(repo, record) {

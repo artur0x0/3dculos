@@ -1,8 +1,7 @@
 #!/usr/bin/env node
 /**
- * G3 commit/push: changed parts + assembly as one commit to main; when main
- * moved, detect the base, branch to surfcad/<assembly>-<date>, and ask to
- * force merge (warning: main's diff in those files is lost).
+ * G3 commit/push: changed parts + assembly as one commit to main.
+ * A moved tip returns conflict and writes nothing (force merge is retired).
  * Assembly rename moves paths in the same commit (see G5 golden for full
  * rename-on-Commit coverage).
  * Mock adapter only — no network, no tokens.
@@ -16,7 +15,7 @@ import { fileWrite } from '../../src/utils/git/githubAdapterInterface.js';
 import { openVaultAssembly, isWorkspaceDirty } from '../../src/utils/git/gitWorkspace.js';
 import {
   buildCommitFiles, commitBranchName, commitWorkspace, detectCommitBase,
-  forceMergeCommit, forceMergeWarning, firstCommitBaseline,
+  forceMergeCommit, firstCommitBaseline,
 } from '../../src/utils/git/gitCommit.js';
 import * as gitIndex from '../../src/utils/git/index.js';
 
@@ -108,10 +107,9 @@ console.log('\ngit G3 — happy path: one commit to main');
   eq('second commit chains on new baseline', [second.status, (await gh.getBranch(repo, 'main')).sha === second.sha], ['committed', true]);
 }
 
-console.log('\ngit G3 — moved main → branch + force-merge ask');
+console.log('\ngit G3 — moved main → conflict, nothing overwritten');
 {
   const { gh, repo, opened, seedSha } = await seedVault();
-  // Someone else commits to main after our Open.
   const remote = await gh.commitFiles(repo, {
     branch: 'main', message: 'remote edit', baseSha: seedSha,
     files: [fileWrite(BRACKET, '// remote bracket'), fileWrite(SPARE, '// remote spare')],
@@ -122,43 +120,23 @@ console.log('\ngit G3 — moved main → branch + force-merge ask');
   const scripts = { ...opened.scripts, [BRACKET]: '// mine bracket' };
   const mainBefore = commitsOn(gh, 'main').length;
   const res = await commitWorkspace(gh, repo, { doc: opened.doc, scripts, baseline: opened.baseline, message: 'mine', now: DAY });
-  eq('status branched', res.status, 'branched');
-  eq('branch name', res.branch, 'surfcad/Gearbox-2026-10-06');
+  eq('status conflict', res.status, 'conflict');
+  ok('sync hold', res.syncHold === true);
   eq('main not written', [commitsOn(gh, 'main').length - mainBefore, (await gh.getBranch(repo, 'main')).sha], [0, remote.sha]);
-  const side = await gh.getBranch(repo, res.branch);
-  eq('branch head is our commit', side.sha, res.branchSha);
-  const cmpSide = await gh.compare(repo, seedSha, res.branch);
-  eq('branch cut from base, one commit', [cmpSide.status, cmpSide.aheadBy, cmpSide.mergeBaseSha], ['ahead', 1, seedSha]);
-  eq('branch has mine', (await gh.readFile(repo, BRACKET, res.branch)).content, '// mine bracket');
-  eq('overlap = bracket', res.overlap, [BRACKET]);
-  const warn = forceMergeWarning(res);
-  ok('warning names branch + lost diff', warn.includes(res.branch) && /will be lost/.test(warn) && warn.includes(BRACKET), warn);
-
-  // Second stale commit the same day gets a fresh name.
+  eq('remote bracket kept', (await gh.readFile(repo, BRACKET, 'main')).content, '// remote bracket');
+  eq('remote spare kept', (await gh.readFile(repo, SPARE, 'main')).content, '// remote spare');
+  ok('no side branch', !(await gh.listBranches(repo)).some((b) => b.name.startsWith('surfcad/')));
   const again = await commitWorkspace(gh, repo, { doc: opened.doc, scripts, baseline: opened.baseline, now: DAY });
-  eq('same-day branch suffix', again.branch, 'surfcad/Gearbox-2026-10-06-2');
-
-  // Keep on branch = do nothing: baseline stays, main unchanged.
+  eq('second stale save is also a conflict', again.status, 'conflict');
   eq('keep on branch leaves main', (await gh.getBranch(repo, 'main')).sha, remote.sha);
-
-  // Force merge.
-  const merged = await forceMergeCommit(gh, repo, res);
-  eq('force merge status', merged.status, 'merged');
-  const mainHead = await gh.getBranch(repo, 'main');
-  eq('main head = merge commit', mainHead.sha, merged.sha);
-  eq('merge parent = remote head', (await gh.compare(repo, remote.sha, merged.sha)).aheadBy, 1);
-  eq('mine wins on bracket (remote diff lost)', (await gh.readFile(repo, BRACKET, 'main')).content, '// mine bracket');
-  eq('untouched remote file kept', (await gh.readFile(repo, SPARE, 'main')).content, '// remote spare');
-  eq('merged baseline head', merged.baseline.headSha, merged.sha);
-  ok('clean after force merge', !isWorkspaceDirty(opened.doc, scripts, merged.baseline));
-
-  // Race: main moves again before force merge → moved-again.
-  const res2 = await commitWorkspace(gh, repo, { doc: opened.doc, scripts: { ...scripts, [BOLT]: '// x' }, baseline: opened.baseline, now: DAY });
-  const realGet = gh.getBranch;
-  gh.getBranch = async (r, b) => ({ name: b, sha: remote.sha }); // stale view
-  const raced = await forceMergeCommit(gh, repo, res2);
-  gh.getBranch = realGet;
-  eq('force merge race → moved-again', raced.status, 'moved-again');
+  let retired = '';
+  try {
+    await forceMergeCommit(gh, repo, res);
+  } catch (err) {
+    retired = err.message || '';
+  }
+  ok('force merge is retired', /will not overwrite/.test(retired), retired);
+  eq('retired call left main', (await gh.getBranch(repo, 'main')).sha, remote.sha);
 }
 
 console.log('\ngit G3 — first commit of a new assembly (no Open)');
@@ -239,14 +217,20 @@ ok('G13 conflict popup options', /data-git-conflict-popup/.test(feed)
   && /data-git-conflict-open-github/.test(feed) && /Open on GitHub/.test(feed)
   && /data-git-conflict-overwrite/.test(feed) && /Overwrite main/.test(feed)
   && !/Keep on branch/.test(feed) && !/>Force merge</.test(feed));
-ok('App wires commit + force merge', /handleGitCommit/.test(app) && /handleForceMerge/.test(app)
-  && /commitWorkspace\(gitAdapterRef\.current/.test(app) && /forceMergeCommit\(gitAdapterRef\.current/.test(app)
+ok('App queues Save and does not force merge', /handleGitCommit/.test(app)
+  && /assembleCommitFiles\(gitAdapterRef\.current/.test(app)
+  && /op: 'save'/.test(app)
+  && !/commitWorkspace\(gitAdapterRef\.current/.test(app)
+  && !/forceMergeCommit\(/.test(app)
   && /onGitCommit=\{handleGitCommit\}/.test(app) && /canCommit=/.test(app));
-ok('baseline advances after commit', /rememberGitBaseline\(result\.baseline\)/.test(app));
-ok('index exports G3', typeof gitIndex.commitWorkspace === 'function' && typeof gitIndex.forceMergeCommit === 'function');
+ok('baseline advances after commit', /rememberGitBaseline\(result\.baseline\)/.test(app)
+  || /rememberGitBaseline\(captureBaseline\(/.test(app));
+ok('index exports G3', typeof gitIndex.commitWorkspace === 'function'
+  && typeof gitIndex.assembleCommitFiles === 'function'
+  && typeof gitIndex.forceMergeCommit === 'function');
 const commitSrc = readFileSync(new URL('../../src/utils/git/gitCommit.js', import.meta.url), 'utf8');
 const vaultSrc = readFileSync(new URL('../../src/utils/git/vault.js', import.meta.url), 'utf8');
-ok('null baseline head resolves tip before commit', /let expectedBase = baseline\.headSha/.test(commitSrc)
+ok('null baseline head resolves tip before commit', /expectedBase = opts\.baseline\?\.headSha/.test(commitSrc)
   && /adapter\.getBranch\(repo, branch\)/.test(commitSrc));
 ok('vault findOrCreate prefers getBranch over size===0', /classifyExistingVault/.test(vaultSrc)
   && /size === 0/.test(vaultSrc) && /non_fast_forward/.test(vaultSrc));

@@ -1,15 +1,12 @@
 /**
  * G3: Commit / push in Git mode.
  *
- * Commit sends the changed part scripts plus the assembly `.surf.json` as
- * ONE commit to main, guarded by the baseline head (`baseSha`). When main
- * has moved since the last Open/Commit, the adapter refuses with
- * `non_fast_forward`; we detect the base (merge base of our baseline head
- * and main), park the same files on a new branch
- * `surfcad/<assembly>-<date>` cut from that base, and hand back a
- * `branched` result so the UI can ASK whether to force merge. Force merge
- * writes the same files on top of the current main; whatever main changed
- * in those files since the base is lost (the warning lists them).
+ * `assembleCommitFiles` builds the changed part scripts plus the assembly
+ * `.surf.json` for one commit. The Parts Save button enqueues that list;
+ * the sync worker is the only writer. `commitWorkspace` remains for callers
+ * that already hold a matching baseline (move-to-git follow-ups, goldens):
+ * it commits with `baseSha` and, on `non_fast_forward`, returns `conflict`
+ * without writing. It does not open a side branch and it does not overwrite.
  *
  * When the assembly was renamed, the same commit moves the `.surf.json`
  * and assembly-owned parts to the new folder (deletes the old paths);
@@ -473,17 +470,6 @@ export function commitBranchName(assemblyName, date = new Date()) {
   return `${COMMIT_BRANCH_PREFIX}${slug}-${stamp}`;
 }
 
-/** First free branch name: base, base-2, base-3 … */
-async function freeBranchName(adapter, repo, base) {
-  const taken = new Set((await adapter.listBranches(repo)).map((b) => b.name));
-  if (!taken.has(base)) return base;
-  for (let n = 2; n < 1000; n += 1) {
-    const name = `${base}-${n}`;
-    if (!taken.has(name)) return name;
-  }
-  throw new GitAdapterError('name_exists', `No free branch name for ${base}`);
-}
-
 /**
  * Detect the base for a stale commit: the merge base of our baseline head
  * and main. Falls back to main's head when the baseline commit is gone.
@@ -523,20 +509,18 @@ function nextBaseline(doc, scripts, baseline, assemblyPath, branch, headSha) {
 }
 
 /**
- * Commit the working copy.
+ * Files for one Save, without writing git.
  * -> { status: 'clean' }
- *  | { status: 'committed', sha, branch, files, baseline }
- *  | { status: 'branched', branch, branchSha, baseSha, mainSha, behindBy,
- *      remoteFiles, overlap, files, message, pending }   (ask: force merge?)
+ *  | { status: 'ready', files, doc, scripts, message, branch, assemblyPath,
+ *      renamed, moved, partIds }
  */
-export async function commitWorkspace(adapter, repo, {
+export async function assembleCommitFiles(adapter, repo, {
   doc,
   scripts,
   baseline,
   message = '',
   liveId = null,
   liveScript = null,
-  now = new Date(),
 } = {}) {
   assertGithubAdapter(adapter);
   if (!baseline) throw new Error('Open an assembly from the vault before committing');
@@ -598,124 +582,79 @@ export async function commitWorkspace(adapter, repo, {
   if (!built.files.length) return { status: 'clean' };
   const branch = baseline.branch || 'main';
   const msg = String(message || '').trim() || `Update ${vaultSegment(workDoc.name) || 'assembly'}`;
-  const filePaths = () => built.files.map((f) => f.path);
-  // First Save after OAuth (no Open yet) may have a null baseline head.
-  // Use the tip as baseSha — do NOT pass null on a non-empty repo (that
-  // throws "main moved: head …, base null" and wrongly looks like a conflict).
-  let expectedBase = baseline.headSha || null;
+  return {
+    status: 'ready',
+    files: built.files,
+    doc: workDoc,
+    scripts: built.scripts,
+    message: msg,
+    branch,
+    assemblyPath: built.assemblyPath,
+    renamed: built.renamed,
+    moved: built.moved,
+    partIds: built.partPaths || [],
+  };
+}
+
+/**
+ * Commit a prepared workspace when the baseline still matches the tip.
+ * On `non_fast_forward` this returns `conflict` and writes nothing.
+ * Save in the app does not call this — it enqueues `assembleCommitFiles`.
+ * -> { status: 'clean' | 'committed' | 'conflict', ... }
+ */
+export async function commitWorkspace(adapter, repo, opts = {}) {
+  const assembled = await assembleCommitFiles(adapter, repo, opts);
+  if (assembled.status === 'clean') return assembled;
+  const { branch } = assembled;
+  let expectedBase = opts.baseline?.headSha || null;
   if (!expectedBase) {
     const tip = await adapter.getBranch(repo, branch);
     expectedBase = tip?.sha || null;
   }
-  const prepared = await filesForPush(adapter, repo, branch, built.files);
-  built.files = prepared.files;
-  const promoted = applyIdPromotion(workDoc, built.scripts, prepared.map);
-  const pushDoc = promoted.changed ? promoted.doc : workDoc;
-  const pushScripts = promoted.changed ? promoted.scripts : built.scripts;
+  const prepared = await filesForPush(adapter, repo, branch, assembled.files);
+  const promoted = applyIdPromotion(assembled.doc, assembled.scripts, prepared.map);
+  const pushDoc = promoted.changed ? promoted.doc : assembled.doc;
+  const pushScripts = promoted.changed ? promoted.scripts : assembled.scripts;
   try {
     const res = await adapter.commitFiles(repo, {
       branch,
-      message: msg,
-      files: built.files,
+      message: assembled.message,
+      files: prepared.files,
       baseSha: expectedBase,
     });
     return {
       status: 'committed',
       sha: res.sha,
       branch,
-      files: filePaths(),
-      baseline: nextBaseline(pushDoc, pushScripts, baseline, built.assemblyPath, branch, res.sha),
+      files: prepared.files.map((file) => file.path),
+      baseline: nextBaseline(pushDoc, pushScripts, opts.baseline, assembled.assemblyPath, branch, res.sha),
       doc: pushDoc,
       scripts: pushScripts,
-      renamed: built.renamed,
-      moved: built.moved,
+      renamed: assembled.renamed,
+      moved: assembled.moved,
       promoted: prepared.map,
     };
   } catch (err) {
     if (!(err instanceof GitAdapterError) || err.code !== 'non_fast_forward') throw err;
+    return {
+      status: 'conflict',
+      syncHold: true,
+      branch,
+      baseSha: expectedBase,
+      warning: 'The repo moved since the last sync. Nothing was overwritten.',
+    };
   }
-  // Branch tip moved: detect base, park the commit on a side branch, then ask.
-  const base = await detectCommitBase(adapter, repo, { branch, baselineSha: baseline.headSha });
-  const sideName = await freeBranchName(adapter, repo, commitBranchName(workDoc.name, now));
-  await adapter.createBranch(repo, sideName, base.baseSha);
-  const side = await adapter.commitFiles(repo, {
-    branch: sideName,
-    message: msg,
-    files: built.files,
-    baseSha: base.baseSha,
-  });
-  const mine = new Set(built.files.map((f) => f.path));
-  const overlap = base.remoteFiles.map((f) => f.path).filter((p) => mine.has(p)).sort();
-  return {
-    status: 'branched',
-    branch: sideName,
-    branchSha: side.sha,
-    targetBranch: branch,
-    baseSha: base.baseSha,
-    mainSha: base.mainSha,
-    behindBy: base.behindBy,
-    remoteFiles: base.remoteFiles,
-    overlap,
-    files: filePaths(),
-    message: msg,
-    renamed: built.renamed,
-    moved: built.moved,
-    pending: {
-      files: built.files,
-      scripts: built.scripts,
-      assemblyPath: built.assemblyPath,
-      doc: workDoc,
-      baseline,
-    },
-  };
 }
 
-/** Warning text for the force-merge ask. */
-export function forceMergeWarning(result) {
-  if (!result || result.status !== 'branched') return '';
-  const n = result.behindBy || 0;
-  const lost = result.overlap?.length
-    ? ` Main's changes to ${result.overlap.join(', ')} will be lost.`
-    : ' Any change main made to these files will be lost.';
-  return `Main moved since you opened this assembly (${n} new commit${n === 1 ? '' : 's'}). `
-    + `Your commit is safe on ${result.branch}. Force merge writes your versions on top of main.${lost}`;
+/** Retired with force merge. The conflict popup explains that nothing was overwritten. */
+export function forceMergeWarning() {
+  return 'The repo moved since the last sync. Nothing was overwritten.';
 }
 
 /**
- * Force merge a `branched` result: write the same files on top of the
- * current main (one commit, guarded by main's current head). Main's diff in
- * those files since the base is overwritten. A second race returns
- * `moved-again` so the UI can ask again.
- * -> { status: 'merged', sha, branch, files, baseline } | { status: 'moved-again', mainSha }
+ * Retired. Force merge wrote local files on top of a moved tip.
+ * Calling it throws and does not touch the repo.
  */
-export async function forceMergeCommit(adapter, repo, result) {
-  assertGithubAdapter(adapter);
-  if (!result || result.status !== 'branched' || !result.pending) {
-    throw new Error('Nothing to force merge');
-  }
-  const { files, scripts, assemblyPath, doc, baseline } = result.pending;
-  const target = result.targetBranch || 'main';
-  const head = (await adapter.getBranch(repo, target))?.sha || null;
-  try {
-    const res = await adapter.commitFiles(repo, {
-      branch: target,
-      message: `${result.message} (force merge from ${result.branch})`,
-      files,
-      baseSha: head,
-    });
-    return {
-      status: 'merged',
-      sha: res.sha,
-      branch: target,
-      files: files.map((f) => f.path),
-      baseline: nextBaseline(doc, scripts, baseline, assemblyPath, target, res.sha),
-      doc,
-      scripts,
-    };
-  } catch (err) {
-    if (err instanceof GitAdapterError && err.code === 'non_fast_forward') {
-      return { status: 'moved-again', mainSha: (await adapter.getBranch(repo, target))?.sha || null };
-    }
-    throw err;
-  }
+export async function forceMergeCommit() {
+  throw new Error('Force merge is retired. Sync will not overwrite the remote repo.');
 }
