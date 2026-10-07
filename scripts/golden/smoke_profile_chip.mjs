@@ -135,7 +135,7 @@ console.log('\nG9 — UI wiring (source)');
   ok('green chip click uses signedIn (not only isAuthenticated)',
     /if \(signedIn\)/.test(chip)
     && /setPanelOpen/.test(chip)
-    && /signedIn && \(/.test(chip)
+    && (/signedIn && \(/.test(chip) || /showPanel && \(/.test(chip) || /signedIn \|\| localMenu/.test(chip))
     && /<ProfilePanel/.test(chip)
     && !/if \(isAuthenticated\) \{[\s\S]*?setPanelOpen/.test(chip));
   ok('delete confirm warns account + GitHub repo',

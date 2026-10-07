@@ -357,9 +357,10 @@ export default function PartFeed({
   githubConnected = false,
   onGitConnect = null,
   onGitDisconnect = null,
-  // Same account/sign-in flow as CAD ProfileChip
+  // Same account/sign-in flow as CAD ProfileChip; Clear local CAD data on inline menu
   onAccount = null,
   onSignedOut = null,
+  onClearLocalCadData = null,
   profileVaultName = null,
 }) {
   const [renamingId, setRenamingId] = useState(null);
@@ -1187,7 +1188,7 @@ export default function PartFeed({
           </button>
           {/* Same profile chip as CAD viewport — opens Login / Account. */}
           <div data-parts-profile-chip="" className="flex shrink-0 items-center pl-0.5">
-            <ProfileChip variant="inline" onAccount={onAccount} onSignedOut={onSignedOut} vaultName={profileVaultName} />
+            <ProfileChip variant="inline" onAccount={onAccount} onSignedOut={onSignedOut} onClearLocalCadData={onClearLocalCadData} vaultName={profileVaultName} />
           </div>
         </div>
 

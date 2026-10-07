@@ -39,6 +39,7 @@ import {
   clearEditorState 
 } from './utils/editorStorage';
 import { saveEditorDraft, loadEditorDraft } from './utils/editorDraft';
+import { clearLocalCadData } from './utils/clearLocalCadData';
 import { resolveActiveRestore } from './utils/partScriptRestore';
 import {
   assemblyName,
@@ -3767,6 +3768,21 @@ const App = () => {
     }
   };
 
+  /**
+   * Parts / Script profile menu: wipe local CAD IDB caches, then reload so
+   * viewer / script / parts list reset. Suppress draft flush so pagehide cannot
+   * re-write what we just cleared. Keeps GitHub sessionStorage token (same-tab
+   * reload) and does not delete the GitHub account or vault repo.
+   */
+  const handleClearLocalCadData = async () => {
+    suppressPartSaveRef.current = true;
+    editorLiveRef.current = false;
+    partSaveEpochRef.current += 1;
+    refreshGenRef.current += 1;
+    await clearLocalCadData();
+    window.location.reload();
+  };
+
   /** After profile Sign out / Delete account: drop vault token state and git chrome. */
   const handleProfileSignedOut = () => {
     clearGithubToken();
@@ -4080,6 +4096,7 @@ const App = () => {
       onGitDisconnect={handleGitDisconnect}
       onAccount={handleAccount}
       onSignedOut={handleProfileSignedOut}
+      onClearLocalCadData={handleClearLocalCadData}
       profileVaultName={gitDefaultVaultName()}
       suggestNewPartPath={
         assemblyDoc.source === 'git'
@@ -4195,6 +4212,7 @@ const App = () => {
                   monacoEndPadClassName={isScriptStage ? 'pr-11' : ''}
                   onAccount={handleAccount}
                   onSignedOut={handleProfileSignedOut}
+                  onClearLocalCadData={handleClearLocalCadData}
                   profileVaultName={gitDefaultVaultName()}
                 />
     );
@@ -4510,6 +4528,7 @@ const App = () => {
               onCadToolbarHost={setCadToolbarHost}
               onAccount={handleAccount}
               onSignedOut={handleProfileSignedOut}
+              onClearLocalCadData={handleClearLocalCadData}
               profileVaultName={gitDefaultVaultName()}
             />
           </div>

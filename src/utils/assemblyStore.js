@@ -148,3 +148,10 @@ export async function loadPartScripts(ids) {
   }
   return out;
 }
+
+/** Wipe assembly document + all part scripts (Clear local CAD data). */
+export async function clearAssemblyStore() {
+  const doc = await runTx(DOC_STORE, 'readwrite', (store) => store.clear());
+  const parts = await runTx(PART_STORE, 'readwrite', (store) => store.clear());
+  return !!(doc.ok && parts.ok);
+}
