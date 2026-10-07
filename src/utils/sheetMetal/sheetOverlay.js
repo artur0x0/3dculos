@@ -134,9 +134,10 @@ export function buildSheetOverlay(mode) {
     group.add(m);
   }
   // Edge handles: fat, translucent, only for the active tool.
-  if (mode.stage === 'edit' && (mode.tool === 'bend' || mode.tool === 'tab')) {
+  if (mode.stage === 'edit' && !mode.draft && (mode.tool === 'bend' || mode.tool === 'tab')) {
     const hot = mode.hotEdge ? `${mode.hotEdge.panel}:${mode.hotEdge.edge}` : '';
-    const size = Math.max(4, spec.t * 3);
+    // Fat enough for a fingertip at fit-to-view zoom.
+    const size = Math.max(4, spec.t * 3, Math.max(spec.width, spec.height) * 0.05);
     for (const e of sheetFreeEdges(spec, solved)) {
       if (mode.tool === 'bend' ? !e.bendable : !e.tabbable) continue;
       if (!(e.length > 1e-3)) continue;
