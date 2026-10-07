@@ -65,7 +65,14 @@ import ShellModeChip from './ShellModeChip';
 import SheetMetalPicker from './sheetMetal/SheetMetalPicker';
 import SheetMetalRail from './sheetMetal/SheetMetalRail';
 import SheetMetalFlow from './sheetMetal/SheetMetalFlow';
-import { baseDraftSpec, draftPreviewSpec, enterSheetMetalMode, sheetTap } from '../utils/sheetMetal/sheetMetalMode';
+import {
+  baseDraftSpec,
+  draftPreviewSpec,
+  enterSheetMetalMode,
+  setSheetTool,
+  sheetTap,
+  sheetToolsFor,
+} from '../utils/sheetMetal/sheetMetalMode';
 import { buildSheetOverlay, disposeSheetOverlay, sheetPickFromHits } from '../utils/sheetMetal/sheetOverlay';
 import DraftModeChip from './DraftModeChip';
 import CutModeChip from './CutModeChip';
@@ -7632,7 +7639,12 @@ const Viewport = forwardRef(({
 
       {/* SCS sheet metal: left rail swaps like contour mode. */}
       {sheetMetalMode && (
-        <SheetMetalRail onExit={() => setSheetMetalMode(null)} />
+        <SheetMetalRail
+          onExit={() => setSheetMetalMode(null)}
+          tools={sheetMetalMode.stage === 'edit' ? sheetToolsFor(sheetMetalMode.spec) : []}
+          tool={sheetMetalMode.tool}
+          onSelectTool={(id) => setSheetMetalMode((prev) => (prev ? setSheetTool(prev, id) : prev))}
+        />
       )}
       {sheetMetalMode && (
         <SheetMetalFlow

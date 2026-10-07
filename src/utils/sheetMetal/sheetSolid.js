@@ -96,6 +96,15 @@ export function buildSheetMetalSolid(Manifold, CrossSection, rawSpec) {
     const cyl = Manifold.cylinder(t + 2, d / 2, d / 2, 48, false);
     const origin = vSub(h.center, vMul(1, p.N));
     cutters.push(cyl.transform(frameMatrix(p.U, p.V, p.N, origin)));
+    // Countersink: 82° cone opening on the +N face, capped at the thickness.
+    const csk = Number(h.cskDia) || 0;
+    if (h.type === 'countersink' && csk > d) {
+      const half = ((Number(h.cskAngle) || 82) / 2) * (Math.PI / 180);
+      const depth = Math.min(t, (csk - d) / 2 / Math.tan(half));
+      const rTop = d / 2 + depth * Math.tan(half);
+      const cone = Manifold.cylinder(depth + 0.5, d / 2, rTop + 0.5 * Math.tan(half), 48, false);
+      cutters.push(cone.transform(frameMatrix(p.U, p.V, p.N, vAdd(h.center, vMul(t - depth, p.N)))));
+    }
   }
   if (cutters.length) solid = solid.subtract(cutters.length === 1 ? cutters[0] : Manifold.union(cutters));
   return solid;

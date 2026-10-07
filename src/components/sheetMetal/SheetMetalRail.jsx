@@ -1,5 +1,5 @@
 import React from 'react';
-import { X } from 'lucide-react';
+import { Circle, Cone, Drill, FoldVertical, PanelTop, X } from 'lucide-react';
 import {
   RAIL_PAIR_HEIGHT_CLASS,
   RAIL_SCROLL_CLASS,
@@ -11,7 +11,13 @@ import {
  * Left rail while sheet-metal mode is active (swaps out the FEAT palette,
  * like ContourModeRail for loft/sweep). ✕ leaves the flow without writing.
  */
-const SheetMetalRail = ({ onExit, children }) => {
+const TOOL_ICONS = { tab: PanelTop, bend: FoldVertical, hole: Circle, countersink: Cone, tapped: Drill };
+
+/**
+ * tools = sheetToolsFor(spec): only features SendCutSend makes on this SKU,
+ * Tab first. Empty before the base flange exists.
+ */
+const SheetMetalRail = ({ onExit, tools = [], tool = null, onSelectTool, children }) => {
   const { railRef, fits, widthClass } = useLeftRailFit();
   return (
     <div
@@ -29,6 +35,26 @@ const SheetMetalRail = ({ onExit, children }) => {
       <div className="text-[9px] font-semibold uppercase tracking-wide text-orange-700 px-1 truncate leading-4">
         Sheet
       </div>
+      {tools.map((item) => {
+        const Icon = TOOL_ICONS[item.id] || Circle;
+        const active = tool === item.id;
+        return (
+          <button
+            key={item.id}
+            type="button"
+            onClick={() => onSelectTool?.(item.id)}
+            title={item.title}
+            aria-label={item.title}
+            aria-pressed={active}
+            data-sheet-tool={item.id}
+            className={`p-2 min-h-[44px] rounded flex flex-col items-center justify-center gap-0.5 transition-colors
+              ${active ? 'bg-orange-200 text-orange-900' : 'text-orange-800 hover:bg-orange-100 active:bg-orange-200'}`}
+          >
+            <Icon size={20} strokeWidth={2} />
+            <span className="text-[9px] font-semibold leading-none">{item.label}</span>
+          </button>
+        );
+      })}
       {children}
       <div className="border-t border-gray-300/70 my-0.5 mx-0.5" aria-hidden />
       <button
