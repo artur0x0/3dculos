@@ -452,6 +452,7 @@ const App = () => {
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState(null);
   const [manifoldReady, setManifoldReady] = useState(false);
+  const manifoldReadyRef = useRef(false);
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [showAccountModal, setShowAccountModal] = useState(false);
   const [accountModalTab, setAccountModalTab] = useState('info');
@@ -813,11 +814,13 @@ const App = () => {
         if (cancelled) return;
         console.log('[App] Available helper functions:', helpers);
 
+        manifoldReadyRef.current = true;
         setManifoldReady(true);
         console.log('[App] Manifold Sandbox Worker ready');
       } catch (error) {
         if (cancelled) return;
         console.error('[App] Failed to initialize Manifold Sandbox:', error);
+        manifoldReadyRef.current = false;
         setInitError(error.message || 'Manifold init failed');
       }
     };
@@ -826,6 +829,8 @@ const App = () => {
 
     return () => {
       cancelled = true;
+      manifoldReadyRef.current = false;
+      // StrictMode remount only — never terminate on pagehide/visibility.
       manifoldContext.terminate();
     };
   }, []);
@@ -1041,7 +1046,9 @@ const App = () => {
   }, [currentScript, currentFilename, manifoldReady, editorInitialScript, appMode]);
 
   // A reload can beat the debounce (refresh mid-typing). pagehide covers the
-  // iOS/Safari case where unload never fires.
+  // iOS/Safari case where unload never fires. Flush drafts only — never
+  // location.reload, never terminate the WASM worker here (that would force
+  // a full remount on every minimize).
   useEffect(() => {
     if (!manifoldReady || editorInitialScript === null) return undefined;
     const flush = () => {
@@ -1054,13 +1061,70 @@ const App = () => {
         savePartScript(id, live);
       }
     };
-    window.addEventListener('pagehide', flush);
-    document.addEventListener('visibilitychange', flush);
+    const onPageHide = (event) => {
+      flush();
+      // event.persisted === true means bfcache; still do not reload/terminate.
+      void event;
+    };
+    const onVisFlush = () => {
+      if (document.visibilityState === 'hidden') flush();
+    };
+    window.addEventListener('pagehide', onPageHide);
+    document.addEventListener('visibilitychange', onVisFlush);
     return () => {
-      window.removeEventListener('pagehide', flush);
-      document.removeEventListener('visibilitychange', flush);
+      window.removeEventListener('pagehide', onPageHide);
+      document.removeEventListener('visibilitychange', onVisFlush);
     };
   }, [currentScript, currentFilename, manifoldReady, editorInitialScript]);
+
+  // Safari minimize / restore: soft-recover the Manifold worker when the JS
+  // world survives but the Worker was killed. If Safari discarded the tab
+  // entirely (standalone PWA / memory pressure), that is a real navigation
+  // and WASM must re-init — we cannot fake surviving it; see architecture.md.
+  useEffect(() => {
+    let busy = false;
+    let lastCheck = 0;
+    const softRecover = async (reason) => {
+      if (!manifoldReadyRef.current || busy) return;
+      const now = Date.now();
+      if (now - lastCheck < 1500) return;
+      lastCheck = now;
+      busy = true;
+      try {
+        const result = await manifoldContext.ensureAlive(reason);
+        if (result.status === 'restarted') {
+          manifoldReadyRef.current = true;
+          setManifoldReady(true);
+          setInitError(null);
+          console.log('[App] Manifold worker soft-restarted after', reason);
+        }
+      } catch (err) {
+        console.error('[App] Manifold soft-restart failed:', err);
+        manifoldReadyRef.current = false;
+        setManifoldReady(false);
+        setInitError(err?.message || 'Manifold worker lost after backgrounding');
+      } finally {
+        busy = false;
+      }
+    };
+    const onPageShow = (event) => {
+      // bfcache restore (persisted) or ordinary show after freeze.
+      if (event.persisted || manifoldReadyRef.current) {
+        void softRecover(event.persisted ? 'bfcache' : 'pageshow');
+      }
+    };
+    const onVis = () => {
+      if (document.visibilityState === 'visible') {
+        void softRecover('visibility');
+      }
+    };
+    window.addEventListener('pageshow', onPageShow);
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      window.removeEventListener('pageshow', onPageShow);
+      document.removeEventListener('visibilitychange', onVis);
+    };
+  }, []);
 
   // Leaving a puzzle puts the assembly back in the viewport. appModeRef is
   // still 'game' during the exit click, so the editor's auto-run skips it.

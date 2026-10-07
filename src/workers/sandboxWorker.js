@@ -8545,6 +8545,12 @@ self.onmessage = async (event) => {
         self.postMessage({ type: 'ready', id });
         break;
       }
+
+      // Lightweight alive check after Safari freeze / bfcache restore.
+      case 'ping': {
+        self.postMessage({ type: 'result', id, payload: { ok: true } });
+        break;
+      }
       
       case 'execute': {
         if (!isInitialized) {

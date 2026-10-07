@@ -705,6 +705,32 @@ class ManifoldWorker {
   }
   
   /**
+   * Cheap alive check (Safari may kill the Worker on minimize while the
+   * JS world survives). Returns false when the worker is gone or unresponsive.
+   */
+  async ping(timeoutMs = 2000) {
+    if (!this.worker || !this.isReady) return false;
+    try {
+      await this._request('ping', {}, { timeoutMs });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Soft-recover after page freeze / bfcache: ping, else restart in place.
+   * Never calls location.reload — full remount is only if Safari discarded
+   * the tab (that is a real navigation; we cannot fake surviving it).
+   */
+  async ensureAlive(reason = 'lifecycle') {
+    if (await this.ping()) return { status: 'alive', reason };
+    console.warn(`[ManifoldWorker] Worker dead (${reason}); soft restart`);
+    await this.restart();
+    return { status: 'restarted', reason };
+  }
+
+  /**
    * Terminate the worker
    */
   terminate() {
