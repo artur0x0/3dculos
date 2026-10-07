@@ -10,12 +10,14 @@ import {
   bendLimits,
   cancelDraft,
   deleteDraftFeature,
+  holeRange,
   pickSheetPlane,
   setBaseDims,
+  TAP_SIZES,
   updateDraft,
 } from '../../utils/sheetMetal/sheetMetalMode';
 import SheetMetalModeChip from './SheetMetalModeChip';
-import { SmButton, SmPopup, SmSlider } from './SmControls';
+import { SmButton, SmPopup, SmSelect, SmSlider, SmToggle } from './SmControls';
 
 /**
  * Sheet-metal flow chrome by stage. Viewport owns the mode state, overlay
@@ -104,11 +106,91 @@ const BendPopup = ({ mode, setMode, onCommit, onExit }) => {
   );
 };
 
+const TabPopup = ({ mode, setMode, onCommit, onExit }) => {
+  const d = mode.draft;
+  const span = Number(d.span) || Math.max(d.width, 1);
+  const where = d.panel === 'base' ? `Base ${EDGE_NAMES[d.edge] || d.edge}` : `Flange ${d.panel} ${d.edge === 'u+' ? 'tip' : 'side'}`;
+  return (
+    <SmPopup
+      short
+      title={d.isNew ? 'Tab' : `Tab ${d.id}`}
+      subtitle={`${where} · edge ${span.toFixed(1)} mm`}
+      onClose={onExit}
+      closeLabel="Exit sheet metal without writing this tab"
+      dataAttr="data-sheet-metal-tab"
+      footer={<DraftFooter mode={mode} setMode={setMode} onCommit={onCommit} />}
+    >
+      <SmSlider id="sm-tab-width" label="Width" value={d.width} min={1} max={span} step={0.5}
+        onChange={(v) => setMode((m) => updateDraft(m, { width: v }))} />
+      <SmSlider id="sm-tab-depth" label="Depth" value={d.depth} min={0.5} max={Math.max(50, d.depth)} step={0.5}
+        onChange={(v) => setMode((m) => updateDraft(m, { depth: v }))} />
+      <SmToggle id="sm-tab-centered" label="Centered" checked={d.centered !== false}
+        onChange={(v) => setMode((m) => updateDraft(m, { centered: v }))} />
+      {d.centered === false && (
+        <SmSlider id="sm-tab-offset" label="Offset from edge start" value={d.offset ?? 0} min={0}
+          max={Math.max(0, span - d.width)} step={0.5}
+          onChange={(v) => setMode((m) => updateDraft(m, { offset: v }))} />
+      )}
+    </SmPopup>
+  );
+};
+
+const HOLE_TITLES = { hole: 'Hole', countersink: 'Countersunk hole', tapped: 'Tapped hole' };
+
+const HolePopup = ({ mode, setMode, onCommit, onExit }) => {
+  const d = mode.draft;
+  const range = holeRange(mode) || { u0: -50, u1: 50, v0: -50, v1: 50 };
+  const minHole = Number(mode.spec.limits?.minHole) || 0;
+  const type = d.type || 'hole';
+  return (
+    <SmPopup
+      short
+      title={d.isNew ? HOLE_TITLES[type] : `${HOLE_TITLES[type]} ${d.id}`}
+      subtitle={`${d.panel === 'base' ? 'Base' : `Flange ${d.panel}`} face${minHole ? ` · SKU min Ø ${minHole.toFixed(2)} mm` : ''}`}
+      onClose={onExit}
+      closeLabel="Exit sheet metal without writing this hole"
+      dataAttr="data-sheet-metal-hole"
+      footer={<DraftFooter mode={mode} setMode={setMode} onCommit={onCommit} />}
+    >
+      {type === 'tapped' ? (
+        <SmSelect id="sm-hole-thread" label="Thread" value={d.thread}
+          options={TAP_SIZES.map((x) => ({ value: x.id, label: `${x.id} (drill Ø ${x.tap.toFixed(2)} mm)` }))}
+          onChange={(v) => setMode((m) => updateDraft(m, { thread: v }))} />
+      ) : (
+        <SmSlider id="sm-hole-d" label="Diameter" value={d.d} min={Math.max(0.5, minHole)} max={Math.max(40, d.d)} step={0.1}
+          onChange={(v) => setMode((m) => updateDraft(m, { d: v }))} />
+      )}
+      {type === 'countersink' && (
+        <SmSlider id="sm-hole-csk" label="Countersink Ø (82°)" value={d.cskDia} min={d.d} max={Math.max(d.d * 3, d.cskDia)} step={0.1}
+          onChange={(v) => setMode((m) => updateDraft(m, { cskDia: v }))} />
+      )}
+      <SmSlider id="sm-hole-u" label="Position along U" value={d.u} min={range.u0} max={range.u1} step={0.5}
+        onChange={(v) => setMode((m) => updateDraft(m, { u: v }))} />
+      <SmSlider id="sm-hole-v" label="Position along V" value={d.v} min={range.v0} max={range.v1} step={0.5}
+        onChange={(v) => setMode((m) => updateDraft(m, { v: v }))} />
+    </SmPopup>
+  );
+};
+
+const TOOL_HINTS = {
+  tab: 'Tap an orange edge to add a tab, or a tab to edit it.',
+  bend: 'Tap an orange edge to bend it, or a bend to edit it.',
+  hole: 'Tap a face to place a hole, or a hole to edit it.',
+  countersink: 'Tap a face to place a countersunk hole.',
+  tapped: 'Tap a face to place a tapped hole.',
+};
+
 const SheetMetalFlow = ({ mode, setMode, onCommit, onExit, compact = false }) => {
   if (!mode) return null;
 
   if (mode.stage === 'edit' && mode.draft?.kind === 'bend') {
     return <BendPopup mode={mode} setMode={setMode} onCommit={onCommit} onExit={onExit} />;
+  }
+  if (mode.stage === 'edit' && mode.draft?.kind === 'tab') {
+    return <TabPopup mode={mode} setMode={setMode} onCommit={onCommit} onExit={onExit} />;
+  }
+  if (mode.stage === 'edit' && mode.draft?.kind === 'hole') {
+    return <HolePopup mode={mode} setMode={setMode} onCommit={onCommit} onExit={onExit} />;
   }
 
   if (mode.stage === 'base' && mode.base) {
@@ -180,8 +262,7 @@ const SheetMetalFlow = ({ mode, setMode, onCommit, onExit, compact = false }) =>
       )}
       {mode.stage === 'edit' && (
         <div className="mt-1.5 text-[12px] text-orange-100 font-sans" data-sheet-metal-step="edit">
-          {mode.tool === 'bend' && 'Tap an orange edge to bend it, or a bend to edit it.'}
-          {mode.tool !== 'bend' && 'Pick a tool on the left rail.'}
+          {TOOL_HINTS[mode.tool] || 'Pick a tool on the left rail.'}
           {mode.toast && <div className="mt-1 text-amber-200" data-sm-toast="1">{mode.toast}</div>}
         </div>
       )}

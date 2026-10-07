@@ -397,3 +397,14 @@ Touch-first sheet-metal mode that designs against live SendCutSend (SCS) stock. 
 - **Bends (S3).** In `edit` with the Bend tool, every bendable free edge (base edges, flange tips) gets a fat orange handle (≥ 5% of the base). Tap → Bend popup over a live cyan preview (`draftPreviewSpec`): **Angle** (SKU min … `max_bend_angle`, default 90°), **Flange length** (SKU `min_flange_length_after_bend` … the base's longest side, default ¼ of the side it leaves), **Flip** (up = +N / down), and a read-only R · K · BD line (BD at the current angle; equals SCS's 90° value). Back drops the draft, ✕ exits, Accept rewrites the block; tapping a bend edits it (Delete removes it and its child flanges). Taps are ignored while a popup is open. SKUs without `bending` never open a bend.
 - **Bend geometry.** Inner radius `r` and `k` from the SKU. Up bends roll about `E0 + (t+r)N`, flips about `E0 − rN`; the bend zone is an annular sector (r … r+t) swept along the edge, the flange a box in the rolled frame. Flat: child panels shift by `BA = θ(r + k·t)`.
 - **Reliefs (automatic).** Where two bent base edges meet, both flanges stop `g = max(t, SCS min corner relief) + r` short of the corner and a `g × g` notch is cut from the base corner, so bend lines end in free space (no tearing, no flange collision). Full-width flanges need no bend relief; chained tip bends inherit the parent's width.
+- **Sidebar (S4).** After the base flange the left rail (`SheetMetalRail`) lists only what SCS makes on the bound SKU, **Tab first**: Tab (always), Bend (`bending`), Hole (always), Csk (`countersinking`), Tap (`tapping`) — `sheetToolsFor(spec)` reads `spec.limits.services`, so gating works offline. Same translucent popups (Accept / Back / Delete, ✕ exits):
+  - **Tab** — tap a free edge (base edges, flange tips and sides; not a bent or tabbed edge). Width (default 40% of the edge, ≤ 25 mm), Depth (10 mm), **Centered on by default**; off shows Offset from the edge start. In-plane box, no relief needed.
+  - **Hole / Csk / Tap** — tap a panel face; the hole lands at the tap (`panelLocal`), U / V sliders refine it. Hole Ø defaults to ≥ 2× SKU min hole (≥ 5 mm). Csk adds an 82° cone (Ø defaults 2× hole) on the +N face. Tap picks a thread (M2.5–M8, #4-40–1/4-20) and cuts its tap drill Ø; threads are SCS's job.
+
+| Tool | Pick | Gate | Writes |
+| --- | --- | --- | --- |
+| Tab | free edge handle | — | `tabs[]` |
+| Bend | bendable edge handle | `bending` + bend specs | `bends[]` |
+| Hole | panel face | — | `holes[]` (`type: 'hole'`) |
+| Csk | panel face | `countersinking` | `holes[]` (`type: 'countersink'`, `cskDia`, `cskAngle`) |
+| Tap | panel face | `tapping` | `holes[]` (`type: 'tapped'`, `thread`) |

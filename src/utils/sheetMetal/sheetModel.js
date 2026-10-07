@@ -344,7 +344,7 @@ export function sheetFreeEdges(spec, solved = solveSheet(spec)) {
       const key = `${p.id}:${edge}`;
       if (usedBend.has(key)) continue;
       const canBend = bendableEdges(p.id).includes(edge) && !usedTab.has(key);
-      const canTab = tabEdges(p.id).includes(edge);
+      const canTab = tabEdges(p.id).includes(edge) && !usedTab.has(key);
       if (!canBend && !canTab) continue;
       const ef = panelEdge(p, edge);
       const mid = mul(spec.t / 2, p.N);
@@ -355,7 +355,7 @@ export function sheetFreeEdges(spec, solved = solveSheet(spec)) {
         b: add(add(ef.E0, mul(ef.q1, ef.e)), mid),
         length: ef.q1 - ef.q0,
         bendable: canBend,
-        tabbable: canTab && !usedTab.has(key),
+        tabbable: canTab,
       });
     }
   }
