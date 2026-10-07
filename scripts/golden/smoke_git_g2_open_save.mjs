@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * G2 open/save in Git mode: list/open .surf.json + parts by path, new part
- * path, add existing from vault, dirty badges, Local|Git toggle.
+ * path, add existing from vault, dirty badges, session identity (G10).
  * Mock adapter only — no network, no tokens, no commit (G3).
  */
 import { readFileSync } from 'node:fs';
@@ -158,25 +158,30 @@ ok('Cover cannot add Gearbox Spare', !addableCover.some((a) => a.path === assemb
 console.log('\ngit G2 — UI wiring (PartFeed + App)');
 const feed = readFileSync(new URL('../../src/components/PartFeed.jsx', import.meta.url), 'utf8');
 const app = readFileSync(new URL('../../src/App.jsx', import.meta.url), 'utf8');
-ok('Local|Git is a toggle', /data-parts-source-toggle/.test(feed)
-  && /source === 'git' \? 'Git' : 'Local'/.test(feed)
-  && /onToggleSource/.test(feed));
-ok('toggle dirty badge', /data-git-dirty-badge/.test(feed) && /data-git-dirty=/.test(feed));
+ok('session identity strip (G10), not Local|Git toggle',
+  /data-parts-session-identity/.test(feed)
+  && /data-parts-session-kind/.test(feed)
+  && /sessionIdentity/.test(feed)
+  && !/data-parts-source-toggle/.test(feed));
+ok('dirty badge on Commit', /data-git-dirty-badge/.test(feed) && /data-git-dirty=/.test(feed)
+  && /data-git-commit=""/.test(feed));
 ok('row dirty badge', /data-part-dirty/.test(feed) && /row\.dirty/.test(feed));
 ok('git Open lists vault', /data-git-open-list/.test(feed) && /onListVaultAssemblies/.test(feed)
   && /onOpenVaultAssembly/.test(feed));
 ok('new part asks for path', /data-git-new-part-path/.test(feed) && /New part path/.test(feed));
 ok('add existing picker', /data-git-add-existing/.test(feed) && /data-git-add-list/.test(feed)
   && /onAddExistingPart/.test(feed));
-ok('Connect still git-only (G7 gates on client id)',
-  /data-git-connect=""/.test(feed) && /source === 'git'/.test(feed)
-  && /githubConnectReady/.test(feed));
-ok('App wires vault open + dirty',
+ok('Connect gated on client id / connected (G7+G10)',
+  /data-git-connect=""/.test(feed)
+  && /githubConnectReady/.test(feed)
+  && /githubConnected/.test(feed));
+ok('App wires vault open + dirty; source follows GitHub token (G10)',
   /handleOpenVaultAssembly/.test(app)
-  && /handleToggleSource/.test(app)
   && /isWorkspaceDirty/.test(app)
   && /dirtyPartIds/.test(app)
   && /sourceDirty=\{!!sourceDirty\}/.test(app)
+  && /githubConnected/.test(app)
+  && /source: 'git'/.test(app)
   && /createMockGithubAdapter/.test(app)
   && /findOrCreateVault/.test(app));
 ok('App new part resolveNewPartPath in git',
