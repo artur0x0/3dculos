@@ -147,9 +147,11 @@ ok('index exports G11 helpers', typeof gitIndex.createVaultBranch === 'function'
   && typeof gitIndex.canDeleteVaultBranch === 'function');
 ok('adapter has deleteBranch', typeof gitIndex.createMockGithubAdapter({}).deleteBranch === 'function');
 ok('architecture mentions G11 Parts chrome', /G11/.test(arch) && /Save = Commit|Save \(commit\)|Parts vault chrome/i.test(arch));
-ok('Toolbar Script still has file Save (G12 leaves Upload/Download)', (() => {
+ok('Toolbar Script is Upload+Download only (G12)', (() => {
   const toolbar = readFileSync(new URL('../../src/components/Toolbar.jsx', import.meta.url), 'utf8');
-  return /onSave/.test(toolbar) && /Upload/.test(toolbar) && /Download/.test(toolbar);
+  return /data-script-upload=""/.test(toolbar) && /data-script-download=""/.test(toolbar)
+    && !/title="Open File"/.test(toolbar) && !/onSave/.test(toolbar)
+    && !/FolderOpen/.test(toolbar);
 })());
 
 console.log(failed ? `\n❌ FAIL (${failed} failed, ${passed} passed)` : `\n✅ PASS (${passed})`);

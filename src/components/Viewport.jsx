@@ -600,8 +600,6 @@ const Viewport = forwardRef(({
   onAccount,
   currentScript, 
   onFaceSelected, 
-  onOpen,
-  onSave,
   onQuote,
   onUpload,
   onUndo,
@@ -7432,8 +7430,6 @@ const Viewport = forwardRef(({
         <Toolbar
           mode="cad"
           variant="strip"
-          onOpen={onOpen}
-          onSave={onSave}
           onDownload={handleDownloadModel}
           onQuote={onQuote}
           onUpload={onUpload}
@@ -7444,7 +7440,6 @@ const Viewport = forwardRef(({
           isExecuting={isExecuting}
           isDownloading={isDownloading}
           isUploading={isUploading}
-          currentFilename={currentFilename}
           onStartGame={onStartGame}
           onExitGame={onExitGame}
           onRun={onRun}

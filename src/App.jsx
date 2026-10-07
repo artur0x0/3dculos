@@ -18,7 +18,6 @@ import {
   isFeatureSheetEditable,
   liveSheetFeature,
 } from './utils/featureSheetWriteback';
-import { saveAs } from 'file-saver';
 import QuoteModal from './components/QuoteModal';
 import OrderModal from './components/OrderModal';
 import LoginModal from './components/LoginModal';
@@ -3292,16 +3291,6 @@ const App = () => {
     setSelectedFace(null);
   };
 
-  const handleOpen = async (text, filename) => {
-    try {
-      console.log('[APP] Handling opening script file');
-      codeEditorRef.current?.loadContent(text, `Opened ${filename}`);
-      setCurrentFilename(filename);
-    } catch (error) {
-      console.error('[App] Open error:', error);
-    }
-  };
-
   // --- Draggable editor/viewport split ---
   // Desktop: percentage width of the editor column. Mobile: an explicit editor
   // height in px that overrides the computed budget until the keyboard opens
@@ -3359,19 +3348,6 @@ const App = () => {
     const doc = assemblyRef.current;
     if (!doc || next === assemblyName(doc)) return;
     rememberAssembly({ ...doc, name: next });
-  };
-
-  const handleSave = () => {
-    try {
-      const code = codeEditorRef.current?.getContent();
-      if (!code) return;
-      
-      const filename = currentFilename || 'model';
-      const blob = new Blob([code], { type: 'text/javascript' });
-      saveAs(blob, `${filename}.js`);
-    } catch (error) {
-      console.error('[App] Save error:', error);
-    }
   };
 
   // Handle account button click
@@ -3637,8 +3613,6 @@ const App = () => {
               onAccount={handleAccount}
               currentScript={currentScript}
               onFaceSelected={handleFaceSelected}
-              onOpen={handleOpen}
-              onSave={handleSave}
               onQuote={handleQuote}
               onUpload={handleImport}
               onUndo={handleUndo}
@@ -4081,8 +4055,6 @@ const App = () => {
             onAccount={handleAccount}
             currentScript={currentScript}
             onFaceSelected={handleFaceSelected}
-            onOpen={handleOpen}
-            onSave={handleSave}
             onQuote={handleQuote}
             onUpload={handleImport}
             onUndo={handleUndo}
