@@ -3460,6 +3460,21 @@ const App = () => {
     }
   };
 
+  /** After profile Sign out / Delete account: drop vault token state and git chrome. */
+  const handleProfileSignedOut = () => {
+    clearGithubToken();
+    setGithubConnected(false);
+    gitVaultRef.current = null;
+    gitAdapterRef.current = null;
+    rememberGitBaseline(null);
+    rememberGitBehind(null, { showToast: false, resetResolved: true });
+    setGitBehindToast(null);
+    const doc = assemblyRef.current;
+    if (doc && doc.source === 'git') {
+      rememberAssembly({ ...doc, source: 'local' });
+    }
+  };
+
   // Handle account modal from order flow
   const handleOpenAccount = (tab = 'info') => {
     setAccountModalTab(tab);
@@ -3713,6 +3728,8 @@ const App = () => {
       onGitConnect={handleGitConnect}
       onGitDisconnect={handleGitDisconnect}
       onAccount={handleAccount}
+      onSignedOut={handleProfileSignedOut}
+      profileVaultName={gitDefaultVaultName()}
       suggestNewPartPath={
         assemblyDoc.source === 'git'
           ? suggestNewPartPath(assemblyDoc.name, assemblyDoc.parts)
@@ -3745,6 +3762,8 @@ const App = () => {
             <Viewport 
               ref={viewportRef} 
               onAccount={handleAccount}
+              onSignedOut={handleProfileSignedOut}
+              profileVaultName={gitDefaultVaultName()}
               currentScript={currentScript}
               onFaceSelected={handleFaceSelected}
               onQuote={handleQuote}
@@ -3824,6 +3843,8 @@ const App = () => {
                   onCadToolbarHost={setCadToolbarHost}
                   monacoEndPadClassName={isScriptStage ? 'pr-11' : ''}
                   onAccount={handleAccount}
+                  onSignedOut={handleProfileSignedOut}
+                  profileVaultName={gitDefaultVaultName()}
                 />
     );
 
@@ -4137,6 +4158,8 @@ const App = () => {
               gameBestTimeMs={gameBestTimeMs}
               onCadToolbarHost={setCadToolbarHost}
               onAccount={handleAccount}
+              onSignedOut={handleProfileSignedOut}
+              profileVaultName={gitDefaultVaultName()}
             />
           </div>
           {/* AI prompt row is HIDDEN, not removed: it stays mounted (and keeps
@@ -4182,6 +4205,8 @@ const App = () => {
           <Viewport 
             ref={viewportRef} 
             onAccount={handleAccount}
+            onSignedOut={handleProfileSignedOut}
+            profileVaultName={gitDefaultVaultName()}
             currentScript={currentScript}
             onFaceSelected={handleFaceSelected}
             onQuote={handleQuote}

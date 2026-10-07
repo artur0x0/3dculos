@@ -598,6 +598,8 @@ const EXECUTION_LIMITS = {
 
 const Viewport = forwardRef(({ 
   onAccount,
+  onSignedOut = null,
+  profileVaultName = null,
   currentScript, 
   onFaceSelected, 
   onQuote,
@@ -7420,7 +7422,7 @@ const Viewport = forwardRef(({
       )}
       {/* G9: circular profile chip — top-right of the CAD viewport. */}
       {mode !== 'game' && (
-        <ProfileChip variant="viewport" onAccount={onAccount} />
+        <ProfileChip variant="viewport" onAccount={onAccount} onSignedOut={onSignedOut} vaultName={profileVaultName} />
       )}
 
       {/* CAD chrome lives in the editor mid-strip in BOTH shells (desktop matches

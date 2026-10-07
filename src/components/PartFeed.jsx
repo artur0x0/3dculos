@@ -316,6 +316,8 @@ export default function PartFeed({
   onGitDisconnect = null,
   // Same account/sign-in flow as CAD ProfileChip
   onAccount = null,
+  onSignedOut = null,
+  profileVaultName = null,
 }) {
   const [renamingId, setRenamingId] = useState(null);
   const loadRef = useRef(null);
@@ -1187,7 +1189,7 @@ export default function PartFeed({
           </button>
           {/* Same profile chip as CAD viewport — opens Login / Account. */}
           <div data-parts-profile-chip="" className="flex shrink-0 items-center pl-0.5">
-            <ProfileChip variant="inline" onAccount={onAccount} />
+            <ProfileChip variant="inline" onAccount={onAccount} onSignedOut={onSignedOut} vaultName={profileVaultName} />
           </div>
         </div>
 

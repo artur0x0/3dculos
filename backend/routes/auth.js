@@ -6,6 +6,7 @@ import User from '../db/models/User.js';
 import email from '../services/email.js';
 import config from '../config/index.js';
 import { fetchGithubUserProfile } from '../services/githubUser.js';
+import { deleteGithubVaultRepo } from '../services/githubVaultDelete.js';
 
 const router = Router();
 
@@ -663,6 +664,89 @@ router.post('/change-password', async (req, res) => {
   } catch (error) {
     console.error('[Auth] Change password error:', error);
     return res.status(500).json({ error: 'Failed to change password' });
+  }
+});
+
+
+/**
+ * DELETE /api/auth/account
+ * Delete the SurfCAD user record and (when a GitHub token is provided) the
+ * vault repo. Confirmed from the profile Danger zone.
+ * Body: { access_token?: string, vault_name?: string } — vault defaults to surfcad.
+ */
+router.delete('/account', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+
+    const user = await User.findById(req.user._id);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const accessToken = typeof req.body?.access_token === 'string'
+      ? req.body.access_token.trim()
+      : '';
+    const vaultNameRaw = typeof req.body?.vault_name === 'string'
+      ? req.body.vault_name.trim()
+      : '';
+    const vaultName = vaultNameRaw || 'surfcad';
+
+    let vault = null;
+    if (user.githubId || accessToken) {
+      if (!accessToken) {
+        return res.status(400).json({
+          error: 'GitHub token required to delete the vault repo. Sign in with GitHub again, then retry.',
+          code: 'missing_token',
+        });
+      }
+      // Resolve login for owner — prefer live GitHub profile, fall back to email local-part.
+      const looked = await fetchGithubUserProfile({ accessToken });
+      if (!looked.ok) {
+        return res.status(looked.status || 400).json({
+          error: looked.error || 'Could not verify GitHub token',
+          code: looked.status === 401 ? 'invalid_token' : 'github_lookup_failed',
+        });
+      }
+      const owner = looked.profile.login;
+      if (!owner) {
+        return res.status(400).json({ error: 'GitHub login missing', code: 'missing_login' });
+      }
+      const del = await deleteGithubVaultRepo({
+        accessToken,
+        owner,
+        name: vaultName,
+      });
+      if (!del.ok) {
+        return res.status(del.status || 403).json({
+          error: del.error,
+          code: del.code || 'vault_delete_failed',
+        });
+      }
+      vault = { repo: del.repo, deleted: del.deleted };
+    }
+
+    const email = user.email;
+    await User.deleteOne({ _id: user._id });
+
+    await new Promise((resolve) => {
+      req.logout((err) => {
+        if (err) console.warn('[Auth] logout after account delete:', err);
+        resolve();
+      });
+    });
+    if (req.session) {
+      delete req.session.guestId;
+      delete req.session.guestEmail;
+      delete req.session.guestAddress;
+    }
+
+    console.log(`[Auth] Account deleted: ${email}${vault ? ` vault=${vault.repo} deleted=${vault.deleted}` : ''}`);
+    return res.json({ success: true, vault });
+  } catch (error) {
+    console.error('[Auth] Account delete error:', error);
+    return res.status(500).json({ error: error?.message || 'Failed to delete account' });
   }
 });
 
