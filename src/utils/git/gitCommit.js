@@ -307,12 +307,20 @@ export async function commitWorkspace(adapter, repo, {
   const branch = baseline.branch || 'main';
   const msg = String(message || '').trim() || `Update ${vaultSegment(workDoc.name) || 'assembly'}`;
   const filePaths = () => built.files.map((f) => f.path);
+  // First Save after OAuth (no Open yet) may have a null baseline head.
+  // Use the tip as baseSha — do NOT pass null on a non-empty repo (that
+  // throws "main moved: head …, base null" and wrongly looks like a conflict).
+  let expectedBase = baseline.headSha || null;
+  if (!expectedBase) {
+    const tip = await adapter.getBranch(repo, branch);
+    expectedBase = tip?.sha || null;
+  }
   try {
     const res = await adapter.commitFiles(repo, {
       branch,
       message: msg,
       files: built.files,
-      baseSha: baseline.headSha || null,
+      baseSha: expectedBase,
     });
     return {
       status: 'committed',
