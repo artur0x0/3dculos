@@ -186,19 +186,20 @@ console.log('\ngit G6 — existing vault, conflicts, bad names');
 console.log('\ngit G6 — UI wiring (PartFeed + App)');
 const feed = readFileSync(new URL('../../src/components/PartFeed.jsx', import.meta.url), 'utf8');
 const app = readFileSync(new URL('../../src/App.jsx', import.meta.url), 'utf8');
-ok('Local toggle opens Move to Git', /onClick=\{onSourceToggleClick\}/.test(feed)
-  && /source !== 'git' && onMoveToGit/.test(feed) && /startMoveToGit\(\)/.test(feed));
+ok('Move to Git dialog machinery remains (G10: not opened from Local|Git toggle)',
+  /startMoveToGit/.test(feed) && /dataAttr="move-to-git"/.test(feed)
+  && !/data-parts-source-toggle/.test(feed));
 ok('dialog: vault name + plan + shared + confirm', /data-git-move-vault-name/.test(feed)
   && /data-git-move-plan/.test(feed) && /data-git-move-shared=/.test(feed)
   && /data-git-move-confirm/.test(feed) && /data-git-move-done=/.test(feed));
-ok('Switch only keeps the old toggle', /data-git-move-switch-only/.test(feed) && /onToggleSource\?\.\(\)/.test(feed));
+ok('Switch only control still in dialog', /data-git-move-switch-only/.test(feed) && /onToggleSource\?\.\(\)/.test(feed));
 ok('App wires plan + move', /onPlanMoveToGit=\{handlePlanMoveToGit\}/.test(app)
   && /onMoveToGit=\{handleMoveToGit\}/.test(app) && /moveToGit\(ensureGitAdapter\(\)/.test(app)
   && /rememberGitBaseline\(result\.baseline\)/.test(app) && /applyCommittedWorkspace\(\{ doc: result\.doc/.test(app));
 ok('default vault name from vault / surfcad', /defaultVaultName=\{gitDefaultVaultName\(\)\}/.test(app)
   && /DEFAULT_VAULT_NAME/.test(app));
-ok('Connect still git-only (G7 gates on client id)',
-  /data-git-connect=""/.test(feed) && /source === 'git'/.test(feed)
+ok('Connect gated on client id / connected (G10)',
+  /data-git-connect=""/.test(feed)
   && /githubConnectReady/.test(feed));
 ok('index exports G6', typeof gitIndex.moveToGit === 'function' && typeof gitIndex.planMoveToGit === 'function');
 const src = readFileSync(new URL('../../src/utils/git/gitMoveToGit.js', import.meta.url), 'utf8');

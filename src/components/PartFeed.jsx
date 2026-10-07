@@ -1,7 +1,9 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Eye, EyeOff, FolderOpen, GitBranch, GitCommitHorizontal, Github, GripVertical, Plus, Trash2 } from 'lucide-react';
+import { Eye, EyeOff, FolderOpen, GitBranch, GitCommitHorizontal, Github, GripVertical, Plus, Trash2, User } from 'lucide-react';
 import { partListDeleteAction, sanitizeAssemblyName, sanitizePartName } from '../utils/assembly.js';
+import { useAuth } from '../hooks/useAuth';
+import { sessionIdentity } from '../utils/sessionIdentity.js';
 import {
   PART_PREVIEW_SIZE,
   blitPartPreview,
@@ -261,6 +263,30 @@ function VaultPickerDialog({
   );
 }
 
+
+/** Tiny brand marks for the Parts session identity strip (G10). */
+function SessionIdentityIcon({ kind, size = 12 }) {
+  if (kind === 'github') return <Github size={size} aria-hidden="true" />;
+  if (kind === 'apple') {
+    return (
+      <svg className="shrink-0" width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+        <path d="M17.05 20.28c-.98.95-2.05.8-3.08.35-1.09-.46-2.09-.48-3.24 0-1.44.62-2.2.44-3.06-.35C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.8 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.54 4.09l.01-.01zM12.03 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.34 4.5-3.74 4.25z" />
+      </svg>
+    );
+  }
+  if (kind === 'google') {
+    return (
+      <svg className="shrink-0" width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
+        <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+        <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+        <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />
+        <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
+      </svg>
+    );
+  }
+  return <User size={size} aria-hidden="true" />;
+}
+
 export default function PartFeed({
   placement = 'desktop',
   source = 'local',
@@ -325,6 +351,13 @@ export default function PartFeed({
   const behindSet = behindPartIds instanceof Set
     ? behindPartIds
     : new Set(behindPartIds || []);
+
+  // G10: session identity on the strip (not Local|Git).
+  const { user, isAuthenticated } = useAuth();
+  const identity = useMemo(
+    () => sessionIdentity({ user, isAuthenticated }),
+    [user, isAuthenticated],
+  );
 
   // G5: keep the branch list populated while in Git mode.
   useEffect(() => {
@@ -459,18 +492,11 @@ export default function PartFeed({
   // G6: Move to Git dialog — { stage: 'form'|'busy'|'done'|'error', vaultName, sharedIds, result, error }
   const [moveFlow, setMoveFlow] = useState(null);
   const closeMove = () => setMoveFlow(null);
+  // G6 dialog opener retained (G10 removed the Local|Git strip trigger; G11 may rewire).
   const startMoveToGit = () => {
     setMoveFlow({
       stage: 'form', vaultName: defaultVaultName || 'surfcad', sharedIds: [], result: null, error: '',
     });
-  };
-  const onSourceToggleClick = () => {
-    // Local → Git asks first: move the parts into the vault, or just switch.
-    if (source !== 'git' && onMoveToGit) {
-      startMoveToGit();
-      return;
-    }
-    onToggleSource?.();
   };
   const moveVaultClean = moveFlow
     ? (sanitizeVaultName ? sanitizeVaultName(moveFlow.vaultName) : String(moveFlow.vaultName || '').trim())
@@ -693,17 +719,27 @@ export default function PartFeed({
           {source === 'git' && (
             <button
               type="button"
-              className={`${STRIP_BTN} disabled:cursor-not-allowed disabled:opacity-40`}
+              className={`relative ${STRIP_BTN} disabled:cursor-not-allowed disabled:opacity-40`}
               data-git-commit=""
+              data-git-dirty={sourceDirty ? 'true' : 'false'}
               disabled={!canCommit}
               title={canCommit ? `Commit changes to ${currentBranch || 'main'}` : 'Nothing to commit'}
               aria-label="Commit"
               onClick={startCommit}
             >
               <GitCommitHorizontal size={STRIP_ICON} />
+              {sourceDirty ? (
+                <span
+                  data-git-dirty-badge=""
+                  className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-amber-400"
+                  title="Uncommitted changes"
+                />
+              ) : null}
             </button>
           )}
-          {source === 'git' && (
+          {/* Connect stays reachable so a GitHub token can be established; vault
+              Commit/Branches/Add only appear once source is git (token sync). */}
+          {(githubConnected || githubConnectReady || source === 'git') && (
             <button
               type="button"
               data-git-connect=""
@@ -730,32 +766,34 @@ export default function PartFeed({
                 else if (githubConnectReady) onGitConnect?.();
               }}
             >
-              {/* Icon-only so the ribbon fits Commit beside the centered name. */}
               <Github size={14} aria-hidden="true" />
               <span className="sr-only">{githubConnected ? 'Disconnect GitHub' : 'Connect GitHub'}</span>
             </button>
           )}
           <div className={STRIP_DIVIDER} />
+          {/* G6 Move-to-Git kept available off-strip (not a mode toggle). */}
           <button
             type="button"
-            data-parts-source-label=""
-            data-parts-source-toggle=""
-            data-git-dirty={sourceDirty ? 'true' : 'false'}
-            title={source === 'git' ? 'Switch to Local mode' : (onMoveToGit ? 'Move to Git…' : 'Switch to Git mode')}
-            aria-label={source === 'git' ? 'Git mode' : 'Local mode'}
-            aria-pressed={source === 'git'}
-            className="relative shrink-0 rounded px-1 py-0.5 text-[11px] font-mono text-gray-300 hover:bg-gray-700/60"
-            onClick={onSourceToggleClick}
+            className="sr-only"
+            data-git-move-open=""
+            tabIndex={-1}
+            aria-hidden="true"
+            onClick={startMoveToGit}
           >
-            {source === 'git' ? 'Git' : 'Local'}
-            {sourceDirty ? (
-              <span
-                data-git-dirty-badge=""
-                className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-amber-400"
-                title="Uncommitted changes"
-              />
-            ) : null}
+            Move to Git
           </button>
+          {/* G10: session identity — display only (not a Local|Git mode toggle). */}
+          <div
+            data-parts-session-identity=""
+            data-parts-session-kind={identity.kind}
+            data-parts-source-label={identity.label}
+            title={`Signed in as ${identity.label}`}
+            aria-label={`Session: ${identity.label}`}
+            className="flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium text-gray-300"
+          >
+            <SessionIdentityIcon kind={identity.kind} size={12} />
+            <span data-parts-session-label="">{identity.label}</span>
+          </div>
         </div>
         {ribbonName ? (
           <div

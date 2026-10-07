@@ -1665,6 +1665,14 @@ const App = () => {
     setGithubConnected(false);
     gitAdapterRef.current = null;
     gitVaultRef.current = null;
+    // G10: leaving GitHub drops vault chrome; IndexedDB keeps working as local autosave.
+    const doc = assemblyRef.current;
+    if (doc?.source === 'git') {
+      rememberAssembly({ ...doc, source: 'local' });
+      rememberGitBaseline(null);
+      rememberGitBehind(null, { showToast: false, resetResolved: true });
+      setGitBehindToast(null);
+    }
   };
 
   const ensureGitVault = async () => {
@@ -2234,6 +2242,40 @@ const App = () => {
       document.removeEventListener('visibilitychange', onVis);
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps -- refs + stable helpers
+
+  // G10: GitHub token enables vault/git source; without it, stay on silent IndexedDB (local).
+  // No user-facing Local|Git toggle — identity strip is display-only.
+  useEffect(() => {
+    const doc = assemblyRef.current;
+    if (!doc) return undefined;
+    if (githubConnected) {
+      if (doc.source === 'git') return undefined;
+      let cancelled = false;
+      (async () => {
+        try {
+          await ensureGitVault();
+        } catch (err) {
+          if (!cancelled) setUploadError(err.message || 'Could not open vault');
+          return;
+        }
+        if (cancelled) return;
+        const latest = assemblyRef.current;
+        if (!latest || latest.source === 'git') return;
+        rememberAssembly({ ...latest, source: 'git' });
+        rememberGitBaseline(null);
+        rememberGitBehind(null, { showToast: false, resetResolved: true });
+        setGitBehindToast(null);
+      })();
+      return () => { cancelled = true; };
+    }
+    if (doc.source === 'git') {
+      rememberAssembly({ ...doc, source: 'local' });
+      rememberGitBaseline(null);
+      rememberGitBehind(null, { showToast: false, resetResolved: true });
+      setGitBehindToast(null);
+    }
+    return undefined;
+  }, [githubConnected]); // eslint-disable-line react-hooks/exhaustive-deps -- vault helpers via refs
 
   const handleAddPart = async (gitPath) => {
     const doc = assemblyRef.current;
