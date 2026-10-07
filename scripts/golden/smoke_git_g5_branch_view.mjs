@@ -89,6 +89,24 @@ console.log('git G5 — branch list + switch reload');
   try { await switchVaultBranch(gh, repo, 'Gearbox', 'nope'); }
   catch (err) { missing = err.message; }
   ok('missing branch refused', /Branch not found/.test(missing), missing);
+
+  // Named assembly missing on tip → fall back to another vault assembly
+  // (playtest: default "Assembly" never committed, switch after Create).
+  await gh.createBranch(repo, 'feature/empty-asm', seedSha);
+  const fallback = await switchVaultBranch(gh, repo, 'Assembly', 'feature/empty-asm');
+  eq('missing name falls back to Gearbox', fallback.doc.name, 'Gearbox');
+  eq('fallback flag set', fallback.fallbackAssembly, 'Gearbox');
+  eq('fallback on side branch', fallback.baseline.branch, 'feature/empty-asm');
+
+  // Tip with no assemblies at all → seed empty working copy (no hard error).
+  const emptyInfo = gh._seedRepo({ name: 'surfcad-empty-switch', files: { 'README.md': '# x' } });
+  const emptyRepo = { owner: emptyInfo.owner, name: emptyInfo.name };
+  const seeded = await switchVaultBranch(gh, emptyRepo, 'Assembly', 'main');
+  ok('empty tip seeds', seeded.seeded === true);
+  eq('seeded name', seeded.doc.name, 'Assembly');
+  eq('seeded branch', seeded.baseline.branch, 'main');
+  ok('seeded has assembly part path', seeded.doc.parts.length === 1
+    && String(seeded.doc.parts[0].id).startsWith('assemblies/Assembly/'));
 }
 
 console.log('\ngit G5 — rename-on-Commit moves paths');
@@ -151,7 +169,7 @@ ok('rename-on-commit applied to workspace', /applyCommittedWorkspace\(result\)/.
   && /result\.renamed \|\| result\.moved/.test(app));
 ok('index exports G5', typeof gitIndex.listVaultBranches === 'function'
   && typeof gitIndex.switchVaultBranch === 'function'
-  && typeof gitIndex.remapAssemblyPaths === 'function');
+  && typeof gitIndex.seedEmptyVaultAssembly === 'function');
 ok('Connect still git-only (G7 gates on client id)',
   /data-git-connect=""/.test(feed) && /source === 'git'/.test(feed)
   && /githubConnectReady/.test(feed));
