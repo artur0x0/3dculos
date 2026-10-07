@@ -15,9 +15,11 @@ import {
 import { assertGithubAdapter } from './githubAdapterInterface.js';
 import {
   assemblyFilePath,
+  assemblyFilePathCandidates,
   assemblyPartPath,
   listAssemblies,
   listPartScripts,
+  migrateDocToCurrentLayout,
   partPathAllowedFor,
   vaultSegment,
 } from './vaultLayout.js';
@@ -93,9 +95,10 @@ export function dirtyPartIds(doc, scripts, baseline, { liveId = null, liveScript
   return out;
 }
 
-/** Assembly and/or any part dirty. */
+/** Assembly and/or any part dirty (or awaiting legacy-layout rewrite). */
 export function isWorkspaceDirty(doc, scripts, baseline, opts) {
   if (!baseline) return false;
+  if (baseline.legacyCleanup) return true;
   if (isAssemblyDirty(doc, baseline)) return true;
   return dirtyPartIds(doc, scripts, baseline, opts).size > 0;
 }
@@ -110,7 +113,7 @@ export async function listVaultAssemblies(adapter, repo, ref) {
 /**
  * Empty git working copy for a branch tip that has no `.surf.json` yet.
  * Used when switching onto a new branch before the default Assembly is
- * committed — avoids hard-erroring on assemblies/Assembly/Assembly.surf.json.
+ * committed — avoids hard-erroring on assemblies/Assembly/.surf.json.
  * -> { doc, scripts, assemblyPath, baseline, seeded: true }
  */
 export function seedEmptyVaultAssembly(assemblyName, {
@@ -150,15 +153,28 @@ export async function openVaultAssembly(adapter, repo, assemblyName, {
   assertGithubAdapter(adapter);
   const name = vaultSegment(assemblyName);
   if (!name) throw new Error('Empty assembly name');
-  const assemblyPath = assemblyFilePath(name);
-  const file = await adapter.readFile(repo, assemblyPath, branch);
-  if (!file) throw new Error(`Assembly not found: ${assemblyPath}`);
-  const doc = parseSurfJson(file.content);
-  const scripts = {};
-  for (const part of doc.parts) {
-    const got = await adapter.readFile(repo, part.id, branch);
-    scripts[part.id] = got ? got.content : '';
+  let file = null;
+  let foundPath = null;
+  for (const candidate of assemblyFilePathCandidates(name)) {
+    // eslint-disable-next-line no-await-in-loop
+    file = await adapter.readFile(repo, candidate, branch);
+    if (file) { foundPath = candidate; break; }
   }
+  if (!file || !foundPath) {
+    throw new Error(`Assembly not found: ${assemblyFilePath(name)}`);
+  }
+  let doc = parseSurfJson(file.content);
+  const rawScripts = {};
+  for (const part of doc.parts) {
+    // eslint-disable-next-line no-await-in-loop
+    const got = await adapter.readFile(repo, part.id, branch);
+    rawScripts[part.id] = got ? got.content : '';
+  }
+  // Working copy always uses the current flat layout; legacy paths remap here.
+  const migrated = migrateDocToCurrentLayout(doc, rawScripts);
+  doc = migrated.doc;
+  const scripts = migrated.scripts;
+  const assemblyPath = assemblyFilePath(name);
   const head = headSha || (await adapter.getBranch(repo, branch))?.sha || null;
   const baseline = captureBaseline({
     assemblyPath,
@@ -168,12 +184,17 @@ export async function openVaultAssembly(adapter, repo, assemblyName, {
     branch,
     headSha: head,
   });
-  return { doc, scripts, assemblyPath, baseline };
+  if (foundPath !== assemblyPath || migrated.changed) {
+    baseline.legacyCleanup = true;
+    baseline.legacyAssemblyPath = foundPath !== assemblyPath ? foundPath : null;
+  }
+  return { doc, scripts, assemblyPath, baseline, migrated: migrated.changed };
 }
 
 /**
- * Default path for a new part under this assembly.
- * `partName` may be a bare name or a full repo path.
+ * Resolve a new part under this assembly.
+ * Prefer a bare part name (UI is name-only). A full repo path is still
+ * accepted when it is allowed for this assembly (tests / paste).
  */
 export function resolveNewPartPath(assemblyName, partName) {
   const raw = String(partName ?? '').trim();
@@ -191,7 +212,7 @@ export function resolveNewPartPath(assemblyName, partName) {
   }
 }
 
-/** Suggest `assemblies/<asm>/parts/Part N.js` for the next empty slot. */
+/** Suggest `assemblies/<asm>/Part N.js` for the next empty slot. */
 export function suggestNewPartPath(assemblyName, existingParts = []) {
   const used = new Set((existingParts || []).map((p) => p?.id || p));
   for (let n = 1; n < 1000; n += 1) {
@@ -202,7 +223,7 @@ export function suggestNewPartPath(assemblyName, existingParts = []) {
 }
 
 /**
- * Vault part scripts the assembly may add: this assembly's parts/ plus
+ * Vault part scripts the assembly may add: this assembly's folder plus
  * shared parts/, minus paths already in the document.
  * -> [{ path, kind: 'assembly-part'|'shared-part', label }]
  */
@@ -274,7 +295,7 @@ export async function listVaultBrowseItems(adapter, repo, ref) {
 
 /**
  * G11: plan inserting another assembly's parts into the current document.
- * Shared paths stay; other-assembly parts remap under this assembly's parts/.
+ * Shared paths stay; other-assembly parts remap under this assembly's folder.
  * -> { additions: [{ id, name, content, fromPath }] }
  */
 export async function planInsertVaultAssemblyParts(adapter, repo, sourceAssembly, targetDoc, {

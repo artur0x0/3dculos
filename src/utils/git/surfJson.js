@@ -1,20 +1,23 @@
 /**
- * `.surf.json` — the assembly document as stored in the git vault.
+ * `.surf.json` — the assembly document as stored in the git vault
+ * (nameless file at assemblies/<Name>/.surf.json).
  *
  * {
  *   "format": "surfcad.assembly",
  *   "version": 1,
  *   "name": "Gearbox",
- *   "activeId": "assemblies/Gearbox/parts/Bracket.js" | null,
+ *   "activeId": "assemblies/Gearbox/Bracket.js" | null,
  *   "parts": [
- *     { "path": "assemblies/Gearbox/parts/Bracket.js", "name": "Bracket",
+ *     { "path": "assemblies/Gearbox/Bracket.js", "name": "Bracket",
  *       "visible": true, "order": 0, "position": [x, y, z]? },
  *     { "path": "parts/M3 bolt.js", "name": "M3 bolt", "visible": true, "order": 1 }
  *   ]
  * }
  *
- * `path` is a full repo path: the assembly's own parts/ or the shared
- * top-level parts/. It is also the row id in the in-app assembly document
+ * `path` is a full repo path: this assembly's folder (next to `.surf.json`)
+ * or the shared top-level `parts/`. Legacy `assemblies/<Name>/parts/<P>.js`
+ * paths are accepted on read (read-compat); writers should emit the flat
+ * layout. Path is also the row id in the in-app assembly document
  * (source 'git'). No script source in the file. Unknown top-level keys are
  * rejected so a typo cannot silently drop data.
  */
@@ -62,7 +65,7 @@ export function validateSurfJson(input) {
       if (!path || path !== part.path) errors.push(`${at}.path must be a repo-relative path`);
       else if (!path.endsWith(PART_EXT)) errors.push(`${at}.path must end in ${PART_EXT}`);
       else if (name && !partPathAllowedFor(name, path)) {
-        errors.push(`${at}.path must be under assemblies/${name}/parts/ or parts/`);
+        errors.push(`${at}.path must be under assemblies/${name}/ or parts/`);
       }
       if (path && seen.has(path)) errors.push(`${at}.path duplicates ${path}`);
       if (path) seen.add(path);

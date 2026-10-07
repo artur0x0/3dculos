@@ -502,16 +502,17 @@ export default function PartFeed({
   };
 
   const startNewPart = () => {
-    if (source !== 'git') {
-      onAddPart?.();
-      return;
-    }
+    // Name only — app owns folder + .js (git) or local: id (local).
+    const draft = String(suggestNewPartPath || '')
+      .split('/')
+      .pop()
+      ?.replace(/\.js$/i, '') || '';
     setOpenPicker({
       kind: 'new-part',
       items: [],
       loading: false,
       error: '',
-      draft: suggestNewPartPath || '',
+      draft,
     });
   };
 
@@ -1466,7 +1467,7 @@ export default function PartFeed({
       )}
       {openPicker && typeof document !== 'undefined' && openPicker.kind === 'new-part' && (
         <VaultPickerDialog
-          title="New part path"
+          title="New part"
           labelledBy="git-new-part-title"
           dataAttr="new-part"
           onClose={closePicker}
@@ -1480,9 +1481,9 @@ export default function PartFeed({
                 data-git-new-part-confirm=""
                 className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-500"
                 onClick={() => {
-                  const path = openPicker.draft || '';
+                  const name = (openPicker.draft || '').trim();
                   closePicker();
-                  onAddPart?.(path);
+                  onAddPart?.(name);
                 }}
               >
                 Create
@@ -1491,23 +1492,23 @@ export default function PartFeed({
           )}
         >
           <p className="mb-2 text-[11px] text-gray-400">
-            Repo path under this assembly or shared parts/.
+            Part name
           </p>
           <input
             ref={pathInputRef}
-            data-git-new-part-path=""
+            data-git-new-part-name=""
             value={openPicker.draft || ''}
             onChange={(e) => setOpenPicker({ ...openPicker, draft: e.target.value })}
             onKeyDown={(e) => {
               if (e.key === 'Enter') {
                 e.preventDefault();
-                const path = openPicker.draft || '';
+                const name = (openPicker.draft || '').trim();
                 closePicker();
-                onAddPart?.(path);
+                onAddPart?.(name);
               }
             }}
             className="w-full rounded-md border border-gray-600 bg-black/30 px-2 py-1.5 text-xs text-gray-100 outline-none focus:border-blue-500"
-            placeholder="assemblies/Name/parts/Bracket.js"
+            placeholder="Bracket"
           />
         </VaultPickerDialog>
       )}

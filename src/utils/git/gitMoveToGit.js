@@ -8,12 +8,12 @@
  * document, scripts keyed by repo path, and a clean baseline so the app can
  * switch to Git mode with no dirty badges.
  *
- *   assemblies/<asm>/<asm>.surf.json        the assembly
- *   assemblies/<asm>/parts/<part>.js        every part by default
+ *   assemblies/<asm>/.surf.json             nameless assembly metadata
+ *   assemblies/<asm>/<part>.js              every part by default (same folder)
  *   parts/<part>.js                         parts the user marks shared
  *
  * Row ids that are already a repo path keep it when the layout allows it
- * for this assembly (its own `parts/` or the shared `parts/`); anything
+ * for this assembly (its own folder or the shared `parts/`); anything
  * else (`local:<uuid>`, another assembly's path) gets a path from the part
  * name. Name collisions get ` 2`, ` 3`… (case-insensitive, so the vault
  * also works on case-insensitive checkouts).
