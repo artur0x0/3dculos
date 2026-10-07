@@ -241,7 +241,7 @@ That yields **four** layout combinations; check both flags when editing chrome.
 
 | | `mode === 'cad'` | `mode === 'game'` |
 | --- | --- | --- |
-| Toolbar contents | **run + select-all** (green run first, own section) then account/open/upload/undo/save/download/quote/puzzle | back, undo/redo, run, picker, hint (`src/components/Toolbar.jsx:98`+) |
+| Toolbar contents | **run + select-all** (green run first, own section) then open/upload/undo/save/download/quote/puzzle (Account moved to viewport profile chip, G9) | back, undo/redo, run, picker, hint (`src/components/Toolbar.jsx`) |
 | Toolbar placement | portaled strip above the editor, both shells | strip inside CodeEditor, both shells |
 | Title chip | always (filename) | always (puzzle title) |
 | Helper rail | `layout="cad"` — Block, Build, Shape, Polish, Move | `layout="game"` — the same five sections |
@@ -298,8 +298,8 @@ phones, centered dialog on desktop**.
 
 | Modal | Opened by | File | Notes |
 | --- | --- | --- | --- |
-| Login | Toolbar → Account, signed out | `LoginModal.jsx` | `/api/auth/login`, `/register` |
-| Account | Toolbar → Account, signed in | `AccountModal.jsx` | tabs `info` / `orders` (`:160`) |
+| Login | Viewport profile chip (signed out / guest) | `LoginModal.jsx` / `ProfileChip.jsx` | `/api/auth/login`, `/register` |
+| Account | Viewport profile chip (signed in) | `AccountModal.jsx` / `ProfileChip.jsx` | tabs `info` / `orders` |
 | Quote | Toolbar → Truck | `QuoteModal.jsx` | process / material / infill → `utils/quoting.js` |
 | Order | Quote → Order | `OrderModal.jsx` + `components/order/*` | six steps, `STEPS` at `OrderModal.jsx:13`: Auth → Address → Shipping → Payment → Confirmation → Convert |
 | Helper params | any helper-rail button | `HelperParamModal.jsx` | **not** a full-screen modal: docks bottom-centre *of the viewport* (`absolute inset-0`, click-through overlay, no scrim) so the rails and the live preview stay visible and usable. No click-outside-to-cancel — X / Cancel only. Also serves as the refuse/explain dialog |

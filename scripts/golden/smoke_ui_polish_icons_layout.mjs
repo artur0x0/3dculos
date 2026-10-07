@@ -391,7 +391,9 @@ const contourRail = read('../../src/components/ContourModeRail.jsx');
   check('CAD strip has a Run button', runAt > 0);
   // First means first: no other button may open before it.
   check('Run is the first button in the strip',
-    runAt < strip.indexOf('onClick={onAccount}'));
+    runAt < strip.indexOf('title="Open File"'));
+  check('Account left the strip for the viewport profile chip (G9)',
+    !/onClick=\{onAccount\}/.test(strip) && !/title="Account"/.test(strip));
   check('Run is green', /text-green-400 disabled:opacity-60/.test(strip));
   // Run's section now holds Run + Select all (both editor actions), then the
   // divider before the file/model buttons.

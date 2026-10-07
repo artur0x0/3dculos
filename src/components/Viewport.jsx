@@ -54,6 +54,7 @@ import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 
 import Toolbar from './Toolbar';
+import ProfileChip from './ProfileChip';
 import CrossSectionPanel from './CrossSectionPanel';
 import HelperInsertPalette from './HelperInsertPalette';
 import ErrorPopup from './ErrorPopup';
@@ -7419,6 +7420,11 @@ const Viewport = forwardRef(({
           ))}
         </div>
       )}
+      {/* G9: circular profile chip — top-right of the CAD viewport. */}
+      {mode !== 'game' && (
+        <ProfileChip onAccount={onAccount} />
+      )}
+
       {/* CAD chrome lives in the editor mid-strip in BOTH shells (desktop matches
           phone now): rendered here so download/export busy state stays local —
           and so Run can execute the live buffer without a round trip via App. */}
@@ -7428,7 +7434,6 @@ const Viewport = forwardRef(({
           variant="strip"
           onOpen={onOpen}
           onSave={onSave}
-          onAccount={onAccount}
           onDownload={handleDownloadModel}
           onQuote={onQuote}
           onUpload={onUpload}
