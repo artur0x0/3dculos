@@ -15,6 +15,27 @@ import { buildCoherentEdges, buildFeatureEdges } from './selectEdge.js';
 import { annotateFeatureEdges, indexBoundaryEdgesFromGeometry } from './boundaryEdgeIds.js';
 
 /**
+ * Per-triangle feature key from Manifold runs: `runFeature` (fillet / chamfer
+ * op brackets from the worker) else `runOriginalID`. Aligned with the kept
+ * triangles after fin drop. Null when the mesh has no runs.
+ */
+export function triangleSources(meshData, keep, nKept) {
+  const runIndex = meshData?.runIndex;
+  const ids = meshData?.runFeature || meshData?.runOriginalID;
+  if (!runIndex || !ids || runIndex.length < 2 || ids.length < runIndex.length - 1) return null;
+  const nRaw = Math.floor((meshData.triVerts?.length || 0) / 3);
+  const raw = new Int32Array(nRaw);
+  for (let r = 0; r + 1 < runIndex.length; r++) {
+    const t1 = Math.min(nRaw, Math.floor(runIndex[r + 1] / 3));
+    for (let t = Math.floor(runIndex[r] / 3); t < t1; t++) raw[t] = ids[r] | 0;
+  }
+  if (!keep) return raw.length === nKept ? raw : null;
+  const out = new Int32Array(nKept);
+  for (let i = 0; i < nKept; i++) out[i] = raw[keep[i]];
+  return out;
+}
+
+/**
  * One part's solid as a BufferGeometry: the planar needle between two copies
  * of a cap vertex is dropped, faceID is kept, normals are computed. The pick
  * mesh and the other assembly parts use the same build, so a part switch can
@@ -41,6 +62,10 @@ export function buildSolidGeometry(meshData) {
   const srcFaceID = meshData.faceID && meshData.faceID.length > 0 ? meshData.faceID : null;
   const fin = dropPlanarFins(vertProperties, srcIndex, srcFaceID);
   const triVerts = fin.indices;
+  // Feature source per kept triangle (fillet op or originalID) — the face
+  // graph's curved merge never crosses it.
+  const triSource = triangleSources(meshData, fin.keep, triVerts.length / 3);
+  if (triSource) geometry.userData.triSource = triSource;
   geometry.setAttribute('position', new BufferAttribute(vertProperties, 3));
   geometry.setIndex(new BufferAttribute(triVerts, 1));
   const faceIDs = fin.faceIDs && fin.faceIDs.length > 0 ? fin.faceIDs : null;

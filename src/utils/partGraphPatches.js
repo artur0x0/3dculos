@@ -47,6 +47,12 @@ export const PATCH_K_FEATURE_DEG = 25;
  */
 /** Coplanar group area ≥ this × the largest coplanar group → locked flat. */
 export const PATCH_FLAT_AREA_FRAC_OF_MAX = 0.15;
+/**
+ * Within one fillet / chamfer op (negative feature source from the worker)
+ * curved atoms merge up to this dihedral with no κ test: a coarse fillet
+ * (few wide strips) is still one face. Chamfer corners (≈60°) stay apart.
+ */
+export const PATCH_OP_SMOOTH_DEG = 40;
 /** A triangle is on a flat's plane when its offset matches within this many mm. */
 const PLANE_OFFSET_MM = 0.05;
 /**
@@ -169,6 +175,11 @@ export function buildPartGraphPatches(mesh, opts = {}) {
   const positions = mesh?.positions;
   const indices = mesh?.indices;
   const faceIDs = mesh?.faceIDs;
+  // Feature source per triangle (Manifold run: fillet op or originalID).
+  const triSource = mesh?.triSource && mesh.triSource.length >= Math.floor((mesh?.indices?.length || 0) / 3)
+    ? mesh.triSource
+    : null;
+  const sameSource = (t0, t1) => !triSource || triSource[t0] === triSource[t1];
   const planarDeg = opts.planarDeg ?? PATCH_PLANAR_DEG;
   const smoothDeg = opts.smoothDeg ?? PATCH_SMOOTH_DEG;
   const curvedRateTol = opts.curvedRateTol ?? PATCH_CURVED_RATE_TOL;
@@ -240,7 +251,8 @@ export function buildPartGraphPatches(mesh, opts = {}) {
   for (const tris of edgeMap.values()) {
     if (tris.length !== 2) continue;
     if (!sameBody(tris[0], tris[1])) continue;
-    if (rawFid[tris[0]] === rawFid[tris[1]]) atomUF.unite(tris[0], tris[1]);
+    // Face ids restart per source mesh, so equal ids from two features are not one face.
+    if (rawFid[tris[0]] === rawFid[tris[1]] && sameSource(tris[0], tris[1])) atomUF.unite(tris[0], tris[1]);
   }
 
   const atomRootToIdx = new Map();
@@ -303,6 +315,16 @@ export function buildPartGraphPatches(mesh, opts = {}) {
   // Area per coplanar component (rooted).
   const rootArea = new Float64Array(atomCount);
   for (let a = 0; a < atomCount; a++) rootArea[patchUF.find(a)] += atomArea[a];
+  // Op-sourced area (a fillet strip, a chamfer face) never earns the flat
+  // lock: a wide fillet strip can pass the area gate and then the curved
+  // pass skips it. Coplanar op scraps on a real face still ride its lock.
+  const atomSource = new Int32Array(atomCount);
+  if (triSource) for (let a = 0; a < atomCount; a++) atomSource[a] = triSource[atomTris[a][0]];
+  const isOpAtom = (a) => !!triSource && atomSource[a] < 0;
+  const rootLockArea = new Float64Array(atomCount);
+  for (let a = 0; a < atomCount; a++) {
+    if (!isOpAtom(a)) rootLockArea[patchUF.find(a)] += atomArea[a];
+  }
 
   let maxRootArea = 0;
   for (let a = 0; a < atomCount; a++) {
@@ -319,7 +341,7 @@ export function buildPartGraphPatches(mesh, opts = {}) {
   const atomLockedFlat = new Uint8Array(atomCount);
   for (let a = 0; a < atomCount; a++) {
     const r = patchUF.find(a);
-    if (rootArea[r] >= flatAreaGate) atomLockedFlat[a] = 1;
+    if (rootLockArea[r] >= flatAreaGate) atomLockedFlat[a] = 1;
   }
   // Sharp-only islands (every neighbour dihedral > smoothDeg) used to be
   // locked flat here so a lone box faceID stayed planar. That also froze
@@ -368,8 +390,16 @@ export function buildPartGraphPatches(mesh, opts = {}) {
   }
 
   // --- Pass 3: curvature-consistent merge among non-flats ----------------
+  // A curved face never crosses a feature wall: a fillet tangent to a loft
+  // wall, or to the next fillet, is still its own face (G1 hides the seam).
+  // Inside one op the blend is one face even when its strips are coarse.
   for (const rec of atomAdj) {
     if (atomLockedFlat[rec.a] || atomLockedFlat[rec.b]) continue;
+    if (atomSource[rec.a] !== atomSource[rec.b]) continue;
+    if (isOpAtom(rec.a)) {
+      if (rec.max <= PATCH_OP_SMOOTH_DEG) patchUF.unite(rec.a, rec.b);
+      continue;
+    }
     if (rec.max > smoothDeg) continue;
     const ka = atomK[rec.a];
     const kb = atomK[rec.b];

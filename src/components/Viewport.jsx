@@ -240,6 +240,7 @@ import {
   pruneSolidCacheIn,
   releaseGeometryIn,
   solidEntryForGeometry,
+  triangleSources,
 } from '../utils/partSolidCache';
 import { dropPlanarFins, highlightBoundaryPositions } from '../utils/planarSeam';
 import { classifySelectedFace } from '../utils/faceFeaturePlacement';
@@ -3579,8 +3580,13 @@ const Viewport = forwardRef(({
     }
     highlightGeometry.setIndex(indices);
     
+    // The fill sits exactly on the part's triangles but runs a different
+    // shader (MeshBasic vs the part's MeshNormal), so equal depth is not
+    // guaranteed per pixel — mobile GPUs z-fight it into stripes. Pull it a
+    // hair toward the camera and never write depth.
     const highlightMesh = new ThreeMesh(highlightGeometry, new MeshBasicMaterial({
-      color, transparent: true, opacity: 0.3, depthTest: true, side: 2
+      color, transparent: true, opacity: 0.3, depthTest: true, depthWrite: false, side: 2,
+      polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -4,
     }));
     highlightMesh.name = name;
     anchorToActivePart(highlightMesh);
@@ -6672,6 +6678,7 @@ const Viewport = forwardRef(({
           positions,
           indices: cached.triVerts,
           faceIDs: cached.faceID || null,
+          triSource: triangleSources(cached, null, Math.floor(cached.triVerts.length / 3)),
         });
         partGraphRef.current = {
           version: built.version,

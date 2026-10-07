@@ -144,20 +144,77 @@ function posAt(positions, i) {
 }
 
 /**
- * Outline of a highlighted face, as flat xyz pairs.
+ * Outline of a highlighted face, as flat xyz pairs: only the true boundary
+ * of the picked region.
  *
- * An edge two picked triangles share by index is internal. So is an edge
- * that only exists because a fillet boolean left two copies of the vertices:
- * the copies do not share an index, but the midpoint already lies on another
- * triangle of this face (within COVER_MM). That seam is not drawn. The
- * curved fillet is a different face, so it is not in `faceIndices` and its
- * own outline stays.
+ * Index edges lie about that boundary. A boolean leaves copies of a vertex
+ * (split verts), and `dropPlanarFins` removes zero-width needles, leaving
+ * T-junctions: either way an interior diagonal has one picked triangle per
+ * index edge. So:
+ *   1. Weld picked vertices within OUTLINE_WELD_MM and count edges on the
+ *      welded ids — split copies and near-endpoint needles cancel.
+ *   2. An edge still owned by one picked triangle is boundary only if the
+ *      point OUTLINE_SIDE_MM past its midpoint (in the owner's plane, away
+ *      from the owner) is not on another picked triangle — a neighbour that
+ *      shares an endpoint counts (the old check skipped it and drew the
+ *      needle's diagonal) — and its midpoint is not on a picked triangle
+ *      that has neither endpoint and reaches past the edge (an overlapping
+ *      duplicate-vertex seam; a sliver fanned along the inside does not).
  *
  * `positions` is a tightly packed xyz array or a three.js BufferAttribute.
  */
+const OUTLINE_WELD_MM = COVER_MM;
+const OUTLINE_SIDE_MM = COVER_MM;
+/** Side point hits a neighbour across a curved seam up to ~30° (sin 30° · side). */
+const OUTLINE_PAST_MM = 1e-4;
+const OUTLINE_SIDE_TOL_MM = COVER_MM * 0.5;
+
 export function highlightBoundaryPositions(positions, index, faceIndices) {
   if (!positions || !index || !faceIndices?.length) return [];
-  const edgeCount = new Map();
+  // 1. Weld the picked vertices.
+  const weldInv = 1 / OUTLINE_WELD_MM;
+  const weld2 = OUTLINE_WELD_MM * OUTLINE_WELD_MM;
+  const cells = new Map();
+  const canon = new Map();
+  const canonPos = [];
+  const weldOf = (vi) => {
+    let id = canon.get(vi);
+    if (id !== undefined) return id;
+    const p = posAt(positions, vi);
+    const cx = Math.floor(p[0] * weldInv);
+    const cy = Math.floor(p[1] * weldInv);
+    const cz = Math.floor(p[2] * weldInv);
+    for (let dx = -1; dx <= 1 && id === undefined; dx++) {
+      for (let dy = -1; dy <= 1 && id === undefined; dy++) {
+        for (let dz = -1; dz <= 1 && id === undefined; dz++) {
+          const list = cells.get(`${cx + dx}|${cy + dy}|${cz + dz}`);
+          if (!list) continue;
+          for (let i = 0; i < list.length; i++) {
+            const q = canonPos[list[i]];
+            const ex = q[0] - p[0];
+            const ey = q[1] - p[1];
+            const ez = q[2] - p[2];
+            if (ex * ex + ey * ey + ez * ez <= weld2) { id = list[i]; break; }
+          }
+        }
+      }
+    }
+    if (id === undefined) {
+      id = canonPos.length;
+      canonPos.push(p);
+      const key = `${cx}|${cy}|${cz}`;
+      let list = cells.get(key);
+      if (!list) {
+        list = [];
+        cells.set(key, list);
+      }
+      list.push(id);
+    }
+    canon.set(vi, id);
+    return id;
+  };
+
+  const edges = new Map();
   const covers = [];
   const pad = COVER_MM;
   for (let f = 0; f < faceIndices.length; f++) {
@@ -166,15 +223,6 @@ export function highlightBoundaryPositions(positions, index, faceIndices) {
     const i0 = index[base];
     const i1 = index[base + 1];
     const i2 = index[base + 2];
-    const pairs = [[i0, i1], [i1, i2], [i2, i0]];
-    for (let p = 0; p < 3; p++) {
-      const u = pairs[p][0];
-      const v = pairs[p][1];
-      const lo = u < v ? u : v;
-      const hi = u < v ? v : u;
-      const key = `${lo}-${hi}`;
-      edgeCount.set(key, (edgeCount.get(key) || 0) + 1);
-    }
     const a = posAt(positions, i0);
     const b = posAt(positions, i1);
     const c = posAt(positions, i2);
@@ -184,53 +232,106 @@ export function highlightBoundaryPositions(positions, index, faceIndices) {
     const acx = c[0] - a[0];
     const acy = c[1] - a[1];
     const acz = c[2] - a[2];
-    const area = 0.5 * Math.hypot(
-      aby * acz - abz * acy,
-      abz * acx - abx * acz,
-      abx * acy - aby * acx,
-    );
-    if (!(area > 1e-8)) continue;
-    covers.push({
+    const nx = aby * acz - abz * acy;
+    const ny = abz * acx - abx * acz;
+    const nz = abx * acy - aby * acx;
+    const nl = Math.hypot(nx, ny, nz);
+    if (!(nl > 2e-8)) continue; // zero-area: no boundary of its own
+    const cover = {
+      f,
       i0, i1, i2,
       ax: a[0], ay: a[1], az: a[2],
       bx: b[0], by: b[1], bz: b[2],
       cx: c[0], cy: c[1], cz: c[2],
+      nx: nx / nl, ny: ny / nl, nz: nz / nl,
       minX: Math.min(a[0], b[0], c[0]) - pad,
       maxX: Math.max(a[0], b[0], c[0]) + pad,
       minY: Math.min(a[1], b[1], c[1]) - pad,
       maxY: Math.max(a[1], b[1], c[1]) + pad,
       minZ: Math.min(a[2], b[2], c[2]) - pad,
       maxZ: Math.max(a[2], b[2], c[2]) + pad,
-    });
+    };
+    covers.push(cover);
+    const w = [weldOf(i0), weldOf(i1), weldOf(i2)];
+    const raw = [i0, i1, i2];
+    for (let k = 0; k < 3; k++) {
+      const u = w[k];
+      const v = w[(k + 1) % 3];
+      if (u === v) continue;
+      const key = u < v ? `${u}-${v}` : `${v}-${u}`;
+      const rec = edges.get(key);
+      if (rec) rec.n++;
+      else edges.set(key, { n: 1, cover, ia: raw[k], ib: raw[(k + 1) % 3], opp: raw[(k + 2) % 3] });
+    }
   }
 
   const grid = coverBuckets(covers);
+  const tol = OUTLINE_SIDE_TOL_MM;
+  const coveredByOther = (px, py, pz, owner) => {
+    const list = grid.buckets.get(`${Math.floor(px * grid.inv)}|${Math.floor(py * grid.inv)}|${Math.floor(pz * grid.inv)}`);
+    if (!list) return false;
+    for (let i = 0; i < list.length; i++) {
+      const c = list[i];
+      if (c === owner) continue;
+      if (px < c.minX || px > c.maxX || py < c.minY || py > c.maxY || pz < c.minZ || pz > c.maxZ) continue;
+      if (distPointTri(px, py, pz, c.ax, c.ay, c.az, c.bx, c.by, c.bz, c.cx, c.cy, c.cz) <= tol) return true;
+    }
+    return false;
+  };
+
   const cover2 = COVER_MM * COVER_MM;
-  const onFace = (px, py, pz, ia, ib) => {
+  const midpointOnOther = (px, py, pz, ia, ib, sx, sy, sz) => {
     const list = grid.buckets.get(`${Math.floor(px * grid.inv)}|${Math.floor(py * grid.inv)}|${Math.floor(pz * grid.inv)}`);
     if (!list) return false;
     for (let i = 0; i < list.length; i++) {
       const c = list[i];
       if (c.i0 === ia || c.i1 === ia || c.i2 === ia || c.i0 === ib || c.i1 === ib || c.i2 === ib) continue;
       if (px < c.minX || px > c.maxX || py < c.minY || py > c.maxY || pz < c.minZ || pz > c.maxZ) continue;
-      const d = distPointTri(px, py, pz, c.ax, c.ay, c.az, c.bx, c.by, c.bz, c.cx, c.cy, c.cz);
-      if (d * d <= cover2) return true;
+      // It must reach past the edge (an overlapping copy), not be a sliver
+      // fanned along the inside of a true boundary.
+      const out0 = (c.ax - px) * sx + (c.ay - py) * sy + (c.az - pz) * sz;
+      const out1 = (c.bx - px) * sx + (c.by - py) * sy + (c.bz - pz) * sz;
+      const out2 = (c.cx - px) * sx + (c.cy - py) * sy + (c.cz - pz) * sz;
+      if (Math.max(out0, out1, out2) <= OUTLINE_PAST_MM) continue;
+      const dd = distPointTri(px, py, pz, c.ax, c.ay, c.az, c.bx, c.by, c.bz, c.cx, c.cy, c.cz);
+      if (dd * dd <= cover2) return true;
     }
     return false;
   };
 
   const out = [];
-  for (const [key, count] of edgeCount) {
-    if (count !== 1) continue;
-    const dash = key.indexOf('-');
-    const ia = Number(key.slice(0, dash));
-    const ib = Number(key.slice(dash + 1));
-    const a = posAt(positions, ia);
-    const b = posAt(positions, ib);
+  for (const rec of edges.values()) {
+    if (rec.n !== 1) continue;
+    const a = posAt(positions, rec.ia);
+    const b = posAt(positions, rec.ib);
+    const o = posAt(positions, rec.opp);
+    const ex = b[0] - a[0];
+    const ey = b[1] - a[1];
+    const ez = b[2] - a[2];
+    const el = Math.hypot(ex, ey, ez);
+    if (!(el > 1e-9)) continue;
+    const c = rec.cover;
+    // In-plane normal to the edge, pointing away from the owner triangle.
+    let sx = c.ny * ez - c.nz * ey;
+    let sy = c.nz * ex - c.nx * ez;
+    let sz = c.nx * ey - c.ny * ex;
+    const sl = Math.hypot(sx, sy, sz) || 1;
+    sx /= sl;
+    sy /= sl;
+    sz /= sl;
     const mx = (a[0] + b[0]) * 0.5;
     const my = (a[1] + b[1]) * 0.5;
     const mz = (a[2] + b[2]) * 0.5;
-    if (onFace(mx, my, mz, ia, ib)) continue;
+    if ((o[0] - mx) * sx + (o[1] - my) * sy + (o[2] - mz) * sz > 0) {
+      sx = -sx;
+      sy = -sy;
+      sz = -sz;
+    }
+    const d = OUTLINE_SIDE_MM;
+    if (coveredByOther(mx + sx * d, my + sy * d, mz + sz * d, c)) continue;
+    // A duplicate-vertex seam whose other copy overlaps this edge: the
+    // midpoint already lies on a picked triangle that has neither endpoint.
+    if (midpointOnOther(mx, my, mz, rec.ia, rec.ib, sx, sy, sz)) continue;
     out.push(a[0], a[1], a[2], b[0], b[1], b[2]);
   }
   return out;
@@ -256,7 +357,8 @@ function vertexOnCover(positions, buckets, inv, vi) {
  * Drop planar-seam fins from a drawn mesh. `positions` is tightly packed xyz.
  * A fin is dropped only when each vertex already lies on another triangle of
  * real area, so the face under it is unchanged. Face ids stay aligned with
- * the kept triangles. Returns the same index array when there is nothing to drop.
+ * the kept triangles; `keep` lists the source triangle of each kept one.
+ * Returns the same index array when there is nothing to drop.
  */
 export function dropPlanarFins(positions, indices, faceIDs = null) {
   const nTri = Math.floor(indices.length / 3);
@@ -321,5 +423,5 @@ export function dropPlanarFins(positions, indices, faceIDs = null) {
     next[i * 3 + 2] = indices[t * 3 + 2];
     if (fids) fids[i] = faceIDs[t];
   }
-  return { indices: next, faceIDs: fids, dropped: nTri - keep.length };
+  return { indices: next, faceIDs: fids, dropped: nTri - keep.length, keep };
 }

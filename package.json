@@ -137,7 +137,8 @@
         "golden:session-identity": "node scripts/golden/smoke_session_identity.mjs",
     "golden:git-g11-parts-vault-chrome": "node scripts/golden/smoke_git_g11_parts_vault_chrome.mjs",
     "golden:git-g12-script-upload-download": "node scripts/golden/smoke_git_g12_script_upload_download.mjs",
-    "golden:git-g13-vault-create-conflict": "node scripts/golden/smoke_git_g13_vault_create_conflict.mjs"
+    "golden:git-g13-vault-create-conflict": "node scripts/golden/smoke_git_g13_vault_create_conflict.mjs",
+    "golden:face-select-boundaries": "node scripts/golden/smoke_face_select_boundaries.mjs"
     },
     "dependencies": {
         "@monaco-editor/react": "^4.6.0",
