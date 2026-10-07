@@ -30,6 +30,10 @@ ok('no unload / beforeunload handlers in App', !/addEventListener\('unload'/.tes
   && !/addEventListener\('beforeunload'/.test(app));
 ok('ManifoldWorker has ping + ensureAlive', /async ping\(/.test(worker)
   && /async ensureAlive\(/.test(worker));
+// App imports the ManifoldContext singleton — soft-recover must hit context, not only the class.
+ok('ManifoldContext exposes ensureAlive (App call site)',
+  /class ManifoldContext[\s\S]*?async ensureAlive\(/.test(worker)
+  && /typeof manifoldContext\.ensureAlive !== 'function'/.test(app));
 ok('sandbox worker handles ping', /case 'ping':/.test(sandbox));
 ok('architecture documents Safari discard limit', /Safari page lifecycle/.test(arch)
   && /discard/.test(arch)
