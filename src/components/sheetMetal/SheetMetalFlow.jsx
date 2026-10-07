@@ -184,12 +184,13 @@ const downloadText = (file) => {
 };
 
 /** DFM + DXF / STEP / Order on SendCutSend. Hard fails block downloads + order. */
-const ExportPopup = ({ mode, setMode, mesh, partName }) => {
+const ExportPopup = ({ mode, setMode, mesh, script, partName }) => {
   const bundle = React.useMemo(
-    () => buildSheetExport(mode.spec, { mesh: mesh || null, partName: partName || mode.partId || 'sheet' }),
-    [mode.spec, mode.partId, partName, mesh],
+    () => buildSheetExport(mode.spec, { mesh: mesh || null, script: script ?? null, partName: partName || mode.partId || 'sheet' }),
+    [mode.spec, mode.partId, partName, mesh, script],
   );
-  const { dfm, files, blocked, flat } = bundle;
+  const { dfm, files, blocked, flat, stepSource } = bundle;
+  const bendCount = files.step?.stats?.bendFaces ? files.step.stats.bendFaces / 2 : 0;
   const fails = dfm.issues.filter((x) => x.level === 'fail');
   const warns = dfm.issues.filter((x) => x.level === 'warn');
   const size = flat?.size;
@@ -270,8 +271,11 @@ const ExportPopup = ({ mode, setMode, mesh, partName }) => {
           Download STEP
         </SmButton>
       </div>
-      <p className="text-[11px] text-gray-400">
-        DXF is the flat cut (mm). STEP is the bent 3D part. Upload either at app.sendcutsend.com.
+      <p className="text-[11px] text-gray-400" data-sm-step-source={stepSource || 'none'}>
+        DXF is the flat cut (mm). STEP is the bent 3D part
+        {stepSource === 'spec' ? `, built from the sheet spec with exact bends${bendCount ? ` (${bendCount} cylindrical)` : ''}` : ''}
+        {stepSource === 'mesh' ? ', faceted from the 3D part' : ''}
+        . Upload either at app.sendcutsend.com.
       </p>
     </SmPopup>
   );
@@ -285,11 +289,11 @@ const TOOL_HINTS = {
   tapped: 'Tap a face to place a tapped hole.',
 };
 
-const SheetMetalFlow = ({ mode, setMode, onCommit, onExit, compact = false, mesh = null, partName = '' }) => {
+const SheetMetalFlow = ({ mode, setMode, onCommit, onExit, compact = false, mesh = null, script = null, partName = '' }) => {
   if (!mode) return null;
 
   if (mode.stage === 'edit' && mode.exportOpen) {
-    return <ExportPopup mode={mode} setMode={setMode} mesh={mesh} partName={partName} />;
+    return <ExportPopup mode={mode} setMode={setMode} mesh={mesh} script={script} partName={partName} />;
   }
 
   if (mode.stage === 'edit' && mode.draft?.kind === 'bend') {

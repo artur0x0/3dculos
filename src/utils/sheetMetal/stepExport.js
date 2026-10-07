@@ -1,8 +1,11 @@
 /**
- * Mesh → STEP AP214 (MANIFOLD_SOLID_BREP, mm). Welds vertices, merges
- * edge-connected coplanar triangles into planar ADVANCED_FACEs (outer +
- * inner EDGE_LOOPs), one LINE EDGE_CURVE per boundary segment. Curved
- * regions (bend zones) stay faceted — no analytic cylinders yet.
+ * STEP AP214 writers (MANIFOLD_SOLID_BREP, mm).
+ * - `brepToStep`: an exact B-rep (planes, cylinders, cones; LINE / CIRCLE
+ *   edges). Sheet metal uses this via `sheetBrep.js`, so bends are true
+ *   cylinders that SendCutSend reads as bends.
+ * - `meshToStep`: fallback for a triangle mesh. Welds vertices, merges
+ *   edge-connected coplanar triangles into planar faces; curved regions stay
+ *   faceted.
  */
 
 const stepReal = (n) => {
@@ -130,9 +133,18 @@ export function meshPlanarFaces(mesh, { weldTol = 1e-5 } = {}) {
   return { verts, faces, triangles: tris.length };
 }
 
-/** STEP AP214 text for a closed triangle mesh (mm). */
-export function meshToStep(mesh, { name = 'SurfCAD part', timestamp = new Date().toISOString().slice(0, 19) } = {}) {
-  const { verts, faces } = meshPlanarFaces(mesh);
+function perp(axis, ref) {
+  const a = norm(axis);
+  let r = ref ? sub(ref, a.map((x) => x * dot(ref, a))) : null;
+  if (!r || Math.hypot(...r) < 1e-9) {
+    const h = Math.abs(a[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0];
+    r = sub(h, a.map((x) => x * dot(h, a)));
+  }
+  return norm(r);
+}
+
+/** Shared AP214 product / context entities; `emit(add, point, dir)` returns the brep id. */
+function stepDocument(name, timestamp, emit) {
   const lines = [];
   let id = 0;
   const add = (body) => {
@@ -155,50 +167,11 @@ export function meshToStep(mesh, { name = 'SurfCAD part', timestamp = new Date()
   const unc = add(`UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(1.E-05),#${lu},'distance_accuracy_value','confusion accuracy')`);
   const gctx = add(`(GEOMETRIC_REPRESENTATION_CONTEXT(3)GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT((#${unc}))GLOBAL_UNIT_ASSIGNED_CONTEXT((#${lu},#${au},#${su}))REPRESENTATION_CONTEXT('Context #1','3D Context with UNIT and UNCERTAINTY'))`);
   const point = (p) => add(`CARTESIAN_POINT('',(${p.map(stepReal).join(',')}))`);
-  const dir = (d) => add(`DIRECTION('',(${d.map(stepReal).join(',')}))`);
-
-  const vertexIds = new Map();
-  const vertexOf = (vi) => {
-    if (!vertexIds.has(vi)) vertexIds.set(vi, add(`VERTEX_POINT('',#${point(verts[vi])})`));
-    return vertexIds.get(vi);
-  };
-  const edgeIds = new Map(); // "a_b" (a<b) → EDGE_CURVE id oriented a→b
-  const edgeOf = (a, b) => {
-    const lo = Math.min(a, b);
-    const hi = Math.max(a, b);
-    const key = `${lo}_${hi}`;
-    if (!edgeIds.has(key)) {
-      const v = sub(verts[hi], verts[lo]);
-      const len = Math.hypot(...v);
-      const vec = add(`VECTOR('',#${dir(norm(v))},${stepReal(len)})`);
-      const line = add(`LINE('',#${point(verts[lo])},#${vec})`);
-      edgeIds.set(key, add(`EDGE_CURVE('',#${vertexOf(lo)},#${vertexOf(hi)},#${line},.T.)`));
-    }
-    return { id: edgeIds.get(key), same: a === lo };
-  };
-  const faceIds = [];
-  for (const f of faces) {
-    const bounds = f.loops.map((loop, li) => {
-      const oes = loop.map((a, i) => {
-        const e = edgeOf(a, loop[(i + 1) % loop.length]);
-        return `#${add(`ORIENTED_EDGE('',*,*,#${e.id},${e.same ? '.T.' : '.F.'})`)}`;
-      });
-      const el = add(`EDGE_LOOP('',(${oes.join(',')}))`);
-      return `#${add(`${li === 0 ? 'FACE_OUTER_BOUND' : 'FACE_BOUND'}('',#${el},.T.)`)}`;
-    });
-    const p0 = verts[f.loops[0][0]];
-    const p1 = verts[f.loops[0][1]];
-    const ref = norm(sub(p1, p0));
-    const ax = add(`AXIS2_PLACEMENT_3D('',#${point(p0)},#${dir(f.normal)},#${dir(ref)})`);
-    const plane = add(`PLANE('',#${ax})`);
-    faceIds.push(`#${add(`ADVANCED_FACE('',(${bounds.join(',')}),#${plane},.T.)`)}`);
-  }
-  const shell = add(`CLOSED_SHELL('',(${faceIds.join(',')}))`);
-  const brep = add(`MANIFOLD_SOLID_BREP(${stepStr(name)},#${shell})`);
+  const dir = (d) => add(`DIRECTION('',(${norm(d).map(stepReal).join(',')}))`);
+  const brep = emit(add, point, dir);
   const origin = add(`AXIS2_PLACEMENT_3D('',#${point([0, 0, 0])},#${dir([0, 0, 1])},#${dir([1, 0, 0])})`);
   const rep = add(`ADVANCED_BREP_SHAPE_REPRESENTATION(${stepStr(name)},(#${origin},#${brep}),#${gctx})`);
   add(`SHAPE_DEFINITION_REPRESENTATION(#${pds},#${rep})`);
-
   const header = [
     'ISO-10303-21;',
     'HEADER;',
@@ -208,10 +181,102 @@ export function meshToStep(mesh, { name = 'SurfCAD part', timestamp = new Date()
     'ENDSEC;',
     'DATA;',
   ];
-  return {
-    text: `${[...header, ...lines, 'ENDSEC;', 'END-ISO-10303-21;'].join('\n')}\n`,
-    faces: faces.length,
-    edges: edgeIds.size,
-    vertices: vertexIds.size,
-  };
+  return `${[...header, ...lines, 'ENDSEC;', 'END-ISO-10303-21;'].join('\n')}\n`;
+}
+
+/**
+ * STEP AP214 text for an exact B-rep: { vertices, edges: [{ v1, v2, curve:
+ * { type: 'line' } | { type: 'circle', center, axis, ref, radius } }],
+ * faces: [{ surface: { type: 'plane' | 'cylinder' | 'cone', origin, axis,
+ * ref, radius?, semiAngle? }, sameSense, loops: [[{ edge, forward }]] }] }.
+ * A circle edge runs v1 → v2 counter-clockwise about its axis. Loops are
+ * oriented with the material on the left seen from outside; loop 0 is outer.
+ */
+export function brepToStep(brep, { name = 'SurfCAD part', timestamp = new Date().toISOString().slice(0, 19) } = {}) {
+  let faceCount = 0;
+  const text = stepDocument(name, timestamp, (add, point, dir) => {
+    const placement = (o, axis, ref) => add(`AXIS2_PLACEMENT_3D('',#${point(o)},#${dir(axis)},#${dir(perp(axis, ref))})`);
+    const vIds = brep.vertices.map((p) => add(`VERTEX_POINT('',#${point(p)})`));
+    const eIds = brep.edges.map((e) => {
+      const A = brep.vertices[e.v1];
+      const B = brep.vertices[e.v2];
+      let curve;
+      if (e.curve.type === 'circle') {
+        curve = add(`CIRCLE('',#${placement(e.curve.center, e.curve.axis, e.curve.ref || sub(A, e.curve.center))},${stepReal(e.curve.radius)})`);
+      } else {
+        const v = sub(B, A);
+        curve = add(`LINE('',#${point(A)},#${add(`VECTOR('',#${dir(v)},${stepReal(Math.hypot(...v))})`)})`);
+      }
+      return add(`EDGE_CURVE('',#${vIds[e.v1]},#${vIds[e.v2]},#${curve},.T.)`);
+    });
+    const faceIds = brep.faces.map((f) => {
+      const bounds = f.loops.map((loop, li) => {
+        const oes = loop.map((oe) => `#${add(`ORIENTED_EDGE('',*,*,#${eIds[oe.edge]},${oe.forward ? '.T.' : '.F.'})`)}`);
+        const el = add(`EDGE_LOOP('',(${oes.join(',')}))`);
+        return `#${add(`${li === 0 ? 'FACE_OUTER_BOUND' : 'FACE_BOUND'}('',#${el},.T.)`)}`;
+      });
+      const s = f.surface;
+      const ax = placement(s.origin, s.axis, s.ref);
+      let surf;
+      if (s.type === 'plane') surf = add(`PLANE('',#${ax})`);
+      else if (s.type === 'cylinder') surf = add(`CYLINDRICAL_SURFACE('',#${ax},${stepReal(s.radius)})`);
+      else if (s.type === 'cone') surf = add(`CONICAL_SURFACE('',#${ax},${stepReal(s.radius)},${stepReal(s.semiAngle)})`);
+      else throw new Error(`brepToStep: unknown surface ${s.type}`);
+      return `#${add(`ADVANCED_FACE('',(${bounds.join(',')}),#${surf},${f.sameSense === false ? '.F.' : '.T.'})`)}`;
+    });
+    faceCount = faceIds.length;
+    const shell = add(`CLOSED_SHELL('',(${faceIds.join(',')}))`);
+    return add(`MANIFOLD_SOLID_BREP(${stepStr(name)},#${shell})`);
+  });
+  return { text, faces: faceCount, edges: brep.edges.length, vertices: brep.vertices.length };
+}
+
+/** STEP AP214 text for a closed triangle mesh (mm). */
+export function meshToStep(mesh, { name = 'SurfCAD part', timestamp = new Date().toISOString().slice(0, 19) } = {}) {
+  const { verts, faces } = meshPlanarFaces(mesh);
+  let edgeCount = 0;
+  let vertexCount = 0;
+  const text = stepDocument(name, timestamp, (add, point, dir) => {
+    const vertexIds = new Map();
+    const vertexOf = (vi) => {
+      if (!vertexIds.has(vi)) vertexIds.set(vi, add(`VERTEX_POINT('',#${point(verts[vi])})`));
+      return vertexIds.get(vi);
+    };
+    const edgeIds = new Map(); // "a_b" (a<b) → EDGE_CURVE id oriented a→b
+    const edgeOf = (a, b) => {
+      const lo = Math.min(a, b);
+      const hi = Math.max(a, b);
+      const key = `${lo}_${hi}`;
+      if (!edgeIds.has(key)) {
+        const v = sub(verts[hi], verts[lo]);
+        const len = Math.hypot(...v);
+        const vec = add(`VECTOR('',#${dir(norm(v))},${stepReal(len)})`);
+        const line = add(`LINE('',#${point(verts[lo])},#${vec})`);
+        edgeIds.set(key, add(`EDGE_CURVE('',#${vertexOf(lo)},#${vertexOf(hi)},#${line},.T.)`));
+      }
+      return { id: edgeIds.get(key), same: a === lo };
+    };
+    const faceIds = [];
+    for (const f of faces) {
+      const bounds = f.loops.map((loop, li) => {
+        const oes = loop.map((a, i) => {
+          const e = edgeOf(a, loop[(i + 1) % loop.length]);
+          return `#${add(`ORIENTED_EDGE('',*,*,#${e.id},${e.same ? '.T.' : '.F.'})`)}`;
+        });
+        const el = add(`EDGE_LOOP('',(${oes.join(',')}))`);
+        return `#${add(`${li === 0 ? 'FACE_OUTER_BOUND' : 'FACE_BOUND'}('',#${el},.T.)`)}`;
+      });
+      const p0 = verts[f.loops[0][0]];
+      const p1 = verts[f.loops[0][1]];
+      const ref = norm(sub(p1, p0));
+      const ax = add(`AXIS2_PLACEMENT_3D('',#${point(p0)},#${dir(f.normal)},#${dir(ref)})`);
+      const plane = add(`PLANE('',#${ax})`);
+      faceIds.push(`#${add(`ADVANCED_FACE('',(${bounds.join(',')}),#${plane},.T.)`)}`);
+    }
+    const shell = add(`CLOSED_SHELL('',(${faceIds.join(',')}))`);
+    edgeCount = edgeIds.size;
+    vertexCount = vertexIds.size;
+    return add(`MANIFOLD_SOLID_BREP(${stepStr(name)},#${shell})`);
+  });
+  return { text, faces: faces.length, edges: edgeCount, vertices: vertexCount };
 }
