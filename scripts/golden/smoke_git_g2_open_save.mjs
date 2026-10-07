@@ -226,7 +226,8 @@ ok('git Open lists vault', /data-git-open-list/.test(feed) && /onListVaultAssemb
   && /onOpenVaultAssembly/.test(feed)
   && /data-git-open-search/.test(feed) && /filterVaultOpenIndex/.test(feed));
 ok('new part asks for name only', /data-git-new-part-name/.test(feed) && /title="New part"/.test(feed)
-  && !/New part path/.test(feed) && !/data-git-new-part-path/.test(feed));
+  && !/New part path/.test(feed) && !/data-git-new-part-path/.test(feed)
+  && /data-git-new-part-name[\s\S]*?PARTS_TEXT_INPUT_CLASS/.test(feed));
 ok('+ create menu is Part|Assembly only', /data-part-add-menu/.test(feed)
   && /data-part-add-dropdown/.test(feed)
   && /data-part-add-action="part"/.test(feed)

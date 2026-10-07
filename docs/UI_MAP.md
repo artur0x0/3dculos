@@ -94,7 +94,8 @@ Desktop specifics:
   first; Cancel keeps the part, Confirm removes that part only. In git mode,
   **Open from repo** indexes assemblies/parts on pane open and live-filters
   via `data-git-open-search` (add-existing: `data-git-add-search`); empty query
-  shows the full index, no hits show *No matches*.
+  shows the full index, no hits show *No matches*. Text inputs on Parts/git
+  use `partsChrome.js` `PARTS_TEXT_INPUT_CLASS` (≥16px) to block iOS Safari focus-zoom.
 - `PromptInput` is passed `isMobile={false}` explicitly (`src/App.jsx:1345`).
 
 ### Mobile shell (`src/App.jsx` mobile branch) — CAD stages + game stack
