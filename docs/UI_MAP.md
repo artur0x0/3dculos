@@ -96,6 +96,7 @@ Desktop specifics:
   via `data-git-open-search` (add-existing: `data-git-add-search`); empty query
   shows the full index, no hits show *No matches*. Text inputs on Parts/git
   use `partsChrome.js` `PARTS_TEXT_INPUT_CLASS` (≥16px) to block iOS Safari focus-zoom.
+  Git create (new part / Add to Repo / new assembly seed) shows `data-part-pending` spinner in place of the Save icon until the promise settles.
 - `PromptInput` is passed `isMobile={false}` explicitly (`src/App.jsx:1345`).
 
 ### Mobile shell (`src/App.jsx` mobile branch) — CAD stages + game stack

@@ -188,6 +188,8 @@ const App = () => {
   const [gitBehindResolved, setGitBehindResolved] = useState([]); // path strings
   const gitBehindResolvedRef = useRef([]);
   const [gitBehindToast, setGitBehindToast] = useState(null); // { message, behindBy } | null
+  /** Part ids with an in-flight create / Add-to-Repo (spinner on row save icon). */
+  const [pendingPartIds, setPendingPartIds] = useState(() => new Set());
   const gitCheckGenRef = useRef(0);
   /** G7: GitHub App Client ID (from /api/config or VITE_) + connected flag. */
   const [githubClientId, setGithubClientId] = useState(() => resolveGithubClientId());
@@ -2127,6 +2129,7 @@ const App = () => {
     if (!doc || doc.source !== 'git' || !id) {
       return { status: 'error', error: 'Not in Git mode' };
     }
+    setPendingPartIds((prev) => new Set(prev).add(String(id)));
     try {
       const vault = await ensureGitVault();
       let scripts = { ...partScriptsRef.current };
@@ -2192,6 +2195,12 @@ const App = () => {
       const error = err.message || 'Add to Repo failed';
       setUploadError(error);
       return { status: 'error', error };
+    } finally {
+      setPendingPartIds((prev) => {
+        const next = new Set(prev);
+        next.delete(String(id));
+        return next;
+      });
     }
   };
 
@@ -2832,7 +2841,7 @@ const App = () => {
       parts: [{ id: seedId, name: DEFAULT_PART_NAME, visible: true, order: 0 }],
     });
     refreshGenRef.current += 1;
-    await savePartScript(seedId, starter);
+    // Optimistic: show the seeded assembly immediately, then persist.
     rememberScripts({ [seedId]: starter });
     rememberAssembly(seedDoc);
     rememberGitBaseline(null);
@@ -2847,6 +2856,18 @@ const App = () => {
     setCurrentFilename(DEFAULT_PART_NAME);
     codeEditorRef.current?.loadContent(starter, DEFAULT_PART_NAME, false);
     saveEditorDraft({ script: starter, filename: DEFAULT_PART_NAME, partId: seedId });
+    setPendingPartIds((prev) => new Set(prev).add(seedId));
+    try {
+      await savePartScript(seedId, starter);
+    } catch (err) {
+      setUploadError(err?.message || 'Could not create assembly');
+    } finally {
+      setPendingPartIds((prev) => {
+        const next = new Set(prev);
+        next.delete(seedId);
+        return next;
+      });
+    }
   };
 
   const handleAddPart = async (partName) => {
@@ -2890,12 +2911,13 @@ const App = () => {
       position: order === 0 ? undefined : [order * 40, 0, 0],
     };
     scripts[id] = starter;
-    await savePartScript(id, starter);
     rememberScripts(scripts);
     // Pending autosave still holds the previous part's buffer — do not let it
     // land on this new id (playtest: cube became a copy of FilletKilla).
     partSaveEpochRef.current += 1;
     refreshGenRef.current += 1;
+    // Optimistic: row appears immediately; spinner while persist (and any
+    // follow-on Add to Repo) is in flight.
     rememberAssembly({ ...doc, activeId: id, parts: [...doc.parts, part] });
     focusPartHistory(id, starter);
     suppressPartSaveRef.current = false;
@@ -2904,6 +2926,24 @@ const App = () => {
     // Bind draft immediately so a leave before the 600ms debounce cannot
     // restore the previous part's script onto this row.
     saveEditorDraft({ script: starter, filename: part.name, partId: id });
+    setPendingPartIds((prev) => new Set(prev).add(id));
+    try {
+      await savePartScript(id, starter);
+    } catch (err) {
+      const cur = assemblyRef.current;
+      if (cur?.parts?.some((p) => p.id === id)) {
+        rememberAssembly(removePart(cur, id));
+        rememberScripts(dropPartRecord(partScriptsRef.current, id));
+      }
+      try { await deletePartScript(id); } catch { /* ignore */ }
+      setUploadError(err?.message || 'Could not create part');
+    } finally {
+      setPendingPartIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+    }
   };
 
   const handleDeletePart = (id, opts = {}) => {
@@ -4041,6 +4081,7 @@ const App = () => {
         ...row,
         dirty: gitDirtyIds.has(row.id),
         behind: behindPartIdSet.has(row.id),
+        pending: pendingPartIds.has(row.id),
         action,
       };
     })

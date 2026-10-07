@@ -212,6 +212,9 @@ ok('App wires create/delete/merge/squash/insert/browse', /handleCreateBranch/.te
   && /handleBranchUiClose/.test(app)
   && /onBranchUiClose=\{handleBranchUiClose\}/.test(app)
   && /githubCompareUrl\(/.test(app) && /window\.open\(url/.test(app));
+ok('branch create optimistic pending row', /pending: true/.test(feed)
+  && /data-git-branch-pending/.test(feed)
+  && /data-git-branch-pending-spinner/.test(feed));
 ok('Create branch refreshes pane with ensureBranch',
   /ensureBranch:/.test(feed) && /refreshBranchPane\(/.test(feed)
   && /result\.status === 'created'/.test(feed));

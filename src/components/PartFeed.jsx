@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Eye, EyeOff, FolderOpen, GripVertical, Plus, Save, Trash2 } from 'lucide-react';
+import { Eye, EyeOff, FolderOpen, GripVertical, Loader2, Plus, Save, Trash2 } from 'lucide-react';
 import { partCanDeleteFromRepo, partListDeleteAction, sanitizeAssemblyName, sanitizePartName } from '../utils/assembly.js';
 import { filterVaultOpenIndex, filterVaultPartItems } from '../utils/git/gitWorkspace.js';
 import { PARTS_TEXT_INPUT_CLASS, PARTS_TEXT_INPUT_STYLE } from '../utils/partsChrome.js';
@@ -822,7 +822,24 @@ export default function PartFeed({
       setBranchFlow((prev) => ({ ...(prev || {}), error: 'Enter a branch name' }));
       return;
     }
-    setBranchFlow((prev) => ({ ...(prev || {}), stage: 'busy', error: '' }));
+    const priorItems = Array.isArray(branchFlow?.items) ? branchFlow.items : [];
+    // Optimistic: show the new branch row immediately with a spinner.
+    const optimisticItems = [
+      ...priorItems.filter((b) => b.name !== draft),
+      { name: draft, sha: null, current: false, pending: true },
+    ].sort((a, b) => {
+      if (a.name === 'main') return -1;
+      if (b.name === 'main') return 1;
+      return a.name.localeCompare(b.name);
+    });
+    setBranchFlow({
+      stage: 'pane',
+      items: optimisticItems,
+      loading: false,
+      error: '',
+      pending: null,
+      draft: '',
+    });
     const result = (await onCreateBranch?.(draft)) || { status: 'error', error: 'Create unavailable' };
     if (result.status === 'created') {
       await refreshBranchPane('', {
@@ -830,9 +847,14 @@ export default function PartFeed({
       });
       return;
     }
+    // Failure: drop the ghost row and return to the create form.
     setBranchFlow({
-      stage: 'create', draft, items: [], loading: false,
-      error: result.error || 'Create failed', pending: null,
+      stage: 'create',
+      draft,
+      items: priorItems,
+      loading: false,
+      error: result.error || 'Create failed',
+      pending: null,
     });
   };
 
@@ -1329,32 +1351,44 @@ export default function PartFeed({
                 )}
               </div>
               {source === 'git' ? (
-                <button
-                  type="button"
-                  data-part-save={row.id}
-                  data-part-dirty={row.dirty ? 'true' : 'false'}
-                  aria-label={row.dirty ? 'Save part to repo' : 'Part in sync'}
-                  title={row.dirty ? 'Save part to repo' : 'In sync with repo'}
-                  disabled={!row.dirty || !onAddToRepo}
-                  className="relative shrink-0 rounded-full p-1.5 text-gray-300 hover:bg-white/10 disabled:cursor-default disabled:opacity-50 disabled:hover:bg-transparent"
-                  onPointerDown={(event) => event.stopPropagation()}
-                  onDragStart={(event) => event.stopPropagation()}
-                  onKeyDown={(event) => event.stopPropagation()}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    if (!row.dirty || !onAddToRepo) return;
-                    void onAddToRepo(row.id);
-                  }}
-                >
-                  <Save size={16} />
-                  {row.dirty ? (
-                    <span
-                      data-part-dirty=""
-                      title="Unsaved / not on repo"
-                      className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-amber-400"
-                    />
-                  ) : null}
-                </button>
+                row.pending ? (
+                  <span
+                    data-part-pending={row.id}
+                    data-part-save={row.id}
+                    aria-label="Creating…"
+                    title="Creating…"
+                    className="relative shrink-0 rounded-full p-1.5 text-sky-300"
+                  >
+                    <Loader2 size={16} className="animate-spin" data-part-pending-spinner="" />
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    data-part-save={row.id}
+                    data-part-dirty={row.dirty ? 'true' : 'false'}
+                    aria-label={row.dirty ? 'Save part to repo' : 'Part in sync'}
+                    title={row.dirty ? 'Save part to repo' : 'In sync with repo'}
+                    disabled={!row.dirty || !onAddToRepo}
+                    className="relative shrink-0 rounded-full p-1.5 text-gray-300 hover:bg-white/10 disabled:cursor-default disabled:opacity-50 disabled:hover:bg-transparent"
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onDragStart={(event) => event.stopPropagation()}
+                    onKeyDown={(event) => event.stopPropagation()}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      if (!row.dirty || !onAddToRepo) return;
+                      void onAddToRepo(row.id);
+                    }}
+                  >
+                    <Save size={16} />
+                    {row.dirty ? (
+                      <span
+                        data-part-dirty=""
+                        title="Unsaved / not on repo"
+                        className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-amber-400"
+                      />
+                    ) : null}
+                  </button>
+                )
               ) : null}
               <button
                 type="button"
@@ -2128,14 +2162,15 @@ export default function PartFeed({
                 <ul className="max-h-56 space-y-1 overflow-y-auto" data-git-branch-dialog-list="">
                   {(branchFlow.items || []).map((b) => {
                     const current = !!b.current || b.name === currentBranch;
-                    const canDelete = b.name !== 'main' && !current;
+                    const creating = !!b.pending;
+                    const canDelete = b.name !== 'main' && !current && !creating;
                     return (
-                      <li key={b.name} className="flex items-center gap-1">
+                      <li key={b.name} className="flex items-center gap-1" data-git-branch-pending={creating ? 'true' : undefined}>
                         <button
                           type="button"
                           data-git-branch-row={b.name}
                           data-git-branch-current={current ? 'true' : 'false'}
-                          disabled={current}
+                          disabled={current || creating}
                           className={`flex min-w-0 flex-1 items-center justify-between rounded px-2 py-1.5 text-left text-xs ${
                             current
                               ? 'bg-blue-600/20 text-blue-200'
@@ -2144,7 +2179,9 @@ export default function PartFeed({
                           onClick={() => requestSwitchBranch(b.name)}
                         >
                           <span className="truncate font-mono">{b.name}</span>
-                          {current ? (
+                          {creating ? (
+                            <Loader2 size={14} className="shrink-0 animate-spin text-sky-300" data-git-branch-pending-spinner="" />
+                          ) : current ? (
                             <span className="shrink-0 text-[9px] uppercase tracking-wide text-blue-300" data-git-branch-marker="">
                               current
                             </span>
@@ -2163,7 +2200,7 @@ export default function PartFeed({
                             <Trash2 size={14} />
                           </button>
                         ) : (
-                          <span className="w-6 shrink-0 text-center text-[9px] text-gray-600" title="protected">·</span>
+                          <span className="w-6 shrink-0 text-center text-[9px] text-gray-600" title={creating ? 'creating' : 'protected'}>·</span>
                         )}
                       </li>
                     );

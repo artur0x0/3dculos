@@ -264,6 +264,12 @@ ok('App wires vault open + dirty; source follows GitHub token (G10)',
   && /findOrCreateVault/.test(app));
 ok('App new part resolveNewPartPath in git',
   /resolveNewPartPath\(doc\.name,/.test(app));
+ok('optimistic create + pending spinner', /setPendingPartIds/.test(app)
+  && /data-part-pending/.test(feed)
+  && /data-part-pending-spinner/.test(feed)
+  && /Loader2/.test(feed)
+  && /rememberAssembly\([\s\S]*?activeId: id[\s\S]*?setPendingPartIds/.test(app)
+  && /handleAddToRepo[\s\S]*?setPendingPartIds/.test(app));
 ok('Add to Repo wires commit', /handleAddToRepo/.test(app) && /onAddToRepo/.test(feed)
   && /commitPartToRepo/.test(app) && /Add to Repo/.test(feed));
 const srcFiles = ['gitWorkspace', 'githubAdapterInterface', 'mockGithubAdapter', 'vaultLayout', 'surfJson', 'vault']
