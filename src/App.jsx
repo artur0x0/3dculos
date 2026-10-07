@@ -252,9 +252,9 @@ const App = () => {
     }, 400);
   };
   /**
-   * Desktop seam strip: jump the caret AND open the feature sheet in the
-   * viewer. Both panes are on screen here, so editing the feature and seeing
-   * the code it owns are not a trade-off the way they are on a phone.
+   * Desktop CAD viewer feature bar: jump the caret AND open the feature sheet
+   * in the viewer. Both panes are on screen here, so editing the feature and
+   * seeing the code it owns are not a trade-off the way they are on a phone.
    */
   const handleDesktopFeatureStripJump = (feature) => {
     if (!feature) return;
@@ -4019,38 +4019,31 @@ const App = () => {
             </div>
           )}
         </div>
-        {/* Desktop feature strip: vertical chips in the seam, starting BELOW the
-            measured editor ribbon (same spacer pattern as mobile Script stage). */}
-        {appMode !== 'game' && (
-          <div
-            className="shrink-0 flex flex-col self-stretch h-full min-h-0"
-            data-desktop-feature-strip=""
-            data-feature-strip-placement="desktop-seam"
-            data-feature-strip-below-ribbon=""
-          >
+        <SplitDivider orientation="vertical" onDrag={(x) => handleSplitDragX(x)} />
+        <div className="relative flex-1 min-w-0">
+          {/* Desktop CAD viewer feature bar (horizontal under title) — replaces
+              the old vertical seam strip between editor and viewer. */}
+          {appMode !== 'game' && (
             <div
-              className="shrink-0 w-full"
-              style={{ height: ribbonPx }}
-              data-feature-strip-ribbon-spacer=""
-              data-feature-strip-ribbon-spacer-h="measured"
-              aria-hidden="true"
-            />
-            <div className="flex-1 min-h-0 flex flex-col">
+              className="absolute inset-x-0 top-14 z-20 pointer-events-auto flex px-2"
+              data-desktop-feature-strip=""
+              data-cad-feature-strip="desktop"
+              data-feature-strip-placement="viewer-under-title-horizontal"
+              data-feature-strip-gap="name-2x"
+              data-feature-bar-row="full"
+            >
               <FeatureStrip
-                orientation="vertical"
-                side="between"
+                orientation="horizontal"
                 script={stripScript}
                 bodyCount={stripBodyCount}
                 failedIds={stripFailedIds}
                 hidden={featureSession}
-                activeId={featureStripActiveId}
+                activeId={featureSheet?.feature?.id || featureStripActiveId}
+                hideWhenEmpty
                 onJump={handleDesktopFeatureStripJump}
               />
             </div>
-          </div>
-        )}
-        <SplitDivider orientation="vertical" onDrag={(x) => handleSplitDragX(x)} />
-        <div className="relative flex-1 min-w-0">
+          )}
           <Viewport 
             ref={viewportRef} 
             onAccount={handleAccount}
@@ -4105,9 +4098,9 @@ const App = () => {
             onFeatureSessionChange={handleFeatureSession}
             partLabels={partLabels}
           />
-          {/* Feature sheets live INSIDE the viewer on desktop: the seam strip
-              stays put, and editing a feature happens over the model it
-              changes rather than over the script. */}
+          {/* Feature sheets live INSIDE the viewer on desktop: the horizontal
+              CAD bar sits under the title, and editing a feature happens over
+              the model it changes rather than over the script. */}
           {appMode !== 'game' && featureSheet?.mode === 'edit' && featureSheet.feature && (
             <FeatureSheet
               placement="viewport"

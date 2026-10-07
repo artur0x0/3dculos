@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 /**
- * Desktop feature strip between editor and viewer panes.
+ * Desktop feature strip on the CAD viewer (horizontal under title).
  *
- * CAD desktop mounts a vertical FeatureStrip in the seam (editor | strip |
- * SplitDivider | viewport), starting below the measured editor ribbon.
- * Chips jump Monaco caret; feature sheets stay mobile-only. Mobile CAD/Script
- * strips must remain unchanged.
+ * Replaces the old vertical seam strip between editor and viewer.
+ * Chips jump Monaco caret + open the feature sheet in the viewer.
+ * Mobile CAD/Script strips must remain unchanged.
+ * Desktop Monaco/script ribbon does not mount a profile chip (Parts + CAD only).
  */
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -23,31 +23,45 @@ function check(name, cond, detail = '') {
   }
 }
 
-console.log('desktop: feature strip between panes');
+console.log('desktop: feature strip on CAD viewer');
 
 {
   const app = read('../../src/App.jsx');
   const strip = read('../../src/components/FeatureStrip.jsx');
+  const editor = read('../../src/components/CodeEditor.jsx');
+  const viewport = read('../../src/components/Viewport.jsx');
+  const feed = read('../../src/components/PartFeed.jsx');
 
   check(
-    'desktop shell mounts FeatureStrip with side=between',
+    'desktop shell mounts horizontal FeatureStrip on CAD viewer',
     /data-desktop-feature-strip/.test(app) &&
-      /data-feature-strip-placement="desktop-seam"/.test(app) &&
-      /side="between"/.test(app) &&
-      /orientation="vertical"/.test(app),
+      /data-feature-strip-placement="viewer-under-title-horizontal"/.test(app) &&
+      /data-cad-feature-strip="desktop"/.test(app) &&
+      /orientation="horizontal"/.test(app) &&
+      !/data-feature-strip-placement="desktop-seam"/.test(app) &&
+      !/side="between"/.test(app),
   );
   check(
-    'desktop strip sits between editor column and SplitDivider',
+    'desktop strip overlays the viewer pane (after SplitDivider)',
     (() => {
-      const iStrip = app.indexOf('data-desktop-feature-strip');
       const iDiv = app.indexOf('<SplitDivider orientation="vertical"');
+      const iStrip = app.indexOf('data-desktop-feature-strip');
       const iVp = app.indexOf('isMobile={false}', iDiv);
-      return iStrip > 0 && iDiv > iStrip && iVp > iDiv;
+      return iDiv > 0 && iStrip > iDiv && iVp > iStrip;
     })(),
   );
-  // Desktop now jumps the caret AND opens the sheet: both panes are visible,
-  // so editing a feature and seeing its code is not the either/or it is on a
-  // phone. The sheet renders inside the VIEWER, not over the script.
+  check(
+    'no vertical seam strip between editor and viewer',
+    !/data-feature-strip-placement="desktop-seam"/.test(app) &&
+      !/data-feature-strip-ribbon-spacer/.test(app) ||
+      // mobile script still has ribbon spacer attrs
+      (() => {
+        // desktop-specific: no spacer tied to data-desktop-feature-strip
+        const i = app.indexOf('data-desktop-feature-strip');
+        const chunk = app.slice(i, i + 800);
+        return !/data-feature-strip-ribbon-spacer/.test(chunk);
+      })(),
+  );
   check(
     'desktop jump reveals the code and opens the feature sheet',
     /handleDesktopFeatureStripJump/.test(app) &&
@@ -79,22 +93,8 @@ console.log('desktop: feature strip between panes');
     })(),
   );
   check(
-    'the seam strip itself did not move',
-    /data-feature-strip-placement="desktop-seam"/.test(app),
-  );
-  check(
     'desktop strip gated off in game mode',
     /appMode !== 'game' && \(\s*[\s\S]*?data-desktop-feature-strip/.test(app),
-  );
-  check(
-    'FeatureStrip supports side=between / desktop-seam chrome',
-    /stripSide === 'between'/.test(strip) || /side === 'between'/.test(strip) ||
-      /between = stripSide === 'between'/.test(strip),
-  );
-  check(
-    'FeatureStrip emits data-feature-strip-side between + desktop-seam',
-    /data-feature-strip-placement=\{between \? 'desktop-seam'/.test(strip) &&
-      /data-feature-strip-side=\{stripSide\}/.test(strip),
   );
   check(
     'mobile CAD + Script strips unchanged',
@@ -105,19 +105,22 @@ console.log('desktop: feature strip between panes');
       /openFeatureSheetFor/.test(app),
   );
   check(
-    'total FeatureStrip mounts = 3 (2 mobile + 1 desktop)',
+    'total FeatureStrip mounts = 3 (2 mobile + 1 desktop viewer)',
     (() => {
       const n = (app.match(/<FeatureStrip\b/g) || []).length;
       return n === 3;
     })(),
   );
   check(
-    'desktop strip starts below measured editor ribbon',
-    /data-desktop-feature-strip/.test(app) &&
-      /data-feature-strip-below-ribbon/.test(app) &&
-      /data-feature-strip-ribbon-spacer/.test(app) &&
-      /data-feature-strip-ribbon-spacer-h="measured"/.test(app) &&
-      /style=\{\{ height: ribbonPx \}\}/.test(app),
+    'Monaco/CodeEditor has no profile chip (mobile-only concern; desktop Parts OK)',
+    !/ProfileChip/.test(editor) &&
+      !/onAccount/.test(editor) &&
+      /data-parts-profile-chip/.test(feed) &&
+      /ProfileChip variant="viewport"/.test(viewport),
+  );
+  check(
+    'FeatureStrip still supports horizontal CAD chrome',
+    /orientation === 'horizontal'/.test(strip) || /horizontal = orientation === 'horizontal'/.test(strip),
   );
 }
 
@@ -125,4 +128,4 @@ if (failed) {
   console.log(`\n${failed} check(s) failed`);
   process.exit(1);
 }
-console.log('\nAll desktop feature-strip-between-panes checks passed.');
+console.log('\nAll desktop CAD-viewer feature-strip checks passed.');

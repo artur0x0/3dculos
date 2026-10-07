@@ -355,7 +355,7 @@ Git mode talks to GitHub only through an adapter object (`src/utils/git/`). G1 s
 
 
 
-- **Profile chip (G9).** Playtest unify: Circular initials chip (`ProfileChip`, `data-profile-chip`): **green** when signed in, **grey** when signed out / guest. Initials from `profileInitials` (first+last → name words → email local-part → `?`; guest → `G`; signed out → `?`). Circular chip at top-right of the CAD viewport (`variant="viewport"`, absolute). Parts ribbon mounts the same chip `variant="inline"` (`data-parts-profile-chip`) — same `handleAccount` (Login / Account). The separate Parts GitHub Connect icon and Guest|Apple|Google|GitHub session strip are gone (Connect remains sr-only for vault token tests). Hidden in game mode on the viewport.
+- **Profile chip (G9).** Playtest unify: Circular initials chip (`ProfileChip`, `data-profile-chip`): **green** when signed in, **grey** when signed out / guest. Initials from `profileInitials` (first+last → name words → email local-part → `?`; guest → `G`; signed out → `?`). Circular chip at top-right of the CAD viewport (`variant="viewport"`, absolute). Parts ribbon mounts the same chip `variant="inline"` (`data-parts-profile-chip`) — same `handleAccount` (Login / Account). The separate Parts GitHub Connect icon and Guest|Apple|Google|GitHub session strip are gone (Connect remains sr-only for vault token tests).  Hidden in game mode on the viewport. Desktop Monaco/script ribbon has no profile chip (Parts ribbon + CAD viewport only). Desktop feature chips live as a **horizontal** bar on the CAD viewer (`viewer-under-title-horizontal`), not a vertical seam between editor and viewer.
 
 
 
@@ -366,14 +366,14 @@ Git mode talks to GitHub only through an adapter object (`src/utils/git/`). G1 s
 
 - **Script Upload/Download (G12).** The Script (CAD) strip keeps **model import/export only**: **Upload** (`data-script-upload`, STEP/STL/OBJ/3MF) and **Download** (`data-script-download`). File Open (`.js`/`.txt`) and file Save were removed — vault Save / Branch / Open live on Parts (G11). Editor actions stay on the strip (Run, Select all, Undo/Redo, Quote, Puzzle). No vault Commit/Branch/Move-to-Git chrome on Script. Vault-create modal + conflict popup are G13.
 
-- **Vault create + conflict popup (G13).** **Create vault** is name + Save/Cancel only (see G6 slim UI). When Save hits a moved `main`, the conflict **popup** offers Stay on branch / Open on GitHub / Overwrite main (same force-merge warning as G3; no yellow toast for this flow). Light vocab: vault = repo, **+** = part, **Add** = from vault assembly. Closes the G8→G13 chrome chain.
+- **Vault create + conflict popup (G13).** **Create vault** is name + Save/Cancel only (see G6 slim UI). When Save hits a moved `main`, the conflict **popup** offers Stay on branch / Open on GitHub / Overwrite main (same force-merge warning as G3; no yellow toast for this flow). Light vocab: vault = repo, **+** = New|Existing part menu. Closes the G8→G13 chrome chain.
 
 ## Goldens and fixtures
 
 - Runners live in `scripts/golden/`. Playtest scripts live in `scripts/golden/fixtures/*.txt`.
 - Each runner is a `package.json` script named `golden:…` (`node scripts/golden/smoke_….mjs`). `npm run verify` is the full gate (`VALIDATION.md`).
 - `golden:git-g6-move-to-git`: plan (paths, dedupe, shared, live text, carried paths), Move into a fresh renamed vault (one commit, clean baseline, Open round-trip, Commit after), existing vault / conflicts / non-vault / invalid / empty, UI wiring (G13 slim create modal), no network.
-- `golden:session-identity`: Parts strip session identity (Guest/Apple/Google/GitHub), no Local|Git toggle, source follows githubConnected, IndexedDB silent autosave noted.
+- `golden:session-identity`: Parts profile chip unify (no Guest strip / visible Connect), no Local|Git toggle, source follows githubConnected, IndexedDB silent autosave noted.
 - `golden:git-g11-parts-vault-chrome` checks Save=Commit chrome, Branch dropdown (Switch/Create/Delete/Merge), Open browse + assembly Open vs Insert, create/delete branch helpers + compare URL, PartFeed/App wiring, mock-only.
 - `golden:git-g12-script-upload-download` checks Script strip is Upload+Download only (no file Open/Save, no vault chrome), editor actions remain, Parts chrome untouched, App/Viewport wiring dropped Open/Save handlers.
 - `golden:git-g13-vault-create-conflict` checks slim Create vault (name+Save/Cancel, no plan/shared/switch), conflict popup Stay / Open on GitHub / Overwrite main (no toast), warning attrs, light vocab, architecture.
