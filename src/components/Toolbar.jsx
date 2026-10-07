@@ -1,9 +1,8 @@
 import React, { useRef } from 'react';
 import {
   FolderOpen, Save, Download, Undo, Redo,
-  Truck, Upload, User, ArrowLeft, Play, BookOpen, Puzzle, List, SquareDashedBottomCode
+  Truck, Upload, ArrowLeft, Play, BookOpen, Puzzle, List, SquareDashedBottomCode
 } from 'lucide-react';
-import { useAuth } from '../hooks/useAuth';
 import { formatGameTime } from '../utils/gamePuzzle';
 
 /**
@@ -17,7 +16,6 @@ import { formatGameTime } from '../utils/gamePuzzle';
 const Toolbar = ({
   mode = 'cad',
   variant = 'overlay',
-  onAccount,
   onOpen,
   onSave,
   onDownload,
@@ -47,7 +45,6 @@ const Toolbar = ({
   const fileInputRef = useRef(null);
   const uploadModelRef = useRef(null);
 
-  const { isAuthenticated } = useAuth();
   const isGame = mode === 'game';
   const isStrip = variant === 'strip';
 
@@ -182,7 +179,7 @@ const Toolbar = ({
 
         {/* Slice 07: keep BookOpen as the sole Hint control (removed ⋯ overflow
             that sat next to Hint and felt like a second help entry in playtest).
-            CAD Account/Save/Download remain available after exiting game. */}
+            CAD Save/Download remain available after exiting game; Account is the viewport profile chip (G9). */}
         <button
           onClick={onHint}
           className={`${btnPad} flex items-center gap-1 ${cyanCls} rounded active:opacity-80`}
@@ -260,14 +257,6 @@ const Toolbar = ({
         </button>
         <div className={divider} />
 
-        <button
-          type="button"
-          onClick={onAccount}
-          className={`${btn} ${isAuthenticated ? 'text-green-400' : blue}`}
-          title="Account"
-        >
-          <User size={icon} />
-        </button>
         <button
           type="button"
           onClick={() => fileInputRef.current?.click()}
