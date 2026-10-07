@@ -236,13 +236,14 @@ ok('+ create menu is Part|Assembly only', /data-part-add-menu/.test(feed)
   && /data-part-add-kind="assembly"/.test(feed)
   && !/data-part-add-action="existing"/.test(feed)
   && !/data-part-add-section=/.test(feed));
-ok('folder open menu is Part|Assembly; Existing via folder', /data-part-open-menu/.test(feed)
+ok('folder open menu is Part|Assembly; Open Part (whole repo) via folder', /data-part-open-menu/.test(feed)
   && /data-part-open-dropdown/.test(feed)
   && /data-part-open-action="part"/.test(feed)
   && /data-part-open-action="assembly"/.test(feed)
-  && /data-git-add-existing/.test(feed) && /data-git-add-list/.test(feed)
+  && /data-git-open-part-action/.test(feed) && /startOpenPart/.test(feed)
+  && !/data-git-add-existing/.test(feed)
   && /data-assembly-add-existing/.test(feed)
-  && /onAddExistingPart/.test(feed));
+  && /onOpenVaultPart/.test(feed));
 ok('assembly leave Save|Discard guard', /data-assembly-leave-ask/.test(feed)
   && /data-assembly-leave-save/.test(feed)
   && /data-assembly-leave-discard/.test(feed)

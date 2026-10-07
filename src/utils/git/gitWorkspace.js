@@ -314,17 +314,110 @@ export function filterVaultOpenIndex(index, query) {
 }
 
 /**
- * Same live filter for Add-existing part lists (folder → Part).
+ * Same live filter for part lists (folder → Part / Open Part): path, label,
+ * kind, source assembly (`scope`) and its display label (`source`, so
+ * "loose" finds shared parts).
  */
 export function filterVaultPartItems(items, query) {
   const list = Array.isArray(items) ? items : [];
   const q = String(query || '').trim().toLowerCase();
   if (!q) return list;
   return list.filter((item) => {
-    const hay = [item?.path, item?.label, item?.kind, item?.scope]
+    const hay = [item?.path, item?.label, item?.name, item?.kind, item?.scope, item?.source]
       .map((v) => String(v || '').toLowerCase());
     return hay.some((h) => h.includes(q));
   });
+}
+
+/** Group heading for parts in the shared `parts/` folder (no assembly). */
+export const LOOSE_PARTS_LABEL = 'Loose parts';
+
+/**
+ * Open Part rows: every part script in the repo (every assembly's folder,
+ * legacy nested paths included, plus loose `parts/`). Each row carries
+ * `name` (file name without `.js`), `source` (assembly name or
+ * LOOSE_PARTS_LABEL), `inDoc` (already in the open document), `foreign`
+ * (belongs to another assembly: opening copies it into the current one) and
+ * `sameName` (another part in the repo has the same name).
+ */
+export function vaultOpenPartRows(parts, { currentAssembly = '', inDoc = [] } = {}) {
+  const list = Array.isArray(parts) ? parts : [];
+  const cur = vaultSegment(currentAssembly || '') || String(currentAssembly || '');
+  const have = new Set(inDoc || []);
+  const counts = new Map();
+  const rows = list.map((item) => {
+    const name = String(item?.label || item?.path || '').replace(/\.js$/i, '');
+    counts.set(name.toLowerCase(), (counts.get(name.toLowerCase()) || 0) + 1);
+    const loose = item?.scope === 'shared';
+    return {
+      ...item,
+      name,
+      source: loose ? LOOSE_PARTS_LABEL : String(item?.scope || ''),
+      inDoc: have.has(item?.path),
+      foreign: !loose && !!cur && item?.scope !== cur,
+    };
+  });
+  for (const row of rows) row.sameName = (counts.get(row.name.toLowerCase()) || 0) > 1;
+  return rows;
+}
+
+/**
+ * Group Open Part rows by source: the current assembly, other assemblies
+ * A→Z, then loose parts. -> [{ key, label, current, loose, parts }]
+ */
+export function groupVaultOpenPartRows(rows, { currentAssembly = '' } = {}) {
+  const cur = vaultSegment(currentAssembly || '') || String(currentAssembly || '');
+  const groups = new Map();
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const loose = row.scope === 'shared';
+    const key = loose ? '\u0000loose' : `asm:${row.scope}`;
+    if (!groups.has(key)) {
+      groups.set(key, { key, label: row.source, current: !loose && row.scope === cur, loose, parts: [] });
+    }
+    groups.get(key).parts.push(row);
+  }
+  const out = [...groups.values()];
+  for (const g of out) g.parts.sort((a, b) => a.name.localeCompare(b.name) || a.path.localeCompare(b.path));
+  const rank = (g) => (g.current ? 0 : g.loose ? 2 : 1);
+  out.sort((a, b) => rank(a) - rank(b) || a.label.localeCompare(b.label));
+  return out;
+}
+
+/** Open Part index, grouped (rows + groups in one call). */
+export function groupVaultOpenParts(parts, opts = {}) {
+  return groupVaultOpenPartRows(vaultOpenPartRows(parts, opts), opts);
+}
+
+/**
+ * Open Part into the current assembly (folder → Part). A part of this
+ * assembly or a loose `parts/` script joins by reference (same path). A part
+ * of another assembly is copied into this assembly's folder (the source file
+ * is untouched, nothing links them); a copy already in the document with the
+ * same script is reused instead of making "Name 2".
+ * -> { id, mode: 'focus' | 'reference' | 'copy' | 'reuse-copy' }
+ */
+export function planOpenVaultPart(doc, path, content, scripts = {}) {
+  const from = normalizeRepoPath(path);
+  if (!from) throw new Error('Bad part path');
+  const have = new Set((doc?.parts || []).map((p) => p.id));
+  if (partPathAllowedFor(doc?.name, from)) {
+    return { id: from, mode: have.has(from) ? 'focus' : 'reference' };
+  }
+  const baseName = from.split('/').pop()?.replace(/\.js$/i, '') || 'Part';
+  let toPath = assemblyPartPath(doc?.name, baseName);
+  let n = 2;
+  while (have.has(toPath)) {
+    if (scripts[toPath] === content) return { id: toPath, mode: 'reuse-copy' };
+    toPath = assemblyPartPath(doc?.name, `${baseName} ${n}`);
+    n += 1;
+  }
+  return { id: toPath, mode: 'copy' };
+}
+
+/** Open Assembly index: assemblies only (parts are Open Part's list). */
+export function vaultOpenAssemblies(browse) {
+  const list = Array.isArray(browse?.assemblies) ? browse.assemblies : [];
+  return list.map((item) => (typeof item === 'string' ? { kind: 'assembly', name: item, label: item } : item));
 }
 
 /**

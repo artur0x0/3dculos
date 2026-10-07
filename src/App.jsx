@@ -99,16 +99,15 @@ import {
   isWorkspaceDirty,
   listVaultAssemblies,
   listVaultBrowseItems,
-  listAddableVaultParts,
   openVaultAssembly,
   planInsertVaultAssemblyParts,
+  planOpenVaultPart,
   readVaultPart,
   resolveNewPartPath,
   suggestNewPartPath,
   partPathAllowedFor,
   vaultSegment,
   assemblyFilePath,
-  assemblyPartPath,
   commitWorkspace,
   commitPartToRepo,
   deletePartFromRepo,
@@ -2067,17 +2066,6 @@ const App = () => {
     }
   };
 
-  const handleListAddableParts = async () => {
-    const doc = assemblyRef.current;
-    if (!doc) return [];
-    const vault = await ensureGitVault();
-    const name = vaultSegment(doc.name) || doc.name;
-    return listAddableVaultParts(gitAdapterRef.current, vault.repo, name, {
-      branch: gitWorkingBranch(),
-      existingIds: doc.parts.map((p) => p.id),
-    });
-  };
-
   const handleAddExistingPart = async (path) => {
     const doc = assemblyRef.current;
     if (!doc || doc.source !== 'git') return;
@@ -2346,18 +2334,9 @@ const App = () => {
       const branch = gitWorkingBranch();
       const got = await readVaultPart(gitAdapterRef.current, vault.repo, path, branch);
       if (!got) return { status: 'error', error: `Missing in vault: ${path}` };
-      let id = got.path;
-      if (!partPathAllowedFor(doc.name, id)) {
-        const baseName = id.split('/').pop()?.replace(/\.js$/i, '') || 'Part';
-        let toPath = assemblyPartPath(doc.name, baseName);
-        let n = 2;
-        const have = new Set(doc.parts.map((p) => p.id));
-        while (have.has(toPath)) {
-          toPath = assemblyPartPath(doc.name, `${baseName} ${n}`);
-          n += 1;
-        }
-        id = toPath;
-      }
+      // Own / loose part: by reference. Another assembly's part: copied in.
+      const plan = planOpenVaultPart(doc, got.path, got.content, partScriptsRef.current);
+      const id = plan.id;
       // Reuse add-existing path when already allowed / remapped.
       const live = codeEditorRef.current?.getContent?.();
       const prev = doc.activeId;
@@ -2367,8 +2346,10 @@ const App = () => {
         savePartScript(prev, live);
         stashPartHistory(prev, live);
       }
-      scripts[id] = got.content;
-      await savePartScript(id, got.content);
+      // Focusing a part already in the document keeps its live script.
+      const content = plan.mode === 'focus' || plan.mode === 'reuse-copy' ? (scripts[id] ?? got.content) : got.content;
+      scripts[id] = content;
+      await savePartScript(id, content);
       rememberScripts(scripts);
       const existing = doc.parts.some((part) => part.id === id);
       const parts = existing
@@ -2381,11 +2362,11 @@ const App = () => {
         }];
       refreshGenRef.current += 1;
       rememberAssembly({ ...doc, source: 'git', activeId: id, parts });
-      focusPartHistory(id, got.content);
+      focusPartHistory(id, content);
       suppressPartSaveRef.current = false;
       setCurrentFilename(id.split('/').pop() || id);
-      codeEditorRef.current?.loadContent(got.content, id, false);
-      return { status: 'opened', path: id };
+      codeEditorRef.current?.loadContent(content, id, false);
+      return { status: 'opened', path: id, mode: plan.mode };
     } catch (err) {
       return { status: 'error', error: err.message || 'Could not open part' };
     }
@@ -4196,7 +4177,6 @@ const App = () => {
       onOpenVaultAssembly={handleOpenVaultAssembly}
       onInsertVaultAssemblyParts={handleInsertVaultAssemblyParts}
       onOpenVaultPart={handleOpenVaultPart}
-      onListAddableParts={handleListAddableParts}
       onAddExistingPart={handleAddExistingPart}
       onAddToRepo={handleAddToRepo}
       canCommit={assemblyDoc.source === 'git' && !!sourceDirty}

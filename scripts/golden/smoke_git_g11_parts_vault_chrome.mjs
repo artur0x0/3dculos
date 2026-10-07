@@ -196,7 +196,7 @@ ok('Open pane live search filters client index', /data-git-open-search/.test(fee
   && /filterVaultOpenIndex/.test(feed)
   && /data-git-open-search-empty/.test(feed)
   && /No matches/.test(feed)
-  && /data-git-add-search/.test(feed)
+  && /data-git-open-search-kind/.test(feed)
   && /filterVaultPartItems/.test(feed)
   && /query: ''/.test(feed));
 ok('delete confirm + protected', /data-git-branch-delete-confirm/.test(feed)
