@@ -199,3 +199,90 @@ export async function readVaultPart(adapter, repo, path, ref = 'main') {
   const file = await adapter.readFile(repo, id, ref);
   return file ? { path: id, content: file.content } : null;
 }
+
+/**
+ * G11: browse vault for Open — assemblies and part scripts on `ref`.
+ * -> { assemblies: [{ kind:'assembly', name, label }], parts: [{ kind:'part', path, label, scope }] }
+ */
+export async function listVaultBrowseItems(adapter, repo, ref) {
+  assertGithubAdapter(adapter);
+  const tree = await adapter.listTree(repo, ref);
+  const assemblies = listAssemblies(tree).map((name) => ({
+    kind: 'assembly',
+    name,
+    label: name,
+  }));
+  const { shared, byAssembly } = listPartScripts(tree);
+  const parts = [];
+  for (const path of shared) {
+    parts.push({
+      kind: 'part',
+      path,
+      label: path.split('/').pop() || path,
+      scope: 'shared',
+    });
+  }
+  for (const [asm, paths] of Object.entries(byAssembly)) {
+    for (const path of paths) {
+      parts.push({
+        kind: 'part',
+        path,
+        label: path.split('/').pop() || path,
+        scope: asm,
+      });
+    }
+  }
+  parts.sort((a, b) => a.path.localeCompare(b.path));
+  return { assemblies, parts };
+}
+
+/**
+ * G11: plan inserting another assembly's parts into the current document.
+ * Shared paths stay; other-assembly parts remap under this assembly's parts/.
+ * -> { additions: [{ id, name, content, fromPath }] }
+ */
+export async function planInsertVaultAssemblyParts(adapter, repo, sourceAssembly, targetDoc, {
+  branch = 'main',
+} = {}) {
+  assertGithubAdapter(adapter);
+  const source = vaultSegment(sourceAssembly);
+  const target = vaultSegment(targetDoc?.name);
+  if (!source) throw new Error('Empty source assembly');
+  if (!target) throw new Error('Empty target assembly');
+  const opened = await openVaultAssembly(adapter, repo, source, { branch });
+  const existing = new Set((targetDoc.parts || []).map((p) => p.id));
+  const taken = new Set(existing);
+  const additions = [];
+  for (const part of opened.doc.parts || []) {
+    const fromPath = part.id;
+    const content = opened.scripts[fromPath] || '';
+    if (partPathAllowedFor(target, fromPath)) {
+      if (taken.has(fromPath)) continue;
+      taken.add(fromPath);
+      additions.push({
+        id: fromPath,
+        name: part.name || fromPath.split('/').pop()?.replace(/\.js$/i, '') || fromPath,
+        content,
+        fromPath,
+      });
+      continue;
+    }
+    const baseName = part.name
+      || fromPath.split('/').pop()?.replace(/\.js$/i, '')
+      || 'Part';
+    let toPath = assemblyPartPath(target, baseName);
+    let n = 2;
+    while (taken.has(toPath)) {
+      toPath = assemblyPartPath(target, `${baseName} ${n}`);
+      n += 1;
+    }
+    taken.add(toPath);
+    additions.push({
+      id: toPath,
+      name: toPath.split('/').pop()?.replace(/\.js$/i, '') || baseName,
+      content,
+      fromPath,
+    });
+  }
+  return { additions, sourceName: source, scripts: opened.scripts };
+}

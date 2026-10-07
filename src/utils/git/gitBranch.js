@@ -1,12 +1,10 @@
 /**
- * G5: branch view helpers.
+ * G5/G11: branch view helpers.
  *
- * List vault branches and open the current assembly on another branch.
- * Commit / Open / Add-existing use the working-copy branch from the
- * baseline (`baseline.branch`); switching reloads the assembly from the
- * chosen tip. Mock adapter only — no network, no tokens.
+ * List / switch / create / delete vault branches. Merge opens a GitHub
+ * compare URL in the browser (no server-side merge).
  */
-import { assertGithubAdapter } from './githubAdapterInterface.js';
+import { assertGithubAdapter, GitAdapterError } from './githubAdapterInterface.js';
 import { openVaultAssembly } from './gitWorkspace.js';
 import { vaultSegment } from './vaultLayout.js';
 
@@ -36,4 +34,63 @@ export async function switchVaultBranch(adapter, repo, assemblyName, branch) {
   const tip = await adapter.getBranch(repo, branch);
   if (!tip) throw new Error(`Branch not found: ${branch}`);
   return openVaultAssembly(adapter, repo, name, { branch, headSha: tip.sha });
+}
+
+/**
+ * Create a branch from `fromSha` (default: tip of `fromBranch` or main).
+ * -> { name, sha }
+ */
+export async function createVaultBranch(adapter, repo, branchName, {
+  fromBranch = 'main',
+  fromSha = null,
+} = {}) {
+  assertGithubAdapter(adapter);
+  const name = String(branchName || '').trim();
+  if (!name) throw new GitAdapterError('invalid', 'Branch name required');
+  if (name === 'main') throw new GitAdapterError('invalid', 'Cannot recreate main');
+  let sha = fromSha;
+  if (!sha) {
+    const tip = await adapter.getBranch(repo, fromBranch);
+    if (!tip?.sha) throw new GitAdapterError('not_found', `Branch ${fromBranch} not found`);
+    sha = tip.sha;
+  }
+  return adapter.createBranch(repo, name, sha);
+}
+
+/**
+ * Delete a branch. Refuses `main` and the current working branch.
+ */
+export async function deleteVaultBranch(adapter, repo, branchName, {
+  current = null,
+} = {}) {
+  assertGithubAdapter(adapter);
+  const name = String(branchName || '').trim();
+  if (!name) throw new GitAdapterError('invalid', 'Branch name required');
+  if (name === 'main') throw new GitAdapterError('invalid', 'Cannot delete main');
+  if (current && name === current) {
+    throw new GitAdapterError('invalid', 'Cannot delete the current branch');
+  }
+  await adapter.deleteBranch(repo, name);
+  return { status: 'deleted', branch: name };
+}
+
+/**
+ * GitHub compare / "Open a pull request" URL for merging `head` into `base`.
+ * Opens in the browser — SurfCAD does not merge server-side.
+ */
+export function githubCompareUrl(repo, { base = 'main', head } = {}) {
+  const owner = repo?.owner;
+  const name = repo?.name;
+  if (!owner || !name || !head) return null;
+  const baseEnc = encodeURIComponent(base);
+  const headEnc = encodeURIComponent(head);
+  return `https://github.com/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/compare/${baseEnc}...${headEnc}?expand=1`;
+}
+
+/** True when a branch may be deleted (not main, not current). */
+export function canDeleteVaultBranch(branchName, { current = null } = {}) {
+  const name = String(branchName || '');
+  if (!name || name === 'main') return false;
+  if (current && name === current) return false;
+  return true;
 }
