@@ -276,11 +276,12 @@ All of these are absolutely positioned inside the shell at
 | left-2/4 bottom-2.5 | helper insert rail (height paired to right) | `HelperInsertPalette.jsx` | Viewport |
 | left-2/4 bottom-2.5 | contour tool rail (replaces the helper rail) | `ContourModeRail.jsx` | Viewport |
 | left-2/4 bottom-2.5 | sheet-metal rail (replaces the helper rail while `sheetMetalMode`): SCS tools for the SKU, Tab first, ✕ exit | `sheetMetal/SheetMetalRail.jsx` | Viewport |
-| bottom-center | sheet-metal chip: bound SKU + step, ✕ exits | `sheetMetal/SheetMetalModeChip.jsx` | Viewport |
+| bottom-center | sheet-metal chip: bound SKU + step hint, **Check & Export** (edit), ✕ exits | `sheetMetal/SheetMetalModeChip.jsx` | Viewport |
 | bottom sheet `z-50` | Sheet Metal picker: material + gauge (in stock), Start designing | `sheetMetal/SheetMetalPicker.jsx` | Viewport |
 | bottom sheet `z-50` | Base flange popup: X / Y, Back, Accept, ✕ | `sheetMetal/SheetMetalFlow.jsx` | Viewport |
 | bottom sheet `z-50` (short) | Bend popup: Angle, Flange length, Flip, R·K·BD, Back / Accept / Delete, ✕ | `sheetMetal/SheetMetalFlow.jsx` | Viewport |
 | bottom sheet `z-50` (short) | Tab popup (Width, Depth, Centered, Offset) / Hole popup (Ø or Thread, Csk Ø, U, V) | `sheetMetal/SheetMetalFlow.jsx` | Viewport |
+| bottom sheet `z-50` | Check & Export popup: DFM fails (red) / warnings (amber), Download DXF, Download STEP, Order on SendCutSend (all disabled on a hard fail), ✕ | `sheetMetal/SheetMetalFlow.jsx` | Viewport |
 | scene | plane quads / sheet preview / edge handles (taps route here first) | `utils/sheetMetal/sheetOverlay.js` | Viewport |
 | right-2/4 bottom-4 | view / pick / cross-section cluster | `CrossSectionPanel.jsx:175` collapsed, `:327` expanded | `:3641` |
 | inside that cluster | Front/Right/Top/**Iso** snap popup | `ViewSnapControl.jsx` | `CrossSectionPanel.jsx:181` |

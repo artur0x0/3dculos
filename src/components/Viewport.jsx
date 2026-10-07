@@ -7653,6 +7653,8 @@ const Viewport = forwardRef(({
           onCommit={(spec, meta) => onCommitSheetMetal?.(spec, { ...meta, partId: sheetMetalMode.partId }) ?? false}
           onExit={() => setSheetMetalMode(null)}
           compact={isMobile}
+          mesh={cachedMeshData}
+          partName={partLabelsRef.current?.[sheetMetalMode.partId] || ''}
         />
       )}
       {sheetMetalPicker && (

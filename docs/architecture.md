@@ -391,7 +391,7 @@ Touch-first sheet-metal mode that designs against live SendCutSend (SCS) stock. 
 - **In stock.** Dropdowns list `inStock` SKUs only. Material = distinct `name` (bendable first, flat-only labeled); gauge = that material's SKUs, thinnest first.
 - **SKU on the part.** Start designing binds `part.sheetMetal = { sku, name, thicknessIn, gauge }` on the assembly row (`setPartSheetMetal`). It rides `serializeAssembly` (local IndexedDB doc) and `.surf.json` (git; optional key, validated), so reload and Commit keep it and binding marks the assembly dirty.
 - **Mode entry.** Left rail **Sheet** → `SheetMetalPicker` (≥16px selects, 44px targets). Start designing is disabled until an in-stock SKU is picked. It writes into the editor part when that part is empty / the starter cube / already sheet metal (`sheetMetalReady`); otherwise it creates a new `Sheet N` part and binds there. Then Viewport enters `sheetMetalMode` (`{ stage, sku, partId }`); the FEAT rail swaps to `SheetMetalRail` (✕ exits without writing).
-- **Sheet model.** `src/utils/sheetMetal/sheetModel.js` is the one source of geometry: the spec (`{ sku, t, r, k, limits, plane, width, height, bends[], tabs[], holes[] }`, mm, limits copied from the SKU so DFM works offline) solves to panel frames (`o, U, V, N`, u/v extents). The same solve feeds the sandbox solid (`sheetSolid.js` → `sheetMetalSolid`), the three.js preview + pick handles (`sheetOverlay.js`) and, unrolled, the flat pattern.
+- **Sheet model.** `src/utils/sheetMetal/sheetModel.js` is the one source of geometry: the spec (`{ sku, t, r, k, limits, plane, width, height, bends[], tabs[], holes[] }`, mm, limits copied from the SKU so DFM works offline) solves to panel frames (`o, U, V, N`, u/v extents). The same solve feeds the sandbox solid (`sheetSolid.js` → `sheetMetalSolid`), the three.js preview + pick handles (`sheetOverlay.js`) and, unrolled (`solveSheet(spec, { flat: true })`), the flat pattern (`sheetFlat.js`).
 - **Script.** One block between `// --- sheet-metal begin/end ---`: a comment, `const sheetSpec = {…one JSON line…};`, `let part = sheetMetalSolid(sheetSpec);`. Every step rewrites that block (`composeSheetMetalCommit`); re-entering reads it back (`readSheetMetalSpec`). Feature strip chip: **Sheet**.
 - **Base flange (S2).** Start → stage `plane`: Top / Front / Right quads (and same-named buttons) are the only pick targets; the part's own mesh hides while the flow is open and the overlay is the draft. Tap → popup X / Y (mm, defaults 100 × 60, ≥16px sliders + numbers), **Back** = plane pick again in one tap (dims kept), **✕** = exit with no write, **Accept** = base flange centered on that plane at SKU thickness (sheet grows along +N) → stage `edit`. A part that already has a block skips to `edit` and is re-thicknessed to the newly bound SKU.
 - **Bends (S3).** In `edit` with the Bend tool, every bendable free edge (base edges, flange tips) gets a fat orange handle (≥ 5% of the base). Tap → Bend popup over a live cyan preview (`draftPreviewSpec`): **Angle** (SKU min … `max_bend_angle`, default 90°), **Flange length** (SKU `min_flange_length_after_bend` … the base's longest side, default ¼ of the side it leaves), **Flip** (up = +N / down), and a read-only R · K · BD line (BD at the current angle; equals SCS's 90° value). Back drops the draft, ✕ exits, Accept rewrites the block; tapping a bend edits it (Delete removes it and its child flanges). Taps are ignored while a popup is open. SKUs without `bending` never open a bend.
@@ -408,3 +408,25 @@ Touch-first sheet-metal mode that designs against live SendCutSend (SCS) stock. 
 | Hole | panel face | — | `holes[]` (`type: 'hole'`) |
 | Csk | panel face | `countersinking` | `holes[]` (`type: 'countersink'`, `cskDia`, `cskAngle`) |
 | Tap | panel face | `tapping` | `holes[]` (`type: 'tapped'`, `thread`) |
+
+- **DFM + export (S5).** Chip **Check & Export** (edit stage, no open draft; taps and tool switches are ignored while it is open) → popup: DFM fails (red), warnings (amber), flat size, **Download DXF**, **Download STEP**, **Order on SendCutSend** (`window.open('https://app.sendcutsend.com/', '_blank', 'noopener,noreferrer')` — SCS has no cart API, the user uploads the file there). Any hard fail disables all three. `buildSheetExport(spec, { mesh, partName })` in `sheetExport.js` is the single entry point.
+  - **DFM** (`sheetDfm.js`, mm from `spec.limits`, works offline):
+
+| Rule | Level | Check |
+| --- | --- | --- |
+| `min-hole` | fail | hole Ø < SCS `min_hole_size` |
+| `bridge` | fail | web between two holes on one panel < `min_bridge_size` (or overlap) |
+| `hole-edge` | fail | hole edge to a free panel edge < `min_hole_to_edge` (not where a tab covers the hole's span); hole outside its face |
+| `hole-bend` | fail | **tapped** hole centre → bend line < SCS `min_hole_cl_to_bend_line` (tapping / hardware specs) |
+| `hole-bend` | warn | any hole edge within `2.5·t + r` of a bend (may distort) |
+| `flange` | fail | flange length < `min_flange_length_after_bend` |
+| `angle` | fail | angle outside SCS min … `max_bend_angle` |
+| `bend-length` | fail | bend line > `max_bend_length` |
+| `no-bending` | fail | bends on a SKU without `bending` |
+| `flat-size` | fail | flat bbox outside `min/max_flat_part_size` (bent) or `min/max_part_size` (flat) |
+| `tab-small` | warn | tab width or depth < max(t, min bridge) |
+| `mesh-stale` | warn | built mesh volume ≠ spec volume by > 5% (run pending / script edited); STEP uses the mesh |
+
+  - **Flat + DXF** (`sheetFlat.js`). All flat frames are ± the base axes, so panels, bend strips (`E0 … E0 + BA·d`) and tabs are axis-aligned rectangles in base (u, v); relief notches subtract. A grid sweep returns the union's boundary loops (CCW outer); holes are circles. DXF is R12 ASCII, mm (`$INSUNITS 4`), layer `CUT`, `LINE` + `CIRCLE`, moved to the origin. **Bend lines are not written** (SCS cuts every line in a DXF); they are returned as `bendLines` for later use.
+  - **STEP** (`stepExport.js`). From the part's last built mesh (`cachedMeshData`, part-local): weld vertices, merge edge-connected coplanar triangles into planar `ADVANCED_FACE`s (outer + inner `EDGE_LOOP`s), one `LINE` `EDGE_CURVE` per boundary segment, one `MANIFOLD_SOLID_BREP`, AP214, mm. Bend zones stay faceted (no analytic cylinders yet). Files: `<part>-<sku>-flat.dxf`, `<part>-<sku>.step`.
+- **Goldens.** `golden:scs-s1` catalog/cache/binding · `golden:scs-s2` base flange + real sandbox solid · `golden:scs-s3` bends, reliefs, BD · `golden:scs-s4` gated sidebar, tab / hole / csk / tap · `golden:scs-s5` DFM rules, flat area and DXF, STEP topology (Euler–Poincaré, each edge used twice) from the sandbox mesh, export gating. Fixtures: `scripts/golden/fixtures/scs/`.
