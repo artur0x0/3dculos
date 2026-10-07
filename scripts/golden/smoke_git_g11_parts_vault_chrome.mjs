@@ -141,7 +141,7 @@ console.log('\ngit G11 — Open browse + insert parts');
   const planned = await planInsertVaultAssemblyParts(gh, repo, 'Cover', gearbox, { branch: 'main' });
   // Shared bolt already in gearbox → skipped; Lid remapped under Gearbox
   const lidAdd = planned.additions.find((a) => a.fromPath === COVER);
-  ok('lid remapped into Gearbox', !!lidAdd && lidAdd.id.startsWith(`${ASSEMBLIES_DIR}/Gearbox/parts/`), JSON.stringify(planned.additions));
+  ok('lid remapped into Gearbox', !!lidAdd && lidAdd.id.startsWith(`${ASSEMBLIES_DIR}/Gearbox/`) && !lidAdd.id.includes('/parts/'), JSON.stringify(planned.additions));
   ok('shared bolt not re-added', !planned.additions.some((a) => a.id === BOLT));
   eq('insert count', planned.additions.length, 1);
 }

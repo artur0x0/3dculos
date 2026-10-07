@@ -127,13 +127,14 @@ ok('liveScript overrides stored', dirtyPartIds(opened.doc, opened.scripts, base,
   liveScript: 'CHANGED',
 }).has(assemblyPartPath('Gearbox', 'Bracket')));
 
-console.log('\ngit G2 — new part path');
+console.log('\ngit G2 — new part name');
 eq('bare name → assembly part', resolveNewPartPath('Gearbox', 'Bracket'),
   assemblyPartPath('Gearbox', 'Bracket'));
 eq('full assembly path', resolveNewPartPath('Gearbox', assemblyPartPath('Gearbox', 'X')),
   assemblyPartPath('Gearbox', 'X'));
 eq('shared path allowed', resolveNewPartPath('Gearbox', 'parts/Pin.js'), sharedPartPath('Pin'));
-eq('other assembly refused', resolveNewPartPath('Gearbox', 'assemblies/Cover/parts/Lid.js'), null);
+eq('other assembly refused (legacy)', resolveNewPartPath('Gearbox', 'assemblies/Cover/parts/Lid.js'), null);
+eq('other assembly refused (flat)', resolveNewPartPath('Gearbox', 'assemblies/Cover/Lid.js'), null);
 eq('suggest skips existing', suggestNewPartPath('Gearbox', opened.doc.parts),
   assemblyPartPath('Gearbox', 'Part 1'));
 ok('index exports G2', typeof gitIndex.openVaultAssembly === 'function'
@@ -209,7 +210,8 @@ ok('dirty badge on Commit', /data-git-dirty-badge/.test(feed) && /data-git-dirty
 ok('row dirty badge', /data-part-dirty/.test(feed) && /row\.dirty/.test(feed));
 ok('git Open lists vault', /data-git-open-list/.test(feed) && /onListVaultAssemblies/.test(feed)
   && /onOpenVaultAssembly/.test(feed));
-ok('new part asks for path', /data-git-new-part-path/.test(feed) && /New part path/.test(feed));
+ok('new part asks for name only', /data-git-new-part-name/.test(feed) && /title="New part"/.test(feed)
+  && !/New part path/.test(feed) && !/data-git-new-part-path/.test(feed));
 ok('add existing via + dropdown', /data-part-add-menu/.test(feed)
   && /data-part-add-dropdown/.test(feed)
   && /data-part-add-action="new"/.test(feed)
@@ -241,7 +243,7 @@ ok('App wires vault open + dirty; source follows GitHub token (G10)',
   && /createMockGithubAdapter/.test(app)
   && /findOrCreateVault/.test(app));
 ok('App new part resolveNewPartPath in git',
-  /resolveNewPartPath\(doc\.name, gitPath\)/.test(app));
+  /resolveNewPartPath\(doc\.name,/.test(app));
 ok('Add to Repo wires commit', /handleAddToRepo/.test(app) && /onAddToRepo/.test(feed)
   && /commitPartToRepo/.test(app) && /Add to Repo/.test(feed));
 const srcFiles = ['gitWorkspace', 'githubAdapterInterface', 'mockGithubAdapter', 'vaultLayout', 'surfJson', 'vault']

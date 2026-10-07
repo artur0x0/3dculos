@@ -50,7 +50,7 @@ export function vaultSeedFiles(name) {
     { path: VAULT_MARKER_PATH, content: vaultMarkerContent() },
     {
       path: VAULT_README_PATH,
-      content: `# ${name}\n\nSurfCAD vault.\n\n- \`${ASSEMBLIES_DIR}/<name>/<name>.surf.json\` assembly, with its \`parts/<part>.js\`\n- \`${SHARED_PARTS_DIR}/<part>.js\` shared parts, referenced by path\n`,
+      content: `# ${name}\n\nSurfCAD vault.\n\n- \`${ASSEMBLIES_DIR}/<name>/.surf.json\` assembly metadata; part scripts live in the same folder\n- \`${SHARED_PARTS_DIR}/<part>.js\` shared parts, referenced by path\n`,
     },
     { path: `${ASSEMBLIES_DIR}/.gitkeep`, content: '' },
     { path: `${SHARED_PARTS_DIR}/.gitkeep`, content: '' },

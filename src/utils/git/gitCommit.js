@@ -24,6 +24,7 @@ import {
   ASSEMBLIES_DIR,
   assemblyFilePath,
   assemblyPartPath,
+  legacyCleanupPaths,
   parseVaultPath,
   vaultSegment,
 } from './vaultLayout.js';
@@ -192,7 +193,7 @@ export function firstCommitBaseline({ branch = 'main', headSha = null } = {}) {
 /**
  * Instantly commit one part (plus the assembly `.surf.json`) to the working
  * branch. Used by Parts "Add to Repo" for local content not yet in the vault.
- * Remaps `local:` / foreign ids to `assemblies/<asm>/parts/<name>.js`.
+ * Remaps `local:` / foreign ids to `assemblies/<asm>/<name>.js`.
  * -> { status: 'committed'|'clean'|'error', ... } (branched on non_fast_forward)
  */
 export async function commitPartToRepo(adapter, repo, {
@@ -419,7 +420,7 @@ export async function commitWorkspace(adapter, repo, {
   });
   if (stray.length) {
     const err = new Error(`No repo path for ${stray.map((p) => p.name || p.id).join(', ')}. `
-      + 'Remove it, or add parts under this assembly\'s parts/ or shared parts/.');
+      + 'Remove it, or add parts under this assembly\'s folder or shared parts/.');
     err.code = NO_REPO_PATH;
     err.stray = stray.map((p) => ({ id: p.id, name: p.name || p.id }));
     throw err;
@@ -438,6 +439,29 @@ export async function commitWorkspace(adapter, repo, {
       if (!p || scheduled.has(p)) continue;
       built.files.push(fileDelete(p));
       scheduled.add(p);
+    }
+  }
+  // One-shot rewrite: drop legacy named .surf.json + nested parts/ when the
+  // working copy already uses the flat nameless layout.
+  if (baseline.legacyCleanup) {
+    const ref = baseline.branch || 'main';
+    const asmName = vaultSegment(workDoc.name) || baseline.assemblyName;
+    const tree = await adapter.listTree(repo, ref);
+    const scheduled = new Set(built.files.map((f) => f.path));
+    const toDelete = legacyCleanupPaths(asmName, tree);
+    if (baseline.legacyAssemblyPath) toDelete.push(baseline.legacyAssemblyPath);
+    for (const path of [...new Set(toDelete)].sort()) {
+      if (!path || scheduled.has(path)) continue;
+      // Never delete the current assembly metadata or current part paths.
+      if (path === built.assemblyPath) continue;
+      if ((workDoc.parts || []).some((part) => part.id === path)) continue;
+      built.files.push(fileDelete(path));
+      scheduled.add(path);
+    }
+    // Ensure the current .surf.json is written even when only cleanup remains.
+    if (built.assemblyPath && !scheduled.has(built.assemblyPath)) {
+      built.files.push(fileWrite(built.assemblyPath, stringifySurfJson(workDoc)));
+      scheduled.add(built.assemblyPath);
     }
   }
   if (!built.files.length) return { status: 'clean' };

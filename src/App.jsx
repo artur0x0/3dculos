@@ -2773,7 +2773,7 @@ const App = () => {
     codeEditorRef.current?.loadContent(starter, DEFAULT_PART_NAME, false);
   };
 
-  const handleAddPart = async (gitPath) => {
+  const handleAddPart = async (partName) => {
     const doc = assemblyRef.current;
     if (!doc) return;
     const live = codeEditorRef.current?.getContent?.();
@@ -2786,20 +2786,23 @@ const App = () => {
     }
     let id;
     let name;
+    const rawName = String(partName ?? '').trim();
     if (doc.source === 'git') {
-      id = resolveNewPartPath(doc.name, gitPath);
+      // Name-only UX: resolve to assemblies/<asm>/<Name>.js (or allow a full
+      // allowed path for tests / paste). Never ask the user for a path.
+      id = resolveNewPartPath(doc.name, rawName || suggestNewPartPath(doc.name, doc.parts));
       if (!id) {
-        setUploadError('Enter a path under this assembly parts/ or shared parts/');
+        setUploadError('Enter a part name');
         return;
       }
       if (doc.parts.some((part) => part.id === id)) {
-        setUploadError(`Part already in assembly: ${id}`);
+        setUploadError(`Part already in assembly: ${id.split('/').pop()?.replace(/\.js$/i, '') || id}`);
         return;
       }
       name = id.split('/').pop()?.replace(/\.js$/i, '') || id;
     } else {
       id = newLocalPartId();
-      name = `Part ${doc.parts.length + 1}`;
+      name = rawName || `Part ${doc.parts.length + 1}`;
     }
     const order = doc.parts.length;
     const starter = newPartStarterScript();

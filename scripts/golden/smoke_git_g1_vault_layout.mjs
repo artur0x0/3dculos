@@ -103,41 +103,47 @@ await throwsCode('unknown repo', () => mock.listBranches({ owner: 'artur', name:
 eq('branches sorted', (await mock.listBranches(repo)).map((b) => b.name), ['feature', 'main']);
 
 console.log('\ngit G1 — path helpers');
-eq('assembly file', assemblyFilePath('Gearbox'), 'assemblies/Gearbox/Gearbox.surf.json');
+eq('assembly file', assemblyFilePath('Gearbox'), 'assemblies/Gearbox/.surf.json');
 eq('assembly dir', assemblyDir('Gearbox'), 'assemblies/Gearbox');
-eq('assembly part', assemblyPartPath('Gearbox', 'Bracket'), 'assemblies/Gearbox/parts/Bracket.js');
-eq('assembly part .js idempotent', assemblyPartPath('Gearbox', 'Bracket.js'), 'assemblies/Gearbox/parts/Bracket.js');
+eq('assembly part', assemblyPartPath('Gearbox', 'Bracket'), 'assemblies/Gearbox/Bracket.js');
+eq('assembly part .js idempotent', assemblyPartPath('Gearbox', 'Bracket.js'), 'assemblies/Gearbox/Bracket.js');
 eq('shared part', sharedPartPath('M3 bolt'), 'parts/M3 bolt.js');
 eq('segment strips path chars', vaultSegment(' a/b\\c:d*  e.. '), 'abcd e');
 eq('segment strips dots', vaultSegment('..x..'), 'x');
 let threw = false; try { assemblyFilePath('../'); } catch { threw = true; }
 ok('empty segment throws', threw);
 eq('parse marker', parseVaultPath(VAULT_MARKER_PATH), { kind: 'marker' });
-eq('parse assembly', parseVaultPath('assemblies/Gearbox/Gearbox.surf.json'), { kind: 'assembly', assembly: 'Gearbox' });
+eq('parse assembly', parseVaultPath('assemblies/Gearbox/.surf.json'), { kind: 'assembly', assembly: 'Gearbox' });
+eq('parse legacy named assembly', parseVaultPath('assemblies/Gearbox/Gearbox.surf.json'), { kind: 'assembly', assembly: 'Gearbox', legacy: true });
 eq('parse mismatched assembly file', parseVaultPath('assemblies/Gearbox/Other.surf.json'), { kind: 'other' });
-eq('parse assembly part', parseVaultPath('./assemblies/Gearbox/parts/Bracket.js'), { kind: 'assembly-part', assembly: 'Gearbox', part: 'Bracket' });
+eq('parse assembly part', parseVaultPath('./assemblies/Gearbox/Bracket.js'), { kind: 'assembly-part', assembly: 'Gearbox', part: 'Bracket' });
+eq('parse legacy nested part', parseVaultPath('./assemblies/Gearbox/parts/Bracket.js'), { kind: 'assembly-part', assembly: 'Gearbox', part: 'Bracket', legacy: true });
 eq('parse shared part', parseVaultPath('parts/M3 bolt.js'), { kind: 'shared-part', part: 'M3 bolt' });
 eq('parse nested shared = other', parseVaultPath('parts/sub/x.js'), { kind: 'other' });
 eq('parse bad', parseVaultPath('../x.js'), null);
-ok('isAssemblyFile / isPartScript', isAssemblyFile('assemblies/A/A.surf.json') && isPartScript('parts/x.js') && !isPartScript('parts/.gitkeep'));
-ok('own + shared allowed, other assembly not', partPathAllowedFor('A', 'assemblies/A/parts/p.js') && partPathAllowedFor('A', 'parts/p.js') && !partPathAllowedFor('A', 'assemblies/B/parts/p.js'));
-const tree = ['assemblies/B/B.surf.json', 'assemblies/A/A.surf.json', 'assemblies/A/parts/p.js', 'parts/s.js', 'README.md', 'assemblies/A/notes.md'].map((path) => ({ path }));
+ok('isAssemblyFile / isPartScript', isAssemblyFile('assemblies/A/.surf.json') && isPartScript('parts/x.js') && !isPartScript('parts/.gitkeep'));
+ok('own + shared allowed, other assembly not', partPathAllowedFor('A', 'assemblies/A/p.js') && partPathAllowedFor('A', 'parts/p.js') && !partPathAllowedFor('A', 'assemblies/B/p.js'));
+ok('legacy nested still allowed for read-compat', partPathAllowedFor('A', 'assemblies/A/parts/p.js'));
+const tree = ['assemblies/B/.surf.json', 'assemblies/A/.surf.json', 'assemblies/A/p.js', 'parts/s.js', 'README.md', 'assemblies/A/notes.md'].map((path) => ({ path }));
 eq('listAssemblies', listAssemblies(tree), ['A', 'B']);
-eq('listPartScripts', listPartScripts(tree), { shared: ['parts/s.js'], byAssembly: { A: ['assemblies/A/parts/p.js'] } });
+eq('listPartScripts', listPartScripts(tree), { shared: ['parts/s.js'], byAssembly: { A: ['assemblies/A/p.js'] } });
+const legacyTree = ['assemblies/A/A.surf.json', 'assemblies/A/parts/old.js'].map((path) => ({ path }));
+eq('listAssemblies legacy', listAssemblies(legacyTree), ['A']);
+eq('listPartScripts legacy', listPartScripts(legacyTree), { shared: [], byAssembly: { A: ['assemblies/A/parts/old.js'] } });
 
 console.log('\ngit G1 — .surf.json schema');
 const doc = {
-  source: 'git', name: 'Gearbox', activeId: 'assemblies/Gearbox/parts/Bracket.js',
+  source: 'git', name: 'Gearbox', activeId: 'assemblies/Gearbox/Bracket.js',
   parts: [
     { id: 'parts/M3 bolt.js', name: 'M3 bolt', visible: false, order: 1, position: [10, 0, 0], script: 'IGNORED' },
-    { id: 'assemblies/Gearbox/parts/Bracket.js', name: 'Bracket', visible: true, order: 0 },
+    { id: 'assemblies/Gearbox/Bracket.js', name: 'Bracket', visible: true, order: 0 },
   ],
 };
 const surf = toSurfJson(doc);
 eq('toSurfJson shape', surf, {
-  format: SURF_JSON_FORMAT, version: 1, name: 'Gearbox', activeId: 'assemblies/Gearbox/parts/Bracket.js',
+  format: SURF_JSON_FORMAT, version: 1, name: 'Gearbox', activeId: 'assemblies/Gearbox/Bracket.js',
   parts: [
-    { path: 'assemblies/Gearbox/parts/Bracket.js', name: 'Bracket', visible: true, order: 0 },
+    { path: 'assemblies/Gearbox/Bracket.js', name: 'Bracket', visible: true, order: 0 },
     { path: 'parts/M3 bolt.js', name: 'M3 bolt', visible: false, order: 1, position: [10, 0, 0] },
   ],
 });
@@ -145,14 +151,14 @@ ok('no script source in file', !stringifySurfJson(doc).includes('IGNORED'));
 ok('stringify stable + newline', stringifySurfJson(doc) === stringifySurfJson(doc) && stringifySurfJson(doc).endsWith('}\n'));
 eq('validate ok', validateSurfJson(surf), { ok: true, errors: [] });
 const back = parseSurfJson(stringifySurfJson(doc));
-eq('parse → git doc', [back.source, back.name, back.activeId, back.parts.map((p) => p.id)], ['git', 'Gearbox', 'assemblies/Gearbox/parts/Bracket.js', ['assemblies/Gearbox/parts/Bracket.js', 'parts/M3 bolt.js']]);
+eq('parse → git doc', [back.source, back.name, back.activeId, back.parts.map((p) => p.id)], ['git', 'Gearbox', 'assemblies/Gearbox/Bracket.js', ['assemblies/Gearbox/Bracket.js', 'parts/M3 bolt.js']]);
 eq('round-trip', toSurfJson(back), surf);
 const bad = (patch) => validateSurfJson({ ...surf, ...patch });
 ok('reject wrong format', !bad({ format: 'x' }).ok);
 ok('reject wrong version', !bad({ version: 2 }).ok);
 ok('reject unknown key', !bad({ script: 'x' }).ok);
 ok('reject unsafe name', !bad({ name: 'a/b' }).ok);
-ok('reject other assembly part', !bad({ parts: [{ path: 'assemblies/Other/parts/x.js', name: 'x', visible: true, order: 0 }], activeId: null }).ok);
+ok('reject other assembly part', !bad({ parts: [{ path: 'assemblies/Other/x.js', name: 'x', visible: true, order: 0 }], activeId: null }).ok);
 ok('reject non-js', !bad({ parts: [{ path: 'parts/x.txt', name: 'x', visible: true, order: 0 }], activeId: null }).ok);
 ok('reject duplicate path', !bad({ parts: [surf.parts[0], { ...surf.parts[0], order: 1 }] }).ok);
 ok('reject bad position', !bad({ parts: [{ ...surf.parts[0], position: [1, 'x'] }] }).ok);
