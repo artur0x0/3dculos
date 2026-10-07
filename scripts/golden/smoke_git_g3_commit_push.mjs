@@ -208,6 +208,11 @@ ok('Commit button git-only, gated', /data-git-commit=""/.test(feed) && /disabled
 ok('commit message dialog', /data-git-commit-message/.test(feed) && /data-git-commit-confirm/.test(feed));
 ok('force merge ask', /data-git-force-merge-ask/.test(feed) && /data-git-force-merge=""/.test(feed)
   && /data-git-keep-branch/.test(feed) && /data-git-force-merge-warning/.test(feed));
+ok('G13 conflict popup options', /data-git-conflict-popup/.test(feed)
+  && /data-git-conflict-stay/.test(feed) && /Stay on branch/.test(feed)
+  && /data-git-conflict-open-github/.test(feed) && /Open on GitHub/.test(feed)
+  && /data-git-conflict-overwrite/.test(feed) && /Overwrite main/.test(feed)
+  && !/Keep on branch/.test(feed) && !/>Force merge</.test(feed));
 ok('App wires commit + force merge', /handleGitCommit/.test(app) && /handleForceMerge/.test(app)
   && /commitWorkspace\(gitAdapterRef\.current/.test(app) && /forceMergeCommit\(gitAdapterRef\.current/.test(app)
   && /onGitCommit=\{handleGitCommit\}/.test(app) && /canCommit=/.test(app));
