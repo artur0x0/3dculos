@@ -302,7 +302,6 @@ export default function PartFeed({
   assemblyName = '',
   onRenameAssembly = null,
   onRenamePart = null,
-  onToggleSource = null,
   sourceDirty = false,
   onListVaultAssemblies = null,
   onListVaultBrowse = null,
@@ -329,7 +328,6 @@ export default function PartFeed({
   onDeleteBranch = null,
   onMergeBranch = null,
   // G6 Local → Git
-  onPlanMoveToGit = null,
   onMoveToGit = null,
   defaultVaultName = 'surfcad',
   sanitizeVaultName = null,
@@ -562,48 +560,44 @@ export default function PartFeed({
 
   const closeBranches = () => setBranchFlow(null);
 
-  // G6: Move to Git dialog — { stage: 'form'|'busy'|'done'|'error', vaultName, sharedIds, result, error }
+  // G13: slim vault create — { stage: 'form'|'busy'|'done'|'error', vaultName, result, error }
   const [moveFlow, setMoveFlow] = useState(null);
   const closeMove = () => setMoveFlow(null);
-  // G6 dialog opener retained (G10 removed the Local|Git strip trigger; G11 may rewire).
   const startMoveToGit = () => {
     setMoveFlow({
-      stage: 'form', vaultName: defaultVaultName || 'surfcad', sharedIds: [], result: null, error: '',
+      stage: 'form', vaultName: defaultVaultName || 'surfcad', result: null, error: '',
     });
   };
   const moveVaultClean = moveFlow
     ? (sanitizeVaultName ? sanitizeVaultName(moveFlow.vaultName) : String(moveFlow.vaultName || '').trim())
     : '';
-  const movePlan = moveFlow && moveFlow.stage === 'form' && onPlanMoveToGit
-    ? onPlanMoveToGit({ sharedIds: moveFlow.sharedIds })
-    : null;
-  const toggleMoveShared = (id) => {
-    setMoveFlow((prev) => {
-      if (!prev) return prev;
-      const has = prev.sharedIds.includes(id);
-      return { ...prev, sharedIds: has ? prev.sharedIds.filter((x) => x !== id) : [...prev.sharedIds, id] };
-    });
-  };
   const runMoveToGit = async () => {
     if (!moveFlow || !moveVaultClean) return;
-    const { sharedIds } = moveFlow;
     setMoveFlow((prev) => ({ ...prev, stage: 'busy', error: '' }));
-    const result = (await onMoveToGit?.({ vaultName: moveVaultClean, sharedIds }))
-      || { status: 'error', error: 'Move unavailable' };
+    // G13: no Shared checkboxes — seed every part under this assembly (sharedIds: []).
+    const result = (await onMoveToGit?.({ vaultName: moveVaultClean, sharedIds: [] }))
+      || { status: 'error', error: 'Create unavailable' };
     if (result.status === 'moved') {
       setMoveFlow((prev) => ({ ...(prev || {}), stage: 'done', result, error: '' }));
       return;
     }
-    let error = result.error || 'Move to Git failed';
-    if (result.status === 'invalid-name') error = 'Enter a repo name (letters, digits, . _ -).';
+    let error = result.error || 'Could not create vault';
+    if (result.status === 'invalid-name') error = 'Enter a vault name (letters, digits, . _ -).';
     else if (result.status === 'not-a-vault') {
       error = `${result.repo?.owner || 'You'}/${result.vaultName} already exists and is not a SurfCAD vault. Pick another name.`;
     } else if (result.status === 'conflict') {
       error = result.assemblyExists
         ? 'This assembly already exists in the vault. Rename the assembly, or pick another vault name.'
         : `These vault files already exist with different content: ${result.paths.join(', ')}`;
-    } else if (result.status === 'empty') error = 'Add a part before moving to Git.';
+    } else if (result.status === 'empty') error = 'Add a part before creating a vault.';
     setMoveFlow((prev) => ({ ...(prev || {}), stage: 'form', result, error }));
+  };
+
+  /** G13 conflict popup: open the side branch compare URL on GitHub. */
+  const openConflictOnGithub = () => {
+    const head = commitFlow?.result?.branch;
+    if (!head) return;
+    onMergeBranch?.({ head, base: 'main' });
   };
 
   const closeBranchMenu = () => setBranchMenuOpen(false);
@@ -932,8 +926,8 @@ export default function PartFeed({
               type="button"
               className={STRIP_BTN}
               data-git-add-existing=""
-              title="Add existing part from vault"
-              aria-label="Add existing part from vault"
+              title="Add from vault assembly"
+              aria-label="Add from vault assembly"
               onClick={startAddExisting}
             >
               <span className="px-0.5 text-[10px] font-medium leading-none">Add</span>
@@ -1063,7 +1057,7 @@ export default function PartFeed({
             aria-hidden="true"
             onClick={startMoveToGit}
           >
-            Move to Git
+            Create vault
           </button>
           {/* G10: session identity — display only (not a Local|Git mode toggle). */}
           <div
@@ -1501,7 +1495,7 @@ export default function PartFeed({
       )}
       {commitFlow && typeof document !== 'undefined' && (
         <VaultPickerDialog
-          title={commitFlow.stage === 'ask-force' ? 'Main has moved' : 'Save to vault'}
+          title={commitFlow.stage === 'ask-force' ? 'Conflict with main' : 'Save to vault'}
           labelledBy="git-commit-title"
           dataAttr="commit"
           onClose={commitFlow.stage === 'busy' ? undefined : closeCommit}
@@ -1524,16 +1518,31 @@ export default function PartFeed({
               )}
               {commitFlow.stage === 'ask-force' && (
                 <>
-                  <button type="button" className="rounded-md px-3 py-1.5 text-xs text-gray-200 hover:bg-white/10" onClick={closeCommit} data-git-keep-branch="">
-                    Keep on branch
+                  <button
+                    type="button"
+                    className="rounded-md px-3 py-1.5 text-xs text-gray-200 hover:bg-white/10"
+                    onClick={closeCommit}
+                    data-git-keep-branch=""
+                    data-git-conflict-stay=""
+                  >
+                    Stay on branch
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-md px-3 py-1.5 text-xs text-gray-100 hover:bg-white/10 border border-gray-600"
+                    data-git-conflict-open-github=""
+                    onClick={openConflictOnGithub}
+                  >
+                    Open on GitHub
                   </button>
                   <button
                     type="button"
                     data-git-force-merge=""
+                    data-git-conflict-overwrite=""
                     className="rounded-md bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-500"
                     onClick={runForceMerge}
                   >
-                    Force merge
+                    Overwrite main
                   </button>
                 </>
               )}
@@ -1568,14 +1577,18 @@ export default function PartFeed({
           )}
           {commitFlow.stage === 'busy' && <p className="text-xs text-gray-400" data-git-dialog-loading="">Committing…</p>}
           {commitFlow.stage === 'ask-force' && (
-            <div data-git-force-merge-ask="" data-git-branch={commitFlow.result?.branch || ''}>
+            <div
+              data-git-force-merge-ask=""
+              data-git-conflict-popup=""
+              data-git-branch={commitFlow.result?.branch || ''}
+            >
               <p className="text-xs text-gray-300">
                 {'Your changes were committed to '}
                 <span className="font-mono text-gray-100">{commitFlow.result?.branch}</span>
                 {` (from base ${String(commitFlow.result?.baseSha || '').slice(0, 7)}).`}
               </p>
-              <p className="mt-2 text-xs text-amber-300" data-git-force-merge-warning="">
-                {commitFlow.result?.warning || 'Force merge overwrites main; main\'s diff in these files will be lost.'}
+              <p className="mt-2 text-xs text-amber-300" data-git-force-merge-warning="" data-git-conflict-warning="">
+                {commitFlow.result?.warning || 'Overwrite main replaces tip-side edits in these files; other remote files stay.'}
               </p>
             </div>
           )}
@@ -1848,12 +1861,12 @@ export default function PartFeed({
 
       {moveFlow && typeof document !== 'undefined' && (
         <VaultPickerDialog
-          title={moveFlow.stage === 'done' ? 'Moved to Git' : 'Move to Git'}
+          title={moveFlow.stage === 'done' ? 'Vault ready' : 'Create vault'}
           labelledBy="git-move-title"
           dataAttr="move-to-git"
           onClose={moveFlow.stage === 'busy' ? undefined : closeMove}
           footer={(
-            <div className="mt-4 flex flex-wrap justify-end gap-2" data-git-move-stage={moveFlow.stage}>
+            <div className="mt-4 flex flex-wrap justify-end gap-2" data-git-move-stage={moveFlow.stage} data-git-vault-create-stage={moveFlow.stage}>
               {moveFlow.stage === 'form' && (
                 <>
                   <button type="button" className="rounded-md px-3 py-1.5 text-xs text-gray-200 hover:bg-white/10" onClick={closeMove} data-git-dialog-cancel="">
@@ -1861,34 +1874,13 @@ export default function PartFeed({
                   </button>
                   <button
                     type="button"
-                    className="rounded-md px-3 py-1.5 text-xs text-gray-200 hover:bg-white/10"
-                    data-git-move-switch-only=""
-                    title="Switch to Git mode without writing these parts to the vault"
-                    onClick={async () => {
-                      // Keep the dialog open with a busy state while find-or-create
-                      // runs — closing first left the phone on Local with no feedback
-                      // when the real GitHub adapter hung.
-                      setMoveFlow((prev) => (prev ? { ...prev, stage: 'busy', error: '' } : prev));
-                      const ok = await onToggleSource?.();
-                      if (ok === false) {
-                        setMoveFlow((prev) => (prev
-                          ? { ...prev, stage: 'form', error: 'Could not open the vault. Connect GitHub or try again.' }
-                          : prev));
-                        return;
-                      }
-                      closeMove();
-                    }}
-                  >
-                    Switch only
-                  </button>
-                  <button
-                    type="button"
                     className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-40"
                     data-git-move-confirm=""
-                    disabled={!moveVaultClean || !!movePlan?.error}
+                    data-git-vault-save=""
+                    disabled={!moveVaultClean}
                     onClick={runMoveToGit}
                   >
-                    Move to Git
+                    Save
                   </button>
                 </>
               )}
@@ -1901,17 +1893,14 @@ export default function PartFeed({
           )}
         >
           {moveFlow.stage === 'form' && (
-            <div className="space-y-3">
-              <p className="text-xs text-gray-300">
-                Writes this assembly and its parts into your vault as one commit, then switches to Git mode.
-                IndexedDB keeps autosaving.
-              </p>
+            <div className="space-y-3" data-git-vault-create="">
               <label className="block text-[11px] text-gray-400" htmlFor="git-move-vault-name">
-                Vault repo name
+                Vault
               </label>
               <input
                 id="git-move-vault-name"
                 data-git-move-vault-name=""
+                data-git-vault-name=""
                 className="w-full rounded border border-gray-600 bg-gray-900 px-2 py-1 font-mono text-xs text-gray-100"
                 value={moveFlow.vaultName}
                 autoFocus
@@ -1927,36 +1916,6 @@ export default function PartFeed({
                   }
                 }}
               />
-              <p className="text-[10px] text-gray-500" data-git-move-vault-preview="">
-                {moveVaultClean ? `Private repo “${moveVaultClean}” (created if missing)` : 'Enter a repo name'}
-              </p>
-              {movePlan && !movePlan.error && (
-                <div>
-                  <p className="font-mono text-[10px] text-gray-400" data-git-move-assembly-path="">{movePlan.assemblyPath}</p>
-                  <ul className="mt-1 max-h-40 space-y-1 overflow-y-auto" data-git-move-plan="">
-                    {movePlan.idMap.map((m) => (
-                      <li key={m.from} className="flex items-center gap-2 text-[11px]" data-git-move-row={m.to}>
-                        <span className="min-w-0 flex-1 truncate font-mono text-gray-200" title={m.to}>{m.to}</span>
-                        <label className="flex shrink-0 items-center gap-1 text-[10px] text-gray-400">
-                          <input
-                            type="checkbox"
-                            data-git-move-shared={m.from}
-                            checked={m.shared}
-                            onChange={() => toggleMoveShared(m.from)}
-                          />
-                          Shared
-                        </label>
-                      </li>
-                    ))}
-                  </ul>
-                  {movePlan.missing?.length ? (
-                    <p className="mt-1 text-[10px] text-amber-300" data-git-move-missing="">
-                      {`No script yet, not written: ${movePlan.missing.join(', ')}`}
-                    </p>
-                  ) : null}
-                </div>
-              )}
-              {movePlan?.error && <p className="text-xs text-amber-300" data-git-move-plan-error="">{movePlan.error}</p>}
               {moveFlow.error && <p className="text-xs text-amber-300" data-git-move-error="">{moveFlow.error}</p>}
             </div>
           )}
@@ -1965,7 +1924,7 @@ export default function PartFeed({
           )}
           {moveFlow.stage === 'done' && (
             <p className="text-xs text-gray-300" data-git-move-done={moveFlow.result?.vault?.repo?.name || ''}>
-              {`${moveFlow.result?.files?.length || 0} files committed to ${moveFlow.result?.vault?.repo?.name || 'the vault'}/${moveFlow.result?.vault?.defaultBranch || 'main'}. You are in Git mode.`}
+              {`${moveFlow.result?.files?.length || 0} files saved to vault ${moveFlow.result?.vault?.repo?.name || ''}/${moveFlow.result?.vault?.defaultBranch || 'main'}.`}
             </p>
           )}
         </VaultPickerDialog>
