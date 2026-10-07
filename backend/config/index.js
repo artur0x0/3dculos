@@ -80,6 +80,12 @@ const config = {
     emailSender: process.env.AZURE_EMAIL_SENDER,
   },
   
+  // GitHub App (user-to-server OAuth — no private key / App ID needed)
+  githubApp: {
+    clientId: process.env.GITHUB_APP_CLIENT_ID || '',
+    clientSecret: process.env.GITHUB_APP_CLIENT_SECRET || '',
+  },
+
   // Admin
   adminEmail: process.env.ADMIN_EMAIL,
 

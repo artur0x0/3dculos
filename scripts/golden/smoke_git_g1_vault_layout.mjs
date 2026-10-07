@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
  * G1 git vault + layout: adapter interface contract, mock round-trip,
- * path helpers, .surf.json schema, find-or-create vault, Connect GitHub stub.
- * Mock adapter only — no network, no tokens.
+ * path helpers, .surf.json schema, find-or-create vault, Connect GitHub control.
+ * Core G1 modules: mock adapter only — no network, no tokens.
  */
 import { readFileSync } from 'node:fs';
 import {
@@ -190,14 +190,15 @@ eq('vault lists assembly', listAssemblies(vaultTree), ['Gearbox']);
 const loaded = parseSurfJson((await gh.readFile(v1.repo, assemblyFilePath('Gearbox'))).content);
 eq('loaded part script by path', (await gh.readFile(v1.repo, loaded.parts[0].id)).content, 'return Manifold.cube([1,1,1]);');
 
-console.log('\ngit G1 — Connect GitHub placeholder (wiring)');
+console.log('\ngit G1 — Connect GitHub wiring (G7 enables when Client ID set)');
 const feed = readFileSync(new URL('../../src/components/PartFeed.jsx', import.meta.url), 'utf8');
 const at = feed.indexOf('data-git-connect');
-ok('PartFeed has Connect GitHub stub', at > 0 && feed.includes('Connect GitHub'));
-ok('stub only in git mode + disabled', /source === 'git' && \(\s*<button\s+type="button"\s+disabled\s+data-git-connect/.test(feed));
+ok('PartFeed has Connect GitHub', at > 0 && feed.includes('Connect GitHub'));
+ok('Connect is git-mode only', /source === 'git' && \([\s\S]*?data-git-connect/.test(feed));
+ok('Connect gated on client id / token (G7)', /githubConnectReady/.test(feed) && /githubConnected/.test(feed));
 const srcFiles = ['githubAdapter', 'mockGithubAdapter', 'vaultLayout', 'surfJson', 'vault']
   .map((f) => readFileSync(new URL(`../../src/utils/git/${f}.js`, import.meta.url), 'utf8')).join('\n');
-ok('no network or token use in G1', !/\bfetch\(|api\.github\.com|XMLHttpRequest|localStorage|Authorization/.test(srcFiles));
+ok('no network or token use in G1 core modules', !/\bfetch\(|api\.github\.com|XMLHttpRequest|localStorage|Authorization/.test(srcFiles));
 
 console.log(failed ? `\n❌ FAIL (${failed} failed, ${passed} passed)` : `\n✅ PASS (${passed})`);
 process.exit(failed ? 1 : 0);

@@ -249,8 +249,9 @@ ok('index exports G4', typeof gitIndex.checkRemoteBehind === 'function'
   && typeof gitIndex.reloadFromRemote === 'function'
   && typeof gitIndex.checkInMineToBranch === 'function'
   && typeof gitIndex.remainingBehindMarkers === 'function');
-ok('Connect stub still git-only disabled',
-  /source === 'git' && \(\s*<button\s+type="button"\s+disabled\s+data-git-connect/.test(feed));
+ok('Connect still git-only (G7 gates on client id)',
+  /data-git-connect=""/.test(feed) && /source === 'git'/.test(feed)
+  && /githubConnectReady/.test(feed));
 const src = readFileSync(new URL('../../src/utils/git/gitPull.js', import.meta.url), 'utf8');
 ok('no network or token use in G4', !/\bfetch\(|api\.github\.com|XMLHttpRequest|localStorage|Authorization/.test(src));
 

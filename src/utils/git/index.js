@@ -1,5 +1,7 @@
 export * from './githubAdapter.js';
 export * from './mockGithubAdapter.js';
+export * from './realGithubAdapter.js';
+export * from './githubAuth.js';
 export * from './vaultLayout.js';
 export * from './surfJson.js';
 export * from './vault.js';

@@ -197,8 +197,9 @@ ok('App wires plan + move', /onPlanMoveToGit=\{handlePlanMoveToGit\}/.test(app)
   && /rememberGitBaseline\(result\.baseline\)/.test(app) && /applyCommittedWorkspace\(\{ doc: result\.doc/.test(app));
 ok('default vault name from vault / surfcad', /defaultVaultName=\{gitDefaultVaultName\(\)\}/.test(app)
   && /DEFAULT_VAULT_NAME/.test(app));
-ok('Connect stub still git-only disabled',
-  /source === 'git' && \(\s*<button\s+type="button"\s+disabled\s+data-git-connect/.test(feed));
+ok('Connect still git-only (G7 gates on client id)',
+  /data-git-connect=""/.test(feed) && /source === 'git'/.test(feed)
+  && /githubConnectReady/.test(feed));
 ok('index exports G6', typeof gitIndex.moveToGit === 'function' && typeof gitIndex.planMoveToGit === 'function');
 const src = readFileSync(new URL('../../src/utils/git/gitMoveToGit.js', import.meta.url), 'utf8');
 ok('no network or token use in G6', !/\bfetch\(|api\.github\.com|XMLHttpRequest|localStorage|Authorization/.test(src));
