@@ -208,6 +208,13 @@ ok('profile chip on Parts (playtest unify), not Local|Git toggle',
 ok('dirty badge on Commit', /data-git-dirty-badge/.test(feed) && /data-git-dirty=/.test(feed)
   && /data-git-commit=""/.test(feed));
 ok('row dirty badge', /data-part-dirty/.test(feed) && /row\.dirty/.test(feed));
+ok('row Save icon always in git (dot when dirty)', /data-part-save=/.test(feed)
+  && /data-part-dirty=\{row\.dirty/.test(feed)
+  && /onAddToRepo\(row\.id\)/.test(feed));
+ok('App no-baseline treated dirty for chrome', /firstCommitBaseline/.test(app)
+  && /dirtyBaseline/.test(app)
+  && /!gitBaseline/.test(app)
+  && /startsWith\('local:'\)/.test(app));
 ok('git Open lists vault', /data-git-open-list/.test(feed) && /onListVaultAssemblies/.test(feed)
   && /onOpenVaultAssembly/.test(feed));
 ok('new part asks for name only', /data-git-new-part-name/.test(feed) && /title="New part"/.test(feed)

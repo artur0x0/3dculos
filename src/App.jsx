@@ -1893,7 +1893,7 @@ const App = () => {
     }
     // Keep current rows; paths that are not repo-safe stay until Open replaces them.
     rememberAssembly({ ...doc, source: 'git' });
-    // No baseline until a vault Open — dirty badges stay off.
+    // No baseline until a vault Open — UI treats that as fully dirty (first commit).
     rememberGitBaseline(null);
     rememberGitBehind(null, { showToast: false, resetResolved: true });
     setGitBehindToast(null);
@@ -3850,18 +3850,31 @@ const App = () => {
     && assemblyDoc.activeId === cadHighlightId
     && typeof currentScript === 'string'
   ) ? currentScript : null;
+  // No vault Open yet → empty firstCommitBaseline so every part + assembly
+  // count as dirty (yellow dots). Helpers still treat null baseline as clean.
+  const dirtyBaseline = gitBaseline || (
+    assemblyDoc?.source === 'git'
+      ? firstCommitBaseline({
+        branch: gitVaultRef.current?.defaultBranch || 'main',
+        headSha: gitVaultRef.current?.headSha || null,
+      })
+      : null
+  );
   const gitDirtyIds = (
-    assemblyDoc?.source === 'git' && gitBaseline
-  ) ? dirtyPartIds(assemblyDoc, partScripts, gitBaseline, {
+    assemblyDoc?.source === 'git' && dirtyBaseline
+  ) ? dirtyPartIds(assemblyDoc, partScripts, dirtyBaseline, {
     liveId: assemblyDoc.activeId,
     liveScript: liveDirtyScript,
   }) : new Set();
   const sourceDirty = (
     assemblyDoc?.source === 'git'
-    && isWorkspaceDirty(assemblyDoc, partScripts, gitBaseline, {
-      liveId: assemblyDoc.activeId,
-      liveScript: liveDirtyScript,
-    })
+    && (
+      !gitBaseline
+      || isWorkspaceDirty(assemblyDoc, partScripts, gitBaseline, {
+        liveId: assemblyDoc.activeId,
+        liveScript: liveDirtyScript,
+      })
+    )
   );
   const behindMarkers = (
     assemblyDoc?.source === 'git' && gitBehind
@@ -3875,9 +3888,13 @@ const App = () => {
   );
   const partRows = assemblyDoc
     ? feedRows(assemblyDoc, partRuns, partScripts).map((row) => {
+      // local: after sign-in (often no baseline yet), or any id missing from baseline.
       const notInRepo = assemblyDoc.source === 'git'
-        && gitBaseline
-        && !Object.prototype.hasOwnProperty.call(gitBaseline.scripts || {}, row.id);
+        && (
+          String(row.id).startsWith('local:')
+          || (gitBaseline
+            && !Object.prototype.hasOwnProperty.call(gitBaseline.scripts || {}, row.id))
+        );
       const action = (assemblyDoc.source === 'git' && (row.missing || notInRepo))
         ? 'add-to-repo'
         : row.action;

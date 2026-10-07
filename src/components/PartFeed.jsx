@@ -1273,13 +1273,6 @@ export default function PartFeed({
                 />
                 <div className="flex items-center gap-1 truncate text-[10px] text-gray-500">
                   <span className="truncate">{row.id}</span>
-                  {row.dirty ? (
-                    <span
-                      data-part-dirty=""
-                      title="Uncommitted changes"
-                      className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400"
-                    />
-                  ) : null}
                   {behindSet.has(row.id) ? (
                     <button
                       type="button"
@@ -1314,6 +1307,34 @@ export default function PartFeed({
                   </div>
                 )}
               </div>
+              {source === 'git' ? (
+                <button
+                  type="button"
+                  data-part-save={row.id}
+                  data-part-dirty={row.dirty ? 'true' : 'false'}
+                  aria-label={row.dirty ? 'Save part to repo' : 'Part in sync'}
+                  title={row.dirty ? 'Save part to repo' : 'In sync with repo'}
+                  disabled={!row.dirty || !onAddToRepo}
+                  className="relative shrink-0 rounded-full p-1.5 text-gray-300 hover:bg-white/10 disabled:cursor-default disabled:opacity-50 disabled:hover:bg-transparent"
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onDragStart={(event) => event.stopPropagation()}
+                  onKeyDown={(event) => event.stopPropagation()}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    if (!row.dirty || !onAddToRepo) return;
+                    void onAddToRepo(row.id);
+                  }}
+                >
+                  <Save size={16} />
+                  {row.dirty ? (
+                    <span
+                      data-part-dirty=""
+                      title="Unsaved / not on repo"
+                      className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-amber-400"
+                    />
+                  ) : null}
+                </button>
+              ) : null}
               <button
                 type="button"
                 data-part-visibility={row.id}
