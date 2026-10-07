@@ -1,7 +1,7 @@
 // components/CrossSectionPanel.jsx
 /* eslint-disable react-hooks/exhaustive-deps -- see Viewport note; same ref-backed pattern */
 import React, { useState, useEffect } from 'react';
-import { FlipHorizontal, Check, Maximize2, Ruler, Move3d, Frame, Spline, RectangleHorizontal, Layers3, NotebookPen, Palette, X } from 'lucide-react';
+import { FlipHorizontal, Check, Maximize2, Ruler, Move3d, Spline, RectangleHorizontal, Layers3, NotebookPen, Palette, X } from 'lucide-react';
 import TrianglesCenterlineDashedVertical from './icons/TrianglesCenterlineDashedVertical';
 import ViewSnapControl from './ViewSnapControl';
 import { PLANE_PRESETS } from '../utils/crossSection';
@@ -12,8 +12,6 @@ const CrossSectionPanel = ({
   onToggle,
   onPlaneChange,
   onZoomToFit,
-  onAutoFitToggle,
-  autoFitEnabled = true,
   onSnapView,
   bounds,
   measurementEnabled,
@@ -321,16 +319,6 @@ const handleButtonClick = () => {
           <Move3d size={20} />
         </button>
         <button
-          type="button"
-          onClick={onAutoFitToggle}
-          className={`p-2 rounded ${autoFitEnabled ? 'text-green-600 bg-green-100' : 'text-gray-500'} hover:bg-gray-100 active:bg-gray-200`}
-          title={autoFitEnabled ? 'Auto-fit on run: ON (re-frames the part after each run)' : 'Auto-fit on run: OFF'}
-          aria-pressed={!!autoFitEnabled}
-          data-auto-fit=""
-        >
-          <Frame size={20} />
-        </button>
-        <button
           onClick={onMeasurementToggle}
           className={`p-2 rounded ${measurementEnabled ? 'text-green-600 bg-green-100' : 'text-blue-600'} hover:bg-gray-100 active:bg-blue-100`}
           title={measurementEnabled ? 'Disable Measurement' : 'Enable Measurement'}
@@ -383,16 +371,6 @@ const handleButtonClick = () => {
           title={axisHelperEnabled ? 'Hide Axis Helper' : 'Show Axis Helper'}
         >
           <Move3d size={20} />
-        </button>
-        <button
-          type="button"
-          onClick={onAutoFitToggle}
-          className={`p-2 rounded ${autoFitEnabled ? 'text-green-600 bg-green-100' : 'text-gray-500'} hover:bg-gray-100`}
-          title={autoFitEnabled ? 'Auto-fit on run: ON (re-frames the part after each run)' : 'Auto-fit on run: OFF'}
-          aria-pressed={!!autoFitEnabled}
-          data-auto-fit=""
-        >
-          <Frame size={20} />
         </button>
         <button
           onClick={onMeasurementToggle}

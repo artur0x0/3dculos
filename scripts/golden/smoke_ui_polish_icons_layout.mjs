@@ -65,19 +65,20 @@ const contourRail = read('../../src/components/ContourModeRail.jsx');
     glyphs.length > 6 && new Set(glyphs).size === glyphs.length,
     glyphs.join(','),
   );
-  // Playtest: zoom-fit directly under view-change. Lucide Frame (# / auto-fit)
-  // stays lower on the strip; Maximize2 no longer sits two slots below it.
+  // Playtest correction: zoom-fit under view-change; XYZ triad (Move3d) stays;
+  // Lucide Frame (# / auto-fit) removed — it duplicated zoom-to-fit.
   const zoomAt = rail.indexOf('data-zoom-to-fit');
   const viewAt = rail.indexOf('<ViewSnapControl');
-  const frameAt = rail.indexOf('<Frame size={20} />');
   check(
     'zoom-to-fit directly under view-snap',
     viewAt >= 0 && zoomAt > viewAt && /data-zoom-to-fit=""/.test(rail)
       && glyphs[0] === 'Maximize2',
   );
   check(
-    'Frame (#) auto-fit kept; only one zoom-fit; zoom above Frame',
-    frameAt > zoomAt && glyphs.includes('Frame')
+    'triad (Move3d) kept; Frame (#) auto-fit gone; one zoom-fit',
+    glyphs.includes('Move3d')
+      && !glyphs.includes('Frame')
+      && !/data-auto-fit/.test(rail)
       && glyphs.filter((g) => g === 'Maximize2').length === 1,
   );
 }
