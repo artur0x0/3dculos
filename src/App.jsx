@@ -978,8 +978,18 @@ const App = () => {
       setEditorInitialScript(script);
     };
 
-    init();
-    return () => { cancelled = true; };
+    const EDITOR_INIT_TIMEOUT_MS = 20000;
+    const watchdog = setTimeout(() => {
+      if (cancelled) return;
+      console.warn('[App] Editor/assembly init timed out — continuing with defaults');
+      setEditorInitialScript((prev) => (prev == null ? DEFAULT_SCRIPT : prev));
+    }, EDITOR_INIT_TIMEOUT_MS);
+
+    init().finally(() => clearTimeout(watchdog));
+    return () => {
+      cancelled = true;
+      clearTimeout(watchdog);
+    };
   }, [manifoldReady]);
 
   // Mirror the live CAD buffer into IndexedDB so a reload restores it.
@@ -3454,6 +3464,19 @@ const App = () => {
     }
   };
 
+
+  // Tailscale / mobile: never leave the user on "Loading..." forever if Manifold
+  // or IndexedDB restore stalls past the worker init budget.
+  useEffect(() => {
+    if (manifoldReady && editorInitialScript !== null) return undefined;
+    if (initError) return undefined;
+    const LOADING_WATCHDOG_MS = 75000;
+    const id = setTimeout(() => {
+      setInitError((prev) => prev || 'Still loading after 75s — Manifold or document restore stalled. Tap Retry.');
+    }, LOADING_WATCHDOG_MS);
+    return () => clearTimeout(id);
+  }, [manifoldReady, editorInitialScript, initError]);
+
   // Show error state if initialization failed
   if (initError) {
     return (
@@ -3476,10 +3499,13 @@ const App = () => {
   // Show loading state while Manifold initializes
   if (!manifoldReady || editorInitialScript === null) {
     return (
-      <div className="flex items-center justify-center h-screen bg-gray-900 text-white">
+      <div className="flex items-center justify-center h-screen bg-gray-900 text-white" data-app-loading="">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white mx-auto mb-4"></div>
           <p>Loading...</p>
+          <p className="mt-2 text-xs text-gray-500">
+            {!manifoldReady ? 'Starting CAD engine…' : 'Restoring document…'}
+          </p>
         </div>
       </div>
     );
