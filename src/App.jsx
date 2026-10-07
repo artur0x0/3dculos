@@ -39,6 +39,7 @@ import {
   clearEditorState 
 } from './utils/editorStorage';
 import { saveEditorDraft, loadEditorDraft } from './utils/editorDraft';
+import { resolveActiveRestore } from './utils/partScriptRestore';
 import {
   assemblyName,
   assemblyNameForLoad,
@@ -947,19 +948,14 @@ const App = () => {
       let nextFilename = filename;
       let nextRestoredEditor = restoredEditor;
 
+      let draft = null;
       if (!nextRestoredEditor) {
         try {
-          const draft = await loadEditorDraft();
+          draft = await loadEditorDraft();
           if (cancelled) return;
-          if (draft && typeof draft.script === 'string') {
-            nextScript = draft.script;
-            if (draft.filename) nextFilename = draft.filename;
-            nextRestoredEditor = true;
-            setEditorInitialScript(nextScript);
-            if (nextFilename) setCurrentFilename(nextFilename);
-          }
         } catch (err) {
           console.warn('[App] Editor draft restore failed:', err);
+          draft = null;
         }
       }
       if (cancelled) return;
@@ -991,12 +987,25 @@ const App = () => {
 
       const active = doc.parts.find((part) => part.id === doc.activeId) || doc.parts[0];
       doc = serializeAssembly({ ...doc, activeId: active.id });
-      if (typeof scripts[active.id] === 'string' && !nextRestoredEditor) {
-        nextScript = scripts[active.id];
-        nextFilename = nextFilename || active.name;
-      } else {
-        scripts = { ...scripts, [active.id]: nextScript };
+      // Draft may only override the active row when bound to that part id —
+      // never bleed another part's buffer into this slot (playtest: new cube
+      // became a second FilletKilla after leave/return).
+      const restored = resolveActiveRestore({
+        active,
+        scripts,
+        draft: nextRestoredEditor ? null : draft,
+        fallbackScript: nextScript,
+      });
+      scripts = restored.scripts;
+      nextScript = restored.script;
+      nextFilename = restored.filename || nextFilename || active.name;
+      if (restored.fromDraft) nextRestoredEditor = true;
+      if (restored.persistActive) {
         try { await savePartScript(active.id, nextScript); } catch { /* ignore */ }
+      }
+      if (restored.fromDraft) {
+        setEditorInitialScript(nextScript);
+        if (nextFilename) setCurrentFilename(nextFilename);
       }
       if (!nextFilename) nextFilename = active.name;
       if (cancelled) return;
@@ -1031,16 +1040,25 @@ const App = () => {
     if (!manifoldReady || editorInitialScript === null) return undefined;
     if (appMode === 'game' || !editorLiveRef.current) return undefined;
     const epoch = partSaveEpochRef.current;
+    // Capture id + buffer at schedule time. Reading activeId only when the
+    // timer fires would write the previous part's script into a newly
+    // selected / created row after a switch.
+    const idAtSchedule = assemblyRef.current?.activeId;
+    const scriptAtSchedule = currentScript;
+    const filenameAtSchedule = currentFilename;
     const timer = setTimeout(() => {
       if (epoch !== partSaveEpochRef.current) return;
-      saveEditorDraft({ script: currentScript, filename: currentFilename });
-      const id = assemblyRef.current?.activeId;
-      if (id && !suppressPartSaveRef.current && typeof currentScript === 'string') {
-        const next = { ...partScriptsRef.current, [id]: currentScript };
-        partScriptsRef.current = next;
-        setPartScripts(next);
-        savePartScript(id, currentScript);
-      }
+      if (!idAtSchedule || assemblyRef.current?.activeId !== idAtSchedule) return;
+      if (suppressPartSaveRef.current || typeof scriptAtSchedule !== 'string') return;
+      saveEditorDraft({
+        script: scriptAtSchedule,
+        filename: filenameAtSchedule,
+        partId: idAtSchedule,
+      });
+      const next = { ...partScriptsRef.current, [idAtSchedule]: scriptAtSchedule };
+      partScriptsRef.current = next;
+      setPartScripts(next);
+      savePartScript(idAtSchedule, scriptAtSchedule);
     }, 600);
     return () => clearTimeout(timer);
   }, [currentScript, currentFilename, manifoldReady, editorInitialScript, appMode]);
@@ -1054,8 +1072,10 @@ const App = () => {
     const flush = () => {
       if (appModeRef.current === 'game' || !editorLiveRef.current) return;
       const live = codeEditorRef.current?.getContent?.() ?? currentScript;
-      saveEditorDraft({ script: live, filename: currentFilename });
       const id = assemblyRef.current?.activeId;
+      if (typeof live === 'string') {
+        saveEditorDraft({ script: live, filename: currentFilename, partId: id || null });
+      }
       if (id && !suppressPartSaveRef.current && typeof live === 'string') {
         partScriptsRef.current = { ...partScriptsRef.current, [id]: live };
         savePartScript(id, live);
@@ -1525,6 +1545,8 @@ const App = () => {
       savePartScript(prev, live);
       stashPartHistory(prev, live);
     }
+    // Invalidate pending autosave: it still closes over the previous buffer.
+    partSaveEpochRef.current += 1;
     // Drop an in-flight refresh of the part we are leaving so it cannot
     // paint that solid back over the one we are about to show.
     refreshGenRef.current += 1;
@@ -1547,6 +1569,11 @@ const App = () => {
         suppressPartSaveRef.current = false;
         codeEditorRef.current?.setTextOnly?.(picked.script);
         setCurrentScript(picked.script);
+        saveEditorDraft({
+          script: picked.script,
+          filename: part?.name || null,
+          partId: id,
+        });
       }
       if (opts.bodyHighlight) viewportRef.current?.showCadBodyHighlight?.();
       return;
@@ -1554,6 +1581,11 @@ const App = () => {
     if (picked.ok) {
       suppressPartSaveRef.current = false;
       codeEditorRef.current?.loadContent(picked.script, part?.name || 'Part', false);
+      saveEditorDraft({
+        script: picked.script,
+        filename: part?.name || null,
+        partId: id,
+      });
       viewportRef.current?.showCadBodyHighlight?.();
       return;
     }
@@ -2807,10 +2839,12 @@ const App = () => {
     for (const key of Object.keys(partHistoriesRef.current)) {
       if (key !== '__game__') delete partHistoriesRef.current[key];
     }
+    partSaveEpochRef.current += 1;
     focusPartHistory(seedId, starter);
     suppressPartSaveRef.current = false;
     setCurrentFilename(DEFAULT_PART_NAME);
     codeEditorRef.current?.loadContent(starter, DEFAULT_PART_NAME, false);
+    saveEditorDraft({ script: starter, filename: DEFAULT_PART_NAME, partId: seedId });
   };
 
   const handleAddPart = async (partName) => {
@@ -2856,12 +2890,18 @@ const App = () => {
     scripts[id] = starter;
     await savePartScript(id, starter);
     rememberScripts(scripts);
+    // Pending autosave still holds the previous part's buffer — do not let it
+    // land on this new id (playtest: cube became a copy of FilletKilla).
+    partSaveEpochRef.current += 1;
     refreshGenRef.current += 1;
     rememberAssembly({ ...doc, activeId: id, parts: [...doc.parts, part] });
     focusPartHistory(id, starter);
     suppressPartSaveRef.current = false;
     setCurrentFilename(part.name);
     codeEditorRef.current?.loadContent(starter, part.name, false);
+    // Bind draft immediately so a leave before the 600ms debounce cannot
+    // restore the previous part's script onto this row.
+    saveEditorDraft({ script: starter, filename: part.name, partId: id });
   };
 
   const handleDeletePart = (id) => {
@@ -2922,7 +2962,7 @@ const App = () => {
       applyPartHistory({ commits: [], head: -1 });
       const note = '// No parts.\n';
       setCurrentFilename(null);
-      saveEditorDraft({ script: note, filename: null });
+      saveEditorDraft({ script: note, filename: null, partId: null });
       codeEditorRef.current?.setTextOnly?.(note);
       setCurrentScript(note);
       return;
