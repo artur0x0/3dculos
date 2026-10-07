@@ -104,6 +104,7 @@ import {
   assemblyFilePath,
   assemblyPartPath,
   commitWorkspace,
+  commitPartToRepo,
   forceMergeCommit,
   forceMergeWarning,
   firstCommitBaseline,
@@ -1732,7 +1733,7 @@ const App = () => {
       findOrCreateVault(gitAdapterRef.current),
       new Promise((_, reject) => {
         setTimeout(() => reject(new Error(
-          'Vault lookup timed out — check network / GitHub Connect and try again',
+          'Repo lookup timed out — check network / GitHub Connect and try again',
         )), VAULT_TIMEOUT_MS);
       }),
     ]);
@@ -1805,7 +1806,7 @@ const App = () => {
     try {
       await ensureGitVault();
     } catch (err) {
-      setUploadError(err.message || 'Could not open vault');
+      setUploadError(err.message || 'Could not open repo');
       return false;
     }
     // Keep current rows; paths that are not repo-safe stay until Open replaces them.
@@ -2001,29 +2002,78 @@ const App = () => {
     }
   };
 
-  const handleFindInRepo = async (id) => {
+  /**
+   * Add to Repo: instantly commit one local part (plus assembly file) into the
+   * vault. Replaces the old lost-reference "Find in repo" flow.
+   */
+  const handleAddToRepo = async (id) => {
     const doc = assemblyRef.current;
-    if (!doc || doc.source !== 'git') return;
+    if (!doc || doc.source !== 'git' || !id) return;
     try {
       const vault = await ensureGitVault();
-      const got = await readVaultPart(gitAdapterRef.current, vault.repo, id, gitWorkingBranch());
-      if (!got) {
-        setUploadError(`Not in vault: ${id}`);
+      let scripts = { ...partScriptsRef.current };
+      const live = codeEditorRef.current?.getContent?.();
+      const liveId = (!suppressPartSaveRef.current && typeof live === 'string')
+        ? doc.activeId : null;
+      if (liveId === id && typeof live === 'string') {
+        scripts[id] = live;
+        await savePartScript(id, live);
+        rememberScripts(scripts);
+      }
+      if (typeof scripts[id] !== 'string') {
+        // No local text yet — seed a starter so the path exists in the repo.
+        const starter = newPartStarterScript();
+        scripts[id] = starter;
+        await savePartScript(id, starter);
+        rememberScripts(scripts);
+      }
+      const baseline = gitBaselineRef.current || firstCommitBaseline({
+        branch: gitWorkingBranch(),
+        headSha: vault.headSha
+          || (await gitAdapterRef.current.getBranch(vault.repo, gitWorkingBranch()))?.sha
+          || null,
+      });
+      const result = await commitPartToRepo(gitAdapterRef.current, vault.repo, {
+        doc,
+        scripts,
+        baseline,
+        partId: id,
+        liveId,
+        liveScript: liveId ? live : null,
+      });
+      if (result.status === 'error') {
+        setUploadError(result.error || 'Add to Repo failed');
         return;
       }
-      await savePartScript(id, got.content);
-      const scripts = { ...partScriptsRef.current, [id]: got.content };
-      rememberScripts(scripts);
-      suppressPartSaveRef.current = false;
-      if (doc.activeId === id) {
-        codeEditorRef.current?.loadContent(got.content, id, false);
+      if (result.status === 'clean') {
+        return;
+      }
+      if (result.doc && result.fromId) {
+        // Remapped local:/foreign id → repo path.
+        refreshGenRef.current += 1;
+        rememberAssembly(result.doc);
+        rememberScripts(result.scripts || scripts);
+        if (doc.activeId === id || doc.activeId === result.partId) {
+          const text = result.scripts?.[result.partId] ?? scripts[id];
+          focusPartHistory(result.partId, text);
+          suppressPartSaveRef.current = false;
+          setCurrentFilename(String(result.partId).split('/').pop() || result.partId);
+          codeEditorRef.current?.loadContent(text, result.partId, false);
+        }
+      } else if (doc.activeId === id) {
+        suppressPartSaveRef.current = false;
       } else {
         refreshAssemblyRef.current?.(codeEditorRef.current?.getContent?.());
       }
+      if (result.baseline) {
+        rememberGitBaseline(result.baseline);
+        gitVaultRef.current = { ...vault, headSha: result.sha };
+      }
     } catch (err) {
-      setUploadError(err.message || 'Find in repo failed');
+      setUploadError(err.message || 'Add to Repo failed');
     }
   };
+
 
   /** G5: list vault branches with the current working branch marked. */
   const handleListBranches = async () => {
@@ -2244,7 +2294,7 @@ const App = () => {
   const handleMergeBranch = ({ head = null, base = 'main' } = {}) => {
     const vault = gitVaultRef.current;
     const headBranch = head || gitWorkingBranch();
-    if (!vault?.repo) return { status: 'error', error: 'No vault' };
+    if (!vault?.repo) return { status: 'error', error: 'No repo' };
     if (!headBranch || headBranch === base) {
       return { status: 'error', error: 'Pick a branch other than the merge base' };
     }
@@ -2512,15 +2562,15 @@ const App = () => {
           // Vault seed used to throw "main moved: head …, base null" when
           // GitHub size===0 lied about an existing vault. findOrCreateVault
           // recovers now; if a race still surfaces, never toast as Upload Error.
-          const msg = err?.message || 'Could not open vault';
+          const msg = err?.message || 'Could not open repo';
           if (!cancelled && /moved:\s*head/i.test(msg)) {
-            console.warn('[App] Vault open hit main-moved race; clearing vault cache', msg);
+            console.warn('[App] Repo open hit main-moved race; clearing vault cache', msg);
             gitVaultRef.current = null;
             try {
               await ensureGitVault();
             } catch (err2) {
               if (!cancelled && !/moved:\s*head/i.test(err2?.message || '')) {
-                setUploadError(err2.message || 'Could not open vault');
+                setUploadError(err2.message || 'Could not open repo');
               }
               return;
             }
@@ -3687,11 +3737,20 @@ const App = () => {
       : '')
   );
   const partRows = assemblyDoc
-    ? feedRows(assemblyDoc, partRuns, partScripts).map((row) => ({
-      ...row,
-      dirty: gitDirtyIds.has(row.id),
-      behind: behindPartIdSet.has(row.id),
-    }))
+    ? feedRows(assemblyDoc, partRuns, partScripts).map((row) => {
+      const notInRepo = assemblyDoc.source === 'git'
+        && gitBaseline
+        && !Object.prototype.hasOwnProperty.call(gitBaseline.scripts || {}, row.id);
+      const action = (assemblyDoc.source === 'git' && (row.missing || notInRepo))
+        ? 'add-to-repo'
+        : row.action;
+      return {
+        ...row,
+        dirty: gitDirtyIds.has(row.id),
+        behind: behindPartIdSet.has(row.id),
+        action,
+      };
+    })
     : [];
   const stripScript = (
     cadHighlightId && assemblyDoc && cadHighlightId !== assemblyDoc.activeId
@@ -3749,7 +3808,7 @@ const App = () => {
       onOpenVaultPart={handleOpenVaultPart}
       onListAddableParts={handleListAddableParts}
       onAddExistingPart={handleAddExistingPart}
-      onFindInRepo={handleFindInRepo}
+      onAddToRepo={handleAddToRepo}
       canCommit={assemblyDoc.source === 'git' && (!gitBaseline || !!sourceDirty)}
       onGitCommit={handleGitCommit}
       onForceMerge={handleForceMerge}

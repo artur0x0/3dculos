@@ -55,9 +55,11 @@ export default function ProfilePanel({
 
   if (!open) return null;
 
-  const name = displayName(user);
+  const name = displayName(user) || (user ? '' : 'GitHub connected');
   const email = user?.email || '';
-  const loginHint = user?.githubId ? 'GitHub linked' : null;
+  const loginHint = user?.githubId
+    ? 'GitHub linked'
+    : (!user ? 'Signed in with GitHub' : null);
 
   const runDelete = async () => {
     setBusy(true);
@@ -125,7 +127,7 @@ export default function ProfilePanel({
       ) : (
         <div className="px-3 py-1" data-profile-delete-confirm="">
           <p className="text-xs text-gray-200">
-            This deletes your SurfCAD account and your GitHub vault repo
+            This deletes your SurfCAD account and your GitHub repo
             (usually <span className="font-mono text-gray-100">surfcad</span>).
             This cannot be undone.
           </p>

@@ -269,6 +269,7 @@ function VaultPickerDialog({
   onClose,
   children,
   footer = null,
+  headerRight = null,
 }) {
   return createPortal(
     <div
@@ -288,7 +289,10 @@ function VaultPickerDialog({
       }}
     >
       <div className="w-full max-w-sm rounded-lg surface-glass border border-gray-700 p-4 shadow-xl">
-        <h2 id={labelledBy} className="text-sm font-semibold text-gray-100">{title}</h2>
+        <div className="flex items-center gap-2" data-git-dialog-header="">
+          <h2 id={labelledBy} className="min-w-0 flex-1 text-sm font-semibold text-gray-100">{title}</h2>
+          {headerRight}
+        </div>
         <div className="mt-3">{children}</div>
         {footer}
       </div>
@@ -324,6 +328,7 @@ export default function PartFeed({
   onOpenVaultPart = null,
   onListAddableParts = null,
   onAddExistingPart = null,
+  onAddToRepo = null,
   onFindInRepo = null,
   suggestNewPartPath = '',
   canCommit = false,
@@ -407,8 +412,8 @@ export default function PartFeed({
   };
 
   const offerResolve = (id) => {
-    if (source === 'git' && onFindInRepo) {
-      onFindInRepo(id);
+    if (source === 'git' && (onAddToRepo || onFindInRepo)) {
+      void (onAddToRepo || onFindInRepo)?.(id);
       return;
     }
     resolveIdRef.current = id;
@@ -441,12 +446,12 @@ export default function PartFeed({
         assemblies,
         parts,
         loading: false,
-        error: empty ? 'Nothing in the vault yet.' : '',
+        error: empty ? 'Nothing in the repo yet.' : '',
       });
     } catch (err) {
       setOpenPicker({
         kind: 'open', assemblies: [], parts: [], loading: false,
-        error: err?.message || 'Could not browse vault',
+        error: err?.message || 'Could not browse repo',
       });
     }
   };
@@ -517,7 +522,7 @@ export default function PartFeed({
         kind: 'add-existing',
         items,
         loading: false,
-        error: items.length ? '' : 'No other part scripts in the vault.',
+        error: items.length ? '' : 'No other part scripts in the repo.',
       });
     } catch (err) {
       setOpenPicker({ kind: 'add-existing', items: [], loading: false, error: err?.message || 'Could not list parts' });
@@ -621,15 +626,15 @@ export default function PartFeed({
       setMoveFlow((prev) => ({ ...(prev || {}), stage: 'done', result, error: '' }));
       return;
     }
-    let error = result.error || 'Could not create vault';
-    if (result.status === 'invalid-name') error = 'Enter a vault name (letters, digits, . _ -).';
+    let error = result.error || 'Could not create repo';
+    if (result.status === 'invalid-name') error = 'Enter a repo name (letters, digits, . _ -).';
     else if (result.status === 'not-a-vault') {
-      error = `${result.repo?.owner || 'You'}/${result.vaultName} already exists and is not a SurfCAD vault. Pick another name.`;
+      error = `${result.repo?.owner || 'You'}/${result.vaultName} already exists and is not a SurfCAD repo. Pick another name.`;
     } else if (result.status === 'conflict') {
       error = result.assemblyExists
-        ? 'This assembly already exists in the vault. Rename the assembly, or pick another vault name.'
-        : `These vault files already exist with different content: ${result.paths.join(', ')}`;
-    } else if (result.status === 'empty') error = 'Add a part before creating a vault.';
+        ? 'This assembly already exists in the repo. Rename the assembly, or pick another repo name.'
+        : `These repo files already exist with different content: ${result.paths.join(', ')}`;
+    } else if (result.status === 'empty') error = 'Add a part before creating a repo.';
     setMoveFlow((prev) => ({ ...(prev || {}), stage: 'form', result, error }));
   };
 
@@ -935,8 +940,8 @@ export default function PartFeed({
             type="button"
             className={STRIP_BTN}
             data-assembly-load=""
-            title={source === 'git' ? 'Open from vault' : 'Load assembly'}
-            aria-label={source === 'git' ? 'Open from vault' : 'Load assembly'}
+            title={source === 'git' ? 'Open from repo' : 'Load assembly'}
+            aria-label={source === 'git' ? 'Open from repo' : 'Load assembly'}
             onClick={() => requestAssemblyAction('existing')}
           >
             <FolderOpen size={STRIP_ICON} />
@@ -1078,7 +1083,7 @@ export default function PartFeed({
             aria-hidden="true"
             onClick={startMoveToGit}
           >
-            Create vault
+            Create repo
           </button>
           {/* Vault Connect kept off-strip: Sign in with GitHub (profile) is the
               visible path; this stays for tests / token reconnect without a second icon. */}
@@ -1207,17 +1212,18 @@ export default function PartFeed({
                     />
                   ) : null}
                 </div>
-                {row.missing && (
+                {(row.missing || row.action === 'add-to-repo') && (
                   <button
                     type="button"
-                    data-part-missing={row.action}
+                    data-part-missing={row.action || 'add-to-repo'}
+                    data-part-add-to-repo={row.action === 'add-to-repo' || row.action === 'find-in-repo' ? '' : undefined}
                     className="mt-1 rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-medium text-sky-200 hover:bg-white/15"
                     onClick={(event) => {
                       event.stopPropagation();
                       offerResolve(row.id);
                     }}
                   >
-                    {row.action === 'find-in-repo' ? 'Find in repo' : 'Upload'}
+                    {row.action === 'add-to-repo' || row.action === 'find-in-repo' ? 'Add to Repo' : 'Upload'}
                   </button>
                 )}
                 {row.error && (
@@ -1262,7 +1268,7 @@ export default function PartFeed({
 
       {openPicker && typeof document !== 'undefined' && openPicker.kind === 'open' && (
         <VaultPickerDialog
-          title="Open from vault"
+          title="Open from repo"
           labelledBy="git-open-title"
           dataAttr="open"
           onClose={closePicker}
@@ -1468,7 +1474,7 @@ export default function PartFeed({
       )}
       {commitFlow && typeof document !== 'undefined' && (
         <VaultPickerDialog
-          title={commitFlow.stage === 'ask-force' ? 'Conflict with main' : 'Save to vault'}
+          title={commitFlow.stage === 'ask-force' ? 'Conflict with main' : 'Save to repo'}
           labelledBy="git-commit-title"
           dataAttr="commit"
           onClose={commitFlow.stage === 'busy' ? undefined : closeCommit}
@@ -1530,7 +1536,7 @@ export default function PartFeed({
           {commitFlow.stage === 'message' && (
             <>
               <p className="mb-2 text-[11px] text-gray-400">
-                Saving commits changed parts and the assembly to the vault.
+                Saving commits changed parts and the assembly to the repo.
               </p>
               <input
                 ref={commitInputRef}
@@ -1693,7 +1699,7 @@ export default function PartFeed({
           <div data-assembly-leave-ask="" data-assembly-leave-pending={leaveGuard.pending}>
             <p className="text-xs text-gray-300">
               {source === 'git'
-                ? 'Save commits this assembly to the vault before continuing.'
+                ? 'Save commits this assembly to the repo before continuing.'
                 : 'Save keeps this assembly in local storage before continuing.'}
             </p>
             {leaveGuard.error ? (
@@ -1733,6 +1739,18 @@ export default function PartFeed({
           labelledBy="git-branch-title"
           dataAttr="branch"
           onClose={branchFlow.stage === 'busy' ? undefined : closeBranches}
+          headerRight={branchFlow.stage === 'pane' ? (
+            <button
+              type="button"
+              data-git-branch-action="create"
+              className="shrink-0 rounded p-1 text-blue-400 hover:bg-white/10"
+              title="Create branch"
+              aria-label="Create branch"
+              onClick={startCreateBranch}
+            >
+              <Plus size={16} />
+            </button>
+          ) : null}
           footer={(
             <div className="mt-4 flex flex-wrap justify-end gap-2" data-git-branch-stage={branchFlow.stage}>
               {branchFlow.stage === 'confirm' && (
@@ -1845,7 +1863,12 @@ export default function PartFeed({
                     void runCreateBranch();
                   }
                 }}
-                className="w-full rounded-md border border-gray-600 bg-black/30 px-2 py-1.5 text-xs text-gray-100 outline-none focus:border-blue-500"
+                inputMode="text"
+                autoCapitalize="off"
+                autoCorrect="off"
+                spellCheck={false}
+                className="w-full rounded-md border border-gray-600 bg-black/30 px-2 py-1.5 text-base text-gray-100 outline-none focus:border-blue-500"
+                style={{ fontSize: '16px' }}
                 placeholder="feature/my-change"
               />
               {branchFlow.error ? (
@@ -1869,8 +1892,8 @@ export default function PartFeed({
           )}
           {branchFlow.stage === 'pane' && (
             <div data-git-branch-pane="">
-              <div className="mb-2 flex items-center gap-2" data-git-branch-pane-toolbar="">
-                {(currentBranch || 'main') !== 'main' ? (
+              {(currentBranch || 'main') !== 'main' ? (
+                <div className="mb-2 flex items-center gap-2" data-git-branch-pane-toolbar="">
                   <button
                     type="button"
                     data-git-branch-action="merge"
@@ -1879,19 +1902,8 @@ export default function PartFeed({
                   >
                     Merge
                   </button>
-                ) : null}
-                <div className="flex-1" />
-                <button
-                  type="button"
-                  data-git-branch-action="create"
-                  className="rounded p-1 text-blue-400 hover:bg-white/10"
-                  title="Create branch"
-                  aria-label="Create branch"
-                  onClick={startCreateBranch}
-                >
-                  <Plus size={16} />
-                </button>
-              </div>
+                </div>
+              ) : null}
               {branchFlow.loading && (
                 <p className="text-xs text-gray-400" data-git-branch-loading="">Loading…</p>
               )}
@@ -1951,7 +1963,7 @@ export default function PartFeed({
 
       {moveFlow && typeof document !== 'undefined' && (
         <VaultPickerDialog
-          title={moveFlow.stage === 'done' ? 'Vault ready' : 'Create vault'}
+          title={moveFlow.stage === 'done' ? 'Repo ready' : 'Create repo'}
           labelledBy="git-move-title"
           dataAttr="move-to-git"
           onClose={moveFlow.stage === 'busy' ? undefined : closeMove}
@@ -1985,16 +1997,20 @@ export default function PartFeed({
           {moveFlow.stage === 'form' && (
             <div className="space-y-3" data-git-vault-create="">
               <label className="block text-[11px] text-gray-400" htmlFor="git-move-vault-name">
-                Vault
+                Repo
               </label>
               <input
                 id="git-move-vault-name"
                 data-git-move-vault-name=""
                 data-git-vault-name=""
-                className="w-full rounded border border-gray-600 bg-gray-900 px-2 py-1 font-mono text-xs text-gray-100"
+                className="w-full rounded border border-gray-600 bg-gray-900 px-2 py-1 font-mono text-base text-gray-100"
+                style={{ fontSize: '16px' }}
                 value={moveFlow.vaultName}
                 autoFocus
                 spellCheck={false}
+                inputMode="text"
+                autoCapitalize="off"
+                autoCorrect="off"
                 onChange={(event) => {
                   const vaultName = event.target.value;
                   setMoveFlow((prev) => ({ ...prev, vaultName, error: '' }));
@@ -2014,7 +2030,7 @@ export default function PartFeed({
           )}
           {moveFlow.stage === 'done' && (
             <p className="text-xs text-gray-300" data-git-move-done={moveFlow.result?.vault?.repo?.name || ''}>
-              {`${moveFlow.result?.files?.length || 0} files saved to vault ${moveFlow.result?.vault?.repo?.name || ''}/${moveFlow.result?.vault?.defaultBranch || 'main'}.`}
+              {`${moveFlow.result?.files?.length || 0} files saved to repo ${moveFlow.result?.vault?.repo?.name || ''}/${moveFlow.result?.vault?.defaultBranch || 'main'}.`}
             </p>
           )}
         </VaultPickerDialog>

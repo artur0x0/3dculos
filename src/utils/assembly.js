@@ -29,7 +29,7 @@ export function partPosition(part) {
 }
 
 export function missingRowAction(source) {
-  return source === 'git' ? 'find-in-repo' : 'upload';
+  return source === 'git' ? 'add-to-repo' : 'upload';
 }
 
 /**

@@ -151,10 +151,11 @@ const feed = readFileSync(new URL('../../src/components/PartFeed.jsx', import.me
 const app = readFileSync(new URL('../../src/App.jsx', import.meta.url), 'utf8');
 const arch = readFileSync(new URL('../../docs/architecture.md', import.meta.url), 'utf8');
 ok('Save = Commit chrome', /data-git-save=""/.test(feed) && /data-git-commit=""/.test(feed)
-  && /aria-label="Save"/.test(feed) && /Save to vault/.test(feed));
+  && /aria-label="Save"/.test(feed) && /Save to repo/.test(feed));
 ok('title chip → pane actions', /data-assembly-branch=""/.test(feed)
   && /data-git-branches=""/.test(feed) && /data-git-branch-pane=""/.test(feed)
   && /data-git-branch-action="create"/.test(feed)
+  && /data-git-dialog-header/.test(feed)
   && /data-git-branch-action="delete"/.test(feed)
   && /data-git-branch-action="merge"/.test(feed)
   && !/data-git-branch-dropdown/.test(feed)

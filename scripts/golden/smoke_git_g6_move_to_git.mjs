@@ -191,7 +191,7 @@ ok('Vault create dialog machinery remains (G10: not opened from Local|Git toggle
   && !/data-parts-source-toggle/.test(feed));
 ok('G13 slim vault create: name + Save/Cancel only', /data-git-vault-create/.test(feed)
   && /data-git-move-vault-name/.test(feed) && /data-git-vault-save/.test(feed)
-  && /data-git-move-confirm/.test(feed) && /Create vault/.test(feed)
+  && /data-git-move-confirm/.test(feed) && /Create repo/.test(feed)
   && !/data-git-move-plan/.test(feed) && !/data-git-move-shared=/.test(feed)
   && !/data-git-move-switch-only/.test(feed) && !/Switch only/.test(feed));
 ok('App wires plan + move', /onPlanMoveToGit=\{handlePlanMoveToGit\}/.test(app)

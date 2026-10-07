@@ -127,9 +127,16 @@ console.log('\nG9 — UI wiring (source)');
     && /data-profile-danger-zone/.test(readFileSync(join(root, 'src/components/ProfilePanel.jsx'), 'utf8'))
     && /data-profile-delete-account/.test(readFileSync(join(root, 'src/components/ProfilePanel.jsx'), 'utf8'))
     && /data-profile-delete-confirm/.test(readFileSync(join(root, 'src/components/ProfilePanel.jsx'), 'utf8')));
-  ok('delete confirm warns account + vault',
+  // Green chip (session OR GitHub token) must open the panel — never Login.
+  ok('green chip click uses signedIn (not only isAuthenticated)',
+    /if \(signedIn\)/.test(chip)
+    && /setPanelOpen/.test(chip)
+    && /signedIn && \(/.test(chip)
+    && /<ProfilePanel/.test(chip)
+    && !/if \(isAuthenticated\) \{[\s\S]*?setPanelOpen/.test(chip));
+  ok('delete confirm warns account + GitHub repo',
     /SurfCAD account/.test(readFileSync(join(root, 'src/components/ProfilePanel.jsx'), 'utf8'))
-    && /vault repo/.test(readFileSync(join(root, 'src/components/ProfilePanel.jsx'), 'utf8')));
+    && /GitHub repo/.test(readFileSync(join(root, 'src/components/ProfilePanel.jsx'), 'utf8')));
   ok('DELETE /api/auth/account wired',
     /router\.delete\('\/account'/.test(readFileSync(join(root, 'backend/routes/auth.js'), 'utf8'))
     && /deleteGithubVaultRepo/.test(readFileSync(join(root, 'backend/routes/auth.js'), 'utf8')));
