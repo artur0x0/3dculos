@@ -17,12 +17,46 @@ import {
   sheetFeatureId,
   solveSheet,
   SHEET_PLANES,
+  IN,
 } from './sheetModel.js';
 import { FASTENER_METRIC, FASTENER_UNC } from '../../workers/fastenerSizes.js';
 
 export const BASE_DEFAULTS = Object.freeze({ width: 100, height: 60 });
 export const BASE_MIN = 1;
 export const BASE_MAX = 1200;
+
+/** Inches pair → sorted [smaller, larger] mm, or null. */
+function sortedPairMm(pair) {
+  if (!Array.isArray(pair) || pair.length < 2) return null;
+  const a = Number(pair[0]);
+  const b = Number(pair[1]);
+  if (!(a > 0) || !(b > 0)) return null;
+  const mm = [a, b].map((n) => Math.round(n * IN * 1000) / 1000).sort((x, y) => x - y);
+  return mm;
+}
+
+/**
+ * Base-flange defaults: 100×60 mm, then each sorted side is raised to cover
+ * the SKU minimum flat (`bend.minFlatIn` / bending min_flat_part_size) and
+ * the cutting minimum part size (`minPartIn`). The longer minimum maps to
+ * width. Already-larger defaults stay put. Result is millimetres.
+ */
+export function defaultBaseDims(rec) {
+  let height = BASE_DEFAULTS.height;
+  let width = BASE_DEFAULTS.width;
+  const raise = (pair) => {
+    const min = sortedPairMm(pair);
+    if (!min) return;
+    height = Math.max(height, min[0]);
+    width = Math.max(width, min[1]);
+  };
+  raise(rec?.bend?.minFlatIn);
+  raise(rec?.minPartIn);
+  return {
+    width: Math.min(BASE_MAX, width),
+    height: Math.min(BASE_MAX, height),
+  };
+}
 
 /** Start designing. An existing sheet spec on the part skips straight to edit. */
 export function enterSheetMetalMode(record, partId = null, existingSpec = null) {
@@ -41,13 +75,14 @@ export function defaultTool(record) {
 export function pickSheetPlane(mode, planeId) {
   if (!mode || mode.stage !== 'plane' || !SHEET_PLANES[planeId]) return mode;
   const prev = mode.base || {};
+  const dims = defaultBaseDims(mode.sku);
   return {
     ...mode,
     stage: 'base',
     base: {
       plane: planeId,
-      width: prev.width ?? BASE_DEFAULTS.width,
-      height: prev.height ?? BASE_DEFAULTS.height,
+      width: prev.width ?? dims.width,
+      height: prev.height ?? dims.height,
     },
   };
 }

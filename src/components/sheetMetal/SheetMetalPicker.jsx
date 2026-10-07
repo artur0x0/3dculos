@@ -11,9 +11,10 @@ import { SmButton, SmPopup, SmSelect } from './SmControls';
 
 /**
  * S1 — Sheet Metal entry. Material + gauge dropdowns over live SendCutSend
- * stock (in-stock only). Start designing stays disabled until an in-stock
- * SKU is picked; it binds the SKU to the active part and enters sheet-metal
- * mode. Catalog: IndexedDB cache, refreshed daily, stale cache when offline.
+ * stock. Out-of-stock gauges stay in the list, disabled, labeled
+ * "out of stock". Start designing stays disabled until an in-stock SKU is
+ * picked; it binds the SKU to the active part and enters sheet-metal mode.
+ * Catalog: IndexedDB cache, refreshed daily, stale cache when offline.
  */
 const SheetMetalPicker = ({
   binding = null,
@@ -41,17 +42,18 @@ const SheetMetalPicker = ({
   const materials = useMemo(() => scsMaterialOptions(state.records), [state.records]);
   const gauges = useMemo(() => scsGaugeOptions(state.records, material), [state.records, material]);
   const picked = findScsSku(state.records, sku);
-  const canStart = canStartSheetMetal(state.records, sku) && gauges.some((g) => g.sku === sku);
+  const canStart = canStartSheetMetal(state.records, sku) && gauges.some((g) => g.sku === sku && g.inStock);
   const boundGone = binding?.sku && !state.loading && state.records.length > 0
     && !canStartSheetMetal(state.records, binding.sku);
 
   const materialOptions = materials.map((m) => ({
     value: m.name,
-    label: `${m.name}${m.bendable ? '' : ' (flat only)'}`,
+    label: `${m.name}${m.inStock === false ? ' (out of stock)' : ''}${m.bendable ? '' : ' (flat only)'}`,
   }));
   const gaugeOptions = gauges.map((g) => ({
     value: g.sku,
-    label: `${g.label}${g.bendable ? '' : ' · no bending'}`,
+    label: g.label,
+    disabled: !!g.disabled,
   }));
 
   return (
@@ -112,7 +114,7 @@ const SheetMetalPicker = ({
           <SmSelect
             id="sm-gauge"
             label="Gauge / thickness"
-            value={gauges.some((g) => g.sku === sku) ? sku : ''}
+            value={gauges.some((g) => g.sku === sku && g.inStock) ? sku : ''}
             placeholder={material ? 'Choose gauge…' : 'Pick a material first'}
             disabled={!material}
             options={gaugeOptions}

@@ -60,6 +60,11 @@ console.log('SCS S5 — DFM rules (ALU-090 limits)');
   const bent = { ...base(), bends: [{ id: 'b1', panel: 'base', edge: 'u+', angle: 90, length: 20 }] };
   const nearBend = { ...bent, holes: [{ id: 'h1', panel: 'base', u: 50 - 2.5 - 3, v: 0, d: 5 }] };
   check('plain hole near a bend → soft warn (not fail)', rules(nearBend, 'warn').includes('hole-bend') && checkSheetDfm(nearBend).ok);
+  const inchTiny = checkSheetDfm(tiny, { unit: 'in' });
+  check('DFM text follows the display unit; the spec stays mm',
+    inchTiny.issues.some((i) => i.rule === 'min-hole' && /\d+\.\d+ in/.test(i.message))
+    && checkSheetDfm(tiny).issues.some((i) => i.rule === 'min-hole' && /\d+\.\d+ mm/.test(i.message))
+    && tiny.width === 100);
   const tappedNear = { ...bent, holes: [{ id: 'h1', panel: 'base', u: 50 - 6, v: 0, d: 3.3, type: 'tapped', thread: 'M4' }] };
   check('tapped hole inside SCS centre→bend-line min → fail', L.minHoleToBend > 6 && rules(tappedNear, 'fail').includes('hole-bend'));
   const flangeHole = { ...bent, holes: [{ id: 'h1', panel: 'b1', u: 1.5, v: 0, d: 2 }] };
@@ -173,6 +178,7 @@ console.log('SCS S5 — mode + UI wiring');
   check('chip has Check & Export', /data-sm-export="1"/.test(flow) && /openSheetExport/.test(flow));
   check('DXF / STEP / Order disabled while blocked', /data-sm-dxf="1"\s*\n\s*disabled=\{blocked/.test(flow) && /data-sm-step="1"\s*\n\s*disabled=\{blocked/.test(flow) && /data-sm-order="1"\s*\n\s*disabled=\{blocked\}/.test(flow));
   check('Order opens SCS in a new tab without opener', /window\.open\(SCS_ORDER_URL, '_blank', 'noopener,noreferrer'\)/.test(flow));
+  check('export DFM uses the display unit', /buildSheetExport\(mode\.spec, \{[^}]*unit/.test(flow) && /formatSheetLength/.test(flow));
   check('fails red, warns amber', /data-sm-dfm-fails/.test(flow) && /bg-red-950/.test(flow) && /data-sm-dfm-warns/.test(flow) && /bg-amber-950/.test(flow));
   check('Viewport passes the built mesh + part name', /mesh=\{cachedMeshData\}/.test(view) && /partName=\{partLabelsRef\.current/.test(view));
   check('architecture.md documents DFM / export', /DFM \+ export \(S5\)/.test(read('docs/architecture.md')));

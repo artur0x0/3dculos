@@ -148,20 +148,29 @@ export function findScsSku(records, sku) {
   return (records || []).find((r) => r.sku === sku) || null;
 }
 
-/** Material dropdown: distinct names among in-stock SKUs, grouped by category. */
+/**
+ * Material dropdown: distinct names. A material with only out-of-stock
+ * SKUs is still listed (`inStock: false`) so its gauges can be shown
+ * disabled. Bendable names sort first.
+ */
 export function scsMaterialOptions(records) {
   const byName = new Map();
-  for (const r of inStockSkus(records)) {
+  for (const r of records || []) {
+    if (!r?.name) continue;
     const cur = byName.get(r.name);
     if (cur) {
       cur.count += 1;
       cur.bendable = cur.bendable || r.bendable;
+      cur.inStock = cur.inStock || r.inStock;
     } else {
-      byName.set(r.name, { name: r.name, category: r.category, count: 1, bendable: r.bendable });
+      byName.set(r.name, {
+        name: r.name, category: r.category, count: 1, bendable: !!r.bendable, inStock: !!r.inStock,
+      });
     }
   }
   return [...byName.values()].sort((a, b) => (
     Number(b.bendable) - Number(a.bendable)
+    || Number(b.inStock) - Number(a.inStock)
     || a.category.localeCompare(b.category)
     || a.name.localeCompare(b.name)
   ));
@@ -175,12 +184,26 @@ export function scsGaugeLabel(rec) {
   return `${inch}${ga} · ${rec.thicknessMm.toFixed(2)} mm`;
 }
 
-/** Gauge dropdown for one material: in-stock SKUs, thinnest first. */
+/**
+ * Gauge dropdown for one material: every SKU, thinnest first.
+ * Out-of-stock gauges stay in the list, `disabled`, labeled "out of stock".
+ */
 export function scsGaugeOptions(records, materialName) {
-  return inStockSkus(records)
-    .filter((r) => r.name === materialName)
-    .sort((a, b) => a.thicknessIn - b.thicknessIn)
-    .map((r) => ({ sku: r.sku, label: scsGaugeLabel(r), bendable: r.bendable }));
+  return (records || [])
+    .filter((r) => r && r.name === materialName)
+    .sort((a, b) => a.thicknessIn - b.thicknessIn || Number(b.inStock) - Number(a.inStock) || a.sku.localeCompare(b.sku))
+    .map((r) => {
+      const bits = [scsGaugeLabel(r)];
+      if (!r.bendable) bits.push('no bending');
+      if (!r.inStock) bits.push('out of stock');
+      return {
+        sku: r.sku,
+        label: bits.join(' · '),
+        bendable: r.bendable,
+        inStock: !!r.inStock,
+        disabled: !r.inStock,
+      };
+    });
 }
 
 /** Start designing: only an in-stock SKU that exists in the catalog. */

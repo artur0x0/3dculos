@@ -1437,8 +1437,16 @@ export default function PartFeed({
             const partRows = isPart
               ? vaultOpenPartRows(openPicker.parts, { currentAssembly: assemblyName, inDoc: rows.map((row) => row.id) })
               : [];
+            // filterVaultOpenIndex (PR #224) filters this list; filterVaultPartItems
+            // is the same haystack on a bare part array (source / "loose" included).
+            const partHits = isPart
+              ? filterVaultPartItems(
+                filterVaultOpenIndex({ assemblies: [], parts: partRows }, openPicker.query).parts,
+                openPicker.query,
+              )
+              : [];
             const partGroups = isPart
-              ? groupVaultOpenPartRows(filterVaultPartItems(partRows, openPicker.query), { currentAssembly: assemblyName })
+              ? groupVaultOpenPartRows(partHits, { currentAssembly: assemblyName })
               : [];
             const hitCount = isPart ? partGroups.reduce((n, g) => n + g.parts.length, 0) : asmHits.length;
             const openEmptyFilter = !openPicker.loading && !openPicker.error && openQuery && hitCount === 0;
@@ -1451,7 +1459,7 @@ export default function PartFeed({
                     data-git-open-search-kind={isPart ? 'part' : 'assembly'}
                     value={openPicker.query || ''}
                     onChange={(e) => setOpenPicker({ ...openPicker, query: e.target.value })}
-                    placeholder={isPart ? 'Search parts or assemblies…' : 'Search assemblies…'}
+                    placeholder={isPart ? 'Search parts…' : 'Search assemblies…'}
                     aria-label={isPart ? 'Search parts' : 'Search assemblies'}
                     className={`mb-3 ${PARTS_TEXT_INPUT_CLASS}`}
                     style={PARTS_TEXT_INPUT_STYLE}
@@ -1512,7 +1520,7 @@ export default function PartFeed({
                                   {item.sameName ? <span className="ml-1 text-gray-400">· {item.source}</span> : null}
                                 </span>
                                 <span className="text-[10px] text-gray-500">
-                                  {item.inDoc ? 'in this assembly' : item.foreign ? `copies into ${assemblyName || 'this assembly'}` : 'adds to this assembly'}
+                                  {item.inDoc ? 'in this assembly' : item.foreign ? `copies into ${assemblyName || 'this assembly'}` : 'opens by reference'}
                                 </span>
                               </button>
                             </li>

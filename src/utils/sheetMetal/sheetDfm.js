@@ -17,8 +17,7 @@
  */
 import { normalizeSheetSpec, solveSheet } from './sheetModel.js';
 import { sheetFlatPattern } from './sheetFlat.js';
-
-const fmt = (n) => `${Number(n).toFixed(2)} mm`;
+import { formatSheetLength, formatSheetPair } from './sheetUnits.js';
 
 function fitsSize(size, lim, { min = false } = {}) {
   if (!Array.isArray(lim)) return true;
@@ -27,7 +26,13 @@ function fitsSize(size, lim, { min = false } = {}) {
   return min ? a[0] >= b[0] - 1e-6 && a[1] >= b[1] - 1e-6 : a[0] <= b[0] + 1e-6 && a[1] <= b[1] + 1e-6;
 }
 
-export function checkSheetDfm(rawSpec) {
+/**
+ * `unit` formats messages only ('mm' default, or 'in'). Limits and the
+ * spec stay millimetres either way.
+ */
+export function checkSheetDfm(rawSpec, { unit = 'mm' } = {}) {
+  const display = unit === 'in' ? 'in' : 'mm';
+  const fmt = (n) => formatSheetLength(n, display, 2);
   const spec = normalizeSheetSpec(rawSpec);
   const issues = [];
   const push = (level, rule, message, featureId = null) => issues.push({ level, rule, message, featureId });
@@ -138,8 +143,11 @@ export function checkSheetDfm(rawSpec) {
     const max = bent ? L.maxFlat : L.maxPart;
     const min = bent ? L.minFlat : L.minPart;
     const label = `${fmt(flat.size[0])} × ${fmt(flat.size[1])}`;
-    if (!fitsSize(flat.size, max)) push('fail', 'flat-size', `Flat ${label} exceeds SCS max ${max.map((n) => n.toFixed(0)).join(' × ')} mm${bent ? ' for bending' : ''}.`);
-    if (!fitsSize(flat.size, min, { min: true })) push('fail', 'flat-size', `Flat ${label} is below SCS min ${min.map((n) => n.toFixed(1)).join(' × ')} mm${bent ? ' for bending' : ''}.`);
+    const pairText = (pair, digits) => (display === 'in'
+      ? formatSheetPair(pair, 'in', 3)
+      : `${pair.map((n) => n.toFixed(digits)).join(' × ')} mm`);
+    if (!fitsSize(flat.size, max)) push('fail', 'flat-size', `Flat ${label} exceeds SCS max ${pairText(max, 0)}${bent ? ' for bending' : ''}.`);
+    if (!fitsSize(flat.size, min, { min: true })) push('fail', 'flat-size', `Flat ${label} is below SCS min ${pairText(min, 1)}${bent ? ' for bending' : ''}.`);
   }
 
   const fails = issues.filter((x) => x.level === 'fail').length;

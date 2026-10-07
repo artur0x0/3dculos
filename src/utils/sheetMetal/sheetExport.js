@@ -84,8 +84,8 @@ export function sheetScriptHasExtras(script) {
  * sheet block (`script-extras`): those are in the 3D part, not in the files.
  * `exactStep: false` forces the mesh fallback (goldens).
  */
-export function buildSheetExport(spec, { mesh = null, script = null, partName = '', timestamp, exactStep = true } = {}) {
-  const dfm = checkSheetDfm(spec);
+export function buildSheetExport(spec, { mesh = null, script = null, partName = '', timestamp, exactStep = true, unit = 'mm' } = {}) {
+  const dfm = checkSheetDfm(spec, { unit });
   const issues = [...dfm.issues];
   const flat = dfm.flat;
   const base = sheetFileBase(partName, spec?.sku);

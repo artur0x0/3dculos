@@ -293,10 +293,23 @@ export async function listVaultBrowseItems(adapter, repo, ref) {
   return { assemblies, parts };
 }
 
+/** Group heading for parts in the shared `parts/` folder (no assembly). */
+export const LOOSE_PARTS_LABEL = 'Loose parts';
+
+/** Fields a live Open search matches. Shared `parts/` also match "loose". */
+function vaultPartSearchHay(item) {
+  return [
+    item?.path, item?.label, item?.name, item?.kind, item?.scope, item?.source,
+    item?.scope === 'shared' || item?.source === LOOSE_PARTS_LABEL ? LOOSE_PARTS_LABEL : '',
+  ];
+}
+
 /**
  * Client-side live filter for the git Open pane index (assemblies + parts).
  * Empty / whitespace query returns the full index. Matching is case-insensitive
- * substring on assembly name/label and part path/label/scope — no network.
+ * substring on assembly name/label and part path/label/name/scope/source
+ * (including the "Loose parts" heading) — no network.
+ * Open Part passes already-grouped rows; Open Assembly passes assemblies only.
  */
 export function filterVaultOpenIndex(index, query) {
   const assemblies = Array.isArray(index?.assemblies) ? index.assemblies : [];
@@ -309,28 +322,22 @@ export function filterVaultOpenIndex(index, query) {
       if (typeof item === 'string') return hit(item);
       return hit(item?.name, item?.label);
     }),
-    parts: parts.filter((item) => hit(item?.path, item?.label, item?.scope)),
+    parts: parts.filter((item) => hit(...vaultPartSearchHay(item))),
   };
 }
 
 /**
- * Same live filter for part lists (folder → Part / Open Part): path, label,
- * kind, source assembly (`scope`) and its display label (`source`, so
- * "loose" finds shared parts).
+ * Same live filter for a bare part array (Open Part rows). Matches path,
+ * label, kind, source assembly (`scope`) and its display label (`source`).
  */
 export function filterVaultPartItems(items, query) {
   const list = Array.isArray(items) ? items : [];
   const q = String(query || '').trim().toLowerCase();
   if (!q) return list;
-  return list.filter((item) => {
-    const hay = [item?.path, item?.label, item?.name, item?.kind, item?.scope, item?.source]
-      .map((v) => String(v || '').toLowerCase());
-    return hay.some((h) => h.includes(q));
-  });
+  return list.filter((item) => (
+    vaultPartSearchHay(item).some((v) => String(v || '').toLowerCase().includes(q))
+  ));
 }
-
-/** Group heading for parts in the shared `parts/` folder (no assembly). */
-export const LOOSE_PARTS_LABEL = 'Loose parts';
 
 /**
  * Open Part rows: every part script in the repo (every assembly's folder,
