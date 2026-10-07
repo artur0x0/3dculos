@@ -107,6 +107,7 @@ import {
   assemblyPartPath,
   commitWorkspace,
   commitPartToRepo,
+  deletePartFromRepo,
   forceMergeCommit,
   forceMergeWarning,
   firstCommitBaseline,
@@ -2905,11 +2906,12 @@ const App = () => {
     saveEditorDraft({ script: starter, filename: part.name, partId: id });
   };
 
-  const handleDeletePart = (id) => {
+  const handleDeletePart = (id, opts = {}) => {
     const doc = assemblyRef.current;
     if (!doc || id == null) return;
     const key = String(id);
     if (!doc.parts.some((part) => part.id === key)) return;
+    const fromRepo = !!opts?.fromRepo;
 
     // An in-flight refresh still has the old document. Drop it so it cannot
     // put this part's solid back.
@@ -2939,6 +2941,31 @@ const App = () => {
     const nextDoc = rememberAssembly(removePart(doc, key));
     const runs = dropPartRecord(partRunsRef.current, key);
     commitPartRuns(runs);
+
+    if (fromRepo && nextDoc?.source === 'git' && !key.startsWith('local:')) {
+      const vault = gitVaultRef.current;
+      const adapter = gitAdapterRef.current;
+      const baseline = gitBaselineRef.current;
+      if (vault?.repo && adapter) {
+        void (async () => {
+          try {
+            const result = await deletePartFromRepo(adapter, vault.repo, {
+              doc: nextDoc,
+              scripts: partScriptsRef.current,
+              baseline,
+              partPath: key,
+            });
+            if (result.status === 'committed') {
+              rememberGitBaseline(result.baseline);
+              return;
+            }
+            setUploadError(result.error || 'Delete from repo failed');
+          } catch (err) {
+            setUploadError(err?.message || 'Delete from repo failed');
+          }
+        })();
+      }
+    }
 
     const nextActive = nextDoc.activeId;
     if (cadPartIdRef.current === key) rememberCadPart(nextActive);

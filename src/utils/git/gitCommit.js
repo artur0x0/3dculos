@@ -321,6 +321,96 @@ export async function commitPartToRepo(adapter, repo, {
   }
 }
 
+/**
+ * Delete a part script from the vault and write the assembly without that row.
+ * Caller has already removed the part from the local working copy.
+ * -> { status: 'committed'|'error', ... }
+ */
+export async function deletePartFromRepo(adapter, repo, {
+  doc,
+  scripts,
+  baseline,
+  partPath,
+  message = null,
+} = {}) {
+  assertGithubAdapter(adapter);
+  if (!doc || doc.source !== 'git') {
+    return { status: 'error', error: 'Not in Git mode' };
+  }
+  const path = String(partPath || '');
+  if (!path || path.startsWith('local:')) {
+    return { status: 'error', error: 'Part is not in the repo' };
+  }
+  const info = parseVaultPath(path);
+  if (!info || (info.kind !== 'assembly-part' && info.kind !== 'shared-part')) {
+    return { status: 'error', error: 'Not a vault part path' };
+  }
+  // Refusing if the part is still listed (caller must remove first).
+  if ((doc.parts || []).some((p) => p.id === path)) {
+    return { status: 'error', error: 'Part still in assembly — remove it first' };
+  }
+
+  const asmName = vaultSegment(doc.name) || baseline?.assemblyName || 'Assembly';
+  const base = baseline || {
+    branch: 'main',
+    headSha: null,
+    scripts: {},
+    assemblyText: '',
+  };
+  const branch = base.branch || 'main';
+  const assemblyPath = assemblyFilePath(asmName);
+  const assemblyText = stringifySurfJson(doc);
+  const files = [
+    fileDelete(path),
+    fileWrite(assemblyPath, assemblyText),
+  ];
+  const leaf = path.split('/').pop()?.replace(/\.js$/i, '') || 'part';
+  const msg = String(message || '').trim() || `Delete ${leaf}`;
+
+  let expectedBase = base.headSha || null;
+  if (!expectedBase) {
+    const tip = await adapter.getBranch(repo, branch);
+    expectedBase = tip?.sha || null;
+  }
+
+  try {
+    const res = await adapter.commitFiles(repo, {
+      branch,
+      message: msg,
+      files,
+      baseSha: expectedBase,
+    });
+    const nextScripts = { ...(base.scripts || {}), ...(scripts || {}) };
+    delete nextScripts[path];
+    const next = captureBaseline({
+      assemblyPath,
+      assemblyName: asmName,
+      doc,
+      scripts: nextScripts,
+      branch,
+      headSha: res.sha,
+    });
+    return {
+      status: 'committed',
+      sha: res.sha,
+      branch,
+      partPath: path,
+      files: files.map((f) => f.path),
+      baseline: next,
+    };
+  } catch (err) {
+    if (err instanceof GitAdapterError && err.code === 'non_fast_forward') {
+      return {
+        status: 'error',
+        error: 'Repo moved — Save the assembly (or resolve the conflict), then try again.',
+        code: 'non_fast_forward',
+      };
+    }
+    return { status: 'error', error: err?.message || 'Delete from repo failed' };
+  }
+}
+
+
 function pad(n) {
   return String(n).padStart(2, '0');
 }

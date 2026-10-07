@@ -184,9 +184,25 @@ export function formatViewerTitle(partName, assemblyNameValue) {
   return { part, assembly, connector: 'in', text: `${part} in ${assembly}` };
 }
 
-/** Delete asks first. Only Confirm drops the part. Cancel keeps it. */
+/**
+ * Delete asks first.
+ * - cancel / dismiss → keep
+ * - confirm / assembly → drop from assembly only (legacy confirm = assembly)
+ * - repo → drop from assembly and delete the vault file when applicable
+ */
 export function partListDeleteAction(choice) {
-  return choice === 'confirm' ? 'drop' : 'keep';
+  if (choice === 'confirm' || choice === 'assembly') return 'drop';
+  if (choice === 'repo') return 'drop-repo';
+  return 'keep';
+}
+
+/** True when Parts delete can offer "Delete from assembly & repo". */
+export function partCanDeleteFromRepo(source, partId) {
+  if (source !== 'git') return false;
+  const id = String(partId || '');
+  if (!id || id.startsWith('local:')) return false;
+  // Vault part scripts only (assembly-owned or shared).
+  return /\.(js)$/i.test(id) && !id.includes('..');
 }
 
 /**
