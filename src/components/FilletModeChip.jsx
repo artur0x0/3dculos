@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { AlertTriangle, Check, X } from 'lucide-react';
 import { NumberField } from './controls/popupUI';
 
@@ -6,9 +6,9 @@ const ACCENT = 'amber';
 
 /**
  * Slice 27 — Fillet-in-mode chip (Edge-pick pattern).
- * Tangent (default-on) / Clear / Accept / Back. Live radius while edges accumulate.
- * Slice B: a hard edge shows a red banner (same red strip as the feature-modal
- * size guard) and Accept stays enabled. Mobile-first compact card.
+ * Tangent (default-on) / Clear / Back (= undo last pick) / Accept.
+ * X / Escape / dismiss without Accept clears all picks and exits.
+ * Slice B: a hard edge shows a red banner; Accept stays enabled.
  * Picks can span parts; `partCount` > 1 says so, and Accept writes each part.
  */
 const FilletModeChip = ({
@@ -50,6 +50,16 @@ const FilletModeChip = ({
     : (Number(params._sweepMax) > 0 ? Number(params._sweepMax) : 40);
   const hard = !chamfer && edgeClass?.klass === 'hard';
   const title = chamfer ? 'Chamfer' : 'Fillet';
+
+  useEffect(() => {
+    const onKey = (event) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      (onDismiss || onBack)?.();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onDismiss, onBack]);
 
   return (
     <div
@@ -107,7 +117,8 @@ const FilletModeChip = ({
         </div>
         <button
           type="button"
-          onClick={() => (onDismiss || onBack)?.()}
+          data-fillet-dismiss=""
+          onClick={() => onDismiss?.()}
           className="shrink-0 text-amber-200 hover:text-white"
           title={`Exit ${title} mode without committing`}
           aria-label={`Dismiss ${title} mode without committing`}
@@ -140,6 +151,7 @@ const FilletModeChip = ({
         </button>
         <button
           type="button"
+          data-fillet-clear=""
           className="text-[11px] text-amber-200 underline"
           onClick={() => onClear?.()}
           title="Clear all selected edges"
@@ -148,17 +160,16 @@ const FilletModeChip = ({
         </button>
         <button
           type="button"
+          data-fillet-back=""
           className="text-[11px] text-amber-200 underline"
           onClick={() => onBack?.()}
-          title={`Exit ${title} mode without committing`}
+          title="Undo last edge selection"
         >
           Back
         </button>
       </div>
-      <div className="mt-2 flex items-center justify-between gap-2">
-        <span className="text-[11px] text-amber-200/70 leading-tight">
-          {chamfer ? 'Strategy · sweep chamfer' : 'Strategy · sweep'}
-        </span>
+      {/* Space Clear/Back away from Accept; strategy helper text removed. */}
+      <div className="mt-4 flex items-center justify-end gap-2" data-fillet-accept-row="">
         <button
           type="button"
           onClick={() => onAccept?.()}

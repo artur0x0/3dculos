@@ -43,9 +43,17 @@ console.log('fillet follow-up — Accept chrome + blend loud-fail');
   const view = readFileSync(new URL('../../src/components/Viewport.jsx', import.meta.url), 'utf8');
   // The label is built from `title` (Fillet | Chamfer) — match the template,
   // not the old hard-coded string.
-  check('chip has X dismiss without committing', /Dismiss \$\{title\} mode without committing/.test(chip));
+  check('chip has X dismiss without committing', /Dismiss \$\{title\} mode without committing/.test(chip)
+    && /data-fillet-dismiss/.test(chip));
   check('Accept leaves Fillet mode', /exitFilletMode\(\)/.test(view) && /commitMode:/.test(view));
-  check('Back is still an exit', /onBack=\{exitFilletMode\}/.test(view));
+  check('Back undoes last edge pick', /data-fillet-back/.test(chip)
+    && /Undo last edge selection/.test(chip)
+    && /popLastEdgeSelection/.test(view)
+    && !/onBack=\{exitFilletMode\}/.test(view));
+  check('dismiss/exit clears all edge picks', /exitFilletMode[\s\S]{0,280}setSelectedEdges\(\[\]\)/.test(view)
+    && /onDismiss=\{exitFilletMode\}/.test(view)
+    && !/Strategy ·/.test(chip));
+  check('Clear/Back spaced from Accept', /data-fillet-accept-row/.test(chip) && /mt-4/.test(chip));
   check(
     'Accept does not force Face pick',
     !/if \(ok\) \{[\s\S]{0,220}setPickMode\('face'\)/.test(view),
