@@ -847,87 +847,110 @@ const App = () => {
     return () => { cancelled = true; };
   }, []);
 
-  // Single initialization effect - runs once when manifold is ready
+  // Restore editor + assembly once Manifold is ready.
+  // CRITICAL (Tailscale / Safari after GitHub OAuth): never block the Loading
+  // gate on IndexedDB. Soft-nav returns to `/` without `?auth=success`, so the
+  // old gate waited on IDB while open/tx could hang forever ("Restoring
+  // document…"). Unblock synchronously (OAuth localStorage hand-off or default),
+  // then hydrate IDB in the background with per-op timeouts.
   useEffect(() => {
     if (!manifoldReady) return undefined;
     let cancelled = false;
 
-    const init = async () => {
-      let script = DEFAULT_SCRIPT;
-      let filename = null;
-      let shouldOpenAccount = false;
-      let restoredCheckout = null;
-      let restoredEditor = false;
-    
-      const params = new URLSearchParams(window.location.search);
-      const isAuthReturn = params.get('auth') === 'success';
-      const isAccountReturn = params.get('account') === 'true';
-      const isCheckoutReturn = hasCheckoutReturnFlag();
-    
-      console.log('[App] Initialization check:', {
-        isAuthReturn,
-        isAccountReturn,
-        isCheckoutReturn,
-        hasPendingEditor: hasPendingEditorState(),
-        hasPendingCheckout: hasPendingCheckout(),
+    const params = new URLSearchParams(window.location.search);
+    const isAuthReturn = params.get('auth') === 'success';
+    const isAccountReturn = params.get('account') === 'true';
+    const isCheckoutReturn = hasCheckoutReturnFlag();
+    // GitHub soft-nav lands on `/` with no query flag — still honor the hand-off.
+    const pendingOAuthEditor = hasPendingEditorState();
+
+    let script = DEFAULT_SCRIPT;
+    let filename = null;
+    let restoredEditor = false;
+    let shouldOpenAccount = false;
+    let restoredCheckout = null;
+
+    console.log('[App] Initialization check:', {
+      isAuthReturn,
+      isAccountReturn,
+      isCheckoutReturn,
+      hasPendingEditor: pendingOAuthEditor,
+      hasPendingCheckout: hasPendingCheckout(),
+    });
+
+    if (pendingOAuthEditor) {
+      const restored = restoreEditorState();
+      clearEditorState();
+      console.log('[App] Restored OAuth editor hand-off:', {
+        hasScript: !!restored?.currentScript,
+        scriptLength: restored?.currentScript?.length,
       });
-    
-      // Restore editor state if returning from any OAuth flow
-      if ((isAuthReturn || isAccountReturn || isCheckoutReturn) && hasPendingEditorState()) {
-        const restored = restoreEditorState();
-        console.log('[App] Restored editor state:', {
-          hasScript: !!restored?.currentScript,
-          scriptLength: restored?.currentScript?.length,
-        });
-        if (restored?.currentScript) {
-          script = restored.currentScript;
-        }
-        if (restored?.currentFilename) {
-          filename = restored.currentFilename;
-        }
-        clearEditorState();
+      if (restored?.currentScript) {
+        script = restored.currentScript;
         restoredEditor = true;
       }
+      if (restored?.currentFilename) filename = restored.currentFilename;
+    }
 
-      // Plain reload / crash / tab eviction: the IndexedDB draft is the buffer
-      // the user last saw. An OAuth hand-off already won above — it is the more
-      // specific intent — so only fill in when nothing was restored yet.
-      if (!restoredEditor) {
-        const draft = await loadEditorDraft();
-        if (draft && typeof draft.script === 'string') {
-          script = draft.script;
-          if (draft.filename) filename = draft.filename;
+    if (isCheckoutReturn || (isAuthReturn && hasPendingCheckout())) {
+      const checkoutState = restoreCheckoutState();
+      if (checkoutState) {
+        restoredCheckout = {
+          quoteData: checkoutState.quoteData,
+          modelData: checkoutState.modelData,
+          restoredStep: checkoutState.currentStep,
+          restoredAddress: checkoutState.address,
+          restoredGuestEmail: checkoutState.guestEmail,
+        };
+      }
+      clearCheckoutState();
+    }
+    if (isAccountReturn) shouldOpenAccount = true;
+    if (isAuthReturn || isAccountReturn || isCheckoutReturn) clearCheckoutReturnFlag();
+
+    // Seed in-memory assembly so Parts can mount without waiting on IDB.
+    const seedId = newLocalPartId();
+    const seedDoc = serializeAssembly({
+      source: 'local',
+      activeId: seedId,
+      parts: [{ id: seedId, name: filename || 'Part 1', visible: true, order: 0 }],
+    });
+    const seedScripts = { [seedId]: script };
+    assemblyRef.current = seedDoc;
+    partScriptsRef.current = seedScripts;
+    setAssemblyDoc(seedDoc);
+    setPartScripts(seedScripts);
+    if (filename) setCurrentFilename(filename);
+    if (restoredCheckout) {
+      setOrderData(restoredCheckout);
+      setShowOrderModal(true);
+    }
+    if (shouldOpenAccount) setShowAccountModal(true);
+    // Unblock Loading THIS tick — before any await.
+    setEditorInitialScript(script);
+
+    const hydrate = async () => {
+      let nextScript = script;
+      let nextFilename = filename;
+      let nextRestoredEditor = restoredEditor;
+
+      if (!nextRestoredEditor) {
+        try {
+          const draft = await loadEditorDraft();
+          if (cancelled) return;
+          if (draft && typeof draft.script === 'string') {
+            nextScript = draft.script;
+            if (draft.filename) nextFilename = draft.filename;
+            nextRestoredEditor = true;
+            setEditorInitialScript(nextScript);
+            if (nextFilename) setCurrentFilename(nextFilename);
+          }
+        } catch (err) {
+          console.warn('[App] Editor draft restore failed:', err);
         }
       }
       if (cancelled) return;
 
-      // Handle checkout-specific restoration
-      if (isCheckoutReturn || (isAuthReturn && hasPendingCheckout())) {
-        const checkoutState = restoreCheckoutState();
-        if (checkoutState) {
-          restoredCheckout = {
-            quoteData: checkoutState.quoteData,
-            modelData: checkoutState.modelData,
-            restoredStep: checkoutState.currentStep,
-            restoredAddress: checkoutState.address,
-            restoredGuestEmail: checkoutState.guestEmail,
-          };
-        }
-        clearCheckoutState();
-      }
-    
-      // Determine if we should open modals
-      if (isAccountReturn) {
-        shouldOpenAccount = true;
-      }
-    
-      // Clean URL
-      if (isAuthReturn || isAccountReturn || isCheckoutReturn) {
-        clearCheckoutReturnFlag();
-      }
-    
-      // Assembly wraps the editor buffer. The document stores ids only.
-      // The buffer we just restored is the active part's script.
       let doc = null;
       let scripts = {};
       try {
@@ -938,58 +961,43 @@ const App = () => {
         doc = null;
       }
       if (cancelled) return;
+
       if (!doc || !doc.parts.length) {
-        const id = newLocalPartId();
-        doc = serializeAssembly({
-          source: 'local',
-          activeId: id,
-          parts: [{ id, name: filename || 'Part 1', visible: true, order: 0 }],
-        });
-        scripts = { [id]: script };
-        await savePartScript(id, script);
-        await saveAssemblyDocument(doc);
-      } else {
-        const active = doc.parts.find((part) => part.id === doc.activeId) || doc.parts[0];
-        doc = serializeAssembly({ ...doc, activeId: active.id });
-        if (typeof scripts[active.id] === 'string' && !restoredEditor) {
-          script = scripts[active.id];
-          filename = filename || active.name;
-        } else {
-          scripts = { ...scripts, [active.id]: script };
-          await savePartScript(active.id, script);
+        // Persist the seed we already showed.
+        const latest = assemblyRef.current || seedDoc;
+        const latestScripts = partScriptsRef.current || seedScripts;
+        const activeId = latest.activeId || seedId;
+        try {
+          await savePartScript(activeId, latestScripts[activeId] || nextScript);
+          await saveAssemblyDocument(latest);
+        } catch (err) {
+          console.warn('[App] Seed assembly persist failed:', err);
         }
-        if (!filename) filename = active.name;
+        return;
       }
+
+      const active = doc.parts.find((part) => part.id === doc.activeId) || doc.parts[0];
+      doc = serializeAssembly({ ...doc, activeId: active.id });
+      if (typeof scripts[active.id] === 'string' && !nextRestoredEditor) {
+        nextScript = scripts[active.id];
+        nextFilename = nextFilename || active.name;
+      } else {
+        scripts = { ...scripts, [active.id]: nextScript };
+        try { await savePartScript(active.id, nextScript); } catch { /* ignore */ }
+      }
+      if (!nextFilename) nextFilename = active.name;
       if (cancelled) return;
+
       assemblyRef.current = doc;
       partScriptsRef.current = scripts;
       setAssemblyDoc(doc);
       setPartScripts(scripts);
-
-      // Set state - order matters for avoiding flicker
-      if (filename) setCurrentFilename(filename);
-      if (restoredCheckout) {
-        setOrderData(restoredCheckout);
-        setShowOrderModal(true);
-      }
-      if (shouldOpenAccount) setShowAccountModal(true);
-    
-      // Set editor script last - this enables rendering
-      setEditorInitialScript(script);
+      if (nextFilename) setCurrentFilename(nextFilename);
+      setEditorInitialScript(nextScript);
     };
 
-    const EDITOR_INIT_TIMEOUT_MS = 20000;
-    const watchdog = setTimeout(() => {
-      if (cancelled) return;
-      console.warn('[App] Editor/assembly init timed out — continuing with defaults');
-      setEditorInitialScript((prev) => (prev == null ? DEFAULT_SCRIPT : prev));
-    }, EDITOR_INIT_TIMEOUT_MS);
-
-    init().finally(() => clearTimeout(watchdog));
-    return () => {
-      cancelled = true;
-      clearTimeout(watchdog);
-    };
+    void hydrate();
+    return () => { cancelled = true; };
   }, [manifoldReady]);
 
   // Mirror the live CAD buffer into IndexedDB so a reload restores it.
@@ -2478,7 +2486,7 @@ const App = () => {
       setGitBehindToast(null);
     }
     return undefined;
-  }, [githubConnected]); // eslint-disable-line react-hooks/exhaustive-deps -- vault helpers via refs
+  }, [githubConnected, assemblyDoc]); // eslint-disable-line react-hooks/exhaustive-deps -- vault helpers via refs
 
   const handleAddPart = async (gitPath) => {
     const doc = assemblyRef.current;
@@ -3470,9 +3478,15 @@ const App = () => {
   useEffect(() => {
     if (manifoldReady && editorInitialScript !== null) return undefined;
     if (initError) return undefined;
-    const LOADING_WATCHDOG_MS = 75000;
+    // Manifold budget is 60s; give a little headroom. Document restore must not
+    // hold Loading anymore (sync unblock above) — this is Manifold-stuck only.
+    const LOADING_WATCHDOG_MS = manifoldReady ? 8000 : 75000;
     const id = setTimeout(() => {
-      setInitError((prev) => prev || 'Still loading after 75s — Manifold or document restore stalled. Tap Retry.');
+      if (manifoldReady && editorInitialScript == null) {
+        setEditorInitialScript(DEFAULT_SCRIPT);
+        return;
+      }
+      setInitError((prev) => prev || 'Still loading after 75s — CAD engine stalled. Tap Retry.');
     }, LOADING_WATCHDOG_MS);
     return () => clearTimeout(id);
   }, [manifoldReady, editorInitialScript, initError]);

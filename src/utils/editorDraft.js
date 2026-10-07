@@ -1,3 +1,4 @@
+import { idbWithTimeout, IDB_OP_TIMEOUT_MS } from './idbWithTimeout.js';
 /**
  * utils/editorDraft.js — crash/reload-proof editor draft in IndexedDB.
  *
@@ -65,11 +66,15 @@ function openDB() {
     };
     req.onblocked = () => resolve(null);
   });
-  return dbPromise;
+  return idbWithTimeout(dbPromise, IDB_OP_TIMEOUT_MS, 'EditorDraft open').catch((err) => {
+    console.warn('[EditorDraft] indexedDB.open timed out:', err?.message || err);
+    dbPromise = null;
+    return null;
+  });
 }
 
 function runTx(mode, work) {
-  return openDB().then((db) => {
+  const op = openDB().then((db) => {
     if (!db) return { ok: false, value: null };
     return new Promise((resolve) => {
       let tx;
@@ -80,15 +85,25 @@ function runTx(mode, work) {
         resolve({ ok: false, value: null });
         return;
       }
+      let settled = false;
+      const finish = (result) => {
+        if (settled) return;
+        settled = true;
+        resolve(result);
+      };
       let out;
       const req = work(tx.objectStore(STORE));
       if (req) req.onsuccess = () => { out = req.result; };
-      tx.oncomplete = () => resolve({ ok: true, value: out });
-      tx.onabort = () => resolve({ ok: false, value: null });
-      tx.onerror = () => resolve({ ok: false, value: null });
+      tx.oncomplete = () => finish({ ok: true, value: out });
+      tx.onabort = () => finish({ ok: false, value: null });
+      tx.onerror = () => finish({ ok: false, value: null });
     });
   }).catch((err) => {
     console.warn('[EditorDraft] store unavailable:', err);
+    return { ok: false, value: null };
+  });
+  return idbWithTimeout(op, IDB_OP_TIMEOUT_MS, 'EditorDraft tx').catch((err) => {
+    console.warn('[EditorDraft] tx timed out:', err?.message || err);
     return { ok: false, value: null };
   });
 }
