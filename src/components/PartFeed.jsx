@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Eye, EyeOff, FolderOpen, GripVertical, Plus, Save, Trash2 } from 'lucide-react';
-import { partListDeleteAction, sanitizeAssemblyName, sanitizePartName } from '../utils/assembly.js';
+import { partCanDeleteFromRepo, partListDeleteAction, sanitizeAssemblyName, sanitizePartName } from '../utils/assembly.js';
 import ProfileChip from './ProfileChip';
 import {
   PART_PREVIEW_SIZE,
@@ -1010,11 +1010,12 @@ export default function PartFeed({
     setPendingDelete(null);
   };
 
-  const confirmDeletePart = () => {
+  const confirmDeletePart = (choice = 'assembly') => {
     const pending = pendingDelete;
     setPendingDelete(null);
-    if (partListDeleteAction('confirm') !== 'drop' || !pending?.id) return;
-    onDeletePart?.(pending.id);
+    const action = partListDeleteAction(choice);
+    if ((action !== 'drop' && action !== 'drop-repo') || !pending?.id) return;
+    onDeletePart?.(pending.id, { fromRepo: action === 'drop-repo' });
   };
 
   return (
@@ -2202,10 +2203,11 @@ export default function PartFeed({
               Delete part
             </h2>
             <p className="mt-2 text-xs text-gray-300">
-              {`Remove ${pendingDelete.name} from this assembly? This drops the row, its script, and its solid.`}
-              {source === 'git' ? ' The git file is left where it is.' : ''}
+              {partCanDeleteFromRepo(source, pendingDelete.id)
+                ? `Remove ${pendingDelete.name} from this assembly only, or also delete its file from the repo.`
+                : `Remove ${pendingDelete.name} from this assembly? This drops the row, its script, and its solid.`}
             </p>
-            <div className="mt-4 flex justify-end gap-2">
+            <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
               <button
                 ref={cancelBtnRef}
                 type="button"
@@ -2218,11 +2220,23 @@ export default function PartFeed({
               <button
                 type="button"
                 data-part-delete-confirm=""
+                data-part-delete-scope="assembly"
                 className="rounded-md bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-500"
-                onClick={confirmDeletePart}
+                onClick={() => confirmDeletePart('assembly')}
               >
-                Delete
+                Delete from assembly
               </button>
+              {partCanDeleteFromRepo(source, pendingDelete.id) && (
+                <button
+                  type="button"
+                  data-part-delete-confirm-repo=""
+                  data-part-delete-scope="repo"
+                  className="rounded-md bg-red-800 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-700"
+                  onClick={() => confirmDeletePart('repo')}
+                >
+                  Delete from assembly & repo
+                </button>
+              )}
             </div>
           </div>
         </div>,

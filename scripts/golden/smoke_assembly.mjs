@@ -26,6 +26,7 @@ import {
   formatViewerTitle,
   parseAssemblyDocument,
   partListDeleteAction,
+  partCanDeleteFromRepo,
   recordPartRun,
   removePart,
   resolvePartId,
@@ -217,9 +218,18 @@ const BAD = 'let part = Manifold.cube([10, 10, 10], true);\nreturn part.missingM
     && partListDeleteAction('dismiss') === 'keep'
     && partListDeleteAction(undefined) === 'keep'
     && partListDeleteAction('confirm') === 'drop'
-    && /partListDeleteAction\('confirm'\) !== 'drop'/.test(confirmDel)
-    && /onDeletePart\?\.\(pending\.id\)/.test(confirmDel)
-    && /data-part-delete-confirm/.test(feed));
+    && partListDeleteAction('assembly') === 'drop'
+    && partListDeleteAction('repo') === 'drop-repo'
+    && /partListDeleteAction\(choice\)/.test(confirmDel)
+    && /onDeletePart\?\.\(pending\.id, \{ fromRepo:/.test(confirmDel)
+    && /data-part-delete-confirm/.test(feed)
+    && /data-part-delete-scope="assembly"/.test(feed)
+    && /Delete from assembly/.test(feed)
+    && /data-part-delete-confirm-repo/.test(feed)
+    && /partCanDeleteFromRepo/.test(feed)
+    && partCanDeleteFromRepo('git', 'assemblies/Gearbox/Bracket.js') === true
+    && partCanDeleteFromRepo('git', 'local:abc') === false
+    && partCanDeleteFromRepo('local', 'assemblies/Gearbox/Bracket.js') === false);
   check('assembly name in the title and the ribbon uses the same commit rules',
     /onRenameAssembly/.test(view)
     && /noun="Assembly"/.test(view)
