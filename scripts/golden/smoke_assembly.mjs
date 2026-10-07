@@ -179,15 +179,17 @@ const BAD = 'let part = Manifold.cube([10, 10, 10], true);\nreturn part.missingM
   const ribbon = feed.slice(ribbonStart, feed.indexOf('data-parts-rows'));
   const toolbar = ribbon.slice(ribbon.indexOf('data-parts-feed-toolbar'), ribbon.indexOf('data-parts-ribbon-end'));
   const ribbonEnd = ribbon.slice(ribbon.indexOf('data-parts-ribbon-end'));
-  check('parts ribbon centers the assembly name and parks Local or Git on the right',
+  check('parts ribbon centers the assembly name; profile chip on the right',
     /data-parts-ribbon-center/.test(ribbon)
     && /RibbonAssemblyName name=\{ribbonName\}/.test(ribbon)
     && /data-parts-ribbon-end/.test(ribbon)
     && /ml-auto/.test(ribbonEnd.slice(0, 180))
     && ribbon.indexOf('data-parts-feed-toolbar') < ribbon.indexOf('data-parts-ribbon-end')
     && !/data-parts-source-label/.test(toolbar)
-    && /data-parts-source-label/.test(ribbonEnd)
-    && /source === 'git' \? 'Git' : 'Local'/.test(ribbonEnd)
+    && !/data-parts-source-label/.test(ribbonEnd)
+    && /data-parts-profile-chip/.test(ribbonEnd)
+    && /max-w-\[70%\]/.test(feed)
+    && /data-part-add-menu/.test(toolbar)
     && /assemblyName=\{assemblyLabel\}/.test(app));
   const ask = feed.slice(feed.indexOf('const askDeletePart'), feed.indexOf('const cancelDeletePart'));
   const cancel = feed.slice(feed.indexOf('const cancelDeletePart'), feed.indexOf('const confirmDeletePart'));
