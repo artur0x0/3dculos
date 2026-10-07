@@ -7,7 +7,7 @@
  * Commit (G3) is the only write back to git; this module never commits.
  */
 import { normalizeRepoPath, serializeAssembly } from '../assembly.js';
-import { assertGithubAdapter } from './githubAdapter.js';
+import { assertGithubAdapter } from './githubAdapterInterface.js';
 import {
   assemblyFilePath,
   assemblyPartPath,

@@ -9,7 +9,7 @@
  *
  * Mock adapter only; nothing here talks to the network.
  */
-import { GitAdapterError, assertGithubAdapter, fileWrite } from './githubAdapter.js';
+import { GitAdapterError, assertGithubAdapter, fileWrite } from './githubAdapterInterface.js';
 import { detectCommitBase, commitBranchName } from './gitCommit.js';
 import { captureBaseline } from './gitWorkspace.js';
 import { parseSurfJson, stringifySurfJson } from './surfJson.js';

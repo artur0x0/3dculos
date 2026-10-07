@@ -8,7 +8,7 @@ import { readFileSync } from 'node:fs';
 import {
   GITHUB_ADAPTER_METHODS, GitAdapterError, assertGithubAdapter, missingAdapterMethods,
   fileWrite, fileDelete,
-} from '../../src/utils/git/githubAdapter.js';
+} from '../../src/utils/git/githubAdapterInterface.js';
 import { createMockGithubAdapter, mockSha } from '../../src/utils/git/mockGithubAdapter.js';
 import {
   assemblyFilePath, assemblyPartPath, sharedPartPath, assemblyDir, parseVaultPath,
@@ -196,7 +196,7 @@ const at = feed.indexOf('data-git-connect');
 ok('PartFeed has Connect GitHub', at > 0 && feed.includes('Connect GitHub'));
 ok('Connect is git-mode only', /source === 'git' && \([\s\S]*?data-git-connect/.test(feed));
 ok('Connect gated on client id / token (G7)', /githubConnectReady/.test(feed) && /githubConnected/.test(feed));
-const srcFiles = ['githubAdapter', 'mockGithubAdapter', 'vaultLayout', 'surfJson', 'vault']
+const srcFiles = ['githubAdapterInterface', 'mockGithubAdapter', 'vaultLayout', 'surfJson', 'vault']
   .map((f) => readFileSync(new URL(`../../src/utils/git/${f}.js`, import.meta.url), 'utf8')).join('\n');
 ok('no network or token use in G1 core modules', !/\bfetch\(|api\.github\.com|XMLHttpRequest|localStorage|Authorization/.test(srcFiles));
 

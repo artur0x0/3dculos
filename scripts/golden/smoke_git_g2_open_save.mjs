@@ -11,7 +11,7 @@ import {
   assemblyFilePath, assemblyPartPath, sharedPartPath, listAssemblies,
 } from '../../src/utils/git/vaultLayout.js';
 import { stringifySurfJson, parseSurfJson } from '../../src/utils/git/surfJson.js';
-import { fileWrite } from '../../src/utils/git/githubAdapter.js';
+import { fileWrite } from '../../src/utils/git/githubAdapterInterface.js';
 import {
   dirtyPartIds, isAssemblyDirty, isPartDirty, isWorkspaceDirty,
   listVaultAssemblies, listAddableVaultParts, openVaultAssembly, readVaultPart,
@@ -182,7 +182,7 @@ ok('App wires vault open + dirty',
 ok('App new part resolveNewPartPath in git',
   /resolveNewPartPath\(doc\.name, gitPath\)/.test(app));
 ok('Find in repo uses vault', /handleFindInRepo/.test(app) && /onFindInRepo/.test(feed));
-const srcFiles = ['gitWorkspace', 'githubAdapter', 'mockGithubAdapter', 'vaultLayout', 'surfJson', 'vault']
+const srcFiles = ['gitWorkspace', 'githubAdapterInterface', 'mockGithubAdapter', 'vaultLayout', 'surfJson', 'vault']
   .map((f) => readFileSync(new URL(`../../src/utils/git/${f}.js`, import.meta.url), 'utf8')).join('\n');
 ok('no network or token use in G2', !/\bfetch\(|api\.github\.com|XMLHttpRequest|Authorization:\s*['"]Bearer/.test(srcFiles));
 ok('G2 does not commit from workspace helpers',

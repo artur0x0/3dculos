@@ -6,7 +6,7 @@
  * baseline (`baseline.branch`); switching reloads the assembly from the
  * chosen tip. Mock adapter only — no network, no tokens.
  */
-import { assertGithubAdapter } from './githubAdapter.js';
+import { assertGithubAdapter } from './githubAdapterInterface.js';
 import { openVaultAssembly } from './gitWorkspace.js';
 import { vaultSegment } from './vaultLayout.js';
 
