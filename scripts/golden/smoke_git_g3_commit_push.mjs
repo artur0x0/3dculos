@@ -226,7 +226,10 @@ ok('Commit button git-only, gated', /data-git-commit=""/.test(feed) && /disabled
   && /canCommit=\{assemblyDoc\.source === 'git' && !!sourceDirty\}/.test(app));
 ok('commit message dialog', /data-git-commit-message/.test(feed) && /data-git-commit-confirm/.test(feed));
 ok('commit message prompts + no iOS zoom', /Enter a commit message/.test(feed)
-  && /data-git-commit-message[\s\S]*?fontSize: '16px'/.test(feed));
+  && /data-git-commit-message[\s\S]*?PARTS_TEXT_INPUT_STYLE/.test(feed)
+  && /PARTS_TEXT_INPUT_CLASS/.test(feed)
+  && /partsChrome\.js/.test(feed)
+  && /fontSize: '16px'/.test(readFileSync(new URL('../../src/utils/partsChrome.js', import.meta.url), 'utf8')));
 ok('no-repo-path commit error offers Add to Repo', /data-git-commit-add-to-repo/.test(feed)
   && /no_repo_path/.test(feed) && /runAddStrayToRepo/.test(feed));
 ok('force merge ask', /data-git-force-merge-ask/.test(feed) && /data-git-force-merge=""/.test(feed)

@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { Eye, EyeOff, FolderOpen, GripVertical, Plus, Save, Trash2 } from 'lucide-react';
 import { partCanDeleteFromRepo, partListDeleteAction, sanitizeAssemblyName, sanitizePartName } from '../utils/assembly.js';
 import { filterVaultOpenIndex, filterVaultPartItems } from '../utils/git/gitWorkspace.js';
+import { PARTS_TEXT_INPUT_CLASS, PARTS_TEXT_INPUT_STYLE } from '../utils/partsChrome.js';
 import ProfileChip from './ProfileChip';
 import {
   PART_PREVIEW_SIZE,
@@ -19,6 +20,7 @@ import {
 const STRIP_BTN = 'shrink-0 p-1.5 flex items-center rounded active:opacity-80 hover:bg-gray-700/60 text-blue-400';
 const STRIP_DIVIDER = 'shrink-0 w-px bg-gray-600 mx-0.5 self-stretch my-1';
 const STRIP_ICON = 18;
+
 
 /**
  * Parts feed. Desktop mounts it to the left of the editor. Mobile mounts it
@@ -62,6 +64,7 @@ function RibbonAssemblyName({
   };
 
   const label = 'max-w-full truncate bg-gray-900 px-1.5 text-center text-xs font-medium text-gray-100';
+  const editInput = 'max-w-full min-w-[6rem] truncate bg-gray-900 px-1.5 text-center text-base font-medium text-gray-100 outline-none';
   const behindBadge = behind ? (
     <button
       type="button"
@@ -89,7 +92,8 @@ function RibbonAssemblyName({
             if (e.key === 'Escape') { e.preventDefault(); setEditing(false); }
             e.stopPropagation();
           }}
-          className={`${label} pointer-events-auto w-full min-w-[6rem] outline-none`}
+          className={`${editInput} pointer-events-auto w-full`}
+          style={PARTS_TEXT_INPUT_STYLE}
           aria-label="Assembly name"
           data-assembly-name=""
           data-assembly-rename="input"
@@ -175,6 +179,7 @@ function RowPartName({ id, name, onRename, editing, setEditing }) {
   };
 
   const label = 'truncate text-sm font-medium text-gray-100';
+  const editInput = 'w-full truncate rounded border border-blue-400/80 bg-gray-900 px-1 text-base font-medium text-gray-100 outline-none';
   if (editing) {
     const stop = (event) => event.stopPropagation();
     return (
@@ -193,7 +198,8 @@ function RowPartName({ id, name, onRename, editing, setEditing }) {
           if (e.key === 'Escape') { e.preventDefault(); setEditing(false); }
           e.stopPropagation();
         }}
-        className={`${label} w-full rounded border border-blue-400/80 bg-gray-900 px-1 outline-none`}
+        className={editInput}
+        style={PARTS_TEXT_INPUT_STYLE}
         aria-label="Part name"
         data-part-name-input={id}
       />
@@ -1416,7 +1422,8 @@ export default function PartFeed({
                     onChange={(e) => setOpenPicker({ ...openPicker, query: e.target.value })}
                     placeholder="Search assemblies and parts…"
                     aria-label="Search assemblies and parts"
-                    className="mb-3 w-full rounded-md border border-gray-600 bg-black/30 px-2 py-1.5 text-xs text-gray-100 outline-none focus:border-blue-500"
+                    className={`mb-3 ${PARTS_TEXT_INPUT_CLASS}`}
+                    style={PARTS_TEXT_INPUT_STYLE}
                     autoFocus
                   />
                 )}
@@ -1571,7 +1578,8 @@ export default function PartFeed({
                 onAddPart?.(name);
               }
             }}
-            className="w-full rounded-md border border-gray-600 bg-black/30 px-2 py-1.5 text-xs text-gray-100 outline-none focus:border-blue-500"
+            className={PARTS_TEXT_INPUT_CLASS}
+            style={PARTS_TEXT_INPUT_STYLE}
             placeholder="Bracket"
           />
         </VaultPickerDialog>
@@ -1608,7 +1616,8 @@ export default function PartFeed({
                     onChange={(e) => setOpenPicker({ ...openPicker, query: e.target.value })}
                     placeholder="Search parts…"
                     aria-label="Search parts"
-                    className="mb-3 w-full rounded-md border border-gray-600 bg-black/30 px-2 py-1.5 text-xs text-gray-100 outline-none focus:border-blue-500"
+                    className={`mb-3 ${PARTS_TEXT_INPUT_CLASS}`}
+                    style={PARTS_TEXT_INPUT_STYLE}
                     autoFocus
                   />
                 )}
@@ -1738,8 +1747,8 @@ export default function PartFeed({
                     runCommit();
                   }
                 }}
-                className="w-full rounded-md border border-gray-600 bg-black/30 px-2 py-1.5 text-base text-gray-100 outline-none focus:border-blue-500"
-                style={{ fontSize: '16px' }}
+                className={PARTS_TEXT_INPUT_CLASS}
+                style={PARTS_TEXT_INPUT_STYLE}
                 placeholder="Enter a commit message"
               />
             </>
@@ -2072,8 +2081,8 @@ export default function PartFeed({
                 autoCapitalize="off"
                 autoCorrect="off"
                 spellCheck={false}
-                className="w-full rounded-md border border-gray-600 bg-black/30 px-2 py-1.5 text-base text-gray-100 outline-none focus:border-blue-500"
-                style={{ fontSize: '16px' }}
+                className={PARTS_TEXT_INPUT_CLASS}
+                style={PARTS_TEXT_INPUT_STYLE}
                 placeholder="feature/my-change"
               />
               {branchFlow.error ? (
@@ -2208,8 +2217,8 @@ export default function PartFeed({
                 id="git-move-vault-name"
                 data-git-move-vault-name=""
                 data-git-vault-name=""
-                className="w-full rounded border border-gray-600 bg-gray-900 px-2 py-1 font-mono text-base text-gray-100"
-                style={{ fontSize: '16px' }}
+                className={`${PARTS_TEXT_INPUT_CLASS} font-mono`}
+                style={PARTS_TEXT_INPUT_STYLE}
                 value={moveFlow.vaultName}
                 autoFocus
                 spellCheck={false}
