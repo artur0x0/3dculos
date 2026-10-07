@@ -1,8 +1,11 @@
 /**
  * Profile chip — CAD viewport (absolute), Parts ribbon + Script toolbar (inline).
- * Signed out / guest: opens Login (onAccount). Signed in: opens ProfilePanel
- * (user info, Sign out, Danger zone → Delete account). Initials when available;
- * User icon when signed out. Green when signed in / GitHub token present.
+ *
+ * CAD (viewport): green → ProfilePanel; grey → Login (onAccount). No Clear
+ * local CAD data popup here.
+ *
+ * Parts + Script (inline): always opens a panel. Signed out → Sign in + Clear
+ * local CAD data. Signed in → account panel + Clear local CAD data when wired.
  */
 import React, { useMemo, useState } from 'react';
 import { User } from 'lucide-react';
@@ -19,6 +22,7 @@ import ProfilePanel from './ProfilePanel';
 export default function ProfileChip({
   onAccount,
   onSignedOut = null,
+  onClearLocalCadData = null,
   vaultName = DEFAULT_VAULT_NAME,
   variant = 'viewport',
 }) {
@@ -27,6 +31,8 @@ export default function ProfileChip({
 
   const githubLinked = !isAuthenticated && hasGithubToken();
   const signedIn = isAuthenticated || githubLinked;
+  // Parts / Script: panel even when signed out (Sign in + Clear local CAD data).
+  const localMenu = variant === 'inline' && typeof onClearLocalCadData === 'function';
 
   const label = useMemo(
     () => profileInitials({
@@ -74,8 +80,13 @@ export default function ProfileChip({
     : 'pointer-events-auto absolute top-4 right-4 z-50';
 
   const handleClick = () => {
-    // Green chip = signed in (session and/or GitHub token). Always open the
-    // account panel — never bounce a green chip to Login/AuthStep.
+    // Parts / Script: always open the local menu panel.
+    if (localMenu) {
+      setPanelOpen((open) => !open);
+      return;
+    }
+    // CAD: green chip = signed in (session and/or GitHub token). Always open
+    // the account panel — never bounce a green chip to Login/AuthStep.
     if (signedIn) {
       setPanelOpen((open) => !open);
       return;
@@ -110,6 +121,8 @@ export default function ProfileChip({
     onSignedOut?.();
   };
 
+  const showPanel = signedIn || localMenu;
+
   return (
     <div className={wrapClass} data-profile-chip-wrap="">
       <button
@@ -118,8 +131,8 @@ export default function ProfileChip({
         data-profile-chip-variant={variant}
         data-profile-initials={label || (signedIn ? 'user' : 'out')}
         data-profile-auth={authState}
-        aria-expanded={signedIn ? (panelOpen ? 'true' : 'false') : undefined}
-        aria-haspopup={signedIn ? 'dialog' : undefined}
+        aria-expanded={showPanel ? (panelOpen ? 'true' : 'false') : undefined}
+        aria-haspopup={showPanel ? 'dialog' : undefined}
         onClick={handleClick}
         onPointerDown={(e) => e.stopPropagation()}
         title={title}
@@ -134,12 +147,15 @@ export default function ProfileChip({
           <User size={iconSize} aria-hidden="true" strokeWidth={2.25} data-profile-icon="user" />
         )}
       </button>
-      {signedIn && (
+      {showPanel && (
         <ProfilePanel
           open={panelOpen}
           onClose={() => setPanelOpen(false)}
           onSignOut={handleSignOut}
           onDeleteAccount={handleDeleteAccount}
+          onSignIn={localMenu ? () => { onAccount?.(); } : null}
+          onClearLocalCadData={localMenu ? onClearLocalCadData : null}
+          signedIn={signedIn}
           align="right"
         />
       )}

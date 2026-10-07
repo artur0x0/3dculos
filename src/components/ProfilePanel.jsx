@@ -1,6 +1,9 @@
 /**
- * Signed-in profile panel: user info, Sign out, Danger zone → Delete account.
- * Opened from ProfileChip (not the full AccountModal).
+ * Profile panel from ProfileChip.
+ * Signed-in (CAD + Parts/Script): user info, Sign out, optional Clear local
+ * CAD data, Danger zone → Delete account.
+ * Signed-out Parts/Script only: Sign in + Clear local CAD data.
+ * CAD viewport never mounts the signed-out panel (grey chip → Login).
  */
 import React, { useEffect, useRef, useState } from 'react';
 import { useAuth } from '../hooks/useAuth';
@@ -18,17 +21,22 @@ export default function ProfilePanel({
   onClose,
   onSignOut,
   onDeleteAccount,
+  onSignIn = null,
+  onClearLocalCadData = null,
+  signedIn = true,
   align = 'right',
 }) {
   const { user } = useAuth();
   const ref = useRef(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [confirmClear, setConfirmClear] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
     if (!open) {
       setConfirmDelete(false);
+      setConfirmClear(false);
       setBusy(false);
       setError('');
     }
@@ -42,6 +50,7 @@ export default function ProfilePanel({
     const onKey = (event) => {
       if (event.key === 'Escape') {
         if (confirmDelete) setConfirmDelete(false);
+        else if (confirmClear) setConfirmClear(false);
         else onClose?.();
       }
     };
@@ -51,7 +60,7 @@ export default function ProfilePanel({
       document.removeEventListener('mousedown', onDoc);
       document.removeEventListener('keydown', onKey);
     };
-  }, [open, onClose, confirmDelete]);
+  }, [open, onClose, confirmDelete, confirmClear]);
 
   if (!open) return null;
 
@@ -60,6 +69,7 @@ export default function ProfilePanel({
   const loginHint = user?.githubId
     ? 'GitHub linked'
     : (!user ? 'Signed in with GitHub' : null);
+  const canClear = typeof onClearLocalCadData === 'function';
 
   const runDelete = async () => {
     setBusy(true);
@@ -73,58 +83,65 @@ export default function ProfilePanel({
     }
   };
 
+  const runClear = async () => {
+    setBusy(true);
+    setError('');
+    try {
+      await onClearLocalCadData?.();
+      onClose?.();
+    } catch (err) {
+      setError(err?.message || 'Could not clear local CAD data');
+      setBusy(false);
+    }
+  };
+
   const alignClass = align === 'left' ? 'left-0' : 'right-0';
 
   return (
     <div
       ref={ref}
       data-profile-panel=""
+      data-profile-panel-mode={signedIn ? 'signed-in' : 'signed-out'}
       role="dialog"
       aria-label="Account"
       className={`absolute ${alignClass} top-full z-[60] mt-1 w-64 rounded-md border border-gray-600
         bg-gray-900 py-2 shadow-xl`}
       onPointerDown={(e) => e.stopPropagation()}
     >
-      {!confirmDelete ? (
-        <>
-          <div className="px-3 pb-2 pt-1" data-profile-panel-info="">
-            {name ? (
-              <p className="truncate text-sm font-medium text-gray-100" data-profile-panel-name="">
-                {name}
-              </p>
-            ) : null}
-            {email ? (
-              <p className="truncate text-xs text-gray-400" data-profile-panel-email="" title={email}>
-                {email}
-              </p>
-            ) : null}
-            {loginHint ? (
-              <p className="mt-0.5 text-[10px] text-gray-500" data-profile-panel-github="">{loginHint}</p>
-            ) : null}
-          </div>
-          <button
-            type="button"
-            data-profile-sign-out=""
-            className="block w-full px-3 py-1.5 text-left text-xs text-gray-100 hover:bg-white/10"
-            onClick={() => { void onSignOut?.(); onClose?.(); }}
-          >
-            Sign out
-          </button>
-          <div className="my-2 border-t border-gray-700" data-profile-danger-divider="" />
-          <p className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-wide text-red-400/90"
-            data-profile-danger-zone="">
-            Danger zone
+      {confirmClear ? (
+        <div className="px-3 py-1" data-profile-clear-local-confirm="">
+          <p className="text-xs text-gray-200">
+            Clear local CAD caches (editor draft, assembly, model cache) and
+            reset the viewer, script, and parts list. Your GitHub account and
+            repo are not deleted. The GitHub session token is kept across the
+            reload.
           </p>
-          <button
-            type="button"
-            data-profile-delete-account=""
-            className="block w-full px-3 py-1.5 text-left text-xs text-red-300 hover:bg-red-500/15"
-            onClick={() => setConfirmDelete(true)}
-          >
-            Delete account
-          </button>
-        </>
-      ) : (
+          {error ? (
+            <p className="mt-2 text-xs text-amber-300" data-profile-clear-local-error="">{error}</p>
+          ) : null}
+          <div className="mt-3 flex flex-wrap justify-end gap-2">
+            <button
+              type="button"
+              data-profile-clear-local-cancel=""
+              className="rounded-md px-2.5 py-1 text-xs text-gray-200 hover:bg-white/10"
+              disabled={busy}
+              onClick={() => { setConfirmClear(false); setError(''); }}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              data-profile-clear-local-confirm-btn=""
+              className="rounded-md bg-amber-700 px-2.5 py-1 text-xs font-medium text-white hover:bg-amber-600
+                disabled:opacity-50"
+              disabled={busy}
+              onClick={() => { void runClear(); }}
+            >
+              {busy ? 'Clearing…' : 'Clear local CAD data'}
+            </button>
+          </div>
+        </div>
+      ) : confirmDelete ? (
         <div className="px-3 py-1" data-profile-delete-confirm="">
           <p className="text-xs text-gray-200">
             This deletes your SurfCAD account and your GitHub repo
@@ -156,6 +173,76 @@ export default function ProfilePanel({
             </button>
           </div>
         </div>
+      ) : !signedIn ? (
+        <>
+          <button
+            type="button"
+            data-profile-sign-in=""
+            className="block w-full px-3 py-1.5 text-left text-xs text-gray-100 hover:bg-white/10"
+            onClick={() => { onSignIn?.(); onClose?.(); }}
+          >
+            Sign in
+          </button>
+          {canClear ? (
+            <button
+              type="button"
+              data-profile-clear-local=""
+              className="block w-full px-3 py-1.5 text-left text-xs text-amber-200/90 hover:bg-amber-500/15"
+              onClick={() => setConfirmClear(true)}
+            >
+              Clear local CAD data
+            </button>
+          ) : null}
+        </>
+      ) : (
+        <>
+          <div className="px-3 pb-2 pt-1" data-profile-panel-info="">
+            {name ? (
+              <p className="truncate text-sm font-medium text-gray-100" data-profile-panel-name="">
+                {name}
+              </p>
+            ) : null}
+            {email ? (
+              <p className="truncate text-xs text-gray-400" data-profile-panel-email="" title={email}>
+                {email}
+              </p>
+            ) : null}
+            {loginHint ? (
+              <p className="mt-0.5 text-[10px] text-gray-500" data-profile-panel-github="">{loginHint}</p>
+            ) : null}
+          </div>
+          <button
+            type="button"
+            data-profile-sign-out=""
+            className="block w-full px-3 py-1.5 text-left text-xs text-gray-100 hover:bg-white/10"
+            onClick={() => { void onSignOut?.(); onClose?.(); }}
+          >
+            Sign out
+          </button>
+          {canClear ? (
+            <button
+              type="button"
+              data-profile-clear-local=""
+              className="block w-full px-3 py-1.5 text-left text-xs text-amber-200/90 hover:bg-amber-500/15"
+              onClick={() => setConfirmClear(true)}
+            >
+              Clear local CAD data
+            </button>
+          ) : null}
+          <div className="my-2 border-t border-gray-700" data-profile-danger-divider="" />
+          <p className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-wide text-red-400/90"
+            data-profile-danger-zone="">
+            Danger zone
+          </p>
+          <button
+            type="button"
+            data-profile-delete-account=""
+            className="block w-full px-3 py-1.5 text-left text-xs text-red-300 hover:bg-red-500/15"
+            onClick={() => setConfirmDelete(true)}
+          >
+            Delete account
+          </button>
+        </>
       )}
     </div>
   );

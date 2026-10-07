@@ -57,6 +57,7 @@ const CodeEditor = forwardRef(({
   monacoEndPadClassName = '',
   /** Same profile chip as CAD / Parts — right of Script toolbar. */
   onSignedOut = null,
+  onClearLocalCadData = null,
   profileVaultName = null,
   onAccount = null,
 }, ref) => {
@@ -485,7 +486,7 @@ const CodeEditor = forwardRef(({
             data-script-profile-chip=""
             className="ml-auto flex shrink-0 items-center pl-0.5"
           >
-            <ProfileChip variant="inline" onAccount={onAccount} onSignedOut={onSignedOut} vaultName={profileVaultName} />
+            <ProfileChip variant="inline" onAccount={onAccount} onSignedOut={onSignedOut} onClearLocalCadData={onClearLocalCadData} vaultName={profileVaultName} />
           </div>
         )}
       </div>
