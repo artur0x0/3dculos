@@ -301,6 +301,11 @@ export default function PartFeed({
   onMoveToGit = null,
   defaultVaultName = 'surfcad',
   sanitizeVaultName = null,
+  // G7 Connect GitHub
+  githubConnectReady = false,
+  githubConnected = false,
+  onGitConnect = null,
+  onGitDisconnect = null,
 }) {
   const [renamingId, setRenamingId] = useState(null);
   const loadRef = useRef(null);
@@ -701,16 +706,33 @@ export default function PartFeed({
           {source === 'git' && (
             <button
               type="button"
-              disabled
               data-git-connect=""
-              data-git-adapter="mock"
-              title="Connect GitHub — sign-in is coming. Git mode uses a local mock vault for now."
-              aria-label="Connect GitHub"
-              className="shrink-0 rounded border border-gray-700 p-1 text-gray-400 opacity-80 cursor-not-allowed"
+              data-git-adapter={githubConnected ? 'real' : 'mock'}
+              data-git-connected={githubConnected ? 'true' : 'false'}
+              disabled={!githubConnected && !githubConnectReady}
+              title={
+                githubConnected
+                  ? 'Connected to GitHub — click to disconnect (token cleared from this tab)'
+                  : githubConnectReady
+                    ? 'Connect GitHub'
+                    : 'Connect GitHub — set GITHUB_APP_CLIENT_ID (and VITE_GITHUB_APP_CLIENT_ID) to enable'
+              }
+              aria-label={githubConnected ? 'Disconnect GitHub' : 'Connect GitHub'}
+              className={
+                githubConnected
+                  ? 'shrink-0 rounded border border-emerald-700/60 p-1 text-emerald-400 hover:bg-emerald-900/30'
+                  : (!githubConnected && !githubConnectReady)
+                    ? 'shrink-0 rounded border border-gray-700 p-1 text-gray-400 opacity-80 cursor-not-allowed'
+                    : 'shrink-0 rounded border border-gray-700 p-1 text-gray-300 hover:bg-gray-700/60'
+              }
+              onClick={() => {
+                if (githubConnected) onGitDisconnect?.();
+                else if (githubConnectReady) onGitConnect?.();
+              }}
             >
               {/* Icon-only so the ribbon fits Commit beside the centered name. */}
               <Github size={14} aria-hidden="true" />
-              <span className="sr-only">Connect GitHub</span>
+              <span className="sr-only">{githubConnected ? 'Disconnect GitHub' : 'Connect GitHub'}</span>
             </button>
           )}
           <div className={STRIP_DIVIDER} />

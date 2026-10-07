@@ -19,9 +19,16 @@ import orderRoutes from './routes/orders.js';
 import webhookRoutes from './routes/webhooks.js';
 import convertRoutes from './routes/convert.js';
 import winsRoutes from './routes/wins.js';
+import githubRoutes from './routes/github.js';
 
 // CAD and AI 
-import { SYSTEM_PROMPT } from './systemPrompt.js';
+let SYSTEM_PROMPT = 'You are a CAD assistant.';
+try {
+  const mod = await import('./systemPrompt.js');
+  if (mod?.SYSTEM_PROMPT) SYSTEM_PROMPT = mod.SYSTEM_PROMPT;
+} catch {
+  console.warn('[Server] systemPrompt.js missing — using stub');
+}
 
 const app = express();
 
@@ -61,6 +68,7 @@ app.use('/api/shipping', shippingRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/convert', convertRoutes);
 app.use('/api/wins', winsRoutes);
+app.use('/api/github', githubRoutes);
 
 const MODEL_CONFIG = {
   model: 'meta-llama/llama-4-scout-17b-16e-instruct',
@@ -99,6 +107,8 @@ app.get('/api/config', (req, res) => {
     stripePublishableKey: config.stripe.publishableKey,
     googleClientId: config.google.clientId,
     appleClientId: config.apple.clientId,
+    // Public Client ID only — secret stays server-side for /api/github/oauth/token.
+    githubAppClientId: config.githubApp.clientId || '',
   });
 });
 

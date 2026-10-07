@@ -76,7 +76,15 @@ import {
 } from './utils/assemblyStore';
 import {
   createMockGithubAdapter,
+  createRealGithubAdapter,
   findOrCreateVault,
+  hasGithubToken,
+  loadGithubToken,
+  clearGithubToken,
+  resolveGithubClientId,
+  buildAuthorizeUrl,
+  createOAuthState,
+  githubRedirectUri,
   dirtyPartIds,
   isWorkspaceDirty,
   listVaultAssemblies,
@@ -165,6 +173,9 @@ const App = () => {
   const gitBehindResolvedRef = useRef([]);
   const [gitBehindToast, setGitBehindToast] = useState(null); // { message, behindBy } | null
   const gitCheckGenRef = useRef(0);
+  /** G7: GitHub App Client ID (from /api/config or VITE_) + connected flag. */
+  const [githubClientId, setGithubClientId] = useState(() => resolveGithubClientId());
+  const [githubConnected, setGithubConnected] = useState(() => hasGithubToken());
   /** Last successful mesh per part. A failed row can still be picked from this. */
   const partLeftoversRef = useRef({});
   /** CAD pick target. Monaco stays on assembly.activeId until a sync. */
@@ -785,6 +796,25 @@ const App = () => {
     return () => {
       manifoldContext.terminate();
     };
+  }, []);
+
+  // G7: resolve GitHub App Client ID from server config (secret stays server-side).
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/config');
+        if (!res.ok) return;
+        const cfg = await res.json();
+        if (cancelled) return;
+        const id = resolveGithubClientId({ configClientId: cfg.githubAppClientId });
+        if (id) setGithubClientId(id);
+      } catch {
+        // Offline / no backend — VITE_GITHUB_APP_CLIENT_ID still works.
+      }
+      if (!cancelled) setGithubConnected(hasGithubToken());
+    })();
+    return () => { cancelled = true; };
   }, []);
 
   // Single initialization effect - runs once when manifold is ready
@@ -1596,12 +1626,42 @@ const App = () => {
     }
   };
 
-  /** Mock adapter until the real GitHub App adapter lands (no tokens here). */
+  /**
+   * G7: real adapter when a browser token is present; otherwise the mock
+   * (goldens / offline). Switching Connect resets the vault handle so the
+   * next Open uses the new adapter.
+   */
   const ensureGitAdapter = () => {
-    if (!gitAdapterRef.current) {
-      gitAdapterRef.current = createMockGithubAdapter({ login: 'local-user' });
+    const token = loadGithubToken();
+    const wantReal = !!token;
+    const have = gitAdapterRef.current;
+    const haveReal = have?.kind === 'real';
+    if (!have || wantReal !== haveReal) {
+      gitAdapterRef.current = wantReal
+        ? createRealGithubAdapter({ token })
+        : createMockGithubAdapter({ login: 'local-user' });
+      gitVaultRef.current = null; // vault belongs to the previous adapter
     }
     return gitAdapterRef.current;
+  };
+
+  const handleGitConnect = () => {
+    const clientId = githubClientId || resolveGithubClientId();
+    if (!clientId) return;
+    const state = createOAuthState();
+    const url = buildAuthorizeUrl({
+      clientId,
+      redirectUri: githubRedirectUri(),
+      state,
+    });
+    if (url) window.location.assign(url);
+  };
+
+  const handleGitDisconnect = () => {
+    clearGithubToken();
+    setGithubConnected(false);
+    gitAdapterRef.current = null;
+    gitVaultRef.current = null;
   };
 
   const ensureGitVault = async () => {
@@ -3305,6 +3365,10 @@ const App = () => {
       currentBranch={assemblyDoc.source === 'git' ? (gitBaseline?.branch || 'main') : ''}
       onListBranches={handleListBranches}
       onSwitchBranch={handleSwitchBranch}
+      githubConnectReady={!!githubClientId}
+      githubConnected={githubConnected}
+      onGitConnect={handleGitConnect}
+      onGitDisconnect={handleGitDisconnect}
       suggestNewPartPath={
         assemblyDoc.source === 'git'
           ? suggestNewPartPath(assemblyDoc.name, assemblyDoc.parts)

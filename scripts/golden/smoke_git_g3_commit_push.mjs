@@ -213,8 +213,9 @@ ok('App wires commit + force merge', /handleGitCommit/.test(app) && /handleForce
   && /onGitCommit=\{handleGitCommit\}/.test(app) && /canCommit=/.test(app));
 ok('baseline advances after commit', /rememberGitBaseline\(result\.baseline\)/.test(app));
 ok('index exports G3', typeof gitIndex.commitWorkspace === 'function' && typeof gitIndex.forceMergeCommit === 'function');
-ok('Connect stub still git-only disabled',
-  /source === 'git' && \(\s*<button\s+type="button"\s+disabled\s+data-git-connect/.test(feed));
+ok('Connect still git-only (G7 gates on client id)',
+  /data-git-connect=""/.test(feed) && /source === 'git'/.test(feed)
+  && /githubConnectReady/.test(feed));
 const src = readFileSync(new URL('../../src/utils/git/gitCommit.js', import.meta.url), 'utf8');
 ok('no network or token use in G3', !/\bfetch\(|api\.github\.com|XMLHttpRequest|localStorage|Authorization/.test(src));
 

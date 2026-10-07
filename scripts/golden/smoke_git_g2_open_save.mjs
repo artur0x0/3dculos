@@ -168,8 +168,9 @@ ok('git Open lists vault', /data-git-open-list/.test(feed) && /onListVaultAssemb
 ok('new part asks for path', /data-git-new-part-path/.test(feed) && /New part path/.test(feed));
 ok('add existing picker', /data-git-add-existing/.test(feed) && /data-git-add-list/.test(feed)
   && /onAddExistingPart/.test(feed));
-ok('Connect stub still git-only disabled',
-  /source === 'git' && \(\s*<button\s+type="button"\s+disabled\s+data-git-connect/.test(feed));
+ok('Connect still git-only (G7 gates on client id)',
+  /data-git-connect=""/.test(feed) && /source === 'git'/.test(feed)
+  && /githubConnectReady/.test(feed));
 ok('App wires vault open + dirty',
   /handleOpenVaultAssembly/.test(app)
   && /handleToggleSource/.test(app)

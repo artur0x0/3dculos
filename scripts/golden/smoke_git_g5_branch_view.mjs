@@ -149,8 +149,9 @@ ok('rename-on-commit applied to workspace', /applyCommittedWorkspace\(result\)/.
 ok('index exports G5', typeof gitIndex.listVaultBranches === 'function'
   && typeof gitIndex.switchVaultBranch === 'function'
   && typeof gitIndex.remapAssemblyPaths === 'function');
-ok('Connect stub still git-only disabled',
-  /source === 'git' && \(\s*<button\s+type="button"\s+disabled\s+data-git-connect/.test(feed));
+ok('Connect still git-only (G7 gates on client id)',
+  /data-git-connect=""/.test(feed) && /source === 'git'/.test(feed)
+  && /githubConnectReady/.test(feed));
 const src = [
   readFileSync(new URL('../../src/utils/git/gitBranch.js', import.meta.url), 'utf8'),
   readFileSync(new URL('../../src/utils/git/gitCommit.js', import.meta.url), 'utf8'),
