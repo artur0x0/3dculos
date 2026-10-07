@@ -66,7 +66,7 @@ import {
   needsAssemblyLeaveGuard,
 } from './utils/assembly';
 import { sheetMetalBinding } from './utils/scs/scsCatalog';
-import { sheetMetalReady } from './utils/sheetMetal/sheetMetalScript';
+import { composeSheetMetalCommit, readSheetMetalSpec, sheetMetalReady } from './utils/sheetMetal/sheetMetalScript';
 import {
   historyForPart,
   pushPartHistory,
@@ -3469,7 +3469,32 @@ const App = () => {
     }
     const partId = doc.activeId;
     rememberAssembly(setPartSheetMetal(doc, partId, binding));
-    return { ok: true, partId, created };
+    const spec = created ? null : readSheetMetalSpec(codeEditorRef.current?.getContent?.() ?? '');
+    return { ok: true, partId, created, spec };
+  };
+
+  /** Sheet-metal step (base flange, bend, tab, hole …): rewrite the one block; Auto-Run. */
+  const handleCommitSheetMetal = (spec, meta = {}) => {
+    if (!focusWritePart(meta?.partId)) {
+      viewportRef.current?.notify?.(PICKED_PART_FAIL);
+      return false;
+    }
+    const buf = codeEditorRef.current?.getContent?.() || '';
+    const result = composeSheetMetalCommit(buf, spec);
+    if (!result.ok) {
+      viewportRef.current?.notify?.(result.message);
+      return false;
+    }
+    if (result.buffer === buf) return true;
+    const wrote = codeEditorRef.current?.applyBuffer?.(result.buffer, 'Sheet metal');
+    if (!wrote) {
+      viewportRef.current?.notify?.('Could not write sheet metal into the editor — try again.');
+      return false;
+    }
+    setTimeout(() => {
+      handleGameRun();
+    }, 0);
+    return true;
   };
 
   /** Shell face-pick Confirm — hollow() + SHELL markers; Auto-Run. */
@@ -4270,6 +4295,7 @@ const App = () => {
               sheetMetalBinding={assemblyDoc ? partSheetMetal(assemblyDoc, assemblyDoc.activeId) : null}
               getSheetMetalReady={getSheetMetalReady}
               onBindSheetMetal={handleBindSheetMetal}
+              onCommitSheetMetal={handleCommitSheetMetal}
               onCommitDeleteFace={handleCommitDeleteFace}
               getHelperBuffer={() => codeEditorRef.current?.getContent?.() || ''}
               cadToolbarHost={cadToolbarHost}
@@ -4718,6 +4744,7 @@ const App = () => {
               sheetMetalBinding={assemblyDoc ? partSheetMetal(assemblyDoc, assemblyDoc.activeId) : null}
               getSheetMetalReady={getSheetMetalReady}
               onBindSheetMetal={handleBindSheetMetal}
+              onCommitSheetMetal={handleCommitSheetMetal}
               onCommitDeleteFace={handleCommitDeleteFace}
             getHelperBuffer={() => codeEditorRef.current?.getContent?.() || ''}
             cadToolbarHost={cadToolbarHost}

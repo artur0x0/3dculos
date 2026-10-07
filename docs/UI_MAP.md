@@ -278,6 +278,8 @@ All of these are absolutely positioned inside the shell at
 | left-2/4 bottom-2.5 | sheet-metal rail (replaces the helper rail while `sheetMetalMode`) | `sheetMetal/SheetMetalRail.jsx` | Viewport |
 | bottom-center | sheet-metal chip: bound SKU + step, ✕ exits | `sheetMetal/SheetMetalModeChip.jsx` | Viewport |
 | bottom sheet `z-50` | Sheet Metal picker: material + gauge (in stock), Start designing | `sheetMetal/SheetMetalPicker.jsx` | Viewport |
+| bottom sheet `z-50` | Base flange popup: X / Y, Back, Accept, ✕ | `sheetMetal/SheetMetalFlow.jsx` | Viewport |
+| scene | plane quads / sheet preview / edge handles (taps route here first) | `utils/sheetMetal/sheetOverlay.js` | Viewport |
 | right-2/4 bottom-4 | view / pick / cross-section cluster | `CrossSectionPanel.jsx:175` collapsed, `:327` expanded | `:3641` |
 | inside that cluster | Front/Right/Top/**Iso** snap popup | `ViewSnapControl.jsx` | `CrossSectionPanel.jsx:181` |
 | top-16, portaled `z-50`, `inset-x-3` (most of the viewport width, same card on desktop) | execution error toast: fixed card, label "Error", Undo and dismiss on the right, description on the next line (`ErrorPopup` `layout="stacked"`), glass `rounded-lg` | `ErrorPopup.jsx` | Viewport |

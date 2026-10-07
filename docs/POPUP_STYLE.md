@@ -11,6 +11,9 @@ over inventing a new modal layout.
   use the compact mobile max-height + internal scroll described below.
 - **`FilletModeChip.jsx`** — amber glass card; same placement and scroll rules,
   edge-pick Accept / Back / grey X dismiss.
+- **`sheetMetal/SmControls.jsx`** — orange glass bottom sheet (`SmPopup`) for
+  Sheet Metal: ✕ top-right exits the flow, Back / Accept footer, 44px tap
+  targets, ≥16px number / select fields (`PARTS_TEXT_INPUT_*`).
 - **`ShellModeChip.jsx`** — cyan glass card (same shell as Contour / Loft /
   Workplane); face-pick opening + Wall `NumberField` + Face/Closed segmented
   control. Taps add faces with no modifier (tap a selected face to remove it,

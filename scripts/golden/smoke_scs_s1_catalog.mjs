@@ -192,7 +192,7 @@ console.log('SCS S1 — mode entry + chrome');
     && /min-h-\[44px\]/.test(controls));
   check('Sheet Metal button on the left rail', /data-sheet-metal-button/.test(palette) && /onOpenSheetMetal/.test(palette));
   check('rail swaps while in sheet metal', /!deleteFaceMode && !sheetMetalMode && \(/.test(view) && /<SheetMetalRail/.test(view));
-  check('Start binds then enters mode', /onBindSheetMetal\?\.\(record\)/.test(view) && /enterSheetMetalMode\(record, bound\.partId\)/.test(view));
+  check('Start binds then enters mode', /onBindSheetMetal\?\.\(record\)/.test(view) && /enterSheetMetalMode\(record, bound\.partId/.test(view));
   check('App binds SKU to the part (new part when busy)',
     /setPartSheetMetal\(doc, partId, binding\)/.test(app) && /handleAddPart\(`Sheet \$\{n\}`\)/.test(app));
   const arch = read('docs/architecture.md');

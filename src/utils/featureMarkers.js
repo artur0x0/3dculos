@@ -76,6 +76,7 @@ import {
   WORKPLANE_BEGIN,
   WORKPLANE_END,
 } from './helperPaletteSnippets.js';
+import { SHEET_METAL_BEGIN, SHEET_METAL_END } from './sheetMetal/sheetMetalScript.js';
 
 /** externalBody() inside a block = a cross-part copy (see externalCopy.js). */
 const EXTERNAL_COPY_CALL = /\bexternalBody\s*\(/;
@@ -127,6 +128,7 @@ export const FEATURE_MARKER_KINDS = Object.freeze([
   { begin: ARRAY_BEGIN, end: ARRAY_END, kind: 'array', label: 'Array' },
   { begin: POLAR_ARRAY_BEGIN, end: POLAR_ARRAY_END, kind: 'polarArray', label: 'Polar' },
   { begin: WORKPLANE_BEGIN, end: WORKPLANE_END, kind: 'workplane', label: 'Workplane' },
+  { begin: SHEET_METAL_BEGIN, end: SHEET_METAL_END, kind: 'sheetMetal', label: 'Sheet' },
 ]);
 
 /**
