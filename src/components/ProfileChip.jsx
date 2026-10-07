@@ -63,7 +63,7 @@ export default function ProfileChip({
         justify-center rounded-full border surface-glass-chip bg-gray-900/55
         text-[10px] font-semibold tracking-wide transition-colors
         active:opacity-80 ${tone}`
-    : `pointer-events-auto absolute top-4 right-4 z-20 flex h-9 w-9 items-center
+    : `pointer-events-auto absolute top-4 right-4 z-50 flex h-9 w-9 items-center
         justify-center rounded-full border surface-glass-chip bg-gray-900/55
         text-xs font-semibold tracking-wide shadow-lg transition-colors
         active:opacity-80 ${tone}`;
@@ -71,7 +71,7 @@ export default function ProfileChip({
   const iconSize = inline ? 14 : 16;
   const wrapClass = inline
     ? 'pointer-events-auto relative z-10 shrink-0'
-    : 'pointer-events-auto absolute top-4 right-4 z-20';
+    : 'pointer-events-auto absolute top-4 right-4 z-50';
 
   const handleClick = () => {
     // Green chip = signed in (session and/or GitHub token). Always open the
@@ -126,7 +126,7 @@ export default function ProfileChip({
         aria-label={title}
         className={inline
           ? shell.replace('relative z-10 ', '')
-          : shell.replace('absolute top-4 right-4 z-20 ', '')}
+          : shell.replace('absolute top-4 right-4 z-50 ', '')}
       >
         {label ? (
           <span className="select-none" aria-hidden="true">{label}</span>
