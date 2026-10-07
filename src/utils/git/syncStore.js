@@ -1,0 +1,354 @@
+/**
+ * Durable git outbox + per-part cache.
+ *
+ * UI reads and writes the local cache. Every git action is appended here
+ * (FIFO per repo and branch) before anything is pushed. IndexedDB is the durable copy;
+ * memory is the live copy so a flush in the same turn sees the op.
+ * When IndexedDB is missing (goldens, private mode) memory still works.
+ */
+import { idbWithTimeout, IDB_OP_TIMEOUT_MS } from '../idbWithTimeout.js';
+
+const DB_NAME = 'surfcad-sync';
+const DB_VERSION = 1;
+const OUTBOX = 'outbox';
+const KV = 'kv';
+
+let dbPromise = null;
+
+function idbAvailable() {
+  try {
+    return typeof indexedDB !== 'undefined' && indexedDB !== null;
+  } catch {
+    return false;
+  }
+}
+
+function openDB() {
+  if (!idbAvailable()) return Promise.resolve(null);
+  if (dbPromise) return dbPromise;
+  dbPromise = new Promise((resolve) => {
+    let req;
+    try {
+      req = indexedDB.open(DB_NAME, DB_VERSION);
+    } catch (err) {
+      console.warn('[GitSync] indexedDB.open threw:', err);
+      resolve(null);
+      return;
+    }
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(OUTBOX)) db.createObjectStore(OUTBOX, { keyPath: 'id' });
+      if (!db.objectStoreNames.contains(KV)) db.createObjectStore(KV);
+    };
+    req.onsuccess = () => {
+      const db = req.result;
+      db.onversionchange = () => {
+        try { db.close(); } catch { /* already closing */ }
+        dbPromise = null;
+      };
+      resolve(db);
+    };
+    req.onerror = () => {
+      console.warn('[GitSync] indexedDB.open failed:', req.error);
+      resolve(null);
+    };
+    req.onblocked = () => resolve(null);
+  });
+  return idbWithTimeout(dbPromise, IDB_OP_TIMEOUT_MS, 'GitSync open').catch((err) => {
+    console.warn('[GitSync] indexedDB.open timed out:', err?.message || err);
+    dbPromise = null;
+    return null;
+  });
+}
+
+function txDone(db, storeName, mode, work) {
+  return new Promise((resolve) => {
+    let tx;
+    try {
+      tx = db.transaction(storeName, mode);
+    } catch (err) {
+      console.warn('[GitSync] transaction failed:', err);
+      resolve(null);
+      return;
+    }
+    let out = null;
+    const req = work(tx.objectStore(storeName));
+    if (req) req.onsuccess = () => { out = req.result; };
+    tx.oncomplete = () => resolve(out);
+    tx.onabort = () => resolve(null);
+    tx.onerror = () => resolve(null);
+  });
+}
+
+export function repoKeyOf(repo) {
+  if (!repo) return '';
+  if (typeof repo === 'string') return repo;
+  return `${repo.owner}/${repo.name}`;
+}
+
+/** Outbox, part-row state, and lastSyncedSha are scoped per repo and branch. */
+export function branchKeyOf(repo, branch = 'main') {
+  return `${repoKeyOf(repo)}\0${branch || 'main'}`;
+}
+
+export function createSyncStore({ persist = true } = {}) {
+  let seq = 1;
+  const ops = [];
+  const partState = new Map();
+  const parts = new Map();
+  const aliases = new Map();
+  const assemblies = new Map();
+  const pathIndex = new Map();
+  const repoSha = new Map();
+  const listeners = new Set();
+  let persistOn = !!persist && idbAvailable();
+
+  const ready = (async () => {
+    if (!persistOn) return;
+    const db = await openDB();
+    if (!db) {
+      persistOn = false;
+      return;
+    }
+    const savedOps = await txDone(db, OUTBOX, 'readonly', (store) => store.getAll());
+    const savedKv = await txDone(db, KV, 'readonly', (store) => store.getAll());
+    const keys = await txDone(db, KV, 'readonly', (store) => store.getAllKeys());
+    for (const op of savedOps || []) {
+      if (op.status === 'sending') op.status = 'queued';
+      ops.push(op);
+      seq = Math.max(seq, Number(op.id) + 1 || seq);
+    }
+    ops.sort((a, b) => a.seq - b.seq || a.id - b.id);
+    (keys || []).forEach((key, i) => {
+      const value = savedKv?.[i];
+      if (typeof key !== 'string') return;
+      if (key.startsWith('sha:')) repoSha.set(key.slice(4), value);
+      else if (key.startsWith('state:')) partState.set(key.slice(6), value);
+      else if (key.startsWith('part:')) parts.set(key.slice(5), value);
+      else if (key.startsWith('alias:')) aliases.set(key.slice(6), value);
+      else if (key.startsWith('asm:')) assemblies.set(key.slice(4), value);
+      else if (key.startsWith('path:')) pathIndex.set(key.slice(5), value);
+    });
+  })();
+
+  function emit() {
+    for (const fn of listeners) {
+      try { fn(partStates()); } catch { /* listener */ }
+    }
+  }
+
+  async function persistOp(op) {
+    if (!persistOn) return;
+    const db = await openDB();
+    if (!db) return;
+    await txDone(db, OUTBOX, 'readwrite', (store) => store.put(op));
+  }
+
+  async function persistKv(key, value) {
+    if (!persistOn) return;
+    const db = await openDB();
+    if (!db) return;
+    await txDone(db, KV, 'readwrite', (store) => (
+      value == null ? store.delete(key) : store.put(value, key)
+    ));
+  }
+
+  function partStates() {
+    return Object.fromEntries(partState.entries());
+  }
+
+  async function enqueue(repo, op) {
+    await ready;
+    const key = repoKeyOf(repo);
+    const branch = op.branch || 'main';
+    const row = {
+      id: seq,
+      seq,
+      repoKey: key,
+      branch,
+      op: op.op,
+      status: 'queued',
+      message: op.message || '',
+      files: op.files || null,
+      partIds: op.partIds || [],
+      payload: op.payload || {},
+      error: '',
+      createdAt: Date.now(),
+    };
+    seq += 1;
+    ops.push(row);
+    for (const id of row.partIds) partState.set(`${key}\0${branch}\0${id}`, 'queued');
+    await persistOp(row);
+    for (const id of row.partIds) {
+      // eslint-disable-next-line no-await-in-loop
+      await persistKv(`state:${key}\0${branch}\0${id}`, 'queued');
+    }
+    emit();
+    return row;
+  }
+
+  function matchesBranch(op, branch) {
+    if (branch == null) return true;
+    return (op.branch || 'main') === branch;
+  }
+
+  function pending(repo, branch) {
+    const key = repoKeyOf(repo);
+    return ops
+      .filter((op) => op.repoKey === key && matchesBranch(op, branch)
+        && (op.status === 'queued' || op.status === 'sending'))
+      .sort((a, b) => a.seq - b.seq || a.id - b.id);
+  }
+
+  function failed(repo, branch) {
+    const key = repoKeyOf(repo);
+    return ops.filter((op) => op.repoKey === key && matchesBranch(op, branch) && op.status === 'failed');
+  }
+
+  async function setOpStatus(id, status, error = '') {
+    const op = ops.find((row) => row.id === id);
+    if (!op) return null;
+    op.status = status;
+    op.error = error || '';
+    await persistOp(op);
+    emit();
+    return op;
+  }
+
+  async function setPartsState(repo, partIds, state, branch = 'main') {
+    const key = repoKeyOf(repo);
+    const on = branch || 'main';
+    for (const id of partIds || []) {
+      const slot = `${key}\0${on}\0${id}`;
+      if (!state || state === 'clean') partState.delete(slot);
+      else partState.set(slot, state);
+      // eslint-disable-next-line no-await-in-loop
+      await persistKv(`state:${slot}`, state && state !== 'clean' ? state : null);
+    }
+    emit();
+  }
+
+  async function requeue(id) {
+    const op = await setOpStatus(id, 'queued', '');
+    if (op) await setPartsState(op.repoKey, op.partIds, 'queued', op.branch || 'main');
+    return op;
+  }
+
+  async function drop(id) {
+    const idx = ops.findIndex((row) => row.id === id);
+    if (idx < 0) return null;
+    const [op] = ops.splice(idx, 1);
+    await setPartsState(op.repoKey, op.partIds, 'clean', op.branch || 'main');
+    if (persistOn) {
+      const db = await openDB();
+      if (db) await txDone(db, OUTBOX, 'readwrite', (store) => store.delete(id));
+    }
+    emit();
+    return op;
+  }
+
+  async function setLastSyncedSha(repo, sha, branch = 'main') {
+    await ready;
+    const key = branchKeyOf(repo, branch);
+    if (sha) repoSha.set(key, sha);
+    else repoSha.delete(key);
+    await persistKv(`sha:${key}`, sha || null);
+  }
+
+  function getLastSyncedSha(repo, branch = 'main') {
+    return repoSha.get(branchKeyOf(repo, branch)) || null;
+  }
+
+  async function putPart(repo, record) {
+    await ready;
+    const key = repoKeyOf(repo);
+    const surfId = record?.surfId;
+    if (!surfId) return;
+    const row = {
+      surfId,
+      path: record.path,
+      content: record.content ?? '',
+      lastSyncedSha: record.lastSyncedSha ?? null,
+      previousPath: record.previousPath || null,
+    };
+    parts.set(`${key}\0${surfId}`, row);
+    await persistKv(`part:${key}\0${surfId}`, row);
+    if (row.previousPath) {
+      aliases.set(`${key}\0${row.previousPath}`, surfId);
+      await persistKv(`alias:${key}\0${row.previousPath}`, surfId);
+    }
+  }
+
+  function getPartById(repo, surfId) {
+    return parts.get(`${repoKeyOf(repo)}\0${surfId}`) || null;
+  }
+
+  function getAlias(repo, path) {
+    return aliases.get(`${repoKeyOf(repo)}\0${path}`) || null;
+  }
+
+  async function putAssembly(repo, path, text) {
+    await ready;
+    const slot = `${repoKeyOf(repo)}\0${path}`;
+    assemblies.set(slot, text);
+    await persistKv(`asm:${slot}`, text);
+  }
+
+  function getAssembly(repo, path) {
+    return assemblies.get(`${repoKeyOf(repo)}\0${path}`) ?? null;
+  }
+
+  async function rememberPathId(repo, path, surfId) {
+    await ready;
+    if (!path || !surfId) return;
+    const slot = `${repoKeyOf(repo)}\0${path}`;
+    pathIndex.set(slot, surfId);
+    await persistKv(`path:${slot}`, surfId);
+  }
+
+  function pathIndexFor(repo) {
+    const prefix = `${repoKeyOf(repo)}\0`;
+    const out = {};
+    for (const [slot, surfId] of pathIndex) {
+      if (slot.startsWith(prefix)) out[slot.slice(prefix.length)] = surfId;
+    }
+    return out;
+  }
+
+  function subscribe(fn) {
+    listeners.add(fn);
+    return () => listeners.delete(fn);
+  }
+
+  return {
+    ready: () => ready,
+    enqueue,
+    pending,
+    failed,
+    setOpStatus,
+    setPartsState,
+    requeue,
+    drop,
+    setLastSyncedSha,
+    getLastSyncedSha,
+    putPart,
+    getPartById,
+    getAlias,
+    putAssembly,
+    getAssembly,
+    rememberPathId,
+    pathIndexFor,
+    partStates,
+    subscribe,
+    ops: () => ops.slice(),
+  };
+}
+
+/** Drop the sync database (Clear local CAD data). */
+export async function clearSyncStore() {
+  const db = await openDB();
+  if (!db) return false;
+  const out = await txDone(db, OUTBOX, 'readwrite', (store) => store.clear());
+  const kv = await txDone(db, KV, 'readwrite', (store) => store.clear());
+  return out != null || kv != null;
+}

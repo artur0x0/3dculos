@@ -337,11 +337,16 @@ export default function PartFeed({
   onOpenVaultPart = null,
   onAddExistingPart = null,
   onAddToRepo = null,
+  onCopyPartToAssembly = null,
+  renameNotice = null,
+  onRenameRetry = null,
+  onRenameRevert = null,
+  syncConflict = null,
+  onSyncConflictClear = null,
   onFindInRepo = null,
   suggestNewPartPath = '',
   canCommit = false,
   onGitCommit = null,
-  onForceMerge = null,
   // G4 pull/conflicts
   behindPartIds = null,
   assemblyBehind = false,
@@ -381,6 +386,21 @@ export default function PartFeed({
   const pathInputRef = useRef(null);
   // G3 commit flow: null | { stage: 'message'|'busy'|'ask-force'|'done'|'error', ... }
   const [commitFlow, setCommitFlow] = useState(null);
+  useEffect(() => {
+    if (!syncConflict) return;
+    setCommitFlow({
+      stage: 'ask-force',
+      draft: '',
+      result: {
+        status: 'branched',
+        branch: syncConflict.branch || 'main',
+        baseSha: syncConflict.lastSyncedSha || syncConflict.baseSha || '',
+        warning: syncConflict.warning || 'The repo moved since the last sync. Nothing was overwritten.',
+        syncHold: true,
+      },
+      error: '',
+    });
+  }, [syncConflict]);
   const commitInputRef = useRef(null);
   // G4 conflict choice: null | { path, kind: 'part'|'assembly', name, stage, error, result }
   const [conflictFlow, setConflictFlow] = useState(null);
@@ -605,6 +625,7 @@ export default function PartFeed({
 
 
   const closeCommit = () => {
+    if (commitFlow?.result?.syncHold) onSyncConflictClear?.();
     setCommitFlow(null);
     if (leaveGuard?.stage === 'commit') {
       setLeaveGuard({ pending: leaveGuard.pending, stage: 'ask', error: '' });
@@ -901,9 +922,19 @@ export default function PartFeed({
     const draft = commitFlow?.draft || '';
     setCommitFlow({ stage: 'busy', draft, result: null, error: '' });
     const result = (await onGitCommit?.(draft)) || { status: 'error', error: 'Commit unavailable' };
-    if (result.status === 'branched') {
-      setCommitFlow({ stage: 'ask-force', draft, result, error: '' });
-      // Conflict popup first; leave guard waits until overwrite/stay resolves.
+    if (result.status === 'branched' || result.status === 'conflict' || result.syncHold) {
+      setCommitFlow({
+        stage: 'ask-force',
+        draft,
+        result: {
+          ...result,
+          status: 'branched',
+          syncHold: true,
+          warning: result.warning || 'The repo moved since the last sync. Nothing was overwritten.',
+        },
+        error: '',
+      });
+      // Conflict popup first; leave guard waits until stay resolves.
     } else if (result.status === 'error') {
       setCommitFlow({ stage: 'error', draft, result, error: result.error || 'Commit failed' });
       if (leaveGuard?.stage === 'commit') {
@@ -927,21 +958,11 @@ export default function PartFeed({
   };
 
   const runForceMerge = async () => {
-    const branched = commitFlow?.result;
-    setCommitFlow({ ...commitFlow, stage: 'busy' });
-    const result = (await onForceMerge?.(branched)) || { status: 'error', error: 'Force merge unavailable' };
-    if (result.status === 'moved-again') {
-      setCommitFlow({ ...commitFlow, stage: 'error', error: 'Main moved again. Your commit is still on the branch; commit again to retry.' });
-    } else if (result.status === 'error') {
-      setCommitFlow({ ...commitFlow, stage: 'error', error: result.error || 'Force merge failed' });
-    } else {
-      setCommitFlow({ stage: 'done', draft: '', result, error: '' });
-      if (leaveGuard?.stage === 'commit' && leaveGuard.pending) {
-        const pending = leaveGuard.pending;
-        setLeaveGuard(null);
-        queueMicrotask(() => proceedAssemblyAction(pending));
-      }
-    }
+    setCommitFlow({
+      ...commitFlow,
+      stage: 'error',
+      error: 'Sync will not overwrite the remote repo. Stay on branch keeps your local changes queued.',
+    });
   };
 
   /** Save/commit refused for parts without a vault path — reuse Add to Repo. */
@@ -1243,6 +1264,29 @@ export default function PartFeed({
           onChange={onResolvePicked}
         />
       </div>
+      {renameNotice ? (
+        <div
+          data-rename-toast=""
+          role="alert"
+          className="mx-2 mt-2 rounded-md border border-red-400/70 bg-red-950/80 px-2 py-2 text-xs text-red-50"
+        >
+          <p data-rename-toast-message="">{renameNotice.message}</p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <button
+              type="button"
+              data-rename-retry=""
+              className="rounded-md bg-white/15 px-2 py-1 text-[11px] font-semibold hover:bg-white/25"
+              onClick={() => onRenameRetry?.(renameNotice)}
+            >Retry</button>
+            <button
+              type="button"
+              data-rename-revert=""
+              className="rounded-md bg-white/15 px-2 py-1 text-[11px] font-semibold hover:bg-white/25"
+              onClick={() => onRenameRevert?.(renameNotice)}
+            >Revert</button>
+          </div>
+        </div>
+      ) : null}
       <div className="min-h-0 flex-1 overflow-y-auto pb-16" data-parts-rows="">
         {rows.map((row, index) => {
           const selected = row.id === activeId;
@@ -1256,6 +1300,7 @@ export default function PartFeed({
               data-part-selected={selected ? 'true' : 'false'}
               data-part-status={status}
               data-part-dirty={row.dirty ? 'true' : 'false'}
+              data-part-sync={row.syncFailed ? 'failed' : row.pending ? 'sending' : row.dirty ? 'dirty' : 'clean'}
               data-part-behind={behindSet.has(row.id) ? 'true' : 'false'}
               draggable={renamingId !== row.id}
               onDragStart={(event) => {
@@ -1322,7 +1367,25 @@ export default function PartFeed({
                     />
                   ) : null}
                 </div>
-                {(row.missing || row.action === 'add-to-repo') && (
+                {row.external ? (
+                  <div className="mt-1" data-part-external="">
+                    <p className="text-[10px] font-medium text-amber-300">Caution: external part!</p>
+                    {onCopyPartToAssembly ? (
+                      <button
+                        type="button"
+                        data-part-copy-to-assembly=""
+                        className="mt-1 rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-medium text-amber-100 hover:bg-white/15"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onCopyPartToAssembly(row.id);
+                        }}
+                      >
+                        Copy to this assembly
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
+                {(row.action === 'add-to-repo' || row.action === 'find-in-repo' || row.action === 'upload') && (
                   <button
                     type="button"
                     data-part-missing={row.action || 'add-to-repo'}
@@ -1343,7 +1406,18 @@ export default function PartFeed({
                 )}
               </div>
               {source === 'git' ? (
-                row.pending ? (
+                row.syncFailed ? (
+                  <span
+                    data-part-sync-failed={row.id}
+                    data-part-save={row.id}
+                    title="Sync failed"
+                    aria-label="Sync failed"
+                    className="relative shrink-0 rounded-full p-1.5 text-red-400"
+                  >
+                    <Save size={16} />
+                    <span className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-red-500" />
+                  </span>
+                ) : row.pending ? (
                   <span
                     data-part-pending={row.id}
                     data-part-save={row.id}
@@ -1520,7 +1594,7 @@ export default function PartFeed({
                                   {item.sameName ? <span className="ml-1 text-gray-400">· {item.source}</span> : null}
                                 </span>
                                 <span className="text-[10px] text-gray-500">
-                                  {item.inDoc ? 'in this assembly' : item.foreign ? `copies into ${assemblyName || 'this assembly'}` : 'opens by reference'}
+                                  {item.inDoc ? 'in this assembly' : item.foreign ? `links from ${item.source}` : 'opens by reference'}
                                 </span>
                               </button>
                             </li>
@@ -1740,9 +1814,15 @@ export default function PartFeed({
               data-git-branch={commitFlow.result?.branch || ''}
             >
               <p className="text-xs text-gray-300">
-                {'Your changes were committed to '}
-                <span className="font-mono text-gray-100">{commitFlow.result?.branch}</span>
-                {` (from base ${String(commitFlow.result?.baseSha || '').slice(0, 7)}).`}
+                {commitFlow.result?.syncHold
+                  ? `Nothing was written on ${commitFlow.result?.branch || 'this branch'}. Your local changes stay queued.`
+                  : (
+                    <>
+                      {'Your changes were committed to '}
+                      <span className="font-mono text-gray-100">{commitFlow.result?.branch}</span>
+                      {` (from base ${String(commitFlow.result?.baseSha || '').slice(0, 7)}).`}
+                    </>
+                  )}
               </p>
               <p className="mt-2 text-xs text-amber-300" data-git-force-merge-warning="" data-git-conflict-warning="">
                 {commitFlow.result?.warning || 'Overwrite main replaces tip-side edits in these files; other remote files stay.'}
@@ -1753,9 +1833,11 @@ export default function PartFeed({
             <p className="text-xs text-gray-300" data-git-commit-done={commitFlow.result?.status || ''}>
               {commitFlow.result?.status === 'clean'
                 ? 'Nothing to commit.'
-                : commitFlow.result?.addedNames
-                  ? `Added ${commitFlow.result.addedNames} to the repo.`
-                  : `${commitFlow.result?.status === 'merged' ? 'Force merged' : 'Committed'} ${(commitFlow.result?.files || []).length} file(s) to ${commitFlow.result?.branch || 'main'} (${String(commitFlow.result?.sha || '').slice(0, 7)}).`}
+                : commitFlow.result?.status === 'queued'
+                  ? 'Saved locally. It will sync when you are back online.'
+                  : commitFlow.result?.addedNames
+                    ? `Added ${commitFlow.result.addedNames} to the repo.`
+                    : `Committed ${(commitFlow.result?.files || []).length} file(s) to ${commitFlow.result?.branch || 'main'} (${String(commitFlow.result?.sha || '').slice(0, 7)}).`}
             </p>
           )}
           {commitFlow.stage === 'error' && (

@@ -142,9 +142,9 @@ console.log('\ngit G11 — Open browse + insert parts');
   ok('browse has shared bolt', browse.parts.some((p) => p.path === BOLT));
   ok('browse has cover lid', browse.parts.some((p) => p.path === COVER));
   const planned = await planInsertVaultAssemblyParts(gh, repo, 'Cover', gearbox, { branch: 'main' });
-  // Shared bolt already in gearbox → skipped; Lid remapped under Gearbox
+  // Shared bolt already in gearbox → skipped; Lid stays linked at its Cover path
   const lidAdd = planned.additions.find((a) => a.fromPath === COVER);
-  ok('lid remapped into Gearbox', !!lidAdd && lidAdd.id.startsWith(`${ASSEMBLIES_DIR}/Gearbox/`) && !lidAdd.id.includes('/parts/'), JSON.stringify(planned.additions));
+  ok('lid stays linked at its Cover path', !!lidAdd && lidAdd.id === COVER && lidAdd.linked, JSON.stringify(planned.additions));
   ok('shared bolt not re-added', !planned.additions.some((a) => a.id === BOLT));
   eq('insert count', planned.additions.length, 1);
 
@@ -170,8 +170,8 @@ console.log('\ngit G11 — Open browse + insert parts');
   ok('own part in the doc is not foreign', groups[0].current && groups[0].parts.some((p) => p.path === BRACKET && p.inDoc && !p.foreign));
   ok('other assembly part is foreign', groups[1].parts.every((p) => p.foreign && p.source === 'Cover'));
   ok('loose part opens by reference', groups[2].loose && groups[2].parts.some((p) => p.path === BOLT && !p.foreign));
-  const copied = planOpenVaultPart(gearbox, COVER, 'return Manifold.cube([20,20,2], true);', {});
-  ok('foreign part copies under this assembly', copied.mode === 'copy' && copied.id.endsWith('/Gearbox/Lid.js') && copied.id !== COVER);
+  const linked = planOpenVaultPart(gearbox, COVER, 'return Manifold.cube([20,20,2], true);', {});
+  ok('foreign part links, it is not copied', linked.mode === 'link' && linked.id === COVER);
   eq('own part focuses', planOpenVaultPart(gearbox, BRACKET, 'x', {}), { id: BRACKET, mode: 'focus' });
   eq('loose part focuses when already in the doc', planOpenVaultPart(gearbox, BOLT, 'bolt', {}), { id: BOLT, mode: 'focus' });
 }

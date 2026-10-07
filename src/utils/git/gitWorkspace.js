@@ -17,6 +17,7 @@ import {
   assemblyFilePath,
   assemblyFilePathCandidates,
   assemblyPartPath,
+  isExternalPartPath,
   listAssemblies,
   listPartScripts,
   migrateDocToCurrentLayout,
@@ -24,6 +25,7 @@ import {
   vaultSegment,
 } from './vaultLayout.js';
 import { parseSurfJson, stringifySurfJson } from './surfJson.js';
+import { isSurfId, mintSurfId, readSurfId, stripSurfId, withSurfId } from './surfId.js';
 
 /** Working-copy baseline taken at the last vault open (or explicit reset). */
 export function captureBaseline({
@@ -174,6 +176,14 @@ export async function openVaultAssembly(adapter, repo, assemblyName, {
   const migrated = migrateDocToCurrentLayout(doc, rawScripts);
   doc = migrated.doc;
   const scripts = migrated.scripts;
+  doc = {
+    ...doc,
+    parts: (doc.parts || []).map((part) => {
+      const header = readSurfId(scripts[part.id] || '');
+      if (!header) return part;
+      return part.surfId === header ? part : { ...part, surfId: header };
+    }),
+  };
   const assemblyPath = assemblyFilePath(name);
   const head = headSha || (await adapter.getBranch(repo, branch))?.sha || null;
   const baseline = captureBaseline({
@@ -344,7 +354,7 @@ export function filterVaultPartItems(items, query) {
  * legacy nested paths included, plus loose `parts/`). Each row carries
  * `name` (file name without `.js`), `source` (assembly name or
  * LOOSE_PARTS_LABEL), `inDoc` (already in the open document), `foreign`
- * (belongs to another assembly: opening copies it into the current one) and
+ * (belongs to another assembly: opening links it; it is not copied) and
  * `sameName` (another part in the repo has the same name).
  */
 export function vaultOpenPartRows(parts, { currentAssembly = '', inDoc = [] } = {}) {
@@ -396,29 +406,55 @@ export function groupVaultOpenParts(parts, opts = {}) {
 }
 
 /**
- * Open Part into the current assembly (folder → Part). A part of this
- * assembly or a loose `parts/` script joins by reference (same path). A part
- * of another assembly is copied into this assembly's folder (the source file
- * is untouched, nothing links them); a copy already in the document with the
- * same script is reused instead of making "Name 2".
- * -> { id, mode: 'focus' | 'reference' | 'copy' | 'reuse-copy' }
+ * Open Part into the current assembly (folder → Part). Every vault part
+ * joins by reference (same path, same surf id). A part of another assembly
+ * is a linked external reference — it is not copied. Copy is explicit
+ * (`planCopyToAssembly`).
+ * -> { id, mode: 'focus' | 'reference' | 'link' }
  */
 export function planOpenVaultPart(doc, path, content, scripts = {}) {
+  void content;
+  void scripts;
   const from = normalizeRepoPath(path);
   if (!from) throw new Error('Bad part path');
   const have = new Set((doc?.parts || []).map((p) => p.id));
-  if (partPathAllowedFor(doc?.name, from)) {
-    return { id: from, mode: have.has(from) ? 'focus' : 'reference' };
-  }
-  const baseName = from.split('/').pop()?.replace(/\.js$/i, '') || 'Part';
-  let toPath = assemblyPartPath(doc?.name, baseName);
+  if (have.has(from)) return { id: from, mode: 'focus' };
+  if (isExternalPartPath(doc?.name, from)) return { id: from, mode: 'link' };
+  return { id: from, mode: 'reference' };
+}
+
+/**
+ * Copy an external (or any) part into this assembly's folder.
+ * New surf id, `copiedFrom` records the source id, the reference repoints
+ * at the new path. The source file is left in place.
+ * -> { fromPath, path, id, surfId, copiedFrom, content, name }
+ */
+export function planCopyToAssembly(doc, part, script, { now, rand } = {}) {
+  const asm = vaultSegment(doc?.name);
+  if (!asm) throw new Error('Empty assembly name');
+  const base = vaultSegment(part?.name) || 'Part';
+  const taken = new Set((doc?.parts || []).map((row) => row.id));
+  let path = assemblyPartPath(asm, base);
   let n = 2;
-  while (have.has(toPath)) {
-    if (scripts[toPath] === content) return { id: toPath, mode: 'reuse-copy' };
-    toPath = assemblyPartPath(doc?.name, `${baseName} ${n}`);
+  while (taken.has(path)) {
+    path = assemblyPartPath(asm, `${base} ${n}`);
     n += 1;
   }
-  return { id: toPath, mode: 'copy' };
+  const surfId = mintSurfId({ local: true, now, rand });
+  const sourceId = (part?.surfId && isSurfId(part.surfId))
+    ? part.surfId
+    : readSurfId(script);
+  const content = withSurfId(stripSurfId(script || ''), surfId);
+  const name = path.split('/').pop().replace(/\.js$/i, '');
+  return {
+    fromPath: part?.id,
+    path,
+    id: path,
+    surfId,
+    copiedFrom: sourceId || null,
+    content,
+    name,
+  };
 }
 
 /** Open Assembly index: assemblies only (parts are Open Part's list). */
@@ -428,9 +464,10 @@ export function vaultOpenAssemblies(browse) {
 }
 
 /**
- * G11: plan inserting another assembly's parts into the current document.
- * Shared paths stay; other-assembly parts remap under this assembly's folder.
- * -> { additions: [{ id, name, content, fromPath }] }
+ * Insert another assembly's parts into the current document as links.
+ * Shared paths, this assembly's paths, and other assemblies' paths all keep
+ * their repo path (no silent copy). A path already in the document is skipped.
+ * -> { additions: [{ id, name, content, fromPath, linked }] }
  */
 export async function planInsertVaultAssemblyParts(adapter, repo, sourceAssembly, targetDoc, {
   branch = 'main',
@@ -447,32 +484,15 @@ export async function planInsertVaultAssemblyParts(adapter, repo, sourceAssembly
   for (const part of opened.doc.parts || []) {
     const fromPath = part.id;
     const content = opened.scripts[fromPath] || '';
-    if (partPathAllowedFor(target, fromPath)) {
-      if (taken.has(fromPath)) continue;
-      taken.add(fromPath);
-      additions.push({
-        id: fromPath,
-        name: part.name || fromPath.split('/').pop()?.replace(/\.js$/i, '') || fromPath,
-        content,
-        fromPath,
-      });
-      continue;
-    }
-    const baseName = part.name
-      || fromPath.split('/').pop()?.replace(/\.js$/i, '')
-      || 'Part';
-    let toPath = assemblyPartPath(target, baseName);
-    let n = 2;
-    while (taken.has(toPath)) {
-      toPath = assemblyPartPath(target, `${baseName} ${n}`);
-      n += 1;
-    }
-    taken.add(toPath);
+    if (taken.has(fromPath)) continue;
+    taken.add(fromPath);
     additions.push({
-      id: toPath,
-      name: toPath.split('/').pop()?.replace(/\.js$/i, '') || baseName,
+      id: fromPath,
+      name: part.name || fromPath.split('/').pop()?.replace(/\.js$/i, '') || fromPath,
       content,
       fromPath,
+      surfId: part.surfId || readSurfId(content) || null,
+      linked: isExternalPartPath(target, fromPath) || !partPathAllowedFor(target, fromPath),
     });
   }
   return { additions, sourceName: source, scripts: opened.scripts };

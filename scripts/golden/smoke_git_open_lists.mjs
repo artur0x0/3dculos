@@ -4,8 +4,9 @@
  * assembly, including a legacy nested script, plus loose parts/), grouped
  * by source so same-name parts stay distinct. Folder → Assembly lists
  * assemblies only. Live search (filterVaultOpenIndex) filters both.
- * Opening: this assembly or a loose part is by reference; another
- * assembly's part is copied in (planOpenVaultPart). Mock only.
+ * Opening: this assembly's own part is by reference. A loose part or
+ * another assembly's part is a linked reference (planOpenVaultPart).
+ * Copy is explicit (Copy to this assembly), not a silent open. Mock only.
  */
 import { readFileSync } from 'node:fs';
 import { createMockGithubAdapter } from '../../src/utils/git/mockGithubAdapter.js';
@@ -135,7 +136,7 @@ console.log('git open lists — several assemblies + loose parts');
     && !groups[0].parts.find((p) => p.name === 'Plate').inDoc
     && groups[0].parts.every((p) => !p.foreign));
   eq('Cover parts', groups[1].parts.map((p) => p.path), [CV_BRACKET, CV_LID]);
-  ok('Cover parts would be copied', groups[1].parts.every((p) => p.foreign && !p.inDoc));
+  ok('Cover parts would be linked', groups[1].parts.every((p) => p.foreign && !p.inDoc));
   eq('Frame includes the legacy gusset', groups[2].parts.map((p) => p.path), [FR_GUSSET, FR_RAIL]);
   eq('loose parts', groups[3].parts.map((p) => p.path), [BOLT, SHIM]);
   ok('loose bolt is in this assembly by reference', groups[3].loose
@@ -158,25 +159,23 @@ console.log('git open lists — several assemblies + loose parts');
     { id: GB_BRACKET, mode: 'focus' });
   eq('own part not in the doc is a reference', planOpenVaultPart(gearboxDoc, GB_PLATE, 'plate', {}),
     { id: GB_PLATE, mode: 'reference' });
-  eq('loose part not in the doc is a reference', planOpenVaultPart(gearboxDoc, SHIM, 'shim', {}),
-    { id: SHIM, mode: 'reference' });
+  eq('loose part not in the doc is a link', planOpenVaultPart(gearboxDoc, SHIM, 'shim', {}),
+    { id: SHIM, mode: 'link' });
   eq('loose part already in the doc focuses', planOpenVaultPart(gearboxDoc, BOLT, 'bolt', {}),
     { id: BOLT, mode: 'focus' });
-  const copy = planOpenVaultPart(gearboxDoc, CV_BRACKET, BRACKET_B, { [GB_BRACKET]: BRACKET_A });
-  eq('foreign part copies; same name already used', copy,
-    { id: assemblyPartPath('Gearbox', 'Bracket 2'), mode: 'copy' });
-  ok('copy path is not the source', copy.id !== CV_BRACKET);
-  const reused = planOpenVaultPart(
-    { ...gearboxDoc, parts: [...gearboxDoc.parts, { id: assemblyPartPath('Gearbox', 'Bracket 2'), name: 'Bracket 2' }] },
+  const linked = planOpenVaultPart(gearboxDoc, CV_BRACKET, BRACKET_B, { [GB_BRACKET]: BRACKET_A });
+  eq('foreign part links at its own path', linked, { id: CV_BRACKET, mode: 'link' });
+  ok('link path is the source', linked.id === CV_BRACKET);
+  const again = planOpenVaultPart(
+    { ...gearboxDoc, parts: [...gearboxDoc.parts, { id: CV_BRACKET, name: 'Bracket' }] },
     CV_BRACKET,
     BRACKET_B,
-    { [GB_BRACKET]: BRACKET_A, [assemblyPartPath('Gearbox', 'Bracket 2')]: BRACKET_B },
+    { [GB_BRACKET]: BRACKET_A, [CV_BRACKET]: BRACKET_B },
   );
-  eq('identical copy already in the doc is reused', reused,
-    { id: assemblyPartPath('Gearbox', 'Bracket 2'), mode: 'reuse-copy' });
-  const legacyCopy = planOpenVaultPart(gearboxDoc, FR_GUSSET, 'gusset', {});
-  eq('another assembly\'s legacy part copies flat', legacyCopy,
-    { id: assemblyPartPath('Gearbox', 'Gusset'), mode: 'copy' });
+  eq('linked part already in the doc focuses', again, { id: CV_BRACKET, mode: 'focus' });
+  const legacyLink = planOpenVaultPart(gearboxDoc, FR_GUSSET, 'gusset', {});
+  eq('another assembly\'s legacy part links, it is not copied', legacyLink,
+    { id: FR_GUSSET, mode: 'link' });
   const frameDoc = { source: 'git', name: 'Frame', parts: [{ id: FR_RAIL, name: 'Rail' }] };
   eq('legacy part of the current assembly is a reference',
     planOpenVaultPart(frameDoc, FR_GUSSET, 'gusset', {}),
@@ -194,7 +193,7 @@ console.log('\ngit open lists — UI wiring');
   ok('Open Part search uses filterVaultOpenIndex', /filterVaultOpenIndex\(\{ assemblies: \[\], parts: partRows \}/.test(feed)
     && /data-git-open-search/.test(feed) && /data-git-open-group/.test(feed)
     && /data-git-open-part-source/.test(feed));
-  ok('Open Part says reference vs copy', /opens by reference/.test(feed) && /copies into/.test(feed));
+  ok('Open Part says reference vs link', /opens by reference/.test(feed) && /links from/.test(feed));
   ok('App opens through planOpenVaultPart', /planOpenVaultPart\(/.test(app) && /handleOpenVaultPart/.test(app));
 }
 

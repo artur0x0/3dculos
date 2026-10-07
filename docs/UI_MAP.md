@@ -95,10 +95,14 @@ Desktop specifics:
   **Open from repo** (folder): **Part** lists every part in the repo grouped
   by source assembly (loose `parts/` included); **Assembly** lists assemblies
   only. Live search is `data-git-open-search` / `filterVaultOpenIndex`; empty
-  query shows the full list, no hits show *No matches*. A part from another
-  assembly is copied in; this assembly and loose parts open by reference. Text inputs on Parts/git
+  query shows the full list, no hits show *No matches*. A part from this
+  assembly opens by reference. A part from another assembly or loose `parts/`
+  links in (`links from …`). The row then shows **Caution: external part!**
+  (`data-part-external`) and **Copy to this assembly**
+  (`data-part-copy-to-assembly`). Add to Repo (`data-part-add-to-repo`) shows
+  only for a `local-` id. Text inputs on Parts/git
   use `partsChrome.js` `PARTS_TEXT_INPUT_CLASS` (≥16px) to block iOS Safari focus-zoom.
-  Git create (new part / Add to Repo / new assembly seed) shows `data-part-pending` spinner in place of the Save icon until the promise settles.
+  Git create, Save, rename, copy, and delete show `data-part-pending` spinner in place of the Save icon while that branch's outbox op is queued or sending. A failed sync shows a red mark (`data-part-sync-failed`). A failed rename shows a toast with Retry and Revert (`data-rename-toast`). A moved remote tip opens the conflict popup and does not overwrite.
 - `PromptInput` is passed `isMobile={false}` explicitly (`src/App.jsx:1345`).
 
 ### Mobile shell (`src/App.jsx` mobile branch) — CAD stages + game stack
