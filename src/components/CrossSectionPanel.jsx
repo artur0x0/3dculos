@@ -183,17 +183,26 @@ const handleButtonClick = () => {
         data-rail-height={verticalRail ? RAIL_PAIR_HEIGHT_ATTR : undefined}
         className={`absolute bottom-2.5 right-2.5 bg-white/60 backdrop-blur-sm p-2 rounded-lg shadow-lg z-40 ${
         verticalRail
-          // Content height, NOT the paired 26rem: this rail holds 10 tools
-          // (~422px) and the cap is 416px, so the last one — Cross-section —
-          // was cropped off the bottom and, being bottom-anchored 10px above
-          // the viewport edge, spilled out of reach. It grows upward, so its
-          // natural height is the correct one.
+          // Content height, NOT the paired 26rem: a fixed cap cropped
+          // Cross-section off the bottom (bottom-anchored). It grows upward, so
+          // its natural height is the correct one.
           ? `flex flex-col gap-1 ${RAIL_NO_CLIP_CLASS} max-h-[calc(100%-1.25rem)]`
           : 'flex flex-wrap justify-end gap-2 max-w-[calc(100%-1rem)]'
       }`}>
         <ViewSnapControl onSnap={onSnapView} />
+        {/* Zoom-to-fit sits directly under view-change (playtest). */}
+        <button
+          type="button"
+          onClick={onZoomToFit}
+          className="p-2 rounded text-blue-600 hover:bg-blue-100 active:bg-blue-200"
+          title="Zoom to Fit"
+          aria-label="Zoom to Fit"
+          data-zoom-to-fit=""
+        >
+          <Maximize2 size={20} />
+        </button>
 
-        {/* Pick selectors — icons only; idle matches Fit/ruler (no filled tan/opaque frame) */}
+        {/* Pick selectors — icons only; idle matches zoom/ruler (no filled tan/opaque frame) */}
         {typeof onPickModeChange === 'function' && (
           <>
             <div
@@ -304,14 +313,6 @@ const handleButtonClick = () => {
         )}
 
         <button
-          onClick={onAutoFitToggle}
-          className={`p-2 rounded ${autoFitEnabled ? 'text-green-600 bg-green-100' : 'text-gray-500'} hover:bg-gray-100 active:bg-gray-200`}
-          title={autoFitEnabled ? 'Auto-fit on run: ON (re-frames the part after each run)' : 'Auto-fit on run: OFF'}
-          aria-pressed={!!autoFitEnabled}
-        >
-          <Frame size={20} />
-        </button>
-        <button
           onClick={onAxisHelperToggle}
           className={`p-2 rounded ${axisHelperEnabled ? 'text-green-600 bg-green-100' : 'text-blue-600'} hover:bg-gray-100 active:bg-blue-100`}
           title={axisHelperEnabled ? 'Hide Axis Helper' : 'Show Axis Helper'}
@@ -320,11 +321,14 @@ const handleButtonClick = () => {
           <Move3d size={20} />
         </button>
         <button
-          onClick={onZoomToFit}
-          className="p-2 rounded text-blue-600 hover:bg-blue-100 active:bg-blue-200"
-          title="Zoom to Fit"
+          type="button"
+          onClick={onAutoFitToggle}
+          className={`p-2 rounded ${autoFitEnabled ? 'text-green-600 bg-green-100' : 'text-gray-500'} hover:bg-gray-100 active:bg-gray-200`}
+          title={autoFitEnabled ? 'Auto-fit on run: ON (re-frames the part after each run)' : 'Auto-fit on run: OFF'}
+          aria-pressed={!!autoFitEnabled}
+          data-auto-fit=""
         >
-          <Maximize2 size={20} />
+          <Frame size={20} />
         </button>
         <button
           onClick={onMeasurementToggle}
@@ -364,11 +368,14 @@ const handleButtonClick = () => {
       <div className="flex items-center justify-between mb-3">
         <ViewSnapControl onSnap={onSnapView} />
         <button
-          onClick={onAutoFitToggle}
-          className={`p-2 rounded ${autoFitEnabled ? 'text-green-600 bg-green-100' : 'text-gray-500'} hover:bg-gray-100`}
-          title={autoFitEnabled ? 'Auto-fit on run: ON (re-frames the part after each run)' : 'Auto-fit on run: OFF'}
+          type="button"
+          onClick={onZoomToFit}
+          className="p-2 rounded text-blue-600 hover:bg-blue-100"
+          title="Zoom to Fit"
+          aria-label="Zoom to Fit"
+          data-zoom-to-fit=""
         >
-          <Frame size={20} />
+          <Maximize2 size={20} />
         </button>
         <button
           onClick={onAxisHelperToggle}
@@ -378,11 +385,14 @@ const handleButtonClick = () => {
           <Move3d size={20} />
         </button>
         <button
-          onClick={onZoomToFit}
-          className="p-2 rounded text-blue-600 hover:bg-blue-100"
-          title="Zoom to Fit"
+          type="button"
+          onClick={onAutoFitToggle}
+          className={`p-2 rounded ${autoFitEnabled ? 'text-green-600 bg-green-100' : 'text-gray-500'} hover:bg-gray-100`}
+          title={autoFitEnabled ? 'Auto-fit on run: ON (re-frames the part after each run)' : 'Auto-fit on run: OFF'}
+          aria-pressed={!!autoFitEnabled}
+          data-auto-fit=""
         >
-          <Maximize2 size={20} />
+          <Frame size={20} />
         </button>
         <button
           onClick={onMeasurementToggle}

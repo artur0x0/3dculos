@@ -504,8 +504,7 @@ Import `src/utils/importModel.js` (+ `POST /api/convert/step`); export
   Polar, and the `array3D` build delegates to `polarArray`'s for Polar.
   `holePattern` likewise: Hole's "n×m pattern" tick emits `holePattern()`.
   Hide a tool this way rather than deleting an item other code builds with.
-- **The right rail is content-height**, not paired: it carries 10 tools (~422px)
-  and the shared 26rem cap cropped the last one (Cross-section) off the bottom,
+- **The right rail is content-height**, not paired: view-snap then zoom-to-fit at the top, then picks/overlays/helpers. A shared 26rem cap used to crop Cross-section off the bottom,
   where — being bottom-anchored 10px above the viewport edge — it was out of
   reach. It keeps `overflow-visible` plus a `max-h` that respects the pane.
 - **The view-snap flyout must never `flex-wrap`.** It is absolutely positioned
