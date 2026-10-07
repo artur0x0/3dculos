@@ -379,9 +379,11 @@ export default function PartFeed({
   // G5/G11: null | { stage: 'pane'|'create'|'delete-confirm'|'busy'|'confirm'|'error'|'merge-conflict', ... }
   const [branchFlow, setBranchFlow] = useState(null);
   const [plusMenuOpen, setPlusMenuOpen] = useState(false);
+  const [folderMenuOpen, setFolderMenuOpen] = useState(false);
   // Assembly New/Existing leave guard: null | { pending: 'new'|'existing', stage: 'ask'|'busy'|'commit', error }
   const [leaveGuard, setLeaveGuard] = useState(null);
   const plusMenuRef = useRef(null);
+  const folderMenuRef = useRef(null);
   const branchCreateInputRef = useRef(null);
   const behindSet = behindPartIds instanceof Set
     ? behindPartIds
@@ -562,6 +564,7 @@ export default function PartFeed({
   /** Assembly New/Existing: Save|Discard when working copy is not blank/default/known-saved. */
   const requestAssemblyAction = (pending) => {
     setPlusMenuOpen(false);
+    setFolderMenuOpen(false);
     if (assemblyLeaveSafe) {
       proceedAssemblyAction(pending);
       return;
@@ -857,15 +860,18 @@ export default function PartFeed({
   }, [branchFlow?.stage]);
 
   useEffect(() => {
-    if (!plusMenuOpen) return undefined;
+    if (!plusMenuOpen && !folderMenuOpen) return undefined;
     const onDoc = (event) => {
       if (plusMenuRef.current && !plusMenuRef.current.contains(event.target)) {
         setPlusMenuOpen(false);
       }
+      if (folderMenuRef.current && !folderMenuRef.current.contains(event.target)) {
+        setFolderMenuOpen(false);
+      }
     };
     document.addEventListener('mousedown', onDoc);
     return () => document.removeEventListener('mousedown', onDoc);
-  }, [plusMenuOpen]);
+  }, [plusMenuOpen, folderMenuOpen]);
 
     const runCommit = async () => {
     const draft = commitFlow?.draft || '';
@@ -1019,26 +1025,69 @@ export default function PartFeed({
         className="relative z-30 flex w-full items-center border-b border-gray-700/60 bg-gray-900 px-1 py-0.5 shrink-0"
       >
         <div className="relative z-10 flex shrink-0 items-center gap-0.5 sm:gap-1" data-parts-feed-toolbar="">
-          <button
-            type="button"
-            className={STRIP_BTN}
-            data-assembly-load=""
-            title={source === 'git' ? 'Open from repo' : 'Load assembly'}
-            aria-label={source === 'git' ? 'Open from repo' : 'Load assembly'}
-            onClick={() => requestAssemblyAction('existing')}
-          >
-            <FolderOpen size={STRIP_ICON} />
-          </button>
+          <div className="relative" ref={folderMenuRef} data-part-open-menu="">
+            <button
+              type="button"
+              className={STRIP_BTN}
+              data-assembly-load=""
+              title={source === 'git' ? 'Open part or assembly' : 'Open assembly'}
+              aria-label={source === 'git' ? 'Open part or assembly' : 'Open assembly'}
+              aria-expanded={folderMenuOpen ? 'true' : 'false'}
+              aria-haspopup="menu"
+              onClick={() => {
+                setPlusMenuOpen(false);
+                setFolderMenuOpen((open) => !open);
+              }}
+            >
+              <FolderOpen size={STRIP_ICON} />
+            </button>
+            {folderMenuOpen && (
+              <div
+                data-part-open-dropdown=""
+                role="menu"
+                className="absolute left-0 top-full z-50 mt-1 min-w-[8.5rem] rounded-md border border-gray-600 bg-gray-900 py-1 shadow-lg"
+              >
+                {source === 'git' && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    data-part-open-action="part"
+                    data-git-add-existing=""
+                    className="block w-full px-3 py-1.5 text-left text-xs text-gray-100 hover:bg-white/10"
+                    onClick={() => {
+                      setFolderMenuOpen(false);
+                      void startAddExisting();
+                    }}
+                  >
+                    Part
+                  </button>
+                )}
+                <button
+                  type="button"
+                  role="menuitem"
+                  data-part-open-action="assembly"
+                  data-assembly-add-existing=""
+                  className="block w-full px-3 py-1.5 text-left text-xs text-gray-100 hover:bg-white/10"
+                  onClick={() => requestAssemblyAction('existing')}
+                >
+                  Assembly
+                </button>
+              </div>
+            )}
+          </div>
           <div className="relative" ref={plusMenuRef} data-part-add-menu="">
             <button
               type="button"
               className={STRIP_BTN}
               data-part-add=""
-              title="Add part or assembly"
-              aria-label="Add part or assembly"
+              title="New part or assembly"
+              aria-label="New part or assembly"
               aria-expanded={plusMenuOpen ? 'true' : 'false'}
               aria-haspopup="menu"
-              onClick={() => setPlusMenuOpen((open) => !open)}
+              onClick={() => {
+                setFolderMenuOpen(false);
+                setPlusMenuOpen((open) => !open);
+              }}
             >
               <Plus size={STRIP_ICON} />
             </button>
@@ -1048,16 +1097,10 @@ export default function PartFeed({
                 role="menu"
                 className="absolute left-0 top-full z-50 mt-1 min-w-[8.5rem] rounded-md border border-gray-600 bg-gray-900 py-1 shadow-lg"
               >
-                <div
-                  className="px-3 pt-1.5 pb-0.5 text-[10px] font-semibold uppercase tracking-wide text-gray-500"
-                  data-part-add-section="part"
-                >
-                  Part
-                </div>
                 <button
                   type="button"
                   role="menuitem"
-                  data-part-add-action="new"
+                  data-part-add-action="part"
                   data-part-add-kind="part"
                   className="block w-full px-3 py-1.5 text-left text-xs text-gray-100 hover:bg-white/10"
                   onClick={() => {
@@ -1065,51 +1108,17 @@ export default function PartFeed({
                     startNewPart();
                   }}
                 >
-                  New
+                  Part
                 </button>
-                {source === 'git' && (
-                  <button
-                    type="button"
-                    role="menuitem"
-                    data-part-add-action="existing"
-                    data-part-add-kind="part"
-                    data-git-add-existing=""
-                    className="block w-full px-3 py-1.5 text-left text-xs text-gray-100 hover:bg-white/10"
-                    onClick={() => {
-                      setPlusMenuOpen(false);
-                      void startAddExisting();
-                    }}
-                  >
-                    Existing
-                  </button>
-                )}
-                <div className="my-1 border-t border-gray-700" data-part-add-divider="" />
-                <div
-                  className="px-3 pt-1.5 pb-0.5 text-[10px] font-semibold uppercase tracking-wide text-gray-500"
-                  data-part-add-section="assembly"
-                >
-                  Assembly
-                </div>
                 <button
                   type="button"
                   role="menuitem"
-                  data-part-add-action="new"
+                  data-part-add-action="assembly"
                   data-part-add-kind="assembly"
                   className="block w-full px-3 py-1.5 text-left text-xs text-gray-100 hover:bg-white/10"
                   onClick={() => requestAssemblyAction('new')}
                 >
-                  New
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  data-part-add-action="existing"
-                  data-part-add-kind="assembly"
-                  data-assembly-add-existing=""
-                  className="block w-full px-3 py-1.5 text-left text-xs text-gray-100 hover:bg-white/10"
-                  onClick={() => requestAssemblyAction('existing')}
-                >
-                  Existing
+                  Assembly
                 </button>
               </div>
             )}

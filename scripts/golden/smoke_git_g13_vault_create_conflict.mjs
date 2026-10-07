@@ -44,12 +44,12 @@ ok('warning copy preserved via forceMergeWarning', /data-git-conflict-warning/.t
 ok('G4 behind toast unchanged (separate flow)', /data-git-behind-toast/.test(app)
   && /data-git-behind-reload/.test(feed));
 
-ok('light vocab: Repo label, + Part|Assembly New|Existing', /htmlFor="git-move-vault-name"[\s\S]{0,80}Repo/.test(feed)
-  && /data-part-add-action="new"/.test(feed)
-  && /data-part-add-action="existing"/.test(feed)
-  && /data-part-add-section="part"/.test(feed)
-  && /data-part-add-section="assembly"/.test(feed)
-  && /title="Add part or assembly"/.test(feed));
+ok('light vocab: Repo label, + Part|Assembly create; folder open', /htmlFor="git-move-vault-name"[\s\S]{0,80}Repo/.test(feed)
+  && /data-part-add-action="part"/.test(feed)
+  && /data-part-add-action="assembly"/.test(feed)
+  && /data-part-open-action="part"/.test(feed)
+  && /data-part-open-action="assembly"/.test(feed)
+  && /title="New part or assembly"/.test(feed));
 
 ok('architecture documents G13', /G13/.test(arch)
   && /Create repo|Create vault|repo create|vault create|slim/i.test(arch)
