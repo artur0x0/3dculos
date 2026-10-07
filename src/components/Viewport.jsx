@@ -62,6 +62,10 @@ import ContourModeRail from './ContourModeRail';
 import ContourModeChip from './ContourModeChip';
 import FilletModeChip from './FilletModeChip';
 import ShellModeChip from './ShellModeChip';
+import SheetMetalPicker from './sheetMetal/SheetMetalPicker';
+import SheetMetalRail from './sheetMetal/SheetMetalRail';
+import SheetMetalModeChip from './sheetMetal/SheetMetalModeChip';
+import { enterSheetMetalMode } from '../utils/sheetMetal/sheetMetalMode';
 import DraftModeChip from './DraftModeChip';
 import CutModeChip from './CutModeChip';
 import BooleanModeChip from './BooleanModeChip';
@@ -647,6 +651,12 @@ const Viewport = forwardRef(({
   onCommitMove = null,
   onCommitMoveFace = null,
   onCommitDeleteFace = null,
+  /** S1 sheet metal: active part's SendCutSend binding (or null). */
+  sheetMetalBinding = null,
+  /** S1: () => boolean — can sheet metal write into the editor part as-is? */
+  getSheetMetalReady = null,
+  /** S1: (skuRecord) => { ok, partId } — bind SKU to the part (or a new one). */
+  onBindSheetMetal = null,
   getHelperBuffer = null,
   /** Mobile CAD mid-strip host (CodeEditor). Null on desktop and in game. */
   cadToolbarHost = null,
@@ -846,6 +856,11 @@ const Viewport = forwardRef(({
   const filletModeRef = useRef(null);
   const [shellMode, setShellMode] = useState(null);
   const shellModeRef = useRef(null);
+  /** SCS sheet metal: picker popup (S1) + mode state (stage, sku, partId). */
+  const [sheetMetalPicker, setSheetMetalPicker] = useState(null);
+  const [sheetMetalMode, setSheetMetalMode] = useState(null);
+  const sheetMetalModeRef = useRef(null);
+  sheetMetalModeRef.current = sheetMetalMode;
   const [draftMode, setDraftMode] = useState(null);
   const draftModeRef = useRef(null);
   const [cutMode, setCutMode] = useState(null);
@@ -7508,7 +7523,7 @@ const Viewport = forwardRef(({
       )}
       
       {/* Left helper rail. Block, Build, Shape, Polish, Move. */}
-      {onInsertHelper && !contourMode && !filletMode && !shellMode && !draftMode && !cutMode && !booleanMode && !moveMode && !moveFaceMode && !deleteFaceMode && (
+      {onInsertHelper && !contourMode && !filletMode && !shellMode && !draftMode && !cutMode && !booleanMode && !moveMode && !moveFaceMode && !deleteFaceMode && !sheetMetalMode && (
         <HelperInsertPalette
           layout={mode === 'game' ? 'game' : 'cad'}
           onInsert={onInsertHelper}
@@ -7537,7 +7552,35 @@ const Viewport = forwardRef(({
           onEnterMoveMode={enterMoveMode}
           onEnterMoveFaceMode={enterMoveFaceMode}
           onEnterDeleteFaceMode={enterDeleteFaceMode}
+          onOpenSheetMetal={mode !== 'game' && onBindSheetMetal
+            ? () => setSheetMetalPicker({ willCreatePart: getSheetMetalReady ? !getSheetMetalReady() : false })
+            : null}
           compact={isMobile}
+        />
+      )}
+
+      {/* SCS sheet metal: left rail swaps like contour mode. */}
+      {sheetMetalMode && (
+        <SheetMetalRail onExit={() => setSheetMetalMode(null)} />
+      )}
+      {sheetMetalMode && (
+        <SheetMetalModeChip mode={sheetMetalMode} compact={isMobile} onDismiss={() => setSheetMetalMode(null)}>
+          <div className="text-[12px] text-orange-100 font-sans mt-1.5" data-sheet-metal-next="base-flange">
+            SKU bound to this part. Base flange: pick a plane next.
+          </div>
+        </SheetMetalModeChip>
+      )}
+      {sheetMetalPicker && (
+        <SheetMetalPicker
+          binding={sheetMetalBinding}
+          willCreatePart={!!sheetMetalPicker.willCreatePart}
+          onCancel={() => setSheetMetalPicker(null)}
+          onStart={(record) => {
+            const bound = onBindSheetMetal?.(record);
+            setSheetMetalPicker(null);
+            if (!bound?.ok) return;
+            setSheetMetalMode(enterSheetMetalMode(record, bound.partId));
+          }}
         />
       )}
 

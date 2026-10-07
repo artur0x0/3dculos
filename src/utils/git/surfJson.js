@@ -10,7 +10,9 @@
  *   "parts": [
  *     { "path": "assemblies/Gearbox/Bracket.js", "name": "Bracket",
  *       "visible": true, "order": 0, "position": [x, y, z]? },
- *     { "path": "parts/M3 bolt.js", "name": "M3 bolt", "visible": true, "order": 1 }
+ *     { "path": "parts/M3 bolt.js", "name": "M3 bolt", "visible": true, "order": 1 },
+ *     { "path": "parts/Plate.js", "name": "Plate", "visible": true, "order": 2,
+ *       "sheetMetal": { "sku": "ALU-090", "name": "…", "thicknessIn": 0.09, "gauge": 11 }? }
  *   ]
  * }
  *
@@ -23,12 +25,13 @@
  */
 import { ASSEMBLY_VERSION, partPosition, serializeAssembly } from '../assembly.js';
 import { normalizeRepoPath } from '../assembly.js';
+import { normalizeSheetMetalBinding } from '../scs/scsCatalog.js';
 import { PART_EXT, partPathAllowedFor, vaultSegment } from './vaultLayout.js';
 
 export const SURF_JSON_FORMAT = 'surfcad.assembly';
 export const SURF_JSON_VERSION = 1;
 const TOP_KEYS = new Set(['format', 'version', 'name', 'activeId', 'parts']);
-const PART_KEYS = new Set(['path', 'name', 'visible', 'order', 'position']);
+const PART_KEYS = new Set(['path', 'name', 'visible', 'order', 'position', 'sheetMetal']);
 
 /** { ok, errors: [string] } — every problem, not just the first. */
 export function validateSurfJson(input) {
@@ -73,6 +76,9 @@ export function validateSurfJson(input) {
       if (typeof part.visible !== 'boolean') errors.push(`${at}.visible must be a boolean`);
       if (!Number.isInteger(part.order) || part.order < 0) errors.push(`${at}.order must be a non-negative integer`);
       if (part.position !== undefined && !partPosition(part)) errors.push(`${at}.position must be [x, y, z] numbers`);
+      if (part.sheetMetal !== undefined && !normalizeSheetMetalBinding(part.sheetMetal)) {
+        errors.push(`${at}.sheetMetal must be { sku: string, … }`);
+      }
     });
     if (raw.activeId != null && !seen.has(raw.activeId)) errors.push('activeId must be null or one of the part paths');
   }
@@ -97,6 +103,7 @@ export function toSurfJson(doc) {
     parts: flat.parts.map((p) => {
       const row = { path: p.id, name: p.name, visible: p.visible, order: p.order };
       if (p.position) row.position = p.position;
+      if (p.sheetMetal) row.sheetMetal = p.sheetMetal;
       return row;
     }),
   };
@@ -122,6 +129,7 @@ export function parseSurfJson(input) {
     activeId: raw.activeId,
     parts: raw.parts.map((p) => ({
       id: p.path, name: p.name, visible: p.visible, order: p.order, position: p.position,
+      sheetMetal: p.sheetMetal,
     })),
   });
 }

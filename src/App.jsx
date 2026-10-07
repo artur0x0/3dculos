@@ -59,10 +59,14 @@ import {
   scriptForRow,
   serializeAssembly,
   setPartVisible,
+  partSheetMetal,
+  setPartSheetMetal,
   DEFAULT_ASSEMBLY_NAME,
   DEFAULT_PART_NAME,
   needsAssemblyLeaveGuard,
 } from './utils/assembly';
+import { sheetMetalBinding } from './utils/scs/scsCatalog';
+import { sheetMetalReady } from './utils/sheetMetal/sheetMetalScript';
 import {
   historyForPart,
   pushPartHistory,
@@ -3441,6 +3445,33 @@ const App = () => {
     return true;
   };
 
+  /** S1 sheet metal: can the editor part take a sheet-metal block as-is? */
+  const getSheetMetalReady = () => sheetMetalReady(codeEditorRef.current?.getContent?.() ?? '');
+
+  /**
+   * S1 Start designing: bind the SendCutSend SKU to the editor part. A part
+   * with other features is left alone — a new "Sheet N" part gets the SKU.
+   */
+  const handleBindSheetMetal = (record) => {
+    const binding = sheetMetalBinding(record);
+    if (!binding || appModeRef.current === 'game') return { ok: false };
+    let doc = assemblyRef.current;
+    if (!doc) return { ok: false };
+    let created = false;
+    if (!doc.activeId || !getSheetMetalReady()) {
+      const names = new Set(doc.parts.map((part) => part.name));
+      let n = 1;
+      while (names.has(`Sheet ${n}`)) n += 1;
+      handleAddPart(`Sheet ${n}`);
+      if (assemblyRef.current?.activeId === doc.activeId) return { ok: false };
+      doc = assemblyRef.current;
+      created = true;
+    }
+    const partId = doc.activeId;
+    rememberAssembly(setPartSheetMetal(doc, partId, binding));
+    return { ok: true, partId, created };
+  };
+
   /** Shell face-pick Confirm — hollow() + SHELL markers; Auto-Run. */
   const handleCommitShell = (payload) => {
     if (!focusWritePart(payload?.partId)) {
@@ -4236,6 +4267,9 @@ const App = () => {
               onCommitBoolean={handleCommitBoolean}
               onCommitMove={handleCommitMove}
               onCommitMoveFace={handleCommitMoveFace}
+              sheetMetalBinding={assemblyDoc ? partSheetMetal(assemblyDoc, assemblyDoc.activeId) : null}
+              getSheetMetalReady={getSheetMetalReady}
+              onBindSheetMetal={handleBindSheetMetal}
               onCommitDeleteFace={handleCommitDeleteFace}
               getHelperBuffer={() => codeEditorRef.current?.getContent?.() || ''}
               cadToolbarHost={cadToolbarHost}
@@ -4681,6 +4715,9 @@ const App = () => {
               onCommitBoolean={handleCommitBoolean}
               onCommitMove={handleCommitMove}
               onCommitMoveFace={handleCommitMoveFace}
+              sheetMetalBinding={assemblyDoc ? partSheetMetal(assemblyDoc, assemblyDoc.activeId) : null}
+              getSheetMetalReady={getSheetMetalReady}
+              onBindSheetMetal={handleBindSheetMetal}
               onCommitDeleteFace={handleCommitDeleteFace}
             getHelperBuffer={() => codeEditorRef.current?.getContent?.() || ''}
             cadToolbarHost={cadToolbarHost}

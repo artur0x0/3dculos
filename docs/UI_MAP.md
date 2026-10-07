@@ -275,6 +275,9 @@ All of these are absolutely positioned inside the shell at
 | centered | "Match!" success banner | inline | `:3595` |
 | left-2/4 bottom-2.5 | helper insert rail (height paired to right) | `HelperInsertPalette.jsx` | Viewport |
 | left-2/4 bottom-2.5 | contour tool rail (replaces the helper rail) | `ContourModeRail.jsx` | Viewport |
+| left-2/4 bottom-2.5 | sheet-metal rail (replaces the helper rail while `sheetMetalMode`) | `sheetMetal/SheetMetalRail.jsx` | Viewport |
+| bottom-center | sheet-metal chip: bound SKU + step, ✕ exits | `sheetMetal/SheetMetalModeChip.jsx` | Viewport |
+| bottom sheet `z-50` | Sheet Metal picker: material + gauge (in stock), Start designing | `sheetMetal/SheetMetalPicker.jsx` | Viewport |
 | right-2/4 bottom-4 | view / pick / cross-section cluster | `CrossSectionPanel.jsx:175` collapsed, `:327` expanded | `:3641` |
 | inside that cluster | Front/Right/Top/**Iso** snap popup | `ViewSnapControl.jsx` | `CrossSectionPanel.jsx:181` |
 | top-16, portaled `z-50`, `inset-x-3` (most of the viewport width, same card on desktop) | execution error toast: fixed card, label "Error", Undo and dismiss on the right, description on the next line (`ErrorPopup` `layout="stacked"`), glass `rounded-lg` | `ErrorPopup.jsx` | Viewport |
@@ -374,6 +377,9 @@ and does not insert the starter cube, so the following Extrude is
 `let part = placeInFrame`, the same shape as Workplane-then-Extrude.
 Both modes share the shape: tool rail on the left, param chip on the right,
 commit writes script text back through `App.jsx`.
+Sheet metal (SendCutSend): left rail **Sheet** button → `SheetMetalPicker`;
+Start designing binds the SKU on the part row (`part.sheetMetal`) and enters
+`sheetMetalMode` (rail + chip above). Catalog/cache in `src/utils/scs/`.
 
 ### Viewport furniture
 Camera and snaps `src/utils/viewCamera.js`; cutting plane

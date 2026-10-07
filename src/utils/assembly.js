@@ -6,6 +6,8 @@
  * A position, when present, is a translation. There are no mates.
  */
 
+import { normalizeSheetMetalBinding } from './scs/scsCatalog.js';
+
 export const ASSEMBLY_VERSION = 1;
 
 export function sortParts(parts) {
@@ -226,6 +228,8 @@ export function serializeAssembly(doc) {
     };
     const position = partPosition(part);
     if (position) row.position = position;
+    const sheetMetal = normalizeSheetMetalBinding(part?.sheetMetal);
+    if (sheetMetal) row.sheetMetal = sheetMetal;
     return row;
   }).filter((part) => part.id);
   const wanted = doc?.activeId != null ? String(doc.activeId) : '';
@@ -258,6 +262,7 @@ export function parseAssemblyDocument(input) {
       visible: part?.visible,
       order: part?.order ?? index,
       position: part?.position,
+      sheetMetal: part?.sheetMetal,
     })),
   });
 }
@@ -299,6 +304,27 @@ export function setPartVisible(doc, id, visible) {
     parts: (doc?.parts || []).map((part) => (
       part.id === id ? { ...part, visible: !!visible } : part
     )),
+  });
+}
+
+/** The SendCutSend SKU bound to a part (S1 sheet metal), or null. */
+export function partSheetMetal(doc, id) {
+  const part = (doc?.parts || []).find((row) => row.id === id);
+  return normalizeSheetMetalBinding(part?.sheetMetal);
+}
+
+/** Bind (or clear with null) a part's SendCutSend SKU. Unknown id → same doc. */
+export function setPartSheetMetal(doc, id, binding) {
+  if (id == null || !(doc?.parts || []).some((part) => part.id === id)) return doc;
+  const clean = normalizeSheetMetalBinding(binding);
+  return serializeAssembly({
+    ...doc,
+    parts: (doc?.parts || []).map((part) => {
+      if (part.id !== id) return part;
+      const rest = { ...part };
+      delete rest.sheetMetal;
+      return clean ? { ...rest, sheetMetal: clean } : rest;
+    }),
   });
 }
 
