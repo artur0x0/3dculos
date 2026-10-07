@@ -2398,6 +2398,9 @@ const Viewport = forwardRef(({
     setFilletMode(null);
     filletModeRef.current = null;
     clearFilletBlendPreview();
+    clearEdgeHover();
+    clearEdgeHighlight();
+    setSelectedEdges([]);
     setShellMode(null);
     shellModeRef.current = null;
     setDraftMode(null);
@@ -2442,7 +2445,7 @@ const Viewport = forwardRef(({
     // Soft-fail / refuse only — no informational toast on successful feature UI open.
     if (next.enterRefuse) showContourToast(next.enterRefuse);
     applyContourPartGhost(true);
-  }, [selectedFace, selectedPlaneId, armedContourId, applyContourPartGhost, clearFilletBlendPreview, getHelperBuffer, currentScript]);
+  }, [selectedFace, selectedPlaneId, armedContourId, applyContourPartGhost, clearFilletBlendPreview, clearEdgeHover, clearEdgeHighlight, getHelperBuffer, currentScript]);
 
   const confirmContourProfile = useCallback(() => {
     const state = contourModeRef.current;
@@ -2529,6 +2532,10 @@ const Viewport = forwardRef(({
     setFilletMode(null);
     filletModeRef.current = null;
     clearFilletBlendPreview();
+    // Dismiss without Accept must not leave sticky edge picks.
+    clearEdgeHover();
+    clearEdgeHighlight();
+    setSelectedEdges([]);
     if (filletToastTimerRef.current) {
       clearTimeout(filletToastTimerRef.current);
       filletToastTimerRef.current = null;
@@ -2538,7 +2545,7 @@ const Viewport = forwardRef(({
     const restore = filletPriorPickModeRef.current === 'edge' ? 'edge' : 'face';
     pickModeRef.current = restore;
     setPickMode(restore);
-  }, [clearFilletBlendPreview]);
+  }, [clearFilletBlendPreview, clearEdgeHover, clearEdgeHighlight]);
 
   const enterFilletMode = useCallback((opts = {}) => {
     const entry = opts?.entry === 'chamferEdges' ? 'chamferEdges' : 'filletEdges';
@@ -7763,7 +7770,10 @@ const Viewport = forwardRef(({
             setSelectedEdges([]);
           }}
           onAccept={acceptFillet}
-          onBack={exitFilletMode}
+          onBack={() => {
+            clearEdgeHover();
+            setSelectedEdges((prev) => popLastEdgeSelection(prev));
+          }}
           onDismiss={exitFilletMode}
           onParamChange={(next, extra) => setFilletMode((prev) => (
             prev
