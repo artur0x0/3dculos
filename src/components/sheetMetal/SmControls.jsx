@@ -111,12 +111,12 @@ export const SmToggle = ({ id, label, checked, onChange }) => (
 );
 
 /** Translucent popup shell shared by the picker and feature popups (✕ top-right). */
-export const SmPopup = ({ title, subtitle, onClose, closeLabel = 'Close', children, footer, dataAttr }) => (
+export const SmPopup = ({ title, subtitle, onClose, closeLabel = 'Close', children, footer, dataAttr, short = false }) => (
   <div className="absolute inset-0 z-50 flex items-end justify-center p-3 pointer-events-none" role="presentation">
     <div
       role="dialog"
       aria-label={title}
-      className="pointer-events-auto w-full max-w-sm max-h-[min(78%,calc(100dvh-8rem))] mb-1 overflow-hidden flex flex-col rounded-lg surface-glass border border-orange-500/60 shadow-2xl"
+      className={`pointer-events-auto w-full max-w-sm ${short ? 'max-h-[min(52%,calc(100dvh-8rem))]' : 'max-h-[min(78%,calc(100dvh-8rem))]'} mb-1 overflow-hidden flex flex-col rounded-lg surface-glass border border-orange-500/60 shadow-2xl`}
       {...(dataAttr ? { [dataAttr]: '1' } : {})}
     >
       <div className="flex items-start justify-between gap-2 px-4 py-3 border-b border-gray-700 shrink-0">

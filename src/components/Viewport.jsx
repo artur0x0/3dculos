@@ -65,7 +65,7 @@ import ShellModeChip from './ShellModeChip';
 import SheetMetalPicker from './sheetMetal/SheetMetalPicker';
 import SheetMetalRail from './sheetMetal/SheetMetalRail';
 import SheetMetalFlow from './sheetMetal/SheetMetalFlow';
-import { baseDraftSpec, enterSheetMetalMode, pickSheetPlane } from '../utils/sheetMetal/sheetMetalMode';
+import { baseDraftSpec, draftPreviewSpec, enterSheetMetalMode, sheetTap } from '../utils/sheetMetal/sheetMetalMode';
 import { buildSheetOverlay, disposeSheetOverlay, sheetPickFromHits } from '../utils/sheetMetal/sheetOverlay';
 import DraftModeChip from './DraftModeChip';
 import CutModeChip from './CutModeChip';
@@ -4553,11 +4553,7 @@ const Viewport = forwardRef(({
    */
   const sheetMetalTapRef = useRef(null);
   sheetMetalTapRef.current = (pick) => {
-    setSheetMetalMode((prev) => {
-      if (!prev) return prev;
-      if (pick.kind === 'plane' && prev.stage === 'plane') return pickSheetPlane(prev, pick.plane);
-      return prev;
-    });
+    setSheetMetalMode((prev) => (prev ? sheetTap(prev, pick) : prev));
   };
   useEffect(() => {
     const scene = sceneRef.current;
@@ -4577,7 +4573,9 @@ const Viewport = forwardRef(({
       }
       const group = buildSheetOverlay({
         ...sheetMetalMode,
-        previewSpec: sheetMetalMode.stage === 'base' ? baseDraftSpec(sheetMetalMode) : null,
+        previewSpec: sheetMetalMode.stage === 'base'
+          ? baseDraftSpec(sheetMetalMode)
+          : draftPreviewSpec(sheetMetalMode),
         draft: sheetMetalMode.stage === 'base' ? { id: 'base' } : sheetMetalMode.draft,
       });
       if (group && scene) {

@@ -12,6 +12,7 @@
         "golden:slice01": "node scripts/golden/smoke_slice01.mjs",
         "golden:scs-s1": "node scripts/golden/smoke_scs_s1_catalog.mjs",
         "golden:scs-s2": "node scripts/golden/smoke_scs_s2_base_flange.mjs",
+        "golden:scs-s3": "node scripts/golden/smoke_scs_s3_bends.mjs",
         "golden:slice03": "node scripts/golden/smoke_slice03_format.mjs",
         "golden:slice04": "node scripts/golden/smoke_slice04_pack.mjs",
         "golden:slice09": "node scripts/golden/smoke_slice09_helper_compose.mjs",

@@ -279,6 +279,7 @@ All of these are absolutely positioned inside the shell at
 | bottom-center | sheet-metal chip: bound SKU + step, ✕ exits | `sheetMetal/SheetMetalModeChip.jsx` | Viewport |
 | bottom sheet `z-50` | Sheet Metal picker: material + gauge (in stock), Start designing | `sheetMetal/SheetMetalPicker.jsx` | Viewport |
 | bottom sheet `z-50` | Base flange popup: X / Y, Back, Accept, ✕ | `sheetMetal/SheetMetalFlow.jsx` | Viewport |
+| bottom sheet `z-50` (short) | Bend popup: Angle, Flange length, Flip, R·K·BD, Back / Accept / Delete, ✕ | `sheetMetal/SheetMetalFlow.jsx` | Viewport |
 | scene | plane quads / sheet preview / edge handles (taps route here first) | `utils/sheetMetal/sheetOverlay.js` | Viewport |
 | right-2/4 bottom-4 | view / pick / cross-section cluster | `CrossSectionPanel.jsx:175` collapsed, `:327` expanded | `:3641` |
 | inside that cluster | Front/Right/Top/**Iso** snap popup | `ViewSnapControl.jsx` | `CrossSectionPanel.jsx:181` |
