@@ -110,6 +110,17 @@ console.log('\ngit G8 — establishGithubSession');
   ok('missing token fails', r.ok === false && /Missing access token/.test(r.error));
 }
 {
+  const fetchImpl = async () => new Promise(() => {}); // never settles
+  const t0 = Date.now();
+  const r = await establishGithubSession({
+    accessToken: 'tok_hang',
+    fetchImpl,
+    timeoutMs: 50,
+  });
+  ok('hanging upsert times out', r.ok === false && /timed out/i.test(r.error));
+  ok('hanging upsert returns promptly', Date.now() - t0 < 2000);
+}
+{
   const fetchImpl = async () => ({
     ok: false, status: 401, json: async () => ({ error: 'Bad credentials' }),
   });
@@ -173,6 +184,7 @@ console.log('\ngit G8 — UI + wiring (source)');
   const order = readFileSync(join(root, 'src/components/OrderModal.jsx'), 'utf8');
   const cb = readFileSync(join(root, 'src/components/GitCallback.jsx'), 'utf8');
   const main = readFileSync(join(root, 'src/main.jsx'), 'utf8');
+  const app = readFileSync(join(root, 'src/App.jsx'), 'utf8');
   const userModel = readFileSync(join(root, 'backend/db/models/User.js'), 'utf8');
   const authRoutes = readFileSync(join(root, 'backend/routes/auth.js'), 'utf8');
   const ghUser = readFileSync(join(root, 'backend/services/githubUser.js'), 'utf8');
@@ -204,6 +216,23 @@ console.log('\ngit G8 — UI + wiring (source)');
   ok('GitCallback still soft-navs via onComplete',
     /onComplete/.test(cb) && /history\.replaceState/.test(cb)
     && /typeof onComplete === 'function'/.test(cb));
+  ok('GitCallback soft-navs before awaiting session upsert',
+    (() => {
+      const iNav = cb.search(/history\.replaceState/);
+      const iSess = cb.search(/establishGithubSession\(/);
+      // Soft-nav must appear before the background session call, or session
+      // must not be awaited (void …). Blocking await before soft-nav hung Loading.
+      if (iNav < 0 || iSess < 0) return false;
+      const beforeSess = cb.slice(0, iSess);
+      const awaitsBeforeNav = /await\s+establishGithubSession/.test(beforeSess);
+      return iNav < iSess && !awaitsBeforeNav;
+    })());
+  ok('establishGithubSession has timeout budget',
+    /GITHUB_SESSION_TIMEOUT_MS/.test(readFileSync(join(root, 'src/utils/git/githubAuth.js'), 'utf8'))
+    && /withTimeout/.test(readFileSync(join(root, 'src/utils/git/githubAuth.js'), 'utf8')));
+  ok('App Loading has editor-init + watchdog timeouts',
+    /EDITOR_INIT_TIMEOUT_MS/.test(app) && /LOADING_WATCHDOG_MS/.test(app)
+    && /data-app-loading/.test(app));
   ok('callback outside StrictMode (soft-nav #191)',
     main.indexOf('<GitCallback') < main.indexOf('<StrictMode>'));
 

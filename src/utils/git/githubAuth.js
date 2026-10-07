@@ -273,6 +273,24 @@ export function startGithubOAuth({
   return true;
 }
 
+/** Race a promise against a timeout; does not cancel the underlying work. */
+export function withTimeout(promise, ms, label = 'operation') {
+  const timeoutMs = Math.max(0, Number(ms) || 0);
+  if (!timeoutMs) return promise;
+  return new Promise((resolve, reject) => {
+    const id = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${timeoutMs / 1000}s`));
+    }, timeoutMs);
+    Promise.resolve(promise).then(
+      (v) => { clearTimeout(id); resolve(v); },
+      (e) => { clearTimeout(id); reject(e); },
+    );
+  });
+}
+
+/** Default budget for app-session upsert so OAuth soft-nav cannot stick forever. */
+export const GITHUB_SESSION_TIMEOUT_MS = 8000;
+
 /**
  * After token exchange: POST access_token to /api/auth/github so the server
  * can verify with GitHub, upsert User.githubId (findOrCreateOAuth), and set
@@ -283,8 +301,11 @@ export async function establishGithubSession({
   accessToken,
   fetchImpl = globalThis.fetch,
   sessionPath = GITHUB_SESSION_PATH,
+  timeoutMs = GITHUB_SESSION_TIMEOUT_MS,
 } = {}) {
   if (!accessToken) return { ok: false, error: 'Missing access token' };
+
+  const run = async () => {
   let res;
   try {
     res = await fetchImpl(sessionPath, {
@@ -309,4 +330,11 @@ export async function establishGithubSession({
     return { ok: false, error: body?.error || 'Session upsert returned no user' };
   }
   return { ok: true, user: body.user, isNew: !!body.isNew };
+  };
+
+  try {
+    return await withTimeout(run(), timeoutMs, 'GitHub session upsert');
+  } catch (e) {
+    return { ok: false, error: e?.message || 'Session upsert timed out' };
+  }
 }

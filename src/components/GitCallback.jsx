@@ -1,8 +1,10 @@
 /**
  * SPA page at /git/callback — receives ?code=&state= from GitHub OAuth,
  * POSTs the code to the stateless exchange endpoint, stores the token in
- * sessionStorage, upserts the app User (githubId) via /api/auth/github, then
- * hands off to App. Never persists the token server-side.
+ * sessionStorage, then soft-navs to App. App-user session upsert (G8) is
+ * best-effort and must NOT block soft-nav — awaiting /api/auth/github with
+ * no budget left Sign-in stuck on a spinner while Manifold never started
+ * (Tailscale phone "Loading..." forever after #201).
  *
  * Mounted outside React StrictMode (see main.jsx) so the effect does not
  * double-fire and clear OAuth state before exchange. completeGithubCallback
@@ -11,10 +13,6 @@
  * Success uses onComplete (soft navigate) when provided so the already-loaded
  * module graph mounts App once. Falls back to location.replace('/') only when
  * mounted without a parent router (tests / unexpected entry).
- *
- * Session upsert (G8) is best-effort after a successful token exchange: git
- * Connect still soft-navs when the app DB is down; Sign-in simply has no
- * Express session until upsert succeeds on a later Connect.
  */
 import { useEffect, useState } from 'react';
 import {
@@ -41,23 +39,22 @@ export default function GitCallback({ onComplete } = {}) {
         return;
       }
 
-      // G8: upsert app user with githubId (mirrors Apple/Google). Token stays
-      // in sessionStorage for git; server verifies then discards it.
-      const session = await establishGithubSession({ accessToken: result.token });
-      if (cancelled) return;
-      if (!session.ok) {
-        // Soft-fail: keep git token; App can still use Connect without a session.
-        console.warn('[GitCallback] app session upsert failed:', session.error);
-      }
-
+      // Soft-nav FIRST (same as Connect / #191). Token is already in
+      // sessionStorage. Session upsert is best-effort in the background —
+      // App's #201 bridge also retries establishGithubSession + checkAuth.
       setStatus('ok');
-      // Drop ?code=&state= from the URL, then mount App without a full reload.
       window.history.replaceState({}, '', '/');
       if (typeof onComplete === 'function') {
         onComplete();
       } else {
         window.location.replace('/');
       }
+
+      void establishGithubSession({ accessToken: result.token }).then((session) => {
+        if (!session.ok) {
+          console.warn('[GitCallback] app session upsert failed:', session.error);
+        }
+      });
     })();
     return () => { cancelled = true; };
   }, [onComplete]);
