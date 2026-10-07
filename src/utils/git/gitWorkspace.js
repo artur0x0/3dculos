@@ -294,6 +294,40 @@ export async function listVaultBrowseItems(adapter, repo, ref) {
 }
 
 /**
+ * Client-side live filter for the git Open pane index (assemblies + parts).
+ * Empty / whitespace query returns the full index. Matching is case-insensitive
+ * substring on assembly name/label and part path/label/scope — no network.
+ */
+export function filterVaultOpenIndex(index, query) {
+  const assemblies = Array.isArray(index?.assemblies) ? index.assemblies : [];
+  const parts = Array.isArray(index?.parts) ? index.parts : [];
+  const q = String(query || '').trim().toLowerCase();
+  if (!q) return { assemblies, parts };
+  const hit = (...vals) => vals.some((v) => String(v || '').toLowerCase().includes(q));
+  return {
+    assemblies: assemblies.filter((item) => {
+      if (typeof item === 'string') return hit(item);
+      return hit(item?.name, item?.label);
+    }),
+    parts: parts.filter((item) => hit(item?.path, item?.label, item?.scope)),
+  };
+}
+
+/**
+ * Same live filter for Add-existing part lists (folder → Part).
+ */
+export function filterVaultPartItems(items, query) {
+  const list = Array.isArray(items) ? items : [];
+  const q = String(query || '').trim().toLowerCase();
+  if (!q) return list;
+  return list.filter((item) => {
+    const hay = [item?.path, item?.label, item?.kind, item?.scope]
+      .map((v) => String(v || '').toLowerCase());
+    return hay.some((h) => h.includes(q));
+  });
+}
+
+/**
  * G11: plan inserting another assembly's parts into the current document.
  * Shared paths stay; other-assembly parts remap under this assembly's folder.
  * -> { additions: [{ id, name, content, fromPath }] }

@@ -91,7 +91,10 @@ Desktop specifics:
   profile chip is right-justified (`data-parts-ribbon-end`). Each row thumbnail
   (`data-part-thumbnail`, `data-part-preview="manifold"`) is a cached snapshot
   of that part's solid. No solid is `data-part-preview="empty"`. Delete asks
-  first; Cancel keeps the part, Confirm removes that part only.
+  first; Cancel keeps the part, Confirm removes that part only. In git mode,
+  **Open from repo** indexes assemblies/parts on pane open and live-filters
+  via `data-git-open-search` (add-existing: `data-git-add-search`); empty query
+  shows the full index, no hits show *No matches*.
 - `PromptInput` is passed `isMobile={false}` explicitly (`src/App.jsx:1345`).
 
 ### Mobile shell (`src/App.jsx` mobile branch) — CAD stages + game stack
