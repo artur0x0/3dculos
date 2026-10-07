@@ -5,7 +5,11 @@
  * squash onto main via the adapter; conflicts open a GitHub compare URL.
  */
 import { assertGithubAdapter, GitAdapterError } from './githubAdapterInterface.js';
-import { openVaultAssembly } from './gitWorkspace.js';
+import {
+  listVaultAssemblies,
+  openVaultAssembly,
+  seedEmptyVaultAssembly,
+} from './gitWorkspace.js';
 import { vaultSegment } from './vaultLayout.js';
 
 /** Branches in the vault, sorted; `current` marked when it matches. */
@@ -33,7 +37,27 @@ export async function switchVaultBranch(adapter, repo, assemblyName, branch) {
   if (!branch) throw new Error('Empty branch name');
   const tip = await adapter.getBranch(repo, branch);
   if (!tip) throw new Error(`Branch not found: ${branch}`);
-  return openVaultAssembly(adapter, repo, name, { branch, headSha: tip.sha });
+  try {
+    return await openVaultAssembly(adapter, repo, name, { branch, headSha: tip.sha });
+  } catch (err) {
+    const msg = err?.message || '';
+    if (!/Assembly not found/i.test(msg)) throw err;
+  }
+  // Named assembly missing on this tip (common after Create on a default
+  // "Assembly" that was never committed). Prefer another vault assembly;
+  // otherwise seed an empty working copy on this branch — never hard-error.
+  const available = await listVaultAssemblies(adapter, repo, branch);
+  if (available.length) {
+    const pick = available.includes(name) ? name : available[0];
+    const opened = await openVaultAssembly(adapter, repo, pick, {
+      branch, headSha: tip.sha,
+    });
+    return {
+      ...opened,
+      fallbackAssembly: pick !== name ? pick : null,
+    };
+  }
+  return seedEmptyVaultAssembly(name, { branch, headSha: tip.sha });
 }
 
 /**

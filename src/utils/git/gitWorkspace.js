@@ -6,7 +6,12 @@
  * captures a baseline. Dirty = working copy differs from that baseline.
  * Commit (G3) is the only write back to git; this module never commits.
  */
-import { normalizeRepoPath, serializeAssembly } from '../assembly.js';
+import {
+  DEFAULT_ASSEMBLY_NAME,
+  DEFAULT_PART_NAME,
+  normalizeRepoPath,
+  serializeAssembly,
+} from '../assembly.js';
 import { assertGithubAdapter } from './githubAdapterInterface.js';
 import {
   assemblyFilePath,
@@ -100,6 +105,37 @@ export async function listVaultAssemblies(adapter, repo, ref) {
   assertGithubAdapter(adapter);
   const tree = await adapter.listTree(repo, ref);
   return listAssemblies(tree);
+}
+
+/**
+ * Empty git working copy for a branch tip that has no `.surf.json` yet.
+ * Used when switching onto a new branch before the default Assembly is
+ * committed — avoids hard-erroring on assemblies/Assembly/Assembly.surf.json.
+ * -> { doc, scripts, assemblyPath, baseline, seeded: true }
+ */
+export function seedEmptyVaultAssembly(assemblyName, {
+  branch = 'main',
+  headSha = null,
+} = {}) {
+  const name = vaultSegment(assemblyName) || DEFAULT_ASSEMBLY_NAME;
+  const partId = assemblyPartPath(name, DEFAULT_PART_NAME);
+  const doc = serializeAssembly({
+    source: 'git',
+    name,
+    activeId: partId,
+    parts: [{ id: partId, name: DEFAULT_PART_NAME, visible: true, order: 0 }],
+  });
+  const scripts = { [partId]: '' };
+  const assemblyPath = assemblyFilePath(name);
+  const baseline = captureBaseline({
+    assemblyPath,
+    assemblyName: name,
+    doc,
+    scripts,
+    branch,
+    headSha,
+  });
+  return { doc, scripts, assemblyPath, baseline, seeded: true };
 }
 
 /**

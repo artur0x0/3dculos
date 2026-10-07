@@ -347,6 +347,7 @@ export default function PartFeed({
   onDeleteBranch = null,
   onMergeBranch = null,
   onSquashMerge = null,
+  onBranchUiClose = null,
   // G6 Local → Git
   onMoveToGit = null,
   defaultVaultName = 'surfcad',
@@ -603,7 +604,12 @@ export default function PartFeed({
     }
   };
 
-  const closeBranches = () => setBranchFlow(null);
+  const closeBranches = () => {
+    setBranchFlow(null);
+    // Git mode: drop any IndexedDB local: rows that leaked into a vault-backed
+    // working copy (stale hydrate / source flip). App no-ops when clean.
+    onBranchUiClose?.();
+  };
 
   // G13: slim vault create — { stage: 'form'|'busy'|'done'|'error', vaultName, result, error }
   const [moveFlow, setMoveFlow] = useState(null);
@@ -645,7 +651,7 @@ export default function PartFeed({
     onMergeBranch?.({ head, base: 'main' });
   };
 
-  const refreshBranchPane = async (preserveError = '') => {
+  const refreshBranchPane = async (preserveError = '', { ensureBranch = null } = {}) => {
     setBranchFlow((prev) => ({
       stage: 'pane',
       items: prev?.items || [],
@@ -654,7 +660,23 @@ export default function PartFeed({
       pending: null,
     }));
     try {
-      const items = (await onListBranches?.()) || [];
+      let items = (await onListBranches?.()) || [];
+      // Create just succeeded but a cached / flaky listBranches may omit the
+      // new ref — fold it in so the pane shows it without a full reload.
+      if (ensureBranch?.name && !items.some((b) => b.name === ensureBranch.name)) {
+        items = [
+          ...items,
+          {
+            name: ensureBranch.name,
+            sha: ensureBranch.sha || null,
+            current: false,
+          },
+        ].sort((a, b) => {
+          if (a.name === 'main') return -1;
+          if (b.name === 'main') return 1;
+          return a.name.localeCompare(b.name);
+        });
+      }
       setBranchFlow({
         stage: 'pane',
         items,
@@ -663,8 +685,12 @@ export default function PartFeed({
         pending: null,
       });
     } catch (err) {
+      // Still surface the created branch if list failed after create.
+      const fallback = ensureBranch?.name
+        ? [{ name: ensureBranch.name, sha: ensureBranch.sha || null, current: false }]
+        : [];
       setBranchFlow({
-        stage: 'pane', items: [], loading: false,
+        stage: 'pane', items: fallback, loading: false,
         error: err?.message || 'Could not list branches',
         pending: null,
       });
@@ -784,7 +810,9 @@ export default function PartFeed({
     setBranchFlow((prev) => ({ ...(prev || {}), stage: 'busy', error: '' }));
     const result = (await onCreateBranch?.(draft)) || { status: 'error', error: 'Create unavailable' };
     if (result.status === 'created') {
-      await refreshBranchPane();
+      await refreshBranchPane('', {
+        ensureBranch: { name: result.branch || draft, sha: result.sha || null },
+      });
       return;
     }
     setBranchFlow({
