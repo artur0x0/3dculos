@@ -175,6 +175,17 @@ ok('add existing via + dropdown', /data-part-add-menu/.test(feed)
   && /data-part-add-action="existing"/.test(feed)
   && /data-git-add-existing/.test(feed) && /data-git-add-list/.test(feed)
   && /onAddExistingPart/.test(feed));
+ok('+ menu sections Part + Assembly with New/Existing', /data-part-add-section="part"/.test(feed)
+  && /data-part-add-section="assembly"/.test(feed)
+  && /data-part-add-kind="part"/.test(feed)
+  && /data-part-add-kind="assembly"/.test(feed)
+  && /data-assembly-add-existing/.test(feed));
+ok('assembly leave Save|Discard guard', /data-assembly-leave-ask/.test(feed)
+  && /data-assembly-leave-save/.test(feed)
+  && /data-assembly-leave-discard/.test(feed)
+  && /bg-red-700/.test(feed)
+  && /needsAssemblyLeaveGuard/.test(app)
+  && /onNewAssembly/.test(app));
 ok('Connect gated on client id / connected (G7+G10)',
   /data-git-connect=""/.test(feed)
   && /githubConnectReady/.test(feed)

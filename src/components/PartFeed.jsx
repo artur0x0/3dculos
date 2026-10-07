@@ -273,6 +273,9 @@ export default function PartFeed({
   onLoadFile,
   onResolveFile,
   onAddPart,
+  onNewAssembly = null,
+  onFlushLocalAssembly = null,
+  assemblyLeaveSafe = true,
   onDeletePart,
   assemblyName = '',
   onRenameAssembly = null,
@@ -331,6 +334,8 @@ export default function PartFeed({
   const [branchFlow, setBranchFlow] = useState(null);
   const [branchMenuOpen, setBranchMenuOpen] = useState(false);
   const [plusMenuOpen, setPlusMenuOpen] = useState(false);
+  // Assembly New/Existing leave guard: null | { pending: 'new'|'existing', stage: 'ask'|'busy'|'commit', error }
+  const [leaveGuard, setLeaveGuard] = useState(null);
   const branchMenuRef = useRef(null);
   const plusMenuRef = useRef(null);
   const branchCreateInputRef = useRef(null);
@@ -528,7 +533,70 @@ export default function PartFeed({
     setCommitFlow({ stage: 'message', draft: '', result: null, error: '' });
   };
 
-  const closeCommit = () => setCommitFlow(null);
+  const runNewAssembly = () => {
+    if (onNewAssembly) {
+      onNewAssembly();
+      return;
+    }
+    // Fallback: local blank via add-part path is unavailable — no-op.
+  };
+
+  const runExistingAssembly = () => {
+    void startOpenAssembly();
+  };
+
+  const proceedAssemblyAction = (pending) => {
+    setLeaveGuard(null);
+    if (pending === 'new') runNewAssembly();
+    else if (pending === 'existing') runExistingAssembly();
+  };
+
+  /** Assembly New/Existing: Save|Discard when working copy is not blank/default/known-saved. */
+  const requestAssemblyAction = (pending) => {
+    setPlusMenuOpen(false);
+    if (assemblyLeaveSafe) {
+      proceedAssemblyAction(pending);
+      return;
+    }
+    setLeaveGuard({ pending, stage: 'ask', error: '' });
+  };
+
+  const runLeaveDiscard = () => {
+    const pending = leaveGuard?.pending;
+    if (!pending) return;
+    proceedAssemblyAction(pending);
+  };
+
+  const runLeaveSave = async () => {
+    const pending = leaveGuard?.pending;
+    if (!pending) return;
+    if (source === 'git') {
+      // Commit = Save in vault mode. Reuse the commit message dialog; after
+      // success, continue with the pending New/Existing assembly action.
+      if (!canCommit) {
+        proceedAssemblyAction(pending);
+        return;
+      }
+      setLeaveGuard({ pending, stage: 'commit', error: '' });
+      startCommit();
+      return;
+    }
+    setLeaveGuard({ pending, stage: 'busy', error: '' });
+    try {
+      await onFlushLocalAssembly?.();
+      proceedAssemblyAction(pending);
+    } catch (err) {
+      setLeaveGuard({ pending, stage: 'ask', error: err?.message || 'Could not save' });
+    }
+  };
+
+
+  const closeCommit = () => {
+    setCommitFlow(null);
+    if (leaveGuard?.stage === 'commit') {
+      setLeaveGuard({ pending: leaveGuard.pending, stage: 'ask', error: '' });
+    }
+  };
 
   const closeBranches = () => setBranchFlow(null);
 
@@ -806,10 +874,20 @@ export default function PartFeed({
     const result = (await onGitCommit?.(draft)) || { status: 'error', error: 'Commit unavailable' };
     if (result.status === 'branched') {
       setCommitFlow({ stage: 'ask-force', draft, result, error: '' });
+      // Conflict popup first; leave guard waits until overwrite/stay resolves.
     } else if (result.status === 'error') {
       setCommitFlow({ stage: 'error', draft, result, error: result.error || 'Commit failed' });
+      if (leaveGuard?.stage === 'commit') {
+        setLeaveGuard({ ...leaveGuard, stage: 'ask', error: result.error || 'Commit failed' });
+      }
     } else {
       setCommitFlow({ stage: 'done', draft, result, error: '' });
+      if (leaveGuard?.stage === 'commit' && leaveGuard.pending) {
+        const pending = leaveGuard.pending;
+        setLeaveGuard(null);
+        // Defer so commit dialog can close before New/Existing opens.
+        queueMicrotask(() => proceedAssemblyAction(pending));
+      }
     }
   };
 
@@ -823,6 +901,11 @@ export default function PartFeed({
       setCommitFlow({ ...commitFlow, stage: 'error', error: result.error || 'Force merge failed' });
     } else {
       setCommitFlow({ stage: 'done', draft: '', result, error: '' });
+      if (leaveGuard?.stage === 'commit' && leaveGuard.pending) {
+        const pending = leaveGuard.pending;
+        setLeaveGuard(null);
+        queueMicrotask(() => proceedAssemblyAction(pending));
+      }
     }
   };
 
@@ -890,7 +973,7 @@ export default function PartFeed({
             data-assembly-load=""
             title={source === 'git' ? 'Open from vault' : 'Load assembly'}
             aria-label={source === 'git' ? 'Open from vault' : 'Load assembly'}
-            onClick={startOpenAssembly}
+            onClick={() => requestAssemblyAction('existing')}
           >
             <FolderOpen size={STRIP_ICON} />
           </button>
@@ -899,8 +982,8 @@ export default function PartFeed({
               type="button"
               className={STRIP_BTN}
               data-part-add=""
-              title="Add part"
-              aria-label="Add part"
+              title="Add part or assembly"
+              aria-label="Add part or assembly"
               aria-expanded={plusMenuOpen ? 'true' : 'false'}
               aria-haspopup="menu"
               onClick={() => setPlusMenuOpen((open) => !open)}
@@ -911,12 +994,19 @@ export default function PartFeed({
               <div
                 data-part-add-dropdown=""
                 role="menu"
-                className="absolute left-0 top-full z-50 mt-1 min-w-[7.5rem] rounded-md border border-gray-600 bg-gray-900 py-1 shadow-lg"
+                className="absolute left-0 top-full z-50 mt-1 min-w-[8.5rem] rounded-md border border-gray-600 bg-gray-900 py-1 shadow-lg"
               >
+                <div
+                  className="px-3 pt-1.5 pb-0.5 text-[10px] font-semibold uppercase tracking-wide text-gray-500"
+                  data-part-add-section="part"
+                >
+                  Part
+                </div>
                 <button
                   type="button"
                   role="menuitem"
                   data-part-add-action="new"
+                  data-part-add-kind="part"
                   className="block w-full px-3 py-1.5 text-left text-xs text-gray-100 hover:bg-white/10"
                   onClick={() => {
                     setPlusMenuOpen(false);
@@ -930,6 +1020,7 @@ export default function PartFeed({
                     type="button"
                     role="menuitem"
                     data-part-add-action="existing"
+                    data-part-add-kind="part"
                     data-git-add-existing=""
                     className="block w-full px-3 py-1.5 text-left text-xs text-gray-100 hover:bg-white/10"
                     onClick={() => {
@@ -940,6 +1031,34 @@ export default function PartFeed({
                     Existing
                   </button>
                 )}
+                <div className="my-1 border-t border-gray-700" data-part-add-divider="" />
+                <div
+                  className="px-3 pt-1.5 pb-0.5 text-[10px] font-semibold uppercase tracking-wide text-gray-500"
+                  data-part-add-section="assembly"
+                >
+                  Assembly
+                </div>
+                <button
+                  type="button"
+                  role="menuitem"
+                  data-part-add-action="new"
+                  data-part-add-kind="assembly"
+                  className="block w-full px-3 py-1.5 text-left text-xs text-gray-100 hover:bg-white/10"
+                  onClick={() => requestAssemblyAction('new')}
+                >
+                  New
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  data-part-add-action="existing"
+                  data-part-add-kind="assembly"
+                  data-assembly-add-existing=""
+                  className="block w-full px-3 py-1.5 text-left text-xs text-gray-100 hover:bg-white/10"
+                  onClick={() => requestAssemblyAction('existing')}
+                >
+                  Existing
+                </button>
               </div>
             )}
           </div>
@@ -1669,6 +1788,65 @@ export default function PartFeed({
           )}
         </VaultPickerDialog>
       )}
+
+      {leaveGuard && leaveGuard.stage === 'ask' && typeof document !== 'undefined' && (
+        <VaultPickerDialog
+          title="Save current assembly?"
+          labelledBy="assembly-leave-title"
+          dataAttr="assembly-leave"
+          onClose={() => setLeaveGuard(null)}
+          footer={(
+            <div className="mt-4 flex flex-wrap justify-end gap-2" data-assembly-leave-stage="ask">
+              <button
+                type="button"
+                className="rounded-md px-3 py-1.5 text-xs text-gray-200 hover:bg-white/10"
+                data-assembly-leave-cancel=""
+                onClick={() => setLeaveGuard(null)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="rounded-md bg-red-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-600"
+                data-assembly-leave-discard=""
+                onClick={runLeaveDiscard}
+              >
+                Discard
+              </button>
+              <button
+                type="button"
+                className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-500"
+                data-assembly-leave-save=""
+                onClick={() => { void runLeaveSave(); }}
+              >
+                Save
+              </button>
+            </div>
+          )}
+        >
+          <div data-assembly-leave-ask="" data-assembly-leave-pending={leaveGuard.pending}>
+            <p className="text-xs text-gray-300">
+              {source === 'git'
+                ? 'Save commits this assembly to the vault before continuing.'
+                : 'Save keeps this assembly in local storage before continuing.'}
+            </p>
+            {leaveGuard.error ? (
+              <p className="mt-2 text-xs text-amber-300" data-assembly-leave-error="">{leaveGuard.error}</p>
+            ) : null}
+          </div>
+        </VaultPickerDialog>
+      )}
+      {leaveGuard && leaveGuard.stage === 'busy' && typeof document !== 'undefined' && (
+        <VaultPickerDialog
+          title="Saving…"
+          labelledBy="assembly-leave-busy-title"
+          dataAttr="assembly-leave"
+          onClose={undefined}
+        >
+          <p className="text-xs text-gray-400" data-git-dialog-loading="">Saving…</p>
+        </VaultPickerDialog>
+      )}
+
       {branchFlow && (
         branchFlow.stage === 'confirm'
         || branchFlow.stage === 'busy'

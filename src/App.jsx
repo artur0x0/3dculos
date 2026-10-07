@@ -57,6 +57,9 @@ import {
   scriptForRow,
   serializeAssembly,
   setPartVisible,
+  DEFAULT_ASSEMBLY_NAME,
+  DEFAULT_PART_NAME,
+  needsAssemblyLeaveGuard,
 } from './utils/assembly';
 import {
   historyForPart,
@@ -2505,6 +2508,47 @@ const App = () => {
     return undefined;
   }, [githubConnected, assemblyDoc]); // eslint-disable-line react-hooks/exhaustive-deps -- vault helpers via refs
 
+  /** Flush working copy to IndexedDB (local Save for assembly leave guard). */
+  const handleFlushLocalAssembly = async () => {
+    const doc = assemblyRef.current;
+    if (!doc) return;
+    const live = codeEditorRef.current?.getContent?.();
+    const liveId = (!suppressPartSaveRef.current && typeof live === 'string') ? doc.activeId : null;
+    if (liveId) {
+      await savePartScript(liveId, live);
+      rememberScripts({ ...partScriptsRef.current, [liveId]: live });
+    }
+    const latest = assemblyRef.current;
+    if (latest) await saveAssemblyDocument(latest);
+  };
+
+  /** Seed a blank default assembly (Parts + → Assembly → New). */
+  const handleNewAssembly = async () => {
+    const seedId = newLocalPartId();
+    const starter = DEFAULT_SCRIPT;
+    const source = githubConnected ? 'git' : 'local';
+    const seedDoc = serializeAssembly({
+      source,
+      name: DEFAULT_ASSEMBLY_NAME,
+      activeId: seedId,
+      parts: [{ id: seedId, name: DEFAULT_PART_NAME, visible: true, order: 0 }],
+    });
+    refreshGenRef.current += 1;
+    await savePartScript(seedId, starter);
+    rememberScripts({ [seedId]: starter });
+    rememberAssembly(seedDoc);
+    rememberGitBaseline(null);
+    rememberGitBehind(null, { showToast: false, resetResolved: true });
+    setGitBehindToast(null);
+    for (const key of Object.keys(partHistoriesRef.current)) {
+      if (key !== '__game__') delete partHistoriesRef.current[key];
+    }
+    focusPartHistory(seedId, starter);
+    suppressPartSaveRef.current = false;
+    setCurrentFilename(DEFAULT_PART_NAME);
+    codeEditorRef.current?.loadContent(starter, DEFAULT_PART_NAME, false);
+  };
+
   const handleAddPart = async (gitPath) => {
     const doc = assemblyRef.current;
     if (!doc) return;
@@ -3625,6 +3669,17 @@ const App = () => {
       onLoadFile={handleLoadAssembly}
       onResolveFile={handleResolvePartFile}
       onAddPart={handleAddPart}
+      onNewAssembly={handleNewAssembly}
+      onFlushLocalAssembly={handleFlushLocalAssembly}
+      assemblyLeaveSafe={!needsAssemblyLeaveGuard(assemblyDoc, {
+        sourceDirty: !!sourceDirty,
+        hasBaseline: !!gitBaseline,
+        source: assemblyDoc.source,
+        scripts: partScripts,
+        defaultScripts: [DEFAULT_SCRIPT, newPartStarterScript()],
+        liveId: assemblyDoc.activeId,
+        liveScript: liveDirtyScript,
+      })}
       onDeletePart={handleDeletePart}
       onToggleSource={handleToggleSource}
       onPlanMoveToGit={handlePlanMoveToGit}

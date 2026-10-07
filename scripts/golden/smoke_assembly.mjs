@@ -33,6 +33,10 @@ import {
   scriptForRow,
   serializeAssembly,
   setPartVisible,
+  needsAssemblyLeaveGuard,
+  isDefaultBlankAssembly,
+  DEFAULT_ASSEMBLY_NAME,
+  DEFAULT_PART_NAME,
 } from '../../src/utils/assembly.js';
 import { meshPreviewKey, partPreviewKind } from '../../src/utils/partPreview.js';
 import {
@@ -775,6 +779,39 @@ async function execute(script) {
     && again.solids.some((solid) => solid.id === 'local:wide')
     && !againRows.some((entry) => entry.id === 'local:box')
     && againRows.some((entry) => entry.id === 'local:wide'));
+}
+
+
+console.log('\nassembly leave guard');
+{
+  const blank = {
+    source: 'local',
+    name: DEFAULT_ASSEMBLY_NAME,
+    activeId: 'p1',
+    parts: [{ id: 'p1', name: DEFAULT_PART_NAME, visible: true, order: 0 }],
+  };
+  const starter = 'return Manifold.cube([1,1,1], true);';
+  check('blank default is leave-safe',
+    isDefaultBlankAssembly(blank, { p1: starter }, { defaultScripts: [starter] }));
+  check('blank skips leave guard',
+    !needsAssemblyLeaveGuard(blank, {
+      source: 'local', scripts: { p1: starter }, defaultScripts: [starter],
+    }));
+  const renamed = { ...blank, name: 'Gearbox' };
+  check('renamed local needs leave guard',
+    needsAssemblyLeaveGuard(renamed, {
+      source: 'local', scripts: { p1: starter }, defaultScripts: [starter],
+    }));
+  check('git clean baseline is leave-safe',
+    !needsAssemblyLeaveGuard(renamed, {
+      source: 'git', sourceDirty: false, hasBaseline: true,
+      scripts: { p1: starter }, defaultScripts: [starter],
+    }));
+  check('git dirty needs leave guard',
+    needsAssemblyLeaveGuard(renamed, {
+      source: 'git', sourceDirty: true, hasBaseline: true,
+      scripts: { p1: starter }, defaultScripts: [starter],
+    }));
 }
 
 if (failed) {
