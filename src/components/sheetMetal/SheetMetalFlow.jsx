@@ -9,13 +9,18 @@ import {
   bendDeductionAt,
   bendLimits,
   cancelDraft,
+  closeSheetExport,
   deleteDraftFeature,
   holeRange,
+  openSheetExport,
   pickSheetPlane,
   setBaseDims,
   TAP_SIZES,
   updateDraft,
 } from '../../utils/sheetMetal/sheetMetalMode';
+import { buildSheetExport } from '../../utils/sheetMetal/sheetExport';
+import { SCS_ORDER_URL } from '../../utils/scs/scsCatalog';
+import { downloadBlob } from '../../utils/model-io';
 import SheetMetalModeChip from './SheetMetalModeChip';
 import { SmButton, SmPopup, SmSelect, SmSlider, SmToggle } from './SmControls';
 
@@ -172,6 +177,106 @@ const HolePopup = ({ mode, setMode, onCommit, onExit }) => {
   );
 };
 
+
+const downloadText = (file) => {
+  if (!file?.text) return;
+  downloadBlob(new Blob([file.text], { type: `${file.mime || 'text/plain'};charset=utf-8` }), file.name);
+};
+
+/** DFM + DXF / STEP / Order on SendCutSend. Hard fails block downloads + order. */
+const ExportPopup = ({ mode, setMode, mesh, partName }) => {
+  const bundle = React.useMemo(
+    () => buildSheetExport(mode.spec, { mesh: mesh || null, partName: partName || mode.partId || 'sheet' }),
+    [mode.spec, mode.partId, partName, mesh],
+  );
+  const { dfm, files, blocked, flat } = bundle;
+  const fails = dfm.issues.filter((x) => x.level === 'fail');
+  const warns = dfm.issues.filter((x) => x.level === 'warn');
+  const size = flat?.size;
+  const close = () => setMode((m) => closeSheetExport(m));
+  return (
+    <SmPopup
+      title="Check & Export"
+      subtitle={blocked
+        ? `${fails.length} issue${fails.length === 1 ? '' : 's'} block export`
+        : warns.length
+          ? `Ready · ${warns.length} warning${warns.length === 1 ? '' : 's'}`
+          : 'Ready for SendCutSend'}
+      onClose={close}
+      closeLabel="Close export"
+      dataAttr="data-sheet-metal-export"
+      footer={(
+        <>
+          <SmButton onClick={close} data-sm-back="1">Close</SmButton>
+          <SmButton
+            variant="primary"
+            data-sm-order="1"
+            disabled={blocked}
+            title={blocked ? 'Fix DFM fails first' : 'Open SendCutSend to upload DXF or STEP'}
+            onClick={() => {
+              if (blocked) return;
+              window.open(SCS_ORDER_URL, '_blank', 'noopener,noreferrer');
+            }}
+          >
+            Order on SendCutSend
+          </SmButton>
+        </>
+      )}
+    >
+      {size && (
+        <p className="text-xs text-gray-300" data-sm-flat-size="1">
+          Flat {size[0].toFixed(1)} × {size[1].toFixed(1)} mm
+          {mode.spec?.sku ? ` · ${mode.spec.sku}` : ''}
+        </p>
+      )}
+      {dfm.issues.length === 0 && (
+        <p className="text-sm text-emerald-300" data-sm-dfm-ok="1">All SCS checks passed.</p>
+      )}
+      {fails.length > 0 && (
+        <ul className="flex flex-col gap-1.5" data-sm-dfm-fails="1">
+          {fails.map((iss, i) => (
+            <li key={`f${i}`} className="rounded-md bg-red-950/70 border border-red-500/50 px-3 py-2 text-sm text-red-100">
+              <span className="font-semibold uppercase text-[10px] tracking-wide text-red-300 mr-2">{iss.rule}</span>
+              {iss.message}
+            </li>
+          ))}
+        </ul>
+      )}
+      {warns.length > 0 && (
+        <ul className="flex flex-col gap-1.5" data-sm-dfm-warns="1">
+          {warns.map((iss, i) => (
+            <li key={`w${i}`} className="rounded-md bg-amber-950/50 border border-amber-500/40 px-3 py-2 text-sm text-amber-100">
+              <span className="font-semibold uppercase text-[10px] tracking-wide text-amber-300 mr-2">{iss.rule}</span>
+              {iss.message}
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="grid grid-cols-2 gap-2">
+        <SmButton
+          data-sm-dxf="1"
+          disabled={blocked || !files.dxf}
+          title={blocked ? 'Fix DFM fails first' : files.dxf?.name}
+          onClick={() => downloadText(files.dxf)}
+        >
+          Download DXF
+        </SmButton>
+        <SmButton
+          data-sm-step="1"
+          disabled={blocked || !files.step}
+          title={blocked ? 'Fix DFM fails first' : (files.step?.name || 'Run the part first')}
+          onClick={() => downloadText(files.step)}
+        >
+          Download STEP
+        </SmButton>
+      </div>
+      <p className="text-[11px] text-gray-400">
+        DXF is the flat cut (mm). STEP is the bent 3D part. Upload either at app.sendcutsend.com.
+      </p>
+    </SmPopup>
+  );
+};
+
 const TOOL_HINTS = {
   tab: 'Tap an orange edge to add a tab, or a tab to edit it.',
   bend: 'Tap an orange edge to bend it, or a bend to edit it.',
@@ -180,8 +285,12 @@ const TOOL_HINTS = {
   tapped: 'Tap a face to place a tapped hole.',
 };
 
-const SheetMetalFlow = ({ mode, setMode, onCommit, onExit, compact = false }) => {
+const SheetMetalFlow = ({ mode, setMode, onCommit, onExit, compact = false, mesh = null, partName = '' }) => {
   if (!mode) return null;
+
+  if (mode.stage === 'edit' && mode.exportOpen) {
+    return <ExportPopup mode={mode} setMode={setMode} mesh={mesh} partName={partName} />;
+  }
 
   if (mode.stage === 'edit' && mode.draft?.kind === 'bend') {
     return <BendPopup mode={mode} setMode={setMode} onCommit={onCommit} onExit={onExit} />;
@@ -261,9 +370,19 @@ const SheetMetalFlow = ({ mode, setMode, onCommit, onExit, compact = false }) =>
         </div>
       )}
       {mode.stage === 'edit' && (
-        <div className="mt-1.5 text-[12px] text-orange-100 font-sans" data-sheet-metal-step="edit">
-          {TOOL_HINTS[mode.tool] || 'Pick a tool on the left rail.'}
-          {mode.toast && <div className="mt-1 text-amber-200" data-sm-toast="1">{mode.toast}</div>}
+        <div className="mt-1.5 font-sans" data-sheet-metal-step="edit">
+          <div className="text-[12px] text-orange-100">
+            {TOOL_HINTS[mode.tool] || 'Pick a tool on the left rail.'}
+          </div>
+          {mode.toast && <div className="mt-1 text-[12px] text-amber-200" data-sm-toast="1">{mode.toast}</div>}
+          <SmButton
+            variant="primary"
+            className="mt-2 w-full"
+            data-sm-export="1"
+            onClick={() => setMode((m) => openSheetExport(m))}
+          >
+            Check &amp; Export
+          </SmButton>
         </div>
       )}
     </SheetMetalModeChip>

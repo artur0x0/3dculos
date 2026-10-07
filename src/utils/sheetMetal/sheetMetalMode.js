@@ -251,7 +251,7 @@ export function deleteDraftFeature(mode) {
 export function sheetTap(mode, pick) {
   if (!mode || !pick) return mode;
   if (mode.stage === 'plane') return pick.kind === 'plane' ? pickSheetPlane(mode, pick.plane) : mode;
-  if (mode.stage !== 'edit' || mode.draft) return mode;
+  if (mode.stage !== 'edit' || mode.draft || mode.exportOpen) return mode;
   if (pick.kind === 'edge') {
     if (mode.tool === 'bend') return startBendDraft(mode, pick);
     if (mode.tool === 'tab') return startTabDraft(mode, pick);
@@ -284,7 +284,7 @@ export function sheetToolsFor(spec) {
 }
 
 export function setSheetTool(mode, tool) {
-  if (!mode || mode.stage !== 'edit') return mode;
+  if (!mode || mode.stage !== 'edit' || mode.exportOpen) return mode;
   if (!sheetToolsFor(mode.spec).some((t) => t.id === tool)) return mode;
   return { ...mode, tool, draft: null, hotEdge: null, toast: null };
 }
@@ -368,4 +368,14 @@ export function bendDeductionAt(spec, angle) {
   const th = (Number(angle) * Math.PI) / 180;
   const ba = th * (spec.r + spec.k * spec.t);
   return 2 * (spec.r + spec.t) * Math.tan(th / 2) - ba;
+}
+
+// ---------------------------------------------------------------- S5 export
+/** Check & Export popup: only from edit with no open draft. */
+export function openSheetExport(mode) {
+  if (!mode || mode.stage !== 'edit' || mode.draft) return mode;
+  return { ...mode, exportOpen: true, hotEdge: null, toast: null };
+}
+export function closeSheetExport(mode) {
+  return mode ? { ...mode, exportOpen: false } : mode;
 }
