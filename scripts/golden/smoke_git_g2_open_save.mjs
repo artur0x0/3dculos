@@ -223,7 +223,8 @@ ok('assembly floppy dirty badge closer to icon',
   /data-git-dirty-badge=""/.test(feed)
   && /absolute right-0\.5 top-0\.5 h-1\.5 w-1\.5 rounded-full bg-amber-400/.test(feed));
 ok('git Open lists vault', /data-git-open-list/.test(feed) && /onListVaultAssemblies/.test(feed)
-  && /onOpenVaultAssembly/.test(feed));
+  && /onOpenVaultAssembly/.test(feed)
+  && /data-git-open-search/.test(feed) && /filterVaultOpenIndex/.test(feed));
 ok('new part asks for name only', /data-git-new-part-name/.test(feed) && /title="New part"/.test(feed)
   && !/New part path/.test(feed) && !/data-git-new-part-path/.test(feed));
 ok('+ create menu is Part|Assembly only', /data-part-add-menu/.test(feed)

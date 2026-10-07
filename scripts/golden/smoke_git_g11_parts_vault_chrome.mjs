@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * G11 Parts vault chrome: Save=Commit label, title branch chip → pane
- * (list / Create / Delete / Merge squash), Open browse + assembly choice
+ * (list / Create / Delete / Merge squash), Open browse + live search + assembly choice
  * (Open vs Insert), adapter deleteBranch + squashMerge + branch helpers.
  * Mock only — no network, no tokens.
  */
@@ -15,6 +15,7 @@ import { stringifySurfJson } from '../../src/utils/git/surfJson.js';
 import { fileWrite } from '../../src/utils/git/githubAdapterInterface.js';
 import {
   listVaultBrowseItems, planInsertVaultAssemblyParts, openVaultAssembly,
+  filterVaultOpenIndex, filterVaultPartItems,
 } from '../../src/utils/git/gitWorkspace.js';
 import {
   listVaultBranches, createVaultBranch, deleteVaultBranch,
@@ -144,6 +145,20 @@ console.log('\ngit G11 — Open browse + insert parts');
   ok('lid remapped into Gearbox', !!lidAdd && lidAdd.id.startsWith(`${ASSEMBLIES_DIR}/Gearbox/`) && !lidAdd.id.includes('/parts/'), JSON.stringify(planned.additions));
   ok('shared bolt not re-added', !planned.additions.some((a) => a.id === BOLT));
   eq('insert count', planned.additions.length, 1);
+
+  const filteredAsm = filterVaultOpenIndex(browse, 'gear');
+  eq('search assemblies by name', filteredAsm.assemblies.map((a) => a.name), ['Gearbox']);
+  eq('search gear parts = Bracket only', filteredAsm.parts.map((p) => p.path), [BRACKET]);
+  const filteredBolt = filterVaultOpenIndex(browse, 'M3');
+  eq('search M3 parts', filteredBolt.parts.map((p) => p.path), [BOLT]);
+  eq('search M3 assemblies empty', filteredBolt.assemblies.length, 0);
+  const none = filterVaultOpenIndex(browse, 'zzzz-no-such');
+  eq('search miss empties both lists', [none.assemblies.length, none.parts.length], [0, 0]);
+  const full = filterVaultOpenIndex(browse, '  ');
+  eq('blank query returns full index', [full.assemblies.length, full.parts.length],
+    [browse.assemblies.length, browse.parts.length]);
+  const addFiltered = filterVaultPartItems(browse.parts, 'Lid');
+  eq('add-existing filter by label/path', addFiltered.map((p) => p.path), [COVER]);
 }
 
 console.log('\ngit G11 — UI wiring (PartFeed + App + architecture)');
@@ -177,6 +192,13 @@ ok('Open assembly choice', (/data-git-dialog="open-choice"/.test(feed) || /dataA
   && /Insert parts into current/.test(feed) && /Open assembly/.test(feed));
 ok('Open browses parts + assemblies', /data-git-open-assemblies/.test(feed) && /data-git-open-parts/.test(feed)
   && /data-git-open-part=/.test(feed));
+ok('Open pane live search filters client index', /data-git-open-search/.test(feed)
+  && /filterVaultOpenIndex/.test(feed)
+  && /data-git-open-search-empty/.test(feed)
+  && /No matches/.test(feed)
+  && /data-git-add-search/.test(feed)
+  && /filterVaultPartItems/.test(feed)
+  && /query: ''/.test(feed));
 ok('delete confirm + protected', /data-git-branch-delete-confirm/.test(feed)
   && /data-git-branch-delete-warn/.test(feed) && /protected/.test(feed));
 ok('App wires create/delete/merge/squash/insert/browse', /handleCreateBranch/.test(app)
