@@ -198,7 +198,10 @@ const AccountModal = ({ onClose, user, selectedTab = 'info' }) => {
                 </div>
                 {user.authProvider !== 'local' && (
                   <div className="text-xs text-gray-500">
-                    Signed in with {user.authProvider === 'google' ? 'Google' : 'Apple'}
+                    Signed in with {user.authProvider === 'google' ? 'Google'
+                      : user.authProvider === 'apple' ? 'Apple'
+                      : user.authProvider === 'github' ? 'GitHub'
+                      : user.authProvider}
                   </div>
                 )}
               </div>

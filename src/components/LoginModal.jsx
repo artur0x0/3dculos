@@ -5,6 +5,7 @@ import React, { useState } from 'react';
 import { X } from 'lucide-react';
 import AuthStep from './order/AuthStep';
 import { saveEditorState, getAccountReturnUrl } from '../utils/editorStorage';
+import { startGithubOAuth } from '../utils/git/githubAuth.js';
 
 const LoginModal = ({ onClose, onComplete, currentScript, currentFilename }) => {
   const [error, setError] = useState(null);
@@ -37,6 +38,12 @@ const LoginModal = ({ onClose, onComplete, currentScript, currentFilename }) => 
             onComplete={onComplete}
             onOAuthRedirect={(provider) => {
               saveEditorState({ currentScript, currentFilename });
+              if (provider === 'github') {
+                if (!startGithubOAuth()) {
+                  setError('GitHub sign-in is not configured (set GITHUB_APP_CLIENT_ID)');
+                }
+                return;
+              }
               const returnUrl = encodeURIComponent(getAccountReturnUrl());
               const fullUrl = `/api/auth/${provider}?returnTo=${returnUrl}`;
               window.location.href = fullUrl;

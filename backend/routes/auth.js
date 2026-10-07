@@ -5,6 +5,7 @@ import crypto from 'crypto';
 import User from '../db/models/User.js';
 import email from '../services/email.js';
 import config from '../config/index.js';
+import { fetchGithubUserProfile } from '../services/githubUser.js';
 
 const router = Router();
 
@@ -450,6 +451,50 @@ router.post('/guest/convert', async (req, res) => {
   } catch (error) {
     console.error('[Auth] Guest conversion error:', error);
     return res.status(500).json({ error: 'Failed to create account' });
+  }
+});
+
+/**
+ * POST /api/auth/github
+ * Upsert app user from a GitHub user-to-server access token (G8).
+ * Mirrors Apple/Google findOrCreateOAuth — sets githubId + session.
+ * Does NOT store the token (browser keeps it in sessionStorage for git).
+ */
+router.post('/github', async (req, res) => {
+  try {
+    const accessToken = typeof req.body?.access_token === 'string'
+      ? req.body.access_token
+      : '';
+    const looked = await fetchGithubUserProfile({ accessToken });
+    if (!looked.ok) {
+      return res.status(looked.status || 400).json({ error: looked.error || 'GitHub lookup failed' });
+    }
+
+    const { profile } = looked;
+    const { user, isNew } = await User.findOrCreateOAuth(profile, 'github');
+
+    // Ensure githubId is always set (older linked accounts)
+    if (user.githubId !== profile.id) {
+      user.githubId = profile.id;
+      await user.save();
+    }
+
+    await new Promise((resolve, reject) => {
+      req.login(user, (err) => (err ? reject(err) : resolve()));
+    });
+
+    delete req.session.guestId;
+    delete req.session.guestEmail;
+    delete req.session.guestAddress;
+
+    return res.json({
+      success: true,
+      isNew: !!isNew,
+      user,
+    });
+  } catch (error) {
+    console.error('[Auth] GitHub session upsert error:', error);
+    return res.status(500).json({ error: error?.message || 'Failed to sign in with GitHub' });
   }
 });
 

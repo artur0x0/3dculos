@@ -43,7 +43,7 @@ export function initializePassport() {
         // Check if user has a password (might be OAuth-only)
         if (!user.passwordHash) {
           return done(null, false, { 
-            message: 'This account uses social login. Please sign in with Google or Apple.' 
+            message: 'This account uses social login. Please sign in with GitHub, Google, or Apple.' 
           });
         }
         

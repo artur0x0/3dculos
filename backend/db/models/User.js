@@ -70,12 +70,19 @@ const userSchema = new mongoose.Schema({
   },
   authProvider: {
     type: String,
-    enum: ['local', 'google', 'apple'],
+    enum: ['local', 'google', 'apple', 'github'],
     default: 'local',
   },
   providerId: {
     type: String,
     default: null, // OAuth provider's user ID
+  },
+  // GitHub numeric user id (string). Set on Sign in with GitHub / Connect upsert.
+  githubId: {
+    type: String,
+    default: null,
+    index: true,
+    sparse: true,
   },
   // Name fields - support both single name and first/last
   name: {
@@ -284,8 +291,17 @@ userSchema.statics.findOrCreateOAuth = async function(profile, provider) {
   
   // Try to find by provider ID first
   let user = await this.findOne({ authProvider: provider, providerId: id });
+
+  // GitHub: also match on githubId (Connect / Sign-in upsert)
+  if (!user && provider === 'github' && id) {
+    user = await this.findOne({ githubId: String(id) });
+  }
   
   if (user) {
+    if (provider === 'github' && !user.githubId) {
+      user.githubId = String(id);
+      await user.save();
+    }
     return { user, isNew: false };
   }
   
@@ -297,6 +313,9 @@ userSchema.statics.findOrCreateOAuth = async function(profile, provider) {
     user.authProvider = provider;
     user.providerId = id;
     user.emailVerified = true; // OAuth emails are verified
+    if (provider === 'github') {
+      user.githubId = String(id);
+    }
     if (!user.firstName && name?.givenName) {
       user.firstName = name.givenName;
     }
@@ -315,6 +334,7 @@ userSchema.statics.findOrCreateOAuth = async function(profile, provider) {
     email,
     authProvider: provider,
     providerId: id,
+    githubId: provider === 'github' ? String(id) : null,
     firstName: name?.givenName || displayName?.split(' ')[0],
     lastName: name?.familyName || displayName?.split(' ').slice(1).join(' '),
     name: displayName || (name ? `${name.givenName || ''} ${name.familyName || ''}`.trim() : null),
