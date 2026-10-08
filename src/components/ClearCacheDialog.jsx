@@ -54,7 +54,7 @@ export default function ClearCacheDialog({
           Clear local cache
         </h2>
         <p className="mt-2 text-xs text-gray-300">
-          This removes parts, assemblies, and the outbox on this device, then
+          This removes parts, assemblies, and unpushed changes on this device, then
           reloads. Your GitHub account and repo are not deleted. The GitHub
           session token is kept. Settings stay. Nothing is written to the
           remote repo.
@@ -63,12 +63,12 @@ export default function ClearCacheDialog({
           <p className="mt-2 text-xs text-amber-200" data-clear-cache-warning="">
             {outbox > 0 ? (
               <span className="block" data-clear-cache-outbox="">
-                {`${noun(outbox, 'unpushed outbox entry', 'unpushed outbox entries')} on this device.`}
+                {`${noun(outbox, "change hasn't been pushed yet", "changes haven't been pushed yet")}.`}
               </span>
             ) : null}
             {unsynced > 0 ? (
               <span className="block" data-clear-cache-unsynced="">
-                {`${noun(unsynced, 'unsynced part', 'unsynced parts')} (isSynced is false).`}
+                {`${noun(unsynced, "part isn't in the repo yet", "parts aren't in the repo yet")}.`}
               </span>
             ) : null}
             <span className="mt-1 block">

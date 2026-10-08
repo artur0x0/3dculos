@@ -305,6 +305,15 @@ console.log('clear local cache — chips and docs');
     && /data-clear-cache-unsynced/.test(dialog)
     && /data-clear-cache-push/.test(dialog)
     && /data-clear-cache-confirm/.test(dialog));
+  ok('dialog copy avoids outbox and isSynced',
+    /change hasn't been pushed yet/.test(dialog)
+    && /changes haven't been pushed yet/.test(dialog)
+    && /part isn't in the repo yet/.test(dialog)
+    && /parts aren't in the repo yet/.test(dialog)
+    && /assemblies, and unpushed changes/.test(dialog)
+    && !/isSynced/.test(dialog)
+    && !/outbox entry/.test(dialog)
+    && !/the outbox/.test(dialog));
   ok('wipe covers the three stores and leaves the token',
     /clearAssemblyStore/.test(util)
     && /clearSyncStore/.test(util)
@@ -392,9 +401,12 @@ try {
     await page.waitForFunction(() => window.__READY__, null, { timeout: 30000 });
     await page.locator('[data-clear-cache-dialog]').waitFor();
     await page.locator('[data-clear-cache-warning]').waitFor();
-    await page.locator('[data-clear-cache-outbox]').waitFor();
-    await page.locator('[data-clear-cache-unsynced]').waitFor();
+    const changes = await page.locator('[data-clear-cache-outbox]').innerText();
+    const parts = await page.locator('[data-clear-cache-unsynced]').innerText();
     await page.locator('[data-clear-cache-push]').waitFor();
+    ok(`${name} warning copy`,
+      changes === "2 changes haven't been pushed yet."
+      && parts === "1 part isn't in the repo yet.");
     const file = join(shotDir, name);
     await page.screenshot({ path: file });
     ok(`${name} shows the warning`, errors.length === 0, errors.join('; '));
