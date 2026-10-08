@@ -2,8 +2,8 @@
 /**
  * Cache-first sync + stable part ids.
  * Rename with a cross-assembly reference survives reload; offline rename
- * then reconnect; rename failure toast; local- id promotes on push;
- * external caution + copy; Add to Repo only for local- ids.
+ * then reconnect; rename failure toast; a push keeps the surf id;
+ * external caution + copy; Add to Repo follows isSynced.
  */
 import { readFileSync } from 'node:fs';
 import { createMockGithubAdapter } from '../../src/utils/git/mockGithubAdapter.js';
@@ -12,7 +12,7 @@ import { assemblyFilePath, assemblyPartPath, isExternalPartPath, sharedPartPath 
 import { parseSurfJson, stringifySurfJson } from '../../src/utils/git/surfJson.js';
 import { fileWrite } from '../../src/utils/git/githubAdapterInterface.js';
 import {
-  mintSurfId, withSurfId, readSurfId, promoteSurfId, showAddToRepo, backfillSurfIds, isLocalSurfId,
+  mintSurfId, withSurfId, readSurfId, showAddToRepo, backfillSurfIds,
 } from '../../src/utils/git/surfId.js';
 import {
   buildRenameCommitFiles, projectFiles, overlayPendingPartRenames,
@@ -81,7 +81,7 @@ async function seed() {
 console.log('stable ids');
 {
   eq('mint format', mintSurfId({ local: true, now: WHEN, rand: 'a3f9' }),
-    'local-2026-10-07-20-56-31-0423-a3f9');
+    '2026-10-07-20-56-31-0423-a3f9');
   ok('header round trip', readSurfId(BRACKET_SRC) === BRACKET_ID);
   const doc = { name: 'Gearbox', source: 'git', parts: [{ id: GB, name: 'Bracket' }] };
   const once = backfillSurfIds(doc, {}, { now: WHEN, randFor: () => 'abcd' });
@@ -185,18 +185,19 @@ console.log('\nrename failure toast');
   ok('failed row has a red mark', /data-part-sync-failed/.test(feed));
 }
 
-console.log('\nlocal- id becomes a repo id on push');
+console.log('\npush keeps the surf id');
 {
   const { gh, repo, head } = await seed();
   const store = createSyncStore({ persist: false });
   await store.setLastSyncedSha(repo, head);
   const localId = mintSurfId({ local: true, now: WHEN, rand: 'c0de' });
+  ok('create mints a bare id', !String(localId).startsWith('local-'));
   const path = assemblyPartPath('Gearbox', 'Shim');
   const script = withSurfId('return Manifold.cube([1,1,1], true);\n', localId);
   const before = parseSurfJson((await gh.readFile(repo, assemblyFilePath('Gearbox'), 'main')).content);
   const doc = {
     ...before,
-    parts: [...before.parts, { id: path, name: 'Shim', visible: true, order: 1, surfId: localId }],
+    parts: [...before.parts, { id: path, name: 'Shim', visible: true, order: 1, surfId: localId, isSynced: false }],
   };
   const commitsBefore = gh._log.filter((entry) => entry.op === 'commitFiles').length;
   await store.enqueue(repo, {
@@ -211,13 +212,12 @@ console.log('\nlocal- id becomes a repo id on push');
   const pushed = await flushSyncQueue({ store, adapter: gh, repo, branch: 'main', online: true });
   eq('create synced', pushed.status, 'synced');
   const commitsAfter = gh._log.filter((entry) => entry.op === 'commitFiles').length;
-  ok('promotion is the same commit', commitsAfter === commitsBefore + 1);
-  const promoted = promoteSurfId(localId);
-  ok('prefix dropped', !isLocalSurfId(promoted) && promoted !== localId);
-  eq('header promoted', readSurfId((await gh.readFile(repo, path, 'main')).content), promoted);
+  ok('create is one commit', commitsAfter === commitsBefore + 1);
+  eq('header unchanged', readSurfId((await gh.readFile(repo, path, 'main')).content), localId);
   const surf = parseSurfJson((await gh.readFile(repo, assemblyFilePath('Gearbox'), 'main')).content);
-  eq('surf json id promoted', surf.parts.find((part) => part.id === path)?.surfId, promoted);
-  ok('result map records the promotion', pushed.promoted?.[localId] === promoted);
+  eq('surf json id unchanged', surf.parts.find((part) => part.id === path)?.surfId, localId);
+  ok('push does not rewrite ids', !pushed.promoted || Object.keys(pushed.promoted).length === 0);
+  ok('surf json omits isSynced', !String((await gh.readFile(repo, assemblyFilePath('Gearbox'), 'main')).content).includes('isSynced'));
 }
 
 console.log('\nexternal part caution and copy');
@@ -232,7 +232,7 @@ console.log('\nexternal part caution and copy');
   eq('open links instead of copying', planOpenVaultPart(doc, CV_LID, LID_SRC, {}), { id: CV_LID, mode: 'link' });
   const copy = planCopyToAssembly(doc, { id: CV_LID, name: 'Lid', surfId: LID_ID }, LID_SRC, { now: WHEN, rand: 'd00d' });
   eq('copy lands in this assembly', copy.path, assemblyPartPath('Gearbox', 'Lid'));
-  ok('copy has a new local id', isLocalSurfId(copy.surfId) && copy.surfId !== LID_ID);
+  ok('copy has a new bare id', !String(copy.surfId).startsWith('local-') && copy.surfId !== LID_ID && copy.isSynced === false);
   eq('copy records copiedFrom', copy.copiedFrom, LID_ID);
   eq('copy header is the new id', readSurfId(copy.content), copy.surfId);
   const feed = readFileSync(new URL('../../src/components/PartFeed.jsx', import.meta.url), 'utf8');
@@ -242,11 +242,14 @@ console.log('\nexternal part caution and copy');
     && /data-part-copy-to-assembly/.test(feed));
 }
 
-console.log('\nAdd to Repo only for local- ids');
+console.log('\nAdd to Repo follows isSynced');
 {
-  ok('local- surf id offers Add to Repo', showAddToRepo({ id: GB, surfId: 'local-2026-10-07-20-56-31-0423-a3f9' }));
+  ok('unsynced part offers Add to Repo', showAddToRepo({ id: GB, surfId: BRACKET_ID, isSynced: false }));
   ok('legacy local: id offers Add to Repo', showAddToRepo({ id: 'local:abc' }));
-  ok('in-repo part does not', !showAddToRepo({ id: CV_LID, surfId: LID_ID }));
+  ok('legacy local- row id offers Add to Repo', showAddToRepo({ id: 'local-abc' }));
+  ok('synced part does not', !showAddToRepo({ id: CV_LID, surfId: LID_ID, isSynced: true }));
+  ok('in-repo part without a flag does not', !showAddToRepo({ id: CV_LID, surfId: LID_ID }));
+  ok('a legacy prefixed surf id is not the signal', !showAddToRepo({ id: GB, surfId: 'local-2026-10-07-20-56-31-0423-a3f9' }));
   ok('linked part without an id does not', !showAddToRepo({ id: CV_LID }));
   const app = readFileSync(new URL('../../src/App.jsx', import.meta.url), 'utf8');
   ok('rows use showAddToRepo', /showAddToRepo\(row\)/.test(app));

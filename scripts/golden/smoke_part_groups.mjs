@@ -14,8 +14,8 @@ import { findOrCreateVault } from '../../src/utils/git/vault.js';
 import { assemblyFilePath, assemblyPartPath, sharedPartPath } from '../../src/utils/git/vaultLayout.js';
 import { parseSurfJson, stringifySurfJson, toSurfJson, validateSurfJson } from '../../src/utils/git/surfJson.js';
 import { fileWrite } from '../../src/utils/git/githubAdapterInterface.js';
-import { mintSurfId, promoteSurfId, withSurfId, readSurfId, isLocalSurfId } from '../../src/utils/git/surfId.js';
-import { promoteFiles } from '../../src/utils/git/surfId.js';
+import { mintSurfId, withSurfId, readSurfId } from '../../src/utils/git/surfId.js';
+import { planSurfIdMigrationCommit } from '../../src/utils/git/surfIdMigration.js';
 import { openVaultAssembly, planInsertVaultAssemblyParts } from '../../src/utils/git/gitWorkspace.js';
 import { createSyncStore } from '../../src/utils/git/syncStore.js';
 import { flushSyncQueue } from '../../src/utils/git/syncWorker.js';
@@ -157,7 +157,7 @@ console.log('\nrename, ungroup, copy all, remove');
   eq('one copy', copied.copies.length, 1);
   const copy = copied.copies[0];
   eq('copy lands in this assembly', copy.path, assemblyPartPath('Gearbox', 'Lid'));
-  ok('copy has a new local id', isLocalSurfId(copy.surfId) && copy.surfId !== LID_ID);
+  ok('copy has a new bare id', !String(copy.surfId).startsWith('local-') && copy.surfId !== LID_ID && copy.isSynced === false);
   eq('copy records copiedFrom', copy.copiedFrom, LID_ID);
   eq('copy header is the new id', readSurfId(copy.content), copy.surfId);
   eq('group kept, part id follows the copy', [copied.doc.groups[0].id, copied.doc.groups[0].name, copied.doc.groups[0].partIds],
@@ -250,22 +250,26 @@ console.log('\nsave, reload, legacy, prune, promote');
   const idb = parseAssemblyDocument(JSON.stringify(grouped));
   eq('indexed document keeps groups', idb.groups, grouped.groups);
 
-  const localId = mintSurfId({ local: true, now: WHEN, rand: 'e1e1' });
+  const localId = `local-${mintSurfId({ now: WHEN, rand: 'e1e1' })}`;
   const shim = assemblyPartPath('Gearbox', 'Lid');
+  const body = 'return Manifold.cube([20,20,2], true);\n';
   const promotedDoc = {
     ...grouped,
     parts: grouped.parts.map((row) => (row.surfId === LID_ID ? { ...row, id: shim, surfId: localId, copiedFrom: LID_ID } : row)),
     groups: [{ ...grouped.groups[0], partIds: [localId] }],
   };
-  const promoted = promoteFiles([
-    fileWrite(shim, withSurfId('return Manifold.cube([20,20,2], true);\n', localId)),
-    fileWrite(assemblyFilePath('Gearbox'), stringifySurfJson(promotedDoc)),
+  const script = withSurfId(body, localId);
+  const asmText = stringifySurfJson(promotedDoc);
+  const promoted = planSurfIdMigrationCommit([
+    { path: shim, content: script },
+    { path: assemblyFilePath('Gearbox'), content: asmText },
   ]);
   const surfFile = promoted.files.find((file) => file.path.endsWith('.surf.json'));
   const parsed = parseSurfJson(surfFile.content);
-  const wantId = promoteSurfId(localId);
-  eq('push rewrites group part ids and leaves the group id', [parsed.groups[0].id, parsed.groups[0].partIds], [GROUP_ID, [wantId]]);
-  ok('promoted id is not local-', !isLocalSurfId(wantId));
+  const wantId = mintSurfId({ now: WHEN, rand: 'e1e1' });
+  eq('migration rewrites group part ids and leaves the group id', [parsed.groups[0].id, parsed.groups[0].partIds], [GROUP_ID, [wantId]]);
+  eq('migration keeps the script body', readSurfId(promoted.files.find((file) => file.path === shim).content) === wantId
+    && promoted.files.find((file) => file.path === shim).content.endsWith(body), true);
 }
 
 console.log('\nrender thread, collapse, and the action menu');

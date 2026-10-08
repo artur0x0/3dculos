@@ -432,7 +432,7 @@ export function planOpenVaultPart(doc, path, content, scripts = {}) {
  * Copy an external (or any) part into this assembly's folder.
  * New surf id, `copiedFrom` records the source id, the reference repoints
  * at the new path. The source file is left in place.
- * -> { fromPath, path, id, surfId, copiedFrom, content, name }
+ * -> { fromPath, path, id, surfId, copiedFrom, content, name, isSynced }
  */
 export function planCopyToAssembly(doc, part, script, { now, rand } = {}) {
   const asm = vaultSegment(doc?.name);
@@ -445,7 +445,7 @@ export function planCopyToAssembly(doc, part, script, { now, rand } = {}) {
     path = assemblyPartPath(asm, `${base} ${n}`);
     n += 1;
   }
-  const surfId = mintSurfId({ local: true, now, rand });
+  const surfId = mintSurfId({ now, rand });
   const sourceId = (part?.surfId && isSurfId(part.surfId))
     ? part.surfId
     : readSurfId(script);
@@ -459,6 +459,7 @@ export function planCopyToAssembly(doc, part, script, { now, rand } = {}) {
     copiedFrom: sourceId || null,
     content,
     name,
+    isSynced: false,
   };
 }
 

@@ -94,6 +94,7 @@ import {
   deletePartScript,
   loadAssemblyDocument,
   loadPartScripts,
+  loadPartSyncFlags,
   saveAssemblyDocument,
   savePartScript,
 } from './utils/assemblyStore';
@@ -126,6 +127,11 @@ import {
   readSurfId,
   backfillSurfIds,
   applyIdPromotion,
+  migrateAssemblyRecords,
+  reconcileSyncedFromTip,
+  markPartsSynced,
+  planSurfIdMigrationCommit,
+  readVaultIdEntries,
   planPartPath,
   applyPartPathChange,
   remapAssemblyPaths,
@@ -1051,6 +1057,33 @@ const App = () => {
               scripts = await loadPartScripts(doc.parts.map((part) => part.id), {
                 onProgress: (update) => progress({ ...update, name: doc.name }),
               });
+              const migrated = migrateAssemblyRecords({ doc, scripts });
+              if (migrated.changed) {
+                doc = migrated.doc;
+                scripts = migrated.scripts;
+              }
+              const flags = await loadPartSyncFlags((doc.parts || []).map((part) => part.id));
+              if (Object.keys(flags).length) {
+                doc = serializeAssembly({
+                  ...doc,
+                  parts: (doc.parts || []).map((part) => (
+                    typeof flags[part.id] === 'boolean' ? { ...part, isSynced: flags[part.id] } : part
+                  )),
+                });
+              }
+              if (migrated.changed || Object.keys(flags).length) {
+                try {
+                  await saveAssemblyDocument(doc);
+                  if (migrated.changed) {
+                    for (const [id, text] of Object.entries(scripts)) {
+                      // eslint-disable-next-line no-await-in-loop
+                      await savePartScript(id, text);
+                    }
+                  }
+                } catch (err) {
+                  console.warn('[App] Part id migration persist failed:', err?.message || err);
+                }
+              }
             }
             if (cancelled || !signal()) return;
 
@@ -2066,6 +2099,16 @@ const App = () => {
       setSyncConflict(result);
       return result;
     }
+    if (result.partIds?.length && assemblyRef.current && result.status !== 'conflict') {
+      const marked = markPartsSynced(assemblyRef.current, result.partIds);
+      if (marked.changed) {
+        rememberAssembly(marked.doc);
+        for (const id of result.partIds) {
+          const text = partScriptsRef.current[id];
+          if (typeof text === 'string') savePartScript(id, text, { isSynced: true });
+        }
+      }
+    }
     if (result.status === 'failed') {
       if (result.toast) setRenameNotice(result.toast);
       return result;
@@ -2087,7 +2130,7 @@ const App = () => {
         store.setLastSyncedSha(vault.repo, result.sha, result.branch || gitWorkingBranch());
         const doc = assemblyRef.current;
         const base = gitBaselineRef.current;
-        if (doc?.source === 'git') {
+        if (doc?.source === 'git' && result.partIds?.length) {
           rememberGitBaseline(captureBaseline({
             assemblyPath: assemblyFilePath(vaultSegment(doc.name) || doc.name),
             assemblyName: doc.name,
@@ -2281,23 +2324,71 @@ const App = () => {
    * When this branch has queued ops and the tip moved, lastSyncedSha stays
    * put so the worker refuses to overwrite.
    */
+  const queueSurfIdMigration = async (vault, branch) => {
+    const adapter = gitAdapterRef.current;
+    if (!vault?.repo || !adapter) return false;
+    const store = gitSync();
+    try {
+      await store.migrateLocalSurfIds();
+    } catch (err) {
+      console.warn('[git] local id migration failed', err?.message || err);
+    }
+    const existing = store.pending(vault.repo, branch)
+      .concat(store.failed(vault.repo, branch))
+      .find((op) => op.op === 'migrate-ids');
+    if (existing) {
+      if (existing.status === 'failed') {
+        try { await store.requeue(existing.id); } catch { /* ignore */ }
+      }
+      return true;
+    }
+    let entries;
+    try {
+      entries = await readVaultIdEntries(adapter, vault.repo, branch);
+    } catch (err) {
+      console.warn('[git] id migration scan skipped', err?.message || err);
+      return false;
+    }
+    let plan;
+    try {
+      plan = planSurfIdMigrationCommit(entries);
+    } catch (err) {
+      console.warn('[git] id migration refused', err?.message || err);
+      return false;
+    }
+    if (!plan.changed) return false;
+    await gitSync().enqueue(vault.repo, {
+      op: 'migrate-ids',
+      branch,
+      message: 'Keep part ids',
+      partIds: [],
+      files: plan.files,
+      payload: { kind: 'surf-id-migration' },
+    }, { front: true });
+    return true;
+  };
+
   const adoptVaultOpening = async (opened, vault) => {
     const store = gitSync();
     const branch = opened.baseline?.branch || gitWorkingBranch();
     const filled = backfillSurfIds(opened.doc, store.pathIndexFor(vault.repo));
-    for (const part of filled.doc.parts || []) {
+    const migrated = migrateAssemblyRecords({ doc: filled.doc, scripts: opened.scripts });
+    const reconciled = reconcileSyncedFromTip(migrated.doc, opened.scripts);
+    const openedDocIn = reconciled.doc;
+    const openedScriptsIn = migrated.scripts;
+    for (const part of openedDocIn.parts || []) {
       if (part.surfId) store.rememberPathId(vault.repo, part.id, part.surfId);
     }
     const queued = store.pending(vault.repo, branch).concat(store.failed(vault.repo, branch));
-    const overlaid = overlayPendingPartRenames(filled.doc, opened.scripts, queued);
+    const overlaid = overlayPendingPartRenames(openedDocIn, openedScriptsIn, queued);
     const deletedOverlay = overlayPendingAssemblyDeletes(overlaid.doc, overlaid.scripts, queued);
     let openedDoc = deletedOverlay.doc;
     let openedScripts = deletedOverlay.scripts;
     if (deletedOverlay.removed) {
       const tree = store.getTree(vault.repo, branch);
       const next = workingCopyAfterDelete(
-        { ...opened.doc, name: opened.doc?.name },
-        opened.scripts,
+        { ...openedDocIn, name: openedDocIn?.name },
+        openedScriptsIn,
         tree || [],
         { assemblyName: vaultSegment(opened.doc?.name) },
         { recent: recentAssembliesRef.current },
@@ -2306,7 +2397,12 @@ const App = () => {
       openedScripts = next.scripts;
     }
     for (const [id, script] of Object.entries(openedScripts)) {
-      await savePartScript(id, script);
+      const part = (openedDoc.parts || []).find((row) => row.id === id);
+      await savePartScript(
+        id,
+        script,
+        typeof part?.isSynced === 'boolean' ? { isSynced: part.isSynced } : {},
+      );
     }
     rememberScripts(openedScripts);
     const saved = rememberAssembly(openedDoc);
@@ -2339,6 +2435,11 @@ const App = () => {
       });
     }
     gitVaultRef.current = { ...vault, headSha: head || vault.headSha };
+    try {
+      await queueSurfIdMigration(vault, branch);
+    } catch (err) {
+      console.warn('[git] id migration enqueue failed', err?.message || err);
+    }
     return { saved, scripts: openedScripts, baseline, branch, held };
   };
 
@@ -2504,6 +2605,15 @@ const App = () => {
         gitVaultRef.current = { ...vault, headSha: result.sha };
       }
       if (result.sha) await gitSync().setLastSyncedSha(vault.repo, result.sha, gitWorkingBranch());
+      if (result.status === 'committed' || result.status === 'clean') {
+        const partId = result.partId || id;
+        const marked = markPartsSynced(assemblyRef.current, [partId]);
+        if (marked.changed) {
+          rememberAssembly(marked.doc);
+          const text = (result.scripts || partScriptsRef.current)[partId];
+          if (typeof text === 'string') await savePartScript(partId, text, { isSynced: true });
+        }
+      }
       return result;
     } catch (err) {
       const error = err.message || 'Add to Repo failed';
@@ -2913,12 +3023,13 @@ const App = () => {
       name: plan.name,
       surfId: plan.surfId,
       copiedFrom: plan.copiedFrom || undefined,
+      isSynced: false,
     } : row));
     const activeId = doc.activeId === partId ? plan.path : doc.activeId;
     const groups = replaceGroupPartId(doc.groups, part.surfId, plan.surfId);
     const nextDoc = rememberAssembly({ ...doc, source: 'git', activeId, parts, groups });
     rememberScripts(scripts);
-    await savePartScript(plan.path, plan.content);
+    await savePartScript(plan.path, plan.content, { isSynced: false });
     await deletePartScript(partId);
     rekeyRuntime([{ from: partId, to: plan.path }]);
     if (doc.activeId === partId) {
@@ -3594,9 +3705,45 @@ const App = () => {
           { branch, headSha: tip },
         );
         if (cancelled || gitBaselineRef.current) return;
+        const beforeScripts = partScriptsRef.current || {};
+        const migrated = migrateAssemblyRecords({ doc: assemblyRef.current, scripts: beforeScripts });
+        let doc = migrated.doc;
+        if (migrated.changed) {
+          rememberScripts(migrated.scripts);
+          for (const [id, text] of Object.entries(migrated.scripts)) {
+            if (text !== beforeScripts[id]) savePartScript(id, text);
+          }
+        }
+        const reconciled = reconcileSyncedFromTip(doc, opened.scripts);
+        if (reconciled.changed || migrated.changed) {
+          doc = reconciled.doc;
+          rememberAssembly(doc);
+          for (const part of doc.parts || []) {
+            if (part.isSynced !== true) continue;
+            const text = partScriptsRef.current[part.id];
+            if (typeof text === 'string') savePartScript(part.id, text, { isSynced: true });
+          }
+        }
+        await queueSurfIdMigration(vault, branch);
+        if (cancelled || gitBaselineRef.current) return;
+        const flushed = await flushGitOps();
+        if (cancelled || gitBaselineRef.current) return;
         // Tip content only — leave IDB working copy alone so real edits stay dirty.
-        rememberGitBaseline(opened.baseline);
-        gitVaultRef.current = { ...vault, headSha: opened.baseline.headSha };
+        let baseline = opened.baseline;
+        if (flushed?.sha && flushed.sha !== opened.baseline?.headSha) {
+          const again = await openVaultAssembly(
+            gitAdapterRef.current,
+            vault.repo,
+            name,
+            { branch, headSha: flushed.sha },
+          );
+          if (cancelled || gitBaselineRef.current) return;
+          baseline = again.baseline;
+          const resynced = reconcileSyncedFromTip(assemblyRef.current, again.scripts);
+          if (resynced.changed) rememberAssembly(resynced.doc);
+        }
+        rememberGitBaseline(baseline);
+        gitVaultRef.current = { ...vault, headSha: baseline.headSha };
         void checkGitRemoteBehind({ showToast: true, reason: 'reseed' });
       } catch (err) {
         // Missing assembly on tip → stay without baseline (local: chrome / first commit).
@@ -3696,7 +3843,7 @@ const App = () => {
     let starter = newPartStarterScript();
     let surfId = null;
     if (doc.source === 'git') {
-      surfId = mintSurfId({ local: true });
+      surfId = mintSurfId();
       starter = withSurfId(starter, surfId);
     }
     const part = {
@@ -3705,7 +3852,7 @@ const App = () => {
       visible: true,
       order,
       position: order === 0 ? undefined : [order * 40, 0, 0],
-      ...(surfId ? { surfId } : {}),
+      ...(surfId ? { surfId, isSynced: false } : {}),
     };
     scripts[id] = starter;
     rememberScripts(scripts);
@@ -3725,7 +3872,7 @@ const App = () => {
     saveEditorDraft({ script: starter, filename: part.name, partId: id });
     setPendingPartIds((prev) => new Set(prev).add(id));
     try {
-      await savePartScript(id, starter);
+      await savePartScript(id, starter, doc.source === 'git' ? { isSynced: false } : {});
       if (doc.source === 'git' && surfId) {
         const vault = gitVaultRef.current || await ensureGitVault();
         const nextDoc = assemblyRef.current;

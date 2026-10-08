@@ -6,34 +6,11 @@
  * the remote commit SHA first. If it differs from lastSyncedSha for this
  * branch, do not push and do not overwrite — the caller routes that to the
  * G13 conflict popup.
- * Otherwise push the queue. A `local-` id is promoted in the same commit
- * that first pushes the part.
+ * Otherwise push the queue. Part ids are not rewritten on push.
  */
-import { promoteFiles, rewriteSurfIdFields, isSurfJsonPath } from './surfId.js';
-import { isAssemblyFile } from './vaultLayout.js';
 import { materializeRename, renameFailureToast } from './gitRename.js';
 import { deleteAssemblyFailureToast } from './gitDeleteAssembly.js';
-
-async function expandPromotion(adapter, repo, branch, files) {
-  const promoted = promoteFiles(files);
-  const map = promoted.map;
-  const keys = Object.keys(map);
-  if (!keys.length || !adapter || !repo) return promoted;
-  const tree = await adapter.listTree(repo, branch);
-  const have = new Set(promoted.files.map((file) => file.path));
-  const extra = [];
-  for (const entry of tree || []) {
-    const path = entry?.path ?? entry;
-    if (!isAssemblyFile(path) && !isSurfJsonPath(path)) continue;
-    if (have.has(path)) continue;
-    // eslint-disable-next-line no-await-in-loop
-    const file = await adapter.readFile(repo, path, branch);
-    if (!file?.content || !keys.some((id) => file.content.includes(id))) continue;
-    const content = rewriteSurfIdFields(file.content, map);
-    if (content !== file.content) extra.push({ path, content });
-  }
-  return { files: extra.length ? [...promoted.files, ...extra] : promoted.files, map };
-}
+import { assertMigrationCommitSafe } from './surfIdMigration.js';
 
 /**
  * Push queued ops for one repo.
@@ -70,6 +47,7 @@ export async function flushSyncQueue({
 
   let head = remote;
   const promoted = {};
+  const syncedPartIds = [];
   for (const item of queued) {
     // eslint-disable-next-line no-await-in-loop
     await store.setOpStatus(item.id, 'sending');
@@ -89,17 +67,16 @@ export async function flushSyncQueue({
         await store.setPartsState(repo, item.partIds, 'clean', item.branch || branch);
         continue;
       }
-      // eslint-disable-next-line no-await-in-loop
-      const prepared = await expandPromotion(adapter, repo, branch, files);
-      Object.assign(promoted, prepared.map);
+      if (item.op === 'migrate-ids') assertMigrationCommitSafe(files);
       // eslint-disable-next-line no-await-in-loop
       const res = await adapter.commitFiles(repo, {
         branch,
         message: item.message || 'Sync',
-        files: prepared.files,
+        files,
         baseSha: head,
       });
       head = res.sha;
+      syncedPartIds.push(...(item.partIds || []));
       // eslint-disable-next-line no-await-in-loop
       await store.setLastSyncedSha(repo, head, branch);
       // eslint-disable-next-line no-await-in-loop
@@ -121,8 +98,9 @@ export async function flushSyncQueue({
         sha: head,
         branch,
         promoted,
+        partIds: syncedPartIds,
       };
     }
   }
-  return { status: 'synced', sha: head, branch, promoted };
+  return { status: 'synced', sha: head, branch, promoted, partIds: syncedPartIds };
 }

@@ -3,8 +3,12 @@
  *
  * Format (UTC): yyyy-mm-dd-hh-mm-ss-SSSS-<4 hex>
  *   2026-10-07-20-56-31-0423-a3f9
- * A part created locally and not yet pushed is `local-` + that id.
- * The first successful push drops the prefix in the same commit.
+ * Minted once. A push does not change it. Whether the part has been pushed
+ * is `isSynced` on the local part record, never part of the id and never
+ * written to `.surf.json`.
+ *
+ * A legacy id may still carry a `local-` prefix. That prefix is accepted on
+ * read and stripped once by the id migration. New ids are minted without it.
  *
  * The id lives as the first line of the part script:
  *   // @surf-id <id>
@@ -46,9 +50,9 @@ function randomHex4() {
 /**
  * Mint an id. `now` is a Date or epoch ms (tests pin it).
  * `rand` is 4 hex chars (tests pin it); otherwise random.
- * `local` prefixes `local-` for a part that has not been pushed.
+ * The id is permanent. A `local` option is ignored so a caller cannot prefix it.
  */
-export function mintSurfId({ local = false, now = new Date(), rand } = {}) {
+export function mintSurfId({ now = new Date(), rand } = {}) {
   const date = now instanceof Date ? now : new Date(now);
   const stamp = [
     pad(date.getUTCFullYear(), 4),
@@ -64,8 +68,7 @@ export function mintSurfId({ local = false, now = new Date(), rand } = {}) {
     .replace(/[^0-9a-f]/g, '')
     .padStart(4, '0')
     .slice(0, 4);
-  const body = `${stamp}-${hex}`;
-  return local ? `local-${body}` : body;
+  return `${stamp}-${hex}`;
 }
 
 /** Id from the first line, or null when the header is missing or invalid. */
@@ -89,15 +92,16 @@ export function withSurfId(script, id) {
 }
 
 /**
- * Add to Repo is only for parts that have never been pushed:
- * a `local-` surf id, or a legacy `local:` / `local-` row id.
- * An in-repo path (including a link to another assembly) does not qualify.
+ * Add to Repo when the local record says the part has not been pushed
+ * (`isSynced === false`), or the row id is not a repo path (`local:` /
+ * `local-` keys from local mode). A surf id is not the signal.
+ * An in-repo path with `isSynced` true or unset does not qualify.
  */
 export function showAddToRepo(part) {
   if (!part) return false;
-  if (isLocalSurfId(part.surfId)) return true;
   const id = String(part.id || '');
-  return id.startsWith('local:') || id.startsWith('local-');
+  if (id.startsWith('local:') || id.startsWith('local-')) return true;
+  return part.isSynced === false;
 }
 
 /**
@@ -121,7 +125,6 @@ export function backfillSurfIds(doc, pathIndex = {}, { now, randFor } = {}) {
       return { ...part, surfId: cached };
     }
     const id = mintSurfId({
-      local: false,
       now,
       rand: typeof randFor === 'function' ? randFor(part, i) : undefined,
     });
@@ -141,9 +144,10 @@ export function surfIdFromScript(part, script) {
 }
 
 /**
- * Replace `local-` ids in part headers and `.surf.json` part.id fields.
- * `map` is filled with localId → promoted id. Files with no local id are
- * returned unchanged (same array when nothing promoted).
+ * Legacy helper used by the one-time id migration. Replaces `local-` surf
+ * ids in part headers and `.surf.json` id fields. A push does not call this.
+ * `map` is filled with localId → bare id. Files with no local id are
+ * returned unchanged (same array when nothing changes).
  */
 export function promoteFiles(files) {
   const list = Array.isArray(files) ? files : [];

@@ -60,7 +60,8 @@ check('assembly schema is surfcad.assembly v1', assembly.properties?.format?.con
   && assembly.properties?.version?.const === 1
   && assembly.properties?.parts?.items?.properties?.id
   && assembly.properties?.parts?.items?.properties?.path
-  && /local-/.test(assembly.properties.parts.items.properties.id.description || '')
+  && /[Pp]ermanent/.test(assembly.properties.parts.items.properties.id.description || '')
+  && !/not yet pushed/.test(assembly.properties.parts.items.properties.id.description || '')
   && /@surf-id/.test(JSON.stringify(assembly.defs || assembly.$defs || assembly)));
 
 const sample = {
@@ -78,7 +79,7 @@ const sample = {
   }],
 };
 const verdict = validateSurfJson(sample);
-check('sample .surf.json with a local- id validates', verdict.ok, (verdict.errors || []).join('; '));
+check('sample .surf.json with a legacy local- id still validates', verdict.ok, (verdict.errors || []).join('; '));
 
 check('sheet-metal catalog names the part binding, the script block, and DFM',
   sheet.partSheetMetal?.fields?.sku?.required === true

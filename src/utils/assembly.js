@@ -73,11 +73,12 @@ export function newLocalPartId() {
  *   source: 'git' | 'local',
  *   name: string,
  *   activeId: string | null,
- *   parts: [{ id, name, visible, order, position?, surfId? }]
+ *   parts: [{ id, name, visible, order, position?, surfId?, isSynced? }]
  *   groups?: [{ id, name, source, partIds }]
  * }
  * `name` is the assembly name. A blank name is saved as Assembly.
- * `script` and any other fields are dropped.
+ * `script` and any other fields are dropped. `isSynced` is local only
+ * (never written to `.surf.json`).
  * `groups` lists parts inserted from another assembly. `partIds` are surf
  * ids. A part is in at most one group. Empty groups and dangling ids are
  * dropped. No `groups` key when there are none. `source` is the source
@@ -274,6 +275,7 @@ export function serializeAssembly(doc) {
     if (sheetMetal) row.sheetMetal = sheetMetal;
     if (typeof part?.surfId === 'string' && part.surfId) row.surfId = part.surfId;
     if (typeof part?.copiedFrom === 'string' && part.copiedFrom) row.copiedFrom = part.copiedFrom;
+    if (typeof part?.isSynced === 'boolean') row.isSynced = part.isSynced;
     return row;
   }).filter((part) => part.id);
   const wanted = doc?.activeId != null ? String(doc.activeId) : '';
@@ -312,6 +314,7 @@ export function parseAssemblyDocument(input) {
       sheetMetal: part?.sheetMetal,
       surfId: part?.surfId,
       copiedFrom: part?.copiedFrom,
+      isSynced: part?.isSynced,
     })),
     groups: raw.groups,
   });
@@ -489,6 +492,7 @@ export function feedRows(doc, runs, scripts) {
       mesh: !missing && run && run.ok === true ? run.mesh : null,
       surfId: part.surfId || null,
       copiedFrom: part.copiedFrom || null,
+      isSynced: typeof part.isSynced === 'boolean' ? part.isSynced : undefined,
     };
   });
 }
