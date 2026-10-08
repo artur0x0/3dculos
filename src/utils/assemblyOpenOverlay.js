@@ -207,8 +207,12 @@ export function createAssemblyOpenController({
     return true;
   }
 
+  function isOpen() {
+    return !!snapshot;
+  }
+
   return {
-    begin, progress, finish, fail, isCurrent, acknowledgeLate,
+    begin, progress, finish, fail, isCurrent, acknowledgeLate, isOpen,
   };
 }
 
