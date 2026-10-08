@@ -336,6 +336,8 @@ All of these are absolutely positioned inside the shell at
 | bottom-left | measurement readout | inline | `:3961` |
 | fills the pane | WebGL canvas | `<canvas ref={canvasRef}>` | `:3985` |
 
+The canvas draws a face-color skin on top of a part when that assembly has `colors` (`src/utils/faceColorSkin.js`). The skin is under crease lines and pick highlights. `?debugFaces=1` or `localStorage` key `surfcad.debugFaces` = `1` paints each face patch a different color. The flag is off unless set, and it is not on the right rail.
+
 **Opening an assembly.** `data-assembly-open-spinner` sits centered over the
 viewport (the viewport pane on desktop, the full shell on a phone) while a
 document loads. Paths: the Open assembly dialog (Cancel, Insert parts into

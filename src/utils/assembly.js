@@ -636,6 +636,7 @@ export function composeViewportParts(doc, runs) {
     if (!run || run.ok !== true || !run.mesh || !run.mesh.vertProperties) continue;
     out.push({
       id: part.id,
+      surfId: part.surfId || null,
       mesh: run.mesh,
       position: partPosition(part) || [0, 0, 0],
     });
