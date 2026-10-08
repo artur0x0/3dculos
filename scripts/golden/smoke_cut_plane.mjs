@@ -71,6 +71,29 @@ function triangleOnPlusX(geometry, minZ) {
   return -1;
 }
 
+function ifConditionsContaining(src, token) {
+  const found = [];
+  const re = /\bif\s*\(/g;
+  let match;
+  while ((match = re.exec(src))) {
+    let depth = 1;
+    let j = match.index + match[0].length;
+    const start = j;
+    for (; j < src.length && depth > 0; j++) {
+      const ch = src[j];
+      if (ch === '(') depth += 1;
+      else if (ch === ')') depth -= 1;
+    }
+    if (depth === 0) {
+      const cond = src.slice(start, j - 1);
+      if (cond.includes(token)) found.push(cond);
+    } else {
+      break;
+    }
+  }
+  return found;
+}
+
 function check(name, cond, detail = '') {
   if (cond) console.log(`  ✅ ${name}`);
   else {
@@ -300,9 +323,16 @@ console.log('cut plane');
     pc > 0 && /cachedManifold\.clone\(/.test(pcBody) && !/cachedManifold\s*=/.test(pcBody));
   const bridge = read('../../src/utils/ManifoldWorker.js');
   check('the worker bridge exposes previewCut', /previewCut/.test(bridge));
+  // Extra mode guards (Paint, and whatever comes next) may sit in any order.
+  // Cut and Boolean still have to be on both the contour guard and the plane guard.
+  const skipsCutAndBoolean = (token) => {
+    const conds = ifConditionsContaining(view, token);
+    return conds.length > 0 && conds.every((cond) => (
+      cond.includes('!cutModeRef.current') && cond.includes('!booleanModeRef.current')
+    ));
+  };
   check('a cut tap is not swallowed by a contour or a construction plane',
-    /!cutModeRef\.current && !booleanModeRef\.current && showContoursRef/.test(view)
-    && /!cutModeRef\.current && !booleanModeRef\.current && planeHits/.test(view));
+    skipsCutAndBoolean('showContoursRef') && skipsCutAndBoolean('planeHits'));
   check('chip does not ask for shift-click', !/shift-click/.test(chip) && !/shiftKey/.test(chip));
   check('POPUP_STYLE documents CutModeChip', /CutModeChip/.test(popup) && /sticky picker/.test(popup));
 }

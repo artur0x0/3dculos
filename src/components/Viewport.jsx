@@ -5497,9 +5497,9 @@ const Viewport = forwardRef(({
       }
       // No piece under the cursor. Fall through so another part can be picked.
     }
-    // Cut and Boolean own the canvas: a saved contour under the cursor must
-    // not eat the piece tap (same as a construction plane sitting on the cut).
-    if (!moveFaceModeRef.current && !deleteFaceModeRef.current && !cutModeRef.current && !booleanModeRef.current && showContoursRef.current && !moveModeRef.current && contourModeRef.current?.tool !== 'polyline') {
+    // Cut, Boolean, and Paint own the canvas: a saved contour under the cursor
+    // must not eat the tap (same as a construction plane sitting on the cut).
+    if (!moveFaceModeRef.current && !deleteFaceModeRef.current && !cutModeRef.current && !booleanModeRef.current && !paintModeRef.current && showContoursRef.current && !moveModeRef.current && contourModeRef.current?.tool !== 'polyline') {
       // Saved contours are in the editor part's frame.
       const hitC = pickContourByRay(
         toPartLocal(origin, savedContourOffsetRef.current),
