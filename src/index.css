@@ -84,6 +84,34 @@ body {
 .viewport-shell {
   container-type: inline-size;
 }
+
+/* Page-zoom lock. touch-action is not inherited. The browser intersects the
+   hit target with its ancestors up to the nearest scroll container.
+   The shell is overflow:hidden, so it is that container for the canvas, and
+   none keeps a pinch there from becoming a page zoom (TrackballControls still
+   receives the touch events). The left rail is its own scroll container
+   (overflow-y: auto): pan-y keeps one-finger scrolling of the tool list and
+   still refuses pinch-zoom. none on that rail would freeze it. The right rail
+   does not scroll (overflow: visible); none is explicit there. Buttons and
+   fields use manipulation so a double-tap does not zoom the page. */
+.viewport-shell,
+.viewport-shell > canvas,
+[data-rail-pair="right"] {
+  touch-action: none;
+}
+[data-rail-pair="left"] {
+  touch-action: pan-y;
+}
+button,
+[role="button"],
+a,
+summary,
+label,
+input,
+select,
+textarea {
+  touch-action: manipulation;
+}
 .view-snap-popup {
   /* Clear the LEFT rail too, not just the pane edge. The rail is a 20px icon
      in a p-2 button inside a p-2 shell (~52px) at left-2/left-4, so ~5.25rem

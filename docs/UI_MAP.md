@@ -164,6 +164,7 @@ draggable seam). Stages do not apply in puzzle mode.
 ```
 
 Mobile specifics:
+- **Page zoom lock:** a pinch in the CAD view zooms the camera, not the browser page (iOS Safari and the installed PWA). Viewport meta locks scale (`maximum-scale=1`, `user-scalable=no`; `viewport-fit=cover` stays). The canvas and the right rail are `touch-action: none`; the left rail is `pan-y` so the tool list still scrolls; buttons are `manipulation` so a double-tap does not zoom. Off-canvas two-finger moves and Safari `gesture*` events are cancelled. One-finger scroll in Parts, Script, and scrolling popups stays. Inputs stay ≥16px so focus does not zoom.
 - **Stage toggle (Slice Mobile B):** `MobileStageToggle.jsx` is a bottom-centered
   iPhone Home Screen–style glass pill (`data-mobile-stage-home-indicator`,
   `data-home-indicator-pill`) with three Lucide icons: CAD (`Box`), Parts
