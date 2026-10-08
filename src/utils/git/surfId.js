@@ -133,16 +133,30 @@ export function withSurfId(script, id) {
 }
 
 /**
- * Add to Repo when the local record says the part has not been pushed
- * (`isSynced === false`), or the row id is not a repo path (`local:` /
- * `local-` keys from local mode). A surf id is not the signal.
- * An in-repo path with `isSynced` true or unset does not qualify.
+ * A repo part path (`parts/…js`, this assembly's file, or a legacy nested
+ * path). Kept here so surf-id code does not import the vault layout.
+ * Same cases as `isVaultPartPath`.
+ */
+function isRepoPartRow(id) {
+  const text = String(id || '').trim().replace(/\\/g, '/').replace(/^\.\//, '');
+  if (!text || text.startsWith('/') || text.split('/').includes('..')) return false;
+  return /^parts\/[^/]+\.js$/i.test(text)
+    || /^assemblies\/[^/]+\/[^/]+\.js$/i.test(text)
+    || /^assemblies\/[^/]+\/parts\/[^/]+\.js$/i.test(text);
+}
+
+/**
+ * Add to Repo when the part has not been pushed. `isSynced === true` never
+ * qualifies. `isSynced === false` always does. When the flag is unset, a
+ * row that is not a repo path still qualifies (a bare id, or a legacy
+ * `local:` / `local-` key). A surf id is not the signal. An in-repo path
+ * with the flag unset does not qualify.
  */
 export function showAddToRepo(part) {
   if (!part) return false;
-  const id = String(part.id || '');
-  if (id.startsWith('local:') || id.startsWith('local-')) return true;
-  return part.isSynced === false;
+  if (part.isSynced === true) return false;
+  if (part.isSynced === false) return true;
+  return !isRepoPartRow(part.id);
 }
 
 /**

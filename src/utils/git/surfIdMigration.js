@@ -307,7 +307,6 @@ export async function readVaultIdEntries(adapter, repo, branch) {
     const path = entry?.path ?? entry;
     if (typeof path !== 'string') continue;
     if (!path.endsWith('.js') && !isSurfJsonPath(path)) continue;
-    // eslint-disable-next-line no-await-in-loop
     const file = await adapter.readFile(repo, path, branch);
     if (typeof file?.content === 'string') entries.push({ path, content: file.content });
   }

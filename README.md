@@ -4,7 +4,7 @@ Browser CAD at [surfcad.com](https://surfcad.com). This repo is `3dculos`. The k
 
 ## Modes
 
-**Local.** No GitHub token. The open document and part scripts autosave in IndexedDB (`surfcad-assembly`). A part row id is a `local:` key. Vault chrome stays hidden.
+**Local.** No GitHub token. The open document and part scripts autosave in IndexedDB (`surfcad-assembly`). A part row id is a bare key (no `local:` prefix). Vault chrome stays hidden.
 
 **Git vault.** A GitHub token find-or-creates one private repo (default name `surfcad`). Assemblies live at `assemblies/<Name>/.surf.json` with that assembly's `.js` files beside it, and shared parts live in `parts/`. The on-disk contract, including groups, links, delete, and the outbox, is [docs/vault-schema.md](docs/vault-schema.md).
 

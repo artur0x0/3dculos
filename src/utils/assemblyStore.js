@@ -8,6 +8,7 @@
  * schemas do not fight.
  */
 import { serializeAssembly } from './assembly.js';
+import { LOCAL_ROW_PREFIX, remapLocalColorKeys, stripLocalRowPrefix } from './git/localPartIdMigration.js';
 import { idbWithTimeout, IDB_OP_TIMEOUT_MS } from './idbWithTimeout.js';
 
 const DB_NAME = 'surfcad-assembly';
@@ -103,11 +104,24 @@ export async function loadAssemblyDocument() {
   const { ok, value } = await runTx(DOC_STORE, 'readonly', (store) => store.get(DOC_KEY));
   if (!ok || !value) return null;
   try {
-    const clean = serializeAssembly(value);
-    const raw = typeof value.name === 'string' ? value.name.trim() : '';
+    // serializeAssembly drops a color key that is not a surf id. Strip a
+    // legacy `local:` prefix first so `local:<surfId>` still round-trips.
+    // Part ids stay; hydrate rewrites those after scripts are loaded by
+    // the key that is stored today.
+    const rawDoc = value && typeof value === 'object' ? { ...value } : value;
+    let colorsChanged = false;
+    if (rawDoc?.colors) {
+      const colors = remapLocalColorKeys(rawDoc.colors);
+      if (colors !== rawDoc.colors) {
+        rawDoc.colors = colors;
+        colorsChanged = true;
+      }
+    }
+    const clean = serializeAssembly(rawDoc);
+    const rawName = typeof value.name === 'string' ? value.name.trim() : '';
     // Older documents omitted a blank name. Write Assembly back so the next
-    // load already has it.
-    if (!raw && clean.name) await saveAssemblyDocument(clean);
+    // load already has it. A rewritten color key is persisted the same way.
+    if ((!rawName && clean.name) || colorsChanged) await saveAssemblyDocument(clean);
     return clean;
   } catch {
     return null;
@@ -129,7 +143,16 @@ export async function loadPartRecord(id) {
 
 export async function loadPartScript(id) {
   const record = await loadPartRecord(id);
-  return record ? record.script : null;
+  if (record) return record.script;
+  // A reload strips `local:` and rekeys the script. A file opened afterward
+  // may still name the old id, or the other way around. Either key is the
+  // same part. Repo paths are never aliased.
+  const text = String(id || '');
+  if (!text || text.includes('/')) return null;
+  const alt = text.startsWith(LOCAL_ROW_PREFIX) ? stripLocalRowPrefix(text) : `${LOCAL_ROW_PREFIX}${text}`;
+  if (!alt || alt === text) return null;
+  const other = await loadPartRecord(alt);
+  return other ? other.script : null;
 }
 
 /**
@@ -153,7 +176,6 @@ export async function savePartScript(id, script, opts = {}) {
 export async function loadPartSyncFlags(ids) {
   const out = {};
   for (const id of ids || []) {
-    // eslint-disable-next-line no-await-in-loop
     const record = await loadPartRecord(id);
     if (typeof record?.isSynced === 'boolean') out[String(id)] = record.isSynced;
   }
@@ -173,7 +195,6 @@ export async function loadPartScripts(ids, { onProgress } = {}) {
   for (let i = 0; i < list.length; i += 1) {
     const id = list[i];
     onProgress?.({ index: i + 1, total });
-    // eslint-disable-next-line no-await-in-loop
     const script = await loadPartScript(id);
     if (typeof script === 'string') out[id] = script;
   }

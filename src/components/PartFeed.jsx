@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Eye, EyeOff, FolderOpen, GripVertical, Loader2, Plus, Save, Trash2 } from 'lucide-react';
 import { partCanDeleteFromRepo, partListDeleteAction, sanitizeAssemblyName, sanitizePartName } from '../utils/assembly.js';
+import { partListSubtitles } from '../utils/git/partListSubtitle.js';
 import {
   filterVaultOpenIndex, filterVaultPartItems, groupVaultOpenPartRows, vaultOpenAssemblies, vaultOpenPartRows,
 } from '../utils/git/gitWorkspace.js';
@@ -582,7 +583,7 @@ export default function PartFeed({
   };
 
   const startNewPart = () => {
-    // Name only — app owns folder + .js (git) or local: id (local).
+    // Name only — app owns folder + .js. The row id has no sync prefix.
     const draft = String(suggestNewPartPath || '')
       .split('/')
       .pop()
@@ -1103,9 +1104,12 @@ export default function PartFeed({
     onDeletePart?.(pending.id, { fromRepo: action === 'drop-repo' });
   };
 
+  const subtitles = partListSubtitles(rows);
+
   const renderPartRow = (row, index) => {
           const selected = row.id === activeId;
           const status = row.error ? 'error' : row.missing ? 'missing' : 'ok';
+          const subtitle = subtitles.get(row.id) || '';
           return (
             <div
               key={row.id}
@@ -1166,8 +1170,11 @@ export default function PartFeed({
                   editing={renamingId === row.id}
                   setEditing={(on) => setRenamingId(on ? row.id : null)}
                 />
+                {(subtitle || behindSet.has(row.id)) ? (
                 <div className="flex items-center gap-1 truncate text-[10px] text-gray-500">
-                  <span className="truncate">{row.id}</span>
+                  {subtitle ? (
+                    <span className="truncate" data-part-subtitle="">{subtitle}</span>
+                  ) : null}
                   {behindSet.has(row.id) ? (
                     <button
                       type="button"
@@ -1182,6 +1189,7 @@ export default function PartFeed({
                     />
                   ) : null}
                 </div>
+                ) : null}
                 {row.external ? (
                   <div className="mt-1" data-part-external="">
                     <p className="text-[10px] font-medium text-amber-300">Caution: external part!</p>

@@ -162,7 +162,6 @@ export async function openVaultAssembly(adapter, repo, assemblyName, {
   let file = null;
   let foundPath = null;
   for (const candidate of assemblyFilePathCandidates(name)) {
-    // eslint-disable-next-line no-await-in-loop
     file = await adapter.readFile(repo, candidate, branch);
     if (file) { foundPath = candidate; break; }
   }
@@ -176,7 +175,6 @@ export async function openVaultAssembly(adapter, repo, assemblyName, {
   for (let i = 0; i < partTotal; i += 1) {
     const part = doc.parts[i];
     onProgress?.({ index: i + 1, total: partTotal, phase: 'script', name: doc.name });
-    // eslint-disable-next-line no-await-in-loop
     const got = await adapter.readFile(repo, part.id, branch);
     rawScripts[part.id] = got ? got.content : '';
   }

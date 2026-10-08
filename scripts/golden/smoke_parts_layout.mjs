@@ -220,7 +220,6 @@ console.log('\nparts layout — migrate two Bracket.js files');
     const entries = [];
     for (const path of paths) {
       if (!path.endsWith('.js') && !path.endsWith('.surf.json')) continue;
-      // eslint-disable-next-line no-await-in-loop
       const file = await gh.readFile(vault.repo, path, 'main');
       if (file) entries.push({ path, content: file.content });
     }

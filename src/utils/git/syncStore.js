@@ -187,7 +187,6 @@ export function createSyncStore({ persist = true } = {}) {
     for (const id of row.partIds) partState.set(`${key}\0${branch}\0${id}`, 'queued');
     await persistOp(row);
     for (const id of row.partIds) {
-      // eslint-disable-next-line no-await-in-loop
       await persistKv(`state:${key}\0${branch}\0${id}`, 'queued');
     }
     emit();
@@ -229,7 +228,6 @@ export function createSyncStore({ persist = true } = {}) {
       const slot = `${key}\0${on}\0${id}`;
       if (!state || state === 'clean') partState.delete(slot);
       else partState.set(slot, state);
-      // eslint-disable-next-line no-await-in-loop
       await persistKv(`state:${slot}`, state && state !== 'clean' ? state : null);
     }
     emit();
@@ -357,7 +355,6 @@ export function createSyncStore({ persist = true } = {}) {
       if (next === op) continue;
       Object.assign(op, next);
       changed = true;
-      // eslint-disable-next-line no-await-in-loop
       await persistOp(op);
     }
     for (const [slot, surfId] of [...pathIndex.entries()]) {
@@ -365,7 +362,6 @@ export function createSyncStore({ persist = true } = {}) {
       if (next === surfId) continue;
       pathIndex.set(slot, next);
       changed = true;
-      // eslint-disable-next-line no-await-in-loop
       await persistKv(`path:${slot}`, next);
     }
     for (const [slot, surfId] of [...aliases.entries()]) {
@@ -373,7 +369,6 @@ export function createSyncStore({ persist = true } = {}) {
       if (next === surfId) continue;
       aliases.set(slot, next);
       changed = true;
-      // eslint-disable-next-line no-await-in-loop
       await persistKv(`alias:${slot}`, next);
     }
     for (const [slot, row] of [...parts.entries()]) {
@@ -388,9 +383,7 @@ export function createSyncStore({ persist = true } = {}) {
       parts.delete(slot);
       parts.set(newSlot, nextRow);
       changed = true;
-      // eslint-disable-next-line no-await-in-loop
       await persistKv(`part:${slot}`, null);
-      // eslint-disable-next-line no-await-in-loop
       await persistKv(`part:${newSlot}`, nextRow);
     }
     return { changed };

@@ -4,7 +4,7 @@ How SurfCAD stores a Git vault today. The app is [surfcad.com](https://surfcad.c
 
 Sources: `src/utils/git/vaultLayout.js`, `vault.js`, `surfJson.js`, `surfId.js`, `gitWorkspace.js`, `gitDeleteAssembly.js`, `gitRename.js`, `syncStore.js`, `syncWorker.js`, `src/utils/partGroups.js`, `src/utils/assembly.js`.
 
-Local mode is not this layout. With no GitHub token the working copy autosaves in IndexedDB `surfcad-assembly`, and a part row id is a `local:` key. A GitHub token find-or-creates one private repo (default name `surfcad`) and writes the layout below.
+Local mode is not this layout. With no GitHub token the working copy autosaves in IndexedDB `surfcad-assembly`. A part row id is a bare key with no `local:` prefix; a load-time migration strips that legacy prefix. A GitHub token find-or-creates one private repo (default name `surfcad`) and writes the layout below.
 
 ## Tree
 
