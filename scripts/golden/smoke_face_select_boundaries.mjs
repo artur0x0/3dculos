@@ -243,12 +243,11 @@ return placeInFrame(fr, makeLoft([xs0, xs1]));
 }
 
 console.log('Rounded box + hole + underside loft (lower front fillet chain)');
-{
-  // 16-segment rounded box: fillet facets turn 22.5°, the corner sphere meets
-  // them at 17.9°. The old 15° gate stopped the highlight on one band, short
-  // of the corner. The chain is every tangent fillet, not the flats or the loft.
+for (const segments of [8, 16, 32]) {
+  // The gate comes from this segment count (360°/segments × 1.15, clamped).
+  // One click is every tangent fillet, including corners, not the flats or the loft.
   const script = `
-let part = roundedBox([40, 30, 20], 3, 16);
+let part = roundedBox([40, 30, 20], 3, ${segments});
 part = part.subtract(Manifold.cylinder(30, 2.5, 2.5, 32, true));
 const fr = { center: [0, 7, -10], normal: [0, 0, -1], x: [1, 0, 0], y: [0, 1, 0] };
 const xs0 = makeCrossSection(fr, profileCircle(5, 64));
@@ -257,29 +256,68 @@ part = part.add(placeInFrame(fr, makeLoft([xs0, xs1])));
 return part;
 `;
   const s = await build(script);
+  const step = 360 / segments;
+  const tagged = (s.payload.mesh.featureTessellation || []).some((row) => Math.abs(row.facetDeg - step) < 1e-6);
   const T = tris(s);
   const seeds = [];
   T.forEach((t, i) => {
     if (t.area < 1e-4) return;
     if (t.c[1] < 10 || t.c[1] > 16 || t.c[2] < -12 || t.c[2] > -6) return;
     if (Math.abs(t.c[0]) > 12) return;
-    if (Math.abs(t.n[0]) > 0.35) return;
-    if (t.n[1] < 0.2 || t.n[2] > -0.2) return;
+    if (Math.abs(t.n[0]) > 0.45) return;
+    if (t.n[1] < 0.15 || t.n[2] > -0.15) return;
     seeds.push(i);
   });
   const seed = seeds[Math.floor(seeds.length / 2)];
-  const r = click(s, seed);
+  const r = seed == null ? { indices: [] } : click(s, seed);
   const picked = r.indices.map((t) => T[t]);
   const area = picked.reduce((a, t) => a + t.area, 0);
   const flat = picked.filter((t) => t.area > 1 && isAxis(t.n)).length;
   const loft = picked.filter((t) => t.c[2] < -10.5).length;
   const corner = picked.some((t) => Math.abs(t.c[0]) > 18 && t.c[1] > 12 && t.c[2] < -7);
   const sideFillet = picked.some((t) => Math.abs(t.c[0]) > 18 && Math.abs(t.c[1]) < 8 && t.c[2] < -6);
-  check('lower front fillet seed exists', seeds.length > 0, `n=${seeds.length}`);
-  check('the pick is the whole tangent fillet chain', area > 1200 && area < 1800, `area=${area.toFixed(1)}`);
-  check('the chain wraps the corner onto the side fillet', corner && sideFillet);
-  check('flats stay out of the fillet chain', flat === 0, `flatTris=${flat}`);
-  check('the loft stays out of the fillet chain', loft === 0, `loftTris=${loft}`);
+  check(`${segments}-seg rounded box records facet step ${step}°`, tagged);
+  check(`${segments}-seg lower front fillet seed exists`, seeds.length > 0, `n=${seeds.length}`);
+  check(`${segments}-seg pick is the whole tangent fillet chain`, area > 1100 && area < 1800, `area=${area.toFixed(1)}`);
+  check(`${segments}-seg chain wraps the corner onto the side fillet`, corner && sideFillet);
+  check(`${segments}-seg flats stay out of the fillet chain`, flat === 0, `flatTris=${flat}`);
+  check(`${segments}-seg loft stays out of the fillet chain`, loft === 0, `loftTris=${loft}`);
+}
+
+console.log('Separate fillet calls stay separate; one call with two radii splits');
+{
+  const separate = await build(`
+let part = Manifold.cube([40, 30, 20], true);
+part = filletAlongPath(part, makeSweepPath(edgesBetween(part, 3, 5)), 3);
+part = filletAlongPath(part, makeSweepPath(edgesBetween(part, 2, 3)), 3);
+return part;
+`);
+  const Ts = tris(separate);
+  const curved = [];
+  Ts.forEach((t, i) => { if (t.area > 1 && !isAxis(t.n)) curved.push(i); });
+  const a = curved[0];
+  const pickA = new Set(click(separate, a).indices);
+  const b = curved.find((t) => !pickA.has(t));
+  check('two fillet calls leave a second fillet unselected', b != null && !pickA.has(b));
+  const radii = await build(`
+let part = Manifold.cube([40, 30, 20], true);
+const e1 = edgesBetween(part, 0, 1);
+const e2 = edgesBetween(part, 1, 2);
+const edges = e1.concat(e2);
+part = filletEdges(part, edges, edges.map((_, i) => i < e1.length ? 3 : 8), { sphericalCorners: true });
+return part;
+`);
+  const Tr = tris(radii);
+  const curvedR = [];
+  Tr.forEach((t, i) => { if (t.area > 0.2 && !isAxis(t.n)) curvedR.push(i); });
+  const seedR = curvedR[0];
+  const pickR = new Set(click(radii, seedR).indices);
+  const other = curvedR.find((t) => !pickR.has(t));
+  const areaR = [...pickR].reduce((acc, t) => acc + Tr[t].area, 0);
+  const otherArea = other == null ? 0 : click(radii, other).indices.reduce((acc, t) => acc + Tr[t].area, 0);
+  check('one filletEdges call with two radii stays two faces',
+    other != null && otherArea > 20 && areaR > 20 && Math.abs(areaR - otherArea) > 20,
+    `a=${areaR.toFixed(1)} b=${otherArea.toFixed(1)}`);
 }
 
 console.log('Long filleted box edge');

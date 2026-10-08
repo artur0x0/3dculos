@@ -4151,7 +4151,7 @@ function filletEdges(part, edgesIn, radiusIn, opts = {}) {
   // whole fillet (measured 4.5e-2 mm³ per 20 mm edge vs the analytic
   // circle-exact fillet). 384 segments cut that ~16x (2.7e-3 mm³) for a
   // trivial mesh cost (~400 tris per edge vs ~108).
-  const SEGMENTS = 384;
+  const SEGMENTS = FILLET_EDGES_CIRCLE_SEGMENTS;
   const sphericalCorners = !!opts.sphericalCorners;
   // Slice C2 hard path: skip local planar-adjacent assert so loft generators
   // can use the same parallelepiped−cylinder cutter per coherent segment.
@@ -4364,7 +4364,7 @@ function filletEdges(part, edgesIn, radiusIn, opts = {}) {
       const dev = Math.abs(dist - r0*Math.sqrt(3));
       if (dev > 1e-3 * r0 + 1e-6)
         throw new Error(`filletEdges: corner-cap incenter sanity failed (|O−P|=${dist}, want ${r0*Math.sqrt(3)})`);
-      const ball = M.sphere(r0, 256).transform(
+      const ball = M.sphere(r0, FILLET_EDGES_CORNER_SEGMENTS).transform(
         [1,0,0,0, 0,1,0,0, 0,0,1,0, O[0],O[1],O[2], 1]);
       // cap = (cornerBox ∩ cyl1 ∩ cyl2 ∩ cyl3) \ (ball ∩ cornerBox):
       //   cornerBox ∩ all three sails = material T left in the corner
@@ -8023,6 +8023,8 @@ function _booleanDropPieces(result, spec) {
  * fillet. Reset per execute.
  */
 let _featureOps = [];
+/** Positive originalIDs tagged with a facet step, without becoming a fillet op. */
+let _sourceTess = [];
 function _probeOriginalID() {
   try {
     const probe = manifoldModule.Manifold.cube([1e-3, 1e-3, 1e-3]);
@@ -8033,14 +8035,76 @@ function _probeOriginalID() {
     return -1;
   }
 }
-function _featureOp(fn) {
+/**
+ * Full-circle counts inside filletEdges. The cylinder is the fillet arc;
+ * the ball is the spherical corner. The face graph turns these into a
+ * per-source facet step (360°/count).
+ */
+const FILLET_EDGES_CIRCLE_SEGMENTS = 384;
+const FILLET_EDGES_CORNER_SEGMENTS = 256;
+function _featureOp(fn, describe) {
   return function featureOp(...args) {
     const lo = _probeOriginalID();
     const out = fn.apply(this, args);
     const hi = _probeOriginalID();
-    if (lo >= 0 && hi > lo + 1) _featureOps.push([lo, hi]);
+    let tess = null;
+    if (describe) {
+      try { tess = describe(args); } catch { tess = null; }
+    }
+    if (lo >= 0 && hi > lo + 1) {
+      _featureOps.push({
+        lo,
+        hi,
+        facetDeg: tess && tess.facetDeg > 0 ? tess.facetDeg : 0,
+        cornerDeg: tess && tess.cornerDeg > 0 ? tess.cornerDeg : 0,
+      });
+    }
     return out;
   };
+}
+/**
+ * Tag the originalIDs a call allocates, and leave those keys positive.
+ * roundedBox is a hull, not a fillet op: its flats must still earn the flat lock.
+ */
+function _tagTessellation(fn, describe) {
+  return function tagTessellation(...args) {
+    const lo = _probeOriginalID();
+    const out = fn.apply(this, args);
+    const hi = _probeOriginalID();
+    let tess = null;
+    try { tess = describe(args); } catch { tess = null; }
+    if (lo >= 0 && hi > lo && tess && (tess.facetDeg > 0 || tess.cornerDeg > 0)) {
+      _sourceTess.push({
+        lo,
+        hi,
+        facetDeg: tess.facetDeg > 0 ? tess.facetDeg : 0,
+        cornerDeg: tess.cornerDeg > 0 ? tess.cornerDeg : 0,
+      });
+    }
+    return out;
+  };
+}
+/** roundedBox(size, radius, segments=16) — sphere circularSegments, full circle. */
+function _roundedBoxTess(args) {
+  const segments = Math.max(3, Math.round(Number(args[2] == null ? 16 : args[2]) || 16));
+  return { facetDeg: 360 / segments, cornerDeg: 0 };
+}
+/** filletEdges cylinder is a full circle; the corner ball is its own count. */
+function _filletEdgesTess() {
+  return {
+    facetDeg: 360 / FILLET_EDGES_CIRCLE_SEGMENTS,
+    cornerDeg: 360 / FILLET_EDGES_CORNER_SEGMENTS,
+  };
+}
+/**
+ * filletAlongPath segments are the arc of a right-angle wedge (90°),
+ * unless the profile is a straight chamfer, which has no facet step.
+ */
+function _filletAlongPathTess(args) {
+  const opts = args[3] && typeof args[3] === 'object' ? args[3] : {};
+  if (opts.profile === 'chamfer') return null;
+  const segments = Math.max(2, Math.round(Number(opts.segments != null ? opts.segments : FILLET_ARC_SEGMENTS) || FILLET_ARC_SEGMENTS));
+  return { facetDeg: 90 / segments, cornerDeg: 0 };
 }
 /** Per run: the outermost op that reserved its originalID (−(op+1)), else the originalID. */
 function _runFeatureKeys(runOriginalID) {
@@ -8049,10 +8113,33 @@ function _runFeatureKeys(runOriginalID) {
     const id = runOriginalID[r];
     let key = id;
     for (let k = 0; k < _featureOps.length; k++) {
-      const [lo, hi] = _featureOps[k];
-      if (id > lo && id < hi) { key = -(k + 1); break; }
+      const op = _featureOps[k];
+      if (id > op.lo && id < op.hi) { key = -(k + 1); break; }
     }
     out[r] = key;
+  }
+  return out;
+}
+/** One row per tagged source: facet step (and corner step, when known). */
+function _featureTessellation(runOriginalID) {
+  const out = [];
+  for (let k = 0; k < _featureOps.length; k++) {
+    const op = _featureOps[k];
+    if (!(op.facetDeg > 0) && !(op.cornerDeg > 0)) continue;
+    out.push({ source: -(k + 1), facetDeg: op.facetDeg, cornerDeg: op.cornerDeg });
+  }
+  const seen = new Set();
+  const ids = runOriginalID || [];
+  for (let r = 0; r < ids.length; r++) {
+    const id = ids[r];
+    if (seen.has(id)) continue;
+    for (const row of _sourceTess) {
+      if (id > row.lo && id < row.hi) {
+        seen.add(id);
+        out.push({ source: id, facetDeg: row.facetDeg, cornerDeg: row.cornerDeg });
+        break;
+      }
+    }
   }
   return out;
 }
@@ -8061,7 +8148,7 @@ const HELPER_FUNCTIONS = {
   shell,
   hollow,
   getScaleRatio,
-  roundedBox,
+  roundedBox: _tagTessellation(roundedBox, _roundedBoxTess),
   tube,
   rectTube,
   hexPrism,
@@ -8105,7 +8192,7 @@ const HELPER_FUNCTIONS = {
   holeSpan,
   cboreHole,
   cskHole,
-  chamferEdges: _featureOp(chamferEdges),
+  chamferEdges: _featureOp(chamferEdges), // planar wedge: no segment count, gate falls back to 15°
   convexEdges,
   concaveEdges,
   signedFeatureEdges,
@@ -8119,7 +8206,7 @@ const HELPER_FUNCTIONS = {
   listFastenerSizes,
   resolveFastenerSize,
   // C6 fillet (see block above)
-  filletEdges: _featureOp(filletEdges),
+  filletEdges: _featureOp(filletEdges, _filletEdgesTess),
   // C8 revolve/extrude with safe winding (see block above)
   makeRevolve,
   makeExtrude,
@@ -8135,7 +8222,7 @@ const HELPER_FUNCTIONS = {
   // Slice 22 edge → sweep path / wire
   makeSweepPath,
   // Slice 23 fillet via swept cross-section
-  filletAlongPath: _featureOp(filletAlongPath),
+  filletAlongPath: _featureOp(filletAlongPath, _filletAlongPathTess),
   // Fillet-mode edge ids
   edge,
   edgesBetween,
@@ -8326,6 +8413,7 @@ const serializeResult = (manifold) => {
     runIndex: Array.from(mesh.runIndex),
     runOriginalID: Array.from(mesh.runOriginalID),
     runFeature: _runFeatureKeys(mesh.runOriginalID),
+    featureTessellation: _featureTessellation(mesh.runOriginalID),
     faceID: mesh.faceID ? Array.from(mesh.faceID) : null,
   };
 };
@@ -8628,6 +8716,7 @@ self.onmessage = async (event) => {
         // copy that follows. The main thread adds the postMessage gap.
         const _execT0 = _perfNow();
         _featureOps = [];
+        _sourceTess = [];
         const result = executeScript(script, importedModels);
         const _execMs = _perfNow() - _execT0;
         
@@ -9377,6 +9466,7 @@ export function runPreparedScript(source, opts = {}) {
     globalThis.__filletSweepRingCall = null;
   }
   _featureOps = [];
+  _sourceTess = [];
   const result = executeScript(String(source ?? ''), opts.importedModels || {});
   cachedManifold = result;
   cachedExecuteNonce = (opts.nonce !== undefined && opts.nonce !== null) ? opts.nonce : null;
