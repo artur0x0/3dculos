@@ -168,12 +168,13 @@ try {
       const start = root[key].current || root[key];
       const seen = new Set();
       let controls = null;
+      const renderers = [];
       let bestArea = -1;
       function walk(fiber) {
         if (!fiber || seen.has(fiber)) return;
         seen.add(fiber);
         let hook = fiber.memoizedState;
-        for (let g = 0; hook && g < 400; g++) {
+        for (let g = 0; hook && g < 800; g++) {
           const c = hook.memoizedState && hook.memoizedState.current;
           if (c && typeof c.rotateSpeed === 'number' && c.object && c.object.isCamera && c.domElement) {
             const area = c.domElement.clientWidth * c.domElement.clientHeight;
@@ -182,13 +183,18 @@ try {
               bestArea = area;
             }
           }
+          if (c && typeof c.setPixelRatio === 'function' && typeof c.render === 'function' && c.domElement) {
+            renderers.push(c);
+          }
           hook = hook.next;
         }
         walk(fiber.child);
         walk(fiber.sibling);
       }
       walk(start);
-      return controls;
+      if (!controls) return null;
+      const renderer = renderers.find((r) => r.domElement === controls.domElement) || null;
+      return { controls, renderer, rendererCount: renderers.length };
     };
   });
 
@@ -200,34 +206,16 @@ try {
 
   await page.goto(APP_URL, { waitUntil: 'load', timeout: 60000 });
   await page.waitForFunction(() => {
-    const c = window.__surfcadFindOrbit?.();
-    return !!(c && c.domElement && c.domElement.clientWidth > 0 && window.__VIEWPORT__);
+    const found = window.__surfcadFindOrbit?.();
+    const canvas = found && found.controls && found.controls.domElement;
+    return !!(canvas && canvas.clientWidth > 0 && window.__VIEWPORT__);
   }, null, { timeout: 60000 });
   await page.waitForTimeout(600);
 
   const live = await page.evaluate(({ rotate, zoom, pan, damp }) => {
-    const controls = window.__surfcadFindOrbit();
-    const rendererEntry = (() => {
-      const root = document.getElementById('root');
-      const key = Object.keys(root).find((k) => k.startsWith('__reactContainer$'));
-      const start = root[key].current;
-      const seen = new Set();
-      let renderer = null;
-      function walk(fiber) {
-        if (!fiber || seen.has(fiber)) return;
-        seen.add(fiber);
-        let hook = fiber.memoizedState;
-        for (let g = 0; hook && g < 400; g++) {
-          const c = hook.memoizedState && hook.memoizedState.current;
-          if (c && c.isWebGLRenderer && c.domElement === controls.domElement) renderer = c;
-          hook = hook.next;
-        }
-        walk(fiber.child);
-        walk(fiber.sibling);
-      }
-      walk(start);
-      return renderer;
-    })();
+    const found = window.__surfcadFindOrbit();
+    const controls = found.controls;
+    const rendererEntry = found.renderer;
     if (!controls.__armed) {
       const origU = controls.update;
       controls.update = function () {
