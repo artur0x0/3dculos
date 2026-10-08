@@ -1,8 +1,8 @@
 /**
- * Paint mode writes assembly face colors. It does not pick and it does not
- * draw. A click still goes through `resolveViewportFaceClick` (one click, the
- * face-graph patch). Confirm stores `faceColorKey` on `colors[surfId]`.
- * Cancel stores nothing. Undo drops a pick and leaves saved colors alone.
+ * Paint mode writes assembly face colors. A tap paints one face on the
+ * session map immediately. A second tap on that face within
+ * `PAINT_DOUBLE_TAP_MS` upgrades the same undo entry to every face of the
+ * body. Confirm stores the session on `colors`. Cancel drops the session.
  */
 
 import { isSurfId } from './git/surfId.js';
@@ -325,4 +325,156 @@ export function unmatchedColorCount(colors, surfId, faces) {
   if (!items?.length) return 0;
   const hit = matchFaceKeys(faces, items);
   return hit.ambiguous.length + hit.missing.length;
+}
+
+/** Second tap on the same face upgrades that paint to the whole body. */
+export const PAINT_DOUBLE_TAP_MS = 300;
+
+/** Session copy of an assembly color map. Empty in, empty out. */
+export function clonePaintSession(colors) {
+  return cloneColorMap(colors);
+}
+
+function sessionJson(colors) {
+  if (!colors || typeof colors !== 'object' || Array.isArray(colors)) return 'null';
+  if (!Object.keys(colors).length) return 'null';
+  return JSON.stringify(colors);
+}
+
+function asSession(colors) {
+  return cloneColorMap(colors);
+}
+
+function copyUndo(undo) {
+  return (Array.isArray(undo) ? undo : []).map((snap) => cloneColorMap(snap));
+}
+
+/** True when the session differs from the map captured as the popup opened. */
+export function livePaintChanged(session, baseline) {
+  return sessionJson(session) !== sessionJson(baseline);
+}
+
+/**
+ * Face keys whose triangles intersect `indices`. Used to upgrade one face
+ * to every face of the body under the finger.
+ */
+export function paintKeysForTriangles(geometry, faceIDs, indices) {
+  const faces = fingerprintsFromGeometry(geometry, faceIDs);
+  const want = new Set(indices || []);
+  if (!want.size) return [];
+  const keys = [];
+  for (const face of faces) {
+    const tris = face.tris || [];
+    let hit = false;
+    for (let i = 0; i < tris.length; i += 1) {
+      if (want.has(tris[i])) {
+        hit = true;
+        break;
+      }
+    }
+    if (!hit) continue;
+    const key = faceColorKey(face);
+    if (key) keys.push(key);
+  }
+  return keys;
+}
+
+function paintResult(session, undo, lastTap, changed) {
+  return { session, undo, lastTap, changed };
+}
+
+/**
+ * Paint one face now. A second call for that same face inside the double-tap
+ * window rewrites the pre-tap snapshot with every body face and does not push
+ * another undo entry. A different face, or a tap after the window, is a new
+ * action. A write that does not change the map pushes nothing.
+ */
+export function livePaintTap(state, {
+  surfId,
+  color,
+  key,
+  bodyKeys = null,
+  faces = null,
+  now = 0,
+  doubleTapMs = PAINT_DOUBLE_TAP_MS,
+} = {}) {
+  const session = asSession(state?.session);
+  const undo = copyUndo(state?.undo);
+  const last = state?.lastTap || null;
+  const hex = parsePaintHex(color);
+  if (!hex || !isSurfId(surfId) || !key?.at) {
+    return paintResult(session, undo, last, false);
+  }
+  const keyJson = JSON.stringify(key);
+  const upgrade = !!(
+    last
+    && last.surfId === surfId
+    && last.keyJson === keyJson
+    && Number(now) - Number(last.at) <= doubleTapMs
+    && Array.isArray(bodyKeys)
+    && bodyKeys.length
+  );
+  if (upgrade) {
+    const base = last.pushed && undo.length
+      ? cloneColorMap(undo[undo.length - 1])
+      : cloneColorMap(session);
+    const next = asSession(commitPaintColors(base, surfId, { color: hex, keys: bodyKeys, faces }));
+    if (!last.pushed) {
+      if (!livePaintChanged(next, session)) return paintResult(session, undo, null, false);
+      undo.push(cloneColorMap(session));
+      return paintResult(next, undo, null, true);
+    }
+    if (!livePaintChanged(next, session)) return paintResult(session, undo, null, false);
+    return paintResult(next, undo, null, true);
+  }
+  const before = cloneColorMap(session);
+  const next = asSession(commitPaintColors(session, surfId, { color: hex, keys: [key], faces }));
+  const changed = livePaintChanged(next, before);
+  if (changed) undo.push(before);
+  return paintResult(next, undo, {
+    surfId,
+    keyJson,
+    at: Number(now) || 0,
+    pushed: changed,
+  }, changed);
+}
+
+/** Paint `colors[surfId].part` for the whole part. One undo entry when it changes. */
+export function livePaintPart(state, { surfId, color } = {}) {
+  const session = asSession(state?.session);
+  const undo = copyUndo(state?.undo);
+  const hex = parsePaintHex(color);
+  if (!hex || !isSurfId(surfId)) return paintResult(session, undo, null, false);
+  const next = asSession(commitPaintColors(session, surfId, { color: hex, part: true }));
+  if (!livePaintChanged(next, session)) return paintResult(session, undo, null, false);
+  undo.push(cloneColorMap(session));
+  return paintResult(next, undo, null, true);
+}
+
+/** Step back one paint action. */
+export function livePaintUndo(state) {
+  const undo = copyUndo(state?.undo);
+  if (!undo.length) return paintResult(asSession(state?.session), undo, null, false);
+  const session = undo.pop();
+  return paintResult(session, undo, null, true);
+}
+
+/** Restore the map from when the popup opened. That restore is itself one undo step. */
+export function livePaintClear(state) {
+  const session = asSession(state?.session);
+  const baseline = asSession(state?.baseline);
+  const undo = copyUndo(state?.undo);
+  if (!livePaintChanged(session, baseline)) return paintResult(session, undo, null, false);
+  undo.push(cloneColorMap(session));
+  return paintResult(baseline, undo, null, true);
+}
+
+/** Drop unmatched face keys on the session. Not written until Confirm. */
+export function livePaintUnmatched(state, { surfId, faces } = {}) {
+  const session = asSession(state?.session);
+  const undo = copyUndo(state?.undo);
+  const next = asSession(removeUnmatchedColors(session, surfId, faces));
+  if (!livePaintChanged(next, session)) return paintResult(session, undo, null, false);
+  undo.push(cloneColorMap(session));
+  return paintResult(next, undo, null, true);
 }

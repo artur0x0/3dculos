@@ -92,11 +92,49 @@ export function newLocalPartId() {
 export const DEFAULT_ASSEMBLY_NAME = 'Assembly';
 
 /** Default part label used when seeding a blank assembly. */
-export const DEFAULT_PART_NAME = 'Part 1';
+export const DEFAULT_PART_NAME = 'Part (1)';
+
+/**
+ * Auto-number form. A generated number is always `Base (n)`.
+ * Saved names are not rewritten. `Part` + 1 is `Part (1)`, not `Part 1`.
+ */
+export function numberedName(base, n) {
+  const stem = String(base ?? '').replace(/\s+/g, ' ').trim();
+  const i = Number(n);
+  if (!stem || !Number.isInteger(i) || i < 1) return stem;
+  return `${stem} (${i})`;
+}
+
+/**
+ * Next free generated name.
+ * Without `bareFirst`: `Base (1)`, then `Base (2)`, … (a new part, a new sheet).
+ * With `bareFirst`: `Base` when it is free, otherwise `Base (2)`, `Base (3)`, …
+ * (a copy, an import, or a rename that collided). An existing `Base (n)`
+ * occupies n, so the next free slot is n+1 when every lower slot is taken.
+ * `taken` is an iterable of names. Matching is exact unless `caseInsensitive`.
+ */
+export function nextNumberedName(base, taken, { bareFirst = false, caseInsensitive = false } = {}) {
+  const stem = String(base ?? '').replace(/\s+/g, ' ').trim() || 'Part';
+  const keyOf = (value) => {
+    const text = String(value ?? '').replace(/\s+/g, ' ').trim();
+    return caseInsensitive ? text.toLowerCase() : text;
+  };
+  const used = new Set();
+  for (const item of taken || []) used.add(keyOf(item));
+  const free = (name) => !used.has(keyOf(name));
+  if (bareFirst && free(stem)) return stem;
+  const start = bareFirst ? 2 : 1;
+  for (let n = start; n < 1000; n += 1) {
+    const name = numberedName(stem, n);
+    if (free(name)) return name;
+  }
+  return numberedName(stem, Date.now());
+}
 
 /**
  * True when the working copy is blank or still the stock default assembly
- * (name Assembly / blank, zero or one Part 1, script empty or a known starter).
+ * (name Assembly / blank, zero or one stock part name, script empty or a known starter).
+ * A saved `Part 1` from before the parenthesis form is still the stock name.
  * Used so Assembly New/Existing can skip the Save|Discard leave guard.
  */
 export function isDefaultBlankAssembly(doc, scripts = {}, {
@@ -112,7 +150,7 @@ export function isDefaultBlankAssembly(doc, scripts = {}, {
   if (parts.length !== 1) return false;
   const part = parts[0];
   const pname = String(part?.name || '').trim();
-  if (pname && pname !== DEFAULT_PART_NAME && pname !== 'part1') return false;
+  if (pname && pname !== DEFAULT_PART_NAME && pname !== 'Part 1' && pname !== 'part1') return false;
   let script = scripts?.[part.id];
   if (liveId != null && String(liveId) === String(part.id) && typeof liveScript === 'string') {
     script = liveScript;

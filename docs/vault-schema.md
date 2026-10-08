@@ -27,7 +27,7 @@ parts/M3 bolt.js
 | `surfcad.json` | Vault marker. A non-empty repo without it is not written. |
 | `assemblies/<Name>/.surf.json` | Assembly document. The file name is `.surf.json`, not `<Name>.surf.json`. |
 | `parts/<Part>.js` | Part script. New parts land here. Flat: `parts/a/b.js` is not a part path. |
-| `assemblies/<Name>/<Part>.js` | Copy to this assembly only. New surf id. A name already in the folder becomes `Name 2`. |
+| `assemblies/<Name>/<Part>.js` | Copy to this assembly only. New surf id. A name already in the folder becomes `Name (2)`. |
 
 `<Name>` and `<Part>` go through `vaultSegment`: no path or Windows-illegal characters, no control characters, whitespace collapsed, no leading or trailing dots, at most 60 characters. The `name` stored in `.surf.json` must already be that segment.
 
@@ -156,7 +156,7 @@ A group is a Parts-list folder for parts inserted from another assembly. It is n
 
 A linked row is a path in another assembly's folder (`isExternalPartPath`). `parts/` is not external. The row shows **Caution: external part!** and **Copy to this assembly**.
 
-**Copy to this assembly** (`planCopyToAssembly`) writes a new script in this folder. The new surf id is minted once. `isSynced` stays false until that part is pushed. `copiedFrom` records the source surf id (the row's id, else the header). The source file stays. A name already in this folder becomes `Name 2`. The group, if any, keeps the row and points `partIds` at the new id. Colors are not copied onto the new id. A color stored for the old id is dropped with that id. Colors for parts that stay are left alone.
+**Copy to this assembly** (`planCopyToAssembly`) writes a new script in this folder. The new surf id is minted once. `isSynced` stays false until that part is pushed. `copiedFrom` records the source surf id (the row's id, else the header). The source file stays. A name already in this folder becomes `Name (2)`. The group, if any, keeps the row and points `partIds` at the new id. Colors are not copied onto the new id. A color stored for the old id is dropped with that id. Colors for parts that stay are left alone.
 
 **Copy all to this assembly** (`copyGroupToAssembly`) runs that copy on each linked member. The group stays. A member that already lives in this folder is left alone.
 
@@ -168,7 +168,7 @@ One outbox commit, message `Delete assembly <Name>` (`planDeleteAssembly`). The 
 
 | Choice | What the commit does |
 | --- | --- |
-| **Delete assembly, keep parts** | Deletes the assembly folder and `.surf.json`. Bytes already in `parts/` stay. An assembly-local copy moves to `parts/`. A name already there gets a numeric suffix (`Bracket.js`, then `Bracket 2.js`). The destination name is the file name, not the row label. Surf ids stay. |
+| **Delete assembly, keep parts** | Deletes the assembly folder and `.surf.json`. Bytes already in `parts/` stay. An assembly-local copy moves to `parts/`. A name already there gets a numeric suffix (`Bracket.js`, then `Bracket (2).js`). The destination name is the file name, not the row label. Surf ids stay. |
 | **Delete assembly and its parts** | The button stays disabled until the assembly name is typed. A script is deleted only when no other assembly references its surf id. An assembly-local copy that is still referenced moves to `parts/` and is not deleted. An unreferenced copy is deleted. |
 
 A reference is another assembly on this branch: its tip `.surf.json`, the open working copy, and this branch's queued or failed outbox projected onto the tree. It matches `parts[].id`, or `parts[].path` when that row has no id, or `groups[].partIds`. `copiedFrom` is provenance, not a reference. `groups[].source` pointing at the deleted assembly is not a part reference.
@@ -191,7 +191,7 @@ The queue is FIFO per repo and branch. Ops for another branch stay queued and ar
 
 ## Layout migration
 
-One outbox commit (`migrate-layout`) moves assembly-folder scripts into `parts/`. This branch's pending outbox is projected onto the tree first. Surf ids stay. Every `.surf.json` path is rewritten by surf id, then by the old path. A name already in `parts/` becomes `Name 2` (`Bracket.js`, then `Bracket 2.js`). Nothing is overwritten. A row with `copiedFrom` is already a copy and stays in the assembly folder, so a later Copy is not swept and a second pass is a no-op. The commit refuses to drop a part file, change its body or surf id, or delete a `.surf.json`. Renaming an assembly then changes the folder and `.surf.json` only. `parts/` paths do not move. An assembly-local copy moves with the folder; the rename commit stamps `// @surf-id`, and a reload follows the pending rename so the id is not minted again. `groups[].source` on other assemblies is left as stored.
+One outbox commit (`migrate-layout`) moves assembly-folder scripts into `parts/`. This branch's pending outbox is projected onto the tree first. Surf ids stay. Every `.surf.json` path is rewritten by surf id, then by the old path. A name already in `parts/` becomes `Name (2)` (`Bracket.js`, then `Bracket (2).js`). Nothing is overwritten. A row with `copiedFrom` is already a copy and stays in the assembly folder, so a later Copy is not swept and a second pass is a no-op. The commit refuses to drop a part file, change its body or surf id, or delete a `.surf.json`. Renaming an assembly then changes the folder and `.surf.json` only. `parts/` paths do not move. An assembly-local copy moves with the folder; the rename commit stamps `// @surf-id`, and a reload follows the pending rename so the id is not minted again. `groups[].source` on other assemblies is left as stored.
 
 ```mermaid
 stateDiagram-v2

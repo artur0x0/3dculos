@@ -67,6 +67,7 @@ import {
   partSheetMetal,
   setPartSheetMetal,
   DEFAULT_ASSEMBLY_NAME,
+  nextNumberedName,
   DEFAULT_PART_NAME,
   needsAssemblyLeaveGuard,
 } from './utils/assembly';
@@ -1015,7 +1016,7 @@ const App = () => {
     const seedDoc = serializeAssembly({
       source: 'local',
       activeId: seedId,
-      parts: [{ id: seedId, name: filename || 'Part 1', visible: true, order: 0 }],
+      parts: [{ id: seedId, name: filename || DEFAULT_PART_NAME, visible: true, order: 0 }],
     });
     const seedScripts = { [seedId]: script };
     assemblyRef.current = seedDoc;
@@ -3979,7 +3980,10 @@ const App = () => {
       name = id.split('/').pop()?.replace(/\.js$/i, '') || id;
     } else {
       id = newLocalPartId();
-      name = rawName || `Part ${doc.parts.length + 1}`;
+      const takenNames = (doc.parts || []).map((part) => part.name);
+      name = rawName
+        ? nextNumberedName(rawName, takenNames, { bareFirst: true })
+        : nextNumberedName('Part', takenNames);
     }
     const order = doc.parts.length;
     let starter = newPartStarterScript();
@@ -4557,10 +4561,9 @@ const App = () => {
     if (!doc) return { ok: false };
     let created = false;
     if (!doc.activeId || !getSheetMetalReady()) {
-      const names = new Set(doc.parts.map((part) => part.name));
-      let n = 1;
-      while (names.has(`Sheet ${n}`)) n += 1;
-      handleAddPart(`Sheet ${n}`);
+      const names = doc.parts.map((part) => part.name);
+      const sheetName = nextNumberedName('Sheet', names);
+      handleAddPart(sheetName);
       if (assemblyRef.current?.activeId === doc.activeId) return { ok: false };
       doc = assemblyRef.current;
       created = true;
@@ -4596,14 +4599,26 @@ const App = () => {
   };
 
   /**
-   * Paint Confirm, Clear, and Remove unmatched. Colors go through the same
-   * assembly save as any other assembly edit: the working copy, the local
-   * document, and the git outbox when the assembly is in Git mode. Cancel
-   * never calls this. Part scripts and isSynced are left as they are.
+   * Paint Confirm. One session write: the working copy, the local document,
+   * and the git outbox when the assembly is in Git mode. Cancel never calls
+   * this. Part scripts and isSynced are left as they are.
    */
   const handleCommitPaint = (payload) => {
     const doc = assemblyRef.current;
-    if (!doc || !payload?.surfId) return false;
+    if (!doc || !payload) return false;
+    if (payload.op === 'session') {
+      const next = serializeAssembly({ ...doc, colors: payload.colors || null });
+      if (JSON.stringify(next.colors || null) === JSON.stringify(doc.colors || null)) return true;
+      const saved = rememberAssembly(next);
+      enqueueAssemblySave(saved, {
+        message: 'Paint',
+        payload: { paint: 'session' },
+      }).catch((err) => {
+        setUploadError(err?.message || 'Could not save colors');
+      });
+      return true;
+    }
+    if (!payload.surfId) return false;
     const before = doc.colors || null;
     let colors = before;
     if (payload.op === 'clear-part') {
@@ -4989,10 +5004,14 @@ const App = () => {
   const handleRenamePart = (id, name) => {
     const doc = assemblyRef.current;
     if (!doc) return;
-    const nextName = sanitizePartName(name);
+    let nextName = sanitizePartName(name);
     if (!nextName) return;
     const part = (doc.parts || []).find((row) => row.id === id);
     if (!part || part.name === nextName) return;
+    const otherNames = (doc.parts || []).filter((row) => row.id !== id).map((row) => row.name);
+    if (otherNames.includes(nextName)) {
+      nextName = nextNumberedName(nextName, otherNames, { bareFirst: true });
+    }
     if (doc.source !== 'git' || !gitVaultRef.current?.repo) {
       const nextDoc = renamePart(doc, id, nextName);
       if (nextDoc === doc) return;

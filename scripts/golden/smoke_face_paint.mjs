@@ -1,8 +1,8 @@
 /* global window, document, getComputedStyle */
 /**
- * Paint mode. A click picks the same face the viewport already picks.
- * Confirm writes faceColorKey into the assembly and the skin draws it.
- * Cancel writes nothing. Undo drops a pick only. Game mode hides the chip.
+ * Paint mode. A tap paints the face on the skin immediately. A second tap
+ * on that face paints the body and stays one undo entry. Confirm writes the
+ * session into `.surf.json`. X and Cancel revert it.
  *
  * Screenshots: GOLDEN_SHOT_DIR or os.tmpdir()/surfcad-golden-shots.
  */
@@ -17,12 +17,22 @@ import { buildSolidGeometry } from '../../src/utils/partSolidCache.js';
 import { serializeAssembly } from '../../src/utils/assembly.js';
 import { faceFingerprints } from '../../src/utils/faceColorMatch.js';
 import { syncFaceColorSkin } from '../../src/utils/faceColorSkin.js';
-import { warmFaceGraph } from '../../src/utils/selectFace.js';
+import { selectOwningBody, warmFaceGraph } from '../../src/utils/selectFace.js';
+import { stringifySurfJson, parseSurfJson } from '../../src/utils/git/surfJson.js';
+import { sharedPartPath } from '../../src/utils/git/vaultLayout.js';
 import {
+  PAINT_DOUBLE_TAP_MS,
   PAINT_SWATCHES,
   clearPaintColors,
+  clonePaintSession,
   commitPaintColors,
+  livePaintChanged,
+  livePaintClear,
+  livePaintPart,
+  livePaintTap,
+  livePaintUndo,
   paintChipVisible,
+  paintKeysForTriangles,
   paintPickFromClick,
   paintPicksAfterMeshChange,
   paintPicksAfterPartChange,
@@ -256,14 +266,24 @@ console.log('face paint — cancel writes nothing');
 {
   const view = readFileSync(new URL('../../src/components/Viewport.jsx', import.meta.url), 'utf8');
   const exitAt = view.indexOf('const exitPaintMode = useCallback');
-  const exitBlock = view.slice(exitAt, view.indexOf('const clearPaintPicks', exitAt));
-  check('leaving paint does not write', exitAt > 0 && !/onCommitPaint/.test(exitBlock));
+  const exitEnd = view.indexOf('exitPaintModeRef.current = exitPaintMode', exitAt);
+  const exitBlock = view.slice(exitAt, exitEnd);
+  const nullAt = exitBlock.indexOf('paintModeRef.current = null');
+  const repaintAt = exitBlock.indexOf('repaintFaceSkins');
+  check('leaving paint does not write', exitAt > 0 && exitEnd > exitAt && !/onCommitPaint/.test(exitBlock)
+    && nullAt >= 0 && repaintAt > nullAt);
   check('cancel and the grey X dismiss', /data-paint-cancel/.test(readFileSync(new URL('../../src/components/PaintModeChip.jsx', import.meta.url), 'utf8'))
     && /onDismiss\?\.\(\)/.test(readFileSync(new URL('../../src/components/PaintModeChip.jsx', import.meta.url), 'utf8')));
   const app = readFileSync(new URL('../../src/App.jsx', import.meta.url), 'utf8');
   const handlerAt = app.indexOf('const handleCommitPaint');
   const handler = app.slice(handlerAt, app.indexOf('const handleCommitShell', handlerAt));
-  check('confirm saves through the assembly path', /rememberAssembly\(/.test(handler) && /enqueueAssemblySave\(/.test(handler));
+  check('confirm saves through the assembly path', /rememberAssembly\(/.test(handler) && /enqueueAssemblySave\(/.test(handler)
+    && /payload\.op === 'session'/.test(handler) && /op: 'session'/.test(view));
+  const css = readFileSync(new URL('../../src/index.css', import.meta.url), 'utf8');
+  const dblAt = view.indexOf('const onDblClick = (event) => {');
+  check('a double tap does not zoom the page',
+    dblAt > 0 && view.slice(dblAt, dblAt + 90).includes('event.preventDefault()')
+    && /\.viewport-shell > canvas/.test(css) && /touch-action:\s*none/.test(css));
 }
 
 console.log('face paint — game mode and part switch');
@@ -290,8 +310,10 @@ console.log('face paint — game mode and part switch');
     && /data-sheet-metal-button/.test(panel)
     && /sheetMetalActive[\s\S]{0,180}text-blue-600 hover:bg-gray-100/.test(panel)
     && !/text-orange-700/.test(panel));
-  check('paint uses the normal face pick and the normal highlight',
-    /paintPickFromClick\(/.test(view) && /'paint-pick'/.test(view));
+  check('a tap paints immediately through the normal face pick',
+    /livePaintTap\(/.test(view) && /paintPickFromClick\(/.test(view)
+    && /applyLivePaintTapRef\.current\(clickData\)/.test(view)
+    && !/'paint-pick'/.test(view));
   const skipsPaint = (token) => {
     const conds = ifConditionsContaining(view, token);
     return conds.length > 0 && conds.every((cond) => cond.includes('!paintModeRef.current'));
@@ -344,6 +366,106 @@ console.log('face paint — repick after a rebuild replaces the key');
   check('the replaced key still round-trips', doc.colors[SID].faces.length === 2);
 }
 
+let liveShot = null;
+console.log('face paint — live tap, body, confirm, revert');
+{
+  const empty = { session: clonePaintSession(null), undo: [], lastTap: null, baseline: clonePaintSession(null) };
+  const t0 = 1_000_000;
+  const one = livePaintTap(empty, {
+    surfId: SID,
+    color: SWATCH,
+    key: topPick.key,
+    faces: cube.faces,
+    now: t0,
+  });
+  check('a tap paints one face before confirm',
+    one.changed && one.undo.length === 1 && one.session[SID].faces.length === 1
+    && one.session[SID].faces[0].color === SWATCH);
+  {
+    const { Mesh, MeshNormalMaterial } = await import('three');
+    const host = new Mesh(cube.geometry, new MeshNormalMaterial({ flatShading: true }));
+    host.userData.surfId = SID;
+    const skin = syncFaceColorSkin(host, {
+      geometry: cube.geometry,
+      faceIDs: cube.faceIDs,
+      surfId: SID,
+      colors: one.session,
+      rainbow: false,
+    });
+    const tris = skinTris(skin);
+    const topPainted = tris.filter((tri) => tri.n[2] > 0.9 && near(tri.rgb, SWATCH)).length;
+    const sidePainted = tris.filter((tri) => tri.n[0] > 0.9 && near(tri.rgb, SWATCH)).length;
+    check('the overlay shows that face without confirm', topPainted > 0 && sidePainted === 0,
+      `top ${topPainted} side ${sidePainted}`);
+  }
+  const bodyIdx = selectOwningBody(cube.geometry, top.tris[0]);
+  const bodyKeys = paintKeysForTriangles(cube.geometry, cube.faceIDs, bodyIdx);
+  check('the body covers every face of the cube', bodyKeys.length === cube.faces.length && bodyKeys.length > 1);
+  const doubled = livePaintTap(one, {
+    surfId: SID,
+    color: SWATCH,
+    key: topPick.key,
+    bodyKeys,
+    faces: cube.faces,
+    now: t0 + 120,
+  });
+  check('a double tap paints every face and keeps one undo entry',
+    doubled.undo.length === 1
+    && doubled.session[SID].faces.length === cube.faces.length
+    && doubled.session[SID].faces.every((face) => face.color === SWATCH));
+  const undoneBody = livePaintUndo(doubled);
+  check('one undo drops the whole double tap',
+    undoneBody.undo.length === 0 && !livePaintChanged(undoneBody.session, empty.baseline));
+  const later = livePaintTap(one, {
+    surfId: SID,
+    color: SWATCH,
+    key: sidePick.key,
+    faces: cube.faces,
+    now: t0 + 900,
+  });
+  check('a later face is a second undo entry', later.undo.length === 2 && later.session[SID].faces.length === 2);
+  const same = livePaintTap(one, {
+    surfId: SID,
+    color: SWATCH,
+    key: topPick.key,
+    faces: cube.faces,
+    now: t0 + 900,
+  });
+  check('painting the same face again does not add an undo entry', same.undo.length === 1 && same.changed === false);
+  const parted = livePaintPart(empty, { surfId: SID, color: '#00aa00' });
+  const partedAgain = livePaintPart(parted, { surfId: SID, color: '#00aa00' });
+  check('part paints the whole part once',
+    parted.session[SID].part === '#00aa00' && !parted.session[SID].faces && parted.undo.length === 1
+    && partedAgain.changed === false && partedAgain.undo.length === 1);
+  const cleared = livePaintClear({ ...one, baseline: empty.baseline });
+  check('clear restores the pre-session colors and can be undone',
+    !livePaintChanged(cleared.session, empty.baseline) && cleared.undo.length === 2);
+  const undone = livePaintUndo(one);
+  check('undo restores the face from before the tap',
+    !undone.session[SID] && undone.undo.length === 0);
+  const partPath = sharedPartPath('A');
+  const gitDoc = {
+    source: 'git',
+    name: 'Paint',
+    activeId: partPath,
+    parts: [{ id: partPath, name: 'A', surfId: SID, visible: true, order: 0 }],
+    colors: doubled.session,
+  };
+  const reloaded = parseSurfJson(stringifySurfJson(gitDoc));
+  check('confirm colors survive a .surf.json reload',
+    reloaded.colors?.[SID]?.faces?.length === cube.faces.length
+    && reloaded.colors[SID].faces.every((face) => face.color === SWATCH));
+  const baselineDoc = saveDoc(null);
+  check('dropping the session leaves the pre-session colors', baselineDoc.colors == null);
+  check('the double-tap window is the same 300 ms as a multi-click', PAINT_DOUBLE_TAP_MS === 300);
+  liveShot = {
+    mesh,
+    surfId: SID,
+    face: one.session,
+    body: doubled.session,
+  };
+}
+
 console.log('face paint — docs');
 {
   const arch = readFileSync(new URL('../../docs/architecture.md', import.meta.url), 'utf8');
@@ -371,15 +493,42 @@ renderPaintChrome(document.getElementById('root'), { theme: ${JSON.stringify(the
 window.__READY__ = true;
 </script>`;
 
+const liveHtml = `<!doctype html><meta charset="utf-8">
+<canvas id="face" width="390" height="420"></canvas>
+<canvas id="body" width="390" height="420"></canvas>
+<script id="payload" type="application/json">${JSON.stringify({
+  mesh: {
+    numProp: liveShot.mesh.numProp,
+    vertProperties: Array.from(liveShot.mesh.vertProperties),
+    triVerts: Array.from(liveShot.mesh.triVerts),
+    faceID: liveShot.mesh.faceID ? Array.from(liveShot.mesh.faceID) : null,
+  },
+  surfId: liveShot.surfId,
+  face: liveShot.face,
+  body: liveShot.body,
+}).replace(/</g, '\\u003c')}</script>
+<script type="module">
+import { renderLivePaintCanvas } from '/scripts/golden/face_paint_shot.js';
+const payload = JSON.parse(document.getElementById('payload').textContent);
+renderLivePaintCanvas(document.getElementById('face'), { mesh: payload.mesh, surfId: payload.surfId, colors: payload.face });
+renderLivePaintCanvas(document.getElementById('body'), { mesh: payload.mesh, surfId: payload.surfId, colors: payload.body });
+window.__READY__ = true;
+</script>`;
+
 const vite = await createVite({
   root: new URL('../..', import.meta.url).pathname,
-  server: { middlewareMode: true },
+  server: { middlewareMode: true, hmr: false },
   appType: 'custom',
   logLevel: 'error',
 });
 const server = createServer((req, res) => {
   const url = req.url || '/';
-  if (url === '/' || url.startsWith('/?')) {
+    if (url.startsWith('/live')) {
+      res.setHeader('content-type', 'text/html; charset=utf-8');
+      res.end(liveHtml);
+      return;
+    }
+    if (url === '/' || url.startsWith('/?')) {
     const theme = url.includes('theme=light') ? 'light' : 'dark';
     const compact = url.includes('compact=1');
     res.setHeader('content-type', 'text/html; charset=utf-8');
@@ -471,6 +620,63 @@ try {
         badgeCount: badges.length,
         badgeFits,
         stripHeight: strip ? Math.round(strip.getBoundingClientRect().height * 10) / 10 : 0,
+        swatches: (() => {
+          const ringOutset = (style) => {
+            let spread = 0;
+            const shadow = style.boxShadow || '';
+            const re = /(-?[\d.]+)px\s+(-?[\d.]+)px\s+(-?[\d.]+)px\s+(-?[\d.]+)px/g;
+            let match;
+            while ((match = re.exec(shadow))) {
+              const s = Math.abs(parseFloat(match[4]));
+              if (s > spread) spread = s;
+            }
+            const outline = parseFloat(style.outlineWidth) || 0;
+            if (style.outlineStyle && style.outlineStyle !== 'none' && outline > 0) {
+              spread = Math.max(spread, outline + Math.max(0, parseFloat(style.outlineOffset) || 0));
+            }
+            return spread;
+          };
+          const buttons = [...document.querySelectorAll('[data-paint-swatch]')];
+          const popup = document.querySelector('[data-paint-mode]');
+          const selected = buttons.find((el) => el.getAttribute('aria-pressed') === 'true');
+          const selectedOutset = selected ? ringOutset(getComputedStyle(selected)) : 0;
+          const maxOutset = buttons.reduce((n, el) => Math.max(n, ringOutset(getComputedStyle(el))), 0);
+          const outset = Math.max(selectedOutset, maxOutset);
+          const rows = new Map();
+          const fits = buttons.map((el) => {
+            const raw = el.getBoundingClientRect();
+            const box = {
+              top: raw.top - outset,
+              left: raw.left - outset,
+              right: raw.right + outset,
+              bottom: raw.bottom + outset,
+            };
+            rows.set(Math.round(raw.top), (rows.get(Math.round(raw.top)) || 0) + 1);
+            let ok = true;
+            let node = el.parentElement;
+            while (node && ok) {
+              const style = getComputedStyle(node);
+              const clipsX = style.overflowX !== 'visible';
+              const clipsY = style.overflowY !== 'visible';
+              if (clipsX || clipsY) {
+                const clip = paddingBox(node);
+                if (clipsY && (box.top < clip.top - slack || box.bottom > clip.bottom + slack)) ok = false;
+                if (clipsX && (box.left < clip.left - slack || box.right > clip.right + slack)) ok = false;
+              }
+              if (node === popup) break;
+              node = node.parentElement;
+            }
+            return ok;
+          });
+          const compact = document.querySelector('[data-paint-shot-compact]')?.getAttribute('data-paint-shot-compact') === '1';
+          return {
+            count: buttons.length,
+            outset,
+            fits: fits.every(Boolean),
+            rows: [...rows.values()],
+            compact,
+          };
+        })(),
       };
     });
     const badgesOk = placed.badgeFits.length === 4 && placed.badgeFits.every((b) => b.ok);
@@ -480,9 +686,40 @@ try {
     check(`${name} sheet metal is idle in the inspection group`, placed.sheetInRail && placed.sheetIdle);
     check(`${name} count badges sit inside the strip`, badgesOk && placed.stripHeight > 0 && placed.stripHeight <= 52,
       JSON.stringify({ height: placed.stripHeight, badges: placed.badgeFits }));
+    const swatchRows = placed.swatches?.rows || [];
+    check(`${name} swatch rings sit inside every clipping ancestor`,
+      placed.swatches?.count === 8
+      && placed.swatches.outset >= 1.5
+      && placed.swatches.fits
+      && (!placed.swatches.compact || swatchRows.length >= 2),
+      JSON.stringify(placed.swatches));
     const file = join(shotDir, name);
     await page.screenshot({ path: file });
     console.log(`  shot ${file}`);
+    if (name.includes('dark-390') || name.includes('dark-desktop')) {
+      const zoomName = name.replace('chip-popup', 'swatches');
+      const zoom = join(shotDir, zoomName);
+      await page.locator('[data-paint-mode="1"]').screenshot({ path: zoom });
+      console.log(`  shot ${zoom}`);
+    }
+    await page.close();
+  }
+  {
+    const page = await browser.newPage({
+      viewport: { width: 390, height: 900 },
+      deviceScaleFactor: 2,
+    });
+    const errors = [];
+    page.on('pageerror', (err) => errors.push(err.message));
+    await page.goto(`http://127.0.0.1:${port}/live`, { waitUntil: 'networkidle' });
+    await page.waitForFunction(() => window.__READY__, null, { timeout: 30000 });
+    const faceFile = join(shotDir, 'face-paint-live-face-dark-390.png');
+    const bodyFile = join(shotDir, 'face-paint-live-body-dark-390.png');
+    await page.locator('#face').screenshot({ path: faceFile });
+    await page.locator('#body').screenshot({ path: bodyFile });
+    check('live face and body shots render', errors.length === 0, errors.join('; '));
+    console.log(`  shot ${faceFile}`);
+    console.log(`  shot ${bodyFile}`);
     await page.close();
   }
 } finally {

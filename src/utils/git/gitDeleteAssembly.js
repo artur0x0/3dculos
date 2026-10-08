@@ -3,7 +3,7 @@
  *
  * Without parts (`keep`): delete the assembly folder and `.surf.json`.
  * Files already in `parts/` stay byte for byte. An assembly-local copy
- * moves to `parts/` (`Bracket.js`, then `Bracket 2.js`). Surf ids stay.
+ * moves to `parts/` (`Bracket.js`, then `Bracket (2).js`). Surf ids stay.
  * Refs are rewritten by surf id, then by path when the row has no id.
  *
  * With parts (`drop`): delete a script only when no other assembly
@@ -21,7 +21,7 @@
  * The local cache is one snapshot. Swap it only after the next tree is
  * fully built, so a failure cannot leave some paths moved and others not.
  */
-import { serializeAssembly, DEFAULT_ASSEMBLY_NAME } from '../assembly.js';
+import { serializeAssembly, DEFAULT_ASSEMBLY_NAME, numberedName } from '../assembly.js';
 import { fileDelete, fileWrite } from './githubAdapterInterface.js';
 import {
   assemblyDir,
@@ -60,7 +60,7 @@ export function sharedPathForMove(partName, taken) {
     return path;
   }
   for (let n = 2; n < 1000; n += 1) {
-    path = sharedPartPath(`${base} ${n}`);
+    path = sharedPartPath(numberedName(base, n));
     if (!taken.has(path)) {
       taken.add(path);
       return path;

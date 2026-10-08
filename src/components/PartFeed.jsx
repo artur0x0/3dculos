@@ -2432,7 +2432,7 @@ export default function PartFeed({
             <p className="mt-2 text-xs text-gray-300">
               {partCanDeleteFromRepo(source, pendingDelete.id)
                 ? `Remove ${pendingDelete.name} from this assembly only, or also delete its file from the repo.`
-                : `Remove ${pendingDelete.name} from this assembly? This drops the row, its script, and its solid.`}
+                : `Remove ${pendingDelete.name} from this assembly?`}
             </p>
             <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
               <button

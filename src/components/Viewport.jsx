@@ -294,13 +294,20 @@ import { calculateQuote } from '../utils/quoting';
 import { resolveViewportFaceClick, warmFaceGraph } from '../utils/selectFace';
 import {
   fingerprintsFromGeometry,
+  PAINT_DOUBLE_TAP_MS,
   PAINT_SWATCHES,
+  clonePaintSession,
+  livePaintChanged,
+  livePaintClear,
+  livePaintPart,
+  livePaintTap,
+  livePaintUndo,
+  livePaintUnmatched,
+  paintKeysForTriangles,
   paintPickFromClick,
   paintPicksAfterMeshChange,
   paintPicksAfterPartChange,
   resolvedPaintColor,
-  togglePaintPick,
-  undoPaintPick,
   unmatchedColorCount,
 } from '../utils/facePaint';
 import { formatViewerTitle, sanitizePartName } from '../utils/assembly.js';
@@ -883,12 +890,11 @@ const Viewport = forwardRef(({
   const filletModeRef = useRef(null);
   const [shellMode, setShellMode] = useState(null);
   const shellModeRef = useRef(null);
-  /** Paint: in-progress face picks and the popup. Null when the chip is off. */
+  /** Paint session. Null when the popup is closed. Colors stay here until Confirm. */
   const [paintMode, setPaintMode] = useState(null);
   const paintModeRef = useRef(null);
   const exitPaintModeRef = useRef(() => {});
-  const clearPaintPicksRef = useRef(() => {});
-  const showPaintPicksRef = useRef(() => {});
+  const applyLivePaintTapRef = useRef(() => {});
   /** SCS sheet metal: picker popup (S1) + mode state (stage, sku, partId). */
   const [sheetMetalPicker, setSheetMetalPicker] = useState(null);
   const [sheetMetalMode, setSheetMetalMode] = useState(null);
@@ -2798,22 +2804,23 @@ const Viewport = forwardRef(({
     shellModeRef.current = next;
   }, [exitContourMode, selectedFace, clearFilletBlendPreview, clearEdgeHover, clearEdgeHighlight, clearHighlight]);
 
+  const repaintFaceSkins = () => {
+    const apply = applyFaceSkinRef.current;
+    if (resultRef.current) apply(resultRef.current);
+    for (const mesh of assemblyExtrasRef.current.values()) apply(mesh);
+    const renderer = rendererRef.current;
+    const scene = sceneRef.current;
+    const camera = cameraRef.current;
+    if (renderer && scene && camera) renderer.render(scene, camera);
+  };
+
   const exitPaintMode = useCallback(() => {
-    setPaintMode(null);
     paintModeRef.current = null;
+    setPaintMode(null);
     clearHighlight();
+    repaintFaceSkins();
   }, [clearHighlight]);
   exitPaintModeRef.current = exitPaintMode;
-
-  const clearPaintPicks = useCallback(() => {
-    const prev = paintModeRef.current;
-    if (!prev?.picks?.length) return;
-    const next = { ...prev, picks: [] };
-    paintModeRef.current = next;
-    setPaintMode(next);
-    clearHighlight();
-  }, [clearHighlight]);
-  clearPaintPicksRef.current = clearPaintPicks;
 
   const enterPaintMode = useCallback(() => {
     if (mode === 'game') return;
@@ -2845,7 +2852,15 @@ const Viewport = forwardRef(({
     clearEdgeHover();
     clearEdgeHighlight();
     setSelectedEdges([]);
-    const next = { color: PAINT_SWATCHES[0], custom: '', part: false, picks: [] };
+    const base = clonePaintSession(assemblyColorsRef.current);
+    const next = {
+      color: PAINT_SWATCHES[0],
+      custom: '',
+      baseline: base,
+      session: clonePaintSession(base),
+      undo: [],
+      lastTap: null,
+    };
     paintModeRef.current = next;
     setPaintMode(next);
     clearHighlight();
@@ -3700,27 +3715,6 @@ const Viewport = forwardRef(({
     }
     highlightMeshRef.current.push(highlightMesh);
   }, []);
-
-  const showPaintPicks = useCallback((picks) => {
-    const list = Array.isArray(picks) ? picks : (paintModeRef.current?.picks || []);
-    clearHighlight();
-    const geom = resultRef.current?.geometry;
-    const positions = geom?.attributes?.position;
-    const index = geom?.index?.array;
-    const shown = [];
-    const seen = new Set();
-    for (const pick of list) {
-      for (const tri of pick?.indices || []) {
-        if (seen.has(tri)) continue;
-        seen.add(tri);
-        shown.push(tri);
-      }
-    }
-    if (geom && positions && index && shown.length) {
-      highlightFace(shown, geom, positions, index, 0xffff00, 'paint-pick');
-    }
-  }, [clearHighlight, highlightFace]);
-  showPaintPicksRef.current = showPaintPicks;
 
   const showCadBodyHighlight = useCallback(() => {
     const geom = resultRef.current?.geometry;
@@ -5584,7 +5578,21 @@ const Viewport = forwardRef(({
       additive: !!(event.shiftKey || event.metaKey || event.ctrlKey),
       partId: activePartIdRef.current,
     };
-    
+
+    // Paint applies on this mouseup. One tap is one face. A second tap on
+    // that face inside the double-tap window upgrades it to the body. The
+    // delayed processClick path must not also run, or the tap is counted twice.
+    if (paintModeRef.current) {
+      if (clickTimerRef.current) {
+        clearTimeout(clickTimerRef.current);
+        clickTimerRef.current = null;
+      }
+      clickCountRef.current = 0;
+      pendingClickDataRef.current = null;
+      applyLivePaintTapRef.current(clickData);
+      return;
+    }
+
     // Multi-click detection
     const now = Date.now();
     if (now - lastClickTimeRef.current > MULTI_CLICK_DELAY) {
@@ -5669,25 +5677,9 @@ const Viewport = forwardRef(({
     if (!clickData) return;
 
     if (paintModeRef.current) {
-      const { seedFaceIndex, geometry, faceNormal } = clickData;
-      const pick = paintPickFromClick({
-        geometry,
-        faceIDs: faceIDsRef.current,
-        seedFaceIndex,
-        faceNormal,
-        angleTolerance: ANGLE_TOLERANCE_DEGREES,
-      });
       clickCountRef.current = 0;
       clickTimerRef.current = null;
       pendingClickDataRef.current = null;
-      if (!pick) return;
-      const picks = togglePaintPick(paintModeRef.current.picks, pick);
-      const next = { ...paintModeRef.current, picks };
-      paintModeRef.current = next;
-      setPaintMode(next);
-      clearEdgeHighlight();
-      setSelectedEdges([]);
-      showPaintPicks(picks);
       return;
     }
 
@@ -5923,7 +5915,7 @@ const Viewport = forwardRef(({
       }
     }
     
-  }, [measurementEnabled, measurementFaces, onFaceSelected, clearHighlight, clearEdgeHighlight, highlightFace, publishFacePicks, paintDraftPicks, commitCutState, paintMovePreview, commitMoveFaceState, commitDeleteFaceState, getHelperBuffer, commitBooleanState, crossSectionEnabled, showPaintPicks]);
+  }, [measurementEnabled, measurementFaces, onFaceSelected, clearHighlight, clearEdgeHighlight, highlightFace, publishFacePicks, paintDraftPicks, commitCutState, paintMovePreview, commitMoveFaceState, commitDeleteFaceState, getHelperBuffer, commitBooleanState, crossSectionEnabled]);
 
   const chooseAmbiguousPart = useCallback((partId) => {
     const pending = ambiguousPickRef.current;
@@ -6092,9 +6084,13 @@ const Viewport = forwardRef(({
       if (polylinePointDragRef.current) endPolylinePointDrag(event);
     };
 
+    const onDblClick = (event) => {
+      event.preventDefault();
+    };
     canvas.addEventListener('mousedown', handleMouseDown);
     canvas.addEventListener('mousemove', handleMouseMove);
     canvas.addEventListener('mouseup', handleMouseUp);
+    canvas.addEventListener('dblclick', onDblClick);
     canvas.addEventListener('contextmenu', onContextMenu);
     window.addEventListener('mouseup', onWindowMouseUp);
 
@@ -6102,6 +6098,7 @@ const Viewport = forwardRef(({
       canvas.removeEventListener('mousedown', handleMouseDown);
       canvas.removeEventListener('mousemove', handleMouseMove);
       canvas.removeEventListener('mouseup', handleMouseUp);
+      canvas.removeEventListener('dblclick', onDblClick);
       canvas.removeEventListener('contextmenu', onContextMenu);
       window.removeEventListener('mouseup', onWindowMouseUp);
     };
@@ -6695,7 +6692,8 @@ const Viewport = forwardRef(({
   assemblyColorsRef.current = assemblyColors || null;
   applyFaceSkinRef.current = (host) => {
     if (!host) return;
-    const colors = assemblyColorsRef.current;
+    const painting = paintModeRef.current;
+    const colors = painting ? (painting.session || null) : assemblyColorsRef.current;
     const rainbow = readFaceColorDebugFlag();
     const surfId = host.userData?.surfId || null;
     const entry = surfId && colors ? colors[surfId] : null;
@@ -7258,7 +7256,6 @@ const Viewport = forwardRef(({
     }
     if (renderer && scene && camera) renderer.render(scene, camera);
     if (booleanModeRef.current) paintBooleanPicksRef.current(booleanModeRef.current);
-    if (paintModeRef.current) showPaintPicksRef.current(paintModeRef.current.picks);
     return true;
   };
 
@@ -7601,42 +7598,106 @@ const Viewport = forwardRef(({
     paintModeRef.current = next;
     setPaintMode(next);
   };
+  const storeLivePaint = (result) => {
+    const prev = paintModeRef.current;
+    if (!prev || !result) return;
+    const next = {
+      ...prev,
+      session: result.session,
+      undo: result.undo,
+      lastTap: result.lastTap,
+    };
+    paintModeRef.current = next;
+    setPaintMode(next);
+    repaintFaceSkins();
+  };
+  applyLivePaintTapRef.current = (clickData) => {
+    const state = paintModeRef.current;
+    if (!state || !clickData) return;
+    const color = resolvedPaintColor(state.color, state.custom);
+    const surfId = paintSurfId();
+    if (!color || !surfId) return;
+    const { seedFaceIndex, geometry, faceNormal } = clickData;
+    const pick = paintPickFromClick({
+      geometry,
+      faceIDs: faceIDsRef.current,
+      seedFaceIndex,
+      faceNormal,
+      angleTolerance: ANGLE_TOLERANCE_DEGREES,
+    });
+    if (!pick?.key) return;
+    const now = Date.now();
+    const keyJson = JSON.stringify(pick.key);
+    const last = state.lastTap;
+    const upgrade = last
+      && last.surfId === surfId
+      && last.keyJson === keyJson
+      && now - last.at <= PAINT_DOUBLE_TAP_MS;
+    let bodyKeys = null;
+    if (upgrade) {
+      const body = resolveViewportFaceClick({
+        geometry,
+        seedFaceIndex,
+        faceNormal,
+        clickCount: 2,
+        faceIDs: faceIDsRef.current,
+        angleTolerance: ANGLE_TOLERANCE_DEGREES,
+        legacy: false,
+      });
+      bodyKeys = paintKeysForTriangles(geometry, faceIDsRef.current, body?.indices || []);
+    }
+    const result = livePaintTap(state, {
+      surfId,
+      color,
+      key: pick.key,
+      bodyKeys,
+      faces: paintFacesNow(),
+      now,
+    });
+    storeLivePaint(result);
+    clearEdgeHighlight();
+    setSelectedEdges([]);
+  };
   const acceptPaint = () => {
     const state = paintModeRef.current;
     if (!state || mode === 'game') return;
-    const surfId = paintSurfId();
-    const color = resolvedPaintColor(state.color, state.custom);
-    if (!surfId || !color) return;
-    if (!state.part && !state.picks.length) return;
-    const wrote = onCommitPaint?.({
-      op: state.part ? 'part' : 'faces',
-      surfId,
-      color,
-      keys: state.picks.map((pick) => pick.key),
-      faces: paintFacesNow(),
-    });
-    if (wrote === false) return;
-    exitPaintMode();
+    if (!resolvedPaintColor(state.color, state.custom)) return;
+    if (livePaintChanged(state.session, state.baseline)) {
+      const wrote = onCommitPaint?.({ op: 'session', colors: state.session });
+      if (wrote === false) return;
+    }
+    // The assembly colors update in this same turn. Do not repaint from the
+    // old map first, or the skin flashes back before Confirm lands.
+    paintModeRef.current = null;
+    setPaintMode(null);
+    clearHighlight();
   };
-  const clearPaintSaved = () => {
+  const paintWholePart = () => {
     const state = paintModeRef.current;
     if (!state) return;
+    const color = resolvedPaintColor(state.color, state.custom);
     const surfId = paintSurfId();
-    if (!surfId) return;
-    onCommitPaint?.({
-      op: state.part ? 'clear-part' : 'clear-faces',
-      surfId,
-      keys: (state.picks || []).map((pick) => pick.key),
-      faces: paintFacesNow(),
-    });
+    if (!color || !surfId) return;
+    storeLivePaint(livePaintPart(state, { surfId, color }));
+  };
+  const undoLivePaint = () => {
+    const state = paintModeRef.current;
+    if (!state) return;
+    storeLivePaint(livePaintUndo(state));
+  };
+  const clearLivePaint = () => {
+    const state = paintModeRef.current;
+    if (!state) return;
+    storeLivePaint(livePaintClear(state));
   };
   const removeUnmatchedPaint = () => {
+    const state = paintModeRef.current;
     const surfId = paintSurfId();
-    if (!surfId) return;
-    onCommitPaint?.({ op: 'unmatched', surfId, faces: paintFacesNow() });
+    if (!state || !surfId) return;
+    storeLivePaint(livePaintUnmatched(state, { surfId, faces: paintFacesNow() }));
   };
   const paintUnmatched = paintMode
-    ? unmatchedColorCount(assemblyColors, paintSurfId(), paintFacesNow())
+    ? unmatchedColorCount(paintMode.session, paintSurfId(), paintFacesNow())
     : 0;
 
   const titleParts = formatViewerTitle(
@@ -8109,24 +8170,17 @@ const Viewport = forwardRef(({
       {paintMode && mode !== 'game' && (
         <PaintModeChip
           compact={isMobile}
-          faceCount={paintMode.picks.length}
           color={paintMode.color}
           custom={paintMode.custom}
-          part={!!paintMode.part}
-          canUndo={paintMode.picks.length > 0}
-          canClear={!!paintMode.part || paintMode.picks.length > 0}
-          canConfirm={!!resolvedPaintColor(paintMode.color, paintMode.custom)
-            && (!!paintMode.part || paintMode.picks.length > 0)}
+          canUndo={(paintMode.undo || []).length > 0}
+          canClear={livePaintChanged(paintMode.session, paintMode.baseline)}
+          canConfirm={!!resolvedPaintColor(paintMode.color, paintMode.custom)}
           unmatched={paintUnmatched}
           onSwatch={(hex) => patchPaint({ color: hex, custom: '' })}
           onCustom={(custom) => patchPaint({ custom })}
-          onPart={(part) => patchPaint({ part })}
-          onUndo={() => {
-            const picks = undoPaintPick(paintModeRef.current?.picks);
-            patchPaint({ picks });
-            showPaintPicks(picks);
-          }}
-          onClear={clearPaintSaved}
+          onPart={paintWholePart}
+          onUndo={undoLivePaint}
+          onClear={clearLivePaint}
           onConfirm={acceptPaint}
           onDismiss={exitPaintMode}
           onRemoveUnmatched={removeUnmatchedPaint}
