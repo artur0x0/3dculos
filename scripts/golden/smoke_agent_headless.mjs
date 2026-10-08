@@ -79,6 +79,34 @@ await expectSolid('filleted box', filletScript, { bodyCount: 1, volumeMin: 4500,
 await expectSolid('two-body assembly', assemblyScript, { bodyCount: 2, volumeMin: 4800, volumeMax: 4800 + Math.PI * 9 * 14 + 50 });
 
 const sheet = await expectSolid('sheet metal', sheetScript, { bodyCount: 1, volumeMin: 1000, volumeMax: 80000 });
+
+const wrappedScript = `
+const spec = ${JSON.stringify(sheetSpec)};
+const solid = sheetMetalSolid(spec);
+return { kind: 'sheet', spec, flat: { area: spec.width * spec.height }, solid };
+`;
+const wrapped = await runScript(wrappedScript);
+check('sheet wrapper unwraps to the solid', Math.abs(wrapped.volume - sheet.volume) < 1
+  && wrapped.status === 'NoError' && wrapped.mesh?.vertProperties?.length > 0,
+  `vol=${wrapped.volume} vs ${sheet.volume}`);
+try { wrapped.manifold?.delete?.(); } catch { /* already freed */ }
+
+let bareBag = '';
+try {
+  await runScript('return { solid: Manifold.cube([4, 4, 4], true) };');
+  bareBag = 'accepted';
+} catch (err) {
+  bareBag = err?.message || String(err);
+}
+check('a bag with only .solid is still rejected', bareBag === 'Script must return a Manifold object', bareBag);
+let arbitrary = '';
+try {
+  await runScript('return { nope: 1 };');
+  arbitrary = 'accepted';
+} catch (err) {
+  arbitrary = err?.message || String(err);
+}
+check('an arbitrary object is still rejected', arbitrary === 'Script must return a Manifold object', arbitrary);
 const exact = sheetSpecToStep(sheetSpec, { name: 'bracket', mesh: sheet.mesh, script: sheetScript });
 const exactText = exact.text || '';
 check('sheet step is true-curve', exact.stepSource === 'spec' && exactText.includes('CYLINDRICAL_SURFACE') && !exact.blocked,

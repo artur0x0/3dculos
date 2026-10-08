@@ -32,10 +32,11 @@ const SheetMetalRail = ({ onExit, tools = [], tool = null, onSelectTool, childre
       data-rail-fit={fits ? 'fits' : 'scroll'}
       data-sheet-metal-rail="1"
     >
-      <div className="text-[9px] font-semibold uppercase tracking-wide text-orange-700 px-1 truncate leading-4">
-        Sheet
-      </div>
-      {tools.map((item) => {
+      <div className="flex flex-col gap-0.5" data-palette-section="shape">
+        <div className="text-[9px] font-semibold uppercase tracking-wide text-gray-500 px-1 truncate leading-4">
+          Shape
+        </div>
+        {tools.map((item) => {
         const Icon = TOOL_ICONS[item.id] || Circle;
         const active = tool === item.id;
         return (
@@ -54,7 +55,8 @@ const SheetMetalRail = ({ onExit, tools = [], tool = null, onSelectTool, childre
             <span className="text-[9px] font-semibold leading-none">{item.label}</span>
           </button>
         );
-      })}
+        })}
+      </div>
       {children}
       <div className="border-t border-gray-300/70 my-0.5 mx-0.5" aria-hidden />
       <button

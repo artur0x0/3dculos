@@ -16,6 +16,7 @@ import {
   helperScope,
   HELPER_FUNCTIONS,
   getManifoldModule,
+  manifoldFromScriptResult,
 } from './runtime.js';
 
 export {
@@ -26,6 +27,7 @@ export {
   initializeManifold,
   loadBundledManifold,
   manifoldReady,
+  manifoldFromScriptResult,
 };
 
 /**

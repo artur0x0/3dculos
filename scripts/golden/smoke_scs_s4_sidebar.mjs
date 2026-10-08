@@ -139,7 +139,10 @@ console.log('SCS S4 — overlay + chrome');
   const flow = read('src/components/sheetMetal/SheetMetalFlow.jsx');
   const view = read('src/components/Viewport.jsx');
   const controls = read('src/components/sheetMetal/SmControls.jsx');
-  check('rail renders gated tools with 44px targets', /data-sheet-tool/.test(rail) && /min-h-\[44px\]/.test(rail));
+  check('rail renders gated tools with 44px targets under Shape',
+    /data-sheet-tool/.test(rail) && /min-h-\[44px\]/.test(rail)
+    && /data-palette-section="shape"/.test(rail) && />\s*Shape\s*</.test(rail)
+    && !/>\s*Sheet\s*</.test(rail));
   check('Viewport feeds sheetToolsFor + setSheetTool', /tools=\{sheetMetalMode\.stage === 'edit' \? sheetToolsFor/.test(view) && /setSheetTool\(prev, id\)/.test(view));
   check('Tab popup: width, depth, Centered toggle, offset when off', /sm-tab-width/.test(flow) && /sm-tab-depth/.test(flow)
     && /sm-tab-centered/.test(flow) && /d\.centered === false && \(/.test(flow));
