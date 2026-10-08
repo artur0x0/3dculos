@@ -105,8 +105,13 @@ Desktop specifics:
   assembly name, its part count, and **These parts are used elsewhere and
   will be kept in /parts** when another assembly references a part (part
   name and those assemblies). **Delete assembly, keep parts** is the
-  primary. **Delete assembly and its parts** is the danger button and stays
-  disabled until the name is typed. Cancel leaves the assembly. Folder →
+  primary: it deletes the folder and leaves `parts/` files in place, and an
+  assembly-local copy moves into `parts/`. **Delete assembly and its parts**
+  is the danger button and stays disabled until the name is typed. It removes
+  a script only when no other assembly cites it (`parts[].id`, a path when the
+  id is missing, or `groups[].partIds`, including the open document and this
+  branch's queued outbox). A cited copy moves into `parts/`. Cancel leaves
+  the assembly. Folder →
   Assembly and the open search share that list on desktop and on the phone.
   Live search is `data-git-open-search` / `filterVaultOpenIndex`; empty
   query shows the full list, no hits show *No matches*. Vault files,

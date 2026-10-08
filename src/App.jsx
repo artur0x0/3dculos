@@ -2818,7 +2818,7 @@ const App = () => {
     const branch = gitWorkingBranch();
     const remote = await readRenameEntries(gitAdapterRef.current, vault.repo, branch);
     const ops = gitSync().pending(vault.repo, branch).concat(gitSync().failed(vault.repo, branch));
-    return { vault, branch, entries: projectPendingOps(remote, ops) };
+    return { vault, branch, tip: remote, entries: projectPendingOps(remote, ops) };
   };
 
   const showEmptyAssembly = () => {
@@ -2896,8 +2896,8 @@ const App = () => {
 
   const handlePreviewDeleteAssembly = async (name) => {
     try {
-      const { entries } = await vaultEntriesForDelete();
-      return previewDeleteAssembly(entries, name);
+      const { entries, tip } = await vaultEntriesForDelete();
+      return previewDeleteAssembly(entries, name, { openDoc: assemblyRef.current, tipEntries: tip });
     } catch (err) {
       return { status: 'error', error: err?.message || 'Could not check this assembly' };
     }
@@ -2911,13 +2911,17 @@ const App = () => {
     const doc = assemblyRef.current;
     if (!doc || doc.source !== 'git') return { status: 'error', error: 'Not in Git mode' };
     try {
-      const { vault, branch, entries } = await vaultEntriesForDelete();
+      const { vault, branch, entries, tip } = await vaultEntriesForDelete();
       const live = codeEditorRef.current?.getContent?.();
       const scripts = { ...partScriptsRef.current };
       if (doc.activeId && !suppressPartSaveRef.current && typeof live === 'string') {
         scripts[doc.activeId] = live;
       }
-      const plan = planDeleteAssembly(entries, name, mode === 'drop' ? 'drop' : 'keep', { scripts });
+      const plan = planDeleteAssembly(entries, name, mode === 'drop' ? 'drop' : 'keep', {
+        scripts,
+        openDoc: doc,
+        tipEntries: tip,
+      });
       const projected = projectFiles(entries, plan.files);
       const next = workingCopyAfterDelete(doc, scripts, projected, plan, {
         recent: recentAssembliesRef.current,

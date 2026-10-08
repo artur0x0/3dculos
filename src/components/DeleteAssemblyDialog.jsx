@@ -70,8 +70,9 @@ export function AssemblyOpenList({ items, current, onOpen, onDelete }) {
 
 /**
  * Delete assembly? Name, part count, parts other assemblies still use,
- * and two actions plus Cancel. Keep-parts is the primary. Deleting the
- * part files stays disabled until the assembly name is typed.
+ * and two actions plus Cancel. Keep-parts leaves files in /parts and is
+ * the primary. Deleting the part files stays disabled until the assembly
+ * name is typed. A copy another assembly uses moves to /parts either way.
  */
 export default function DeleteAssemblyDialog({
   assemblyName,
@@ -137,6 +138,9 @@ export default function DeleteAssemblyDialog({
             {' has '}
             <span data-assembly-delete-count={String(count)}>{countLabel}</span>
             .
+          </p>
+          <p className="mt-2 text-xs text-gray-400" data-assembly-delete-rules="">
+            Keeping parts leaves files in /parts where they are. Deleting parts removes a script only when no other assembly uses it. A copy another assembly uses moves to /parts.
           </p>
           {referenced.length > 0 && (
             <div className="mt-3" data-assembly-delete-kept="">

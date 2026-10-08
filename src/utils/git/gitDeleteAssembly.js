@@ -1,16 +1,22 @@
 /**
  * Delete an assembly in one commit.
  *
- * Keep parts: every part script in assemblies/<Name>/ moves to parts/.
- * A name already in parts/ gets a numeric suffix (Bracket 2.js).
- * Delete parts: unreferenced scripts are removed; a part any other
- * assembly references is still moved to parts/. Either way the folder's
- * .surf.json is deleted, and every other .surf.json that pointed at those
- * paths is rewritten in the same commit. Match a ref by stable id first,
- * then by path.
+ * Without parts (`keep`): delete the assembly folder and `.surf.json`.
+ * Files already in `parts/` stay byte for byte. An assembly-local copy
+ * moves to `parts/` (`Bracket.js`, then `Bracket 2.js`). Surf ids stay.
+ * Refs are rewritten by surf id, then by path when the row has no id.
  *
- * Groups whose source was the deleted assembly keep their name. source
- * becomes null.
+ * With parts (`drop`): delete a script only when no other assembly
+ * references its surf id. An assembly-local copy that is still referenced
+ * moves to `parts/` and is not deleted. An unreferenced one is deleted.
+ * A reference is another assembly's tip `.surf.json`, the open working
+ * copy, or this branch's queued or failed outbox projected onto the tree.
+ * It matches `parts[].id`, or `parts[].path` when that id is missing, or
+ * `groups[].partIds`. `copiedFrom` is provenance. `groups[].source` is not
+ * a part ref.
+ *
+ * The commit refuses to drop a referenced part file. Groups whose source
+ * was the deleted assembly keep their name and `source` becomes null.
  *
  * The local cache is one snapshot. Swap it only after the next tree is
  * fully built, so a failure cannot leave some paths moved and others not.
@@ -26,7 +32,7 @@ import {
   sharedPartPath,
   vaultSegment,
 } from './vaultLayout.js';
-import { isSurfId, readSurfId } from './surfId.js';
+import { isSurfId, isSurfJsonPath, readSurfId, withSurfId } from './surfId.js';
 import { parseSurfJson, stringifySurfJson } from './surfJson.js';
 import { buildRenameCommitFiles, projectFiles } from './gitRename.js';
 
@@ -78,69 +84,203 @@ function otherAssemblyFiles(entries, name) {
 }
 
 /**
- * A ref hits a part when its stable id matches, otherwise when its path does.
- * Id wins when it matches; a missing or unknown id falls back to the path.
+ * A part row hits when `parts[].id` equals the surf id.
+ * `parts[].path` counts only when that row has no id.
  */
 export function refMatchesPart(ref, part) {
   if (!ref || !part) return false;
   if (ref.id && part.surfId && ref.id === part.surfId) return true;
-  if (ref.id && part.surfId && ref.id !== part.surfId) {
-    return ref.path === part.path;
-  }
+  if (ref.id) return false;
   return !!ref.path && ref.path === part.path;
 }
 
-function describeParts(entries, name) {
-  const metaPath = assemblyFilePath(name);
-  const legacyPath = legacyAssemblyFilePath(name);
-  const meta = (entries || []).find((entry) => entry.path === metaPath)
-    || (entries || []).find((entry) => entry.path === legacyPath);
-  const raw = meta ? parseJson(meta.content) : null;
-  const rows = Array.isArray(raw?.parts) ? raw.parts : [];
-  return assemblyPartFiles(entries, name).map((file) => {
-    const row = rows.find((part) => part?.path === file.path);
-    const header = readSurfId(file.content || '');
-    const surfId = (header && isSurfId(header))
-      ? header
-      : (isSurfId(row?.id) ? row.id : null);
-    const nameFromRow = typeof row?.name === 'string' ? row.name.trim() : '';
-    return {
-      path: file.path,
-      content: file.content ?? '',
-      surfId,
-      name: nameFromRow || partLabel(file.path),
-    };
-  }).sort((a, b) => a.path.localeCompare(b.path));
+function isScriptPath(path) {
+  const kind = parseVaultPath(path)?.kind;
+  return kind === 'shared-part' || kind === 'assembly-part';
 }
 
-function findReferencedPart(ref, parts) {
-  if (!ref) return null;
-  if (ref.id) {
-    const byId = parts.find((part) => part.surfId && part.surfId === ref.id);
-    if (byId) return byId;
+function fileAt(entries, path) {
+  if (!path) return null;
+  return (entries || []).find((entry) => entry?.path === path && typeof entry.content === 'string') || null;
+}
+
+function surfIdForFile(file, entries) {
+  const header = readSurfId(file?.content || '');
+  if (header && isSurfId(header)) return header;
+  for (const entry of entries || []) {
+    if (!isSurfJsonPath(entry?.path) || typeof entry.content !== 'string') continue;
+    const raw = parseJson(entry.content);
+    for (const part of raw?.parts || []) {
+      if (part?.path === file?.path && isSurfId(part.id)) return part.id;
+    }
   }
-  if (ref.path) return parts.find((part) => part.path === ref.path) || null;
   return null;
 }
 
-function referencesFrom(entries, name, parts) {
-  const used = new Map(parts.map((part) => [part.path, []]));
-  for (const file of otherAssemblyFiles(entries, name)) {
-    const raw = parseJson(file.content);
-    if (!raw || !Array.isArray(raw.parts)) continue;
-    const asm = typeof raw.name === 'string' && raw.name.trim()
-      ? raw.name.trim()
-      : parseVaultPath(file.path)?.assembly;
-    if (!asm) continue;
-    for (const ref of raw.parts) {
-      const hit = findReferencedPart(ref, parts);
-      if (!hit) continue;
-      const list = used.get(hit.path);
-      if (!list.includes(asm)) list.push(asm);
+function findOwnedBySurfId(entries, surfId, assemblyName) {
+  for (const entry of entries || []) {
+    if (!isScriptPath(entry?.path) || typeof entry.content !== 'string') continue;
+    const info = parseVaultPath(entry.path);
+    const here = info?.kind === 'shared-part'
+      || (info?.kind === 'assembly-part' && info.assembly === assemblyName);
+    if (!here) continue;
+    if (readSurfId(entry.content) === surfId) return entry;
+  }
+  for (const entry of entries || []) {
+    if (!isSurfJsonPath(entry?.path) || typeof entry.content !== 'string') continue;
+    const raw = parseJson(entry.content);
+    for (const part of raw?.parts || []) {
+      if (part?.id !== surfId || !part.path) continue;
+      const file = fileAt(entries, part.path);
+      const info = parseVaultPath(part.path);
+      if (!file || !info) continue;
+      if (info.kind === 'shared-part' || (info.kind === 'assembly-part' && info.assembly === assemblyName)) {
+        return file;
+      }
     }
   }
-  for (const list of used.values()) list.sort((a, b) => a.localeCompare(b));
-  return used;
+  return null;
+}
+
+function rememberOwned(map, file, entries, assemblyName, rowName) {
+  if (!file?.path || typeof file.content !== 'string') return;
+  const info = parseVaultPath(file.path);
+  const here = info?.kind === 'shared-part'
+    || (info?.kind === 'assembly-part' && info.assembly === assemblyName);
+  if (!here) return;
+  const label = typeof rowName === 'string' ? rowName.trim() : '';
+  const existing = map.get(file.path);
+  if (existing) {
+    if (label && !existing.nameFromRow) existing.nameFromRow = label;
+    return;
+  }
+  map.set(file.path, {
+    path: file.path,
+    content: file.content,
+    surfId: surfIdForFile(file, entries),
+    nameFromRow: label,
+    local: info.kind === 'assembly-part',
+  });
+}
+
+function ownFromRaw(map, raw, entries, assemblyName) {
+  for (const part of raw?.parts || []) {
+    const rowName = typeof part?.name === 'string' ? part.name : '';
+    if (typeof part?.path === 'string') {
+      rememberOwned(map, fileAt(entries, part.path), entries, assemblyName, rowName);
+    }
+    if (isSurfId(part?.id)) {
+      rememberOwned(map, findOwnedBySurfId(entries, part.id, assemblyName), entries, assemblyName, rowName);
+    }
+  }
+  for (const group of raw?.groups || []) {
+    for (const id of group?.partIds || []) {
+      if (!isSurfId(id)) continue;
+      rememberOwned(map, findOwnedBySurfId(entries, id, assemblyName), entries, assemblyName, '');
+    }
+  }
+}
+
+function rawFromOpenDoc(doc) {
+  return {
+    name: doc?.name,
+    parts: (doc?.parts || []).map((part) => ({
+      id: part?.surfId,
+      path: part?.id,
+      name: part?.name,
+    })),
+    groups: doc?.groups || [],
+  };
+}
+
+/** Scripts this assembly will take with it: its folder, plus scripts it cites in parts/. */
+function ownedParts(entries, name, openDoc) {
+  const map = new Map();
+  for (const file of assemblyPartFiles(entries, name)) {
+    rememberOwned(map, file, entries, name, '');
+  }
+  const raw = parseJson((fileAt(entries, assemblyFilePath(name)) || fileAt(entries, legacyAssemblyFilePath(name)))?.content);
+  ownFromRaw(map, raw, entries, name);
+  if (openDoc && vaultSegment(openDoc.name) === name) ownFromRaw(map, rawFromOpenDoc(openDoc), entries, name);
+  return [...map.values()].map((part) => ({
+    path: part.path,
+    content: part.content,
+    surfId: part.surfId,
+    local: part.local,
+    name: part.nameFromRow || partLabel(part.path),
+  })).sort((a, b) => a.path.localeCompare(b.path));
+}
+
+function refsFromRaw(raw, asm) {
+  const refs = [];
+  for (const part of raw?.parts || []) {
+    refs.push({
+      id: isSurfId(part?.id) ? part.id : null,
+      path: typeof part?.path === 'string' ? part.path : null,
+      assembly: asm,
+      via: 'part',
+    });
+  }
+  for (const group of raw?.groups || []) {
+    for (const id of group?.partIds || []) {
+      if (!isSurfId(id)) continue;
+      refs.push({ id, path: null, assembly: asm, via: 'group' });
+    }
+  }
+  return refs;
+}
+
+function assemblyLabel(raw, filePath) {
+  if (typeof raw?.name === 'string' && raw.name.trim()) return raw.name.trim();
+  return parseVaultPath(filePath)?.assembly || '';
+}
+
+function refsFromTree(entries, deletedName) {
+  const refs = [];
+  for (const file of otherAssemblyFiles(entries, deletedName)) {
+    const raw = parseJson(file.content);
+    if (!raw) continue;
+    const asm = assemblyLabel(raw, file.path);
+    if (!asm || asm === deletedName) continue;
+    refs.push(...refsFromRaw(raw, asm));
+  }
+  return refs;
+}
+
+/**
+ * Refs from the projected tree, the tip tree, and the open working copy
+ * when that copy is a different assembly. `copiedFrom` and `groups[].source`
+ * are not refs.
+ */
+function externalRefs(entries, name, { openDoc = null, tipEntries = null } = {}) {
+  const refs = refsFromTree(entries, name);
+  if (tipEntries && tipEntries !== entries) refs.push(...refsFromTree(tipEntries, name));
+  const openName = vaultSegment(openDoc?.name);
+  if (openDoc && openName && openName !== name) refs.push(...refsFromRaw(rawFromOpenDoc(openDoc), openName));
+  return refs;
+}
+
+function refHits(ref, part) {
+  if (!ref) return false;
+  if (ref.via === 'group') return !!(ref.id && part?.surfId && ref.id === part.surfId);
+  return refMatchesPart(ref, part);
+}
+
+function assembliesFor(part, refs) {
+  const names = [];
+  for (const ref of refs || []) {
+    if (!refHits(ref, part) || !ref.assembly || names.includes(ref.assembly)) continue;
+    names.push(ref.assembly);
+  }
+  names.sort((a, b) => a.localeCompare(b));
+  return names;
+}
+
+function contentForMove(part, scripts) {
+  const override = scripts && typeof scripts[part.path] === 'string' ? scripts[part.path] : null;
+  let content = override != null ? override : part.content;
+  if (part.surfId && !readSurfId(content)) content = withSurfId(content, part.surfId);
+  return content;
 }
 
 function rewriteSurfForDelete(text, { moves, sourcePaths }) {
@@ -151,7 +291,7 @@ function rewriteSurfForDelete(text, { moves, sourcePaths }) {
   const matchRef = (ref) => {
     if (!ref) return null;
     if (ref.id && byId.has(ref.id)) return byId.get(ref.id);
-    if (ref.path && byPath.has(ref.path)) return byPath.get(ref.path);
+    if (!ref.id && ref.path && byPath.has(ref.path)) return byPath.get(ref.path);
     return null;
   };
   let changed = false;
@@ -184,60 +324,156 @@ function rewriteSurfForDelete(text, { moves, sourcePaths }) {
   return `${JSON.stringify(raw, null, 2)}\n`;
 }
 
+function partRecord(entry, entries) {
+  return {
+    path: entry.path,
+    content: entry.content ?? '',
+    surfId: surfIdForFile(entry, entries),
+  };
+}
+
+/**
+ * Throw when a referenced part script disappears or a `parts/` file is
+ * rewritten. An assembly-local copy may move to `parts/` with its bytes
+ * and surf id. `mode: 'keep'` also requires every existing `parts/` file
+ * to stay byte for byte.
+ */
+export function assertDeleteKeepsReferenced(before, after, refs, moves = [], { assemblyName = '', mode = 'drop' } = {}) {
+  const afterMap = new Map((after || []).map((entry) => [entry.path, entry.content ?? '']));
+  const moveByFrom = new Map((moves || []).map((move) => [move.from, move]));
+  for (const entry of before || []) {
+    if (!isScriptPath(entry?.path) || typeof entry.content !== 'string') continue;
+    const part = partRecord(entry, before);
+    if (!assembliesFor(part, refs).length) continue;
+    if (afterMap.get(part.path) === part.content) continue;
+    const move = moveByFrom.get(part.path);
+    const dest = move ? afterMap.get(move.to) : undefined;
+    const info = parseVaultPath(part.path);
+    if (info?.kind === 'shared-part' || typeof dest !== 'string' || dest !== (move.content ?? '')) {
+      throw new Error(`Delete assembly lost referenced part ${part.path}`);
+    }
+    if (part.surfId && readSurfId(dest) !== part.surfId) {
+      throw new Error(`Delete assembly changed the surf id of ${part.path}`);
+    }
+  }
+  if (mode === 'keep') {
+    for (const entry of before || []) {
+      if (parseVaultPath(entry?.path)?.kind !== 'shared-part') continue;
+      if (afterMap.get(entry.path) !== (entry.content ?? '')) {
+        throw new Error(`Delete assembly changed ${entry.path}`);
+      }
+    }
+  }
+  const gone = new Set([
+    assemblyName ? assemblyFilePath(assemblyName) : '',
+    assemblyName ? legacyAssemblyFilePath(assemblyName) : '',
+  ]);
+  for (const entry of before || []) {
+    if (!isSurfJsonPath(entry?.path) || gone.has(entry.path)) continue;
+    if (!afterMap.has(entry.path)) throw new Error(`Delete assembly lost ${entry.path}`);
+  }
+}
+
+/** The file list must not overwrite a path or delete a referenced script. */
+export function assertDeleteCommitSafe(files, before, { assemblyName, refs, mode, moves }) {
+  const beforeMap = new Map((before || []).map((entry) => [entry.path, entry.content ?? '']));
+  const prefix = `${assemblyDir(assemblyName)}/`;
+  const movedFrom = new Set((moves || []).map((move) => move.from));
+  for (const file of files || []) {
+    if (!file?.path) continue;
+    if (!file.delete) {
+      const prev = beforeMap.get(file.path);
+      const kind = parseVaultPath(file.path)?.kind;
+      const script = kind === 'shared-part' || kind === 'assembly-part';
+      if (script && typeof prev === 'string' && prev !== (file.content ?? '')) {
+        throw new Error(`Delete assembly overwrote ${file.path}`);
+      }
+      continue;
+    }
+    if (isSurfJsonPath(file.path) && !file.path.startsWith(prefix)) {
+      throw new Error(`Delete assembly refuses to delete ${file.path}`);
+    }
+    const info = parseVaultPath(file.path);
+    if (info?.kind === 'assembly-part' && info.assembly !== assemblyName) {
+      throw new Error(`Delete assembly refuses to delete ${file.path}`);
+    }
+    if (info?.kind !== 'shared-part' && info?.kind !== 'assembly-part') continue;
+    const part = partRecord({ path: file.path, content: beforeMap.get(file.path) ?? '' }, before);
+    const referenced = assembliesFor(part, refs).length > 0;
+    if (info.kind === 'shared-part' && mode === 'keep') {
+      throw new Error(`Delete assembly refuses to delete ${file.path}`);
+    }
+    if (info.kind === 'shared-part' && referenced) {
+      throw new Error(`Delete assembly refuses to delete referenced part ${file.path}`);
+    }
+    if (info.kind === 'assembly-part' && referenced && !movedFrom.has(file.path)) {
+      throw new Error(`Delete assembly refuses to delete referenced part ${file.path}`);
+    }
+  }
+}
+
 /**
  * File list for one delete commit.
- * mode 'keep' moves every part script in the folder.
- * mode 'drop' deletes scripts no other assembly references.
+ * mode 'keep' deletes the folder and leaves `parts/` bytes alone.
+ * Assembly-local copies move to `parts/`.
+ * mode 'drop' deletes a script only when no other assembly references it.
+ * A referenced assembly-local copy still moves.
  * -> { assemblyName, assemblyPath, legacyPath, mode, message, partCount,
  *      referenced, moves, files }
  */
-export function planDeleteAssembly(entries, assemblyName, mode = 'keep', { scripts = null } = {}) {
+export function planDeleteAssembly(entries, assemblyName, mode = 'keep', {
+  scripts = null,
+  openDoc = null,
+  tipEntries = null,
+} = {}) {
   const name = vaultSegment(assemblyName);
   if (!name) throw new Error('Empty assembly name');
   if (mode !== 'keep' && mode !== 'drop') throw new Error(`Unknown delete mode "${mode}"`);
-  const parts = describeParts(entries, name);
-  const usedBy = referencesFrom(entries, name, parts);
+  const list = entries || [];
+  const parts = ownedParts(list, name, openDoc);
+  const refs = externalRefs(list, name, { openDoc, tipEntries });
   const referenced = parts
-    .filter((part) => (usedBy.get(part.path) || []).length > 0)
     .map((part) => ({
       name: part.name,
       path: part.path,
       surfId: part.surfId,
-      assemblies: usedBy.get(part.path) || [],
+      assemblies: assembliesFor(part, refs),
     }))
+    .filter((part) => part.assemblies.length > 0)
     .sort((a, b) => a.name.localeCompare(b.name) || a.path.localeCompare(b.path));
-  const keepSet = new Set(
-    mode === 'keep' ? parts.map((part) => part.path) : referenced.map((part) => part.path),
-  );
+  const referencedPaths = new Set(referenced.map((part) => part.path));
   const taken = new Set(
-    (entries || [])
-      .map((entry) => entry.path)
-      .filter((path) => parseVaultPath(path)?.kind === 'shared-part'),
+    list.map((entry) => entry.path).filter((path) => parseVaultPath(path)?.kind === 'shared-part'),
   );
   const moves = [];
+  const dropShared = [];
   for (const part of parts) {
-    if (!keepSet.has(part.path)) continue;
-    const override = scripts && typeof scripts[part.path] === 'string' ? scripts[part.path] : null;
-    moves.push({
-      from: part.path,
-      to: sharedPathForMove(partLabel(part.path), taken),
-      surfId: part.surfId,
-      name: part.name,
-      content: override != null ? override : part.content,
-    });
+    const keep = mode === 'keep' ? part.local : (part.local && referencedPaths.has(part.path));
+    if (keep) {
+      moves.push({
+        from: part.path,
+        to: sharedPathForMove(partLabel(part.path), taken),
+        surfId: part.surfId,
+        name: part.name,
+        content: contentForMove(part, scripts),
+      });
+      continue;
+    }
+    if (mode === 'drop' && !part.local && !referencedPaths.has(part.path)) dropShared.push(part.path);
   }
   const sourcePaths = new Set([assemblyFilePath(name), legacyAssemblyFilePath(name)]);
   const prefix = `${assemblyDir(name)}/`;
   const writes = new Map();
   const deletes = new Set();
-  for (const entry of entries || []) {
+  for (const entry of list) {
     if (typeof entry?.path === 'string' && entry.path.startsWith(prefix)) deletes.add(entry.path);
   }
+  for (const path of dropShared) deletes.add(path);
   for (const move of moves) {
     writes.set(move.to, move.content ?? '');
     deletes.add(move.from);
   }
-  for (const file of otherAssemblyFiles(entries, name)) {
+  for (const file of otherAssemblyFiles(list, name)) {
     const next = rewriteSurfForDelete(file.content || '', { moves, sourcePaths });
     if (next !== (file.content || '')) writes.set(file.path, next);
   }
@@ -246,6 +482,9 @@ export function planDeleteAssembly(entries, assemblyName, mode = 'keep', { scrip
     ...[...writes.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([path, content]) => fileWrite(path, content)),
     ...[...deletes].sort().map((path) => fileDelete(path)),
   ];
+  const after = projectFiles(list, files);
+  assertDeleteKeepsReferenced(list, after, refs, moves, { assemblyName: name, mode });
+  assertDeleteCommitSafe(files, list, { assemblyName: name, refs, mode, moves });
   return {
     assemblyName: name,
     assemblyPath: assemblyFilePath(name),

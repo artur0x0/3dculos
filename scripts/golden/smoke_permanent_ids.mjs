@@ -166,6 +166,66 @@ console.log('\nmigration strips once and keeps every part file');
   throws('a delete is refused', () => assertMigrationCommitSafe([{ path: GB, delete: true }]), /refuses to delete/);
 }
 
+console.log('\nheader bytes stay except the id text');
+{
+  const blank = `// @surf-id ${LOCAL}\n\nconst a = 1;\n`;
+  const indented = `// @surf-id ${LOCAL}\n  const a = 1;\n`;
+  const crlf = `// @surf-id ${LOCAL}\r\n\r\n  const a = 1;\r\n`;
+  const cases = [
+    ['blank line', blank, assemblyPartPath('Gearbox', 'Blank')],
+    ['indented first line', indented, assemblyPartPath('Gearbox', 'Indent')],
+    ['crlf', crlf, assemblyPartPath('Gearbox', 'Crlf')],
+  ];
+  const entries = cases.map(([, before, path]) => ({ path, content: before }));
+  const once = planSurfIdMigrationCommit(entries);
+  for (const [label, before, path] of cases) {
+    const next = once.files.find((file) => file.path === path)?.content;
+    eq(`${label} is the same bytes except the id`, next, before.replace(LOCAL, BODY));
+  }
+  const after = entries.map((entry) => {
+    const hit = once.files.find((file) => file.path === entry.path);
+    return hit ? { path: entry.path, content: hit.content } : entry;
+  });
+  ok('header second pass is a no-op', planSurfIdMigrationCommit(after).changed === false);
+}
+
+console.log('\ngroup id is stripped in the repo and in IndexedDB');
+{
+  const localGroup = `local-${GROUP}`;
+  const asm = stringifySurfJson({
+    source: 'git',
+    name: 'Gearbox',
+    activeId: GB,
+    parts: [{ id: GB, name: 'Bracket', visible: true, order: 0, surfId: BODY }],
+    groups: [{ id: localGroup, name: 'Cover', source: null, partIds: [BODY] }],
+  });
+  const entries = [
+    { path: GB, content: withSurfId(BRACKET_BODY, BODY) },
+    { path: assemblyFilePath('Gearbox'), content: asm },
+  ];
+  const once = planSurfIdMigrationCommit(entries);
+  const json = once.files.find((file) => file.path.endsWith('.surf.json'))?.content;
+  const parsed = parseSurfJson(json);
+  eq('repo group id drops the prefix', parsed.groups[0].id, GROUP);
+  const local = migrateAssemblyRecords({
+    doc: {
+      name: 'Gearbox',
+      source: 'git',
+      parts: [{ id: GB, name: 'Bracket', surfId: BODY }],
+      groups: [{ id: localGroup, name: 'Cover', source: null, partIds: [BODY] }],
+    },
+    scripts: {},
+  });
+  eq('indexeddb group id drops the prefix', local.doc.groups[0].id, GROUP);
+  eq('repo and indexeddb group ids match', parsed.groups[0].id, local.doc.groups[0].id);
+  const again = entries.map((entry) => {
+    const hit = once.files.find((file) => file.path === entry.path);
+    return hit ? { path: entry.path, content: hit.content } : entry;
+  });
+  ok('group id second pass is a no-op', planSurfIdMigrationCommit(again).changed === false);
+  ok('indexeddb group id second pass is a no-op', migrateAssemblyRecords({ doc: local.doc, scripts: {} }).changed === false);
+}
+
 console.log('\nreload between commit and local apply');
 {
   const gh = createMockGithubAdapter({ login: 'artur' });
