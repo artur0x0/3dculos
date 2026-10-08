@@ -98,3 +98,24 @@ If the timing hook is present, a successful run sets `window.__SURFCAD_RUN_TIMIN
 | `edgeGraphMs` | Edge graph (feature + boundary topo + annotate) |
 | `contourGraphMs` | Contour graph (coherent chains + contact seam) |
 | `totalMs` | From the start of that execute to ready, not from the click |
+
+## Viewport orbit (dev vs production)
+
+This is not a fillet or wasm regression. Staging is `vite` dev. Production is `vite build` behind nginx. Same commit, same `built/manifold.wasm` (480700 bytes, sha256 `1b0597b065b041457e157daf6b53872337da0da75459d678eaf1d8cc4979bf43`).
+
+React StrictMode in dev mounts the viewport effect twice. The effect started a `requestAnimationFrame` loop that called `controlsRef.current.update()` and `renderer.render`, and the cleanup did not cancel the frame or call `controls.dispose()`. Both loops stayed alive and both drove the second controls instance, so development applied every TrackballControls step twice per frame. Production mounts once.
+
+`TrackballControls.update()` consumes the pointer delta on the first call and, when `staticMoving` is false, coasts on the next call with `dynamicDampingFactor` 0.2 (`_lastAngle *= Math.sqrt(1 - factor)` for rotation; zoom and pan eat `factor` of the leftover delta). Two calls per frame is a faster drag and a shorter coast. `controls.enableDamping = true` was a no-op: that property is on OrbitControls, not TrackballControls.
+
+Ruled out on a 390×844 page, devicePixelRatio 3, in Chromium and WebKit, dev server and `vite preview`:
+
+- Pixel ratio cap is `min(devicePixelRatio, 2)` in both, and both created a 2× backing store with antialias on.
+- Live `rotateSpeed` / `zoomSpeed` / `panSpeed` / `dynamicDampingFactor` were the three.js defaults in both bundles. Minification did not change them.
+- The wasm bytes above were the response in dev (`/built/manifold.wasm`) and in preview (`/assets/manifold-*.wasm`).
+- Dev also loads `@vite/client` and the React refresh client. Those scripts do not touch the orbit. Stripe and Monaco load in both.
+
+Before the fix, idle `controls.update()` / `renderer.render` per frame was 2 in dev and 1 in preview (the extra perpetual `requestAnimationFrame` in the sample is the probe). A 120 CSS-pixel pointer drag dispatched in the page (same `pageX`/`pageY` in both browsers) rotated about 0.568 deg/px in dev and 0.306 deg/px in preview (about 1.85×), and the coast dropped under 0.05 deg/frame in 15 frames in dev and 25 frames in preview. Chromium and WebKit agreed. Frame cost did not explain the sluggish prod feel: render CPU was a fraction of a millisecond, and the preview frame interval was the same or shorter than dev.
+
+The viewport init effect now cancels its frame and disposes the controls. `src/utils/trackballFeel.js` sets one update to that double-update feel: speeds 2× the defaults, `dynamicDampingFactor` 0.36.
+
+After that change, dev and preview both do one `update()` and one `render` per frame (one wheel listener, one key listener). The same in-page drag rotates 0.609 deg/px and coasts in 15 frames on Chromium dev, Chromium preview, and WebKit preview: about 7% above the old dev drag, same settle. A Playwright mouse drag, three trials, was about 6% above that browser's old dev number, and dev matched preview in each browser. Chromium's frame interval is 33 ms in both builds. Render CPU stays under a millisecond, so production was never the slow renderer.

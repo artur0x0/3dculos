@@ -49,6 +49,7 @@ import {
   PREVIEW_RENDER_ORDER,
 } from '../utils/previewStyle';
 import { TrackballControls } from 'three/addons/controls/TrackballControls.js';
+import { applyTrackballFeel } from '../utils/trackballFeel';
 import { LineSegments2 } from 'three/addons/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js';
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
@@ -5985,6 +5986,12 @@ const Viewport = forwardRef(({
 
     const container = containerRef.current;
     let initialized = false;
+    // This effect's own loop. StrictMode runs cleanup between two mounts in dev;
+    // the id and the flag stop the first loop, and the loop closes over its own
+    // controls instead of controlsRef (a later mount overwrites the ref).
+    let rafId = 0;
+    let loopAlive = true;
+    let orbitControls = null;
     
     const getContainerSize = () => {
       const size = {
@@ -6258,8 +6265,9 @@ const Viewport = forwardRef(({
       }
 
       const controls = new TrackballControls(camera, renderer.domElement);
-      controls.enableDamping = true;
+      applyTrackballFeel(controls);
       controls.enableRotate = true;
+      orbitControls = controls;
       controlsRef.current = controls;
 
       // Add axis helper
@@ -6269,18 +6277,17 @@ const Viewport = forwardRef(({
       axisHelperRef.current.visible = axisHelperEnabled;
 
       const animate = () => {
-        requestAnimationFrame(animate);
-        
-        if (controlsRef.current) {
-          controlsRef.current.update();
-        }
+        if (!loopAlive) return;
+        rafId = requestAnimationFrame(animate);
+
+        controls.update();
 
         animatePolylineHandles();
         updateEdgeChips();
-        
-        if (rendererRef.current && sceneRef.current && cameraRef.current) {
+
+        if (scene && camera) {
           try {
-            rendererRef.current.render(sceneRef.current, cameraRef.current);
+            renderer.render(scene, camera);
           } catch (error) {
             // Log debug info only on error
             const meshCount = sceneRef.current.children.filter(c => c.type === 'Mesh').length;
@@ -6349,6 +6356,14 @@ const Viewport = forwardRef(({
     initScene();
 
     return () => {
+      loopAlive = false;
+      cancelAnimationFrame(rafId);
+      rafId = 0;
+      if (orbitControls) {
+        orbitControls.dispose();
+        if (controlsRef.current === orbitControls) controlsRef.current = null;
+        orbitControls = null;
+      }
       resizeObserver.disconnect();
       window.removeEventListener('resize', handleResize);
       if (rendererRef.current) {

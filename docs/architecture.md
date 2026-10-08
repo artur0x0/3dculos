@@ -26,6 +26,11 @@ flowchart TD
 3. **Mesh.** A successful run replaces the three.js geometry and stores `faceID` on it. `c4MeshData` is a separate worker graph, rebuilt on each helper call that needs faces or edges. It is not the viewport PartGraph. `edge` / `edgesBetween` use `indexBoundaryEdges`, cached in a WeakMap on that Manifold object.
 4. **Viewport.** Pickers and paint read the three.js mesh. They do not read `c4MeshData`.
 
+## Viewport orbit loop
+
+- The viewport init effect owns one `requestAnimationFrame` loop and one `TrackballControls`. Cleanup cancels that frame (`cancelAnimationFrame` on the id it stored) and calls `controls.dispose()`. The loop updates the controls instance it created, not `controlsRef`, so a later mount cannot retarget a stale loop. That includes React StrictMode in `vite` dev, which runs the effect, the cleanup, then the effect again.
+- Orbit feel is `src/utils/trackballFeel.js`: `rotateSpeed` 2, `zoomSpeed` 2.4, `panSpeed` 0.6 (2× the three.js defaults) and `dynamicDampingFactor` 0.36, one step with the same per-frame decay as two default 0.2 steps. `enableDamping` is not a TrackballControls property and is not set.
+
 ## Helpers
 
 Injected names are the keys of `HELPER_FUNCTIONS` in `src/lib/surfcad/runtime.js`. Anything not in that object is not a script helper. `src/workers/sandboxWorker.js` only calls `bindWorker` on that module.
