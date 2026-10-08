@@ -305,11 +305,6 @@ console.log('face paint — game mode and part switch');
     && !/showPatchOverlay/.test(view)
     && !/buildPatchOverlayArrays/.test(view)
     && !/patchOverlayActiveRef/.test(view));
-  check('sheet metal is in the inspection group and idle is not a green fill',
-    /data-sheet-metal-group="inspection"/.test(panel)
-    && /data-sheet-metal-button/.test(panel)
-    && /sheetMetalActive[\s\S]{0,180}text-blue-600 hover:bg-gray-100/.test(panel)
-    && !/text-orange-700/.test(panel));
   check('a tap paints immediately through the normal face pick',
     /livePaintTap\(/.test(view) && /paintPickFromClick\(/.test(view)
     && /applyLivePaintTapRef\.current\(clickData\)/.test(view)
@@ -578,11 +573,9 @@ try {
       };
       const rail = document.querySelector('[data-rail-pair="right"]');
       const chip = document.querySelector('[data-paint-chip]');
-      const sheet = document.querySelector('[data-sheet-metal-button]');
       const strip = document.querySelector('[data-feature-strip]');
       const badges = [...document.querySelectorAll('[data-feature-type-badge]')];
       const chipStyle = chip ? getComputedStyle(chip) : null;
-      const sheetClass = sheet ? sheet.className : '';
       const badgeFits = badges.map((badge) => {
         const box = badge.getBoundingClientRect();
         const stripBox = paddingBox(strip);
@@ -614,8 +607,6 @@ try {
         chipInRail: !!(rail && chip && rail.contains(chip)),
         chipNotAbsolute: chipStyle?.position !== 'absolute',
         noRainbow: !document.querySelector('[data-overlay-toggle="patches"]'),
-        sheetInRail: !!(rail && sheet && rail.contains(sheet) && sheet.getAttribute('data-sheet-metal-group') === 'inspection'),
-        sheetIdle: sheetClass.includes('text-blue-600') && !sheetClass.includes('bg-green-100'),
         paintPressed: chip?.getAttribute('aria-pressed') === 'true' && (chip?.className || '').includes('bg-green-100'),
         badgeCount: badges.length,
         badgeFits,
@@ -683,7 +674,6 @@ try {
     check(`${name} shows the paint button, popup, and 8 swatches`, errors.length === 0 && swatches === 8
       && placed.chipInRail && placed.chipNotAbsolute && placed.paintPressed && placed.noRainbow,
       errors.join('; ') || JSON.stringify({ swatches, ...placed, badgeFits: undefined }));
-    check(`${name} sheet metal is idle in the inspection group`, placed.sheetInRail && placed.sheetIdle);
     check(`${name} count badges sit inside the strip`, badgesOk && placed.stripHeight > 0 && placed.stripHeight <= 52,
       JSON.stringify({ height: placed.stripHeight, badges: placed.badgeFits }));
     const swatchRows = placed.swatches?.rows || [];

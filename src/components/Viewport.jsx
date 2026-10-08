@@ -8242,6 +8242,9 @@ const Viewport = forwardRef(({
           onEnterMoveMode={enterMoveMode}
           onEnterMoveFaceMode={enterMoveFaceMode}
           onEnterDeleteFaceMode={enterDeleteFaceMode}
+          onOpenSheetMetal={mode !== 'game' && onBindSheetMetal
+            ? () => setSheetMetalPicker({ willCreatePart: getSheetMetalReady ? !getSheetMetalReady() : false })
+            : null}
           compact={isMobile}
           editSession={helperEdit}
           onEditConfirm={({ fields }) => commitFeatureEditRef.current?.({
@@ -8343,10 +8346,6 @@ const Viewport = forwardRef(({
           showPaint={mode !== 'game'}
           paintActive={!!paintMode}
           onPaintToggle={() => (paintMode ? exitPaintMode() : enterPaintMode())}
-          onOpenSheetMetal={mode !== 'game' && onBindSheetMetal
-            ? () => setSheetMetalPicker({ willCreatePart: getSheetMetalReady ? !getSheetMetalReady() : false })
-            : null}
-          sheetMetalActive={!!(sheetMetalMode || sheetMetalPicker)}
           onPickModeChange={(mode) => {
             const next = mode === 'edge' ? 'edge' : 'face';
             setPickMode(next);

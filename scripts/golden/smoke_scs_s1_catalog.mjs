@@ -209,14 +209,14 @@ console.log('SCS S1 — mode entry + chrome');
   check('selects + numbers use the ≥16px token',
     /PARTS_TEXT_INPUT_STYLE/.test(controls) && (controls.match(/style=\{PARTS_TEXT_INPUT_STYLE\}/g) || []).length >= 2
     && /min-h-\[44px\]/.test(controls));
-  check('Sheet Metal button sits in the right-rail inspection group',
-    /data-sheet-metal-button/.test(panel)
-    && /data-sheet-metal-group="inspection"/.test(panel)
-    && /onOpenSheetMetal/.test(panel)
-    && /sheetMetalActive[\s\S]{0,160}text-green-600 bg-green-100/.test(panel)
-    && /text-blue-600 hover:bg-gray-100 active:bg-blue-100/.test(panel)
-    && !/data-sheet-metal-button/.test(palette)
-    && !/text-orange-700/.test(panel)
+  check('Sheet Metal button sits in the left-rail Shape group',
+    /section\.section === 'shape' && onOpenSheetMetal/.test(palette)
+    && /data-sheet-metal-button/.test(palette)
+    && /FoldVertical/.test(palette)
+    && /text-orange-700 hover:bg-orange-100 active:bg-orange-200/.test(palette)
+    && /onOpenSheetMetal=\{mode !== 'game' && onBindSheetMetal/.test(view)
+    && !/data-sheet-metal-button/.test(panel)
+    && !/data-sheet-metal-group="inspection"/.test(panel)
     && !/data-palette-section="sheet"/.test(palette));
   check('rail swaps while in sheet metal', /!deleteFaceMode && !sheetMetalMode && \(/.test(view) && /<SheetMetalRail/.test(view));
   check('Start binds then enters mode', /onBindSheetMetal\?\.\(record\)/.test(view) && /enterSheetMetalMode\(record, bound\.partId/.test(view));
