@@ -75,10 +75,13 @@ export function newLocalPartId() {
  *   activeId: string | null,
  *   parts: [{ id, name, visible, order, position?, surfId?, isSynced? }]
  *   groups?: [{ id, name, source, partIds }]
+ *   colors?: { [surfId]: { part?: '#rrggbb', faces?: [...] } }
  * }
  * `name` is the assembly name. A blank name is saved as Assembly.
  * `script` and any other fields are dropped. `isSynced` is local only
- * (never written to `.surf.json`).
+ * (never written to `.surf.json`). `colors` is per assembly, keyed by
+ * surf id. An empty map is omitted. A key whose surf id is not on a row
+ * is dropped.
  * `groups` lists parts inserted from another assembly. `partIds` are surf
  * ids. A part is in at most one group. Empty groups and dangling ids are
  * dropped. No `groups` key when there are none. `source` is the source
@@ -260,6 +263,178 @@ export function normalizeGroups(groups, parts) {
   return out;
 }
 
+const FACE_COLOR_RE = /^#[0-9a-f]{6}$/;
+const COLOR_ENTRY_KEYS = new Set(['part', 'faces']);
+const COLOR_FACE_KEYS = new Set(['color', 'key']);
+const COLOR_KEY_FIELDS = new Set(['at', 'n', 'area', 'src', 'ord']);
+
+/** Lowercase `#rrggbb`. */
+export function isFaceColor(value) {
+  return typeof value === 'string' && FACE_COLOR_RE.test(value);
+}
+
+function isVec3(value) {
+  return Array.isArray(value)
+    && value.length === 3
+    && value.every((n) => typeof n === 'number' && Number.isFinite(n));
+}
+
+function colorKeyErrors(key, at) {
+  const errors = [];
+  if (!key || typeof key !== 'object' || Array.isArray(key)) {
+    errors.push(`${at} must be an object`);
+    return errors;
+  }
+  for (const k of Object.keys(key)) {
+    if (!COLOR_KEY_FIELDS.has(k)) errors.push(`${at} unknown key "${k}"`);
+  }
+  if (!isVec3(key.at)) errors.push(`${at}.at must be [x, y, z] numbers`);
+  if (!isVec3(key.n)) errors.push(`${at}.n must be [x, y, z] numbers`);
+  if (typeof key.area !== 'number' || !Number.isFinite(key.area) || !(key.area > 0)) {
+    errors.push(`${at}.area must be a number greater than 0`);
+  }
+  const hasSrc = key.src !== undefined;
+  const hasOrd = key.ord !== undefined;
+  if (hasSrc !== hasOrd) errors.push(`${at} src and ord are set together`);
+  if (hasSrc && (!Number.isInteger(key.src) || key.src >= 0)) {
+    errors.push(`${at}.src must be a negative integer`);
+  }
+  if (hasOrd && (!Number.isInteger(key.ord) || key.ord < 0)) {
+    errors.push(`${at}.ord must be a non-negative integer`);
+  }
+  return errors;
+}
+
+function colorFaceErrors(face, at) {
+  const errors = [];
+  if (!face || typeof face !== 'object' || Array.isArray(face)) {
+    errors.push(`${at} must be an object`);
+    return errors;
+  }
+  for (const k of Object.keys(face)) {
+    if (!COLOR_FACE_KEYS.has(k)) errors.push(`${at} unknown key "${k}"`);
+  }
+  if (!isFaceColor(face.color)) errors.push(`${at}.color must be a lowercase #rrggbb`);
+  errors.push(...colorKeyErrors(face.key, `${at}.key`));
+  return errors;
+}
+
+function colorEntryErrors(entry, at) {
+  const errors = [];
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+    errors.push(`${at} must be an object`);
+    return errors;
+  }
+  for (const k of Object.keys(entry)) {
+    if (!COLOR_ENTRY_KEYS.has(k)) errors.push(`${at} unknown key "${k}"`);
+  }
+  if (entry.part !== undefined && !isFaceColor(entry.part)) {
+    errors.push(`${at}.part must be a lowercase #rrggbb`);
+  }
+  if (entry.faces !== undefined) {
+    if (!Array.isArray(entry.faces) || entry.faces.length === 0) {
+      errors.push(`${at}.faces must be a non-empty array`);
+    } else {
+      entry.faces.forEach((face, i) => {
+        errors.push(...colorFaceErrors(face, `${at}.faces[${i}]`));
+      });
+    }
+  }
+  if (entry.part === undefined && entry.faces === undefined) {
+    errors.push(`${at} needs part or faces`);
+  }
+  return errors;
+}
+
+/**
+ * Problems in a `colors` map. `liveIds` is the surf ids that name a part.
+ * A key that is not one of those is an error here; load and save prune
+ * those keys before validating.
+ */
+export function assemblyColorErrors(colors, liveIds) {
+  const errors = [];
+  if (!colors || typeof colors !== 'object' || Array.isArray(colors)) {
+    errors.push('colors must be an object');
+    return errors;
+  }
+  const keys = Object.keys(colors);
+  if (!keys.length) {
+    errors.push('colors must be omitted when empty');
+    return errors;
+  }
+  const live = liveIds instanceof Set ? liveIds : new Set(liveIds || []);
+  for (const id of keys) {
+    const at = `colors["${id}"]`;
+    if (!isSurfId(id)) {
+      errors.push(`${at} must be a surf id`);
+      continue;
+    }
+    if (!live.has(id)) errors.push(`${at} is not a part in this file`);
+    errors.push(...colorEntryErrors(colors[id], at));
+  }
+  return errors;
+}
+
+/**
+ * Drop keys that are real surf ids but not in `liveIds`. Anything else
+ * stays so validation can reject it. Null means the map is now empty.
+ */
+export function pruneColorMap(colors, liveIds) {
+  if (!colors || typeof colors !== 'object' || Array.isArray(colors)) return colors;
+  const live = liveIds instanceof Set ? liveIds : new Set(liveIds || []);
+  let dropped = false;
+  const next = {};
+  for (const [id, entry] of Object.entries(colors)) {
+    if (isSurfId(id) && !live.has(id)) {
+      dropped = true;
+      continue;
+    }
+    next[id] = entry;
+  }
+  if (!dropped) return colors;
+  return Object.keys(next).length ? next : null;
+}
+
+function canonicalColorEntry(entry) {
+  if (colorEntryErrors(entry, 'colors').length) return null;
+  const out = {};
+  if (entry.part !== undefined) out.part = entry.part;
+  if (Array.isArray(entry.faces) && entry.faces.length) {
+    out.faces = entry.faces.map((face) => {
+      const key = {
+        at: [face.key.at[0], face.key.at[1], face.key.at[2]],
+        n: [face.key.n[0], face.key.n[1], face.key.n[2]],
+        area: face.key.area,
+      };
+      if (face.key.src !== undefined) {
+        key.src = face.key.src;
+        key.ord = face.key.ord;
+      }
+      return { color: face.color, key };
+    });
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+/**
+ * Colors worth keeping on an in-app document. Keyed by surf id. Empty,
+ * dangling, and malformed entries are dropped. Null when nothing remains.
+ */
+export function normalizeAssemblyColors(colors, parts) {
+  if (!colors || typeof colors !== 'object' || Array.isArray(colors)) return null;
+  const live = (parts || []).map((part) => part?.surfId).filter((id) => isSurfId(id));
+  const pruned = pruneColorMap(colors, live);
+  if (!pruned || typeof pruned !== 'object' || Array.isArray(pruned)) return null;
+  const liveSet = new Set(live);
+  const out = {};
+  for (const [id, entry] of Object.entries(pruned)) {
+    if (!liveSet.has(id)) continue;
+    const clean = canonicalColorEntry(entry);
+    if (clean) out[id] = clean;
+  }
+  return Object.keys(out).length ? out : null;
+}
+
 export function serializeAssembly(doc) {
   const source = doc?.source === 'git' ? 'git' : 'local';
   const parts = sortParts(doc?.parts).map((part, index) => {
@@ -284,6 +459,7 @@ export function serializeAssembly(doc) {
     : (parts[0]?.id || null);
   const name = storedAssemblyName(doc) || DEFAULT_ASSEMBLY_NAME;
   const groups = normalizeGroups(doc?.groups, parts);
+  const colors = normalizeAssemblyColors(doc?.colors, parts);
   const out = {
     version: ASSEMBLY_VERSION,
     source,
@@ -292,6 +468,7 @@ export function serializeAssembly(doc) {
     parts,
   };
   if (groups.length) out.groups = groups;
+  if (colors) out.colors = colors;
   return out;
 }
 
@@ -317,6 +494,7 @@ export function parseAssemblyDocument(input) {
       isSynced: part?.isSynced,
     })),
     groups: raw.groups,
+    colors: raw.colors,
   });
 }
 

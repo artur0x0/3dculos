@@ -443,7 +443,9 @@ export function planOpenVaultPart(doc, path, content, scripts = {}) {
 /**
  * Copy an external (or any) part into this assembly's folder.
  * New surf id, `copiedFrom` records the source id, the reference repoints
- * at the new path. The source file is left in place.
+ * at the new path. The source file is left in place. Colors stay keyed by
+ * surf id on the assembly, so this new id starts uncolored. The old key is
+ * dropped on save because that surf id left the document.
  * -> { fromPath, path, id, surfId, copiedFrom, content, name, isSynced }
  */
 export function planCopyToAssembly(doc, part, script, { now, rand } = {}) {

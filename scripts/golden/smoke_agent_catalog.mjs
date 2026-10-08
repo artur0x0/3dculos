@@ -62,7 +62,10 @@ check('assembly schema is surfcad.assembly v1', assembly.properties?.format?.con
   && assembly.properties?.parts?.items?.properties?.path
   && /[Pp]ermanent/.test(assembly.properties.parts.items.properties.id.description || '')
   && !/not yet pushed/.test(assembly.properties.parts.items.properties.id.description || '')
-  && /@surf-id/.test(JSON.stringify(assembly.defs || assembly.$defs || assembly)));
+  && /@surf-id/.test(JSON.stringify(assembly.defs || assembly.$defs || assembly))
+  && assembly.properties?.colors?.minProperties === 1
+  && assembly.properties?.colors?.additionalProperties?.additionalProperties === false
+  && assembly.properties?.colors?.additionalProperties?.properties?.part?.pattern === '^#[0-9a-f]{6}$');
 
 const sample = {
   format: 'surfcad.assembly',
@@ -77,6 +80,9 @@ const sample = {
     order: 0,
     position: [0, 0, 0],
   }],
+  colors: {
+    'local-2026-10-07-20-56-31-0423-a3f9': { part: '#aabbcc' },
+  },
 };
 const verdict = validateSurfJson(sample);
 check('sample .surf.json with a legacy local- id still validates', verdict.ok, (verdict.errors || []).join('; '));

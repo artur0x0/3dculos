@@ -186,7 +186,8 @@ export function surfIdFromScript(part, script) {
 
 /**
  * Legacy helper used by the one-time id migration. Replaces `local-` surf
- * ids in part headers and `.surf.json` id fields. A push does not call this.
+ * ids in part headers and `.surf.json` id fields, including `colors` keys.
+ * A push does not call this.
  * `map` is filled with localId → bare id. Files with no local id are
  * returned unchanged (same array when nothing changes).
  */
@@ -219,7 +220,29 @@ export function isSurfJsonPath(path) {
   return String(path || '').endsWith('/.surf.json') || String(path || '').endsWith('.surf.json');
 }
 
-/** Rewrite part.id values in a `.surf.json` text. Unknown JSON is returned as-is. */
+/**
+ * Rename `colors` keys through a localId → bare id map. A bare key already
+ * in the map wins over the prefixed duplicate. The same object comes back
+ * when nothing changes.
+ */
+export function rewriteColorMap(colors, map) {
+  if (!colors || typeof colors !== 'object' || Array.isArray(colors)) return colors;
+  const get = (id) => (map instanceof Map ? map.get(id) : map?.[id]);
+  const next = {};
+  const pending = [];
+  for (const [id, entry] of Object.entries(colors)) {
+    const mapped = get(id);
+    if (mapped && mapped !== id) pending.push([mapped, entry]);
+    else next[id] = entry;
+  }
+  if (!pending.length) return colors;
+  for (const [key, entry] of pending) {
+    if (!Object.prototype.hasOwnProperty.call(next, key)) next[key] = entry;
+  }
+  return next;
+}
+
+/** Rewrite surf-id fields in a `.surf.json` text, including `colors` keys. Unknown JSON is returned as-is. */
 export function rewriteSurfIdFields(text, map) {
   if (!map || (typeof map.size === 'number' ? map.size === 0 : !Object.keys(map).length)) {
     return text;
@@ -263,6 +286,13 @@ export function rewriteSurfIdFields(text, map) {
       });
     }
   }
+  if (raw.colors && typeof raw.colors === 'object' && !Array.isArray(raw.colors)) {
+    const colors = rewriteColorMap(raw.colors, map);
+    if (colors !== raw.colors) {
+      raw.colors = colors;
+      changed = true;
+    }
+  }
   if (!changed) return text;
   return `${JSON.stringify(raw, null, 2)}\n`;
 }
@@ -289,13 +319,16 @@ export function applyIdPromotion(doc, scripts, map) {
       partIds: (group.partIds || []).map((id) => table[id] || id),
     }))
     : doc?.groups;
+  const colors = rewriteColorMap(doc?.colors, table);
   const nextScripts = {};
   for (const [path, text] of Object.entries(scripts || {})) {
     const id = readSurfId(text);
     nextScripts[path] = id && table[id] ? withSurfId(text, table[id]) : text;
   }
+  const nextDoc = { ...doc, parts, ...(Array.isArray(groups) ? { groups } : {}) };
+  if (colors !== doc?.colors) nextDoc.colors = colors;
   return {
-    doc: { ...doc, parts, ...(Array.isArray(groups) ? { groups } : {}) },
+    doc: nextDoc,
     scripts: nextScripts,
     changed: true,
   };

@@ -30,10 +30,18 @@
  * `source` is the source assembly path (`assemblies/<Name>/.surf.json`),
  * or null after that assembly is deleted. The group name stays.
  * A missing `groups` key loads as no groups. Dangling part ids are dropped
- * on read; a group left empty is dropped. Unknown top-level keys are
- * rejected so a typo cannot silently drop data.
+ * on read; a group left empty is dropped. `colors` is optional and omitted
+ * when empty. It is keyed by surf id. A key for a surf id that is not in
+ * `parts` is dropped on load and save. Unknown keys are rejected so a typo
+ * cannot silently drop data. `version` stays 1.
  */
-import { ASSEMBLY_VERSION, partPosition, serializeAssembly } from '../assembly.js';
+import {
+  ASSEMBLY_VERSION,
+  assemblyColorErrors,
+  partPosition,
+  pruneColorMap,
+  serializeAssembly,
+} from '../assembly.js';
 import { normalizeRepoPath } from '../assembly.js';
 import { normalizeSheetMetalBinding } from '../scs/scsCatalog.js';
 import { PART_EXT, isVaultPartPath, vaultSegment } from './vaultLayout.js';
@@ -41,7 +49,7 @@ import { isSurfId } from './surfId.js';
 
 export const SURF_JSON_FORMAT = 'surfcad.assembly';
 export const SURF_JSON_VERSION = 1;
-const TOP_KEYS = new Set(['format', 'version', 'name', 'activeId', 'parts', 'groups']);
+const TOP_KEYS = new Set(['format', 'version', 'name', 'activeId', 'parts', 'groups', 'colors']);
 const PART_KEYS = new Set(['id', 'path', 'name', 'visible', 'order', 'position', 'sheetMetal', 'copiedFrom']);
 const GROUP_KEYS = new Set(['id', 'name', 'source', 'partIds']);
 
@@ -74,6 +82,24 @@ export function pruneDanglingGroupPartIds(raw) {
     groups.push({ ...group, partIds });
   }
   return { ...raw, groups };
+}
+
+/**
+ * Drop color keys that are real surf ids but not in `parts`. Invalid keys
+ * stay so validation can reject them. An empty map omits `colors`.
+ */
+export function pruneDanglingColors(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw) || !Array.isArray(raw.parts)) return raw;
+  if (raw.colors == null) return raw;
+  const live = raw.parts.map((part) => part?.id).filter((id) => isSurfId(id));
+  const colors = pruneColorMap(raw.colors, live);
+  if (colors === raw.colors) return raw;
+  if (!colors) {
+    const rest = { ...raw };
+    delete rest.colors;
+    return rest;
+  }
+  return { ...raw, colors };
 }
 
 /** { ok, errors: [string] } — every problem, not just the first. */
@@ -172,6 +198,12 @@ export function validateSurfJson(input) {
   if (raw.activeId !== undefined && raw.activeId !== null && typeof raw.activeId !== 'string') {
     errors.push('activeId must be a string or null');
   }
+  if (raw.colors !== undefined) {
+    const live = new Set(
+      (Array.isArray(raw.parts) ? raw.parts : []).map((part) => part?.id).filter((id) => isSurfId(id)),
+    );
+    errors.push(...assemblyColorErrors(raw.colors, live));
+  }
   return { ok: errors.length === 0, errors };
 }
 
@@ -208,6 +240,7 @@ export function toSurfJson(doc) {
       partIds: group.partIds,
     }));
   }
+  if (flat.colors) out.colors = flat.colors;
   const check = validateSurfJson(out);
   if (!check.ok) throw new Error(`Invalid .surf.json: ${check.errors.join('; ')}`);
   return out;
@@ -221,7 +254,7 @@ export function stringifySurfJson(doc) {
 /** .surf.json text or object -> in-app assembly document (source 'git'). Throws on invalid. */
 export function parseSurfJson(input) {
   const parsed = typeof input === 'string' ? JSON.parse(input) : input;
-  const raw = pruneDanglingGroupPartIds(parsed);
+  const raw = pruneDanglingColors(pruneDanglingGroupPartIds(parsed));
   const check = validateSurfJson(raw);
   if (!check.ok) throw new Error(`Invalid .surf.json: ${check.errors.join('; ')}`);
   return serializeAssembly({
@@ -240,5 +273,6 @@ export function parseSurfJson(input) {
       sheetMetal: p.sheetMetal,
     })),
     groups: raw.groups,
+    colors: raw.colors,
   });
 }

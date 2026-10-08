@@ -41,7 +41,7 @@ The first line of a part script is the stable id:
 
 The body is UTC `yyyy-mm-dd-hh-mm-ss-SSSS-` plus 4 hex characters (`2026-10-07-20-56-31-0423-a3f9`). The id is minted once and never changes. A push does not rewrite it. Whether the part has been pushed is `isSynced` on the local IndexedDB part record. That flag is not part of the id and is never written to `.surf.json`. Add to Repo shows when `isSynced` is false. Blob SHA is not an identity.
 
-A legacy id may still carry a `local-` prefix. It is accepted on read. One migration strips that prefix and keeps the body: IndexedDB first (the open document, script headers, outbox payloads, and sync-store keys), then one outbox commit rewrites `@surf-id` headers and `.surf.json` `id`, `copiedFrom`, group `id`, and group `partIds`. IndexedDB and the repo both strip a group id, so the two do not drift. The part path stays. Bytes after the header line stay, including a blank line or an indented first line, and a CRLF header line stays CRLF. The commit has no deletes. A second pass changes nothing. A row id that merely starts with `local-` and is not a surf id is left alone.
+A legacy id may still carry a `local-` prefix. It is accepted on read. One migration strips that prefix and keeps the body: IndexedDB first (the open document, script headers, outbox payloads, and sync-store keys), then one outbox commit rewrites `@surf-id` headers and `.surf.json` `id`, `copiedFrom`, group `id`, group `partIds`, and `colors` keys. IndexedDB and the repo both strip a group id and a color key, so the two do not drift. A bare color key wins when the same body is stored both ways. The part path stays. Bytes after the header line stay, including a blank line or an indented first line, and a CRLF header line stays CRLF. The commit has no deletes. A second pass changes nothing. A row id that merely starts with `local-` and is not a surf id is left alone.
 
 `.surf.json` stores `{ id, path }`. In the app the row id stays the repo path, and `surfId` carries `id`, so scripts stay keyed by file.
 
@@ -94,7 +94,25 @@ A reference matches a part by surf id when that id is known. A missing or unknow
 }
 ```
 
-The second part is a legacy row: no `id`. The third part is a link to another assembly's folder. `copiedFrom` is set when this row was made by Copy. `version` stays `1`. A face-coloring `colors` key is planned to join a later version bump, not this layout.
+The second part is a legacy row: no `id`. The third part is a link to another assembly's folder. `copiedFrom` is set when this row was made by Copy. `version` stays `1`.
+
+`colors` is optional. It is omitted when empty. Each key is a surf id of a part in this file. The same part used in two assemblies can be colored differently, because the map lives on the assembly, not on the script. Copy to this assembly mints a new id and does not copy the entry. The old key is dropped because that surf id left this document.
+
+```json
+"colors": {
+  "2026-10-07-20-56-31-0423-a3f9": {
+    "part": "#6b7280",
+    "faces": [
+      {
+        "color": "#e11d48",
+        "key": { "at": [0, 0, 5], "n": [0, 0, 1], "area": 100, "src": -1, "ord": 0 }
+      }
+    ]
+  }
+}
+```
+
+`part` is a whole-part color. A face entry wins on that face. `src` and `ord` are omitted on a primitive face. `src` is the fillet or chamfer call, stored as `-(index + 1)`. `ord` is that fillet's patch index. Hex is lowercase `#rrggbb`. Unknown keys are rejected.
 
 ### Fields
 
@@ -120,8 +138,13 @@ The second part is a legacy row: no `id`. The third part is a link to another as
 | `groups[].name` | when grouped | Non-empty label. Starts as the source assembly name. Rename changes only this. |
 | `groups[].source` | when grouped | `assemblies/<Name>/.surf.json` captured at insert, or `null` after that assembly is deleted. The name is the label. Renaming that assembly does not rewrite another assembly's `source`. Assemblies have no surf id, so no second identity field is stored. |
 | `groups[].partIds` | when grouped | Non-empty surf ids. A part is in at most one group. |
+| `colors` | no | Omitted when empty. Map of surf id → `{ part?, faces? }`. A key must be a surf id. |
+| `colors.<id>.part` | no | Whole-part color, lowercase `#rrggbb`. |
+| `colors.<id>.faces` | no | Non-empty when present. Each item is `{ color, key }`. |
+| `colors.<id>.faces[].color` | with a face | Lowercase `#rrggbb`. |
+| `colors.<id>.faces[].key` | with a face | `{ at: [x,y,z], n: [x,y,z], area, src?, ord? }`. `area` > 0. `src` and `ord` are set together. `src` is a negative integer. `ord` is a non-negative integer. |
 
-On load, `pruneDanglingGroupPartIds` drops part ids that are not in `parts`, and drops a group that has nothing left. The same pass runs on every save (`normalizeGroups` inside `serializeAssembly`). A surf id listed twice stays on the first group. Collapse is UI state and is not stored.
+On load, `pruneDanglingGroupPartIds` drops part ids that are not in `parts`, and drops a group that has nothing left. The same pass runs on every save (`normalizeGroups` inside `serializeAssembly`). A surf id listed twice stays on the first group. Collapse is UI state and is not stored. `pruneDanglingColors` drops a color key whose surf id is not in `parts`, and drops `colors` when that leaves it empty. The same pass runs on every save. A key that is not a surf id is rejected, not dropped.
 
 ## Groups, links, and copy
 
@@ -133,7 +156,7 @@ A group is a Parts-list folder for parts inserted from another assembly. It is n
 
 A linked row is a path in another assembly's folder (`isExternalPartPath`). `parts/` is not external. The row shows **Caution: external part!** and **Copy to this assembly**.
 
-**Copy to this assembly** (`planCopyToAssembly`) writes a new script in this folder. The new surf id is minted once. `isSynced` stays false until that part is pushed. `copiedFrom` records the source surf id (the row's id, else the header). The source file stays. A name already in this folder becomes `Name 2`. The group, if any, keeps the row and points `partIds` at the new id.
+**Copy to this assembly** (`planCopyToAssembly`) writes a new script in this folder. The new surf id is minted once. `isSynced` stays false until that part is pushed. `copiedFrom` records the source surf id (the row's id, else the header). The source file stays. A name already in this folder becomes `Name 2`. The group, if any, keeps the row and points `partIds` at the new id. Colors are not copied onto the new id. A color stored for the old id is dropped with that id. Colors for parts that stay are left alone.
 
 **Copy all to this assembly** (`copyGroupToAssembly`) runs that copy on each linked member. The group stays. A member that already lives in this folder is left alone.
 

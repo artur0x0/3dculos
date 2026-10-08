@@ -3,7 +3,7 @@
  *
  * IndexedDB is rewritten first (callers). Then one outbox commit rewrites
  * `@surf-id` headers and `.surf.json` id / copiedFrom / group id / group
- * partIds. Only a value that passes `isLocalSurfId` changes, and only by
+ * partIds / `colors` keys. Only a value that passes `isLocalSurfId` changes, and only by
  * dropping the prefix. A second pass is a no-op. Part paths stay. Bytes
  * after the header line stay, and the header keeps its line ending.
  * The commit has no deletes.
@@ -14,6 +14,7 @@ import {
   isSurfJsonPath,
   promoteSurfId,
   readSurfId,
+  rewriteColorMap,
   rewriteSurfIdFields,
   bytesAfterHeaderLine,
   headerLineEnding,
@@ -53,6 +54,9 @@ function mapFromSurfJson(text) {
   for (const group of raw.groups || []) {
     noteLocal(map, group?.id);
     for (const id of group?.partIds || []) noteLocal(map, id);
+  }
+  if (raw.colors && typeof raw.colors === 'object' && !Array.isArray(raw.colors)) {
+    for (const id of Object.keys(raw.colors)) noteLocal(map, id);
   }
   return map;
 }
@@ -115,6 +119,20 @@ function rewriteExactIds(value) {
       rewritten = rewriteVaultFile(value.assemblyPath || 'assemblies/Assembly/.surf.json', item);
     } else if (key === 'scripts' && item && typeof item === 'object' && !Array.isArray(item)) {
       rewritten = rewriteScriptMap(item);
+    } else if (key === 'colors' && item && typeof item === 'object' && !Array.isArray(item)) {
+      const colorMap = new Map();
+      for (const id of Object.keys(item)) {
+        if (isLocalSurfId(id)) colorMap.set(id, promoteSurfId(id));
+      }
+      const keyed = rewriteColorMap(item, colorMap);
+      let valuesChanged = false;
+      const withValues = {};
+      for (const [id, entry] of Object.entries(keyed)) {
+        const nextEntry = rewriteExactIds(entry);
+        if (nextEntry !== entry) valuesChanged = true;
+        withValues[id] = nextEntry;
+      }
+      rewritten = (keyed !== item || valuesChanged) ? withValues : item;
     } else {
       rewritten = rewriteExactIds(item);
     }
@@ -158,6 +176,9 @@ export function migrateAssemblyRecords({ doc, scripts } = {}) {
     for (const id of group?.partIds || []) noteLocal(map, id);
   }
   for (const text of Object.values(scripts || {})) noteLocal(map, readSurfId(text));
+  if (doc?.colors && typeof doc.colors === 'object' && !Array.isArray(doc.colors)) {
+    for (const id of Object.keys(doc.colors)) noteLocal(map, id);
+  }
   if (!map.size) return { doc, scripts: scripts || {}, map: {}, changed: false };
 
   let scriptsChanged = false;
@@ -189,8 +210,11 @@ export function migrateAssemblyRecords({ doc, scripts } = {}) {
       return { ...group, id, partIds };
     })
     : doc?.groups;
+  const colors = rewriteColorMap(doc?.colors, map);
+  const nextDoc = { ...doc, parts, ...(Array.isArray(groups) ? { groups } : {}) };
+  if (colors !== doc?.colors) nextDoc.colors = colors;
   return {
-    doc: { ...doc, parts, ...(Array.isArray(groups) ? { groups } : {}) },
+    doc: nextDoc,
     scripts: scriptsChanged ? nextScripts : (scripts || {}),
     map: Object.fromEntries(map),
     changed: true,

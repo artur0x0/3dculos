@@ -464,6 +464,70 @@ function assemblySchema() {
           },
         },
       },
+      colors: {
+        type: 'object',
+        minProperties: 1,
+        propertyNames: { pattern: id },
+        additionalProperties: {
+          type: 'object',
+          additionalProperties: false,
+          minProperties: 1,
+          properties: {
+            part: {
+              type: 'string',
+              pattern: '^#[0-9a-f]{6}$',
+              description: 'Whole-part color. A face color wins on that face.',
+            },
+            faces: {
+              type: 'array',
+              minItems: 1,
+              items: {
+                type: 'object',
+                additionalProperties: false,
+                required: ['color', 'key'],
+                properties: {
+                  color: { type: 'string', pattern: '^#[0-9a-f]{6}$' },
+                  key: {
+                    type: 'object',
+                    additionalProperties: false,
+                    required: ['at', 'n', 'area'],
+                    dependentRequired: { src: ['ord'], ord: ['src'] },
+                    properties: {
+                      at: {
+                        type: 'array',
+                        items: { type: 'number' },
+                        minItems: 3,
+                        maxItems: 3,
+                        description: 'Area-weighted face centroid, mm.',
+                      },
+                      n: {
+                        type: 'array',
+                        items: { type: 'number' },
+                        minItems: 3,
+                        maxItems: 3,
+                        description: 'Area-weighted face normal.',
+                      },
+                      area: { type: 'number', exclusiveMinimum: 0 },
+                      src: {
+                        type: 'integer',
+                        exclusiveMaximum: 0,
+                        description: 'Fillet or chamfer call index, stored as -(index+1). Omitted on a primitive face.',
+                      },
+                      ord: {
+                        type: 'integer',
+                        minimum: 0,
+                        description: 'Patch index inside that fillet, sorted by center. Set only with src.',
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          description: 'part, faces, or both. Unknown keys are rejected.',
+        },
+        description: 'Optional face colors for this assembly, keyed by surf id. Omitted when empty. A key whose surf id is not in parts is dropped on load and save. The same part in another assembly has its own map. Copy to this assembly mints a new id and does not copy these entries. Version stays 1.',
+      },
     },
     defs: {
       surfId: {
