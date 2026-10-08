@@ -317,10 +317,11 @@ const App = () => {
     ));
   };
   /**
-   * Height of the editor ribbon, MEASURED. Mobile Script-stage strip overlays
-   * with `top: ribbonPx`; desktop seam strip uses a matching spacer so chips
-   * start flush under the ribbon (not overlapping). ResizeObserver keeps it
-   * exact as the ribbon's contents change.
+   * Height of the editor ribbon, MEASURED. The mobile Script-stage strip
+   * overlays with `top: ribbonPx` so chips start under the ribbon.
+   * ResizeObserver keeps it exact as the ribbon's contents change. The
+   * desktop feature bar is a horizontal row under the title (`top-14`),
+   * not that spacer.
    */
   const [ribbonPx, setRibbonPx] = useState(44);
   /** Script-stage strip: caret jump only (no FeatureSheet — CAD strip / long-press keep the sheet). */

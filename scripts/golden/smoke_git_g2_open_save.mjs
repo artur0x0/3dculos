@@ -15,7 +15,6 @@ import { fileWrite } from '../../src/utils/git/githubAdapterInterface.js';
 import {
   dirtyPartIds, isAssemblyDirty, isPartDirty, isWorkspaceDirty,
   listVaultAssemblies, listAddableVaultParts, openVaultAssembly, readVaultPart,
-  captureBaseline,
   resolveNewPartPath, suggestNewPartPath,
 } from '../../src/utils/git/gitWorkspace.js';
 import { commitPartToRepo } from '../../src/utils/git/gitCommit.js';

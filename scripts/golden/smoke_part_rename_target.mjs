@@ -97,7 +97,7 @@ check('no doc → null', renameTargetId(null, 'p2') === null);
   const app = read('src/App.jsx');
   const i = app.indexOf('const handleRenamePart');
   const block = app.slice(i, app.indexOf('const handleRenameAssembly', i));
-  check('App has handleRenamePart(id, name) using renamePart', i > 0 && /renamePart\(doc, id, name\)/.test(block));
+  check('App has handleRenamePart(id, name) using renamePart', i > 0 && /renamePart\(doc, id, nextName\)/.test(block));
   check('title rename targets the shown part (cadPartId)',
     /const handleRenameFile[\s\S]{0,300}renameTargetId\(doc, cadPartIdRef\.current\)[\s\S]{0,300}handleRenamePart\(id, name\)/.test(block));
   check('title rename no longer writes to activeId',

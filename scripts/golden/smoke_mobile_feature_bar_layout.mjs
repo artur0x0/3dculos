@@ -4,8 +4,9 @@
  * at the end, feature chips centered in the padded middle while they fit, and
  * the tail of the list once they overflow.
  *
- * Desktop seam and the Script vertical rail stay as they are. This checks
- * structure, not pixels.
+ * The Script rail stays vertical. The desktop bar is the horizontal strip
+ * under the title and does not take the CAD bar's undo/redo handlers.
+ * This checks structure, not pixels.
  */
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -30,11 +31,11 @@ console.log('mobile feature bar: undo | centered features | redo');
   const app = read('../../src/App.jsx');
   const strip = read('../../src/components/FeatureStrip.jsx');
   const mounts = [...app.matchAll(/<FeatureStrip\b[\s\S]*?\/>/g)].map((m) => m[0]);
-  const cad = mounts.find((m) => /orientation="horizontal"/.test(m));
+  const cad = mounts.find((m) => /orientation="horizontal"/.test(m) && /onUndo=\{handleUndo\}/.test(m));
   const script = mounts.find((m) => /handleFeatureStripJump/.test(m));
-  const desktop = mounts.find((m) => /side="between"/.test(m));
+  const desktop = mounts.find((m) => /handleDesktopFeatureStripJump/.test(m));
 
-  check('three FeatureStrip mounts (CAD bar, Script rail, desktop seam)', mounts.length === 3 && cad && script && desktop);
+  check('three FeatureStrip mounts (CAD bar, Script rail, desktop bar)', mounts.length === 3 && cad && script && desktop);
 
   const cadAt = app.indexOf('data-cad-feature-strip');
   const cadRow = cadAt < 0 ? '' : app.slice(Math.max(0, cadAt - 250), cadAt + 280);
@@ -52,11 +53,11 @@ console.log('mobile feature bar: undo | centered features | redo');
       /canRedo=\{canRedo\(\)\}/.test(cad),
   );
   check(
-    'Script rail and desktop seam do not take the bar handlers',
-    !/onUndo/.test(script) && !/onRedo/.test(script) &&
-      !/onUndo/.test(desktop) && !/onRedo/.test(desktop) &&
-      /orientation="vertical"/.test(script) &&
-      /orientation="vertical"/.test(desktop),
+    'Script rail and desktop bar do not take the bar handlers',
+    !/onUndo/.test(script || '') && !/onRedo/.test(script || '') &&
+      !/onUndo/.test(desktop || '') && !/onRedo/.test(desktop || '') &&
+      /orientation="vertical"/.test(script || '') &&
+      /orientation="horizontal"/.test(desktop || ''),
   );
 
   const undoAt = strip.indexOf('data-feature-bar-section="undo"');

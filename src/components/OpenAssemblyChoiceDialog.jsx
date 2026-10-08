@@ -27,7 +27,7 @@ export default function OpenAssemblyChoiceDialog({
       onClose={loading ? undefined : onClose}
       footer={(
         <div
-          className="mt-4 -mx-2 flex flex-nowrap items-center justify-end gap-1"
+          className="mt-4 -mx-2 flex flex-nowrap items-center justify-end gap-1 min-w-0"
           data-git-open-choice-stage=""
         >
           <button

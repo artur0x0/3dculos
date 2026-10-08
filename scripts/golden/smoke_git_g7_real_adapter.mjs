@@ -708,7 +708,7 @@ console.log('\ngit G7 — Connect wiring + no client secrets');
     && /X-GitHub-Api-Version/.test(realSrc) && /2022-11-28/.test(realSrc));
   ok('403 surfaces X-Accepted-GitHub-Permissions', /X-Accepted-GitHub-Permissions/.test(realSrc)
     && /unauthorizedFromResponse/.test(realSrc));
-  ok('docs cover Administration R\/W', /Administration/.test(readFileSync(join(root, 'docs/architecture.md'), 'utf8'))
+  ok('docs cover Administration R/W', /Administration/.test(readFileSync(join(root, 'docs/architecture.md'), 'utf8'))
     && /Approve.*updated permissions/i.test(readFileSync(join(root, 'docs/architecture.md'), 'utf8')));
   ok('client secret not in src/', (() => {
     const walk = (dir) => {

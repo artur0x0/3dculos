@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import {
   GITHUB_CALLBACK_PATH, GITHUB_SESSION_PATH, GITHUB_SIGNIN_SUBTITLE,
-  buildAuthorizeUrl, createOAuthState, peekOAuthState,
+  peekOAuthState,
   startGithubOAuth, establishGithubSession, resolveGithubClientId,
   rememberGithubClientId, peekGithubClientId,
   resetGithubCallbackDedupe,

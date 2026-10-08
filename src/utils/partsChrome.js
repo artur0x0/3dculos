@@ -19,7 +19,9 @@ export const PARTS_DIALOG_BTN_PRIMARY =
 
 /**
  * Phone-width action. Tighter than the default px-3 py-1.5, still a 40px
- * target, and the label stays on one line.
+ * target, and the label stays on one line. It may shrink and ellipsize so
+ * the three Open-assembly actions fit inside a 375px card on wider Linux
+ * fonts, with a few pixels of slack before the label clips.
  */
 export const PARTS_DIALOG_BTN_COMPACT =
-  'inline-flex h-10 shrink-0 items-center justify-center whitespace-nowrap px-2';
+  'inline-flex h-10 min-w-0 shrink items-center justify-center overflow-hidden text-ellipsis whitespace-nowrap px-1.5';

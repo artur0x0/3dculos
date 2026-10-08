@@ -55,7 +55,6 @@ const COVER_SRC = assemblyFilePath('Cover');
 
 const BRACKET_SRC = withSurfId('return Manifold.cube([10,10,10], true);\n', BRACKET_ID);
 const LID_SRC = withSurfId('return Manifold.cube([20,20,2], true);\n', LID_ID);
-const PLATE_SRC = withSurfId('return Manifold.cube([8,8,1], true);\n', PLATE_ID);
 const BOLT_SRC = withSurfId('return Manifold.cylinder(6, 1.5, 1.5, 24);\n', BOLT_ID);
 
 function part(id, name, order, surfId) {

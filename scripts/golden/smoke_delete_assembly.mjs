@@ -12,6 +12,7 @@
 /* The evaluate callback runs in the browser, where document exists. */
 /* global document */
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
@@ -512,7 +513,7 @@ createRoot(document.getElementById('root')).render(<Harness />);
     executablePath: exe,
     args: ['--no-sandbox', '--disable-dev-shm-usage'],
   });
-  const shotDir = '/opt/cursor/artifacts';
+  const shotDir = process.env.GOLDEN_SHOT_DIR || join(tmpdir(), 'surfcad-golden-shots');
   mkdirSync(shotDir, { recursive: true });
   try {
     const page = await browser.newPage({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1 });
