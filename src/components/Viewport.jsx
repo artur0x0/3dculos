@@ -50,6 +50,7 @@ import {
 } from '../utils/previewStyle';
 import { TrackballControls } from 'three/addons/controls/TrackballControls.js';
 import { applyTrackballFeel } from '../utils/trackballFeel';
+import { installPageZoomLock } from '../utils/pageZoomLock';
 import { LineSegments2 } from 'three/addons/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js';
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
@@ -571,6 +572,7 @@ function ViewportTitleChip({ children, value = null, onRename = null, inline = f
             e.stopPropagation(); // viewport hotkeys must not eat the typing
           }}
           className={`${shell} w-48 outline-none border-blue-400/80 bg-gray-900`}
+          style={{ fontSize: '16px' }}
           aria-label={noun === 'Assembly' ? 'Assembly name' : 'Part name'}
           data-title-chip="input"
           data-title-role={role}
@@ -5969,6 +5971,15 @@ const Viewport = forwardRef(({
       clearMeasurementLines();
     }
   }, [measurementEnabled, clearMeasurementLines]);
+
+  // Page-zoom lock. Its own effect so StrictMode's extra mount removes the
+  // document listeners (same cleanup shape as the orbit loop, #237). The
+  // canvas touch stream is not cancelled, so TrackballControls still runs.
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return undefined;
+    return installPageZoomLock(canvas);
+  }, []);
 
   // Initialize Three.js scene
   useEffect(() => {
