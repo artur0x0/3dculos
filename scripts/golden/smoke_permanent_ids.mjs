@@ -226,6 +226,35 @@ console.log('\ngroup id is stripped in the repo and in IndexedDB');
   ok('indexeddb group id second pass is a no-op', migrateAssemblyRecords({ doc: local.doc, scripts: {} }).changed === false);
 }
 
+console.log('\ncolors keys drop the prefix');
+{
+  const painted = stringifySurfJson({
+    source: 'git',
+    name: 'Gearbox',
+    activeId: GB,
+    parts: [{ id: GB, name: 'Bracket', visible: true, order: 0, surfId: LOCAL }],
+    colors: { [LOCAL]: { part: '#aabbcc' } },
+  });
+  const once = planSurfIdMigrationCommit([
+    { path: GB, content: withSurfId(BRACKET_BODY, LOCAL) },
+    { path: assemblyFilePath('Gearbox'), content: painted },
+  ]);
+  const json = once.files.find((file) => file.path.endsWith('.surf.json'))?.content;
+  const parsed = parseSurfJson(json);
+  eq('repo color key keeps the body', parsed.colors, { [BODY]: { part: '#aabbcc' } });
+  const local = migrateAssemblyRecords({
+    doc: {
+      name: 'Gearbox',
+      source: 'git',
+      parts: [{ id: GB, name: 'Bracket', surfId: LOCAL }],
+      colors: { [LOCAL]: { part: '#aabbcc' } },
+    },
+    scripts: {},
+  });
+  eq('indexeddb color key keeps the body', local.doc.colors, { [BODY]: { part: '#aabbcc' } });
+  ok('color key second pass is a no-op', migrateAssemblyRecords({ doc: local.doc, scripts: {} }).changed === false);
+}
+
 console.log('\nreload between commit and local apply');
 {
   const gh = createMockGithubAdapter({ login: 'artur' });

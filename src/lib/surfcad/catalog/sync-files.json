@@ -31,6 +31,7 @@
     "src/utils/sheetMetal/sheetDfm.js",
     "src/utils/sheetMetal/sheetExport.js",
     "src/utils/sheetMetal/sheetFlat.js",
+    "src/utils/sheetMetal/sheetMeshFlag.js",
     "src/utils/sheetMetal/sheetMetalScript.js",
     "src/utils/sheetMetal/sheetModel.js",
     "src/utils/sheetMetal/sheetSolid.js",
