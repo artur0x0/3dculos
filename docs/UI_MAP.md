@@ -109,7 +109,9 @@ Desktop specifics:
   disabled until the name is typed. Cancel leaves the assembly. Folder →
   Assembly and the open search share that list on desktop and on the phone.
   Live search is `data-git-open-search` / `filterVaultOpenIndex`; empty
-  query shows the full list, no hits show *No matches*. A part from this
+  query shows the full list, no hits show *No matches*. Vault files,
+  groups, and delete semantics are [`vault-schema.md`](vault-schema.md).
+  A part from this
   assembly opens by reference. A part from another assembly or loose `parts/`
   links in (`links from …`). The row then shows **Caution: external part!**
   (`data-part-external`) and **Copy to this assembly**
@@ -126,7 +128,7 @@ Desktop specifics:
   caution label and the same select, rename, and delete controls. Add to Repo (`data-part-add-to-repo`) shows
   only for a `local-` id. Text inputs on Parts/git
   use `partsChrome.js` `PARTS_TEXT_INPUT_CLASS` (≥16px) to block iOS Safari focus-zoom.
-  Git create, Save, rename, copy, and delete show `data-part-pending` spinner in place of the Save icon while that branch's outbox op is queued or sending. A failed sync shows a red mark (`data-part-sync-failed`). A failed rename shows a toast with Retry and Revert (`data-rename-toast`). A moved remote tip opens the conflict popup and does not overwrite.
+  Git create, Save, rename, copy, and delete show `data-part-pending` spinner in place of the Save icon while that branch's outbox op is queued or sending. A failed sync shows a red mark (`data-part-sync-failed`). A failed rename or assembly delete shows a toast with Retry and Revert (`data-rename-toast`). A moved remote tip opens the conflict popup and does not overwrite.
 - `PromptInput` is passed `isMobile={false}` explicitly (`src/App.jsx:1345`).
 
 ### Mobile shell (`src/App.jsx` mobile branch) — CAD stages + game stack
@@ -334,7 +336,7 @@ document loads. Paths: the Open assembly dialog (Cancel, Insert parts into
 current, and Open assembly on one right-aligned row), the folder menu's Assembly
 action, git open search, a branch switch, and the initial restore of the last
 assembly. The wait is the `.surf.json` and part-script fetch (IndexedDB
-cache-first, and GitHub when the vault is open) plus the worker build that
+cache-first, and GitHub when the vault is open; see [`vault-schema.md`](vault-schema.md)) plus the worker build that
 refresh paints. The label is `Opening <name>…` (`data-assembly-open-label`).
 While a part is in flight it also reads `part 3 of 7`
 (`data-assembly-open-progress`). The ring is the same border spinner as the
