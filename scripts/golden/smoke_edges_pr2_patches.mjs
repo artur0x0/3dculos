@@ -72,7 +72,7 @@ function meshArrays(mesh) {
 
 console.log('edges PR2 — patch segmentation (lazy / off serialize path)');
 check('planar gate is tight (≤1°)', PATCH_PLANAR_DEG <= 1);
-check('smooth gate clears coarse tessellation', PATCH_SMOOTH_DEG >= 12 && PATCH_SMOOTH_DEG <= 20);
+check('smooth gate clears a 16-segment rounded box (22.5° facets)', PATCH_SMOOTH_DEG >= 22.5 && PATCH_SMOOTH_DEG <= 25);
 check('flat lock uses frac-of-max', PATCH_FLAT_AREA_FRAC_OF_MAX > 0.05 && PATCH_FLAT_AREA_FRAC_OF_MAX < 0.5);
 check('tri count soft-cap is finite', Number.isFinite(PARTGRAPH_MAX_TRIANGLES) && PARTGRAPH_MAX_TRIANGLES > 1000);
 
@@ -149,10 +149,11 @@ return part.subtract(shell(part, 2.5, 'z'));
   const payload = await exec('return roundedBox([50,30,20], 4, 16);');
   const g = buildPartGraphPatches(meshArrays(payload.mesh));
   const planar = g.patches.filter((p) => p.kind === 'planar');
+  const blend = g.patches.filter((p) => p.kind === 'blend');
   check('roundedBox has 6 planar faces', planar.length === 6, `n=${planar.length}`);
   check('roundedBox flats stay large (not shreds)', planar.every((p) => p.area > 200));
-  check('roundedBox total patches near 26±10', g.patches.length >= 20 && g.patches.length <= 40,
-    `n=${g.patches.length}`);
+  check('roundedBox fillet chain is one blend, corners included', blend.length === 1 && blend[0].area > 1500,
+    `n=${blend.length} area=${blend[0] ? blend[0].area.toFixed(0) : 'none'}`);
 }
 
 {

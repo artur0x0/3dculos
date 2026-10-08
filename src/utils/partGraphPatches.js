@@ -33,10 +33,14 @@ export const PARTGRAPH_MAX_TRIANGLES = 250000;
 /** Pass 1: dihedral at/below this merges as coplanar. */
 export const PATCH_PLANAR_DEG = 0.5;
 /**
- * Pass 3: dihedral gate for curved↔curved. Clears cylinder facets on
- * roundedBox seg=16 (~5.6°) and coarse G1 (~11°) tries — flats stay locked.
+ * Pass 3: dihedral gate for curved↔curved on one feature source.
+ * A 16-segment rounded box steps 22.5° between fillet facets and 17.9° from
+ * the straight fillet into the corner sphere. 15° left each color band as its
+ * own face and stopped at the corner. 23° follows that tangent chain. The
+ * facet-to-flat step is 11.25° and flats are locked, so they stay out. A
+ * separate fillet call is a different feature source and still does not join.
  */
-export const PATCH_SMOOTH_DEG = 15;
+export const PATCH_SMOOTH_DEG = 23;
 /** Relative |κA−κB|/max(κA,κB) for curved↔curved. */
 export const PATCH_CURVED_RATE_TOL = 0.55;
 /** Dihedrals at/above this are ignored for the curved κ proxy. */
