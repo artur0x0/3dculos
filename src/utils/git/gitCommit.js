@@ -26,8 +26,7 @@ import {
   vaultSegment,
 } from './vaultLayout.js';
 import { stringifySurfJson } from './surfJson.js';
-import { applyIdPromotion, isSurfId, promoteFiles, readSurfId, rewriteSurfIdFields, withSurfId } from './surfId.js';
-import { isAssemblyFile } from './vaultLayout.js';
+import { isSurfId, readSurfId, withSurfId } from './surfId.js';
 
 export const COMMIT_BRANCH_PREFIX = 'surfcad/';
 
@@ -185,31 +184,6 @@ export function buildCommitFiles(doc, scripts, baseline, opts = {}) {
 }
 
 /**
- * Drop `local-` prefixes in this commit and rewrite every `.surf.json` in
- * the repo that still cites them. No-op (same file list) when nothing is local.
- */
-async function filesForPush(adapter, repo, branch, files) {
-  const promoted = promoteFiles(files);
-  if (!Object.keys(promoted.map).length) return { files, map: {} };
-  const have = new Set(promoted.files.map((file) => file.path));
-  const extra = [];
-  const tree = await adapter.listTree(repo, branch);
-  for (const entry of tree || []) {
-    const path = entry?.path;
-    if (!path || !isAssemblyFile(path) || have.has(path)) continue;
-    // eslint-disable-next-line no-await-in-loop
-    const file = await adapter.readFile(repo, path, branch);
-    if (!file?.content) continue;
-    const content = rewriteSurfIdFields(file.content, promoted.map);
-    if (content !== file.content) extra.push(fileWrite(path, content));
-  }
-  return {
-    files: extra.length ? [...promoted.files, ...extra] : promoted.files,
-    map: promoted.map,
-  };
-}
-
-/**
  * Baseline for an assembly that has never been in the vault (Git mode
  * without an Open): nothing committed yet, so every part and the assembly
  * are new. `headSha` is the vault branch head the first commit builds on.
@@ -318,23 +292,19 @@ export async function commitPartToRepo(adapter, repo, {
     expectedBase = tip?.sha || null;
   }
 
-  const prepared = await filesForPush(adapter, repo, branch, files);
-  const promoted = applyIdPromotion(workDoc, workScripts, prepared.map);
-  const pushDoc = promoted.changed ? promoted.doc : workDoc;
-  const pushScripts = promoted.changed ? promoted.scripts : workScripts;
-  const pushContent = pushScripts[destId] ?? content;
+  const pushContent = workScripts[destId] ?? content;
   try {
     const res = await adapter.commitFiles(repo, {
       branch,
       message: msg,
-      files: prepared.files,
+      files,
       baseSha: expectedBase,
     });
-    const nextScripts = { ...(base.scripts || {}), ...pushScripts, [destId]: pushContent };
+    const nextScripts = { ...(base.scripts || {}), ...workScripts, [destId]: pushContent };
     const next = captureBaseline({
       assemblyPath,
       assemblyName: asmName,
-      doc: pushDoc,
+      doc: workDoc,
       scripts: nextScripts,
       branch,
       headSha: res.sha,
@@ -345,11 +315,11 @@ export async function commitPartToRepo(adapter, repo, {
       branch,
       partId: destId,
       fromId: id !== destId ? id : null,
-      files: prepared.files.map((f) => f.path),
+      files: files.map((f) => f.path),
       baseline: next,
-      doc: pushDoc,
-      scripts: pushScripts,
-      promoted: prepared.map,
+      doc: workDoc,
+      scripts: workScripts,
+      promoted: {},
     };
   } catch (err) {
     if (err instanceof GitAdapterError && err.code === 'non_fast_forward') {
@@ -611,28 +581,24 @@ export async function commitWorkspace(adapter, repo, opts = {}) {
     const tip = await adapter.getBranch(repo, branch);
     expectedBase = tip?.sha || null;
   }
-  const prepared = await filesForPush(adapter, repo, branch, assembled.files);
-  const promoted = applyIdPromotion(assembled.doc, assembled.scripts, prepared.map);
-  const pushDoc = promoted.changed ? promoted.doc : assembled.doc;
-  const pushScripts = promoted.changed ? promoted.scripts : assembled.scripts;
   try {
     const res = await adapter.commitFiles(repo, {
       branch,
       message: assembled.message,
-      files: prepared.files,
+      files: assembled.files,
       baseSha: expectedBase,
     });
     return {
       status: 'committed',
       sha: res.sha,
       branch,
-      files: prepared.files.map((file) => file.path),
-      baseline: nextBaseline(pushDoc, pushScripts, opts.baseline, assembled.assemblyPath, branch, res.sha),
-      doc: pushDoc,
-      scripts: pushScripts,
+      files: assembled.files.map((file) => file.path),
+      baseline: nextBaseline(assembled.doc, assembled.scripts, opts.baseline, assembled.assemblyPath, branch, res.sha),
+      doc: assembled.doc,
+      scripts: assembled.scripts,
       renamed: assembled.renamed,
       moved: assembled.moved,
-      promoted: prepared.map,
+      promoted: {},
     };
   } catch (err) {
     if (!(err instanceof GitAdapterError) || err.code !== 'non_fast_forward') throw err;

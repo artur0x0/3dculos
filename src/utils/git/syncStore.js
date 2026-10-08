@@ -7,6 +7,7 @@
  * When IndexedDB is missing (goldens, private mode) memory still works.
  */
 import { idbWithTimeout, IDB_OP_TIMEOUT_MS } from '../idbWithTimeout.js';
+import { canonicalSurfId, migrateOutboxOp, rewriteVaultFile } from './surfIdMigration.js';
 
 const DB_NAME = 'surfcad-sync';
 const DB_VERSION = 1;
@@ -159,13 +160,16 @@ export function createSyncStore({ persist = true } = {}) {
     return Object.fromEntries(partState.entries());
   }
 
-  async function enqueue(repo, op) {
+  async function enqueue(repo, op, { front = false } = {}) {
     await ready;
     const key = repoKeyOf(repo);
     const branch = op.branch || 'main';
+    const rowSeq = front && ops.length
+      ? Math.min(...ops.map((item) => item.seq)) - 1
+      : seq;
     const row = {
       id: seq,
-      seq,
+      seq: rowSeq,
       repoKey: key,
       branch,
       op: op.op,
@@ -178,7 +182,8 @@ export function createSyncStore({ persist = true } = {}) {
       createdAt: Date.now(),
     };
     seq += 1;
-    ops.push(row);
+    if (front) ops.unshift(row);
+    else ops.push(row);
     for (const id of row.partIds) partState.set(`${key}\0${branch}\0${id}`, 'queued');
     await persistOp(row);
     for (const id of row.partIds) {
@@ -340,6 +345,57 @@ export function createSyncStore({ persist = true } = {}) {
     return rows.map((entry) => ({ path: entry.path, content: entry.content ?? '' }));
   }
 
+  /**
+   * Strip legacy `local-` surf ids in this store: outbox payloads, path-index
+   * values, alias values, and `part:` keys. A second call changes nothing.
+   */
+  async function migrateLocalSurfIds() {
+    await ready;
+    let changed = false;
+    for (const op of ops) {
+      const next = migrateOutboxOp(op);
+      if (next === op) continue;
+      Object.assign(op, next);
+      changed = true;
+      // eslint-disable-next-line no-await-in-loop
+      await persistOp(op);
+    }
+    for (const [slot, surfId] of [...pathIndex.entries()]) {
+      const next = canonicalSurfId(surfId);
+      if (next === surfId) continue;
+      pathIndex.set(slot, next);
+      changed = true;
+      // eslint-disable-next-line no-await-in-loop
+      await persistKv(`path:${slot}`, next);
+    }
+    for (const [slot, surfId] of [...aliases.entries()]) {
+      const next = canonicalSurfId(surfId);
+      if (next === surfId) continue;
+      aliases.set(slot, next);
+      changed = true;
+      // eslint-disable-next-line no-await-in-loop
+      await persistKv(`alias:${slot}`, next);
+    }
+    for (const [slot, row] of [...parts.entries()]) {
+      const nextId = canonicalSurfId(row?.surfId);
+      const nextContent = typeof row?.content === 'string'
+        ? rewriteVaultFile(row.path || 'part.js', row.content)
+        : row?.content;
+      if (nextId === row?.surfId && nextContent === row?.content) continue;
+      const repoKey = slot.split('\0')[0];
+      const newSlot = `${repoKey}\0${nextId}`;
+      const nextRow = { ...row, surfId: nextId, content: nextContent ?? '' };
+      parts.delete(slot);
+      parts.set(newSlot, nextRow);
+      changed = true;
+      // eslint-disable-next-line no-await-in-loop
+      await persistKv(`part:${slot}`, null);
+      // eslint-disable-next-line no-await-in-loop
+      await persistKv(`part:${newSlot}`, nextRow);
+    }
+    return { changed };
+  }
+
   function pathIndexFor(repo) {
     const prefix = `${repoKeyOf(repo)}\0`;
     const out = {};
@@ -374,6 +430,7 @@ export function createSyncStore({ persist = true } = {}) {
     pathIndexFor,
     putTree,
     getTree,
+    migrateLocalSurfIds,
     partStates,
     subscribe,
     ops: () => ops.slice(),

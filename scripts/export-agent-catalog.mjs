@@ -368,7 +368,7 @@ function assemblySchema() {
     $schema: 'https://json-schema.org/draft/2020-12/schema',
     $id: 'https://github.com/artur0x0/3dculos/schema/surf-assembly.json',
     title: 'SurfCAD assembly (.surf.json)',
-    description: 'Assembly document stored at assemblies/<Name>/.surf.json. Part rows reference scripts by repo path. The stable id is // @surf-id in the script and { id, path } here. A part that has not been pushed uses the local- prefix. Optional groups list inserted parts by those ids. validateSurfJson also requires each part visible boolean and order integer.',
+    description: 'Assembly document stored at assemblies/<Name>/.surf.json. Part rows reference scripts by repo path. The stable id is // @surf-id in the script and { id, path } here. The id is permanent. Optional groups list inserted parts by those ids. validateSurfJson also requires each part visible boolean and order integer.',
     type: 'object',
     additionalProperties: false,
     required: ['format', 'version', 'name', 'parts'],
@@ -390,7 +390,7 @@ function assemblySchema() {
             id: {
               type: 'string',
               pattern: id,
-              description: 'Stable surf id. Optional on read so older repos still load. local- prefix means not yet pushed.',
+              description: 'Stable surf id. Optional on read so older repos still load. Permanent once minted. A legacy local- prefix is accepted on read.',
             },
             path: {
               type: 'string',
@@ -468,7 +468,7 @@ function assemblySchema() {
     defs: {
       surfId: {
         pattern: id,
-        examples: ['2026-10-07-20-56-31-0423-a3f9', 'local-2026-10-07-20-56-31-0423-a3f9'],
+        examples: ['2026-10-07-20-56-31-0423-a3f9'],
       },
       surfIdHeader: {
         description: 'First line of a part script.',

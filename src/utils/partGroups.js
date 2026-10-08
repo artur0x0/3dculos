@@ -176,6 +176,7 @@ export function copyGroupToAssembly(doc, scripts, groupId, { now, randFor } = {}
       name: plan.name,
       surfId: plan.surfId,
       copiedFrom: plan.copiedFrom || undefined,
+      isSynced: false,
     } : row));
     groups = groups.map((row) => ({
       ...row,

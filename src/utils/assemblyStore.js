@@ -120,18 +120,44 @@ export async function saveAssemblyDocument(doc) {
   return ok ? clean : null;
 }
 
-export async function loadPartScript(id) {
+export async function loadPartRecord(id) {
   if (!id) return null;
   const { ok, value } = await runTx(PART_STORE, 'readonly', (store) => store.get(String(id)));
   if (!ok || !value || typeof value.script !== 'string') return null;
-  return value.script;
+  return value;
 }
 
-export async function savePartScript(id, script) {
+export async function loadPartScript(id) {
+  const record = await loadPartRecord(id);
+  return record ? record.script : null;
+}
+
+/**
+ * `isSynced` is local to this record. Omit it to keep the stored flag.
+ * Pass a boolean to set it. Never written to `.surf.json`.
+ */
+export async function savePartScript(id, script, opts = {}) {
   if (!id || typeof script !== 'string') return false;
+  let isSynced = opts.isSynced;
+  if (typeof isSynced !== 'boolean') {
+    const existing = await loadPartRecord(id);
+    if (typeof existing?.isSynced === 'boolean') isSynced = existing.isSynced;
+  }
   const record = { id: String(id), script, savedAt: Date.now() };
+  if (typeof isSynced === 'boolean') record.isSynced = isSynced;
   const { ok } = await runTx(PART_STORE, 'readwrite', (store) => store.put(record, record.id));
   return ok;
+}
+
+/** Row id → isSynced for records that store the flag. */
+export async function loadPartSyncFlags(ids) {
+  const out = {};
+  for (const id of ids || []) {
+    // eslint-disable-next-line no-await-in-loop
+    const record = await loadPartRecord(id);
+    if (typeof record?.isSynced === 'boolean') out[String(id)] = record.isSynced;
+  }
+  return out;
 }
 
 export async function deletePartScript(id) {

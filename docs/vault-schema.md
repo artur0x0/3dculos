@@ -39,13 +39,15 @@ The first line of a part script is the stable id:
 // @surf-id 2026-10-07-20-56-31-0423-a3f9
 ```
 
-The body is UTC `yyyy-mm-dd-hh-mm-ss-SSSS-` plus 4 hex characters. A part created in the app and not yet pushed is the same body with a `local-` prefix (`local-2026-10-07-20-56-31-0423-a3f9`). The first successful push drops the prefix in that commit, in the script header and in every `.surf.json` field that cites it (`id`, `copiedFrom`, and group `partIds`). Blob SHA is not an identity.
+The body is UTC `yyyy-mm-dd-hh-mm-ss-SSSS-` plus 4 hex characters (`2026-10-07-20-56-31-0423-a3f9`). The id is minted once and never changes. A push does not rewrite it. Whether the part has been pushed is `isSynced` on the local IndexedDB part record. That flag is not part of the id and is never written to `.surf.json`. Add to Repo shows when `isSynced` is false. Blob SHA is not an identity.
+
+A legacy id may still carry a `local-` prefix. It is accepted on read. One migration strips that prefix and keeps the body: IndexedDB first (the open document, script headers, outbox payloads, and sync-store keys), then one outbox commit rewrites `@surf-id` headers and `.surf.json` `id`, `copiedFrom`, and group `partIds`. The script body and the part path stay. The commit has no deletes. A second pass changes nothing. A row id that merely starts with `local-` and is not a surf id is left alone.
 
 `.surf.json` stores `{ id, path }`. In the app the row id stays the repo path, and `surfId` carries `id`, so scripts stay keyed by file.
 
 A reference matches a part by surf id when that id is known. A missing or unknown id falls back to the path. That is how delete and rename rewrite other assemblies (`findReferencedPart`, `rewriteSurfForDelete`, `rewriteSurfText`).
 
-`id` may be omitted. `openVaultAssembly` reads the header when the script has one (the header wins). `backfillSurfIds` then fills any row that still has none: the cached path index, else a new id without a `local-` prefix. Backfill does not rewrite the script and does not push. The header is written on the next real save.
+`id` may be omitted. `openVaultAssembly` reads the header when the script has one (the header wins). `backfillSurfIds` then fills any row that still has none: the cached path index, else a new id. Backfill does not rewrite the script and does not push. The header is written on the next real save.
 
 ## `.surf.json`
 
@@ -109,12 +111,12 @@ The second part is a legacy row: no `id`. The third part is a link to another as
 | `parts[].name` | yes | Non-empty after trim. |
 | `parts[].visible` | yes | Boolean. |
 | `parts[].order` | yes | Non-negative integer. |
-| `parts[].id` | no | Surf id, unique in this file. `local-` means not yet pushed. |
+| `parts[].id` | no | Surf id, unique in this file. Permanent. A legacy `local-` prefix is accepted on read. |
 | `parts[].position` | no | `[x, y, z]` finite numbers. Viewport translation, millimetres. No mates. |
 | `parts[].sheetMetal` | no | `{ sku, name?, thicknessIn?, gauge? }`. `sku` is required when the object is present. |
 | `parts[].copiedFrom` | no | Surf id this row was copied from. |
 | `groups` | no | Omitted on old files. No key means no groups. |
-| `groups[].id` | when grouped | Surf-id shape. A group id, not a part id. New groups are minted without `local-`. |
+| `groups[].id` | when grouped | Surf-id shape. A group id, not a part id. |
 | `groups[].name` | when grouped | Non-empty label. Starts as the source assembly name. Rename changes only this. |
 | `groups[].source` | when grouped | `assemblies/<Name>/.surf.json`, or `null` after that assembly is deleted. The name stays. |
 | `groups[].partIds` | when grouped | Non-empty surf ids. A part is in at most one group. |
@@ -131,7 +133,7 @@ A group is a Parts-list folder for parts inserted from another assembly. It is n
 
 A linked row is any path outside this assembly's folder (`isExternalPartPath`). The row shows **Caution: external part!** and **Copy to this assembly**.
 
-**Copy to this assembly** (`planCopyToAssembly`) writes a new script in this folder. The new surf id is `local-` until it is pushed. `copiedFrom` records the source surf id (the row's id, else the header). The source file stays. A name already in this folder becomes `Name 2`. The group, if any, keeps the row and points `partIds` at the new id.
+**Copy to this assembly** (`planCopyToAssembly`) writes a new script in this folder. The new surf id is minted once. `isSynced` stays false until that part is pushed. `copiedFrom` records the source surf id (the row's id, else the header). The source file stays. A name already in this folder becomes `Name 2`. The group, if any, keeps the row and points `partIds` at the new id.
 
 **Copy all to this assembly** (`copyGroupToAssembly`) runs that copy on each linked member. The group stays. A member that already lives in this folder is left alone.
 
@@ -158,11 +160,9 @@ A failed push uses the same failure toast as rename (`data-rename-toast`): **Ret
 
 The UI reads and writes the local cache. Git create, save, rename, copy, link, and delete are appended to the outbox before anything is pushed.
 
-IndexedDB `surfcad-sync` is the durable copy (`outbox` plus `kv` for the branch SHA, part rows, path index, and the whole-tree snapshot). Memory is the live copy, so a flush in the same turn sees the op. When IndexedDB is missing, memory still works. IndexedDB `surfcad-assembly` holds the open document and part script text (row id → script) in both modes.
+IndexedDB `surfcad-sync` is the durable copy (`outbox` plus `kv` for the branch SHA, part rows, path index, and the whole-tree snapshot). Memory is the live copy, so a flush in the same turn sees the op. When IndexedDB is missing, memory still works. IndexedDB `surfcad-assembly` holds the open document and part records (row id → `{ script, savedAt, isSynced }`) in both modes. `isSynced` is local only.
 
-The queue is FIFO per repo and branch. Ops for another branch stay queued and are not pushed onto this tip. The worker pushes immediately when online, and again on `online`. On reconnect it compares that branch's remote commit SHA to `lastSyncedSha` first. If they differ, it does not push and does not overwrite; the conflict popup opens.
-
-A `local-` id is promoted in the same commit that first pushes the part. The worker also rewrites any other `.surf.json` on the branch that still cites the old id.
+The queue is FIFO per repo and branch. Ops for another branch stay queued and are not pushed onto this tip. The worker pushes immediately when online, and again on `online`. On reconnect it compares that branch's remote commit SHA to `lastSyncedSha` first. If they differ, it does not push and does not overwrite; the conflict popup opens. A push does not rewrite surf ids. The id migration commit is queued ahead of other pending ops, so a later rename still sees the bare id.
 
 ```mermaid
 stateDiagram-v2
