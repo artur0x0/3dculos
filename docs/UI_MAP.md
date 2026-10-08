@@ -425,9 +425,8 @@ Contour / Extrude / Revolve / Loft / Sweep: `src/utils/contourMode.js` +
 `src/components/Viewport.jsx:1337-1401`.
 Fillet / Chamfer: `src/utils/filletMode.js` + `FilletModeChip.jsx` (same
 edge-pick chip; both commit path sweeps — Fillet → `filletAlongPath`,
-Chamfer → `filletAlongPath({ profile: 'chamfer' })`). Chip: Back = undo last
-pick; X / Escape / dismiss without Accept clears all picks and exits; no
-strategy helper line; Accept row spaced below Clear/Back.
+Chamfer → `filletAlongPath({ profile: 'chamfer' })`). Chip: Tangent / Clear / Undo / Accept. Undo undoes the last edge pick only; X / Escape / dismiss without Accept clears all picks and exits; no hard-edge warning; no
+strategy helper line; Accept row spaced below Clear/Undo.
 Enter/exit/accept at `src/components/Viewport.jsx` `enterFilletMode` /
 `acceptFillet`. Disjoint edge picks split via `splitEdgePathComponents` and
 Accept emits one `makeSweepPath` + `filletAlongPath` pair per contiguous

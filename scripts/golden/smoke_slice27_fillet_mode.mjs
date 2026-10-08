@@ -218,7 +218,8 @@ const e30 = mk(3, 0);
 
 // ── Back = no commit / empty / disconnected stay visible ───────
 {
-  check('Back constant documents no commit', /no commit/i.test(FILLET_MODE_NO_COMMIT));
+  check('dismiss constant documents no commit', /no commit/i.test(FILLET_MODE_NO_COMMIT)
+    && !/Back exits/.test(FILLET_MODE_NO_COMMIT));
   const untouched = starter;
   check('Back leaves buffer unchanged', untouched === starter);
 

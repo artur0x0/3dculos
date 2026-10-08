@@ -415,7 +415,7 @@ export function sweepBlendHardMax(pathLength) {
   return 100;
 }
 
-/** Pop the last selected edge (Back affordance). Returns new array. */
+/** Pop the last selected edge (Fillet/Chamfer chip Undo). Returns new array. */
 export function popLastEdgeSelection(selected) {
   const list = Array.isArray(selected) ? [...selected] : [];
   if (list.length === 0) return list;

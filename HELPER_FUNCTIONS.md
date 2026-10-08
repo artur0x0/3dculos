@@ -83,13 +83,14 @@ wrong solid.
 
 **Fillet mode (Slice 27):** tapping **Fillet** enters edge-pick mode with no
 prior selection required (no soft-fail / no pre-select). The chip is Tangent
-(default-on) / Clear / **Accept** / Back. Live sweep-blend preview updates as
-edges accumulate. While Fillet mode is open the viewport labels each merged
-face `fN` and each boundary edge `eN`. **Accept** writes `makeSweepPath` +
-`filletAlongPath` in a marked block, with `edgesBetween` / `edge` instead of
-a `va`/`vb` dump when those ids are present, and Auto-Runs; second Accept
-replaces that same block. **Back** exits with no commit. Strategy default
-stays **sweep**.
+(default-on) / Clear / **Undo** / **Accept**. **Undo** drops the last edge
+pick only (not the CAD script Undo). There is no hard-edge warning. Live
+sweep-blend preview updates as edges accumulate. While Fillet mode is open
+the viewport labels each merged face `fN` and each boundary edge `eN`.
+**Accept** writes `makeSweepPath` + `filletAlongPath` in a marked block, with
+`edgesBetween` / `edge` instead of a `va`/`vb` dump when those ids are
+present, and Auto-Runs; second Accept replaces that same block. **X** exits
+with no commit. Strategy default stays **sweep**.
 
 **Cross-section (Slice 21):** `makeCrossSection(plane, profile)` is the reusable
 plane + 2D profile substrate (planar face via `workplaneFromFace`, or default
