@@ -313,6 +313,8 @@ All of these are absolutely positioned inside the shell at
 | --- | --- | --- | --- |
 | *editor header* (portal) | Toolbar, all CAD | `Toolbar.jsx` `variant="strip"` | `:3530` |
 | top-center | CAD: part, the word in, assembly. Game: puzzle name | `data-viewer-title` / `ViewportTitleChip` | Viewport |
+| top-right, left of the profile chip (`top-4 right-16`) | Paint toggle. Hidden in game. On opens the paint popup; off, Esc, Cancel, or the grey X leave without writing | `PaintModeToggle` `data-paint-chip` | Viewport |
+| bottom, centered in the gap between the rails (same card as Shell; `bottom-14` on a phone) | Paint popup: 8 swatches, custom `#rrggbb`, Part, Undo, Clear, Remove unmatched colors, Confirm, Cancel | `PaintModeChip` `data-paint-mode` | Viewport |
 | centered | "Match!" success banner | inline | `:3595` |
 | left-2/4 bottom-2.5 | helper insert rail (height paired to right). Shape includes Sheet Metal with the other shape tools | `HelperInsertPalette.jsx` | Viewport |
 | left-2/4 bottom-2.5 | contour tool rail (replaces the helper rail) | `ContourModeRail.jsx` | Viewport |
@@ -338,6 +340,8 @@ All of these are absolutely positioned inside the shell at
 
 The canvas draws a face-color skin on top of a part when that assembly has `colors` (`src/utils/faceColorSkin.js`). The skin is under crease lines and pick highlights. `?debugFaces=1` or `localStorage` key `surfcad.debugFaces` = `1` paints each face patch a different color. The flag is off unless set, and it is not on the right rail.
 
+**Paint.** The palette chip is CAD-only. A click in paint mode uses the normal face pick, so a blend and a coplanar seam select the same face they already do, and the highlight draws above the skin. Tap a picked face again to drop it. Undo drops the last pick and leaves saved colors alone. Confirm writes `colors[surfId]` through the assembly save (local document, and the git outbox in Git mode). Part colors the whole part. Clear removes the saved color of the picked faces, or the part color. Cancel writes nothing. Picks belong to the active part; switching parts clears them. Game mode hides the chip. The helper rail hides while the popup is open, same as Shell.
+
 **Opening an assembly.** `data-assembly-open-spinner` sits centered over the
 viewport (the viewport pane on desktop, the full shell on a phone) while a
 document loads. Paths: the Open assembly dialog (Cancel, Insert parts into
@@ -355,8 +359,8 @@ Retry (`data-assembly-open-retry`). The overlay does not take clicks
 (`pointer-events-none`, `z-[45]`), so those toasts (`z-50`) stay usable.
 `prefers-reduced-motion` stops the ring (`data-assembly-open-ring`).
 
-**Mutual-exclusion rules.** The helper rail hides while `contourMode` or
-`filletMode` is set; the Edge-pick chip needs `pickMode === 'edge'`, no active mode, **and at
+**Mutual-exclusion rules.** The helper rail hides while `contourMode`,
+`filletMode`, or paint mode is set (and the other feature modes); the Edge-pick chip needs `pickMode === 'edge'`, no active mode, **and at
 least one selected edge**. Break these and overlays stack in the same corner.
 
 **View snaps.** `ViewSnapControl`'s button only opens and closes its popup —
