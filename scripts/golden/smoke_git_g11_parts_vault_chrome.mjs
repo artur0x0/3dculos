@@ -178,6 +178,8 @@ console.log('\ngit G11 — Open browse + insert parts');
 
 console.log('\ngit G11 — UI wiring (PartFeed + App + architecture)');
 const feed = readFileSync(new URL('../../src/components/PartFeed.jsx', import.meta.url), 'utf8');
+const vaultDlg = readFileSync(new URL('../../src/components/VaultPickerDialog.jsx', import.meta.url), 'utf8');
+const choiceDlg = readFileSync(new URL('../../src/components/OpenAssemblyChoiceDialog.jsx', import.meta.url), 'utf8');
 const app = readFileSync(new URL('../../src/App.jsx', import.meta.url), 'utf8');
 const arch = readFileSync(new URL('../../docs/architecture.md', import.meta.url), 'utf8');
 ok('Save = Commit chrome', /data-git-save=""/.test(feed) && /data-git-commit=""/.test(feed)
@@ -185,7 +187,7 @@ ok('Save = Commit chrome', /data-git-save=""/.test(feed) && /data-git-commit=""/
 ok('title chip → pane actions', /data-assembly-branch=""/.test(feed)
   && /data-git-branches=""/.test(feed) && /data-git-branch-pane=""/.test(feed)
   && /data-git-branch-action="create"/.test(feed)
-  && /data-git-dialog-header/.test(feed)
+  && /data-git-dialog-header/.test(vaultDlg)
   && /data-git-branch-action="delete"/.test(feed)
   && /data-git-branch-action="merge"/.test(feed)
   && !/data-git-branch-dropdown/.test(feed)
@@ -202,9 +204,10 @@ ok('Save still on ribbon end (no Branch button)', (() => {
 ok('merge conflict → Resolve on Git', /data-git-branch-merge-conflict/.test(feed)
   && /data-git-branch-resolve-github/.test(feed)
   && /startMergeFromPane/.test(feed) && /onSquashMerge/.test(feed));
-ok('Open assembly choice', (/data-git-dialog="open-choice"/.test(feed) || /dataAttr="open-choice"/.test(feed))
-  && /data-git-open-replace/.test(feed) && /data-git-open-insert/.test(feed)
-  && /Insert parts into current/.test(feed) && /Open assembly/.test(feed));
+ok('Open assembly choice', (/data-git-dialog="open-choice"/.test(choiceDlg) || /dataAttr="open-choice"/.test(choiceDlg))
+  && /data-git-open-replace/.test(choiceDlg) && /data-git-open-insert/.test(choiceDlg)
+  && /Insert parts into current/.test(choiceDlg) && /Open assembly/.test(choiceDlg)
+  && /<OpenAssemblyChoiceDialog/.test(feed));
 ok('Open browses parts + assemblies', /data-git-open-assemblies/.test(feed) && /data-git-open-parts/.test(feed)
   && /data-git-open-part=/.test(feed));
 ok('Open Part groups by source; Open Assembly is assemblies only', /data-git-open-group/.test(feed)
