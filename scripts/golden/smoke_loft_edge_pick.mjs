@@ -8,6 +8,7 @@
  */
 import { register } from 'node:module';
 import { BufferGeometry, BufferAttribute } from 'three';
+import { buildSolidGeometry, featureGraphFor } from '../../src/utils/partSolidCache.js';
 import {
   buildFeatureEdges,
   buildCoherentEdges,
@@ -185,6 +186,34 @@ return placeInFrame(fr, makeLoft([xs0, xs1]));
   }
 }
 
+console.log('loft edge pick — 64-seg rectangle side (app mesh)');
+{
+  // App path: fin drop + coherent chains. The long side used to stop at a
+  // 1.00 mm hole (x = 7.50 → 8.50) because collinear merge only bridged 0.75 mm.
+  // It is one segment to the last crease (x = 9.50). It does not turn the
+  // 90° corner onto the short side.
+  const payload = await exec(`
+const fr = { center: [0, 0, 0], normal: [0, 0, 1], x: [1, 0, 0], y: [0, 1, 0] };
+const xs0 = makeCrossSection(fr, profileCircle(5, 64));
+const xs1 = makeCrossSection(offsetPlaneFrame(fr, 20), profileRectangle(20, 12, true));
+return placeInFrame(fr, makeLoft([xs0, xs1]));
+`);
+  const { geometry, faceIDs } = buildSolidGeometry(payload.mesh);
+  const { featureEdges } = featureGraphFor(geometry, faceIDs);
+  const side = featureEdges.filter((e) => Math.abs(e.va[1] - 6) < 0.25 && Math.abs(e.vb[1] - 6) < 0.25 && Math.abs(e.va[2] - 20) < 0.4);
+  const seed = side.slice().sort((a, b) => b.length - a.length)[0];
+  check('64-seg long side exists as a coherent edge', !!seed && seed.length > 19, seed ? `L=${seed.length.toFixed(2)}` : 'missing');
+  if (seed) {
+    const picked = toggleEdgeSelectionPropagated([], seed, { propagate: true, featureEdges });
+    const len = picked.reduce((s, e) => s + e.length, 0);
+    const xs = picked.flatMap((e) => [e.va[0], e.vb[0]]);
+    const ys = picked.flatMap((e) => [e.va[1], e.vb[1]]);
+    check('64-seg long side pick is that one side', picked.length === 1 && len > 19 && len < 20.2, `n=${picked.length} len=${len.toFixed(2)}`);
+    check('64-seg long side reaches both ends of the crease', Math.min(...xs) < -9.9 && Math.max(...xs) > 9.4, `x ${Math.min(...xs).toFixed(2)}→${Math.max(...xs).toFixed(2)}`);
+    check('64-seg long side does not turn the corner', Math.max(...ys) - Math.min(...ys) < 0.3, `dy=${(Math.max(...ys) - Math.min(...ys)).toFixed(2)}`);
+  }
+}
+
 {
   const cube = await exec('return Manifold.cube([40, 30, 20], true);');
   const g = geomOf(cube.mesh);
@@ -197,6 +226,8 @@ return placeInFrame(fr, makeLoft([xs0, xs1]));
   const coherent = buildCoherentEdges(annotateFeatureEdges(raw, topo));
   check('cube still 12 edges', coherent.length === 12, `n=${coherent.length}`);
   check('cube edges keep boundary ids', coherent.every((e) => Number.isFinite(e.boundaryId)));
+  const cubePick = toggleEdgeSelectionPropagated([], coherent[0], { propagate: true, featureEdges: coherent });
+  check('cube edge with tangent on stays that one edge', cubePick.length === 1, `n=${cubePick.length}`);
 }
 
 if (failed) {

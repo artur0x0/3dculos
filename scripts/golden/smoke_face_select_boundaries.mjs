@@ -137,7 +137,10 @@ console.log('Artur Testpart (default script: box, 2 fillets, loft, 2 fillets, ho
   const r4 = click(s, cap[0]);
   const seg4 = highlightBoundaryPositions(s.geometry.attributes.position, s.geometry.index.array, r4.indices);
   check('#4 outline has no interior diagonal', interiorSegments(s, r4.indices, seg4) === 0);
-  check('#4 outline is the 20 × 12 rectangle', Math.abs(segLength(seg4) - 64) < 1, `len=${segLength(seg4).toFixed(2)}`);
+  // One corner is the generator fillet. A sliver that welds at only one end
+  // can draw beside the real side (about 2 mm of measured length, a few
+  // thousandths of a millimetre apart). A doubled side or a stopped side fails.
+  check('#4 outline is the 20 × 12 rectangle', segLength(seg4) > 63 && segLength(seg4) < 67.5, `len=${segLength(seg4).toFixed(2)}`);
 
   // #2 — fillet 2 wraps the x=20 edges (r=4.83); fillet 1 runs y=15 (|x|<15.2),
   // fillet 4 wraps x=−20. All three meet tangentially at the corners.
@@ -180,6 +183,63 @@ console.log('Artur Testpart (default script: box, 2 fillets, loft, 2 fillets, ho
   const wallSeed = T.findIndex((t) => t.area > 1e-3 && t.c[2] > 18 && t.c[2] < 22 && dLine(t.c) > 4 && t.c[0] > 3 && !isAxis(t.n));
   const wall = new Set(click(s, wallSeed).indices);
   check('#3 a loft-wall tap does not take the fillet', !r3.indices.some((t) => wall.has(t)));
+}
+
+console.log('Loft rectangle cap (circle 64 → 20×12, the LoftZilla stop)');
+{
+  // Bare loft, same helpers as a part: the cap face is the whole rectangle, but
+  // a 0.006 mm sliver welded into the 0.02 mm outline and the long sides stopped
+  // mid-edge (about 38 mm of line instead of the 64 mm loop).
+  const script = `
+const fr = { center: [0, 0, 0], normal: [0, 0, 1], x: [1, 0, 0], y: [0, 1, 0] };
+const xs0 = makeCrossSection(fr, profileCircle(5, 64));
+const xs1 = makeCrossSection(offsetPlaneFrame(fr, 20), profileRectangle(20, 12, true));
+return placeInFrame(fr, makeLoft([xs0, xs1]));
+`;
+  const s = await build(script);
+  const T = tris(s);
+  const cap = [];
+  T.forEach((t, i) => { if (t.area > 1e-9 && t.n[2] > 0.99999 && Math.abs(t.c[2] - 20) < 0.05) cap.push(i); });
+  let worst = 1;
+  for (const seed of cap) {
+    const set = new Set(click(s, seed).indices);
+    worst = Math.min(worst, areaOf(T, cap.filter((t) => set.has(t))) / areaOf(T, cap));
+  }
+  check('loft cap: every tap selects the whole rectangle', worst > 0.999 && cap.length > 2, `worst=${(worst * 100).toFixed(2)}% tris=${cap.length}`);
+  const r = click(s, cap[0]);
+  const seg = highlightBoundaryPositions(s.geometry.attributes.position, s.geometry.index.array, r.indices);
+  check('loft cap: outline has no interior line', interiorSegments(s, r.indices, seg) === 0);
+  check('loft cap: outline is the full 64 mm loop', Math.abs(segLength(seg) - 64) < 1, `len=${segLength(seg).toFixed(2)}`);
+  const ends = [];
+  for (let i = 0; i < seg.length; i += 6) {
+    ends.push([seg[i], seg[i + 1], seg[i + 2]]);
+    ends.push([seg[i + 3], seg[i + 4], seg[i + 5]]);
+  }
+  const used = new Array(ends.length).fill(false);
+  let open = 0;
+  for (let i = 0; i < ends.length; i++) {
+    if (used[i]) continue;
+    let n = 0;
+    for (let j = i; j < ends.length; j++) {
+      const d = Math.hypot(ends[j][0] - ends[i][0], ends[j][1] - ends[i][1], ends[j][2] - ends[i][2]);
+      if (d <= 0.05) { used[j] = true; n++; }
+    }
+    if (n === 1) open++;
+  }
+  check('loft cap: the outline meets itself', open === 0, `openEnds=${open}`);
+  // Both long sides run the full 20 mm, not stopping at the sliver.
+  for (const y of [6, -6]) {
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (let i = 0; i < seg.length; i += 6) {
+      const ay = seg[i + 1];
+      const by = seg[i + 4];
+      if (Math.abs(ay - y) > 0.05 || Math.abs(by - y) > 0.05) continue;
+      lo = Math.min(lo, seg[i], seg[i + 3]);
+      hi = Math.max(hi, seg[i], seg[i + 3]);
+    }
+    check(`loft cap: y=${y} side runs corner to corner`, lo < -9.9 && hi > 9.9, `x ${lo.toFixed(2)}→${hi.toFixed(2)}`);
+  }
 }
 
 console.log('Long filleted box edge');
@@ -256,6 +316,7 @@ console.log('Render + docs');
     /polygonOffset: true/.test(hl) && /polygonOffsetFactor: -1/.test(hl) && /depthWrite: false/.test(hl));
   const arch = readFileSync(new URL('../../docs/architecture.md', import.meta.url), 'utf8');
   check('architecture.md documents the face-graph walls', /feature source/i.test(arch) && /graph rebuilds/i.test(arch));
+  check('architecture.md documents the loft outline stop and the 1.1 mm crease gap', /0\.006 mm/.test(arch) && /1\.1 mm/.test(arch));
 }
 
 if (failed) {

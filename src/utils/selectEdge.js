@@ -690,7 +690,17 @@ export const TANGENT_PROP_FLOOD_MAX = 128;
 
 const COLLINEAR_DEG = 6;
 const LINE_OFFSET_EPS = 0.45;
-const LINE_GAP_EPS = 0.75;
+/**
+ * Collinear crease pieces join across a hole this long (mm).
+ * A 64-segment circle-to-rectangle loft leaves a measured 1.00 mm hole on
+ * the long rectangle side (x = 7.50 → 8.50): the cap and the wall do not
+ * share the intermediate vertex, so both index edges have one triangle and
+ * drop out of the feature graph. 0.75 mm split that side into a 17.5 mm
+ * pick that stopped short of the corner. 1.1 mm crosses that hole and still
+ * leaves a real 2 mm notch alone. A 90° corner is a different line, so a
+ * cube edge stays one edge.
+ */
+const LINE_GAP_EPS = 1.1;
 /** RDP tolerance. Keeps a mild loft generator; collapses a straight side to one segment. */
 const CHAIN_SIMPLIFY_EPS = 0.35;
 /**
