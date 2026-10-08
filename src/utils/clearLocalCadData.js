@@ -1,15 +1,17 @@
 /**
- * clearLocalCadData — wipe device CAD caches without touching GitHub.
+ * clearLocalCadData — wipe device CAD caches without touching the remote repo.
  *
  * Clears:
  *   - surfcad / editorDraft (+ localStorage surfcad_editor_draft fallback)
  *   - surfcad-assembly (document + part scripts)
+ *   - surfcad-sync (outbox + kv)
  *   - SurfDB model cache (+ in-memory Manifold import cache)
  *   - OAuth editor hand-off localStorage (surfcad_editor) so a reload cannot
  *     resurrect the previous buffer
  *
- * Does not delete the GitHub account or vault repo. Does not clear the GitHub
- * OAuth token in sessionStorage — a same-tab reload keeps that token.
+ * Kept: GitHub sessionStorage token (`surfcad.github.token`), the auth
+ * session, the `surfcad-scs` catalog, and checkout / game-wins settings.
+ * Does not delete the GitHub account or vault repo, and does not fetch.
  */
 import { clearEditorDraft } from './editorDraft.js';
 import { clearAssemblyStore } from './assemblyStore.js';

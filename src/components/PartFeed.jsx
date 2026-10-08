@@ -341,7 +341,8 @@ export default function PartFeed({
   githubConnected = false,
   onGitConnect = null,
   onGitDisconnect = null,
-  // Same account/sign-in flow as CAD ProfileChip; Clear local CAD data on inline menu
+  // Same account menu as the CAD ProfileChip. The chip itself is mobile-only.
+  isMobile = false,
   onAccount = null,
   onSignedOut = null,
   onClearLocalCadData = null,
@@ -1481,10 +1482,12 @@ export default function PartFeed({
           >
             {githubConnected ? 'Disconnect GitHub' : 'Connect GitHub'}
           </button>
-          {/* Same profile chip as CAD viewport — opens Login / Account. */}
-          <div data-parts-profile-chip="" className="flex shrink-0 items-center pl-0.5">
-            <ProfileChip variant="inline" onAccount={onAccount} onSignedOut={onSignedOut} onClearLocalCadData={onClearLocalCadData} vaultName={profileVaultName} />
-          </div>
+          {/* Mobile only. Desktop uses the CAD viewer profile chip. */}
+          {isMobile && (
+            <div data-parts-profile-chip="" className="flex shrink-0 items-center pl-0.5">
+              <ProfileChip variant="inline" onAccount={onAccount} onSignedOut={onSignedOut} onClearLocalCadData={onClearLocalCadData} vaultName={profileVaultName} />
+            </div>
+          )}
         </div>
 
         <input

@@ -38,7 +38,7 @@ one shell you must change the other.
 │ │ PromptInput (hidden)   │ │ ║ │  profile chip top-right      │
 │ └────────────────────────┘ │ ║ │                              │
 └────────────────────────────┴───┴──────────────────────────────┘
-  Parts feed sits left of the editor; its ribbon has the profile chip.
+  Parts feed sits left of the editor. Desktop hides its profile chip.
 ```
 
 **The seam between the two panes is draggable** in both shells
@@ -72,9 +72,14 @@ Desktop specifics:
   the viewer (`handleDesktopFeatureStripJump`). The old vertical seam strip
   between editor and viewer is gone. Hidden in game mode. SplitDivider sits
   directly between editor and viewer.
-- **Profile chip:** CAD viewport + Parts ribbon + Script toolbar (same
-  `ProfileChip`). Signed-out = grey User icon; signed-in = green initials.
-  GitHub Sign-in uses the runtime Client ID cache from `/api/config`.
+- **Profile chip:** desktop (above the 768px mobile breakpoint) shows only
+  the CAD viewport chip, top-right. Mobile shows that chip plus one on the
+  Parts ribbon and one on the Script toolbar (same `ProfileChip`). Signed-out
+  = grey User icon; signed-in = green initials. The account menu includes
+  **Clear local cache** (`data-clear-cache`), which opens the confirm popup
+  (`data-clear-cache-dialog`) and warns about unpushed outbox entries and
+  unsynced parts. GitHub Sign-in uses the runtime Client ID cache from
+  `/api/config`.
 - **The Toolbar is portaled into the editor mid-strip, exactly like mobile.**
   There is no floating overlay bar and no collapse chevron for CAD any more;
   `Toolbar.jsx` renders only the dark `variant="strip"` markup for CAD.
@@ -87,8 +92,9 @@ Desktop specifics:
 - CAD title is the same "part in assembly" line as mobile. No toolbar carries it.
 - **Parts feed:** the same list as the mobile Parts stage, mounted to the left
   of the editor (`data-parts-feed-placement="desktop-left"`). The assembly
-  name sits in the middle of the ribbon (`data-parts-ribbon-center`). The
-  profile chip is right-justified (`data-parts-ribbon-end`). Each row thumbnail
+  name sits in the middle of the ribbon (`data-parts-ribbon-center`).
+  On mobile the profile chip is right-justified in `data-parts-ribbon-end`;
+  desktop leaves that slot empty. Each row thumbnail
   (`data-part-thumbnail`, `data-part-preview="manifold"`) is a cached snapshot
   of that part's solid. No solid is `data-part-preview="empty"`. Delete asks
   first; Cancel keeps the part, Confirm removes that part only. In git mode,
@@ -183,7 +189,9 @@ Mobile specifics:
   uses the same Open assembly list and **Delete assembly?** dialog as desktop.
   The ribbon centers
   the assembly name (Assembly when the document has none) and keeps Local or
-  Git on the right.
+  Git on the right. Mobile also keeps a profile chip on the Parts ribbon and
+  the Script toolbar; desktop keeps only the CAD viewer chip. **Clear local
+  cache** is on that chip's account menu.
   Session-sticky via `3dculos.mobileStage`.
   Top CAD|Script text chrome is gone. Inert `data-ai-prompt-hook` marks a
   future AI-on-tap site (not wired). Contour/Fillet chips use `bottom-14` on
@@ -379,7 +387,7 @@ phones, centered dialog on desktop**.
 
 | Modal | Opened by | File | Notes |
 | --- | --- | --- | --- |
-| Login | Viewport profile chip (signed out / guest) | `LoginModal.jsx` / `ProfileChip.jsx` | `/api/auth/login`, `/register` |
+| Login | Profile chip → Sign in (signed out / guest) | `LoginModal.jsx` / `ProfileChip.jsx` | `/api/auth/login`, `/register` |
 | Account | Viewport profile chip (signed in) | `AccountModal.jsx` / `ProfileChip.jsx` | tabs `info` / `orders` |
 | Quote | Toolbar → Truck | `QuoteModal.jsx` | process / material / infill → `utils/quoting.js` |
 | Order | Quote → Order | `OrderModal.jsx` + `components/order/*` | six steps, `STEPS` at `OrderModal.jsx:13`: Auth → Address → Shipping → Payment → Confirmation → Convert |

@@ -180,7 +180,7 @@ export async function loadPartScripts(ids, { onProgress } = {}) {
   return out;
 }
 
-/** Wipe assembly document + all part scripts (Clear local CAD data). */
+/** Wipe assembly document + all part scripts (Clear local cache). */
 export async function clearAssemblyStore() {
   const doc = await runTx(DOC_STORE, 'readwrite', (store) => store.clear());
   const parts = await runTx(PART_STORE, 'readwrite', (store) => store.clear());

@@ -1,6 +1,6 @@
 /**
  * IndexedDB cache for the joined SendCutSend catalog (one entry).
- * Separate DB from CAD data so Clear local CAD data keeps the catalog.
+ * Separate DB from CAD data so Clear local cache keeps the catalog.
  */
 import { idbWithTimeout, IDB_OP_TIMEOUT_MS } from '../idbWithTimeout.js';
 
