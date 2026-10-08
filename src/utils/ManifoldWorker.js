@@ -759,6 +759,20 @@ class ManifoldWorker {
     this.terminate();
     await this.init();
   }
+
+  /**
+   * A superseded execute keeps the worker thread until it finishes, and every
+   * later script queues behind it. Opening an assembly restarts the thread
+   * when one of those runs is still in flight so the open is not stuck there.
+   * No-op when nothing is pending. Pending promises reject as terminated.
+   * @returns {Promise<boolean>} true when a run was dropped
+   */
+  async preemptInflight() {
+    if (!this.pendingRequests || this.pendingRequests.size === 0) return false;
+    console.log('[ManifoldWorker] Preempting in-flight run');
+    await this.restart();
+    return true;
+  }
   
   /**
    * Configure the worker

@@ -276,13 +276,25 @@ const App = () => {
   const [assemblyOpenUi, setAssemblyOpenUi] = useState(null);
   const [assemblyOpenToast, setAssemblyOpenToast] = useState(null);
   const assemblyOpenCtrlRef = useRef(null);
-  const assemblyOpenBuildRef = useRef(null);
   const assemblyOpenProgressRef = useRef(null);
+  // While an open owns the worker, editor auto-run must not start another
+  // script behind (or in front of) the build the spinner is waiting on.
+  const assemblyOpenLockRef = useRef(false);
   const finishOpenedPartRef = useRef(async () => {});
   if (assemblyOpenCtrlRef.current == null) {
     assemblyOpenCtrlRef.current = createAssemblyOpenController({
-      onChange: (ui) => setAssemblyOpenUi(ui),
-      onBegin: () => setAssemblyOpenToast(null),
+      onChange: (ui) => {
+        setAssemblyOpenUi(ui);
+        // begin() emits once before the spinner is visible. The open is
+        // still current then; only a real hide releases the auto-run lock.
+        if (!ui && !assemblyOpenCtrlRef.current?.isOpen?.()) {
+          assemblyOpenLockRef.current = false;
+        }
+      },
+      onBegin: () => {
+        assemblyOpenLockRef.current = true;
+        setAssemblyOpenToast(null);
+      },
       onFailure: (fail) => setAssemblyOpenToast({
         generation: fail.generation,
         message: fail.message || 'Could not open assembly',
@@ -1578,10 +1590,9 @@ const App = () => {
       const report = assemblyOpenProgressRef.current;
       if (typeof report === 'function') report({ index: buildStep, total: buildTotal });
     };
+    let other;
     try {
-      let other;
-      try {
-        other = await runAssemblyParts({
+      other = await runAssemblyParts({
           doc,
           scripts,
           ids: otherIds,
@@ -1644,21 +1655,26 @@ const App = () => {
         // Red outline in the viewer, same rule as the Parts feed's red row.
         failedIds: failedPartIdsFor(doc, runs),
       });
-      return true;
-    } finally {
-      const wait = assemblyOpenBuildRef.current;
-      if (wait && gen > wait.after) {
-        assemblyOpenBuildRef.current = null;
-        wait.resolve();
-      }
-    }
+    return true;
   };
   refreshAssemblyRef.current = refreshAssembly;
 
   /**
-   * Put the opened assembly's active part in the editor and wait until that
-   * refresh's worker build finishes. The open spinner stays up through this.
+   * Drop a worker run that already started (the seed auto-run, or the part
+   * we are leaving). A generation bump only discards its result; the thread
+   * keeps chewing and the open's script queues behind it, so the spinner
+   * stays up after the rest of the UI is on screen.
    */
+  const preemptInflightAssemblyRun = async () => {
+    const worker = manifoldContext?.worker;
+    if (!worker || typeof worker.preemptInflight !== 'function') return;
+    try {
+      await worker.preemptInflight();
+    } catch (err) {
+      console.warn('[App] Could not preempt in-flight part run', err?.message || err);
+    }
+  };
+
   const finishOpenedPart = async (saved, scripts, progress) => {
     const active = saved?.parts?.find((part) => part.id === saved.activeId) || saved?.parts?.[0];
     if (!active) return;
@@ -1669,20 +1685,30 @@ const App = () => {
     const report = typeof progress === 'function' ? progress : null;
     assemblyOpenProgressRef.current = report;
     try {
-      if (picked.ok && codeEditorRef.current?.loadContent) {
-        let resolveWait = () => {};
-        const pending = new Promise((resolve) => { resolveWait = resolve; });
-        assemblyOpenBuildRef.current = { after: refreshGenRef.current, resolve: resolveWait };
+      // Kill a superseded run before this build posts, or it sits in front
+      // of the script the spinner is waiting on.
+      await preemptInflightAssemblyRun();
+      const note = '// This part has no file yet.\n';
+      const script = picked.ok ? picked.script : undefined;
+      if (picked.ok) {
         suppressPartSaveRef.current = false;
-        codeEditorRef.current.loadContent(picked.script, active.name, false);
-        await pending;
-      } else if (picked.ok) {
-        suppressPartSaveRef.current = false;
-        await refreshAssemblyRef.current?.(picked.script, { persistActive: false });
+        if (codeEditorRef.current?.setTextOnly) codeEditorRef.current.setTextOnly(picked.script);
+        else setEditorInitialScript(picked.script);
       } else {
         suppressPartSaveRef.current = true;
-        codeEditorRef.current?.setTextOnly?.('// This part has no file yet.\n');
-        await refreshAssemblyRef.current?.(undefined, { persistActive: false });
+        if (codeEditorRef.current?.setTextOnly) codeEditorRef.current.setTextOnly(note);
+        else setEditorInitialScript(note);
+      }
+      // This open's own build. Not the editor's 100ms auto-run: that one is
+      // dropped when the generation changes, and the spinner used to wait
+      // on a refresh that never started.
+      const before = refreshGenRef.current;
+      const ok = await refreshAssemblyRef.current?.(script, { persistActive: false });
+      const superseded = refreshGenRef.current > before + 1;
+      if (ok === false && !superseded) {
+        const err = new Error(`Could not open ${saved?.name || 'assembly'}`);
+        err.assemblyOpen = true;
+        throw err;
       }
     } finally {
       if (assemblyOpenProgressRef.current === report) assemblyOpenProgressRef.current = null;
@@ -4876,6 +4902,9 @@ const App = () => {
       // A generation bump (open / hydrate) drops this scheduled run.
       const scheduledGen = refreshGenRef.current;
       setTimeout(() => {
+        // An open is already building this part. A second post queues behind
+        // it, or bumps the generation and drops the build the spinner awaits.
+        if (assemblyOpenLockRef.current) return;
         if (refreshGenRef.current !== scheduledGen) return;
         refreshAssemblyRef.current?.(script);
       }, 100);
