@@ -473,10 +473,13 @@ export function buildPartGraphPatches(mesh, opts = {}) {
   }
 
   // --- Pass 3: curvature-consistent merge among non-flats ----------------
-  // A curved face never crosses a feature wall: a fillet tangent to a loft
-  // wall, or to the next fillet, is still its own face (G1 hides the seam).
   // The dihedral gate is that source's own tessellation. Inside one op the
   // κ test stays off, so a coarse fillet strip is still one face.
+  // A later fillet call cuts the previous fillet into strips that no longer
+  // share an edge with each other. Those strips meet the new fillet at a
+  // couple of degrees. The walk crosses that seam only when both sides are
+  // fillet ops and the angle clears both gates. A loft, a flat, a hole, and
+  // a chamfer have no fillet step, so the wall stays.
   const gateBySource = new Map();
   const gateFor = (source) => {
     const hit = gateBySource.get(source);
@@ -490,9 +493,20 @@ export function buildPartGraphPatches(mesh, opts = {}) {
     gateBySource.set(source, gate);
     return gate;
   };
+  const filletOpSource = (source) => {
+    if (!triSource || !(source < 0)) return false;
+    const info = tessBySource.get(source);
+    return !!(info && info.facetDeg > 0);
+  };
   for (const rec of atomAdj) {
     if (atomLockedFlat[rec.a] || atomLockedFlat[rec.b]) continue;
-    if (atomSource[rec.a] !== atomSource[rec.b]) continue;
+    if (atomSource[rec.a] !== atomSource[rec.b]) {
+      if (!filletOpSource(atomSource[rec.a]) || !filletOpSource(atomSource[rec.b])) continue;
+      const crossGate = Math.min(gateFor(atomSource[rec.a]), gateFor(atomSource[rec.b]));
+      if (rec.max > crossGate) continue;
+      patchUF.unite(rec.a, rec.b);
+      continue;
+    }
     const gate = gateFor(atomSource[rec.a]);
     if (rec.max > gate) continue;
     // A tagged tessellation is one feature's own facets. κ stays off there,
