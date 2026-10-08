@@ -4,8 +4,8 @@
  *   surfcad.json                                  vault marker
  *   README.md
  *   assemblies/<name>/.surf.json                  assembly metadata (nameless)
- *   assemblies/<name>/<part>.js                   that assembly's parts (same folder)
- *   parts/<part>.js                               shared parts, referenced by path
+ *   assemblies/<name>/<part>.js                   Copy to this assembly only (new id)
+ *   parts/<part>.js                               part scripts, referenced by path
  *
  * Legacy (read-compat only; writes always use the layout above):
  *   assemblies/<name>/<name>.surf.json
@@ -172,16 +172,14 @@ export function isVaultPartPath(path) {
 }
 
 /**
- * Referenced file lives outside this assembly's folder (another assembly,
- * or loose `parts/`). Those rows stay linked; the row shows the external
- * caution until the user copies the file in.
+ * Referenced file lives in another assembly's folder. `parts/` is the
+ * normal home and is not external. The row shows the external caution
+ * until the user copies that file into this assembly.
  */
 export function isExternalPartPath(assemblyName, path) {
   const info = parseVaultPath(path);
   if (!info) return false;
-  if (info.kind === 'shared-part') return true;
-  if (info.kind === 'assembly-part' && info.assembly !== vaultSegment(assemblyName)) return true;
-  return false;
+  return info.kind === 'assembly-part' && info.assembly !== vaultSegment(assemblyName);
 }
 
 /**

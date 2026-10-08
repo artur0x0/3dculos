@@ -9,14 +9,14 @@
  * switch to Git mode with no dirty badges.
  *
  *   assemblies/<asm>/.surf.json             nameless assembly metadata
- *   assemblies/<asm>/<part>.js              every part by default (same folder)
- *   parts/<part>.js                         parts the user marks shared
+ *   parts/<part>.js                         every new part
  *
  * Row ids that are already a repo path keep it when the layout allows it
- * for this assembly (its own folder or the shared `parts/`); anything
- * else (`local:<uuid>`, another assembly's path) gets a path from the part
- * name. Name collisions get ` 2`, ` 3`… (case-insensitive, so the vault
- * also works on case-insensitive checkouts).
+ * for this assembly (its own folder or `parts/`); anything else
+ * (`local:<uuid>`, another assembly's path) goes to `parts/<Name>.js`.
+ * Name collisions get ` 2`, ` 3`… (case-insensitive, so the vault also
+ * works on case-insensitive checkouts). An existing assembly-folder path
+ * stays (a copy, or a part the layout migration has not moved yet).
  *
  * The move never overwrites vault content: when the assembly already
  * exists in the vault, or a planned part path exists with different
@@ -31,7 +31,6 @@ import { stringifySurfJson } from './surfJson.js';
 import { DEFAULT_VAULT_NAME, findOrCreateVault, sanitizeVaultName } from './vault.js';
 import {
   assemblyFilePath,
-  assemblyPartPath,
   parseVaultPath,
   sharedPartPath,
   vaultSegment,
@@ -86,21 +85,19 @@ export function planMoveToGit(doc, scripts, {
   const parts = clean.parts.map((row) => {
     const repoPath = normalizeRepoPath(row.id);
     const info = repoPath && repoPath === row.id ? parseVaultPath(repoPath) : null;
-    const shared = wantShared.has(row.id) || info?.kind === 'shared-part';
     let to = null;
-    // Keep a path that already fits this assembly's layout (unless the user
-    // flipped it between own / shared).
-    if (info?.kind === 'shared-part' && shared && !taken.has(repoPath.toLowerCase())) to = repoPath;
-    if (info?.kind === 'assembly-part' && info.assembly === assemblyName && !shared
-      && !taken.has(repoPath.toLowerCase())) to = repoPath;
+    // Keep a path that already fits: parts/, or this assembly's own folder
+    // (a copy). Anything else is a new part and lands in parts/.
+    if (info?.kind === 'shared-part' && !taken.has(repoPath.toLowerCase())) to = repoPath;
+    if (!to && info?.kind === 'assembly-part' && info.assembly === assemblyName
+      && !wantShared.has(row.id) && !taken.has(repoPath.toLowerCase())) to = repoPath;
     if (to) taken.add(to.toLowerCase());
     else {
       const base = partBaseFor(row);
-      to = shared
-        ? claim((b) => sharedPartPath(b), base)
-        : claim((b) => assemblyPartPath(assemblyName, b), base);
+      to = claim((b) => sharedPartPath(b), base);
     }
-    idMap.push({ from: row.id, to, shared });
+    const destShared = parseVaultPath(to)?.kind === 'shared-part';
+    idMap.push({ from: row.id, to, shared: destShared });
     const text = eff[row.id];
     if (typeof text === 'string') {
       nextScripts[to] = text;

@@ -53,7 +53,7 @@
           },
           "path": {
             "type": "string",
-            "description": "Repo-relative part script path (assemblies/<Name>/<Part>.js, another assembly, or parts/<Part>.js)."
+            "description": "Repo-relative part script path. New parts are parts/<Part>.js. An assembly folder holds a Copy to this assembly. Another assembly folder is a link. Legacy assemblies/<Name>/parts/<Part>.js is accepted on read."
           },
           "name": {
             "type": "string"

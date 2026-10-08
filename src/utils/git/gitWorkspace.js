@@ -22,8 +22,10 @@ import {
   listPartScripts,
   migrateDocToCurrentLayout,
   partPathAllowedFor,
+  sharedPartPath,
   vaultSegment,
 } from './vaultLayout.js';
+import { sharedPathForMove } from './gitDeleteAssembly.js';
 import { parseSurfJson, stringifySurfJson } from './surfJson.js';
 import { isSurfId, mintSurfId, readSurfId, stripSurfId, withSurfId } from './surfId.js';
 
@@ -123,7 +125,7 @@ export function seedEmptyVaultAssembly(assemblyName, {
   headSha = null,
 } = {}) {
   const name = vaultSegment(assemblyName) || DEFAULT_ASSEMBLY_NAME;
-  const partId = assemblyPartPath(name, DEFAULT_PART_NAME);
+  const partId = sharedPartPath(DEFAULT_PART_NAME);
   const doc = serializeAssembly({
     source: 'git',
     name,
@@ -208,10 +210,11 @@ export async function openVaultAssembly(adapter, repo, assemblyName, {
 
 /**
  * Resolve a new part under this assembly.
- * Prefer a bare part name (UI is name-only). A full repo path is still
- * accepted when it is allowed for this assembly (tests / paste).
+ * A bare name lands in `parts/<Name>.js`. A name already taken becomes
+ * `Name 2`. A full repo path is still accepted when it is allowed for this
+ * assembly (an assembly-folder copy, tests, or paste).
  */
-export function resolveNewPartPath(assemblyName, partName) {
+export function resolveNewPartPath(assemblyName, partName, takenPaths = []) {
   const raw = String(partName ?? '').trim();
   if (!raw) return null;
   if (raw.includes('/') || raw.toLowerCase().endsWith('.js')) {
@@ -221,20 +224,29 @@ export function resolveNewPartPath(assemblyName, partName) {
     return path;
   }
   try {
-    return assemblyPartPath(assemblyName, raw);
+    const taken = new Set();
+    for (const item of takenPaths || []) {
+      const path = typeof item === 'string' ? item : item?.id;
+      if (path) taken.add(path);
+    }
+    return sharedPathForMove(raw, taken);
   } catch {
     return null;
   }
 }
 
-/** Suggest `assemblies/<asm>/Part N.js` for the next empty slot. */
-export function suggestNewPartPath(assemblyName, existingParts = []) {
-  const used = new Set((existingParts || []).map((p) => p?.id || p));
+/** Suggest `parts/Part N.js` for the next empty slot. */
+export function suggestNewPartPath(assemblyName, existingParts = [], takenPaths = null) {
+  void assemblyName;
+  const used = new Set(
+    takenPaths
+      || (existingParts || []).map((part) => (typeof part === 'string' ? part : part?.id)),
+  );
   for (let n = 1; n < 1000; n += 1) {
-    const path = assemblyPartPath(assemblyName, `Part ${n}`);
+    const path = sharedPartPath(`Part ${n}`);
     if (!used.has(path)) return path;
   }
-  return assemblyPartPath(assemblyName, `Part ${Date.now()}`);
+  return sharedPartPath(`Part ${Date.now()}`);
 }
 
 /**
@@ -411,10 +423,10 @@ export function groupVaultOpenParts(parts, opts = {}) {
 }
 
 /**
- * Open Part into the current assembly (folder → Part). Every vault part
- * joins by reference (same path, same surf id). A part of another assembly
- * is a linked external reference — it is not copied. Copy is explicit
- * (`planCopyToAssembly`).
+ * Open Part into the current assembly. Every vault part joins by reference
+ * (same path, same surf id). A part that lives in another assembly's folder
+ * is a linked external reference — it is not copied. `parts/` is not
+ * external. Copy is explicit (`planCopyToAssembly`).
  * -> { id, mode: 'focus' | 'reference' | 'link' }
  */
 export function planOpenVaultPart(doc, path, content, scripts = {}) {

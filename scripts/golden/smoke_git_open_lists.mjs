@@ -4,8 +4,8 @@
  * assembly, including a legacy nested script, plus loose parts/), grouped
  * by source so same-name parts stay distinct. Folder → Assembly lists
  * assemblies only. Live search (filterVaultOpenIndex) filters both.
- * Opening: this assembly's own part is by reference. A loose part or
- * another assembly's part is a linked reference (planOpenVaultPart).
+ * Opening: this assembly's own part, and a loose parts/ file, join by
+ * reference. Another assembly's part is a linked reference (planOpenVaultPart).
  * Copy is explicit (Copy to this assembly), not a silent open. Mock only.
  */
 import { readFileSync } from 'node:fs';
@@ -159,8 +159,8 @@ console.log('git open lists — several assemblies + loose parts');
     { id: GB_BRACKET, mode: 'focus' });
   eq('own part not in the doc is a reference', planOpenVaultPart(gearboxDoc, GB_PLATE, 'plate', {}),
     { id: GB_PLATE, mode: 'reference' });
-  eq('loose part not in the doc is a link', planOpenVaultPart(gearboxDoc, SHIM, 'shim', {}),
-    { id: SHIM, mode: 'link' });
+  eq('loose part not in the doc is a reference', planOpenVaultPart(gearboxDoc, SHIM, 'shim', {}),
+    { id: SHIM, mode: 'reference' });
   eq('loose part already in the doc focuses', planOpenVaultPart(gearboxDoc, BOLT, 'bolt', {}),
     { id: BOLT, mode: 'focus' });
   const linked = planOpenVaultPart(gearboxDoc, CV_BRACKET, BRACKET_B, { [GB_BRACKET]: BRACKET_A });

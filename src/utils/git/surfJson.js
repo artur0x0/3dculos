@@ -6,9 +6,9 @@
  *   "format": "surfcad.assembly",
  *   "version": 1,
  *   "name": "Gearbox",
- *   "activeId": "assemblies/Gearbox/Bracket.js" | null,
+ *   "activeId": "parts/Bracket.js" | null,
  *   "parts": [
- *     { "id": "2026-10-07-20-56-31-0423-a3f9", "path": "assemblies/Gearbox/Bracket.js",
+ *     { "id": "2026-10-07-20-56-31-0423-a3f9", "path": "parts/Bracket.js",
  *       "name": "Bracket", "visible": true, "order": 0, "position": [x, y, z]? },
  *     { "path": "parts/M3 bolt.js", "name": "M3 bolt", "visible": true, "order": 1 },
  *     { "id": "2026-10-07-20-56-31-0424-b10c", "path": "assemblies/Cover/Plate.js",
@@ -22,8 +22,8 @@
  * }
  *
  * `id` is the stable surf id (optional on read so older repos still load).
- * `path` is a full repo path: this assembly's folder, another assembly's
- * folder (linked external part), or the shared top-level `parts/`. Legacy
+ * `path` is a full repo path: `parts/` (the normal home), this assembly's
+ * folder (a copy), or another assembly's folder (a link). Legacy
  * `assemblies/<Name>/parts/<P>.js` paths are accepted on read. The in-app
  * row id stays the path; `surfId` carries `id`. No script source in the
  * file. `groups` is optional. Each group names parts by surf id (`partIds`).

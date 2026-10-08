@@ -10,7 +10,8 @@
  */
 import { materializeRename, renameFailureToast } from './gitRename.js';
 import { deleteAssemblyFailureToast } from './gitDeleteAssembly.js';
-import { assertMigrationCommitSafe } from './surfIdMigration.js';
+import { assertMigrationCommitSafe, readVaultIdEntries } from './surfIdMigration.js';
+import { planLayoutMigration } from './layoutMigration.js';
 
 /**
  * Push queued ops for one repo.
@@ -48,6 +49,7 @@ export async function flushSyncQueue({
   let head = remote;
   const promoted = {};
   const syncedPartIds = [];
+  const layoutMoves = [];
   for (const item of queued) {
     // eslint-disable-next-line no-await-in-loop
     await store.setOpStatus(item.id, 'sending');
@@ -68,6 +70,21 @@ export async function flushSyncQueue({
         continue;
       }
       if (item.op === 'migrate-ids') assertMigrationCommitSafe(files);
+      let plannedMoves = null;
+      if (item.op === 'migrate-layout') {
+        // eslint-disable-next-line no-await-in-loop
+        const entries = await readVaultIdEntries(adapter, repo, branch);
+        const plan = planLayoutMigration(entries);
+        if (!plan.changed) {
+          // eslint-disable-next-line no-await-in-loop
+          await store.setOpStatus(item.id, 'done');
+          // eslint-disable-next-line no-await-in-loop
+          await store.setPartsState(repo, item.partIds, 'clean', item.branch || branch);
+          continue;
+        }
+        files = plan.files;
+        plannedMoves = plan.moves;
+      }
       // eslint-disable-next-line no-await-in-loop
       const res = await adapter.commitFiles(repo, {
         branch,
@@ -76,6 +93,7 @@ export async function flushSyncQueue({
         baseSha: head,
       });
       head = res.sha;
+      if (plannedMoves) layoutMoves.push(...plannedMoves);
       syncedPartIds.push(...(item.partIds || []));
       // eslint-disable-next-line no-await-in-loop
       await store.setLastSyncedSha(repo, head, branch);
@@ -99,8 +117,9 @@ export async function flushSyncQueue({
         branch,
         promoted,
         partIds: syncedPartIds,
+        layoutMoves,
       };
     }
   }
-  return { status: 'synced', sha: head, branch, promoted, partIds: syncedPartIds };
+  return { status: 'synced', sha: head, branch, promoted, partIds: syncedPartIds, layoutMoves };
 }

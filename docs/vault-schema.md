@@ -15,10 +15,10 @@ surfcad.json                         { "kind": "surfcad-vault", "version": 1 }
 README.md
 assemblies/.gitkeep                  seed placeholder for an empty folder
 assemblies/Gearbox/.surf.json
-assemblies/Gearbox/Bracket.js
 assemblies/Cover/.surf.json
-assemblies/Cover/Plate.js
+assemblies/Gearbox/Lid.js
 parts/.gitkeep
+parts/Bracket.js
 parts/M3 bolt.js
 ```
 
@@ -26,8 +26,8 @@ parts/M3 bolt.js
 | --- | --- |
 | `surfcad.json` | Vault marker. A non-empty repo without it is not written. |
 | `assemblies/<Name>/.surf.json` | Assembly document. The file name is `.surf.json`, not `<Name>.surf.json`. |
-| `assemblies/<Name>/<Part>.js` | That assembly's part script, in the same folder. No nested `parts/` under an assembly. |
-| `parts/<Part>.js` | Shared part. Flat: `parts/a/b.js` is not a part path. |
+| `parts/<Part>.js` | Part script. New parts land here. Flat: `parts/a/b.js` is not a part path. |
+| `assemblies/<Name>/<Part>.js` | Copy to this assembly only. New surf id. A name already in the folder becomes `Name 2`. |
 
 `<Name>` and `<Part>` go through `vaultSegment`: no path or Windows-illegal characters, no control characters, whitespace collapsed, no leading or trailing dots, at most 60 characters. The `name` stored in `.surf.json` must already be that segment.
 
@@ -58,11 +58,11 @@ A reference matches a part by surf id when that id is known. A missing or unknow
   "format": "surfcad.assembly",
   "version": 1,
   "name": "Gearbox",
-  "activeId": "assemblies/Gearbox/Bracket.js",
+  "activeId": "parts/Bracket.js",
   "parts": [
     {
       "id": "2026-10-07-20-56-31-0423-a3f9",
-      "path": "assemblies/Gearbox/Bracket.js",
+      "path": "parts/Bracket.js",
       "name": "Bracket",
       "visible": true,
       "order": 0,
@@ -94,7 +94,7 @@ A reference matches a part by surf id when that id is known. A missing or unknow
 }
 ```
 
-The second part is a legacy row: no `id`. The third part is a link to another assembly. `copiedFrom` is set when this row was made by Copy.
+The second part is a legacy row: no `id`. The third part is a link to another assembly's folder. `copiedFrom` is set when this row was made by Copy. `version` stays `1`. A face-coloring `colors` key is planned to join a later version bump, not this layout.
 
 ### Fields
 
@@ -107,7 +107,7 @@ The second part is a legacy row: no `id`. The third part is a link to another as
 | `name` | yes | Path-safe folder name, equal to `vaultSegment(name)`. |
 | `activeId` | no | `null` or one of the part `path` values. Omitted is allowed. |
 | `parts` | yes | Array. `path` values are unique. |
-| `parts[].path` | yes | Repo-relative vault script: this folder, another assembly's folder, `parts/<Part>.js`, or a legacy path below. Must end in `.js`. |
+| `parts[].path` | yes | Repo-relative vault script: `parts/<Part>.js`, this folder (a copy), another assembly's folder, or a legacy path below. Must end in `.js`. |
 | `parts[].name` | yes | Non-empty after trim. |
 | `parts[].visible` | yes | Boolean. |
 | `parts[].order` | yes | Non-negative integer. |
@@ -118,7 +118,7 @@ The second part is a legacy row: no `id`. The third part is a link to another as
 | `groups` | no | Omitted on old files. No key means no groups. |
 | `groups[].id` | when grouped | Surf-id shape. A group id, not a part id. |
 | `groups[].name` | when grouped | Non-empty label. Starts as the source assembly name. Rename changes only this. |
-| `groups[].source` | when grouped | `assemblies/<Name>/.surf.json`, or `null` after that assembly is deleted. The name stays. |
+| `groups[].source` | when grouped | `assemblies/<Name>/.surf.json` captured at insert, or `null` after that assembly is deleted. The name is the label. Renaming that assembly does not rewrite another assembly's `source`. Assemblies have no surf id, so no second identity field is stored. |
 | `groups[].partIds` | when grouped | Non-empty surf ids. A part is in at most one group. |
 
 On load, `pruneDanglingGroupPartIds` drops part ids that are not in `parts`, and drops a group that has nothing left. The same pass runs on every save (`normalizeGroups` inside `serializeAssembly`). A surf id listed twice stays on the first group. Collapse is UI state and is not stored.
@@ -129,9 +129,9 @@ A group is a Parts-list folder for parts inserted from another assembly. It is n
 
 **Insert parts into current** (`planInsertVaultAssemblyParts` + `withInsertedGroup`) adds the source assembly's parts as links: same repo path, same surf id. A path already in this document is skipped. New rows are filed under one group named for the source assembly, `source` set to `assemblies/<Name>/.surf.json`. Inserting the same source again appends to that group and keeps its name. Parts already in some group stay where they are. The outbox commit rewrites this assembly's `.surf.json` only.
 
-**Open Part** (`planOpenVaultPart`): a part already in the document is focused. A part in this assembly's folder is a reference (same path). A part from another assembly, or a loose `parts/` file, is a link. It is not copied.
+**Open Part** (`planOpenVaultPart`): a part already in the document is focused. A part in `parts/`, or in this assembly's folder, is a reference (same path). A part from another assembly's folder is a link. It is not copied.
 
-A linked row is any path outside this assembly's folder (`isExternalPartPath`). The row shows **Caution: external part!** and **Copy to this assembly**.
+A linked row is a path in another assembly's folder (`isExternalPartPath`). `parts/` is not external. The row shows **Caution: external part!** and **Copy to this assembly**.
 
 **Copy to this assembly** (`planCopyToAssembly`) writes a new script in this folder. The new surf id is minted once. `isSynced` stays false until that part is pushed. `copiedFrom` records the source surf id (the row's id, else the header). The source file stays. A name already in this folder becomes `Name 2`. The group, if any, keeps the row and points `partIds` at the new id.
 
@@ -164,6 +164,10 @@ IndexedDB `surfcad-sync` is the durable copy (`outbox` plus `kv` for the branch 
 
 The queue is FIFO per repo and branch. Ops for another branch stay queued and are not pushed onto this tip. The worker pushes immediately when online, and again on `online`. On reconnect it compares that branch's remote commit SHA to `lastSyncedSha` first. If they differ, it does not push and does not overwrite; the conflict popup opens. A push does not rewrite surf ids. The id migration commit is queued ahead of other pending ops, so a later rename still sees the bare id.
 
+## Layout migration
+
+One outbox commit (`migrate-layout`) moves assembly-folder scripts into `parts/`. This branch's pending outbox is projected onto the tree first. Surf ids stay. Every `.surf.json` path is rewritten by surf id, then by the old path. A name already in `parts/` becomes `Name 2` (`Bracket.js`, then `Bracket 2.js`). Nothing is overwritten. A row with `copiedFrom` is already a copy and stays in the assembly folder, so a later Copy is not swept and a second pass is a no-op. The commit refuses to drop a part file, change its body or surf id, or delete a `.surf.json`. Renaming an assembly then changes the folder and `.surf.json` only. `parts/` paths do not move. An assembly-local copy moves with the folder; the rename commit stamps `// @surf-id`, and a reload follows the pending rename so the id is not minted again. `groups[].source` on other assemblies is left as stored.
+
 ```mermaid
 stateDiagram-v2
   [*] --> Clean
@@ -188,6 +192,6 @@ Read still accepts the old layout. Writes do not emit it.
 | `assemblies/<Name>/<Name>.surf.json` | `assemblies/<Name>/.surf.json` |
 | `assemblies/<Name>/parts/<Part>.js` | `assemblies/<Name>/<Part>.js` |
 
-`openVaultAssembly` tries the current metadata path, then the legacy one. `migrateDocToCurrentLayout` remaps this assembly's nested part paths onto the flat folder. Shared `parts/` paths stay. The next Save deletes the legacy blobs and writes the current files (`legacyCleanup`).
+`openVaultAssembly` tries the current metadata path, then the legacy one. `migrateDocToCurrentLayout` remaps this assembly's nested part paths onto the flat folder. The layout migration then moves those scripts into `parts/` and rewrites the path. Shared `parts/` paths stay. The next Save deletes a leftover legacy `.surf.json` (`legacyCleanup`).
 
 A `.surf.json` with no `groups` key loads as no groups. A part with no `id` loads; open backfills one as described above and does not mark the row dirty. The baseline is recaptured after backfill.

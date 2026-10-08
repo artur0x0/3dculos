@@ -47,10 +47,11 @@ function localWorkspace() {
   return { doc, scripts };
 }
 
-const BRACKET = assemblyPartPath('Gearbox', 'Bracket');
-const BRACKET2 = assemblyPartPath('Gearbox', 'Bracket 2');
+const BRACKET = sharedPartPath('Bracket');
+const BRACKET2 = sharedPartPath('Bracket 2');
 const SH_BOLT = sharedPartPath('M3 bolt');
-const COVER = assemblyPartPath('Gearbox', 'Cover');
+const COVER = sharedPartPath('Cover');
+const KEPT_BRACKET = assemblyPartPath('Gearbox', 'Bracket');
 const ASM = assemblyFilePath('Gearbox');
 
 console.log('git G6 — plan (no writes)');
@@ -59,8 +60,8 @@ console.log('git G6 — plan (no writes)');
   const plan = planMoveToGit(doc, scripts, { sharedIds: ['local:c'], liveId: 'local:b', liveScript: LIVE });
   eq('assembly path', plan.assemblyPath, ASM);
   eq('id map', plan.idMap.map((m) => [m.from, m.to, m.shared]), [
-    ['local:a', BRACKET, false], ['local:b', BRACKET2, false],
-    ['local:c', SH_BOLT, true], ['local:d', COVER, false],
+    ['local:a', BRACKET, true], ['local:b', BRACKET2, true],
+    ['local:c', SH_BOLT, true], ['local:d', COVER, true],
   ]);
   eq('files: parts sorted (codepoint, like G3) then assembly', plan.files.map((f) => f.path), [BRACKET2, BRACKET, SH_BOLT, ASM]);
   eq('missing script reported', plan.missing, [COVER]);
@@ -75,20 +76,20 @@ console.log('git G6 — plan (no writes)');
     source: 'local', name: 'Gearbox',
     parts: [{ id: 'local:1', name: 'Bracket' }, { id: 'local:2', name: 'bracket' }],
   }, { 'local:1': CUBE, 'local:2': CUBE });
-  eq('case-insensitive dedupe', ci.idMap.map((m) => m.to), [BRACKET, assemblyPartPath('Gearbox', 'bracket 2')]);
+  eq('case-insensitive dedupe', ci.idMap.map((m) => m.to), [BRACKET, sharedPartPath('bracket 2')]);
 
   // Rows that already carry repo paths (Git → Local → Git): own path and
   // shared path are kept, another assembly's path is re-homed.
   const carried = planMoveToGit({
     source: 'local', name: 'Gearbox',
     parts: [
-      { id: BRACKET, name: 'Renamed label', order: 0 },
+      { id: KEPT_BRACKET, name: 'Renamed label', order: 0 },
       { id: SH_BOLT, name: 'M3 bolt', order: 1 },
       { id: assemblyPartPath('Other', 'Plate'), name: 'Plate', order: 2 },
     ],
-  }, { [BRACKET]: CUBE, [SH_BOLT]: BOLT, [assemblyPartPath('Other', 'Plate')]: CUBE });
-  eq('carried paths', carried.idMap.map((m) => m.to), [BRACKET, SH_BOLT, assemblyPartPath('Gearbox', 'Plate')]);
-  eq('carried shared flag', carried.idMap.map((m) => m.shared), [false, true, false]);
+  }, { [KEPT_BRACKET]: CUBE, [SH_BOLT]: BOLT, [assemblyPartPath('Other', 'Plate')]: CUBE });
+  eq('carried paths', carried.idMap.map((m) => m.to), [KEPT_BRACKET, SH_BOLT, sharedPartPath('Plate')]);
+  eq('carried shared flag', carried.idMap.map((m) => m.shared), [false, true, true]);
 }
 
 console.log('\ngit G6 — Move to Git into a fresh vault (rename field)');
@@ -156,7 +157,7 @@ console.log('\ngit G6 — existing vault, conflicts, bad names');
   });
   eq('found vault', [second.status, second.vault.status], ['moved', 'found']);
   eq('identical shared part not rewritten', second.files,
-    [assemblyPartPath('Cover box', 'Lid'), assemblyFilePath('Cover box')]);
+    [sharedPartPath('Lid'), assemblyFilePath('Cover box')]);
   eq('both assemblies listed', listAssemblies(await gh.listTree(moved.vault.repo, 'main')), ['Cover box', 'Gearbox']);
 
   const clash = await moveToGit(gh, {

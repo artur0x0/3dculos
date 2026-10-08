@@ -132,6 +132,9 @@ import {
   markPartsSynced,
   planSurfIdMigrationCommit,
   readVaultIdEntries,
+  planLayoutMigrationCommit,
+  applyLayoutMoves,
+  overlayPendingLayoutMigration,
   planPartPath,
   applyPartPathChange,
   remapAssemblyPaths,
@@ -2113,6 +2116,40 @@ const App = () => {
       if (result.toast) setRenameNotice(result.toast);
       return result;
     }
+    if ((result.status === 'synced' || result.status === 'failed') && result.layoutMoves?.length && assemblyRef.current) {
+      const applied = applyLayoutMoves(assemblyRef.current, partScriptsRef.current, result.layoutMoves);
+      if (applied.changed) {
+        for (const { from, to } of applied.pairs) {
+          const text = applied.scripts[to];
+          if (typeof text === 'string') savePartScript(to, text);
+          try { await deletePartScript(from); } catch { /* ignore */ }
+        }
+        rekeyRuntime(applied.pairs);
+        rememberScripts(applied.scripts);
+        rememberAssembly(applied.doc);
+        const prior = gitBaselineRef.current;
+        if (prior && result.sha) {
+          const synthetic = {
+            source: 'git',
+            name: prior.assemblyName,
+            parts: (prior.partIds || []).map((id, order) => ({ id, name: 'Part', visible: true, order })),
+            activeId: null,
+          };
+          const baseApplied = applyLayoutMoves(synthetic, prior.scripts, result.layoutMoves);
+          const shifted = captureBaseline({
+            assemblyPath: prior.assemblyPath,
+            assemblyName: assemblyRef.current.name,
+            doc: assemblyRef.current,
+            scripts: baseApplied.scripts,
+            branch: prior.branch || gitWorkingBranch(),
+            headSha: result.sha,
+          });
+          if (prior.legacyCleanup) shifted.legacyCleanup = prior.legacyCleanup;
+          rememberGitBaseline(shifted);
+          result.layoutApplied = true;
+        }
+      }
+    }
     if (result.status === 'synced') {
       setRenameNotice((prev) => (prev && prev.opId ? null : prev));
       const vault = gitVaultRef.current;
@@ -2130,7 +2167,7 @@ const App = () => {
         store.setLastSyncedSha(vault.repo, result.sha, result.branch || gitWorkingBranch());
         const doc = assemblyRef.current;
         const base = gitBaselineRef.current;
-        if (doc?.source === 'git' && result.partIds?.length) {
+        if (!result.layoutApplied && doc?.source === 'git' && result.partIds?.length) {
           rememberGitBaseline(captureBaseline({
             assemblyPath: assemblyFilePath(vaultSegment(doc.name) || doc.name),
             assemblyName: doc.name,
@@ -2139,7 +2176,7 @@ const App = () => {
             branch: base?.branch || gitWorkingBranch(),
             headSha: result.sha,
           }));
-        } else if (base) {
+        } else if (!result.layoutApplied && base) {
           rememberGitBaseline({ ...base, headSha: result.sha });
         }
         gitVaultRef.current = { ...vault, headSha: result.sha };
@@ -2368,6 +2405,46 @@ const App = () => {
     return true;
   };
 
+  const queueLayoutMigration = async (vault, branch) => {
+    const adapter = gitAdapterRef.current;
+    if (!vault?.repo || !adapter) return null;
+    const store = gitSync();
+    const existing = store.pending(vault.repo, branch)
+      .concat(store.failed(vault.repo, branch))
+      .find((op) => op.op === 'migrate-layout');
+    if (existing) {
+      if (existing.status === 'failed') {
+        try { await store.requeue(existing.id); } catch { /* ignore */ }
+      }
+      return { changed: false, moves: existing.payload?.moves || [], queued: true };
+    }
+    let entries;
+    try {
+      entries = await readVaultIdEntries(adapter, vault.repo, branch);
+    } catch (err) {
+      console.warn('[git] layout migration scan skipped', err?.message || err);
+      return null;
+    }
+    const pending = store.pending(vault.repo, branch).concat(store.failed(vault.repo, branch));
+    let plan;
+    try {
+      plan = planLayoutMigrationCommit(entries, pending);
+    } catch (err) {
+      console.warn('[git] layout migration refused', err?.message || err);
+      return null;
+    }
+    if (!plan.changed) return { changed: false, moves: [], queued: false };
+    await gitSync().enqueue(vault.repo, {
+      op: 'migrate-layout',
+      branch,
+      message: 'Move parts into parts/',
+      partIds: [],
+      files: plan.files,
+      payload: { kind: 'parts-layout', moves: plan.moves },
+    });
+    return { changed: true, moves: plan.moves, queued: true };
+  };
+
   const adoptVaultOpening = async (opened, vault) => {
     const store = gitSync();
     const branch = opened.baseline?.branch || gitWorkingBranch();
@@ -2381,7 +2458,8 @@ const App = () => {
     }
     const queued = store.pending(vault.repo, branch).concat(store.failed(vault.repo, branch));
     const overlaid = overlayPendingPartRenames(openedDocIn, openedScriptsIn, queued);
-    const deletedOverlay = overlayPendingAssemblyDeletes(overlaid.doc, overlaid.scripts, queued);
+    const layoutOver = overlayPendingLayoutMigration(overlaid.doc, overlaid.scripts, queued);
+    const deletedOverlay = overlayPendingAssemblyDeletes(layoutOver.doc, layoutOver.scripts, queued);
     let openedDoc = deletedOverlay.doc;
     let openedScripts = deletedOverlay.scripts;
     if (deletedOverlay.removed) {
@@ -2405,7 +2483,7 @@ const App = () => {
       );
     }
     rememberScripts(openedScripts);
-    const saved = rememberAssembly(openedDoc);
+    let saved = rememberAssembly(openedDoc);
     noteRecentAssembly(saved.name);
     const baseline = captureBaseline({
       assemblyPath: deletedOverlay.removed ? assemblyFilePath(saved.name) : opened.baseline.assemblyPath,
@@ -2439,6 +2517,44 @@ const App = () => {
       await queueSurfIdMigration(vault, branch);
     } catch (err) {
       console.warn('[git] id migration enqueue failed', err?.message || err);
+    }
+    let layout = null;
+    try {
+      layout = await queueLayoutMigration(vault, branch);
+    } catch (err) {
+      console.warn('[git] layout migration enqueue failed', err?.message || err);
+    }
+    if (layout?.moves?.length) {
+      const applied = applyLayoutMoves(saved, openedScripts, layout.moves);
+      if (applied.changed) {
+        for (const { from, to } of applied.pairs) {
+          const text = applied.scripts[to];
+          if (typeof text === 'string') {
+            const part = (applied.doc.parts || []).find((row) => row.id === to);
+            await savePartScript(
+              to,
+              text,
+              typeof part?.isSynced === 'boolean' ? { isSynced: part.isSynced } : {},
+            );
+          }
+          try { await deletePartScript(from); } catch { /* ignore */ }
+        }
+        rekeyRuntime(applied.pairs);
+        rememberScripts(applied.scripts);
+        saved = rememberAssembly(applied.doc);
+        openedScripts = applied.scripts;
+        const shifted = captureBaseline({
+          assemblyPath: baseline.assemblyPath,
+          assemblyName: saved.name,
+          doc: saved,
+          scripts: openedScripts,
+          branch,
+          headSha: baseline.headSha,
+        });
+        if (baseline.legacyCleanup) shifted.legacyCleanup = baseline.legacyCleanup;
+        rememberGitBaseline(shifted);
+        return { saved, scripts: openedScripts, baseline: shifted, branch, held };
+      }
     }
     return { saved, scripts: openedScripts, baseline, branch, held };
   };
@@ -3725,11 +3841,15 @@ const App = () => {
           }
         }
         await queueSurfIdMigration(vault, branch);
+        try {
+          await queueLayoutMigration(vault, branch);
+        } catch (err) {
+          console.warn('[git] layout migration enqueue failed', err?.message || err);
+        }
         if (cancelled || gitBaselineRef.current) return;
         const flushed = await flushGitOps();
         if (cancelled || gitBaselineRef.current) return;
         // Tip content only — leave IDB working copy alone so real edits stay dirty.
-        let baseline = opened.baseline;
         if (flushed?.sha && flushed.sha !== opened.baseline?.headSha) {
           const again = await openVaultAssembly(
             gitAdapterRef.current,
@@ -3738,12 +3858,15 @@ const App = () => {
             { branch, headSha: flushed.sha },
           );
           if (cancelled || gitBaselineRef.current) return;
-          baseline = again.baseline;
+          const baseline = again.baseline;
           const resynced = reconcileSyncedFromTip(assemblyRef.current, again.scripts);
           if (resynced.changed) rememberAssembly(resynced.doc);
+          rememberGitBaseline(baseline);
+          gitVaultRef.current = { ...vault, headSha: baseline.headSha };
+        } else {
+          rememberGitBaseline(opened.baseline);
+          gitVaultRef.current = { ...vault, headSha: opened.baseline?.headSha };
         }
-        rememberGitBaseline(baseline);
-        gitVaultRef.current = { ...vault, headSha: baseline.headSha };
         void checkGitRemoteBehind({ showToast: true, reason: 'reseed' });
       } catch (err) {
         // Missing assembly on tip → stay without baseline (local: chrome / first commit).
@@ -3823,9 +3946,19 @@ const App = () => {
     let name;
     const rawName = String(partName ?? '').trim();
     if (doc.source === 'git') {
-      // Name-only UX: resolve to assemblies/<asm>/<Name>.js (or allow a full
-      // allowed path for tests / paste). Never ask the user for a path.
-      id = resolveNewPartPath(doc.name, rawName || suggestNewPartPath(doc.name, doc.parts));
+      // Name-only UX: a bare name lands in parts/<Name>.js. A full allowed
+      // path (an assembly-folder copy, tests, paste) is kept. Never ask
+      // the user for a path.
+      let taken = (doc.parts || []).map((part) => part.id);
+      try {
+        const vault = gitVaultRef.current;
+        const adapter = gitAdapterRef.current;
+        if (vault?.repo && adapter?.listTree) {
+          const tree = await adapter.listTree(vault.repo, gitWorkingBranch());
+          taken = [...taken, ...(tree || []).map((entry) => entry?.path ?? entry)];
+        }
+      } catch { /* the open document still blocks a collision */ }
+      id = resolveNewPartPath(doc.name, rawName || suggestNewPartPath(doc.name, doc.parts, taken), taken);
       if (!id) {
         setUploadError('Enter a part name');
         return;
@@ -4929,7 +5062,7 @@ const App = () => {
       await enqueueGit(vault.repo, {
         op: 'rename',
         message: `Rename assembly ${oldName} to ${newName}`,
-        partIds: nextDoc.parts.map((part) => part.id),
+        partIds: (remapped.moved || []).map((pair) => pair.to),
         payload: {
           kind: 'assembly',
           fromName: oldName,
@@ -4939,7 +5072,14 @@ const App = () => {
           before,
           assemblyPath: asmPath,
           assemblyText: stringifySurfJson(nextDoc),
-          localFiles: Object.entries(remapped.scripts).map(([path, content]) => ({ path, content })),
+          localFiles: (remapped.moved || []).map(({ to }) => {
+            const part = nextDoc.parts.find((row) => row.id === to);
+            let content = remapped.scripts[to] ?? '';
+            if (part?.surfId && readSurfId(content) !== part.surfId) {
+              content = withSurfId(content, part.surfId);
+            }
+            return { path: to, content };
+          }),
         },
       });
       setPartSync({ ...gitSync().partStates() });

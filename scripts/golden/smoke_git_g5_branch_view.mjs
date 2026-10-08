@@ -105,8 +105,8 @@ console.log('git G5 — branch list + switch reload');
   ok('empty tip seeds', seeded.seeded === true);
   eq('seeded name', seeded.doc.name, 'Assembly');
   eq('seeded branch', seeded.baseline.branch, 'main');
-  ok('seeded has assembly part path', seeded.doc.parts.length === 1
-    && String(seeded.doc.parts[0].id).startsWith('assemblies/Assembly/'));
+  ok('seeded part lands in parts/', seeded.doc.parts.length === 1
+    && seeded.doc.parts[0].id === sharedPartPath('Part 1'));
 }
 
 console.log('\ngit G5 — rename-on-Commit moves paths');
