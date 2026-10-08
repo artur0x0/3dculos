@@ -1,14 +1,14 @@
 import React, { useEffect } from 'react';
-import { AlertTriangle, Check, X } from 'lucide-react';
+import { Check, X } from 'lucide-react';
 import { NumberField } from './controls/popupUI';
 
 const ACCENT = 'amber';
 
 /**
  * Slice 27 — Fillet-in-mode chip (Edge-pick pattern).
- * Tangent (default-on) / Clear / Back (= undo last pick) / Accept.
+ * Tangent (default-on) / Clear / Undo (= last edge pick only) / Accept.
  * X / Escape / dismiss without Accept clears all picks and exits.
- * Slice B: a hard edge shows a red banner; Accept stays enabled.
+ * Easy/hard class still chooses the kernel on Accept; the chip does not warn.
  * Picks can span parts; `partCount` > 1 says so, and Accept writes each part.
  */
 const FilletModeChip = ({
@@ -19,7 +19,6 @@ const FilletModeChip = ({
   params = {},
   pathOk = false,
   componentCount = 0,
-  edgeClass = null,
   compact = false,
   onToggleTangent,
   onClear,
@@ -48,7 +47,6 @@ const FilletModeChip = ({
   const max = chamfer
     ? Math.max(40, Number.isFinite(sizeNum) ? sizeNum : 0)
     : (Number(params._sweepMax) > 0 ? Number(params._sweepMax) : 40);
-  const hard = !chamfer && edgeClass?.klass === 'hard';
   const title = chamfer ? 'Chamfer' : 'Fillet';
 
   useEffect(() => {
@@ -74,27 +72,7 @@ const FilletModeChip = ({
       role="group"
       aria-label={chamfer ? 'Chamfer edge pick' : 'Fillet edge pick'}
       data-edge-blend={chamfer ? 'chamfer' : 'fillet'}
-      data-fillet-class={chamfer ? undefined : (edgeClass?.klass || 'empty')}
     >
-      {hard && (
-        <div
-          className="mb-1.5 rounded border border-red-400/80 bg-red-950/80 px-2 py-1.5 text-[13px] leading-snug text-red-50"
-          role="status"
-          data-fillet-warn="hard"
-          data-fillet-reason={edgeClass.reason || ''}
-        >
-          <div className="flex items-start gap-1.5">
-            <AlertTriangle size={13} className="text-red-300 shrink-0 mt-0.5" aria-hidden="true" />
-            <div>
-              <span className="font-semibold text-red-200">Hard edge</span>
-              {edgeClass.reason ? ` · ${edgeClass.reason}` : ''}
-              <div className="text-[11px] text-red-100/95 mt-0.5">
-                Quality may be poor. Accept still runs.
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="font-bold font-sans text-amber-200">
@@ -163,12 +141,14 @@ const FilletModeChip = ({
           data-fillet-back=""
           className="text-[11px] text-amber-200 underline"
           onClick={() => onBack?.()}
-          title="Undo last edge selection"
+          title="Undo"
+          aria-label="Undo"
         >
-          Back
+          Undo
         </button>
       </div>
-      {/* Space Clear/Back away from Accept; strategy helper text removed. */}
+      {/* Space Clear/Undo away from Accept; strategy helper text removed.
+          This Undo pops the last edge only. It is not the CAD script Undo. */}
       <div className="mt-4 flex items-center justify-end gap-2" data-fillet-accept-row="">
         <button
           type="button"

@@ -104,12 +104,16 @@ check('reasons are the UI copy', [...REASONS].every((r) => r === r.toLowerCase()
   check('a collapsed triangle counts as degenerate', countDegenerateTriangles(zero) === 1);
 }
 
-console.log('fillet easy/hard — chip keeps Accept enabled');
+console.log('fillet easy/hard — chip keeps Accept enabled, no hard warning');
 {
   const chip = readFileSync(new URL('../../src/components/FilletModeChip.jsx', import.meta.url), 'utf8');
-  check('hard warn is a red banner', /data-fillet-warn="hard"/.test(chip) && /bg-red-950/.test(chip));
+  check('chip shows no hard-edge warning', !/data-fillet-warn/.test(chip)
+    && !/Hard edge/.test(chip)
+    && !/Quality may be poor/.test(chip)
+    && !/AlertTriangle/.test(chip)
+    && !/bg-red-950/.test(chip));
   check('Accept is not disabled by class', /data-fillet-accept="enabled"/.test(chip) && !/disabled=\{[^}]*hard/.test(chip));
-  check('warn names the stable reason', /edgeClass\.reason/.test(chip));
+  check('chip does not render the class reason', !/edgeClass\.reason/.test(chip));
 }
 
 register('./manifold-resolve-hook.mjs', import.meta.url);

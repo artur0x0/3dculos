@@ -119,7 +119,7 @@ Each one is a scar. Changing it reintroduces a shipped bug.
 - **Volume guards cannot see a distribution error.** C3.2's total was 1.19× the
   true integral while its per-quarter profile was inverted. When you change
   cutter geometry, pin the SHAPE (per-quarter removal), not just the integral.
-- **Hard class warns, never blocks.** Hard-block Accept is an explicit non-goal.
+- **Hard class never blocks.** The chip does not warn. Hard-block Accept is an explicit non-goal.
 - **Import thresholds, don't restate them.** `SLIVER_MAX_ABS` (80) /
   `SLIVER_MAX_FRAC` (0.06) live in `filletSliverGuard.js` precisely so the worker
   and the goldens cannot drift.
@@ -166,7 +166,7 @@ The viewport scrap banner is **delta-based** (pre-Accept degenerate-tri count vi
 | `src/utils/edgeSweepPath.js` | `assembleSweepPath` / ordering / topology gates |
 | `src/utils/edgeTangencyField.js` | tangency field, densify, transport, variable-profile frames |
 | `src/utils/selectEdge.js` | edge picking, coherent chains, radius defaults/caps |
-| `src/components/FilletModeChip.jsx` | Tangent / Clear / Accept / Back / X chip |
+| `src/components/FilletModeChip.jsx` | Tangent / Clear / Undo / Accept / X chip |
 | `src/components/Viewport.jsx` | mode lifecycle, preview paint, classification, scrap notice |
 | `src/utils/helperPaletteSnippets.js:938` | the `filletEdges` emitter (script text) |
 | `src/lib/surfcad/runtime.js` | `filletEdges`, `makeSweepPath`, `filletAlongPath` (worker binds this module) |

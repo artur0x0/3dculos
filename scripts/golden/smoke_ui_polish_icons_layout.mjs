@@ -116,6 +116,17 @@ const contourRail = read('../../src/components/ContourModeRail.jsx');
     /pickMode === 'edge' && !contourMode && !filletMode && selectedEdges\.length > 0 && \(/.test(view),
   );
   check('edge chip keeps its test hook', /data-edge-selector="standalone"/.test(view));
+  const edgeBlock = view.slice(view.indexOf('data-edge-selector="standalone"'));
+  const edgeEnd = edgeBlock.indexOf('edgeModeToast');
+  const edgeChip = edgeEnd > 0 ? edgeBlock.slice(0, edgeEnd) : edgeBlock.slice(0, 1800);
+  check(
+    'standalone edge chip Undo removes the last edge',
+    />\s*Undo\s*</.test(edgeChip)
+      && /title="Undo last selected edge"/.test(edgeChip)
+      && /aria-label="Undo last selected edge"/.test(edgeChip)
+      && /popLastEdgeSelection/.test(edgeChip)
+      && !/>\s*Back\s*</.test(edgeChip),
+  );
 }
 
 // ── AC4: desktop shell matches the phone shell ──

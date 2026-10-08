@@ -3,14 +3,14 @@
  * preview, Accept commits makeSweepPath + filletAlongPath.
  *
  * Locked UX: tapping Fillet never soft-fails for empty selection. Edge-pick
- * chip (Tangent / Clear / Accept / Back / X) owns the session. Accept writes
+ * chip (Tangent / Clear / Undo / Accept / X) owns the session. Accept writes
  * a marked block, Auto-Runs, and exits. Disconnected picks split into
  * contiguous components and each gets its own makeSweepPath + filletAlongPath
  * inside the same FILLET_MODE markers (connected chains keep single-path
  * behavior). A later Fillet on a different sharp edge appends another block
  * (commitMode 'append') so edge() runs on the already-filleted solid. Replace
- * stays the default for an in-place update of the same block. Back and X exit
- * with no commit. Strategy default stays sweep (#30).
+ * stays the default for an in-place update of the same block. Undo pops the
+ * last edge only. X exits with no commit. Strategy default stays sweep (#30).
  *
  * Chamfer mode mirrors Fillet: enter without edges, pick disjoint components,
  * Accept emits makeSweepPath + filletAlongPath(..., { profile: 'chamfer' })
@@ -59,7 +59,7 @@ export const FILLET_MODE_EMPTY =
   'Pick edges in Fillet mode, then Accept. Tangent-on chains work for circular rims.';
 
 export const FILLET_MODE_NO_COMMIT =
-  'Back exits Fillet mode with no commit.';
+  'Dismiss exits Fillet mode with no commit.';
 
 export const FILLET_BLEND_ONLY =
   'Those edges are an existing blend. Pick a sharp edge — re-filleting a blend is not supported.';

@@ -152,7 +152,6 @@ import {
   validateChamferAccept,
   defaultFilletParams,
   solidMinExtent,
-  normalizeFilletParams,
   hasFilletModeBlock,
   hasChamferModeBlock,
 } from '../utils/filletMode';
@@ -993,7 +992,7 @@ const Viewport = forwardRef(({
   }, []);
   const [filletToast, setFilletToast] = useState(null);
   const filletToastTimerRef = useRef(null);
-  /** Bumps when the solid mesh is replaced so fillet easy/hard recomputes. */
+  /** Bumps when the solid mesh is replaced so pick overlays recompute. */
   const [meshEpoch, setMeshEpoch] = useState(0);
   /** Bumps after each assembly placement so part overlays re-read scripts and poses. */
   const [overlayEpoch, setOverlayEpoch] = useState(0);
@@ -2805,10 +2804,10 @@ const Viewport = forwardRef(({
   // Live sweep-fillet blend as edges accumulate. The payload is memoized so the
   // chip's pathOk flag and the painter share ONE build per input (Slice 27 nit:
   // the chip used to re-run buildFilletBlendPreview on every render just for .ok).
-  // Fillet / Chamfer picks can span parts. The live blend, the easy/hard
-  // class, and the seeded radius read the active part's picks only: those
-  // are the points in the pick mesh's frame. Picks kept on other parts are
-  // still highlighted and still written on Accept.
+  // Fillet / Chamfer picks can span parts. The live blend and the seeded
+  // radius read the active part's picks only: those are the points in the
+  // pick mesh's frame. Easy/hard class is computed on Accept, not shown.
+  // Picks kept on other parts are still highlighted and still written on Accept.
   const filletActiveEdges = useMemo(
     () => activePartEdges(selectedEdges, activePartIdRef.current),
     // meshEpoch: a retarget swaps the active part without touching the picks.
@@ -2818,14 +2817,6 @@ const Viewport = forwardRef(({
     () => groupEdgesByPart(selectedEdges, activePartIdRef.current).length,
     [selectedEdges, meshEpoch],
   );
-  const filletEdgeClass = useMemo(() => {
-    if (!filletMode || !filletActiveEdges.length) return null;
-    const params = normalizeFilletParams(filletMode.params || {}, filletActiveEdges);
-    return classifyFilletEdges(filletActiveEdges, {
-      radius: params.radius,
-      geometry: resultRef.current?.geometry,
-    });
-  }, [filletMode, filletActiveEdges]);
 
   const filletPreviewParams = useCallback((mode) => (
     mode.entry === 'chamferEdges'
@@ -7896,7 +7887,7 @@ const Viewport = forwardRef(({
         />
       )}
 
-      {/* Slice 27: Fillet-in-mode chip — Tangent / Clear / Accept / Back */}
+      {/* Slice 27: Fillet-in-mode chip — Tangent / Clear / Undo / Accept */}
       {filletMode && (
         <FilletModeChip
           kind={filletMode.entry === 'chamferEdges' ? 'chamfer' : 'fillet'}
@@ -7911,7 +7902,6 @@ const Viewport = forwardRef(({
           }}
           pathOk={filletChipStatus.ok}
           componentCount={filletChipStatus.componentCount}
-          edgeClass={filletEdgeClass}
           compact={isMobile}
           onToggleTangent={() => setTangentProp((v) => !v)}
           onClear={() => {
@@ -8161,9 +8151,10 @@ const Viewport = forwardRef(({
                     clearEdgeHover();
                     setSelectedEdges((prev) => popLastEdgeSelection(prev));
                   }}
-                  title="Remove last selected edge"
+                  title="Undo last selected edge"
+                  aria-label="Undo last selected edge"
                 >
-                  Back
+                  Undo
                 </button>
                 <button
                   type="button"

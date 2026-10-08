@@ -66,7 +66,7 @@ Face-offset stays a later multi-slice only if Manifold gains solid offset or we 
 
 **Perf:** Expect hard path similar to or slightly above planar `filletEdges` per segment; avoid naive sphere-hull. Still need Slice Speed/spinner for long loft chains — out of scope here.
 
-**Quality:** Boxy easy unchanged. Loft generators should lose most zero-area sweep scraps; `#50` red Hard edge warn remains (junction quality may still be imperfect).
+**Quality:** Boxy easy unchanged. Loft generators should lose most zero-area sweep scraps. The chip no longer shows the `#50` hard-edge warning (junction quality may still be imperfect). Easy/hard class still selects the kernel.
 
 ## What shipped in Slice C
 
