@@ -200,6 +200,19 @@ export function rewriteSurfIdFields(text, map) {
       changed = true;
     }
   }
+  if (Array.isArray(raw.groups)) {
+    for (const group of raw.groups) {
+      if (!Array.isArray(group?.partIds)) continue;
+      group.partIds = group.partIds.map((id) => {
+        const next = get(id);
+        if (next && next !== id) {
+          changed = true;
+          return next;
+        }
+        return id;
+      });
+    }
+  }
   if (!changed) return text;
   return `${JSON.stringify(raw, null, 2)}\n`;
 }
@@ -211,12 +224,28 @@ export function applyIdPromotion(doc, scripts, map) {
   if (!keys.length) return { doc, scripts: scripts || {}, changed: false };
   const parts = (doc?.parts || []).map((part) => {
     const next = table[part?.surfId];
-    return next ? { ...part, surfId: next } : part;
+    const copied = table[part?.copiedFrom];
+    if (!next && !copied) return part;
+    return {
+      ...part,
+      ...(next ? { surfId: next } : {}),
+      ...(copied ? { copiedFrom: copied } : {}),
+    };
   });
+  const groups = Array.isArray(doc?.groups)
+    ? doc.groups.map((group) => ({
+      ...group,
+      partIds: (group.partIds || []).map((id) => table[id] || id),
+    }))
+    : doc?.groups;
   const nextScripts = {};
   for (const [path, text] of Object.entries(scripts || {})) {
     const id = readSurfId(text);
     nextScripts[path] = id && table[id] ? withSurfId(text, table[id]) : text;
   }
-  return { doc: { ...doc, parts }, scripts: nextScripts, changed: true };
+  return {
+    doc: { ...doc, parts, ...(Array.isArray(groups) ? { groups } : {}) },
+    scripts: nextScripts,
+    changed: true,
+  };
 }

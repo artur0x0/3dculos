@@ -500,5 +500,10 @@ export async function planInsertVaultAssemblyParts(adapter, repo, sourceAssembly
       linked: isExternalPartPath(target, fromPath) || !partPathAllowedFor(target, fromPath),
     });
   }
-  return { additions, sourceName: source, scripts: opened.scripts };
+  return {
+    additions,
+    sourceName: source,
+    sourcePath: assemblyFilePath(source),
+    scripts: opened.scripts,
+  };
 }

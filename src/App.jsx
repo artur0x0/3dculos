@@ -67,6 +67,14 @@ import {
   DEFAULT_PART_NAME,
   needsAssemblyLeaveGuard,
 } from './utils/assembly';
+import {
+  copyGroupToAssembly,
+  removeGroupParts,
+  renameGroup,
+  replaceGroupPartId,
+  ungroupParts,
+  withInsertedGroup,
+} from './utils/partGroups';
 import { sheetMetalBinding } from './utils/scs/scsCatalog';
 import { composeSheetMetalCommit, readSheetMetalSpec, sheetMetalReady } from './utils/sheetMetal/sheetMetalScript';
 import {
@@ -2582,7 +2590,14 @@ const App = () => {
       }
       rememberScripts(scripts);
       refreshGenRef.current += 1;
-      const inserted = rememberAssembly({ ...doc, source: 'git', activeId, parts });
+      const inserted = rememberAssembly(withInsertedGroup(
+        { ...doc, source: 'git', activeId, parts },
+        {
+          name: planned.sourceName,
+          source: planned.sourcePath,
+          partIds: planned.additions.map((add) => add.surfId).filter(Boolean),
+        },
+      ));
       if (gitVaultRef.current?.repo) {
         await enqueueGit(gitVaultRef.current.repo, {
           op: 'save',
@@ -2685,7 +2700,8 @@ const App = () => {
       copiedFrom: plan.copiedFrom || undefined,
     } : row));
     const activeId = doc.activeId === partId ? plan.path : doc.activeId;
-    const nextDoc = rememberAssembly({ ...doc, source: 'git', activeId, parts });
+    const groups = replaceGroupPartId(doc.groups, part.surfId, plan.surfId);
+    const nextDoc = rememberAssembly({ ...doc, source: 'git', activeId, parts, groups });
     rememberScripts(scripts);
     await savePartScript(plan.path, plan.content);
     await deletePartScript(partId);
@@ -2709,6 +2725,184 @@ const App = () => {
       await flushGitOps();
     }
     return { status: 'copied', path: plan.path, surfId: plan.surfId, copiedFrom: plan.copiedFrom };
+  };
+
+  const enqueueAssemblySave = async (doc, {
+    op = 'save', message, partIds = [], extraFiles = [], payload,
+  } = {}) => {
+    if (!doc || doc.source !== 'git' || !gitVaultRef.current?.repo) return null;
+    const asmPath = assemblyFilePath(vaultSegment(doc.name) || doc.name);
+    await enqueueGit(gitVaultRef.current.repo, {
+      op,
+      message,
+      partIds,
+      files: [...extraFiles, fileWrite(asmPath, stringifySurfJson(doc))],
+      ...(payload ? { payload } : {}),
+    });
+    return flushGitOps();
+  };
+
+  const handleRenameGroup = async (groupId, name) => {
+    const doc = assemblyRef.current;
+    if (!doc) return { status: 'error', error: 'No assembly' };
+    const before = (doc.groups || []).find((group) => group.id === groupId)?.name;
+    const next = renameGroup(doc, groupId, name);
+    const after = (next.groups || []).find((group) => group.id === groupId)?.name;
+    if (!after || after === before) return { status: 'unchanged' };
+    const saved = rememberAssembly(next);
+    await enqueueAssemblySave(saved, {
+      message: `Rename group ${after}`,
+      payload: { groupId, name: after },
+    });
+    return { status: 'renamed', name: after };
+  };
+
+  const handleUngroup = async (groupId) => {
+    const doc = assemblyRef.current;
+    if (!doc) return { status: 'error', error: 'No assembly' };
+    const group = (doc.groups || []).find((row) => row.id === groupId);
+    if (!group) return { status: 'error', error: 'Group not found' };
+    const saved = rememberAssembly(ungroupParts(doc, groupId));
+    await enqueueAssemblySave(saved, {
+      message: `Ungroup ${group.name}`,
+      payload: { groupId },
+    });
+    return { status: 'ungrouped', name: group.name };
+  };
+
+  /** Copy every linked member of a group into this assembly. The group stays. */
+  const handleCopyGroup = async (groupId) => {
+    const doc = assemblyRef.current;
+    if (!doc || doc.source !== 'git') return { status: 'error', error: 'Not in Git mode' };
+    const group = (doc.groups || []).find((row) => row.id === groupId);
+    if (!group) return { status: 'error', error: 'Group not found' };
+    const result = copyGroupToAssembly(doc, partScriptsRef.current, groupId);
+    if (!result.copies.length) return { status: 'noop', name: group.name };
+    rememberScripts(result.scripts);
+    for (const copy of result.copies) {
+      await savePartScript(copy.path, copy.content);
+      await deletePartScript(copy.from);
+    }
+    rekeyRuntime(result.copies.map((copy) => ({ from: copy.from, to: copy.path })));
+    const saved = rememberAssembly(result.doc);
+    const activeCopy = result.copies.find((copy) => copy.path === saved.activeId);
+    if (activeCopy) {
+      focusPartHistory(activeCopy.path, activeCopy.content);
+      setCurrentFilename(activeCopy.name);
+      codeEditorRef.current?.loadContent(activeCopy.content, activeCopy.name, false);
+    }
+    await enqueueAssemblySave(saved, {
+      op: 'copy',
+      message: `Copy ${group.name} into ${saved.name}`,
+      partIds: result.copies.map((copy) => copy.path),
+      extraFiles: result.copies.map((copy) => fileWrite(copy.path, copy.content)),
+      payload: {
+        groupId,
+        copies: result.copies.map((copy) => ({
+          from: copy.from,
+          to: copy.path,
+          surfId: copy.surfId,
+          copiedFrom: copy.copiedFrom,
+        })),
+      },
+    });
+    return { status: 'copied', count: result.copies.length, name: group.name };
+  };
+
+  /**
+   * Drop the group's parts from this assembly. Linked files stay in the
+   * vault: the outbox write is the assembly file only, never a file delete.
+   */
+  const handleRemoveGroup = async (groupId) => {
+    const doc = assemblyRef.current;
+    if (!doc || groupId == null) return { status: 'error', error: 'No assembly' };
+    const groupName = (doc.groups || []).find((row) => row.id === groupId)?.name || 'group';
+    const { doc: nextDoc, removed } = removeGroupParts(doc, groupId);
+    if (!removed.length) return { status: 'empty' };
+    refreshGenRef.current += 1;
+    const drop = new Set(removed.map((part) => part.id));
+    const live = codeEditorRef.current?.getContent?.();
+    const prevActive = doc.activeId;
+    const deletingActive = drop.has(prevActive);
+    let scripts = { ...partScriptsRef.current };
+    if (!deletingActive && prevActive && !suppressPartSaveRef.current && typeof live === 'string') {
+      scripts[prevActive] = live;
+      savePartScript(prevActive, live);
+    }
+    if (deletingActive) {
+      partSaveEpochRef.current += 1;
+      suppressPartSaveRef.current = true;
+    }
+    for (const part of removed) {
+      scripts = dropPartRecord(scripts, part.id);
+      deletePartScript(part.id);
+      dropPartHistory(part.id);
+      delete partLeftoversRef.current[part.id];
+    }
+    rememberScripts(scripts);
+    const saved = rememberAssembly(nextDoc);
+    let runs = partRunsRef.current;
+    for (const part of removed) runs = dropPartRecord(runs, part.id);
+    commitPartRuns(runs);
+    try {
+      const result = await enqueueAssemblySave(saved, {
+        message: `Remove group ${groupName}`,
+        partIds: removed.map((part) => part.id),
+        payload: { groupId, unlink: true },
+      });
+      if (result?.status === 'failed') setUploadError(result.error || 'Could not remove group');
+    } catch (err) {
+      setUploadError(err?.message || 'Could not remove group');
+    }
+    const nextActive = saved.activeId;
+    if ([...drop].some((id) => cadPartIdRef.current === id)) rememberCadPart(nextActive);
+    const nextPart = saved.parts.find((row) => row.id === nextActive);
+    const nextRun = nextActive ? runs[nextActive] : null;
+    if (deletingActive && nextRun?.ok && nextRun.mesh?.vertProperties) {
+      viewportRef.current?.adoptActiveSolid?.({
+        mesh: nextRun.mesh,
+        position: partPosition(nextPart) || [0, 0, 0],
+        partId: nextActive,
+      });
+    }
+    viewportRef.current?.placeAssembly?.({
+      solids: composeViewportParts(saved, runs),
+      leftovers: leftoverPickSolids(saved, runs, partLeftoversRef.current),
+      activeId: deletingActive && !(nextRun?.ok && nextRun.mesh) ? null : nextActive,
+      blankActive: (deletingActive && !(nextRun?.ok && nextRun.mesh?.vertProperties)) || !nextActive,
+      failedIds: failedPartIdsFor(saved, runs),
+    });
+    if (!nextActive) {
+      applyPartHistory({ commits: [], head: -1 });
+      const note = '// No parts.\n';
+      setCurrentFilename(null);
+      saveEditorDraft({ script: note, filename: null, partId: null });
+      codeEditorRef.current?.setTextOnly?.(note);
+      setCurrentScript(note);
+      return { status: 'removed', count: removed.length };
+    }
+    if (!deletingActive) {
+      refreshAssemblyRef.current?.(live, { persistActive: !suppressPartSaveRef.current });
+      return { status: 'removed', count: removed.length };
+    }
+    setCurrentFilename(nextPart?.name || null);
+    const picked = scriptForRow(saved, scripts, nextActive);
+    focusPartHistory(nextActive, picked.ok ? picked.script : '');
+    if (picked.ok) {
+      suppressPartSaveRef.current = false;
+      if (codeEditorRef.current?.loadContent) {
+        codeEditorRef.current.loadContent(picked.script, nextPart?.name || 'Part', false);
+      } else {
+        setCurrentScript(picked.script);
+        refreshAssemblyRef.current?.(picked.script);
+      }
+    } else {
+      const note = '// This part has no file yet.\n';
+      codeEditorRef.current?.setTextOnly?.(note);
+      setCurrentScript(note);
+      refreshAssemblyRef.current?.(undefined, { persistActive: false });
+    }
+    return { status: 'removed', count: removed.length };
   };
 
   const handleRenameRetry = async () => {
@@ -4693,6 +4887,11 @@ const App = () => {
       onInsertVaultAssemblyParts={handleInsertVaultAssemblyParts}
       onOpenVaultPart={handleOpenVaultPart}
       onCopyPartToAssembly={handleCopyPartToAssembly}
+      groups={assemblyDoc.groups || []}
+      onRenameGroup={handleRenameGroup}
+      onUngroup={handleUngroup}
+      onCopyGroup={handleCopyGroup}
+      onRemoveGroup={handleRemoveGroup}
       onAddExistingPart={handleAddExistingPart}
       onAddToRepo={handleAddToRepo}
       renameNotice={renameNotice}

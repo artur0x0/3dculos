@@ -7,6 +7,7 @@
  */
 
 import { normalizeSheetMetalBinding } from './scs/scsCatalog.js';
+import { isSurfId } from './git/surfId.js';
 
 export const ASSEMBLY_VERSION = 1;
 
@@ -72,10 +73,14 @@ export function newLocalPartId() {
  *   source: 'git' | 'local',
  *   name: string,
  *   activeId: string | null,
- *   parts: [{ id, name, visible, order, position? }]
+ *   parts: [{ id, name, visible, order, position?, surfId? }]
+ *   groups?: [{ id, name, source, partIds }]
  * }
  * `name` is the assembly name. A blank name is saved as Assembly.
  * `script` and any other fields are dropped.
+ * `groups` lists parts inserted from another assembly. `partIds` are surf
+ * ids. A part is in at most one group. Empty groups and dangling ids are
+ * dropped. No `groups` key when there are none.
  */
 
 /** Shown and saved when a document has no name of its own. */
@@ -217,6 +222,36 @@ export function assemblyNameFromFile(filename) {
   return base.replace(/\.json$/i, '').trim();
 }
 
+/**
+ * Keep groups whose part ids still match a row. First group wins when a
+ * surf id is listed twice. A group with nothing left is dropped.
+ */
+export function normalizeGroups(groups, parts) {
+  const live = new Set(
+    (parts || []).map((part) => part?.surfId).filter((id) => isSurfId(id)),
+  );
+  const seenParts = new Set();
+  const seenIds = new Set();
+  const out = [];
+  for (const group of Array.isArray(groups) ? groups : []) {
+    if (!group || typeof group !== 'object') continue;
+    const id = String(group.id || '').trim();
+    const name = sanitizeAssemblyName(group.name);
+    const source = normalizeRepoPath(group.source);
+    if (!isSurfId(id) || !name || !source || source !== String(group.source) || seenIds.has(id)) continue;
+    const partIds = [];
+    for (const pid of Array.isArray(group.partIds) ? group.partIds : []) {
+      if (!isSurfId(pid) || !live.has(pid) || seenParts.has(pid)) continue;
+      seenParts.add(pid);
+      partIds.push(pid);
+    }
+    if (!partIds.length) continue;
+    seenIds.add(id);
+    out.push({ id, name, source, partIds });
+  }
+  return out;
+}
+
 export function serializeAssembly(doc) {
   const source = doc?.source === 'git' ? 'git' : 'local';
   const parts = sortParts(doc?.parts).map((part, index) => {
@@ -239,13 +274,16 @@ export function serializeAssembly(doc) {
     ? wanted
     : (parts[0]?.id || null);
   const name = storedAssemblyName(doc) || DEFAULT_ASSEMBLY_NAME;
-  return {
+  const groups = normalizeGroups(doc?.groups, parts);
+  const out = {
     version: ASSEMBLY_VERSION,
     source,
     name,
     activeId,
     parts,
   };
+  if (groups.length) out.groups = groups;
+  return out;
 }
 
 export function parseAssemblyDocument(input) {
@@ -268,6 +306,7 @@ export function parseAssemblyDocument(input) {
       surfId: part?.surfId,
       copiedFrom: part?.copiedFrom,
     })),
+    groups: raw.groups,
   });
 }
 

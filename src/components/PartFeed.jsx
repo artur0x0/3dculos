@@ -5,6 +5,8 @@ import { partCanDeleteFromRepo, partListDeleteAction, sanitizeAssemblyName, sani
 import {
   filterVaultOpenIndex, filterVaultPartItems, groupVaultOpenPartRows, vaultOpenAssemblies, vaultOpenPartRows,
 } from '../utils/git/gitWorkspace.js';
+import { layoutPartFeed } from '../utils/partGroups.js';
+import PartGroupBlock from './PartGroupBlock';
 import { PARTS_TEXT_INPUT_CLASS, PARTS_TEXT_INPUT_STYLE } from '../utils/partsChrome.js';
 import OpenAssemblyChoiceDialog from './OpenAssemblyChoiceDialog';
 import ProfileChip from './ProfileChip';
@@ -299,6 +301,11 @@ export default function PartFeed({
   onAddExistingPart = null,
   onAddToRepo = null,
   onCopyPartToAssembly = null,
+  groups = [],
+  onRenameGroup = null,
+  onUngroup = null,
+  onCopyGroup = null,
+  onRemoveGroup = null,
   renameNotice = null,
   onRenameRetry = null,
   onRenameRevert = null,
@@ -338,6 +345,10 @@ export default function PartFeed({
   profileVaultName = null,
 }) {
   const [renamingId, setRenamingId] = useState(null);
+  const [collapsedGroups, setCollapsedGroups] = useState({});
+  const [menuGroupId, setMenuGroupId] = useState(null);
+  const [renamingGroupId, setRenamingGroupId] = useState(null);
+  const [pendingRemoveGroup, setPendingRemoveGroup] = useState(null);
   const loadRef = useRef(null);
   const resolveRef = useRef(null);
   const resolveIdRef = useRef(null);
@@ -1024,6 +1035,207 @@ export default function PartFeed({
     onDeletePart?.(pending.id, { fromRepo: action === 'drop-repo' });
   };
 
+  const renderPartRow = (row, index) => {
+          const selected = row.id === activeId;
+          const status = row.error ? 'error' : row.missing ? 'missing' : 'ok';
+          return (
+            <div
+              key={row.id}
+              role="button"
+              tabIndex={0}
+              data-part-row={row.id}
+              data-part-selected={selected ? 'true' : 'false'}
+              data-part-status={status}
+              data-part-dirty={row.dirty ? 'true' : 'false'}
+              data-part-sync={row.syncFailed ? 'failed' : row.pending ? 'sending' : row.dirty ? 'dirty' : 'clean'}
+              data-part-behind={behindSet.has(row.id) ? 'true' : 'false'}
+              draggable={renamingId !== row.id}
+              onDragStart={(event) => {
+                event.dataTransfer.setData('text/plain', String(index));
+                event.dataTransfer.effectAllowed = 'move';
+              }}
+              onDragOver={(event) => event.preventDefault()}
+              onDrop={(event) => {
+                event.preventDefault();
+                const from = Number(event.dataTransfer.getData('text/plain'));
+                if (Number.isInteger(from) && from !== index) onReorder?.(from, index);
+              }}
+              onClick={() => onSelect?.(row.id)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault();
+                  onSelect?.(row.id);
+                }
+                if (event.key === 'F2' && onRenamePart) {
+                  event.preventDefault();
+                  setRenamingId(row.id);
+                }
+              }}
+              className={`relative flex w-full cursor-pointer items-center gap-2 border-b border-white/5 px-2 py-2 text-left ${
+                row.error ? 'bg-red-950/55 ring-1 ring-inset ring-red-500/80' : ''
+              } ${selected && !row.error ? 'bg-blue-950/50' : ''} ${
+                !selected && !row.error ? 'hover:bg-white/5' : ''
+              }`}
+            >
+              {selected && (
+                <span
+                  data-part-selected-bar=""
+                  className="absolute bottom-1 left-0 top-1 w-1 rounded-full bg-blue-500"
+                />
+              )}
+              <GripVertical
+                size={14}
+                className="shrink-0 text-gray-500"
+                data-part-drag=""
+                aria-hidden="true"
+              />
+              <PartThumbnail mesh={row.mesh} />
+              <div className="min-w-0 flex-1">
+                <RowPartName
+                  id={row.id}
+                  name={row.name}
+                  onRename={onRenamePart}
+                  editing={renamingId === row.id}
+                  setEditing={(on) => setRenamingId(on ? row.id : null)}
+                />
+                <div className="flex items-center gap-1 truncate text-[10px] text-gray-500">
+                  <span className="truncate">{row.id}</span>
+                  {behindSet.has(row.id) ? (
+                    <button
+                      type="button"
+                      data-part-behind=""
+                      title="Remote changed this part — click for Reload / Keep mine / Check in mine"
+                      aria-label="Part behind remote"
+                      className="inline-block h-2 w-2 shrink-0 rounded-full bg-amber-400 ring-1 ring-amber-200/80"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        openConflict(row.id, 'part', row.name);
+                      }}
+                    />
+                  ) : null}
+                </div>
+                {row.external ? (
+                  <div className="mt-1" data-part-external="">
+                    <p className="text-[10px] font-medium text-amber-300">Caution: external part!</p>
+                    {onCopyPartToAssembly ? (
+                      <button
+                        type="button"
+                        data-part-copy-to-assembly=""
+                        className="mt-1 rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-medium text-amber-100 hover:bg-white/15"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onCopyPartToAssembly(row.id);
+                        }}
+                      >
+                        Copy to this assembly
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
+                {(row.action === 'add-to-repo' || row.action === 'find-in-repo' || row.action === 'upload') && (
+                  <button
+                    type="button"
+                    data-part-missing={row.action || 'add-to-repo'}
+                    data-part-add-to-repo={row.action === 'add-to-repo' || row.action === 'find-in-repo' ? '' : undefined}
+                    className="mt-1 rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-medium text-sky-200 hover:bg-white/15"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      offerResolve(row.id);
+                    }}
+                  >
+                    {row.action === 'add-to-repo' || row.action === 'find-in-repo' ? 'Add to Repo' : 'Upload'}
+                  </button>
+                )}
+                {row.error && (
+                  <div className="mt-0.5 text-[10px] font-medium text-red-300" data-part-error="">
+                    Script failed
+                  </div>
+                )}
+              </div>
+              {source === 'git' ? (
+                row.syncFailed ? (
+                  <span
+                    data-part-sync-failed={row.id}
+                    data-part-save={row.id}
+                    title="Sync failed"
+                    aria-label="Sync failed"
+                    className="relative shrink-0 rounded-full p-1.5 text-red-400"
+                  >
+                    <Save size={16} />
+                    <span className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-red-500" />
+                  </span>
+                ) : row.pending ? (
+                  <span
+                    data-part-pending={row.id}
+                    data-part-save={row.id}
+                    aria-label="Creating…"
+                    title="Creating…"
+                    className="relative shrink-0 rounded-full p-1.5 text-sky-300"
+                  >
+                    <Loader2 size={16} className="animate-spin" data-part-pending-spinner="" />
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    data-part-save={row.id}
+                    data-part-dirty={row.dirty ? 'true' : 'false'}
+                    aria-label={row.dirty ? 'Save part to repo' : 'Part in sync'}
+                    title={row.dirty ? 'Save part to repo' : 'In sync with repo'}
+                    disabled={!row.dirty || !onAddToRepo}
+                    className="relative shrink-0 rounded-full p-1.5 text-gray-300 hover:bg-white/10 disabled:cursor-default disabled:opacity-50 disabled:hover:bg-transparent"
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onDragStart={(event) => event.stopPropagation()}
+                    onKeyDown={(event) => event.stopPropagation()}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      if (!row.dirty || !onAddToRepo) return;
+                      void onAddToRepo(row.id);
+                    }}
+                  >
+                    <Save size={16} />
+                    {row.dirty ? (
+                      <span
+                        data-part-dirty=""
+                        title="Unsaved / not on repo"
+                        className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-amber-400"
+                      />
+                    ) : null}
+                  </button>
+                )
+              ) : null}
+              <button
+                type="button"
+                data-part-visibility={row.id}
+                aria-pressed={row.visible}
+                aria-label={row.visible ? 'Hide part' : 'Show part'}
+                className="shrink-0 rounded-full p-1.5 text-gray-300 hover:bg-white/10"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onToggleVisible?.(row.id);
+                }}
+              >
+                {row.visible ? <Eye size={16} /> : <EyeOff size={16} />}
+              </button>
+              <button
+                type="button"
+                data-part-delete={row.id}
+                aria-label="Delete part"
+                title="Delete part"
+                className="shrink-0 rounded-full p-1.5 text-gray-400 hover:bg-white/10 hover:text-red-300"
+                onPointerDown={(event) => event.stopPropagation()}
+                onDragStart={(event) => event.stopPropagation()}
+                onKeyDown={(event) => event.stopPropagation()}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  askDeletePart(row.id, row.name);
+                }}
+              >
+                <Trash2 size={16} />
+              </button>
+            </div>
+          );
+  };
+
   return (
     <aside className={shell} data-parts-feed="" data-parts-source={source}>
       <div
@@ -1249,205 +1461,42 @@ export default function PartFeed({
         </div>
       ) : null}
       <div className="min-h-0 flex-1 overflow-y-auto pb-16" data-parts-rows="">
-        {rows.map((row, index) => {
-          const selected = row.id === activeId;
-          const status = row.error ? 'error' : row.missing ? 'missing' : 'ok';
-          return (
-            <div
-              key={row.id}
-              role="button"
-              tabIndex={0}
-              data-part-row={row.id}
-              data-part-selected={selected ? 'true' : 'false'}
-              data-part-status={status}
-              data-part-dirty={row.dirty ? 'true' : 'false'}
-              data-part-sync={row.syncFailed ? 'failed' : row.pending ? 'sending' : row.dirty ? 'dirty' : 'clean'}
-              data-part-behind={behindSet.has(row.id) ? 'true' : 'false'}
-              draggable={renamingId !== row.id}
-              onDragStart={(event) => {
-                event.dataTransfer.setData('text/plain', String(index));
-                event.dataTransfer.effectAllowed = 'move';
-              }}
-              onDragOver={(event) => event.preventDefault()}
-              onDrop={(event) => {
-                event.preventDefault();
-                const from = Number(event.dataTransfer.getData('text/plain'));
-                if (Number.isInteger(from) && from !== index) onReorder?.(from, index);
-              }}
-              onClick={() => onSelect?.(row.id)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter' || event.key === ' ') {
-                  event.preventDefault();
-                  onSelect?.(row.id);
-                }
-                if (event.key === 'F2' && onRenamePart) {
-                  event.preventDefault();
-                  setRenamingId(row.id);
-                }
-              }}
-              className={`relative flex w-full cursor-pointer items-center gap-2 border-b border-white/5 px-2 py-2 text-left ${
-                row.error ? 'bg-red-950/55 ring-1 ring-inset ring-red-500/80' : ''
-              } ${selected && !row.error ? 'bg-blue-950/50' : ''} ${
-                !selected && !row.error ? 'hover:bg-white/5' : ''
-              }`}
-            >
-              {selected && (
-                <span
-                  data-part-selected-bar=""
-                  className="absolute bottom-1 left-0 top-1 w-1 rounded-full bg-blue-500"
-                />
-              )}
-              <GripVertical
-                size={14}
-                className="shrink-0 text-gray-500"
-                data-part-drag=""
-                aria-hidden="true"
-              />
-              <PartThumbnail mesh={row.mesh} />
-              <div className="min-w-0 flex-1">
-                <RowPartName
-                  id={row.id}
-                  name={row.name}
-                  onRename={onRenamePart}
-                  editing={renamingId === row.id}
-                  setEditing={(on) => setRenamingId(on ? row.id : null)}
-                />
-                <div className="flex items-center gap-1 truncate text-[10px] text-gray-500">
-                  <span className="truncate">{row.id}</span>
-                  {behindSet.has(row.id) ? (
-                    <button
-                      type="button"
-                      data-part-behind=""
-                      title="Remote changed this part — click for Reload / Keep mine / Check in mine"
-                      aria-label="Part behind remote"
-                      className="inline-block h-2 w-2 shrink-0 rounded-full bg-amber-400 ring-1 ring-amber-200/80"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        openConflict(row.id, 'part', row.name);
-                      }}
-                    />
-                  ) : null}
-                </div>
-                {row.external ? (
-                  <div className="mt-1" data-part-external="">
-                    <p className="text-[10px] font-medium text-amber-300">Caution: external part!</p>
-                    {onCopyPartToAssembly ? (
-                      <button
-                        type="button"
-                        data-part-copy-to-assembly=""
-                        className="mt-1 rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-medium text-amber-100 hover:bg-white/15"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          onCopyPartToAssembly(row.id);
-                        }}
-                      >
-                        Copy to this assembly
-                      </button>
-                    ) : null}
-                  </div>
-                ) : null}
-                {(row.action === 'add-to-repo' || row.action === 'find-in-repo' || row.action === 'upload') && (
-                  <button
-                    type="button"
-                    data-part-missing={row.action || 'add-to-repo'}
-                    data-part-add-to-repo={row.action === 'add-to-repo' || row.action === 'find-in-repo' ? '' : undefined}
-                    className="mt-1 rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-medium text-sky-200 hover:bg-white/15"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      offerResolve(row.id);
-                    }}
-                  >
-                    {row.action === 'add-to-repo' || row.action === 'find-in-repo' ? 'Add to Repo' : 'Upload'}
-                  </button>
-                )}
-                {row.error && (
-                  <div className="mt-0.5 text-[10px] font-medium text-red-300" data-part-error="">
-                    Script failed
-                  </div>
-                )}
-              </div>
-              {source === 'git' ? (
-                row.syncFailed ? (
-                  <span
-                    data-part-sync-failed={row.id}
-                    data-part-save={row.id}
-                    title="Sync failed"
-                    aria-label="Sync failed"
-                    className="relative shrink-0 rounded-full p-1.5 text-red-400"
-                  >
-                    <Save size={16} />
-                    <span className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-red-500" />
-                  </span>
-                ) : row.pending ? (
-                  <span
-                    data-part-pending={row.id}
-                    data-part-save={row.id}
-                    aria-label="Creating…"
-                    title="Creating…"
-                    className="relative shrink-0 rounded-full p-1.5 text-sky-300"
-                  >
-                    <Loader2 size={16} className="animate-spin" data-part-pending-spinner="" />
-                  </span>
-                ) : (
-                  <button
-                    type="button"
-                    data-part-save={row.id}
-                    data-part-dirty={row.dirty ? 'true' : 'false'}
-                    aria-label={row.dirty ? 'Save part to repo' : 'Part in sync'}
-                    title={row.dirty ? 'Save part to repo' : 'In sync with repo'}
-                    disabled={!row.dirty || !onAddToRepo}
-                    className="relative shrink-0 rounded-full p-1.5 text-gray-300 hover:bg-white/10 disabled:cursor-default disabled:opacity-50 disabled:hover:bg-transparent"
-                    onPointerDown={(event) => event.stopPropagation()}
-                    onDragStart={(event) => event.stopPropagation()}
-                    onKeyDown={(event) => event.stopPropagation()}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      if (!row.dirty || !onAddToRepo) return;
-                      void onAddToRepo(row.id);
-                    }}
-                  >
-                    <Save size={16} />
-                    {row.dirty ? (
-                      <span
-                        data-part-dirty=""
-                        title="Unsaved / not on repo"
-                        className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-amber-400"
-                      />
-                    ) : null}
-                  </button>
-                )
-              ) : null}
-              <button
-                type="button"
-                data-part-visibility={row.id}
-                aria-pressed={row.visible}
-                aria-label={row.visible ? 'Hide part' : 'Show part'}
-                className="shrink-0 rounded-full p-1.5 text-gray-300 hover:bg-white/10"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onToggleVisible?.(row.id);
+        {layoutPartFeed(rows, groups).map((item) => {
+          if (item.kind === 'group') {
+            const gid = item.group.id;
+            const open = collapsedGroups[gid] !== true;
+            return (
+              <PartGroupBlock
+                key={gid}
+                group={item.group}
+                open={open}
+                count={item.parts.length}
+                menuOpen={menuGroupId === gid}
+                editing={renamingGroupId === gid}
+                onToggle={() => setCollapsedGroups((prev) => ({ ...prev, [gid]: !prev[gid] }))}
+                onOpenMenu={() => { setMenuGroupId(gid); }}
+                onCloseMenu={() => setMenuGroupId((cur) => (cur === gid ? null : cur))}
+                onStartRename={() => { setRenamingGroupId(gid); setMenuGroupId(null); }}
+                onRename={(groupId, next) => {
+                  setRenamingGroupId(null);
+                  if (next && next !== item.group.name) onRenameGroup?.(groupId, next);
+                }}
+                onAction={(action) => {
+                  setMenuGroupId(null);
+                  if (action === 'rename') {
+                    setRenamingGroupId(gid);
+                    return;
+                  }
+                  if (action === 'ungroup') onUngroup?.(gid);
+                  else if (action === 'copy-all') onCopyGroup?.(gid);
+                  else if (action === 'remove') setPendingRemoveGroup({ id: gid, name: item.group.name });
                 }}
               >
-                {row.visible ? <Eye size={16} /> : <EyeOff size={16} />}
-              </button>
-              <button
-                type="button"
-                data-part-delete={row.id}
-                aria-label="Delete part"
-                title="Delete part"
-                className="shrink-0 rounded-full p-1.5 text-gray-400 hover:bg-white/10 hover:text-red-300"
-                onPointerDown={(event) => event.stopPropagation()}
-                onDragStart={(event) => event.stopPropagation()}
-                onKeyDown={(event) => event.stopPropagation()}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  askDeletePart(row.id, row.name);
-                }}
-              >
-                <Trash2 size={16} />
-              </button>
-            </div>
-          );
+                {item.parts.map(({ row, index }) => renderPartRow(row, index))}
+              </PartGroupBlock>
+            );
+          }
+          return renderPartRow(item.row, item.index);
         })}
               </div>
 
@@ -2232,6 +2281,57 @@ export default function PartFeed({
             </p>
           )}
         </VaultPickerDialog>
+      )}
+
+      {pendingRemoveGroup && typeof document !== 'undefined' && createPortal(
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center surface-scrim p-4"
+          data-part-group-remove-dialog=""
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="part-group-remove-title"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setPendingRemoveGroup(null);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') {
+              event.preventDefault();
+              setPendingRemoveGroup(null);
+            }
+          }}
+        >
+          <div className="w-full max-w-sm rounded-lg surface-glass border border-gray-700 p-4 shadow-xl">
+            <h2 id="part-group-remove-title" className="text-sm font-semibold text-gray-100">
+              Remove group
+            </h2>
+            <p className="mt-2 text-xs text-gray-300">
+              {`Remove ${pendingRemoveGroup.name} from this assembly? Its parts leave this assembly. Linked parts stay in the repo; they are only unlinked.`}
+            </p>
+            <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
+              <button
+                type="button"
+                data-part-group-remove-cancel=""
+                className="rounded-md px-3 py-1.5 text-xs text-gray-200 hover:bg-white/10"
+                onClick={() => setPendingRemoveGroup(null)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                data-part-group-remove-confirm=""
+                className="rounded-md bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-500"
+                onClick={() => {
+                  const pending = pendingRemoveGroup;
+                  setPendingRemoveGroup(null);
+                  if (pending?.id) onRemoveGroup?.(pending.id);
+                }}
+              >
+                Remove group
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body,
       )}
 
       {pendingDelete && typeof document !== 'undefined' && createPortal(

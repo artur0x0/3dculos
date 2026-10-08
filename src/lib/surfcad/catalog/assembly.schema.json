@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/artur0x0/3dculos/schema/surf-assembly.json",
   "title": "SurfCAD assembly (.surf.json)",
-  "description": "Assembly document stored at assemblies/<Name>/.surf.json. Part rows reference scripts by repo path. The stable id is // @surf-id in the script and { id, path } here. A part that has not been pushed uses the local- prefix.",
+  "description": "Assembly document stored at assemblies/<Name>/.surf.json. Part rows reference scripts by repo path. The stable id is // @surf-id in the script and { id, path } here. A part that has not been pushed uses the local- prefix. Optional groups list inserted parts by those ids.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -97,6 +97,41 @@
             "type": "string",
             "pattern": "^(?:local-)?\\d{4}-\\d{2}-\\d{2}-\\d{2}-\\d{2}-\\d{2}-\\d{4}-[0-9a-f]{4}$",
             "description": "Surf id this row was copied from, when set."
+          }
+        }
+      }
+    },
+    "groups": {
+      "type": "array",
+      "description": "Optional. Parts inserted from another assembly, shown together in the Parts list. Older files omit this. A part id is in at most one group.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "name", "source", "partIds"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^(?:local-)?\\d{4}-\\d{2}-\\d{2}-\\d{2}-\\d{2}-\\d{2}-\\d{4}-[0-9a-f]{4}$",
+            "description": "Stable group id. Not a part id."
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Label in the Parts list. Starts as the source assembly name."
+          },
+          "source": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Source assembly path, assemblies/<Name>/.surf.json."
+          },
+          "partIds": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "pattern": "^(?:local-)?\\d{4}-\\d{2}-\\d{2}-\\d{2}-\\d{2}-\\d{2}-\\d{4}-[0-9a-f]{4}$"
+            },
+            "description": "Surf ids of the member parts. Dangling ids are dropped on load and save."
           }
         }
       }
