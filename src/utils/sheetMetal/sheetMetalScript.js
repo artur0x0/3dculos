@@ -61,14 +61,28 @@ export function readSheetMetalSpec(script) {
  * sheet-ready buffer (empty / starter). Anything else refuses (App makes a
  * new part before it gets here).
  */
+/** The block assigns `part` but does not return it. One trailing return does. */
+function withSheetReturn(buffer) {
+  const s = String(buffer ?? '');
+  if (/\breturn\s+part\b/.test(s)) return s.endsWith('\n') ? s : `${s}\n`;
+  return `${s.replace(/\s*$/, '')}\nreturn part;\n`;
+}
+
 export function composeSheetMetalCommit(buffer, spec) {
   const s = String(buffer ?? '');
   const block = sheetMetalBlock(spec);
+  let next;
   if (hasSheetMetalBlock(s)) {
     const i = s.indexOf(SHEET_METAL_BEGIN);
     const j = s.indexOf(SHEET_METAL_END, i) + SHEET_METAL_END.length;
-    return { ok: true, buffer: `${s.slice(0, i)}${block}${s.slice(j)}` };
+    next = `${s.slice(0, i)}${block}${s.slice(j)}`;
+  } else if (sheetMetalReady(s)) {
+    next = `${block}\n`;
+  } else {
+    return { ok: false, message: 'This part has other features — start sheet metal on a new part.' };
   }
-  if (sheetMetalReady(s)) return { ok: true, buffer: `${block}\n` };
-  return { ok: false, message: 'This part has other features — start sheet metal on a new part.' };
+  // The return stays outside the markers so a later edit of the block keeps it,
+  // and so code after the block still runs. Goldens that only exec the block
+  // append their own `return part;`.
+  return { ok: true, buffer: withSheetReturn(next) };
 }

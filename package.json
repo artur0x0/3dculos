@@ -18,6 +18,8 @@
         "golden:scs-s3": "node scripts/golden/smoke_scs_s3_bends.mjs",
         "golden:scs-s4": "node scripts/golden/smoke_scs_s4_sidebar.mjs",
         "golden:scs-s5": "node scripts/golden/smoke_scs_s5_dfm_export.mjs",
+        "golden:scs-bend-return": "node scripts/golden/smoke_scs_bend_return.mjs",
+        "golden:scs-sheet-chip": "node scripts/golden/smoke_scs_sheet_chip.mjs",
         "golden:scs-step-brep": "node scripts/golden/smoke_scs_true_curve_step.mjs",
         "golden:slice03": "node scripts/golden/smoke_slice03_format.mjs",
         "golden:slice04": "node scripts/golden/smoke_slice04_pack.mjs",

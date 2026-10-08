@@ -11,18 +11,27 @@ export function normalizeSheetDisplayUnit(unit) {
   return unit === 'in' ? 'in' : 'mm';
 }
 
-export function loadSheetDisplayUnit(storage = globalThis.localStorage) {
+function sheetStorage(storage) {
+  if (storage) return storage;
   try {
-    return normalizeSheetDisplayUnit(storage?.getItem?.(SHEET_DISPLAY_UNIT_KEY));
+    return globalThis.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+export function loadSheetDisplayUnit(storage) {
+  try {
+    return normalizeSheetDisplayUnit(sheetStorage(storage)?.getItem?.(SHEET_DISPLAY_UNIT_KEY));
   } catch {
     return 'mm';
   }
 }
 
-export function saveSheetDisplayUnit(unit, storage = globalThis.localStorage) {
+export function saveSheetDisplayUnit(unit, storage) {
   const next = normalizeSheetDisplayUnit(unit);
   try {
-    storage?.setItem?.(SHEET_DISPLAY_UNIT_KEY, next);
+    sheetStorage(storage)?.setItem?.(SHEET_DISPLAY_UNIT_KEY, next);
   } catch {
     /* private mode / no storage */
   }

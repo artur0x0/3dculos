@@ -391,7 +391,7 @@ const SheetMetalFlow = ({ mode, setMode, onCommit, onExit, compact = false, mesh
       )}
       {mode.stage === 'edit' && (
         <div className="mt-1.5 font-sans" data-sheet-metal-step="edit">
-          <div className="text-[12px] text-orange-100">
+          <div className="text-[12px] text-orange-100 whitespace-normal break-words" data-sm-hint="">
             {TOOL_HINTS[mode.tool] || 'Pick a tool on the left rail.'}
           </div>
           {mode.toast && <div className="mt-1 text-[12px] text-amber-200" data-sm-toast="1">{mode.toast}</div>}

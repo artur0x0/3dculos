@@ -308,10 +308,10 @@ All of these are absolutely positioned inside the shell at
 | *editor header* (portal) | Toolbar, all CAD | `Toolbar.jsx` `variant="strip"` | `:3530` |
 | top-center | CAD: part, the word in, assembly. Game: puzzle name | `data-viewer-title` / `ViewportTitleChip` | Viewport |
 | centered | "Match!" success banner | inline | `:3595` |
-| left-2/4 bottom-2.5 | helper insert rail (height paired to right) | `HelperInsertPalette.jsx` | Viewport |
+| left-2/4 bottom-2.5 | helper insert rail (height paired to right). Shape includes Sheet Metal with the other shape tools | `HelperInsertPalette.jsx` | Viewport |
 | left-2/4 bottom-2.5 | contour tool rail (replaces the helper rail) | `ContourModeRail.jsx` | Viewport |
-| left-2/4 bottom-2.5 | sheet-metal rail (replaces the helper rail while `sheetMetalMode`): SCS tools for the SKU, Tab first, ✕ exit | `sheetMetal/SheetMetalRail.jsx` | Viewport |
-| bottom-center | sheet-metal chip: bound SKU + step hint, **Check & Export** (edit), ✕ exits | `sheetMetal/SheetMetalModeChip.jsx` | Viewport |
+| left-2/4 bottom-2.5 | sheet-metal rail (replaces the helper rail while `sheetMetalMode`): **Shape** section, SCS tools for the SKU, Tab first, ✕ exit | `sheetMetal/SheetMetalRail.jsx` | Viewport |
+| bottom, centered in the gap between the measured side rails (22rem cap on desktop; full gap on a phone). Material line truncates, hint wraps. Does not cover either toolbar | sheet-metal chip: bound SKU + step hint, **Check & Export** (edit), ✕ exits | `sheetMetal/SheetMetalModeChip.jsx` | Viewport |
 | bottom sheet `z-50` | Sheet Metal picker: material + gauge (out-of-stock gauges disabled, “out of stock”), Start designing | `sheetMetal/SheetMetalPicker.jsx` | Viewport |
 | bottom sheet `z-50` | Base flange popup: X / Y, mm\|in toggle, Back, Accept, ✕ | `sheetMetal/SheetMetalFlow.jsx` | Viewport |
 | bottom sheet `z-50` (short) | Bend popup: Angle, Flange length, Flip, R·K·BD, Back / Accept / Delete, ✕ | `sheetMetal/SheetMetalFlow.jsx` | Viewport |
@@ -438,11 +438,16 @@ and does not insert the starter cube, so the following Extrude is
 `let part = placeInFrame`, the same shape as Workplane-then-Extrude.
 Both modes share the shape: tool rail on the left, param chip on the right,
 commit writes script text back through `App.jsx`.
-Sheet metal (SendCutSend): left rail **Sheet** button → `SheetMetalPicker`;
-Start designing binds the SKU on the part row (`part.sheetMetal`) and enters
-`sheetMetalMode` (rail + chip above). An mm|in toggle on the popups is display
-only (stored mm, preference in localStorage). Out-of-stock gauges stay visible
-and disabled. Catalog/cache in `src/utils/scs/`.
+Sheet metal (SendCutSend): left rail **Shape** → Sheet Metal (no separate
+Sheet section) → `SheetMetalPicker`. Start designing binds the SKU on the
+part row (`part.sheetMetal`) and enters `sheetMetalMode`. The rail then lists
+Tab / Bend / Hole / Tap under **Shape**. The chip (material, hint, Check &
+Export) is centered in the measured gap between the side rails. An mm|in
+toggle on the popups is display only (stored mm, preference in localStorage).
+Out-of-stock gauges stay visible and disabled. Catalog/cache in `src/utils/scs/`.
+The committed script is the sheet block plus `return part;`. The worker and
+`runScript` unwrap a sheet wrapper (`solid` + spec or flat pattern) and still
+reject any other non-Manifold.
 
 ### Viewport furniture
 Camera and snaps `src/utils/viewCamera.js`; cutting plane

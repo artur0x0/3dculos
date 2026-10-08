@@ -8395,6 +8395,32 @@ const executeScript = (script, importedModels) => {
 /** Engine header lines before the script in a `new Function` body (lazy). */
 let _scriptLineOffset;
 
+function _isManifoldValue(value) {
+  return !!value && typeof value.getMesh === 'function';
+}
+
+/**
+ * Script return shared by the worker `execute` path and `runPreparedScript`.
+ * A Manifold is used as-is. A sheet wrapper — a plain object whose `solid`
+ * is a Manifold and that carries a sheet spec, a flat pattern, or
+ * `kind: 'sheet'` — unwraps to that solid. Numbers, strings, arrays, and
+ * any other object still throw. Do not accept an arbitrary bag that merely
+ * happens to hold a solid.
+ */
+export function manifoldFromScriptResult(result) {
+  if (_isManifoldValue(result)) return result;
+  if (result && typeof result === 'object' && !Array.isArray(result) && _isManifoldValue(result.solid)) {
+    const spec = result.spec;
+    const flat = result.flat;
+    const sheetSpec = !!spec && typeof spec === 'object' && !Array.isArray(spec)
+      && (spec.sku != null || spec.t != null || spec.width != null);
+    const sheetFlat = !!flat && typeof flat === 'object' && !Array.isArray(flat)
+      && (flat.area != null || Array.isArray(flat.loops) || Array.isArray(flat.panels));
+    if (sheetSpec || sheetFlat || result.kind === 'sheet') return result.solid;
+  }
+  throw new Error('Script must return a Manifold object');
+}
+
 /**
  * Serialize a Manifold result to mesh data for transfer
  */
@@ -8717,7 +8743,7 @@ self.onmessage = async (event) => {
         const _execT0 = _perfNow();
         _featureOps = [];
         _sourceTess = [];
-        const result = executeScript(script, importedModels);
+        const result = manifoldFromScriptResult(executeScript(script, importedModels));
         const _execMs = _perfNow() - _execT0;
         
         // Cache the manifold for cross-section operations (+ nonce for game compare)
@@ -9434,18 +9460,16 @@ export function helperScope(mod) {
 }
 
 function summarizeManifold(result) {
-  if (!result || typeof result.getMesh !== 'function') {
-    throw new Error('Script must return a Manifold object');
-  }
-  const mesh = serializeResult(result);
-  const bbox = result.boundingBox();
-  const bodyCentroids = _kernelBodyCentroids(result);
+  const solid = manifoldFromScriptResult(result);
+  const mesh = serializeResult(solid);
+  const bbox = solid.boundingBox();
+  const bodyCentroids = _kernelBodyCentroids(solid);
   return {
-    manifold: result,
+    manifold: solid,
     mesh,
-    volume: result.volume(),
-    surfaceArea: typeof result.surfaceArea === 'function' ? result.surfaceArea() : null,
-    status: _c4StatusError(result) || 'NoError',
+    volume: solid.volume(),
+    surfaceArea: typeof solid.surfaceArea === 'function' ? solid.surfaceArea() : null,
+    status: _c4StatusError(solid) || 'NoError',
     tris: mesh.triVerts.length / 3,
     boundingBox: { min: [...bbox.min], max: [...bbox.max] },
     bodyCentroids,
@@ -9468,7 +9492,8 @@ export function runPreparedScript(source, opts = {}) {
   _featureOps = [];
   _sourceTess = [];
   const result = executeScript(String(source ?? ''), opts.importedModels || {});
-  cachedManifold = result;
+  const summary = summarizeManifold(result);
+  cachedManifold = summary.manifold;
   cachedExecuteNonce = (opts.nonce !== undefined && opts.nonce !== null) ? opts.nonce : null;
-  return summarizeManifold(result);
+  return summary;
 }

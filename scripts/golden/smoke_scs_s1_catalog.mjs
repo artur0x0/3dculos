@@ -208,7 +208,10 @@ console.log('SCS S1 — mode entry + chrome');
   check('selects + numbers use the ≥16px token',
     /PARTS_TEXT_INPUT_STYLE/.test(controls) && (controls.match(/style=\{PARTS_TEXT_INPUT_STYLE\}/g) || []).length >= 2
     && /min-h-\[44px\]/.test(controls));
-  check('Sheet Metal button on the left rail', /data-sheet-metal-button/.test(palette) && /onOpenSheetMetal/.test(palette));
+  check('Sheet Metal button sits in Shape, not its own section',
+    /data-sheet-metal-button/.test(palette) && /onOpenSheetMetal/.test(palette)
+    && /section\.section === 'shape' && onOpenSheetMetal/.test(palette)
+    && !/data-palette-section="sheet"/.test(palette));
   check('rail swaps while in sheet metal', /!deleteFaceMode && !sheetMetalMode && \(/.test(view) && /<SheetMetalRail/.test(view));
   check('Start binds then enters mode', /onBindSheetMetal\?\.\(record\)/.test(view) && /enterSheetMetalMode\(record, bound\.partId/.test(view));
   check('App binds SKU to the part (new part when busy)',
