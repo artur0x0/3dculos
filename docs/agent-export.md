@@ -53,7 +53,7 @@ Helpers close over one module per process, the one bound by `initializeManifold`
 | --- | --- |
 | `helpers.json` | Every `HELPER_FUNCTIONS` key: name, signature, params (with defaults), description, doc, examples. Sources are JSDoc, `HELPER_FUNCTIONS.md`, and a small gap list in the generator. |
 | `manifold.json` | Static constructors and instance methods of `Manifold` and `CrossSection`, plus the module functions, from `built/manifold-encapsulated-types.d.ts`. |
-| `assembly.schema.json` | `.surf.json` JSON Schema: `format` `surfcad.assembly`, `version` 1, part `{ id, path, name, visible, order, position, sheetMetal, copiedFrom }`, optional `groups: [{ id, name, source, partIds }]` (`source` is the assembly path, or null after that assembly is deleted), the `// @surf-id` header, and the `local-` id prefix. |
+| `assembly.schema.json` | JSON Schema for `.surf.json`. Field rules, groups, and the `// @surf-id` header are [the vault schema](vault-schema.md). |
 | `sheet-metal.json` | `part.sheetMetal` (`sku` required), the `// --- sheet-metal begin/end ---` block, `sheetMetalSolid`, DFM rules, and export options. |
 | `sync-files.json` | The copy list for an external consumer, plus `regenerate`. |
 

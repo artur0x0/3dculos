@@ -368,7 +368,7 @@ function assemblySchema() {
     $schema: 'https://json-schema.org/draft/2020-12/schema',
     $id: 'https://github.com/artur0x0/3dculos/schema/surf-assembly.json',
     title: 'SurfCAD assembly (.surf.json)',
-    description: 'Assembly document stored at assemblies/<Name>/.surf.json. Part rows reference scripts by repo path. The stable id is // @surf-id in the script and { id, path } here. A part that has not been pushed uses the local- prefix.',
+    description: 'Assembly document stored at assemblies/<Name>/.surf.json. Part rows reference scripts by repo path. The stable id is // @surf-id in the script and { id, path } here. A part that has not been pushed uses the local- prefix. Optional groups list inserted parts by those ids. validateSurfJson also requires each part visible boolean and order integer.',
     type: 'object',
     additionalProperties: false,
     required: ['format', 'version', 'name', 'parts'],
@@ -385,7 +385,7 @@ function assemblySchema() {
         items: {
           type: 'object',
           additionalProperties: false,
-          required: ['path', 'name'],
+          required: ['path', 'name', 'visible', 'order'],
           properties: {
             id: {
               type: 'string',
@@ -398,7 +398,11 @@ function assemblySchema() {
             },
             name: { type: 'string' },
             visible: { type: 'boolean' },
-            order: { type: 'number' },
+            order: {
+              type: 'integer',
+              minimum: 0,
+              description: 'Non-negative integer. validateSurfJson rejects a non-integer.',
+            },
             position: {
               type: 'array',
               items: { type: 'number' },
@@ -422,6 +426,40 @@ function assemblySchema() {
               type: 'string',
               pattern: id,
               description: 'Surf id this row was copied from, when set.',
+            },
+          },
+        },
+      },
+      groups: {
+        type: 'array',
+        description: 'Optional. Parts inserted from another assembly, shown together in the Parts list. Older files omit this. A part id is in at most one group.',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['id', 'name', 'source', 'partIds'],
+          properties: {
+            id: {
+              type: 'string',
+              pattern: id,
+              description: 'Stable group id. Not a part id.',
+            },
+            name: {
+              type: 'string',
+              minLength: 1,
+              description: 'Label in the Parts list. Starts as the source assembly name.',
+            },
+            source: {
+              anyOf: [
+                { type: 'string', minLength: 1 },
+                { type: 'null' },
+              ],
+              description: 'Source assembly path, assemblies/<Name>/.surf.json. Null after that assembly is deleted; the group name stays.',
+            },
+            partIds: {
+              type: 'array',
+              minItems: 1,
+              items: { type: 'string', pattern: id },
+              description: 'Surf ids of the member parts. Dangling ids are dropped on load and save.',
             },
           },
         },
