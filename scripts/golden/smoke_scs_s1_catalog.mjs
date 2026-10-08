@@ -212,8 +212,10 @@ console.log('SCS S1 — mode entry + chrome');
   check('Sheet Metal button sits in the left-rail Shape group',
     /section\.section === 'shape' && onOpenSheetMetal/.test(palette)
     && /data-sheet-metal-button/.test(palette)
-    && /FoldVertical/.test(palette)
-    && /text-orange-700 hover:bg-orange-100 active:bg-orange-200/.test(palette)
+    && /data-sheet-metal-icon/.test(palette)
+    && /text-blue-700 hover:bg-blue-100 active:bg-blue-200/.test(palette)
+    && !/text-orange-700/.test(palette)
+    && !/FoldVertical/.test(palette)
     && /onOpenSheetMetal=\{mode !== 'game' && onBindSheetMetal/.test(view)
     && !/data-sheet-metal-button/.test(panel)
     && !/data-sheet-metal-group="inspection"/.test(panel)

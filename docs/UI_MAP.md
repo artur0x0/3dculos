@@ -329,7 +329,7 @@ All of these are absolutely positioned inside the shell at
 | top-center | CAD: part, the word in, assembly. Game: puzzle name | `data-viewer-title` / `ViewportTitleChip` | Viewport |
 | bottom, centered in the gap between the rails (same card as Shell; `bottom-14` on a phone) | Paint popup: 8 swatches (grid padded so the selection ring is not clipped), custom `#rrggbb`, Part, Undo, Clear, Remove unmatched colors, Confirm, Cancel. A tap paints the face immediately. Double-tap paints that body. Confirm saves the session. X and Cancel revert it | `PaintModeChip` `data-paint-mode` | Viewport |
 | centered | "Match!" success banner | inline | `:3595` |
-| left-2/4 bottom-2.5 | helper insert rail (height paired to right). Block, Build, Shape, Polish, Move. Shape includes Sheet Metal (`FoldVertical`, `data-sheet-metal-button`) with the other shape tools | `HelperInsertPalette.jsx` | Viewport |
+| left-2/4 bottom-2.5 | helper insert rail (height paired to right). Block, Build, Shape, Polish, Move. Shape includes Sheet Metal (blue plate with a bent flange, `data-sheet-metal-button`) with the other shape tools | `HelperInsertPalette.jsx` | Viewport |
 | left-2/4 bottom-2.5 | contour tool rail (replaces the helper rail) | `ContourModeRail.jsx` | Viewport |
 | left-2/4 bottom-2.5 | sheet-metal rail (replaces the helper rail while `sheetMetalMode`): **Shape** section, SCS tools for the SKU, Tab first, ✕ exit | `sheetMetal/SheetMetalRail.jsx` | Viewport |
 | bottom, centered in the gap between the measured side rails (22rem cap on desktop; full gap on a phone). Material line truncates, hint wraps. Does not cover either toolbar | sheet-metal chip: bound SKU + step hint, **Check & Export** (edit), ✕ exits | `sheetMetal/SheetMetalModeChip.jsx` | Viewport |
@@ -572,7 +572,7 @@ Import `src/utils/importModel.js` (+ `POST /api/convert/step`); export
   `RectangleHorizontal` = Face pick, `Layers3` = plane overlays,
   `NotebookPen` = sketch (contour) overlays, `Spline` = Edge pick,
   `Palette` = Paint. In the left
-  rail, Sheet Metal is `FoldVertical` (Shape, after Loft), Loft is `Pyramid` (a tapered stack of profiles), not `Layers`, and
+  rail, Sheet Metal is a plate with a bend line and a bent flange (Shape, after Loft, same blue as the other rail icons), Loft is `Pyramid` (a tapered stack of profiles), not `Layers`, and
   Fillet is `SquareRoundCorner` — so `Squircle` now means roundedBox alone.
   Chamfer is `TriangleRight`.
   **Two left-rail tools deliberately share a glyph with a right-rail toggle:**

@@ -1,13 +1,14 @@
 #!/usr/bin/env node
 /**
  * Sheet Metal is a Shape tool on the left rail, on the desktop shell and at
- * 390px (the mobile feature bar). One button: FoldVertical, after the other
- * Shape tools. The right-rail inspection group does not carry a second copy.
+ * 390px (the mobile feature bar). One button, after the other Shape tools,
+ * in the same blue as those icons. The glyph is a plate with a bend line and
+ * a bent flange. The right-rail inspection group does not carry a second copy.
  *
  * Screenshots go to GOLDEN_SHOT_DIR or os.tmpdir(), never the artifacts dir.
  */
 /* The evaluate callback runs in the browser, where document exists. */
-/* global document, window */
+/* global document, getComputedStyle, window */
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -48,7 +49,8 @@ console.log('sheet metal: Shape group on desktop and the 390px feature bar');
   const view = read('src/components/Viewport.jsx');
   const snippets = read('src/utils/helperPaletteSnippets.js');
   const shapeAt = palette.indexOf("section.section === 'shape' && onOpenSheetMetal");
-  const shapeBlock = shapeAt < 0 ? '' : palette.slice(shapeAt, shapeAt + 700);
+  const shapeBlock = shapeAt < 0 ? '' : palette.slice(shapeAt, shapeAt + 1600);
+  const railBlue = 'text-blue-700 hover:bg-blue-100 active:bg-blue-200';
   check('rail order stays Block, Build, Shape, Polish, Move',
     /CAD_RAIL_ORDER = \['Primitives', 'Build', 'Shape', 'Features', 'Transforms'\]/.test(snippets)
     && /Primitives: 'Block'/.test(palette)
@@ -56,11 +58,18 @@ console.log('sheet metal: Shape group on desktop and the 390px feature bar');
     && /Shape: 'Shape'/.test(palette)
     && /Features: 'Polish'/.test(palette)
     && /Transforms: 'Move'/.test(palette));
-  check('Sheet Metal is the Shape button, orange FoldVertical',
+  check('Sheet Metal is the Shape button, same blue, plate with a bent flange',
     shapeAt > 0
+    && shapeBlock.includes(railBlue)
+    && palette.includes(railBlue)
+    && !/orange/.test(shapeBlock)
+    && !/FoldVertical/.test(shapeBlock)
     && /data-sheet-metal-button="1"/.test(shapeBlock)
-    && /FoldVertical size=\{iconSize\}/.test(shapeBlock)
-    && /text-orange-700 hover:bg-orange-100 active:bg-orange-200/.test(shapeBlock)
+    && /data-sheet-metal-icon/.test(shapeBlock)
+    && /M4 10h11l5-4v10l-5 4H4z/.test(shapeBlock)
+    && /M12 10v10/.test(shapeBlock)
+    && /stroke="currentColor"/.test(shapeBlock)
+    && /strokeWidth=\{2\}/.test(shapeBlock)
     && /aria-label="Sheet Metal: pick SendCutSend material and gauge"/.test(shapeBlock)
     && /onClick=\{\(\) => onOpenSheetMetal\(\)\}/.test(shapeBlock));
   check('Viewport opens the picker from the left rail, hidden in game',
@@ -162,7 +171,6 @@ window.__sheetOpened = 0;
           count: buttons.length,
           inShape: !!(shape && last && last === buttons[0] && shape.contains(buttons[0])),
           inRight: buttons.some((btn) => right && right.contains(btn)),
-          orange: !!(last && last.className.includes('text-orange-700')),
           label: last ? last.getAttribute('aria-label') : '',
           compact: document.querySelector('[data-sheet-shape-stage]')?.getAttribute('data-compact'),
         };
@@ -172,10 +180,68 @@ window.__sheetOpened = 0;
         && placed.labels.join(',') === 'BLOCK,BUILD,SHAPE,POLISH,MOVE',
         JSON.stringify(placed));
       check(`${label}: Sheet Metal is the last Shape button and not on the right rail`,
-        placed.count === 1 && placed.inShape && !placed.inRight && placed.orange
+        placed.count === 1 && placed.inShape && !placed.inRight
         && placed.label === 'Sheet Metal: pick SendCutSend material and gauge'
         && placed.compact === (width <= 768 ? '1' : '0'),
         JSON.stringify(placed));
+      const paintOf = (which) => page.evaluate((target) => {
+        const shape = document.querySelector('[data-palette-section="shape"]');
+        const shapeButtons = [...shape.querySelectorAll('button')];
+        const btn = target === 'sheet'
+          ? shapeButtons[shapeButtons.length - 1]
+          : shapeButtons[shapeButtons.length - 2];
+        const svg = btn.querySelector('svg');
+        const style = getComputedStyle(btn);
+        return {
+          color: style.color,
+          bg: style.backgroundColor,
+          stroke: svg ? getComputedStyle(svg).stroke : '',
+          orange: /orange/.test(btn.className),
+          blue: btn.className.includes('text-blue-700')
+            && btn.className.includes('hover:bg-blue-100')
+            && btn.className.includes('active:bg-blue-200'),
+        };
+      }, which);
+      const sameBlue = (a, b) => !!(a && b && a.color === b.color && a.bg === b.bg
+        && a.stroke === b.stroke && a.color === a.stroke
+        && a.blue && b.blue && !a.orange && !b.orange
+        && a.color !== 'rgb(194, 65, 12)');
+      const settle = () => page.waitForTimeout(250);
+      await page.mouse.move(0, 0);
+      await settle();
+      const restSheet = await paintOf('sheet');
+      const restSibling = await paintOf('sibling');
+      check(`${label}: default icon color matches the sibling blue and is not orange`,
+        sameBlue(restSheet, restSibling),
+        JSON.stringify({ restSheet, restSibling }));
+      const shapeButtons = page.locator('[data-palette-section="shape"] button');
+      const shapeCount = await shapeButtons.count();
+      const siblingBtn = shapeButtons.nth(shapeCount - 2);
+      const sheetBtn = shapeButtons.nth(shapeCount - 1);
+      await siblingBtn.hover();
+      await settle();
+      const hoverSibling = await paintOf('sibling');
+      await sheetBtn.hover();
+      await settle();
+      const hoverSheet = await paintOf('sheet');
+      check(`${label}: hover icon color matches the sibling blue and is not orange`,
+        sameBlue(hoverSheet, hoverSibling) && hoverSheet.bg !== restSheet.bg,
+        JSON.stringify({ hoverSheet, hoverSibling, rest: restSheet.bg }));
+      const pressed = async (loc, which) => {
+        await loc.hover();
+        await page.mouse.down();
+        await settle();
+        const paint = await paintOf(which);
+        await page.mouse.up();
+        await settle();
+        return paint;
+      };
+      const activeSibling = await pressed(siblingBtn, 'sibling');
+      const activeSheet = await pressed(sheetBtn, 'sheet');
+      check(`${label}: active icon color matches the sibling blue and is not orange`,
+        sameBlue(activeSheet, activeSibling) && activeSheet.bg !== hoverSheet.bg,
+        JSON.stringify({ activeSheet, activeSibling, hover: hoverSheet.bg }));
+      await page.evaluate(() => { window.__sheetOpened = 0; });
       await page.click('[data-sheet-metal-button]');
       const opened = await page.evaluate(() => window.__sheetOpened);
       check(`${label}: the button opens sheet metal`, opened === 1, String(opened));
