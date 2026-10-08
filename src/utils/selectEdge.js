@@ -699,8 +699,18 @@ const LINE_OFFSET_EPS = 0.45;
  * pick that stopped short of the corner. 1.1 mm crosses that hole and still
  * leaves a real 2 mm notch alone. A 90° corner is a different line, so a
  * cube edge stays one edge.
+ *
+ * Only a real crease may use that extra reach. Both pieces have to be at
+ * least LINE_GAP_BRIDGE_MIN long. The loft tail after the hole is about 1 mm
+ * (x = 8.50 → 9.50). A collapsed sliver is under 0.05 mm, and on Artur's
+ * wrap and the dense mesh those slivers sit 0.8–1.1 mm off a real crease.
+ * Bridging them stretched the pick across empty space and merged chains
+ * (contourN 907 → 905, dense 1245 → 1243). Gaps up to the old 0.75 mm still
+ * collapse coincident copies, including short ones.
  */
+const LINE_GAP_TOUCH = 0.75;
 const LINE_GAP_EPS = 1.1;
+const LINE_GAP_BRIDGE_MIN = 0.25;
 /** RDP tolerance. Keeps a mild loft generator; collapses a straight side to one segment. */
 const CHAIN_SIMPLIFY_EPS = 0.35;
 /**
@@ -932,7 +942,13 @@ function mergeCollinearEdges(edges) {
     };
     for (let k = 1; k < spans.length; k++) {
       const s = spans[k];
-      if (s.lo <= acc.hi + LINE_GAP_EPS) {
+      const gap = s.lo - acc.hi;
+      const bridgeable = gap <= LINE_GAP_TOUCH || (
+        gap <= LINE_GAP_EPS
+        && (acc.hi - acc.lo) >= LINE_GAP_BRIDGE_MIN
+        && (s.hi - s.lo) >= LINE_GAP_BRIDGE_MIN
+      );
+      if (bridgeable) {
         acc.sources.push(s.src);
         if (s.hi > acc.hi) {
           acc.hi = s.hi;

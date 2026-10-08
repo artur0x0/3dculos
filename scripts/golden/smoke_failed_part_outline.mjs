@@ -113,9 +113,14 @@ console.log('failed part outline — red outline + glow on a failing part in the
 {
   const vp = read('src/components/Viewport.jsx');
   const app = read('src/App.jsx');
+  // Refresh, group remove, and part delete pass failedPartIdsFor. Showing
+  // an empty assembly passes [] so the previous outlines do not stick.
+  const placements = [...app.matchAll(/placeAssembly\?\.\(\{([\s\S]*?)\n\s*\}\);/g)].map((m) => m[1]);
   check('App passes failedIds on every placement',
-    (app.match(/failedIds: failedPartIdsFor\(/g) || []).length === 2
-    && (app.match(/placeAssembly\?\.\(\{/g) || []).length === 2);
+    placements.length === 4
+    && placements.filter((block) => /failedIds: failedPartIdsFor\(/.test(block)).length === 3
+    && placements.filter((block) => /failedIds: \[\]/.test(block)).length === 1,
+    `placements=${placements.length}`);
   check('placement stores the failed ids (leftovers as fallback) and syncs',
     /failedPartIdsRef\.current = new Set\(/.test(vp) && /payload\.leftovers\.map\(\(solid\) => solid\?\.id\)/.test(vp)
     && /syncFailedPartOutlinesRef\.current\(\);\n\s+if \(containerRef\.current\)/.test(vp));

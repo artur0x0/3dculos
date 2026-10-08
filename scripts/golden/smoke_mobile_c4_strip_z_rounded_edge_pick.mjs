@@ -55,9 +55,9 @@ console.log('mobile C.4: strip z + rounded edge pick');
       /absolute right-0 bottom-0 z-20 flex flex-col/.test(app) &&
       /data-feature-strip-below-ribbon/.test(app) &&
       /data-feature-strip-ribbon-spacer/.test(app) &&
-      // Spacer height is measured off the ribbon, so no h-11 literal.
+      // The strip starts at the measured ribbon height (top), so no h-11 literal.
       /data-feature-strip-ribbon-spacer-h="measured"/.test(app) &&
-      /style=\{\{ height: ribbonPx \}\}/.test(app) &&
+      /style=\{\{ top: ribbonPx \}\}/.test(app) &&
       /ResizeObserver/.test(app) &&
       /data-editor-ribbon/.test(editor),
   );

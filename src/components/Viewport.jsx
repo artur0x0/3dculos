@@ -6506,14 +6506,6 @@ const Viewport = forwardRef(({
     return ok;
   }, []);
 
-  const handleAutoFitToggle = useCallback(() => {
-    setAutoFitEnabled((on) => {
-      const next = !on;
-      if (next) handleZoomToFit();
-      return next;
-    });
-  }, [handleZoomToFit]);
-
   const handleMeasurementToggle = () => {
     if (!measurementEnabled && selectedFace) {
       // Turning on measurement mode with a face already selected

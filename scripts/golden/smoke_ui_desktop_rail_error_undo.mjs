@@ -26,10 +26,10 @@ console.log('ui: desktop ribbon + left rail + error Undo');
 {
   const app = read('../../src/App.jsx');
   check(
-    '1: desktop seam strip below ribbon spacer',
+    '1: desktop feature bar under the title',
     /data-desktop-feature-strip/.test(app) &&
-      /data-feature-strip-below-ribbon/.test(app) &&
-      /style=\{\{ height: ribbonPx \}\}/.test(app),
+      /data-feature-strip-placement="viewer-under-title-horizontal"/.test(app) &&
+      /top-14[\s\S]{0,120}data-desktop-feature-strip/.test(app),
   );
 }
 

@@ -79,7 +79,7 @@ console.log('part script restore — resolveActiveRestore binding');
 
 console.log('part script restore — editorDraft carries partId');
 {
-  function fakeLocalStorage() {
+  const fakeLocalStorage = () => {
     const map = new Map();
     return {
       getItem: (k) => (map.has(k) ? map.get(k) : null),
@@ -87,8 +87,8 @@ console.log('part script restore — editorDraft carries partId');
       removeItem: (k) => map.delete(k),
       _map: map,
     };
-  }
-  function fakeIndexedDB() {
+  };
+  const fakeIndexedDB = () => {
     const stores = new Map();
     const later = (fn) => setTimeout(fn, 0);
     return {
@@ -136,7 +136,7 @@ console.log('part script restore — editorDraft carries partId');
         return req;
       },
     };
-  }
+  };
 
   globalThis.indexedDB = fakeIndexedDB();
   globalThis.localStorage = fakeLocalStorage();

@@ -9,19 +9,19 @@ import { readFileSync } from 'node:fs';
 import { createMockGithubAdapter } from '../../src/utils/git/mockGithubAdapter.js';
 import { findOrCreateVault } from '../../src/utils/git/vault.js';
 import {
-  ASSEMBLIES_DIR, assemblyFilePath, assemblyPartPath, sharedPartPath,
+  assemblyFilePath, assemblyPartPath, sharedPartPath,
 } from '../../src/utils/git/vaultLayout.js';
 import { stringifySurfJson } from '../../src/utils/git/surfJson.js';
 import { fileWrite } from '../../src/utils/git/githubAdapterInterface.js';
 import {
-  listVaultBrowseItems, planInsertVaultAssemblyParts, openVaultAssembly,
+  listVaultBrowseItems, planInsertVaultAssemblyParts,
   filterVaultOpenIndex, filterVaultPartItems,
   vaultOpenAssemblies, vaultOpenPartRows, groupVaultOpenPartRows, planOpenVaultPart,
   LOOSE_PARTS_LABEL,
 } from '../../src/utils/git/gitWorkspace.js';
 import {
-  listVaultBranches, createVaultBranch, deleteVaultBranch,
-  githubCompareUrl, canDeleteVaultBranch, switchVaultBranch,
+  createVaultBranch, deleteVaultBranch,
+  githubCompareUrl, canDeleteVaultBranch,
   squashMergeVaultBranch,
 } from '../../src/utils/git/gitBranch.js';
 import * as gitIndex from '../../src/utils/git/index.js';
@@ -103,7 +103,7 @@ console.log('\ngit G11 — squash merge into main');
   const { gh, repo, seedSha } = await seedVault();
   await createVaultBranch(gh, repo, 'feature/squash', { fromSha: seedSha });
   // Ahead-only: commit on feature, then squash into main.
-  const ahead = await gh.commitFiles(repo, {
+  await gh.commitFiles(repo, {
     branch: 'feature/squash', message: 'side work',
     baseSha: seedSha,
     files: [fileWrite(BRACKET, 'return Manifold.cube([11,11,11], true);')],
@@ -115,7 +115,7 @@ console.log('\ngit G11 — squash merge into main');
   eq('main has side content', (await gh.readFile(repo, BRACKET, 'main')).content,
     'return Manifold.cube([11,11,11], true);');
   const up = await squashMergeVaultBranch(gh, repo, { head: 'feature/squash', base: 'main' });
-  // feature tip still points at ahead.sha; main is ahead of it → behindBy > 0 → conflict
+  // feature tip is still the side commit; main is ahead of it → behindBy > 0 → conflict
   // or if compare sees identical trees via ancestry — expect conflict when behind.
   ok('re-squash after main moved is conflict or up-to-date',
     up.status === 'conflict' || up.status === 'up-to-date', up.status);
