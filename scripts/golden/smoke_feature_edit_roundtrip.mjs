@@ -401,6 +401,15 @@ console.log('feature edit — coverage');
   check('strip edit calls beginFeatureEdit', /beginFeatureEdit\?\.\(/.test(app));
   check('desktop and mobile share openFeatureSheetFor', /openFeatureSheetFor/.test(app) && /handleDesktopFeatureStripJump/.test(app));
   check('confirm edit writes one buffer', /confirmFeatureEdit/.test(app) && /applyBuffer/.test(app));
+  const commitFn = app.slice(app.indexOf('const handleCommitFeatureEdit'), app.indexOf('const handleFeatureSheetDelete'));
+  check('edit confirm yields while an assembly open holds the auto-run lock',
+    commitFn.includes('assemblyOpenLockRef.current')
+    && commitFn.indexOf('assemblyOpenLockRef.current') < commitFn.indexOf('applyBuffer?.')
+    && !/assemblyOpenLockRef\.current\s*=/.test(commitFn));
+  check('edit preview does not post while that lock is held',
+    /assemblyRunLockRef\?\.current/.test(view)
+    && /editPreviewBlocked\(\)/.test(view)
+    && !/assemblyOpenLockRef\.current\s*=/.test(view));
   check('fillet chip shows missing edges', /data-feature-edit-missing/.test(chip) && /data-feature-edit-clear-missing/.test(chip));
   check('viewport resolves edit edges on the prefix graph', /editPreviewScript/.test(view) && /resolveStoredEdges|openFeatureEdit/.test(view));
   const parsed = parseFeatureEdit('fillet', '// --- fillet-mode begin ---\nconst selEdges = edgesBetween(part, 2, 5); // boundary edge 9\npart = filletAlongPath(part, path, 2);\n// --- fillet-mode end ---');

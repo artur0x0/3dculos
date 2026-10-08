@@ -683,6 +683,12 @@ const Viewport = forwardRef(({
   onCommitContourProfile = null,
   onCommitFillet = null,
   onCommitFeatureEdit = null,
+  /**
+   * True while an assembly open owns the worker. Feature-edit preview and
+   * the cancel/unchanged restore must not post in front of that build, and
+   * must not set or clear the lock.
+   */
+  assemblyRunLockRef = null,
   onCommitShell = null,
   onCommitDraft = null,
   onCommitCut = null,
@@ -7082,6 +7088,12 @@ const Viewport = forwardRef(({
         }
       }
       
+      // An assembly open may have taken the worker during import loading.
+      // Do not post this preview in front of the build the spinner awaits.
+      if (opts.editPreview && assemblyRunLockRef?.current) {
+        return false;
+      }
+
       // Step 3: Execute script in sandbox worker (nonce ties compare to this solid)
       console.log('[Viewport] Executing script in sandbox worker...');
       const nonce = (typeof crypto !== 'undefined' && crypto.randomUUID)
@@ -7333,6 +7345,8 @@ const Viewport = forwardRef(({
     return false;
   };
 
+  const editPreviewBlocked = () => assemblyRunLockRef?.current === true;
+
   cancelFeatureEditRef.current = (kind) => {
     const edit = featureEditRef.current;
     if (!edit || edit.opening || !editKindMatches(edit, kind)) return;
@@ -7340,7 +7354,7 @@ const Viewport = forwardRef(({
     featureEditRef.current = null;
     setHelperEdit(null);
     setFeatureEditBanner('');
-    if (full) executeScriptRef.current?.(full, { editPreview: true });
+    if (full && !editPreviewBlocked()) executeScriptRef.current?.(full, { editPreview: true });
   };
 
   commitFeatureEditRef.current = (draft) => {
@@ -7353,7 +7367,7 @@ const Viewport = forwardRef(({
     featureEditRef.current = null;
     setHelperEdit(null);
     setFeatureEditBanner('');
-    if (full) executeScriptRef.current?.(full, { editPreview: true });
+    if (full && !editPreviewBlocked()) executeScriptRef.current?.(full, { editPreview: true });
     return true;
   };
 
@@ -7397,7 +7411,7 @@ const Viewport = forwardRef(({
     const launch = async () => {
       let session = session0;
       try {
-        if (needsPreview) {
+        if (needsPreview && !editPreviewBlocked()) {
           const preview = editPreviewScript(text, feature);
           const ran = await executeScriptRef.current?.(preview, { editPreview: true });
           if (!featureEditRef.current) return;

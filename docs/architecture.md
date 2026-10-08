@@ -245,6 +245,8 @@ Sticky pickers (Shell, Draft, Cut, Boolean, Move, Move Face, Delete Face) write 
 
 **Missing refs.** A stored edge or face the prefix graph cannot resolve stays in the dialog (`2 edges not found`) until the user clears it. Confirm without that clear keeps the original line. It is never dropped on open.
 
+**Assembly open.** While `assemblyOpenLockRef` is set, a prefix preview does not post, and Confirm does not call `applyBuffer` or refresh. Cancel and an unchanged Confirm also skip the restore run. Feature edit never sets or clears that lock, and it does not call `preemptInflight`. The dialog stays up until the open finishes.
+
 Single-body ops (Draft, Shell, Cut, Move, Move Face, Delete Face) write only the touched part. Fillet and Chamfer write every part that has picks, each into its own script (below). Subtract-mode Block / Shape and Boolean can write more than the part in the editor, by the cross-part rules below.
 
 **Write target.** A face or edge pick moves the CAD part (`cadPartId`, the title, the strip and every preview anchor) but leaves the editor on `activeId`, and every writer writes the editor buffer. So before anything that writes, opens a feature sheet, or undoes, App runs `focusWritePart`. That covers:

@@ -469,6 +469,15 @@ const App = () => {
   const handleCommitFeatureEdit = (payload) => {
     const feature = payload?.feature;
     if (!feature) return false;
+    // An open owns the worker. applyBuffer would schedule work beside that
+    // build, and handleGameRun would bump the generation the spinner awaits.
+    // Leave the dialog open and leave the lock alone.
+    if (assemblyOpenLockRef.current) {
+      viewportRef.current?.softFailContour?.(
+        'An assembly is opening — confirm the edit again once it finishes.',
+      );
+      return false;
+    }
     focusWritePartRef.current(null);
     const buf = codeEditorRef.current?.getContent?.() || currentScript || '';
     const result = confirmFeatureEdit(buf, feature, payload?.draft || {});
@@ -5733,6 +5742,7 @@ const App = () => {
               onCommitContourProfile={handleCommitContourProfile}
               onCommitFillet={handleCommitFillet}
               onCommitFeatureEdit={handleCommitFeatureEdit}
+              assemblyRunLockRef={assemblyOpenLockRef}
               onCommitShell={handleCommitShell}
               onCommitPaint={handleCommitPaint}
               onCommitDraft={handleCommitDraft}
@@ -6190,6 +6200,7 @@ const App = () => {
             onCommitContourProfile={handleCommitContourProfile}
             onCommitFillet={handleCommitFillet}
             onCommitFeatureEdit={handleCommitFeatureEdit}
+            assemblyRunLockRef={assemblyOpenLockRef}
               onCommitShell={handleCommitShell}
               onCommitPaint={handleCommitPaint}
               onCommitDraft={handleCommitDraft}
