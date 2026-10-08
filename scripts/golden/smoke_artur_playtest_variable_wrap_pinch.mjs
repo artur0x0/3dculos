@@ -182,7 +182,7 @@ function analyze(mesh) {
 
 const here = dirname(fileURLToPath(import.meta.url));
 const full = readFileSync(join(here, 'fixtures', 'artur_playtest_variable_wrap_pinch.txt'), 'utf8');
-const workerSrc = readFileSync(join(here, '../../src/workers/sandboxWorker.js'), 'utf8');
+const workerSrc = readFileSync(join(here, '../../src/workers/sandboxWorker.js'), 'utf8') + '\n' + readFileSync(join(here, '../../src/lib/surfcad/runtime.js'), 'utf8');
 
 console.log('Artur playtest — variable wrap over prior fillet (r=4 → r=4.83)');
 

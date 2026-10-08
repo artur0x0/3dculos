@@ -43,7 +43,7 @@ const CHAMFER = { center: [4, 0, 4], normal: [Math.SQRT1_2, 0, Math.SQRT1_2] };
   const view = read('src/components/Viewport.jsx');
   const app = read('src/App.jsx');
   const chip = read('src/components/DeleteFaceModeChip.jsx');
-  const worker = read('src/workers/sandboxWorker.js');
+  const worker = read('src/workers/sandboxWorker.js') + '\n' + read('src/lib/surfcad/runtime.js');
   const palette = read('src/components/HelperInsertPalette.jsx');
   const arch = read('docs/architecture.md');
   check('Delete Face double click is not the body',

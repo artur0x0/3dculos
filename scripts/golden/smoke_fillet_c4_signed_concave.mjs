@@ -39,7 +39,7 @@ function check(name, cond, detail = '') {
 
 console.log('fillet C4 — source pins');
 {
-  const w = readRepo('src/workers/sandboxWorker.js');
+  const w = readRepo('src/workers/sandboxWorker.js') + '\n' + readRepo('src/lib/surfcad/runtime.js');
   check('signedFeatureEdges exists and carries a sign',
     /function signedFeatureEdges\s*\(/.test(w) && /convex,\s*dihedralDeg/.test(w));
   check('convexEdges and concaveEdges are thin filters over it',

@@ -67,7 +67,7 @@ console.log('fillet C3.1 along-path tangency / frame transport');
     /alongPathTransport\s*!==\s*false/.test(fieldSrc)
       && /transportVariableProfileFrames\s*\(/.test(fieldSrc),
   );
-  const workerSrc = readRepo('src/workers/sandboxWorker.js');
+  const workerSrc = readRepo('src/workers/sandboxWorker.js') + '\n' + readRepo('src/lib/surfcad/runtime.js');
   check(
     'sandboxWorker records alongPathTransport meta',
     /alongPathTransport\s*:/.test(workerSrc) && /maxFrameJumpDeg/.test(workerSrc),

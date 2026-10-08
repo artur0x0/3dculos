@@ -28,7 +28,15 @@ flowchart TD
 
 ## Helpers
 
-Injected names are the keys of `HELPER_FUNCTIONS` in `src/workers/sandboxWorker.js`. Anything not in that object is not a script helper.
+Injected names are the keys of `HELPER_FUNCTIONS` in `src/lib/surfcad/runtime.js`. Anything not in that object is not a script helper. `src/workers/sandboxWorker.js` only calls `bindWorker` on that module.
+
+### Headless entry
+
+- **One module.** Script helpers and `executeScript` live in `src/lib/surfcad/runtime.js`. The worker message protocol is `bindWorker` in that same file. Node imports `src/lib/surfcad/index.js` (`runScript`, `helperScope`, STL / 3MF / STEP). There is no second copy of the helpers.
+- **Kernel.** Both paths load `built/manifold.js` + `built/manifold.wasm`. npm `manifold-3d` is a different build. `runScript` also accepts an injected module or a `modulePath`.
+- **Evaluation.** `runScript` uses the same `"use strict"` + `new Function(...helperNames, script)` parameter scope as the worker, so a script-local `let hollow` still shadows the helper. Worker global lockdown stays on the worker entry only.
+- **Catalog.** `npm run export:agent` rewrites `src/lib/surfcad/catalog/` from the helper source, `HELPER_FUNCTIONS.md`, the shipped Manifold `.d.ts`, `.surf.json`, and the sheet-metal modules. Regenerate when a helper is added or its signature or docs change, and when the shipped Manifold types change. `golden:agent-catalog` fails if a `HELPER_FUNCTIONS` key has no signature and one-line description in that catalog.
+- **Sync.** An external agent repo copies the import graph of `src/lib/surfcad/index.js` plus `built/manifold.wasm` at a pinned commit. The file list is `src/lib/surfcad/catalog/sync-files.json`. See `docs/agent-export.md`.
 
 | Helper | Inputs → output | Multi-body |
 | --- | --- | --- |

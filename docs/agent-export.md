@@ -1,0 +1,75 @@
+# Agent export
+
+SurfCAD helpers stay in this repo. The external agent package pins a 3dculos commit and copies the files in `src/lib/surfcad/catalog/sync-files.json`. It does not keep a second copy of the helper source.
+
+This package is `"private": true`. Do not publish it as npm `surfcad`. That name belongs to the helper library the agent repo publishes.
+
+## Public surface
+
+| Path | Role |
+| --- | --- |
+| `src/lib/surfcad/index.js` | Node entry. `loadManifold`, `runScript`, `helperScope`, `HELPER_FUNCTIONS`, `exportResult`, `meshToStl`, `meshTo3mfBytes`, `meshToStepBytes`, `sheetSpecToStep`. |
+| `src/lib/surfcad/runtime.js` | Helper implementations, `executeScript`, and `bindWorker`. |
+| `src/lib/surfcad/export.js` | STL, 3MF, and STEP from a `runScript` result. |
+| `src/workers/sandboxWorker.js` | Browser worker. It only calls `bindWorker`. |
+| `src/lib/surfcad/catalog/*.json` | Generated catalogs (below). |
+
+`helperScope(mod)` returns the Manifold API plus `HELPER_FUNCTIONS`. `runScript` also injects the limited `window` import bag and the feature-trace hooks, the same way `executeScript` does.
+
+## Kernel
+
+The headless entry and the worker both need the shipped custom build: `built/manifold.js` and `built/manifold.wasm`. npm `manifold-3d` is a different build. On that package `status()` is the string `'NoError'`; on this build it is an enum object. Goldens and the app use the custom build.
+
+`built/manifold.js` loads the wasm next to itself (`import.meta.url`) under Node. `runScript` / `loadManifold` also accept:
+
+- `manifold` or `module` — an already constructed module
+- `modulePath` plus optional `wasmPath` or `locateFile` — another copy of this factory
+
+## Script evaluation
+
+`runScript` calls `executeScript`. The script body is `"use strict";\n` plus the source, passed to `new Function(...helperNames, script)`. A top-level `let` or `const` in the user script shadows a helper of the same name. Do not wrap the script in another function.
+
+`runScript` does not call worker global lockdown. That lockdown replaces `fetch` and other names on the worker global and would freeze the host process. Geometry and the helper scope match the worker.
+
+Helpers close over one module per process, the one bound by `initializeManifold` or `bindManifoldModule`.
+
+`runScript` returns `{ manifold, mesh, volume, surfaceArea, status, tris, boundingBox, bodyCentroids, bodyCount, parts }`. `status` is `'NoError'` when the solid is valid. `parts` is `{ index, at }` per body centroid.
+
+## Exports
+
+`exportResult(result, 'stl' | '3mf' | 'step')` returns bytes (`Uint8Array`).
+
+- STL is binary.
+- 3MF is the app's uncompressed OPC zip (`export3MF`).
+- STEP is `meshToStep` (coplanar faces merged, curves stay faceted) unless `sheetSpec` is passed, in which case `buildSheetExport` writes true-curve cylinders (`brepToStep`) when the spec folds.
+
+`sheetSpecToStep(spec, { mesh, script, name })` returns `{ bytes, text, stepSource, blocked, dfm, brepError }`. `stepSource: 'spec'` is the true-curve path.
+
+## Catalog
+
+`npm run export:agent` (`scripts/export-agent-catalog.mjs`) rewrites `src/lib/surfcad/catalog/`:
+
+| File | Contents |
+| --- | --- |
+| `helpers.json` | Every `HELPER_FUNCTIONS` key: name, signature, params (with defaults), description, doc, examples. Sources are JSDoc, `HELPER_FUNCTIONS.md`, and a small gap list in the generator. |
+| `manifold.json` | Static constructors and instance methods of `Manifold` and `CrossSection`, plus the module functions, from `built/manifold-encapsulated-types.d.ts`. |
+| `assembly.schema.json` | `.surf.json` JSON Schema: `format` `surfcad.assembly`, `version` 1, part `{ id, path, name, visible, order, position, sheetMetal, copiedFrom }`, the `// @surf-id` header, and the `local-` id prefix. |
+| `sheet-metal.json` | `part.sheetMetal` (`sku` required), the `// --- sheet-metal begin/end ---` block, `sheetMetalSolid`, DFM rules, and export options. |
+| `sync-files.json` | The copy list for an external consumer, plus `regenerate`. |
+
+Regenerate in this repo when a helper is added or its signature or docs change, and when the shipped Manifold `.d.ts` changes. Copy the JSON. Do not regenerate from a partial tree.
+
+`npm run golden:agent-catalog` fails if a `HELPER_FUNCTIONS` key has no catalog entry, or an entry has no signature and one-line description.
+
+## Sync
+
+Pin a 3dculos commit. Copy every path in `sync-files.json` `runtimeFiles` and `catalogFiles`, keeping those paths. The imports are static ESM relative to those paths, and the wasm sits next to `built/manifold.js`.
+
+That is a sparse copy of the import graph of `src/lib/surfcad/index.js`, not a fork and not an npm subpath of this private package.
+
+## What stays stable
+
+- The keys of `HELPER_FUNCTIONS` (a new key needs a catalog regen; the catalog golden fails until then).
+- The `runScript` return shape above.
+- The catalog file names.
+- `bindWorker` message types the app already sends (`init`, `execute`, `ping`, `previewCut`, `previewBoolean`, `previewBlock`, and the rest of that handler).

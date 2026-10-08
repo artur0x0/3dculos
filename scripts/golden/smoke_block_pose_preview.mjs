@@ -122,7 +122,7 @@ const LINES = {
     /hasThrough && p\.name === 'depth' && !showDepth/.test(modal));
   const palette = readFileSync(new URL('../../src/components/HelperInsertPalette.jsx', import.meta.url), 'utf8');
   const view = readFileSync(new URL('../../src/components/Viewport.jsx', import.meta.url), 'utf8');
-  const worker = readFileSync(new URL('../../src/workers/sandboxWorker.js', import.meta.url), 'utf8');
+  const worker = readFileSync(new URL('../../src/workers/sandboxWorker.js', import.meta.url), 'utf8') + '\n' + readFileSync(new URL('../../src/lib/surfcad/runtime.js', import.meta.url), 'utf8');
   check('Cancel clears the block preview', /onBlockPreview\?\.\(null\)/.test(palette));
   check('the sheet feeds block params to the preview',
     /isBlockSolidId\(item\?\.id\)/.test(palette) && /blockParamsPending\(values\)/.test(palette));

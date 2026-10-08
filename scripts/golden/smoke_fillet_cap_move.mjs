@@ -517,7 +517,7 @@ return shifted;
 }
 
 {
-  const worker = readFileSync(new URL('../../src/workers/sandboxWorker.js', import.meta.url), 'utf8');
+  const worker = readFileSync(new URL('../../src/workers/sandboxWorker.js', import.meta.url), 'utf8') + '\n' + readFileSync(new URL('../../src/lib/surfcad/runtime.js', import.meta.url), 'utf8');
   const vp = readFileSync(new URL('../../src/components/Viewport.jsx', import.meta.url), 'utf8');
   const fillet = readFileSync(new URL('../../src/utils/filletAlongPath.js', import.meta.url), 'utf8');
   const scraps = worker.match(/scrapVol > 0\.05 \* bestVol && scrapVol > 1e-2/g) || [];

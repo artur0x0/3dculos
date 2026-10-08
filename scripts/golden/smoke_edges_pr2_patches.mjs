@@ -174,7 +174,7 @@ return placeInFrame(fr, makeLoft([xs0, xs1]));
 {
   const fs = await import('node:fs');
   const vp = fs.readFileSync(new URL('../../src/components/Viewport.jsx', import.meta.url), 'utf8');
-  const worker = fs.readFileSync(new URL('../../src/workers/sandboxWorker.js', import.meta.url), 'utf8');
+  const worker = fs.readFileSync(new URL('../../src/workers/sandboxWorker.js', import.meta.url), 'utf8') + '\n' + fs.readFileSync(new URL('../../src/lib/surfcad/runtime.js', import.meta.url), 'utf8');
   check(
     'worker serializeResult does not call buildPartGraphPatches',
     !/buildPartGraphPatches/.test(worker),

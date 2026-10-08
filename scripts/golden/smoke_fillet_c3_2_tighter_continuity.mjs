@@ -76,7 +76,7 @@ console.log('fillet C3.2 tighter continuity — helpers + source pins');
     Number.isFinite(FRAME_DENSIFY_MAX_TURN_DEG) && FRAME_DENSIFY_MAX_TURN_DEG > 0,
   );
 
-  const workerSrc = readRepo('src/workers/sandboxWorker.js');
+  const workerSrc = readRepo('src/workers/sandboxWorker.js') + '\n' + readRepo('src/lib/surfcad/runtime.js');
   check(
     'sandboxWorker variableProfile densify uses variableProfileDensifyStep',
     /variableProfileDensifyStep\s*\(/.test(workerSrc)

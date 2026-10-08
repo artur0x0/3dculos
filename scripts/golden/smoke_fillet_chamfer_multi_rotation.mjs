@@ -223,7 +223,7 @@ function __probes() {
 
 // ── Wiring ─────────────────────────────────────────────────────
 {
-  const worker = readFileSync(new URL('../../src/workers/sandboxWorker.js', import.meta.url), 'utf8');
+  const worker = readFileSync(new URL('../../src/workers/sandboxWorker.js', import.meta.url), 'utf8') + '\n' + readFileSync(new URL('../../src/lib/surfcad/runtime.js', import.meta.url), 'utf8');
   const fap = readFileSync(new URL('../../src/utils/filletAlongPath.js', import.meta.url), 'utf8');
   check('sweep probe reads in-face rays against the mesh edge (sliver-safe)',
     /_c6InFaceDirSafe\(X0, best\.va, seg\.T, nA, nB, eDir\)/.test(worker));
