@@ -1,35 +1,11 @@
 import React from 'react';
-import { Check, Palette, X } from 'lucide-react';
+import { Check, X } from 'lucide-react';
 import { PAINT_SWATCHES, parsePaintHex, resolvedPaintColor } from '../utils/facePaint';
-
-/**
- * Paint toggle. Sits in the title row, left of the profile chip.
- * Hidden by the viewport in game mode. Pressed means paint mode is on.
- */
-export function PaintModeToggle({ pressed = false, onToggle }) {
-  return (
-    <button
-      type="button"
-      data-paint-chip=""
-      data-paint-chip-state={pressed ? 'on' : 'off'}
-      aria-pressed={pressed}
-      aria-label={pressed ? 'Leave paint mode' : 'Paint'}
-      title={pressed ? 'Leave paint mode' : 'Paint faces'}
-      onClick={() => onToggle?.()}
-      className={`pointer-events-auto absolute top-4 right-16 z-50 flex h-9 w-9 items-center justify-center rounded-full border surface-glass-chip shadow-lg transition-colors ${
-        pressed
-          ? 'border-cyan-300/80 bg-cyan-600 text-white'
-          : 'border-white/20 bg-gray-900/55 text-gray-200 hover:bg-white/10'
-      }`}
-    >
-      <Palette size={16} />
-    </button>
-  );
-}
 
 /**
  * Paint popup. Same card as Shell: between the rails, cyan glass, grey X
  * exits with no write. Confirm writes colors. Cancel writes nothing.
+ * The button that opens it lives on the right rail (`data-paint-chip`).
  */
 export function PaintModeChip({
   compact = false,

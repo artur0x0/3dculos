@@ -193,8 +193,11 @@ export default function FeatureStrip({
     if (!scroller || !track) return undefined;
 
     const pin = () => {
-      // Padding lives on the section around this scroller, so it stays put
-      // when the chips scroll. Measure the scrollport itself.
+      // Horizontal padding stays on the section around this scroller, so it
+      // stays put when the chips scroll. Vertical padding is on the scroller
+      // itself: the count badges hang a couple of pixels past the icon, and
+      // overflow-x clips that hang unless it sits inside the padding edge.
+      // Measure the scrollport itself.
       const next = featureBarWindowMode(track.scrollWidth, scroller.clientWidth);
       setFeatureWindow((prev) => (prev === next ? prev : next));
       if (next === 'tail') {
@@ -258,7 +261,7 @@ export default function FeatureStrip({
     return (
       <div
         className="flex w-full min-w-0 flex-row items-center
-          border border-gray-700/40 bg-gray-900/70 surface-glass-chip py-1.5"
+          border border-gray-700/40 bg-gray-900/70 surface-glass-chip"
         data-feature-strip=""
         data-feature-strip-orientation="horizontal"
         data-feature-strip-side="top"
@@ -291,7 +294,7 @@ export default function FeatureStrip({
         >
           <div
             ref={scrollRef}
-            className={`flex flex-row items-center overflow-x-auto rail-scroll ${
+            className={`flex flex-row items-center overflow-x-auto rail-scroll py-1.5 ${
               featureWindow === 'tail' ? 'justify-start' : 'justify-center'
             }`}
             data-feature-bar-scroller=""

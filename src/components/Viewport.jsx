@@ -64,7 +64,7 @@ import ContourModeRail from './ContourModeRail';
 import ContourModeChip from './ContourModeChip';
 import FilletModeChip from './FilletModeChip';
 import ShellModeChip from './ShellModeChip';
-import { PaintModeChip, PaintModeToggle } from './PaintModeChip';
+import { PaintModeChip } from './PaintModeChip';
 import SheetMetalPicker from './sheetMetal/SheetMetalPicker';
 import SheetMetalRail from './sheetMetal/SheetMetalRail';
 import SheetMetalFlow from './sheetMetal/SheetMetalFlow';
@@ -243,7 +243,6 @@ import {
   pruneSolidCacheIn,
   releaseGeometryIn,
   solidEntryForGeometry,
-  triangleSources,
 } from '../utils/partSolidCache';
 import {
   FACE_HIGHLIGHT_RENDER_ORDER,
@@ -305,7 +304,6 @@ import {
   unmatchedColorCount,
 } from '../utils/facePaint';
 import { formatViewerTitle, sanitizePartName } from '../utils/assembly.js';
-import { buildPartGraphPatches, buildPatchOverlayArrays, PARTGRAPH_MAX_TRIANGLES } from '../utils/partGraphPatches';
 import { createCuttingPlaneWidget, updateCuttingPlaneWidget } from '../utils/cuttingPlaneWidget';
 import { AxesHelper } from 'three';
 import { calculateMeasurements, createMeasurementLines, disposeMeasurementLines } from '../utils/measurementTool';
@@ -784,8 +782,6 @@ const Viewport = forwardRef(({
    */
   const [showPlanes, setShowPlanes] = useState(true);
   const [showContours, setShowContours] = useState(true);
-  /** Edges PR2: patch-colour debug overlay (PartGraph). Default off. Lazy-built. */
-  const [showPatchOverlay, setShowPatchOverlay] = useState(false);
   const [selectedEdges, setSelectedEdges] = useState([]);
   /** Slice B+C: latest selection for orbit-synced HTML edge chips (animate loop). */
   const selectedEdgesRef = useRef([]);
@@ -834,16 +830,6 @@ const Viewport = forwardRef(({
   };
   /** Per-triangle Manifold faceID from the last worker mesh (not a per-vertex attribute). */
   const faceIDsRef = useRef(null);
-  /**
-   * Edges PR2: PartGraph built lazily on the main thread when the patch overlay
-   * is toggled on (never shipped from worker serializeResult — #88/#89).
-   */
-  const partGraphRef = useRef(null);
-  const partGraphSourceRef = useRef(null);
-  const patchOverlayMatRef = useRef(null);
-  const preOverlayMaterialRef = useRef(null);
-  /** True only while the patch overlay has replaced base geometry/material. */
-  const patchOverlayActiveRef = useRef(false);
   const boundaryTopoRef = useRef(null);
   const idLabelGroupRef = useRef(null);
   const edgeHighlightRef = useRef(null);
@@ -6743,25 +6729,11 @@ const Viewport = forwardRef(({
     const geometry = solid.geometry;
     faceIDsRef.current = solid.faceIDs;
 
-    // Drop any patch-overlay material before swapping geometry — vertexColors
-    // without a color attribute paints black (esp. iOS). Overlay effect will
-    // re-paint lazily if still toggled on (cachedMeshData dependency).
-    if (patchOverlayMatRef.current) {
-      patchOverlayMatRef.current.dispose();
-      patchOverlayMatRef.current = null;
-    }
-    if (preOverlayMaterialRef.current) {
-      resultRef.current.material = preOverlayMaterialRef.current;
-      preOverlayMaterialRef.current = null;
-    }
     // Sheet parts take the gray metal. Everything else keeps the shared
     // normal-material array. The array itself is never disposed.
     if (meshData?.sheetMetal || materialsRef.current?.length) {
       ensureBodyMaterial(resultRef.current, meshData, materialsRef.current);
     }
-    partGraphRef.current = null;
-    partGraphSourceRef.current = null;
-    patchOverlayActiveRef.current = false;
 
     const prevGeometry = resultRef.current.geometry;
     resultRef.current.geometry = geometry;
@@ -6811,149 +6783,6 @@ const Viewport = forwardRef(({
     const camera = cameraRef.current;
     if (renderer && scene && camera) renderer.render(scene, camera);
   }, [assemblyColors]);
-
-  // Edges PR2 — PartGraph patch colours (debug). Built lazily here from the
-  // already-delivered mesh (faceID + verts); worker serialize stays lean so
-  // iOS Safari does not OOM/hang before the mesh lands (#88/#89).
-  //
-  // Hotfix (#104+#105 black viewport): overlay-off must NOT half-rebuild
-  // geometry (that dropped runIndex groups and could leave MeshBasicMaterial
-  // + vertexColors on colour-less geometry → black on iOS). Fail-safe:
-  //   • overlay never applied + toggle off → no-op (leave renderMeshData alone)
-  //   • toggle on→off / failure → force lit base materials + full renderMeshData
-  useEffect(() => {
-    const mesh = resultRef.current;
-    if (!mesh) return undefined;
-
-    const paint = () => {
-      const renderer = rendererRef.current;
-      const scene = sceneRef.current;
-      const camera = cameraRef.current;
-      if (renderer && scene && camera) renderer.render(scene, camera);
-    };
-
-    const forceBaseRestore = () => {
-      if (patchOverlayMatRef.current) {
-        patchOverlayMatRef.current.dispose();
-        patchOverlayMatRef.current = null;
-      }
-      preOverlayMaterialRef.current = null;
-      partGraphRef.current = null;
-      partGraphSourceRef.current = null;
-      patchOverlayActiveRef.current = false;
-      const base = materialsRef.current;
-      if (base?.length) {
-        mesh.material = base;
-      }
-      const cached = cachedMeshDataRef.current;
-      if (cached?.vertProperties && cached?.triVerts) {
-        // Full rebuild matching the normal paint path (groups + normals).
-        renderMeshData(cached);
-      } else {
-        paint();
-      }
-    };
-
-    if (!showPatchOverlay) {
-      // Default / already-off path: never touch the mesh unless overlay was live.
-      if (patchOverlayActiveRef.current) {
-        forceBaseRestore();
-      }
-      return undefined;
-    }
-
-    const cached = cachedMeshDataRef.current;
-    if (!cached?.vertProperties || !cached?.triVerts) {
-      if (patchOverlayActiveRef.current) forceBaseRestore();
-      return undefined;
-    }
-
-    const np = cached.numProp || 3;
-    const src = cached.vertProperties;
-    const nVert = Math.floor(src.length / np);
-    const numTri = Math.floor(cached.triVerts.length / 3);
-
-    if (numTri > PARTGRAPH_MAX_TRIANGLES) {
-      console.warn(
-        `[partGraph] skip overlay — ${numTri} tris > cap ${PARTGRAPH_MAX_TRIANGLES}`,
-      );
-      forceBaseRestore();
-      setShowPatchOverlay(false);
-      return undefined;
-    }
-
-    if (partGraphSourceRef.current !== cached || !partGraphRef.current?.triPatch) {
-      const positions = new Float32Array(nVert * 3);
-      for (let i = 0; i < nVert; i++) {
-        positions[i * 3] = src[i * np];
-        positions[i * 3 + 1] = src[i * np + 1];
-        positions[i * 3 + 2] = src[i * np + 2];
-      }
-      try {
-        const built = buildPartGraphPatches({
-          positions,
-          indices: cached.triVerts,
-          faceIDs: cached.faceID || null,
-          triSource: triangleSources(cached, null, Math.floor(cached.triVerts.length / 3)),
-        });
-        partGraphRef.current = {
-          version: built.version,
-          atomCount: built.atomCount,
-          triPatch: built.triPatch,
-          patches: built.patches,
-        };
-        partGraphSourceRef.current = cached;
-      } catch (e) {
-        console.warn('[partGraph] segmentation failed:', e?.message || e);
-        forceBaseRestore();
-        setShowPatchOverlay(false);
-        return undefined;
-      }
-    }
-
-    const pg = partGraphRef.current;
-    if (!pg?.triPatch) {
-      forceBaseRestore();
-      setShowPatchOverlay(false);
-      return undefined;
-    }
-
-    try {
-      const positions = new Float32Array(nVert * 3);
-      for (let i = 0; i < nVert; i++) {
-        positions[i * 3] = src[i * np];
-        positions[i * 3 + 1] = src[i * np + 1];
-        positions[i * 3 + 2] = src[i * np + 2];
-      }
-      const { positions: oPos, colors } = buildPatchOverlayArrays(
-        { positions, indices: cached.triVerts },
-        pg.triPatch,
-      );
-      const geom = new BufferGeometry();
-      geom.setAttribute('position', new BufferAttribute(oPos, 3));
-      geom.setAttribute('color', new BufferAttribute(colors, 3));
-      // Unlit — MeshLambert + vertexColors paints black under poor iOS lighting.
-      if (!preOverlayMaterialRef.current) {
-        preOverlayMaterialRef.current = mesh.material;
-      }
-      mesh.geometry?.dispose();
-      mesh.geometry = geom;
-      if (patchOverlayMatRef.current) patchOverlayMatRef.current.dispose();
-      patchOverlayMatRef.current = new MeshBasicMaterial({
-        vertexColors: true,
-        side: 2,
-      });
-      mesh.material = patchOverlayMatRef.current;
-      patchOverlayActiveRef.current = true;
-      paint();
-    } catch (e) {
-      console.warn('[partGraph] overlay apply failed:', e?.message || e);
-      forceBaseRestore();
-      setShowPatchOverlay(false);
-    }
-    return undefined;
-  }, [showPatchOverlay, cachedMeshData, renderMeshData]);
-
 
   // Calculate model bounds from mesh data
   const calculateBoundsFromMesh = (meshData) => {
@@ -7008,17 +6837,6 @@ const Viewport = forwardRef(({
       featureEdgesRef.current = [];
       featureEdgesSourceRef.current = null;
       faceIDsRef.current = null;
-      partGraphRef.current = null;
-      partGraphSourceRef.current = null;
-      patchOverlayActiveRef.current = false;
-      if (patchOverlayMatRef.current) {
-        patchOverlayMatRef.current.dispose();
-        patchOverlayMatRef.current = null;
-      }
-      preOverlayMaterialRef.current = null;
-      if (resultRef.current && materialsRef.current?.length) {
-        resultRef.current.material = materialsRef.current;
-      }
       boundaryTopoRef.current = null;
       // Overlays drawn from that solid (cut plane, section/path previews, the
       // fillet blend ghost, f#/e# labels) must not outlive it on screen.
@@ -7311,8 +7129,6 @@ const Viewport = forwardRef(({
         featureEdgesRef.current = [];
         featureEdgesSourceRef.current = null;
         graphsBoundMeshRef.current = null;
-        partGraphRef.current = null;
-        partGraphSourceRef.current = null;
         faceIDsRef.current = null;
         if (!noShadow) {
           setEdgeModeToast(toastPayload('Run failed — selection cleared (no prior solid)'));
@@ -7648,8 +7464,6 @@ const Viewport = forwardRef(({
       featureEdgesRef.current = [];
       featureEdgesSourceRef.current = null;
       graphsBoundMeshRef.current = null;
-      partGraphRef.current = null;
-      partGraphSourceRef.current = null;
       faceIDsRef.current = null;
     } else {
       const active = solids.find((solid) => solid.id === activeId);
@@ -7859,12 +7673,6 @@ const Viewport = forwardRef(({
       {mode !== 'game' && (
         <ProfileChip variant="viewport" onAccount={onAccount} onSignedOut={onSignedOut} onClearLocalCadData={onClearLocalCadData} vaultName={profileVaultName} />
       )}
-      {mode !== 'game' && (
-        <PaintModeToggle
-          pressed={!!paintMode}
-          onToggle={() => (paintMode ? exitPaintMode() : enterPaintMode())}
-        />
-      )}
 
       {/* CAD chrome lives in the editor mid-strip in BOTH shells (desktop matches
           phone now): rendered here so download/export busy state stays local —
@@ -7971,9 +7779,6 @@ const Viewport = forwardRef(({
           onEnterMoveMode={enterMoveMode}
           onEnterMoveFaceMode={enterMoveFaceMode}
           onEnterDeleteFaceMode={enterDeleteFaceMode}
-          onOpenSheetMetal={mode !== 'game' && onBindSheetMetal
-            ? () => setSheetMetalPicker({ willCreatePart: getSheetMetalReady ? !getSheetMetalReady() : false })
-            : null}
           compact={isMobile}
         />
       )}
@@ -8046,8 +7851,13 @@ const Viewport = forwardRef(({
           showContours={showContours}
           onShowPlanesChange={setShowPlanes}
           onShowContoursChange={setShowContours}
-          showPatchOverlay={showPatchOverlay}
-          onShowPatchOverlayChange={setShowPatchOverlay}
+          showPaint={mode !== 'game'}
+          paintActive={!!paintMode}
+          onPaintToggle={() => (paintMode ? exitPaintMode() : enterPaintMode())}
+          onOpenSheetMetal={mode !== 'game' && onBindSheetMetal
+            ? () => setSheetMetalPicker({ willCreatePart: getSheetMetalReady ? !getSheetMetalReady() : false })
+            : null}
+          sheetMetalActive={!!(sheetMetalMode || sheetMetalPicker)}
           onPickModeChange={(mode) => {
             const next = mode === 'edge' ? 'edge' : 'face';
             setPickMode(next);

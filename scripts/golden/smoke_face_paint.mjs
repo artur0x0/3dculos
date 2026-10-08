@@ -1,4 +1,4 @@
-/* global window */
+/* global window, document, getComputedStyle */
 /**
  * Paint mode. A click picks the same face the viewport already picks.
  * Confirm writes faceColorKey into the assembly and the skin draws it.
@@ -269,10 +269,27 @@ console.log('face paint — cancel writes nothing');
 console.log('face paint — game mode and part switch');
 {
   const view = readFileSync(new URL('../../src/components/Viewport.jsx', import.meta.url), 'utf8');
-  const chip = readFileSync(new URL('../../src/components/PaintModeChip.jsx', import.meta.url), 'utf8');
-  check('the chip is hidden in game mode', paintChipVisible('cad') === true && paintChipVisible('game') === false
-    && /mode !== 'game'[\s\S]{0,160}<PaintModeToggle/.test(view)
-    && /data-paint-chip/.test(chip));
+  const panel = readFileSync(new URL('../../src/components/CrossSectionPanel.jsx', import.meta.url), 'utf8');
+  check('the paint button is hidden in game mode', paintChipVisible('cad') === true && paintChipVisible('game') === false
+    && /showPaint=\{mode !== 'game'\}/.test(view)
+    && /\{showPaint &&/.test(panel)
+    && /data-paint-chip/.test(panel)
+    && !/<PaintModeToggle/.test(view));
+  check('paint sits in the right bar, not the header',
+    /data-paint-chip/.test(panel)
+    && /data-selector-group="plane-contour"[\s\S]*data-paint-chip/.test(panel)
+    && !/top-4 right-16/.test(panel)
+    && !/PaintModeToggle/.test(view));
+  check('the rainbow toggle is gone',
+    !/data-overlay-toggle="patches"/.test(panel)
+    && !/showPatchOverlay/.test(view)
+    && !/buildPatchOverlayArrays/.test(view)
+    && !/patchOverlayActiveRef/.test(view));
+  check('sheet metal is in the inspection group and idle is not a green fill',
+    /data-sheet-metal-group="inspection"/.test(panel)
+    && /data-sheet-metal-button/.test(panel)
+    && /sheetMetalActive[\s\S]{0,180}text-blue-600 hover:bg-gray-100/.test(panel)
+    && !/text-orange-700/.test(panel));
   check('paint uses the normal face pick and the normal highlight',
     /paintPickFromClick\(/.test(view) && /'paint-pick'/.test(view));
   const skipsPaint = (token) => {
@@ -396,8 +413,73 @@ try {
     await page.waitForFunction(() => window.__READY__, null, { timeout: 30000 });
     await page.locator('[data-paint-chip]').waitFor();
     await page.locator('[data-paint-mode="1"]').waitFor();
+    await page.locator('[data-feature-type-badge="4"]').waitFor();
     const swatches = await page.locator('[data-paint-swatch]').count();
-    check(`${name} shows the chip, popup, and 8 swatches`, errors.length === 0 && swatches === 8, errors.join('; ') || `swatches ${swatches}`);
+    const placed = await page.evaluate(() => {
+      const slack = 0.5;
+      const paddingBox = (el) => {
+        const r = el.getBoundingClientRect();
+        const s = getComputedStyle(el);
+        return {
+          top: r.top + (parseFloat(s.borderTopWidth) || 0),
+          right: r.right - (parseFloat(s.borderRightWidth) || 0),
+          bottom: r.bottom - (parseFloat(s.borderBottomWidth) || 0),
+          left: r.left + (parseFloat(s.borderLeftWidth) || 0),
+        };
+      };
+      const rail = document.querySelector('[data-rail-pair="right"]');
+      const chip = document.querySelector('[data-paint-chip]');
+      const sheet = document.querySelector('[data-sheet-metal-button]');
+      const strip = document.querySelector('[data-feature-strip]');
+      const badges = [...document.querySelectorAll('[data-feature-type-badge]')];
+      const chipStyle = chip ? getComputedStyle(chip) : null;
+      const sheetClass = sheet ? sheet.className : '';
+      const badgeFits = badges.map((badge) => {
+        const box = badge.getBoundingClientRect();
+        const stripBox = paddingBox(strip);
+        let ok = box.top >= stripBox.top - slack
+          && box.left >= stripBox.left - slack
+          && box.bottom <= stripBox.bottom + slack
+          && box.right <= stripBox.right + slack;
+        let node = badge.parentElement;
+        while (node && ok) {
+          const style = getComputedStyle(node);
+          const clipsX = style.overflowX !== 'visible';
+          const clipsY = style.overflowY !== 'visible';
+          if (clipsX || clipsY) {
+            const clip = paddingBox(node);
+            if (clipsY && (box.top < clip.top - slack || box.bottom > clip.bottom + slack)) ok = false;
+            if (clipsX && (box.left < clip.left - slack || box.right > clip.right + slack)) ok = false;
+          }
+          if (node === strip) break;
+          node = node.parentElement;
+        }
+        return {
+          n: badge.getAttribute('data-feature-type-badge'),
+          ok,
+          bottom: Math.round(box.bottom * 10) / 10,
+          stripBottom: Math.round(stripBox.bottom * 10) / 10,
+        };
+      });
+      return {
+        chipInRail: !!(rail && chip && rail.contains(chip)),
+        chipNotAbsolute: chipStyle?.position !== 'absolute',
+        noRainbow: !document.querySelector('[data-overlay-toggle="patches"]'),
+        sheetInRail: !!(rail && sheet && rail.contains(sheet) && sheet.getAttribute('data-sheet-metal-group') === 'inspection'),
+        sheetIdle: sheetClass.includes('text-blue-600') && !sheetClass.includes('bg-green-100'),
+        paintPressed: chip?.getAttribute('aria-pressed') === 'true' && (chip?.className || '').includes('bg-green-100'),
+        badgeCount: badges.length,
+        badgeFits,
+        stripHeight: strip ? Math.round(strip.getBoundingClientRect().height * 10) / 10 : 0,
+      };
+    });
+    const badgesOk = placed.badgeFits.length === 4 && placed.badgeFits.every((b) => b.ok);
+    check(`${name} shows the paint button, popup, and 8 swatches`, errors.length === 0 && swatches === 8
+      && placed.chipInRail && placed.chipNotAbsolute && placed.paintPressed && placed.noRainbow,
+      errors.join('; ') || JSON.stringify({ swatches, ...placed, badgeFits: undefined }));
+    check(`${name} sheet metal is idle in the inspection group`, placed.sheetInRail && placed.sheetIdle);
+    check(`${name} count badges sit inside the strip`, badgesOk && placed.stripHeight > 0 && placed.stripHeight <= 52,
+      JSON.stringify({ height: placed.stripHeight, badges: placed.badgeFits }));
     const file = join(shotDir, name);
     await page.screenshot({ path: file });
     console.log(`  shot ${file}`);

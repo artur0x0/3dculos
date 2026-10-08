@@ -1,7 +1,7 @@
 // components/CrossSectionPanel.jsx
 /* eslint-disable react-hooks/exhaustive-deps -- see Viewport note; same ref-backed pattern */
 import React, { useState, useEffect } from 'react';
-import { FlipHorizontal, Check, Maximize2, Ruler, Move3d, Spline, RectangleHorizontal, Layers3, NotebookPen, Palette, X } from 'lucide-react';
+import { FlipHorizontal, Check, Maximize2, Ruler, Move3d, Spline, RectangleHorizontal, Layers3, NotebookPen, Palette, FoldVertical, X } from 'lucide-react';
 import TrianglesCenterlineDashedVertical from './icons/TrianglesCenterlineDashedVertical';
 import ViewSnapControl from './ViewSnapControl';
 import { PLANE_PRESETS } from '../utils/crossSection';
@@ -26,9 +26,13 @@ const CrossSectionPanel = ({
   showContours = true,
   onShowPlanesChange = null,
   onShowContoursChange = null,
-  /** Edges PR2: patch-colour debug overlay. Session only; default off. */
-  showPatchOverlay = false,
-  onShowPatchOverlayChange = null,
+  /** Paint. Same slot the patch-colour toggle used. Hidden in game. */
+  showPaint = false,
+  paintActive = false,
+  onPaintToggle = null,
+  /** Sheet metal. Inspection group, under the divider. Hidden with no opener. */
+  onOpenSheetMetal = null,
+  sheetMetalActive = false,
   /** Stack tools vertically on the right edge. Both shells pass this now — desktop
    *  matches phone; the wrapping-row fallback is kept for any other caller. */
   verticalRail = false,
@@ -247,7 +251,7 @@ const handleButtonClick = () => {
               <div
                 className={`flex gap-1 ${verticalRail ? 'flex-col' : 'flex-row'}`}
                 role="group"
-                aria-label="Plane, contour, and patch display"
+                aria-label="Plane and contour display"
                 data-selector-group="plane-contour"
               >
                 <button
@@ -284,23 +288,24 @@ const handleButtonClick = () => {
                 >
                   <NotebookPen size={20} />
                 </button>
-                <button
-                  type="button"
-                  onClick={() => onShowPatchOverlayChange?.(!showPatchOverlay)}
-                  className={`p-2 rounded ${
-                    showPatchOverlay
-                      ? 'text-green-600 bg-green-100'
-                      : 'text-blue-600 hover:bg-gray-100 active:bg-blue-100'
-                  }`}
-                  title={showPatchOverlay
-                    ? 'Patch colours on — each segmented face one colour (Edges PR2 debug)'
-                    : 'Patch colours off — tap to eyeball PartGraph patches'}
-                  aria-label="Patch colour overlay"
-                  aria-pressed={!!showPatchOverlay}
-                  data-overlay-toggle="patches"
-                >
-                  <Palette size={20} />
-                </button>
+                {showPaint && (
+                  <button
+                    type="button"
+                    onClick={() => onPaintToggle?.()}
+                    className={`p-2 rounded ${
+                      paintActive
+                        ? 'text-green-600 bg-green-100'
+                        : 'text-blue-600 hover:bg-gray-100 active:bg-blue-100'
+                    }`}
+                    title={paintActive ? 'Leave paint mode' : 'Paint faces'}
+                    aria-label={paintActive ? 'Leave paint mode' : 'Paint'}
+                    aria-pressed={!!paintActive}
+                    data-paint-chip=""
+                    data-paint-chip-state={paintActive ? 'on' : 'off'}
+                  >
+                    <Palette size={20} />
+                  </button>
+                )}
               </div>
             </div>
             <div
@@ -310,6 +315,24 @@ const handleButtonClick = () => {
           </>
         )}
 
+        {typeof onOpenSheetMetal === 'function' && (
+          <button
+            type="button"
+            onClick={() => onOpenSheetMetal()}
+            className={`p-2 rounded ${
+              sheetMetalActive
+                ? 'text-green-600 bg-green-100'
+                : 'text-blue-600 hover:bg-gray-100 active:bg-blue-100'
+            }`}
+            title="Sheet Metal — design against SendCutSend stock"
+            aria-label="Sheet Metal"
+            aria-pressed={!!sheetMetalActive}
+            data-sheet-metal-button="1"
+            data-sheet-metal-group="inspection"
+          >
+            <FoldVertical size={20} />
+          </button>
+        )}
         <button
           onClick={onAxisHelperToggle}
           className={`p-2 rounded ${axisHelperEnabled ? 'text-green-600 bg-green-100' : 'text-blue-600'} hover:bg-gray-100 active:bg-blue-100`}
