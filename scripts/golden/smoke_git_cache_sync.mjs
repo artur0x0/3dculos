@@ -223,7 +223,7 @@ console.log('\npush keeps the surf id');
 console.log('\nexternal part caution and copy');
 {
   ok('other assembly is external', isExternalPartPath('Gearbox', CV_LID));
-  ok('loose part is external', isExternalPartPath('Gearbox', BOLT));
+  ok('loose part is not external', !isExternalPartPath('Gearbox', BOLT));
   ok('own part is not external', !isExternalPartPath('Gearbox', GB));
   const doc = {
     source: 'git', name: 'Gearbox', activeId: GB,

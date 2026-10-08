@@ -25,6 +25,7 @@ import {
   parseVaultPath,
   vaultSegment,
 } from './vaultLayout.js';
+import { sharedPathForMove } from './gitDeleteAssembly.js';
 import { stringifySurfJson } from './surfJson.js';
 import { isSurfId, readSurfId, withSurfId } from './surfId.js';
 
@@ -203,7 +204,7 @@ export function firstCommitBaseline({ branch = 'main', headSha = null } = {}) {
 /**
  * Instantly commit one part (plus the assembly `.surf.json`) to the working
  * branch. Used by Parts "Add to Repo" for local content not yet in the vault.
- * Remaps `local:` / foreign ids to `assemblies/<asm>/<name>.js`.
+ * Remaps `local:` / foreign ids to `parts/<Name>.js` (`Name 2` on collision).
  * -> { status: 'committed'|'clean'|'error', ... } (branched on non_fast_forward)
  */
 export async function commitPartToRepo(adapter, repo, {
@@ -226,6 +227,11 @@ export async function commitPartToRepo(adapter, repo, {
   if (!row) return { status: 'error', error: 'Part not in assembly' };
 
   const asmName = vaultSegment(doc.name) || baseline?.assemblyName || 'Assembly';
+  const base = baseline || firstCommitBaseline({
+    branch: baseline?.branch || 'main',
+    headSha: baseline?.headSha || null,
+  });
+  const branch = base.branch || 'main';
   let destId = id;
   let workDoc = { ...doc, source: 'git' };
   let workScripts = effectiveScripts(scripts, { liveId, liveScript });
@@ -235,16 +241,19 @@ export async function commitPartToRepo(adapter, repo, {
     && ((info.kind === 'assembly-part' && info.assembly === asmName)
       || info.kind === 'shared-part');
   if (!allowed) {
-    const base = vaultSegment(String(row.name || '').replace(/\.js$/i, '')) || 'Part';
-    let candidate = assemblyPartPath(asmName, base);
+    const partBase = vaultSegment(String(row.name || '').replace(/\.js$/i, '')) || 'Part';
     const taken = new Set((workDoc.parts || []).map((p) => p.id));
-    if (taken.has(candidate) && candidate !== id) {
-      for (let n = 2; n < 1000; n += 1) {
-        const alt = assemblyPartPath(asmName, `${base} ${n}`);
-        if (!taken.has(alt)) { candidate = alt; break; }
+    taken.delete(id);
+    try {
+      const tree = await adapter.listTree(repo, branch);
+      for (const entry of tree || []) {
+        const path = entry?.path ?? entry;
+        if (typeof path === 'string') taken.add(path);
       }
+    } catch {
+      // The open document still blocks a collision inside this assembly.
     }
-    destId = candidate;
+    destId = sharedPathForMove(partBase, taken);
     workDoc = {
       ...workDoc,
       parts: workDoc.parts.map((p) => (p.id === id ? { ...p, id: destId } : p)),
@@ -262,11 +271,6 @@ export async function commitPartToRepo(adapter, repo, {
     workScripts = { ...workScripts, [destId]: content };
   }
 
-  const base = baseline || firstCommitBaseline({
-    branch: baseline?.branch || 'main',
-    headSha: baseline?.headSha || null,
-  });
-  const branch = base.branch || 'main';
   const assemblyPath = assemblyFilePath(asmName);
   const assemblyText = stringifySurfJson(workDoc);
   const files = [

@@ -5,7 +5,7 @@
  */
 import { fileDelete, fileWrite } from './githubAdapterInterface.js';
 import { assemblyDir, assemblyFilePath, assemblyPartPath, isAssemblyFile, parseVaultPath, sharedPartPath, vaultSegment } from './vaultLayout.js';
-import { isSurfJsonPath, readSurfId } from './surfId.js';
+import { isSurfId, isSurfJsonPath, readSurfId, withSurfId } from './surfId.js';
 
 /**
  * New repo path for a renamed part. The file stays in its current folder
@@ -73,6 +73,32 @@ export function rewriteSurfText(text, {
 }
 
 /**
+ * Assembly-local copies move with the folder. Stamp the surf id from the
+ * new `.surf.json` (else the header already on the script) so the new path
+ * is still the same part.
+ */
+function stampMovedAssemblyParts(writes, toName) {
+  const meta = assemblyFilePath(toName);
+  let raw = null;
+  try {
+    raw = JSON.parse(writes.get(meta) || '');
+  } catch {
+    raw = null;
+  }
+  const byPath = new Map();
+  for (const part of raw?.parts || []) {
+    if (part?.path && isSurfId(part?.id)) byPath.set(part.path, part.id);
+  }
+  for (const [path, content] of [...writes.entries()]) {
+    const info = parseVaultPath(path);
+    if (info?.kind !== 'assembly-part' || typeof content !== 'string') continue;
+    const surfId = byPath.get(path) || readSurfId(content);
+    if (!isSurfId(surfId) || readSurfId(content) === surfId) continue;
+    writes.set(path, withSurfId(content, surfId));
+  }
+}
+
+/**
  * Files for one atomic rename commit.
  * entries: [{ path, content }] of part scripts and `.surf.json` files.
  * plan.kind 'part': { surfId, from, to, content }
@@ -110,7 +136,12 @@ export function buildRenameCommitFiles({ entries, plan } = {}) {
       deletes.add(path);
     }
     for (const local of plan.localFiles || []) {
-      if (local?.path && typeof local.content === 'string') writes.set(local.path, local.content);
+      if (!local?.path || typeof local.content !== 'string') continue;
+      const info = parseVaultPath(local.path);
+      // Shared parts/ files do not move with the folder. Only an
+      // assembly-local copy in the destination folder is overwritten.
+      if (info?.kind !== 'assembly-part' || info.assembly !== toName) continue;
+      writes.set(local.path, local.content);
     }
     if (plan.assemblyPath && typeof plan.assemblyText === 'string') {
       writes.set(plan.assemblyPath, plan.assemblyText);
@@ -137,6 +168,7 @@ export function buildRenameCommitFiles({ entries, plan } = {}) {
       const next = rewriteSurfText(text, { pathMap });
       if (next !== text) writes.set(path, next);
     }
+    stampMovedAssemblyParts(writes, toName);
   }
 
   for (const path of [...deletes]) {
@@ -180,14 +212,47 @@ export function applyPartPathChange(doc, scripts, from, to, name) {
 /**
  * A reload that still sees the old path (git not pushed yet, or a stale
  * cache row) must follow the pending rename instead of forking a new part.
- * Pending ops carry `{ op:'rename', payload:{ kind:'part', from, to, surfId } }`.
+ * A part rename carries `{ kind:'part', from, to, surfId }`. An assembly
+ * rename carries `{ kind:'assembly', fromName, toName }` and only moves
+ * assembly-local copies. `groups[].source` is left as stored.
  */
+function applyPendingAssemblyRename(doc, scripts, payload) {
+  const fromName = vaultSegment(payload?.fromName);
+  const toName = vaultSegment(payload?.toName);
+  if (!fromName || !toName || fromName === toName) return { doc, scripts };
+  const nextScripts = { ...(scripts || {}) };
+  const parts = (doc?.parts || []).map((part) => {
+    const info = parseVaultPath(part.id);
+    if (info?.kind !== 'assembly-part' || info.assembly !== fromName) return part;
+    const to = assemblyPartPath(toName, info.part);
+    if (to === part.id) return part;
+    if (Object.prototype.hasOwnProperty.call(nextScripts, part.id) && nextScripts[to] == null) {
+      nextScripts[to] = nextScripts[part.id];
+    }
+    delete nextScripts[part.id];
+    return { ...part, id: to };
+  });
+  let activeId = doc?.activeId;
+  const activeInfo = parseVaultPath(activeId);
+  if (activeInfo?.kind === 'assembly-part' && activeInfo.assembly === fromName) {
+    activeId = assemblyPartPath(toName, activeInfo.part);
+  }
+  const name = vaultSegment(doc?.name) === fromName ? toName : doc?.name;
+  return { doc: { ...doc, name, parts, activeId }, scripts: nextScripts };
+}
+
 export function overlayPendingPartRenames(doc, scripts, ops) {
   let nextDoc = doc;
   let nextScripts = { ...(scripts || {}) };
   for (const op of ops || []) {
-    if (op?.op !== 'rename' || op.payload?.kind !== 'part') continue;
-    if (op.status === 'done') continue;
+    if (op?.op !== 'rename' || op.status === 'done') continue;
+    if (op.payload?.kind === 'assembly') {
+      const applied = applyPendingAssemblyRename(nextDoc, nextScripts, op.payload);
+      nextDoc = applied.doc;
+      nextScripts = applied.scripts;
+      continue;
+    }
+    if (op.payload?.kind !== 'part') continue;
     const { from, to, surfId } = op.payload;
     if (!from || !to || from === to) continue;
     const parts = nextDoc?.parts || [];
