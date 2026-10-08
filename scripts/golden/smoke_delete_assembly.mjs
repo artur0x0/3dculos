@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 /**
  * Delete an assembly.
- * Keep parts: files move to parts/, other assemblies' refs are rewritten,
- * one commit. Delete with parts: unreferenced scripts are removed,
- * referenced ones are kept and moved, and the dialog lists them behind a
- * type-to-confirm gate. Deleting the open assembly switches to the most
- * recent remaining one, or the empty document. A failed commit toasts
- * Retry/Revert and the cache snapshot is never half-applied. A name
- * already in parts/ gets a numeric suffix.
+ * Without parts: the folder and .surf.json go, parts/ bytes stay, and an
+ * assembly-local copy moves to parts/. With parts: an unreferenced script
+ * is removed, a script cited from another assembly's parts[] or
+ * groups[].partIds stays (including a ref that exists only in a queued op
+ * or the open document), and a referenced assembly-local copy moves to
+ * parts/. The commit refuses to drop a referenced part file. A failed
+ * commit toasts Retry/Revert and the cache snapshot is never half-applied.
  */
 /* The evaluate callback runs in the browser, where document exists. */
 /* global document */
@@ -39,6 +39,8 @@ import {
   assemblyFromEntries,
   emptyGitAssembly,
   refMatchesPart,
+  assertDeleteKeepsReferenced,
+  projectPendingOps,
 } from '../../src/utils/git/gitDeleteAssembly.js';
 import { mintGroupId } from '../../src/utils/partGroups.js';
 
@@ -150,6 +152,10 @@ console.log('refs match id first, then path');
   ));
   ok('different id and path does not match', !refMatchesPart(
     { id: SHIM_ID, path: SHIM },
+    { surfId: BRACKET_ID, path: GB },
+  ));
+  ok('same path with a different id does not match', !refMatchesPart(
+    { id: SHIM_ID, path: GB },
     { surfId: BRACKET_ID, path: GB },
   ));
 }
@@ -397,6 +403,158 @@ console.log('\nretry pushes the same commit after a failure');
   ok('retry moved the part', !!(await gh.readFile(repo, SHARED_BRACKET, 'main')));
 }
 
+console.log('\nwithout parts leaves /parts; with parts keeps only real refs');
+{
+  const ORPHAN_ID = mintSurfId({ now: new Date('2026-10-07T21:00:00.000Z'), rand: 'd00d' });
+  const CITED_ID = mintSurfId({ now: new Date('2026-10-07T21:00:01.000Z'), rand: 'e11e' });
+  const GROUPED_ID = mintSurfId({ now: new Date('2026-10-07T21:00:02.000Z'), rand: 'f22f' });
+  const QUEUED_ID = mintSurfId({ now: new Date('2026-10-07T21:00:03.000Z'), rand: 'a33a' });
+  const OPEN_ID = mintSurfId({ now: new Date('2026-10-07T21:00:04.000Z'), rand: 'b44b' });
+  const LIVE_ID = mintSurfId({ now: new Date('2026-10-07T21:00:05.000Z'), rand: 'c55c' });
+  const COPY_ID = mintSurfId({ now: new Date('2026-10-07T21:00:06.000Z'), rand: 'd66d' });
+  const ORPHAN = sharedPartPath('Orphan');
+  const CITED = sharedPartPath('Cited');
+  const GROUPED = sharedPartPath('Grouped');
+  const QUEUED = sharedPartPath('Queued');
+  const OPEN_ONLY = sharedPartPath('OpenOnly');
+  const LIVE = sharedPartPath('Live');
+  const SPARE = sharedPartPath('Spare');
+  const COPY = assemblyPartPath('Gearbox', 'Copy');
+  const COPY_DEST = sharedPartPath('Copy');
+  const orphanSrc = withSurfId('return Manifold.cube([2,2,2], true);\n', ORPHAN_ID);
+  const citedSrc = withSurfId('return Manifold.cube([3,3,3], true);\n', CITED_ID);
+  const groupedSrc = withSurfId('return Manifold.cube([4,4,4], true);\n', GROUPED_ID);
+  const queuedSrc = withSurfId('return Manifold.cube([5,5,5], true);\n', QUEUED_ID);
+  const openSrc = withSurfId('return Manifold.cube([6,6,6], true);\n', OPEN_ID);
+  const liveSrc = withSurfId('return Manifold.cube([7,7,7], true);\n', LIVE_ID);
+  const spareSrc = withSurfId('return Manifold.cube([8,8,8], true);\n', mintSurfId({ now: WHEN, rand: 'eeee' }));
+  const copySrc = withSurfId('return Manifold.cube([9,9,9], true);\n', COPY_ID);
+  const row = (id, path, name, order, extra = {}) => ({ id, path, name, visible: true, order, ...extra });
+  const surf = (name, activeId, parts, groups) => `${JSON.stringify({
+    format: 'surfcad.assembly',
+    version: 1,
+    name,
+    activeId,
+    parts,
+    ...(groups ? { groups } : {}),
+  }, null, 2)}\n`;
+  const gearbox = surf('Gearbox', CITED, [
+    row(ORPHAN_ID, ORPHAN, 'Orphan', 0),
+    row(CITED_ID, CITED, 'Cited', 1),
+    row(GROUPED_ID, GROUPED, 'Grouped', 2),
+    row(QUEUED_ID, QUEUED, 'Queued', 3),
+    row(OPEN_ID, OPEN_ONLY, 'OpenOnly', 4),
+    row(LIVE_ID, LIVE, 'Live', 5),
+    row(COPY_ID, COPY, 'Copy', 6),
+  ]);
+  const coverTip = surf('Cover', LID, [
+    row(LID_ID, LID, 'Lid', 0, { copiedFrom: ORPHAN_ID }),
+    row(CITED_ID, CITED, 'Cited', 1),
+    row(COPY_ID, COPY, 'Copy', 2),
+    row(OPEN_ID, OPEN_ONLY, 'OpenOnly', 3),
+  ], [{
+    id: GROUP_ID, name: 'Gearbox', source: assemblyFilePath('Gearbox'), partIds: [GROUPED_ID],
+  }]);
+  const coverQueued = surf('Cover', LID, [
+    row(LID_ID, LID, 'Lid', 0, { copiedFrom: ORPHAN_ID }),
+    row(CITED_ID, CITED, 'Cited', 1),
+    row(COPY_ID, COPY, 'Copy', 2),
+    row(QUEUED_ID, QUEUED, 'Queued', 3),
+  ], [{
+    id: GROUP_ID, name: 'Gearbox', source: assemblyFilePath('Gearbox'), partIds: [GROUPED_ID],
+  }]);
+  const scripts = [
+    [ORPHAN, orphanSrc], [CITED, citedSrc], [GROUPED, groupedSrc], [QUEUED, queuedSrc],
+    [OPEN_ONLY, openSrc], [LIVE, liveSrc], [SPARE, spareSrc], [COPY, copySrc], [LID, LID_SRC],
+  ];
+  const tip = [
+    fileWrite(assemblyFilePath('Gearbox'), gearbox),
+    fileWrite(assemblyFilePath('Cover'), coverTip),
+    ...scripts.map(([path, content]) => fileWrite(path, content)),
+  ].map((file) => ({ path: file.path, content: file.content }));
+  const projected = projectPendingOps(tip, [{
+    op: 'save',
+    status: 'queued',
+    files: [fileWrite(assemblyFilePath('Cover'), coverQueued)],
+  }]);
+  const openDoc = {
+    source: 'git',
+    name: 'Cover',
+    activeId: LID,
+    parts: [
+      { id: LID, name: 'Lid', visible: true, order: 0, surfId: LID_ID },
+      { id: CITED, name: 'Cited', visible: true, order: 1, surfId: CITED_ID },
+      { id: COPY, name: 'Copy', visible: true, order: 2, surfId: COPY_ID },
+      { id: LIVE, name: 'Live', visible: true, order: 3, surfId: LIVE_ID },
+    ],
+    groups: [{ id: GROUP_ID, name: 'Gearbox', source: assemblyFilePath('Gearbox'), partIds: [GROUPED_ID] }],
+  };
+  const opts = { openDoc, tipEntries: tip };
+  const keep = planDeleteAssembly(projected, 'Gearbox', 'keep', opts);
+  const keepTree = projectFiles(projected, keep.files);
+  const keepBy = byPath(keepTree);
+  ok('without parts leaves every /parts file', [ORPHAN, CITED, GROUPED, QUEUED, OPEN_ONLY, LIVE, SPARE].every((path) => keepBy.get(path) === byPath(projected).get(path)));
+  ok('without parts removes the assembly folder', !keepBy.has(assemblyFilePath('Gearbox')) && !keepBy.has(COPY));
+  eq('without parts moves the copy', keepBy.get(COPY_DEST), copySrc);
+  const keepCover = JSON.parse(keepBy.get(assemblyFilePath('Cover')));
+  eq('without parts rewrites the copy ref', keepCover.parts.find((part) => part.id === COPY_ID)?.path, COPY_DEST);
+  eq('without parts clears group source', keepCover.groups[0].source, null);
+  const drop = planDeleteAssembly(projected, 'Gearbox', 'drop', opts);
+  const dropTree = projectFiles(projected, drop.files);
+  const dropBy = byPath(dropTree);
+  ok('with parts removes the unreferenced part', !dropBy.has(ORPHAN));
+  ok('copiedFrom did not keep the orphan', drop.referenced.every((part) => part.surfId !== ORPHAN_ID));
+  eq('with parts keeps the parts[] ref', dropBy.get(CITED), citedSrc);
+  eq('with parts keeps the group partId', dropBy.get(GROUPED), groupedSrc);
+  eq('with parts keeps the queued ref', dropBy.get(QUEUED), queuedSrc);
+  eq('with parts keeps the tip ref a queued op removed', dropBy.get(OPEN_ONLY), openSrc);
+  eq('with parts keeps the open-document ref', dropBy.get(LIVE), liveSrc);
+  eq('with parts leaves an unrelated part', dropBy.get(SPARE), spareSrc);
+  eq('referenced copy moves to /parts', dropBy.get(COPY_DEST), copySrc);
+  ok('referenced copy is not deleted in place', !dropBy.has(COPY));
+  const dropCover = JSON.parse(dropBy.get(assemblyFilePath('Cover')));
+  eq('moved copy keeps its id in the other assembly', [
+    dropCover.parts.find((part) => part.id === COPY_ID)?.path,
+    dropCover.groups[0].partIds,
+    dropCover.groups[0].source,
+  ], [COPY_DEST, [GROUPED_ID], null]);
+  let lost = false;
+  try {
+    assertDeleteKeepsReferenced(
+      [{ path: CITED, content: citedSrc }],
+      [],
+      [{ id: CITED_ID, path: null, assembly: 'Cover', via: 'part' }],
+    );
+  } catch (err) {
+    lost = /lost referenced part/.test(err?.message || '');
+  }
+  ok('guard refuses to drop a referenced part', lost);
+  const gh = createMockGithubAdapter({ login: 'artur' });
+  const vault = await findOrCreateVault(gh);
+  const seeded = await gh.commitFiles(vault.repo, {
+    branch: 'main',
+    message: 'seed',
+    baseSha: vault.headSha,
+    files: projected.map((entry) => fileWrite(entry.path, entry.content)),
+  });
+  const store = createSyncStore({ persist: false });
+  await store.setLastSyncedSha(vault.repo, seeded.sha);
+  let commits = 0;
+  const orig = gh.commitFiles.bind(gh);
+  gh.commitFiles = async (target, commitOpts) => {
+    commits += 1;
+    return orig(target, commitOpts);
+  };
+  await store.enqueue(vault.repo, {
+    op: 'delete-assembly', message: drop.message, files: drop.files, payload: { name: 'Gearbox' },
+  });
+  const synced = await flushSyncQueue({ store, adapter: gh, repo: vault.repo, branch: 'main', online: true });
+  eq('with parts is one commit', [synced.status, commits], ['synced', 1]);
+  ok('committed orphan is gone', !(await gh.readFile(vault.repo, ORPHAN, 'main')));
+  eq('committed cited stays', (await gh.readFile(vault.repo, CITED, 'main'))?.content, citedSrc);
+  eq('committed copy moved', (await gh.readFile(vault.repo, COPY_DEST, 'main'))?.content, copySrc);
+}
+
 console.log('\nui wires the trash, the gate, and the existing toast');
 {
   const feed = read('src/components/PartFeed.jsx');
@@ -419,7 +577,8 @@ console.log('\nui wires the trash, the gate, and the existing toast');
     && /Delete assembly and its parts/.test(dialog)
     && /data-assembly-delete-confirm-input/.test(dialog)
     && /disabled=\{locked \|\| !confirmed\}/.test(dialog)
-    && /These parts are used elsewhere and will be kept in \/parts/.test(dialog));
+    && /These parts are used elsewhere and will be kept in \/parts/.test(dialog)
+    && /Keeping parts leaves files in \/parts where they are/.test(dialog));
   ok('row trash matches the branch row action',
     /shrink-0 rounded p-1 text-gray-500 hover:bg-red-500\/15 hover:text-red-300/.test(dialog)
     && /data-git-branch-delete-row/.test(feed));

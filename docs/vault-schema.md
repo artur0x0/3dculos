@@ -41,7 +41,7 @@ The first line of a part script is the stable id:
 
 The body is UTC `yyyy-mm-dd-hh-mm-ss-SSSS-` plus 4 hex characters (`2026-10-07-20-56-31-0423-a3f9`). The id is minted once and never changes. A push does not rewrite it. Whether the part has been pushed is `isSynced` on the local IndexedDB part record. That flag is not part of the id and is never written to `.surf.json`. Add to Repo shows when `isSynced` is false. Blob SHA is not an identity.
 
-A legacy id may still carry a `local-` prefix. It is accepted on read. One migration strips that prefix and keeps the body: IndexedDB first (the open document, script headers, outbox payloads, and sync-store keys), then one outbox commit rewrites `@surf-id` headers and `.surf.json` `id`, `copiedFrom`, and group `partIds`. The script body and the part path stay. The commit has no deletes. A second pass changes nothing. A row id that merely starts with `local-` and is not a surf id is left alone.
+A legacy id may still carry a `local-` prefix. It is accepted on read. One migration strips that prefix and keeps the body: IndexedDB first (the open document, script headers, outbox payloads, and sync-store keys), then one outbox commit rewrites `@surf-id` headers and `.surf.json` `id`, `copiedFrom`, group `id`, and group `partIds`. IndexedDB and the repo both strip a group id, so the two do not drift. The part path stays. Bytes after the header line stay, including a blank line or an indented first line, and a CRLF header line stays CRLF. The commit has no deletes. A second pass changes nothing. A row id that merely starts with `local-` and is not a surf id is left alone.
 
 `.surf.json` stores `{ id, path }`. In the app the row id stays the repo path, and `surfId` carries `id`, so scripts stay keyed by file.
 
@@ -143,14 +143,16 @@ Ungroup drops the group and leaves the parts. Remove group drops those parts fro
 
 One outbox commit, message `Delete assembly <Name>` (`planDeleteAssembly`). The cache snapshot is swapped only after the next tree is fully built, so a failure cannot leave some paths moved and others not.
 
-| Choice | What happens to scripts in `assemblies/<Name>/` |
+| Choice | What the commit does |
 | --- | --- |
-| **Delete assembly, keep parts** | Every part script moves to `parts/`. A file already named that in `parts/` gets a numeric suffix (`Bracket 2.js`). The destination name is the file name, not the row label. |
-| **Delete assembly and its parts** | The button stays disabled until the assembly name is typed. Scripts no other assembly references are deleted. A part any other assembly references is still moved to `parts/`. |
+| **Delete assembly, keep parts** | Deletes the assembly folder and `.surf.json`. Bytes already in `parts/` stay. An assembly-local copy moves to `parts/`. A name already there gets a numeric suffix (`Bracket.js`, then `Bracket 2.js`). The destination name is the file name, not the row label. Surf ids stay. |
+| **Delete assembly and its parts** | The button stays disabled until the assembly name is typed. A script is deleted only when no other assembly references its surf id. An assembly-local copy that is still referenced moves to `parts/` and is not deleted. An unreferenced copy is deleted. |
 
-Either way the folder's `.surf.json` is deleted (and the rest of `assemblies/<Name>/`). Every other `.surf.json` is rewritten in that same commit: part `path` follows the surf id, then the old path, and `activeId` follows the old path. A group whose `source` was this assembly (current or legacy metadata path) keeps its name and `source` becomes `null`.
+A reference is another assembly on this branch: its tip `.surf.json`, the open working copy, and this branch's queued or failed outbox projected onto the tree. It matches `parts[].id`, or `parts[].path` when that row has no id, or `groups[].partIds`. `copiedFrom` is provenance, not a reference. `groups[].source` pointing at the deleted assembly is not a part reference.
 
-The confirm dialog lists referenced parts that will be kept: part name and the assemblies that use them.
+Either way the folder's `.surf.json` is deleted (and the rest of `assemblies/<Name>/`). Every other `.surf.json` is rewritten in that same commit when a copy moves: part `path` follows the surf id, then the old path when the row has no id, and `activeId` follows the old path. A group whose `source` was this assembly (current or legacy metadata path) keeps its name and `source` becomes `null`. The commit refuses to drop a referenced part file or to overwrite a `parts/` file.
+
+The confirm dialog lists referenced parts that will be kept: part name and the assemblies that use them. Keeping parts leaves files in `/parts` where they are. Deleting parts removes a script only when no other assembly uses it.
 
 If the deleted assembly is the one open, the working copy switches to the most recently opened remaining assembly, else the first remaining name in sorted order, else an empty document named `Assembly`. An open assembly that only referenced the moved parts updates in place.
 

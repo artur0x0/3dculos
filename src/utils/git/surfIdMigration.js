@@ -2,9 +2,10 @@
  * One-time migration off the legacy `local-` surf-id prefix.
  *
  * IndexedDB is rewritten first (callers). Then one outbox commit rewrites
- * `@surf-id` headers and `.surf.json` id / copiedFrom / group partIds.
- * Only a value that passes `isLocalSurfId` changes, and only by dropping
- * the prefix. A second pass is a no-op. Part paths and script bodies stay.
+ * `@surf-id` headers and `.surf.json` id / copiedFrom / group id / group
+ * partIds. Only a value that passes `isLocalSurfId` changes, and only by
+ * dropping the prefix. A second pass is a no-op. Part paths stay. Bytes
+ * after the header line stay, and the header keeps its line ending.
  * The commit has no deletes.
  */
 import {
@@ -14,7 +15,8 @@ import {
   promoteSurfId,
   readSurfId,
   rewriteSurfIdFields,
-  stripSurfId,
+  bytesAfterHeaderLine,
+  headerLineEnding,
   withSurfId,
 } from './surfId.js';
 
@@ -215,7 +217,9 @@ export function assertPartFilesPreserved(before, after) {
   }
   for (const [path, content] of beforeJs) {
     if (!afterJs.has(path)) throw new Error(`Surf id migration lost part file ${path}`);
-    if (stripSurfId(afterJs.get(path)) !== stripSurfId(content)) {
+    const next = afterJs.get(path);
+    if (bytesAfterHeaderLine(next) !== bytesAfterHeaderLine(content)
+      || headerLineEnding(next) !== headerLineEnding(content)) {
       throw new Error(`Surf id migration overwrote part file ${path}`);
     }
   }

@@ -18,7 +18,9 @@
 
 const SURF_ID_BODY = String.raw`\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2}-\d{4}-[0-9a-f]{4}`;
 export const SURF_ID_RE = new RegExp(`^(?:local-)?${SURF_ID_BODY}$`);
-const HEADER_RE = /^\/\/ @surf-id (\S+)\s*(?:\r?\n)?/;
+// Spaces and tabs only. `\s` would eat the blank line after the header and
+// any indent on the next line. The line ending is captured so CRLF stays CRLF.
+const HEADER_RE = /^\/\/ @surf-id (\S+)([ \t]*)(\r\n|\n|\r)?/;
 
 export function isSurfId(value) {
   return SURF_ID_RE.test(String(value || ''));
@@ -71,24 +73,63 @@ export function mintSurfId({ now = new Date(), rand } = {}) {
   return `${stamp}-${hex}`;
 }
 
+function splitSurfHeader(script) {
+  const text = String(script ?? '');
+  const match = HEADER_RE.exec(text);
+  if (!match || !isSurfId(match[1])) return null;
+  return {
+    id: match[1],
+    trailing: match[2] || '',
+    ending: match[3] || '',
+    body: text.slice(match[0].length),
+  };
+}
+
 /** Id from the first line, or null when the header is missing or invalid. */
 export function readSurfId(script) {
-  const match = HEADER_RE.exec(String(script ?? ''));
-  if (!match || !isSurfId(match[1])) return null;
-  return match[1];
+  return splitSurfHeader(script)?.id || null;
 }
 
-/** Script text with the surf-id header removed. */
+/** Script text with the surf-id header line removed. A following blank line stays. */
 export function stripSurfId(script) {
-  return String(script ?? '').replace(HEADER_RE, '');
+  const split = splitSurfHeader(script);
+  return split ? split.body : String(script ?? '');
 }
 
-/** First line is `// @surf-id <id>`. Replaces an existing header. */
+/**
+ * Exact bytes after the header line, split on the first line ending only.
+ * A script with no header returns the whole text. This does not use the
+ * header regex, so a regex that swallows a blank line still fails a compare.
+ */
+export function bytesAfterHeaderLine(script) {
+  const text = String(script ?? '');
+  if (!text.startsWith('// @surf-id ')) return text;
+  const lf = text.indexOf('\n');
+  if (lf < 0) return '';
+  return text.slice(lf + 1);
+}
+
+/** Line ending of a header line: `\r\n`, `\n`, ``, or null when there is no header. */
+export function headerLineEnding(script) {
+  const text = String(script ?? '');
+  if (!text.startsWith('// @surf-id ')) return null;
+  const lf = text.indexOf('\n');
+  if (lf < 0) return '';
+  if (lf > 0 && text[lf - 1] === '\r') return '\r\n';
+  return '\n';
+}
+
+/**
+ * First line is `// @surf-id <id>`. Replaces an existing header and keeps
+ * the trailing spaces and the original line ending. Bytes after that line stay.
+ */
 export function withSurfId(script, id) {
   if (!isSurfId(id)) throw new Error(`Bad surf id: ${id}`);
-  const body = stripSurfId(script);
-  const sep = body.length && !body.startsWith('\n') ? '\n' : '';
-  return `// @surf-id ${id}${sep}${body}`;
+  const split = splitSurfHeader(script);
+  if (split) return `// @surf-id ${id}${split.trailing}${split.ending}${split.body}`;
+  const text = String(script ?? '');
+  const sep = text.length && !text.startsWith('\n') && !text.startsWith('\r') ? '\n' : '';
+  return `// @surf-id ${id}${sep}${text}`;
 }
 
 /**
@@ -206,6 +247,11 @@ export function rewriteSurfIdFields(text, map) {
   }
   if (Array.isArray(raw.groups)) {
     for (const group of raw.groups) {
+      const nextId = get(group?.id);
+      if (nextId && nextId !== group.id) {
+        group.id = nextId;
+        changed = true;
+      }
       if (!Array.isArray(group?.partIds)) continue;
       group.partIds = group.partIds.map((id) => {
         const next = get(id);
@@ -239,6 +285,7 @@ export function applyIdPromotion(doc, scripts, map) {
   const groups = Array.isArray(doc?.groups)
     ? doc.groups.map((group) => ({
       ...group,
+      id: table[group?.id] || group?.id,
       partIds: (group.partIds || []).map((id) => table[id] || id),
     }))
     : doc?.groups;
