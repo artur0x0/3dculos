@@ -99,7 +99,16 @@ Desktop specifics:
   and **Open assembly** sit on one right-aligned row
   (`data-git-open-choice-stage`, no wrap) down to a 375px phone; the blue
   **Open assembly** button stays the primary. The folder Assembly list and
-  the git open search both use that dialog. Live search is `data-git-open-search` / `filterVaultOpenIndex`; empty
+  the git open search both use that dialog. Each assembly row has a trash
+  control (`data-assembly-delete`, the same gray trash as a branch row).
+  It opens **Delete assembly?** (`data-git-dialog="delete-assembly"`): the
+  assembly name, its part count, and **These parts are used elsewhere and
+  will be kept in /parts** when another assembly references a part (part
+  name and those assemblies). **Delete assembly, keep parts** is the
+  primary. **Delete assembly and its parts** is the danger button and stays
+  disabled until the name is typed. Cancel leaves the assembly. Folder →
+  Assembly and the open search share that list on desktop and on the phone.
+  Live search is `data-git-open-search` / `filterVaultOpenIndex`; empty
   query shows the full list, no hits show *No matches*. A part from this
   assembly opens by reference. A part from another assembly or loose `parts/`
   links in (`links from …`). The row then shows **Caution: external part!**
@@ -162,7 +171,9 @@ Mobile specifics:
   The Parts stage is the part list, including group rows and the thread
   (same markup as desktop). Each row shows the same cached solid
   snapshot as desktop. Delete asks first. Confirm removes that part only
-  (its script, its row, and its solid). Cancel leaves it. The ribbon centers
+  (its script, its row, and its solid). Cancel leaves it. Folder → Assembly
+  uses the same Open assembly list and **Delete assembly?** dialog as desktop.
+  The ribbon centers
   the assembly name (Assembly when the document has none) and keeps Local or
   Git on the right.
   Session-sticky via `3dculos.mobileStage`.

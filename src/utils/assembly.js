@@ -80,7 +80,8 @@ export function newLocalPartId() {
  * `script` and any other fields are dropped.
  * `groups` lists parts inserted from another assembly. `partIds` are surf
  * ids. A part is in at most one group. Empty groups and dangling ids are
- * dropped. No `groups` key when there are none.
+ * dropped. No `groups` key when there are none. `source` is the source
+ * assembly path, or null after that assembly is deleted (the name stays).
  */
 
 /** Shown and saved when a document has no name of its own. */
@@ -237,8 +238,14 @@ export function normalizeGroups(groups, parts) {
     if (!group || typeof group !== 'object') continue;
     const id = String(group.id || '').trim();
     const name = sanitizeAssemblyName(group.name);
-    const source = normalizeRepoPath(group.source);
-    if (!isSurfId(id) || !name || !source || source !== String(group.source) || seenIds.has(id)) continue;
+    let source = null;
+    if (group.source == null) {
+      if (group.source !== null) continue;
+    } else {
+      source = normalizeRepoPath(group.source);
+      if (!source || source !== String(group.source)) continue;
+    }
+    if (!isSurfId(id) || !name || seenIds.has(id)) continue;
     const partIds = [];
     for (const pid of Array.isArray(group.partIds) ? group.partIds : []) {
       if (!isSurfId(pid) || !live.has(pid) || seenParts.has(pid)) continue;

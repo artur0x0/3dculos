@@ -99,6 +99,7 @@ export function createSyncStore({ persist = true } = {}) {
   const aliases = new Map();
   const assemblies = new Map();
   const pathIndex = new Map();
+  const trees = new Map();
   const repoSha = new Map();
   const listeners = new Set();
   let persistOn = !!persist && idbAvailable();
@@ -128,6 +129,7 @@ export function createSyncStore({ persist = true } = {}) {
       else if (key.startsWith('alias:')) aliases.set(key.slice(6), value);
       else if (key.startsWith('asm:')) assemblies.set(key.slice(4), value);
       else if (key.startsWith('path:')) pathIndex.set(key.slice(5), value);
+      else if (key.startsWith('tree:')) trees.set(key.slice(5), value);
     });
   })();
 
@@ -306,6 +308,38 @@ export function createSyncStore({ persist = true } = {}) {
     await persistKv(`path:${slot}`, surfId);
   }
 
+  /**
+   * Whole-vault snapshot for one branch. One IndexedDB value, swapped only
+   * after `entries` is fully built, so a delete cannot land halfway.
+   */
+  async function putTree(repo, branch, entries) {
+    await ready;
+    if (!Array.isArray(entries)) throw new Error('Delete cache needs a full snapshot');
+    const built = [];
+    for (const entry of entries) {
+      if (!entry?.path) throw new Error('Delete cache snapshot has an empty path');
+      built.push({ path: entry.path, content: entry.content ?? '' });
+    }
+    const slot = branchKeyOf(repo, branch);
+    const had = trees.has(slot);
+    const prev = trees.get(slot);
+    trees.set(slot, built);
+    try {
+      await persistKv(`tree:${slot}`, built);
+    } catch (err) {
+      if (!had) trees.delete(slot);
+      else trees.set(slot, prev);
+      throw err;
+    }
+    return built;
+  }
+
+  function getTree(repo, branch = 'main') {
+    const rows = trees.get(branchKeyOf(repo, branch));
+    if (!rows) return null;
+    return rows.map((entry) => ({ path: entry.path, content: entry.content ?? '' }));
+  }
+
   function pathIndexFor(repo) {
     const prefix = `${repoKeyOf(repo)}\0`;
     const out = {};
@@ -338,6 +372,8 @@ export function createSyncStore({ persist = true } = {}) {
     getAssembly,
     rememberPathId,
     pathIndexFor,
+    putTree,
+    getTree,
     partStates,
     subscribe,
     ops: () => ops.slice(),

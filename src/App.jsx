@@ -130,6 +130,16 @@ import {
   applyPartPathChange,
   remapAssemblyPaths,
   overlayPendingPartRenames,
+  overlayPendingAssemblyDeletes,
+  planDeleteAssembly,
+  previewDeleteAssembly,
+  projectPendingOps,
+  projectFiles,
+  commitOpenAssemblyText,
+  baselineAfterDelete,
+  workingCopyAfterDelete,
+  hidePendingDeletedAssemblies,
+  readRenameEntries,
   createSyncStore,
   flushSyncQueue,
   captureBaseline,
@@ -208,6 +218,8 @@ const App = () => {
   const [partScripts, setPartScripts] = useState({});
   const [partRuns, setPartRuns] = useState({});
   const assemblyRef = useRef(null);
+  /** Assembly names opened this session, oldest first. The last is current. */
+  const recentAssembliesRef = useRef([]);
   const partScriptsRef = useRef({});
   const partRunsRef = useRef({});
   /** Git mode: mock adapter + vault handle + dirty baseline (G2) + Commit (G3). */
@@ -2006,6 +2018,14 @@ const App = () => {
     return baseline?.branch || vault?.defaultBranch || 'main';
   };
 
+  const noteRecentAssembly = (name) => {
+    const seg = vaultSegment(name);
+    if (!seg) return;
+    const prev = recentAssembliesRef.current.filter((item) => item !== seg);
+    prev.push(seg);
+    recentAssembliesRef.current = prev.slice(-12);
+  };
+
   const gitSync = () => {
     if (!gitSyncRef.current) gitSyncRef.current = createSyncStore({ persist: true });
     return gitSyncRef.current;
@@ -2269,21 +2289,38 @@ const App = () => {
     }
     const queued = store.pending(vault.repo, branch).concat(store.failed(vault.repo, branch));
     const overlaid = overlayPendingPartRenames(filled.doc, opened.scripts, queued);
-    const openedScripts = overlaid.scripts;
+    const deletedOverlay = overlayPendingAssemblyDeletes(overlaid.doc, overlaid.scripts, queued);
+    let openedDoc = deletedOverlay.doc;
+    let openedScripts = deletedOverlay.scripts;
+    if (deletedOverlay.removed) {
+      const tree = store.getTree(vault.repo, branch);
+      const next = workingCopyAfterDelete(
+        { ...opened.doc, name: opened.doc?.name },
+        opened.scripts,
+        tree || [],
+        { assemblyName: vaultSegment(opened.doc?.name) },
+        { recent: recentAssembliesRef.current },
+      );
+      openedDoc = next.doc;
+      openedScripts = next.scripts;
+    }
     for (const [id, script] of Object.entries(openedScripts)) {
       await savePartScript(id, script);
     }
     rememberScripts(openedScripts);
-    const saved = rememberAssembly(overlaid.doc);
+    const saved = rememberAssembly(openedDoc);
+    noteRecentAssembly(saved.name);
     const baseline = captureBaseline({
-      assemblyPath: opened.baseline.assemblyPath,
+      assemblyPath: deletedOverlay.removed ? assemblyFilePath(saved.name) : opened.baseline.assemblyPath,
       assemblyName: saved.name,
       doc: saved,
       scripts: openedScripts,
       branch,
       headSha: opened.baseline.headSha,
     });
-    if (opened.baseline.legacyCleanup) baseline.legacyCleanup = opened.baseline.legacyCleanup;
+    if (!deletedOverlay.removed && opened.baseline.legacyCleanup) {
+      baseline.legacyCleanup = opened.baseline.legacyCleanup;
+    }
     rememberGitBaseline(baseline);
     const head = opened.baseline.headSha || null;
     const stored = store.getLastSyncedSha(vault.repo, branch);
@@ -2543,7 +2580,184 @@ const App = () => {
   /** G11: browse vault assemblies + parts for Open. */
   const handleListVaultBrowse = async () => {
     const vault = await ensureGitVault();
-    return listVaultBrowseItems(gitAdapterRef.current, vault.repo, gitWorkingBranch());
+    const browse = await listVaultBrowseItems(gitAdapterRef.current, vault.repo, gitWorkingBranch());
+    const branch = gitWorkingBranch();
+    const ops = gitSync().pending(vault.repo, branch).concat(gitSync().failed(vault.repo, branch));
+    return hidePendingDeletedAssemblies(browse, ops);
+  };
+
+  const vaultEntriesForDelete = async () => {
+    const vault = await ensureGitVault();
+    const branch = gitWorkingBranch();
+    const remote = await readRenameEntries(gitAdapterRef.current, vault.repo, branch);
+    const ops = gitSync().pending(vault.repo, branch).concat(gitSync().failed(vault.repo, branch));
+    return { vault, branch, entries: projectPendingOps(remote, ops) };
+  };
+
+  const showEmptyAssembly = () => {
+    refreshGenRef.current += 1;
+    partSaveEpochRef.current += 1;
+    suppressPartSaveRef.current = true;
+    applyPartHistory({ commits: [], head: -1 });
+    setCurrentFilename(null);
+    rememberCadPart(null);
+    const note = '// No parts.\n';
+    saveEditorDraft({ script: note, filename: null, partId: null });
+    codeEditorRef.current?.setTextOnly?.(note);
+    setCurrentScript(note);
+    viewportRef.current?.placeAssembly?.({
+      solids: [],
+      leftovers: [],
+      activeId: null,
+      blankActive: true,
+      failedIds: [],
+    });
+  };
+
+  const applyDeleteWorkingCopy = async (next, branch, headSha, files = []) => {
+    refreshGenRef.current += 1;
+    const scripts = next.scripts || {};
+    const previousIds = Object.keys(partScriptsRef.current || {});
+    rememberScripts(scripts);
+    const saved = rememberAssembly(next.doc);
+    if (next.kind === 'update' && next.pairs?.length) rekeyRuntime(next.pairs);
+    for (const id of previousIds) {
+      if (!Object.prototype.hasOwnProperty.call(scripts, id)) {
+        try { await deletePartScript(id); } catch { /* ignore */ }
+      }
+    }
+    for (const [id, text] of Object.entries(scripts)) {
+      try { await savePartScript(id, text); } catch { /* ignore */ }
+    }
+    const keptIds = new Set(Object.keys(scripts));
+    for (const key of Object.keys(partHistoriesRef.current)) {
+      if (key !== '__game__' && !keptIds.has(key)) delete partHistoriesRef.current[key];
+    }
+    const baseline = baselineAfterDelete(captureBaseline({
+      assemblyPath: next.assemblyPath || assemblyFilePath(saved.name),
+      assemblyName: saved.name,
+      doc: saved,
+      scripts,
+      branch,
+      headSha,
+    }), {
+      kind: next.kind,
+      files,
+      pairs: next.pairs,
+      previous: gitBaselineRef.current,
+    });
+    rememberGitBaseline(baseline);
+    if (next.kind === 'empty' || !saved.parts?.length) {
+      showEmptyAssembly();
+      return saved;
+    }
+    noteRecentAssembly(saved.name);
+    const active = saved.parts.find((part) => part.id === saved.activeId) || saved.parts[0];
+    if (active) {
+      setCurrentFilename(active.name);
+      const text = scripts[active.id] ?? '';
+      focusPartHistory(active.id, text);
+      suppressPartSaveRef.current = false;
+      if (next.kind === 'switch') {
+        await finishOpenedPartRef.current(saved, scripts);
+      } else if (codeEditorRef.current?.loadContent) {
+        codeEditorRef.current.loadContent(text, active.name, false);
+      }
+    }
+    return saved;
+  };
+
+  const handlePreviewDeleteAssembly = async (name) => {
+    try {
+      const { entries } = await vaultEntriesForDelete();
+      return previewDeleteAssembly(entries, name);
+    } catch (err) {
+      return { status: 'error', error: err?.message || 'Could not check this assembly' };
+    }
+  };
+
+  /**
+   * One outbox commit. The cache snapshot is swapped only after the next
+   * tree is built. Failure toasts Retry/Revert and Revert puts that snapshot back.
+   */
+  const handleDeleteAssembly = async (name, mode = 'keep') => {
+    const doc = assemblyRef.current;
+    if (!doc || doc.source !== 'git') return { status: 'error', error: 'Not in Git mode' };
+    try {
+      const { vault, branch, entries } = await vaultEntriesForDelete();
+      const live = codeEditorRef.current?.getContent?.();
+      const scripts = { ...partScriptsRef.current };
+      if (doc.activeId && !suppressPartSaveRef.current && typeof live === 'string') {
+        scripts[doc.activeId] = live;
+      }
+      const plan = planDeleteAssembly(entries, name, mode === 'drop' ? 'drop' : 'keep', { scripts });
+      const projected = projectFiles(entries, plan.files);
+      const next = workingCopyAfterDelete(doc, scripts, projected, plan, {
+        recent: recentAssembliesRef.current,
+      });
+      const files = next.kind === 'update'
+        ? commitOpenAssemblyText(plan.files, assemblyFilePath(vaultSegment(doc.name) || doc.name), next.doc)
+        : plan.files;
+      const cacheBefore = entries.map((entry) => ({ path: entry.path, content: entry.content ?? '' }));
+      const cacheAfter = projectFiles(entries, files);
+      const baselineBefore = gitBaselineRef.current;
+      const headSha = baselineBefore?.headSha
+        || (await gitAdapterRef.current.getBranch(vault.repo, branch))?.sha
+        || null;
+      let swapped = false;
+      try {
+        await gitSync().putTree(vault.repo, branch, cacheAfter);
+        swapped = true;
+        await applyDeleteWorkingCopy(next, branch, headSha, files);
+        const partIds = [
+          ...(next.doc?.parts || []).map((part) => part.id),
+          ...plan.moves.map((move) => move.to),
+        ];
+        await enqueueGit(vault.repo, {
+          op: 'delete-assembly',
+          message: plan.message,
+          partIds,
+          files,
+          payload: {
+            name: plan.assemblyName,
+            label: plan.assemblyName,
+            mode: plan.mode,
+            assemblyPath: plan.assemblyPath,
+            legacyPath: plan.legacyPath,
+            moves: plan.moves.map((move) => ({
+              from: move.from,
+              to: move.to,
+              surfId: move.surfId,
+              name: move.name,
+            })),
+            pairs: next.pairs || [],
+            partId: next.doc?.activeId || plan.moves[0]?.to || null,
+            before: {
+              doc,
+              scripts,
+              baseline: baselineBefore,
+              cache: cacheBefore,
+            },
+          },
+        });
+      } catch (err) {
+        if (swapped) {
+          try { await gitSync().putTree(vault.repo, branch, cacheBefore); } catch { /* keep the throw */ }
+          rememberScripts(scripts);
+          rememberAssembly(doc);
+          rememberGitBaseline(baselineBefore);
+        }
+        throw err;
+      }
+      setPartSync({ ...gitSync().partStates() });
+      const result = await flushGitOps();
+      if (result?.status === 'failed') {
+        return { status: 'failed', error: result.error || 'Could not delete assembly' };
+      }
+      return { status: 'deleted', name: plan.assemblyName };
+    } catch (err) {
+      return { status: 'error', error: err?.message || 'Could not delete assembly' };
+    }
   };
 
   /**
@@ -2923,16 +3137,27 @@ const App = () => {
     const op = gitSync().ops().find((row) => row.id === notice.opId);
     await gitSync().drop(notice.opId);
     const before = op?.payload?.before;
+    if (op?.payload?.pairs?.length) {
+      rekeyRuntime(op.payload.pairs.map((pair) => ({ from: pair.to, to: pair.from })));
+    }
+    if (before?.cache && gitVaultRef.current?.repo) {
+      await gitSync().putTree(gitVaultRef.current.repo, op.branch || gitWorkingBranch(), before.cache);
+    }
     if (before?.doc) {
       const scripts = before.scripts || {};
       rememberScripts(scripts);
       rememberAssembly(before.doc);
       for (const [path, text] of Object.entries(scripts)) savePartScript(path, text);
-      const active = before.doc.parts?.find((part) => part.id === before.doc.activeId);
+      if (before.baseline !== undefined) rememberGitBaseline(before.baseline);
+      noteRecentAssembly(before.doc.name);
+      const active = before.doc.parts?.find((part) => part.id === before.doc.activeId)
+        || before.doc.parts?.[0];
       if (active) {
         setCurrentFilename(active.name);
         const text = scripts[active.id] ?? '';
         codeEditorRef.current?.loadContent(text, active.name, false);
+      } else {
+        showEmptyAssembly();
       }
     }
     setRenameNotice(null);
@@ -4884,6 +5109,8 @@ const App = () => {
       onListVaultAssemblies={handleListVaultAssemblies}
       onListVaultBrowse={handleListVaultBrowse}
       onOpenVaultAssembly={handleOpenVaultAssembly}
+      onPreviewDeleteAssembly={handlePreviewDeleteAssembly}
+      onDeleteAssembly={handleDeleteAssembly}
       onInsertVaultAssemblyParts={handleInsertVaultAssemblyParts}
       onOpenVaultPart={handleOpenVaultPart}
       onCopyPartToAssembly={handleCopyPartToAssembly}
