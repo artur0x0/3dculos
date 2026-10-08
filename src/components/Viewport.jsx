@@ -8151,9 +8151,10 @@ const Viewport = forwardRef(({
                     clearEdgeHover();
                     setSelectedEdges((prev) => popLastEdgeSelection(prev));
                   }}
-                  title="Remove last selected edge"
+                  title="Undo last selected edge"
+                  aria-label="Undo last selected edge"
                 >
-                  Back
+                  Undo
                 </button>
                 <button
                   type="button"

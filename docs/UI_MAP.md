@@ -234,7 +234,7 @@ Mobile specifics:
   no empty reserved band.
 - **Edge-pick chip (C.1):** horizontally centered + raised
   (`left-1/2 -translate-x-1/2`, `bottom-20` mobile / `bottom-14` desktop) so it
-  clears the right rail and home-indicator / CAD|Script dots.
+  clears the right rail and home-indicator / CAD|Script dots. Buttons: Tangent / Undo / Clear. Undo removes the last selected edge only.
 - **Left ↔ right rail height (C.1 → content-max):** helper / contour left rail
   uses the same bottom inset as the right cluster (`bottom-2.5`) and
   `max-h-[min(26rem,calc(100%-5.5rem))]` (shared `RAIL_PAIR_HEIGHT_CLASS`) —
@@ -325,7 +325,7 @@ All of these are absolutely positioned inside the shell at
 | *(removed C.1)* | Selected Face readout | — | — |
 | bottom-4 right-2/4 | contour param chip | `ContourModeChip.jsx:176` | `:3733` |
 | bottom-4 right-2/4 | fillet param chip | `FilletModeChip.jsx:43` | `:3835` |
-| bottom-center (raised) | Edge-pick chip (`data-edge-selector`) | inline | Viewport |
+| bottom-center (raised) | Edge-pick chip (`data-edge-selector`): Tangent / Undo / Clear | inline | Viewport |
 | top-16 center, portaled `z-50` | toasts: edge-mode, contour, fillet-scrap, fillet, shell — same `ErrorPopup` card | `ErrorPopup.jsx` | Viewport |
 | bottom-left | measurement readout | inline | `:3961` |
 | fills the pane | WebGL canvas | `<canvas ref={canvasRef}>` | `:3985` |
