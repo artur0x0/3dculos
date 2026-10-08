@@ -6,6 +6,10 @@
  * sample at that point toward the swatch. A second tap within 300ms paints
  * the body, so a different face moves toward the swatch too.
  *
+ * A legacy `local:` part id and a `local:<surfId>` color key (face fingerprint
+ * included) still resolve after the load-time id migration: the face pixel
+ * is the saved swatch, and `.surf.json` keeps that same key.
+ *
  * Screenshots: GOLDEN_SHOT_DIR or os.tmpdir() only.
  */
 /* global document, indexedDB, window */
@@ -14,20 +18,36 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { chromium } from 'playwright-core';
+import { migrateLocalPartIds } from '../../src/utils/git/localPartIdMigration.js';
+import { parseSurfJson } from '../../src/utils/git/surfJson.js';
 
 const PORT = Number(process.env.SMOKE_PORT || 5213);
 const APP_URL = `http://127.0.0.1:${PORT}/`;
 const SHOT_DIR = process.env.GOLDEN_SHOT_DIR || tmpdir();
 const SURF = '2026-10-08-22-00-00-0001-ab12';
 const PART = 'paint';
+const LEGACY = `local:${PART}`;
 const CUBE = 'return Manifold.cube([20, 16, 12], true);\n';
 const SWATCH = [0xef, 0x44, 0x44];
+const FACE = {
+  color: '#22c55e',
+  key: { at: [0, 0, 6], n: [0, 0, 1], area: 192 },
+};
+const PAINTED = { part: '#ef4444', faces: [FACE] };
 const DOC = {
   version: 1,
   source: 'local',
   name: 'Paint',
   activeId: PART,
   parts: [{ id: PART, name: 'Block', visible: true, order: 0, surfId: SURF }],
+};
+const DOC_LEGACY = {
+  version: 1,
+  source: 'local',
+  name: 'Paint',
+  activeId: LEGACY,
+  parts: [{ id: LEGACY, name: 'Block', visible: true, order: 0, surfId: SURF }],
+  colors: { [`local:${SURF}`]: PAINTED },
 };
 
 const CHROME_CANDIDATES = [
@@ -51,7 +71,56 @@ function dist(rgb) {
   return Math.abs(rgb[0] - SWATCH[0]) + Math.abs(rgb[1] - SWATCH[1]) + Math.abs(rgb[2] - SWATCH[2]);
 }
 
+function sameJson(a, b) {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+function checkColorMigration() {
+  const prefixed = `local:${SURF}`;
+  const entry = { part: '#ef4444', faces: [FACE] };
+  let moved;
+  try {
+    moved = migrateLocalPartIds({
+      doc: DOC_LEGACY,
+      scripts: { [LEGACY]: CUBE },
+      histories: { [LEGACY]: { commits: [{ id: 'seed:0', code: CUBE, partId: LEGACY }], head: 0 } },
+    });
+  } catch (err) {
+    check('legacy color key migrates', false, err.message);
+    return;
+  }
+  const kept = moved.colors?.[SURF];
+  check('legacy part id becomes the bare id', moved.doc?.parts?.[0]?.id === PART && moved.doc?.activeId === PART);
+  check('legacy migration leaves the surf id', moved.doc?.parts?.[0]?.surfId === SURF);
+  check('legacy color key resolves to the surf id', kept?.part === '#ef4444' && !moved.colors[prefixed], JSON.stringify(moved.colors));
+  check('legacy face color key is unchanged', sameJson(kept?.faces?.[0], FACE), JSON.stringify(kept?.faces?.[0]));
+  check('legacy undo key follows the bare id', moved.histories?.[PART]?.commits?.[0]?.partId === PART && moved.histories[LEGACY] == null);
+  const twice = migrateLocalPartIds({ doc: moved.doc, scripts: moved.scripts, histories: moved.histories, colors: moved.colors });
+  check('legacy color migration second pass is a no-op', twice.changed === false);
+
+  const repoPath = 'parts/Block.js';
+  let loaded;
+  try {
+    loaded = parseSurfJson({
+      format: 'surfcad.assembly',
+      version: 1,
+      name: 'Paint',
+      activeId: `local:${repoPath}`,
+      parts: [{ id: SURF, path: `local:${repoPath}`, name: 'Block', visible: true, order: 0 }],
+      colors: { [prefixed]: entry },
+    });
+  } catch (err) {
+    check('.surf.json color key resolves', false, err.message);
+    return;
+  }
+  const fileEntry = loaded.colors?.[SURF];
+  check('.surf.json path drops local:', loaded.parts?.[0]?.id === repoPath && loaded.activeId === repoPath);
+  check('.surf.json color key resolves to the surf id', fileEntry?.part === '#ef4444' && !loaded.colors[prefixed], JSON.stringify(loaded.colors));
+  check('.surf.json face color key is unchanged', sameJson(fileEntry?.faces?.[0], FACE), JSON.stringify(fileEntry?.faces?.[0]));
+}
+
 console.log('face paint tap pixels');
+checkColorMigration();
 
 const exe = CHROME_CANDIDATES.find((p) => existsSync(p));
 if (!exe) {
@@ -89,8 +158,8 @@ async function waitForServer(timeoutMs = 40000) {
   return false;
 }
 
-async function seed(page) {
-  await page.evaluate(async ({ doc, script, partId }) => {
+async function seed(page, doc, partId) {
+  await page.evaluate(async ({ doc: nextDoc, script, partId: id }) => {
     const drop = (name) => new Promise((resolve) => {
       const req = indexedDB.deleteDatabase(name);
       req.onsuccess = () => resolve();
@@ -110,8 +179,8 @@ async function seed(page) {
       req.onsuccess = () => {
         const db = req.result;
         const tx = db.transaction(['assembly', 'parts'], 'readwrite');
-        tx.objectStore('assembly').put(doc, 'current');
-        tx.objectStore('parts').put({ id: partId, script, savedAt: Date.now() }, partId);
+        tx.objectStore('assembly').put(nextDoc, 'current');
+        tx.objectStore('parts').put({ id, script, savedAt: Date.now() }, id);
         tx.oncomplete = () => { db.close(); resolve(); };
         tx.onerror = () => reject(tx.error);
       };
@@ -129,14 +198,14 @@ async function seed(page) {
         tx.objectStore('editorDraft').put({
           script,
           filename: 'Block',
-          partId,
+          partId: id,
           savedAt: Date.now(),
         }, 'current');
         tx.oncomplete = () => { db.close(); resolve(); };
         tx.onerror = () => reject(tx.error);
       };
     });
-  }, { doc: DOC, script: CUBE, partId: PART });
+  }, { doc, script: CUBE, partId });
 }
 
 function installProbe(page) {
@@ -281,7 +350,7 @@ async function runCase(browser, vp) {
   }));
   await page.goto(APP_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
   await ready(page);
-  await seed(page);
+  await seed(page, DOC, PART);
   await page.reload({ waitUntil: 'domcontentloaded' });
   await ready(page);
   await installProbe(page);
@@ -338,6 +407,102 @@ async function runCase(browser, vp) {
   await context.close();
 }
 
+function swatchBlob(page) {
+  return page.evaluate(() => new Promise((resolve) => {
+    const { canvas, renderer } = window.__paintProbe.bits();
+    const orig = renderer.render.bind(renderer);
+    renderer.render = function hooked(scene, camera) {
+      const out = orig(scene, camera);
+      renderer.render = orig;
+      const gl = renderer.getContext();
+      const dpr = renderer.getPixelRatio();
+      const w = gl.drawingBufferWidth;
+      const h = gl.drawingBufferHeight;
+      const buf = new Uint8Array(w * h * 4);
+      gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, buf);
+      const rect = canvas.getBoundingClientRect();
+      let n = 0;
+      let sx = 0;
+      let sy = 0;
+      let sr = 0;
+      let sg = 0;
+      let sb = 0;
+      for (let y = 4; y < h - 4; y += 2) {
+        for (let x = 4; x < w - 4; x += 2) {
+          const i = (y * w + x) * 4;
+          const r = buf[i];
+          const g = buf[i + 1];
+          const b = buf[i + 2];
+          const score = Math.abs(r - 239) + Math.abs(g - 68) + Math.abs(b - 68);
+          if (score > 48) continue;
+          const cssX = rect.left + (x + 0.5) / dpr;
+          const cssY = rect.top + (h - y - 0.5) / dpr;
+          if (document.elementFromPoint(cssX, cssY) !== canvas) continue;
+          n += 1;
+          sx += cssX;
+          sy += cssY;
+          sr += r;
+          sg += g;
+          sb += b;
+        }
+      }
+      resolve(n
+        ? { x: sx / n, y: sy / n, rgb: [Math.round(sr / n), Math.round(sg / n), Math.round(sb / n)], n }
+        : null);
+      return out;
+    };
+  }));
+}
+
+async function storedAssembly(page) {
+  return page.evaluate(() => new Promise((resolve, reject) => {
+    const req = indexedDB.open('surfcad-assembly', 1);
+    req.onerror = () => reject(req.error);
+    req.onsuccess = () => {
+      const db = req.result;
+      const tx = db.transaction('assembly', 'readonly');
+      const get = tx.objectStore('assembly').get('current');
+      get.onsuccess = () => { db.close(); resolve(get.result || null); };
+      get.onerror = () => reject(get.error);
+    };
+  }));
+}
+
+async function runLegacyColor(browser) {
+  const context = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    hasTouch: true,
+    isMobile: true,
+    deviceScaleFactor: 2,
+    colorScheme: 'dark',
+    userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+  });
+  const page = await context.newPage();
+  const errors = [];
+  page.on('pageerror', (err) => errors.push(String(err).slice(0, 240)));
+  await page.route('**/api/**', (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ authenticated: false }),
+  }));
+  await page.goto(APP_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await ready(page);
+  await seed(page, DOC_LEGACY, LEGACY);
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await ready(page);
+  await installProbe(page);
+  await page.evaluate(() => window.__VIEWPORT__.stageSnap('front'));
+  const blob = await swatchBlob(page);
+  const stored = await storedAssembly(page);
+  const entry = stored?.colors?.[SURF];
+  console.log(`  legacy color ${JSON.stringify(blob && blob.rgb)} n ${blob?.n ?? 0}`);
+  check('legacy color key paints the face', !!blob && blob.n > 1000 && dist(blob.rgb) < 48, JSON.stringify(blob));
+  check('stored color key is the surf id', entry?.part === '#ef4444' && sameJson(entry?.faces?.[0], FACE) && stored?.parts?.[0]?.id === PART,
+    JSON.stringify({ id: stored?.parts?.[0]?.id, colors: stored?.colors }));
+  check('legacy load has no page errors', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await context.close();
+}
+
 let browser;
 try {
   if (!await waitForServer()) {
@@ -351,6 +516,7 @@ try {
   });
   await runCase(browser, { name: '390', width: 390, height: 844, touch: true });
   await runCase(browser, { name: 'desktop', width: 1280, height: 800, touch: false });
+  await runLegacyColor(browser);
 } finally {
   if (browser) await browser.close();
   stop();
