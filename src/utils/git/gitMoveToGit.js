@@ -14,7 +14,7 @@
  * Row ids that are already a repo path keep it when the layout allows it
  * for this assembly (its own folder or `parts/`); anything else
  * (`local:<uuid>`, another assembly's path) goes to `parts/<Name>.js`.
- * Name collisions get ` 2`, ` 3`… (case-insensitive, so the vault also
+ * Name collisions get ` (2)`, ` (3)`… (case-insensitive, so the vault also
  * works on case-insensitive checkouts). An existing assembly-folder path
  * stays (a copy, or a part the layout migration has not moved yet).
  *
@@ -23,7 +23,7 @@
  * content, it returns `conflict` and writes nothing. Mock adapter only;
  * nothing here talks to the network.
  */
-import { normalizeRepoPath, serializeAssembly } from '../assembly.js';
+import { normalizeRepoPath, numberedName, serializeAssembly } from '../assembly.js';
 import { assertGithubAdapter, fileWrite } from './githubAdapterInterface.js';
 import { captureBaseline } from './gitWorkspace.js';
 import { effectiveScripts } from './gitCommit.js';
@@ -73,7 +73,7 @@ export function planMoveToGit(doc, scripts, {
 
   const claim = (makePath, base) => {
     for (let n = 1; n < 1000; n += 1) {
-      const path = makePath(n === 1 ? base : `${base} ${n}`);
+      const path = makePath(n === 1 ? base : numberedName(base, n));
       if (!taken.has(path.toLowerCase())) {
         taken.add(path.toLowerCase());
         return path;

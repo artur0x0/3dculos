@@ -38,6 +38,7 @@ import {
   isDefaultBlankAssembly,
   DEFAULT_ASSEMBLY_NAME,
   DEFAULT_PART_NAME,
+  nextNumberedName,
 } from '../../src/utils/assembly.js';
 import { meshPreviewKey, partPreviewKind } from '../../src/utils/partPreview.js';
 import {
@@ -224,6 +225,8 @@ const BAD = 'let part = Manifold.cube([10, 10, 10], true);\nreturn part.missingM
     && /onDeletePart\?\.\(pending\.id, \{ fromRepo:/.test(confirmDel)
     && /data-part-delete-confirm/.test(feed)
     && /data-part-delete-scope="assembly"/.test(feed)
+    && /Remove \$\{pendingDelete\.name\} from this assembly\?/.test(feed)
+    && !/This drops the row, its script, and its solid/.test(feed)
     && /Delete from assembly/.test(feed)
     && /data-part-delete-confirm-repo/.test(feed)
     && /partCanDeleteFromRepo/.test(feed)
@@ -808,6 +811,17 @@ console.log('\nassembly leave guard');
   const starter = 'return Manifold.cube([1,1,1], true);';
   check('blank default is leave-safe',
     isDefaultBlankAssembly(blank, { p1: starter }, { defaultScripts: [starter] }));
+  const legacyBlank = {
+    ...blank,
+    parts: [{ id: 'p1', name: 'Part 1', visible: true, order: 0 }],
+  };
+  check('a saved Part 1 is still the stock blank',
+    isDefaultBlankAssembly(legacyBlank, { p1: starter }, { defaultScripts: [starter] }));
+  check('new names use parentheses and skip a taken Part (n)',
+    nextNumberedName('Part', []) === 'Part (1)'
+    && nextNumberedName('Part', ['Part (1)']) === 'Part (2)'
+    && nextNumberedName('Part', ['Part (1)', 'Part (2)']) === 'Part (3)'
+    && nextNumberedName('Bracket', ['Bracket'], { bareFirst: true }) === 'Bracket (2)');
   check('blank skips leave guard',
     !needsAssemblyLeaveGuard(blank, {
       source: 'local', scripts: { p1: starter }, defaultScripts: [starter],

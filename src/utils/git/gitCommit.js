@@ -204,7 +204,7 @@ export function firstCommitBaseline({ branch = 'main', headSha = null } = {}) {
 /**
  * Instantly commit one part (plus the assembly `.surf.json`) to the working
  * branch. Used by Parts "Add to Repo" for local content not yet in the vault.
- * Remaps `local:` / foreign ids to `parts/<Name>.js` (`Name 2` on collision).
+ * Remaps `local:` / foreign ids to `parts/<Name>.js` (`Name (2)` on collision).
  * -> { status: 'committed'|'clean'|'error', ... } (branched on non_fast_forward)
  */
 export async function commitPartToRepo(adapter, repo, {

@@ -10,6 +10,7 @@ import {
   DEFAULT_ASSEMBLY_NAME,
   DEFAULT_PART_NAME,
   normalizeRepoPath,
+  numberedName,
   serializeAssembly,
 } from '../assembly.js';
 import { assertGithubAdapter } from './githubAdapterInterface.js';
@@ -211,7 +212,7 @@ export async function openVaultAssembly(adapter, repo, assemblyName, {
 /**
  * Resolve a new part under this assembly.
  * A bare name lands in `parts/<Name>.js`. A name already taken becomes
- * `Name 2`. A full repo path is still accepted when it is allowed for this
+ * `Name (2)`. A full repo path is still accepted when it is allowed for this
  * assembly (an assembly-folder copy, tests, or paste).
  */
 export function resolveNewPartPath(assemblyName, partName, takenPaths = []) {
@@ -235,7 +236,7 @@ export function resolveNewPartPath(assemblyName, partName, takenPaths = []) {
   }
 }
 
-/** Suggest `parts/Part N.js` for the next empty slot. */
+/** Suggest `parts/Part (n).js` for the next empty slot. */
 export function suggestNewPartPath(assemblyName, existingParts = [], takenPaths = null) {
   void assemblyName;
   const used = new Set(
@@ -243,10 +244,10 @@ export function suggestNewPartPath(assemblyName, existingParts = [], takenPaths 
       || (existingParts || []).map((part) => (typeof part === 'string' ? part : part?.id)),
   );
   for (let n = 1; n < 1000; n += 1) {
-    const path = sharedPartPath(`Part ${n}`);
+    const path = sharedPartPath(numberedName('Part', n));
     if (!used.has(path)) return path;
   }
-  return sharedPartPath(`Part ${Date.now()}`);
+  return sharedPartPath(numberedName('Part', Date.now()));
 }
 
 /**
@@ -456,7 +457,7 @@ export function planCopyToAssembly(doc, part, script, { now, rand } = {}) {
   let path = assemblyPartPath(asm, base);
   let n = 2;
   while (taken.has(path)) {
-    path = assemblyPartPath(asm, `${base} ${n}`);
+    path = assemblyPartPath(asm, numberedName(base, n));
     n += 1;
   }
   const surfId = mintSurfId({ now, rand });

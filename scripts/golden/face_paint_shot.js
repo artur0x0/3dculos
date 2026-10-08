@@ -5,10 +5,13 @@
  */
 import React from 'react';
 import { createRoot } from 'react-dom/client';
+import * as THREE from 'three';
 import { PAINT_SWATCHES } from '../../src/utils/facePaint.js';
 import { PaintModeChip } from '../../src/components/PaintModeChip.jsx';
 import CrossSectionPanel from '../../src/components/CrossSectionPanel.jsx';
 import FeatureStrip from '../../src/components/FeatureStrip.jsx';
+import { buildSolidGeometry } from '../../src/utils/partSolidCache.js';
+import { syncFaceColorSkin } from '../../src/utils/faceColorSkin.js';
 
 const CUBES = [1, 2, 3, 4]
   .map(() => '// --- cube begin ---\nlet part = 1;\n// --- cube end ---')
@@ -71,10 +74,8 @@ export function renderPaintChrome(el, { theme = 'dark', compact = false } = {}) 
     }),
     React.createElement(PaintModeChip, {
       compact,
-      faceCount: 2,
       color: PAINT_SWATCHES[0],
       custom: '',
-      part: false,
       canUndo: true,
       canClear: true,
       canConfirm: true,
@@ -89,4 +90,43 @@ export function renderPaintChrome(el, { theme = 'dark', compact = false } = {}) 
       onRemoveUnmatched: () => {},
     }),
   ));
+}
+
+function framePaint(camera, object) {
+  const box = new THREE.Box3().setFromObject(object);
+  const sphere = box.getBoundingSphere(new THREE.Sphere());
+  const dist = sphere.radius / Math.sin((45 * Math.PI) / 360) * 1.35;
+  const dir = new THREE.Vector3(0.9, -0.7, 0.85).normalize();
+  camera.position.copy(sphere.center).addScaledVector(dir, dist);
+  camera.up.set(0, 0, 1);
+  camera.lookAt(sphere.center);
+  camera.updateMatrixWorld(true);
+}
+
+/** Dark 390 px cube with the session skin already applied. */
+export function renderLivePaintCanvas(canvas, payload) {
+  const width = 390;
+  const height = 420;
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
+  renderer.setPixelRatio(1);
+  renderer.setSize(width, height, false);
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x1e1e1e);
+  const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 2000);
+  const light = new THREE.PointLight(0xffffff, 8);
+  camera.add(light);
+  scene.add(camera);
+  const solid = buildSolidGeometry(payload.mesh);
+  const host = new THREE.Mesh(solid.geometry, new THREE.MeshNormalMaterial({ flatShading: true }));
+  host.userData.surfId = payload.surfId;
+  scene.add(host);
+  framePaint(camera, host);
+  syncFaceColorSkin(host, {
+    geometry: solid.geometry,
+    faceIDs: solid.faceIDs,
+    surfId: payload.surfId,
+    colors: payload.colors,
+    rainbow: false,
+  });
+  renderer.render(scene, camera);
 }

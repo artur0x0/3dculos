@@ -53,8 +53,8 @@ console.log('parts layout — new part lands in parts/');
 {
   eq('bare name', resolveNewPartPath('Gearbox', 'Bracket'), sharedPartPath('Bracket'));
   eq('collision suffix', resolveNewPartPath('Gearbox', 'Bracket', [sharedPartPath('Bracket')]),
-    sharedPartPath('Bracket 2'));
-  eq('suggest', suggestNewPartPath('Gearbox', []), sharedPartPath('Part 1'));
+    sharedPartPath('Bracket (2)'));
+  eq('suggest', suggestNewPartPath('Gearbox', []), sharedPartPath('Part (1)'));
   const app = readFileSync(new URL('../../src/App.jsx', import.meta.url), 'utf8');
   ok('create calls resolveNewPartPath', /resolveNewPartPath\(/.test(app));
 }
@@ -245,7 +245,7 @@ console.log('\nparts layout — migrate two Bracket.js files');
   const plan = planLayoutMigration(before);
   eq('one plan, both brackets, copy stays', plan.moves.map((move) => [move.from, move.to, move.surfId]), [
     [cover, sharedPartPath('Bracket'), ID_B],
-    [gear, sharedPartPath('Bracket 2'), ID_A],
+    [gear, sharedPartPath('Bracket (2)'), ID_A],
   ]);
   ok('copy is not in the plan', !plan.moves.some((move) => move.from === copy));
   const store = createSyncStore({ persist: false });
@@ -271,18 +271,18 @@ console.log('\nparts layout — migrate two Bracket.js files');
   eq('no part file lost', afterJs.length, beforeJs.length);
   eq('bracket ids kept', [
     readSurfId(after.find((entry) => entry.path === sharedPartPath('Bracket')).content),
-    readSurfId(after.find((entry) => entry.path === sharedPartPath('Bracket 2')).content),
+    readSurfId(after.find((entry) => entry.path === sharedPartPath('Bracket (2)')).content),
   ], [ID_B, ID_A]);
   ok('copy stayed in the assembly folder', after.some((entry) => entry.path === copy && entry.content === copyBody));
   const gearAfter = parseSurfJson(after.find((entry) => entry.path === assemblyFilePath('Gearbox')).content);
   const coverAfter = parseSurfJson(after.find((entry) => entry.path === assemblyFilePath('Cover')).content);
   eq('gearbox paths rewritten by id', gearAfter.parts.map((part) => [part.surfId, part.id]), [
-    [ID_A, sharedPartPath('Bracket 2')],
+    [ID_A, sharedPartPath('Bracket (2)')],
     [ID_COPY, copy],
   ]);
   eq('cover ref follows the surf id', coverAfter.parts.map((part) => [part.surfId, part.id]), [
     [ID_B, sharedPartPath('Bracket')],
-    [ID_A, sharedPartPath('Bracket 2')],
+    [ID_A, sharedPartPath('Bracket (2)')],
   ]);
   eq('cover group partId still resolves', coverAfter.groups[0].partIds, [ID_A]);
   eq('cover group source not rewritten', coverAfter.groups[0].source, assemblyFilePath('Gearbox'));

@@ -129,15 +129,15 @@ ok('liveScript overrides stored', dirtyPartIds(opened.doc, opened.scripts, base,
 console.log('\ngit G2 — new part name');
 eq('bare name → parts/', resolveNewPartPath('Gearbox', 'Bracket'),
   sharedPartPath('Bracket'));
-eq('bare name collision → Bracket 2', resolveNewPartPath('Gearbox', 'Bracket', [sharedPartPath('Bracket')]),
-  sharedPartPath('Bracket 2'));
+eq('bare name collision → Bracket (2)', resolveNewPartPath('Gearbox', 'Bracket', [sharedPartPath('Bracket')]),
+  sharedPartPath('Bracket (2)'));
 eq('full assembly path', resolveNewPartPath('Gearbox', assemblyPartPath('Gearbox', 'X')),
   assemblyPartPath('Gearbox', 'X'));
 eq('shared path allowed', resolveNewPartPath('Gearbox', 'parts/Pin.js'), sharedPartPath('Pin'));
 eq('other assembly refused (legacy)', resolveNewPartPath('Gearbox', 'assemblies/Cover/parts/Lid.js'), null);
 eq('other assembly refused (flat)', resolveNewPartPath('Gearbox', 'assemblies/Cover/Lid.js'), null);
 eq('suggest skips existing', suggestNewPartPath('Gearbox', opened.doc.parts),
-  sharedPartPath('Part 1'));
+  sharedPartPath('Part (1)'));
 ok('index exports G2', typeof gitIndex.openVaultAssembly === 'function'
   && typeof gitIndex.isWorkspaceDirty === 'function'
   && typeof gitIndex.suggestNewPartPath === 'function');

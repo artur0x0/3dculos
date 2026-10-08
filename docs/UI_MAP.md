@@ -323,7 +323,7 @@ All of these are absolutely positioned inside the shell at
 | --- | --- | --- | --- |
 | *editor header* (portal) | Toolbar, all CAD | `Toolbar.jsx` `variant="strip"` | `:3530` |
 | top-center | CAD: part, the word in, assembly. Game: puzzle name | `data-viewer-title` / `ViewportTitleChip` | Viewport |
-| bottom, centered in the gap between the rails (same card as Shell; `bottom-14` on a phone) | Paint popup: 8 swatches, custom `#rrggbb`, Part, Undo, Clear, Remove unmatched colors, Confirm, Cancel | `PaintModeChip` `data-paint-mode` | Viewport |
+| bottom, centered in the gap between the rails (same card as Shell; `bottom-14` on a phone) | Paint popup: 8 swatches (grid padded so the selection ring is not clipped), custom `#rrggbb`, Part, Undo, Clear, Remove unmatched colors, Confirm, Cancel. A tap paints the face immediately. Double-tap paints that body. Confirm saves the session. X and Cancel revert it | `PaintModeChip` `data-paint-mode` | Viewport |
 | centered | "Match!" success banner | inline | `:3595` |
 | left-2/4 bottom-2.5 | helper insert rail (height paired to right). Block, Build, Shape, Polish, Move | `HelperInsertPalette.jsx` | Viewport |
 | left-2/4 bottom-2.5 | contour tool rail (replaces the helper rail) | `ContourModeRail.jsx` | Viewport |
@@ -349,7 +349,7 @@ All of these are absolutely positioned inside the shell at
 
 The canvas draws a face-color skin on top of a part when that assembly has `colors` (`src/utils/faceColorSkin.js`). The skin is under crease lines and pick highlights. `?debugFaces=1` or `localStorage` key `surfcad.debugFaces` = `1` paints each face patch a different color. The flag is off unless set, and it is not a rail button. The right rail has no patch-colour toggle.
 
-**Paint.** The paint button is on the right rail and is CAD-only. A click in paint mode uses the normal face pick, so a blend and a coplanar seam select the same face they already do, and the highlight draws above the skin. Tap a picked face again to drop it. Undo drops the last pick and leaves saved colors alone. Confirm writes `colors[surfId]` through the assembly save (local document, and the git outbox in Git mode). Part colors the whole part. Clear removes the saved color of the picked faces, or the part color. Cancel writes nothing. Picks belong to the active part; switching parts clears them. Game mode hides the button. The helper rail hides while the popup is open, same as Shell.
+**Paint.** The paint button is on the right rail and is CAD-only. A tap paints that face immediately on the skin, in the selected color. There is no selection step. A second tap on the same face within 300 ms paints every face of that body and stays one undo entry. Part paints the whole part (`colors[surfId].part`), which is every body, so it stays next to double-tap. Confirm writes the session once through the assembly save (local document, and one git outbox op in Git mode) and closes. X, Cancel, and Esc revert every paint from this session and write nothing. Undo steps back one paint. Clear restores the colors from when the popup opened. The swatch grid is padded so the selection ring stays inside the scroller. Game mode hides the button. The helper rail hides while the popup is open, same as Shell.
 
 **Opening an assembly.** `data-assembly-open-spinner` sits centered over the
 viewport (the viewport pane on desktop, the full shell on a phone) while a

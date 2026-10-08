@@ -48,7 +48,7 @@ function localWorkspace() {
 }
 
 const BRACKET = sharedPartPath('Bracket');
-const BRACKET2 = sharedPartPath('Bracket 2');
+const BRACKET2 = sharedPartPath('Bracket (2)');
 const SH_BOLT = sharedPartPath('M3 bolt');
 const COVER = sharedPartPath('Cover');
 const KEPT_BRACKET = assemblyPartPath('Gearbox', 'Bracket');
@@ -76,7 +76,7 @@ console.log('git G6 — plan (no writes)');
     source: 'local', name: 'Gearbox',
     parts: [{ id: 'local:1', name: 'Bracket' }, { id: 'local:2', name: 'bracket' }],
   }, { 'local:1': CUBE, 'local:2': CUBE });
-  eq('case-insensitive dedupe', ci.idMap.map((m) => m.to), [BRACKET, sharedPartPath('bracket 2')]);
+  eq('case-insensitive dedupe', ci.idMap.map((m) => m.to), [BRACKET, sharedPartPath('bracket (2)')]);
 
   // Rows that already carry repo paths (Git → Local → Git): own path and
   // shared path are kept, another assembly's path is re-homed.

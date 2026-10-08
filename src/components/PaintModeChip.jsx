@@ -4,15 +4,14 @@ import { PAINT_SWATCHES, parsePaintHex, resolvedPaintColor } from '../utils/face
 
 /**
  * Paint popup. Same card as Shell: between the rails, cyan glass, grey X
- * exits with no write. Confirm writes colors. Cancel writes nothing.
- * The button that opens it lives on the right rail (`data-paint-chip`).
+ * exits with no write. A tap paints immediately. Confirm writes the session.
+ * Cancel writes nothing. The button that opens it lives on the right rail
+ * (`data-paint-chip`).
  */
 export function PaintModeChip({
   compact = false,
-  faceCount = 0,
   color = null,
   custom = '',
-  part = false,
   canUndo = false,
   canClear = false,
   canConfirm = false,
@@ -29,14 +28,6 @@ export function PaintModeChip({
   const typed = typeof custom === 'string' ? custom.trim() : '';
   const resolved = resolvedPaintColor(color, custom);
   const customInvalid = typed !== '' && !parsePaintHex(typed);
-  let status;
-  if (part) {
-    status = 'Part · the whole part takes this color';
-  } else if (faceCount > 0) {
-    status = `${faceCount} face${faceCount === 1 ? '' : 's'} · tap to add, tap again to remove`;
-  } else {
-    status = 'Tap faces to paint';
-  }
 
   return (
     <div
@@ -53,11 +44,9 @@ export function PaintModeChip({
     >
       <div className="flex items-start justify-between gap-2 shrink-0">
         <div className="min-w-0">
-          <div className="font-bold font-sans text-cyan-200">
-            Paint{faceCount && !part ? ` · ${faceCount}` : ''}
-          </div>
+          <div className="font-bold font-sans text-cyan-200">Paint</div>
           <div className="text-[11px] text-cyan-100/90 normal-case font-sans mt-0.5">
-            {status}
+            Tap a face. Double-tap paints the body.
           </div>
         </div>
         <button
@@ -73,7 +62,12 @@ export function PaintModeChip({
       </div>
 
       <div className="mt-1.5 flex flex-col gap-1.5 font-sans overflow-y-auto rail-scroll min-h-0">
-        <div className="flex flex-wrap gap-1.5" role="group" aria-label="Swatches">
+        <div
+          className="flex flex-wrap gap-1.5 p-1"
+          role="group"
+          aria-label="Swatches"
+          data-paint-swatches=""
+        >
           {PAINT_SWATCHES.map((hex) => {
             const on = !typed && color === hex;
             return (
@@ -85,7 +79,7 @@ export function PaintModeChip({
                 aria-label={hex}
                 title={hex}
                 onClick={() => onSwatch?.(hex)}
-                className={`h-7 w-7 rounded-full border ${
+                className={`h-7 w-7 shrink-0 rounded-full border outline-none focus-visible:ring-2 focus-visible:ring-cyan-200 ${
                   on ? 'border-white ring-2 ring-cyan-200' : 'border-white/40'
                 }`}
                 style={{ background: hex }}
@@ -116,14 +110,9 @@ export function PaintModeChip({
           <button
             type="button"
             data-paint-part=""
-            aria-pressed={!!part}
-            onClick={() => onPart?.(!part)}
-            className={`px-2.5 py-1 rounded text-[13px] ${
-              part
-                ? 'bg-cyan-600 text-white'
-                : 'bg-cyan-950/80 text-cyan-100 border border-cyan-700/70'
-            }`}
-            title="Color the whole part instead of the picked faces"
+            onClick={() => onPart?.()}
+            className="px-2.5 py-1 rounded text-[13px] bg-cyan-950/80 text-cyan-100 border border-cyan-700/70"
+            title="Paint the whole part"
           >
             Part
           </button>
@@ -135,7 +124,7 @@ export function PaintModeChip({
             className={`px-2.5 py-1 rounded text-[13px] underline ${
               canUndo ? 'text-cyan-200' : 'text-cyan-400/40 cursor-not-allowed'
             }`}
-            title="Drop the last pick. Saved colors stay."
+            title="Step back one paint"
           >
             Undo
           </button>
@@ -147,7 +136,7 @@ export function PaintModeChip({
             className={`px-2.5 py-1 rounded text-[13px] underline ${
               canClear ? 'text-cyan-200' : 'text-cyan-400/40 cursor-not-allowed'
             }`}
-            title={part ? 'Remove the part color' : 'Remove the color from the picked faces'}
+            title="Remove the paints from this session"
           >
             Clear
           </button>
@@ -191,7 +180,7 @@ export function PaintModeChip({
               ? 'bg-cyan-600 hover:bg-cyan-500 active:bg-cyan-400 text-white'
               : 'bg-cyan-950/80 text-cyan-400/50 border border-cyan-800/60 cursor-not-allowed'
           }`}
-          title={canConfirm ? 'Save this color' : 'Pick a face and a valid color first'}
+          title={canConfirm ? 'Save colors and close' : 'Enter a valid hex color'}
         >
           <Check size={14} />
           Confirm

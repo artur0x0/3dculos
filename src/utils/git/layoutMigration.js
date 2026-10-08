@@ -2,7 +2,7 @@
  * One commit moves assembly-folder part scripts into `parts/`.
  *
  * Surf ids stay. Every `.surf.json` path is rewritten by surf id, then by
- * the old path. A name already in `parts/` becomes `Name 2`. Never overwrite.
+ * the old path. A name already in `parts/` becomes `Name (2)`. Never overwrite.
  * Callers project this branch's pending outbox onto the tree first.
  * A row with `copiedFrom` is already an assembly-local copy and stays.
  * A second pass is a no-op. A part file is never dropped.
