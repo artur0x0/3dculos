@@ -1,10 +1,17 @@
 /**
- * Unlit face-color skin for one part.
+ * Lit face-color skin for one part.
  *
  * Reads the face graph already built for the shown mesh, matches the saved
  * `colors[surfId]` entry, and adds a child mesh of those triangles. The child
  * does not raycast. The base material stays MeshNormal (or the sheet metal).
  * Ambiguous and missing keys are skipped. This does not write the color map.
+ *
+ * The viewport point light decays to nothing at a fitted view, so the skin
+ * carries its own view-space headlight. Intensity is PI: Standard's diffuse
+ * term is albedo / PI, and that cancels on a face whose normal points at the
+ * camera. Metalness 0 and roughness 1, with the dielectric specular cleared,
+ * keep a face-on swatch from picking up a white sheen. Vertex colors stay
+ * sRGB in the buffer; the shader decodes them before lighting.
  */
 import {
   BufferAttribute,
@@ -12,7 +19,7 @@ import {
   DoubleSide,
   FrontSide,
   Mesh,
-  MeshBasicMaterial,
+  MeshStandardMaterial,
 } from 'three';
 import { warmFaceGraph } from './selectFace.js';
 import { faceFingerprints, matchFaceColors } from './faceColorMatch.js';
@@ -23,6 +30,57 @@ export const FACE_SKIN_RENDER_ORDER = 2;
 export const FACE_HIGHLIGHT_RENDER_ORDER = 6;
 
 const SKIN_NAME = 'face-color-skin';
+const HEADLIGHT_KEY = 'face-color-skin-lit-v1';
+
+/** Fully diffuse. A specular lobe would add white and shift the swatch. */
+export const FACE_SKIN_METALNESS = 0;
+export const FACE_SKIN_ROUGHNESS = 1;
+
+function makeFaceSkinMaterial(side) {
+  const material = new MeshStandardMaterial({
+    vertexColors: true,
+    flatShading: true,
+    metalness: FACE_SKIN_METALNESS,
+    roughness: FACE_SKIN_ROUGHNESS,
+    polygonOffset: true,
+    polygonOffsetFactor: -1,
+    polygonOffsetUnits: -2,
+    depthTest: true,
+    depthWrite: false,
+    toneMapped: false,
+    side,
+  });
+  material.customProgramCacheKey = () => HEADLIGHT_KEY;
+  material.onBeforeCompile = (shader) => {
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        '#include <color_fragment>',
+        `#include <color_fragment>
+        diffuseColor.rgb = mix(
+          pow((diffuseColor.rgb + vec3(0.055)) / vec3(1.055), vec3(2.4)),
+          diffuseColor.rgb * vec3(1.0 / 12.92),
+          vec3(lessThanEqual(diffuseColor.rgb, vec3(0.04045)))
+        );`,
+      )
+      .replace(
+        '#include <lights_physical_fragment>',
+        `#include <lights_physical_fragment>
+        material.specularColor = vec3(0.0);`,
+      )
+      .replace(
+        '#include <lights_fragment_begin>',
+        `#include <lights_fragment_begin>
+        {
+          IncidentLight faceSkinHeadlight;
+          faceSkinHeadlight.color = vec3(PI);
+          faceSkinHeadlight.direction = normalize(vViewPosition);
+          faceSkinHeadlight.visible = true;
+          RE_Direct(faceSkinHeadlight, geometryPosition, geometryNormal, geometryViewDir, geometryClearcoatNormal, material, reflectedLight);
+        }`,
+      );
+  };
+  return material;
+}
 
 export function readFaceColorDebugFlag(win) {
   const scope = win || (typeof window !== 'undefined' ? window : null);
@@ -134,6 +192,7 @@ function paintColors(geometry, { partRgb, rainbow, matched, graph }) {
   const geom = new BufferGeometry();
   geom.setAttribute('position', new BufferAttribute(positions, 3));
   geom.setAttribute('color', new BufferAttribute(colors, 3));
+  geom.computeVertexNormals();
   return geom;
 }
 
@@ -202,16 +261,7 @@ export function syncFaceColorSkin(host, opts = {}) {
   detachFaceColorSkin(host);
   if (!painted) return null;
 
-  const skin = new Mesh(painted, new MeshBasicMaterial({
-    vertexColors: true,
-    polygonOffset: true,
-    polygonOffsetFactor: -1,
-    polygonOffsetUnits: -2,
-    depthTest: true,
-    depthWrite: false,
-    toneMapped: false,
-    side: hostSide(host),
-  }));
+  const skin = new Mesh(painted, makeFaceSkinMaterial(hostSide(host)));
   skin.name = SKIN_NAME;
   skin.renderOrder = FACE_SKIN_RENDER_ORDER;
   skin.frustumCulled = false;

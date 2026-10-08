@@ -1,8 +1,9 @@
 /* global window */
 /**
- * Unlit face-color skin. A saved color paints the matched face only.
+ * Lit face-color skin. A saved color paints the matched face only.
  * Missing and ambiguous keys draw nothing. The skin does not take picks,
  * and it is disposed with the part. The debug rainbow stays off.
+ * A face-on view matches the swatch. A whole-body paint shades.
  *
  * Screenshots: GOLDEN_SHOT_DIR or os.tmpdir()/surfcad-golden-shots.
  */
@@ -134,12 +135,18 @@ let shotKey = null;
   const before = JSON.stringify(colors);
   const skin = syncFaceColorSkin(host, { geometry: host.geometry, faceIDs, surfId: 'part-a', colors, rainbow: false });
   check('a saved face color builds a skin', !!skin && skin.name === 'face-color-skin');
-  check('the skin is unlit and does not write depth',
-    skin?.material?.type === 'MeshBasicMaterial'
+  check('the skin is lit and does not write depth',
+    skin?.material?.type === 'MeshStandardMaterial'
     && skin.material.vertexColors === true
     && skin.material.toneMapped === false
     && skin.material.depthWrite === false
+    && skin.material.depthTest === true
     && skin.material.polygonOffset === true
+    && skin.material.polygonOffsetFactor === -1
+    && skin.material.polygonOffsetUnits === -2
+    && skin.material.metalness === 0
+    && skin.material.roughness === 1
+    && skin.material.flatShading === true
     && skin.renderOrder === FACE_SKIN_RENDER_ORDER);
   check('the skin does not raycast', skin?.raycast !== Mesh.prototype.raycast);
   const tris = skinTris(skin);
@@ -392,7 +399,7 @@ window.__RESULT__ = renderFaceSkinShots(document.getElementById('c'), payload);
 
 const vite = await createVite({
   root: new URL('../..', import.meta.url).pathname,
-  server: { middlewareMode: true },
+  server: { middlewareMode: true, hmr: false },
   appType: 'custom',
   logLevel: 'error',
 });
@@ -423,7 +430,15 @@ try {
   await page.waitForFunction(() => window.__RESULT__, null, { timeout: 30000 });
   const result = await page.evaluate(() => window.__RESULT__);
   check('page rendered', errors.length === 0, errors.join('; '));
-  check('canvas skin is unlit', result.material?.type === 'MeshBasicMaterial' && result.material.toneMapped === false && result.material.depthWrite === false,
+  check('canvas skin is lit and keeps the depth offset',
+    result.material?.type === 'MeshStandardMaterial'
+    && result.material.toneMapped === false
+    && result.material.depthWrite === false
+    && result.material.polygonOffset === true
+    && result.material.polygonOffsetFactor === -1
+    && result.material.polygonOffsetUnits === -2
+    && result.material.metalness === 0
+    && result.material.roughness === 1,
     JSON.stringify(result.material));
   check('before, dark ground has no red face', result.beforeDark.red < 20, `red=${result.beforeDark.red}`);
   check('before, light ground has no red face', result.beforeLight.red < 20, `red=${result.beforeLight.red}`);
@@ -432,8 +447,32 @@ try {
   const gap = Math.abs(result.afterDark.r - result.afterLight.r)
     + Math.abs(result.afterDark.g - result.afterLight.g)
     + Math.abs(result.afterDark.b - result.afterLight.b);
-  check('the red reads the same in both themes', gap < 12 && result.afterDark.r > 220 && result.afterLight.r > 220,
+  check('the red reads the same in both themes', gap < 12 && result.afterDark.r > 160 && result.afterLight.r > 160,
     `dark ${result.afterDark.r.toFixed(0)},${result.afterDark.g.toFixed(0)},${result.afterDark.b.toFixed(0)} light ${result.afterLight.r.toFixed(0)},${result.afterLight.g.toFixed(0)},${result.afterLight.b.toFixed(0)}`);
+  const swatchDelta = (sample, hex) => {
+    const n = Number.parseInt(hex.slice(1), 16);
+    const want = [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+    return Math.max(
+      Math.abs(sample.r - want[0]),
+      Math.abs(sample.g - want[1]),
+      Math.abs(sample.b - want[2]),
+    );
+  };
+  const redDelta = swatchDelta(result.faceOnRed, '#ff0000');
+  const midDelta = swatchDelta(result.faceOnMid, '#2244aa');
+  check('a face-on red matches the swatch', redDelta <= 8 && result.faceOnRed.n > 50,
+    `delta=${redDelta.toFixed(1)} rgb=${result.faceOnRed.r.toFixed(0)},${result.faceOnRed.g.toFixed(0)},${result.faceOnRed.b.toFixed(0)} n=${result.faceOnRed.n}`);
+  check('a face-on midtone matches the swatch', midDelta <= 8 && result.faceOnMid.n > 50,
+    `delta=${midDelta.toFixed(1)} rgb=${result.faceOnMid.r.toFixed(0)},${result.faceOnMid.g.toFixed(0)},${result.faceOnMid.b.toFixed(0)} n=${result.faceOnMid.n}`);
+  check('a face-on paint is not striped', result.faceOnRed.stripe < 8 && result.faceOnMid.stripe < 8,
+    `red=${result.faceOnRed.stripe.toFixed(2)} mid=${result.faceOnMid.stripe.toFixed(2)}`);
+  const lum = (sample) => 0.2126 * sample.r + 0.7152 * sample.g + 0.0722 * sample.b;
+  const lumGap = Math.abs(lum(result.body.bright) - lum(result.body.dark));
+  check('two faces of a whole-body paint differ in luminance', lumGap >= 15 && result.body.bright.n > 20 && result.body.dark.n > 20,
+    `gap=${lumGap.toFixed(1)} bright=${result.body.bright.r.toFixed(0)},${result.body.bright.g.toFixed(0)},${result.body.bright.b.toFixed(0)} dark=${result.body.dark.r.toFixed(0)},${result.body.dark.g.toFixed(0)},${result.body.dark.b.toFixed(0)}`);
+  console.log(`  face-on red ${result.faceOnRed.r.toFixed(1)},${result.faceOnRed.g.toFixed(1)},${result.faceOnRed.b.toFixed(1)} delta ${redDelta.toFixed(2)} stripe ${result.faceOnRed.stripe.toFixed(2)}`);
+  console.log(`  face-on mid ${result.faceOnMid.r.toFixed(1)},${result.faceOnMid.g.toFixed(1)},${result.faceOnMid.b.toFixed(1)} delta ${midDelta.toFixed(2)} stripe ${result.faceOnMid.stripe.toFixed(2)}`);
+  console.log(`  body lum gap ${lumGap.toFixed(1)} bright ${result.body.bright.r.toFixed(0)},${result.body.bright.g.toFixed(0)},${result.body.bright.b.toFixed(0)} dark ${result.body.dark.r.toFixed(0)},${result.body.dark.g.toFixed(0)},${result.body.dark.b.toFixed(0)}`);
   const save = (name, row) => {
     if (!row?.png) return;
     const file = join(shotDir, name);
@@ -444,6 +483,8 @@ try {
   save('face-skin-after-dark-390.png', result.afterDark);
   save('face-skin-before-light-390.png', result.beforeLight);
   save('face-skin-after-light-390.png', result.afterLight);
+  save('face-skin-body-dark-390.png', result.body);
+  save('face-skin-faceon-red-390.png', result.faceOnRed);
 } finally {
   await browser?.close();
   server.close();
