@@ -59,6 +59,29 @@ function send(type, payload = {}) {
 
 let failed = 0;
 let passed = 0;
+function ifConditionsContaining(src, token) {
+  const found = [];
+  const re = /\bif\s*\(/g;
+  let match;
+  while ((match = re.exec(src))) {
+    let depth = 1;
+    let j = match.index + match[0].length;
+    const start = j;
+    for (; j < src.length && depth > 0; j++) {
+      const ch = src[j];
+      if (ch === '(') depth += 1;
+      else if (ch === ')') depth -= 1;
+    }
+    if (depth === 0) {
+      const cond = src.slice(start, j - 1);
+      if (cond.includes(token)) found.push(cond);
+    } else {
+      break;
+    }
+  }
+  return found;
+}
+
 function check(name, cond, detail = '') {
   if (cond) {
     passed++;
@@ -252,6 +275,12 @@ console.log('face paint — game mode and part switch');
     && /data-paint-chip/.test(chip));
   check('paint uses the normal face pick and the normal highlight',
     /paintPickFromClick\(/.test(view) && /'paint-pick'/.test(view));
+  const skipsPaint = (token) => {
+    const conds = ifConditionsContaining(view, token);
+    return conds.length > 0 && conds.every((cond) => cond.includes('!paintModeRef.current'));
+  };
+  check('a paint tap is not swallowed by a contour or a construction plane',
+    skipsPaint('showContoursRef') && skipsPaint('planeHits'));
   const switched = paintPicksAfterPartChange('part-a', 'part-b', picks);
   check('a part switch clears picks', switched.length === 0);
   check('the same part keeps picks', paintPicksAfterPartChange('part-a', 'part-a', picks).length === picks.length);
