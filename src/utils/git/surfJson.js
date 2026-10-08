@@ -46,6 +46,7 @@ import { normalizeRepoPath } from '../assembly.js';
 import { normalizeSheetMetalBinding } from '../scs/scsCatalog.js';
 import { PART_EXT, isVaultPartPath, vaultSegment } from './vaultLayout.js';
 import { isSurfId } from './surfId.js';
+import { rewriteSurfJsonLocalIds } from './localPartIdMigration.js';
 
 export const SURF_JSON_FORMAT = 'surfcad.assembly';
 export const SURF_JSON_VERSION = 1;
@@ -253,7 +254,18 @@ export function stringifySurfJson(doc) {
 
 /** .surf.json text or object -> in-app assembly document (source 'git'). Throws on invalid. */
 export function parseSurfJson(input) {
-  const parsed = typeof input === 'string' ? JSON.parse(input) : input;
+  // A legacy `local:` path or color key fails validation. Strip it before
+  // the check. Surf ids that use the older `local-` prefix stay for the
+  // surf-id migration.
+  let prepared = input;
+  if (typeof input === 'string') {
+    prepared = rewriteSurfJsonLocalIds(input);
+  } else if (input && typeof input === 'object') {
+    const text = JSON.stringify(input);
+    const rewritten = rewriteSurfJsonLocalIds(text);
+    prepared = rewritten === text ? input : JSON.parse(rewritten);
+  }
+  const parsed = typeof prepared === 'string' ? JSON.parse(prepared) : prepared;
   const raw = pruneDanglingColors(pruneDanglingGroupPartIds(parsed));
   const check = validateSurfJson(raw);
   if (!check.ok) throw new Error(`Invalid .surf.json: ${check.errors.join('; ')}`);

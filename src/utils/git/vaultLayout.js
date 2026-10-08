@@ -13,8 +13,8 @@
  *
  * Every path here is repo-relative, forward-slash, no leading slash.
  * Part rows in a .surf.json reference scripts by these full repo paths.
- * Local IndexedDB uses `local:` ids; Local→Git / Add to Repo map into this
- * same contract.
+ * Local IndexedDB uses a bare id (no `local:` prefix). A load-time migration
+ * strips a legacy prefix. Local→Git / Add to Repo map into this same contract.
  */
 import { normalizeRepoPath } from '../assembly.js';
 

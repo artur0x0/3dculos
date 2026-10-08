@@ -116,7 +116,6 @@ async function entriesOf(gh, repo) {
   const tree = await gh.listTree(repo, 'main');
   const entries = [];
   for (const row of tree) {
-    // eslint-disable-next-line no-await-in-loop
     const file = await gh.readFile(repo, row.path, 'main');
     if (file) entries.push({ path: file.path, content: file.content });
   }

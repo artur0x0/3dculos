@@ -12,6 +12,8 @@ export * from './gitBranch.js';
 export * from './gitMoveToGit.js';
 export * from './surfId.js';
 export * from './surfIdMigration.js';
+export * from './localPartIdMigration.js';
+export * from './partListSubtitle.js';
 export * from './layoutMigration.js';
 export * from './gitRename.js';
 export * from './gitDeleteAssembly.js';

@@ -134,6 +134,8 @@ import {
   backfillSurfIds,
   applyIdPromotion,
   migrateAssemblyRecords,
+  migrateLocalPartIds,
+  isVaultPartPath,
   reconcileSyncedFromTip,
   markPartsSynced,
   planSurfIdMigrationCommit,
@@ -1132,20 +1134,50 @@ const App = () => {
               }
               const flags = await loadPartSyncFlags((doc.parts || []).map((part) => part.id));
               if (Object.keys(flags).length) {
-                doc = serializeAssembly({
+                // Keep color keys until the local: migration rewrites them.
+                // serializeAssembly would drop a key that is not yet a surf id.
+                doc = {
                   ...doc,
                   parts: (doc.parts || []).map((part) => (
                     typeof flags[part.id] === 'boolean' ? { ...part, isSynced: flags[part.id] } : part
                   )),
-                });
+                };
               }
-              if (migrated.changed || Object.keys(flags).length) {
+              const localIds = migrateLocalPartIds({
+                doc,
+                scripts,
+                histories: partHistoriesRef.current,
+                selection: { activeId: doc.activeId, cadPartId: cadPartIdRef.current },
+                draftPartId: draft?.partId ?? null,
+              });
+              if (localIds.changed) {
+                doc = localIds.doc;
+                scripts = localIds.scripts;
+                partHistoriesRef.current = localIds.histories || partHistoriesRef.current;
+                if (localIds.selection?.cadPartId && localIds.selection.cadPartId !== cadPartIdRef.current) {
+                  cadPartIdRef.current = localIds.selection.cadPartId;
+                }
+                if (draft && localIds.draftPartId !== draft.partId) {
+                  draft = { ...draft, partId: localIds.draftPartId };
+                  try { await saveEditorDraft(draft); } catch { /* ignore */ }
+                }
+              }
+              if (migrated.changed || localIds.changed || Object.keys(flags).length) {
                 try {
                   await saveAssemblyDocument(doc);
-                  if (migrated.changed) {
+                  if (migrated.changed || localIds.changed) {
                     for (const [id, text] of Object.entries(scripts)) {
-                      // eslint-disable-next-line no-await-in-loop
-                      await savePartScript(id, text);
+                      const part = (doc.parts || []).find((row) => row.id === id);
+                      await savePartScript(
+                        id,
+                        text,
+                        typeof part?.isSynced === 'boolean' ? { isSynced: part.isSynced } : {},
+                      );
+                    }
+                  }
+                  if (localIds.changed) {
+                    for (const { from } of localIds.pairs) {
+                      try { await deletePartScript(from); } catch { /* ignore */ }
                     }
                   }
                 } catch (err) {
@@ -1953,6 +1985,8 @@ const App = () => {
     }
     const loadedName = assemblyNameForLoad(raw, filename);
     if (loadedName !== doc.name) doc = serializeAssembly({ ...doc, name: loadedName });
+    const migratedIds = migrateLocalPartIds({ doc });
+    if (migratedIds.changed) doc = migratedIds.doc;
     try {
       await runTrackedAssemblyOpen(assemblyOpenCtrlRef.current, {
         name: doc.name,
@@ -2529,9 +2563,24 @@ const App = () => {
     const branch = opened.baseline?.branch || gitWorkingBranch();
     const filled = backfillSurfIds(opened.doc, store.pathIndexFor(vault.repo));
     const migrated = migrateAssemblyRecords({ doc: filled.doc, scripts: opened.scripts });
-    const reconciled = reconcileSyncedFromTip(migrated.doc, opened.scripts);
+    const localIds = migrateLocalPartIds({
+      doc: migrated.doc,
+      scripts: migrated.scripts,
+      histories: partHistoriesRef.current,
+      selection: { activeId: migrated.doc?.activeId, cadPartId: cadPartIdRef.current },
+    });
+    if (localIds.changed) {
+      partHistoriesRef.current = localIds.histories || partHistoriesRef.current;
+      if (localIds.selection?.cadPartId && localIds.selection.cadPartId !== cadPartIdRef.current) {
+        cadPartIdRef.current = localIds.selection.cadPartId;
+      }
+      for (const { from } of localIds.pairs) {
+        try { deletePartScript(from); } catch { /* ignore */ }
+      }
+    }
+    const reconciled = reconcileSyncedFromTip(localIds.doc, localIds.scripts);
     const openedDocIn = reconciled.doc;
-    const openedScriptsIn = migrated.scripts;
+    const openedScriptsIn = localIds.scripts;
     for (const part of openedDocIn.parts || []) {
       if (part.surfId) store.rememberPathId(vault.repo, part.id, part.surfId);
     }
@@ -3886,7 +3935,7 @@ const App = () => {
     if (gitBaselineRef.current) return undefined;
     const parts = doc.parts || [];
     const allLocal = parts.length > 0
-      && parts.every((p) => String(p.id).startsWith('local:'));
+      && parts.every((p) => String(p.id).startsWith('local:') || !isVaultPartPath(p.id));
     if (allLocal) return undefined; // true first-commit; keep null baseline
     const name = vaultSegment(doc.name) || doc.name;
     if (!name) return undefined;
@@ -3907,14 +3956,32 @@ const App = () => {
         const beforeScripts = partScriptsRef.current || {};
         const migrated = migrateAssemblyRecords({ doc: assemblyRef.current, scripts: beforeScripts });
         let doc = migrated.doc;
-        if (migrated.changed) {
-          rememberScripts(migrated.scripts);
-          for (const [id, text] of Object.entries(migrated.scripts)) {
+        let scriptsNow = migrated.scripts;
+        const localIds = migrateLocalPartIds({
+          doc,
+          scripts: scriptsNow,
+          histories: partHistoriesRef.current,
+          selection: { activeId: doc?.activeId, cadPartId: cadPartIdRef.current },
+        });
+        if (localIds.changed) {
+          doc = localIds.doc;
+          scriptsNow = localIds.scripts;
+          partHistoriesRef.current = localIds.histories || partHistoriesRef.current;
+          if (localIds.selection?.cadPartId && localIds.selection.cadPartId !== cadPartIdRef.current) {
+            cadPartIdRef.current = localIds.selection.cadPartId;
+          }
+        }
+        if (migrated.changed || localIds.changed) {
+          rememberScripts(scriptsNow);
+          for (const [id, text] of Object.entries(scriptsNow)) {
             if (text !== beforeScripts[id]) savePartScript(id, text);
+          }
+          for (const { from } of localIds.pairs) {
+            try { deletePartScript(from); } catch { /* ignore */ }
           }
         }
         const reconciled = reconcileSyncedFromTip(doc, opened.scripts);
-        if (reconciled.changed || migrated.changed) {
+        if (reconciled.changed || migrated.changed || localIds.changed) {
           doc = reconciled.doc;
           rememberAssembly(doc);
           for (const part of doc.parts || []) {
@@ -3982,7 +4049,13 @@ const App = () => {
       source,
       name: DEFAULT_ASSEMBLY_NAME,
       activeId: seedId,
-      parts: [{ id: seedId, name: DEFAULT_PART_NAME, visible: true, order: 0 }],
+      parts: [{
+        id: seedId,
+        name: DEFAULT_PART_NAME,
+        visible: true,
+        order: 0,
+        ...(source === 'git' ? { isSynced: false } : {}),
+      }],
     });
     refreshGenRef.current += 1;
     // Optimistic: show the seeded assembly immediately, then persist.
@@ -4002,7 +4075,7 @@ const App = () => {
     saveEditorDraft({ script: starter, filename: DEFAULT_PART_NAME, partId: seedId });
     setPendingPartIds((prev) => new Set(prev).add(seedId));
     try {
-      await savePartScript(seedId, starter);
+      await savePartScript(seedId, starter, source === 'git' ? { isSynced: false } : {});
     } catch (err) {
       setUploadError(err?.message || 'Could not create assembly');
     } finally {
@@ -4166,7 +4239,7 @@ const App = () => {
     if (nextDoc?.source === 'git' && gitVaultRef.current?.repo) {
       const asmPath = assemblyFilePath(vaultSegment(nextDoc.name) || nextDoc.name);
       const files = [fileWrite(asmPath, stringifySurfJson(nextDoc))];
-      if (fromRepo && !key.startsWith('local:') && !key.startsWith('local-')) {
+      if (fromRepo && isVaultPartPath(key) && !key.startsWith('local:') && !key.startsWith('local-')) {
         files.unshift(fileDelete(key));
       }
       void (async () => {
@@ -5490,7 +5563,7 @@ const App = () => {
   // fully dirty — that falsely dotted every in-repo part after reload (#215).
   // firstCommitBaseline is for true first-commit chrome (local: rows only).
   const gitParts = assemblyDoc?.parts || [];
-  const hasLocalPartIds = gitParts.some((p) => String(p.id).startsWith('local:'));
+  const hasLocalPartIds = gitParts.some((p) => String(p.id).startsWith('local:') || !isVaultPartPath(p.id));
   const needsFirstCommitChrome = (
     assemblyDoc?.source === 'git'
     && !gitBaseline
@@ -5513,7 +5586,7 @@ const App = () => {
     // Awaiting tip reseed: only local: rows; repo paths stay clean until
     // baseline arrives and a real content diff can run.
     assemblyDoc?.source === 'git'
-      ? new Set(gitParts.filter((p) => String(p.id).startsWith('local:')).map((p) => p.id))
+      ? new Set(gitParts.filter((p) => String(p.id).startsWith('local:') || !isVaultPartPath(p.id)).map((p) => p.id))
       : new Set()
   );
   const sourceDirty = (

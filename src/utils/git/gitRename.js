@@ -285,7 +285,6 @@ export async function readRenameEntries(adapter, repo, branch) {
   for (const entry of tree || []) {
     const path = entry?.path ?? entry;
     if (!isAssemblyFile(path) && !isPartScriptPath(path)) continue;
-    // eslint-disable-next-line no-await-in-loop
     const file = await adapter.readFile(repo, path, branch);
     if (file) entries.push({ path, content: file.content, sha: file.sha || entry.sha || null });
   }

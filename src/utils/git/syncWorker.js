@@ -51,41 +51,32 @@ export async function flushSyncQueue({
   const syncedPartIds = [];
   const layoutMoves = [];
   for (const item of queued) {
-    // eslint-disable-next-line no-await-in-loop
     await store.setOpStatus(item.id, 'sending');
-    // eslint-disable-next-line no-await-in-loop
     await store.setPartsState(repo, item.partIds, 'sending', item.branch || branch);
     try {
       let files = item.files || [];
       if (item.op === 'rename') {
-        // eslint-disable-next-line no-await-in-loop
         const built = await materializeRename(adapter, repo, branch, item.payload);
         files = built.files;
       }
       if (!files.length) {
-        // eslint-disable-next-line no-await-in-loop
         await store.setOpStatus(item.id, 'done');
-        // eslint-disable-next-line no-await-in-loop
         await store.setPartsState(repo, item.partIds, 'clean', item.branch || branch);
         continue;
       }
       if (item.op === 'migrate-ids') assertMigrationCommitSafe(files);
       let plannedMoves = null;
       if (item.op === 'migrate-layout') {
-        // eslint-disable-next-line no-await-in-loop
         const entries = await readVaultIdEntries(adapter, repo, branch);
         const plan = planLayoutMigration(entries);
         if (!plan.changed) {
-          // eslint-disable-next-line no-await-in-loop
           await store.setOpStatus(item.id, 'done');
-          // eslint-disable-next-line no-await-in-loop
           await store.setPartsState(repo, item.partIds, 'clean', item.branch || branch);
           continue;
         }
         files = plan.files;
         plannedMoves = plan.moves;
       }
-      // eslint-disable-next-line no-await-in-loop
       const res = await adapter.commitFiles(repo, {
         branch,
         message: item.message || 'Sync',
@@ -95,16 +86,11 @@ export async function flushSyncQueue({
       head = res.sha;
       if (plannedMoves) layoutMoves.push(...plannedMoves);
       syncedPartIds.push(...(item.partIds || []));
-      // eslint-disable-next-line no-await-in-loop
       await store.setLastSyncedSha(repo, head, branch);
-      // eslint-disable-next-line no-await-in-loop
       await store.setOpStatus(item.id, 'done');
-      // eslint-disable-next-line no-await-in-loop
       await store.setPartsState(repo, item.partIds, 'clean', item.branch || branch);
     } catch (err) {
-      // eslint-disable-next-line no-await-in-loop
       await store.setOpStatus(item.id, 'failed', err?.message || 'Sync failed');
-      // eslint-disable-next-line no-await-in-loop
       await store.setPartsState(repo, item.partIds, 'failed', item.branch || branch);
       return {
         status: 'failed',

@@ -136,8 +136,10 @@ Desktop specifics:
   `data-part-group-name-input`), **Ungroup**, **Copy all to this assembly**,
   **Remove group** (confirm `data-part-group-remove-dialog`; linked parts
   are unlinked, not deleted from the repo). Grouped part rows keep the
-  caution label and the same select, rename, and delete controls. Add to Repo (`data-part-add-to-repo`) shows
-  when `isSynced` is false, and for a `local:` or `local-` row id that is not a repo path. Text inputs on Parts/git
+  caution label and the same select, rename, and delete controls. The gray subtitle under the name
+  (`data-part-subtitle`) is the repo path, or the path Add to Repo would write (`parts/<Name>.js`). It never
+  shows a `local:` id. Add to Repo (`data-part-add-to-repo`) shows when `isSynced` is false, and when the flag
+  is unset and the row id is not a repo path. Text inputs on Parts/git
   use `partsChrome.js` `PARTS_TEXT_INPUT_CLASS` (≥16px) to block iOS Safari focus-zoom.
   Git create, Save, rename, copy, and delete show `data-part-pending` spinner in place of the Save icon while that branch's outbox op is queued or sending. A failed sync shows a red mark (`data-part-sync-failed`). A failed rename or assembly delete shows a toast with Retry and Revert (`data-rename-toast`). A moved remote tip opens the conflict popup and does not overwrite.
 - `PromptInput` is passed `isMobile={false}` explicitly (`src/App.jsx:1345`).

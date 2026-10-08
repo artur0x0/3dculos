@@ -2,7 +2,7 @@
  * Assembly document and the rules that turn rows into a viewport.
  *
  * The saved JSON lists parts by id. It never contains script source.
- * Git ids are repo paths. Local ids are IndexedDB keys.
+ * Git ids are repo paths. Local ids are bare IndexedDB keys, with no sync prefix.
  * A position, when present, is a translation. There are no mates.
  */
 
@@ -59,11 +59,16 @@ export function normalizeRepoPath(path) {
   return id;
 }
 
+/**
+ * Permanent IndexedDB row id. Sync is `isSynced`, never a prefix on the id.
+ * Uses `crypto.randomUUID` when the page has it. Otherwise time plus random,
+ * which is what an iPhone shows when `randomUUID` is missing.
+ */
 export function newLocalPartId() {
-  const rnd = (typeof crypto !== 'undefined' && crypto.randomUUID)
+  const rnd = (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function')
     ? crypto.randomUUID()
     : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  return `local:${rnd}`;
+  return rnd;
 }
 
 /**
