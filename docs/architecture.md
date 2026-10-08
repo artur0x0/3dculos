@@ -140,6 +140,16 @@ What the new mesh contains is the difference, not the rebuild:
 
 Worker face picks (`{ center, normal }` passed to `hollow` / `draftFaces` / `cut` / `moveFace` / `deleteFace`) resolve in `c4MeshData`, not in PartGraph. A named pick stays on the body whose surface contains the center. It does not move to another body because that face's center is nearer. The two face graphs are not kept in sync. `moveFace` then includes the coplanar face across that 0.02mm seam, and the larger plane when the named face is a scrap of it, so the offset matches the one face the click already selected. `deleteFace` uses that same center and normal and does not take the extra face.
 
+## Face color match
+
+A saved face color is found again from the face graph. `faceFingerprints` (`src/utils/faceColorMatch.js`) reads the PartGraph of the mesh just shown. It does not paint. One patch is one fingerprint, the same `key` stored on `colors[surfId].faces[]`:
+
+- `at` is the patch centroid (area-weighted, mm). `n` is the unit area-weighted normal. A closed wall whose normals cancel keeps the largest triangle's normal. `area` is the patch area.
+- A fillet or chamfer patch also stores `src` and `ord`. `src` is the negative feature key (`triSource`) that owns more than half the patch's triangles. `ord` is that feature's patches sorted by center, so two blends from one call stay distinct.
+- Rebuild the fingerprints when the face graph rebuilds: after a successful run (a new mesh is a new graph), and on a part switch (read that part's graph, not the previous part's).
+
+A key matches one face when the normal is within 8°, `at` is within 1 mm, and the area is within ±25% of the saved area. A key that stores `src` or `ord` has to match those as well. Faces are binned by `at` (1 mm cells) and by normal; the search checks that cell and its neighbors, then applies the tolerances. Two or more faces in tolerance drop the key as ambiguous. None drop it as missing. There is no guess and no error. A key is compared only to the part it was saved on, so an identical solid under another surf id does not take the color.
+
 ## Contour paint
 
 What you see as an edge is not one list.
