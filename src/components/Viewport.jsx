@@ -64,6 +64,7 @@ import ContourModeRail from './ContourModeRail';
 import ContourModeChip from './ContourModeChip';
 import FilletModeChip from './FilletModeChip';
 import ShellModeChip from './ShellModeChip';
+import { PaintModeChip, PaintModeToggle } from './PaintModeChip';
 import SheetMetalPicker from './sheetMetal/SheetMetalPicker';
 import SheetMetalRail from './sheetMetal/SheetMetalRail';
 import SheetMetalFlow from './sheetMetal/SheetMetalFlow';
@@ -292,6 +293,17 @@ import { downloadModelFromMesh, get3MFBase64FromMesh } from '../utils/exportMode
 import { parseImportedModels, loadCachedModel } from '../utils/importModel';
 import { calculateQuote } from '../utils/quoting';
 import { resolveViewportFaceClick, warmFaceGraph } from '../utils/selectFace';
+import {
+  fingerprintsFromGeometry,
+  PAINT_SWATCHES,
+  paintPickFromClick,
+  paintPicksAfterMeshChange,
+  paintPicksAfterPartChange,
+  resolvedPaintColor,
+  togglePaintPick,
+  undoPaintPick,
+  unmatchedColorCount,
+} from '../utils/facePaint';
 import { formatViewerTitle, sanitizePartName } from '../utils/assembly.js';
 import { buildPartGraphPatches, buildPatchOverlayArrays, PARTGRAPH_MAX_TRIANGLES } from '../utils/partGraphPatches';
 import { createCuttingPlaneWidget, updateCuttingPlaneWidget } from '../utils/cuttingPlaneWidget';
@@ -701,6 +713,8 @@ const Viewport = forwardRef(({
   partLabels = null,
   /** Saved assembly colors, keyed by surf id. Empty skips the face skin. */
   assemblyColors = null,
+  /** Paint Confirm / Clear / Remove unmatched. Writes assembly colors. */
+  onCommitPaint = null,
 }, ref) => {
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
@@ -882,6 +896,12 @@ const Viewport = forwardRef(({
   const filletModeRef = useRef(null);
   const [shellMode, setShellMode] = useState(null);
   const shellModeRef = useRef(null);
+  /** Paint: in-progress face picks and the popup. Null when the chip is off. */
+  const [paintMode, setPaintMode] = useState(null);
+  const paintModeRef = useRef(null);
+  const exitPaintModeRef = useRef(() => {});
+  const clearPaintPicksRef = useRef(() => {});
+  const showPaintPicksRef = useRef(() => {});
   /** SCS sheet metal: picker popup (S1) + mode state (stage, sku, partId). */
   const [sheetMetalPicker, setSheetMetalPicker] = useState(null);
   const [sheetMetalMode, setSheetMetalMode] = useState(null);
@@ -1114,6 +1134,7 @@ const Viewport = forwardRef(({
   contourModeRef.current = contourMode;
   filletModeRef.current = filletMode;
   shellModeRef.current = shellMode;
+  paintModeRef.current = paintMode;
   draftModeRef.current = draftMode;
   cutModeRef.current = cutMode;
   booleanModeRef.current = booleanMode;
@@ -1129,14 +1150,30 @@ const Viewport = forwardRef(({
   featureSessionRef.current = !!(
     contourMode || filletMode || shellMode || draftMode || cutMode
     || booleanMode || moveMode || moveFaceMode || deleteFaceMode
+    || paintMode
   );
 
   useEffect(() => {
     onFeatureSessionChangeRef.current?.(featureSessionRef.current);
   }, [
     contourMode, filletMode, shellMode, draftMode, cutMode,
-    booleanMode, moveMode, moveFaceMode, deleteFaceMode,
+    booleanMode, moveMode, moveFaceMode, deleteFaceMode, paintMode,
   ]);
+
+  useEffect(() => {
+    if (mode === 'game') exitPaintModeRef.current();
+  }, [mode]);
+
+  useEffect(() => {
+    if (!paintMode) return undefined;
+    const onKey = (event) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      exitPaintModeRef.current();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [paintMode]);
 
   useImperativeHandle(ref, () => ({
     executeScript,
@@ -2437,6 +2474,7 @@ const Viewport = forwardRef(({
   }, [clearXsPreview, clearWorkplaneOverlay, clearPolylineDraft, clearExtrudePreview, clearRevolvePreview, clearLoftPreview, clearSweepPreview, applyContourPartGhost, clearSavedContourGhosts]);
 
   const enterContourMode = useCallback(({ entry } = {}) => {
+    exitPaintModeRef.current();
     setFilletMode(null);
     filletModeRef.current = null;
     clearFilletBlendPreview();
@@ -2590,6 +2628,7 @@ const Viewport = forwardRef(({
   }, [clearFilletBlendPreview, clearEdgeHover, clearEdgeHighlight]);
 
   const enterFilletMode = useCallback((opts = {}) => {
+    exitPaintModeRef.current();
     const entry = opts?.entry === 'chamferEdges' ? 'chamferEdges' : 'filletEdges';
     // Snapshot before exitContourMode, which forces face pick.
     filletPriorPickModeRef.current = pickModeRef.current === 'edge' ? 'edge' : 'face';
@@ -2743,6 +2782,7 @@ const Viewport = forwardRef(({
   }, []);
 
   const enterShellMode = useCallback(() => {
+    exitPaintModeRef.current();
     exitContourMode();
     setFilletMode(null);
     filletModeRef.current = null;
@@ -2770,6 +2810,61 @@ const Viewport = forwardRef(({
     setShellMode(next);
     shellModeRef.current = next;
   }, [exitContourMode, selectedFace, clearFilletBlendPreview, clearEdgeHover, clearEdgeHighlight, clearHighlight]);
+
+  const exitPaintMode = useCallback(() => {
+    setPaintMode(null);
+    paintModeRef.current = null;
+    clearHighlight();
+  }, [clearHighlight]);
+  exitPaintModeRef.current = exitPaintMode;
+
+  const clearPaintPicks = useCallback(() => {
+    const prev = paintModeRef.current;
+    if (!prev?.picks?.length) return;
+    const next = { ...prev, picks: [] };
+    paintModeRef.current = next;
+    setPaintMode(next);
+    clearHighlight();
+  }, [clearHighlight]);
+  clearPaintPicksRef.current = clearPaintPicks;
+
+  const enterPaintMode = useCallback(() => {
+    if (mode === 'game') return;
+    exitContourMode();
+    setFilletMode(null);
+    filletModeRef.current = null;
+    clearFilletBlendPreview();
+    setShellMode(null);
+    shellModeRef.current = null;
+    setDraftMode(null);
+    draftModeRef.current = null;
+    if (cutModeRef.current || moveModeRef.current || moveFaceModeRef.current || deleteFaceModeRef.current) clearHighlight();
+    setCutMode(null);
+    cutModeRef.current = null;
+    setBooleanMode(null);
+    booleanModeRef.current = null;
+    setMoveMode(null);
+    moveModeRef.current = null;
+    clearMoveFacePreviewRef.current();
+    setMoveFaceMode(null);
+    moveFaceModeRef.current = null;
+    clearDeleteFacePreviewRef.current();
+    setDeleteFaceMode(null);
+    deleteFaceModeRef.current = null;
+    setSheetMetalMode(null);
+    sheetMetalModeRef.current = null;
+    setSheetMetalPicker(null);
+    setPickMode('face');
+    clearEdgeHover();
+    clearEdgeHighlight();
+    setSelectedEdges([]);
+    const next = { color: PAINT_SWATCHES[0], custom: '', part: false, picks: [] };
+    paintModeRef.current = next;
+    setPaintMode(next);
+    clearHighlight();
+  }, [
+    mode, exitContourMode, clearFilletBlendPreview, clearHighlight, clearEdgeHover, clearEdgeHighlight,
+  ]);
 
   const acceptShell = useCallback(() => {
     const state = shellModeRef.current;
@@ -3619,6 +3714,27 @@ const Viewport = forwardRef(({
     highlightMeshRef.current.push(highlightMesh);
   }, []);
 
+  const showPaintPicks = useCallback((picks) => {
+    const list = Array.isArray(picks) ? picks : (paintModeRef.current?.picks || []);
+    clearHighlight();
+    const geom = resultRef.current?.geometry;
+    const positions = geom?.attributes?.position;
+    const index = geom?.index?.array;
+    const shown = [];
+    const seen = new Set();
+    for (const pick of list) {
+      for (const tri of pick?.indices || []) {
+        if (seen.has(tri)) continue;
+        seen.add(tri);
+        shown.push(tri);
+      }
+    }
+    if (geom && positions && index && shown.length) {
+      highlightFace(shown, geom, positions, index, 0xffff00, 'paint-pick');
+    }
+  }, [clearHighlight, highlightFace]);
+  showPaintPicksRef.current = showPaintPicks;
+
   const showCadBodyHighlight = useCallback(() => {
     const geom = resultRef.current?.geometry;
     const positions = geom?.attributes?.position;
@@ -3664,6 +3780,7 @@ const Viewport = forwardRef(({
   }, [clearHighlight]);
 
   const enterDraftMode = useCallback(() => {
+    exitPaintModeRef.current();
     exitContourMode();
     setFilletMode(null);
     filletModeRef.current = null;
@@ -3965,6 +4082,7 @@ const Viewport = forwardRef(({
   }, [paintCutPicks, syncCutPlaneWidget]);
 
   const enterCutMode = useCallback(() => {
+    exitPaintModeRef.current();
     exitContourMode();
     setFilletMode(null);
     filletModeRef.current = null;
@@ -4279,6 +4397,7 @@ const Viewport = forwardRef(({
   }, [paintBooleanPicks]);
 
   const enterBooleanMode = useCallback(() => {
+    exitPaintModeRef.current();
     exitContourMode();
     setFilletMode(null);
     filletModeRef.current = null;
@@ -4403,6 +4522,7 @@ const Viewport = forwardRef(({
   }, [clearHighlight, clearMovePreview]);
 
   const enterMoveMode = useCallback(() => {
+    exitPaintModeRef.current();
     exitContourMode();
     setFilletMode(null);
     filletModeRef.current = null;
@@ -4743,6 +4863,7 @@ const Viewport = forwardRef(({
   }, [paintMoveFacePicks]);
 
   const enterMoveFaceMode = useCallback(() => {
+    exitPaintModeRef.current();
     exitContourMode();
     setFilletMode(null);
     filletModeRef.current = null;
@@ -4854,6 +4975,7 @@ const Viewport = forwardRef(({
   }, [paintDeleteFacePicks]);
 
   const enterDeleteFaceMode = useCallback(() => {
+    exitPaintModeRef.current();
     exitContourMode();
     setFilletMode(null);
     filletModeRef.current = null;
@@ -5299,7 +5421,8 @@ const Viewport = forwardRef(({
     // Slice 12 hotfix: Edge mode short-circuits face selection entirely.
     // Screen-space pick with finger slop — no mesh-face hit required.
     // A hit on another part retargets first so the edge graph is that part's.
-    if (pickModeRef.current === 'edge') {
+    // Paint keeps the face-graph pick, even if the right rail is on edges.
+    if (pickModeRef.current === 'edge' && !paintModeRef.current) {
       if (clickTimerRef.current) {
         clearTimeout(clickTimerRef.current);
         clickTimerRef.current = null;
@@ -5402,7 +5525,7 @@ const Viewport = forwardRef(({
     const solidD = partChoiceHit.hit?.distance ?? Infinity;
     // Cut taps a body or a piece. A construction plane that sits on the cut
     // (the XY plane through a centered part) must not swallow that click.
-    if (!cutModeRef.current && !booleanModeRef.current && planeHits.length && !moveModeRef.current && !moveFaceModeRef.current && !deleteFaceModeRef.current && planeD <= solidD + 0.5) {
+    if (!cutModeRef.current && !booleanModeRef.current && !paintModeRef.current && planeHits.length && !moveModeRef.current && !moveFaceModeRef.current && !deleteFaceModeRef.current && planeD <= solidD + 0.5) {
       const ud = planeHits[0].object.userData?.plane
         ? planeHits[0].object.userData
         : planeHits[0].object.parent?.userData;
@@ -5557,7 +5680,30 @@ const Viewport = forwardRef(({
   const processClick = useCallback(() => {
     const clickData = pendingClickDataRef.current;
     if (!clickData) return;
-    
+
+    if (paintModeRef.current) {
+      const { seedFaceIndex, geometry, faceNormal } = clickData;
+      const pick = paintPickFromClick({
+        geometry,
+        faceIDs: faceIDsRef.current,
+        seedFaceIndex,
+        faceNormal,
+        angleTolerance: ANGLE_TOLERANCE_DEGREES,
+      });
+      clickCountRef.current = 0;
+      clickTimerRef.current = null;
+      pendingClickDataRef.current = null;
+      if (!pick) return;
+      const picks = togglePaintPick(paintModeRef.current.picks, pick);
+      const next = { ...paintModeRef.current, picks };
+      paintModeRef.current = next;
+      setPaintMode(next);
+      clearEdgeHighlight();
+      setSelectedEdges([]);
+      showPaintPicks(picks);
+      return;
+    }
+
     const { clickedFace, seedFaceIndex, geometry, positions, index, faceNormal, additive, hitPoint } = clickData;
     const clickCount = clickCountRef.current;
     const legacyTapNow = !!(
@@ -5790,7 +5936,7 @@ const Viewport = forwardRef(({
       }
     }
     
-  }, [measurementEnabled, measurementFaces, onFaceSelected, clearHighlight, clearEdgeHighlight, highlightFace, publishFacePicks, paintDraftPicks, commitCutState, paintMovePreview, commitMoveFaceState, commitDeleteFaceState, getHelperBuffer, commitBooleanState, crossSectionEnabled]);
+  }, [measurementEnabled, measurementFaces, onFaceSelected, clearHighlight, clearEdgeHighlight, highlightFace, publishFacePicks, paintDraftPicks, commitCutState, paintMovePreview, commitMoveFaceState, commitDeleteFaceState, getHelperBuffer, commitBooleanState, crossSectionEnabled, showPaintPicks]);
 
   const chooseAmbiguousPart = useCallback((partId) => {
     const pending = ambiguousPickRef.current;
@@ -7252,6 +7398,14 @@ const Viewport = forwardRef(({
     // Fillet / Chamfer picks accumulate across parts: a switch keeps the
     // edges already picked on the previous part (each edge carries its part).
     const keepEdges = retargetKeepsEdgePicks({ filletMode: filletModeRef.current });
+    if (paintModeRef.current?.picks?.length) {
+      const kept = paintPicksAfterMeshChange(cachedMeshDataRef.current === mesh, paintModeRef.current.picks);
+      if (kept !== paintModeRef.current.picks) {
+        const next = { ...paintModeRef.current, picks: kept };
+        paintModeRef.current = next;
+        setPaintMode(next);
+      }
+    }
     clearHighlight();
     clearEdgeHighlight();
     clearEdgeHover();
@@ -7287,6 +7441,7 @@ const Viewport = forwardRef(({
     }
     if (renderer && scene && camera) renderer.render(scene, camera);
     if (booleanModeRef.current) paintBooleanPicksRef.current(booleanModeRef.current);
+    if (paintModeRef.current) showPaintPicksRef.current(paintModeRef.current.picks);
     return true;
   };
 
@@ -7322,6 +7477,14 @@ const Viewport = forwardRef(({
   swapPickPartRef.current = ({ partId, mesh, position }) => {
     if (!partId || !mesh?.vertProperties || !resultRef.current) return false;
     const prevId = activePartIdRef.current;
+    if (paintModeRef.current) {
+      const kept = paintPicksAfterPartChange(prevId, partId, paintModeRef.current.picks);
+      if (kept !== paintModeRef.current.picks) {
+        const next = { ...paintModeRef.current, picks: kept };
+        paintModeRef.current = next;
+        setPaintMode(next);
+      }
+    }
     if (prevId && String(prevId) === String(partId) && cachedMeshDataRef.current === mesh) {
       activePartIdRef.current = partId;
       return true;
@@ -7369,6 +7532,15 @@ const Viewport = forwardRef(({
       prevVisible.add(prevActive);
     }
     activePartIdRef.current = activeId;
+    if (paintModeRef.current) {
+      const kept = paintPicksAfterPartChange(prevActive, activeId, paintModeRef.current.picks);
+      if (kept !== paintModeRef.current.picks) {
+        const next = { ...paintModeRef.current, picks: kept };
+        paintModeRef.current = next;
+        setPaintMode(next);
+        clearHighlight();
+      }
+    }
     const surfIds = new Map();
     const rememberSurf = (solid) => {
       if (solid?.id != null && solid.surfId) surfIds.set(String(solid.id), solid.surfId);
@@ -7601,6 +7773,57 @@ const Viewport = forwardRef(({
     }
   }, [cachedMeshData, currentFilename]);
 
+  const paintSurfId = () => (
+    resultRef.current?.userData?.surfId
+    || partSurfIdRef.current.get(String(activePartIdRef.current || ''))
+    || null
+  );
+  const paintFacesNow = () => fingerprintsFromGeometry(resultRef.current?.geometry, faceIDsRef.current);
+  const patchPaint = (partial) => {
+    const prev = paintModeRef.current;
+    if (!prev) return;
+    const next = { ...prev, ...partial };
+    paintModeRef.current = next;
+    setPaintMode(next);
+  };
+  const acceptPaint = () => {
+    const state = paintModeRef.current;
+    if (!state || mode === 'game') return;
+    const surfId = paintSurfId();
+    const color = resolvedPaintColor(state.color, state.custom);
+    if (!surfId || !color) return;
+    if (!state.part && !state.picks.length) return;
+    const wrote = onCommitPaint?.({
+      op: state.part ? 'part' : 'faces',
+      surfId,
+      color,
+      keys: state.picks.map((pick) => pick.key),
+      faces: paintFacesNow(),
+    });
+    if (wrote === false) return;
+    exitPaintMode();
+  };
+  const clearPaintSaved = () => {
+    const state = paintModeRef.current;
+    if (!state) return;
+    const surfId = paintSurfId();
+    if (!surfId) return;
+    onCommitPaint?.({
+      op: state.part ? 'clear-part' : 'clear-faces',
+      surfId,
+      keys: (state.picks || []).map((pick) => pick.key),
+      faces: paintFacesNow(),
+    });
+  };
+  const removeUnmatchedPaint = () => {
+    const surfId = paintSurfId();
+    if (!surfId) return;
+    onCommitPaint?.({ op: 'unmatched', surfId, faces: paintFacesNow() });
+  };
+  const paintUnmatched = paintMode
+    ? unmatchedColorCount(assemblyColors, paintSurfId(), paintFacesNow())
+    : 0;
+
   const titleParts = formatViewerTitle(
     currentFilename,
     typeof assemblyName === 'string' ? assemblyName : '',
@@ -7634,6 +7857,12 @@ const Viewport = forwardRef(({
       {/* G9: circular profile chip — top-right of the CAD viewport. */}
       {mode !== 'game' && (
         <ProfileChip variant="viewport" onAccount={onAccount} onSignedOut={onSignedOut} vaultName={profileVaultName} />
+      )}
+      {mode !== 'game' && (
+        <PaintModeToggle
+          pressed={!!paintMode}
+          onToggle={() => (paintMode ? exitPaintMode() : enterPaintMode())}
+        />
       )}
 
       {/* CAD chrome lives in the editor mid-strip in BOTH shells (desktop matches
@@ -7712,7 +7941,7 @@ const Viewport = forwardRef(({
       )}
       
       {/* Left helper rail. Block, Build, Shape, Polish, Move. */}
-      {onInsertHelper && !contourMode && !filletMode && !shellMode && !draftMode && !cutMode && !booleanMode && !moveMode && !moveFaceMode && !deleteFaceMode && !sheetMetalMode && (
+      {onInsertHelper && !paintMode && !contourMode && !filletMode && !shellMode && !draftMode && !cutMode && !booleanMode && !moveMode && !moveFaceMode && !deleteFaceMode && !sheetMetalMode && (
         <HelperInsertPalette
           layout={mode === 'game' ? 'game' : 'cad'}
           onInsert={onInsertHelper}
@@ -8063,6 +8292,33 @@ const Viewport = forwardRef(({
           }}
           onConfirm={acceptShell}
           onDismiss={exitShellMode}
+        />
+      )}
+
+      {paintMode && mode !== 'game' && (
+        <PaintModeChip
+          compact={isMobile}
+          faceCount={paintMode.picks.length}
+          color={paintMode.color}
+          custom={paintMode.custom}
+          part={!!paintMode.part}
+          canUndo={paintMode.picks.length > 0}
+          canClear={!!paintMode.part || paintMode.picks.length > 0}
+          canConfirm={!!resolvedPaintColor(paintMode.color, paintMode.custom)
+            && (!!paintMode.part || paintMode.picks.length > 0)}
+          unmatched={paintUnmatched}
+          onSwatch={(hex) => patchPaint({ color: hex, custom: '' })}
+          onCustom={(custom) => patchPaint({ custom })}
+          onPart={(part) => patchPaint({ part })}
+          onUndo={() => {
+            const picks = undoPaintPick(paintModeRef.current?.picks);
+            patchPaint({ picks });
+            showPaintPicks(picks);
+          }}
+          onClear={clearPaintSaved}
+          onConfirm={acceptPaint}
+          onDismiss={exitPaintMode}
+          onRemoveUnmatched={removeUnmatchedPaint}
         />
       )}
 

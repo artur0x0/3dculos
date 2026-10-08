@@ -90,6 +90,7 @@ import {
   runTrackedAssemblyOpen,
 } from './utils/assemblyOpenOverlay';
 import { featureWriteTarget, leftoverPickSolids, shouldSyncScript } from './utils/pickRetarget';
+import { clearPaintColors, commitPaintColors, removeUnmatchedColors } from './utils/facePaint';
 import {
   deletePartScript,
   loadAssemblyDocument,
@@ -4590,6 +4591,43 @@ const App = () => {
     return true;
   };
 
+  /**
+   * Paint Confirm, Clear, and Remove unmatched. Colors go through the same
+   * assembly save as any other assembly edit: the working copy, the local
+   * document, and the git outbox when the assembly is in Git mode. Cancel
+   * never calls this. Part scripts and isSynced are left as they are.
+   */
+  const handleCommitPaint = (payload) => {
+    const doc = assemblyRef.current;
+    if (!doc || !payload?.surfId) return false;
+    const before = doc.colors || null;
+    let colors = before;
+    if (payload.op === 'clear-part') {
+      colors = clearPaintColors(before, payload.surfId, { part: true });
+    } else if (payload.op === 'clear-faces') {
+      colors = clearPaintColors(before, payload.surfId, { keys: payload.keys, faces: payload.faces });
+    } else if (payload.op === 'unmatched') {
+      colors = removeUnmatchedColors(before, payload.surfId, payload.faces);
+    } else if (payload.op === 'part') {
+      colors = commitPaintColors(before, payload.surfId, { color: payload.color, part: true });
+    } else {
+      colors = commitPaintColors(before, payload.surfId, {
+        color: payload.color,
+        keys: payload.keys,
+        faces: payload.faces,
+      });
+    }
+    if (JSON.stringify(colors || null) === JSON.stringify(before || null)) return true;
+    const saved = rememberAssembly({ ...doc, colors });
+    enqueueAssemblySave(saved, {
+      message: `Paint ${payload.surfId}`,
+      payload: { surfId: payload.surfId, paint: payload.op || 'faces' },
+    }).catch((err) => {
+      setUploadError(err?.message || 'Could not save colors');
+    });
+    return true;
+  };
+
   /** Shell face-pick Confirm — hollow() + SHELL markers; Auto-Run. */
   const handleCommitShell = (payload) => {
     if (!focusWritePart(payload?.partId)) {
@@ -5520,6 +5558,7 @@ const App = () => {
               onCommitContourProfile={handleCommitContourProfile}
               onCommitFillet={handleCommitFillet}
               onCommitShell={handleCommitShell}
+              onCommitPaint={handleCommitPaint}
               onCommitDraft={handleCommitDraft}
               onCommitCut={handleCommitCut}
               onCommitBoolean={handleCommitBoolean}
@@ -5972,6 +6011,7 @@ const App = () => {
             onCommitContourProfile={handleCommitContourProfile}
             onCommitFillet={handleCommitFillet}
               onCommitShell={handleCommitShell}
+              onCommitPaint={handleCommitPaint}
               onCommitDraft={handleCommitDraft}
               onCommitCut={handleCommitCut}
               onCommitBoolean={handleCommitBoolean}

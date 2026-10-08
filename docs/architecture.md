@@ -159,6 +159,14 @@ A key matches one face when the normal is within 8°, `at` is within 1 mm, and t
 - Draw order: solid, then the skin (render order 2), then crease lines (3) and pick highlights (6). Edge and contour lines stay above the skin. A cut, Boolean, or Move Face preview that hides the solid hides the skin too. Hiding, deleting, or dropping a part detaches the skin and disposes its geometry and material.
 - `?debugFaces=1`, or `localStorage` `surfcad.debugFaces` = `1`, paints each patch its own color. Off unless that flag is set. It is not a rail button. Game mode uses the same skin and the same pick ray.
 
+## Face color paint
+
+The Paint chip (`data-paint-chip`, `PaintModeToggle`) sits in the viewport title row, left of the profile chip. It is not on the helper rail and it is not rendered in game mode. Saved colors still draw there. Turning the chip on opens the paint popup between the rails (the same cyan glass card as Shell). Turning it off, Cancel, the grey X, or Esc leaves without writing.
+
+A click uses the normal one-click face pick (`paintPickFromClick` → `resolveViewportFaceClick`, not the legacy walk). A blend and a coplanar seam pick the same face they already do. The pick highlight is the normal face highlight, drawn above the skin. Tap a picked face again to drop it. Undo drops only the last pick and does not change a saved color. Picks belong to the active part. Switching parts, or a new mesh, clears them. Nothing is written onto another surf id.
+
+Confirm writes `colors[surfId]` through the same assembly save as any other assembly edit (`rememberAssembly`, then the git outbox when the assembly is in Git mode). Local and signed-out save the local assembly. Part `isSynced` is unchanged, same as a group rename. Face colors are `faceColorKey` entries in `faces[]`. A saved key that uniquely matches that face is replaced, so a repick after a rebuild does not duplicate it. A Part toggle writes `colors[surfId].part` instead of face keys. The popup has the eight swatches and one custom `#rrggbb` field. Cancel writes nothing. Clear removes the saved color of the picked faces, or the part color when Part is on. Ambiguous and missing keys are left in place. Remove unmatched colors, on the popup, is the only other way to drop them, and only for the current part.
+
 ## Contour paint
 
 What you see as an edge is not one list.
