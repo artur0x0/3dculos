@@ -239,6 +239,14 @@ A chain like Artur's three-corner wrap (up a vertical edge, round the top perime
 
 Sticky pickers (Shell, Draft, Cut, Boolean, Move, Move Face, Delete Face) write **one** call and **replace** the previous marked block of that kind. A second confirm does not append. Grey X writes nothing. Chip behaviour is `docs/POPUP_STYLE.md`.
 
+**Feature edit** reopens the dialog that created the block (`FEATURE_EDIT_DIALOGS` in `featureEdit.js`): contour chip for profile / extrude / revolve / loft / sweep / workplane, fillet chip for fillet and chamfer, the helper sheet for blocks, holes, and transforms, and the same Shell / Draft / Cut / Boolean / Move / Move Face / Delete Face / sheet-metal chips. The strip and the feature list share `beginFeatureEdit`. Confirm calls `confirmFeatureEdit`, which rewrites that one block. Cancel never writes, so the script stays byte-identical. An unchanged Confirm also skips `applyBuffer`, so it is not an undo step. A real change is one `applyBuffer` — one undo step on that part.
+
+**Selection.** Fillet, chamfer, and any feature that stored an edge or a face resolve those refs with `openFeatureEdit` / `resolveStoredEdges` against the graphs rebuilt on the prefix mesh (`editPreviewScript` drops this feature and everything after it, then `executeScript({ editPreview })` runs `syncFeatureEdges` / the face graph). Graphs rebuild on that successful preview run, not between dialog keystrokes. The resolved edges use the normal edge highlight; the user can add or remove them before Confirm.
+
+**Missing refs.** A stored edge or face the prefix graph cannot resolve stays in the dialog (`2 edges not found`) until the user clears it. Confirm without that clear keeps the original line. It is never dropped on open.
+
+**Assembly open.** While `assemblyOpenLockRef` is set, a prefix preview does not post, and Confirm does not call `applyBuffer` or refresh. Cancel and an unchanged Confirm also skip the restore run. Feature edit never sets or clears that lock, and it does not call `preemptInflight`. The dialog stays up until the open finishes.
+
 Single-body ops (Draft, Shell, Cut, Move, Move Face, Delete Face) write only the touched part. Fillet and Chamfer write every part that has picks, each into its own script (below). Subtract-mode Block / Shape and Boolean can write more than the part in the editor, by the cross-part rules below.
 
 **Write target.** A face or edge pick moves the CAD part (`cadPartId`, the title, the strip and every preview anchor) but leaves the editor on `activeId`, and every writer writes the editor buffer. So before anything that writes, opens a feature sheet, or undoes, App runs `focusWritePart`. That covers:

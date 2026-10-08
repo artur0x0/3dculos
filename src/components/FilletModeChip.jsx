@@ -26,6 +26,8 @@ const FilletModeChip = ({
   onBack,
   onDismiss,
   onParamChange,
+  missingLabel = '',
+  onClearMissing,
 }) => {
   const chamfer = kind === 'chamfer';
   const sizeKey = chamfer ? 'chamfer' : 'radius';
@@ -117,6 +119,19 @@ const FilletModeChip = ({
           step={Math.max(0.5, Math.round((max / 40) * 100) / 100)}
         />
       </div>
+      {missingLabel ? (
+        <div className="mt-1.5 flex items-center gap-2 font-sans text-[11px] text-amber-100" data-feature-edit-missing="">
+          <span>{missingLabel}</span>
+          <button
+            type="button"
+            data-feature-edit-clear-missing=""
+            className="underline text-amber-200"
+            onClick={() => onClearMissing?.()}
+          >
+            Clear
+          </button>
+        </div>
+      ) : null}
       <div className="mt-1.5 flex items-center gap-3 font-sans flex-wrap">
         <button
           type="button"
