@@ -214,9 +214,9 @@ console.log('face match — buckets stay cheap');
     });
   }
   const items = faces.map((face) => ({ key: faceColorKey(face) }));
-  const t0 = performance.now();
+  const t0 = Date.now();
   const hit = matchFaceKeys(faces, items);
-  const ms = performance.now() - t0;
+  const ms = Date.now() - t0;
   check('3000 spaced faces all match', hit.matched.length === 3000 && hit.ambiguous.length === 0 && hit.missing.length === 0,
     `matched=${hit.matched.length}`);
   console.log(`  ${ms.toFixed(1)} ms for 3000 faces`);
