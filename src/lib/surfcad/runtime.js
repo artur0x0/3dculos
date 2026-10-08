@@ -37,6 +37,7 @@ import {
 import { buildMakeLoftSolid, offsetPlaneFrame } from '../../utils/makeLoft.js';
 import { blockSpec, buildBlockManifold } from '../../utils/blockSolid.js';
 import { buildSheetMetalSolid } from '../../utils/sheetMetal/sheetSolid.js';
+import { markSheetMesh } from '../../utils/sheetMetal/sheetMeshFlag.js';
 import { installSeparateBodies, overlappingBodies } from '../../workers/separateBodies.js';
 
 /**
@@ -8760,7 +8761,7 @@ self.onmessage = async (event) => {
         
         // Serialize result for transfer
         const _serT0 = _perfNow();
-        const meshData = serializeResult(result);
+        const meshData = markSheetMesh(serializeResult(result), script);
         const _serializeMs = _perfNow() - _serT0;
         
         // Get metadata for quoting/display
@@ -9493,6 +9494,7 @@ export function runPreparedScript(source, opts = {}) {
   _sourceTess = [];
   const result = executeScript(String(source ?? ''), opts.importedModels || {});
   const summary = summarizeManifold(result);
+  markSheetMesh(summary.mesh, source);
   cachedManifold = summary.manifold;
   cachedExecuteNonce = (opts.nonce !== undefined && opts.nonce !== null) ? opts.nonce : null;
   return summary;

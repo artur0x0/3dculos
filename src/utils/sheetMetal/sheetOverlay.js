@@ -13,17 +13,16 @@ import {
   Matrix4,
   Mesh,
   MeshBasicMaterial,
-  MeshLambertMaterial,
   PlaneGeometry,
   Shape,
   Vector3,
 } from 'three';
 import { SHEET_PLANES, normalizeSheetSpec, panelPoint, sheetFreeEdges, solveSheet, vAdd, vMul } from './sheetModel.js';
+import { makeSheetMetalMaterial } from './sheetMaterial.js';
 
 const COLORS = {
   plane: 0xfb923c,
   planeHot: 0xf97316,
-  metal: 0xcbd5e1,
   draft: 0x22d3ee,
   edge: 0xf97316,
   edgeHot: 0x22d3ee,
@@ -103,8 +102,14 @@ export function buildSheetOverlay(mode) {
   } catch {
     return group;
   }
-  const metal = new MeshLambertMaterial({ color: COLORS.metal, transparent: true, opacity: 0.92 });
-  const draftMat = new MeshLambertMaterial({ color: COLORS.draft, transparent: true, opacity: 0.75 });
+  const metal = makeSheetMetalMaterial();
+  // Unlit on purpose: a lit draft goes black under the scene point light.
+  const draftMat = new MeshBasicMaterial({
+    color: COLORS.draft,
+    transparent: true,
+    opacity: 0.75,
+    side: DoubleSide,
+  });
   const draftId = mode.draft?.id || null;
   const matFor = (id) => (draftId && id === draftId ? draftMat : metal);
   for (const p of solved.panels) {
@@ -148,8 +153,12 @@ export function buildSheetOverlay(mode) {
       const m = new Mesh(g, new MeshBasicMaterial({
         color: `${e.panel}:${e.edge}` === hot ? COLORS.edgeHot : COLORS.edge,
         transparent: true,
-        opacity: `${e.panel}:${e.edge}` === hot ? 0.7 : 0.35,
+        // Opaque enough to stay orange on the gray sheet and on a light ground.
+        opacity: `${e.panel}:${e.edge}` === hot ? 0.95 : 0.85,
         depthWrite: false,
+        polygonOffset: true,
+        polygonOffsetFactor: -2,
+        polygonOffsetUnits: -2,
       }));
       m.quaternion.setFromUnitVectors(new Vector3(0, 1, 0), dir.normalize());
       m.position.copy(mid);

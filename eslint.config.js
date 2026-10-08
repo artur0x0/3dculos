@@ -152,6 +152,16 @@ export default [
     rules: { 'no-undef': 'off', 'no-redeclare': 'off' },
   },
 
+  // Sheet-material golden paints in a real browser (Vite serves this module).
+  {
+    files: ['scripts/golden/sheet_material_shot.js'],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: 'module',
+      globals: browserGlobals,
+    },
+  },
+
   // ── Backend (node, ESM) ──
   {
     files: ['backend/**/*.js'],
