@@ -292,6 +292,7 @@ All of these are absolutely positioned inside the shell at
 | right-2/4 bottom-4 | view / pick / cross-section cluster | `CrossSectionPanel.jsx:175` collapsed, `:327` expanded | `:3641` |
 | inside that cluster | Front/Right/Top/**Iso** snap popup | `ViewSnapControl.jsx` | `CrossSectionPanel.jsx:181` |
 | top-16, portaled `z-50`, `inset-x-3` (most of the viewport width, same card on desktop) | execution error toast: fixed card, label "Error", Undo and dismiss on the right, description on the next line (`ErrorPopup` `layout="stacked"`), glass `rounded-lg` | `ErrorPopup.jsx` | Viewport |
+| centered on the viewport pane (desktop) and the phone shell | assembly-open spinner: ring + `Opening <name>…`, optional `part 3 of 7`. Hidden for the first 150ms. `pointer-events-none`, `z-[45]`, under the toasts | `AssemblyOpenSpinner.jsx` `data-assembly-open-spinner` | App |
 | *(removed C.1)* | Selected Face readout | — | — |
 | bottom-4 right-2/4 | contour param chip | `ContourModeChip.jsx:176` | `:3733` |
 | bottom-4 right-2/4 | fillet param chip | `FilletModeChip.jsx:43` | `:3835` |
@@ -299,6 +300,22 @@ All of these are absolutely positioned inside the shell at
 | top-16 center, portaled `z-50` | toasts: edge-mode, contour, fillet-scrap, fillet, shell — same `ErrorPopup` card | `ErrorPopup.jsx` | Viewport |
 | bottom-left | measurement readout | inline | `:3961` |
 | fills the pane | WebGL canvas | `<canvas ref={canvasRef}>` | `:3985` |
+
+**Opening an assembly.** `data-assembly-open-spinner` sits centered over the
+viewport (the viewport pane on desktop, the full shell on a phone) while a
+document loads. Paths: the Open assembly dialog, the folder menu's Assembly
+action, git open search, a branch switch, and the initial restore of the last
+assembly. The wait is the `.surf.json` and part-script fetch (IndexedDB
+cache-first, and GitHub when the vault is open) plus the worker build that
+refresh paints. The label is `Opening <name>…` (`data-assembly-open-label`).
+While a part is in flight it also reads `part 3 of 7`
+(`data-assembly-open-progress`). The ring is the same border spinner as the
+boot loader. It stays hidden for 150ms so a fast open does not flash, and it
+clears on success, failure, or cancel. Silence for 45s clears it and shows
+the failure toast (`data-assembly-open-toast`, same `ErrorPopup` card) with
+Retry (`data-assembly-open-retry`). The overlay does not take clicks
+(`pointer-events-none`, `z-[45]`), so those toasts (`z-50`) stay usable.
+`prefers-reduced-motion` stops the ring (`data-assembly-open-ring`).
 
 **Mutual-exclusion rules.** The helper rail hides while `contourMode` or
 `filletMode` is set; the Edge-pick chip needs `pickMode === 'edge'`, no active mode, **and at

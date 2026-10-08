@@ -151,6 +151,7 @@ export function seedEmptyVaultAssembly(assemblyName, {
 export async function openVaultAssembly(adapter, repo, assemblyName, {
   branch = 'main',
   headSha = null,
+  onProgress = null,
 } = {}) {
   assertGithubAdapter(adapter);
   const name = vaultSegment(assemblyName);
@@ -167,7 +168,11 @@ export async function openVaultAssembly(adapter, repo, assemblyName, {
   }
   let doc = parseSurfJson(file.content);
   const rawScripts = {};
-  for (const part of doc.parts) {
+  const partTotal = (doc.parts || []).length;
+  onProgress?.({ index: 0, total: partTotal, phase: 'document' });
+  for (let i = 0; i < partTotal; i += 1) {
+    const part = doc.parts[i];
+    onProgress?.({ index: i + 1, total: partTotal, phase: 'script', name: doc.name });
     // eslint-disable-next-line no-await-in-loop
     const got = await adapter.readFile(repo, part.id, branch);
     rawScripts[part.id] = got ? got.content : '';

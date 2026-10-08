@@ -140,9 +140,14 @@ export async function deletePartScript(id) {
   return ok;
 }
 
-export async function loadPartScripts(ids) {
+export async function loadPartScripts(ids, { onProgress } = {}) {
+  const list = ids || [];
+  const total = list.length;
   const out = {};
-  for (const id of ids || []) {
+  for (let i = 0; i < list.length; i += 1) {
+    const id = list[i];
+    onProgress?.({ index: i + 1, total });
+    // eslint-disable-next-line no-await-in-loop
     const script = await loadPartScript(id);
     if (typeof script === 'string') out[id] = script;
   }
