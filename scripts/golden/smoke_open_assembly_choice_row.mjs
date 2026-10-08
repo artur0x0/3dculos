@@ -59,7 +59,9 @@ console.log('open assembly choice: one row at phone width');
       && /requestAssemblyAction\('existing'\)/.test(feed)
       && /const startOpenAssembly/.test(feed)
       && /loadOpenIndex\('open-assembly'\)/.test(feed)
-      && /onClick=\{\(\) => askOpenAssemblyChoice\(item\.name\)\}/.test(feed)
+      && /<AssemblyOpenList\b/.test(feed)
+      && /onOpen=\{askOpenAssemblyChoice\}/.test(feed)
+      && /data-assembly-delete/.test(read('src/components/DeleteAssemblyDialog.jsx'))
       && /data-git-open-search/.test(feed)
       && /filterVaultOpenIndex/.test(feed)
       && (feed.match(/<OpenAssemblyChoiceDialog\b/g) || []).length === 1

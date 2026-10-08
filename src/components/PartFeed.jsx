@@ -9,6 +9,7 @@ import { layoutPartFeed } from '../utils/partGroups.js';
 import PartGroupBlock from './PartGroupBlock';
 import { PARTS_TEXT_INPUT_CLASS, PARTS_TEXT_INPUT_STYLE } from '../utils/partsChrome.js';
 import OpenAssemblyChoiceDialog from './OpenAssemblyChoiceDialog';
+import DeleteAssemblyDialog, { AssemblyOpenList } from './DeleteAssemblyDialog';
 import ProfileChip from './ProfileChip';
 import VaultPickerDialog from './VaultPickerDialog';
 import {
@@ -296,6 +297,8 @@ export default function PartFeed({
   onListVaultAssemblies = null,
   onListVaultBrowse = null,
   onOpenVaultAssembly = null,
+  onPreviewDeleteAssembly = null,
+  onDeleteAssembly = null,
   onInsertVaultAssemblyParts = null,
   onOpenVaultPart = null,
   onAddExistingPart = null,
@@ -355,6 +358,7 @@ export default function PartFeed({
   const [pendingDelete, setPendingDelete] = useState(null);
   const cancelBtnRef = useRef(null);
   const [openPicker, setOpenPicker] = useState(null); // null | { kind, items, loading, error, draft }
+  const [deleteAssembly, setDeleteAssembly] = useState(null);
   const pathInputRef = useRef(null);
   // G3 commit flow: null | { stage: 'message'|'busy'|'ask-force'|'done'|'error', ... }
   const [commitFlow, setCommitFlow] = useState(null);
@@ -467,6 +471,69 @@ export default function PartFeed({
   const startOpenPart = async () => {
     if (source !== 'git') return;
     await loadOpenIndex('open-part');
+  };
+
+  const askDeleteAssembly = async (name) => {
+    setDeleteAssembly({
+      name,
+      loading: true,
+      busy: false,
+      error: '',
+      partCount: 0,
+      referenced: [],
+      typed: '',
+    });
+    try {
+      const preview = (await onPreviewDeleteAssembly?.(name)) || { partCount: 0, referenced: [] };
+      if (preview.status === 'error') {
+        setDeleteAssembly((prev) => (prev?.name === name ? {
+          ...prev,
+          loading: false,
+          error: preview.error || 'Could not check this assembly',
+        } : prev));
+        return;
+      }
+      setDeleteAssembly((prev) => (prev?.name === name ? {
+        ...prev,
+        loading: false,
+        partCount: preview.partCount || 0,
+        referenced: preview.referenced || [],
+        error: '',
+      } : prev));
+    } catch (err) {
+      setDeleteAssembly((prev) => (prev?.name === name ? {
+        ...prev,
+        loading: false,
+        error: err?.message || 'Could not check this assembly',
+      } : prev));
+    }
+  };
+
+  const runDeleteAssembly = async (mode) => {
+    const pending = deleteAssembly;
+    if (!pending?.name || pending.loading || pending.busy) return;
+    if (mode === 'drop' && String(pending.typed || '').trim() !== pending.name) return;
+    setDeleteAssembly({ ...pending, busy: true, error: '' });
+    const result = (await onDeleteAssembly?.(pending.name, mode))
+      || { status: 'error', error: 'Delete unavailable' };
+    if (result.status === 'error') {
+      setDeleteAssembly((prev) => (prev ? {
+        ...prev,
+        busy: false,
+        error: result.error || 'Could not delete assembly',
+      } : prev));
+      return;
+    }
+    setDeleteAssembly(null);
+    setOpenPicker((prev) => {
+      if (!prev || prev.kind !== 'open-assembly') return prev;
+      const assemblies = (prev.assemblies || []).filter((item) => item.name !== pending.name);
+      return {
+        ...prev,
+        assemblies,
+        error: assemblies.length ? '' : 'No assemblies in the repo yet.',
+      };
+    });
   };
 
   const askOpenAssemblyChoice = (name) => {
@@ -1558,24 +1625,13 @@ export default function PartFeed({
                   <p className="text-xs text-amber-300" data-git-open-search-empty="">No matches.</p>
                 )}
                 {!openPicker.loading && !isPart && asmHits.length > 0 && (
-                  <div data-git-open-assemblies="">
-                    <ul className="max-h-64 space-y-1 overflow-y-auto" data-git-open-list="">
-                      {asmHits.map((item) => (
-                        <li key={`asm-${item.name}`}>
-                          <button
-                            type="button"
-                            data-git-open-item={item.name}
-                            data-git-open-kind="assembly"
-                            data-git-open-current={item.name === assemblyName ? 'true' : undefined}
-                            className="w-full rounded-md px-2 py-1.5 text-left text-xs text-gray-100 hover:bg-white/10"
-                            onClick={() => askOpenAssemblyChoice(item.name)}
-                          >
-                            {item.label || item.name}
-                            {item.name === assemblyName ? <span className="ml-2 text-[10px] text-gray-500">open now</span> : null}
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
+                  <div data-git-open-assemblies="" data-git-open-list="">
+                    <AssemblyOpenList
+                      items={asmHits}
+                      current={assemblyName}
+                      onOpen={askOpenAssemblyChoice}
+                      onDelete={(name) => { void askDeleteAssembly(name); }}
+                    />
                   </div>
                 )}
                 {!openPicker.loading && isPart && partGroups.length > 0 && (
@@ -1618,6 +1674,21 @@ export default function PartFeed({
             );
           })()}
         </VaultPickerDialog>
+      )}
+      {deleteAssembly && typeof document !== 'undefined' && (
+        <DeleteAssemblyDialog
+          assemblyName={deleteAssembly.name}
+          partCount={deleteAssembly.partCount}
+          referenced={deleteAssembly.referenced}
+          typed={deleteAssembly.typed}
+          loading={deleteAssembly.loading}
+          busy={deleteAssembly.busy}
+          error={deleteAssembly.error}
+          onTyped={(value) => setDeleteAssembly((prev) => (prev ? { ...prev, typed: value } : prev))}
+          onKeep={() => { void runDeleteAssembly('keep'); }}
+          onDrop={() => { void runDeleteAssembly('drop'); }}
+          onClose={deleteAssembly.busy ? undefined : () => setDeleteAssembly(null)}
+        />
       )}
       {openPicker && typeof document !== 'undefined' && openPicker.kind === 'open-choice' && (
         <OpenAssemblyChoiceDialog

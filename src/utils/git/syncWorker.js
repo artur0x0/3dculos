@@ -12,6 +12,7 @@
 import { promoteFiles, rewriteSurfIdFields, isSurfJsonPath } from './surfId.js';
 import { isAssemblyFile } from './vaultLayout.js';
 import { materializeRename, renameFailureToast } from './gitRename.js';
+import { deleteAssemblyFailureToast } from './gitDeleteAssembly.js';
 
 async function expandPromotion(adapter, repo, branch, files) {
   const promoted = promoteFiles(files);
@@ -114,7 +115,9 @@ export async function flushSyncQueue({
         status: 'failed',
         op: item,
         error: err?.message || 'Sync failed',
-        toast: item.op === 'rename' ? renameFailureToast(item, err) : null,
+        toast: item.op === 'rename'
+          ? renameFailureToast(item, err)
+          : (item.op === 'delete-assembly' ? deleteAssemblyFailureToast(item, err) : null),
         sha: head,
         branch,
         promoted,

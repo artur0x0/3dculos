@@ -120,9 +120,11 @@
             "description": "Label in the Parts list. Starts as the source assembly name."
           },
           "source": {
-            "type": "string",
-            "minLength": 1,
-            "description": "Source assembly path, assemblies/<Name>/.surf.json."
+            "anyOf": [
+              { "type": "string", "minLength": 1 },
+              { "type": "null" }
+            ],
+            "description": "Source assembly path, assemblies/<Name>/.surf.json. Null after that assembly is deleted; the group name stays."
           },
           "partIds": {
             "type": "array",

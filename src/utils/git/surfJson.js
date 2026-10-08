@@ -27,7 +27,8 @@
  * `assemblies/<Name>/parts/<P>.js` paths are accepted on read. The in-app
  * row id stays the path; `surfId` carries `id`. No script source in the
  * file. `groups` is optional. Each group names parts by surf id (`partIds`).
- * `source` is the source assembly path (`assemblies/<Name>/.surf.json`).
+ * `source` is the source assembly path (`assemblies/<Name>/.surf.json`),
+ * or null after that assembly is deleted. The group name stays.
  * A missing `groups` key loads as no groups. Dangling part ids are dropped
  * on read; a group left empty is dropped. Unknown top-level keys are
  * rejected so a typo cannot silently drop data.
@@ -148,8 +149,14 @@ export function validateSurfJson(input) {
         if (group.id && seenGroups.has(group.id)) errors.push(`${at}.id duplicates ${group.id}`);
         if (group.id) seenGroups.add(group.id);
         if (typeof group.name !== 'string' || !group.name.trim()) errors.push(`${at}.name must be a non-empty string`);
-        const source = normalizeRepoPath(group.source);
-        if (!source || source !== group.source) errors.push(`${at}.source must be a repo-relative path`);
+        if (group.source == null) {
+          if (group.source !== null) errors.push(`${at}.source must be a repo-relative path or null`);
+        } else {
+          const source = normalizeRepoPath(group.source);
+          if (typeof group.source !== 'string' || !source || source !== group.source) {
+            errors.push(`${at}.source must be a repo-relative path or null`);
+          }
+        }
         if (!Array.isArray(group.partIds) || !group.partIds.length) {
           errors.push(`${at}.partIds must be a non-empty array`);
         } else {
