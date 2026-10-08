@@ -6,7 +6,9 @@ import {
   filterVaultOpenIndex, filterVaultPartItems, groupVaultOpenPartRows, vaultOpenAssemblies, vaultOpenPartRows,
 } from '../utils/git/gitWorkspace.js';
 import { PARTS_TEXT_INPUT_CLASS, PARTS_TEXT_INPUT_STYLE } from '../utils/partsChrome.js';
+import OpenAssemblyChoiceDialog from './OpenAssemblyChoiceDialog';
 import ProfileChip from './ProfileChip';
+import VaultPickerDialog from './VaultPickerDialog';
 import {
   PART_PREVIEW_SIZE,
   blitPartPreview,
@@ -266,47 +268,6 @@ function PartThumbnail({ mesh }) {
       data-part-preview={partPreviewKind(mesh)}
       data-part-preview-key={previewKey || ''}
     />
-  );
-}
-
-
-/** Small glass dialog shared by Open / New part / Add existing. */
-function VaultPickerDialog({
-  title,
-  labelledBy,
-  dataAttr,
-  onClose,
-  children,
-  footer = null,
-  headerRight = null,
-}) {
-  return createPortal(
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center surface-scrim p-4"
-      data-git-dialog={dataAttr}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby={labelledBy}
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose?.();
-      }}
-      onKeyDown={(event) => {
-        if (event.key === 'Escape') {
-          event.preventDefault();
-          onClose?.();
-        }
-      }}
-    >
-      <div className="w-full max-w-sm rounded-lg surface-glass border border-gray-700 p-4 shadow-xl">
-        <div className="flex items-center gap-2" data-git-dialog-header="">
-          <h2 id={labelledBy} className="min-w-0 flex-1 text-sm font-semibold text-gray-100">{title}</h2>
-          {headerRight}
-        </div>
-        <div className="mt-3">{children}</div>
-        {footer}
-      </div>
-    </div>,
-    document.body,
   );
 }
 
@@ -1610,55 +1571,14 @@ export default function PartFeed({
         </VaultPickerDialog>
       )}
       {openPicker && typeof document !== 'undefined' && openPicker.kind === 'open-choice' && (
-        <VaultPickerDialog
-          title="Open assembly?"
-          labelledBy="git-open-choice-title"
-          dataAttr="open-choice"
-          onClose={openPicker.loading ? undefined : closePicker}
-          footer={(
-            <div className="mt-4 flex flex-wrap justify-end gap-2" data-git-open-choice-stage="">
-              <button
-                type="button"
-                className="rounded-md px-3 py-1.5 text-xs text-gray-200 hover:bg-white/10"
-                onClick={closePicker}
-                data-git-dialog-cancel=""
-                disabled={!!openPicker.loading}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                data-git-open-insert=""
-                className="rounded-md px-3 py-1.5 text-xs text-gray-100 hover:bg-white/10 border border-gray-600"
-                disabled={!!openPicker.loading}
-                onClick={() => { void runInsertAssemblyParts(openPicker.assemblyName); }}
-              >
-                Insert parts into current
-              </button>
-              <button
-                type="button"
-                data-git-open-replace=""
-                className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-500"
-                disabled={!!openPicker.loading}
-                onClick={() => { void runOpenAssembly(openPicker.assemblyName); }}
-              >
-                Open assembly
-              </button>
-            </div>
-          )}
-        >
-          {openPicker.loading && <p className="text-xs text-gray-400" data-git-dialog-loading="">Inserting…</p>}
-          {!openPicker.loading && (
-            <p className="text-xs text-gray-300" data-git-open-choice-ask="">
-              {'Open '}
-              <span className="font-medium text-gray-100">{openPicker.assemblyName}</span>
-              {' as the working assembly, or insert its parts into the current one?'}
-            </p>
-          )}
-          {openPicker.error && (
-            <p className="mt-2 text-xs text-amber-300" data-git-open-choice-error="">{openPicker.error}</p>
-          )}
-        </VaultPickerDialog>
+        <OpenAssemblyChoiceDialog
+          assemblyName={openPicker.assemblyName}
+          loading={!!openPicker.loading}
+          error={openPicker.error || ''}
+          onClose={closePicker}
+          onInsert={() => { void runInsertAssemblyParts(openPicker.assemblyName); }}
+          onOpen={() => { void runOpenAssembly(openPicker.assemblyName); }}
+        />
       )}
       {openPicker && typeof document !== 'undefined' && openPicker.kind === 'new-part' && (
         <VaultPickerDialog

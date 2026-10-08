@@ -94,7 +94,12 @@ Desktop specifics:
   first; Cancel keeps the part, Confirm removes that part only. In git mode,
   **Open from repo** (folder): **Part** lists every part in the repo grouped
   by source assembly (loose `parts/` included); **Assembly** lists assemblies
-  only. Live search is `data-git-open-search` / `filterVaultOpenIndex`; empty
+  only. Picking one opens **Open assembly?** (`OpenAssemblyChoiceDialog`,
+  `data-git-dialog="open-choice"`). **Cancel**, **Insert parts into current**,
+  and **Open assembly** sit on one right-aligned row
+  (`data-git-open-choice-stage`, no wrap) down to a 375px phone; the blue
+  **Open assembly** button stays the primary. The folder Assembly list and
+  the git open search both use that dialog. Live search is `data-git-open-search` / `filterVaultOpenIndex`; empty
   query shows the full list, no hits show *No matches*. A part from this
   assembly opens by reference. A part from another assembly or loose `parts/`
   links in (`links from …`). The row then shows **Caution: external part!**
@@ -303,7 +308,8 @@ All of these are absolutely positioned inside the shell at
 
 **Opening an assembly.** `data-assembly-open-spinner` sits centered over the
 viewport (the viewport pane on desktop, the full shell on a phone) while a
-document loads. Paths: the Open assembly dialog, the folder menu's Assembly
+document loads. Paths: the Open assembly dialog (Cancel, Insert parts into
+current, and Open assembly on one right-aligned row), the folder menu's Assembly
 action, git open search, a branch switch, and the initial restore of the last
 assembly. The wait is the `.surf.json` and part-script fetch (IndexedDB
 cache-first, and GitHub when the vault is open) plus the worker build that
