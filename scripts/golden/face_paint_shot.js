@@ -66,8 +66,6 @@ export function renderPaintChrome(el, { theme = 'dark', compact = false } = {}) 
       showPaint: true,
       paintActive: true,
       onPaintToggle: () => {},
-      onOpenSheetMetal: () => {},
-      sheetMetalActive: false,
       onPickModeChange: () => {},
       onZoomToFit: () => {},
       onSnapView: () => {},

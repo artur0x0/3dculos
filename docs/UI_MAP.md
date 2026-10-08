@@ -325,7 +325,7 @@ All of these are absolutely positioned inside the shell at
 | top-center | CAD: part, the word in, assembly. Game: puzzle name | `data-viewer-title` / `ViewportTitleChip` | Viewport |
 | bottom, centered in the gap between the rails (same card as Shell; `bottom-14` on a phone) | Paint popup: 8 swatches (grid padded so the selection ring is not clipped), custom `#rrggbb`, Part, Undo, Clear, Remove unmatched colors, Confirm, Cancel. A tap paints the face immediately. Double-tap paints that body. Confirm saves the session. X and Cancel revert it | `PaintModeChip` `data-paint-mode` | Viewport |
 | centered | "Match!" success banner | inline | `:3595` |
-| left-2/4 bottom-2.5 | helper insert rail (height paired to right). Block, Build, Shape, Polish, Move | `HelperInsertPalette.jsx` | Viewport |
+| left-2/4 bottom-2.5 | helper insert rail (height paired to right). Block, Build, Shape, Polish, Move. Shape includes Sheet Metal (`FoldVertical`, `data-sheet-metal-button`) with the other shape tools | `HelperInsertPalette.jsx` | Viewport |
 | left-2/4 bottom-2.5 | contour tool rail (replaces the helper rail) | `ContourModeRail.jsx` | Viewport |
 | left-2/4 bottom-2.5 | sheet-metal rail (replaces the helper rail while `sheetMetalMode`): **Shape** section, SCS tools for the SKU, Tab first, ✕ exit | `sheetMetal/SheetMetalRail.jsx` | Viewport |
 | bottom, centered in the gap between the measured side rails (22rem cap on desktop; full gap on a phone). Material line truncates, hint wraps. Does not cover either toolbar | sheet-metal chip: bound SKU + step hint, **Check & Export** (edit), ✕ exits | `sheetMetal/SheetMetalModeChip.jsx` | Viewport |
@@ -335,7 +335,7 @@ All of these are absolutely positioned inside the shell at
 | bottom sheet `z-50` (short) | Tab popup (Width, Depth, Centered, Offset) / Hole popup (Ø or Thread, Csk Ø, U, V) | `sheetMetal/SheetMetalFlow.jsx` | Viewport |
 | bottom sheet `z-50` | Check & Export popup: DFM fails (red) / warnings (amber) in the mm\|in display unit, Download DXF, Download STEP, Order on SendCutSend (opens the app; all disabled on a hard fail), ✕ | `sheetMetal/SheetMetalFlow.jsx` | Viewport |
 | scene | plane quads / sheet preview / edge handles (taps route here first) | `utils/sheetMetal/sheetOverlay.js` | Viewport |
-| right-2/4 bottom-4 | view / pick / paint / inspection cluster. Paint (`data-paint-chip`) is in the plane and contour group, green only while paint mode is on, hidden in game. Sheet Metal (`data-sheet-metal-button`, `data-sheet-metal-group="inspection"`) is under the divider with axes, measure, and cross-section; idle blue, green only while the picker or the mode is open | `CrossSectionPanel.jsx` collapsed rail | Viewport |
+| right-2/4 bottom-4 | view / pick / paint / inspection cluster. Paint (`data-paint-chip`) is in the plane and contour group, green only while paint mode is on, hidden in game | `CrossSectionPanel.jsx` collapsed rail | Viewport |
 | inside that cluster | Front/Right/Top/**Iso** snap popup | `ViewSnapControl.jsx` | `CrossSectionPanel.jsx:181` |
 | top-16, portaled `z-50`, `inset-x-3` (most of the viewport width, same card on desktop) | execution error toast: fixed card, label "Error", Undo and dismiss on the right, description on the next line (`ErrorPopup` `layout="stacked"`), glass `rounded-lg` | `ErrorPopup.jsx` | Viewport |
 | centered on the viewport pane (desktop) and the phone shell | assembly-open spinner: ring + `Opening <name>…`, optional `part 3 of 7`. Hidden for the first 150ms. `pointer-events-none`, `z-[45]`, under the toasts | `AssemblyOpenSpinner.jsx` `data-assembly-open-spinner` | App |
@@ -567,8 +567,8 @@ Import `src/utils/importModel.js` (+ `POST /api/convert/step`); export
   share a glyph** — the right rail's selectors are deliberately distinct:
   `RectangleHorizontal` = Face pick, `Layers3` = plane overlays,
   `NotebookPen` = sketch (contour) overlays, `Spline` = Edge pick,
-  `Palette` = Paint, `FoldVertical` = Sheet Metal (inspection group). In the left
-  rail, Loft is `Pyramid` (a tapered stack of profiles), not `Layers`, and
+  `Palette` = Paint. In the left
+  rail, Sheet Metal is `FoldVertical` (Shape, after Loft), Loft is `Pyramid` (a tapered stack of profiles), not `Layers`, and
   Fillet is `SquareRoundCorner` — so `Squircle` now means roundedBox alone.
   Chamfer is `TriangleRight`.
   **Two left-rail tools deliberately share a glyph with a right-rail toggle:**
@@ -609,7 +609,7 @@ Import `src/utils/importModel.js` (+ `POST /api/convert/step`); export
   Polar, and the `array3D` build delegates to `polarArray`'s for Polar.
   `holePattern` likewise: Hole's "n×m pattern" tick emits `holePattern()`.
   Hide a tool this way rather than deleting an item other code builds with.
-- **The right rail is content-height**, not paired: view-snap then zoom-to-fit (`Maximize2`) at the top, then Face, Edge, plane overlays, contour overlays, and Paint, then a divider, then Sheet Metal, the XYZ triad (`Move3d` / `AxesHelper`), measure, and cross-section. There is no patch-colour toggle. The green Lucide `Frame` (`#` / auto-fit-on-run) was removed — it duplicated zoom-to-fit. A shared 26rem cap used to crop Cross-section off the bottom,
+- **The right rail is content-height**, not paired: view-snap then zoom-to-fit (`Maximize2`) at the top, then Face, Edge, plane overlays, contour overlays, and Paint, then a divider, then the XYZ triad (`Move3d` / `AxesHelper`), measure, and cross-section. There is no patch-colour toggle. The green Lucide `Frame` (`#` / auto-fit-on-run) was removed — it duplicated zoom-to-fit. A shared 26rem cap used to crop Cross-section off the bottom,
   where — being bottom-anchored 10px above the viewport edge — it was out of
   reach. It keeps `overflow-visible` plus a `max-h` that respects the pane.
 - **The view-snap flyout must never `flex-wrap`.** It is absolutely positioned

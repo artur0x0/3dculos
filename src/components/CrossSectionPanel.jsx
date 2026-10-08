@@ -1,7 +1,7 @@
 // components/CrossSectionPanel.jsx
 /* eslint-disable react-hooks/exhaustive-deps -- see Viewport note; same ref-backed pattern */
 import React, { useState, useEffect } from 'react';
-import { FlipHorizontal, Check, Maximize2, Ruler, Move3d, Spline, RectangleHorizontal, Layers3, NotebookPen, Palette, FoldVertical, X } from 'lucide-react';
+import { FlipHorizontal, Check, Maximize2, Ruler, Move3d, Spline, RectangleHorizontal, Layers3, NotebookPen, Palette, X } from 'lucide-react';
 import TrianglesCenterlineDashedVertical from './icons/TrianglesCenterlineDashedVertical';
 import ViewSnapControl from './ViewSnapControl';
 import { PLANE_PRESETS } from '../utils/crossSection';
@@ -30,9 +30,6 @@ const CrossSectionPanel = ({
   showPaint = false,
   paintActive = false,
   onPaintToggle = null,
-  /** Sheet metal. Inspection group, under the divider. Hidden with no opener. */
-  onOpenSheetMetal = null,
-  sheetMetalActive = false,
   /** Stack tools vertically on the right edge. Both shells pass this now — desktop
    *  matches phone; the wrapping-row fallback is kept for any other caller. */
   verticalRail = false,
@@ -315,24 +312,6 @@ const handleButtonClick = () => {
           </>
         )}
 
-        {typeof onOpenSheetMetal === 'function' && (
-          <button
-            type="button"
-            onClick={() => onOpenSheetMetal()}
-            className={`p-2 rounded ${
-              sheetMetalActive
-                ? 'text-green-600 bg-green-100'
-                : 'text-blue-600 hover:bg-gray-100 active:bg-blue-100'
-            }`}
-            title="Sheet Metal — design against SendCutSend stock"
-            aria-label="Sheet Metal"
-            aria-pressed={!!sheetMetalActive}
-            data-sheet-metal-button="1"
-            data-sheet-metal-group="inspection"
-          >
-            <FoldVertical size={20} />
-          </button>
-        )}
         <button
           onClick={onAxisHelperToggle}
           className={`p-2 rounded ${axisHelperEnabled ? 'text-green-600 bg-green-100' : 'text-blue-600'} hover:bg-gray-100 active:bg-blue-100`}
