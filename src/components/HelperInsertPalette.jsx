@@ -30,7 +30,7 @@ import {
 import SquareRoundCorner from './icons/SquareRoundCorner';
 import RectangleCircle from './icons/RectangleCircle';
 import Angle from './icons/Angle';
-import { itemsByGroup, paletteRailSections } from '../utils/helperPaletteSnippets';
+import { HELPER_PALETTE_ITEMS, itemsByGroup, paletteRailSections } from '../utils/helperPaletteSnippets';
 import {
   RAIL_PAIR_HEIGHT_CLASS,
   RAIL_SCROLL_CLASS,
@@ -130,6 +130,10 @@ const HelperInsertPalette = ({
   compact = false,
   /** Both layouts share Block / Build / Shape / Polish / Move. */
   layout = 'game',
+  /** Reopen this palette item with the feature's saved fields. Confirm edits in place. */
+  editSession = null,
+  onEditConfirm = null,
+  onEditCancel = null,
 }) => {
   const grouped = itemsByGroup();
   // Content-height capped just below the part-name chip; narrows when no scroll.
@@ -149,6 +153,27 @@ const HelperInsertPalette = ({
   useEffect(() => () => {
     onBlockPreviewRef.current?.(null);
   }, []);
+
+  // Feature edit reuses this sheet. Defaults are the saved block, not the palette's.
+  useEffect(() => {
+    if (!editSession?.helperId) return;
+    const item = HELPER_PALETTE_ITEMS.find((h) => h.id === editSession.helperId);
+    if (!item) return;
+    const fields = editSession.fields || {};
+    setPending({
+      ...item,
+      _featureEdit: editSession.feature || true,
+      params: (item.params || []).map((p) => (
+        Object.prototype.hasOwnProperty.call(fields, p.name) ? { ...p, default: fields[p.name] } : p
+      )),
+    });
+    setBufferSnapshot(typeof editSession.script === 'string' ? editSession.script : '');
+    setFaceSnapshot(null);
+    setEdgeSnapshot(null);
+    setRefuseMessage(null);
+    setRefuseTitle(null);
+    setModalMode('default');
+  }, [editSession]);
 
   const openParams = (item) => {
     // First, so the buffer snapshot, preview and Confirm are all the picked part's.
@@ -345,7 +370,10 @@ const HelperInsertPalette = ({
           buffer={bufferSnapshot}
           faceInfo={faceSnapshot}
           edgeInfo={edgeSnapshot}
-          onCancel={close}
+          onCancel={() => {
+            if (pending?._featureEdit) onEditCancel?.();
+            close();
+          }}
           onValuesChange={(values, item) => {
             if (isBlockSolidId(item?.id)) {
               onProfilePreview?.(null);
@@ -416,6 +444,15 @@ const HelperInsertPalette = ({
                 onStaleEdgesClear?.(gate.message);
                 return;
               }
+            }
+            if (pending?._featureEdit) {
+              const kept = onEditConfirm?.({
+                feature: pending._featureEdit === true ? null : pending._featureEdit,
+                fields: params,
+              });
+              if (kept === false) return;
+              close();
+              return;
             }
             close();
             onInsert?.(id, params, faceCtx, edgeCtx);

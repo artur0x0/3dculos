@@ -68,8 +68,8 @@ Desktop specifics:
   **horizontal** bar on the CAD viewport under the title
   (`data-desktop-feature-strip`, `data-cad-feature-strip="desktop"`,
   `data-feature-strip-placement="viewer-under-title-horizontal"`). Same chip
-  set as mobile CAD; tap jumps the Monaco caret and opens the feature sheet in
-  the viewer (`handleDesktopFeatureStripJump`). The old vertical seam strip
+  set as mobile CAD; tap jumps the Monaco caret and reopens the creation dialog
+  for that feature (`handleDesktopFeatureStripJump` → `beginFeatureEdit`). The old vertical seam strip
   between editor and viewer is gone. Hidden in game mode. SplitDivider sits
   directly between editor and viewer.
 - **Profile chip:** desktop (above the 768px mobile breakpoint) shows only
@@ -212,7 +212,7 @@ Mobile specifics:
   the latest chips stay on screen and earlier ones sit outside that window.
   Undo and Redo stay visible, call the same `handleUndo` / `handleRedo` as the
   editor toolbar, and do not change which chips appear. Strip taps / long-press
-  still open a **feature sheet**. `hideWhenEmpty` skips the "No features" caption;
+  reopen that feature's **creation dialog** (same path on mobile and desktop). `hideWhenEmpty` skips the "No features" caption;
   the bar itself stays mounted so Undo and Redo remain. A chip whose block holds a
   frozen copy of another part's geometry (`externalBody`) has a 2px yellow border
   (`data-feature-external="1"`), active or not; its feature sheet says External copy.
@@ -229,7 +229,7 @@ Mobile specifics:
   (Contour/`NotebookPen`, Extrude/`ArrowUpFromLine`, Revolve/`Rotate3d`,
   Loft/`Pyramid`, Sweep/`Route`, Fillet/`SquareRoundCorner`,
   Chamfer/`TriangleRight`). Markers from `parseFeatureMarkers` (`typeIndex`).
-  Desktop mounts its own vertical strip in the editor↔viewer seam (see Desktop
+  Desktop's strip is the horizontal bar under the title (see Desktop
   specifics above); mobile CAD/Script mounts stay as documented here.
 - **Feature sheets (Slice Mobile C → C.1):** `FeatureSheet.jsx` — full-width
   **horizontal** glass bar just below the part name (`top-14`,
@@ -237,12 +237,14 @@ Mobile specifics:
   stages. Caps at `max-h-[calc(100dvh-10rem)]` with internal `rail-scroll` so
   mobile popups stay below the feature strip with finger clearance for viewport
   picks (Contour/Fillet chips use `max-h-[calc(100dvh-12rem)]` similarly).
-  Horizontal scroll when params overflow. Open via long-press (~450ms)
-  on the viewport or CAD strip tap. Real param writeback for **Extrude**
-  (distance/sense), **Fillet** (radius), **Revolve** (angle) via
-  `featureSheetWriteback.js` into the marked block + Auto-Run; other kinds stub
-  → Edit script. Accept / Cancel / Edit script stay. Desktop/game sheets off
-  (`featureSheetEnabled` false).
+  Horizontal scroll when params overflow. The CAD strip, the desktop strip, and
+  long-press reopen the **creation dialog** for that feature (`beginFeatureEdit`),
+  pre-filled from the block. Confirm rewrites that block in place
+  (`confirmFeatureEdit`); Cancel writes nothing. A stored edge or face the
+  prefix graph cannot resolve stays listed (`N edges not found`) with Clear.
+  The under-title `FeatureSheet` remains for a failed-chip read and for kinds
+  with no creation dialog. Accept / Cancel / Edit script / Delete stay on that
+  sheet. Desktop/game do not mount it (`featureSheetEnabled` false).
 - **Viewport backdrop:** `viewport-shell` + Three.js clear/background use Monaco
   gray `#1e1e1e` (not Tailwind `gray-900` / `#111827`).
 - **Face description popup:** removed in Slice Mobile C.1 (was under-title B.1

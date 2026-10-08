@@ -159,6 +159,13 @@ import {
   hasChamferModeBlock,
 } from '../utils/filletMode';
 import {
+  applyContourEditSeed,
+  contourFieldsFromState,
+  creationDialogFor,
+  editPreviewScript,
+  openFeatureEdit,
+} from '../utils/featureEdit';
+import {
   enterShellState,
   validateShellAccept,
   normalizeShellParams,
@@ -675,6 +682,7 @@ const Viewport = forwardRef(({
   onFeatureOpen = null,
   onCommitContourProfile = null,
   onCommitFillet = null,
+  onCommitFeatureEdit = null,
   onCommitShell = null,
   onCommitDraft = null,
   onCommitCut = null,
@@ -808,6 +816,15 @@ const Viewport = forwardRef(({
   const onFeatureSessionChangeRef = useRef(null);
   const partLabelsRef = useRef(null);
   const featureSessionRef = useRef(false);
+  const featureEditRef = useRef(null);
+  const beginFeatureEditRef = useRef(null);
+  const commitFeatureEditRef = useRef(() => false);
+  const cancelFeatureEditRef = useRef(() => {});
+  const executeScriptRef = useRef(null);
+  const onCommitFeatureEditRef = useRef(onCommitFeatureEdit);
+  onCommitFeatureEditRef.current = onCommitFeatureEdit;
+  const [helperEdit, setHelperEdit] = useState(null);
+  const [featureEditBanner, setFeatureEditBanner] = useState('');
   const cadBodyStickyRef = useRef(false);
   const showCadBodyHighlightRef = useRef(() => false);
   const swapPickPartRef = useRef(() => false);
@@ -1324,6 +1341,7 @@ const Viewport = forwardRef(({
      * active mesh only. Other visible parts and failed-row leftovers raycast;
      * a pick retargets onto that part before the graphs are used.
      */
+    beginFeatureEdit: (feature, script) => beginFeatureEditRef.current?.(feature, script) === true,
     placeAssembly: (payload) => placeAssemblyRef.current(payload),
     /** Move the pick mesh onto a part the user just touched. */
     swapPickPart: (payload) => swapPickPartRef.current(payload),
@@ -2445,6 +2463,7 @@ const Viewport = forwardRef(({
   }, [clearFilletBlendPreview, anchorToActivePart]);
 
   const exitContourMode = useCallback(() => {
+    cancelFeatureEditRef.current?.('contour');
     setContourMode(null);
     contourModeRef.current = null;
     setPickMode('face');
@@ -2581,6 +2600,16 @@ const Viewport = forwardRef(({
         params: { ...(state.params || {}) },
       })
       : state;
+    if (featureEditRef.current?.dialog === 'contour') {
+      const ok = commitFeatureEditRef.current?.({
+        fields: {
+          ...(featureEditRef.current.session?.fields || {}),
+          ...contourFieldsFromState(loftState),
+        },
+      });
+      if (ok) exitContourMode();
+      return;
+    }
     const ok = onCommitContourProfile?.({
       partId: activePartIdRef.current,
       face: loftState.planeFace || commitFace,
@@ -2602,6 +2631,7 @@ const Viewport = forwardRef(({
   }, [onCommitContourProfile, selectedEdges, modelBounds, exitContourMode]);
 
   const exitFilletMode = useCallback(() => {
+    cancelFeatureEditRef.current?.('fillet');
     setFilletMode(null);
     filletModeRef.current = null;
     clearFilletBlendPreview();
@@ -2623,6 +2653,7 @@ const Viewport = forwardRef(({
   const enterFilletMode = useCallback((opts = {}) => {
     exitPaintModeRef.current();
     const entry = opts?.entry === 'chamferEdges' ? 'chamferEdges' : 'filletEdges';
+    const picked = Array.isArray(opts.edges) ? opts.edges : selectedEdges;
     // Snapshot before exitContourMode, which forces face pick.
     filletPriorPickModeRef.current = pickModeRef.current === 'edge' ? 'edge' : 'face';
     exitContourMode();
@@ -2647,10 +2678,17 @@ const Viewport = forwardRef(({
     setSelectedFace(null);
     onFaceSelected?.(null);
     const next = entry === 'chamferEdges'
-      ? enterChamferState(selectedEdges)
-      : enterFilletState(selectedEdges);
+      ? enterChamferState(picked)
+      : enterFilletState(picked);
+    if (opts.params) {
+      next.params = { ...next.params, ...opts.params };
+      if (entry === 'chamferEdges') next.sizeTouched = true;
+      else next.radiusTouched = true;
+    }
+    if (opts.missingLabel) next.missingLabel = opts.missingLabel;
     setFilletMode(next);
     filletModeRef.current = next;
+    if (Array.isArray(opts.edges)) setSelectedEdges(opts.edges);
     setTangentProp(true);
     // No informational toast on successful Fillet/Chamfer UI open — soft-fail/accept gates still toast.
   }, [exitContourMode, onFaceSelected, selectedEdges, clearHighlight]);
@@ -2667,6 +2705,47 @@ const Viewport = forwardRef(({
   const acceptFillet = useCallback(() => {
     const state = filletModeRef.current;
     if (!state) return;
+    const editing = featureEditRef.current;
+    if (editing && (editing.kind === 'fillet' || editing.kind === 'chamfer')) {
+      const edges = (selectedEdges && selectedEdges.length) ? selectedEdges : (state.lastEdges || []);
+      const chamfer = state.entry === 'chamferEdges';
+      if (edges.length) {
+        const gate = chamfer
+          ? validateChamferAccept(edges, state.params)
+          : validateFilletAccept(edges, state.params);
+        if (!gate.ok) {
+          showFilletToast(gate.message);
+          return;
+        }
+      }
+      const selectedIds = [...new Set(edges.map((edge) => edge.boundaryId).filter((id) => Number.isFinite(id)))];
+      const missingIds = editing.clearMissing
+        ? []
+        : (editing.missingEdges || []).map((edge) => edge.id).filter((id) => Number.isFinite(id));
+      const storedIds = (editing.session?.edges || []).map((edge) => edge.id).filter((id) => Number.isFinite(id));
+      const nextIds = [...selectedIds, ...missingIds].sort((a, b) => a - b);
+      const sameEdges = !editing.clearMissing
+        && JSON.stringify(nextIds) === JSON.stringify(storedIds.slice().sort((a, b) => a - b));
+      const fields = chamfer
+        ? { ...(editing.session?.fields || {}), chamfer: Number(state.params.chamfer) }
+        : {
+          ...(editing.session?.fields || {}),
+          radius: Number(state.params.radius),
+        };
+      const ok = commitFeatureEditRef.current?.({
+        fields,
+        edgeIds: sameEdges ? undefined : nextIds,
+        clearMissing: !!editing.clearMissing,
+      });
+      if (ok) {
+        edgeRematchToastSuppressRef.current = true;
+        clearEdgeHover();
+        clearEdgeHighlight();
+        setSelectedEdges([]);
+        exitFilletMode();
+      }
+      return;
+    }
     const edges = (selectedEdges && selectedEdges.length)
       ? selectedEdges
       : (state.lastEdges || []);
@@ -2765,6 +2844,7 @@ const Viewport = forwardRef(({
   }, [onCommitFillet, selectedEdges, getHelperBuffer, exitFilletMode, clearEdgeHover, clearEdgeHighlight]);
 
   const exitShellMode = useCallback(() => {
+    cancelFeatureEditRef.current?.('shell');
     setShellMode(null);
     shellModeRef.current = null;
     if (shellToastTimerRef.current) {
@@ -2845,6 +2925,7 @@ const Viewport = forwardRef(({
     clearDeleteFacePreviewRef.current();
     setDeleteFaceMode(null);
     deleteFaceModeRef.current = null;
+    cancelFeatureEditRef.current?.('sheetMetal');
     setSheetMetalMode(null);
     sheetMetalModeRef.current = null;
     setSheetMetalPicker(null);
@@ -2871,6 +2952,26 @@ const Viewport = forwardRef(({
   const acceptShell = useCallback(() => {
     const state = shellModeRef.current;
     if (!state) return;
+    if (featureEditRef.current?.kind === 'shell') {
+      const wall = Number(state.params?.wall);
+      if (!(wall > 0)) {
+        showShellToast('Wall thickness must be greater than 0.');
+        return;
+      }
+      const openingMode = state.params?.openingMode === 'none' ? 'none' : 'face';
+      const draft = {
+        fields: { ...(featureEditRef.current.session?.fields || {}), wall, openingMode },
+      };
+      if (featureEditRef.current.clearMissing) draft.faces = featureEditRef.current.resolvedFaces || [];
+      const ok = commitFeatureEditRef.current?.(draft);
+      if (ok) {
+        clearHighlight();
+        setSelectedFace(null);
+        onFaceSelected?.(null);
+        exitShellMode();
+      }
+      return;
+    }
     const liveFace = selectedFace
       ? (selectedFace.type ? selectedFace : classifySelectedFace(selectedFace))
       : null;
@@ -3749,6 +3850,7 @@ const Viewport = forwardRef(({
   }, [clearHighlight, highlightFace]);
 
   const exitDraftMode = useCallback(() => {
+    cancelFeatureEditRef.current?.('draft');
     const was = draftModeRef.current;
     setDraftMode(null);
     draftModeRef.current = null;
@@ -3810,6 +3912,23 @@ const Viewport = forwardRef(({
   const acceptDraft = useCallback(() => {
     const state = draftModeRef.current;
     if (!state) return;
+    if (featureEditRef.current?.kind === 'draft') {
+      const angle = Number(state.angle);
+      if (!(angle > 0)) {
+        showShellToast('Draft angle must be greater than 0.');
+        return;
+      }
+      const ok = commitFeatureEditRef.current?.({
+        fields: { ...(featureEditRef.current.session?.fields || {}), angle, flip: !!state.flip },
+      });
+      if (ok) {
+        clearHighlight();
+        setSelectedFace(null);
+        onFaceSelected?.(null);
+        exitDraftMode();
+      }
+      return;
+    }
     const gate = validateDraftAccept(state);
     if (!gate.ok) {
       showShellToast(gate.message);
@@ -4040,6 +4159,7 @@ const Viewport = forwardRef(({
   }, [clearHighlight, highlightFace, clearCutPiecePreview, ensureLiveCutPreview]);
 
   const exitCutMode = useCallback(() => {
+    cancelFeatureEditRef.current?.('cut');
     const was = cutModeRef.current;
     setCutMode(null);
     cutModeRef.current = null;
@@ -4110,6 +4230,16 @@ const Viewport = forwardRef(({
   const acceptCut = useCallback(() => {
     const state = cutModeRef.current;
     if (!state) return;
+    if (featureEditRef.current?.kind === 'cut') {
+      const ok = commitFeatureEditRef.current?.({
+        fields: {
+          ...(featureEditRef.current.session?.fields || {}),
+          originOffset: Number(state.originOffset) || 0,
+        },
+      });
+      if (ok) exitCutMode();
+      return;
+    }
     const geom = resultRef.current?.geometry;
     const positions = geom?.attributes?.position;
     const index = geom?.index?.array;
@@ -4359,6 +4489,7 @@ const Viewport = forwardRef(({
   paintBooleanPicksRef.current = paintBooleanPicks;
 
   const exitBooleanMode = useCallback(() => {
+    cancelFeatureEditRef.current?.('boolean');
     const was = booleanModeRef.current;
     setBooleanMode(null);
     booleanModeRef.current = null;
@@ -4421,6 +4552,13 @@ const Viewport = forwardRef(({
   const acceptBoolean = useCallback(() => {
     const state = booleanModeRef.current;
     if (!state) return;
+    if (featureEditRef.current?.kind === 'boolean') {
+      const ok = commitFeatureEditRef.current?.({
+        fields: { ...(featureEditRef.current.session?.fields || {}), op: state.op || 'union' },
+      });
+      if (ok) exitBooleanMode();
+      return;
+    }
     const partId = activePartIdRef.current;
     const gate = validateBooleanAccept(state, partId, { pieceCount: booleanPieceCountRef.current });
     if (!gate.ok) {
@@ -4490,6 +4628,7 @@ const Viewport = forwardRef(({
   }, [clearMovePreview, getHelperBuffer]);
 
   const exitMoveMode = useCallback(() => {
+    cancelFeatureEditRef.current?.('move');
     const was = moveModeRef.current;
     clearMovePreview();
     setMoveMode(null);
@@ -4549,6 +4688,18 @@ const Viewport = forwardRef(({
   const acceptMove = useCallback(() => {
     const state = moveModeRef.current;
     if (!state) return;
+    if (featureEditRef.current?.kind === 'move') {
+      const ok = commitFeatureEditRef.current?.({
+        fields: {
+          ...(featureEditRef.current.session?.fields || {}),
+          dx: Number(state.dx) || 0,
+          dy: Number(state.dy) || 0,
+          dz: Number(state.dz) || 0,
+        },
+      });
+      if (ok) exitMoveMode();
+      return;
+    }
     const gate = validateMoveAccept(state);
     if (!gate.ok) {
       showShellToast(gate.message);
@@ -4825,6 +4976,7 @@ const Viewport = forwardRef(({
   }, [clearHighlight, highlightFace]);
 
   const exitMoveFaceMode = useCallback(() => {
+    cancelFeatureEditRef.current?.('moveFace');
     const was = moveFaceModeRef.current;
     clearMoveFacePreview();
     setMoveFaceMode(null);
@@ -4898,6 +5050,19 @@ const Viewport = forwardRef(({
   const acceptMoveFace = useCallback(() => {
     const state = moveFaceModeRef.current;
     if (!state) return;
+    if (featureEditRef.current?.kind === 'moveFace') {
+      const draft = {
+        fields: {
+          ...(featureEditRef.current.session?.fields || {}),
+          distance: Number(state.distance),
+          flip: !!state.flip,
+        },
+      };
+      if (featureEditRef.current.clearMissing) draft.faces = featureEditRef.current.resolvedFaces || [];
+      const ok = commitFeatureEditRef.current?.(draft);
+      if (ok) exitMoveFaceMode();
+      return;
+    }
     const gate = validateMoveFaceAccept(state);
     if (!gate.ok) {
       showShellToast(gate.message);
@@ -4937,6 +5102,7 @@ const Viewport = forwardRef(({
   }, [clearHighlight, highlightFace]);
 
   const exitDeleteFaceMode = useCallback(() => {
+    cancelFeatureEditRef.current?.('deleteFace');
     const was = deleteFaceModeRef.current;
     clearDeleteFacePreview();
     setDeleteFaceMode(null);
@@ -5011,6 +5177,17 @@ const Viewport = forwardRef(({
   const acceptDeleteFace = useCallback(() => {
     const state = deleteFaceModeRef.current;
     if (!state) return;
+    if (featureEditRef.current?.kind === 'deleteFace') {
+      const faces = state.faces || [];
+      const draft = {
+        fields: { ...(featureEditRef.current.session?.fields || {}), faceCount: faces.length },
+      };
+      const stored = featureEditRef.current.session?.faces || [];
+      if (featureEditRef.current.clearMissing || faces.length !== stored.length) draft.faces = faces;
+      const ok = commitFeatureEditRef.current?.(draft);
+      if (ok) exitDeleteFaceMode();
+      return;
+    }
     const gate = validateDeleteFaceAccept(state);
     if (!gate.ok) {
       showShellToast(gate.message);
@@ -7027,7 +7204,7 @@ const Viewport = forwardRef(({
 
       // Auto scale: re-frame the part after every successful run so the new geometry is
       // never left off-screen or tiny. Keeps the user's current orbit direction.
-      if (autoFitEnabled) {
+      if (autoFitEnabled && !opts.editPreview) {
         const bounds = calculateBoundsFromMesh(meshData);
         if (bounds) handleZoomToFit();
       }
@@ -7059,7 +7236,7 @@ const Viewport = forwardRef(({
         seamMs: g.seamMs ?? null,
       };
       if (typeof window !== 'undefined') window.__SURFCAD_RUN_TIMING = report;
-      onRunOutcomeRef.current?.({ script, ok: true, scriptLine: null });
+      if (!opts.editPreview) onRunOutcomeRef.current?.({ script, ok: true, scriptLine: null });
       if (soloRunFailedRef.current) {
         soloRunFailedRef.current = false;
         syncFailedPartOutlinesRef.current();
@@ -7068,6 +7245,10 @@ const Viewport = forwardRef(({
       return { ok: true, nonce, mesh: meshData, bodyCount: bodyCentroidsRef.current.length };
 
     } catch (error) {
+      if (opts.editPreview) {
+        console.error('Edit preview failed:', error);
+        return false;
+      }
       filletQualityWatchRef.current = null;
       console.error('Error executing script:', error);
       const msg = error.message || 'Script execution failed';
@@ -7141,6 +7322,213 @@ const Viewport = forwardRef(({
       }
     }
   }, [currentScript, materials, onFaceSelected, renderMeshData, clearHighlight, clearEdgeHighlight, clearEdgeHover, autoFitEnabled, handleZoomToFit, selectedEdges, syncFeatureEdges]);
+
+  executeScriptRef.current = executeScript;
+
+  const editKindMatches = (edit, kind) => {
+    if (!edit || !kind) return false;
+    if (edit.kind === kind || edit.dialog === kind) return true;
+    if (kind === 'fillet' && (edit.kind === 'fillet' || edit.kind === 'chamfer')) return true;
+    if (kind === 'contour' && edit.dialog === 'contour') return true;
+    return false;
+  };
+
+  cancelFeatureEditRef.current = (kind) => {
+    const edit = featureEditRef.current;
+    if (!edit || edit.opening || !editKindMatches(edit, kind)) return;
+    const full = edit.previewed ? edit.script : '';
+    featureEditRef.current = null;
+    setHelperEdit(null);
+    setFeatureEditBanner('');
+    if (full) executeScriptRef.current?.(full, { editPreview: true });
+  };
+
+  commitFeatureEditRef.current = (draft) => {
+    const edit = featureEditRef.current;
+    if (!edit) return false;
+    const ok = onCommitFeatureEditRef.current?.({ feature: edit.feature, draft });
+    if (!ok) return false;
+    const live = (typeof getHelperBuffer === 'function' ? getHelperBuffer() : '') || '';
+    const full = edit.previewed && live === edit.script ? edit.script : '';
+    featureEditRef.current = null;
+    setHelperEdit(null);
+    setFeatureEditBanner('');
+    if (full) executeScriptRef.current?.(full, { editPreview: true });
+    return true;
+  };
+
+  const liveGraphFaces = () => {
+    const geom = resultRef.current?.geometry;
+    if (!geom) return [];
+    const graph = warmFaceGraph(geom, faceIDsRef.current);
+    return (graph?.patches || []).map((patch) => ({
+      center: patch.center,
+      normal: patch.normal,
+      indices: patch.tris,
+      id: patch.id,
+    }));
+  };
+
+  beginFeatureEditRef.current = (feature, script) => {
+    const dialog = creationDialogFor(feature?.kind);
+    if (!dialog) return false;
+    const text = typeof script === 'string' ? script : '';
+    const session0 = openFeatureEdit(text, feature);
+    if (!session0.ok) {
+      showContourToast(session0.message || 'Could not open that feature.');
+      return false;
+    }
+    const needsPreview = ['fillet', 'chamfer', 'shell', 'draft', 'cut', 'moveFace', 'deleteFace', 'sweep'].includes(feature.kind);
+    featureEditRef.current = {
+      feature: session0.feature || feature,
+      kind: feature.kind,
+      dialog: dialog.dialog,
+      script: text,
+      previewed: false,
+      opening: true,
+      session: session0,
+      clearMissing: false,
+      missingEdges: session0.missingEdges || [],
+      missingFaces: session0.missingFaces || [],
+      resolvedFaces: session0.resolvedFaces || [],
+    };
+    setHelperEdit(null);
+    setFeatureEditBanner('');
+    const launch = async () => {
+      let session = session0;
+      try {
+        if (needsPreview) {
+          const preview = editPreviewScript(text, feature);
+          const ran = await executeScriptRef.current?.(preview, { editPreview: true });
+          if (!featureEditRef.current) return;
+          featureEditRef.current.previewed = !!ran;
+          if (ran && session0.ok) {
+            session = openFeatureEdit(text, feature, {
+              edges: featureEdgesRef.current || [],
+              faces: liveGraphFaces(),
+            });
+            if (session.ok && featureEditRef.current) {
+              featureEditRef.current.session = session;
+              featureEditRef.current.missingEdges = session.missingEdges || [];
+              featureEditRef.current.missingFaces = session.missingFaces || [];
+              featureEditRef.current.resolvedFaces = session.resolvedFaces || [];
+              featureEditRef.current.feature = session.feature || feature;
+            }
+          }
+        }
+        if (!featureEditRef.current) return;
+        const active = session.ok ? session : session0;
+        const label = [active.missingEdgeLabel, active.missingFaceLabel].filter(Boolean).join(' · ');
+        if (dialog.dialog !== 'fillet' && dialog.dialog !== 'chamfer') setFeatureEditBanner(label);
+        if (dialog.dialog === 'fillet' || dialog.dialog === 'chamfer') {
+          const chamfer = feature.kind === 'chamfer';
+          enterFilletMode({
+            entry: chamfer ? 'chamferEdges' : 'filletEdges',
+            edges: active.resolvedEdges || [],
+            params: chamfer ? { chamfer: active.fields?.chamfer } : { radius: active.fields?.radius },
+            missingLabel: label,
+          });
+        } else if (dialog.dialog === 'contour') {
+          enterContourMode({ entry: dialog.entry });
+          setContourMode((prev) => applyContourEditSeed(prev, active));
+          if (feature.kind === 'sweep') setSelectedEdges(active.resolvedEdges || []);
+        } else if (dialog.dialog === 'helper') {
+          setHelperEdit({
+            helperId: dialog.helperId,
+            feature: featureEditRef.current.feature,
+            fields: active.fields || {},
+            script: text,
+          });
+        } else if (dialog.dialog === 'sheetMetal' && active.spec) {
+          setSheetMetalMode({
+            stage: 'edit',
+            sku: {
+              sku: active.spec.sku,
+              name: active.spec.material || active.spec.sku,
+              bendable: true,
+              thicknessMm: active.spec.t,
+            },
+            partId: activePartIdRef.current,
+            spec: active.spec,
+            tool: 'bend',
+          });
+        } else if (dialog.dialog === 'shell') {
+          enterShellMode();
+          const face = (active.resolvedFaces || [])[0] || null;
+          const next = enterShellState(face);
+          next.params = {
+            ...next.params,
+            wall: active.fields?.wall,
+            openingMode: active.fields?.openingMode === 'none' ? 'none' : 'face',
+          };
+          next.lastFace = face;
+          shellModeRef.current = next;
+          setShellMode(next);
+          if ((active.resolvedFaces || []).some((item) => item.indices?.length)) {
+            const geom = resultRef.current?.geometry;
+            publishFacePicks(active.resolvedFaces, geom, geom?.attributes?.position, geom?.index?.array);
+          }
+        } else if (dialog.dialog === 'draft') {
+          enterDraftMode();
+          const ref = active.reference;
+          const neutral = ref
+            ? liveGraphFaces().find((face) => {
+              if (!face.center || !face.normal) return false;
+              const dc = Math.hypot(face.center[0] - ref.center[0], face.center[1] - ref.center[1], face.center[2] - ref.center[2]);
+              const dot = face.normal[0] * ref.normal[0] + face.normal[1] * ref.normal[1] + face.normal[2] * ref.normal[2];
+              return dc < 1 && dot > 0.98;
+            }) || null
+            : null;
+          const next = {
+            ...emptyDraftState(neutral),
+            angle: active.fields?.angle,
+            flip: !!active.fields?.flip,
+            drafts: active.resolvedFaces || [],
+            neutral,
+          };
+          draftModeRef.current = next;
+          setDraftMode(next);
+          paintDraftPicks(next);
+        } else if (dialog.dialog === 'cut') {
+          enterCutMode();
+          const next = { ...emptyCutState(), originOffset: Number(active.fields?.originOffset) || 0 };
+          cutModeRef.current = next;
+          setCutMode(next);
+        } else if (dialog.dialog === 'boolean') {
+          enterBooleanMode();
+          const next = { ...emptyBooleanState(), op: active.fields?.op || 'union' };
+          booleanModeRef.current = next;
+          setBooleanMode(next);
+        } else if (dialog.dialog === 'move') {
+          enterMoveMode();
+          const at = active.fields?.at;
+          const next = {
+            ...emptyMoveState(),
+            dx: Number(active.fields?.dx) || 0,
+            dy: Number(active.fields?.dy) || 0,
+            dz: Number(active.fields?.dz) || 0,
+            target: Array.isArray(at) ? { at: at.slice() } : null,
+          };
+          moveModeRef.current = next;
+          setMoveMode(next);
+        } else if (dialog.dialog === 'moveFace') {
+          enterMoveFaceMode();
+          commitMoveFaceState({
+            ...emptyMoveFaceState(active.resolvedFaces || []),
+            distance: active.fields?.distance,
+            flip: !!active.fields?.flip,
+          });
+        } else if (dialog.dialog === 'deleteFace') {
+          enterDeleteFaceMode();
+          commitDeleteFaceState(emptyDeleteFaceState(active.resolvedFaces || []));
+        }
+      } finally {
+        if (featureEditRef.current) featureEditRef.current.opening = false;
+      }
+    };
+    void launch();
+    return true;
+  };
 
   clearAssemblyExtrasRef.current = () => {
     const group = assemblyGroupRef.current;
@@ -7841,13 +8229,21 @@ const Viewport = forwardRef(({
           onEnterMoveFaceMode={enterMoveFaceMode}
           onEnterDeleteFaceMode={enterDeleteFaceMode}
           compact={isMobile}
+          editSession={helperEdit}
+          onEditConfirm={({ fields }) => commitFeatureEditRef.current?.({
+            fields: { ...(featureEditRef.current?.session?.fields || {}), ...fields },
+          })}
+          onEditCancel={() => cancelFeatureEditRef.current?.(featureEditRef.current?.kind || 'helper')}
         />
       )}
 
       {/* SCS sheet metal: left rail swaps like contour mode. */}
       {sheetMetalMode && (
         <SheetMetalRail
-          onExit={() => setSheetMetalMode(null)}
+          onExit={() => {
+            cancelFeatureEditRef.current?.('sheetMetal');
+            setSheetMetalMode(null);
+          }}
           tools={sheetMetalMode.stage === 'edit' ? sheetToolsFor(sheetMetalMode.spec) : []}
           tool={sheetMetalMode.tool}
           onSelectTool={(id) => setSheetMetalMode((prev) => (prev ? setSheetTool(prev, id) : prev))}
@@ -7857,8 +8253,26 @@ const Viewport = forwardRef(({
         <SheetMetalFlow
           mode={sheetMetalMode}
           setMode={(fn) => setSheetMetalMode((prev) => (prev ? fn(prev) : prev))}
-          onCommit={(spec, meta) => onCommitSheetMetal?.(spec, { ...meta, partId: sheetMetalMode.partId }) ?? false}
-          onExit={() => setSheetMetalMode(null)}
+          onCommit={(spec, meta) => {
+            if (featureEditRef.current?.kind === 'sheetMetal') {
+              const ok = commitFeatureEditRef.current?.({
+                fields: {
+                  ...(featureEditRef.current?.session?.fields || {}),
+                  width: spec?.width,
+                  height: spec?.height,
+                  sku: spec?.sku,
+                  t: spec?.t,
+                },
+              });
+              if (ok) setSheetMetalMode(null);
+              return !!ok;
+            }
+            return onCommitSheetMetal?.(spec, { ...meta, partId: sheetMetalMode.partId }) ?? false;
+          }}
+          onExit={() => {
+            cancelFeatureEditRef.current?.('sheetMetal');
+            setSheetMetalMode(null);
+          }}
           compact={isMobile}
           mesh={cachedMeshData}
           script={sheetMetalMode.exportOpen && typeof getHelperBuffer === 'function' ? getHelperBuffer() : null}
@@ -8094,6 +8508,30 @@ const Viewport = forwardRef(({
         />
       )}
 
+      {featureEditBanner && !filletMode ? (
+        <div
+          className="absolute bottom-24 left-1/2 z-30 flex -translate-x-1/2 items-center gap-2 rounded-md border border-amber-400/70 bg-amber-950/80 px-2 py-1 text-[11px] text-amber-100"
+          data-feature-edit-missing=""
+        >
+          <span>{featureEditBanner}</span>
+          <button
+            type="button"
+            className="underline"
+            data-feature-edit-clear-missing=""
+            onClick={() => {
+              if (featureEditRef.current) {
+                featureEditRef.current.clearMissing = true;
+                featureEditRef.current.missingEdges = [];
+                featureEditRef.current.missingFaces = [];
+              }
+              setFeatureEditBanner('');
+            }}
+          >
+            Clear
+          </button>
+        </div>
+      ) : null}
+
       {/* Slice 27: Fillet-in-mode chip — Tangent / Clear / Undo / Accept */}
       {filletMode && (
         <FilletModeChip
@@ -8122,6 +8560,15 @@ const Viewport = forwardRef(({
             setSelectedEdges((prev) => popLastEdgeSelection(prev));
           }}
           onDismiss={exitFilletMode}
+          missingLabel={filletMode.missingLabel || ''}
+          onClearMissing={() => {
+            if (featureEditRef.current) {
+              featureEditRef.current.clearMissing = true;
+              featureEditRef.current.missingEdges = [];
+            }
+            setFeatureEditBanner('');
+            setFilletMode((prev) => (prev ? { ...prev, missingLabel: '' } : prev));
+          }}
           onParamChange={(next, extra) => setFilletMode((prev) => (
             prev
               ? {

@@ -19,6 +19,7 @@ import {
   isFeatureSheetEditable,
   liveSheetFeature,
 } from './utils/featureSheetWriteback';
+import { confirmFeatureEdit } from './utils/featureEdit';
 import QuoteModal from './components/QuoteModal';
 import OrderModal from './components/OrderModal';
 import LoginModal from './components/LoginModal';
@@ -373,6 +374,8 @@ const App = () => {
     setFeatureStripActiveId(feature.id);
     codeEditorRef.current?.revealRange?.(feature.startOffset, feature.endOffset);
     setFeatureSheet({ mode: 'edit', feature });
+    const buf = codeEditorRef.current?.getContent?.() || currentScript || '';
+    if (viewportRef.current?.beginFeatureEdit?.(feature, buf)) setFeatureSheet(null);
   };
   /** Desktop "Edit script": the editor is already visible — just reveal it. */
   const handleDesktopFeatureSheetEditScript = (feature) => {
@@ -397,6 +400,8 @@ const App = () => {
     focusWritePartRef.current(null);
     setFeatureStripActiveId(feature.id);
     setFeatureSheet({ mode: 'edit', feature });
+    const buf = codeEditorRef.current?.getContent?.() || currentScript || '';
+    if (viewportRef.current?.beginFeatureEdit?.(feature, buf)) setFeatureSheet(null);
   };
   const openFeatureSheetFromCad = () => {
     focusWritePartRef.current(null);
@@ -455,6 +460,39 @@ const App = () => {
         handleGameRun();
       }, 0);
     }
+  };
+  /**
+   * Strip / history edit Confirm. Rewrites that one block. An unchanged
+   * confirm does not touch the editor, so the script stays byte-identical
+   * and undo does not grow. A real change is one applyBuffer — one undo step.
+   */
+  const handleCommitFeatureEdit = (payload) => {
+    const feature = payload?.feature;
+    if (!feature) return false;
+    focusWritePartRef.current(null);
+    const buf = codeEditorRef.current?.getContent?.() || currentScript || '';
+    const result = confirmFeatureEdit(buf, feature, payload?.draft || {});
+    if (!result.ok) {
+      viewportRef.current?.softFailContour?.(result.message);
+      return false;
+    }
+    if (!result.changed) return true;
+    const wrote = codeEditorRef.current?.applyBuffer?.(
+      result.buffer,
+      `Edit ${feature.label || feature.kind || 'feature'}`,
+    );
+    if (!wrote) {
+      viewportRef.current?.softFailContour?.(
+        'Could not write the feature edit into the editor — try again.',
+      );
+      return false;
+    }
+    if (result.run) {
+      setTimeout(() => {
+        handleGameRun();
+      }, 0);
+    }
+    return true;
   };
   const handleFeatureSheetDelete = (feature) => {
     if (!feature) return;
@@ -5694,6 +5732,7 @@ const App = () => {
               onFeatureOpen={handleFeatureOpen}
               onCommitContourProfile={handleCommitContourProfile}
               onCommitFillet={handleCommitFillet}
+              onCommitFeatureEdit={handleCommitFeatureEdit}
               onCommitShell={handleCommitShell}
               onCommitPaint={handleCommitPaint}
               onCommitDraft={handleCommitDraft}
@@ -6150,6 +6189,7 @@ const App = () => {
             onFeatureOpen={handleFeatureOpen}
             onCommitContourProfile={handleCommitContourProfile}
             onCommitFillet={handleCommitFillet}
+            onCommitFeatureEdit={handleCommitFeatureEdit}
               onCommitShell={handleCommitShell}
               onCommitPaint={handleCommitPaint}
               onCommitDraft={handleCommitDraft}
