@@ -1,8 +1,9 @@
 /**
  * Mini snapshot of one part solid for the parts feed.
  *
- * Same look as the CAD viewer: flat normal shading, a point light on the
- * camera, and the #1e1e1e background. One shared renderer draws a part once.
+ * Same look as the CAD viewer: flat normal shading for ordinary parts,
+ * the sheet-metal gray for a sheet mesh, and the #1e1e1e background.
+ * One shared renderer draws a part once.
  * The bitmap is cached by the mesh, so an idle row and a scroll do not
  * draw again. A new solid (new vertex data) is a new key and draws again.
  */
@@ -18,6 +19,7 @@ import {
   WebGLRenderer,
 } from 'three';
 import { dropPlanarFins } from './planarSeam.js';
+import { ensureBodyMaterial } from './sheetMetal/sheetMaterial.js';
 import { VIEW_PRESETS, fitView } from './viewCamera.js';
 
 export const PART_PREVIEW_SIZE = 128;
@@ -30,6 +32,7 @@ let renderer = null;
 let scene = null;
 let camera = null;
 let body = null;
+let normalMaterial = null;
 let rendererFailed = false;
 
 function hashMesh(mesh) {
@@ -52,7 +55,8 @@ function hashMesh(mesh) {
     h = Math.imul(h, 16777619);
   }
   if (!Number.isFinite(h)) return null;
-  return (h >>> 0).toString(16);
+  const key = (h >>> 0).toString(16);
+  return mesh.sheetMetal ? `sheet:${key}` : key;
 }
 
 /** Stable id for this solid. Null when there is nothing to draw. */
@@ -128,7 +132,8 @@ function ensureRenderer() {
     const light = new PointLight(0xffffff, 1);
     camera.add(light);
     scene.add(camera);
-    body = new Mesh(new BufferGeometry(), new MeshNormalMaterial({ flatShading: true }));
+    normalMaterial = new MeshNormalMaterial({ flatShading: true });
+    body = new Mesh(new BufferGeometry(), normalMaterial);
     scene.add(body);
     return true;
   } catch (err) {
@@ -154,6 +159,7 @@ function renderSnapshot(mesh) {
   if (!geometry) return null;
   const prev = body.geometry;
   body.geometry = geometry;
+  ensureBodyMaterial(body, mesh, normalMaterial);
   if (prev && prev !== geometry) prev.dispose();
   const fitted = fitView({
     camera,

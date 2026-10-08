@@ -576,6 +576,8 @@ Import `src/utils/importModel.js` (+ `POST /api/convert/step`); export
   away go dark, which is exactly the bug that made Extrude look muddy next to
   Loft. Add a preview → call `makePreviewSkinMaterial` /
   `makePreviewOutlineMaterial`.
+  Sheet-metal parts are the exception: faces are light gray brushed metal
+  (`#c8ccd2`, both sides), not the normal material; orange bend/edge handles stay unlit on top.
 - **`railHidden` items** are palette entries with no button:
   `paletteRailSections` filters them, `itemsByGroup` does not. `sweepPath`
   (Path) stays so Sweep can still compose an edge wire. `clearanceHole`,

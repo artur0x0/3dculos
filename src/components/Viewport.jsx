@@ -76,6 +76,7 @@ import {
   sheetToolsFor,
 } from '../utils/sheetMetal/sheetMetalMode';
 import { buildSheetOverlay, disposeSheetOverlay, sheetPickFromHits } from '../utils/sheetMetal/sheetOverlay';
+import { ensureBodyMaterial } from '../utils/sheetMetal/sheetMaterial';
 import DraftModeChip from './DraftModeChip';
 import CutModeChip from './CutModeChip';
 import BooleanModeChip from './BooleanModeChip';
@@ -3506,7 +3507,8 @@ const Viewport = forwardRef(({
         normalArray, 
         plane.originOffset
       );
-      
+      if (trimmedMesh && cachedMeshDataRef.current?.sheetMetal) trimmedMesh.sheetMetal = true;
+
       // Render the trimmed result
       renderMeshData(trimmedMesh);
       
@@ -6561,9 +6563,10 @@ const Viewport = forwardRef(({
       resultRef.current.material = preOverlayMaterialRef.current;
       preOverlayMaterialRef.current = null;
     }
-    // Prefer the canonical lit base materials from defineMaterials.
-    if (materialsRef.current?.length) {
-      resultRef.current.material = materialsRef.current;
+    // Sheet parts take the gray metal. Everything else keeps the shared
+    // normal-material array. The array itself is never disposed.
+    if (meshData?.sheetMetal || materialsRef.current?.length) {
+      ensureBodyMaterial(resultRef.current, meshData, materialsRef.current);
     }
     partGraphRef.current = null;
     partGraphSourceRef.current = null;
@@ -7249,6 +7252,7 @@ const Viewport = forwardRef(({
       releaseGeometryIn(solidCacheRef.current, mesh.geometry);
       mesh.geometry = geom;
     }
+    ensureBodyMaterial(mesh, meshData);
     const p = position || [0, 0, 0];
     mesh.position.set(p[0] || 0, p[1] || 0, p[2] || 0);
   };
@@ -7330,6 +7334,7 @@ const Viewport = forwardRef(({
         releaseGeometryIn(solidCacheRef.current, mesh.geometry);
         mesh.geometry = geom;
       }
+      ensureBodyMaterial(mesh, solid.mesh);
       const p = solid.position || [0, 0, 0];
       mesh.position.set(p[0], p[1], p[2]);
     }
@@ -7353,6 +7358,7 @@ const Viewport = forwardRef(({
         releaseGeometryIn(solidCacheRef.current, mesh.geometry);
         mesh.geometry = geom;
       }
+      ensureBodyMaterial(mesh, solid.mesh);
       const p = solid.position || [0, 0, 0];
       mesh.position.set(p[0], p[1], p[2]);
     }

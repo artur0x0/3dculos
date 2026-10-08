@@ -4,15 +4,13 @@
  */
 import { newPartStarterScript } from '../helperPaletteSnippets.js';
 import { DEFAULT_SCRIPT } from '../defaultScript.js';
+import {
+  SHEET_METAL_BEGIN,
+  SHEET_METAL_END,
+  hasSheetMetalBlock,
+} from './sheetMeshFlag.js';
 
-export const SHEET_METAL_BEGIN = '// --- sheet-metal begin ---';
-export const SHEET_METAL_END = '// --- sheet-metal end ---';
-
-export function hasSheetMetalBlock(script) {
-  const s = String(script || '');
-  const i = s.indexOf(SHEET_METAL_BEGIN);
-  return i >= 0 && s.indexOf(SHEET_METAL_END, i) > i;
-}
+export { SHEET_METAL_BEGIN, SHEET_METAL_END, hasSheetMetalBlock };
 
 /**
  * Can sheet-metal mode write into this part without clobbering work?
