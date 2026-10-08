@@ -6,8 +6,8 @@
  *
  *   #1 box top with the loft "boss" on it → one face, outline has no
  *      interior diagonals (dropped needle left a T-junction the old outline drew).
- *   #2 box-edge fillet → exactly that fillet op (not the tangent fillets it
- *      touches), outline has no strip seams.
+ *   #2 box-edge fillet → that fillet plus the G1 fillets the other calls
+ *      left against it. The loft fillet stays out. Outline has no strip seams.
  *   #3 fillet on a loft generator → only the fillet, never the G1 loft wall.
  *   #4 loft end cap → one face, no interior diagonal.
  *   Long filleted box edge (fine, tangent chain, coarse strips) → one face.
@@ -157,8 +157,9 @@ console.log('Artur Testpart (default script: box, 2 fillets, loft, 2 fillets, ho
   const set2 = new Set(r2.indices);
   const cover2 = areaOf(T, f2.filter((t) => set2.has(t))) / areaOf(T, f2);
   check('#2 one tap selects the whole box-edge fillet', cover2 > 0.995, `cover=${(cover2 * 100).toFixed(2)}% of ${areaOf(T, f2).toFixed(1)}`);
-  check('#2 the tangent fillets on either side stay out', !f1.some((t) => set2.has(t)) && !f4.some((t) => set2.has(t)),
+  check('#2 G1 fillets from the other calls join this chain', f1.some((t) => set2.has(t)) && f4.some((t) => set2.has(t)),
     `f1=${f1.filter((t) => set2.has(t)).length} f4=${f4.filter((t) => set2.has(t)).length}`);
+  check('#2 the loft stays out of the box-fillet chain', !r2.indices.some((t) => T[t].c[2] > 11 && T[t].area > 1e-3));
   check('#2 no flat face triangles in the fillet pick', !r2.indices.some((t) => isAxis(T[t].n) && T[t].area > 1e-3));
   const seg2 = highlightBoundaryPositions(s.geometry.attributes.position, s.geometry.index.array, r2.indices);
   check('#2 outline has no strip seams (no stripes)', interiorSegments(s, r2.indices, seg2) === 0, `segs=${seg2.length / 6}`);

@@ -143,7 +143,7 @@ export default [
   // legal ('commonjs' matches that shape; 'script'/'module' do not parse it)
   // and Manifold/helpers arrive through the injected scope, not globals.
   {
-    files: ['scripts/golden/puzzle_*.js', 'codeSamples.js'],
+    files: ['scripts/golden/puzzle_*.js', 'scripts/golden/fixtures/LoftZilla.js', 'codeSamples.js'],
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: 'commonjs',

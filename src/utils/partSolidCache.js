@@ -62,8 +62,8 @@ export function buildSolidGeometry(meshData) {
   const srcFaceID = meshData.faceID && meshData.faceID.length > 0 ? meshData.faceID : null;
   const fin = dropPlanarFins(vertProperties, srcIndex, srcFaceID);
   const triVerts = fin.indices;
-  // Feature source per kept triangle (fillet op or originalID) — the face
-  // graph's curved merge never crosses it.
+  // Feature source per kept triangle (fillet op or originalID). The face
+  // graph crosses it only between fillet ops whose dihedral clears both gates.
   const triSource = triangleSources(meshData, fin.keep, triVerts.length / 3);
   if (triSource) geometry.userData.triSource = triSource;
   if (meshData?.featureTessellation?.length) {

@@ -409,6 +409,10 @@ caps: `EXECUTION_LIMITS`, `src/components/Viewport.jsx:212`.
 
 ### Selection
 Faces: `src/utils/selectFace.js`, `src/utils/faceFeaturePlacement.js`.
+One face tap is the PartGraph patch (`src/utils/partGraphPatches.js`). A fillet
+band is the G1 chain: the walk crosses separate fillet calls when the dihedral
+is within both gates, and it stops at a flat, the loft, a hole, a chamfer, or
+a crease above the gate.
 Edges: `src/utils/selectEdge.js` (`pickNearestEdgeScreen`,
 `buildCoherentEdges`, `toggleEdgeSelectionPropagated`),
 `src/utils/boundaryEdgeIds.js`, `src/utils/edgeTangencyField.js`. Pick mode is
