@@ -13,6 +13,11 @@
  *     { "path": "parts/M3 bolt.js", "name": "M3 bolt", "visible": true, "order": 1 },
  *     { "id": "2026-10-07-20-56-31-0424-b10c", "path": "assemblies/Cover/Plate.js",
  *       "name": "Plate", "visible": true, "order": 2, "copiedFrom": "2026-10-07-20-56-31-0999-abcd"? }
+ *   ],
+ *   "groups": [
+ *     { "id": "2026-10-08-02-00-00-0001-ab12", "name": "Cover",
+ *       "source": "assemblies/Cover/.surf.json",
+ *       "partIds": ["2026-10-07-20-56-31-0424-b10c"] }
  *   ]
  * }
  *
@@ -21,7 +26,11 @@
  * folder (linked external part), or the shared top-level `parts/`. Legacy
  * `assemblies/<Name>/parts/<P>.js` paths are accepted on read. The in-app
  * row id stays the path; `surfId` carries `id`. No script source in the
- * file. Unknown top-level keys are rejected so a typo cannot silently drop data.
+ * file. `groups` is optional. Each group names parts by surf id (`partIds`).
+ * `source` is the source assembly path (`assemblies/<Name>/.surf.json`).
+ * A missing `groups` key loads as no groups. Dangling part ids are dropped
+ * on read; a group left empty is dropped. Unknown top-level keys are
+ * rejected so a typo cannot silently drop data.
  */
 import { ASSEMBLY_VERSION, partPosition, serializeAssembly } from '../assembly.js';
 import { normalizeRepoPath } from '../assembly.js';
@@ -31,8 +40,40 @@ import { isSurfId } from './surfId.js';
 
 export const SURF_JSON_FORMAT = 'surfcad.assembly';
 export const SURF_JSON_VERSION = 1;
-const TOP_KEYS = new Set(['format', 'version', 'name', 'activeId', 'parts']);
+const TOP_KEYS = new Set(['format', 'version', 'name', 'activeId', 'parts', 'groups']);
 const PART_KEYS = new Set(['id', 'path', 'name', 'visible', 'order', 'position', 'sheetMetal', 'copiedFrom']);
+const GROUP_KEYS = new Set(['id', 'name', 'source', 'partIds']);
+
+/**
+ * Drop part ids that are real surf ids but not in `parts`, and drop a group
+ * that has nothing left. Invalid ids stay so validation can reject them.
+ * First group keeps a surf id when two groups list it.
+ */
+export function pruneDanglingGroupPartIds(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw) || !Array.isArray(raw.groups)) return raw;
+  const live = new Set((raw.parts || []).map((part) => part?.id).filter((id) => isSurfId(id)));
+  const seen = new Set();
+  const groups = [];
+  for (const group of raw.groups) {
+    if (!group || typeof group !== 'object' || Array.isArray(group) || !Array.isArray(group.partIds)) {
+      groups.push(group);
+      continue;
+    }
+    const partIds = [];
+    for (const id of group.partIds) {
+      if (!isSurfId(id)) {
+        partIds.push(id);
+        continue;
+      }
+      if (!live.has(id) || seen.has(id)) continue;
+      seen.add(id);
+      partIds.push(id);
+    }
+    if (!partIds.length) continue;
+    groups.push({ ...group, partIds });
+  }
+  return { ...raw, groups };
+}
 
 /** { ok, errors: [string] } — every problem, not just the first. */
 export function validateSurfJson(input) {
@@ -90,6 +131,37 @@ export function validateSurfJson(input) {
     });
     if (raw.activeId != null && !seen.has(raw.activeId)) errors.push('activeId must be null or one of the part paths');
   }
+  if (raw.groups !== undefined) {
+    if (!Array.isArray(raw.groups)) {
+      errors.push('groups must be an array');
+    } else {
+      const seenGroups = new Set();
+      const seenPartIds = new Set();
+      raw.groups.forEach((group, i) => {
+        const at = `groups[${i}]`;
+        if (!group || typeof group !== 'object' || Array.isArray(group)) {
+          errors.push(`${at} must be an object`);
+          return;
+        }
+        for (const k of Object.keys(group)) if (!GROUP_KEYS.has(k)) errors.push(`${at} unknown key "${k}"`);
+        if (!isSurfId(group.id)) errors.push(`${at}.id must be a surf id`);
+        if (group.id && seenGroups.has(group.id)) errors.push(`${at}.id duplicates ${group.id}`);
+        if (group.id) seenGroups.add(group.id);
+        if (typeof group.name !== 'string' || !group.name.trim()) errors.push(`${at}.name must be a non-empty string`);
+        const source = normalizeRepoPath(group.source);
+        if (!source || source !== group.source) errors.push(`${at}.source must be a repo-relative path`);
+        if (!Array.isArray(group.partIds) || !group.partIds.length) {
+          errors.push(`${at}.partIds must be a non-empty array`);
+        } else {
+          group.partIds.forEach((pid, j) => {
+            if (!isSurfId(pid)) errors.push(`${at}.partIds[${j}] must be a surf id`);
+            else if (seenPartIds.has(pid)) errors.push(`${at}.partIds[${j}] duplicates a grouped part`);
+            else seenPartIds.add(pid);
+          });
+        }
+      });
+    }
+  }
   if (raw.activeId !== undefined && raw.activeId !== null && typeof raw.activeId !== 'string') {
     errors.push('activeId must be a string or null');
   }
@@ -121,6 +193,14 @@ export function toSurfJson(doc) {
       return row;
     }),
   };
+  if (flat.groups?.length) {
+    out.groups = flat.groups.map((group) => ({
+      id: group.id,
+      name: group.name,
+      source: group.source,
+      partIds: group.partIds,
+    }));
+  }
   const check = validateSurfJson(out);
   if (!check.ok) throw new Error(`Invalid .surf.json: ${check.errors.join('; ')}`);
   return out;
@@ -133,7 +213,8 @@ export function stringifySurfJson(doc) {
 
 /** .surf.json text or object -> in-app assembly document (source 'git'). Throws on invalid. */
 export function parseSurfJson(input) {
-  const raw = typeof input === 'string' ? JSON.parse(input) : input;
+  const parsed = typeof input === 'string' ? JSON.parse(input) : input;
+  const raw = pruneDanglingGroupPartIds(parsed);
   const check = validateSurfJson(raw);
   if (!check.ok) throw new Error(`Invalid .surf.json: ${check.errors.join('; ')}`);
   return serializeAssembly({
@@ -151,5 +232,6 @@ export function parseSurfJson(input) {
       position: p.position,
       sheetMetal: p.sheetMetal,
     })),
+    groups: raw.groups,
   });
 }

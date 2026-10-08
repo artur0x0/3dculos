@@ -104,7 +104,17 @@ Desktop specifics:
   assembly opens by reference. A part from another assembly or loose `parts/`
   links in (`links from …`). The row then shows **Caution: external part!**
   (`data-part-external`) and **Copy to this assembly**
-  (`data-part-copy-to-assembly`). Add to Repo (`data-part-add-to-repo`) shows
+  (`data-part-copy-to-assembly`). Parts inserted from another assembly sit
+  under a group row (`data-part-group`, `data-part-group-row`): chevron
+  (`data-part-group-chevron`), name, and count (`data-part-group-count`).
+  Expanded parts are indented under a vertical thread
+  (`data-part-group-thread`). Collapse stays in this list. The overflow
+  button (`data-part-group-menu`) and a 450ms long-press open the same menu
+  (`data-part-group-actions`): **Rename** (inline,
+  `data-part-group-name-input`), **Ungroup**, **Copy all to this assembly**,
+  **Remove group** (confirm `data-part-group-remove-dialog`; linked parts
+  are unlinked, not deleted from the repo). Grouped part rows keep the
+  caution label and the same select, rename, and delete controls. Add to Repo (`data-part-add-to-repo`) shows
   only for a `local-` id. Text inputs on Parts/git
   use `partsChrome.js` `PARTS_TEXT_INPUT_CLASS` (≥16px) to block iOS Safari focus-zoom.
   Git create, Save, rename, copy, and delete show `data-part-pending` spinner in place of the Save icon while that branch's outbox op is queued or sending. A failed sync shows a red mark (`data-part-sync-failed`). A failed rename shows a toast with Retry and Revert (`data-rename-toast`). A moved remote tip opens the conflict popup and does not overwrite.
@@ -149,7 +159,8 @@ Mobile specifics:
   (`LayoutList`), Script (`square-text`). Tap a third to switch stage.
   Desktop has no mode toggle; the parts list and the script editor sit side
   by side.
-  The Parts stage is the part list. Each row shows the same cached solid
+  The Parts stage is the part list, including group rows and the thread
+  (same markup as desktop). Each row shows the same cached solid
   snapshot as desktop. Delete asks first. Confirm removes that part only
   (its script, its row, and its solid). Cancel leaves it. The ribbon centers
   the assembly name (Assembly when the document has none) and keeps Local or
