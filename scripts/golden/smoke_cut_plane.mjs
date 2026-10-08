@@ -293,7 +293,7 @@ console.log('cut plane');
     && /side: FrontSide/.test(cutPaint) && !/side: DoubleSide/.test(cutPaint)
     && !/buildCutPiecePositions/.test(view) && !/cutPieceMesh/.test(view)
     && /cutMode\?\.pick === 'pieces'/.test(view));
-  const workerSrc = read('../../src/workers/sandboxWorker.js');
+  const workerSrc = read('../../src/workers/sandboxWorker.js') + '\n' + read('../../src/lib/surfcad/runtime.js');
   const pc = workerSrc.indexOf("case 'previewCut'");
   const pcBody = workerSrc.slice(pc, workerSrc.indexOf("case '", pc + 20));
   check('previewCut clones the cached solid and does not replace it',

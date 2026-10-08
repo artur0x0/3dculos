@@ -119,7 +119,7 @@ export default [
 
   // ── Sandbox worker: runs in a dedicated worker context ──
   {
-    files: ['src/workers/**'],
+    files: ['src/workers/**', 'src/lib/surfcad/runtime.js'],
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: 'module',

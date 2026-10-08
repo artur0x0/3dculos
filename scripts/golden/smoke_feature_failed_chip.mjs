@@ -141,7 +141,7 @@ const GOOD = `${CUBE}\n${GOOD_FILLET}\nreturn part;\n`;
 
 // ── Wiring ─────────────────────────────────────────────────────────────
 {
-  const worker = read('src/workers/sandboxWorker.js');
+  const worker = read('src/workers/sandboxWorker.js') + '\n' + read('src/lib/surfcad/runtime.js');
   const mw = read('src/utils/ManifoldWorker.js');
   const vp = read('src/components/Viewport.jsx');
   const app = read('src/App.jsx');

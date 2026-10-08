@@ -62,7 +62,7 @@ check('shouldUseHardVariableSweep(easy)', shouldUseHardVariableSweep('easy') ===
 check('tangency cap matches coherent cap', TANGENCY_CHAIN_MAX === COHERENT_EDGE_MAX);
 
 {
-  const workerSrc = readRepo('src/workers/sandboxWorker.js');
+  const workerSrc = readRepo('src/workers/sandboxWorker.js') + '\n' + readRepo('src/lib/surfcad/runtime.js');
   check(
     'sandboxWorker call-site buildVariableProfileFrames',
     /\bbuildVariableProfileFrames\s*\(/.test(workerSrc),

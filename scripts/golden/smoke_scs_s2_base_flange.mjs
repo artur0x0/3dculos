@@ -133,7 +133,7 @@ console.log('SCS S2 — chrome + wiring');
   const flow = read('src/components/sheetMetal/SheetMetalFlow.jsx');
   const view = read('src/components/Viewport.jsx');
   const app = read('src/App.jsx');
-  const worker = read('src/workers/sandboxWorker.js');
+  const worker = read('src/workers/sandboxWorker.js') + '\n' + read('src/lib/surfcad/runtime.js');
   check('base popup: x/y sliders, Back, Accept, ✕ exits', /sm-base-x/.test(flow) && /sm-base-y/.test(flow)
     && /backToPlanePick/.test(flow) && /acceptBaseFlange/.test(flow) && /onClose=\{onExit\}/.test(flow));
   check('mm/in toggle on sheet popups; values stay mm', /data-sm-unit-toggle/.test(read('src/components/sheetMetal/SmControls.jsx'))

@@ -21,7 +21,7 @@ function check(name, cond, detail = '') {
   }
 }
 
-const worker = read('src/workers/sandboxWorker.js');
+const worker = read('src/workers/sandboxWorker.js') + '\n' + read('src/lib/surfcad/runtime.js');
 const helperBlock = worker.slice(
   worker.indexOf('const HELPER_FUNCTIONS = {'),
   worker.indexOf('\n};', worker.indexOf('const HELPER_FUNCTIONS = {')),

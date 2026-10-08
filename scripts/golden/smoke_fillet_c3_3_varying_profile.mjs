@@ -113,7 +113,7 @@ console.log('fillet C3.3 varying profile — pure helper + source pins');
 
 // ---------------------------------------------------------------- source pins
 {
-  const workerSrc = readRepo('src/workers/sandboxWorker.js');
+  const workerSrc = readRepo('src/workers/sandboxWorker.js') + '\n' + readRepo('src/lib/surfcad/runtime.js');
   check('worker builds a varying-profile cutter',
     /function _s23VaryingProfileCutter\s*\(/.test(workerSrc));
   check('variableProfile routes to _s23VaryingProfileCutter',

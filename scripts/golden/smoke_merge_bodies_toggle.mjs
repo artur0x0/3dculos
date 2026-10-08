@@ -430,7 +430,7 @@ export { default as ContourModeChip } from './src/components/ContourModeChip.jsx
 
 // ── Wiring / docs ───────────────────────────────────────────────────────
 {
-  const worker = read('src/workers/sandboxWorker.js');
+  const worker = read('src/workers/sandboxWorker.js') + '\n' + read('src/lib/surfcad/runtime.js');
   check('worker installs separate bodies after setup', /installSeparateBodies\(manifoldModule\)/.test(worker));
   for (const fn of ['hollow', 'draftFaces', 'moveFace', 'deleteFace']) {
     check(`${fn} routes through _perBodyFaceOp`, new RegExp(`function ${fn}\\([^)]*\\) \\{\\n  return _perBodyFaceOp\\(`).test(worker));

@@ -25,7 +25,7 @@ function check(name, cond, detail = '') {
 
 console.log('fillet after keep-both cut — source pins');
 {
-  const w = readRepo('src/workers/sandboxWorker.js');
+  const w = readRepo('src/workers/sandboxWorker.js') + '\n' + readRepo('src/lib/surfcad/runtime.js');
   const gate = 'scrapVol > 0.05 * bestVol && scrapVol > 1e-2';
   const n = w.split(gate).length - 1;
   check('open-path and semi-arc scrap gates both still 5% and 0.01', n === 2, `count=${n}`);

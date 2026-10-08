@@ -39,7 +39,7 @@ const SIDE = { center: [5, 0, 0], normal: [1, 0, 0] };
   const view = read('src/components/Viewport.jsx');
   const app = read('src/App.jsx');
   const chip = read('src/components/MoveFaceModeChip.jsx');
-  const worker = read('src/workers/sandboxWorker.js');
+  const worker = read('src/workers/sandboxWorker.js') + '\n' + read('src/lib/surfcad/runtime.js');
   const palette = read('src/components/HelperInsertPalette.jsx');
   const arch = read('docs/architecture.md');
   const hi = view.indexOf('const highlightFace = useCallback');

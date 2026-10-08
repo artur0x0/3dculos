@@ -202,7 +202,7 @@ const SHAPES = ['makeExtrude', 'makeRevolve', 'makeSweep', 'makeLoft'];
   const chip = readFileSync(new URL('../../src/components/BooleanModeChip.jsx', import.meta.url), 'utf8');
   const view = readFileSync(new URL('../../src/components/Viewport.jsx', import.meta.url), 'utf8');
   const app = readFileSync(new URL('../../src/App.jsx', import.meta.url), 'utf8');
-  const worker = readFileSync(new URL('../../src/workers/sandboxWorker.js', import.meta.url), 'utf8');
+  const worker = readFileSync(new URL('../../src/workers/sandboxWorker.js', import.meta.url), 'utf8') + '\n' + readFileSync(new URL('../../src/lib/surfcad/runtime.js', import.meta.url), 'utf8');
   check('Build Boolean enters boolean mode', /item\.id === 'boolean'[\s\S]{0,180}onEnterBooleanMode/.test(palette));
   check('Boolean chip allows section and survives the part list',
     /data-boolean-allow-section="1"/.test(chip)

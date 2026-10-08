@@ -29,7 +29,7 @@ function check(name, cond, detail = '') {
 
 console.log('wrap onto a drafted face — source pins');
 {
-  const w = readRepo('src/workers/sandboxWorker.js');
+  const w = readRepo('src/workers/sandboxWorker.js') + '\n' + readRepo('src/lib/surfcad/runtime.js');
   const field = readRepo('src/utils/edgeTangencyField.js');
   const fillet = readRepo('src/utils/filletAlongPath.js');
   check('varying-profile cutter splits runs at corners',

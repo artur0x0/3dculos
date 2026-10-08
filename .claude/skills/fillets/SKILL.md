@@ -169,7 +169,7 @@ The viewport scrap banner is **delta-based** (pre-Accept degenerate-tri count vi
 | `src/components/FilletModeChip.jsx` | Tangent / Clear / Accept / Back / X chip |
 | `src/components/Viewport.jsx` | mode lifecycle, preview paint, classification, scrap notice |
 | `src/utils/helperPaletteSnippets.js:938` | the `filletEdges` emitter (script text) |
-| `src/workers/sandboxWorker.js` | `filletEdges` (2150), `makeSweepPath` (2743), `filletAlongPath` (3624) |
+| `src/lib/surfcad/runtime.js` | `filletEdges`, `makeSweepPath`, `filletAlongPath` (worker binds this module) |
 
 ## Goldens
 

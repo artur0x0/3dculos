@@ -38,7 +38,7 @@ function check(name, cond, detail = '') {
   const view = read('src/components/Viewport.jsx');
   const app = read('src/App.jsx');
   const chip = read('src/components/MoveModeChip.jsx');
-  const worker = read('src/workers/sandboxWorker.js');
+  const worker = read('src/workers/sandboxWorker.js') + '\n' + read('src/lib/surfcad/runtime.js');
   const popup = read('docs/POPUP_STYLE.md');
   const palette = read('src/components/HelperInsertPalette.jsx');
   const hi = view.indexOf('const highlightFace = useCallback');
