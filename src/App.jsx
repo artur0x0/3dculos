@@ -9,6 +9,7 @@ import { failedFeatureFromOutcome, failedFeatureIds } from './utils/featureFailu
 import { failedPartIdsFor } from './utils/failedPartOutline';
 import { bodyCountOfWorkerMesh } from './utils/meshBodyComponents';
 import ErrorPopup from './components/ErrorPopup';
+import AssemblyOpenSpinner, { AssemblyOpenFailureToast } from './components/AssemblyOpenSpinner';
 import FeatureSheet from './components/FeatureSheet';
 import {
   writeFeatureSheetParams,
@@ -75,6 +76,11 @@ import {
   undoPartHistory,
 } from './utils/partHistory';
 import { runAssemblyParts } from './utils/assemblyRun';
+import {
+  applyAssemblyOpenHold,
+  createAssemblyOpenController,
+  runTrackedAssemblyOpen,
+} from './utils/assemblyOpenOverlay';
 import { featureWriteTarget, leftoverPickSolids, shouldSyncScript } from './utils/pickRetarget';
 import {
   deletePartScript,
@@ -232,6 +238,27 @@ const App = () => {
   /** Bumped when the active part changes out from under a pending autosave. */
   const partSaveEpochRef = useRef(0);
   const refreshGenRef = useRef(0);
+  /** Assembly-open spinner. Hidden until ~150ms; cleared on every exit. */
+  const [assemblyOpenUi, setAssemblyOpenUi] = useState(null);
+  const [assemblyOpenToast, setAssemblyOpenToast] = useState(null);
+  const assemblyOpenCtrlRef = useRef(null);
+  const assemblyOpenBuildRef = useRef(null);
+  const assemblyOpenProgressRef = useRef(null);
+  const finishOpenedPartRef = useRef(async () => {});
+  if (assemblyOpenCtrlRef.current == null) {
+    assemblyOpenCtrlRef.current = createAssemblyOpenController({
+      onChange: (ui) => setAssemblyOpenUi(ui),
+      onBegin: () => setAssemblyOpenToast(null),
+      onFailure: (fail) => setAssemblyOpenToast({
+        generation: fail.generation,
+        message: fail.message || 'Could not open assembly',
+        retry: fail.retry || null,
+      }),
+      onRecover: (generation) => setAssemblyOpenToast((prev) => (
+        prev && prev.generation === generation ? null : prev
+      )),
+    });
+  }
   const refreshAssemblyRef = useRef(async () => false);
   /** Missing-row placeholder must not become that part's stored script. */
   const suppressPartSaveRef = useRef(false);
@@ -977,83 +1004,97 @@ const App = () => {
       let nextFilename = filename;
       let nextRestoredEditor = restoredEditor;
 
-      let draft = null;
-      if (!nextRestoredEditor) {
-        try {
-          draft = await loadEditorDraft();
-          if (cancelled) return;
-        } catch (err) {
-          console.warn('[App] Editor draft restore failed:', err);
-          draft = null;
-        }
-      }
-      if (cancelled) return;
-
-      let doc = null;
-      let scripts = {};
       try {
-        doc = await loadAssemblyDocument();
-        if (doc) scripts = await loadPartScripts(doc.parts.map((part) => part.id));
+        await runTrackedAssemblyOpen(assemblyOpenCtrlRef.current, {
+          name: 'assembly',
+          retry: () => { window.location.reload(); },
+          load: async ({ progress, signal }) => {
+            let draft = null;
+            if (!nextRestoredEditor) {
+              try {
+                draft = await loadEditorDraft();
+              } catch (err) {
+                console.warn('[App] Editor draft restore failed:', err);
+                draft = null;
+              }
+            }
+            if (cancelled || !signal()) return;
+
+            let doc = null;
+            let scripts = {};
+            doc = await loadAssemblyDocument();
+            if (doc?.name) {
+              progress({ name: doc.name, index: 0, total: doc.parts?.length || 0 });
+            }
+            if (doc) {
+              scripts = await loadPartScripts(doc.parts.map((part) => part.id), {
+                onProgress: (update) => progress({ ...update, name: doc.name }),
+              });
+            }
+            if (cancelled || !signal()) return;
+
+            if (!doc || !doc.parts.length) {
+              // Persist the seed we already showed.
+              const latest = assemblyRef.current || seedDoc;
+              const latestScripts = partScriptsRef.current || seedScripts;
+              const activeId = latest.activeId || seedId;
+              try {
+                await savePartScript(activeId, latestScripts[activeId] || nextScript);
+                await saveAssemblyDocument(latest);
+              } catch (err) {
+                console.warn('[App] Seed assembly persist failed:', err);
+              }
+              return;
+            }
+
+            const active = doc.parts.find((part) => part.id === doc.activeId) || doc.parts[0];
+            doc = serializeAssembly({ ...doc, activeId: active.id });
+            // Draft may only override the active row when bound to that part id —
+            // never bleed another part's buffer into this slot (playtest: new cube
+            // became a second FilletKilla after leave/return).
+            const restored = resolveActiveRestore({
+              active,
+              scripts,
+              draft: nextRestoredEditor ? null : draft,
+              fallbackScript: nextScript,
+            });
+            scripts = restored.scripts;
+            nextScript = restored.script;
+            nextFilename = restored.filename || nextFilename || active.name;
+            if (restored.fromDraft) nextRestoredEditor = true;
+            if (restored.persistActive) {
+              try { await savePartScript(active.id, nextScript); } catch { /* ignore */ }
+            }
+            if (restored.fromDraft) {
+              setEditorInitialScript(nextScript);
+              if (nextFilename) setCurrentFilename(nextFilename);
+            }
+            if (!nextFilename) nextFilename = active.name;
+            if (cancelled || !signal()) return;
+            if (genAtStart !== refreshGenRef.current) {
+              console.log('[App] Skipping stale IDB hydrate; assembly already replaced');
+              return;
+            }
+            // Vault-backed working copy won the race — never re-inject IndexedDB local parts.
+            if (gitBaselineRef.current?.headSha) {
+              console.log('[App] Skipping IDB hydrate; vault baseline already set');
+              return;
+            }
+
+            // Drop the seed auto-run so it cannot paint over this document.
+            refreshGenRef.current += 1;
+            assemblyRef.current = doc;
+            partScriptsRef.current = scripts;
+            setAssemblyDoc(doc);
+            setPartScripts(scripts);
+            if (nextFilename) setCurrentFilename(nextFilename);
+            setEditorInitialScript(nextScript);
+            await finishOpenedPartRef.current(doc, scripts, progress);
+          },
+        });
       } catch (err) {
         console.warn('[App] Assembly restore failed:', err);
-        doc = null;
       }
-      if (cancelled) return;
-
-      if (!doc || !doc.parts.length) {
-        // Persist the seed we already showed.
-        const latest = assemblyRef.current || seedDoc;
-        const latestScripts = partScriptsRef.current || seedScripts;
-        const activeId = latest.activeId || seedId;
-        try {
-          await savePartScript(activeId, latestScripts[activeId] || nextScript);
-          await saveAssemblyDocument(latest);
-        } catch (err) {
-          console.warn('[App] Seed assembly persist failed:', err);
-        }
-        return;
-      }
-
-      const active = doc.parts.find((part) => part.id === doc.activeId) || doc.parts[0];
-      doc = serializeAssembly({ ...doc, activeId: active.id });
-      // Draft may only override the active row when bound to that part id —
-      // never bleed another part's buffer into this slot (playtest: new cube
-      // became a second FilletKilla after leave/return).
-      const restored = resolveActiveRestore({
-        active,
-        scripts,
-        draft: nextRestoredEditor ? null : draft,
-        fallbackScript: nextScript,
-      });
-      scripts = restored.scripts;
-      nextScript = restored.script;
-      nextFilename = restored.filename || nextFilename || active.name;
-      if (restored.fromDraft) nextRestoredEditor = true;
-      if (restored.persistActive) {
-        try { await savePartScript(active.id, nextScript); } catch { /* ignore */ }
-      }
-      if (restored.fromDraft) {
-        setEditorInitialScript(nextScript);
-        if (nextFilename) setCurrentFilename(nextFilename);
-      }
-      if (!nextFilename) nextFilename = active.name;
-      if (cancelled) return;
-      if (genAtStart !== refreshGenRef.current) {
-        console.log('[App] Skipping stale IDB hydrate; assembly already replaced');
-        return;
-      }
-      // Vault-backed working copy won the race — never re-inject IndexedDB local parts.
-      if (gitBaselineRef.current?.headSha) {
-        console.log('[App] Skipping IDB hydrate; vault baseline already set');
-        return;
-      }
-
-      assemblyRef.current = doc;
-      partScriptsRef.current = scripts;
-      setAssemblyDoc(doc);
-      setPartScripts(scripts);
-      if (nextFilename) setCurrentFilename(nextFilename);
-      setEditorInitialScript(nextScript);
     };
 
     void hydrate();
@@ -1466,70 +1507,125 @@ const App = () => {
     const otherIds = doc.parts
       .filter((part) => part.visible !== false && part.id !== viewId)
       .map((part) => part.id);
-    let other;
+    const willBuildActive = !!(viewId && activeVisible && typeof scripts[viewId] === 'string');
+    const buildTotal = otherIds.length + (willBuildActive ? 1 : 0);
+    let buildStep = 0;
+    const noteBuild = () => {
+      buildStep += 1;
+      const report = assemblyOpenProgressRef.current;
+      if (typeof report === 'function') report({ index: buildStep, total: buildTotal });
+    };
     try {
-      other = await runAssemblyParts({
-        doc,
-        scripts,
-        ids: otherIds,
-        execute: (script) => manifoldContext.executeScript(script, { timeoutMs: 30000 }),
-      });
-    } catch (err) {
-      console.error('[App] assembly run failed', err);
-      return false;
-    }
-    if (gen !== refreshGenRef.current) return false;
-
-    const runs = { ...(other.runs || {}) };
-    if (viewId && activeVisible && typeof scripts[viewId] === 'string') {
-      const runOpts = { noShadow: true, preservePicks: opts.preservePicks === true };
-      let run = await viewportRef.current?.executeScript(scripts[viewId], runOpts);
-      if (run == null || run === false) {
-        await new Promise((resolve) => { setTimeout(resolve, 200); });
-        if (gen !== refreshGenRef.current) return false;
-        run = await viewportRef.current?.executeScript(scripts[viewId], runOpts);
+      let other;
+      try {
+        other = await runAssemblyParts({
+          doc,
+          scripts,
+          ids: otherIds,
+          execute: (script) => {
+            noteBuild();
+            return manifoldContext.executeScript(script, { timeoutMs: 30000 });
+          },
+        });
+      } catch (err) {
+        console.error('[App] assembly run failed', err);
+        return false;
       }
       if (gen !== refreshGenRef.current) return false;
-      if (run?.cleared) {
-        runs[viewId] = { ok: false, mesh: null, empty: true, error: null };
-      } else if (run?.ok && run.mesh?.vertProperties) {
-        const bodyCount = Number.isFinite(run.bodyCount)
-          ? run.bodyCount
-          : (Array.isArray(run.bodyCentroids) ? run.bodyCentroids.length : undefined);
-        runs[viewId] = { ok: true, mesh: run.mesh, error: null, bodyCount };
-      } else if (run && run.ok === false) {
-        runs[viewId] = { ok: false, mesh: null, error: run.error || 'Script failed' };
-        manifoldContext.clearResult().catch(() => {});
-      }
-    } else if (viewId) {
-      runs[viewId] = {
-        ok: false,
-        mesh: null,
-        skipped: !activeVisible,
-        missing: typeof scripts[viewId] !== 'string',
-        error: typeof scripts[viewId] === 'string' ? null : 'missing',
-      };
-    }
 
-    if (gen !== refreshGenRef.current) return false;
-    for (const [id, run] of Object.entries(runs)) {
-      if (run?.ok && run.mesh?.vertProperties) partLeftoversRef.current[id] = run.mesh;
+      const runs = { ...(other.runs || {}) };
+      if (willBuildActive) {
+        noteBuild();
+        const runOpts = { noShadow: true, preservePicks: opts.preservePicks === true };
+        let run = await viewportRef.current?.executeScript(scripts[viewId], runOpts);
+        if (run == null || run === false) {
+          await new Promise((resolve) => { setTimeout(resolve, 200); });
+          if (gen !== refreshGenRef.current) return false;
+          run = await viewportRef.current?.executeScript(scripts[viewId], runOpts);
+        }
+        if (gen !== refreshGenRef.current) return false;
+        if (run?.cleared) {
+          runs[viewId] = { ok: false, mesh: null, empty: true, error: null };
+        } else if (run?.ok && run.mesh?.vertProperties) {
+          const bodyCount = Number.isFinite(run.bodyCount)
+            ? run.bodyCount
+            : (Array.isArray(run.bodyCentroids) ? run.bodyCentroids.length : undefined);
+          runs[viewId] = { ok: true, mesh: run.mesh, error: null, bodyCount };
+        } else if (run && run.ok === false) {
+          runs[viewId] = { ok: false, mesh: null, error: run.error || 'Script failed' };
+          manifoldContext.clearResult().catch(() => {});
+        }
+      } else if (viewId) {
+        runs[viewId] = {
+          ok: false,
+          mesh: null,
+          skipped: !activeVisible,
+          missing: typeof scripts[viewId] !== 'string',
+          error: typeof scripts[viewId] === 'string' ? null : 'missing',
+        };
+      }
+
+      if (gen !== refreshGenRef.current) return false;
+      for (const [id, run] of Object.entries(runs)) {
+        if (run?.ok && run.mesh?.vertProperties) partLeftoversRef.current[id] = run.mesh;
+      }
+      commitPartRuns(runs);
+      const solids = composeViewportParts(doc, runs);
+      const leftovers = leftoverPickSolids(doc, runs, partLeftoversRef.current);
+      const activeOk = !!(viewId && runs[viewId]?.ok === true && activeVisible);
+      viewportRef.current?.placeAssembly?.({
+        solids,
+        leftovers,
+        activeId: viewId,
+        blankActive: !activeOk,
+        // Red outline in the viewer, same rule as the Parts feed's red row.
+        failedIds: failedPartIdsFor(doc, runs),
+      });
+      return true;
+    } finally {
+      const wait = assemblyOpenBuildRef.current;
+      if (wait && gen > wait.after) {
+        assemblyOpenBuildRef.current = null;
+        wait.resolve();
+      }
     }
-    commitPartRuns(runs);
-    const solids = composeViewportParts(doc, runs);
-    const leftovers = leftoverPickSolids(doc, runs, partLeftoversRef.current);
-    const activeOk = !!(viewId && runs[viewId]?.ok === true && activeVisible);
-    viewportRef.current?.placeAssembly?.({
-      solids,
-      leftovers,
-      activeId: viewId,
-      blankActive: !activeOk,
-      // Red outline in the viewer, same rule as the Parts feed's red row.
-      failedIds: failedPartIdsFor(doc, runs),
-    });
-    return true;
   };
   refreshAssemblyRef.current = refreshAssembly;
+
+  /**
+   * Put the opened assembly's active part in the editor and wait until that
+   * refresh's worker build finishes. The open spinner stays up through this.
+   */
+  const finishOpenedPart = async (saved, scripts, progress) => {
+    const active = saved?.parts?.find((part) => part.id === saved.activeId) || saved?.parts?.[0];
+    if (!active) return;
+    setCurrentFilename(active.name);
+    const picked = scriptForRow(saved, scripts, active.id);
+    focusPartHistory(active.id, picked.ok ? picked.script : '');
+    await applyAssemblyOpenHold();
+    const report = typeof progress === 'function' ? progress : null;
+    assemblyOpenProgressRef.current = report;
+    try {
+      if (picked.ok && codeEditorRef.current?.loadContent) {
+        let resolveWait = () => {};
+        const pending = new Promise((resolve) => { resolveWait = resolve; });
+        assemblyOpenBuildRef.current = { after: refreshGenRef.current, resolve: resolveWait };
+        suppressPartSaveRef.current = false;
+        codeEditorRef.current.loadContent(picked.script, active.name, false);
+        await pending;
+      } else if (picked.ok) {
+        suppressPartSaveRef.current = false;
+        await refreshAssemblyRef.current?.(picked.script, { persistActive: false });
+      } else {
+        suppressPartSaveRef.current = true;
+        codeEditorRef.current?.setTextOnly?.('// This part has no file yet.\n');
+        await refreshAssemblyRef.current?.(undefined, { persistActive: false });
+      }
+    } finally {
+      if (assemblyOpenProgressRef.current === report) assemblyOpenProgressRef.current = null;
+    }
+  };
+  finishOpenedPartRef.current = finishOpenedPart;
 
   const rememberCadPart = (id) => {
     const next = id || null;
@@ -1721,27 +1817,29 @@ const App = () => {
     }
     const loadedName = assemblyNameForLoad(raw, filename);
     if (loadedName !== doc.name) doc = serializeAssembly({ ...doc, name: loadedName });
-    refreshGenRef.current += 1;
-    const scripts = await loadPartScripts(doc.parts.map((part) => part.id));
-    rememberScripts(scripts);
-    const saved = rememberAssembly(doc);
-    const keep = new Set(saved.parts.map((part) => String(part.id)));
-    for (const key of Object.keys(partHistoriesRef.current)) {
-      if (key !== '__game__' && !keep.has(key)) delete partHistoriesRef.current[key];
+    try {
+      await runTrackedAssemblyOpen(assemblyOpenCtrlRef.current, {
+        name: doc.name,
+        total: doc.parts.length,
+        retry: () => { void handleLoadAssembly(text, filename); },
+        load: async ({ progress, signal }) => {
+          refreshGenRef.current += 1;
+          const scripts = await loadPartScripts(doc.parts.map((part) => part.id), {
+            onProgress: (update) => progress({ ...update, name: doc.name }),
+          });
+          if (!signal()) return;
+          rememberScripts(scripts);
+          const saved = rememberAssembly(doc);
+          const keep = new Set(saved.parts.map((part) => String(part.id)));
+          for (const key of Object.keys(partHistoriesRef.current)) {
+            if (key !== '__game__' && !keep.has(key)) delete partHistoriesRef.current[key];
+          }
+          await finishOpenedPartRef.current(saved, scripts, progress);
+        },
+      });
+    } catch (err) {
+      console.warn('[App] Open assembly failed:', err?.message || err);
     }
-    const active = saved.parts.find((part) => part.id === saved.activeId) || saved.parts[0];
-    if (!active) return;
-    setCurrentFilename(active.name);
-    const picked = scriptForRow(saved, scripts, active.id);
-    focusPartHistory(active.id, picked.ok ? picked.script : '');
-    if (picked.ok) {
-      suppressPartSaveRef.current = false;
-      codeEditorRef.current?.loadContent(picked.script, active.name, false);
-      return;
-    }
-    suppressPartSaveRef.current = true;
-    codeEditorRef.current?.setTextOnly?.('// This part has no file yet.\n');
-    refreshAssemblyRef.current?.(undefined, { persistActive: false });
   };
 
   const handleResolvePartFile = async (id, text) => {
@@ -2200,41 +2298,42 @@ const App = () => {
 
   const handleOpenVaultAssembly = async (name) => {
     try {
-      const vault = await ensureGitVault();
-      const branch = gitWorkingBranch();
-      const tip = (await gitAdapterRef.current.getBranch(vault.repo, branch))?.sha || null;
-      const opened = await openVaultAssembly(
-        gitAdapterRef.current,
-        vault.repo,
-        name,
-        { branch, headSha: tip },
-      );
-      refreshGenRef.current += 1;
-      const adopted = await adoptVaultOpening(opened, vault);
-      if (!adopted.held) await flushGitOps();
-      const saved = adopted.saved;
-      const openedScripts = adopted.scripts;
-      // G4: check remote on open (usually current; catches a race with a push).
-      void checkGitRemoteBehind({ showToast: true, reason: 'open' });
-      const keep = new Set(saved.parts.map((part) => String(part.id)));
-      for (const key of Object.keys(partHistoriesRef.current)) {
-        if (key !== '__game__' && !keep.has(key)) delete partHistoriesRef.current[key];
-      }
-      const active = saved.parts.find((part) => part.id === saved.activeId) || saved.parts[0];
-      if (!active) return;
-      setCurrentFilename(active.name);
-      const picked = scriptForRow(saved, openedScripts, active.id);
-      focusPartHistory(active.id, picked.ok ? picked.script : '');
-      if (picked.ok) {
-        suppressPartSaveRef.current = false;
-        codeEditorRef.current?.loadContent(picked.script, active.name, false);
-      } else {
-        suppressPartSaveRef.current = true;
-        codeEditorRef.current?.setTextOnly?.('// This part has no file yet.\n');
-        refreshAssemblyRef.current?.(undefined, { persistActive: false });
-      }
+      await runTrackedAssemblyOpen(assemblyOpenCtrlRef.current, {
+        name: name || 'assembly',
+        retry: () => { void handleOpenVaultAssembly(name); },
+        load: async ({ progress, signal }) => {
+          refreshGenRef.current += 1;
+          const vault = await ensureGitVault();
+          if (!signal()) return;
+          const branch = gitWorkingBranch();
+          const tip = (await gitAdapterRef.current.getBranch(vault.repo, branch))?.sha || null;
+          const opened = await openVaultAssembly(
+            gitAdapterRef.current,
+            vault.repo,
+            name,
+            {
+              branch,
+              headSha: tip,
+              onProgress: (update) => progress({ ...update, name: update.name || name }),
+            },
+          );
+          if (!signal()) return;
+          const adopted = await adoptVaultOpening(opened, vault);
+          if (!signal()) return;
+          if (!adopted.held) await flushGitOps();
+          const saved = adopted.saved;
+          const openedScripts = adopted.scripts;
+          // G4: check remote on open (usually current; catches a race with a push).
+          void checkGitRemoteBehind({ showToast: true, reason: 'open' });
+          const keep = new Set(saved.parts.map((part) => String(part.id)));
+          for (const key of Object.keys(partHistoriesRef.current)) {
+            if (key !== '__game__' && !keep.has(key)) delete partHistoriesRef.current[key];
+          }
+          await finishOpenedPartRef.current(saved, openedScripts, progress);
+        },
+      });
     } catch (err) {
-      setUploadError(err.message || 'Could not open assembly');
+      console.warn('[App] Open assembly failed:', err?.message || err);
     }
   };
 
@@ -2398,35 +2497,35 @@ const App = () => {
       return { status: 'same', branch: current };
     }
     try {
-      const vault = await ensureGitVault();
-      const opened = await switchVaultBranch(
-        gitAdapterRef.current, vault.repo, name, branchName,
-      );
-      refreshGenRef.current += 1;
-      const adopted = await adoptVaultOpening(opened, vault);
-      if (!adopted.held) await flushGitOps();
-      const saved = adopted.saved;
-      rememberGitBehind(null, { showToast: false, resetResolved: true });
-      setGitBehindToast(null);
-      void checkGitRemoteBehind({ showToast: true, reason: 'branch-switch' });
-      const keep = new Set(saved.parts.map((part) => String(part.id)));
-      for (const key of Object.keys(partHistoriesRef.current)) {
-        if (key !== '__game__' && !keep.has(key)) delete partHistoriesRef.current[key];
-      }
-      const active = saved.parts.find((part) => part.id === saved.activeId) || saved.parts[0];
-      if (active) {
-        setCurrentFilename(active.name);
-        const picked = scriptForRow(saved, adopted.scripts, active.id);
-        focusPartHistory(active.id, picked.ok ? picked.script : '');
-        if (picked.ok) {
-          suppressPartSaveRef.current = false;
-          codeEditorRef.current?.loadContent(picked.script, active.name, false);
-        } else {
-          suppressPartSaveRef.current = true;
-          codeEditorRef.current?.setTextOnly?.('// This part has no file yet.\n');
-          refreshAssemblyRef.current?.(undefined, { persistActive: false });
-        }
-      }
+      const opened = await runTrackedAssemblyOpen(assemblyOpenCtrlRef.current, {
+        name,
+        retry: () => { void handleSwitchBranch(branchName); },
+        load: async ({ progress, signal }) => {
+          refreshGenRef.current += 1;
+          const vault = await ensureGitVault();
+          if (!signal()) return null;
+          const loaded = await switchVaultBranch(
+            gitAdapterRef.current, vault.repo, name, branchName, {
+              onProgress: (update) => progress({ ...update, name: update.name || name }),
+            },
+          );
+          if (!signal()) return null;
+          const adopted = await adoptVaultOpening(loaded, vault);
+          if (!signal()) return null;
+          if (!adopted.held) await flushGitOps();
+          const saved = adopted.saved;
+          rememberGitBehind(null, { showToast: false, resetResolved: true });
+          setGitBehindToast(null);
+          void checkGitRemoteBehind({ showToast: true, reason: 'branch-switch' });
+          const keep = new Set(saved.parts.map((part) => String(part.id)));
+          for (const key of Object.keys(partHistoriesRef.current)) {
+            if (key !== '__game__' && !keep.has(key)) delete partHistoriesRef.current[key];
+          }
+          await finishOpenedPartRef.current(saved, adopted.scripts, progress);
+          return loaded;
+        },
+      });
+      if (!opened) return { status: 'error', error: 'Could not switch branch' };
       return { status: 'switched', branch: branchName, baseline: opened.baseline };
     } catch (err) {
       return { status: 'error', error: err.message || 'Could not switch branch' };
@@ -4013,7 +4112,10 @@ const App = () => {
     if (autoExecute && appModeRef.current !== 'game') {
       // Pass script directly to avoid stale closure. CAD runs the assembly
       // so every visible part is drawn, not only the buffer in Monaco.
+      // A generation bump (open / hydrate) drops this scheduled run.
+      const scheduledGen = refreshGenRef.current;
       setTimeout(() => {
+        if (refreshGenRef.current !== scheduledGen) return;
         refreshAssemblyRef.current?.(script);
       }, 100);
     }
@@ -4628,6 +4730,21 @@ const App = () => {
     />
   ) : null;
 
+  const assemblyOpenSpinner = assemblyOpenUi && appMode !== 'game' ? (
+    <AssemblyOpenSpinner
+      name={assemblyOpenUi.name}
+      index={assemblyOpenUi.index}
+      total={assemblyOpenUi.total}
+    />
+  ) : null;
+  const assemblyOpenToastEl = assemblyOpenToast ? (
+    <AssemblyOpenFailureToast
+      message={assemblyOpenToast.message}
+      onRetry={assemblyOpenToast.retry}
+      onDismiss={() => setAssemblyOpenToast(null)}
+    />
+  ) : null;
+
   if (isMobile) {
     // Keep h-dvh while the keyboard is closed so Monaco can take a real
     // user-gesture focus (iOS often refuses keyboard inside a fixed+overflow
@@ -4968,6 +5085,8 @@ const App = () => {
             />
           )}
           {showConfetti && <GameConfetti durationMs={SUCCESS_CLEAR_MS} />}
+          {assemblyOpenSpinner}
+          {assemblyOpenToastEl}
           {gameError && (
             <div className="absolute top-4 left-1/2 transform -translate-x-1/2 z-50 max-w-md">
               <ErrorPopup
@@ -5173,6 +5292,7 @@ const App = () => {
               onEditScript={handleDesktopFeatureSheetEditScript}
             />
           )}
+          {assemblyOpenSpinner}
         </div>
 
         {/* Login Modal */}
@@ -5235,6 +5355,7 @@ const App = () => {
             />
           )}
           {showConfetti && <GameConfetti durationMs={SUCCESS_CLEAR_MS} />}
+        {assemblyOpenToastEl}
         {gameError && (
             <div className="absolute top-4 left-1/2 transform -translate-x-1/2 z-50 max-w-md">
               <ErrorPopup

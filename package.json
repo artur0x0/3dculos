@@ -113,6 +113,7 @@
         "golden:move-face": "node scripts/golden/smoke_move_face.mjs",
         "golden:delete-face": "node scripts/golden/smoke_delete_face.mjs",
         "golden:assembly": "node scripts/golden/smoke_assembly.mjs",
+        "golden:assembly-open-spinner": "node scripts/golden/smoke_assembly_open_spinner.mjs",
         "golden:pick-retarget": "node scripts/golden/smoke_pick_retarget.mjs",
         "golden:per-part-undo": "node scripts/golden/smoke_per_part_undo.mjs",
         "golden:cross-part-clone": "node scripts/golden/smoke_cross_part_clone.mjs",
