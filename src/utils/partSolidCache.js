@@ -66,6 +66,9 @@ export function buildSolidGeometry(meshData) {
   // graph's curved merge never crosses it.
   const triSource = triangleSources(meshData, fin.keep, triVerts.length / 3);
   if (triSource) geometry.userData.triSource = triSource;
+  if (meshData?.featureTessellation?.length) {
+    geometry.userData.featureTessellation = meshData.featureTessellation;
+  }
   geometry.setAttribute('position', new BufferAttribute(vertProperties, 3));
   geometry.setIndex(new BufferAttribute(triVerts, 1));
   const faceIDs = fin.faceIDs && fin.faceIDs.length > 0 ? fin.faceIDs : null;

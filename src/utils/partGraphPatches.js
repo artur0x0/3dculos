@@ -33,10 +33,15 @@ export const PARTGRAPH_MAX_TRIANGLES = 250000;
 /** Pass 1: dihedral at/below this merges as coplanar. */
 export const PATCH_PLANAR_DEG = 0.5;
 /**
- * Pass 3: dihedral gate for curved↔curved. Clears cylinder facets on
- * roundedBox seg=16 (~5.6°) and coarse G1 (~11°) tries — flats stay locked.
+ * Pass 3 fallback when a feature source has no tessellation on it.
+ * A tagged source uses `sourceSmoothDeg` instead: its own facet step and
+ * corner-blend join, scaled, clamped to [this floor, PATCH_SMOOTH_CAP_DEG].
  */
 export const PATCH_SMOOTH_DEG = 15;
+/** Curved gate never opens past this, so a real crease stays a crease. */
+export const PATCH_SMOOTH_CAP_DEG = 50;
+/** facet step and corner join are scaled by this before the clamp. */
+export const PATCH_FACET_GATE_SCALE = 1.15;
 /** Relative |κA−κB|/max(κA,κB) for curved↔curved. */
 export const PATCH_CURVED_RATE_TOL = 0.55;
 /** Dihedrals at/above this are ignored for the curved κ proxy. */
@@ -48,9 +53,66 @@ export const PATCH_K_FEATURE_DEG = 25;
 /** Coplanar group area ≥ this × the largest coplanar group → locked flat. */
 export const PATCH_FLAT_AREA_FRAC_OF_MAX = 0.15;
 /**
- * Within one fillet / chamfer op (negative feature source from the worker)
- * curved atoms merge up to this dihedral with no κ test: a coarse fillet
- * (few wide strips) is still one face. Chamfer corners (≈60°) stay apart.
+ * Gate for one feature's curved faces, from the tessellation the worker
+ * stored with that source. `facetDeg` is the circular step (360°/segments,
+ * or 90°/segs of a right-angle fillet wedge — the same angle). `cornerDeg`
+ * is the corner-blend join, measured on this mesh when the worker did not
+ * already know it. Sources with neither fall back to PATCH_SMOOTH_DEG.
+ * @param {number} facetDeg
+ * @param {number} cornerDeg
+ */
+export function sourceSmoothDeg(facetDeg, cornerDeg) {
+  const known = [Number(facetDeg), Number(cornerDeg)].filter((d) => Number.isFinite(d) && d > 0);
+  if (!known.length) return PATCH_SMOOTH_DEG;
+  const gate = Math.max(...known) * PATCH_FACET_GATE_SCALE;
+  if (gate < PATCH_SMOOTH_DEG) return PATCH_SMOOTH_DEG;
+  if (gate > PATCH_SMOOTH_CAP_DEG) return PATCH_SMOOTH_CAP_DEG;
+  return gate;
+}
+
+function tessellationBySource(raw) {
+  const map = new Map();
+  if (!raw) return map;
+  const list = Array.isArray(raw)
+    ? raw
+    : Object.entries(raw).map(([k, v]) => ({
+      source: Number(k),
+      facetDeg: v && v.facetDeg,
+      cornerDeg: v && v.cornerDeg,
+    }));
+  for (const row of list) {
+    if (!row) continue;
+    const source = Number(row.source);
+    if (!Number.isFinite(source)) continue;
+    map.set(source, {
+      facetDeg: Number(row.facetDeg) || 0,
+      cornerDeg: Number(row.cornerDeg) || 0,
+    });
+  }
+  return map;
+}
+
+/**
+ * Corner-blend join for one source: the widest same-source curved dihedral
+ * that is finer than the regular facet step. A crease coarser than the
+ * tessellation (two fillets of different radius meeting at a cusp) is not
+ * a corner blend and does not widen the gate.
+ */
+function measuredCornerJoin(atomAdj, atomSource, atomLockedFlat, source, facetDeg) {
+  let corner = 0;
+  const cap = facetDeg - 0.25;
+  for (const rec of atomAdj) {
+    if (atomLockedFlat[rec.a] || atomLockedFlat[rec.b]) continue;
+    if (atomSource[rec.a] !== source || atomSource[rec.b] !== source) continue;
+    if (!(rec.max < cap) || !(rec.max > corner)) continue;
+    corner = rec.max;
+  }
+  return corner;
+}
+/**
+ * Op atoms (negative feature source) skip the κ test. Their dihedral gate
+ * is the per-source value above, not a fixed angle. A chamfer corner is
+ * about 60°, past the 50° cap, so those faces stay apart.
  */
 export const PATCH_OP_SMOOTH_DEG = 40;
 /** A triangle is on a flat's plane when its offset matches within this many mm. */
@@ -180,6 +242,7 @@ export function buildPartGraphPatches(mesh, opts = {}) {
     ? mesh.triSource
     : null;
   const sameSource = (t0, t1) => !triSource || triSource[t0] === triSource[t1];
+  const tessBySource = tessellationBySource(mesh?.featureTessellation);
   const planarDeg = opts.planarDeg ?? PATCH_PLANAR_DEG;
   const smoothDeg = opts.smoothDeg ?? PATCH_SMOOTH_DEG;
   const curvedRateTol = opts.curvedRateTol ?? PATCH_CURVED_RATE_TOL;
@@ -343,6 +406,26 @@ export function buildPartGraphPatches(mesh, opts = {}) {
     const r = patchUF.find(a);
     if (rootLockArea[r] >= flatAreaGate) atomLockedFlat[a] = 1;
   }
+  // A tagged feature's own facet can be one big quad (8 segments around a
+  // rounded box) and trip the area lock. That quad meets the next facet at
+  // the recorded step. A real flat meets the fillet at about half that step
+  // and stays locked, so the area rule itself is unchanged.
+  if (tessBySource.size) {
+    const facetTouch = new Uint8Array(atomCount);
+    for (const rec of atomAdj) {
+      if (atomSource[rec.a] !== atomSource[rec.b]) continue;
+      const info = tessBySource.get(atomSource[rec.a]);
+      const step = info && info.facetDeg;
+      if (!(step > 0)) continue;
+      const tol = Math.max(1.5, step * 0.12);
+      if (Math.abs(rec.max - step) > tol) continue;
+      facetTouch[patchUF.find(rec.a)] = 1;
+      facetTouch[patchUF.find(rec.b)] = 1;
+    }
+    for (let a = 0; a < atomCount; a++) {
+      if (facetTouch[patchUF.find(a)]) atomLockedFlat[a] = 0;
+    }
+  }
   // Sharp-only islands (every neighbour dihedral > smoothDeg) used to be
   // locked flat here so a lone box faceID stayed planar. That also froze
   // roundedBox sphere-corner shreds whose facet turns sit at 18–22°, so
@@ -392,15 +475,33 @@ export function buildPartGraphPatches(mesh, opts = {}) {
   // --- Pass 3: curvature-consistent merge among non-flats ----------------
   // A curved face never crosses a feature wall: a fillet tangent to a loft
   // wall, or to the next fillet, is still its own face (G1 hides the seam).
-  // Inside one op the blend is one face even when its strips are coarse.
+  // The dihedral gate is that source's own tessellation. Inside one op the
+  // κ test stays off, so a coarse fillet strip is still one face.
+  const gateBySource = new Map();
+  const gateFor = (source) => {
+    const hit = gateBySource.get(source);
+    if (hit != null) return hit;
+    const info = tessBySource.get(source);
+    let gate = smoothDeg;
+    if (info && (info.facetDeg > 0 || info.cornerDeg > 0)) {
+      const measured = info.facetDeg > 0 ? measuredCornerJoin(atomAdj, atomSource, atomLockedFlat, source, info.facetDeg) : 0;
+      gate = sourceSmoothDeg(info.facetDeg, Math.max(info.cornerDeg, measured));
+    }
+    gateBySource.set(source, gate);
+    return gate;
+  };
   for (const rec of atomAdj) {
     if (atomLockedFlat[rec.a] || atomLockedFlat[rec.b]) continue;
     if (atomSource[rec.a] !== atomSource[rec.b]) continue;
-    if (isOpAtom(rec.a)) {
-      if (rec.max <= PATCH_OP_SMOOTH_DEG) patchUF.unite(rec.a, rec.b);
+    const gate = gateFor(atomSource[rec.a]);
+    if (rec.max > gate) continue;
+    // A tagged tessellation is one feature's own facets. κ stays off there,
+    // as it does for a fillet op, so a coarse step is not read as a radius change.
+    // Untagged curves still split when the κ rate exceeds the tolerance.
+    if (isOpAtom(rec.a) || tessBySource.has(atomSource[rec.a])) {
+      patchUF.unite(rec.a, rec.b);
       continue;
     }
-    if (rec.max > smoothDeg) continue;
     const ka = atomK[rec.a];
     const kb = atomK[rec.b];
     if (ka > 1e-6 || kb > 1e-6) {

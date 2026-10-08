@@ -16,9 +16,12 @@ import {
   buildPartGraphPatches,
   PATCH_PLANAR_DEG,
   PATCH_SMOOTH_DEG,
+  PATCH_SMOOTH_CAP_DEG,
+  sourceSmoothDeg,
   PATCH_FLAT_AREA_FRAC_OF_MAX,
   PARTGRAPH_MAX_TRIANGLES,
 } from '../../src/utils/partGraphPatches.js';
+import { triangleSources } from '../../src/utils/partSolidCache.js';
 
 register('./manifold-resolve-hook.mjs', import.meta.url);
 
@@ -72,7 +75,11 @@ function meshArrays(mesh) {
 
 console.log('edges PR2 — patch segmentation (lazy / off serialize path)');
 check('planar gate is tight (≤1°)', PATCH_PLANAR_DEG <= 1);
-check('smooth gate clears coarse tessellation', PATCH_SMOOTH_DEG >= 12 && PATCH_SMOOTH_DEG <= 20);
+check('untagged sources fall back to 15°', PATCH_SMOOTH_DEG === 15);
+check('derived gate caps at 50°', PATCH_SMOOTH_CAP_DEG === 50);
+check('8-segment step (45°) clamps to 50°', sourceSmoothDeg(45, 24.4) === 50);
+check('16-segment step (22.5°) scales to 25.875°', Math.abs(sourceSmoothDeg(22.5, 18.5) - 25.875) < 1e-9);
+check('32-segment step (11.25°) stays on the 15° floor', sourceSmoothDeg(11.25, 9) === 15);
 check('flat lock uses frac-of-max', PATCH_FLAT_AREA_FRAC_OF_MAX > 0.05 && PATCH_FLAT_AREA_FRAC_OF_MAX < 0.5);
 check('tri count soft-cap is finite', Number.isFinite(PARTGRAPH_MAX_TRIANGLES) && PARTGRAPH_MAX_TRIANGLES > 1000);
 
@@ -147,12 +154,20 @@ return part.subtract(shell(part, 2.5, 'z'));
 
 {
   const payload = await exec('return roundedBox([50,30,20], 4, 16);');
-  const g = buildPartGraphPatches(meshArrays(payload.mesh));
+  const arrays = meshArrays(payload.mesh);
+  arrays.triSource = triangleSources(payload.mesh, null, arrays.indices.length / 3);
+  arrays.featureTessellation = payload.mesh.featureTessellation;
+  const g = buildPartGraphPatches(arrays);
+  check('roundedBox records its 22.5° facet step',
+    Array.isArray(payload.mesh.featureTessellation)
+    && payload.mesh.featureTessellation.some((row) => Math.abs(row.facetDeg - 22.5) < 1e-6),
+    JSON.stringify(payload.mesh.featureTessellation));
   const planar = g.patches.filter((p) => p.kind === 'planar');
+  const blend = g.patches.filter((p) => p.kind === 'blend');
   check('roundedBox has 6 planar faces', planar.length === 6, `n=${planar.length}`);
   check('roundedBox flats stay large (not shreds)', planar.every((p) => p.area > 200));
-  check('roundedBox total patches near 26±10', g.patches.length >= 20 && g.patches.length <= 40,
-    `n=${g.patches.length}`);
+  check('roundedBox fillet chain is one blend, corners included', blend.length === 1 && blend[0].area > 1500,
+    `n=${blend.length} area=${blend[0] ? blend[0].area.toFixed(0) : 'none'}`);
 }
 
 {
@@ -168,6 +183,56 @@ return placeInFrame(fr, makeLoft([xs0, xs1]));
     `n=${walls.length}`);
   const side = walls.filter((p) => Math.abs(p.normal[2]) < 0.5);
   check('loft side walls are single patches each', side.length >= 4, `n=${side.length}`);
+}
+
+{
+  // Same positive source, join under the 15° fallback, κ rate over 0.55.
+  // A coarser bend (14°) against a finer one (1°) is the radius-change split.
+  const positions = [];
+  const indices = [];
+  const faceIDs = [];
+  const sources = [];
+  const add = (x, y, z) => { const i = positions.length / 3; positions.push(x, y, z); return i; };
+  // Large flat so the small bend facets do not earn the flat lock.
+  {
+    const a = add(-20, -20, -40);
+    const b = add(20, -20, -40);
+    const c = add(20, 20, -40);
+    const d = add(-20, 20, -40);
+    indices.push(a, b, c, a, c, d);
+    faceIDs.push(1, 1);
+    sources.push(1, 1);
+  }
+  let y = 0;
+  let z = 0;
+  let ang = 0;
+  let prev = [add(0, y, z), add(2, y, z)];
+  let fid = 10;
+  const segment = (deg) => {
+    ang += deg * Math.PI / 180;
+    y += Math.sin(ang);
+    z += Math.cos(ang);
+    const next = [add(0, y, z), add(2, y, z)];
+    indices.push(prev[0], next[0], next[1], prev[0], next[1], prev[1]);
+    faceIDs.push(fid, fid);
+    sources.push(1, 1);
+    fid += 1;
+    prev = next;
+  };
+  segment(14); segment(14); segment(14);
+  segment(6); // join, still under the 15° fallback
+  segment(1); segment(1); segment(1);
+  const g = buildPartGraphPatches({
+    positions: Float32Array.from(positions),
+    indices: Uint32Array.from(indices),
+    faceIDs: Int32Array.from(faceIDs),
+    triSource: Int32Array.from(sources),
+  });
+  const bend = g.patches.filter((p) => p.kind === 'blend').sort((a, b) => b.area - a.area);
+  const regions = bend.filter((p) => p.area > 4);
+  check('a radius change (κ rate over 0.55) stays split',
+    regions.length === 2 && bend[0].area < 10,
+    `n=${bend.length} areas=${bend.map((p) => p.area.toFixed(1)).join(',')}`);
 }
 
 // Source-level: Viewport builds lazily; overlay uses unlit material.

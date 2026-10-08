@@ -363,6 +363,7 @@ function faceGraphFor(geometry, faceIDs) {
     indices,
     faceIDs: faceIDs && faceIDs.length ? faceIDs : null,
     triSource: geometry.userData?.triSource || null,
+    featureTessellation: geometry.userData?.featureTessellation || null,
   });
   faceGraphCache.set(geometry, { faceIDs, graph });
   return graph;
