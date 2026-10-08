@@ -156,6 +156,7 @@
         "golden:delete-assembly": "node scripts/golden/smoke_delete_assembly.mjs",
         "golden:part-groups": "node scripts/golden/smoke_part_groups.mjs",
         "golden:face-colors": "node scripts/golden/smoke_face_colors.mjs",
+        "golden:face-match": "node scripts/golden/smoke_face_match.mjs",
     "golden:face-select-boundaries": "node scripts/golden/smoke_face_select_boundaries.mjs",
     "golden:loftzilla": "node scripts/golden/smoke_loftzilla_fillet_band.mjs"
     },
