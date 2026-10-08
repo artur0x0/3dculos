@@ -141,6 +141,7 @@ export function leftoverPickSolids(doc, runs, stored) {
     if (!mesh?.vertProperties) continue;
     out.push({
       id: part.id,
+      surfId: part.surfId || null,
       mesh,
       position: partPosition(part) || [0, 0, 0],
       leftover: true,

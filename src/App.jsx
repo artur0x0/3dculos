@@ -5526,6 +5526,7 @@ const App = () => {
               onCommitMove={handleCommitMove}
               onCommitMoveFace={handleCommitMoveFace}
               sheetMetalBinding={assemblyDoc ? partSheetMetal(assemblyDoc, assemblyDoc.activeId) : null}
+              assemblyColors={assemblyDoc?.colors || null}
               getSheetMetalReady={getSheetMetalReady}
               onBindSheetMetal={handleBindSheetMetal}
               onCommitSheetMetal={handleCommitSheetMetal}
@@ -5977,6 +5978,7 @@ const App = () => {
               onCommitMove={handleCommitMove}
               onCommitMoveFace={handleCommitMoveFace}
               sheetMetalBinding={assemblyDoc ? partSheetMetal(assemblyDoc, assemblyDoc.activeId) : null}
+              assemblyColors={assemblyDoc?.colors || null}
               getSheetMetalReady={getSheetMetalReady}
               onBindSheetMetal={handleBindSheetMetal}
               onCommitSheetMetal={handleCommitSheetMetal}

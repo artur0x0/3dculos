@@ -150,6 +150,15 @@ A saved face color is found again from the face graph. `faceFingerprints` (`src/
 
 A key matches one face when the normal is within 8°, `at` is within 1 mm, and the area is within ±25% of the saved area. A key that stores `src` or `ord` has to match those as well. Faces are binned by `at` (1 mm cells) and by normal; the search checks that cell and its neighbors, then applies the tolerances. Two or more faces in tolerance drop the key as ambiguous. None drop it as missing. There is no guess and no error. A key is compared only to the part it was saved on, so an identical solid under another surf id does not take the color.
 
+## Face color skin
+
+`syncFaceColorSkin` (`src/utils/faceColorSkin.js`) paints that match. It runs after a successful run, when the active part changes, and when the assembly is placed. An empty `colors` map skips it. The saved keys are not rewritten.
+
+- The skin is a child of the part mesh, one per surf id, named `face-color-skin`. It uses the part's triangles and an unlit `MeshBasicMaterial`, so the hex is the same on the dark ground and a light ground, and the camera headlight does not tint it. `polygonOffset` pulls it just in front of the solid. It does not write depth and it does not raycast, so a pick hits the same face as before.
+- `colors[surfId].part` fills every triangle. A matched face color is painted over that. Ambiguous and missing keys draw nothing.
+- Draw order: solid, then the skin (render order 2), then crease lines (3) and pick highlights (6). Edge and contour lines stay above the skin. A cut, Boolean, or Move Face preview that hides the solid hides the skin too. Hiding, deleting, or dropping a part detaches the skin and disposes its geometry and material.
+- `?debugFaces=1`, or `localStorage` `surfcad.debugFaces` = `1`, paints each patch its own color. Off unless that flag is set. It is not a rail button. Game mode uses the same skin and the same pick ray.
+
 ## Contour paint
 
 What you see as an edge is not one list.

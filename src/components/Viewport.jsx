@@ -244,6 +244,13 @@ import {
   solidEntryForGeometry,
   triangleSources,
 } from '../utils/partSolidCache';
+import {
+  FACE_HIGHLIGHT_RENDER_ORDER,
+  detachFaceColorSkin,
+  readFaceColorDebugFlag,
+  setFaceColorSkinVisible,
+  syncFaceColorSkin,
+} from '../utils/faceColorSkin';
 import { dropPlanarFins, highlightBoundaryPositions } from '../utils/planarSeam';
 import { classifySelectedFace } from '../utils/faceFeaturePlacement';
 import { classifyFilletEdges, countDegenerateTriangles } from '../utils/filletEdgeClass';
@@ -692,6 +699,8 @@ const Viewport = forwardRef(({
   onFeatureSessionChange = null,
   /** id → display name for the which-part chip. */
   partLabels = null,
+  /** Saved assembly colors, keyed by surf id. Empty skips the face skin. */
+  assemblyColors = null,
 }, ref) => {
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
@@ -702,6 +711,9 @@ const Viewport = forwardRef(({
   const resultRef = useRef(null);
   const assemblyGroupRef = useRef(null);
   const assemblyExtrasRef = useRef(new Map());
+  const assemblyColorsRef = useRef(assemblyColors);
+  const partSurfIdRef = useRef(new Map());
+  const applyFaceSkinRef = useRef(() => {});
   /** Built solid geometry per mesh data (pick mesh + other parts). */
   const solidCacheRef = useRef(null);
   if (!solidCacheRef.current) solidCacheRef.current = createSolidCache();
@@ -3585,6 +3597,7 @@ const Viewport = forwardRef(({
       polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -4,
     }));
     highlightMesh.name = name;
+    highlightMesh.renderOrder = FACE_HIGHLIGHT_RENDER_ORDER;
     anchorToActivePart(highlightMesh);
     
     // Create boundary edge lines only
@@ -3594,6 +3607,7 @@ const Viewport = forwardRef(({
       const edgesLine = new LineSegments(edgeGeometry, new LineBasicMaterial({ 
         color, linewidth: 3, depthTest: true
       }));
+      edgesLine.renderOrder = FACE_HIGHLIGHT_RENDER_ORDER + 1;
       highlightMesh.add(edgesLine);
     }
     
@@ -3769,6 +3783,7 @@ const Viewport = forwardRef(({
     if (mesh && cutBaseMaterialRef.current) {
       mesh.material = cutBaseMaterialRef.current;
       cutBaseMaterialRef.current = null;
+      setFaceColorSkinVisible(mesh, true);
     }
   }, []);
 
@@ -3805,6 +3820,7 @@ const Viewport = forwardRef(({
     }
     if (!cutBaseMaterialRef.current) cutBaseMaterialRef.current = mesh.material;
     mesh.material = cutBaseHiddenMatRef.current;
+    setFaceColorSkinVisible(mesh, false);
   }, []);
 
   const paintLiveCutPieces = useCallback((state, pieces) => {
@@ -4056,6 +4072,7 @@ const Viewport = forwardRef(({
       }));
       mesh.position.copy(host.position);
       mesh.raycast = () => {};
+      mesh.renderOrder = FACE_HIGHLIGHT_RENDER_ORDER;
       mesh.userData.booleanRemotePart = pick.partId;
       group.add(mesh);
     }
@@ -4081,6 +4098,7 @@ const Viewport = forwardRef(({
     if (mesh && booleanBaseMaterialRef.current) {
       mesh.material = booleanBaseMaterialRef.current;
       booleanBaseMaterialRef.current = null;
+      setFaceColorSkinVisible(mesh, true);
     }
   }, []);
 
@@ -4115,6 +4133,7 @@ const Viewport = forwardRef(({
     }
     if (!booleanBaseMaterialRef.current) booleanBaseMaterialRef.current = mesh.material;
     mesh.material = booleanBaseHiddenMatRef.current;
+    setFaceColorSkinVisible(mesh, false);
   }, []);
 
   const paintBooleanPieces = useCallback((state, pieces) => {
@@ -4142,6 +4161,7 @@ const Viewport = forwardRef(({
         side: FrontSide,
       }));
       mesh.userData.booleanPieceAt = piece.at;
+      mesh.renderOrder = FACE_HIGHLIGHT_RENDER_ORDER;
       mesh.raycast = ThreeMesh.prototype.raycast;
       group.add(mesh);
     }
@@ -4458,6 +4478,7 @@ const Viewport = forwardRef(({
     if (mesh && moveFaceBaseMaterialRef.current) {
       mesh.material = moveFaceBaseMaterialRef.current;
       moveFaceBaseMaterialRef.current = null;
+      setFaceColorSkinVisible(mesh, true);
     }
   }, []);
 
@@ -4481,6 +4502,7 @@ const Viewport = forwardRef(({
     }
     if (!moveFaceBaseMaterialRef.current) moveFaceBaseMaterialRef.current = mesh.material;
     mesh.material = moveFaceHiddenMatRef.current;
+    setFaceColorSkinVisible(mesh, false);
   }, []);
 
   const paintMoveFacePreview = useCallback((meshData) => {
@@ -6537,6 +6559,28 @@ const Viewport = forwardRef(({
     });
   };
 
+  assemblyColorsRef.current = assemblyColors || null;
+  applyFaceSkinRef.current = (host) => {
+    if (!host) return;
+    const colors = assemblyColorsRef.current;
+    const rainbow = readFaceColorDebugFlag();
+    const surfId = host.userData?.surfId || null;
+    const entry = surfId && colors ? colors[surfId] : null;
+    const wants = rainbow || !!(entry && (entry.part || (Array.isArray(entry.faces) && entry.faces.length)));
+    if (!wants) {
+      detachFaceColorSkin(host);
+      return;
+    }
+    const cached = solidEntryForGeometry(solidCacheRef.current, host.geometry);
+    syncFaceColorSkin(host, {
+      geometry: host.geometry,
+      faceIDs: cached?.faceIDs || null,
+      surfId,
+      colors,
+      rainbow,
+    });
+  };
+
   // Helper to render mesh data from the worker
   const renderMeshData = useCallback((meshData) => {
     if (!meshData || !resultRef.current) return;
@@ -6600,6 +6644,8 @@ const Viewport = forwardRef(({
       try { hook.onRendered?.(meshData); } catch (e) { console.warn('[stage] onRendered failed:', e?.message); }
     }
 
+    applyFaceSkinRef.current(resultRef.current);
+
     const renderer = rendererRef.current;
     const scene = sceneRef.current;
     const camera = cameraRef.current;
@@ -6607,6 +6653,17 @@ const Viewport = forwardRef(({
       renderer.render(scene, camera);
     }
   }, []);
+
+  // Colors can arrive without a new mesh (a document load). Empty skips the work.
+  useEffect(() => {
+    const apply = applyFaceSkinRef.current;
+    if (resultRef.current?.geometry?.attributes?.position?.count) apply(resultRef.current);
+    for (const mesh of assemblyExtrasRef.current.values()) apply(mesh);
+    const renderer = rendererRef.current;
+    const scene = sceneRef.current;
+    const camera = cameraRef.current;
+    if (renderer && scene && camera) renderer.render(scene, camera);
+  }, [assemblyColors]);
 
   // Edges PR2 — PartGraph patch colours (debug). Built lazily here from the
   // already-delivered mesh (faceID + verts); worker serialize stays lean so
@@ -7128,6 +7185,7 @@ const Viewport = forwardRef(({
     const group = assemblyGroupRef.current;
     prewarmGenRef.current += 1;
     for (const mesh of assemblyExtrasRef.current.values()) {
+      detachFaceColorSkin(mesh);
       group?.remove(mesh);
       releaseGeometryIn(solidCacheRef.current, mesh.geometry);
       if (mesh.material?.dispose) mesh.material.dispose();
@@ -7188,6 +7246,9 @@ const Viewport = forwardRef(({
   adoptActiveSolidRef.current = ({ mesh, position, partId }) => {
     if (!resultRef.current || !mesh?.vertProperties) return false;
     if (partId !== undefined) activePartIdRef.current = partId ?? null;
+    if (partId != null && partSurfIdRef.current.has(String(partId))) {
+      resultRef.current.userData.surfId = partSurfIdRef.current.get(String(partId));
+    }
     // Fillet / Chamfer picks accumulate across parts: a switch keeps the
     // edges already picked on the previous part (each edge carries its part).
     const keepEdges = retargetKeepsEdgePicks({ filletMode: filletModeRef.current });
@@ -7207,6 +7268,7 @@ const Viewport = forwardRef(({
       cachedMeshDataRef.current = mesh;
     } else {
       warmFaceGraph(resultRef.current.geometry, faceIDsRef.current);
+      applyFaceSkinRef.current(resultRef.current);
     }
     const p = Array.isArray(position) ? position : [0, 0, 0];
     resultRef.current.position.set(p[0] || 0, p[1] || 0, p[2] || 0);
@@ -7271,11 +7333,18 @@ const Viewport = forwardRef(({
       resultRef.current.position.z,
     ];
     if (prevId && String(prevId) !== String(partId) && prevMesh?.vertProperties) {
+      const prevSurf = resultRef.current.userData?.surfId || partSurfIdRef.current.get(String(prevId)) || null;
       upsertAssemblyExtra(prevId, prevMesh, prevPos);
+      const parked = assemblyExtrasRef.current.get(prevId);
+      if (parked) {
+        parked.userData.surfId = prevSurf;
+        applyFaceSkinRef.current(parked);
+      }
     }
     const extra = assemblyExtrasRef.current.get(partId);
     if (extra) {
       setFailedPartOutline(extra, false);
+      detachFaceColorSkin(extra);
       assemblyGroupRef.current?.remove(extra);
       // Its geometry is usually the cached solid this switch is about to show.
       releaseGeometryIn(solidCacheRef.current, extra.geometry);
@@ -7300,6 +7369,16 @@ const Viewport = forwardRef(({
       prevVisible.add(prevActive);
     }
     activePartIdRef.current = activeId;
+    const surfIds = new Map();
+    const rememberSurf = (solid) => {
+      if (solid?.id != null && solid.surfId) surfIds.set(String(solid.id), solid.surfId);
+    };
+    for (const solid of solids) rememberSurf(solid);
+    for (const solid of (Array.isArray(payload?.leftovers) ? payload.leftovers : [])) rememberSurf(solid);
+    partSurfIdRef.current = surfIds;
+    if (activeId != null) {
+      resultRef.current.userData.surfId = surfIds.get(String(activeId)) || null;
+    }
     const blankActive = payload?.blankActive === true;
     // Visible parts whose latest run failed: App's list, else the leftovers
     // (a failed part's last good mesh).
@@ -7337,6 +7416,8 @@ const Viewport = forwardRef(({
       ensureBodyMaterial(mesh, solid.mesh);
       const p = solid.position || [0, 0, 0];
       mesh.position.set(p[0], p[1], p[2]);
+      mesh.userData.surfId = solid.surfId || null;
+      applyFaceSkinRef.current(mesh);
     }
     const leftoverList = Array.isArray(payload?.leftovers) ? payload.leftovers : [];
     for (const solid of leftoverList) {
@@ -7361,10 +7442,13 @@ const Viewport = forwardRef(({
       ensureBodyMaterial(mesh, solid.mesh);
       const p = solid.position || [0, 0, 0];
       mesh.position.set(p[0], p[1], p[2]);
+      mesh.userData.surfId = solid.surfId || null;
+      applyFaceSkinRef.current(mesh);
     }
     for (const [id, mesh] of assemblyExtrasRef.current) {
       if (keep.has(id)) continue;
       setFailedPartOutline(mesh, false);
+      detachFaceColorSkin(mesh);
       group.remove(mesh);
       releaseGeometryIn(solidCacheRef.current, mesh.geometry);
       if (mesh.material?.dispose) mesh.material.dispose();
@@ -7374,6 +7458,8 @@ const Viewport = forwardRef(({
       // assembly-fail: the active part is hidden or failed. No previous solid.
       setCachedMeshData(null);
       cachedMeshDataRef.current = null;
+      detachFaceColorSkin(resultRef.current);
+      resultRef.current.userData.surfId = null;
       removeContactSeam(resultRef.current);
       releaseGeometryIn(solidCacheRef.current, resultRef.current.geometry);
       resultRef.current.geometry = new BufferGeometry();
@@ -7403,6 +7489,9 @@ const Viewport = forwardRef(({
         // (the run finishes, then the assembly is placed). Tag it now so a
         // later switch can tell these edges from the other part's.
         for (const edge of featureEdgesRef.current || []) edge.partId = activeId;
+        const sid = partSurfIdRef.current.get(String(activeId));
+        if (sid) resultRef.current.userData.surfId = sid;
+        applyFaceSkinRef.current(resultRef.current);
       }
     }
     pruneSolidCacheIn(solidCacheRef.current, resultRef.current, assemblyExtrasRef.current);
