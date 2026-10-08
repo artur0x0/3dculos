@@ -437,7 +437,7 @@ export function createSyncStore({ persist = true } = {}) {
   };
 }
 
-/** Drop the sync database (Clear local CAD data). */
+/** Drop the sync database (Clear local cache). */
 export async function clearSyncStore() {
   const db = await openDB();
   if (!db) return false;

@@ -41,6 +41,9 @@ import {
 } from './utils/editorStorage';
 import { saveEditorDraft, loadEditorDraft } from './utils/editorDraft';
 import { clearLocalCadData } from './utils/clearLocalCadData';
+import { clearCachePlan, runClearLocalCache } from './utils/clearLocalCache';
+import { repoKeyOf } from './utils/git/syncStore';
+import ClearCacheDialog from './components/ClearCacheDialog';
 import { resolveActiveRestore } from './utils/partScriptRestore';
 import {
   assemblyName,
@@ -543,6 +546,7 @@ const App = () => {
   const manifoldReadyRef = useRef(false);
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [showAccountModal, setShowAccountModal] = useState(false);
+  const [clearCacheUi, setClearCacheUi] = useState(null);
   const [accountModalTab, setAccountModalTab] = useState('info');
   const [editorInitialScript, setEditorInitialScript] = useState(null);
   const [initError, setInitError] = useState(null);
@@ -5140,18 +5144,87 @@ const App = () => {
   };
 
   /**
-   * Parts / Script profile menu: wipe local CAD IDB caches, then reload so
-   * viewer / script / parts list reset. Suppress draft flush so pagehide cannot
-   * re-write what we just cleared. Keeps GitHub sessionStorage token (same-tab
-   * reload) and does not delete the GitHub account or vault repo.
+   * Count unpushed outbox rows and unsynced parts from local state.
+   * Opens IndexedDB. Does not fetch and does not push.
    */
-  const handleClearLocalCadData = async () => {
-    suppressPartSaveRef.current = true;
-    editorLiveRef.current = false;
-    partSaveEpochRef.current += 1;
-    refreshGenRef.current += 1;
-    await clearLocalCadData();
-    window.location.reload();
+  const snapshotClearPlan = async () => {
+    const doc = assemblyRef.current;
+    const vault = gitVaultRef.current;
+    const hasRepo = !!(doc?.source === 'git' && vault?.repo && gitAdapterRef.current);
+    let outbox = 0;
+    let queued = 0;
+    try {
+      const store = gitSync();
+      await store.ready();
+      const ops = store.ops();
+      outbox = ops.filter((op) => op.status === 'queued' || op.status === 'sending' || op.status === 'failed').length;
+      if (hasRepo) {
+        const key = repoKeyOf(vault.repo);
+        const branch = gitWorkingBranch();
+        queued = ops.filter((op) => op.repoKey === key
+          && (op.branch || 'main') === branch
+          && (op.status === 'queued' || op.status === 'sending')).length;
+      }
+    } catch (err) {
+      console.warn('[ClearLocalCache] plan:', err);
+    }
+    const unsynced = (doc?.parts || []).filter((part) => part.isSynced === false).length;
+    return clearCachePlan({
+      source: hasRepo ? 'git' : 'local',
+      hasRepo,
+      outboxCount: outbox,
+      queuedCount: queued,
+      unsyncedCount: unsynced,
+    });
+  };
+
+  /** Profile menu: open the confirm popup. Signed out still works; no fetch. */
+  const openClearLocalCache = async () => {
+    const plan = await snapshotClearPlan();
+    setClearCacheUi({ plan, busy: false, error: '' });
+  };
+
+  /**
+   * Confirm or Push first. Push first is the normal flush, and only when the
+   * plan offers it. The wipe keeps the GitHub session token and does not
+   * touch the remote repo. Reload then loads the repo (git) or an empty
+   * local workspace (local / signed out).
+   */
+  const handleClearLocalCadData = async ({ pushFirst = false } = {}) => {
+    const plan = clearCacheUi?.plan || await snapshotClearPlan();
+    setClearCacheUi((ui) => (ui ? { ...ui, busy: true, error: '' } : ui));
+    try {
+      const outcome = await runClearLocalCache({
+        pushFirst,
+        plan,
+        push: () => flushGitOps(),
+        wipe: async () => {
+          suppressPartSaveRef.current = true;
+          editorLiveRef.current = false;
+          partSaveEpochRef.current += 1;
+          refreshGenRef.current += 1;
+          await clearLocalCadData();
+        },
+      });
+      if (!outcome.cleared) {
+        const status = outcome.result?.status || outcome.reason || 'failed';
+        setClearCacheUi((ui) => (ui ? {
+          ...ui,
+          busy: false,
+          error: status === 'no-push'
+            ? 'Nothing queued to push.'
+            : `Push did not finish (${status}). Local cache was kept.`,
+        } : ui));
+        return;
+      }
+      window.location.reload();
+    } catch (err) {
+      setClearCacheUi((ui) => (ui ? {
+        ...ui,
+        busy: false,
+        error: err?.message || 'Could not clear local cache',
+      } : ui));
+    }
   };
 
   /** After profile Sign out / Delete account: drop vault token state and git chrome. */
@@ -5406,6 +5479,7 @@ const App = () => {
   const partFeed = appMode !== 'game' && assemblyDoc ? (
     <PartFeed
       placement={isMobile ? 'mobile' : 'desktop'}
+      isMobile={isMobile}
       source={assemblyDoc.source}
       assemblyName={assemblyLabel}
       onRenameAssembly={handleRenameAssembly}
@@ -5476,7 +5550,7 @@ const App = () => {
       onGitDisconnect={handleGitDisconnect}
       onAccount={handleAccount}
       onSignedOut={handleProfileSignedOut}
-      onClearLocalCadData={handleClearLocalCadData}
+      onClearLocalCadData={openClearLocalCache}
       profileVaultName={gitDefaultVaultName()}
       suggestNewPartPath={
         assemblyDoc.source === 'git'
@@ -5500,6 +5574,20 @@ const App = () => {
       onDismiss={() => setAssemblyOpenToast(null)}
     />
   ) : null;
+
+  const clearCacheDialog = (
+    <ClearCacheDialog
+      open={!!clearCacheUi}
+      outbox={clearCacheUi?.plan?.outbox || 0}
+      unsynced={clearCacheUi?.plan?.unsynced || 0}
+      offerPush={!!clearCacheUi?.plan?.offerPush}
+      busy={!!clearCacheUi?.busy}
+      error={clearCacheUi?.error || ''}
+      onCancel={() => { if (!clearCacheUi?.busy) setClearCacheUi(null); }}
+      onConfirm={() => { void handleClearLocalCadData({ pushFirst: false }); }}
+      onPushFirst={() => { void handleClearLocalCadData({ pushFirst: true }); }}
+    />
+  );
 
   if (isMobile) {
     // Keep h-dvh while the keyboard is closed so Monaco can take a real
@@ -5526,6 +5614,7 @@ const App = () => {
               ref={viewportRef} 
               onAccount={handleAccount}
               onSignedOut={handleProfileSignedOut}
+              onClearLocalCadData={openClearLocalCache}
               profileVaultName={gitDefaultVaultName()}
               currentScript={currentScript}
               onFaceSelected={handleFaceSelected}
@@ -5613,7 +5702,7 @@ const App = () => {
                   monacoEndPadClassName={isScriptStage ? 'pr-11' : ''}
                   onAccount={handleAccount}
                   onSignedOut={handleProfileSignedOut}
-                  onClearLocalCadData={handleClearLocalCadData}
+                  onClearLocalCadData={openClearLocalCache}
                   profileVaultName={gitDefaultVaultName()}
                 />
     );
@@ -5783,6 +5872,8 @@ const App = () => {
             </>
           )}
 
+          {clearCacheDialog}
+
           {/* Login Modal */}
           {showLoginModal && (
             <LoginModal
@@ -5931,7 +6022,7 @@ const App = () => {
               onCadToolbarHost={setCadToolbarHost}
               onAccount={handleAccount}
               onSignedOut={handleProfileSignedOut}
-              onClearLocalCadData={handleClearLocalCadData}
+              onClearLocalCadData={openClearLocalCache}
               profileVaultName={gitDefaultVaultName()}
             />
           </div>
@@ -5979,6 +6070,7 @@ const App = () => {
             ref={viewportRef} 
             onAccount={handleAccount}
             onSignedOut={handleProfileSignedOut}
+            onClearLocalCadData={openClearLocalCache}
             profileVaultName={gitDefaultVaultName()}
             currentScript={currentScript}
             onFaceSelected={handleFaceSelected}
@@ -6054,6 +6146,8 @@ const App = () => {
           )}
           {assemblyOpenSpinner}
         </div>
+
+        {clearCacheDialog}
 
         {/* Login Modal */}
         {showLoginModal && (

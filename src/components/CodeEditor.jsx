@@ -481,7 +481,7 @@ const CodeEditor = forwardRef(({
             data-cad-toolbar-host=""
           />
         )}
-        {!isGame && (
+        {isMobile && !isGame && (
           <div
             data-script-profile-chip=""
             className="ml-auto flex shrink-0 items-center pl-0.5"

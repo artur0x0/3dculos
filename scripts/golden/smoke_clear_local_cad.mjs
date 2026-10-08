@@ -1,13 +1,10 @@
 #!/usr/bin/env node
 /**
- * Clear local CAD data — helpers + Parts/Script profile menu wiring.
+ * Clear local CAD data — helpers + profile-menu wiring.
  *
- * - clearLocalCadData calls clearEditorDraft, clearAssemblyStore, clearModelCache,
- *   clearEditorState (OAuth hand-off)
- * - Parts + Script inline chips get onClearLocalCadData; CAD viewport does not
- * - Signed-out inline panel: Sign in + Clear local CAD data (with confirm)
- * - CAD grey chip still goes to Login (no clear popup on viewport)
- * - Wipe does not clear GitHub sessionStorage token; reload resets UI
+ * Clear local cache (the confirm popup) calls the same wipe. This golden
+ * keeps the store contract: draft, assembly, model cache, OAuth hand-off,
+ * GitHub session token kept, reload after the wipe.
  *
  * Runtime: localStorage-only clearEditorDraft (no IndexedDB / ManifoldWorker).
  * clearAssemblyStore + clearLocalCadData orchestration are source-checked;
@@ -32,6 +29,7 @@ console.log('clear-local-cad — source wiring');
   const assembly = readFileSync(join(root, 'src/utils/assemblyStore.js'), 'utf8');
   const chip = readFileSync(join(root, 'src/components/ProfileChip.jsx'), 'utf8');
   const panel = readFileSync(join(root, 'src/components/ProfilePanel.jsx'), 'utf8');
+  const dialog = readFileSync(join(root, 'src/components/ClearCacheDialog.jsx'), 'utf8');
   const app = readFileSync(join(root, 'src/App.jsx'), 'utf8');
   const feed = readFileSync(join(root, 'src/components/PartFeed.jsx'), 'utf8');
   const editor = readFileSync(join(root, 'src/components/CodeEditor.jsx'), 'utf8');
@@ -50,25 +48,27 @@ console.log('clear-local-cad — source wiring');
     && /DOC_STORE[\s\S]*store\.clear\(\)/.test(assembly)
     && /PART_STORE[\s\S]*store\.clear\(\)/.test(assembly));
   ok('confirm copy keeps GitHub account/repo + session token',
-    /GitHub account and\s+repo are not deleted/.test(panel)
-    && /session token is kept/.test(panel)
-    && /data-profile-clear-local-confirm/.test(panel));
+    /GitHub account and\s+repo are not deleted/.test(dialog)
+    && /session token is kept/.test(dialog)
+    && /data-clear-cache-dialog/.test(dialog));
   ok('panel has Sign in + Clear for signed-out mode',
     /data-profile-sign-in/.test(panel)
     && /data-profile-clear-local/.test(panel)
+    && /data-clear-cache/.test(panel)
     && /data-profile-panel-mode/.test(panel));
-  ok('inline localMenu opens panel when signed out',
-    /localMenu/.test(chip)
-    && /variant === 'inline'/.test(chip)
+  ok('a chip with Clear opens the panel when signed out',
+    /canClear/.test(chip)
     && /onClearLocalCadData/.test(chip)
-    && /if \(localMenu\)/.test(chip));
-  ok('CAD viewport path still calls onAccount when grey',
+    && /if \(canClear\)/.test(chip)
+    && /setPanelOpen/.test(chip));
+  ok('Sign in still reaches onAccount',
     /onAccount\?\.|onAccount\(/.test(chip)
-    && /if \(signedIn\)/.test(chip));
+    && /if \(signedIn\)/.test(chip)
+    && /onSignIn=\{canClear \? \(\) => \{ onAccount\?\.\(\); \} : null\}/.test(chip));
   {
     const m = view.match(/<ProfileChip variant="viewport"[^/]*\/>/);
-    ok('viewport chip JSX omits onClearLocalCadData',
-      m && !/onClearLocalCadData/.test(m[0]));
+    ok('viewport chip JSX includes onClearLocalCadData',
+      m && /onClearLocalCadData/.test(m[0]));
   }
   ok('Parts + Script pass onClearLocalCadData',
     /onClearLocalCadData=\{onClearLocalCadData\}/.test(feed)
@@ -79,10 +79,10 @@ console.log('clear-local-cad — source wiring');
     && /editorLiveRef\.current = false/.test(app)
     && /clearLocalCadData\(\)/.test(app)
     && /window\.location\.reload\(\)/.test(app));
-  ok('App wires clear into PartFeed + CodeEditor',
-    (app.match(/onClearLocalCadData=\{handleClearLocalCadData\}/g) || []).length >= 2);
-  ok('architecture documents Clear local CAD data contract',
-    /Clear local CAD data/.test(arch)
+  ok('App wires the opener into PartFeed, CodeEditor, and Viewport',
+    (app.match(/onClearLocalCadData=\{openClearLocalCache\}/g) || []).length >= 5);
+  ok('architecture documents Clear local cache contract',
+    /Clear local cache/.test(arch)
     && /sessionStorage GitHub token/.test(arch));
   ok('package.json has golden:clear-local-cad', /golden:clear-local-cad/.test(pkg));
 }

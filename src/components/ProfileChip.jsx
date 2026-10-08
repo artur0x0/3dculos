@@ -1,11 +1,10 @@
 /**
- * Profile chip — CAD viewport (absolute), Parts ribbon + Script toolbar (inline).
+ * Profile chip — CAD viewport (absolute). Parts ribbon + Script toolbar (inline)
+ * mount only at mobile widths.
  *
- * CAD (viewport): green → ProfilePanel; grey → Login (onAccount). No Clear
- * local CAD data popup here.
- *
- * Parts + Script (inline): always opens a panel. Signed out → Sign in + Clear
- * local CAD data. Signed in → account panel + Clear local CAD data when wired.
+ * A chip with Clear local cache always opens the account panel, including
+ * signed out (Sign in + Clear local cache). A signed-in chip opens that panel.
+ * With no clear handler, a grey chip still opens Login (`onAccount`).
  */
 import React, { useMemo, useState } from 'react';
 import { User } from 'lucide-react';
@@ -31,8 +30,8 @@ export default function ProfileChip({
 
   const githubLinked = !isAuthenticated && hasGithubToken();
   const signedIn = isAuthenticated || githubLinked;
-  // Parts / Script: panel even when signed out (Sign in + Clear local CAD data).
-  const localMenu = variant === 'inline' && typeof onClearLocalCadData === 'function';
+  // Clear local cache is on every mounted chip, including signed out.
+  const canClear = typeof onClearLocalCadData === 'function';
 
   const label = useMemo(
     () => profileInitials({
@@ -80,13 +79,13 @@ export default function ProfileChip({
     : 'pointer-events-auto absolute top-4 right-4 z-50';
 
   const handleClick = () => {
-    // Parts / Script: always open the local menu panel.
-    if (localMenu) {
+    // Clear is on this chip: open the account panel, signed in or out.
+    if (canClear) {
       setPanelOpen((open) => !open);
       return;
     }
-    // CAD: green chip = signed in (session and/or GitHub token). Always open
-    // the account panel — never bounce a green chip to Login/AuthStep.
+    // Green chip = signed in (session and/or GitHub token). Always open the
+    // account panel — never bounce a green chip to Login/AuthStep.
     if (signedIn) {
       setPanelOpen((open) => !open);
       return;
@@ -121,7 +120,7 @@ export default function ProfileChip({
     onSignedOut?.();
   };
 
-  const showPanel = signedIn || localMenu;
+  const showPanel = signedIn || canClear;
 
   return (
     <div className={wrapClass} data-profile-chip-wrap="">
@@ -153,8 +152,8 @@ export default function ProfileChip({
           onClose={() => setPanelOpen(false)}
           onSignOut={handleSignOut}
           onDeleteAccount={handleDeleteAccount}
-          onSignIn={localMenu ? () => { onAccount?.(); } : null}
-          onClearLocalCadData={localMenu ? onClearLocalCadData : null}
+          onSignIn={canClear ? () => { onAccount?.(); } : null}
+          onClearLocalCadData={canClear ? onClearLocalCadData : null}
           signedIn={signedIn}
           align="right"
         />

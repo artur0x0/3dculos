@@ -634,6 +634,7 @@ const EXECUTION_LIMITS = {
 const Viewport = forwardRef(({ 
   onAccount,
   onSignedOut = null,
+  onClearLocalCadData = null,
   profileVaultName = null,
   currentScript, 
   onFaceSelected, 
@@ -7854,9 +7855,9 @@ const Viewport = forwardRef(({
           ))}
         </div>
       )}
-      {/* G9: circular profile chip — top-right of the CAD viewport. */}
+      {/* G9: circular profile chip — top-right of the CAD viewport. Desktop's only chip. */}
       {mode !== 'game' && (
-        <ProfileChip variant="viewport" onAccount={onAccount} onSignedOut={onSignedOut} vaultName={profileVaultName} />
+        <ProfileChip variant="viewport" onAccount={onAccount} onSignedOut={onSignedOut} onClearLocalCadData={onClearLocalCadData} vaultName={profileVaultName} />
       )}
       {mode !== 'game' && (
         <PaintModeToggle

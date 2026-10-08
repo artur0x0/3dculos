@@ -154,7 +154,7 @@ export default [
 
   // Golden paint shots run in a real browser (Vite serves these modules).
   {
-    files: ['scripts/golden/sheet_material_shot.js', 'scripts/golden/face_paint_shot.js', 'scripts/golden/face_skin_shot.js'],
+    files: ['scripts/golden/sheet_material_shot.js', 'scripts/golden/face_paint_shot.js', 'scripts/golden/face_skin_shot.js', 'scripts/golden/clear_cache_shot.js'],
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: 'module',
