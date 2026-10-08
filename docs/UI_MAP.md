@@ -223,7 +223,9 @@ Mobile specifics:
   `right-0` with `top: ribbonPx` (`data-feature-strip-ribbon-spacer-h="measured"`),
   `z-20`, and Monaco uses `pr-11` so chips stay below the ribbon without covering code.
   Per-type index badges (`data-feature-type-badge`,
-  1…n per kind) sit bottom-right on each icon. Icons match the CAD toolbar
+  1…n per kind) sit bottom-right on each icon. The horizontal bar pads its
+  scroller, so those badges stay inside the strip on mobile and desktop.
+  Icons match the CAD toolbar
   (Contour/`NotebookPen`, Extrude/`ArrowUpFromLine`, Revolve/`Rotate3d`,
   Loft/`Pyramid`, Sweep/`Route`, Fillet/`SquareRoundCorner`,
   Chamfer/`TriangleRight`). Markers from `parseFeatureMarkers` (`typeIndex`).
@@ -321,10 +323,9 @@ All of these are absolutely positioned inside the shell at
 | --- | --- | --- | --- |
 | *editor header* (portal) | Toolbar, all CAD | `Toolbar.jsx` `variant="strip"` | `:3530` |
 | top-center | CAD: part, the word in, assembly. Game: puzzle name | `data-viewer-title` / `ViewportTitleChip` | Viewport |
-| top-right, left of the profile chip (`top-4 right-16`) | Paint toggle. Hidden in game. On opens the paint popup; off, Esc, Cancel, or the grey X leave without writing | `PaintModeToggle` `data-paint-chip` | Viewport |
 | bottom, centered in the gap between the rails (same card as Shell; `bottom-14` on a phone) | Paint popup: 8 swatches, custom `#rrggbb`, Part, Undo, Clear, Remove unmatched colors, Confirm, Cancel | `PaintModeChip` `data-paint-mode` | Viewport |
 | centered | "Match!" success banner | inline | `:3595` |
-| left-2/4 bottom-2.5 | helper insert rail (height paired to right). Shape includes Sheet Metal with the other shape tools | `HelperInsertPalette.jsx` | Viewport |
+| left-2/4 bottom-2.5 | helper insert rail (height paired to right). Block, Build, Shape, Polish, Move | `HelperInsertPalette.jsx` | Viewport |
 | left-2/4 bottom-2.5 | contour tool rail (replaces the helper rail) | `ContourModeRail.jsx` | Viewport |
 | left-2/4 bottom-2.5 | sheet-metal rail (replaces the helper rail while `sheetMetalMode`): **Shape** section, SCS tools for the SKU, Tab first, ✕ exit | `sheetMetal/SheetMetalRail.jsx` | Viewport |
 | bottom, centered in the gap between the measured side rails (22rem cap on desktop; full gap on a phone). Material line truncates, hint wraps. Does not cover either toolbar | sheet-metal chip: bound SKU + step hint, **Check & Export** (edit), ✕ exits | `sheetMetal/SheetMetalModeChip.jsx` | Viewport |
@@ -334,7 +335,7 @@ All of these are absolutely positioned inside the shell at
 | bottom sheet `z-50` (short) | Tab popup (Width, Depth, Centered, Offset) / Hole popup (Ø or Thread, Csk Ø, U, V) | `sheetMetal/SheetMetalFlow.jsx` | Viewport |
 | bottom sheet `z-50` | Check & Export popup: DFM fails (red) / warnings (amber) in the mm\|in display unit, Download DXF, Download STEP, Order on SendCutSend (opens the app; all disabled on a hard fail), ✕ | `sheetMetal/SheetMetalFlow.jsx` | Viewport |
 | scene | plane quads / sheet preview / edge handles (taps route here first) | `utils/sheetMetal/sheetOverlay.js` | Viewport |
-| right-2/4 bottom-4 | view / pick / cross-section cluster | `CrossSectionPanel.jsx:175` collapsed, `:327` expanded | `:3641` |
+| right-2/4 bottom-4 | view / pick / paint / inspection cluster. Paint (`data-paint-chip`) is in the plane and contour group, green only while paint mode is on, hidden in game. Sheet Metal (`data-sheet-metal-button`, `data-sheet-metal-group="inspection"`) is under the divider with axes, measure, and cross-section; idle blue, green only while the picker or the mode is open | `CrossSectionPanel.jsx` collapsed rail | Viewport |
 | inside that cluster | Front/Right/Top/**Iso** snap popup | `ViewSnapControl.jsx` | `CrossSectionPanel.jsx:181` |
 | top-16, portaled `z-50`, `inset-x-3` (most of the viewport width, same card on desktop) | execution error toast: fixed card, label "Error", Undo and dismiss on the right, description on the next line (`ErrorPopup` `layout="stacked"`), glass `rounded-lg` | `ErrorPopup.jsx` | Viewport |
 | centered on the viewport pane (desktop) and the phone shell | assembly-open spinner: ring + `Opening <name>…`, optional `part 3 of 7`. Hidden for the first 150ms. `pointer-events-none`, `z-[45]`, under the toasts | `AssemblyOpenSpinner.jsx` `data-assembly-open-spinner` | App |
@@ -346,9 +347,9 @@ All of these are absolutely positioned inside the shell at
 | bottom-left | measurement readout | inline | `:3961` |
 | fills the pane | WebGL canvas | `<canvas ref={canvasRef}>` | `:3985` |
 
-The canvas draws a face-color skin on top of a part when that assembly has `colors` (`src/utils/faceColorSkin.js`). The skin is under crease lines and pick highlights. `?debugFaces=1` or `localStorage` key `surfcad.debugFaces` = `1` paints each face patch a different color. The flag is off unless set, and it is not on the right rail.
+The canvas draws a face-color skin on top of a part when that assembly has `colors` (`src/utils/faceColorSkin.js`). The skin is under crease lines and pick highlights. `?debugFaces=1` or `localStorage` key `surfcad.debugFaces` = `1` paints each face patch a different color. The flag is off unless set, and it is not a rail button. The right rail has no patch-colour toggle.
 
-**Paint.** The palette chip is CAD-only. A click in paint mode uses the normal face pick, so a blend and a coplanar seam select the same face they already do, and the highlight draws above the skin. Tap a picked face again to drop it. Undo drops the last pick and leaves saved colors alone. Confirm writes `colors[surfId]` through the assembly save (local document, and the git outbox in Git mode). Part colors the whole part. Clear removes the saved color of the picked faces, or the part color. Cancel writes nothing. Picks belong to the active part; switching parts clears them. Game mode hides the chip. The helper rail hides while the popup is open, same as Shell.
+**Paint.** The paint button is on the right rail and is CAD-only. A click in paint mode uses the normal face pick, so a blend and a coplanar seam select the same face they already do, and the highlight draws above the skin. Tap a picked face again to drop it. Undo drops the last pick and leaves saved colors alone. Confirm writes `colors[surfId]` through the assembly save (local document, and the git outbox in Git mode). Part colors the whole part. Clear removes the saved color of the picked faces, or the part color. Cancel writes nothing. Picks belong to the active part; switching parts clears them. Game mode hides the button. The helper rail hides while the popup is open, same as Shell.
 
 **Opening an assembly.** `data-assembly-open-spinner` sits centered over the
 viewport (the viewport pane on desktop, the full shell on a phone) while a
@@ -565,7 +566,8 @@ Import `src/utils/importModel.js` (+ `POST /api/convert/step`); export
   `aria-label`; toggles carry `aria-pressed`. **No two buttons in the same rail
   share a glyph** — the right rail's selectors are deliberately distinct:
   `RectangleHorizontal` = Face pick, `Layers3` = plane overlays,
-  `NotebookPen` = sketch (contour) overlays, `Spline` = Edge pick. In the left
+  `NotebookPen` = sketch (contour) overlays, `Spline` = Edge pick,
+  `Palette` = Paint, `FoldVertical` = Sheet Metal (inspection group). In the left
   rail, Loft is `Pyramid` (a tapered stack of profiles), not `Layers`, and
   Fillet is `SquareRoundCorner` — so `Squircle` now means roundedBox alone.
   Chamfer is `TriangleRight`.
@@ -607,7 +609,7 @@ Import `src/utils/importModel.js` (+ `POST /api/convert/step`); export
   Polar, and the `array3D` build delegates to `polarArray`'s for Polar.
   `holePattern` likewise: Hole's "n×m pattern" tick emits `holePattern()`.
   Hide a tool this way rather than deleting an item other code builds with.
-- **The right rail is content-height**, not paired: view-snap then zoom-to-fit (`Maximize2`) at the top, then picks/overlays/helpers including the XYZ triad (`Move3d` / `AxesHelper`). The green Lucide `Frame` (`#` / auto-fit-on-run) was removed — it duplicated zoom-to-fit. A shared 26rem cap used to crop Cross-section off the bottom,
+- **The right rail is content-height**, not paired: view-snap then zoom-to-fit (`Maximize2`) at the top, then Face, Edge, plane overlays, contour overlays, and Paint, then a divider, then Sheet Metal, the XYZ triad (`Move3d` / `AxesHelper`), measure, and cross-section. There is no patch-colour toggle. The green Lucide `Frame` (`#` / auto-fit-on-run) was removed — it duplicated zoom-to-fit. A shared 26rem cap used to crop Cross-section off the bottom,
   where — being bottom-anchored 10px above the viewport edge — it was out of
   reach. It keeps `overflow-visible` plus a `max-h` that respects the pane.
 - **The view-snap flyout must never `flex-wrap`.** It is absolutely positioned

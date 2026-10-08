@@ -1,11 +1,18 @@
 /**
- * Paint chip and open popup, for the face-paint golden.
- * The page supplies the ground (dark viewport or light) and the width.
+ * Paint button on the right rail, the open popup, and the feature-strip
+ * count badges. The page supplies the ground (dark viewport or light) and
+ * the width. compact matches the phone popup and the under-ribbon strip.
  */
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { PAINT_SWATCHES } from '../../src/utils/facePaint.js';
-import { PaintModeChip, PaintModeToggle } from '../../src/components/PaintModeChip.jsx';
+import { PaintModeChip } from '../../src/components/PaintModeChip.jsx';
+import CrossSectionPanel from '../../src/components/CrossSectionPanel.jsx';
+import FeatureStrip from '../../src/components/FeatureStrip.jsx';
+
+const CUBES = [1, 2, 3, 4]
+  .map(() => '// --- cube begin ---\nlet part = 1;\n// --- cube end ---')
+  .join('\n');
 
 export function renderPaintChrome(el, { theme = 'dark', compact = false } = {}) {
   const bg = theme === 'light' ? '#f4f4f5' : '#1e1e1e';
@@ -22,7 +29,46 @@ export function renderPaintChrome(el, { theme = 'dark', compact = false } = {}) 
         overflow: 'hidden',
       },
     },
-    React.createElement(PaintModeToggle, { pressed: true, onToggle: () => {} }),
+    React.createElement('div', {
+      'data-profile-standin': '1',
+      'aria-hidden': 'true',
+      style: {
+        position: 'absolute',
+        top: 16,
+        right: 16,
+        width: 36,
+        height: 36,
+        borderRadius: 9999,
+        background: 'rgba(17,24,39,0.55)',
+        border: '1px solid rgba(255,255,255,0.2)',
+      },
+    }),
+    React.createElement(
+      'div',
+      {
+        'data-shot-feature-row': '1',
+        style: { position: 'absolute', left: 0, right: 0, top: compact ? 80 : 56 },
+      },
+      React.createElement(FeatureStrip, {
+        orientation: 'horizontal',
+        script: CUBES,
+        onUndo: () => {},
+        onRedo: () => {},
+        canUndo: true,
+        canRedo: true,
+      }),
+    ),
+    React.createElement(CrossSectionPanel, {
+      verticalRail: true,
+      showPaint: true,
+      paintActive: true,
+      onPaintToggle: () => {},
+      onOpenSheetMetal: () => {},
+      sheetMetalActive: false,
+      onPickModeChange: () => {},
+      onZoomToFit: () => {},
+      onSnapView: () => {},
+    }),
     React.createElement(PaintModeChip, {
       compact,
       faceCount: 2,

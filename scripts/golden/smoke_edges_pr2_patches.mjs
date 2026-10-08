@@ -235,7 +235,8 @@ return placeInFrame(fr, makeLoft([xs0, xs1]));
     `n=${bend.length} areas=${bend.map((p) => p.area.toFixed(1)).join(',')}`);
 }
 
-// Source-level: Viewport builds lazily; overlay uses unlit material.
+// Source-level: the rail patch-colour overlay and its material swap are gone.
+// Face graphs still come from warmFaceGraph. Worker serialize stays lean.
 {
   const fs = await import('node:fs');
   const vp = fs.readFileSync(new URL('../../src/components/Viewport.jsx', import.meta.url), 'utf8');
@@ -245,27 +246,16 @@ return placeInFrame(fr, makeLoft([xs0, xs1]));
     !/buildPartGraphPatches/.test(worker),
   );
   check(
-    'Viewport lazy-builds via buildPartGraphPatches',
-    /buildPartGraphPatches\(/.test(vp),
+    'the rail patch-colour overlay is gone',
+    !/buildPartGraphPatches\(/.test(vp)
+      && !/buildPatchOverlayArrays/.test(vp)
+      && !/showPatchOverlay/.test(vp)
+      && !/patchOverlayActiveRef/.test(vp)
+      && !/forceBaseRestore/.test(vp),
   );
   check(
-    'overlay uses MeshBasicMaterial (unlit)',
-    /patchOverlayMatRef\.current = new MeshBasicMaterial\(\{\s*vertexColors:\s*true/.test(vp)
-      || /new MeshBasicMaterial\(\{\s*vertexColors:\s*true/.test(vp),
-  );
-  check(
-    'overlay does not use MeshLambertMaterial for patches',
-    !/patchOverlayMatRef\.current = new MeshLambertMaterial/.test(vp),
-  );
-  check(
-    'overlay-off is gated on patchOverlayActiveRef (no half-rebuild)',
-    /patchOverlayActiveRef/.test(vp)
-      && /if \(!showPatchOverlay\)/.test(vp)
-      && /if \(patchOverlayActiveRef\.current\)/.test(vp),
-  );
-  check(
-    'toggle-off force-restores via renderMeshData (lit base)',
-    /forceBaseRestore/.test(vp) && /renderMeshData\(cached\)/.test(vp),
+    'face graphs still come from warmFaceGraph',
+    /warmFaceGraph\(/.test(vp),
   );
 }
 
