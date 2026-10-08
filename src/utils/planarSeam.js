@@ -151,15 +151,23 @@ function posAt(positions, i) {
  * (split verts), and `dropPlanarFins` removes zero-width needles, leaving
  * T-junctions: either way an interior diagonal has one picked triangle per
  * index edge. So:
- *   1. Weld picked vertices within OUTLINE_WELD_MM and count edges on the
- *      welded ids — split copies and near-endpoint needles cancel.
- *   2. An edge still owned by one picked triangle is boundary only if the
- *      point OUTLINE_SIDE_MM past its midpoint (in the owner's plane, away
- *      from the owner) is not on another picked triangle — a neighbour that
- *      shares an endpoint counts (the old check skipped it and drew the
- *      needle's diagonal) — and its midpoint is not on a picked triangle
- *      that has neither endpoint and reaches past the edge (an overlapping
- *      duplicate-vertex seam; a sliver fanned along the inside does not).
+ *   1. Weld picked vertices within OUTLINE_WELD_MM so split copies of one
+ *      vertex are one id. Several raw edges can share that key: a
+ *      duplicate-vertex seam, or a sliver whose real boundary welds onto a
+ *      neighbour's diagonal (the loft cap's corner sits 0.006 mm off the
+ *      edge, inside this weld).
+ *   2. A raw edge is boundary when the point OUTLINE_SIDE_MM past its
+ *      midpoint (in the owner's plane, away from the owner) is not on
+ *      another picked triangle — a neighbour that shares an endpoint counts
+ *      (the old check skipped it and drew the needle's diagonal) — and its
+ *      midpoint is not on a picked triangle that has neither endpoint and
+ *      reaches past the edge (an overlapping duplicate-vertex seam; a sliver
+ *      fanned along the inside does not). The key is drawn if any of its raw
+ *      edges still clears that test. Skipping the key whenever more than one
+ *      triangle touched it hid the sliver's boundary, so the rectangle
+ *      outline stopped mid-side. When only one end of the sliver welds,
+ *      the sliver and the real side stay two keys and can both draw, a
+ *      few thousandths of a millimetre apart.
  *
  * `positions` is a tightly packed xyz array or a three.js BufferAttribute.
  */
@@ -259,9 +267,10 @@ export function highlightBoundaryPositions(positions, index, faceIndices) {
       const v = w[(k + 1) % 3];
       if (u === v) continue;
       const key = u < v ? `${u}-${v}` : `${v}-${u}`;
+      const piece = { cover, ia: raw[k], ib: raw[(k + 1) % 3], opp: raw[(k + 2) % 3], t };
       const rec = edges.get(key);
-      if (rec) rec.n++;
-      else edges.set(key, { n: 1, cover, ia: raw[k], ib: raw[(k + 1) % 3], opp: raw[(k + 2) % 3] });
+      if (!rec) edges.set(key, { pieces: [piece] });
+      else rec.pieces.push(piece);
     }
   }
 
@@ -299,18 +308,19 @@ export function highlightBoundaryPositions(positions, index, faceIndices) {
     return false;
   };
 
-  const out = [];
-  for (const rec of edges.values()) {
-    if (rec.n !== 1) continue;
-    const a = posAt(positions, rec.ia);
-    const b = posAt(positions, rec.ib);
-    const o = posAt(positions, rec.opp);
+  // True boundary of one raw edge, or null when the side tests say it is
+  // inside the picked face. Returns the segment plus how far its midpoint
+  // sits outside the owner, so a sliver can prefer the outer edge.
+  const boundaryPiece = (piece) => {
+    const a = posAt(positions, piece.ia);
+    const b = posAt(positions, piece.ib);
+    const o = posAt(positions, piece.opp);
     const ex = b[0] - a[0];
     const ey = b[1] - a[1];
     const ez = b[2] - a[2];
     const el = Math.hypot(ex, ey, ez);
-    if (!(el > 1e-9)) continue;
-    const c = rec.cover;
+    if (!(el > 1e-9)) return null;
+    const c = piece.cover;
     // In-plane normal to the edge, pointing away from the owner triangle.
     let sx = c.ny * ez - c.nz * ey;
     let sy = c.nz * ex - c.nx * ez;
@@ -328,12 +338,35 @@ export function highlightBoundaryPositions(positions, index, faceIndices) {
       sz = -sz;
     }
     const d = OUTLINE_SIDE_MM;
-    if (coveredByOther(mx + sx * d, my + sy * d, mz + sz * d, c)) continue;
+    if (coveredByOther(mx + sx * d, my + sy * d, mz + sz * d, c)) return null;
     // A duplicate-vertex seam whose other copy overlaps this edge: the
     // midpoint already lies on a picked triangle that has neither endpoint.
-    if (midpointOnOther(mx, my, mz, rec.ia, rec.ib, sx, sy, sz)) continue;
-    out.push(a[0], a[1], a[2], b[0], b[1], b[2]);
+    if (midpointOnOther(mx, my, mz, piece.ia, piece.ib, sx, sy, sz)) return null;
+    const ox = (c.ax + c.bx + c.cx) / 3;
+    const oy = (c.ay + c.by + c.cy) / 3;
+    const oz = (c.az + c.bz + c.cz) / 3;
+    const outward = (mx - ox) * sx + (my - oy) * sy + (mz - oz) * sz;
+    return { seg: [a[0], a[1], a[2], b[0], b[1], b[2]], outward };
+  };
+
+  const kept = [];
+  for (const rec of edges.values()) {
+    // Several raw edges can weld to one key: a duplicate-vertex seam (two
+    // triangles, both fail the side test) or a sliver whose boundary welds
+    // onto a neighbour's diagonal (the boundary passes, the diagonal does
+    // not). Draw the raw edge that still clears the side test. Counting
+    // owners and skipping n≠1 hid that boundary — the loft rectangle stopped
+    // mid-side.
+    let best = null;
+    for (let i = 0; i < rec.pieces.length; i++) {
+      const hit = boundaryPiece(rec.pieces[i]);
+      if (!hit) continue;
+      if (!best || hit.outward > best.outward) best = hit;
+    }
+    if (best) kept.push(best.seg);
   }
+  const out = [];
+  for (let i = 0; i < kept.length; i++) out.push(...kept[i]);
   return out;
 }
 
