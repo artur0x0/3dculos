@@ -3125,11 +3125,15 @@ const App = () => {
     }
     try {
       const { vault, branch, entries, tip } = await vaultEntriesForDelete();
-      const failedOp = gitSync().failed(vault.repo, branch).find(
-        (op) => op.op === 'delete-assembly' && op.payload?.name === vaultSegment(name),
-      );
-      if (failedOp) {
-        await gitSync().requeue(failedOp.id);
+      const seg = vaultSegment(name);
+      const sameDelete = (op) => op.op === 'delete-assembly' && op.payload?.name === seg;
+      // A failed sync is `failed`. A vault refusal puts the same op back to
+      // `queued`. Either way the local delete already happened, so retry
+      // flushes that op instead of planning a second one.
+      const failedOp = gitSync().failed(vault.repo, branch).find(sameDelete);
+      const queuedOp = gitSync().pending(vault.repo, branch).find(sameDelete);
+      if (failedOp || queuedOp) {
+        if (failedOp) await gitSync().requeue(failedOp.id);
         setPartSync({ ...gitSync().partStates() });
         const retried = await flushGitOps();
         if (retried?.status === 'failed') {
@@ -3138,7 +3142,7 @@ const App = () => {
             error: retried.error || retried.toast?.message || 'Could not delete assembly',
           };
         }
-        return { status: 'deleted', name: failedOp.payload?.name || vaultSegment(name) || name };
+        return { status: 'deleted', name: (failedOp || queuedOp).payload?.name || seg || name };
       }
       const live = codeEditorRef.current?.getContent?.();
       const scripts = { ...partScriptsRef.current };
