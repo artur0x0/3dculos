@@ -225,6 +225,12 @@ import {
   planMoveToGit,
   moveToGit,
   putAsset,
+  placeLocalMeshParts,
+  remapMeshRecords,
+  collectMeshCommitAssets,
+  partMeshRecordsFromBaseline,
+  meshVaultSaveAllowed,
+  assetPathForScript,
 } from './utils/git';
 import PartFeed from './components/PartFeed';
 import manifoldContext from './utils/ManifoldWorker';
@@ -2246,6 +2252,27 @@ const App = () => {
     setGitBaseline(baseline);
   };
 
+  /** After a mesh commit lands, store the vault sha and clear the badge. */
+  const applyMeshMarks = async (marks) => {
+    if (!marks?.length) return;
+    const nextMeta = { ...partMeshMetaRef.current };
+    for (const mark of marks) {
+      const id = mark?.partId;
+      const name = mark?.assetName;
+      const sha = mark?.sha;
+      if (!id || !name || !sha) continue;
+      const assets = { [name]: sha };
+      const text = partScriptsRef.current[id];
+      if (typeof text === 'string') {
+        await savePartScript(id, text, { assets, meshSynced: true });
+      }
+      rememberPartAssets(id, assets);
+      nextMeta[id] = { assets, meshSynced: true };
+    }
+    partMeshMetaRef.current = nextMeta;
+    setPartMeshMeta(nextMeta);
+  };
+
   const rememberGitBehind = (check, { showToast = true, resetResolved = true } = {}) => {
     gitBehindRef.current = check;
     setGitBehind(check);
@@ -2561,10 +2588,15 @@ const App = () => {
           }
         }
       }
+      if (result.meshes?.length) await applyMeshMarks(result.meshes);
       if (result.sha && vault?.repo) {
         store.setLastSyncedSha(vault.repo, result.sha, result.branch || gitWorkingBranch());
         const doc = assemblyRef.current;
         const base = gitBaselineRef.current;
+        const assetMap = { ...(base?.assets || {}) };
+        for (const mark of result.meshes || []) {
+          if (mark?.meshPath && mark?.sha) assetMap[mark.meshPath] = mark.sha;
+        }
         if (result.assemblyRenameOnly && doc?.source === 'git' && base) {
           rememberGitBaseline(baselineAfterAssemblyRename(base, doc, partScriptsRef.current, {
             headSha: result.sha,
@@ -2576,11 +2608,12 @@ const App = () => {
             assemblyName: doc.name,
             doc,
             scripts: partScriptsRef.current,
+            assets: assetMap,
             branch: base?.branch || gitWorkingBranch(),
             headSha: result.sha,
           }));
         } else if (!result.layoutApplied && base) {
-          rememberGitBaseline({ ...base, headSha: result.sha });
+          rememberGitBaseline({ ...base, headSha: result.sha, assets: assetMap });
         }
         gitVaultRef.current = { ...vault, headSha: result.sha };
       }
@@ -2894,13 +2927,20 @@ const App = () => {
       openedDoc = next.doc;
       openedScripts = next.scripts;
     }
+    const meshRecords = partMeshRecordsFromBaseline(openedDoc, openedScripts, opened.baseline?.assets);
     for (const [id, script] of Object.entries(openedScripts)) {
       const part = (openedDoc.parts || []).find((row) => row.id === id);
-      await savePartScript(
-        id,
-        script,
-        typeof part?.isSynced === 'boolean' ? { isSynced: part.isSynced } : {},
-      );
+      const mesh = meshRecords[id];
+      await savePartScript(id, script, {
+        ...(typeof part?.isSynced === 'boolean' ? { isSynced: part.isSynced } : {}),
+        ...(mesh || {}),
+      });
+      if (mesh?.assets) rememberPartAssets(id, mesh.assets);
+    }
+    if (Object.keys(meshRecords).length) {
+      const nextMeta = { ...partMeshMetaRef.current, ...meshRecords };
+      partMeshMetaRef.current = nextMeta;
+      setPartMeshMeta(nextMeta);
     }
     rememberScripts(openedScripts);
     let saved = rememberAssembly(openedDoc);
@@ -2910,6 +2950,7 @@ const App = () => {
       assemblyName: saved.name,
       doc: saved,
       scripts: openedScripts,
+      assets: opened.baseline?.assets,
       branch,
       headSha: opened.baseline.headSha,
     });
@@ -2968,6 +3009,7 @@ const App = () => {
           assemblyName: saved.name,
           doc: saved,
           scripts: openedScripts,
+          assets: baseline.assets,
           branch,
           headSha: baseline.headSha,
         });
@@ -3986,9 +4028,49 @@ const App = () => {
    * Save queues one commit on the current branch. The sync worker pushes it.
    * A moved tip returns conflict (G13) and writes nothing.
    */
+  const applyMeshPlacement = async (placed) => {
+    if (!placed?.moved?.length) return;
+    for (const { from, to } of placed.moved) {
+      const text = placed.scripts[to] ?? '';
+      const prev = partMeshMetaRef.current[from];
+      await savePartScript(to, text, prev
+        ? { assets: prev.assets, meshSynced: prev.meshSynced === true, isSynced: false }
+        : { isSynced: false });
+      try { await deletePartScript(from); } catch { /* the new id is the record */ }
+      if (prev?.assets) rememberPartAssets(to, prev.assets);
+      forgetPartAssets(from);
+    }
+    const nextMeta = { ...partMeshMetaRef.current };
+    for (const { from, to } of placed.moved) {
+      if (!nextMeta[from]) continue;
+      nextMeta[to] = nextMeta[from];
+      delete nextMeta[from];
+    }
+    partMeshMetaRef.current = nextMeta;
+    setPartMeshMeta(nextMeta);
+    rekeyRuntime(placed.moved);
+    rememberScripts(placed.scripts);
+    rememberAssembly(placed.doc);
+    const active = placed.doc.activeId;
+    if (placed.moved.some((move) => move.to === active)) {
+      const text = placed.scripts[active] ?? '';
+      const name = placed.doc.parts.find((part) => part.id === active)?.name || active;
+      focusPartHistory(active, text);
+      setCurrentFilename(name);
+      codeEditorRef.current?.loadContent(text, name, false);
+    }
+  };
+
   const handleGitCommit = async (message) => {
     const doc = assemblyRef.current;
     if (!doc || doc.source !== 'git') return { status: 'error', error: 'Not in Git mode' };
+    if (!meshVaultSaveAllowed({
+      source: doc.source,
+      readOnly: bootReadOnlyRef.current,
+      githubConnected,
+    })) {
+      return { status: 'error', error: 'Reconnect GitHub before saving this assembly.' };
+    }
     try {
       const vault = await ensureGitVault();
       const branch = gitWorkingBranch();
@@ -4003,18 +4085,51 @@ const App = () => {
       }
       const live = codeEditorRef.current?.getContent?.();
       const liveId = (!suppressPartSaveRef.current && typeof live === 'string') ? doc.activeId : null;
-      if (liveId) {
-        savePartScript(liveId, live);
-        rememberScripts({ ...partScriptsRef.current, [liveId]: live });
-      }
+      let workScripts = { ...partScriptsRef.current };
+      if (liveId) workScripts[liveId] = live;
+      let tree = [];
+      try {
+        tree = await gitAdapterRef.current.listTree(vault.repo, branch) || [];
+      } catch { /* occupancy is the open document when the tree cannot be listed */ }
+      const placed = placeLocalMeshParts(doc, workScripts, {
+        occupied: tree.map((entry) => entry?.path ?? entry).filter((path) => typeof path === 'string'),
+      });
+      workScripts = placed.scripts;
+      const movedLive = placed.moved.find((move) => move.from === liveId);
+      const nextLiveId = movedLive ? movedLive.to : liveId;
+      const loaded = await loadPartAssets((doc.parts || []).map((part) => part.id));
+      const records = remapMeshRecords({
+        ...loaded,
+        ...partMeshMetaRef.current,
+      }, placed.moved);
+      const collected = await collectMeshCommitAssets({
+        doc: placed.doc,
+        scripts: workScripts,
+        records,
+        baseline,
+        tree,
+      });
+      const notes = [
+        ...collected.warnings.map((item) => item.message),
+        ...collected.skipped.map((item) => item.message),
+      ].filter(Boolean);
+      if (notes.length) setUploadNotice(notes.join(' '));
       const result = await assembleCommitFiles(gitAdapterRef.current, vault.repo, {
-        doc,
-        scripts: partScriptsRef.current,
+        doc: placed.doc,
+        scripts: workScripts,
         baseline,
         message,
-        liveId,
-        liveScript: liveId ? live : null,
+        liveId: nextLiveId,
+        liveScript: nextLiveId ? workScripts[nextLiveId] : null,
+        assets: collected.assets,
       });
+      await applyMeshPlacement(placed);
+      if (liveId && !movedLive) {
+        savePartScript(liveId, live);
+        rememberScripts(workScripts);
+      }
+      const adopted = collected.marks.filter((mark) => mark.adopted);
+      if (adopted.length) await applyMeshMarks(adopted);
       if (result.status === 'clean') return result;
       if (result.renamed || result.moved?.length) {
         await applyCommittedWorkspace(result);
@@ -4023,12 +4138,13 @@ const App = () => {
         op: 'save',
         branch,
         message: result.message || message,
-        partIds: result.partIds?.length ? result.partIds : (doc.parts || []).map((part) => part.id),
+        partIds: result.partIds?.length ? result.partIds : (placed.doc.parts || []).map((part) => part.id),
         files: result.files,
         payload: {
           assemblyPath: result.assemblyPath,
           renamed: !!result.renamed,
           moved: result.moved || [],
+          meshes: collected.marks.filter((mark) => !mark.adopted),
         },
       });
       setPartSync({ ...store.partStates() });
@@ -4057,9 +4173,12 @@ const App = () => {
         files: (result.files || []).map((file) => file.path),
       };
     } catch (err) {
+      const tooBig = err?.code === 'file_too_large' || err?.name === 'VaultFileTooLargeError';
+      const message = err.toast || err.message || 'Commit failed';
+      if (tooBig || err.toast) setUploadError(message);
       return {
         status: 'error',
-        error: err.message || 'Commit failed',
+        error: message,
         code: err.code || null,
         stray: Array.isArray(err.stray) ? err.stray : null,
       };
@@ -4161,7 +4280,18 @@ const App = () => {
           return { status: 'reloaded', path, kind: 'assembly' };
         }
         // Part reload
-        await savePartScript(path, reloaded.content);
+        const meshRecord = partMeshRecordsFromBaseline(
+          { parts: [{ id: path }] },
+          { [path]: reloaded.content },
+          reloaded.baseline?.assets,
+        )[path];
+        await savePartScript(path, reloaded.content, meshRecord || {});
+        if (meshRecord?.assets) {
+          rememberPartAssets(path, meshRecord.assets);
+          const nextMeta = { ...partMeshMetaRef.current, [path]: meshRecord };
+          partMeshMetaRef.current = nextMeta;
+          setPartMeshMeta(nextMeta);
+        }
         const nextScripts = reloaded.scripts;
         rememberScripts(nextScripts);
         let nextBaseline = reloaded.baseline;
@@ -4632,6 +4762,8 @@ const App = () => {
       const files = [fileWrite(asmPath, stringifySurfJson(nextDoc))];
       if (fromRepo && isVaultPartPath(key) && !key.startsWith('local:') && !key.startsWith('local-')) {
         files.unshift(fileDelete(key));
+        const meshPath = assetPathForScript(key);
+        if (meshPath) files.unshift(fileDelete(meshPath));
       }
       void (async () => {
         try {
@@ -5649,8 +5781,19 @@ const App = () => {
     rememberAssembly(nextDoc);
     if (to !== from) {
       const text = moved.scripts[to] ?? '';
-      savePartScript(to, text);
+      const prevMesh = partMeshMetaRef.current[from];
+      savePartScript(to, text, prevMesh
+        ? { assets: prevMesh.assets, meshSynced: prevMesh.meshSynced === true }
+        : {});
       deletePartScript(from);
+      if (prevMesh?.assets) {
+        rememberPartAssets(to, prevMesh.assets);
+        forgetPartAssets(from);
+        const nextMeta = { ...partMeshMetaRef.current, [to]: prevMesh };
+        delete nextMeta[from];
+        partMeshMetaRef.current = nextMeta;
+        setPartMeshMeta(nextMeta);
+      }
       rekeyRuntime([{ from, to }]);
       if (doc.activeId === from || cadPartIdRef.current === from) {
         setCurrentFilename(nextName);

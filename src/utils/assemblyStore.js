@@ -179,7 +179,7 @@ export async function loadPartScript(id) {
  * Pass a boolean to set it. Never written to `.surf.json`.
  *
  * `assets` is `{ '<Part>.mesh': gitBlobSha }`. Omit it to keep the stored
- * map. `meshSynced` stays false until a later PR puts the blob in the vault.
+ * map. `meshSynced` stays false until a git Save commits that blob.
  */
 export async function savePartScript(id, script, opts = {}) {
   if (!id || typeof script !== 'string') return false;
