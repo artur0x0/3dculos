@@ -238,6 +238,9 @@ const App = () => {
   const [partScripts, setPartScripts] = useState({});
   const [partRuns, setPartRuns] = useState({});
   const assemblyRef = useRef(null);
+  // rememberAssembly starts the IndexedDB write and returns the doc.
+  // Callers that need the write to finish await this promise.
+  const assemblyDocPersistRef = useRef(Promise.resolve(null));
   /** Assembly names opened this session, oldest first. The last is current. */
   const recentAssembliesRef = useRef([]);
   const partScriptsRef = useRef({});
@@ -1596,7 +1599,7 @@ const App = () => {
     const clean = serializeAssembly(doc);
     assemblyRef.current = clean;
     setAssemblyDoc(clean);
-    saveAssemblyDocument(clean);
+    assemblyDocPersistRef.current = saveAssemblyDocument(clean);
     return clean;
   };
 
@@ -3040,6 +3043,7 @@ const App = () => {
     const previousIds = Object.keys(partScriptsRef.current || {});
     rememberScripts(scripts);
     const saved = rememberAssembly(next.doc);
+    await assemblyDocPersistRef.current;
     if (next.kind === 'update' && next.pairs?.length) rekeyRuntime(next.pairs);
     for (const id of previousIds) {
       if (!Object.prototype.hasOwnProperty.call(scripts, id)) {
@@ -3079,7 +3083,16 @@ const App = () => {
       focusPartHistory(active.id, text);
       suppressPartSaveRef.current = false;
       if (next.kind === 'switch') {
-        await finishOpenedPartRef.current(saved, scripts);
+        // An open already owns the worker. preemptInflight would drop the
+        // build the spinner is waiting on (#264).
+        if (!assemblyOpenLockRef.current) {
+          assemblyOpenLockRef.current = true;
+          try {
+            await finishOpenedPartRef.current(saved, scripts);
+          } finally {
+            if (!assemblyOpenCtrlRef.current?.isOpen?.()) assemblyOpenLockRef.current = false;
+          }
+        }
       } else if (codeEditorRef.current?.loadContent) {
         codeEditorRef.current.loadContent(text, active.name, false);
       }
@@ -3099,12 +3112,34 @@ const App = () => {
   /**
    * One outbox commit. The cache snapshot is swapped only after the next
    * tree is built. Failure toasts Retry/Revert and Revert puts that snapshot back.
+   * The promise waits for the local IndexedDB document and part-script
+   * writes, then the queued git sync. A later call retries that failed op.
    */
   const handleDeleteAssembly = async (name, mode = 'keep') => {
     const doc = assemblyRef.current;
     if (!doc || doc.source !== 'git') return { status: 'error', error: 'Not in Git mode' };
+    // Feature edit and the editor auto-run already stay off this lock.
+    // A delete would preempt the build the open spinner is waiting on.
+    if (assemblyOpenLockRef.current) {
+      return { status: 'error', error: 'An assembly is opening — try the delete again once it finishes.' };
+    }
     try {
       const { vault, branch, entries, tip } = await vaultEntriesForDelete();
+      const failedOp = gitSync().failed(vault.repo, branch).find(
+        (op) => op.op === 'delete-assembly' && op.payload?.name === vaultSegment(name),
+      );
+      if (failedOp) {
+        await gitSync().requeue(failedOp.id);
+        setPartSync({ ...gitSync().partStates() });
+        const retried = await flushGitOps();
+        if (retried?.status === 'failed') {
+          return {
+            status: 'failed',
+            error: retried.error || retried.toast?.message || 'Could not delete assembly',
+          };
+        }
+        return { status: 'deleted', name: failedOp.payload?.name || vaultSegment(name) || name };
+      }
       const live = codeEditorRef.current?.getContent?.();
       const scripts = { ...partScriptsRef.current };
       if (doc.activeId && !suppressPartSaveRef.current && typeof live === 'string') {
@@ -3169,6 +3204,7 @@ const App = () => {
           try { await gitSync().putTree(vault.repo, branch, cacheBefore); } catch { /* keep the throw */ }
           rememberScripts(scripts);
           rememberAssembly(doc);
+          try { await assemblyDocPersistRef.current; } catch { /* keep the throw */ }
           rememberGitBaseline(baselineBefore);
         }
         throw err;
@@ -3176,7 +3212,7 @@ const App = () => {
       setPartSync({ ...gitSync().partStates() });
       const result = await flushGitOps();
       if (result?.status === 'failed') {
-        return { status: 'failed', error: result.error || 'Could not delete assembly' };
+        return { status: 'failed', error: result.error || result.toast?.message || 'Could not delete assembly' };
       }
       return { status: 'deleted', name: plan.assemblyName };
     } catch (err) {

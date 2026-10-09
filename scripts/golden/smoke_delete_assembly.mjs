@@ -10,7 +10,7 @@
  * commit toasts Retry/Revert and the cache snapshot is never half-applied.
  */
 /* The evaluate callback runs in the browser, where document exists. */
-/* global document */
+/* global document, window, KeyboardEvent, MouseEvent */
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -593,6 +593,25 @@ console.log('\nui wires the trash, the gate, and the existing toast');
     && /delete-assembly/.test(worker));
   ok('package.json registers golden:delete-assembly',
     /"golden:delete-assembly": "node scripts\/golden\/smoke_delete_assembly\.mjs"/.test(pkg));
+  ok('delete is guarded by an in-flight ref',
+    /deleteInFlightRef/.test(feed)
+    && /if \(deleteInFlightRef\.current\) return;/.test(feed)
+    && /deleteInFlightRef\.current = true/.test(feed));
+  ok('spinner stays inside the clicked delete button',
+    /data-assembly-delete-spinner=\{which\}/.test(dialog)
+    && /invisible/.test(dialog)
+    && /busyAction/.test(dialog)
+    && /disabled=\{locked \|\| !confirmed\}/.test(dialog));
+  ok('failure stays in the popup',
+    /result\?\.status === 'error' \|\| result\?\.status === 'failed'/.test(feed)
+    && /data-assembly-delete-error/.test(dialog));
+  ok('delete awaits IndexedDB and the queued sync',
+    /await assemblyDocPersistRef\.current/.test(app)
+    && /await deletePartScript\(id\)/.test(app)
+    && /await enqueueGit\(vault\.repo/.test(app)
+    && /const result = await flushGitOps\(\)/.test(app)
+    && /assemblyOpenLockRef\.current/.test(app)
+    && /An assembly is opening — try the delete again once it finishes/.test(app));
 }
 
 const CHROME_CANDIDATES = [
@@ -616,10 +635,37 @@ if (exe) {
 import { useState } from 'react';
 import VaultPickerDialog from './src/components/VaultPickerDialog.jsx';
 import DeleteAssemblyDialog, { AssemblyOpenList } from './src/components/DeleteAssemblyDialog.jsx';
+import PartFeed from './src/components/PartFeed.jsx';
 
 function Harness() {
   const [typed, setTyped] = useState('');
   const showList = window.__DELETE_ASSEMBLY_VIEW__ === 'list';
+  if (window.__DELETE_ASSEMBLY_VIEW__ === 'flow') {
+    return (
+      <div style={{ width: '390px', height: '844px', background: '#1e1e1e' }}>
+        <PartFeed
+          placement="mobile"
+          source="git"
+          assemblyName="Cover"
+          currentBranch="main"
+          assemblyLeaveSafe
+          rows={[{ id: 'parts/Lid.js', name: 'Lid', visible: true, order: 0 }]}
+          activeId="parts/Lid.js"
+          onListVaultAssemblies={() => Promise.resolve(['Cover', 'Gearbox'])}
+          onPreviewDeleteAssembly={async () => ({
+            partCount: 2,
+            referenced: [{ name: 'Bracket', path: 'assemblies/Gearbox/Bracket.js', assemblies: ['Cover'] }],
+          })}
+          onDeleteAssembly={() => {
+            window.__deleteCalls = (window.__deleteCalls || 0) + 1;
+            return new Promise((resolve) => {
+              window.__resolveDelete = () => resolve(window.__DELETE_RESULT || { status: 'deleted' });
+            });
+          }}
+        />
+      </div>
+    );
+  }
   if (showList) {
     return (
       <VaultPickerDialog title="Open assembly" labelledBy="git-open-title" dataAttr="open-assembly" onClose={() => {}}>
@@ -729,6 +775,110 @@ createRoot(document.getElementById('root')).render(<Harness />);
     ok('typing the assembly name enables delete-parts', unlocked === false);
     const card = await page.locator('[data-git-dialog="delete-assembly"] > div').boundingBox();
     ok('confirm dialog fits a 390px phone', !!card && card.width <= 390 && card.x >= 0, JSON.stringify(card));
+
+    await page.setContent(pageHtml('flow'), { waitUntil: 'load' });
+    await page.click('[data-assembly-load]');
+    await page.click('[data-part-open-action="assembly"]');
+    await page.waitForSelector('[data-assembly-delete="Gearbox"]', { timeout: 5000 });
+    await page.click('[data-assembly-delete="Gearbox"]');
+    await page.waitForSelector('[data-assembly-delete-keep]:not([disabled])', { timeout: 5000 });
+    const beforeBox = await page.locator('[data-assembly-delete-keep]').boundingBox();
+    const doubleTap = await page.evaluate(() => {
+      window.__deleteCalls = 0;
+      window.__DELETE_RESULT = { status: 'deleted' };
+      const button = document.querySelector('[data-assembly-delete-keep]');
+      button.click();
+      button.click();
+      return window.__deleteCalls;
+    });
+    ok('a second tap does not start another delete', doubleTap === 1, String(doubleTap));
+    await page.waitForSelector('[data-assembly-delete-spinner="keep"]', { timeout: 5000 });
+    const spinning = await page.evaluate(() => {
+      const root = document.querySelector('[data-git-dialog="delete-assembly"]');
+      const keep = root.querySelector('[data-assembly-delete-keep]');
+      const drop = root.querySelector('[data-assembly-delete-parts]');
+      const cancel = root.querySelector('[data-git-dialog-cancel]');
+      const box = keep.getBoundingClientRect();
+      return {
+        keepDisabled: keep.disabled === true,
+        dropDisabled: drop.disabled === true,
+        cancelDisabled: cancel.disabled === true,
+        spinner: !!root.querySelector('[data-assembly-delete-spinner="keep"]'),
+        ariaBusy: keep.getAttribute('aria-busy'),
+        calls: window.__deleteCalls,
+        width: box.width,
+        height: box.height,
+      };
+    });
+    ok('spinner shows and both actions plus Cancel are disabled',
+      spinning.keepDisabled && spinning.dropDisabled && spinning.cancelDisabled
+      && spinning.spinner && spinning.ariaBusy === 'true' && spinning.calls === 1,
+      JSON.stringify(spinning));
+    ok('delete button keeps its size while the spinner shows',
+      !!beforeBox
+      && Math.abs(beforeBox.width - spinning.width) < 1
+      && Math.abs(beforeBox.height - spinning.height) < 1,
+      JSON.stringify({ before: beforeBox, during: { width: spinning.width, height: spinning.height } }));
+    const stillOpen = await page.evaluate(() => {
+      const root = document.querySelector('[data-git-dialog="delete-assembly"]');
+      root.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+      const scrim = root;
+      scrim.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+      document.querySelector('[data-assembly-delete-keep]')?.click();
+      return {
+        open: !!document.querySelector('[data-git-dialog="delete-assembly"]'),
+        calls: window.__deleteCalls,
+      };
+    });
+    ok('Escape, scrim, and another tap leave the in-flight delete alone',
+      stillOpen.open === true && stillOpen.calls === 1, JSON.stringify(stillOpen));
+    await page.locator('[data-git-dialog="delete-assembly"]').click({ position: { x: 2, y: 2 } });
+    ok('scrim click does not dismiss an in-flight delete',
+      await page.locator('[data-git-dialog="delete-assembly"]').count() === 1);
+    await page.screenshot({ path: join(shotDir, 'delete-assembly-spinner-390.png') });
+    await page.evaluate(() => { window.__resolveDelete?.(); });
+    await page.waitForSelector('[data-git-dialog="delete-assembly"]', { state: 'detached', timeout: 5000 });
+    ok('success closes the delete popup', true);
+
+    await page.click('[data-assembly-delete="Cover"]');
+    await page.waitForSelector('[data-assembly-delete-keep]:not([disabled])', { timeout: 5000 });
+    await page.evaluate(() => {
+      window.__deleteCalls = 0;
+      window.__DELETE_RESULT = { status: 'failed', error: 'Remote rejected the delete' };
+      document.querySelector('[data-assembly-delete-keep]').click();
+    });
+    await page.waitForSelector('[data-assembly-delete-spinner="keep"]', { timeout: 5000 });
+    await page.evaluate(() => { window.__resolveDelete?.(); });
+    await page.waitForSelector('[data-assembly-delete-error]', { timeout: 5000 });
+    const failedUi = await page.evaluate(() => {
+      const root = document.querySelector('[data-git-dialog="delete-assembly"]');
+      const keep = root.querySelector('[data-assembly-delete-keep]');
+      const cancel = root.querySelector('[data-git-dialog-cancel]');
+      return {
+        open: !!root,
+        error: root.querySelector('[data-assembly-delete-error]')?.textContent || '',
+        keepDisabled: keep.disabled === true,
+        cancelDisabled: cancel.disabled === true,
+        spinner: !!root.querySelector('[data-assembly-delete-spinner]'),
+        calls: window.__deleteCalls,
+      };
+    });
+    ok('failure keeps the popup, shows the error, and re-enables the buttons',
+      failedUi.open
+      && failedUi.error === 'Remote rejected the delete'
+      && failedUi.keepDisabled === false
+      && failedUi.cancelDisabled === false
+      && failedUi.spinner === false
+      && failedUi.calls === 1,
+      JSON.stringify(failedUi));
+    const failedCard = await page.locator('[data-git-dialog="delete-assembly"] > div').boundingBox();
+    ok('error dialog fits a 390px phone', !!failedCard && failedCard.width <= 390 && failedCard.x >= 0, JSON.stringify(failedCard));
+    await page.screenshot({ path: join(shotDir, 'delete-assembly-error-390.png') });
+    const spinnerShot = join(shotDir, 'delete-assembly-spinner-390.png');
+    const errorShot = join(shotDir, 'delete-assembly-error-390.png');
+    ok('busy shots stay out of artifacts',
+      !spinnerShot.includes('/opt/cursor/artifacts') && !errorShot.includes('/opt/cursor/artifacts'));
   } finally {
     await browser.close();
   }
