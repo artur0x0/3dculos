@@ -445,7 +445,7 @@ function Stage() {
           onConfirm={() => {}}
         />
       )}
-      <div data-harness="" style={{ position: 'absolute', left: 0, top: 0, opacity: 0 }}>
+      <div data-harness="" style={{ position: 'absolute', left: 0, top: 0, opacity: 0, pointerEvents: 'none' }}>
         <button type="button" data-harness-entry="crossSection" onClick={() => { setPanel('contour'); setEntry('crossSection'); }}>circle</button>
         <button type="button" data-harness-entry="makeExtrude" onClick={() => { setPanel('contour'); setEntry('makeExtrude'); }}>extrude</button>
         <button type="button" data-harness-panel="fillet" onClick={() => setPanel('fillet')}>fillet</button>
