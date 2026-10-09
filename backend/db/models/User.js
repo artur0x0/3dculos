@@ -69,11 +69,21 @@ const cartLineSchema = new mongoose.Schema({
   partId: { type: String, required: true },
   surfId: { type: String, default: null },
   partName: { type: String, required: true },
+  // Hash of the script that was quoted. Not a live pointer. The script stays
+  // on the assembly. Old lines still store whatever hash they were added with.
   scriptHash: { type: String, required: true },
   // Route strips data URLs over 24_000 characters before save.
   thumbDataUrl: { type: String, default: null, maxlength: 24000 },
   qty: { type: Number, required: true, min: 1, max: 999, default: 1 },
+  // Null on lines added before a quote was locked. A v3 line stores the
+  // process, material, and infill the user accepted.
   options: { type: cartOptionsSchema, default: null },
+  // Server unit subtotal in dollars. Null means the line was never quoted.
+  // A quote older than 7 days (QUOTE_TTL_MS) stays on the line; checkout
+  // re-quotes it. This is not a Mongo TTL — the line is not deleted.
+  quotedUnitPrice: { type: Number, default: null },
+  quoteId: { type: String, default: null, maxlength: 128 },
+  quotedAt: { type: Date, default: null },
   addedAt: { type: Date, required: true },
   updatedAt: { type: Date, required: true },
 }, { _id: false });
@@ -309,30 +319,118 @@ userSchema.methods.canResendCode = function() {
   return { allowed: true };
 };
 
-// Instance method: Add or update address
-userSchema.methods.upsertAddress = function(addressData, makeDefault = false) {
-  if (makeDefault) {
-    // Unset any existing default
-    this.addresses.forEach(addr => addr.isDefault = false);
+// The address book is capped. Checkout used to append a duplicate on every
+// order; dedupe updates the matching entry instead. Over the cap is a 400
+// from the route, not a silent drop.
+export const MAX_ADDRESSES = 10;
+
+const ADDRESS_FIELDS = ['label', 'name', 'street', 'street2', 'city', 'state', 'zip', 'country', 'phone'];
+
+export class AddressBookError extends Error {
+  constructor(message, statusCode = 400) {
+    super(message);
+    this.name = 'AddressBookError';
+    this.statusCode = statusCode;
   }
-  
-  if (addressData._id) {
-    // Update existing
-    const existing = this.addresses.id(addressData._id);
-    if (existing) {
-      Object.assign(existing, addressData);
-      if (makeDefault) existing.isDefault = true;
-      return existing;
+}
+
+function addressPart(value) {
+  return String(value ?? '').trim().toLowerCase();
+}
+
+/** Dedupe key. City and state are not part of it. */
+function addressDedupeKey(address) {
+  return `${addressPart(address?.street)}|${addressPart(address?.street2)}|${addressPart(address?.zip)}`;
+}
+
+function findAddressById(addresses, id) {
+  if (id == null || id === '') return null;
+  try {
+    return addresses.id(id) || null;
+  } catch {
+    return null;
+  }
+}
+
+function copyAddressFields(target, data) {
+  for (const field of ADDRESS_FIELDS) {
+    if (data[field] !== undefined) target[field] = data[field];
+  }
+}
+
+function addressIdKey(addr) {
+  if (addr?._id == null) return '';
+  return String(addr._id);
+}
+
+/** Newest saved address. ObjectId order, not array position. */
+function newestAddress(addresses) {
+  let newest = addresses[0];
+  let newestKey = addressIdKey(newest);
+  for (let i = 1; i < addresses.length; i += 1) {
+    const key = addressIdKey(addresses[i]);
+    if (key > newestKey) {
+      newest = addresses[i];
+      newestKey = key;
     }
   }
-  
-  // Add new
-  const newAddress = {
-    ...addressData,
-    isDefault: makeDefault || this.addresses.length === 0,
-  };
-  this.addresses.push(newAddress);
-  return this.addresses[this.addresses.length - 1];
+  return newest;
+}
+
+// Instance method: Add or update address.
+// An `_id` updates that entry (the picker). A missing or unknown id is not
+// an append. Without `_id`, a case-insensitive (street, street2, zip) match
+// updates that entry; otherwise the address is appended when the book is
+// under the cap. The first address is the default.
+userSchema.methods.upsertAddress = function(addressData, makeDefault = false) {
+  if (!addressData || typeof addressData !== 'object' || Array.isArray(addressData)) {
+    throw new AddressBookError('Address is required', 400);
+  }
+
+  let existing = null;
+  const hasId = addressData._id != null && addressData._id !== '';
+  if (hasId) {
+    existing = findAddressById(this.addresses, addressData._id);
+    if (!existing) throw new AddressBookError('Address not found', 404);
+  } else {
+    const key = addressDedupeKey(addressData);
+    existing = this.addresses.find((addr) => addressDedupeKey(addr) === key) || null;
+  }
+
+  if (!existing && this.addresses.length >= MAX_ADDRESSES) {
+    throw new AddressBookError(`At most ${MAX_ADDRESSES} addresses`, 400);
+  }
+
+  const shouldDefault = !!makeDefault || (!existing && this.addresses.length === 0);
+  if (shouldDefault) {
+    this.addresses.forEach((addr) => { addr.isDefault = false; });
+  }
+
+  if (!existing) {
+    const created = { isDefault: shouldDefault };
+    copyAddressFields(created, addressData);
+    this.addresses.push(created);
+    return this.addresses[this.addresses.length - 1];
+  }
+
+  copyAddressFields(existing, addressData);
+  if (shouldDefault) existing.isDefault = true;
+  return existing;
+};
+
+// Instance method: Remove one address. If it was the default, the newest
+// remaining address (greatest `_id`) becomes the default.
+userSchema.methods.deleteAddress = function(id) {
+  const existing = findAddressById(this.addresses, id);
+  if (!existing) throw new AddressBookError('Address not found', 404);
+  const wasDefault = existing.isDefault === true;
+  this.addresses.pull(existing._id);
+  if (wasDefault && this.addresses.length > 0) {
+    const newest = newestAddress(this.addresses);
+    this.addresses.forEach((addr) => { addr.isDefault = false; });
+    newest.isDefault = true;
+  }
+  return this.addresses;
 };
 
 // Static method: Find or create OAuth user

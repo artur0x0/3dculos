@@ -15,6 +15,11 @@ export const MAX_TOMBSTONES = 200;
 export const THUMB_MAX_CHARS = 24_000;
 export const TOMBSTONE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 export const CLOCK_SKEW_MS = 5 * 60 * 1000;
+// Accepted quote stays on the cart line for 7 days (amendment; the plan said
+// 24h). Past this, the line is still stored and checkout re-quotes it.
+// Keep in step with QUOTE_TTL_MS in src/utils/cart.js.
+export const QUOTE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+export const QUOTE_ID_MAX = 128;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -156,6 +161,9 @@ function prepareLine(line, index) {
     };
   }
 
+  const quote = prepareQuote(line, index, options);
+  if (quote.error) return { error: quote.error };
+
   return {
     line: {
       lineId: String(line.lineId),
@@ -168,10 +176,62 @@ function prepareLine(line, index) {
       thumbDataUrl: stripThumb(line.thumbDataUrl),
       qty,
       options,
+      quotedUnitPrice: quote.quotedUnitPrice,
+      quoteId: quote.quoteId,
+      quotedAt: quote.quotedAt,
       addedAt: addedAt.toISOString(),
       updatedAt: updatedAt.toISOString(),
     },
   };
+}
+
+/**
+ * Old lines omit the quote. A line that sends any quote field must send
+ * the locked process, material, infill, unit price, quote id, and quotedAt.
+ */
+function prepareQuote(line, index, options) {
+  const priceMissing = line.quotedUnitPrice == null || line.quotedUnitPrice === '';
+  const quoteId = line.quoteId == null ? '' : String(line.quoteId).trim();
+  const idMissing = quoteId === '';
+  const atMissing = line.quotedAt == null || line.quotedAt === '';
+  if (priceMissing && idMissing && atMissing) {
+    return { quotedUnitPrice: null, quoteId: null, quotedAt: null };
+  }
+
+  const process = options?.process == null ? '' : String(options.process).trim();
+  const material = options?.material == null ? '' : String(options.material).trim();
+  const infill = options?.infill;
+  if (!process || !material || infill == null || !Number.isFinite(infill)) {
+    return { error: `Line ${index} quote needs process, material, and infill` };
+  }
+  if (priceMissing || idMissing || atMissing) {
+    return { error: `Line ${index} quote is incomplete` };
+  }
+  const price = line.quotedUnitPrice;
+  if (typeof price !== 'number' || !Number.isFinite(price) || price < 0) {
+    return { error: `Line ${index} quotedUnitPrice must be a non-negative number` };
+  }
+  if (quoteId.length > QUOTE_ID_MAX) {
+    return { error: `Line ${index} quoteId is too long` };
+  }
+  const quotedAt = new Date(line.quotedAt);
+  if (Number.isNaN(quotedAt.getTime())) {
+    return { error: `Line ${index} quotedAt is invalid` };
+  }
+  return {
+    quotedUnitPrice: price,
+    quoteId,
+    quotedAt: quotedAt.toISOString(),
+  };
+}
+
+/** True when quoteId is missing or quotedAt is older than the 7-day TTL. */
+export function isQuoteExpired(line, now = new Date()) {
+  if (line?.quoteId == null || String(line.quoteId).trim() === '') return true;
+  const quotedMs = new Date(line.quotedAt).getTime();
+  if (!Number.isFinite(quotedMs)) return true;
+  const nowMs = (now instanceof Date ? now : new Date(now)).getTime();
+  return nowMs - quotedMs > QUOTE_TTL_MS;
 }
 
 function asDate(value, fallback) {
@@ -226,12 +286,19 @@ export function mergeCart({
   const nowMs = clock.getTime();
   const maxMs = nowMs + CLOCK_SKEW_MS;
 
-  const clampLine = (line) => ({
-    ...line,
-    thumbDataUrl: stripThumb(line.thumbDataUrl),
-    addedAt: clampTime(line.addedAt, nowMs, maxMs).toISOString(),
-    updatedAt: clampTime(line.updatedAt, nowMs, maxMs).toISOString(),
-  });
+  const clampLine = (line) => {
+    const next = {
+      ...line,
+      thumbDataUrl: stripThumb(line.thumbDataUrl),
+      addedAt: clampTime(line.addedAt, nowMs, maxMs).toISOString(),
+      updatedAt: clampTime(line.updatedAt, nowMs, maxMs).toISOString(),
+    };
+    // A client cannot push quotedAt into the future to stretch the 7-day TTL.
+    if (next.quotedAt != null && next.quotedAt !== '') {
+      next.quotedAt = clampTime(next.quotedAt, nowMs, maxMs).toISOString();
+    }
+    return next;
+  };
 
   const tombs = new Map();
   const addTomb = (lineId, deletedAt) => {

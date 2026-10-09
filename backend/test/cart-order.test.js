@@ -9,6 +9,7 @@ import User from '../db/models/User.js';
 import Order from '../db/models/Order.js';
 import { orderQuantity } from '../services/orderPrice.js';
 import { calculatePackageDimensions, calculatePackageWeight } from '../services/ups.js';
+import { plainLine } from '../routes/cart.js';
 
 const LINE = {
   lineId: '00000000-0000-4000-8000-000000000001',
@@ -73,6 +74,37 @@ describe('User.cart', () => {
     const user = new User({ email: 'bad-qty@example.com' });
     user.cart.push({ ...LINE, qty: 0 });
     await assert.rejects(user.validate());
+  });
+
+  test('an old line and a v3 line validate and plainLine keeps both', async () => {
+    const user = new User({ email: 'v3-line@example.com' });
+    const quotedAt = new Date('2026-06-01T00:00:00.000Z');
+    user.cart.push(LINE);
+    user.cart.push({
+      ...LINE,
+      lineId: '00000000-0000-4000-8000-000000000002',
+      qty: 4,
+      scriptHash: 'quoted-hash',
+      options: { process: 'FDM', material: 'PLA', infill: 20 },
+      quotedUnitPrice: 9.5,
+      quoteId: 'quote-9',
+      quotedAt,
+    });
+    await user.validate();
+    const plain = user.cart.map(plainLine);
+    assert.equal(plain[0].options, null);
+    assert.equal(plain[0].quotedUnitPrice, null);
+    assert.equal(plain[0].quoteId, null);
+    assert.equal(plain[0].quotedAt, null);
+    assert.equal(plain[0].scriptHash, LINE.scriptHash);
+    assert.equal(plain[1].qty, 4);
+    assert.equal(plain[1].scriptHash, 'quoted-hash');
+    assert.equal(plain[1].options.process, 'FDM');
+    assert.equal(plain[1].options.material, 'PLA');
+    assert.equal(plain[1].options.infill, 20);
+    assert.equal(plain[1].quotedUnitPrice, 9.5);
+    assert.equal(plain[1].quoteId, 'quote-9');
+    assert.equal(plain[1].quotedAt, quotedAt.toISOString());
   });
 
   test('a 24_000 character thumbnail is accepted and 24_001 is not', async () => {

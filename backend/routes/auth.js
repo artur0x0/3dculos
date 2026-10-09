@@ -455,6 +455,9 @@ router.post('/guest/convert', async (req, res) => {
       });
     });
   } catch (error) {
+    if (Number.isInteger(error?.statusCode) && error.statusCode >= 400 && error.statusCode < 500) {
+      return res.status(error.statusCode).json({ error: error.message });
+    }
     console.error('[Auth] Guest conversion error:', error);
     return res.status(500).json({ error: 'Failed to create account' });
   }
@@ -593,9 +596,24 @@ router.post('/apple/callback',
   }
 );
 
+function sendAddressRouteError(res, error, logLabel, fallback) {
+  if (Number.isInteger(error?.statusCode) && error.statusCode >= 400 && error.statusCode < 500) {
+    return res.status(error.statusCode).json({ error: error.message });
+  }
+  if (error?.name === 'ValidationError') {
+    return res.status(400).json({ error: 'Address is invalid' });
+  }
+  console.error(logLabel, error);
+  return res.status(500).json({ error: fallback });
+}
+
 /**
  * PUT /api/auth/address
- * Add or update user address
+ * Add or update an address. Signed-in users write the address book.
+ * Body: { address, makeDefault }. `address._id` updates that entry so a
+ * picker can edit or set the default without appending. Omit `_id` to
+ * dedupe on street / street2 / zip or append. Guests still store one
+ * session.guestAddress, not the book.
  */
 router.put('/address', async (req, res) => {
   try {
@@ -608,12 +626,14 @@ router.put('/address', async (req, res) => {
     // For authenticated users
     if (req.isAuthenticated()) {
       const user = await User.findById(req.user._id);
-      user.upsertAddress(address, makeDefault);
+      if (!user) return res.status(401).json({ error: 'Not authenticated' });
+      const saved = user.upsertAddress(address, makeDefault);
       await user.save();
       
       return res.json({
         success: true,
         addresses: user.addresses,
+        address: saved,
       });
     }
     
@@ -624,8 +644,30 @@ router.put('/address', async (req, res) => {
       address: req.session.guestAddress,
     });
   } catch (error) {
-    console.error('[Auth] Address update error:', error);
-    return res.status(500).json({ error: 'Failed to update address' });
+    return sendAddressRouteError(res, error, '[Auth] Address update error:', 'Failed to update address');
+  }
+});
+
+/**
+ * DELETE /api/auth/address/:id
+ * Remove one saved address. If it was the default, the newest remaining
+ * address becomes the default. Guests have no book.
+ */
+router.delete('/address/:id', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const user = await User.findById(req.user._id);
+    if (!user) return res.status(401).json({ error: 'Not authenticated' });
+    user.deleteAddress(req.params.id);
+    await user.save();
+    return res.json({
+      success: true,
+      addresses: user.addresses,
+    });
+  } catch (error) {
+    return sendAddressRouteError(res, error, '[Auth] Address delete error:', 'Failed to delete address');
   }
 });
 
