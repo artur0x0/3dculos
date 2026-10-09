@@ -202,10 +202,10 @@ async function capture(browser, width, height) {
         order: {
           id: 'order-1',
           orderNumber: 'SC-1001',
-          total: 42.5,
-          tax: 2,
-          subtotal: 32,
+          subtotal: 5.49,
           shipping: 8.5,
+          tax: 0,
+          total: 13.99,
           quantity: 3,
         },
         clientSecret: 'pi_test_secret_checkout',
@@ -244,9 +244,10 @@ async function capture(browser, width, height) {
   await page.locator('[data-quote-total]').scrollIntoViewIfNeeded();
   await shot(page, `cart-checkout-${width}-quote.png`);
 
-  await page.locator('[data-quote-total]').locator('xpath=ancestor::div[contains(@class,"space-y-4")]//button').last().click();
-  await page.waitForSelector('text=Continue to Payment', { timeout: 20000 });
-  await page.locator('text=Continue to Payment').click();
+  await page.getByRole('button', { name: 'Order', exact: true }).click();
+  const pay = page.getByRole('button', { name: 'Continue to Payment' });
+  await pay.waitFor({ timeout: 20000 });
+  await pay.click();
   await page.waitForSelector('[data-payment-qty]', { timeout: 20000 });
   await page.waitForFunction(
     () => document.querySelector('[data-checkout-progress]')?.textContent?.includes('Line 1 of 2'),
