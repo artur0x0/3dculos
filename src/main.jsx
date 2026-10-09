@@ -5,6 +5,7 @@ import './index.css';
 import App from './App';
 import GitCallback from './components/GitCallback';
 import { AuthProvider } from './hooks/useAuth';
+import { GithubSessionProvider } from './hooks/useGithubSession';
 import { GITHUB_CALLBACK_PATH } from './utils/git/githubAuth.js';
 
 function pathIsGitCallback(pathname = window.location.pathname) {
@@ -46,7 +47,9 @@ function Root() {
   return (
     <StrictMode>
       <AuthProvider>
-        <App />
+        <GithubSessionProvider>
+          <App />
+        </GithubSessionProvider>
       </AuthProvider>
     </StrictMode>
   );

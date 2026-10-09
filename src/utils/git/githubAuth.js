@@ -41,6 +41,17 @@ export function githubRedirectUri(origin = typeof window !== 'undefined' ? windo
   return `${base}${GITHUB_CALLBACK_PATH}`;
 }
 
+/**
+ * Popup OAuth cannot see this tab's sessionStorage. A sibling module
+ * registers a reader for the one-shot state it stashed for that window.
+ * Null unless that module is loaded. This file does not open the other store.
+ */
+let oauthStateExtra = null;
+
+export function setOAuthStateExtra(store) {
+  oauthStateExtra = store && typeof store.peek === 'function' ? store : null;
+}
+
 /** Random opaque state for CSRF; stored in sessionStorage for the round-trip. */
 export function createOAuthState(randomBytes = defaultRandom) {
   const state = randomBytes();
@@ -51,13 +62,23 @@ export function createOAuthState(randomBytes = defaultRandom) {
 }
 
 export function peekOAuthState() {
-  if (typeof sessionStorage === 'undefined') return null;
-  return sessionStorage.getItem(GITHUB_OAUTH_STATE_KEY);
+  let fromSession = null;
+  if (typeof sessionStorage !== 'undefined') {
+    fromSession = sessionStorage.getItem(GITHUB_OAUTH_STATE_KEY);
+  }
+  if (fromSession) return fromSession;
+  try {
+    return oauthStateExtra?.peek?.() || null;
+  } catch {
+    return null;
+  }
 }
 
 export function clearOAuthState() {
-  if (typeof sessionStorage === 'undefined') return;
-  sessionStorage.removeItem(GITHUB_OAUTH_STATE_KEY);
+  if (typeof sessionStorage !== 'undefined') {
+    sessionStorage.removeItem(GITHUB_OAUTH_STATE_KEY);
+  }
+  try { oauthStateExtra?.clear?.(); } catch { /* ignore */ }
 }
 
 /** Validate callback state against what we stored; clears it either way. */

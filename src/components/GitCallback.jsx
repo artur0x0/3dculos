@@ -21,6 +21,11 @@ import {
   githubRedirectUri,
   GITHUB_OAUTH_STATE_MISSING_HINT,
 } from '../utils/git/githubAuth.js';
+import {
+  finishPopupOAuth,
+  isGithubPopupHandoff,
+  postPopupOAuthResult,
+} from '../utils/git/githubSilentAuth.js';
 
 export default function GitCallback({ onComplete } = {}) {
   const [status, setStatus] = useState('exchanging'); // exchanging | ok | error
@@ -33,6 +38,20 @@ export default function GitCallback({ onComplete } = {}) {
         redirectUri: githubRedirectUri(window.location.origin),
       });
       if (cancelled) return;
+      if (isGithubPopupHandoff()) {
+        // Silent re-auth. The opener keeps the CAD page; this window only
+        // exchanges the code and hands the result back. Token is already in
+        // the shared refresh bundle. Do not soft-nav a second App in here.
+        postPopupOAuthResult(
+          window.opener,
+          { ok: !!result.ok, error: result.ok ? '' : (result.error || 'OAuth failed') },
+          window.location.origin,
+        );
+        finishPopupOAuth();
+        window.close();
+        return;
+      }
+
       if (!result.ok) {
         setStatus('error');
         setError(result.error || 'OAuth failed');

@@ -110,8 +110,9 @@ console.log('\nG9 — UI wiring (source)');
     && /onAccount=\{handleAccount\}/.test(app));
   ok('chip falls back to User icon when no initials',
     /from 'lucide-react'/.test(chip) && /<User /.test(chip));
-  ok('chip treats github token as signed-in affordance',
-    /hasGithubToken/.test(chip) && /github-token|githubLinked/.test(chip));
+  ok('chip uses the shared session phase for reauth vs connected',
+    /useAuthState/.test(chip) && /data-profile-badge="reauth"/.test(chip)
+    && /data-profile-reconnect/.test(chip));
   ok('Toolbar portal no longer gets onAccount',
     !/createPortal\(\s*<Toolbar[\s\S]*?onAccount=\{onAccount\}/.test(view));
 

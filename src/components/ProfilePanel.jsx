@@ -22,7 +22,11 @@ export default function ProfilePanel({
   onDeleteAccount,
   onSignIn = null,
   onClearLocalCadData = null,
+  onReconnect = null,
+  reconnecting = false,
+  reconnectError = '',
   signedIn = true,
+  reauth = false,
   align = 'right',
 }) {
   const { user } = useAuth();
@@ -85,7 +89,7 @@ export default function ProfilePanel({
     <div
       ref={ref}
       data-profile-panel=""
-      data-profile-panel-mode={signedIn ? 'signed-in' : 'signed-out'}
+      data-profile-panel-mode={reauth ? 'reauth' : (signedIn ? 'signed-in' : 'signed-out')}
       role="dialog"
       aria-label="Account"
       className={`absolute ${alignClass} top-full z-[60] mt-1 w-64 rounded-md border border-gray-600
@@ -124,6 +128,55 @@ export default function ProfilePanel({
             </button>
           </div>
         </div>
+      ) : reauth ? (
+        <>
+          <div className="px-3 pb-2 pt-1" data-profile-panel-info="">
+            {name ? (
+              <p className="truncate text-sm font-medium text-gray-100" data-profile-panel-name="">
+                {name}
+              </p>
+            ) : null}
+            {email ? (
+              <p className="truncate text-xs text-gray-400" data-profile-panel-email="" title={email}>
+                {email}
+              </p>
+            ) : null}
+            <p className="mt-1 text-xs text-gray-300" data-profile-reauth-copy="">
+              GitHub needs a reconnect to open your repo.
+            </p>
+            {reconnectError ? (
+              <p className="mt-1 text-xs text-amber-300" data-profile-reconnect-error="">{reconnectError}</p>
+            ) : null}
+          </div>
+          <button
+            type="button"
+            data-profile-reconnect=""
+            className="block w-full px-3 py-1.5 text-left text-xs font-medium text-amber-100 hover:bg-white/10"
+            disabled={reconnecting}
+            onClick={() => { onReconnect?.(); }}
+          >
+            {reconnecting ? 'Reconnecting…' : 'Reconnect'}
+          </button>
+          <button
+            type="button"
+            data-profile-sign-out=""
+            className="block w-full px-3 py-1.5 text-left text-xs text-gray-100 hover:bg-white/10"
+            onClick={() => { void onSignOut?.(); onClose?.(); }}
+          >
+            Sign out
+          </button>
+          {canClear ? (
+            <button
+              type="button"
+              data-profile-clear-local=""
+              data-clear-cache=""
+              className="block w-full px-3 py-1.5 text-left text-xs text-amber-200/90 hover:bg-amber-500/15"
+              onClick={() => { onClose?.(); void onClearLocalCadData?.(); }}
+            >
+              Clear local cache
+            </button>
+          ) : null}
+        </>
       ) : !signedIn ? (
         <>
           <button

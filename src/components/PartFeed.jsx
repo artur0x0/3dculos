@@ -14,6 +14,7 @@ import OpenAssemblyChoiceDialog from './OpenAssemblyChoiceDialog';
 import DeleteAssemblyDialog, { AssemblyOpenList } from './DeleteAssemblyDialog';
 import ProfileChip from './ProfileChip';
 import VaultPickerDialog from './VaultPickerDialog';
+import { useAuthState } from '../hooks/useAuthState';
 import {
   PART_PREVIEW_SIZE,
   blitPartPreview,
@@ -352,6 +353,8 @@ export default function PartFeed({
   onClearLocalCadData = null,
   profileVaultName = null,
 }) {
+  const gitSession = useAuthState();
+  const openTarget = gitSession.openTarget;
   const [renamingId, setRenamingId] = useState(null);
   const [collapsedGroups, setCollapsedGroups] = useState({});
   const [menuGroupId, setMenuGroupId] = useState(null);
@@ -468,16 +471,32 @@ export default function PartFeed({
     }
   };
 
+  const showReconnectOpen = () => {
+    setOpenPicker({ kind: 'reconnect', loading: false, error: '', query: '' });
+  };
+
   const startOpenAssembly = async () => {
-    if (source !== 'git') {
-      loadRef.current?.click();
+    // Same phase as the profile chip. Reauth never falls through to the
+    // local file input while the chip still says the account is signed in.
+    if (openTarget === 'wait') return;
+    if (openTarget === 'reconnect') {
+      showReconnectOpen();
       return;
     }
-    await loadOpenIndex('open-assembly');
+    if (openTarget === 'vault') {
+      await loadOpenIndex('open-assembly');
+      return;
+    }
+    loadRef.current?.click();
   };
 
   const startOpenPart = async () => {
-    if (source !== 'git') return;
+    if (openTarget === 'wait') return;
+    if (openTarget === 'reconnect') {
+      showReconnectOpen();
+      return;
+    }
+    if (openTarget !== 'vault') return;
     await loadOpenIndex('open-part');
   };
 
@@ -658,6 +677,13 @@ export default function PartFeed({
   const requestAssemblyAction = (pending) => {
     setPlusMenuOpen(false);
     setFolderMenuOpen(false);
+    // Reauth Open is the reconnect dialog. A Save/Discard guard would write
+    // or offer to, and the local file picker must stay closed.
+    if (openTarget === 'reconnect') {
+      showReconnectOpen();
+      return;
+    }
+    if (openTarget === 'wait') return;
     if (assemblyLeaveSafe) {
       proceedAssemblyAction(pending);
       return;
@@ -1359,7 +1385,7 @@ export default function PartFeed({
   };
 
   return (
-    <aside className={shell} data-parts-feed="" data-parts-source={source}>
+    <aside className={shell} data-parts-feed="" data-parts-source={source} data-parts-open-target={openTarget}>
       <div
         data-ribbon-bg="editor"
         data-parts-feed-ribbon=""
@@ -1397,10 +1423,11 @@ export default function PartFeed({
                   className="block w-full px-3 py-1.5 text-left text-xs text-gray-100 hover:bg-white/10"
                   onClick={() => {
                     setFolderMenuOpen(false);
-                    // Git opens a repo part. Signed out stays local-only:
-                    // the same name dialog as + → Part (bare id, no repo path).
-                    if (source === 'git') void startOpenPart();
-                    else startNewPart();
+                    // Vault when GitHub is connected. Reauth asks to reconnect
+                    // instead of the local name dialog. Signed out stays local.
+                    if (openTarget === 'reconnect') showReconnectOpen();
+                    else if (openTarget === 'vault') void startOpenPart();
+                    else if (openTarget !== 'wait') startNewPart();
                   }}
                 >
                   Part
@@ -1625,6 +1652,38 @@ export default function PartFeed({
           return renderPartRow(item.row, item.index);
         })}
               </div>
+
+      {openPicker && typeof document !== 'undefined' && openPicker.kind === 'reconnect' && (
+        <VaultPickerDialog
+          title="Reconnect GitHub"
+          labelledBy="git-reconnect-title"
+          dataAttr="reconnect"
+          onClose={closePicker}
+          footer={(
+            <div className="mt-4 flex justify-end gap-2">
+              <button type="button" className="rounded-md px-3 py-1.5 text-xs text-gray-200 hover:bg-white/10" onClick={closePicker} data-git-dialog-cancel="">
+                Cancel
+              </button>
+              <button
+                type="button"
+                data-open-reconnect=""
+                className="rounded-md bg-amber-400 px-3 py-1.5 text-xs font-semibold text-gray-950 disabled:opacity-60"
+                disabled={gitSession.reconnecting}
+                onClick={() => {
+                  if (gitSession.offerReconnect) gitSession.reconnectInteractive();
+                  else void gitSession.reconnect();
+                }}
+              >
+                {gitSession.reconnecting ? 'Reconnecting…' : 'Reconnect'}
+              </button>
+            </div>
+          )}
+        >
+          <p className="text-xs text-gray-300" data-open-reconnect-copy="">
+            Open uses your GitHub repo. Reconnect to browse it. Local files stay closed while this account is signed in.
+          </p>
+        </VaultPickerDialog>
+      )}
 
       {openPicker && typeof document !== 'undefined' && (openPicker.kind === 'open-assembly' || openPicker.kind === 'open-part') && (
         <VaultPickerDialog

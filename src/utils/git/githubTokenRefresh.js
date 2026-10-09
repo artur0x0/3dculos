@@ -13,6 +13,16 @@ export const GITHUB_REFRESH_PATH = '/api/github/oauth/refresh';
 /** Refresh a little early so a vault call does not race the expiry. */
 export const GITHUB_REFRESH_SKEW_MS = 5 * 60 * 1000;
 
+/**
+ * 404/405: this backend has no refresh route (old staging/prod process).
+ * That is "unsupported", not a dead session and not a bad refresh token.
+ */
+export function classifyRefreshStatus(status) {
+  const code = Number(status) || 0;
+  if (code === 404 || code === 405) return 'unsupported';
+  return 'failed';
+}
+
 function sessionStore() {
   try {
     return typeof sessionStorage !== 'undefined' ? sessionStorage : null;
@@ -141,11 +151,19 @@ export async function refreshGithubAccessToken({
   }
   const plan = planTokenRefresh(bundle, now);
   if (plan !== 'refresh') {
+    // sessionStorage dies when iOS evicts the tab. The bundle already lives
+    // in the durable store; mirror a still-valid access token back so Open
+    // and the chip see the same credential.
+    if (plan === 'keep' && bundle.accessToken) {
+      saveGithubTokenBundle(bundle, storage, session);
+    }
     return {
       ok: plan === 'keep' && !!bundle.accessToken,
       accessToken: bundle.accessToken || '',
       refreshed: false,
       plan,
+      unsupported: false,
+      failure: plan === 'sign-out' ? 'absent' : null,
     };
   }
   let res;
@@ -162,6 +180,8 @@ export async function refreshGithubAccessToken({
       accessToken: bundle.accessToken || '',
       refreshed: false,
       plan,
+      unsupported: false,
+      failure: 'failed',
       error: err?.message || 'refresh unreachable',
     };
   }
@@ -169,6 +189,10 @@ export async function refreshGithubAccessToken({
   try { body = await res.json(); } catch { body = null; }
   if (!res.ok || !body?.access_token) {
     const expired = !bundle.expiresAt || bundle.expiresAt <= now;
+    const unsupported = classifyRefreshStatus(res.status) === 'unsupported';
+    if (!expired && bundle.accessToken && session && typeof session.setItem === 'function') {
+      try { session.setItem(GITHUB_ACCESS_TOKEN_KEY, bundle.accessToken); } catch { /* ignore */ }
+    }
     if (expired && session && typeof session.removeItem === 'function') {
       try { session.removeItem(GITHUB_ACCESS_TOKEN_KEY); } catch { /* ignore */ }
     }
@@ -177,7 +201,11 @@ export async function refreshGithubAccessToken({
       accessToken: expired ? '' : (bundle.accessToken || ''),
       refreshed: false,
       plan,
-      error: body?.error || `refresh failed (${res.status})`,
+      unsupported,
+      failure: unsupported ? 'unsupported' : 'failed',
+      error: body?.error || (unsupported
+        ? `refresh unsupported (${res.status})`
+        : `refresh failed (${res.status})`),
     };
   }
   const next = bundleFromTokenResponse({
@@ -185,5 +213,12 @@ export async function refreshGithubAccessToken({
     refresh_token: body.refresh_token || bundle.refreshToken,
   }, now);
   saveGithubTokenBundle(next, storage, session);
-  return { ok: true, accessToken: next.accessToken, refreshed: true, plan };
+  return {
+    ok: true,
+    accessToken: next.accessToken,
+    refreshed: true,
+    plan,
+    unsupported: false,
+    failure: null,
+  };
 }
