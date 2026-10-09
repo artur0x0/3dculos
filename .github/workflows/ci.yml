@@ -10,12 +10,17 @@
 #   - cargo-deny
 #   - wasm freshness
 #   - mesh wasm freshness
+#   - calculix reference
 # cargo-deny and wasm freshness run their real checks when
 # packages/surfcad-fea is present. Mesh wasm freshness runs when
 # packages/surfcad-mesh/pkg is present. If those files are absent the jobs
 # skip and exit 0, because a skipped job would not satisfy a required check.
 # GPL, AGPL, and LGPL fail the Rust license check because they are not in
-# packages/surfcad-fea/deny.toml's allow list.
+# packages/surfcad-fea/deny.toml's allow list. CalculiX is GPL-2.0-only and
+# is not a dependency. The calculix reference job installs the ccx binary
+# with apt and runs it as an external process. It is never vendored, linked,
+# bundled, or committed. If that install fails, the job emits a warning
+# annotation and exits 0. A comparison that runs and misses a gate fails.
 #
 # Triggers are pull requests into main and pushes to main. There is no spark branch.
 # If a step needs the repository name, use ${{ github.repository }}. Do not
@@ -351,3 +356,87 @@ jobs:
       - name: Rebuild the committed mesh wasm and fail on drift
         if: steps.mesh.outputs.present == 'true'
         run: node scripts/fea/check-mesh-wasm-fresh.mjs
+
+  # External CalculiX reference for solve_tet10 (C3D10) and solve_shell (S6).
+  #
+  # CalculiX is GPL-2.0-only. This job may install the ccx binary with apt
+  # and run it as a separate process. It must not vendor, link, bundle, or
+  # commit CalculiX, and it must not add ccx to the Cargo graph. cargo-deny
+  # stays fail-closed on GPL. If the apt install fails, the job emits a
+  # warning annotation and exits 0 so the absence of the binary is visible
+  # and not a silent skip. A comparison that runs and misses a gate fails.
+  calculix-reference:
+    name: calculix reference
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect the FEA crate
+        id: crate
+        run: |
+          if [[ -f packages/surfcad-fea/Cargo.toml && -f packages/surfcad-fea/examples/calculix_reference/main.rs ]]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::warning title=CalculiX reference skipped::packages/surfcad-fea calculix_reference example is not in this revision, so the comparison did not run."
+          fi
+
+      # GPL binary, external only. A failed install is a warning, not a
+      # green silent skip and not a failed comparison.
+      - name: Install CalculiX ccx
+        id: ccx
+        if: steps.crate.outputs.present == 'true'
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          set +e
+          sudo apt-get update
+          sudo apt-get install -y calculix-ccx
+          status=$?
+          set -e
+          if [[ $status -ne 0 ]] || ! command -v ccx >/dev/null 2>&1; then
+            echo "::warning title=CalculiX reference skipped::Could not install calculix-ccx from apt (exit ${status}). The reference comparison was skipped. ccx is an external GPL-2.0 binary and is not a dependency of this repository."
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=true" >> "$GITHUB_OUTPUT"
+            ccx -v
+          fi
+
+      - name: Read the pinned Rust channel
+        id: rust
+        if: steps.crate.outputs.present == 'true' && steps.ccx.outputs.available == 'true'
+        run: |
+          channel=$(sed -n 's/^channel = "\(.*\)"/\1/p' packages/surfcad-fea/rust-toolchain.toml)
+          test -n "$channel"
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+
+      - name: Install the pinned Rust toolchain
+        if: steps.crate.outputs.present == 'true' && steps.ccx.outputs.available == 'true'
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.rust.outputs.channel }}
+
+      - name: Cache Cargo
+        if: steps.crate.outputs.present == 'true' && steps.ccx.outputs.available == 'true'
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packages/surfcad-fea
+          cache-on-failure: true
+
+      - name: Compare the solver with CalculiX
+        if: steps.crate.outputs.present == 'true' && steps.ccx.outputs.available == 'true'
+        working-directory: packages/surfcad-fea
+        run: |
+          set +e
+          set -o pipefail
+          cargo run --example calculix_reference --locked --quiet | tee "${RUNNER_TEMP}/calculix-reference.md"
+          status=$?
+          {
+            echo '## CalculiX reference comparison'
+            echo
+            echo 'CalculiX (`ccx`) is GPL-2.0-only. This job installs it with `apt` and runs it as an external binary. It is not a Cargo dependency, and it is not vendored, linked, bundled, or committed.'
+            echo
+            cat "${RUNNER_TEMP}/calculix-reference.md"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"

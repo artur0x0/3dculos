@@ -1,7 +1,10 @@
 # License gate for the FEA crate. `cargo deny check licenses` fails closed:
 # a crate whose license is not listed here does not pass. GPL, AGPL, and LGPL
 # (every -only / -or-later form, and the deprecated "+" forms) are absent on
-# purpose. Unicode-3.0 is the extra SPDX term unicode-ident carries beside
+# purpose. CalculiX is GPL-2.0-only and must not be added as a dependency,
+# vendored, linked, or committed. CI compares against it by installing the
+# ccx binary with apt and running that binary as a separate process.
+# Unicode-3.0 is the extra SPDX term unicode-ident carries beside
 # MIT OR Apache-2.0; ISC is the same kind of short permissive license used by
 # small transitive crates. Add another identifier only when a real dependency
 # needs it.

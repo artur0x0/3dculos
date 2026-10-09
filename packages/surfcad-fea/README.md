@@ -62,6 +62,29 @@ npm run fea:build
 
 CI runs `node scripts/fea/check-wasm-fresh.mjs`, which rebuilds into a scratch directory and fails if any committed `pkg` file differs. `cargo test --locked` covers the stub, the TET10 checks (patch, cantilever, thick cylinder, plate with a hole, Cholesky versus PCG), and the shell checks (membrane and bending patches, Navier plate, clamped circular plate, cantilever strip, Scordelis–Lo roof, shear-locking ratios). `cargo deny --manifest-path packages/surfcad-fea/Cargo.toml check licenses` enforces `deny.toml`.
 
+## CalculiX reference
+
+[CalculiX](https://www.calculix.de/) (`ccx`) is **GPL-2.0-only**. It is not a dependency of this crate and it is not part of the wasm module. Nothing in the repository vendors, links, bundles, or commits CalculiX source or the `ccx` binary. `deny.toml` does not list GPL, so `cargo deny` rejects an attempt to depend on it.
+
+The CI job `calculix reference` installs the binary with `apt install calculix-ccx` and runs it as a separate process. If that install fails, the job emits a warning annotation and exits 0. A comparison that runs and misses a gate fails the job.
+
+The harness is the native example `calculix_reference`. It is not built by `cargo test`. It writes a temporary `.inp` (C3D10 for TET10, S6 for the 6-node shell), runs `ccx`, and reads `.dat` displacements and `.frd` stresses. Distributed loads are the same consistent nodal forces `solve_tet10` and `solve_shell` assemble, written as `*CLOAD`, so both codes see the same mesh and the same nodal loads. CalculiX's own C3D10 face pressure lumps onto the corner nodes; that is a different discrete load and is not what the example writes.
+
+Cases: cantilever (C3D10), plate with a hole (C3D10), thick cylinder (C3D10), simply supported plate (S6), Scordelis–Lo roof (S6). Gates, against `ccx` on that mesh: peak translational displacement within 1%, nearest-rank p95 von Mises within 3%.
+
+S6 in CalculiX is expanded into a solid wedge. Nodal stress in the `.frd` file is the extrapolated 3D stress on the outer nodes of that wedge. `solve_shell` reports plane-stress von Mises at ζ = ±1 of an MITC6 triangle. On a coarse plate those two p95 values differ by more than 3%, which is the reason a 5% shell gate was the fallback. The example uses a 24×24 plate and a 12×12 roof, where the measured gap stays inside 3%, so the gate is not loosened.
+
+The roof comparison does not prescribe the classical θy/θz symmetry on the mid-span plane. Those global rotations include the shell drilling axis. CalculiX applies shell rotations through mean-rotation constraints and locks the expanded wedge when the prescribed rotation has a drilling component. Both solvers use the diaphragm (uy and uz fixed), translational symmetry (ux on the mid-span plane, uy on the crown), and θx on the crown, where the director is +z and θx is not drilling.
+
+Run it locally when `ccx` is already on `PATH`. The example does not download or build CalculiX.
+
+```bash
+cd packages/surfcad-fea
+cargo run --example calculix_reference --locked
+```
+
+`CCX` overrides the binary name. `CALCULIX_CASE` runs only the cases whose label contains that string.
+
 A native scale check is not part of `cargo test`. Run one size per process so the peak is not cumulative:
 
 ```bash

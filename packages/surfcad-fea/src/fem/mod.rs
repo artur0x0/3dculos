@@ -27,6 +27,11 @@ pub use shell::{
     ShellPressure, SHELL_DOF_PER_NODE,
 };
 
+/// Face loads shared with the native CalculiX reference example. Not part of
+/// the wasm build: the page does not assemble tractions itself.
+#[cfg(not(target_arch = "wasm32"))]
+pub use tet10::{face_pressure_forces, face_traction_forces};
+
 /// Free-DOF count at or below which [`SolverChoice::Auto`] uses supernodal
 /// Cholesky. Larger systems use Jacobi-preconditioned CG.
 pub const DEFAULT_CHOLESKY_MAX_DOFS: usize = 20_000;
