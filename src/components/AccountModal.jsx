@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import { X, User, Mail, Loader2, Phone } from 'lucide-react';
 import { displayOrderLines } from '../utils/checkoutPage.js';
+import ModalFit from './ModalFit';
 
 const AccountModal = ({ onClose, user, selectedTab = 'info' }) => {
   const [activeTab, setActiveTab] = useState(selectedTab);
@@ -147,8 +148,8 @@ const AccountModal = ({ onClose, user, selectedTab = 'info' }) => {
   };
 
   return (
-    <div className="fixed inset-0 surface-scrim flex items-center justify-center z-50 p-4">
-      <div className="surface-glass rounded-2xl shadow-2xl max-w-lg w-full max-h-[80vh] overflow-hidden flex flex-col border border-gray-700/50">
+    <ModalFit cap="80vh" className="surface-scrim flex items-center justify-center z-50 px-4">
+      <div className="modal-fit-panel surface-glass rounded-2xl shadow-2xl max-w-lg w-full flex flex-col border border-gray-700/50">
         <div className="flex items-center justify-between p-5 border-b border-gray-700/50">
           <h2 className="text-lg font-semibold text-white">Account</h2>
           <button onClick={onClose} className="p-1.5 hover:bg-gray-700/50 rounded-lg transition-colors">
@@ -411,7 +412,7 @@ const AccountModal = ({ onClose, user, selectedTab = 'info' }) => {
           )}
         </div>
       </div>
-    </div>
+    </ModalFit>
   );
 };
 
