@@ -85,9 +85,12 @@ console.log('feature sheet card — source');
     && /FEATURE_SHEET_SIDE_GAP_PX = 10/.test(layout)
     && /FEATURE_SHEET_MAX_REM = 22/.test(layout)
     && /min\(22rem,calc\(100%-9\.5rem\)\)/.test(shell));
-  check('phone bottom clears the home pill, desktop does not invent one',
-    /30px \+ max\(8px, env\(safe-area-inset-bottom, 0px\)\) \+ 10px/.test(layout)
-    && /FEATURE_SHEET_BOTTOM_DESKTOP/.test(layout));
+  check('phone card docks to the hidden stage switcher; desktop stays 10px',
+    /FEATURE_SHEET_BOTTOM_PHONE_DOCKED = '0px'/.test(layout)
+    && /compact \? FEATURE_SHEET_BOTTOM_PHONE_DOCKED/.test(layout)
+    && /FEATURE_SHEET_BOTTOM_DESKTOP/.test(layout)
+    && /\[data-mobile-stage\]:has\(\[data-feature-card\]\) \[data-mobile-stage-home-indicator\]/.test(css)
+    && /display:\s*none/.test(css.slice(css.indexOf('[data-mobile-stage]:has([data-feature-card])'))));
   check('body scrolls and keeps an iOS-visible track or hint',
     /data-feature-sheet-body/.test(shell)
     && /overflow-y-auto/.test(shell)
@@ -140,14 +143,18 @@ console.log('feature sheet card — source');
     && /moveFaceSheetOpen/.test(view)
     && /deleteFaceSheetOpen/.test(view)
     && /!shellMode && !draftMode && !moveFaceMode && !deleteFaceMode/.test(view));
-  check('camera snapshots the pose, slides up, and restores it',
+  check('camera snapshots the pose, slides up, retargets orbit, and restores it',
     /export function captureViewPose/.test(camera)
+    && /export function aimOrbitAtVisibleCenter/.test(camera)
     && /FEATURE_SHEET_SLIDE_MAX = 0\.6/.test(camera)
     && /remountTrackball/.test(camera)
+    && /getVisibleFrame/.test(view)
     && /featureSheetCameraOwned/.test(app)
     && /prefers-reduced-motion/.test(view));
-  check('docs name the shell',
+  check('docs name the shell, the hidden switcher, and the visible-area orbit',
     /## Feature card/.test(arch) && /FeatureSheet/.test(arch)
+    && /stage switcher/.test(arch)
+    && /center of the pane above the card/.test(arch)
     && /data-feature-card/.test(map));
 }
 
@@ -246,6 +253,7 @@ import ShellModeChip from './src/components/ShellModeChip.jsx';
 import DraftModeChip from './src/components/DraftModeChip.jsx';
 import MoveFaceModeChip from './src/components/MoveFaceModeChip.jsx';
 import DeleteFaceModeChip from './src/components/DeleteFaceModeChip.jsx';
+import MobileStageToggle from './src/components/MobileStageToggle.jsx';
 import {
   applyViewPose, boxCornerPoints, captureViewPose, createSheetCameraSession,
   featureSheetClearanceNdc, selectionNdcYs,
@@ -259,6 +267,7 @@ function Stage() {
   const [entry, setEntry] = useState('crossSection');
   const [compact, setCompact] = useState(true);
   const [panel, setPanel] = useState('contour');
+  const [cardOpen, setCardOpen] = useState(true);
   const api = useRef(null);
 
   useEffect(() => {
@@ -289,8 +298,17 @@ function Stage() {
       getControls: () => controls,
       setControls: (next) => { controls = next; },
       reducedMotion: () => true,
+      getVisibleFrame: () => {
+        const host = paneRef.current;
+        const card = host?.querySelector('[data-feature-card]');
+        if (!host || !card) return null;
+        const view = host.querySelector('canvas') || host;
+        return {
+          paneRect: view.getBoundingClientRect(),
+          cardRect: card.getBoundingClientRect(),
+        };
+      },
     });
-    const initial = captureViewPose(camera, controls);
     const fit = () => {
       const r = pane.getBoundingClientRect();
       renderer.setSize(Math.max(1, r.width), Math.max(1, r.height), false);
@@ -299,6 +317,7 @@ function Stage() {
       renderer.render(scene, camera);
     };
     fit();
+    const initial = captureViewPose(camera, controls);
     const render = () => renderer.render(scene, camera);
     const pan = (ndcY) => panViewByNdcY({ camera, controls, ndcY });
     const cardFraction = () => {
@@ -358,16 +377,20 @@ function Stage() {
   }, []);
 
   return (
-    <div ref={paneRef} className="viewport-shell relative h-full w-full overflow-hidden bg-[#1e1e1e]" data-stage-pane="cad" data-harness-pane="">
+    <div ref={paneRef} className="viewport-shell relative h-full w-full overflow-hidden bg-[#1e1e1e]" data-mobile-stage="cad" data-stage-pane="cad" data-harness-pane="">
       <canvas className="absolute inset-0 block h-full w-full" />
       <div data-rail-pair="left" className="absolute bottom-2.5 left-2 z-10 w-14 rounded-lg bg-white/70" style={{ height: 220 }} />
       <div data-rail-pair="right" className="absolute bottom-2.5 right-2.5 z-10 w-14 rounded-lg bg-white/70" style={{ height: 300 }} />
       {compact ? (
-        <div data-home-indicator="" className="pointer-events-none absolute inset-x-0 bottom-0 z-10" style={{ paddingBottom: 'max(8px, env(safe-area-inset-bottom, 0px))' }}>
-          <div data-home-indicator-pill="" className="mx-auto rounded-full border border-white/20 bg-gray-900/70" style={{ width: 112, height: 30 }} />
+        <div
+          className="absolute left-1/2 z-30 -translate-x-1/2"
+          style={{ bottom: 0 }}
+          data-mobile-stage-home-indicator=""
+        >
+          <MobileStageToggle stage="cad" onChange={() => {}} />
         </div>
       ) : null}
-      {panel === 'fillet' ? (
+      {cardOpen && panel === 'fillet' ? (
         <FilletModeChip
           kind="fillet"
           edgeCount={3}
@@ -381,10 +404,10 @@ function Stage() {
           onClear={() => {}}
           onAccept={() => {}}
           onBack={() => {}}
-          onDismiss={() => {}}
+          onDismiss={() => setCardOpen(false)}
           onParamChange={() => {}}
         />
-      ) : panel === 'shell' ? (
+      ) : cardOpen && panel === 'shell' ? (
         <ShellModeChip
           face={{ type: 'planar', center: [0, 0, 10], normal: [0, 0, 1] }}
           params={{ wall: 2.5, openingMode: 'face' }}
@@ -393,9 +416,9 @@ function Stage() {
           onUndoFace={() => {}}
           onClearFace={() => {}}
           onConfirm={() => {}}
-          onDismiss={() => {}}
+          onDismiss={() => setCardOpen(false)}
         />
-      ) : panel === 'draft' ? (
+      ) : cardOpen && panel === 'draft' ? (
         <DraftModeChip
           neutral={{ center: [0, 0, 10], normal: [0, 0, 1] }}
           drafts={[{ center: [10, 0, 0], normal: [1, 0, 0] }]}
@@ -407,9 +430,9 @@ function Stage() {
           onUndo={() => {}}
           onClear={() => {}}
           onConfirm={() => {}}
-          onDismiss={() => {}}
+          onDismiss={() => setCardOpen(false)}
         />
-      ) : panel === 'moveFace' ? (
+      ) : cardOpen && panel === 'moveFace' ? (
         <MoveFaceModeChip
           faces={[{ center: [0, 0, 10], normal: [0, 0, 1] }]}
           distance={2}
@@ -420,18 +443,18 @@ function Stage() {
           onUndo={() => {}}
           onClear={() => {}}
           onConfirm={() => {}}
-          onDismiss={() => {}}
+          onDismiss={() => setCardOpen(false)}
         />
-      ) : panel === 'deleteFace' ? (
+      ) : cardOpen && panel === 'deleteFace' ? (
         <DeleteFaceModeChip
           faces={[{ center: [0, 0, 10], normal: [0, 0, 1] }]}
           compact={compact}
           onUndo={() => {}}
           onClear={() => {}}
           onConfirm={() => {}}
-          onDismiss={() => {}}
+          onDismiss={() => setCardOpen(false)}
         />
-      ) : (
+      ) : cardOpen ? (
         <ContourModeChip
           tool="circle"
           entry={entry}
@@ -441,10 +464,10 @@ function Stage() {
           merge
           planeLabel="default +Z top"
           compact={compact}
-          onCancel={() => {}}
+          onCancel={() => setCardOpen(false)}
           onConfirm={() => {}}
         />
-      )}
+      ) : null}
       <div data-harness="" style={{ position: 'absolute', left: 0, top: 0, opacity: 0, pointerEvents: 'none' }}>
         <button type="button" data-harness-entry="crossSection" onClick={() => { setPanel('contour'); setEntry('crossSection'); }}>circle</button>
         <button type="button" data-harness-entry="makeExtrude" onClick={() => { setPanel('contour'); setEntry('makeExtrude'); }}>extrude</button>
@@ -455,6 +478,8 @@ function Stage() {
         <button type="button" data-harness-panel="deleteFace" onClick={() => setPanel('deleteFace')}>deleteFace</button>
         <button type="button" data-harness-compact="1" onClick={() => setCompact(true)}>phone</button>
         <button type="button" data-harness-compact="0" onClick={() => setCompact(false)}>desktop</button>
+        <button type="button" data-harness-card="1" onClick={() => setCardOpen(true)}>open</button>
+        <button type="button" data-harness-card="0" onClick={() => setCardOpen(false)}>close</button>
       </div>
     </div>
   );
@@ -582,19 +607,127 @@ html, body, #root { margin: 0; height: 100%; background: #111; }
       && card.gapRight >= 8
       && card.width > 120,
       JSON.stringify(card));
-    check('phone card sits 10px above the home pill',
-      card.compact === '1'
-      && card.bottomGap >= 46
-      && card.bottomGap <= 52
-      && card.pillGap != null
-      && card.pillGap >= 8
-      && card.pillGap <= 14,
-      JSON.stringify({ bottomGap: card.bottomGap, pillGap: card.pillGap }));
     check('phone card height is capped and the body scrolls',
       card.height <= 362
       && card.height > 160
       && (card.bodyOverflow === 'auto' || card.bodyOverflow === 'scroll'),
       JSON.stringify({ height: card.height, overflow: card.bodyOverflow, max: card.maxHeight }));
+
+    await page.evaluate(() => document.querySelector('[data-harness-card="0"]').click());
+    await page.waitForFunction(() => {
+      const el = document.querySelector('[data-mobile-stage-home-indicator]');
+      const openCard = document.querySelector('[data-feature-card]');
+      if (openCard || !el) return false;
+      const box = el.getBoundingClientRect();
+      return getComputedStyle(el).display !== 'none' && box.height > 10;
+    });
+    await page.evaluate(() => {
+      window.__sheet.reset();
+      window.__sheet.fit();
+      window.__sheet.render();
+    });
+    const switcherWas = await page.evaluate(() => {
+      const el = document.querySelector('[data-mobile-stage-home-indicator]');
+      const box = el.getBoundingClientRect();
+      return {
+        bottom: box.bottom,
+        height: box.height,
+        display: getComputedStyle(el).display,
+      };
+    });
+    check('switcher is visible while the card is closed',
+      switcherWas.display !== 'none' && switcherWas.height > 10,
+      JSON.stringify(switcherWas));
+    const poseBefore = await page.evaluate(() => window.__sheet.pose());
+    await page.screenshot({ path: join(shotDir, 'feature-sheet-switcher-390-before.png') });
+
+    await page.evaluate(() => document.querySelector('[data-harness-card="1"]').click());
+    await page.waitForSelector('[data-feature-card]');
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const docked = await page.evaluate(() => {
+      window.__sheet.session.slideBy(0);
+      const ctl = window.__sheet.controls();
+      ctl.update();
+      window.__sheet.render();
+      const el = document.querySelector('[data-mobile-stage-home-indicator]');
+      const openCard = document.querySelector('[data-feature-card]');
+      const view = document.querySelector('canvas').getBoundingClientRect();
+      const cardBox = openCard.getBoundingClientRect();
+      const p = ctl.target.clone().project(window.__sheet.camera);
+      const sx = (p.x * 0.5 + 0.5) * view.width + view.left;
+      const sy = (1 - p.y) * 0.5 * view.height + view.top;
+      const visibleH = cardBox.top - view.top;
+      const cx = view.left + view.width / 2;
+      const cy = view.top + visibleH / 2;
+      return {
+        display: getComputedStyle(el).display,
+        hidden: getComputedStyle(el).display === 'none' || el.getClientRects().length === 0,
+        cardBottom: cardBox.bottom,
+        dx: sx - cx,
+        dy: sy - cy,
+      };
+    });
+    await page.screenshot({ path: join(shotDir, 'feature-sheet-switcher-390-after.png') });
+    check('at 390px the switcher is hidden while the card is open',
+      docked.hidden,
+      JSON.stringify(docked));
+    check('at 390px the card bottom matches the switcher bottom within 2px',
+      Math.abs(docked.cardBottom - switcherWas.bottom) <= 2,
+      JSON.stringify({ cardBottom: docked.cardBottom, switcherBottom: switcherWas.bottom }));
+    check('at 390px the orbit target projects to the visible-area center',
+      Math.hypot(docked.dx, docked.dy) <= 2,
+      JSON.stringify({ dx: docked.dx, dy: docked.dy }));
+
+    const poseAfter = await page.evaluate(() => {
+      const sheet = window.__sheet;
+      const cam = sheet.camera;
+      const ctl = sheet.controls();
+      const rot = (v, ang) => {
+        const c = Math.cos(ang);
+        const s = Math.sin(ang);
+        const x = v.x * c - v.y * s;
+        const y = v.x * s + v.y * c;
+        v.x = x;
+        v.y = y;
+      };
+      rot(cam.position, 0.45);
+      rot(cam.up, 0.25);
+      cam.lookAt(ctl.target);
+      ctl.update();
+      sheet.session.restore();
+      sheet.controls().update();
+      sheet.render();
+      return sheet.pose();
+    });
+    const poseDist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+    check('at 390px close restores the pre-open pose after an orbit',
+      poseDist(poseAfter.position, poseBefore.position) < 1e-2
+      && poseDist(poseAfter.target, poseBefore.target) < 1e-2
+      && poseDist(poseAfter.up, poseBefore.up) < 1e-2
+      && Math.abs(poseAfter.fov - poseBefore.fov) < 1e-3
+      && !(poseAfter.viewOffset && poseAfter.viewOffset.offsetY),
+      JSON.stringify({
+        position: poseDist(poseAfter.position, poseBefore.position),
+        target: poseDist(poseAfter.target, poseBefore.target),
+        up: poseDist(poseAfter.up, poseBefore.up),
+      }));
+    await page.evaluate(() => document.querySelector('[data-harness-card="0"]').click());
+    await page.waitForFunction(() => {
+      const el = document.querySelector('[data-mobile-stage-home-indicator]');
+      return !document.querySelector('[data-feature-card]')
+        && el
+        && getComputedStyle(el).display !== 'none'
+        && el.getBoundingClientRect().height > 10;
+    });
+    check('at 390px the switcher is back after the card closes', true);
+
+    await page.evaluate(() => document.querySelector('[data-harness-card="1"]').click());
+    await page.waitForSelector('[data-feature-card]');
+    await page.evaluate(() => {
+      window.__sheet.reset();
+      window.__sheet.fit();
+    });
+
     const phoneBefore = await parkAndShoot('feature-sheet-circle-390-before.png', { slide: false });
     check('phone before-slide parks the part under the card',
       phoneBefore.low < phoneBefore.cardTop,
@@ -692,6 +825,7 @@ html, body, #root { margin: 0; height: 100%; background: #111; }
       await page.setViewportSize(phone ? PHONE : { width: 1280, height: 800 });
       await page.evaluate((next) => {
         document.querySelector(`[data-harness-compact="${next ? '1' : '0'}"]`).click();
+        document.querySelector('[data-harness-card="1"]').click();
         document.querySelector('[data-harness-panel="fillet"]').click();
       }, phone);
       await page.waitForFunction((next) => {
@@ -713,16 +847,21 @@ html, body, #root { margin: 0; height: 100%; background: #111; }
 
     await showFillet(true);
     const filletPhone = await readCard();
-    check('fillet card on a phone uses the same rail gap and pill clearance',
+    const filletSwitcher = await page.evaluate(() => {
+      const el = document.querySelector('[data-mobile-stage-home-indicator]');
+      return {
+        hidden: !el || getComputedStyle(el).display === 'none' || el.getClientRects().length === 0,
+      };
+    });
+    check('fillet card on a phone docks and hides the stage switcher',
       filletPhone.compact === '1'
       && filletPhone.width <= filletPhone.cap + 1.5
       && filletPhone.gapLeft >= 8
       && filletPhone.gapRight >= 8
-      && filletPhone.pillGap != null
-      && filletPhone.pillGap >= 8
-      && filletPhone.pillGap <= 14
+      && filletSwitcher.hidden
+      && Math.abs(filletPhone.bottomGap) <= 2
       && filletPhone.height < 360,
-      JSON.stringify(filletPhone));
+      JSON.stringify({ ...filletPhone, ...filletSwitcher }));
     const filletPick = await page.evaluate(() => {
       const pane = document.querySelector('[data-harness-pane]');
       const box = pane.getBoundingClientRect();
@@ -806,6 +945,7 @@ html, body, #root { margin: 0; height: 100%; background: #111; }
       await page.setViewportSize(PHONE);
       await page.evaluate((panelName) => {
         document.querySelector('[data-harness-compact="1"]').click();
+        document.querySelector('[data-harness-card="1"]').click();
         document.querySelector(`[data-harness-panel="${panelName}"]`).click();
       }, name);
       await page.waitForFunction(({ titleText: want, marker: attr }) => {
@@ -842,29 +982,50 @@ html, body, #root { margin: 0; height: 100%; background: #111; }
       shellPick.tag === 'CANVAS' && shellPick.onCard === false,
       JSON.stringify(shellPick));
     const shellPhone = await readCard();
-    check('shell card on a phone uses the same rail gap and pill clearance',
+    const shellSwitcher = await page.evaluate(() => {
+      const el = document.querySelector('[data-mobile-stage-home-indicator]');
+      return {
+        hidden: !el || getComputedStyle(el).display === 'none' || el.getClientRects().length === 0,
+      };
+    });
+    check('shell card on a phone docks and hides the stage switcher',
       shellPhone.compact === '1'
       && shellPhone.width <= shellPhone.cap + 1.5
       && shellPhone.gapLeft >= 8
       && shellPhone.gapRight >= 8
-      && shellPhone.pillGap != null
-      && shellPhone.pillGap >= 8
-      && shellPhone.pillGap <= 14
+      && shellSwitcher.hidden
+      && Math.abs(shellPhone.bottomGap) <= 2
       && shellPhone.height < 360,
-      JSON.stringify(shellPhone));
+      JSON.stringify({ ...shellPhone, ...shellSwitcher }));
     await parkAndShoot('feature-sheet-shell-390-before.png', { slide: false });
     const shellAfter = await parkAndShoot('feature-sheet-shell-390-after.png', { slide: true });
     check('phone shell: projected part box sits above the card',
       Number.isFinite(shellAfter.low) && shellAfter.low + 0.02 >= shellAfter.cardTop,
       JSON.stringify(shellAfter));
 
+    const phoneDocked = async (label) => {
+      const card = await readCard();
+      const sw = await page.evaluate(() => {
+        const el = document.querySelector('[data-mobile-stage-home-indicator]');
+        return {
+          hidden: !el || getComputedStyle(el).display === 'none' || el.getClientRects().length === 0,
+        };
+      });
+      check(`${label} docks and hides the stage switcher`,
+        card.compact === '1' && sw.hidden && Math.abs(card.bottomGap) <= 2,
+        JSON.stringify({ bottomGap: card.bottomGap, compact: card.compact, ...sw }));
+    };
+
     await showFace('draft', 'Draft', 'data-draft-mode');
+    await phoneDocked('draft card on a phone');
     await parkAndShoot('feature-sheet-draft-390-before.png', { slide: false });
     await parkAndShoot('feature-sheet-draft-390-after.png', { slide: true });
     await showFace('moveFace', 'Move Face', 'data-move-face-mode');
+    await phoneDocked('move-face card on a phone');
     await parkAndShoot('feature-sheet-move-face-390-before.png', { slide: false });
     await parkAndShoot('feature-sheet-move-face-390-after.png', { slide: true });
     await showFace('deleteFace', 'Delete Face', 'data-delete-face-mode');
+    await phoneDocked('delete-face card on a phone');
     const deletePick = await page.evaluate(() => {
       const pane = document.querySelector('[data-harness-pane]');
       const box = pane.getBoundingClientRect();

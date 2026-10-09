@@ -1110,6 +1110,20 @@ const Viewport = forwardRef(({
       reducedMotion: () => typeof window !== 'undefined'
         && window.matchMedia('(prefers-reduced-motion: reduce)').matches,
       flattenLift: flattenFeatureSheetLift,
+      getVisibleFrame: () => {
+        const pane = containerRef.current;
+        if (!pane || typeof pane.getBoundingClientRect !== 'function') return null;
+        const card = pane.querySelector('[data-feature-card]');
+        if (!card) return null;
+        const canvas = canvasRef.current;
+        const canvasBox = canvas && typeof canvas.getBoundingClientRect === 'function'
+          ? canvas.getBoundingClientRect()
+          : null;
+        const paneRect = canvasBox && canvasBox.width > 0 && canvasBox.height > 0
+          ? canvasBox
+          : pane.getBoundingClientRect();
+        return { paneRect, cardRect: card.getBoundingClientRect() };
+      },
     });
   }
   const sheetSlideDeltaRef = useRef(() => 0);

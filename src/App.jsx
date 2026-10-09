@@ -6975,7 +6975,8 @@ const App = () => {
               )}
               <FeaStudySheetGate mobile />
 
-              {/* Bottom home-indicator stage pill — clears Contour/Fillet chips via their raised mobile bottom. */}
+              {/* Bottom home-indicator stage pill. A feature card hides it
+                  (index.css :has([data-feature-card])) and docks to this edge. */}
               <div
                 className="absolute left-1/2 -translate-x-1/2 z-30"
                 style={{ bottom: 0 }}

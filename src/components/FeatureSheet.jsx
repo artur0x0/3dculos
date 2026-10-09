@@ -17,7 +17,8 @@ import { featureSheetBottom, measureFeatureSheetWidth } from '../utils/featureSh
  * - children: scrolling body
  * - footer: sticky blocks above the confirm row (Add/Subtract, Merge, Delete)
  * - note: node on the left of Confirm
- * - compact: phone bottom offset (home pill). Desktop when false.
+ * - compact: phone. The card bottom docks to the hidden stage switcher.
+ *   Desktop when false (10px, no switcher to hide).
  * - bodyAttrs / cardAttrs: extra data attributes for the pilot that owns the card
  *
  * The card is pointer-events-auto and stops pointerdown. The pane around it
@@ -183,7 +184,13 @@ export default function FeatureSheet({
         ) : null}
       </div>
       {(footer || note || onConfirm) ? (
-        <div className="shrink-0 px-3 pb-2 pt-1" data-feature-sheet-footer="">
+        <div
+          className={`shrink-0 px-3 pt-1 ${compact ? '' : 'pb-2'}`}
+          style={compact
+            ? { paddingBottom: 'max(8px, env(safe-area-inset-bottom, 0px))' }
+            : undefined}
+          data-feature-sheet-footer=""
+        >
           {footer}
           {(note || onConfirm) ? (
             <div className={`flex items-center justify-between gap-2 ${footer ? 'mt-2' : ''}`}>

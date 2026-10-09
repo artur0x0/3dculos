@@ -106,8 +106,9 @@ console.log('mobile B: home-indicator + feature strip');
   );
   const sheetLayout = read('../../src/utils/featureSheetLayout.js');
   check(
-    'Contour and Fillet cards clear the home pill',
-    /FEATURE_SHEET_BOTTOM_PHONE/.test(sheetLayout)
+    'Contour and Fillet cards dock to the pane bottom while open',
+    /FEATURE_SHEET_BOTTOM_PHONE_DOCKED = '0px'/.test(sheetLayout)
+      && /compact \? FEATURE_SHEET_BOTTOM_PHONE_DOCKED/.test(sheetLayout)
       && /30px \+ max\(8px, env\(safe-area-inset-bottom, 0px\)\) \+ 10px/.test(sheetLayout)
       && /<FeatureSheet\b/.test(filletChip),
   );
