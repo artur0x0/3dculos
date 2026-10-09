@@ -3,6 +3,8 @@
  * Analyze: open the study, fix the root of a small cantilever, load the
  * tip, run TET10, and reload. The study comment is still in the part script.
  * The legend max is within 10% of the beam-theory peak (48 MPa).
+ * After that solve, the material changes and Run goes again: the mesh is
+ * reused, the second run is much faster, and the legend matches the new yield.
  *
  * 390×844 touch (iPhone UA, DPR 2) and 1280×800 desktop. FEA_VIEW=desktop
  * or FEA_VIEW=390 runs one of them. FEA_PREVIEW=1 serves the existing
@@ -26,6 +28,7 @@ const PREVIEW = process.env.FEA_PREVIEW === '1';
 const STUDY = feaStudyBlock({ mesh: { target: 4 } });
 const CUBE = `const part = Manifold.cube([40, 10, 10], false);\nreturn part;\n${STUDY}`;
 const BEAM_PEAK_MPA = 48;
+const ALUMINUM_YIELD_MPA = 276;
 // δ = F L³ / (3 E I), PLA E = 3250 MPa, I = 10 * 10³ / 12.
 const BEAM_TIP_MM = (200 * 40 ** 3) / (3 * 3250 * (10 * 10 ** 3 / 12));
 const PART_ID = 'fea-block';
@@ -703,13 +706,58 @@ async function runCase(browser, vp) {
 
   await assertResultsPlots(page, vp, shell);
 
+  const firstSolveMs = Number(summary.ms);
+  const firstFos = Number(summary.fos);
+  await page.locator(`${shell} [data-fea-material]`).selectOption('al-6061-t6');
+  await page.locator(`${shell} [data-fea-stale="1"]`).waitFor({ timeout: 8000 });
+  check(`${vp.name} material change marks the result stale`, true);
+  await solidReady(page);
+  await page.locator(`${shell} [data-fea-run]`).click();
+  await page.waitForFunction((sel) => {
+    const el = document.querySelector(sel);
+    return !!el && /Mesh reused/.test(el.textContent || '');
+  }, `${shell} [data-fea-timing]`, { timeout: 120000 });
+  const reusedTiming = ((await page.locator(`${shell} [data-fea-timing]`).innerText()) || '').replace(/\s+/g, ' ').trim();
+  check(`${vp.name} mesh reused timing`, /Mesh reused, solved in .* DOF.*total/.test(reusedTiming), reusedTiming);
+  await page.locator(`${shell} [data-fea-timing-details] summary`).click();
+  const meshStage = ((await page.locator(`${shell} [data-fea-stage="meshing"]`).innerText()) || '').replace(/\s+/g, ' ').trim();
+  check(`${vp.name} stage times say mesh reused`, /Meshing: Mesh reused/.test(meshStage), meshStage);
+  const reused = await page.evaluate(() => ({
+    stress: document.querySelector('[data-fea-stress]')?.textContent || '',
+    fos: document.querySelector('[data-fea-fos]')?.getAttribute('data-fea-fos') || '',
+    ms: document.querySelector('[data-fea-solve-ms]')?.getAttribute('data-fea-solve-ms') || '',
+    stale: document.querySelector('[data-fea-stale]')?.getAttribute('data-fea-stale') || '',
+    source: document.querySelector('[data-fea-source]')?.getAttribute('data-fea-source') || '',
+  }));
+  const reusedMax = Number((reused.stress.match(/max ([0-9.]+) MPa/) || [])[1]);
+  const reusedP95 = Number((reused.stress.match(/p95 ([0-9.]+) MPa/) || [])[1]);
+  const reusedFos = Number(reused.fos);
+  const reusedMs = Number(reused.ms);
+  const fosExpected = ALUMINUM_YIELD_MPA / reusedP95;
+  const reusedPeakError = Number.isFinite(reusedMax) ? Math.abs(reusedMax - BEAM_PEAK_MPA) / BEAM_PEAK_MPA : Infinity;
+  console.log(`  reuse ${vp.name} first ${firstSolveMs} ms second ${reusedMs} ms max ${reusedMax} MPa p95 ${reusedP95} fos ${reusedFos} (${reusedTiming})`);
+  check(`${vp.name} reused run is current`, reused.stale === '0', reused.stale);
+  check(`${vp.name} reused tet10 source`, reused.source === 'tet10', reused.source);
+  check(`${vp.name} reused peak within 10% of beam theory`, reusedPeakError <= 0.1, `max ${reusedMax} vs ${BEAM_PEAK_MPA}`);
+  check(
+    `${vp.name} reused safety factor`,
+    Number.isFinite(reusedFos) && Number.isFinite(fosExpected) && Math.abs(reusedFos - fosExpected) / fosExpected < 0.02,
+    `fos ${reusedFos} vs ${fosExpected} from p95 ${reusedP95}`,
+  );
+  check(`${vp.name} reused safety factor moved`, Number.isFinite(firstFos) && reusedFos > firstFos * 2, `first ${firstFos} second ${reusedFos}`);
+  check(
+    `${vp.name} second run much faster`,
+    firstSolveMs > 0 && reusedMs > 0 && reusedMs * 2 < firstSolveMs,
+    `first ${firstSolveMs} ms, second ${reusedMs} ms`,
+  );
+
   const notice = (await noticeOf(page) || '').trim();
   check(`${vp.name} study write accepted`, notice === '', notice);
   const drawerOpen = await page.locator('[data-script-editor-open="true"]').count();
   check(`${vp.name} script drawer stays closed`, drawerOpen === 0, `open=${drawerOpen}`);
   await page.waitForTimeout(200);
   const scripts = await readStudyScripts(page);
-  const stored = scripts.find((script) => script.includes('// @fea-study ') && script.includes('pla-ultimaker'));
+  const stored = scripts.find((script) => script.includes('// @fea-study ') && script.includes('al-6061-t6'));
   check(`${vp.name} study stored`, !!stored, scripts.map((script) => script.slice(0, 80)).join(' | '));
 
   await page.reload({ waitUntil: 'domcontentloaded' });
@@ -723,7 +771,7 @@ async function runCase(browser, vp) {
     loads: document.querySelector('[data-fea-load-count]')?.getAttribute('data-fea-load-count') || '',
     result: document.querySelector('[data-fea-summary]') ? 'present' : 'absent',
   }));
-  check(`${vp.name} material persisted`, again.material === 'pla-ultimaker', JSON.stringify(again));
+  check(`${vp.name} material persisted`, again.material === 'al-6061-t6', JSON.stringify(again));
   check(`${vp.name} fixture persisted`, again.fixtures === '1', JSON.stringify(again));
   check(`${vp.name} load persisted`, again.loads === '1', JSON.stringify(again));
   check(`${vp.name} result not in the script`, again.result === 'absent');

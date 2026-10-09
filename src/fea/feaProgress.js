@@ -103,8 +103,18 @@ function withMeasure(state, update) {
   };
 }
 
-function detailsFrom(timings) {
+function detailsFrom(timings, meshReused = false) {
   return FEA_STAGES.map((stage) => {
+    if (meshReused && stage.id === 'meshing') {
+      const ms = timings[stage.id];
+      const known = ms != null && Number.isFinite(ms);
+      return {
+        id: stage.id,
+        label: stage.label,
+        ms: known ? ms : 0,
+        seconds: 'Mesh reused',
+      };
+    }
     const ms = timings[stage.id];
     const known = ms != null && Number.isFinite(ms);
     return {
@@ -118,10 +128,12 @@ function detailsFrom(timings) {
 
 export function formatDoneText(state) {
   const timings = state.timings || {};
-  const meshedMs = (timings['loading-mesher'] || 0) + (timings.meshing || 0);
   const solvedMs = timings.solving || 0;
   const dofs = formatDofCount(state.dofs) || '0';
-  return `Meshed in ${formatSeconds(meshedMs)}, solved in ${formatSeconds(solvedMs)} (${dofs} DOF), total ${formatSeconds(elapsedMs(state))}`;
+  const tail = `solved in ${formatSeconds(solvedMs)} (${dofs} DOF), total ${formatSeconds(elapsedMs(state))}`;
+  if (state.meshReused) return `Mesh reused, ${tail}`;
+  const meshedMs = (timings['loading-mesher'] || 0) + (timings.meshing || 0);
+  return `Meshed in ${formatSeconds(meshedMs)}, ${tail}`;
 }
 
 export function formatStoppedText(state) {
@@ -141,7 +153,8 @@ export function formatFeaTimingLog(state) {
   if (state.status === 'done') {
     const timings = state.timings || {};
     const meshed = (timings['loading-mesher'] || 0) + (timings.meshing || 0);
-    return `${head} ok meshed=${meshed}ms solved=${timings.solving || 0}ms dofs=${state.dofs ?? ''} total=${elapsedMs(state)}ms ${stages}`;
+    const reused = state.meshReused ? ' reused=1' : '';
+    return `${head} ok meshed=${meshed}ms solved=${timings.solving || 0}ms dofs=${state.dofs ?? ''} total=${elapsedMs(state)}ms${reused} ${stages}`;
   }
   const dofPart = state.dofs != null ? ` dofs=${state.dofs}` : '';
   return `${head} ${state.outcome || 'stopped'} stage=${state.stage || ''} elapsed=${elapsedMs(state)}ms${dofPart} error=${state.error || ''} ${stages}`;
@@ -178,6 +191,7 @@ export function initialFeaProgress(now = 0) {
     text: '',
     elapsedText: '',
     details: detailsFrom({}),
+    meshReused: false,
   };
 }
 
@@ -245,10 +259,11 @@ export function reduceFeaProgress(state, event) {
       indeterminate: false,
       fraction: 1,
       percent: 100,
+      meshReused: event.meshReused === true,
     };
     done.text = formatDoneText(done);
     done.elapsedText = formatSeconds(elapsedMs(done));
-    done.details = detailsFrom(timings);
+    done.details = detailsFrom(timings, done.meshReused);
     return done;
   }
 

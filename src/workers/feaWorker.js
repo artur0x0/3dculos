@@ -7,13 +7,16 @@
 // solve, not when this worker boots.
 
 import init, * as fea from '../../packages/surfcad-fea/pkg/surfcad_fea.js';
-import { solveSolid } from '../fea/solveSolid.js';
+import { createMeshCache, releaseMeshCache, solveSolid } from '../fea/solveSolid.js';
 import { PHONE_WASM_BYTES, capWasmMemory, memoryIsShared, wasmMemoryLimits } from '../fea/wasmMemory.js';
 import { FeaMessage } from '../fea/protocol.js';
 
 let ready = null;
 let memory = null;
 let cancelled = false;
+// One or two TET10 meshes. Phone keeps one so the 512 MiB worker budget
+// is not held by a mesh the next geometry replaced.
+let meshCache = createMeshCache();
 let peakBytes = 0;
 let heartbeatTimer = null;
 let heartbeatId = null;
@@ -103,6 +106,8 @@ self.onmessage = async (event) => {
   }
   if (msg.type === FeaMessage.dispose) {
     stopHeartbeat();
+    releaseMeshCache(meshCache);
+    meshCache = createMeshCache();
     if (ready) ready.then(() => fea.dispose()).catch(() => {});
     return;
   }
@@ -133,6 +138,7 @@ self.onmessage = async (event) => {
           fallback: msg.fallback,
           solveTet10: fea.solve_tet10,
           solveStub: fea.solve,
+          cache: meshCache,
           isCancelled: () => cancelled,
           memory,
           noteMemory,

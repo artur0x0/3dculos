@@ -555,6 +555,7 @@ export function useFeaStudy({
         now: Date.now(),
         dofs: solved?.stats?.dofs ?? null,
         stageTimings: solved?.stageTimings || null,
+        meshReused: solved?.meshReused === true,
       }));
     } catch (err) {
       if (err?.outcome === 'worker-died') {
