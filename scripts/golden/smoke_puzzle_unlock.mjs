@@ -67,7 +67,7 @@ console.log('puzzle easter egg');
     && !/onStartGame/.test(toolbar)
     && /data-script-upload/.test(toolbar)
     && /data-script-download/.test(toolbar)
-    && /Get Quote/.test(toolbar));
+    && !/Get Quote/.test(toolbar));
   check('unlock toast is present and the sequence is not stored',
     /data-puzzle-unlock-toast/.test(unlock)
     && /Puzzle unlocked/.test(unlock)

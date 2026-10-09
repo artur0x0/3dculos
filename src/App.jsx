@@ -28,6 +28,9 @@ import LoginModal from './components/LoginModal';
 import AccountModal from './components/AccountModal';
 import { useAuth } from './hooks/useAuth';
 import { useAuthState } from './hooks/useAuthState';
+import { CartChromeProvider, useCart } from './hooks/useCart';
+import CartSheet from './components/CartSheet';
+import CartDrop from './components/CartDrop';
 import { 
   importFile,
 } from './utils/importModel';
@@ -719,6 +722,20 @@ const App = () => {
 
   const { user, isAuthenticated, isLoading: authLoading, checkAuth } = useAuth();
   const gitSession = useAuthState();
+  const liveScriptRef = useRef({ id: null, script: '' });
+  liveScriptRef.current = {
+    id: assemblyRef.current?.activeId ?? null,
+    script: currentScript,
+  };
+  const cartChrome = useCart({
+    user,
+    signedIn: gitSession.signedIn,
+    pending: gitSession.pending,
+    onNeedLogin: () => setShowLoginModal(true),
+    assemblyRef,
+    partScriptsRef,
+    liveScriptRef,
+  });
   const noteBootEmptyRef = useRef(gitSession.noteBootEmpty);
   noteBootEmptyRef.current = gitSession.noteBootEmpty;
 
@@ -5817,11 +5834,6 @@ const App = () => {
     await checkAuth();
   };
 
-  // Handle quote button click
-  const handleQuote = () => {
-    setShowQuoteModal(true);
-  };
-
   // Handle quote modal close
   const handleQuoteClose = () => {
     setShowQuoteModal(false);
@@ -6207,7 +6219,6 @@ const App = () => {
               profileVaultName={gitDefaultVaultName()}
               currentScript={currentScript}
               onFaceSelected={handleFaceSelected}
-              onQuote={handleQuote}
               onUpload={handleImport}
               onUndo={handleUndo}
               onRedo={handleRedo}
@@ -6317,6 +6328,7 @@ const App = () => {
     );
 
     return (
+      <CartChromeProvider value={cartChrome}>
         <div
           ref={splitShellRef}
           className={`relative flex flex-col bg-gray-900 overflow-hidden ${keyboardOpen ? '' : 'h-dvh'}`}
@@ -6587,10 +6599,14 @@ const App = () => {
             </div>
           )}
         </div>
+        <CartSheet />
+        <CartDrop />
+      </CartChromeProvider>
     );
   }
 
   return (
+    <CartChromeProvider value={cartChrome}>
       <div className="flex h-dvh bg-gray-900">
         {appMode !== 'game' && (
           <div data-parts-feed-placement="desktop-left" className="h-full shrink-0">
@@ -6664,7 +6680,6 @@ const App = () => {
             profileVaultName={gitDefaultVaultName()}
             currentScript={currentScript}
             onFaceSelected={handleFaceSelected}
-            onQuote={handleQuote}
             onUpload={handleImport}
             onUndo={handleUndo}
             onRedo={handleRedo}
@@ -6901,6 +6916,9 @@ const App = () => {
           )}
         </div>
       </div>
+      <CartSheet />
+      <CartDrop />
+    </CartChromeProvider>
   );
 };
 

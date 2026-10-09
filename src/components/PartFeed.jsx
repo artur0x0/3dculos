@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Eye, EyeOff, FolderOpen, GripVertical, Loader2, Pencil, Plus, Save, Trash2 } from 'lucide-react';
+import { Eye, EyeOff, FolderOpen, GripVertical, Loader2, Pencil, Plus, Save, Trash2, Truck } from 'lucide-react';
 import { partCanDeleteFromRepo, partListDeleteAction, sanitizeAssemblyName, sanitizePartName } from '../utils/assembly.js';
 import { partListSubtitles } from '../utils/git/partListSubtitle.js';
 import {
@@ -15,6 +15,7 @@ import DeleteAssemblyDialog, { AssemblyOpenList } from './DeleteAssemblyDialog';
 import ProfileChip from './ProfileChip';
 import VaultPickerDialog from './VaultPickerDialog';
 import { useAuthState } from '../hooks/useAuthState';
+import { useCartChrome } from '../hooks/useCart';
 import {
   PART_PREVIEW_SIZE,
   blitPartPreview,
@@ -354,6 +355,7 @@ export default function PartFeed({
   profileVaultName = null,
 }) {
   const gitSession = useAuthState();
+  const cartChrome = useCartChrome();
   const openTarget = gitSession.openTarget;
   const [renamingId, setRenamingId] = useState(null);
   const [collapsedGroups, setCollapsedGroups] = useState({});
@@ -1335,6 +1337,29 @@ export default function PartFeed({
                   </button>
                 )
               ) : null}
+              <span
+                className="shrink-0"
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={(event) => event.stopPropagation()}
+                onKeyDown={(event) => event.stopPropagation()}
+              >
+                <button
+                  type="button"
+                  data-part-order={row.id}
+                  aria-label={`Order ${row.name || 'part'}`}
+                  title={row.missing || row.error ? 'This part cannot be ordered' : 'Order'}
+                  disabled={!!(row.missing || row.error)}
+                  className="rounded-full p-1.5 text-green-400 hover:bg-white/10 disabled:cursor-default disabled:opacity-30 disabled:hover:bg-transparent"
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    if (row.missing || row.error) return;
+                    cartChrome?.orderPart?.(row.id);
+                  }}
+                >
+                  <Truck size={16} />
+                </button>
+              </span>
               <button
                 type="button"
                 data-part-edit-script={row.id}

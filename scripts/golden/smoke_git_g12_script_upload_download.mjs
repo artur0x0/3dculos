@@ -31,8 +31,10 @@ ok('no vault chrome on Script Toolbar', !/data-git-commit/.test(toolbar) && !/da
 ok('model accept types kept', /accept="\.stl,\.obj,\.3mf,\.step,\.stp"/.test(toolbar));
 ok('editor actions remain', /data-cad-run/.test(toolbar) && /data-cad-select-all/.test(toolbar)
   && /title="Undo"/.test(toolbar) && /title="Redo"/.test(toolbar)
-  && /Get Quote/.test(toolbar) && !/Play match-the-part puzzle/.test(toolbar)
+  && !/Get Quote/.test(toolbar) && !/Play match-the-part puzzle/.test(toolbar)
   && !/onStartGame/.test(toolbar));
+ok('order left the script strip for the part row',
+  !/<Truck /.test(toolbar) && /data-part-order=\{row\.id\}/.test(feed));
 
 ok('App dropped script file Open/Save handlers', !/const handleOpen = async/.test(app)
   && !/const handleSave = /.test(app) && !/onOpen=\{handleOpen\}/.test(app)

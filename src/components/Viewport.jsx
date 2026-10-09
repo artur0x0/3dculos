@@ -654,8 +654,7 @@ const Viewport = forwardRef(({
   onClearLocalCadData = null,
   profileVaultName = null,
   currentScript, 
-  onFaceSelected, 
-  onQuote,
+  onFaceSelected,
   onUpload,
   onUndo,
   onRedo,
@@ -723,8 +722,9 @@ const Viewport = forwardRef(({
   /** Mobile CAD mid-strip host (CodeEditor). Null on desktop and in game. */
   cadToolbarHost = null,
   /**
-   * When the script editor is closed, Upload / Download / Order stay
-   * reachable in a temporary tray. Run and Select all stay in the editor.
+   * When the script editor is closed, Upload and Download stay
+   * reachable in a temporary tray. Order is the part-row cart button.
+   * Run and Select all stay in the editor.
    * The puzzle is the corner easter egg, not a tray button.
    */
   scriptEditorVisible = true,
@@ -8256,9 +8256,9 @@ const Viewport = forwardRef(({
       {/* Five taps in this corner enter the puzzle. It sits under the tray. */}
       <PuzzleUnlock enabled={mode !== 'game'} onUnlock={onStartGame} />
 
-      {/* Temporary home for the editor ribbon's model buttons while Monaco is hidden.
-          Later PRs move these. Undo/redo stay on the feature bar. The puzzle
-          is not one of these buttons. */}
+      {/* Temporary home for Upload and Download while Monaco is hidden.
+          Order is the part-row button. Undo/redo stay on the feature bar.
+          The puzzle is not one of these buttons. */}
       {mode !== 'game' && !scriptEditorVisible && (
         <div
           data-cad-io-tray=""
@@ -8270,7 +8270,6 @@ const Viewport = forwardRef(({
             variant="strip"
             chrome="io"
             onDownload={handleDownloadModel}
-            onQuote={onQuote}
             onUpload={onUpload}
             onUndo={onUndo}
             onRedo={onRedo}
@@ -8300,7 +8299,6 @@ const Viewport = forwardRef(({
           mode="cad"
           variant="strip"
           onDownload={handleDownloadModel}
-          onQuote={onQuote}
           onUpload={onUpload}
           onUndo={onUndo}
           onRedo={onRedo}
