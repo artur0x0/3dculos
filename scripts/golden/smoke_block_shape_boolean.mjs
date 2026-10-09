@@ -200,15 +200,17 @@ const SHAPES = ['makeExtrude', 'makeRevolve', 'makeSweep', 'makeLoft'];
 {
   const palette = readFileSync(new URL('../../src/components/HelperInsertPalette.jsx', import.meta.url), 'utf8');
   const chip = readFileSync(new URL('../../src/components/BooleanModeChip.jsx', import.meta.url), 'utf8');
+  const sheet = readFileSync(new URL('../../src/components/FeatureSheet.jsx', import.meta.url), 'utf8');
   const view = readFileSync(new URL('../../src/components/Viewport.jsx', import.meta.url), 'utf8');
   const app = readFileSync(new URL('../../src/App.jsx', import.meta.url), 'utf8');
   const worker = readFileSync(new URL('../../src/workers/sandboxWorker.js', import.meta.url), 'utf8') + '\n' + readFileSync(new URL('../../src/lib/surfcad/runtime.js', import.meta.url), 'utf8');
   check('Build Boolean enters boolean mode', /item\.id === 'boolean'[\s\S]{0,180}onEnterBooleanMode/.test(palette));
   check('Boolean chip allows section and survives the part list',
-    /data-boolean-allow-section="1"/.test(chip)
-    && /data-boolean-survives-parts="1"/.test(chip)
-    && /z-20/.test(chip)
-    && /pointer-events-auto/.test(chip));
+    /'data-boolean-allow-section': '1'/.test(chip)
+    && /'data-boolean-survives-parts': '1'/.test(chip)
+    && /z-20/.test(sheet)
+    && /pointer-events-auto/.test(sheet)
+    && /booleanMode && mode !== 'game'/.test(view));
   check('cross-section panel stays mounted during Boolean',
     /<CrossSectionPanel/.test(view) && !/booleanMode &&[\s\S]{0,80}<CrossSectionPanel/.test(view));
   check('hiding a part notes the pick and does not exit Boolean',

@@ -1,20 +1,20 @@
 import React from 'react';
-import { Check, X } from 'lucide-react';
 import { NumberField } from './controls/popupUI';
 import { FeatureDeleteButton } from './FeatureEditDelete';
+import FeatureSheet from './FeatureSheet';
 import { CUT_EXPLICIT_PLANES, cutPlaneFromState } from '../utils/cutMode';
 
 const ACCENT = 'cyan';
 
 /**
- * Cut chip — ShellModeChip placement and chrome.
+ * Cut on the shared feature card.
  * Plane is a planar face or an explicit XY / YZ / ZX plane.
  * Bodies and pieces use the Shell sticky picker: tap to add, tap again to
  * remove, Undo drops the last pick, Clear drops that list.
  * Offset is along the plane normal for a face and for XY / YZ / ZX.
  * Pieces: each resulting piece gets its own color; tap hides it, tap again
  * brings it back. Undo drops the last hide. Clear unhides every piece.
- * Confirm writes one cut(); grey X exits with no write.
+ * Confirm writes one cut(); X exits with no write.
  */
 const CutModeChip = ({
   state = null,
@@ -107,41 +107,25 @@ const CutModeChip = ({
   };
 
   return (
-    <div
-      className={`absolute bg-cyan-950/80 surface-glass-chip border border-cyan-400/70 text-white px-3 py-2
-        rounded-lg text-xs z-20 shadow-lg flex flex-col min-h-0 ${
-          compact
-            ? 'bottom-14 left-1/2 -translate-x-1/2 max-w-[min(16rem,calc(100%-9rem))] max-h-[calc(100dvh-12rem)]'
-            : 'bottom-2.5 left-1/2 -translate-x-1/2 max-w-[18rem] max-h-[calc(100dvh-12rem)]'
-        }`}
-      role="group"
-      aria-label="Cut plane"
-      data-cut-mode="1"
+    <FeatureSheet
+      title={`Cut · ${planeLabel}`}
+      subtitle={status}
+      compact={compact}
+      onCancel={onDismiss}
+      onConfirm={onConfirm}
+      confirmDisabled={!canConfirm}
+      cardAttrs={{
+        'data-cut-mode': '1',
+        'data-cut-confirm': canConfirm ? 'enabled' : 'disabled',
+      }}
+      note={(
+        <span className="flex min-w-0 items-center gap-2">
+          {onDelete ? <FeatureDeleteButton onClick={onDelete} /> : null}
+          <span className="leading-tight">cut(body, plane)</span>
+        </span>
+      )}
     >
-      <div className="flex items-start justify-between gap-2 shrink-0">
-        <div className="min-w-0">
-          <div className="font-bold font-sans text-cyan-200">
-            Cut · {planeLabel}
-          </div>
-          <div className="text-[11px] text-cyan-100/90 normal-case font-sans mt-0.5">
-            {status}
-          </div>
-        </div>
-        <button
-          type="button"
-          onClick={() => onDismiss?.()}
-          className="shrink-0 text-gray-400 hover:text-white"
-          title="Exit Cut mode without committing"
-          aria-label="Dismiss Cut mode without committing"
-        >
-          <X size={14} />
-        </button>
-      </div>
-
-      <div
-        className="mt-1.5 flex flex-col gap-1.5 font-sans overflow-y-auto rail-scroll min-h-0"
-        data-cut-chip-scroll=""
-      >
+      <div className="mt-1.5 flex flex-col gap-1.5 font-sans">
         <div className="flex gap-1 flex-wrap" role="group" aria-label="Cutting plane">
           {sourceBtn('face', 'Face', 'Plane from a planar face')}
           {sourceBtn('xy', 'XY', 'Explicit XY plane, normal +Z')}
@@ -190,33 +174,7 @@ const CutModeChip = ({
           )}
         </div>
       </div>
-
-      <div className="mt-2 flex items-center justify-between gap-2 shrink-0">
-        <div className="flex items-center gap-2 min-w-0">
-          {onDelete ? <FeatureDeleteButton onClick={onDelete} /> : null}
-          <span className="text-[11px] text-cyan-200/70 leading-tight">
-            cut(body, plane)
-          </span>
-        </div>
-        <button
-          type="button"
-          onClick={() => onConfirm?.()}
-          disabled={!canConfirm}
-          className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-[13px] font-medium shrink-0 ${
-            canConfirm
-              ? 'bg-cyan-600 hover:bg-cyan-500 active:bg-cyan-400 text-white'
-              : 'bg-cyan-950/80 text-cyan-400/50 border border-cyan-800/60 cursor-not-allowed'
-          }`}
-          data-cut-confirm={canConfirm ? 'enabled' : 'disabled'}
-          title={canConfirm
-            ? 'Commit cut() and leave Cut mode.'
-            : 'Choose a plane and at least one body'}
-        >
-          <Check size={14} />
-          Confirm
-        </button>
-      </div>
-    </div>
+    </FeatureSheet>
   );
 };
 

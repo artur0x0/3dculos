@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
  * Feature card: shared shell, contour pilot, fillet / chamfer / edge card,
- * shell / draft / move face / delete face, keyboard, camera pose.
+ * shell / draft / move face / delete face, cut / boolean / move,
+ * keyboard, camera pose.
  *
  * Screenshots go to GOLDEN_SHOT_DIR or os.tmpdir(), never the artifacts dir.
  */
@@ -143,6 +144,25 @@ console.log('feature sheet card — source');
     && /moveFaceSheetOpen/.test(view)
     && /deleteFaceSheetOpen/.test(view)
     && /!shellMode && !draftMode && !moveFaceMode && !deleteFaceMode/.test(view));
+  check('cut, boolean, and move use the shell; game mounts no card; boolean stays under the section rail',
+    ['Cut', 'Boolean', 'Move'].every((name) => {
+      const src = read(`src/components/${name}ModeChip.jsx`);
+      return /<FeatureSheet\b/.test(src)
+        && /data-feature-card/.test(read('src/components/FeatureSheet.jsx'))
+        && /onCancel=\{onDismiss\}/.test(src)
+        && /onConfirm=\{onConfirm\}/.test(src)
+        && /compact=\{compact\}/.test(src);
+    })
+    && /cutMode && mode !== 'game'/.test(view)
+    && /booleanMode && mode !== 'game'/.test(view)
+    && /moveMode && mode !== 'game'/.test(view)
+    && /cutSheetOpen/.test(view)
+    && /booleanSheetOpen/.test(view)
+    && /moveSheetOpen/.test(view)
+    && /!cutMode && !booleanMode && !moveMode/.test(view)
+    && /'data-boolean-allow-section': '1'/.test(read('src/components/BooleanModeChip.jsx'))
+    && /z-20/.test(read('src/components/FeatureSheet.jsx'))
+    && /pointer-events-auto/.test(read('src/components/FeatureSheet.jsx')));
   check('camera snapshots the pose, slides up, retargets orbit, and restores it',
     /export function captureViewPose/.test(camera)
     && /export function aimOrbitAtVisibleCenter/.test(camera)
@@ -254,6 +274,9 @@ import DraftModeChip from './src/components/DraftModeChip.jsx';
 import MoveFaceModeChip from './src/components/MoveFaceModeChip.jsx';
 import DeleteFaceModeChip from './src/components/DeleteFaceModeChip.jsx';
 import MobileStageToggle from './src/components/MobileStageToggle.jsx';
+import CutModeChip from './src/components/CutModeChip.jsx';
+import BooleanModeChip from './src/components/BooleanModeChip.jsx';
+import MoveModeChip from './src/components/MoveModeChip.jsx';
 import {
   applyViewPose, boxCornerPoints, captureViewPose, createSheetCameraSession,
   featureSheetClearanceNdc, selectionNdcYs,
@@ -454,6 +477,62 @@ function Stage() {
           onConfirm={() => {}}
           onDismiss={() => setCardOpen(false)}
         />
+      ) : cardOpen && panel === 'cut' ? (
+        <CutModeChip
+          state={{
+            planeSource: 'xy',
+            originOffset: 4,
+            pick: 'bodies',
+            bodies: [{ at: [0, 0, 0], center: [0, 0, 0] }],
+            drop: [],
+          }}
+          compact={compact}
+          onPlaneSource={() => {}}
+          onOffset={() => {}}
+          onPickTarget={() => {}}
+          onUndo={() => {}}
+          onClear={() => {}}
+          onConfirm={() => {}}
+          onDismiss={() => setCardOpen(false)}
+        />
+      ) : cardOpen && panel === 'boolean' ? (
+        <BooleanModeChip
+          state={{
+            op: 'difference',
+            pick: 'bodies',
+            byPart: {
+              a: { bodies: [{ at: [0, 0, 0], center: [0, 0, 0], seq: 1 }], drop: [] },
+              b: { bodies: [{ at: [20, 0, 0], center: [20, 0, 0], seq: 2 }], drop: [] },
+            },
+            seq: 2,
+          }}
+          partId="a"
+          partNames={{ a: 'Bracket', b: 'Pin' }}
+          compact={compact}
+          onOp={() => {}}
+          onPickTarget={() => {}}
+          onUndo={() => {}}
+          onClear={() => {}}
+          onConfirm={() => {}}
+          onDismiss={() => setCardOpen(false)}
+        />
+      ) : cardOpen && panel === 'move' ? (
+        <MoveModeChip
+          target={{ at: [0, 0, 10] }}
+          dx={5}
+          dy={0}
+          dz={0}
+          direction="xyz"
+          distance={0}
+          cutNormal={[0, 0, 1]}
+          faceNormal={[0, 1, 0]}
+          compact={compact}
+          onDelta={() => {}}
+          onDirection={() => {}}
+          onClear={() => {}}
+          onConfirm={() => {}}
+          onDismiss={() => setCardOpen(false)}
+        />
       ) : cardOpen ? (
         <ContourModeChip
           tool="circle"
@@ -476,6 +555,9 @@ function Stage() {
         <button type="button" data-harness-panel="draft" onClick={() => setPanel('draft')}>draft</button>
         <button type="button" data-harness-panel="moveFace" onClick={() => setPanel('moveFace')}>moveFace</button>
         <button type="button" data-harness-panel="deleteFace" onClick={() => setPanel('deleteFace')}>deleteFace</button>
+        <button type="button" data-harness-panel="cut" onClick={() => setPanel('cut')}>cut</button>
+        <button type="button" data-harness-panel="boolean" onClick={() => setPanel('boolean')}>boolean</button>
+        <button type="button" data-harness-panel="move" onClick={() => setPanel('move')}>move</button>
         <button type="button" data-harness-compact="1" onClick={() => setCompact(true)}>phone</button>
         <button type="button" data-harness-compact="0" onClick={() => setCompact(false)}>desktop</button>
         <button type="button" data-harness-card="1" onClick={() => setCardOpen(true)}>open</button>
@@ -1041,6 +1123,58 @@ html, body, #root { margin: 0; height: 100%; background: #111; }
       JSON.stringify(deletePick));
     await parkAndShoot('feature-sheet-delete-face-390-before.png', { slide: false });
     await parkAndShoot('feature-sheet-delete-face-390-after.png', { slide: true });
+
+    await showFace('cut', 'Cut', 'data-cut-mode');
+    await phoneDocked('cut card on a phone');
+    const cutPick = await page.evaluate(() => {
+      const pane = document.querySelector('[data-harness-pane]');
+      const box = pane.getBoundingClientRect();
+      const el = document.elementFromPoint(box.left + box.width / 2, box.top + 36);
+      return {
+        tag: el && el.tagName,
+        onCard: !!(el && el.closest('[data-feature-card]')),
+        cards: document.querySelectorAll('[data-feature-card]').length,
+      };
+    });
+    check('a point above the cut card is the canvas',
+      cutPick.tag === 'CANVAS' && cutPick.onCard === false && cutPick.cards === 1,
+      JSON.stringify(cutPick));
+    await parkAndShoot('feature-sheet-cut-390-before.png', { slide: false });
+    const cutAfter = await parkAndShoot('feature-sheet-cut-390-after.png', { slide: true });
+    check('phone cut: projected part box sits above the card',
+      Number.isFinite(cutAfter.low) && cutAfter.low + 0.02 >= cutAfter.cardTop,
+      JSON.stringify(cutAfter));
+
+    await showFace('boolean', 'Boolean', 'data-boolean-mode');
+    await phoneDocked('boolean card on a phone');
+    const booleanRail = await page.evaluate(() => {
+      const card = document.querySelector('[data-feature-card]');
+      const pane = document.querySelector('[data-harness-pane]');
+      const box = pane.getBoundingClientRect();
+      const el = document.elementFromPoint(box.left + box.width / 2, box.top + 36);
+      const z = card ? getComputedStyle(card).zIndex : '';
+      return {
+        tag: el && el.tagName,
+        onCard: !!(el && el.closest('[data-feature-card]')),
+        cards: document.querySelectorAll('[data-feature-card]').length,
+        z,
+        section: card && card.getAttribute('data-boolean-allow-section'),
+      };
+    });
+    check('boolean card is z-20 and a point above it is the canvas',
+      booleanRail.tag === 'CANVAS'
+      && booleanRail.onCard === false
+      && booleanRail.cards === 1
+      && booleanRail.z === '20'
+      && booleanRail.section === '1',
+      JSON.stringify(booleanRail));
+    await parkAndShoot('feature-sheet-boolean-390-before.png', { slide: false });
+    await parkAndShoot('feature-sheet-boolean-390-after.png', { slide: true });
+
+    await showFace('move', 'Move', 'data-move-mode');
+    await phoneDocked('move card on a phone');
+    await parkAndShoot('feature-sheet-move-390-before.png', { slide: false });
+    await parkAndShoot('feature-sheet-move-390-after.png', { slide: true });
 
     check('the page did not throw', pageErrors.length === 0, pageErrors.join(' | '));
   } finally {

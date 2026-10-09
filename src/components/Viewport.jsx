@@ -1243,6 +1243,9 @@ const Viewport = forwardRef(({
   const draftSheetOpen = mode !== 'game' && !!draftMode;
   const moveFaceSheetOpen = mode !== 'game' && !!moveFaceMode;
   const deleteFaceSheetOpen = mode !== 'game' && !!deleteFaceMode;
+  const cutSheetOpen = mode !== 'game' && !!cutMode;
+  const booleanSheetOpen = mode !== 'game' && !!booleanMode;
+  const moveSheetOpen = mode !== 'game' && !!moveMode;
   const edgeSheetOpen = mode !== 'game'
     && pickMode === 'edge'
     && !contourMode
@@ -1251,6 +1254,9 @@ const Viewport = forwardRef(({
     && !draftMode
     && !moveFaceMode
     && !deleteFaceMode
+    && !cutMode
+    && !booleanMode
+    && !moveMode
     && selectedEdges.length > 0;
   const featureCardKind = filletSheetOpen
     ? 'fillet'
@@ -1264,9 +1270,15 @@ const Viewport = forwardRef(({
             ? 'moveFace'
             : deleteFaceSheetOpen
               ? 'deleteFace'
-              : edgeSheetOpen
-                ? 'edge'
-                : '';
+              : cutSheetOpen
+                ? 'cut'
+                : booleanSheetOpen
+                  ? 'boolean'
+                  : moveSheetOpen
+                    ? 'move'
+                    : edgeSheetOpen
+                      ? 'edge'
+                      : '';
   featureCardKindRef.current = featureCardKind;
   sheetCameraOwnedRef.current = featureCardKind !== '';
   useEffect(() => {
@@ -4410,7 +4422,9 @@ const Viewport = forwardRef(({
     shellModeRef.current = null;
     setDraftMode(null);
     draftModeRef.current = null;
-    if (moveModeRef.current || moveFaceModeRef.current || deleteFaceModeRef.current) clearHighlight();
+    if (booleanModeRef.current || moveModeRef.current || moveFaceModeRef.current || deleteFaceModeRef.current) clearHighlight();
+    setBooleanMode(null);
+    booleanModeRef.current = null;
     setMoveMode(null);
     moveModeRef.current = null;
     clearMoveFacePreviewRef.current();
@@ -9080,8 +9094,8 @@ const Viewport = forwardRef(({
         />
       )}
 
-      {/* Cut plane + bodies. Confirm writes one cut(); pieces stay separate. */}
-      {cutMode && (
+      {/* Cut on the shared card. Game mounts no card. */}
+      {cutMode && mode !== 'game' && (
         <CutModeChip
           state={cutMode}
           compact={isMobile}
@@ -9096,8 +9110,8 @@ const Viewport = forwardRef(({
         />
       )}
 
-      {/* Boolean bodies. Confirm writes one booleanBodies(). Pieces hide leftovers. */}
-      {booleanMode && (
+      {/* Boolean on the shared card. Game mounts no card. The card stays z-20, under the section rail. */}
+      {booleanMode && mode !== 'game' && (
         <BooleanModeChip
           state={booleanMode}
           partId={activePartIdRef.current}
@@ -9114,8 +9128,8 @@ const Viewport = forwardRef(({
         />
       )}
 
-      {/* Move body chip — deltas or one distance. Confirm writes one move(). No viewport arrows. */}
-      {moveMode && (
+      {/* Move on the shared card. Game mounts no card. */}
+      {moveMode && mode !== 'game' && (
         <MoveModeChip
           target={moveMode.target}
           dx={moveMode.dx}
@@ -9223,7 +9237,7 @@ const Viewport = forwardRef(({
 
       {/* Standalone edge pick — same card, no Confirm. X clears and leaves edge pick.
           Hidden in fillet, contour, and game. Numbered badges stay on the edges. */}
-      {mode !== 'game' && pickMode === 'edge' && !contourMode && !filletMode && !shellMode && !draftMode && !moveFaceMode && !deleteFaceMode && selectedEdges.length > 0 && (
+      {mode !== 'game' && pickMode === 'edge' && !contourMode && !filletMode && !shellMode && !draftMode && !moveFaceMode && !deleteFaceMode && !cutMode && !booleanMode && !moveMode && selectedEdges.length > 0 && (
         <FeatureSheet
           cardAttrs={{ 'data-edge-selector': 'standalone' }}
           title={`Edge pick · ${selectedEdges.length} selected`}

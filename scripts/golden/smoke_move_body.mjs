@@ -52,7 +52,12 @@ function check(name, cond, detail = '') {
   check('axis helper stays a visual AxesHelper', /new AxesHelper\(/.test(view));
   check('X Y Z are NumberFields', /id="dx"/.test(chip) && /id="dy"/.test(chip) && /id="dz"/.test(chip)
     && /NumberField/.test(chip) && /type="range"/.test(read('src/components/controls/popupUI.jsx')));
-  check('phone chip uses the compact shell', /bottom-14 left-1\/2 -translate-x-1\/2 max-w-\[min\(16rem,calc\(100%-9rem\)\)\]/.test(chip));
+  check('move uses the shared feature card',
+    /<FeatureSheet\b/.test(chip)
+    && /compact=\{compact\}/.test(chip)
+    && /onCancel=\{onDismiss\}/.test(chip)
+    && /onConfirm=\{onConfirm\}/.test(chip)
+    && /moveMode && mode !== 'game'/.test(view));
   check('Move button enters move mode', /item\.id === 'move'/.test(palette) && /onEnterMoveMode/.test(palette)
     && /move:\s*Move/.test(palette));
   for (const layout of ['cad', 'game']) {

@@ -302,6 +302,12 @@ console.log('cut plane');
     && /tap to add, tap a selected body to remove/.test(chip)
     && /tap a piece to hide it/.test(chip)
     && /bring it back/.test(chip));
+  check('cut uses the shared feature card',
+    /<FeatureSheet\b/.test(chip)
+    && /onCancel=\{onDismiss\}/.test(chip)
+    && /onConfirm=\{onConfirm\}/.test(chip)
+    && /compact=\{compact\}/.test(chip)
+    && /cutMode && mode !== 'game'/.test(view));
   check('face and named planes share the offset field',
     /id="cut-offset"/.test(chip) && /along the plane normal/.test(chip));
   // Scope the material checks to the Cut preview painters: #161 added a Block
