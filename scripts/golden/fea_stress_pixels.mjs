@@ -446,9 +446,8 @@ function endFacePoints(page) {
     if (!canvas) return [];
     const rect = canvas.getBoundingClientRect();
     const pts = [];
-    // The desktop Analyze chip sits on the canvas center once the force
-    // row is open. Upper-center and either side of that chip still land
-    // on the end face. The phone sheet covers the top, so keep mid points.
+    // The Analyze card sits on the bottom of the pane. Upper-center and
+    // either side still land on the end face. Points under the card drop.
     const spots = [
       [0.5, 0.28],
       [0.5, 0.34],
