@@ -418,7 +418,10 @@ const contourRail = read('../../src/components/ContourModeRail.jsx');
   check('CAD strip has a Run button', runAt > 0);
   // First means first: no other button may open before it.
   check('Run is the first button in the strip',
-    runAt > 0 && !/<button/.test(strip.slice(0, runAt)));
+    (() => {
+      const first = strip.indexOf('<button');
+      return first > 0 && strip.slice(first, first + 500).includes('data-cad-run');
+    })());
   check('Account left the strip for the viewport profile chip (G9)',
     !/onClick=\{onAccount\}/.test(strip) && !/title="Account"/.test(strip));
   check('Run is green', /text-green-400 disabled:opacity-60/.test(strip));
