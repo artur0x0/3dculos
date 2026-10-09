@@ -17,6 +17,7 @@ export function FeaStudyChip({ panel, compact = false }) {
       role="group"
       aria-label="Analyze"
       data-fea-mode="1"
+      data-fea-view={panel.results ? 'results' : 'setup'}
       onPointerDown={(event) => event.stopPropagation()}
     >
       <div className="flex shrink-0 items-start justify-between gap-2">
@@ -24,9 +25,11 @@ export function FeaStudyChip({ panel, compact = false }) {
           <div className="flex items-center gap-2 font-sans font-bold text-cyan-200">
             Analyze
           </div>
-          <div className="mt-0.5 font-sans text-[11px] normal-case text-cyan-100/90">
-            Fix a face, add a load, then Run.
-          </div>
+          {!panel.results && (
+            <div className="mt-0.5 font-sans text-[11px] normal-case text-cyan-100/90">
+              Fix a face, add a load, then Run.
+            </div>
+          )}
         </div>
         <button
           type="button"
@@ -40,7 +43,7 @@ export function FeaStudyChip({ panel, compact = false }) {
         </button>
       </div>
       <div className="rail-scroll mt-1.5 flex min-h-0 flex-col gap-1.5 overflow-y-auto font-sans" data-fea-chip-scroll="">
-        <FeaStudyControls panel={panel} />
+        {panel.results ? null : <FeaStudyControls panel={panel} />}
       </div>
       <FeaRunBar panel={panel} />
     </div>

@@ -86,11 +86,11 @@ function ensureBoot(profile) {
   return ready;
 }
 
-function copyNodal(result) {
-  if (!result || !(result.nodal instanceof Float32Array)) return null;
-  const nodal = new Float32Array(result.nodal);
-  result.nodal = nodal;
-  return nodal.buffer;
+function ownFloat32(result, key) {
+  if (!result || !(result[key] instanceof Float32Array)) return null;
+  const copy = new Float32Array(result[key]);
+  result[key] = copy;
+  return copy.buffer;
 }
 
 self.onmessage = async (event) => {
@@ -161,8 +161,11 @@ self.onmessage = async (event) => {
         if (cancelled) return;
         noteMemory(null);
         if (result && result.stats) result.stats.peakMemoryBytes = peakBytes;
-        const transfer = copyNodal(result);
-        const transfers = transfer ? [transfer] : [];
+        const transfers = [];
+        for (const key of ['nodal', 'displacement']) {
+          const buffer = ownFloat32(result, key);
+          if (buffer) transfers.push(buffer);
+        }
         self.postMessage({ id: msg.id, ok: true, result }, transfers);
       } finally {
         heartbeatBlocking = false;

@@ -1,6 +1,7 @@
 import React from 'react';
 import { Check } from 'lucide-react';
 import { ChoiceRow, NumberField } from '../controls/popupUI';
+import { PLOT_TABS, activePlot } from '../../fea/resultsView.js';
 import { FORCE_DIRECTIONS } from '../../fea/studyPanel.js';
 import { FeaLegend } from './FeaLegend';
 import { FeaLoadList } from './FeaLoadList';
@@ -12,6 +13,33 @@ const TARGETS = [
   { value: 'force', label: 'Force' },
   { value: 'pressure', label: 'Pressure' },
 ];
+
+/** Shared tab row. Fix / Force / Pressure and Stress / Displacement use it. */
+export function FeaTabs({ options, value, onChange, groupAttr, itemAttr }) {
+  return (
+    <div className="flex gap-1" {...{ [groupAttr]: '' }}>
+      {options.map((option) => {
+        const active = value === option.value;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            {...{ [itemAttr]: option.value }}
+            aria-pressed={active}
+            onClick={() => onChange?.(option.value)}
+            className={`rounded px-2 py-1 text-[13px] ${
+              active
+                ? 'bg-cyan-600 text-white'
+                : 'border border-cyan-700/70 bg-cyan-950/80 text-cyan-100'
+            }`}
+          >
+            {option.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 export function FeaStudyControls({ panel }) {
   const draft = panel.draft || {};
@@ -26,24 +54,13 @@ export function FeaStudyControls({ panel }) {
       />
       <div className="flex flex-col gap-1">
         <span className="text-[11px] font-semibold uppercase tracking-wide text-cyan-200/80">Tap adds</span>
-      <div className="flex gap-1" data-fea-targets="">
-        {TARGETS.map((target) => (
-          <button
-            key={target.value}
-            type="button"
-            data-fea-target={target.value}
-            aria-pressed={draft.target === target.value}
-            onClick={() => panel.setTarget?.(target.value)}
-            className={`rounded px-2 py-1 text-[13px] ${
-              draft.target === target.value
-                ? 'bg-cyan-600 text-white'
-                : 'border border-cyan-700/70 bg-cyan-950/80 text-cyan-100'
-            }`}
-          >
-            {target.label}
-          </button>
-        ))}
-      </div>
+      <FeaTabs
+        options={TARGETS}
+        value={draft.target}
+        onChange={panel.setTarget}
+        groupAttr="data-fea-targets"
+        itemAttr="data-fea-target"
+      />
       </div>
       {draft.target === 'force' && (
         <>
@@ -162,12 +179,33 @@ function FeaTiming({ report }) {
   );
 }
 
+function showLegend(panel) {
+  if (panel.preview?.showing) return true;
+  if (!panel.result) return false;
+  if (panel.results) return true;
+  if (panel.dismissed && !panel.result.stale) return false;
+  return true;
+}
+
 export function FeaRunBar({ panel }) {
   const report = panel.runReport;
+  const results = panel.results === true;
   const stage = panel.running ? (report?.stageLabel || STAGE_LABEL[panel.progress] || 'Running') : 'Run';
+  const plot = activePlot(panel.plot);
   return (
     <div className="mt-1 flex shrink-0 flex-col gap-1">
-      <FeaLegend result={panel.result} preview={panel.preview} />
+      {results && (
+        <FeaTabs
+          options={PLOT_TABS}
+          value={plot}
+          onChange={panel.setPlot}
+          groupAttr="data-fea-plots"
+          itemAttr="data-fea-plot"
+        />
+      )}
+      {showLegend(panel) && (
+        <FeaLegend result={panel.result} preview={panel.preview} plot={results ? plot : 'stress'} />
+      )}
       {panel.running && report?.status === 'running' && <FeaProgressBar report={report} />}
       {!panel.running && <FeaTiming report={report} />}
       <div className="flex items-center justify-end gap-2">
@@ -181,6 +219,17 @@ export function FeaRunBar({ panel }) {
           Cancel
         </button>
       )}
+      {results ? (
+        <button
+          type="button"
+          data-fea-back=""
+          onClick={() => panel.backToSetup?.()}
+          className="inline-flex items-center gap-1 rounded-md bg-cyan-600 px-2 py-1 text-[13px] font-medium text-white hover:bg-cyan-500"
+        >
+          <Check size={14} />
+          Back to Setup
+        </button>
+      ) : (
       <button
         type="button"
         data-fea-run={panel.running ? 'busy' : 'ready'}
@@ -196,6 +245,7 @@ export function FeaRunBar({ panel }) {
         <Check size={14} />
         {stage}
       </button>
+      )}
       </div>
     </div>
   );
