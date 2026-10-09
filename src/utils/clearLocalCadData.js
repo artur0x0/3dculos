@@ -11,7 +11,8 @@
  *     resurrect the previous buffer
  *
  * Kept: GitHub sessionStorage token (`surfcad.github.token`), the auth
- * session, the `surfcad-scs` catalog, and checkout / game-wins settings.
+ * session, the `surfcad-scs` catalog, checkout / game-wins settings, and
+ * the signed-in cart (`surfcad_cart:<user id>`, `surfcad_cart_uploaded:<user id>`).
  * Does not delete the GitHub account or vault repo, and does not fetch.
  */
 import { clearEditorDraft } from './editorDraft.js';

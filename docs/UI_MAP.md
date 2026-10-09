@@ -46,8 +46,8 @@ one shell you must change the other.
 - **Pencil** (`data-part-edit-script`) on each part row, blue, same size as the eye. It activates that part if needed and opens Monaco for it only.
 - **Desktop drawer** (`data-script-drawer-side="right"`): under the feature ribbon (`top: 8rem`), inset so the left rail stays clear, drag the left edge to resize, Escape or Back closes it.
 - **Phone sheet** (`data-script-sheet`, 390px): full-screen over the home pill, Back to CAD (`data-script-editor-close`). A stored Script stage is not restored on load.
-- **Temporary tray** (`data-cad-io-tray`, viewport top-left) while the editor is closed: Upload, Download, Order. The puzzle is not in the tray. Run, Select all, Undo, and Redo are not in that tray.
-- **Puzzle easter egg** (`data-puzzle-unlock`, 44×44, viewport top-left, under the tray so the tray buttons stay clickable): five taps in three seconds while `useAuthState().signedIn` (grey reauth counts) call `handleStartGame` and show `data-puzzle-unlock-toast` ("Puzzle unlocked"). The taps are not stored. Signed-out and pending sessions have no target and no toast.
+- **Temporary tray** (`data-cad-io-tray`, viewport top-left) while the editor is closed: Upload, Download. Order is the part-row cart button (`data-part-order`), not this tray. The puzzle is not in the tray. Run, Select all, Undo, and Redo are not in that tray.
+- **Puzzle easter egg** (`data-puzzle-unlock`, 44×44, viewport top-left, under the tray so the tray buttons stay clickable): five taps in three seconds while `useAuthState().signedIn` (grey reauth counts) call `handleStartGame` and show `data-puzzle-unlock-toast` ("Puzzle unlocked"). The taps are not stored. Signed-out and pending sessions have no target and no toast. Upload and Download still cover part of that corner.
 
 **The seam between the two panes is draggable** in both shells
 (`SplitDivider.jsx`, pointer-capture based): left/right on desktop
@@ -450,7 +450,8 @@ phones, centered dialog on desktop**.
 | --- | --- | --- | --- |
 | Login | Profile chip → Sign in (signed out / guest) | `LoginModal.jsx` / `ProfileChip.jsx` | `/api/auth/login`, `/register` |
 | Account | Viewport profile chip (signed in) | `AccountModal.jsx` / `ProfileChip.jsx` | tabs `info` / `orders` |
-| Quote | Toolbar → Truck | `QuoteModal.jsx` | process / material / infill / quantity stepper 1–999 (`data-quote-quantity`) → `utils/quoting.js` |
+| Cart | part row Order (`data-part-order`); profile menu Cart (`data-profile-cart`); chip count (`data-cart-badge`) | `CartSheet.jsx` | signed-in lines only. Checkout (`data-cart-checkout`) stays disabled until the stepper. |
+| Quote | not on the toolbar; the order stepper opens it later | `QuoteModal.jsx` | process / material / infill / quantity stepper 1–999 (`data-quote-quantity`) → `utils/quoting.js` |
 | Order | Quote → Order | `OrderModal.jsx` + `components/order/*` | six steps, `STEPS` at `OrderModal.jsx`: Auth → Address → Shipping → Payment → Confirmation → Convert. Quantity stepper again. Pay uses the server total; a mismatch shows “Price updated to $X” and disables Pay until confirmed. An unmeasurable export shows “We couldn't measure this part. Please re-export and try again.” |
 | Helper params | any helper-rail button | `HelperParamModal.jsx` | **not** a full-screen modal: docks bottom-centre *of the viewport* (`absolute inset-0`, click-through overlay, no scrim) so the rails and the live preview stay visible and usable. No click-outside-to-cancel — X / Cancel only. Also serves as the refuse/explain dialog |
 | Puzzle picker | Toolbar → List (game) | `PuzzlePickerModal.jsx` | |

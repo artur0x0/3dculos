@@ -27,6 +27,9 @@ export default function ProfilePanel({
   reconnectError = '',
   signedIn = true,
   reauth = false,
+  showCart = false,
+  cartCount = 0,
+  onOpenCart = null,
   align = 'right',
 }) {
   const { user } = useAuth();
@@ -84,6 +87,17 @@ export default function ProfilePanel({
   };
 
   const alignClass = align === 'left' ? 'left-0' : 'right-0';
+  const cartLabel = cartCount > 0 ? `Cart (${cartCount})` : 'Cart';
+  const cartButton = showCart ? (
+    <button
+      type="button"
+      data-profile-cart=""
+      className="block w-full px-3 py-1.5 text-left text-xs font-medium text-emerald-200 hover:bg-white/10"
+      onClick={() => { onOpenCart?.(); onClose?.(); }}
+    >
+      {cartLabel}
+    </button>
+  ) : null;
 
   return (
     <div
@@ -148,6 +162,7 @@ export default function ProfilePanel({
               <p className="mt-1 text-xs text-amber-300" data-profile-reconnect-error="">{reconnectError}</p>
             ) : null}
           </div>
+          {cartButton}
           <button
             type="button"
             data-profile-reconnect=""
@@ -216,6 +231,7 @@ export default function ProfilePanel({
               <p className="mt-0.5 text-[10px] text-gray-500" data-profile-panel-github="">{loginHint}</p>
             ) : null}
           </div>
+          {cartButton}
           <button
             type="button"
             data-profile-sign-out=""

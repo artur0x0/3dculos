@@ -17,6 +17,7 @@ import { profileInitials } from '../utils/profileInitials.js';
 import { clearGithubToken, loadGithubToken } from '../utils/git/githubAuth.js';
 import { DEFAULT_VAULT_NAME } from '../utils/git/vault.js';
 import ProfilePanel from './ProfilePanel';
+import { useCartChrome } from '../hooks/useCart';
 
 export default function ProfileChip({
   onAccount,
@@ -27,6 +28,8 @@ export default function ProfileChip({
 }) {
   const { user, guest, isGuest, logout, checkAuth } = useAuth();
   const session = useAuthState();
+  const cartChrome = useCartChrome();
+  const cartCount = session.signedIn ? (cartChrome?.count || 0) : 0;
   const [panelOpen, setPanelOpen] = useState(false);
   const phase = session.phase;
   const motion = session.reconnecting
@@ -176,6 +179,23 @@ export default function ProfileChip({
           !
         </span>
       ) : null}
+      {cartCount > 0 ? (
+        <button
+          type="button"
+          data-cart-badge=""
+          data-cart-count={cartCount}
+          className="absolute -bottom-1 -right-1 flex h-4 min-w-4 items-center justify-center
+            rounded-full bg-emerald-500 px-1 text-[9px] font-bold leading-none text-gray-950"
+          aria-label={`Cart, ${cartCount}`}
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            event.stopPropagation();
+            cartChrome?.openCart?.();
+          }}
+        >
+          {cartCount > 99 ? '99+' : cartCount}
+        </button>
+      ) : null}
       {showPanel && (
         <ProfilePanel
           open={panelOpen}
@@ -189,6 +209,9 @@ export default function ProfileChip({
           reconnectError={session.lastError}
           signedIn={signedIn}
           reauth={reauth}
+          showCart={session.signedIn}
+          cartCount={cartCount}
+          onOpenCart={session.signedIn ? () => cartChrome?.openCart?.() : null}
           align="right"
         />
       )}
