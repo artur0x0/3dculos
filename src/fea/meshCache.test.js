@@ -19,7 +19,7 @@ const FACES = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
 function beamStudy(force = 200, target = 4) {
   return {
     model: 'solid',
-    mesh: { target },
+    mesh: { target, refine: 'off' },
     fixtures: [{
       kind: 'fixed',
       faces: [{ faceID: 1, at: [0, 5, 5], n: [-1, 0, 0], area: 100 }],
@@ -132,6 +132,10 @@ describe('mesh cache', { concurrency: 1 }, () => {
     assert.notEqual(meshCacheKey(surface, 5, 'desktop'), key);
     assert.notEqual(meshCacheKey(surface, 4, 'phone'), key);
     assert.equal(meshCacheKey(surface, 'auto', 'desktop') !== key, true);
+    assert.equal(meshCacheKey(surface, 4, 'desktop', ''), key);
+    const loaded = meshCacheKey(surface, 4, 'desktop', '{"loads":1}');
+    assert.notEqual(loaded, key);
+    assert.notEqual(meshCacheKey(surface, 4, 'desktop', '{"loads":2}'), loaded);
   });
 
   test('releaseMesh drops the typed arrays', () => {
@@ -428,5 +432,42 @@ describe('mesh cache', { concurrency: 1 }, () => {
     assert.equal(scaled.rescaled, true);
     const worst = assertResultClose(scaled, full, 1e-9, 'wasm rescale');
     console.log(`wasm rescale worst relative error ${worst}`);
+  });
+
+  test('auto refine reuses the mesh for a material change and remeshes when the load changes', async () => {
+    const cache = createMeshCache();
+    const surface = box([40, 10, 10]);
+    let made = 0;
+    const meshVolumeFn = async (part, options) => {
+      made += 1;
+      assert.equal(options.sizing, undefined);
+      return fakeMesh();
+    };
+    const common = {
+      positions: surface.positions,
+      indices: surface.indices,
+      faceIDs: surface.faceIds,
+      profile: 'desktop',
+      cache,
+      meshVolume: meshVolumeFn,
+      solveTet10: (mesh, mat) => linearSolve(mesh, mat),
+      solveStub: () => { throw new Error('stub'); },
+    };
+    const study = { ...beamStudy(200), mesh: { target: 4, refine: 'auto' } };
+    const first = await solveSolid({ ...common, study, material: material(4096) });
+    const stiffer = await solveSolid({ ...common, study, material: material(8192) });
+    assert.equal(made, 1);
+    assert.equal(first.meshReused, false);
+    assert.equal(stiffer.meshReused, true);
+    assert.equal(stiffer.rescaled, true);
+    assert.equal(stiffer.refineCount, first.refineCount);
+    assert.ok(Array.isArray(stiffer.convergence) && stiffer.convergence.length === first.convergence.length);
+    const loaded = {
+      ...study,
+      loads: [{ ...study.loads[0], vector: [0, 0, -400] }],
+    };
+    const again = await solveSolid({ ...common, study: loaded, material: material(8192) });
+    assert.equal(made, 2);
+    assert.equal(again.meshReused, false);
   });
 });

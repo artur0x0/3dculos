@@ -24,6 +24,7 @@
 
 #if defined(__wasm_simd128__)
 #include <wasm_simd128.h>
+extern "C" float surfcad_mesh_simd_unit();
 #endif
 
 namespace {
@@ -144,24 +145,19 @@ bool finite_coord(double value)
     return std::isfinite(value);
 }
 
-}  // namespace
+struct SizingField {
+    const double* positions = nullptr;
+    uint32_t n_vertices = 0;
+    const uint32_t* tets = nullptr;
+    uint32_t n_tets = 0;
+    const double* values = nullptr;
+};
 
-extern "C" {
-
-#if defined(__wasm_simd128__)
-float surfcad_mesh_simd_unit();
-#endif
-
-// Packed little-endian blob:
-//   int32  status
-//   uint32 nVertices
-//   uint32 nTets
-//   uint32 messageLen
-//   double seconds
-//   char   message[messageLen] padded to 8 bytes
-//   double positions[nVertices * 3]
-//   uint32 tets[nTets * 4]
-uint8_t* surfcad_mesh_tet4(
+// Shared body. `sizing` is optional. When it is present, fTetWild's
+// background-mesh sizing field (V, T, and a scalar per vertex) is applied
+// after the uniform mesh. The scalar is an absolute target edge length;
+// fTetWild divides it by ideal_edge_length.
+uint8_t* mesh_tet4(
     const double* positions,
     uint32_t n_vertices,
     const uint32_t* indices,
@@ -169,6 +165,7 @@ uint8_t* surfcad_mesh_tet4(
     double edge_length,
     double epsilon,
     uint32_t max_tets,
+    const SizingField* sizing,
     uint32_t* out_bytes)
 {
     try {
@@ -196,6 +193,28 @@ uint8_t* surfcad_mesh_tet4(
         if (!(edge_length >= 0.0) || !std::isfinite(edge_length) || !(epsilon >= 0.0) || !std::isfinite(epsilon)) {
             return publish(pack_blob(kBadInput, "edgeLength and epsilon must be finite and non-negative", 0, nullptr, 0, nullptr, 0), out_bytes);
         }
+        const bool sized = sizing != nullptr && sizing->n_vertices > 0;
+        if (sized) {
+            if (sizing->positions == nullptr || sizing->tets == nullptr || sizing->values == nullptr
+                || sizing->n_vertices < 4 || sizing->n_tets < 1) {
+                return publish(pack_blob(kBadInput, "sizing field needs vertices, tets, and one value per vertex", 0, nullptr, 0, nullptr, 0), out_bytes);
+            }
+            for (uint32_t i = 0; i < sizing->n_vertices * 3; ++i) {
+                if (!finite_coord(sizing->positions[i])) {
+                    return publish(pack_blob(kBadInput, "sizing positions contain a non-finite coordinate", 0, nullptr, 0, nullptr, 0), out_bytes);
+                }
+            }
+            for (uint32_t i = 0; i < sizing->n_vertices; ++i) {
+                if (!(sizing->values[i] > 0.0) || !std::isfinite(sizing->values[i])) {
+                    return publish(pack_blob(kBadInput, "sizing values must be finite and positive", 0, nullptr, 0, nullptr, 0), out_bytes);
+                }
+            }
+            for (uint32_t i = 0; i < sizing->n_tets * 4; ++i) {
+                if (sizing->tets[i] >= sizing->n_vertices) {
+                    return publish(pack_blob(kBadInput, "sizing tets reference a vertex outside the sizing mesh", 0, nullptr, 0, nullptr, 0), out_bytes);
+                }
+            }
+        }
 
         ensure_geogram();
         SilenceStreams silence;
@@ -222,6 +241,21 @@ uint8_t* surfcad_mesh_tet4(
         }
         if (epsilon > 0.0) {
             params.eps_rel = epsilon;
+        }
+        if (sized) {
+            params.apply_sizing_field = true;
+            params.V_sizing_field.resize(static_cast<Eigen::Index>(sizing->n_vertices) * 3);
+            for (uint32_t i = 0; i < sizing->n_vertices * 3; ++i) {
+                params.V_sizing_field(static_cast<Eigen::Index>(i)) = sizing->positions[i];
+            }
+            params.T_sizing_field.resize(static_cast<Eigen::Index>(sizing->n_tets) * 4);
+            for (uint32_t i = 0; i < sizing->n_tets * 4; ++i) {
+                params.T_sizing_field(static_cast<Eigen::Index>(i)) = static_cast<int>(sizing->tets[i]);
+            }
+            params.values_sizing_field.resize(static_cast<Eigen::Index>(sizing->n_vertices));
+            for (uint32_t i = 0; i < sizing->n_vertices; ++i) {
+                params.values_sizing_field(static_cast<Eigen::Index>(i)) = sizing->values[i];
+            }
         }
 
         Eigen::MatrixXd vertices;
@@ -268,6 +302,63 @@ uint8_t* surfcad_mesh_tet4(
     } catch (...) {
         return publish(pack_blob(kInternal, "unknown fTetWild failure", 0, nullptr, 0, nullptr, 0), out_bytes);
     }
+}
+
+}  // namespace
+
+extern "C" {
+
+#if defined(__wasm_simd128__)
+float surfcad_mesh_simd_unit();
+#endif
+
+// Packed little-endian blob:
+//   int32  status
+//   uint32 nVertices
+//   uint32 nTets
+//   uint32 messageLen
+//   double seconds
+//   char   message[messageLen] padded to 8 bytes
+//   double positions[nVertices * 3]
+//   uint32 tets[nTets * 4]
+uint8_t* surfcad_mesh_tet4(
+    const double* positions,
+    uint32_t n_vertices,
+    const uint32_t* indices,
+    uint32_t n_triangles,
+    double edge_length,
+    double epsilon,
+    uint32_t max_tets,
+    uint32_t* out_bytes)
+{
+    return mesh_tet4(positions, n_vertices, indices, n_triangles, edge_length, epsilon, max_tets, nullptr, out_bytes);
+}
+
+// Same blob as surfcad_mesh_tet4. The extra arrays are a background tet mesh
+// whose per-vertex values are absolute target edge lengths.
+uint8_t* surfcad_mesh_tet4_sized(
+    const double* positions,
+    uint32_t n_vertices,
+    const uint32_t* indices,
+    uint32_t n_triangles,
+    double edge_length,
+    double epsilon,
+    uint32_t max_tets,
+    const double* sizing_positions,
+    uint32_t n_sizing_vertices,
+    const uint32_t* sizing_tets,
+    uint32_t n_sizing_tets,
+    const double* sizing_values,
+    uint32_t* out_bytes)
+{
+    const SizingField sizing{
+        sizing_positions,
+        n_sizing_vertices,
+        sizing_tets,
+        n_sizing_tets,
+        sizing_values,
+    };
+    return mesh_tet4(positions, n_vertices, indices, n_triangles, edge_length, epsilon, max_tets, &sizing, out_bytes);
 }
 
 void surfcad_mesh_free(void* memory)
@@ -322,7 +413,39 @@ static int self_test()
     }
     std::cout << "\n";
     surfcad_mesh_free(blob);
-    return status == 0 && n_tets > 0 ? 0 : 1;
+    if (!(status == 0 && n_tets > 0)) {
+        return 1;
+    }
+
+    const double sizing_positions[] = {
+        0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1,
+    };
+    const uint32_t sizing_tets[] = {
+        0, 1, 3, 4, 1, 2, 3, 6, 1, 4, 5, 6, 3, 4, 7, 6, 1, 3, 4, 6,
+    };
+    const double sizing_values[] = {0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2};
+    uint32_t sized_bytes = 0;
+    uint8_t* sized = surfcad_mesh_tet4_sized(
+        positions, 8, indices, 12, 0.5, 1e-3, 20000,
+        sizing_positions, 8, sizing_tets, 5, sizing_values, &sized_bytes);
+    if (sized == nullptr || sized_bytes < 24) {
+        std::cerr << "self-test: empty sizing blob\n";
+        return 1;
+    }
+    int32_t sized_status = 0;
+    uint32_t sized_vertices = 0;
+    uint32_t sized_tets = 0;
+    std::memcpy(&sized_status, sized, 4);
+    std::memcpy(&sized_vertices, sized + 4, 4);
+    std::memcpy(&sized_tets, sized + 8, 4);
+    std::cout << "self-test sized status=" << sized_status << " vertices=" << sized_vertices
+              << " tets=" << sized_tets << " uniform_tets=" << n_tets << "\n";
+    surfcad_mesh_free(sized);
+    if (!(sized_status == 0 && sized_tets > n_tets)) {
+        std::cerr << "self-test: sizing field did not refine the cube\n";
+        return 1;
+    }
+    return 0;
 }
 
 int main(int argc, char** argv)

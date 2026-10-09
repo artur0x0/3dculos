@@ -160,6 +160,7 @@ self.onmessage = async (event) => {
             for (const key of [
               'stage', 'fraction', 'solver', 'iteration', 'estimatedIterations',
               'residual', 'residual0', 'tol', 'choleskyStep', 'dofs', 'blocking',
+              'refinePass', 'refinePasses',
             ]) {
               if (update[key] != null) payload[key] = update[key];
             }

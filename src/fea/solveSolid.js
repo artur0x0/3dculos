@@ -8,15 +8,18 @@
  * keyed by faceID and position. Displacement is the magnitude in millimetres.
  * The render mesh is not deformed.
  *
- * The worker passes a mesh cache. The key is the surface hash plus the mesh
- * target and the device profile, so a material, load, or fixture change
- * reuses the TET10 mesh. Boundary conditions are mapped again on that mesh.
- * When only E and/or yield change, with the same ν and the same force and
- * pressure loads, the cached solution is rescaled and solve_tet10 is not
- * called: stress stays put, displacement is multiplied by E_old / E_new,
- * and the safety factor is yield / p95. Anything else re-solves on the
- * cached mesh. The phone cache holds one mesh; desktop holds two. Evicting
- * an entry releases its arrays.
+ * The worker passes a mesh cache. A uniform mesh (refine off) is keyed by
+ * the surface hash, the mesh target, and the device profile, so a material,
+ * load, or fixture change reuses that TET10 mesh. Adaptive refine keys the
+ * final mesh by the fixtures and loads as well, so a material-only change
+ * still reuses it and a load change does not. When only E and/or yield
+ * change, with the same ν and the same force and pressure loads, the cached
+ * solution is rescaled and solve_tet10 is not called: stress stays put,
+ * displacement is multiplied by E_old / E_new, and the safety factor is
+ * yield / p95. The stored convergence rows scale the same way. Anything
+ * else re-solves once on the cached mesh and does not remesh. The phone
+ * cache holds one mesh; desktop holds two. Evicting an entry releases its
+ * arrays.
  *
  * A pure sheet-metal part (`sheetMetalSolid`, study model "auto" or "shell")
  * is meshed on its mid-surface and solved with solve_shell. study model
@@ -31,10 +34,20 @@ import {
   dofCap,
   isThinPart,
   partShape,
+  refineDofCap,
+  refineMode,
+  refinePassLimit,
   SHELLS_AVAILABLE,
   shellDofCap,
   THIN_ELEMENTS_THROUGH,
 } from './deviceProfile.js';
+import {
+  convergedOn,
+  ERROR_TARGET,
+  recoveryEstimate,
+  scaleConvergence,
+  sizingFromError,
+} from './errorEstimate.js';
 import {
   buildSheetShell,
   chooseAnalysisModel,
@@ -197,137 +210,263 @@ export async function solveSolid({
   timings['loading-mesher'] = Date.now() - loadStarted;
 
   const device = profile === 'phone' ? 'phone' : 'desktop';
+  const mode = refineMode(study, device);
+  const passLimit = mode === 'auto' ? refinePassLimit(device) : 1;
+  const refineCap = refineDofCap(device, thin, solver);
+  const signature = bcSignature(study);
   const cacheKey = cache
-    ? tools.meshCacheKey({ positions, indices, faceIDs }, target, device)
+    ? tools.meshCacheKey(
+      { positions, indices, faceIDs },
+      target,
+      device,
+      mode === 'auto' ? signature : '',
+    )
     : '';
   let entry = cache ? takeCacheEntry(cache, cacheKey) : null;
   let volume = entry?.mesh?.nodes ? entry.mesh : null;
   let meshReused = false;
-  let started;
+  let started = Date.now();
+  let meshMs = 0;
+  let assembleMs = 0;
+  let solveMs = 0;
+  const tagging = mode === 'auto';
+  const progressPass = (update, pass) => {
+    progress({
+      ...update,
+      ...(tagging && !meshReused ? { refinePass: pass, refinePasses: passLimit } : {}),
+    });
+  };
+  const meshOnce = async (edgeLength, sizing, pass) => {
+    progressPass({ stage: 'meshing' }, pass);
+    await yieldTurn();
+    if (cancelled()) throw abortError();
+    const ceiling = profile === 'phone' ? PHONE_WASM_BYTES : 0;
+    const meshStarted = Date.now();
+    const mesh = await loadMesh(
+      { positions, indices, faceIds: faceIDs },
+      {
+        edgeLength,
+        epsilon: 1e-3,
+        maxTets: 0,
+        memoryCeilingBytes: ceiling,
+        sizing: sizing ? {
+          positions: sizing.positions,
+          tets: sizing.tets,
+          values: sizing.values,
+        } : undefined,
+        onProgress: (update) => progressPass({ stage: 'meshing', ...(update || {}) }, pass),
+      },
+    );
+    meshMs += Date.now() - meshStarted;
+    return mesh;
+  };
+
   if (volume) {
     meshReused = true;
     timings['loading-mesher'] = 0;
     timings.meshing = 0;
     started = Date.now();
-    progress({ stage: 'meshing', fraction: 1 });
+    progressPass({ stage: 'meshing', fraction: 1 }, 1);
   } else {
     entry = null;
     if (cache) evictCache(cache, tools.meshCacheLimit(device), tools.releaseMesh);
-    progress({ stage: 'meshing' });
-    await yieldTurn();
-    if (cancelled()) throw abortError();
-    const ceiling = profile === 'phone' ? PHONE_WASM_BYTES : 0;
     started = Date.now();
-    volume = await loadMesh(
-      { positions, indices, faceIds: faceIDs },
-      {
-        edgeLength: edge.edgeLength,
-        epsilon: 1e-3,
-        maxTets: 0,
-        memoryCeilingBytes: ceiling,
-        onProgress: (update) => progress({ stage: 'meshing', ...(update || {}) }),
-      },
-    );
-    timings.meshing = Date.now() - started;
+    volume = await meshOnce(edge.edgeLength, null, 1);
     if (cancelled()) {
       tools?.releaseMesh?.(volume);
       throw abortError();
     }
-    if (cache) entry = pushCacheEntry(cache, cacheKey, volume);
   }
-  if (typeof noteMemory === 'function') noteMemory(volume);
+
+  const yieldMPa = material && material.yield_MPa != null && Number.isFinite(Number(material.yield_MPa))
+    ? Number(material.yield_MPa)
+    : null;
+  let bcWarnings = [];
+  const solveOnce = async (mesh, pass) => {
+    progressPass({ stage: 'assembling' }, pass);
+    await yieldTurn();
+    if (cancelled()) throw abortError();
+    const assembleStarted = Date.now();
+    const bcs = boundaryConditions(mesh, study || {}, { diagonal: shape.diagonal });
+    assembleMs += Date.now() - assembleStarted;
+    bcWarnings = bcs.warnings;
+    if (!bcs.fixedNodes.length) {
+      if (!meshReused) tools?.releaseMesh?.(mesh);
+      throw new Error('Fix a face before running the study.');
+    }
+    const bcPayload = { fixedNodes: bcs.fixedNodes };
+    if (bcs.forceNodes.length) {
+      bcPayload.forceNodes = bcs.forceNodes;
+      bcPayload.forceValues = bcs.forceValues;
+    }
+    if (bcs.pressureFaces.length) {
+      bcPayload.pressureFaces = bcs.pressureFaces;
+      bcPayload.pressures = bcs.pressures;
+    }
+    progressPass({
+      stage: 'solving',
+      solver,
+      blocking: true,
+      choleskyStep: solver === 'cholesky' ? 'factor' : undefined,
+      fraction: solver === 'cholesky' ? 0.5 : undefined,
+    }, pass);
+    await yieldTurn();
+    if (cancelled()) throw abortError();
+    const solveStarted = Date.now();
+    let solvedPass;
+    try {
+      solvedPass = solveTet10(
+        { nodes: mesh.nodes, elements: mesh.elements },
+        { E_MPa: material.E_MPa, nu: material.nu, yield_MPa: yieldMPa },
+        bcPayload,
+        { solver },
+      );
+    } finally {
+      if (!solvedPass) progressPass({ stage: 'solving', solver, blocking: false }, pass);
+    }
+    solveMs += Date.now() - solveStarted;
+    const solvedStats = solvedPass && solvedPass.stats ? solvedPass.stats : {};
+    const solvedDofs = solvedStats.dofs != null ? solvedStats.dofs : mesh.stats.dofs;
+    if (solver === 'cholesky') {
+      progressPass({
+        stage: 'solving',
+        solver,
+        blocking: false,
+        choleskyStep: 'solve',
+        fraction: 1,
+        dofs: solvedDofs,
+      }, pass);
+    } else {
+      progressPass({
+        stage: 'solving',
+        solver,
+        blocking: false,
+        iteration: solvedStats.iterations,
+        residual: solvedStats.residual,
+        residual0: Number.isFinite(solvedStats.residual) ? 1 : undefined,
+        tol: 1e-8,
+        dofs: solvedDofs,
+      }, pass);
+    }
+    return solvedPass;
+  };
+
+  let solved = null;
+  let rescaled = false;
+  let rows = [];
+  let refineCount = 0;
+  let usedEdge = edge.edgeLength;
+
+  if (meshReused) {
+    progressPass({ stage: 'assembling' }, 1);
+    await yieldTurn();
+    if (cancelled()) throw abortError();
+    const assembleStarted = Date.now();
+    const reusedBcs = boundaryConditions(volume, study || {}, { diagonal: shape.diagonal });
+    assembleMs += Date.now() - assembleStarted;
+    bcWarnings = reusedBcs.warnings;
+    if (!reusedBcs.fixedNodes.length) throw new Error('Fix a face before running the study.');
+    solved = rescaleSolution(entry, material, yieldMPa, signature);
+    if (solved) {
+      rescaled = true;
+      solveMs = 0;
+      const ratio = entry.solution.E / Number(material.E_MPa);
+      rows = entry.report && entry.report.convergence && entry.report.convergence.length
+        ? scaleConvergence(entry.report.convergence, ratio)
+        : [convergenceRow(1, solved, volume, maxMagnitude(solved.displacement), entry.report ? entry.report.errEst : 0)];
+      refineCount = entry.report && entry.report.refineCount ? entry.report.refineCount : 0;
+      if (entry.report && entry.report.edgeLength > 0) usedEdge = entry.report.edgeLength;
+      progressPass({
+        stage: 'solving',
+        solver: solved.solver || solver,
+        blocking: false,
+        fraction: 1,
+        dofs: solved.stats ? solved.stats.dofs : volume.stats.dofs,
+      }, 1);
+    } else {
+      solved = await solveOnce(volume, 1);
+      const estimate = safeEstimate(volume, solved, material);
+      const row = convergenceRow(
+        ((entry.report && entry.report.convergence && entry.report.convergence.length) || 0) + 1,
+        solved,
+        volume,
+        maxMagnitude(solved.displacement),
+        estimate.errEst,
+      );
+      rows = [...((entry.report && entry.report.convergence) || []), row];
+      refineCount = entry.report && entry.report.refineCount ? entry.report.refineCount : 0;
+      if (entry.report && entry.report.edgeLength > 0) usedEdge = entry.report.edgeLength;
+    }
+  } else {
+    let sizing = null;
+    for (let pass = 1; pass <= passLimit; pass += 1) {
+      if (pass > 1) {
+        tools?.releaseMesh?.(volume);
+        volume = await meshOnce(sizing.edgeLength, sizing, pass);
+        usedEdge = sizing.edgeLength;
+        if (cancelled()) {
+          tools?.releaseMesh?.(volume);
+          throw abortError();
+        }
+      }
+      solved = await solveOnce(volume, pass);
+      if (typeof noteMemory === 'function') noteMemory(volume);
+      if (cancelled()) throw abortError();
+      const estimate = safeEstimate(volume, solved, material);
+      rows.push(convergenceRow(
+        pass,
+        solved,
+        volume,
+        maxMagnitude(solved.displacement),
+        estimate.errEst,
+      ));
+      if (mode !== 'auto' || pass === passLimit) break;
+      // The first pass can still be locally coarse when the energy norm is
+      // already under the target, so allow one remesh. After that, a global
+      // error under the target stops the loop before a corner singularity
+      // is chased. A settled p95 stops at any pass.
+      if (convergedOn(rows)) break;
+      if (pass > 1 && estimate.errEst <= ERROR_TARGET) break;
+      sizing = sizingFromError({
+        nodes: volume.nodes,
+        elements: volume.elements,
+        elementError: estimate.elementError,
+        baseEdge: usedEdge,
+        cap: refineCap,
+      });
+      if (!sizing.canRefine) break;
+    }
+    refineCount = Math.max(0, rows.length - 1);
+  }
+
   if (Number.isFinite(cap) && volume.stats.dofs > cap * 1.25) {
     warnings.push({
       code: 'dof-cap',
       msg: `The mesh has ${volume.stats.dofs} degrees of freedom, above the phone cap of ${cap}.`,
     });
   }
+  warnings.push(...bcWarnings);
 
-  progress({ stage: 'assembling' });
-  await yieldTurn();
-  if (cancelled()) throw abortError();
-  const assembleStarted = Date.now();
-  const bcs = boundaryConditions(volume, study || {}, { diagonal: shape.diagonal });
-  timings.assembling = Date.now() - assembleStarted;
-  warnings.push(...bcs.warnings);
-  if (!bcs.fixedNodes.length) {
-    throw new Error('Fix a face before running the study.');
-  }
-  const bcPayload = { fixedNodes: bcs.fixedNodes };
-  if (bcs.forceNodes.length) {
-    bcPayload.forceNodes = bcs.forceNodes;
-    bcPayload.forceValues = bcs.forceValues;
-  }
-  if (bcs.pressureFaces.length) {
-    bcPayload.pressureFaces = bcs.pressureFaces;
-    bcPayload.pressures = bcs.pressures;
-  }
-  const yieldMPa = material && material.yield_MPa != null && Number.isFinite(Number(material.yield_MPa))
-    ? Number(material.yield_MPa)
-    : null;
-  const signature = bcSignature(study);
-  let solved = rescaleSolution(entry, material, yieldMPa, signature);
-  let rescaled = !!solved;
-  if (!solved) {
-    progress({
-      stage: 'solving',
-      solver,
-      blocking: true,
-      choleskyStep: solver === 'cholesky' ? 'factor' : undefined,
-      fraction: solver === 'cholesky' ? 0.5 : undefined,
-    });
-    await yieldTurn();
-    if (cancelled()) throw abortError();
-    const solveStarted = Date.now();
-    try {
-      solved = solveTet10(
-        { nodes: volume.nodes, elements: volume.elements },
-        { E_MPa: material.E_MPa, nu: material.nu, yield_MPa: yieldMPa },
-        bcPayload,
-        { solver },
-      );
-    } finally {
-      if (!solved) progress({ stage: 'solving', solver, blocking: false });
+  const converged = convergedOn(rows);
+  const errEst = rows.length ? rows[rows.length - 1].errEst : 0;
+  if (cache && volume) {
+    if (!entry) entry = pushCacheEntry(cache, cacheKey, volume);
+    if (!rescaled) {
+      rememberSolution(entry, material, signature, solved, linearLoads(study));
+      entry.report = {
+        convergence: rows.map((row) => ({ ...row })),
+        converged,
+        refineCount,
+        errEst,
+        edgeLength: usedEdge,
+      };
     }
-    timings.solving = Date.now() - solveStarted;
-  } else {
-    timings.solving = 0;
-    progress({
-      stage: 'solving',
-      solver: solved.solver || solver,
-      blocking: false,
-      fraction: 1,
-      dofs: solved.stats ? solved.stats.dofs : volume.stats.dofs,
-    });
   }
+
   const solvedStats = solved && solved.stats ? solved.stats : {};
   const solvedDofs = solvedStats.dofs != null ? solvedStats.dofs : volume.stats.dofs;
-  if (solver === 'cholesky') {
-    progress({
-      stage: 'solving',
-      solver,
-      blocking: false,
-      choleskyStep: 'solve',
-      fraction: 1,
-      dofs: solvedDofs,
-    });
-  } else {
-    progress({
-      stage: 'solving',
-      solver,
-      blocking: false,
-      iteration: solvedStats.iterations,
-      residual: solvedStats.residual,
-      residual0: Number.isFinite(solvedStats.residual) ? 1 : undefined,
-      tol: 1e-8,
-      dofs: solvedDofs,
-    });
-  }
   if (typeof noteMemory === 'function') noteMemory(volume);
-  if (cancelled()) throw abortError();
-  if (entry && !rescaled) rememberSolution(entry, material, signature, solved, linearLoads(study));
-
-  progress({ stage: 'post-processing', fraction: 0.9, dofs: solvedDofs });
+  progressPass({ stage: 'post-processing', fraction: 0.9, dofs: solvedDofs }, rows.length || 1);
   const postStarted = Date.now();
   const tetField = Float64Array.from(solved.nodal);
   const nodal = sampleSurfaceStress(positions, indices, faceIDs, volume, tetField);
@@ -352,7 +491,7 @@ export async function solveSolid({
     if (warning.code === 'missing-yield' || warning.code === 'zero-stress') warnings.push(warning);
   }
   timings['post-processing'] = Date.now() - postStarted;
-  progress({ stage: 'post-processing', fraction: 1, dofs: solvedDofs });
+  progressPass({ stage: 'post-processing', fraction: 1, dofs: solvedDofs }, rows.length || 1);
 
   const elapsed = Date.now() - started;
   return {
@@ -372,14 +511,19 @@ export async function solveSolid({
     solver: solved.solver || solver,
     meshReused,
     rescaled,
+    errEst,
+    convergence: rows,
+    converged,
+    refineCount,
     // Loading the worker is timed on the main thread. These four are the
     // worker's own clocks. A reused mesh reports meshing as zero; the
-    // timing line says "Mesh reused" from meshReused.
+    // timing line says "Mesh reused" from meshReused. Refine passes add
+    // into meshing, assembling, and solving.
     stageTimings: {
       ...(meshReused ? { 'loading-mesher': 0 } : {}),
-      meshing: timings.meshing,
-      assembling: timings.assembling,
-      solving: timings.solving,
+      meshing: meshReused ? 0 : meshMs,
+      assembling: assembleMs,
+      solving: solveMs,
       'post-processing': timings['post-processing'],
     },
     thin,
@@ -388,17 +532,56 @@ export async function solveSolid({
       dofs: solved.stats ? solved.stats.dofs : volume.stats.dofs,
       freeDofs: solved.stats ? solved.stats.freeDofs : 0,
       ms: elapsed,
-      meshMs: meshReused ? 0 : volume.stats.ms,
-      solveMs: rescaled ? 0 : (solved.stats ? solved.stats.solveMs : 0),
+      meshMs: meshReused ? 0 : meshMs,
+      solveMs: rescaled ? 0 : solveMs,
       vertices: positions.length / 3,
       triangles: indices.length / 3,
       elements: volume.stats.elements,
-      edgeLength: edge.edgeLength,
+      edgeLength: usedEdge,
       peakMemoryBytes: typeof peakMemory === 'function'
         ? peakMemory()
         : peakBytes(memory, volume),
       wasmMemoryMaxBytes: profile === 'phone' ? PHONE_WASM_BYTES : null,
     },
+  };
+}
+
+function maxMagnitude(displacement) {
+  if (!displacement || displacement.length < 3) return null;
+  let max = 0;
+  for (let i = 0; i < displacement.length; i += 3) {
+    const value = Math.hypot(displacement[i] || 0, displacement[i + 1] || 0, displacement[i + 2] || 0);
+    if (value > max) max = value;
+  }
+  return max;
+}
+
+function safeEstimate(volume, solved, material) {
+  try {
+    if (!volume || !solved || !solved.displacement) {
+      return { errEst: 0, elementError: new Float64Array(0), elementVolume: new Float64Array(0) };
+    }
+    return recoveryEstimate({
+      nodes: volume.nodes,
+      elements: volume.elements,
+      displacement: solved.displacement,
+      material,
+    });
+  } catch {
+    return { errEst: 0, elementError: new Float64Array(0), elementVolume: new Float64Array(0) };
+  }
+}
+
+function convergenceRow(pass, solved, volume, umax, errEst) {
+  const stats = solved && solved.stats ? solved.stats : {};
+  const dof = stats.dofs != null ? stats.dofs : (volume && volume.stats ? volume.stats.dofs : 0);
+  return {
+    pass,
+    dof,
+    p95: asNumber(solved && solved.p95) ?? 0,
+    max: asNumber(solved && solved.max) ?? 0,
+    umax,
+    errEst: Number.isFinite(errEst) ? errEst : 0,
   };
 }
 

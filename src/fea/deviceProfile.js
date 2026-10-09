@@ -154,6 +154,32 @@ export function shellDofCap(profile) {
   return PHONE_DOF_CAPS.shell;
 }
 
+/**
+ * Practical desktop ceiling for an adaptive remesh. The product cap is
+ * memory, which is too loose for a bracket that would otherwise chase a
+ * singularity for three passes. Thin parts stay on the thin-wall budget.
+ */
+export const DESKTOP_REFINE_DOF_CAP = 200_000;
+
+/** Explicit `mesh.refine` wins. Omitted studies follow the device. */
+export function refineMode(study, profile) {
+  const stored = study && study.mesh ? study.mesh.refine : undefined;
+  if (stored === 'off' || stored === 'auto') return stored;
+  return profile === 'phone' ? 'off' : 'auto';
+}
+
+/** Phone does two passes, desktop three, until Artur benches the phone path. */
+export function refinePassLimit(profile) {
+  return profile === 'phone' ? 2 : 3;
+}
+
+/** DOF ceiling for the sizing field. Phone uses the solve cap. */
+export function refineDofCap(profile, thin, solver) {
+  if (profile === 'phone') return dofCap('phone', thin, solver);
+  if (thin) return THIN_WALL_DOF_BUDGET;
+  return DESKTOP_REFINE_DOF_CAP;
+}
+
 /** Study mesh target, or fTetWild's default of 1/20 of the bbox diagonal. */
 export function preferredEdgeLength(diagonal, target) {
   if (typeof target === 'number' && Number.isFinite(target) && target > 0) return target;

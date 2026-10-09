@@ -29,6 +29,7 @@ import {
   studyWithCustomMaterial,
   studyWithLoadVector,
   studyWithMaterialId,
+  studyWithRefine,
   studyWithoutFixture,
   studyWithoutLoad,
 } from './studyPanel.js';
@@ -79,7 +80,7 @@ export function useFeaStudy({
   onClaim,
 }) {
   const [open, setOpen] = useState(false);
-  const studyRef = useRef(freshStudy());
+  const studyRef = useRef(freshStudy(detectFeaProfile()));
   const [study, setStudy] = useState(studyRef.current);
   const [draft, setDraft] = useState(emptyDraft);
   const [result, setResult] = useState(null);
@@ -284,7 +285,7 @@ export function useFeaStudy({
     if (!enabled) return;
     onClaimRef.current?.();
     const text = typeof getScriptRef.current === 'function' ? (getScriptRef.current() || '') : '';
-    const read = readFeaStudy(text) || freshStudy();
+    const read = readFeaStudy(text) || freshStudy(detectFeaProfile());
     writtenRef.current = text.includes('// @fea-study ') ? text : null;
     studyRef.current = read;
     setStudy(read);
@@ -377,6 +378,12 @@ export function useFeaStudy({
   const setTarget = useCallback((target) => {
     setDraft((prev) => ({ ...prev, target }));
   }, []);
+
+  const setRefine = useCallback((refine) => {
+    const next = studyWithRefine(studyRef.current, refine);
+    if (next.ok) commitStudy(next.study);
+    else setNotice(next.errors[0] || 'Could not set refine');
+  }, [commitStudy]);
 
   const setMagnitude = useCallback((magnitudeN) => {
     setDraft((prev) => ({ ...prev, magnitudeN: Number(magnitudeN) }));
@@ -540,6 +547,8 @@ export function useFeaStudy({
         stageTimings: solved?.stageTimings || null,
         meshReused: solved?.meshReused === true,
         source: solved?.source || '',
+        refineCount: solved?.refineCount || 0,
+        converged: solved?.converged === true,
       }));
     } catch (err) {
       if (err?.outcome === 'worker-died') {
@@ -737,6 +746,10 @@ export function useFeaStudy({
     setCustomMode,
     setCustomField,
     setTarget,
+    refine: study?.mesh?.refine === 'off' || study?.mesh?.refine === 'auto'
+      ? study.mesh.refine
+      : (detectFeaProfile() === 'phone' ? 'off' : 'auto'),
+    setRefine,
     setMagnitude,
     setDirection,
     setPressure,

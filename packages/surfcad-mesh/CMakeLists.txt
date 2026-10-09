@@ -101,7 +101,7 @@ if(EMSCRIPTEN)
         "-sMODULARIZE=1"
         "-sEXPORT_ES6=1"
         "-sEXPORT_NAME=createSurfcadMesh"
-        "-sEXPORTED_FUNCTIONS=_surfcad_mesh_tet4,_surfcad_mesh_free,_malloc,_free"
+        "-sEXPORTED_FUNCTIONS=_surfcad_mesh_tet4,_surfcad_mesh_tet4_sized,_surfcad_mesh_free,_malloc,_free"
         "-sEXPORTED_RUNTIME_METHODS=getValue,UTF8ToString,HEAPU8,HEAPF64,HEAPU32"
         "-sFILESYSTEM=0"
         "-sNO_EXIT_RUNTIME=1"

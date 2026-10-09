@@ -9,7 +9,7 @@ let part = sheetMetalSolid(sheetSpec);
 // --- sheet-metal end ---
 return part;
 // --- fea-study begin ---
-// @fea-study {"v":1,"id":"s1","name":"Static 1","type":"linear-static","units":{"length":"mm","force":"N","stress":"MPa","note":"Length is mm, force is N, and stress, pressure, modulus, and yield are MPa. Face area is mm^2 and the face point at is mm."},"material":{"id":"al-6061-t6"},"model":"auto","fixtures":[{"kind":"fixed","faces":[{"faceID":1,"at":[74.89500045776367,38.994998931884766,0],"n":[0,1,0],"area":1692.0002746582031}]}],"loads":[{"kind":"force","faces":[{"faceID":8,"at":[-74.89500045776367,38.994998931884766,0],"n":[0,1,0],"area":1692.0002746582031}],"vector":[0,200,0]}],"mesh":{"target":"auto"},"result":null}
+// @fea-study {"v":1,"id":"s1","name":"Static 1","type":"linear-static","units":{"length":"mm","force":"N","stress":"MPa","note":"Length is mm, force is N, and stress, pressure, modulus, and yield are MPa. Face area is mm^2 and the face point at is mm."},"material":{"id":"al-6061-t6"},"model":"auto","fixtures":[{"kind":"fixed","faces":[{"faceID":1,"at":[74.89500045776367,38.994998931884766,0],"n":[0,1,0],"area":1692.0002746582031}]}],"loads":[{"kind":"force","faces":[{"faceID":8,"at":[-74.89500045776367,38.994998931884766,0],"n":[0,1,0],"area":1692.0002746582031}],"vector":[0,200,0]}],"mesh":{"target":"auto","refine":"off"},"result":null}
 // --- fea-study end ---
 `;
 
