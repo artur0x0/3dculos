@@ -488,7 +488,35 @@ function heatChanged(before, after) {
     || Math.abs(before.rightHeat - after.rightHeat) > 15;
 }
 
+const FEA_SHELL = '[data-fea-sheet="1"]';
+
+async function assertFeaSheet(page, vp, text) {
+  await page.waitForFunction((touch) => {
+    const el = document.querySelector('[data-fea-sheet="1"]');
+    return !!el && el.getAttribute('data-feature-card-compact') === (touch ? '1' : '0');
+  }, vp.touch, { timeout: 8000 });
+  const chrome = await page.locator(FEA_SHELL).evaluate((el) => ({
+    text: (el.innerText || '').replace(/\s+/g, ' ').trim(),
+    featureCard: el.hasAttribute('data-feature-card'),
+    top14: /(^|\s)top-14(\s|$)/.test(el.className),
+    compact: el.getAttribute('data-feature-card-compact') || '',
+    confirm: el.querySelector('[data-feature-card-confirm]') ? 'yes' : 'no',
+  }));
+  check(
+    `${vp.name} sheet keyed by data-fea-sheet and “${text}”`,
+    chrome.featureCard && !chrome.top14 && chrome.text.includes(text),
+    JSON.stringify(chrome),
+  );
+  check(
+    `${vp.name} card size`,
+    chrome.compact === (vp.touch ? '1' : '0'),
+    chrome.compact,
+  );
+  check(`${vp.name} footer is not Confirm`, chrome.confirm === 'no', chrome.confirm);
+}
+
 async function assertResultsPlots(page, vp, shell, sample) {
+  await assertFeaSheet(page, vp, 'Back to Setup');
   const view = await page.locator(shell).getAttribute('data-fea-view');
   check(`${vp.name} results view`, view === 'results', view || '');
   check(`${vp.name} setup hidden`, await page.locator(`${shell} [data-fea-material]`).count() === 0);
@@ -580,8 +608,9 @@ async function runCase(browser, vp) {
   );
 
   await page.locator('[data-analyze-chip]').click();
-  const shell = vp.touch ? '[data-fea-sheet="1"]' : '[data-fea-mode="1"]';
+  const shell = FEA_SHELL;
   await page.locator(shell).waitFor({ timeout: 8000 });
+  await assertFeaSheet(page, vp, 'Run');
   await page.locator('[data-fea-material]').selectOption('pla-ultimaker');
   await solidReady(page);
   check(`${vp.name} left snap`, await snap(page, 'left', END_SNAP_MARGIN));
@@ -719,7 +748,7 @@ async function runCase(browser, vp) {
   );
   check(`${vp.name} analyze still open`, await page.locator(shell).count() === 1);
 
-  await page.locator('[data-fea-dismiss]').click();
+  await page.locator(`${shell} [data-feature-card-cancel]`).click();
   await page.locator(shell).waitFor({ state: 'detached', timeout: 8000 });
   await page.waitForTimeout(300);
   const closed = await readColors(page);

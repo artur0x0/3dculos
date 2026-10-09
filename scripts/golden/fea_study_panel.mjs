@@ -497,6 +497,40 @@ function noticeOf(page) {
   return page.locator('[data-fea-notice]').textContent().catch(() => '');
 }
 
+const FEA_SHELL = '[data-fea-sheet="1"]';
+
+async function assertFeaSheet(page, vp, text) {
+  await page.waitForFunction((touch) => {
+    const el = document.querySelector('[data-fea-sheet="1"]');
+    return !!el && el.getAttribute('data-feature-card-compact') === (touch ? '1' : '0');
+  }, vp.touch, { timeout: 8000 });
+  const chrome = await page.locator(FEA_SHELL).evaluate((el) => ({
+    text: (el.innerText || '').replace(/\s+/g, ' ').trim(),
+    featureCard: el.hasAttribute('data-feature-card'),
+    top14: /(^|\s)top-14(\s|$)/.test(el.className),
+    compact: el.getAttribute('data-feature-card-compact') || '',
+    confirm: el.querySelector('[data-feature-card-confirm]') ? 'yes' : 'no',
+  }));
+  check(
+    `${vp.name} sheet keyed by data-fea-sheet and “${text}”`,
+    chrome.featureCard && !chrome.top14 && chrome.text.includes(text),
+    JSON.stringify(chrome),
+  );
+  check(
+    `${vp.name} card size`,
+    chrome.compact === (vp.touch ? '1' : '0'),
+    chrome.compact,
+  );
+  check(`${vp.name} footer is not Confirm`, chrome.confirm === 'no', chrome.confirm);
+  if (vp.touch) {
+    const display = await page.evaluate(() => {
+      const el = document.querySelector('[data-mobile-stage-home-indicator]');
+      return el ? window.getComputedStyle(el).display : 'missing';
+    });
+    check(`${vp.name} stage switcher hidden`, display === 'none', display);
+  }
+}
+
 function heatChanged(before, after) {
   if (!before || !after || before.model < 10 || after.model < 10) return false;
   return Math.abs(before.leftHeat - after.leftHeat) > 15
@@ -504,6 +538,7 @@ function heatChanged(before, after) {
 }
 
 async function assertResultsPlots(page, vp, shell) {
+  await assertFeaSheet(page, vp, 'Back to Setup');
   const view = await page.locator(shell).getAttribute('data-fea-view');
   check(`${vp.name} results view`, view === 'results', view || '');
   check(`${vp.name} setup hidden`, await page.locator(`${shell} [data-fea-material]`).count() === 0);
@@ -601,8 +636,9 @@ async function runCase(browser, vp) {
 
   check(`${vp.name} front snap`, await snap(page, 'front'));
   await page.locator('[data-analyze-chip]').click();
-  const shell = vp.touch ? '[data-fea-sheet="1"]' : '[data-fea-mode="1"]';
+  const shell = FEA_SHELL;
   await page.locator(shell).waitFor({ timeout: 8000 });
+  await assertFeaSheet(page, vp, 'Run');
   check(`${vp.name} analyze open`, true);
   check(
     `${vp.name} paint stays closed`,
@@ -634,6 +670,12 @@ async function runCase(browser, vp) {
   const loaded = await tapUntil(page, vp.touch, tip, 'data-fea-load-count', '1');
   check(`${vp.name} force on a face`, loaded.ok, JSON.stringify(loaded));
   check(`${vp.name} front snap after picks`, await snap(page, 'front'));
+
+  const setupShot = join(SHOT_DIR, vp.touch ? 'fea-card-setup-390.png' : 'fea-card-setup-desktop.png');
+  check(`${vp.name} setup shot dir`, !setupShot.startsWith('/opt/cursor/artifacts'), setupShot);
+  await page.screenshot({ path: setupShot });
+  check(`${vp.name} setup shot saved`, existsSync(setupShot), setupShot);
+  console.log(`  shot ${setupShot}`);
 
   await page.locator('[data-fea-run]').click();
   const bar = page.locator(`${shell} [data-fea-progress-bar]`);
@@ -846,9 +888,10 @@ async function runSheetCase(browser, vp) {
   await page.waitForSelector('canvas', { timeout: 40000 });
   await solidReady(page);
 
-  const shell = vp.touch ? '[data-fea-sheet="1"]' : '[data-fea-mode="1"]';
+  const shell = FEA_SHELL;
   await page.locator('[data-analyze-chip]').click();
   await page.locator(shell).waitFor({ timeout: 8000 });
+  await assertFeaSheet(page, vp, 'Run');
   const seeded = await page.evaluate(() => ({
     material: document.querySelector('[data-fea-material]')?.value || '',
     fixtures: document.querySelector('[data-fea-fixture-count]')?.getAttribute('data-fea-fixture-count') || '',

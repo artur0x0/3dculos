@@ -960,6 +960,7 @@ const Viewport = forwardRef(({
   const [feaActive, setFeaActive] = useState(false);
   const feaPickRef = useRef(null);
   const feaToggleRef = useRef(() => {});
+  const feaCloseRef = useRef(() => {});
   const exitPaintModeRef = useRef(() => {});
   const applyLivePaintTapRef = useRef(() => {});
   /** SCS sheet metal: picker popup (S1) + mode state (stage, sku, partId). */
@@ -1270,6 +1271,7 @@ const Viewport = forwardRef(({
         ? String(sheetMetalMode.draft.kind)
         : (sheetMetalMode?.stage || 'edit');
   const paintSheetOpen = mode !== 'game' && !!paintMode;
+  const feaSheetOpen = mode !== 'game' && feaActive;
   const featureEditRequested = mode !== 'game'
     && !!featureEdit
     && (featureEdit.mode === 'edit' || featureEdit.mode === 'picker');
@@ -1303,6 +1305,7 @@ const Viewport = forwardRef(({
     && !sheetMetalMode
     && !sheetMetalPicker
     && !paintMode
+    && !feaActive
     && selectedEdges.length > 0;
   const featureCardKind = filletSheetOpen
     ? 'fillet'
@@ -1326,7 +1329,9 @@ const Viewport = forwardRef(({
                       ? `sheetMetal:${sheetMetalCardKey}`
                       : paintSheetOpen
                         ? 'paint'
-                        : helperSheetOpen
+                        : feaSheetOpen
+                          ? 'fea'
+                          : helperSheetOpen
                           ? 'helper'
                           : editSheetOpen
                             ? `edit:${featureEdit.mode}:${featureEdit.feature?.id || 'picker'}`
@@ -1431,8 +1436,15 @@ const Viewport = forwardRef(({
   ]);
 
   useEffect(() => {
-    if (mode === 'game') exitPaintModeRef.current();
+    if (mode === 'game') {
+      exitPaintModeRef.current();
+      feaCloseRef.current();
+    }
   }, [mode]);
+
+  useEffect(() => {
+    if (helperCardOpen && feaActive) feaCloseRef.current();
+  }, [helperCardOpen, feaActive]);
 
   useEffect(() => {
     if (!paintMode) return undefined;
@@ -2708,6 +2720,7 @@ const Viewport = forwardRef(({
   }, [clearXsPreview, clearWorkplaneOverlay, clearPolylineDraft, clearExtrudePreview, clearRevolvePreview, clearLoftPreview, clearSweepPreview, applyContourPartGhost, clearSavedContourGhosts]);
 
   const enterContourMode = useCallback(({ entry } = {}) => {
+    feaCloseRef.current();
     exitPaintModeRef.current();
     exitSheetMetalChromeRef.current();
     setFilletMode(null);
@@ -2874,6 +2887,7 @@ const Viewport = forwardRef(({
   }, [clearFilletBlendPreview, clearEdgeHover, clearEdgeHighlight]);
 
   const enterFilletMode = useCallback((opts = {}) => {
+    feaCloseRef.current();
     exitPaintModeRef.current();
     exitSheetMetalChromeRef.current();
     const entry = opts?.entry === 'chamferEdges' ? 'chamferEdges' : 'filletEdges';
@@ -3079,6 +3093,7 @@ const Viewport = forwardRef(({
   }, []);
 
   const enterShellMode = useCallback(() => {
+    feaCloseRef.current();
     exitPaintModeRef.current();
     exitSheetMetalChromeRef.current();
     exitContourMode();
@@ -3129,6 +3144,7 @@ const Viewport = forwardRef(({
 
   const enterPaintMode = useCallback(() => {
     if (mode === 'game') return;
+    feaCloseRef.current();
     exitContourMode();
     setFilletMode(null);
     filletModeRef.current = null;
@@ -4123,6 +4139,7 @@ const Viewport = forwardRef(({
   }, [clearHighlight]);
 
   const enterDraftMode = useCallback(() => {
+    feaCloseRef.current();
     exitPaintModeRef.current();
     exitSheetMetalChromeRef.current();
     exitContourMode();
@@ -4444,6 +4461,7 @@ const Viewport = forwardRef(({
   }, [paintCutPicks, syncCutPlaneWidget]);
 
   const enterCutMode = useCallback(() => {
+    feaCloseRef.current();
     exitPaintModeRef.current();
     exitSheetMetalChromeRef.current();
     exitContourMode();
@@ -4773,6 +4791,7 @@ const Viewport = forwardRef(({
   }, [paintBooleanPicks]);
 
   const enterBooleanMode = useCallback(() => {
+    feaCloseRef.current();
     exitPaintModeRef.current();
     exitSheetMetalChromeRef.current();
     exitContourMode();
@@ -4907,6 +4926,7 @@ const Viewport = forwardRef(({
   }, [clearHighlight, clearMovePreview]);
 
   const enterMoveMode = useCallback(() => {
+    feaCloseRef.current();
     exitPaintModeRef.current();
     exitSheetMetalChromeRef.current();
     exitContourMode();
@@ -5282,6 +5302,7 @@ const Viewport = forwardRef(({
   }, [paintMoveFacePicks]);
 
   const enterMoveFaceMode = useCallback(() => {
+    feaCloseRef.current();
     exitPaintModeRef.current();
     exitSheetMetalChromeRef.current();
     exitContourMode();
@@ -5415,7 +5436,7 @@ const Viewport = forwardRef(({
     exitSheetMetalChromeRef.current();
     if (paintModeRef.current) exitPaintModeRef.current();
     if (helperCardOpenRef.current) setHelperCardOpen(false);
-    if (feaActive) feaToggleRef.current?.();
+    if (feaActive) feaCloseRef.current();
     clearEdgeHover();
     clearEdgeHighlight();
     setSelectedEdges([]);
@@ -5432,6 +5453,7 @@ const Viewport = forwardRef(({
   }, [paintDeleteFacePicks]);
 
   const enterDeleteFaceMode = useCallback(() => {
+    feaCloseRef.current();
     exitPaintModeRef.current();
     exitSheetMetalChromeRef.current();
     exitContourMode();
@@ -7896,6 +7918,7 @@ const Viewport = forwardRef(({
           if (deleteFaceModeRef.current) exitDeleteFaceMode();
           if (paintModeRef.current) exitPaintModeRef.current();
           if (helperCardOpenRef.current) setHelperCardOpen(false);
+          if (feaActive) feaCloseRef.current();
           setSheetMetalPicker(null);
           if (next) setSheetMetalMode(next);
         } else if (dialog.dialog === 'shell') {
@@ -8661,7 +8684,10 @@ const Viewport = forwardRef(({
           onEnterMoveFaceMode={enterMoveFaceMode}
           onEnterDeleteFaceMode={enterDeleteFaceMode}
           onOpenSheetMetal={mode !== 'game' && onBindSheetMetal
-            ? () => setSheetMetalPicker({ willCreatePart: getSheetMetalReady ? !getSheetMetalReady() : false })
+            ? () => {
+              feaCloseRef.current();
+              setSheetMetalPicker({ willCreatePart: getSheetMetalReady ? !getSheetMetalReady() : false });
+            }
             : null}
           compact={isMobile}
           onHelperCard={setHelperCardOpen}
@@ -8783,6 +8809,7 @@ const Viewport = forwardRef(({
           onAnalyzeToggle={() => feaToggleRef.current?.()}
           onPickModeChange={(mode) => {
             const next = mode === 'edge' ? 'edge' : 'face';
+            if (next === 'edge') feaCloseRef.current();
             setPickMode(next);
             if (next === 'edge') {
               clearHighlight();
@@ -9090,6 +9117,7 @@ const Viewport = forwardRef(({
         onActive={setFeaActive}
         pickRef={feaPickRef}
         toggleRef={feaToggleRef}
+        closeRef={feaCloseRef}
       />
 
       {/* Paint on the shared card. Game mounts no card. */}
@@ -9293,7 +9321,7 @@ const Viewport = forwardRef(({
 
       {/* Standalone edge pick — same card, no Confirm. X clears and leaves edge pick.
           Hidden in fillet, contour, and game. Numbered badges stay on the edges. */}
-      {mode !== 'game' && !helperCardOpen && pickMode === 'edge' && !contourMode && !filletMode && !shellMode && !draftMode && !moveFaceMode && !deleteFaceMode && !cutMode && !booleanMode && !moveMode && !sheetMetalMode && !sheetMetalPicker && !editSheetOpen && !paintMode && selectedEdges.length > 0 && (
+      {mode !== 'game' && !helperCardOpen && pickMode === 'edge' && !contourMode && !filletMode && !shellMode && !draftMode && !moveFaceMode && !deleteFaceMode && !cutMode && !booleanMode && !moveMode && !sheetMetalMode && !sheetMetalPicker && !feaActive && !editSheetOpen && !paintMode && selectedEdges.length > 0 && (
         <FeatureSheet
           cardAttrs={{ 'data-edge-selector': 'standalone' }}
           title={`Edge pick · ${selectedEdges.length} selected`}

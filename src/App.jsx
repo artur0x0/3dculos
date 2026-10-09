@@ -11,7 +11,6 @@ import { failedPartIdsFor } from './utils/failedPartOutline';
 import { bodyCountOfWorkerMesh } from './utils/meshBodyComponents';
 import ErrorPopup from './components/ErrorPopup';
 import AssemblyOpenSpinner, { AssemblyOpenFailureToast } from './components/AssemblyOpenSpinner';
-import { FeaStudySheetGate } from './components/fea/FeaStudyHost';
 import { landingMobileStage, linkedMobileStage } from './utils/mobileStage';
 import {
   writeFeatureSheetParams,
@@ -6933,8 +6932,6 @@ const App = () => {
               >
                 {partFeed}
               </div>
-
-              <FeaStudySheetGate mobile />
 
               {/* Bottom home-indicator stage pill. A feature card hides it
                   (index.css :has([data-feature-card])) and docks to this edge. */}

@@ -71,6 +71,11 @@ over inventing a new modal layout.
   A double click does not select the body. Confirm writes one `moveFace()` and
   replaces a previous Move Face block; X exits with no write. Live preview
   while the distance changes. This is not the body `move()` helper. Hidden in game.
+- **`FeaStudyChip.jsx` / `FeaStudySheet.jsx`** — the shared feature card (`FeatureSheet`)
+  on phone and desktop. Material, Fix / Force / Pressure, the load list, and the
+  preview sliders stay in the body during setup. The legend and the Stress /
+  Displacement tabs stay in the footer. The footer is Run, or Back to Setup
+  after a solve. It does not say Confirm. X and Esc close Analyze. Hidden in game.
 - **`PaintModeChip.jsx`** — the shared feature card (`FeatureSheet`). Eight swatches,
   a custom hex, Part, Undo, and Clear stay in the body. The color preview
   stays in the note. A tap paints the face immediately. Confirm writes the

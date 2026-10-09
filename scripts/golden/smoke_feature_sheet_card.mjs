@@ -3,7 +3,7 @@
  * Feature card: shared shell, contour pilot, fillet / chamfer / edge card,
  * shell / draft / move face / delete face, cut / boolean / move,
  * helper sheets (cube, round box, cylinder, sphere, tube, hex, hole,
- * mirror, center, align, array, path, refuse), paint,
+ * mirror, center, align, array, path, refuse), paint, Analyze,
  * keyboard, camera pose.
  *
  * Screenshots go to GOLDEN_SHOT_DIR or os.tmpdir(), never the artifacts dir.
@@ -176,6 +176,28 @@ console.log('feature sheet card — source');
     && /paintSheetOpen/.test(view)
     && /paintSheetOpen\s*\n\s*\? 'paint'/.test(view)
     && /!paintMode && selectedEdges/.test(view));
+  const feaChip = read('src/components/fea/FeaStudyChip.jsx');
+  const feaSheet = read('src/components/fea/FeaStudySheet.jsx');
+  const feaHost = read('src/components/fea/FeaStudyHost.jsx');
+  check('analyze uses the shell on phone and desktop; the footer is Run or Back to Setup; game mounts no card',
+    /<FeatureSheet\b/.test(feaChip)
+    && /<FeatureSheet\b/.test(feaSheet)
+    && /onCancel=\{\(\) => panel\.close/.test(feaChip)
+    && /onCancel=\{\(\) => panel\.close/.test(feaSheet)
+    && !/onConfirm/.test(feaChip)
+    && !/onConfirm/.test(feaSheet)
+    && !/top-14/.test(feaSheet)
+    && !/top-14/.test(feaChip)
+    && /data-fea-sheet/.test(feaChip)
+    && /data-fea-sheet/.test(feaSheet)
+    && /footer=\{<FeaRunBar/.test(feaChip)
+    && /footer=\{<FeaRunBar/.test(feaSheet)
+    && /if \(compact\) return <FeaStudySheet/.test(feaHost)
+    && /return <FeaStudyChip/.test(feaHost)
+    && /enabled=\{mode !== 'game'\}/.test(view)
+    && /feaSheetOpen/.test(view)
+    && /feaSheetOpen\s*\n\s*\? 'fea'/.test(view)
+    && /Analyze uses it too/.test(arch));
   check('helper sheets use the card in CAD; game keeps the old sheet and does not slide',
     /<FeatureSheet\b/.test(helper)
     && /useCard/.test(helper)
