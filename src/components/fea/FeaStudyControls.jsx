@@ -187,27 +187,38 @@ function showLegend(panel) {
   return true;
 }
 
+/** Results readout. Scrolls in the card body so Stage times cannot cover Back to Setup. */
+export function FeaResultsReadout({ panel }) {
+  if (panel.results !== true) return null;
+  const plot = activePlot(panel.plot);
+  return (
+    <div className="mt-1.5 flex flex-col gap-1 font-sans">
+      <FeaTabs
+        options={PLOT_TABS}
+        value={plot}
+        onChange={panel.setPlot}
+        groupAttr="data-fea-plots"
+        itemAttr="data-fea-plot"
+      />
+      {showLegend(panel) && (
+        <FeaLegend result={panel.result} preview={panel.preview} plot={plot} />
+      )}
+      {!panel.running && <FeaTiming report={panel.runReport} />}
+    </div>
+  );
+}
+
 export function FeaRunBar({ panel }) {
   const report = panel.runReport;
   const results = panel.results === true;
   const stage = panel.running ? (report?.stageLabel || STAGE_LABEL[panel.progress] || 'Running') : 'Run';
-  const plot = activePlot(panel.plot);
   return (
     <div className="mt-1 flex shrink-0 flex-col gap-1">
-      {results && (
-        <FeaTabs
-          options={PLOT_TABS}
-          value={plot}
-          onChange={panel.setPlot}
-          groupAttr="data-fea-plots"
-          itemAttr="data-fea-plot"
-        />
-      )}
-      {showLegend(panel) && (
-        <FeaLegend result={panel.result} preview={panel.preview} plot={results ? plot : 'stress'} />
+      {!results && showLegend(panel) && (
+        <FeaLegend result={panel.result} preview={panel.preview} plot="stress" />
       )}
       {panel.running && report?.status === 'running' && <FeaProgressBar report={report} />}
-      {!panel.running && <FeaTiming report={report} />}
+      {!results && !panel.running && <FeaTiming report={report} />}
       <div className="flex items-center justify-end gap-2">
       {panel.running && (
         <button

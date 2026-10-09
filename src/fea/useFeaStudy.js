@@ -1,11 +1,11 @@
 /**
  * Analyze session. Owns the open study, writes it through studyScript,
  * and runs feaClient.solve(). The desktop chip and the phone sheet both
- * read the published snapshot. This module does not post a Manifold build
+ * read the panel this hook returns. This module does not post a Manifold build
  * and does not call preemptInflight.
  */
 
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { fingerprintsFromGeometry, paintPickFromClick } from '../utils/facePaint.js';
 import { boundingBox, detectFeaProfile } from './deviceProfile.js';
 import { createFeaClient } from './feaClient.js';
@@ -35,26 +35,6 @@ import { sliderFromLoad, studyForPreview } from './preview/loadDrag.js';
 import { createPreviewController } from './preview/previewController.js';
 import { previewFits } from './preview/resolution.js';
 import { probePreviewGpu, runGpuPreview } from './preview/webgpuPreview.js';
-
-const listeners = new Set();
-let snapshot = { open: false };
-let publishedToken = '';
-
-function publish(next, token) {
-  if (token === publishedToken) return;
-  publishedToken = token;
-  snapshot = next;
-  for (const listener of listeners) listener();
-}
-
-function subscribe(listener) {
-  listeners.add(listener);
-  return () => listeners.delete(listener);
-}
-
-export function useFeaPanelSnapshot() {
-  return useSyncExternalStore(subscribe, () => snapshot, () => snapshot);
-}
 
 const FACE_ANGLE_DEG = 3;
 
@@ -734,8 +714,6 @@ export function useFeaStudy({
     displacementFieldRef.current = null;
     previewFieldRef.current = null;
     setStressSkinSource(null);
-    publishedToken = '';
-    publish({ open: false }, 'closed');
   }, []);
 
   const progress = running ? (runReport.stage || 'running') : '';
@@ -774,27 +752,6 @@ export function useFeaStudy({
     dismissed,
     backToSetup,
   };
-
-  const token = JSON.stringify({
-    open: api.open,
-    study,
-    draft,
-    result,
-    running,
-    progress,
-    runReport,
-    notice,
-    preview,
-    results,
-    plot: activePlot(plot),
-    dismissed,
-  });
-
-  useEffect(() => {
-    publish(api, token);
-    // `api` is the snapshot for this token. A matching token must not publish again.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token]);
 
   return api;
 }

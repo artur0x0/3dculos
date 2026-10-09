@@ -448,9 +448,9 @@ function endFacePoints(page) {
     if (!canvas) return [];
     const rect = canvas.getBoundingClientRect();
     const pts = [];
-    // The desktop Analyze chip sits on the canvas center once the force
-    // row is open. Upper-center and either side of that chip still land
-    // on the end face. The phone sheet covers the top, so keep mid points.
+    // The Analyze card sits on the bottom of the pane. Upper-center and
+    // either side still land on the end face. Points under the card are
+    // dropped because elementFromPoint is not the canvas.
     const spots = [
       [0.5, 0.28],
       [0.5, 0.34],
@@ -497,6 +497,40 @@ function noticeOf(page) {
   return page.locator('[data-fea-notice]').textContent().catch(() => '');
 }
 
+const FEA_SHELL = '[data-fea-sheet="1"]';
+
+async function assertFeaSheet(page, vp, text) {
+  await page.waitForFunction((touch) => {
+    const el = document.querySelector('[data-fea-sheet="1"]');
+    return !!el && el.getAttribute('data-feature-card-compact') === (touch ? '1' : '0');
+  }, vp.touch, { timeout: 8000 });
+  const chrome = await page.locator(FEA_SHELL).evaluate((el) => ({
+    text: (el.innerText || '').replace(/\s+/g, ' ').trim(),
+    featureCard: el.hasAttribute('data-feature-card'),
+    top14: /(^|\s)top-14(\s|$)/.test(el.className),
+    compact: el.getAttribute('data-feature-card-compact') || '',
+    confirm: el.querySelector('[data-feature-card-confirm]') ? 'yes' : 'no',
+  }));
+  check(
+    `${vp.name} sheet keyed by data-fea-sheet and “${text}”`,
+    chrome.featureCard && !chrome.top14 && chrome.text.includes(text),
+    JSON.stringify(chrome),
+  );
+  check(
+    `${vp.name} card size`,
+    chrome.compact === (vp.touch ? '1' : '0'),
+    chrome.compact,
+  );
+  check(`${vp.name} footer is not Confirm`, chrome.confirm === 'no', chrome.confirm);
+  if (vp.touch) {
+    const display = await page.evaluate(() => {
+      const el = document.querySelector('[data-mobile-stage-home-indicator]');
+      return el ? window.getComputedStyle(el).display : 'missing';
+    });
+    check(`${vp.name} stage switcher hidden`, display === 'none', display);
+  }
+}
+
 function heatChanged(before, after) {
   if (!before || !after || before.model < 10 || after.model < 10) return false;
   return Math.abs(before.leftHeat - after.leftHeat) > 15
@@ -504,6 +538,7 @@ function heatChanged(before, after) {
 }
 
 async function assertResultsPlots(page, vp, shell) {
+  await assertFeaSheet(page, vp, 'Back to Setup');
   const view = await page.locator(shell).getAttribute('data-fea-view');
   check(`${vp.name} results view`, view === 'results', view || '');
   check(`${vp.name} setup hidden`, await page.locator(`${shell} [data-fea-material]`).count() === 0);
@@ -517,6 +552,45 @@ async function assertResultsPlots(page, vp, shell) {
     await page.locator(`${shell} [data-fea-timing]`).count() === 1
       && await page.locator(`${shell} [data-fea-timing-details]`).count() === 1,
   );
+  if (vp.touch) {
+    await page.locator(`${shell} [data-fea-timing-details] summary`).click();
+    await page.locator(`${shell} [data-fea-stage]`).first().waitFor({ timeout: 8000 });
+    const back = await page.locator(`${shell} [data-fea-back]`).evaluate((el) => {
+      const box = el.getBoundingClientRect();
+      const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+      return {
+        top: box.top,
+        bottom: box.bottom,
+        height: box.height,
+        vh: window.innerHeight,
+        display: window.getComputedStyle(el).display,
+        visibility: window.getComputedStyle(el).visibility,
+        inFooter: !!el.closest('[data-feature-sheet-footer]'),
+        hit: hit === el || el.contains(hit),
+        plotsInBody: !!document.querySelector('[data-fea-plots]')?.closest('[data-feature-sheet-body]'),
+        timingInBody: !!document.querySelector('[data-fea-timing]')?.closest('[data-feature-sheet-body]'),
+        legendInBody: !!document.querySelector('[data-fea-legend]')?.closest('[data-feature-sheet-body]'),
+      };
+    });
+    check(
+      `${vp.name} Back to Setup stays on screen with Stage times open`,
+      back.height > 0
+        && back.top >= 0
+        && back.bottom <= back.vh + 1
+        && back.display !== 'none'
+        && back.visibility !== 'hidden'
+        && back.inFooter
+        && back.hit
+        && back.plotsInBody
+        && back.timingInBody
+        && back.legendInBody,
+      JSON.stringify(back),
+    );
+    const stageShot = join(SHOT_DIR, 'fea-study-results-stage-times-390.png');
+    check(`${vp.name} stage times shot dir`, !stageShot.startsWith('/opt/cursor/artifacts'), stageShot);
+    await page.screenshot({ path: stageShot });
+    await page.locator(`${shell} [data-fea-timing-details]`).evaluate((el) => { el.open = false; });
+  }
   const stressPx = await sampleSides(page);
   const stressShot = join(SHOT_DIR, vp.touch ? 'fea-study-results-stress-390.png' : 'fea-study-results-stress-1280.png');
   check(`${vp.name} stress shot dir`, !stressShot.startsWith('/opt/cursor/artifacts'), stressShot);
@@ -601,8 +675,17 @@ async function runCase(browser, vp) {
 
   check(`${vp.name} front snap`, await snap(page, 'front'));
   await page.locator('[data-analyze-chip]').click();
-  const shell = vp.touch ? '[data-fea-sheet="1"]' : '[data-fea-mode="1"]';
+  const shell = FEA_SHELL;
   await page.locator(shell).waitFor({ timeout: 8000 });
+  await assertFeaSheet(page, vp, 'Run');
+  if (!vp.touch) {
+    await page.keyboard.press('Escape');
+    await page.locator(shell).waitFor({ state: 'detached', timeout: 8000 });
+    check(`${vp.name} Escape closes Analyze`, await page.locator(shell).count() === 0);
+    await page.locator('[data-analyze-chip]').click();
+    await page.locator(shell).waitFor({ timeout: 8000 });
+    await assertFeaSheet(page, vp, 'Run');
+  }
   check(`${vp.name} analyze open`, true);
   check(
     `${vp.name} paint stays closed`,
@@ -634,6 +717,12 @@ async function runCase(browser, vp) {
   const loaded = await tapUntil(page, vp.touch, tip, 'data-fea-load-count', '1');
   check(`${vp.name} force on a face`, loaded.ok, JSON.stringify(loaded));
   check(`${vp.name} front snap after picks`, await snap(page, 'front'));
+
+  const setupShot = join(SHOT_DIR, vp.touch ? 'fea-card-setup-390.png' : 'fea-card-setup-desktop.png');
+  check(`${vp.name} setup shot dir`, !setupShot.startsWith('/opt/cursor/artifacts'), setupShot);
+  await page.screenshot({ path: setupShot });
+  check(`${vp.name} setup shot saved`, existsSync(setupShot), setupShot);
+  console.log(`  shot ${setupShot}`);
 
   await page.locator('[data-fea-run]').click();
   const bar = page.locator(`${shell} [data-fea-progress-bar]`);
@@ -846,9 +935,10 @@ async function runSheetCase(browser, vp) {
   await page.waitForSelector('canvas', { timeout: 40000 });
   await solidReady(page);
 
-  const shell = vp.touch ? '[data-fea-sheet="1"]' : '[data-fea-mode="1"]';
+  const shell = FEA_SHELL;
   await page.locator('[data-analyze-chip]').click();
   await page.locator(shell).waitFor({ timeout: 8000 });
+  await assertFeaSheet(page, vp, 'Run');
   const seeded = await page.evaluate(() => ({
     material: document.querySelector('[data-fea-material]')?.value || '',
     fixtures: document.querySelector('[data-fea-fixture-count]')?.getAttribute('data-fea-fixture-count') || '',
