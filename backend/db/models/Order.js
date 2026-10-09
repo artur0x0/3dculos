@@ -1,6 +1,7 @@
 // db/models/Order.js - Order schema matching business.orders
 import mongoose from 'mongoose';
 import crypto from 'crypto';
+import { USER_ORDERS_SELECT } from '../../services/orderLines.js';
 
 const boundingBoxSchema = new mongoose.Schema({
   'width-mm': { type: Number },
@@ -118,6 +119,8 @@ const shippingSchema = new mongoose.Schema({
   'estimated-delivery': Date,
   'shipped-at': Date,
   'delivered-at': Date,
+  // How many UPS boxes this order was rated as. Old documents omit it.
+  'package-count': { type: Number, min: 1 },
 }, { _id: false });
 
 const billingSchema = new mongoose.Schema({
@@ -148,6 +151,31 @@ const timelineEventSchema = new mongoose.Schema({
     default: 'system',
   },
 }, { _id: false });
+
+const orderLineSchema = new mongoose.Schema({
+  lineId: { type: String, required: true },
+  partName: String,
+  assemblyName: String,
+  partId: String,
+  source: String,
+  surfId: String,
+  scriptHash: String,
+  quoteId: String,
+  process: {
+    type: String,
+    required: true,
+    enum: ['FDM', 'SLA', 'SLS', 'MJF'],
+  },
+  material: { type: String, required: true },
+  infill: { type: Number, required: true, min: 10, max: 100 },
+  quantity: { type: Number, required: true, min: 1, max: 999 },
+  'volume-mm3': { type: Number, required: true },
+  'bounding-box': boundingBoxSchema,
+  'unit-subtotal': { type: Number, required: true },
+  'material-cost': { type: Number, required: true },
+  'machine-cost': { type: Number, required: true },
+  'model-file': modelFileSchema,
+});
 
 const orderSchema = new mongoose.Schema({
   'order-number': {
@@ -183,7 +211,19 @@ const orderSchema = new mongoose.Schema({
     default: 'pending',
     index: true,
   },
-  'model-data': modelDataSchema,
+  // Required for a single-part order. Omitted when `lines` is non-empty.
+  'model-data': {
+    type: modelDataSchema,
+    required: function modelDataRequired() {
+      return !Array.isArray(this.lines) || this.lines.length === 0;
+    },
+  },
+  // 20 lines per order keeps N inline 3MFs inside the 10mb JSON body.
+  // Expand in future. The cap is enforced on create, not as a schema max.
+  lines: {
+    type: [orderLineSchema],
+    default: undefined,
+  },
   quote: quoteSchema,
   shipping: shippingSchema,
   billing: billingSchema,
@@ -196,6 +236,7 @@ const orderSchema = new mongoose.Schema({
   metadata: {
     'ip-address': String,
     'user-agent': String,
+    'idempotency-key': String,
   },
 }, {
   timestamps: {
@@ -209,6 +250,7 @@ const orderSchema = new mongoose.Schema({
 orderSchema.index({ 'created-at': -1 });
 orderSchema.index({ 'payment.stripe-payment-intent-id': 1 }, { sparse: true });
 orderSchema.index({ 'guest-email': 1 }, { sparse: true });
+orderSchema.index({ 'metadata.idempotency-key': 1 }, { unique: true, sparse: true });
 
 // Pre-validate: Generate order number if not set
 orderSchema.pre('validate', async function(next) {
@@ -277,7 +319,7 @@ orderSchema.statics.findUserOrders = function(userId, limit = 20) {
   return this.find({ 'user-id': userId })
     .sort({ 'created-at': -1 })
     .limit(limit)
-    .select('-model-data.script -model-data.model-file');
+    .select(USER_ORDERS_SELECT);
 };
 
 // Virtual: User email (from user or guest)
@@ -293,6 +335,14 @@ orderSchema.set('toJSON', {
     if (ret['model-data']) {
       delete ret['model-data'].script;
       delete ret['model-data']['model-file'];
+    }
+    if (Array.isArray(ret.lines)) {
+      ret.lines = ret.lines.map((line) => {
+        if (!line || typeof line !== 'object') return line;
+        const copy = { ...line };
+        delete copy['model-file'];
+        return copy;
+      });
     }
     return ret;
   },

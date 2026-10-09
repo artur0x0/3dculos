@@ -7,3 +7,4 @@
 import './cart-order.test.js';
 import './address-book.test.js';
 import './measure-part.test.js';
+import './multi-line-order.test.js';
