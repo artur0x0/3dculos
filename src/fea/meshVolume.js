@@ -255,6 +255,24 @@ function factoryWithBinary(factory, bytes) {
   return Promise.race([loaded, failed]);
 }
 
+/**
+ * fTetWild's committed entry point is one call and does not report stages.
+ * If a build exposes setProgress / onProgress / setMeshProgress, forward it.
+ */
+function bindMeshProgress(module, onProgress) {
+  if (!module || typeof onProgress !== 'function') return;
+  const hook = module.setProgress || module.onProgress || module.setMeshProgress;
+  if (typeof hook !== 'function') return;
+  try {
+    hook((update) => {
+      const fraction = update && Number.isFinite(Number(update.fraction)) ? Number(update.fraction) : undefined;
+      onProgress({ stage: (update && update.stage) || 'meshing', fraction, blocking: true });
+    });
+  } catch {
+    /* no stage callback in this build */
+  }
+}
+
 async function loadMeshModule(ceilingBytes) {
   const key = ceilingBytes > 0 ? ceilingBytes : 0;
   if (modulePromise && moduleKey === key) return modulePromise;
@@ -527,7 +545,19 @@ export async function meshVolume(surface, options = {}) {
   const maxTets = options.maxTets ?? 0;
   const started = Date.now();
   const module = await loadMeshModule(options.memoryCeilingBytes);
-  const { decoded, wasmBytes } = meshTet4(module, positions, indices, edgeLength, epsilon, maxTets);
+  bindMeshProgress(module, options.onProgress);
+  if (typeof options.onProgress === 'function') {
+    options.onProgress({ stage: 'meshing', blocking: true });
+  }
+  let decoded;
+  let wasmBytes;
+  try {
+    ({ decoded, wasmBytes } = meshTet4(module, positions, indices, edgeLength, epsilon, maxTets));
+  } finally {
+    if (typeof options.onProgress === 'function') {
+      options.onProgress({ stage: 'meshing', blocking: false });
+    }
+  }
   if (decoded.status !== 0) {
     throw new Error(decoded.message || `volume mesher failed (${decoded.status})`);
   }

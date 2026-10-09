@@ -91,16 +91,81 @@ export function FeaStudyControls({ panel }) {
 }
 
 const STAGE_LABEL = {
+  'loading-mesher': 'Loading mesher',
   meshing: 'Meshing',
+  assembling: 'Assembling',
   solving: 'Solving',
   'post-processing': 'Post-processing',
 };
 
+function FeaProgressBar({ report }) {
+  const indeterminate = report.percent == null;
+  const label = [report.stageLabel, report.stepLabel].filter(Boolean).join(' · ');
+  const elapsed = report.elapsedText || '';
+  return (
+    <div
+      data-fea-progress-bar=""
+      data-fea-progress-indeterminate={indeterminate ? '1' : '0'}
+      role="progressbar"
+      aria-label={label || 'Analyze'}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={indeterminate ? undefined : report.percent}
+      aria-busy="true"
+      className="flex flex-col gap-0.5"
+    >
+      <div className="flex items-baseline justify-between gap-2 text-[11px] text-cyan-50">
+        <span data-fea-progress-stage="" className="min-w-0 truncate">{label}</span>
+        <span data-fea-progress-elapsed="" className="shrink-0 tabular-nums text-cyan-100/90">
+          {elapsed}{report.percent != null ? ` · ${report.percent}%` : ''}
+        </span>
+      </div>
+      <div className="h-1.5 w-full overflow-hidden rounded bg-cyan-950">
+        <div
+          className={`h-full rounded bg-cyan-300 ${indeterminate ? 'w-1/3 animate-pulse' : ''}`}
+          style={indeterminate ? undefined : { width: `${report.percent}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function FeaTiming({ report }) {
+  if (!report || (report.status !== 'done' && report.status !== 'stopped') || !report.text) return null;
+  const stopped = report.status === 'stopped';
+  return (
+    <div className="flex flex-col gap-0.5">
+      <p
+        data-fea-timing={stopped ? undefined : ''}
+        data-fea-stopped={stopped ? '' : undefined}
+        className={`text-[11px] leading-snug ${stopped ? 'text-amber-200' : 'text-cyan-50'}`}
+      >
+        {report.text}
+      </p>
+      {Array.isArray(report.details) && report.details.length > 0 && (
+        <details data-fea-timing-details="" className="text-[11px] text-cyan-100/80">
+          <summary>Stage times</summary>
+          <ul className="mt-0.5 flex flex-col gap-0.5">
+            {report.details.map((row) => (
+              <li key={row.id} data-fea-stage={row.id}>
+                {row.label}: {row.seconds}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </div>
+  );
+}
+
 export function FeaRunBar({ panel }) {
-  const stage = panel.running ? (STAGE_LABEL[panel.progress] || 'Running') : 'Run';
+  const report = panel.runReport;
+  const stage = panel.running ? (report?.stageLabel || STAGE_LABEL[panel.progress] || 'Running') : 'Run';
   return (
     <div className="mt-1 flex shrink-0 flex-col gap-1">
       <FeaLegend result={panel.result} />
+      {panel.running && report?.status === 'running' && <FeaProgressBar report={report} />}
+      {!panel.running && <FeaTiming report={report} />}
       <div className="flex items-center justify-end gap-2">
       {panel.running && (
         <button

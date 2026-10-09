@@ -17,90 +17,25 @@
 
 import FeaWorker from '../workers/feaWorker.js?worker';
 import { appCapabilities } from './deviceProfile.js';
+import { createFeaWorkerHost } from './feaRunSession.js';
 import { packMesh } from './meshTransfer.js';
 import { FeaMessage } from './protocol.js';
 
-function abortError() {
-  if (typeof DOMException === 'function') {
-    return new DOMException('FEA solve cancelled', 'AbortError');
-  }
-  const error = new Error('FEA solve cancelled');
-  error.name = 'AbortError';
-  return error;
-}
-
 export async function createFeaClient(options = {}) {
-  const worker = new FeaWorker();
+  const worker = options.worker || new FeaWorker();
   const profile = options.profile === 'phone' ? 'phone' : 'desktop';
-  let disposed = false;
-  let nextId = 1;
-  const pending = new Map();
-
-  function failAll(error) {
-    for (const slot of pending.values()) slot.reject(error);
-    pending.clear();
-  }
-
-  function assertOpen() {
-    if (disposed) throw new Error('FEA client disposed');
-  }
-
-  const ready = new Promise((resolve, reject) => {
-    worker.onmessage = (event) => {
-      const data = event.data || {};
-      if (data.type === FeaMessage.loaded) {
-        resolve();
-        return;
-      }
-      if (data.type === FeaMessage.loadError) {
-        const error = new Error(data.error || 'FEA wasm failed to load');
-        reject(error);
-        failAll(error);
-        return;
-      }
-      if (data.type === FeaMessage.progress) {
-        const slot = pending.get(data.id);
-        if (slot && typeof slot.onProgress === 'function') {
-          slot.onProgress({ stage: data.stage, fraction: data.fraction });
-        }
-        return;
-      }
-      const slot = pending.get(data.id);
-      if (!slot) return;
-      pending.delete(data.id);
-      if (data.ok) slot.resolve(data.result);
-      else slot.reject(new Error(data.error || 'FEA worker error'));
-    };
-    worker.onerror = (event) => {
-      const error = new Error((event && event.message) || 'FEA worker error');
-      reject(error);
-      failAll(error);
-    };
-  });
-
+  const host = createFeaWorkerHost(worker, options);
   worker.postMessage({ type: FeaMessage.configure, profile });
-  await ready;
-
-  function begin(type, fields, transfer, hooks) {
-    assertOpen();
-    const id = nextId++;
-    const promise = new Promise((resolve, reject) => {
-      pending.set(id, { resolve, reject, type, onProgress: hooks && hooks.onProgress });
-    });
-    worker.postMessage({ id, type, profile, ...fields }, transfer || []);
-    return { id, promise };
-  }
+  await host.ready;
 
   return {
     capabilities() {
-      return begin(FeaMessage.capabilities, {}).promise.then((caps) => appCapabilities(caps));
+      return host.request(FeaMessage.capabilities, { profile }).then((caps) => appCapabilities(caps));
     },
 
     solve(request, hooks = {}) {
-      assertOpen();
-      if (hooks.signal && hooks.signal.aborted) return Promise.reject(abortError());
       const mesh = packMesh(request && request.mesh);
-      const { id, promise } = begin(FeaMessage.solve, {
+      return host.request(FeaMessage.solve, {
         study: request && request.study != null ? request.study : null,
         material: request ? request.material : null,
         profile: request && request.profile ? request.profile : profile,
@@ -108,44 +43,15 @@ export async function createFeaClient(options = {}) {
         positions: mesh.positions,
         indices: mesh.indices,
         faceIDs: mesh.faceIDs,
-      }, mesh.transfer, { onProgress: hooks.onProgress });
-      const onAbort = () => {
-        const slot = pending.get(id);
-        if (!slot) return;
-        pending.delete(id);
-        slot.reject(abortError());
-        try {
-          worker.postMessage({ type: FeaMessage.cancel });
-        } catch {
-          /* worker already gone */
-        }
-      };
-      if (hooks.signal) hooks.signal.addEventListener('abort', onAbort, { once: true });
-      return promise.finally(() => {
-        if (hooks.signal) hooks.signal.removeEventListener('abort', onAbort);
-      });
+      }, mesh.transfer, hooks);
     },
 
     cancel() {
-      assertOpen();
-      for (const [id, slot] of pending) {
-        if (slot.type !== FeaMessage.solve) continue;
-        pending.delete(id);
-        slot.reject(abortError());
-      }
-      worker.postMessage({ type: FeaMessage.cancel });
+      host.cancel();
     },
 
     dispose() {
-      if (disposed) return;
-      disposed = true;
-      failAll(new Error('FEA client disposed'));
-      try {
-        worker.postMessage({ type: FeaMessage.dispose });
-      } catch {
-        /* already terminated */
-      }
-      worker.terminate();
+      host.dispose();
     },
   };
 }

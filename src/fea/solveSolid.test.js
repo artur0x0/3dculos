@@ -128,6 +128,46 @@ test('a phone cap coarsens an edge that would exceed it', async () => {
   assert.ok(seen > 0.2, `edge ${seen}`);
 });
 
+test('progress walks load, mesh, assemble, solve, and post-processing', async () => {
+  const surface = box([40, 10, 10]);
+  const stages = [];
+  const result = await solveSolid({
+    study: beamStudy(200),
+    positions: surface.positions,
+    indices: surface.indices,
+    faceIDs: surface.faceIds,
+    material: pla,
+    profile: 'desktop',
+    onProgress: (event) => stages.push(event.stage),
+    solveTet10: () => ({
+      nodal: new Float64Array(8),
+      min: 0,
+      max: 1,
+      p95: 1,
+      safetyFactor: 1,
+      solver: 'cholesky',
+      warnings: [],
+      stats: { dofs: 36, freeDofs: 30, iterations: 0, residual: 0, solveMs: 4 },
+    }),
+    solveStub: fea.solve,
+    meshVolume: async () => ({
+      nodes: new Float64Array([
+        0, 0, 0, 0, 10, 0, 0, 0, 10, 0, 5, 5, 0, 5, 0, 0, 0, 5,
+        40, 0, 0, 40, 10, 0, 40, 0, 10, 40, 5, 5, 40, 5, 0, 40, 0, 5,
+      ]),
+      elements: new Uint32Array(10),
+      faces: new Uint32Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]),
+      faceIds: new Uint32Array([1, 2]),
+      stats: { dofs: 36, elements: 1, ms: 12, wasmBytes: 0 },
+    }),
+  });
+  const seen = stages.filter((stage, index) => stage !== stages[index - 1]);
+  assert.deepEqual(seen, ['loading-mesher', 'meshing', 'assembling', 'solving', 'post-processing']);
+  assert.equal(result.stageTimings.meshing >= 0, true);
+  assert.equal(result.stageTimings.solving >= 0, true);
+  assert.equal(result.stats.dofs, 36);
+});
+
 test('missing yield leaves the safety factor null', async () => {
   const surface = box([40, 10, 10]);
   let yieldSeen = 'unset';

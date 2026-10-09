@@ -9,6 +9,7 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from '
 import { fingerprintsFromGeometry, paintPickFromClick } from '../utils/facePaint.js';
 import { detectFeaProfile } from './deviceProfile.js';
 import { createFeaClient } from './feaClient.js';
+import { initialFeaProgress, logFeaTiming, reduceFeaProgress } from './feaProgress.js';
 import { studyForSolve } from './renderFaceIds.js';
 import { bindStressField, setStressSkinSource } from './stressMap.js';
 import { composeFeaStudy, readFeaStudy, scriptOutsideFeaStudy } from './studyScript.js';
@@ -50,6 +51,14 @@ export function useFeaPanelSnapshot() {
 
 const FACE_ANGLE_DEG = 3;
 
+function commitRunReport(prev, event) {
+  const next = reduceFeaProgress(prev, event);
+  if (next !== prev && prev.status !== next.status && (next.status === 'done' || next.status === 'stopped')) {
+    logFeaTiming(next);
+  }
+  return next;
+}
+
 export function useFeaStudy({
   enabled = true,
   compact: _ = false,
@@ -68,7 +77,7 @@ export function useFeaStudy({
   const [draft, setDraft] = useState(emptyDraft);
   const [result, setResult] = useState(null);
   const [running, setRunning] = useState(false);
-  const [progress, setProgress] = useState('');
+  const [runReport, setRunReport] = useState(() => initialFeaProgress());
   const [notice, setNotice] = useState('');
   const writtenRef = useRef(null);
   const clientRef = useRef(null);
@@ -165,6 +174,7 @@ export function useFeaStudy({
     stressFieldRef.current = null;
     solvedOutsideRef.current = null;
     setResult(null);
+    setRunReport(initialFeaProgress());
     setNotice('');
     setOpen(true);
     paintHighlight(read);
@@ -318,11 +328,20 @@ export function useFeaStudy({
     const profile = detectFeaProfile();
     const controller = new AbortController();
     runAbortRef.current = controller;
+    const startedAt = Date.now();
+    setRunReport(reduceFeaProgress(
+      reduceFeaProgress(initialFeaProgress(startedAt), { type: 'start', now: startedAt }),
+      { type: 'stage', stage: 'loading-mesher', now: startedAt },
+    ));
     setRunning(true);
-    setProgress('meshing');
     setNotice('');
     try {
       if (!clientRef.current) clientRef.current = await createFeaClient({ profile });
+      if (controller.signal.aborted) {
+        const abort = new Error('FEA solve cancelled');
+        abort.name = 'AbortError';
+        throw abort;
+      }
       const solved = await clientRef.current.solve({
         study: studyForSolve(studyRef.current, geometry, solid?.faceIDs),
         mesh,
@@ -331,7 +350,7 @@ export function useFeaStudy({
       }, {
         signal: controller.signal,
         onProgress: (event) => {
-          if (event && event.stage) setProgress(event.stage);
+          setRunReport((prev) => commitRunReport(prev, event));
         },
       });
       const nodal = solved?.nodal instanceof Float32Array ? solved.nodal : null;
@@ -360,13 +379,31 @@ export function useFeaStudy({
         stats: solved.stats || null,
         solver: solved.solver || null,
       });
+      setRunReport((prev) => commitRunReport(prev, {
+        type: 'finish',
+        now: Date.now(),
+        dofs: solved?.stats?.dofs ?? null,
+        stageTimings: solved?.stageTimings || null,
+      }));
     } catch (err) {
-      if (err?.name === 'AbortError') return;
-      setNotice(err?.message || 'The study did not run');
+      if (err?.outcome === 'worker-died') {
+        const dead = clientRef.current;
+        clientRef.current = null;
+        try { dead?.dispose?.(); } catch { /* worker already gone */ }
+      }
+      const outcome = err?.name === 'AbortError'
+        ? 'cancelled'
+        : (err?.outcome === 'worker-died' ? 'worker-died' : 'error');
+      const error = outcome === 'cancelled' ? 'cancelled' : (err?.message || 'The study did not run');
+      setRunReport((prev) => commitRunReport(prev, {
+        type: 'stop',
+        now: Date.now(),
+        outcome,
+        error,
+      }));
     } finally {
       if (runAbortRef.current === controller) runAbortRef.current = null;
       setRunning(false);
-      setProgress('');
     }
   }, []);
 
@@ -374,6 +411,14 @@ export function useFeaStudy({
     runAbortRef.current?.abort();
     clientRef.current?.cancel();
   }, []);
+
+  useEffect(() => {
+    if (runReport.status !== 'running') return undefined;
+    const id = setInterval(() => {
+      setRunReport((prev) => reduceFeaProgress(prev, { type: 'tick', now: Date.now() }));
+    }, 200);
+    return () => clearInterval(id);
+  }, [runReport.status]);
 
   useEffect(() => {
     if (!open || !result || result.stale || !stressFieldRef.current) setStressSkinSource(null);
@@ -390,6 +435,8 @@ export function useFeaStudy({
     publish({ open: false }, 'closed');
   }, []);
 
+  const progress = running ? (runReport.stage || 'running') : '';
+
   const api = {
     open: !!open && !!enabled,
     study,
@@ -397,6 +444,7 @@ export function useFeaStudy({
     result,
     running,
     progress,
+    runReport,
     notice,
     toggle,
     close,
@@ -421,6 +469,7 @@ export function useFeaStudy({
     result,
     running,
     progress,
+    runReport,
     notice,
   });
 
