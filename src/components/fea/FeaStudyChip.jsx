@@ -23,12 +23,6 @@ export function FeaStudyChip({ panel, compact = false }) {
         <div className="min-w-0">
           <div className="flex items-center gap-2 font-sans font-bold text-cyan-200">
             Analyze
-            <span
-              data-fea-stub="1"
-              className="rounded bg-amber-400 px-1.5 py-0.5 text-[11px] font-bold tracking-wide text-amber-950"
-            >
-              STUB
-            </span>
           </div>
           <div className="mt-0.5 font-sans text-[11px] normal-case text-cyan-100/90">
             Fix a face, add a load, then Run.

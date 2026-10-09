@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
- * Analyze: open the study, pick a material, fix a face, add a force, run
- * the stub, and reload. The study comment is still in the part script.
+ * Analyze: open the study, fix the root of a small cantilever, load the
+ * tip, run TET10, and reload. The study comment is still in the part script.
+ * The legend max is within 10% of the beam-theory peak (48 MPa).
  *
  * 390×844 touch (iPhone UA, DPR 2) and 1280×800 desktop. FEA_VIEW=desktop
  * or FEA_VIEW=390 runs one of them. FEA_PREVIEW=1 serves the existing
@@ -15,12 +16,15 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { chromium } from 'playwright-core';
+import { feaStudyBlock } from '../../src/fea/studyScript.js';
 
 const PORT = Number(process.env.SMOKE_PORT || 4327);
 const APP_URL = `http://127.0.0.1:${PORT}/`;
 const SHOT_DIR = process.env.GOLDEN_SHOT_DIR || tmpdir();
 const PREVIEW = process.env.FEA_PREVIEW === '1';
-const CUBE = 'const part = Manifold.cube([20, 20, 20], true);\nreturn part;\n';
+const STUDY = feaStudyBlock({ mesh: { target: 4 } });
+const CUBE = `const part = Manifold.cube([40, 10, 10], false);\nreturn part;\n${STUDY}`;
+const BEAM_PEAK_MPA = 48;
 const PART_ID = 'fea-block';
 const USER_ID = 'user-fea';
 
@@ -231,64 +235,232 @@ function installProbe(page) {
   });
 }
 
-async function snapFront(page) {
-  const viaHook = await page.evaluate(() => {
-    if (typeof window.__VIEWPORT__?.stageSnap === 'function') return !!window.__VIEWPORT__.stageSnap('front');
-    return false;
-  });
-  if (viaHook) {
-    await page.waitForTimeout(200);
-    return;
-  }
-  await page.locator('[aria-label="View snaps"]').click();
-  await page.locator('[aria-label="Snap to Front"]').click();
-  await page.waitForTimeout(300);
-}
+// Looking down the beam, the default snap margin parks a wide desktop camera
+// inside the solid. A larger margin backs up past the root and tip faces.
+const END_SNAP_MARGIN = 3;
 
-function facePoints(page) {
-  return page.evaluate(() => new Promise((resolve) => {
-    const { canvas, renderer } = window.__feaProbe.bits();
-    if (!canvas || !renderer) {
-      resolve([]);
+async function snap(page, key, margin) {
+  const viaHook = await page.evaluate(({ name, margin }) => {
+    window.__feaView = name;
+    if (typeof window.__VIEWPORT__?.stageSnap === 'function') return !!window.__VIEWPORT__.stageSnap(name, margin);
+    return false;
+  }, { name: key, margin });
+  if (viaHook) {
+    await page.waitForTimeout(250);
+    return true;
+  }
+  // vite preview does not publish __VIEWPORT__. Fit the same way from the
+  // live camera so a left or right end view still lands outside the beam.
+  const fitted = await page.evaluate(({ name, margin }) => new Promise((resolve) => {
+    const presets = {
+      front: { dir: [0, -1, 0], up: [0, 0, 1] },
+      right: { dir: [1, 0, 0], up: [0, 0, 1] },
+      left: { dir: [-1, 0, 0], up: [0, 0, 1] },
+      top: { dir: [0, 0, 1], up: [0, -1, 0] },
+      iso: { dir: [1, 1, 1], up: [0, 0, 1] },
+    };
+    const preset = presets[name];
+    const canvas = document.querySelector('.viewport-shell > canvas');
+    const root = document.getElementById('root');
+    const reactKey = root && Object.keys(root).find((k) => k.startsWith('__reactContainer'));
+    const start = reactKey ? (root[reactKey].current || root[reactKey]) : null;
+    const seen = new Set();
+    let renderer = null;
+    let controls = null;
+    function walk(fiber) {
+      if (!fiber || seen.has(fiber) || (renderer && controls)) return;
+      seen.add(fiber);
+      let hook = fiber.memoizedState;
+      for (let guard = 0; hook && guard < 900; guard += 1) {
+        const cur = hook.memoizedState && hook.memoizedState.current;
+        if (cur && cur.domElement === canvas && typeof cur.render === 'function') renderer = cur;
+        if (cur && cur.target && typeof cur.update === 'function' && typeof cur.rotateSpeed === 'number') controls = cur;
+        hook = hook.next;
+      }
+      walk(fiber.child);
+      walk(fiber.sibling);
+    }
+    if (!preset || !start) {
+      resolve(false);
+      return;
+    }
+    walk(start);
+    if (!renderer || !controls) {
+      resolve(false);
       return;
     }
     const orig = renderer.render.bind(renderer);
     renderer.render = function hooked(scene, camera) {
       const out = orig(scene, camera);
       renderer.render = orig;
+      let mesh = null;
+      let best = 0;
+      scene.traverse((obj) => {
+        const count = obj.geometry?.attributes?.position?.count || 0;
+        if (obj.isMesh && count > best) {
+          best = count;
+          mesh = obj;
+        }
+      });
+      const geometry = mesh?.geometry;
+      if (!geometry?.attributes?.position) {
+        resolve(false);
+        return out;
+      }
+      geometry.computeBoundingBox();
+      const box = geometry.boundingBox;
+      if (!box || box.isEmpty()) {
+        resolve(false);
+        return out;
+      }
+      const vec = () => camera.position.clone();
+      const center = box.getCenter(vec());
+      const d = vec().set(preset.dir[0], preset.dir[1], preset.dir[2]);
+      if (d.lengthSq() < 1e-12) d.set(1, 1, 1);
+      d.normalize();
+      let u = vec().set(preset.up[0], preset.up[1], preset.up[2]);
+      if (u.lengthSq() < 1e-12) u.set(0, 0, 1);
+      if (Math.abs(u.dot(d)) > 1 - 1e-6) u.set(0, 0, 1);
+      u.sub(d.clone().multiplyScalar(u.dot(d))).normalize();
+      const zAxis = d.clone();
+      const xAxis = vec().crossVectors(u, zAxis).normalize();
+      const yAxis = vec().crossVectors(zAxis, xAxis);
+      const tanY = Math.tan(((camera.fov || 45) * Math.PI) / 360) || 1e-6;
+      const tanX = tanY * (camera.aspect > 0 ? camera.aspect : 1);
+      let dist = 0;
+      const corner = vec();
+      for (let i = 0; i < 8; i += 1) {
+        corner.set(
+          i & 1 ? box.max.x : box.min.x,
+          i & 2 ? box.max.y : box.min.y,
+          i & 4 ? box.max.z : box.min.z,
+        ).sub(center);
+        dist = Math.max(dist, Math.abs(corner.dot(xAxis)) / tanX, Math.abs(corner.dot(yAxis)) / tanY);
+      }
+      const pad = Number.isFinite(margin) && margin > 0 ? margin : 1.35;
+      dist = (dist || 1) * pad;
+      camera.near = Math.max(dist / 1000, 1e-4);
+      camera.far = Math.max(dist * 10, camera.far || 2000);
+      camera.up.copy(u);
+      camera.position.copy(center).addScaledVector(d, dist);
+      camera.updateProjectionMatrix();
+      camera.lookAt(center);
+      controls.target.copy(center);
+      controls.update();
+      resolve(true);
+      return out;
+    };
+  }), { name: key, margin });
+  if (fitted) {
+    await page.waitForTimeout(250);
+    return true;
+  }
+  const labels = { front: 'Snap to Front', right: 'Snap to Right', top: 'Snap to Top', iso: 'Snap to Isometric' };
+  if (!labels[key]) return false;
+  await page.locator('[aria-label="View snaps"]').click();
+  await page.locator(`[aria-label="${labels[key]}"]`).click();
+  await page.waitForTimeout(300);
+  return true;
+}
+
+async function sampleSides(page) {
+  return page.evaluate(() => new Promise((resolve) => {
+    const { canvas, renderer } = window.__feaProbe.bits();
+    if (!canvas || !renderer) {
+      resolve(null);
+      return;
+    }
+    const orig = renderer.render.bind(renderer);
+    let best = null;
+    let timer = 0;
+    renderer.render = function hooked(scene, camera) {
+      const out = orig(scene, camera);
       const gl = renderer.getContext();
-      const dpr = renderer.getPixelRatio();
       const w = gl.drawingBufferWidth;
       const h = gl.drawingBufferHeight;
       const buf = new Uint8Array(w * h * 4);
       gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, buf);
-      const rect = canvas.getBoundingClientRect();
+      let minX = Infinity;
+      let maxX = -Infinity;
       const pts = [];
-      for (let y = 4; y < h - 4; y += 3) {
-        for (let x = 4; x < w - 4; x += 3) {
+      for (let y = 0; y < h; y += 2) {
+        for (let x = 0; x < w; x += 2) {
           const i = (y * w + x) * 4;
           const r = buf[i];
           const g = buf[i + 1];
           const b = buf[i + 2];
-          const score = Math.abs(r - 128) + Math.abs(g - 128) + Math.abs(b - 255);
-          if (b < 200 || r < 90 || g < 90 || score > 40) continue;
-          const cssX = rect.left + (x + 0.5) / dpr;
-          const cssY = rect.top + (h - y - 0.5) / dpr;
-          if (document.elementFromPoint(cssX, cssY) !== canvas) continue;
-          pts.push({ x: cssX, y: cssY });
+          if (r < 45 && g < 45 && b < 45) continue;
+          pts.push({ x, r, g, b });
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
         }
       }
-      if (!pts.length) {
-        resolve([]);
-        return;
+      const sample = { model: 0, leftN: 0, rightN: 0, leftHeat: 0, rightHeat: 0 };
+      if (pts.length) {
+        const span = Math.max(1, maxX - minX);
+        const leftCut = minX + span * 0.33;
+        const rightCut = minX + span * 0.67;
+        let leftN = 0;
+        let rightN = 0;
+        let leftHeat = 0;
+        let rightHeat = 0;
+        for (const p of pts) {
+          const heat = p.r + p.g - p.b;
+          if (p.x <= leftCut) {
+            leftN += 1;
+            leftHeat += heat;
+          } else if (p.x >= rightCut) {
+            rightN += 1;
+            rightHeat += heat;
+          }
+        }
+        sample.model = pts.length;
+        sample.leftN = leftN;
+        sample.rightN = rightN;
+        sample.leftHeat = leftN ? leftHeat / leftN : 0;
+        sample.rightHeat = rightN ? rightHeat / rightN : 0;
       }
-      const picks = [];
-      const step = Math.max(1, Math.floor(pts.length / 8));
-      for (let i = step >> 1; i < pts.length && picks.length < 8; i += step) picks.push(pts[i]);
-      resolve(picks);
+      if (!best || sample.model > best.model) best = sample;
+      if (!timer) {
+        timer = setTimeout(() => {
+          const key = window.__feaView || 'front';
+          if (typeof window.__VIEWPORT__?.stageSnap === 'function') window.__VIEWPORT__.stageSnap(key);
+          renderer.render = orig;
+          resolve(best);
+        }, 100);
+      }
       return out;
     };
+    const key = window.__feaView || 'front';
+    if (typeof window.__VIEWPORT__?.stageSnap === 'function') window.__VIEWPORT__.stageSnap(key);
   }));
+}
+
+function endFacePoints(page) {
+  return page.evaluate(() => {
+    const canvas = document.querySelector('.viewport-shell > canvas');
+    if (!canvas) return [];
+    const rect = canvas.getBoundingClientRect();
+    const pts = [];
+    // The desktop Analyze chip sits on the canvas center once the force
+    // row is open. Upper-center and either side of that chip still land
+    // on the end face. The phone sheet covers the top, so keep mid points.
+    const spots = [
+      [0.5, 0.28],
+      [0.5, 0.34],
+      [0.28, 0.5],
+      [0.72, 0.5],
+      [0.5, 0.46],
+      [0.5, 0.5],
+      [0.5, 0.42],
+    ];
+    for (const [fx, fy] of spots) {
+      const x = rect.left + rect.width * fx;
+      const y = rect.top + rect.height * fy;
+      if (document.elementFromPoint(x, y) === canvas) pts.push({ x, y });
+    }
+    return pts;
+  });
 }
 
 async function tap(page, touch, point) {
@@ -360,7 +532,7 @@ async function runCase(browser, vp) {
     .filter(Boolean));
   check(`${vp.name} left rail order`, rail.join(',') === 'Block,Build,Shape,Polish,Move', rail.join(','));
 
-  await snapFront(page);
+  check(`${vp.name} front snap`, await snap(page, 'front'));
   await page.locator('[data-analyze-chip]').click();
   const shell = vp.touch ? '[data-fea-sheet="1"]' : '[data-fea-mode="1"]';
   await page.locator(shell).waitFor({ timeout: 8000 });
@@ -378,28 +550,53 @@ async function runCase(browser, vp) {
   await page.locator('[data-fea-assumed="nu"]').waitFor({ timeout: 8000 });
   await solidReady(page);
 
-  const face = await facePoints(page);
-  check(`${vp.name} front face is tappable`, face.length > 0, `points=${face.length}`);
+  check(`${vp.name} left snap`, await snap(page, 'left', END_SNAP_MARGIN));
+  const root = await endFacePoints(page);
+  check(`${vp.name} root face is tappable`, root.length > 0, `points=${root.length}`);
   await page.locator('[data-fea-target="fixture"]').click();
-  const fixed = await tapUntil(page, vp.touch, face, 'data-fea-fixture-count', '1');
+  const fixed = await tapUntil(page, vp.touch, root, 'data-fea-fixture-count', '1');
   check(`${vp.name} fixture on a face`, fixed.ok, JSON.stringify(fixed));
 
   await page.locator('[data-fea-target="force"]').click();
-  const loaded = await tapUntil(page, vp.touch, face, 'data-fea-load-count', '1');
+  const down = page.locator(`${shell} button`, { hasText: '\u2212Z' });
+  await down.scrollIntoViewIfNeeded();
+  await down.click();
+  check(`${vp.name} right snap`, await snap(page, 'right', END_SNAP_MARGIN));
+  const tip = await endFacePoints(page);
+  check(`${vp.name} tip face is tappable`, tip.length > 0, `points=${tip.length}`);
+  const loaded = await tapUntil(page, vp.touch, tip, 'data-fea-load-count', '1');
   check(`${vp.name} force on a face`, loaded.ok, JSON.stringify(loaded));
+  check(`${vp.name} front snap after picks`, await snap(page, 'front'));
 
   await page.locator('[data-fea-run]').click();
-  await page.locator('[data-fea-summary]').waitFor({ timeout: 30000 });
+  await page.locator('[data-fea-summary]').waitFor({ timeout: 120000 });
   const summary = await page.evaluate(() => ({
     stubs: document.querySelectorAll('[data-fea-stub="1"]').length,
+    source: document.querySelector('[data-fea-source]')?.getAttribute('data-fea-source') || '',
     stress: document.querySelector('[data-fea-stress]')?.textContent || '',
     fos: document.querySelector('[data-fea-fos]')?.getAttribute('data-fea-fos') || '',
     warning: document.querySelector('[data-fea-warning]')?.textContent || '',
+    ms: document.querySelector('[data-fea-solve-ms]')?.getAttribute('data-fea-solve-ms') || '',
+    peak: document.querySelector('[data-fea-peak-bytes]')?.getAttribute('data-fea-peak-bytes') || '',
   }));
-  check(`${vp.name} stub badge`, summary.stubs >= 1, JSON.stringify(summary));
+  const maxMatch = summary.stress.match(/max ([0-9.]+) MPa/);
+  const maxMPa = maxMatch ? Number(maxMatch[1]) : NaN;
+  const peakError = Number.isFinite(maxMPa) ? Math.abs(maxMPa - BEAM_PEAK_MPA) / BEAM_PEAK_MPA : Infinity;
+  console.log(`  solve ${vp.name} ${summary.ms} ms peak ${summary.peak} bytes max ${maxMPa} MPa`);
+  const colours = await sampleSides(page);
+  check(`${vp.name} no stub badge`, summary.stubs === 0, JSON.stringify(summary));
+  check(`${vp.name} tet10 source`, summary.source === 'tet10', summary.source);
   check(`${vp.name} stress summary`, /min .+ MPa/.test(summary.stress) && /p95 /.test(summary.stress) && /max /.test(summary.stress), summary.stress);
+  check(`${vp.name} peak within 10% of beam theory`, peakError <= 0.1, `max ${maxMPa} vs ${BEAM_PEAK_MPA}`);
   check(`${vp.name} safety factor`, summary.fos !== '' && summary.fos !== 'n/a', summary.fos);
-  check(`${vp.name} stub warning`, /STUB, not a real result/.test(summary.warning), summary.warning);
+  check(`${vp.name} no stub warning`, !/STUB/.test(summary.warning), summary.warning);
+  check(`${vp.name} solve time recorded`, Number(summary.ms) > 0, summary.ms);
+  check(`${vp.name} peak memory recorded`, Number(summary.peak) > 0, summary.peak);
+  check(
+    `${vp.name} root is hotter than the tip`,
+    !!colours && colours.leftN > 10 && colours.rightN > 10 && colours.leftHeat > colours.rightHeat + 20,
+    JSON.stringify(colours),
+  );
 
   const uploadError = await page.evaluate(() => {
     const text = document.body?.innerText || '';

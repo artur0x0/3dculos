@@ -7,7 +7,9 @@
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { fingerprintsFromGeometry, paintPickFromClick } from '../utils/facePaint.js';
+import { detectFeaProfile } from './deviceProfile.js';
 import { createFeaClient } from './feaClient.js';
+import { studyForSolve } from './renderFaceIds.js';
 import { bindStressField, setStressSkinSource } from './stressMap.js';
 import { composeFeaStudy, readFeaStudy, scriptOutsideFeaStudy } from './studyScript.js';
 import {
@@ -50,7 +52,7 @@ const FACE_ANGLE_DEG = 3;
 
 export function useFeaStudy({
   enabled = true,
-  compact = false,
+  compact: _ = false,
   paintOpen = false,
   getScript,
   script = '',
@@ -66,9 +68,11 @@ export function useFeaStudy({
   const [draft, setDraft] = useState(emptyDraft);
   const [result, setResult] = useState(null);
   const [running, setRunning] = useState(false);
+  const [progress, setProgress] = useState('');
   const [notice, setNotice] = useState('');
   const writtenRef = useRef(null);
   const clientRef = useRef(null);
+  const runAbortRef = useRef(null);
   const stressFieldRef = useRef(null);
   const solvedOutsideRef = useRef(null);
   const markStaleRef = useRef(() => {});
@@ -299,27 +303,36 @@ export function useFeaStudy({
     if (!mesh) {
       stressFieldRef.current = null;
       setResult({
-        source: 'stub',
+        source: 'tet10',
         min: null,
         p95: null,
         max: null,
         safetyFactor: null,
-        warnings: [{ code: 'empty-mesh', msg: 'n/a' }],
+        warnings: [{ code: 'empty-mesh', msg: 'The part has no triangles to mesh.' }],
         yield_MPa: resolved.material.yield_MPa ?? null,
         stale: false,
       });
       setNotice('');
       return;
     }
+    const profile = detectFeaProfile();
+    const controller = new AbortController();
+    runAbortRef.current = controller;
     setRunning(true);
+    setProgress('meshing');
     setNotice('');
     try {
-      if (!clientRef.current) clientRef.current = await createFeaClient();
+      if (!clientRef.current) clientRef.current = await createFeaClient({ profile });
       const solved = await clientRef.current.solve({
-        study: studyRef.current,
+        study: studyForSolve(studyRef.current, geometry, solid?.faceIDs),
         mesh,
         material: resolved.material,
-        profile: compact ? 'phone' : 'desktop',
+        profile,
+      }, {
+        signal: controller.signal,
+        onProgress: (event) => {
+          if (event && event.stage) setProgress(event.stage);
+        },
       });
       const nodal = solved?.nodal instanceof Float32Array ? solved.nodal : null;
       const now = getSolidRef.current?.()?.geometry;
@@ -344,14 +357,23 @@ export function useFeaStudy({
         warnings: Array.isArray(solved.warnings) ? solved.warnings : [],
         yield_MPa: resolved.material.yield_MPa ?? null,
         stale: moved || !bound,
+        stats: solved.stats || null,
+        solver: solved.solver || null,
       });
     } catch (err) {
       if (err?.name === 'AbortError') return;
       setNotice(err?.message || 'The study did not run');
     } finally {
+      if (runAbortRef.current === controller) runAbortRef.current = null;
       setRunning(false);
+      setProgress('');
     }
-  }, [compact]);
+  }, []);
+
+  const cancel = useCallback(() => {
+    runAbortRef.current?.abort();
+    clientRef.current?.cancel();
+  }, []);
 
   useEffect(() => {
     if (!open || !result || result.stale || !stressFieldRef.current) setStressSkinSource(null);
@@ -374,6 +396,7 @@ export function useFeaStudy({
     draft,
     result,
     running,
+    progress,
     notice,
     toggle,
     close,
@@ -388,6 +411,7 @@ export function useFeaStudy({
     removeLoad,
     pick: pickIfOpen,
     run,
+    cancel,
   };
 
   const token = JSON.stringify({
@@ -396,6 +420,7 @@ export function useFeaStudy({
     draft,
     result,
     running,
+    progress,
     notice,
   });
 

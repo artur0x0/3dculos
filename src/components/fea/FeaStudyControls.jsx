@@ -90,14 +90,32 @@ export function FeaStudyControls({ panel }) {
   );
 }
 
+const STAGE_LABEL = {
+  meshing: 'Meshing',
+  solving: 'Solving',
+  'post-processing': 'Post-processing',
+};
+
 export function FeaRunBar({ panel }) {
+  const stage = panel.running ? (STAGE_LABEL[panel.progress] || 'Running') : 'Run';
   return (
     <div className="mt-1 flex shrink-0 flex-col gap-1">
       <FeaLegend result={panel.result} />
       <div className="flex items-center justify-end gap-2">
+      {panel.running && (
+        <button
+          type="button"
+          data-fea-cancel=""
+          onClick={() => panel.cancel?.()}
+          className="inline-flex items-center rounded-md border border-cyan-700/70 px-2 py-1 text-[13px] font-medium text-cyan-100"
+        >
+          Cancel
+        </button>
+      )}
       <button
         type="button"
         data-fea-run={panel.running ? 'busy' : 'ready'}
+        data-fea-progress={panel.running ? (panel.progress || 'running') : ''}
         onClick={() => panel.run?.()}
         disabled={!!panel.running}
         className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[13px] font-medium ${
@@ -107,7 +125,7 @@ export function FeaRunBar({ panel }) {
         }`}
       >
         <Check size={14} />
-        {panel.running ? 'Running' : 'Run'}
+        {stage}
       </button>
       </div>
     </div>

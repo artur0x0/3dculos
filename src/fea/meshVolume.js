@@ -6,10 +6,11 @@
 // mid-edge nodes, snaps boundary mids back onto the input surface, and copies
 // each boundary face's face id from the nearest input triangle.
 //
-// The module does not use shared memory. Load it from the FEA worker in a
-// later change; nothing in the app imports this yet.
+// The module does not use shared memory. solveSolid loads it on the first
+// Analyze run. A phone solve passes memoryCeilingBytes so the heap stops
+// at 512 MiB.
 
-import { readFile } from 'node:fs/promises';
+import { capWasmMemory } from './wasmMemory.js';
 
 const TET_EDGES = [
   [0, 1, 4],
@@ -20,7 +21,8 @@ const TET_EDGES = [
   [2, 3, 9],
 ];
 
-let modulePromise;
+let modulePromise = null;
+let moduleKey = null;
 
 function asFloat64(positions) {
   if (positions instanceof Float64Array) return positions;
@@ -220,16 +222,55 @@ function decodeTet4(bytes) {
   return { status, message, positions, tets };
 }
 
-async function loadMeshModule() {
-  if (!modulePromise) {
-    modulePromise = (async () => {
-      const jsUrl = new URL('../../packages/surfcad-mesh/pkg/surfcad_mesh.js', import.meta.url);
-      const wasmUrl = new URL('../../packages/surfcad-mesh/pkg/surfcad_mesh.wasm', import.meta.url);
-      const factory = (await import(jsUrl.href)).default;
-      const wasmBinary = await readFile(wasmUrl);
-      return factory({ wasmBinary });
-    })();
+async function readWasm(url) {
+  if (globalThis.process && globalThis.process.versions && globalThis.process.versions.node) {
+    const { readFile } = await import('node:fs/promises');
+    return new Uint8Array(await readFile(url));
   }
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`mesh wasm fetch failed (${response.status})`);
+  return new Uint8Array(await response.arrayBuffer());
+}
+
+function factoryWithBinary(factory, bytes) {
+  let rejectLoad = null;
+  const failed = new Promise((_, reject) => {
+    rejectLoad = reject;
+  });
+  const loaded = factory({
+    instantiateWasm(imports, receive) {
+      WebAssembly.instantiate(bytes, imports).then(
+        (result) => {
+          try {
+            receive(result.instance);
+          } catch (error) {
+            rejectLoad(error);
+          }
+        },
+        (error) => rejectLoad(error),
+      );
+      return {};
+    },
+  });
+  return Promise.race([loaded, failed]);
+}
+
+async function loadMeshModule(ceilingBytes) {
+  const key = ceilingBytes > 0 ? ceilingBytes : 0;
+  if (modulePromise && moduleKey === key) return modulePromise;
+  moduleKey = key;
+  modulePromise = (async () => {
+    const glue = await import('../../packages/surfcad-mesh/pkg/surfcad_mesh.js');
+    const factory = glue.default;
+    const wasmUrl = new URL('../../packages/surfcad-mesh/pkg/surfcad_mesh.wasm', import.meta.url);
+    let bytes = await readWasm(wasmUrl);
+    if (key > 0) bytes = capWasmMemory(bytes, key);
+    return factoryWithBinary(factory, bytes);
+  })().catch((error) => {
+    modulePromise = null;
+    moduleKey = null;
+    throw error;
+  });
   return modulePromise;
 }
 
@@ -485,7 +526,7 @@ export async function meshVolume(surface, options = {}) {
   const epsilon = options.epsilon ?? 0;
   const maxTets = options.maxTets ?? 0;
   const started = Date.now();
-  const module = await loadMeshModule();
+  const module = await loadMeshModule(options.memoryCeilingBytes);
   const { decoded, wasmBytes } = meshTet4(module, positions, indices, edgeLength, epsilon, maxTets);
   if (decoded.status !== 0) {
     throw new Error(decoded.message || `volume mesher failed (${decoded.status})`);

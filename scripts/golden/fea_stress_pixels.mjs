@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 /**
- * Stress skin and legend. After Run the part is viridis (or magenta past
- * yield), the legend is on screen, an edit marks Re-run and drops the
- * colours, and closing Analyze puts the paint skin back.
+ * Stress skin and legend for a real TET10 cantilever.
+ *
+ * 40×10×10 mm beam, fixed on the −X face, 200 N in −Z on the +X face,
+ * mesh target 4 mm. Beam-theory peak is 48 MPa. The legend max must sit
+ * within 10% of that peak. p95 of a bending field is not the peak.
  *
  * 390×844 touch (iPhone UA, DPR 2) and 1280×800 desktop. FEA_VIEW=desktop
  * or FEA_VIEW=390 runs one of them.
@@ -15,19 +17,19 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { chromium } from 'playwright-core';
-import { stressColor } from '../../src/fea/colormap.js';
+import { feaStudyBlock } from '../../src/fea/studyScript.js';
 
 const PORT = Number(process.env.SMOKE_PORT || 4333);
 const APP_URL = `http://127.0.0.1:${PORT}/`;
 const SHOT_DIR = process.env.GOLDEN_SHOT_DIR || tmpdir();
 const SURF = '2026-10-09-04-24-00-0001-ab12';
-const CUBE = `// @surf-id ${SURF}\nconst part = Manifold.cube([20, 20, 20], true);\nreturn part;\n`;
-const WIDE = `// @surf-id ${SURF}\nconst part = Manifold.cube([40, 20, 20], true);\nreturn part;\n`;
+const STUDY = feaStudyBlock({ mesh: { target: 4 } });
+const CUBE = `// @surf-id ${SURF}\nconst part = Manifold.cube([40, 10, 10], false);\nreturn part;\n${STUDY}`;
+const WIDE = `// @surf-id ${SURF}\nconst part = Manifold.cube([50, 10, 10], false);\nreturn part;\n${STUDY}`;
 const PART_ID = 'fea-block';
 const USER_ID = 'user-fea';
-// 1000 N on the 400 mm² face. Front corners sit near 35 MPa; p95 is the far
-// corners, just above PLA yield, so the front face stays on the viridis ramp.
-const FRONT = stressColor(35, { p95: 61, yield_MPa: 52.5 }).map((c) => Math.round(c * 255));
+// σ = F L (h/2) / I, I = width * height³ / 12, force along Z, length along X.
+const BEAM_PEAK_MPA = 48;
 
 const CHROME_CANDIDATES = [
   process.env.CHROME_PATH,
@@ -226,21 +228,135 @@ function installProbe(page) {
   });
 }
 
-async function snapFront(page) {
-  const viaHook = await page.evaluate(() => {
-    if (typeof window.__VIEWPORT__?.stageSnap === 'function') return !!window.__VIEWPORT__.stageSnap('front');
+// Looking down the beam, the default snap margin parks a wide desktop camera
+// inside the solid. A larger margin backs up past the root and tip faces.
+const END_SNAP_MARGIN = 3;
+
+async function snap(page, key, margin) {
+  const viaHook = await page.evaluate(({ name, margin }) => {
+    window.__feaView = name;
+    if (typeof window.__VIEWPORT__?.stageSnap === 'function') return !!window.__VIEWPORT__.stageSnap(name, margin);
     return false;
-  });
+  }, { name: key, margin });
   if (viaHook) {
-    await page.waitForTimeout(200);
-    return;
+    await page.waitForTimeout(250);
+    return true;
   }
+  // vite preview does not publish __VIEWPORT__. Fit the same way from the
+  // live camera so a left or right end view still lands outside the beam.
+  const fitted = await page.evaluate(({ name, margin }) => new Promise((resolve) => {
+    const presets = {
+      front: { dir: [0, -1, 0], up: [0, 0, 1] },
+      right: { dir: [1, 0, 0], up: [0, 0, 1] },
+      left: { dir: [-1, 0, 0], up: [0, 0, 1] },
+      top: { dir: [0, 0, 1], up: [0, -1, 0] },
+      iso: { dir: [1, 1, 1], up: [0, 0, 1] },
+    };
+    const preset = presets[name];
+    const canvas = document.querySelector('.viewport-shell > canvas');
+    const root = document.getElementById('root');
+    const reactKey = root && Object.keys(root).find((k) => k.startsWith('__reactContainer'));
+    const start = reactKey ? (root[reactKey].current || root[reactKey]) : null;
+    const seen = new Set();
+    let renderer = null;
+    let controls = null;
+    function walk(fiber) {
+      if (!fiber || seen.has(fiber) || (renderer && controls)) return;
+      seen.add(fiber);
+      let hook = fiber.memoizedState;
+      for (let guard = 0; hook && guard < 900; guard += 1) {
+        const cur = hook.memoizedState && hook.memoizedState.current;
+        if (cur && cur.domElement === canvas && typeof cur.render === 'function') renderer = cur;
+        if (cur && cur.target && typeof cur.update === 'function' && typeof cur.rotateSpeed === 'number') controls = cur;
+        hook = hook.next;
+      }
+      walk(fiber.child);
+      walk(fiber.sibling);
+    }
+    if (!preset || !start) {
+      resolve(false);
+      return;
+    }
+    walk(start);
+    if (!renderer || !controls) {
+      resolve(false);
+      return;
+    }
+    const orig = renderer.render.bind(renderer);
+    renderer.render = function hooked(scene, camera) {
+      const out = orig(scene, camera);
+      renderer.render = orig;
+      let mesh = null;
+      let best = 0;
+      scene.traverse((obj) => {
+        const count = obj.geometry?.attributes?.position?.count || 0;
+        if (obj.isMesh && count > best) {
+          best = count;
+          mesh = obj;
+        }
+      });
+      const geometry = mesh?.geometry;
+      if (!geometry?.attributes?.position) {
+        resolve(false);
+        return out;
+      }
+      geometry.computeBoundingBox();
+      const box = geometry.boundingBox;
+      if (!box || box.isEmpty()) {
+        resolve(false);
+        return out;
+      }
+      const vec = () => camera.position.clone();
+      const center = box.getCenter(vec());
+      const d = vec().set(preset.dir[0], preset.dir[1], preset.dir[2]);
+      if (d.lengthSq() < 1e-12) d.set(1, 1, 1);
+      d.normalize();
+      let u = vec().set(preset.up[0], preset.up[1], preset.up[2]);
+      if (u.lengthSq() < 1e-12) u.set(0, 0, 1);
+      if (Math.abs(u.dot(d)) > 1 - 1e-6) u.set(0, 0, 1);
+      u.sub(d.clone().multiplyScalar(u.dot(d))).normalize();
+      const zAxis = d.clone();
+      const xAxis = vec().crossVectors(u, zAxis).normalize();
+      const yAxis = vec().crossVectors(zAxis, xAxis);
+      const tanY = Math.tan(((camera.fov || 45) * Math.PI) / 360) || 1e-6;
+      const tanX = tanY * (camera.aspect > 0 ? camera.aspect : 1);
+      let dist = 0;
+      const corner = vec();
+      for (let i = 0; i < 8; i += 1) {
+        corner.set(
+          i & 1 ? box.max.x : box.min.x,
+          i & 2 ? box.max.y : box.min.y,
+          i & 4 ? box.max.z : box.min.z,
+        ).sub(center);
+        dist = Math.max(dist, Math.abs(corner.dot(xAxis)) / tanX, Math.abs(corner.dot(yAxis)) / tanY);
+      }
+      const pad = Number.isFinite(margin) && margin > 0 ? margin : 1.35;
+      dist = (dist || 1) * pad;
+      camera.near = Math.max(dist / 1000, 1e-4);
+      camera.far = Math.max(dist * 10, camera.far || 2000);
+      camera.up.copy(u);
+      camera.position.copy(center).addScaledVector(d, dist);
+      camera.updateProjectionMatrix();
+      camera.lookAt(center);
+      controls.target.copy(center);
+      controls.update();
+      resolve(true);
+      return out;
+    };
+  }), { name: key, margin });
+  if (fitted) {
+    await page.waitForTimeout(250);
+    return true;
+  }
+  const labels = { front: 'Snap to Front', right: 'Snap to Right', top: 'Snap to Top', iso: 'Snap to Isometric' };
+  if (!labels[key]) return false;
   await page.locator('[aria-label="View snaps"]').click();
-  await page.locator('[aria-label="Snap to Front"]').click();
+  await page.locator(`[aria-label="${labels[key]}"]`).click();
   await page.waitForTimeout(300);
+  return true;
 }
 
-async function sampleCenter(page) {
+async function sampleSides(page) {
   return page.evaluate(() => new Promise((resolve) => {
     const { canvas, renderer } = window.__feaProbe.bits();
     if (!canvas || !renderer) {
@@ -248,91 +364,105 @@ async function sampleCenter(page) {
       return;
     }
     const orig = renderer.render.bind(renderer);
+    let best = null;
+    let timer = 0;
     renderer.render = function hooked(scene, camera) {
       const out = orig(scene, camera);
-      renderer.render = orig;
       const gl = renderer.getContext();
       const w = gl.drawingBufferWidth;
       const h = gl.drawingBufferHeight;
       const buf = new Uint8Array(w * h * 4);
       gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, buf);
-      const x0 = Math.floor(w * 0.38);
-      const x1 = Math.floor(w * 0.62);
-      const y0 = Math.floor(h * 0.38);
-      const y1 = Math.floor(h * 0.62);
-      let model = 0;
-      let red = 0;
-      let stress = 0;
-      const paint = [239, 68, 68];
-      const teal = window.__feaExpected;
-      const slack = 180;
-      for (let y = y0; y < y1; y += 2) {
-        for (let x = x0; x < x1; x += 2) {
-          const i = (y * w + x) * 4;
-          const rgb = [buf[i], buf[i + 1], buf[i + 2]];
-          if (rgb[0] < 45 && rgb[1] < 45 && rgb[2] < 45) continue;
-          model += 1;
-          const redD = Math.abs(rgb[0] - paint[0]) + Math.abs(rgb[1] - paint[1]) + Math.abs(rgb[2] - paint[2]);
-          const stressD = Math.abs(rgb[0] - teal[0]) + Math.abs(rgb[1] - teal[1]) + Math.abs(rgb[2] - teal[2]);
-          if (redD <= slack) red += 1;
-          if (stressD <= slack) stress += 1;
-        }
-      }
-      resolve({ model, red, stress });
-      return out;
-    };
-  }));
-}
-
-async function readColors(page) {
-  await page.evaluate((expected) => { window.__feaExpected = expected; }, FRONT);
-  const colors = await sampleCenter(page);
-  return colors;
-}
-
-function facePoints(page) {
-  return page.evaluate(() => new Promise((resolve) => {
-    const { canvas, renderer } = window.__feaProbe.bits();
-    if (!canvas || !renderer) {
-      resolve([]);
-      return;
-    }
-    const orig = renderer.render.bind(renderer);
-    renderer.render = function hooked(scene, camera) {
-      const out = orig(scene, camera);
-      renderer.render = orig;
-      const gl = renderer.getContext();
-      const dpr = renderer.getPixelRatio();
-      const w = gl.drawingBufferWidth;
-      const h = gl.drawingBufferHeight;
-      const buf = new Uint8Array(w * h * 4);
-      gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, buf);
-      const rect = canvas.getBoundingClientRect();
+      let minX = Infinity;
+      let maxX = -Infinity;
       const pts = [];
-      for (let y = 4; y < h - 4; y += 4) {
-        for (let x = 4; x < w - 4; x += 4) {
+      for (let y = 0; y < h; y += 2) {
+        for (let x = 0; x < w; x += 2) {
           const i = (y * w + x) * 4;
           const r = buf[i];
           const g = buf[i + 1];
           const b = buf[i + 2];
-          if (r < 140 || g > 140 || b > 140) continue;
-          const cssX = rect.left + (x + 0.5) / dpr;
-          const cssY = rect.top + (h - y - 0.5) / dpr;
-          if (document.elementFromPoint(cssX, cssY) !== canvas) continue;
-          pts.push({ x: cssX, y: cssY });
+          if (r < 45 && g < 45 && b < 45) continue;
+          pts.push({ x, r, g, b });
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
         }
       }
-      if (!pts.length) {
-        resolve([]);
-        return;
+      const sample = { model: 0, red: 0, leftN: 0, rightN: 0, leftHeat: 0, rightHeat: 0 };
+      if (pts.length) {
+        const span = Math.max(1, maxX - minX);
+        const leftCut = minX + span * 0.33;
+        const rightCut = minX + span * 0.67;
+        let red = 0;
+        let leftN = 0;
+        let rightN = 0;
+        let leftHeat = 0;
+        let rightHeat = 0;
+        for (const p of pts) {
+          // #ef4444 stays red-dominant under the viewport lights. Viridis purple
+          // sits near that swatch in raw distance, so distance alone is not a paint test.
+          if (p.r >= 140 && p.g < 160 && p.b < 160 && p.r > p.g + 40 && p.r > p.b + 40) red += 1;
+          const heat = p.r + p.g - p.b;
+          if (p.x <= leftCut) {
+            leftN += 1;
+            leftHeat += heat;
+          } else if (p.x >= rightCut) {
+            rightN += 1;
+            rightHeat += heat;
+          }
+        }
+        sample.model = pts.length;
+        sample.red = red;
+        sample.leftN = leftN;
+        sample.rightN = rightN;
+        sample.leftHeat = leftN ? leftHeat / leftN : 0;
+        sample.rightHeat = rightN ? rightHeat / rightN : 0;
       }
-      const picks = [];
-      const step = Math.max(1, Math.floor(pts.length / 6));
-      for (let i = step >> 1; i < pts.length && picks.length < 6; i += step) picks.push(pts[i]);
-      resolve(picks);
+      if (!best || sample.model > best.model) best = sample;
+      if (!timer) {
+        timer = setTimeout(() => {
+          const key = window.__feaView || 'front';
+          if (typeof window.__VIEWPORT__?.stageSnap === 'function') window.__VIEWPORT__.stageSnap(key);
+          renderer.render = orig;
+          resolve(best);
+        }, 100);
+      }
       return out;
     };
+    const key = window.__feaView || 'front';
+    if (typeof window.__VIEWPORT__?.stageSnap === 'function') window.__VIEWPORT__.stageSnap(key);
   }));
+}
+
+async function readColors(page) {
+  return sampleSides(page);
+}
+
+function endFacePoints(page) {
+  return page.evaluate(() => {
+    const canvas = document.querySelector('.viewport-shell > canvas');
+    if (!canvas) return [];
+    const rect = canvas.getBoundingClientRect();
+    const pts = [];
+    // The desktop Analyze chip sits on the canvas center once the force
+    // row is open. Upper-center and either side of that chip still land
+    // on the end face. The phone sheet covers the top, so keep mid points.
+    const spots = [
+      [0.5, 0.28],
+      [0.5, 0.34],
+      [0.28, 0.5],
+      [0.72, 0.5],
+      [0.5, 0.46],
+      [0.5, 0.5],
+      [0.5, 0.42],
+    ];
+    for (const [fx, fy] of spots) {
+      const x = rect.left + rect.width * fx;
+      const y = rect.top + rect.height * fy;
+      if (document.elementFromPoint(x, y) === canvas) pts.push({ x, y });
+    }
+    return pts;
+  });
 }
 
 async function tap(page, touch, point) {
@@ -382,7 +512,7 @@ async function runCase(browser, vp) {
   await page.waitForSelector('canvas', { timeout: 40000 });
   await solidReady(page);
   await installProbe(page);
-  await snapFront(page);
+  check(`${vp.name} front snap`, await snap(page, 'front'));
 
   const painted = await readColors(page);
   check(
@@ -396,32 +526,72 @@ async function runCase(browser, vp) {
   await page.locator(shell).waitFor({ timeout: 8000 });
   await page.locator('[data-fea-material]').selectOption('pla-ultimaker');
   await solidReady(page);
-  const face = await facePoints(page);
-  check(`${vp.name} front face is tappable`, face.length > 0, `points=${face.length}`);
+  check(`${vp.name} left snap`, await snap(page, 'left', END_SNAP_MARGIN));
+  const root = await endFacePoints(page);
+  check(`${vp.name} root face is tappable`, root.length > 0, `points=${root.length}`);
   await page.locator('[data-fea-target="fixture"]').click();
-  check(`${vp.name} fixture`, await tapUntil(page, vp.touch, face, 'data-fea-fixture-count', '1'));
+  const fixed = await tapUntil(page, vp.touch, root, 'data-fea-fixture-count', '1');
+  const fixNotice = fixed ? '' : await page.locator('[data-fea-notice]').textContent().catch(() => '');
+  check(`${vp.name} fixture`, fixed, fixNotice);
   await page.locator('[data-fea-target="force"]').click();
-  await page.locator('[data-popup-number="fea-force"]').fill('1000');
-  check(`${vp.name} force`, await tapUntil(page, vp.touch, face, 'data-fea-load-count', '1'));
+  const down = page.locator(`${shell} button`, { hasText: '\u2212Z' });
+  await down.scrollIntoViewIfNeeded();
+  await down.click();
+  check(`${vp.name} right snap`, await snap(page, 'right', END_SNAP_MARGIN));
+  const tip = await endFacePoints(page);
+  check(`${vp.name} tip face is tappable`, tip.length > 0, `points=${tip.length}`);
+  check(`${vp.name} force`, await tapUntil(page, vp.touch, tip, 'data-fea-load-count', '1'));
+  check(`${vp.name} front snap after picks`, await snap(page, 'front'));
 
   await page.locator('[data-fea-run]').click();
-  await page.locator('[data-fea-legend]').waitFor({ timeout: 30000 });
+  const stages = new Set();
+  const started = Date.now();
+  let legendReady = false;
+  while (Date.now() - started < 120000) {
+    const state = await page.evaluate(() => ({
+      progress: document.querySelector('[data-fea-progress]')?.getAttribute('data-fea-progress') || '',
+      legend: !!document.querySelector('[data-fea-legend]'),
+    }));
+    if (state.progress) stages.add(state.progress);
+    if (state.legend) {
+      legendReady = true;
+      break;
+    }
+    await page.waitForTimeout(40);
+  }
+  check(`${vp.name} legend appeared`, legendReady, `stages=${[...stages].join(',')}`);
+  check(
+    `${vp.name} progress stage`,
+    [...stages].some((stage) => stage === 'meshing' || stage === 'solving' || stage === 'post-processing'),
+    [...stages].join(',') || 'none',
+  );
   await page.waitForTimeout(300);
   const legend = await page.evaluate(() => ({
     stub: document.querySelector('[data-fea-legend] [data-fea-stub="1"]') ? 'yes' : 'no',
+    source: document.querySelector('[data-fea-source]')?.getAttribute('data-fea-source') || '',
     stress: document.querySelector('[data-fea-stress]')?.textContent || '',
     fos: document.querySelector('[data-fea-fos]')?.getAttribute('data-fea-fos') || '',
     warning: document.querySelector('[data-fea-warning]')?.textContent || '',
     ticks: document.querySelector('[data-fea-legend-ticks]')?.textContent || '',
     bar: document.querySelector('[data-fea-legend-bar]')?.style?.backgroundImage || document.querySelector('[data-fea-legend-bar]')?.style?.background || '',
     stale: document.querySelector('[data-fea-stale]')?.getAttribute('data-fea-stale') || '',
+    ms: document.querySelector('[data-fea-solve-ms]')?.getAttribute('data-fea-solve-ms') || '',
+    peak: document.querySelector('[data-fea-peak-bytes]')?.getAttribute('data-fea-peak-bytes') || '',
   }));
-  check(`${vp.name} stub badge`, legend.stub === 'yes', JSON.stringify(legend));
+  const maxMatch = legend.stress.match(/max ([0-9.]+) MPa/);
+  const maxMPa = maxMatch ? Number(maxMatch[1]) : NaN;
+  const peakError = Number.isFinite(maxMPa) ? Math.abs(maxMPa - BEAM_PEAK_MPA) / BEAM_PEAK_MPA : Infinity;
+  console.log(`  solve ${vp.name} ${legend.ms} ms peak ${legend.peak} bytes max ${maxMPa} MPa`);
+  check(`${vp.name} no stub badge`, legend.stub === 'no', JSON.stringify(legend));
+  check(`${vp.name} tet10 source`, legend.source === 'tet10', legend.source);
   check(`${vp.name} legend ticks`, (legend.ticks.match(/\d/g) || []).length >= 5, legend.ticks);
   check(`${vp.name} legend gradient`, /linear-gradient/.test(legend.bar), legend.bar.slice(0, 80));
   check(`${vp.name} min p95 max`, /min .+ MPa/.test(legend.stress) && /p95 /.test(legend.stress) && /max /.test(legend.stress), legend.stress);
+  check(`${vp.name} peak within 10% of beam theory`, peakError <= 0.1, `max ${maxMPa} vs ${BEAM_PEAK_MPA}`);
   check(`${vp.name} safety factor`, legend.fos !== '' && legend.fos !== 'n/a', legend.fos);
-  check(`${vp.name} stub warning`, /STUB, not a real result/.test(legend.warning), legend.warning);
+  check(`${vp.name} no stub warning`, !/STUB/.test(legend.warning), legend.warning);
+  check(`${vp.name} solve time recorded`, Number(legend.ms) > 0, legend.ms);
+  check(`${vp.name} peak memory recorded`, Number(legend.peak) > 0, legend.peak);
   check(`${vp.name} result is current`, legend.stale === '0', legend.stale);
 
   const box = await legendBox(page);
@@ -434,8 +604,12 @@ async function runCase(browser, vp) {
   const stressed = await readColors(page);
   check(
     `${vp.name} stress colours replace paint`,
-    !!stressed && stressed.stress > stressed.model * 0.45 && stressed.red < stressed.model * 0.2,
-    JSON.stringify({ stressed, expected: FRONT }),
+    !!stressed
+      && stressed.red < stressed.model * 0.2
+      && stressed.leftN > 10
+      && stressed.rightN > 10
+      && stressed.leftHeat > stressed.rightHeat + 20,
+    JSON.stringify(stressed),
   );
 
   const shot = join(SHOT_DIR, vp.touch ? 'fea-stress-390.png' : 'fea-stress-desktop.png');
@@ -451,7 +625,7 @@ async function runCase(browser, vp) {
   const paintedAgain = await readColors(page);
   check(
     `${vp.name} opening paint restores the skin`,
-    !!paintedAgain && paintedAgain.red > paintedAgain.model * 0.45 && paintedAgain.stress < paintedAgain.model * 0.2,
+    !!paintedAgain && paintedAgain.red > paintedAgain.model * 0.45,
     JSON.stringify(paintedAgain),
   );
   await page.locator('[data-paint-dismiss]').click();
@@ -460,7 +634,7 @@ async function runCase(browser, vp) {
   await page.locator('[data-analyze-chip]').click();
   await page.locator(shell).waitFor({ timeout: 8000 });
   await page.locator('[data-fea-run]').click();
-  await page.locator('[data-fea-stale="0"]').waitFor({ timeout: 30000 });
+  await page.locator('[data-fea-stale="0"]').waitFor({ timeout: 120000 });
   const edited = await page.evaluate(async (script) => {
     if (typeof window.__VIEWPORT__?.executeScript !== 'function') return { skipped: true };
     return window.__VIEWPORT__.executeScript(script);
@@ -477,7 +651,7 @@ async function runCase(browser, vp) {
   const staleColors = await readColors(page);
   check(
     `${vp.name} stale colours are not shown`,
-    !!staleColors && staleColors.stress < staleColors.model * 0.2 && staleColors.red > staleColors.model * 0.35,
+    !!staleColors && staleColors.red > staleColors.model * 0.35,
     JSON.stringify(staleColors),
   );
   check(`${vp.name} analyze still open`, await page.locator(shell).count() === 1);

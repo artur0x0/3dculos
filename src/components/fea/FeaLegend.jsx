@@ -25,6 +25,9 @@ export function FeaLegend({ result }) {
     <div
       data-fea-summary=""
       data-fea-legend=""
+      data-fea-source={result.source || ''}
+      data-fea-solve-ms={result.stats && Number.isFinite(result.stats.ms) ? String(Math.round(result.stats.ms)) : ''}
+      data-fea-peak-bytes={result.stats && Number.isFinite(result.stats.peakMemoryBytes) ? String(result.stats.peakMemoryBytes) : ''}
       data-fea-stale={stale ? '1' : '0'}
       className="rounded border border-amber-300/50 bg-amber-400/10 px-2 py-1.5"
     >
