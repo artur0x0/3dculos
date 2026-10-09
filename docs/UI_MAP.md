@@ -469,7 +469,11 @@ Both modes share the shape: tool rail on the left, param chip on the right,
 commit writes script text back through `App.jsx`.
 Sheet metal (SendCutSend): left rail **Shape** → Sheet Metal (no separate
 Sheet section) → `SheetMetalPicker`. Start designing binds the SKU on the
-part row (`part.sheetMetal`) and enters `sheetMetalMode`. The rail then lists
+part row (`part.sheetMetal`), writes the default base flange
+(`sheetStarterScript` → `sheetMetalSolid`, Top plane, SKU thickness) over an
+empty, demo, or starter-cube script, and enters `sheetMetalMode` still on the
+plane step. A busy part gets a new `Sheet (n)` whose script is that flange.
+The rail then lists
 Tab / Bend / Hole / Tap under **Shape**. The chip (material, hint, Check &
 Export) is centered in the measured gap between the side rails. An mm|in
 toggle on the popups is display only (stored mm, preference in localStorage).
