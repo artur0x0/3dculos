@@ -25,12 +25,6 @@ export function FeaStudySheet({ panel }) {
         <div className="mb-1 flex shrink-0 items-center justify-between gap-2">
           <div className="flex items-center gap-2 text-sm font-semibold text-cyan-200">
             Analyze
-            <span
-              data-fea-stub="1"
-              className="rounded bg-amber-400 px-1.5 py-0.5 text-[11px] font-bold tracking-wide text-amber-950"
-            >
-              STUB
-            </span>
           </div>
           <button
             type="button"

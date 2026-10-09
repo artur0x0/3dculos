@@ -4,7 +4,7 @@ SurfCAD finite-element solver compiled to a **single-threaded** WebAssembly modu
 
 Two entry points share the module:
 
-- `solve` is still the phase-0 **stub**. It returns a deterministic fake von Mises field and always sets `source` to `"stub"`. `capabilities()` still reports `solvers: ["stub"]`. The app worker calls only this entry; wiring the real solver into the page is a later change.
+- `solve` is still the phase-0 **stub**. It returns a deterministic fake von Mises field and always sets `source` to `"stub"`. The wasm `capabilities()` still reports `solvers: ["stub"]`. The app worker calls `solve_tet10` for a study and uses `solve` only when the request sets `fallback: "stub"`. The page reports `source: "tet10"` and `shells: false`.
 - `solve_tet10` is a clean-room linear-elastic static solver for 10-node tetrahedra. It sets `source` to `"fem"`.
 - `solve_shell` is a clean-room linear shell for 6-node triangles. It sets `source` to `"shell"`.
 
@@ -109,9 +109,9 @@ If both a canonical name and its alias are present they must be equal. Mesh coor
 
 ## API
 
-The main thread uses `createFeaClient()` in `src/fea/feaClient.js`. That spawns `src/workers/feaWorker.js`, which loads this module. Typed arrays on `solve` are **transferred** to the worker (not copied). The worker copies the result out of wasm memory, then transfers that `Float32Array` back. Passing a typed array into wasm still copies it across the bindgen ABI; that copy is inside the worker.
+The main thread uses `createFeaClient()` in `src/fea/feaClient.js`. That spawns `src/workers/feaWorker.js`, which loads this module. A study solve meshes the surface and calls `solve_tet10`. The mesher is a separate chunk, loaded on that solve. Typed arrays on `solve` are **transferred** to the worker (not copied). The worker copies the render-vertex von Mises samples out of wasm memory, then transfers that `Float32Array` back. Passing a typed array into wasm still copies it across the bindgen ABI; that copy is inside the worker. On a phone the worker rewrites both wasm memories to a non-shared 512 MiB maximum before instantiate.
 
-`cancel()` rejects the in-flight `solve` promise. The stub is synchronous, so cancel does not interrupt an evaluation that has already started on the worker. `dispose()` terminates the worker.
+`cancel()` rejects the in-flight `solve` promise. The wasm call itself is synchronous, so cancel takes effect at the next stage (meshing, solving, post-processing) rather than inside it. `dispose()` terminates the worker. `capabilities()` from the client adds `tet10` to the wasm solver list and sets `shells` to false.
 
 ```js
 const fea = await createFeaClient();
@@ -119,14 +119,15 @@ const fea = await createFeaClient();
 await fea.capabilities();
 // {
 //   version: "0.1.0",
-//   solvers: ["stub"],
+//   solvers: ["stub", "tet10"],
+//   shells: false,
 //   simd: true,
 //   threads: false,
 //   maxDofs: { phone: 48000, desktop: 300000 }  // hints, not a hard cap
 // }
 
 await fea.solve({
-  study,   // fixtures[].faces[].at, loads[].vector, loads[].faces[].area; other keys ignored
+  study,   // fixtures, loads, mesh.target; a shell model still solves TET10
   mesh: {
     positions: Float32Array,  // x,y,z per vertex
     indices: Uint32Array,     // three indices per triangle
@@ -136,14 +137,14 @@ await fea.solve({
   profile,  // "phone" | "desktop"
 }, { onProgress, signal });
 // {
-//   source: "stub",
+//   source: "tet10",          // "stub" only when the request sets fallback: "stub"
 //   field: "von_mises",
 //   units: "MPa",
 //   nodal: Float32Array,     // one value per input vertex
 //   min, max, p95,           // p95 is the nearest-rank 95th percentile
 //   safetyFactor,            // yield_MPa / p95, or null when p95 is 0
 //   fos,                     // same number as safetyFactor
-//   warnings: [{ code, msg }],  // always includes code "stub"
+//   warnings: [{ code, msg }],  // stub fallback includes code "stub"
 //   stats: { dofs, ms, vertices, triangles }
 // }
 

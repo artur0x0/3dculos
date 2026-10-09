@@ -6,7 +6,7 @@ Closed triangle surface in, TET4 volume mesh out. The JavaScript in `src/fea/mes
 
 `packages/surfcad-fea` is Rust, built with wasm-pack for `wasm32-unknown-unknown`. fTetWild is C++ and needs libc++, exceptions, and Geogram's Emscripten platform. Folding it into the solver crate would replace that reproducible wasm-pack pipeline. This module is loaded only when a study asks for a volume mesh. It is single-threaded, uses simd128, and does not allocate a `SharedArrayBuffer`, so the page does not need COOP/COEP headers.
 
-The app worker is not wired up here. `meshVolume` is the API a later change can call from the FEA worker.
+The FEA worker calls `meshVolume` from the first Analyze run. That import is not part of the initial page bundle. A phone solve passes `memoryCeilingBytes` so the heap maximum is 512 MiB.
 
 ## API
 

@@ -1,0 +1,12 @@
+Third-party notices
+
+getRSS.c
+David Robert Nadeau, NadeauSoftware.com
+Creative Commons Attribution 3.0 Unported (CC BY 3.0)
+https://creativecommons.org/licenses/by/3.0/
+
+getRSS.c is compiled into the volume mesher. The mesher's other
+licences are listed in packages/surfcad-mesh/LICENSES.md.
+
+The finite-element solver is Apache-2.0. Its linear algebra is faer,
+MIT OR Apache-2.0.

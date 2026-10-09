@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
- * Analyze: open the study, pick a material, fix a face, add a force, run
- * the stub, and reload. The study comment is still in the part script.
+ * Analyze: open the study, fix the root of a small cantilever, load the
+ * tip, run TET10, and reload. The study comment is still in the part script.
+ * The legend max is within 10% of the beam-theory peak (48 MPa).
  *
  * 390×844 touch (iPhone UA, DPR 2) and 1280×800 desktop. FEA_VIEW=desktop
  * or FEA_VIEW=390 runs one of them. FEA_PREVIEW=1 serves the existing
@@ -15,12 +16,15 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { chromium } from 'playwright-core';
+import { feaStudyBlock } from '../../src/fea/studyScript.js';
 
 const PORT = Number(process.env.SMOKE_PORT || 4327);
 const APP_URL = `http://127.0.0.1:${PORT}/`;
 const SHOT_DIR = process.env.GOLDEN_SHOT_DIR || tmpdir();
 const PREVIEW = process.env.FEA_PREVIEW === '1';
-const CUBE = 'const part = Manifold.cube([20, 20, 20], true);\nreturn part;\n';
+const STUDY = feaStudyBlock({ mesh: { target: 4 } });
+const CUBE = `const part = Manifold.cube([40, 10, 10], false);\nreturn part;\n${STUDY}`;
+const BEAM_PEAK_MPA = 48;
 const PART_ID = 'fea-block';
 const USER_ID = 'user-fea';
 
@@ -231,18 +235,84 @@ function installProbe(page) {
   });
 }
 
-async function snapFront(page) {
-  const viaHook = await page.evaluate(() => {
-    if (typeof window.__VIEWPORT__?.stageSnap === 'function') return !!window.__VIEWPORT__.stageSnap('front');
+async function snap(page, key) {
+  const viaHook = await page.evaluate((name) => {
+    if (typeof window.__VIEWPORT__?.stageSnap === 'function') return !!window.__VIEWPORT__.stageSnap(name);
     return false;
-  });
+  }, key);
   if (viaHook) {
-    await page.waitForTimeout(200);
-    return;
+    await page.waitForTimeout(250);
+    return true;
   }
+  const labels = { front: 'Snap to Front', right: 'Snap to Right', top: 'Snap to Top', iso: 'Snap to Isometric' };
+  if (!labels[key]) return false;
   await page.locator('[aria-label="View snaps"]').click();
-  await page.locator('[aria-label="Snap to Front"]').click();
+  await page.locator(`[aria-label="${labels[key]}"]`).click();
   await page.waitForTimeout(300);
+  return true;
+}
+
+async function sampleSides(page) {
+  return page.evaluate(() => new Promise((resolve) => {
+    const { canvas, renderer } = window.__feaProbe.bits();
+    if (!canvas || !renderer) {
+      resolve(null);
+      return;
+    }
+    const orig = renderer.render.bind(renderer);
+    renderer.render = function hooked(scene, camera) {
+      const out = orig(scene, camera);
+      renderer.render = orig;
+      const gl = renderer.getContext();
+      const w = gl.drawingBufferWidth;
+      const h = gl.drawingBufferHeight;
+      const buf = new Uint8Array(w * h * 4);
+      let minX = Infinity;
+      let maxX = -Infinity;
+      const pts = [];
+      for (let y = 0; y < h; y += 2) {
+        for (let x = 0; x < w; x += 2) {
+          const i = (y * w + x) * 4;
+          const r = buf[i];
+          const g = buf[i + 1];
+          const b = buf[i + 2];
+          if (r < 45 && g < 45 && b < 45) continue;
+          pts.push({ x, r, g, b });
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+        }
+      }
+      if (!pts.length) {
+        resolve({ model: 0, leftN: 0, rightN: 0, leftHeat: 0, rightHeat: 0 });
+        return;
+      }
+      const span = Math.max(1, maxX - minX);
+      const leftCut = minX + span * 0.33;
+      const rightCut = minX + span * 0.67;
+      let leftN = 0;
+      let rightN = 0;
+      let leftHeat = 0;
+      let rightHeat = 0;
+      for (const p of pts) {
+        const heat = p.r + p.g - p.b;
+        if (p.x <= leftCut) {
+          leftN += 1;
+          leftHeat += heat;
+        } else if (p.x >= rightCut) {
+          rightN += 1;
+          rightHeat += heat;
+        }
+      }
+      resolve({
+        model: pts.length,
+        leftN,
+        rightN,
+        leftHeat: leftN ? leftHeat / leftN : 0,
+        rightHeat: rightN ? rightHeat / rightN : 0,
+      });
+      return out;
+    };
+  }));
 }
 
 function facePoints(page) {
@@ -360,7 +430,7 @@ async function runCase(browser, vp) {
     .filter(Boolean));
   check(`${vp.name} left rail order`, rail.join(',') === 'Block,Build,Shape,Polish,Move', rail.join(','));
 
-  await snapFront(page);
+  check(`${vp.name} front snap`, await snap(page, 'front'));
   await page.locator('[data-analyze-chip]').click();
   const shell = vp.touch ? '[data-fea-sheet="1"]' : '[data-fea-mode="1"]';
   await page.locator(shell).waitFor({ timeout: 8000 });
@@ -378,28 +448,53 @@ async function runCase(browser, vp) {
   await page.locator('[data-fea-assumed="nu"]').waitFor({ timeout: 8000 });
   await solidReady(page);
 
-  const face = await facePoints(page);
-  check(`${vp.name} front face is tappable`, face.length > 0, `points=${face.length}`);
+  check(`${vp.name} left snap`, await snap(page, 'left'));
+  const root = await facePoints(page);
+  check(`${vp.name} root face is tappable`, root.length > 0, `points=${root.length}`);
   await page.locator('[data-fea-target="fixture"]').click();
-  const fixed = await tapUntil(page, vp.touch, face, 'data-fea-fixture-count', '1');
+  const fixed = await tapUntil(page, vp.touch, root, 'data-fea-fixture-count', '1');
   check(`${vp.name} fixture on a face`, fixed.ok, JSON.stringify(fixed));
 
   await page.locator('[data-fea-target="force"]').click();
-  const loaded = await tapUntil(page, vp.touch, face, 'data-fea-load-count', '1');
+  const down = page.locator(`${shell} button`, { hasText: '\u2212Z' });
+  await down.scrollIntoViewIfNeeded();
+  await down.click();
+  check(`${vp.name} right snap`, await snap(page, 'right'));
+  const tip = await facePoints(page);
+  check(`${vp.name} tip face is tappable`, tip.length > 0, `points=${tip.length}`);
+  const loaded = await tapUntil(page, vp.touch, tip, 'data-fea-load-count', '1');
   check(`${vp.name} force on a face`, loaded.ok, JSON.stringify(loaded));
+  check(`${vp.name} front snap after picks`, await snap(page, 'front'));
 
   await page.locator('[data-fea-run]').click();
-  await page.locator('[data-fea-summary]').waitFor({ timeout: 30000 });
+  await page.locator('[data-fea-summary]').waitFor({ timeout: 120000 });
   const summary = await page.evaluate(() => ({
     stubs: document.querySelectorAll('[data-fea-stub="1"]').length,
+    source: document.querySelector('[data-fea-source]')?.getAttribute('data-fea-source') || '',
     stress: document.querySelector('[data-fea-stress]')?.textContent || '',
     fos: document.querySelector('[data-fea-fos]')?.getAttribute('data-fea-fos') || '',
     warning: document.querySelector('[data-fea-warning]')?.textContent || '',
+    ms: document.querySelector('[data-fea-solve-ms]')?.getAttribute('data-fea-solve-ms') || '',
+    peak: document.querySelector('[data-fea-peak-bytes]')?.getAttribute('data-fea-peak-bytes') || '',
   }));
-  check(`${vp.name} stub badge`, summary.stubs >= 1, JSON.stringify(summary));
+  const maxMatch = summary.stress.match(/max ([0-9.]+) MPa/);
+  const maxMPa = maxMatch ? Number(maxMatch[1]) : NaN;
+  const peakError = Number.isFinite(maxMPa) ? Math.abs(maxMPa - BEAM_PEAK_MPA) / BEAM_PEAK_MPA : Infinity;
+  console.log(`  solve ${vp.name} ${summary.ms} ms peak ${summary.peak} bytes max ${maxMPa} MPa`);
+  const colours = await sampleSides(page);
+  check(`${vp.name} no stub badge`, summary.stubs === 0, JSON.stringify(summary));
+  check(`${vp.name} tet10 source`, summary.source === 'tet10', summary.source);
   check(`${vp.name} stress summary`, /min .+ MPa/.test(summary.stress) && /p95 /.test(summary.stress) && /max /.test(summary.stress), summary.stress);
+  check(`${vp.name} peak within 10% of beam theory`, peakError <= 0.1, `max ${maxMPa} vs ${BEAM_PEAK_MPA}`);
   check(`${vp.name} safety factor`, summary.fos !== '' && summary.fos !== 'n/a', summary.fos);
-  check(`${vp.name} stub warning`, /STUB, not a real result/.test(summary.warning), summary.warning);
+  check(`${vp.name} no stub warning`, !/STUB/.test(summary.warning), summary.warning);
+  check(`${vp.name} solve time recorded`, Number(summary.ms) > 0, summary.ms);
+  check(`${vp.name} peak memory recorded`, Number(summary.peak) > 0, summary.peak);
+  check(
+    `${vp.name} root is hotter than the tip`,
+    !!colours && colours.leftN > 10 && colours.rightN > 10 && colours.leftHeat > colours.rightHeat + 20,
+    JSON.stringify(colours),
+  );
 
   const uploadError = await page.evaluate(() => {
     const text = document.body?.innerText || '';
