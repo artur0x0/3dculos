@@ -173,7 +173,7 @@ if (exe && failed === 0) {
           bend1 && bend2 && tab && builtSpec?.bends?.length >= 2 && builtSpec?.tabs?.length >= 1,
           JSON.stringify({ bend1, bend2, tab, bends: builtSpec?.bends?.length, tabs: builtSpec?.tabs?.length, errors: errors.slice(0, 2) }));
 
-        await page.locator('[data-sheet-metal-mode] [data-sm-close]').click();
+        await page.locator('[data-sheet-metal-mode] [data-feature-card-cancel]').click();
         await page.waitForFunction(() => !document.querySelector('[data-sheet-metal-mode]'), null, { timeout: 10000 });
         const saved = await page.evaluate(scriptOf);
         errors.length = 0;
@@ -227,7 +227,7 @@ if (exe && failed === 0) {
           && afterUndos === saved && errors.length === 0,
           JSON.stringify({ undoOk, blank, same: afterUndos === saved, errors: errors.slice(0, 2) }));
 
-        await page.locator('[data-sheet-metal-mode] [data-sm-close]').click();
+        await page.locator('[data-sheet-metal-mode] [data-feature-card-cancel]').click();
         const cancelled = await page.waitForFunction(() => !document.querySelector('[data-sheet-metal-mode]'), null, { timeout: 8000 })
           .then(() => true).catch(() => false);
         const afterCancel = await page.evaluate(scriptOf);

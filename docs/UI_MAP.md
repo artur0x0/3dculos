@@ -398,19 +398,19 @@ All of these are absolutely positioned inside the shell at
 | left-2/4 bottom-2.5 | helper insert rail (height paired to right). Block, Build, Shape, Polish, Move. Shape includes Sheet Metal (blue plate with a bent flange, `data-sheet-metal-button`) with the other shape tools | `HelperInsertPalette.jsx` | Viewport |
 | left-2/4 bottom-2.5 | contour tool rail (replaces the helper rail) | `ContourModeRail.jsx` | Viewport |
 | left-2/4 bottom-2.5 | sheet-metal rail (replaces the helper rail while `sheetMetalMode`): **Shape** section, SCS tools for the SKU, Tab first, ✕ exit | `sheetMetal/SheetMetalRail.jsx` | Viewport |
-| bottom, centered in the gap between the measured side rails (22rem cap on desktop; full gap on a phone). Material line truncates, hint wraps. Does not cover either toolbar | sheet-metal chip: bound SKU + step hint, **Check & Export** (edit), ✕ exits | `sheetMetal/SheetMetalModeChip.jsx` | Viewport |
-| bottom sheet `z-50` | Sheet Metal picker: material + gauge (out-of-stock gauges disabled, “out of stock”), Start designing | `sheetMetal/SheetMetalPicker.jsx` | Viewport |
-| bottom sheet `z-50` | Base flange popup: X / Y, mm\|in toggle, Back, Accept, ✕ | `sheetMetal/SheetMetalFlow.jsx` | Viewport |
-| bottom sheet `z-50` (short) | Bend popup: Angle, Flange length, Flip, R·K·BD, Back / Accept / Delete, ✕ | `sheetMetal/SheetMetalFlow.jsx` | Viewport |
-| bottom sheet `z-50` (short) | Tab popup (Width, Depth, Centered, Offset) / Hole popup (Ø or Thread, Csk Ø, U, V) | `sheetMetal/SheetMetalFlow.jsx` | Viewport |
-| bottom sheet `z-50` | Check & Export popup: DFM fails (red) / warnings (amber) in the mm\|in display unit, flat size, where STEP came from, ✕. No download or SendCutSend button | `sheetMetal/SheetMetalFlow.jsx` | Viewport |
+| bottom center feature card (`data-feature-card`). Material line truncates, hint wraps. Does not cover either toolbar. Hidden in game | sheet-metal chip: bound SKU + step hint, **Check & Export** (edit), X exits without writing | `sheetMetal/SheetMetalModeChip.jsx` | Viewport |
+| same feature card | Sheet Metal picker: material + gauge (out-of-stock gauges disabled, “out of stock”), Start designing. X cancels | `sheetMetal/SheetMetalPicker.jsx` | Viewport |
+| same feature card | Base flange: X / Y, mm\|in toggle in the header, Back, Confirm. X exits without writing | `sheetMetal/SheetMetalFlow.jsx` | Viewport |
+| same feature card | Bend: Angle, Flange length, Flip, R·K·BD, Back / Confirm / Delete. X exits without writing | `sheetMetal/SheetMetalFlow.jsx` | Viewport |
+| same feature card | Tab (Width, Depth, Centered, Offset) / Hole, countersink, tapped (Ø or Thread, Csk Ø, U, V) | `sheetMetal/SheetMetalFlow.jsx` | Viewport |
+| same feature card | Check & Export: DFM fails (red) / warnings (amber) scroll in the body, flat size, where STEP came from, X closes. No download or SendCutSend button | `sheetMetal/SheetMetalFlow.jsx` | Viewport |
 | scene | plane quads / sheet preview / bendable-edge lines (2.5px core, opacity 0.65; undrawn pick box; taps route here first) | `utils/sheetMetal/sheetOverlay.js` | Viewport |
 | right-2/4 bottom-4 | view / pick / paint / inspection cluster. Paint (`data-paint-chip`) is in the plane and contour group, green only while paint mode is on, hidden in game. Analyze (`data-analyze-chip`, Lucide `Gauge`) is the first inspection button, next to Paint, same blue, green only while the study is open, hidden in game | `CrossSectionPanel.jsx` collapsed rail | Viewport |
 | inside that cluster | Front/Right/Top/**Iso** snap popup | `ViewSnapControl.jsx` | `CrossSectionPanel.jsx:181` |
 | top-16, portaled `z-50`, `inset-x-3` (most of the viewport width, same card on desktop) | execution error toast: fixed card, label "Error", Undo and dismiss on the right, description on the next line (`ErrorPopup` `layout="stacked"`), glass `rounded-lg` | `ErrorPopup.jsx` | Viewport |
 | centered on the viewport pane (desktop) and the phone shell | assembly-open spinner: ring + `Opening <name>…`, optional `part 3 of 7`. Hidden for the first 150ms. `pointer-events-none`, `z-[45]`, under the toasts | `AssemblyOpenSpinner.jsx` `data-assembly-open-spinner` | App |
 | *(removed C.1)* | Selected Face readout | — | — |
-| bottom center, between the rails. On a phone the stage switcher hides and the card sits on that switcher's bottom edge (`data-feature-card`). Desktop stays 10px off the pane | contour card (circle, rectangle, polygon, polyline, extrude, revolve, loft, sweep, workplane), fillet, chamfer, the standalone edge card, shell, draft, move face, delete face, cut, boolean, move, and the CAD helper card (cube, round box, cylinder, sphere, tube, hex, hole, mirror, center, align, array, path, refuse). Grey shell, cyan Confirm. The edge card has X and no Confirm. Refuse's footer says OK. Boolean stays `z-20`, under the section rail. Hidden in game. Game keeps the old helper sheet | `FeatureSheet.jsx`, `ContourModeChip.jsx`, `FilletModeChip.jsx`, `ShellModeChip.jsx`, `DraftModeChip.jsx`, `MoveFaceModeChip.jsx`, `DeleteFaceModeChip.jsx`, `CutModeChip.jsx`, `BooleanModeChip.jsx`, `MoveModeChip.jsx`, `HelperParamModal.jsx` | Viewport |
+| bottom center, between the rails. On a phone the stage switcher hides and the card sits on that switcher's bottom edge (`data-feature-card`). Desktop stays 10px off the pane | contour card (circle, rectangle, polygon, polyline, extrude, revolve, loft, sweep, workplane), fillet, chamfer, the standalone edge card, shell, draft, move face, delete face, cut, boolean, move, the CAD helper card (cube, round box, cylinder, sphere, tube, hex, hole, mirror, center, align, array, path, refuse), and sheet metal (picker, plane and edit chip, base, bend, tab, hole, countersink, tapped, export). Grey shell, cyan Confirm. The edge card has X and no Confirm. Refuse's footer says OK. Sheet metal Confirm is 44px. Boolean stays `z-20`, under the section rail. Hidden in game. Game keeps the old helper sheet | `FeatureSheet.jsx`, `ContourModeChip.jsx`, `FilletModeChip.jsx`, `ShellModeChip.jsx`, `DraftModeChip.jsx`, `MoveFaceModeChip.jsx`, `DeleteFaceModeChip.jsx`, `CutModeChip.jsx`, `BooleanModeChip.jsx`, `MoveModeChip.jsx`, `HelperParamModal.jsx`, `sheetMetal/SmControls.jsx` | Viewport |
 | top-16 center, portaled `z-50` | toasts: edge-mode, contour, fillet-scrap, fillet, shell — same `ErrorPopup` card | `ErrorPopup.jsx` | Viewport |
 | bottom-left | measurement readout | inline | `:3961` |
 | fills the pane | WebGL canvas | `<canvas ref={canvasRef}>` | `:3985` |
@@ -546,20 +546,20 @@ open part (`part.sheetMetal`). A fresh part (empty or the 20 mm starter cube)
 gets the default base flange (`sheetStarterScript` → `sheetMetalSolid`, Top
 plane, SKU thickness) and enters `sheetMetalMode` still on the plane step.
 A part that already has features stays put: Start does not rewrite it and
-does not create `Sheet (n)`. Plane Accept appends one sheet block
+does not create `Sheet (n)`. Plane Confirm appends one sheet block
 (`part = part.add(sheetMetalSolid(sheetSpec))`, chosen plane, SKU thickness)
 after the existing blocks. `Sheet (n)` is created only when an assembly is open and no part is active. With no assembly, Start seeds `Assembly` / `Part (1)` from the editor buffer and then follows those same rules. Run of a non-empty script seeds that assembly before it builds.
 The rail then lists
 Tab / Bend / Hole / Tap under **Shape**. The chip (material, hint, Check &
-Export) is centered in the measured gap between the side rails. An mm|in
-toggle on the popups is display only (stored mm, preference in localStorage).
+Export) is the shared feature card, centered between the rails. An mm|in
+toggle in the card header is display only (stored mm, preference in localStorage).
 Out-of-stock gauges stay visible and disabled. Catalog/cache in `src/utils/scs/`.
 The committed script is the sheet block plus `return part;`. The worker and
 `runScript` unwrap a sheet wrapper (`solid` + spec or flat pattern) and still
 reject any other non-Manifold. Tapping the Sheet chip on the feature ribbon
 reopens that flow at the edit step with the saved blank, bends, and features.
 Undo on the chip pops one bend or feature and stops on the flat blank.
-Confirm writes the spec; ✕ cancels and leaves the saved block unchanged.
+Confirm writes the spec; the card X cancels and leaves the saved block unchanged.
 Check & Export shows DFM only. Part-row Order on a sheet-only part that passes those checks opens the SendCutSend handoff (DXF, STEP, redirect) instead of the quote. Quote with SurfCAD instead can still add a cart line. The Sheet Metal button stays under Shape.
 
 ### Viewport furniture

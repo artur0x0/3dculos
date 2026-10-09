@@ -178,6 +178,19 @@ console.log('feature sheet card — source');
     && /helperSheetOpen\s*\n\s*\? 'helper'/.test(view)
     && /!helperCardOpen && pickMode === 'edge'/.test(view)
     && /Game keeps the previous helper sheet/.test(arch));
+  const sheetPopup = read('src/components/sheetMetal/SmControls.jsx');
+  check('sheet metal uses SmPopup on the feature card; game mounts no card',
+    /<FeatureSheet\b/.test(sheetPopup)
+    && /export const SmPopup/.test(sheetPopup)
+    && /<SmPopup/.test(read('src/components/sheetMetal/SheetMetalFlow.jsx'))
+    && /<SmPopup/.test(read('src/components/sheetMetal/SheetMetalPicker.jsx'))
+    && /<SmPopup/.test(read('src/components/sheetMetal/SheetMetalModeChip.jsx'))
+    && /data-sm-unit-toggle/.test(sheetPopup)
+    && /min-h-\[44px\]/.test(sheetPopup)
+    && /sheetMetalMode && mode !== 'game'/.test(view)
+    && /sheetMetalPicker && mode !== 'game'/.test(view)
+    && /sheetMetalSheetOpen/.test(view)
+    && /SmPopup/.test(arch));
   check('camera snapshots the pose, slides up, retargets orbit, and restores it',
     /export function captureViewPose/.test(camera)
     && /export function aimOrbitAtVisibleCenter/.test(camera)

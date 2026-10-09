@@ -22,6 +22,7 @@ const SheetMetalPicker = ({
   willCreatePart = false,
   onCancel,
   onStart,
+  compact = false,
   loader = loadScsCatalog,
 }) => {
   const [state, setState] = useState({ loading: true, records: [], stale: false, error: null, fetchedAt: null });
@@ -63,9 +64,9 @@ const SheetMetalPicker = ({
       onClose={onCancel}
       closeLabel="Close sheet metal picker"
       dataAttr="data-sheet-metal-picker"
+      compact={compact}
       footer={(
-        <>
-          <SmButton onClick={() => onCancel?.()}>Cancel</SmButton>
+        <div className="flex justify-end">
           <SmButton
             variant="primary"
             disabled={!canStart}
@@ -75,7 +76,7 @@ const SheetMetalPicker = ({
           >
             Start designing
           </SmButton>
-        </>
+        </div>
       )}
     >
       {state.loading && !state.records.length && (
