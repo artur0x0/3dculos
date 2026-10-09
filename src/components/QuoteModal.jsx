@@ -8,6 +8,7 @@ import { sheetCheckoutRoute } from '../utils/sheetMetal/sheetCheckout.js';
 import CheckoutStepper from './CheckoutStepper';
 import QuantityStepper from './order/QuantityStepper';
 import ScsHandoff from './sheetMetal/ScsHandoff';
+import ModalFit from './ModalFit';
 
 function initialProcess(options) {
   const key = options?.process;
@@ -210,12 +211,12 @@ const QuoteModal = ({
   };
 
   return (
-    <div
-      className="fixed inset-0 surface-scrim flex items-center justify-center z-50 p-4"
+    <ModalFit
+      className="surface-scrim flex items-center justify-center z-50 px-4"
       data-quote-mode={addingToCart ? 'add' : 'checkout'}
       data-scs-handoff={showHandoff ? '' : undefined}
     >
-      <div className="surface-glass rounded-lg shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+      <div className="modal-fit-panel surface-glass rounded-lg shadow-2xl max-w-2xl w-full flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-gray-700">
           <h2 className="text-xl font-semibold text-white flex items-center gap-2">
@@ -431,7 +432,7 @@ const QuoteModal = ({
         )}
         </div>
       </div>
-    </div>
+    </ModalFit>
   );
 };
 

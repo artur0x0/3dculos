@@ -27,6 +27,7 @@ import { blobToBase64 } from '../../utils/model-io.js';
 import { readJsonSafe } from '../../utils/quoteMath.js';
 import AddressPicker from './AddressPicker.jsx';
 import CheckoutPay from './CheckoutPay.jsx';
+import ModalFit from '../ModalFit.jsx';
 
 const FALLBACK_METHODS = [
   { code: 'ground', name: 'UPS Ground', price: null, estimatedDays: '5-7 business days', carrier: 'UPS' },
@@ -352,7 +353,11 @@ export default function CheckoutPage({
   const summary = payment?.order;
 
   return createPortal(
-    <div className="fixed inset-0 z-[90] flex items-end justify-center sm:items-center" data-checkout-page="">
+    <ModalFit
+      className="modal-fit-sheet z-[90] flex items-end justify-center sm:items-center"
+      cap="92vh"
+      data-checkout-page=""
+    >
       <button
         type="button"
         className="absolute inset-0 bg-black/60"
@@ -362,7 +367,7 @@ export default function CheckoutPage({
       <div
         role="dialog"
         aria-label="Checkout"
-        className="relative z-10 flex max-h-[92vh] w-full flex-col rounded-t-2xl border border-gray-700 bg-gray-900 shadow-2xl sm:max-w-lg sm:rounded-2xl"
+        className="modal-fit-panel relative z-10 flex w-full flex-col rounded-t-2xl border border-gray-700 bg-gray-900 shadow-2xl sm:max-w-lg sm:rounded-2xl"
       >
         <div className="flex items-center justify-between border-b border-gray-700 px-4 py-3">
           <h2 className="text-sm font-semibold text-white">Checkout</h2>
@@ -565,7 +570,7 @@ export default function CheckoutPage({
           )}
         </div>
       </div>
-    </div>,
+    </ModalFit>,
     document.body,
   );
 }

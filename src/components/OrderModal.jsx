@@ -13,6 +13,7 @@ import { applyClientQuantity, clampQuantity } from '../utils/quoteMath.js';
 import { saveCheckoutState, getOAuthReturnUrl } from '../utils/checkoutStorage';
 import { saveEditorState } from '../utils/editorStorage';
 import { startGithubOAuth } from '../utils/git/githubAuth.js';
+import ModalFit from './ModalFit';
 
 const STEPS = {
   AUTH: 'auth',
@@ -298,8 +299,8 @@ const OrderModal = ({
   };
 
   return (
-    <div className="fixed inset-0 surface-scrim flex items-center justify-center z-50 p-4">
-      <div className="surface-glass rounded-2xl shadow-2xl max-w-lg w-full max-h-[90vh] overflow-hidden flex flex-col border border-gray-700/50">
+    <ModalFit className="surface-scrim flex items-center justify-center z-50 px-4">
+      <div className="modal-fit-panel surface-glass rounded-2xl shadow-2xl max-w-lg w-full flex flex-col border border-gray-700/50">
         {/* Header */}
         <div className="flex items-center justify-between p-5 border-b border-gray-700/50">
           <div className="flex items-center gap-3">
@@ -389,7 +390,7 @@ const OrderModal = ({
           {renderStep()}
         </div>
       </div>
-    </div>
+    </ModalFit>
   );
 };
 

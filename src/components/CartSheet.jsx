@@ -9,6 +9,7 @@ import { createPortal } from 'react-dom';
 import { Minus, Plus, X } from 'lucide-react';
 import { useCartChrome } from '../hooks/useCart';
 import { CART_QTY_MAX, CART_QTY_MIN, cartLineIsStale } from '../utils/cart.js';
+import ModalFit from './ModalFit';
 
 function staleLabel(line) {
   if (line.hashStale && line.quoteExpired) return 'Stale';
@@ -37,8 +38,9 @@ export default function CartSheet() {
   const skipNote = cart.checkoutNote || '';
 
   return createPortal(
-    <div
-      className="fixed inset-0 z-[80] flex items-end justify-center sm:items-center"
+    <ModalFit
+      className="modal-fit-sheet z-[80] flex items-end justify-center sm:items-center"
+      cap="85vh"
       data-cart-root=""
     >
       <button
@@ -53,7 +55,7 @@ export default function CartSheet() {
         aria-label="Cart"
         data-cart-sheet=""
         data-cart-count={cart.count || 0}
-        className="relative z-10 flex max-h-[85vh] w-full flex-col rounded-t-xl border border-gray-600
+        className="modal-fit-panel relative z-10 flex w-full flex-col rounded-t-xl border border-gray-600
           bg-gray-900 shadow-2xl sm:max-w-md sm:rounded-xl"
         onPointerDown={(event) => event.stopPropagation()}
       >
@@ -179,7 +181,7 @@ export default function CartSheet() {
           ) : null}
         </div>
       </div>
-    </div>,
+    </ModalFit>,
     document.body,
   );
 }

@@ -183,3 +183,62 @@ textarea {
     animation: none !important;
   }
 }
+
+/* Order-flow sheets (quote, checkout, SendCutSend handoff, login, address).
+   The panel stays inside the visible viewport: 100dvh, or visualViewport
+   (--modal-vvh / --modal-vv-top) when the iOS toolbar or keyboard is shorter.
+   Safe-area insets and --modal-margin inset it. --modal-cap is the desktop
+   ceiling (90vh unless a sheet sets its own), so a tall window is unchanged.
+   The header and the scrolling body stay whatever the caller already had. */
+.modal-fit {
+  --modal-margin: 1rem;
+  --modal-cap: 90vh;
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: var(--modal-vv-top, 0px);
+  box-sizing: border-box;
+  height: min(100dvh, var(--modal-vvh, 100dvh));
+  padding-top: calc(env(safe-area-inset-top, 0px) + var(--modal-margin));
+  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + var(--modal-margin));
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+.modal-fit.modal-fit-sheet {
+  --modal-margin: 0.5rem;
+}
+@media (min-width: 640px) {
+  .modal-fit.modal-fit-sheet {
+    --modal-margin: 0px;
+  }
+}
+.modal-fit-panel {
+  box-sizing: border-box;
+  min-height: 0;
+  overflow: hidden;
+  max-height: min(
+    var(--modal-cap, 90vh),
+    calc(
+      min(100dvh, var(--modal-vvh, 100dvh))
+      - env(safe-area-inset-top, 0px)
+      - env(safe-area-inset-bottom, 0px)
+      - (var(--modal-margin, 1rem) * 2)
+    )
+  );
+}
+@supports not (height: 100dvh) {
+  .modal-fit {
+    height: var(--modal-vvh, 100vh);
+  }
+  .modal-fit-panel {
+    max-height: min(
+      var(--modal-cap, 90vh),
+      calc(
+        var(--modal-vvh, 100vh)
+        - env(safe-area-inset-top, 0px)
+        - env(safe-area-inset-bottom, 0px)
+        - (var(--modal-margin, 1rem) * 2)
+      )
+    );
+  }
+}

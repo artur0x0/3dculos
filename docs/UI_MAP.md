@@ -457,6 +457,8 @@ no alignment prop — both call sites render `<ViewSnapControl onSnap={…} />`.
 All use `fixed inset-0 z-50 flex items-end sm:items-center` — **bottom sheet on
 phones, centered dialog on desktop**.
 
+Order-flow sheets share `ModalFit` (`modal-fit`): max-height is `100dvh` or `visualViewport.height`, minus safe-area insets and a small margin, so the popup stays above the iOS Safari toolbar.
+
 | Modal | Opened by | File | Notes |
 | --- | --- | --- | --- |
 | Login | Profile chip → Sign in (signed out / guest) | `LoginModal.jsx` / `ProfileChip.jsx` | `/api/auth/login`, `/register` |
