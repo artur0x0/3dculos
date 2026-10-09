@@ -1,6 +1,6 @@
 import React from 'react';
 import { legendGradientCss, legendTicks, scaleTop } from '../../fea/colormap.js';
-import { formatSolveSummary } from '../../fea/studyPanel.js';
+import { formatSolveSummary, runSafetyFactor } from '../../fea/studyPanel.js';
 
 function formatMPa(value) {
   const n = Number(value);
@@ -14,7 +14,65 @@ function formatMPa(value) {
  * phone sheet. A stale result keeps the last numbers grey and says Re-run.
  * The coloured skin is already gone; this bar is not a live scale.
  */
-export function FeaLegend({ result }) {
+function PreviewLegend({ result, preview }) {
+  const fos = runSafetyFactor(result);
+  const fosText = fos == null ? 'n/a' : formatMPa(fos);
+  const scale = {
+    p95: preview.p95,
+    yield_MPa: result?.source === 'tet10' ? result.yield_MPa : null,
+  };
+  const top = scaleTop(scale);
+  const ticks = legendTicks(scale, 5);
+  const grid = preview.nx ? `${preview.nx}×${preview.ny}×${preview.nz}` : '';
+  return (
+    <div
+      data-fea-summary=""
+      data-fea-legend=""
+      data-fea-source="preview"
+      data-fea-preview="1"
+      data-fea-preview-ms={Number.isFinite(preview.ms) ? String(Math.round(preview.ms)) : ''}
+      data-fea-preview-bytes={Number.isFinite(preview.bytes) ? String(preview.bytes) : ''}
+      data-fea-preview-res={preview.resolution ? String(preview.resolution) : ''}
+      data-fea-stale="0"
+      className="rounded border border-fuchsia-300/60 bg-fuchsia-400/10 px-2 py-1.5"
+    >
+      <div className="mb-1 flex items-center gap-1.5">
+        <span
+          data-fea-preview-badge=""
+          className="rounded bg-fuchsia-400 px-1.5 py-0.5 text-[13px] font-bold tracking-wide text-fuchsia-950"
+        >
+          Preview
+        </span>
+        {grid && (
+          <span className="text-[10px] tabular-nums text-fuchsia-100/80">{preview.resolution} · {grid}</span>
+        )}
+      </div>
+      <div
+        data-fea-legend-bar=""
+        className="h-2 w-full rounded"
+        style={{ background: legendGradientCss(scale) }}
+        title={`0 to ${formatMPa(top)} MPa`}
+      />
+      <div
+        data-fea-legend-ticks=""
+        className="mt-0.5 flex justify-between gap-1 text-[10px] tabular-nums text-fuchsia-100/90"
+      >
+        {ticks.map((tick, index) => (
+          <span key={index}>{formatMPa(tick)}</span>
+        ))}
+      </div>
+      <div className="text-[12px] text-fuchsia-50" data-fea-stress="">
+        min {formatMPa(preview.min)} MPa · p95 {formatMPa(preview.p95)} MPa · max {formatMPa(preview.max)} MPa
+      </div>
+      <div className="text-[12px] text-fuchsia-50" data-fea-fos={fosText} data-fea-fos-from={fos == null ? 'none' : 'run'}>
+        safety factor {fosText}
+      </div>
+    </div>
+  );
+}
+
+export function FeaLegend({ result, preview }) {
+  if (preview?.showing) return <PreviewLegend result={result} preview={preview} />;
   if (!result) return null;
   const summary = formatSolveSummary(result);
   const stale = result.stale === true;

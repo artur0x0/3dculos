@@ -237,6 +237,24 @@ export function studyWithoutLoad(study, index) {
   return patched(study, { loads });
 }
 
+/** Replace one load vector. The panel commits this once, on pointer-up. */
+export function studyWithLoadVector(study, index, vector) {
+  const loads = (study?.loads || []).map((load, i) => (
+    i === index ? { ...load, vector: [Number(vector?.[0]), Number(vector?.[1]), Number(vector?.[2])] } : load
+  ));
+  return patched(study, { loads });
+}
+
+/**
+ * Safety factor shown next to a preview. It is the last TET10 run, never
+ * yield divided by the preview p95.
+ */
+export function runSafetyFactor(result) {
+  if (!result || result.source !== 'tet10') return null;
+  const fos = result.safetyFactor != null ? result.safetyFactor : result.fos;
+  return typeof fos === 'number' && Number.isFinite(fos) ? fos : null;
+}
+
 /** Triangle indices for the study faces that still match the live mesh. */
 export function highlightIndicesForStudy(fingerprints, study) {
   const faces = [];

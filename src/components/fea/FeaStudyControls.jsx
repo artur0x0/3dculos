@@ -5,6 +5,7 @@ import { FORCE_DIRECTIONS } from '../../fea/studyPanel.js';
 import { FeaLegend } from './FeaLegend';
 import { FeaLoadList } from './FeaLoadList';
 import { FeaMaterialPicker } from './FeaMaterialPicker';
+import { FeaPreviewSliders } from './FeaPreviewSliders';
 
 const TARGETS = [
   { value: 'fixture', label: 'Fix' },
@@ -82,7 +83,10 @@ export function FeaStudyControls({ panel }) {
         study={panel.study}
         onRemoveFixture={panel.removeFixture}
         onRemoveLoad={panel.removeLoad}
+        selectedLoad={panel.preview?.available ? panel.preview.loadIndex : -1}
+        onSelectLoad={panel.preview?.available ? panel.selectPreviewLoad : null}
       />
+      <FeaPreviewSliders panel={panel} />
       {panel.notice && (
         <p className="text-[11px] text-amber-200" data-fea-notice="">{panel.notice}</p>
       )}
@@ -163,7 +167,7 @@ export function FeaRunBar({ panel }) {
   const stage = panel.running ? (report?.stageLabel || STAGE_LABEL[panel.progress] || 'Running') : 'Run';
   return (
     <div className="mt-1 flex shrink-0 flex-col gap-1">
-      <FeaLegend result={panel.result} />
+      <FeaLegend result={panel.result} preview={panel.preview} />
       {panel.running && report?.status === 'running' && <FeaProgressBar report={report} />}
       {!panel.running && <FeaTiming report={report} />}
       <div className="flex items-center justify-end gap-2">
