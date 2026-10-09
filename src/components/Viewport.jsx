@@ -1225,18 +1225,34 @@ const Viewport = forwardRef(({
   // state earlier is a temporal dead zone and the production bundle white-screens.
   const contourSheetOpen = mode !== 'game' && !!contourMode;
   const filletSheetOpen = mode !== 'game' && !!filletMode;
+  const shellSheetOpen = mode !== 'game' && !!shellMode;
+  const draftSheetOpen = mode !== 'game' && !!draftMode;
+  const moveFaceSheetOpen = mode !== 'game' && !!moveFaceMode;
+  const deleteFaceSheetOpen = mode !== 'game' && !!deleteFaceMode;
   const edgeSheetOpen = mode !== 'game'
     && pickMode === 'edge'
     && !contourMode
     && !filletMode
+    && !shellMode
+    && !draftMode
+    && !moveFaceMode
+    && !deleteFaceMode
     && selectedEdges.length > 0;
   const featureCardKind = filletSheetOpen
     ? 'fillet'
     : contourSheetOpen
       ? 'contour'
-      : edgeSheetOpen
-        ? 'edge'
-        : '';
+      : shellSheetOpen
+        ? 'shell'
+        : draftSheetOpen
+          ? 'draft'
+          : moveFaceSheetOpen
+            ? 'moveFace'
+            : deleteFaceSheetOpen
+              ? 'deleteFace'
+              : edgeSheetOpen
+                ? 'edge'
+                : '';
   featureCardKindRef.current = featureCardKind;
   sheetCameraOwnedRef.current = featureCardKind !== '';
   useEffect(() => {
@@ -8953,8 +8969,8 @@ const Viewport = forwardRef(({
       )}
 
       
-      {/* Shell face-pick chip — opening face + wall; Confirm writes hollow(). */}
-      {shellMode && (
+      {/* Shell on the shared card. Game mounts no card. */}
+      {shellMode && mode !== 'game' && (
         <ShellModeChip
           face={selectedFace
             ? (selectedFace.type ? selectedFace : classifySelectedFace(selectedFace))
@@ -9031,8 +9047,8 @@ const Viewport = forwardRef(({
         />
       )}
 
-      {/* Draft face-pick chip — neutral plane + faces; Confirm writes draftFaces(). */}
-      {draftMode && (
+      {/* Draft on the shared card. Game mounts no card. */}
+      {draftMode && mode !== 'game' && (
         <DraftModeChip
           neutral={draftMode.neutral}
           drafts={draftMode.drafts}
@@ -9125,8 +9141,8 @@ const Viewport = forwardRef(({
         />
       )}
 
-      {/* Move Face — offset along each face normal. Confirm writes one moveFace(). */}
-      {moveFaceMode && (
+      {/* Move Face on the shared card. Game mounts no card. */}
+      {moveFaceMode && mode !== 'game' && (
         <MoveFaceModeChip
           faces={moveFaceMode.faces}
           distance={moveFaceMode.distance}
@@ -9142,8 +9158,8 @@ const Viewport = forwardRef(({
         />
       )}
 
-      {/* Delete Face — heal by extending neighbors. Confirm writes one deleteFace(). */}
-      {deleteFaceMode && (
+      {/* Delete Face on the shared card. Game mounts no card. */}
+      {deleteFaceMode && mode !== 'game' && (
         <DeleteFaceModeChip
           faces={deleteFaceMode.faces}
           compact={isMobile}
@@ -9193,7 +9209,7 @@ const Viewport = forwardRef(({
 
       {/* Standalone edge pick — same card, no Confirm. X clears and leaves edge pick.
           Hidden in fillet, contour, and game. Numbered badges stay on the edges. */}
-      {mode !== 'game' && pickMode === 'edge' && !contourMode && !filletMode && selectedEdges.length > 0 && (
+      {mode !== 'game' && pickMode === 'edge' && !contourMode && !filletMode && !shellMode && !draftMode && !moveFaceMode && !deleteFaceMode && selectedEdges.length > 0 && (
         <FeatureSheet
           cardAttrs={{ 'data-edge-selector': 'standalone' }}
           title={`Edge pick · ${selectedEdges.length} selected`}

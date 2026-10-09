@@ -70,8 +70,12 @@ const SIDE = { center: [5, 0, 0], normal: [1, 0, 0] };
   check('sticky picker has Undo and Clear and no shift',
     /data-move-face-undo/.test(chip) && /data-move-face-clear/.test(chip)
     && /data-move-face-flip/.test(chip) && !/shiftKey/.test(chip));
-  check('phone chip uses the compact shell',
-    /bottom-14 left-1\/2 -translate-x-1\/2 max-w-\[min\(16rem,calc\(100%-9rem\)\)\]/.test(chip));
+  check('move face uses the shared feature card',
+    /<FeatureSheet\b/.test(chip)
+    && /compact=\{compact\}/.test(chip)
+    && /onCancel=\{onDismiss\}/.test(chip)
+    && /onConfirm=\{onConfirm\}/.test(chip)
+    && /moveFaceMode && mode !== 'game'/.test(view));
   check('App writes one composeMoveFaceCommit on both viewports',
     /composeMoveFaceCommit/.test(app)
     && (app.match(/onCommitMoveFace=\{handleCommitMoveFace\}/g) || []).length === 2);

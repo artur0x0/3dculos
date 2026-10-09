@@ -183,15 +183,19 @@ console.log('shell face-pick UI');
   );
   const chip = read('../../src/components/ShellModeChip.jsx');
   check('ShellModeChip exists', /data-shell-mode/.test(chip) && /shell-wall/.test(chip));
-  check('chip uses Contour-style cyan glass', /bg-cyan-950\/80/.test(chip) && /surface-glass-chip/.test(chip));
+  check('shell card is the shared feature card; Face and Closed stay cyan',
+    /<FeatureSheet\b/.test(chip)
+    && /bg-cyan-600/.test(chip)
+    && /onCancel=\{onDismiss\}/.test(chip)
+    && /onConfirm=\{onConfirm\}/.test(chip)
+    && /compact=\{compact\}/.test(chip));
   check('chip has Face / Closed segmented', /Opening/.test(chip) && /Closed/.test(chip));
-  check('chip Confirm + grey X', /Confirm/.test(chip) && /<X /.test(chip));
   check('chip Undo drops the last face', /data-shell-undo/.test(chip) && />\s*Undo\s*</.test(chip));
   check('chip Clear drops every face', /data-shell-clear/.test(chip) && />\s*Clear\s*</.test(chip));
   check('shell chip does not ask for shift-click', !/shift-click/.test(chip) && !/shiftKey/.test(chip));
-  check('chip mobile max-h', /max-h-\[calc\(100dvh-12rem\)\]/.test(chip));
 
   const view = read('../../src/components/Viewport.jsx');
+  check('game mounts no shell card', /shellMode && mode !== 'game'/.test(view));
   check('Viewport imports ShellModeChip', /import ShellModeChip/.test(view));
   check('Viewport enterShellMode', /enterShellMode/.test(view) && /onEnterShellMode=\{enterShellMode\}/.test(view));
   check('Viewport onCommitShell', /onCommitShell/.test(view) && /acceptShell/.test(view));

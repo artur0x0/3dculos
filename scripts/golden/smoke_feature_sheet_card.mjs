@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
- * Feature card: shared shell, contour pilot, fillet / chamfer / edge card, keyboard, camera pose.
+ * Feature card: shared shell, contour pilot, fillet / chamfer / edge card,
+ * shell / draft / move face / delete face, keyboard, camera pose.
  *
  * Screenshots go to GOLDEN_SHOT_DIR or os.tmpdir(), never the artifacts dir.
  */
@@ -123,6 +124,22 @@ console.log('feature sheet card — source');
     && /filletSheetOpen/.test(view)
     && /edgeSheetOpen/.test(view)
     && /if \(!next \|\| next === featureCardKind\)/.test(view));
+  check('shell, draft, move face, and delete face use the shell; game mounts no card',
+    ['Shell', 'Draft', 'MoveFace', 'DeleteFace'].every((name) => {
+      const src = read(`src/components/${name}ModeChip.jsx`);
+      return /<FeatureSheet\b/.test(src)
+        && /onCancel=\{onDismiss\}/.test(src)
+        && /onConfirm=\{onConfirm\}/.test(src);
+    })
+    && /shellMode && mode !== 'game'/.test(view)
+    && /draftMode && mode !== 'game'/.test(view)
+    && /moveFaceMode && mode !== 'game'/.test(view)
+    && /deleteFaceMode && mode !== 'game'/.test(view)
+    && /shellSheetOpen/.test(view)
+    && /draftSheetOpen/.test(view)
+    && /moveFaceSheetOpen/.test(view)
+    && /deleteFaceSheetOpen/.test(view)
+    && /!shellMode && !draftMode && !moveFaceMode && !deleteFaceMode/.test(view));
   check('camera snapshots the pose, slides up, and restores it',
     /export function captureViewPose/.test(camera)
     && /FEATURE_SHEET_SLIDE_MAX = 0\.6/.test(camera)
@@ -225,6 +242,10 @@ import { TrackballControls } from 'three/addons/controls/TrackballControls.js';
 import { applyTrackballFeel } from './src/utils/trackballFeel.js';
 import ContourModeChip from './src/components/ContourModeChip.jsx';
 import FilletModeChip from './src/components/FilletModeChip.jsx';
+import ShellModeChip from './src/components/ShellModeChip.jsx';
+import DraftModeChip from './src/components/DraftModeChip.jsx';
+import MoveFaceModeChip from './src/components/MoveFaceModeChip.jsx';
+import DeleteFaceModeChip from './src/components/DeleteFaceModeChip.jsx';
 import {
   applyViewPose, boxCornerPoints, captureViewPose, createSheetCameraSession,
   featureSheetClearanceNdc, selectionNdcYs,
@@ -363,6 +384,53 @@ function Stage() {
           onDismiss={() => {}}
           onParamChange={() => {}}
         />
+      ) : panel === 'shell' ? (
+        <ShellModeChip
+          face={{ type: 'planar', center: [0, 0, 10], normal: [0, 0, 1] }}
+          params={{ wall: 2.5, openingMode: 'face' }}
+          compact={compact}
+          onParamChange={() => {}}
+          onUndoFace={() => {}}
+          onClearFace={() => {}}
+          onConfirm={() => {}}
+          onDismiss={() => {}}
+        />
+      ) : panel === 'draft' ? (
+        <DraftModeChip
+          neutral={{ center: [0, 0, 10], normal: [0, 0, 1] }}
+          drafts={[{ center: [10, 0, 0], normal: [1, 0, 0] }]}
+          angle={2}
+          flip={false}
+          compact={compact}
+          onAngle={() => {}}
+          onFlip={() => {}}
+          onUndo={() => {}}
+          onClear={() => {}}
+          onConfirm={() => {}}
+          onDismiss={() => {}}
+        />
+      ) : panel === 'moveFace' ? (
+        <MoveFaceModeChip
+          faces={[{ center: [0, 0, 10], normal: [0, 0, 1] }]}
+          distance={2}
+          flip={false}
+          compact={compact}
+          onDistance={() => {}}
+          onFlip={() => {}}
+          onUndo={() => {}}
+          onClear={() => {}}
+          onConfirm={() => {}}
+          onDismiss={() => {}}
+        />
+      ) : panel === 'deleteFace' ? (
+        <DeleteFaceModeChip
+          faces={[{ center: [0, 0, 10], normal: [0, 0, 1] }]}
+          compact={compact}
+          onUndo={() => {}}
+          onClear={() => {}}
+          onConfirm={() => {}}
+          onDismiss={() => {}}
+        />
       ) : (
         <ContourModeChip
           tool="circle"
@@ -381,6 +449,10 @@ function Stage() {
         <button type="button" data-harness-entry="crossSection" onClick={() => { setPanel('contour'); setEntry('crossSection'); }}>circle</button>
         <button type="button" data-harness-entry="makeExtrude" onClick={() => { setPanel('contour'); setEntry('makeExtrude'); }}>extrude</button>
         <button type="button" data-harness-panel="fillet" onClick={() => setPanel('fillet')}>fillet</button>
+        <button type="button" data-harness-panel="shell" onClick={() => setPanel('shell')}>shell</button>
+        <button type="button" data-harness-panel="draft" onClick={() => setPanel('draft')}>draft</button>
+        <button type="button" data-harness-panel="moveFace" onClick={() => setPanel('moveFace')}>moveFace</button>
+        <button type="button" data-harness-panel="deleteFace" onClick={() => setPanel('deleteFace')}>deleteFace</button>
         <button type="button" data-harness-compact="1" onClick={() => setCompact(true)}>phone</button>
         <button type="button" data-harness-compact="0" onClick={() => setCompact(false)}>desktop</button>
       </div>
@@ -729,6 +801,85 @@ html, body, #root { margin: 0; height: 100%; background: #111; }
       && orbit.up < 1e-2
       && orbit.fov < 1e-3,
       JSON.stringify(orbit));
+
+    const showFace = async (name, titleText, marker) => {
+      await page.setViewportSize(PHONE);
+      await page.evaluate((panelName) => {
+        document.querySelector('[data-harness-compact="1"]').click();
+        document.querySelector(`[data-harness-panel="${panelName}"]`).click();
+      }, name);
+      await page.waitForFunction(({ titleText: want, marker: attr }) => {
+        const cards = document.querySelectorAll('[data-feature-card]');
+        const card = cards[0];
+        const title = document.querySelector('[data-feature-card-title]');
+        const confirm = document.querySelector('[data-feature-card-confirm]');
+        const cancel = document.querySelector('[data-feature-card-cancel]');
+        return cards.length === 1
+          && card
+          && card.getAttribute(attr) != null
+          && card.getAttribute('data-feature-card-compact') === '1'
+          && title
+          && title.textContent.includes(want)
+          && confirm
+          && confirm.textContent.includes('Confirm')
+          && cancel;
+      }, { titleText, marker }, { timeout: 5000 });
+      await page.evaluate(() => window.__sheet.fit());
+      await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    };
+
+    await showFace('shell', 'Shell', 'data-shell-mode');
+    const shellPick = await page.evaluate(() => {
+      const pane = document.querySelector('[data-harness-pane]');
+      const box = pane.getBoundingClientRect();
+      const el = document.elementFromPoint(box.left + box.width / 2, box.top + 36);
+      return {
+        tag: el && el.tagName,
+        onCard: !!(el && el.closest('[data-feature-card]')),
+      };
+    });
+    check('a point above the shell card is the canvas, so face picks still land',
+      shellPick.tag === 'CANVAS' && shellPick.onCard === false,
+      JSON.stringify(shellPick));
+    const shellPhone = await readCard();
+    check('shell card on a phone uses the same rail gap and pill clearance',
+      shellPhone.compact === '1'
+      && shellPhone.width <= shellPhone.cap + 1.5
+      && shellPhone.gapLeft >= 8
+      && shellPhone.gapRight >= 8
+      && shellPhone.pillGap != null
+      && shellPhone.pillGap >= 8
+      && shellPhone.pillGap <= 14
+      && shellPhone.height < 360,
+      JSON.stringify(shellPhone));
+    await parkAndShoot('feature-sheet-shell-390-before.png', { slide: false });
+    const shellAfter = await parkAndShoot('feature-sheet-shell-390-after.png', { slide: true });
+    check('phone shell: projected part box sits above the card',
+      Number.isFinite(shellAfter.low) && shellAfter.low + 0.02 >= shellAfter.cardTop,
+      JSON.stringify(shellAfter));
+
+    await showFace('draft', 'Draft', 'data-draft-mode');
+    await parkAndShoot('feature-sheet-draft-390-before.png', { slide: false });
+    await parkAndShoot('feature-sheet-draft-390-after.png', { slide: true });
+    await showFace('moveFace', 'Move Face', 'data-move-face-mode');
+    await parkAndShoot('feature-sheet-move-face-390-before.png', { slide: false });
+    await parkAndShoot('feature-sheet-move-face-390-after.png', { slide: true });
+    await showFace('deleteFace', 'Delete Face', 'data-delete-face-mode');
+    const deletePick = await page.evaluate(() => {
+      const pane = document.querySelector('[data-harness-pane]');
+      const box = pane.getBoundingClientRect();
+      const el = document.elementFromPoint(box.left + box.width / 2, box.top + 36);
+      return {
+        tag: el && el.tagName,
+        onCard: !!(el && el.closest('[data-feature-card]')),
+        cards: document.querySelectorAll('[data-feature-card]').length,
+      };
+    });
+    check('a point above the delete-face card is the canvas',
+      deletePick.tag === 'CANVAS' && deletePick.onCard === false && deletePick.cards === 1,
+      JSON.stringify(deletePick));
+    await parkAndShoot('feature-sheet-delete-face-390-before.png', { slide: false });
+    await parkAndShoot('feature-sheet-delete-face-390-after.png', { slide: true });
 
     check('the page did not throw', pageErrors.length === 0, pageErrors.join(' | '));
   } finally {

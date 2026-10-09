@@ -1,17 +1,15 @@
 import React from 'react';
-import { Check, X } from 'lucide-react';
 import { NumberField } from './controls/popupUI';
 import { FeatureDeleteButton } from './FeatureEditDelete';
-
-const ACCENT = 'cyan';
+import FeatureSheet from './FeatureSheet';
 
 /**
- * Draft face-pick chip — ShellModeChip placement + chrome.
+ * Draft on the shared feature card.
  * First tap is the neutral face (its normal is the pull). Flip reverses that
  * normal. Later taps add faces to draft; tap a drafted face again to remove
  * it. Undo drops only the last drafted face. Clear drops drafted faces and
- * keeps the neutral face. Confirm writes one draftFaces(); grey X exits
- * with no write. No modifier key and no tangent chain.
+ * keeps the neutral face. Confirm writes one draftFaces(); X exits with no
+ * write. No modifier key and no tangent chain.
  */
 const DraftModeChip = ({
   neutral = null,
@@ -51,43 +49,28 @@ const DraftModeChip = ({
   }
 
   const canConfirm = !!neutral && faceCount > 0;
+  const title = `Draft${faceCount ? ` · ${faceCount} face${faceCount === 1 ? '' : 's'}` : ''}`;
 
   return (
-    <div
-      className={`absolute bg-cyan-950/80 surface-glass-chip border border-cyan-400/70 text-white px-3 py-2
-        rounded-lg text-xs z-20 shadow-lg flex flex-col min-h-0 ${
-          compact
-            ? 'bottom-14 left-1/2 -translate-x-1/2 max-w-[min(16rem,calc(100%-9rem))] max-h-[calc(100dvh-12rem)]'
-            : 'bottom-2.5 left-1/2 -translate-x-1/2 max-w-[18rem] max-h-[calc(100dvh-12rem)]'
-        }`}
-      role="group"
-      aria-label="Draft face pick"
-      data-draft-mode="1"
+    <FeatureSheet
+      title={title}
+      subtitle={status}
+      compact={compact}
+      onCancel={onDismiss}
+      onConfirm={onConfirm}
+      confirmDisabled={!canConfirm}
+      cardAttrs={{
+        'data-draft-mode': '1',
+        'data-draft-confirm': canConfirm ? 'enabled' : 'disabled',
+      }}
+      note={(
+        <span className="flex min-w-0 items-center gap-2">
+          {onDelete ? <FeatureDeleteButton onClick={onDelete} /> : null}
+          <span className="leading-tight">draftFaces(body, faces, angle)</span>
+        </span>
+      )}
     >
-      <div className="flex items-start justify-between gap-2 shrink-0">
-        <div className="min-w-0">
-          <div className="font-bold font-sans text-cyan-200">
-            Draft{faceCount ? ` · ${faceCount} face${faceCount === 1 ? '' : 's'}` : ''}
-          </div>
-          <div className="text-[11px] text-cyan-100/90 normal-case font-sans mt-0.5">
-            {status}
-          </div>
-        </div>
-        <button
-          type="button"
-          onClick={() => onDismiss?.()}
-          className="shrink-0 text-gray-400 hover:text-white"
-          title="Exit Draft mode without committing"
-          aria-label="Dismiss Draft mode without committing"
-        >
-          <X size={14} />
-        </button>
-      </div>
-
-      <div
-        className="mt-1.5 flex flex-col gap-1.5 font-sans overflow-y-auto rail-scroll min-h-0"
-        data-draft-chip-scroll=""
-      >
+      <div className="mt-1.5 flex flex-col gap-1.5 font-sans">
         <div className="flex gap-1 flex-wrap" role="group" aria-label="Pull">
           <button
             type="button"
@@ -131,7 +114,7 @@ const DraftModeChip = ({
         <NumberField
           id="draft-angle"
           label="Angle °"
-          accent={ACCENT}
+          accent="cyan"
           value={angle}
           onChange={setAngle}
           min={-45}
@@ -139,33 +122,7 @@ const DraftModeChip = ({
           step={0.5}
         />
       </div>
-
-      <div className="mt-2 flex items-center justify-between gap-2 shrink-0">
-        <div className="flex items-center gap-2 min-w-0">
-          {onDelete ? <FeatureDeleteButton onClick={onDelete} /> : null}
-          <span className="text-[11px] text-cyan-200/70 leading-tight">
-            draftFaces(body, faces, angle)
-          </span>
-        </div>
-        <button
-          type="button"
-          onClick={() => onConfirm?.()}
-          disabled={!canConfirm}
-          className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-[13px] font-medium shrink-0 ${
-            canConfirm
-              ? 'bg-cyan-600 hover:bg-cyan-500 active:bg-cyan-400 text-white'
-              : 'bg-cyan-950/80 text-cyan-400/50 border border-cyan-800/60 cursor-not-allowed'
-          }`}
-          data-draft-confirm={canConfirm ? 'enabled' : 'disabled'}
-          title={canConfirm
-            ? 'Commit one draftFaces() about the neutral plane and leave Draft mode.'
-            : 'Tap the neutral face, then the faces to draft'}
-        >
-          <Check size={14} />
-          Confirm
-        </button>
-      </div>
-    </div>
+    </FeatureSheet>
   );
 };
 

@@ -410,7 +410,7 @@ All of these are absolutely positioned inside the shell at
 | top-16, portaled `z-50`, `inset-x-3` (most of the viewport width, same card on desktop) | execution error toast: fixed card, label "Error", Undo and dismiss on the right, description on the next line (`ErrorPopup` `layout="stacked"`), glass `rounded-lg` | `ErrorPopup.jsx` | Viewport |
 | centered on the viewport pane (desktop) and the phone shell | assembly-open spinner: ring + `Opening <name>…`, optional `part 3 of 7`. Hidden for the first 150ms. `pointer-events-none`, `z-[45]`, under the toasts | `AssemblyOpenSpinner.jsx` `data-assembly-open-spinner` | App |
 | *(removed C.1)* | Selected Face readout | — | — |
-| bottom center, between the rails, 10px above the home pill on a phone (`data-feature-card`) | contour card (circle, rectangle, polygon, polyline, extrude, revolve, loft, sweep, workplane), fillet, chamfer, and the standalone edge card. Grey shell, cyan Confirm. The edge card has X and no Confirm. Hidden in game | `FeatureSheet.jsx`, `ContourModeChip.jsx`, `FilletModeChip.jsx` | Viewport |
+| bottom center, between the rails, 10px above the home pill on a phone (`data-feature-card`) | contour card (circle, rectangle, polygon, polyline, extrude, revolve, loft, sweep, workplane), fillet, chamfer, the standalone edge card, shell, draft, move face, and delete face. Grey shell, cyan Confirm. The edge card has X and no Confirm. Hidden in game | `FeatureSheet.jsx`, `ContourModeChip.jsx`, `FilletModeChip.jsx`, `ShellModeChip.jsx`, `DraftModeChip.jsx`, `MoveFaceModeChip.jsx`, `DeleteFaceModeChip.jsx` | Viewport |
 | top-16 center, portaled `z-50` | toasts: edge-mode, contour, fillet-scrap, fillet, shell — same `ErrorPopup` card | `ErrorPopup.jsx` | Viewport |
 | bottom-left | measurement readout | inline | `:3961` |
 | fills the pane | WebGL canvas | `<canvas ref={canvasRef}>` | `:3985` |
@@ -626,8 +626,8 @@ Import `src/utils/importModel.js` (+ `POST /api/convert/step`); export
   the expanded panel closes with a green `Check`. No chevrons — they said
   "up/down", not what would happen.
 - **Bottom-centre is for mode chips and the param popup**; the bottom corners
-  belong to the rails. Contour, Fillet, Chamfer, and the standalone edge card
-  share the feature card (bottom center, between the rails). The right-hand cluster is
+  belong to the rails. Contour, Fillet, Chamfer, the standalone edge card, Shell,
+  Draft, Move Face, and Delete Face share the feature card (bottom center, between the rails). The right-hand cluster is
   `bottom-2.5 right-2.5` (10px off both edges), and the helper rail keeps
   `left-2 lg:left-4`.
 - **Responsive insets** are written `left-2 lg:left-4` / `right-2 lg:right-4`
