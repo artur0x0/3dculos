@@ -131,8 +131,14 @@ export function fitView({ camera, controls, geometry, box: boxArg, dir, up, marg
   const aspect = camera.aspect > 0 ? camera.aspect : 1;
   const tanX = tanY * aspect;
 
-  // --- the farthest of the 8 box corners decides the distance on each axis ---
-  let dist = 0;
+  // Two distances. `distOld` is the perpendicular size, as if every corner sat
+  // on the plane through the box center. That is what a compact part has
+  // always used, and the margin on it is unchanged. A corner closer to the
+  // camera than the center projects wider than that plane predicts, so a
+  // long assembly (two parts far apart) sticks out of the frame. `distExact`
+  // is the eye distance that puts that corner on the frustum edge.
+  let distOld = 0;
+  let distExact = 0;
   const corner = new Vector3();
   for (let i = 0; i < 8; i++) {
     corner.set(
@@ -140,13 +146,15 @@ export function fitView({ camera, controls, geometry, box: boxArg, dir, up, marg
       i & 2 ? box.max.y : box.min.y,
       i & 4 ? box.max.z : box.min.z
     ).sub(center);
-    dist = Math.max(
-      dist,
-      Math.abs(corner.dot(xAxis)) / tanX,
-      Math.abs(corner.dot(yAxis)) / tanY
-    );
+    const px = Math.abs(corner.dot(xAxis)) / tanX;
+    const py = Math.abs(corner.dot(yAxis)) / tanY;
+    const pz = corner.dot(zAxis);
+    distOld = Math.max(distOld, px, py);
+    distExact = Math.max(distExact, pz + px, pz + py);
   }
-  dist = (dist || 1) * (Number.isFinite(margin) && margin > 0 ? margin : 1.15);
+  const marginFactor = Number.isFinite(margin) && margin > 0 ? margin : 1.15;
+  let dist = (distOld || 1) * marginFactor;
+  if (distExact > dist) dist = distExact * 1.02;
   if (!Number.isFinite(dist) || dist <= 0) return false;
 
   // --- commit. near/far bracket the part so it is never clipped or depth-starved ---

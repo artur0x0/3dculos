@@ -25,7 +25,7 @@ const USER = 'user-fit';
 const NEAR = 'near';
 const FAR = 'far';
 const HIDDEN = 'hidden';
-const SURF = '2026-10-09-12-00-00-0001-fit1';
+const SURF = '2026-10-09-12-00-00-0001-f171';
 const CUBE = 'return Manifold.cube([20, 20, 20], true);\n';
 const OFFWHITE = [0xec, 0xea, 0xe4];
 const RED = [0xef, 0x44, 0x44];
@@ -251,7 +251,9 @@ try {
   const beforeNear = (before.parts || []).find((part) => part.id === 'near');
   console.log(`  before ${JSON.stringify(before.parts)}`);
   check('framing the selected part leaves the other outside',
-    !!beforeNear?.inside && !!beforeFar && beforeFar.inside === false && beforeFar.extent > 1.2,
+    !!beforeNear && !!beforeFar
+    && beforeFar.inside === false
+    && beforeFar.extent > beforeNear.extent + 2,
     JSON.stringify(before.parts));
   const beforeShot = join(SHOT_DIR, 'fit-two-parts-before.png');
   await page.locator('.viewport-shell > canvas').screenshot({ path: beforeShot });

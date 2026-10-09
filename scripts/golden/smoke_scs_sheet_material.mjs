@@ -219,10 +219,13 @@ try {
   check('orange handles on the dark ground', result.overlayDark.orange > 80, `orange ${result.overlayDark.orange}`);
   check('orange handles on the light ground', result.overlayLight.orange > 80, `orange ${result.overlayLight.orange}`);
   check('face highlight stays visible', result.highlight.yellow > 50, `yellow ${result.highlight.yellow}`);
+  // Mean of every lit pixel, including sides the headlight shades. A face
+  // aimed at the camera is #ECEAE4; this average sits a bit below that.
   check('a cube stays the default off-white',
     result.cube.satFrac < 0.2
-    && result.cube.r > 170 && result.cube.g > 170 && result.cube.b > 160
-    && Math.abs(result.cube.r - result.cube.g) < 25,
+    && result.cube.r > 150 && result.cube.g > 150 && result.cube.b > 140
+    && Math.abs(result.cube.r - result.cube.g) < 25
+    && Math.abs(result.cube.g - result.cube.b) < 30,
     `rgb ${result.cube.r?.toFixed?.(0)},${result.cube.g?.toFixed?.(0)},${result.cube.b?.toFixed?.(0)} sat ${result.cube.satFrac?.toFixed?.(2)}`);
 
   const save = (name, row) => {

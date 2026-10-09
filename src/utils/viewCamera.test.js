@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { BoxGeometry, Mesh, PerspectiveCamera, Vector3 } from 'three';
+import { BoxGeometry, Matrix4, Mesh, PerspectiveCamera, Vector3, Vector4 } from 'three';
 import { DEFAULT_PART_COLOR, makeDefaultPartMaterial } from './partMaterial.js';
 import { fitView, meshWorldBox, unionWorldBox } from './viewCamera.js';
 
@@ -45,6 +45,23 @@ test('fit unions separated visible parts and skips a hidden one', () => {
   const along = center.clone().sub(camera.position);
   const closest = camera.position.clone().addScaledVector(look, along.dot(look));
   assert.ok(closest.distanceTo(center) < 1e-3);
+  camera.updateMatrixWorld(true);
+  const mvp = new Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+  const p = new Vector4();
+  for (const mesh of [near, far]) {
+    const part = meshWorldBox(mesh);
+    for (let i = 0; i < 8; i++) {
+      p.set(
+        i & 1 ? part.max.x : part.min.x,
+        i & 2 ? part.max.y : part.min.y,
+        i & 4 ? part.max.z : part.min.z,
+        1,
+      ).applyMatrix4(mvp);
+      const u = p.x / p.w;
+      const v = p.y / p.w;
+      assert.ok(Math.abs(u) <= 1.02 && Math.abs(v) <= 1.02, `${u},${v}`);
+    }
+  }
   near.geometry.dispose();
   far.geometry.dispose();
   hidden.geometry.dispose();

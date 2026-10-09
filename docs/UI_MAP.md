@@ -331,8 +331,8 @@ Mobile specifics:
   implicit 1.15) for top / right / front / iso (and other `VIEW_PRESETS`).
   Zoom-to-Fit (`data-zoom-to-fit`) keeps `fitView` margin 1.15 and frames the
   union box of every visible part. A hidden row is left out. One visible part
-  is that part alone. View snaps still frame the active part. Game puzzle
-  enter keeps 1.55.
+  is that part alone. Parts far apart stay inside the frame. View snaps still
+  frame the active part. Game puzzle enter keeps 1.55.
 - **Both panes stay mounted** across stages (WebGL + Monaco + editor refs /
   portal host). Off-stage pane is `invisible pointer-events-none`.
 - **Editor budget** (`mobileEditorPx`) still applies to the **game** stack as a
