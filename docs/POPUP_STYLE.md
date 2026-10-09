@@ -72,7 +72,9 @@ over inventing a new modal layout.
   replaces a previous Move Face block; X exits with no write. Live preview
   while the distance changes. This is not the body `move()` helper. Hidden in game.
 - **`FeaStudyChip.jsx` / `FeaStudySheet.jsx`** — the shared feature card (`FeatureSheet`)
-  on phone and desktop. Material, Fix / Force / Pressure, the load list, and the
+  on phone and desktop. Both pass `fullLeft`: the left tool rail is hidden, so the
+  left edge is 10px from the pane and the right edge stays clear of the right rail.
+  Material, Fix / Force / Pressure, the load list, and the
   preview sliders stay in the body during setup. After a solve, the legend,
   the Stress / Displacement tabs, and Stage times scroll in the body. The footer is Run, or Back to Setup
   after a solve. It does not say Confirm. X and Esc close Analyze. Hidden in game.

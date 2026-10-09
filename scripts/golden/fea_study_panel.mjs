@@ -523,6 +523,39 @@ async function assertFeaSheet(page, vp, text) {
   );
   check(`${vp.name} footer is not Confirm`, chrome.confirm === 'no', chrome.confirm);
   if (vp.touch) {
+    let place = null;
+    for (let i = 0; i < 20; i += 1) {
+      place = await page.evaluate(() => {
+        const card = document.querySelector('[data-fea-sheet="1"]');
+        const pane = card?.closest('.viewport-shell');
+        const right = pane?.querySelector('[data-rail-pair="right"]');
+        if (!card || !pane || !right) return null;
+        const box = card.getBoundingClientRect();
+        const paneBox = pane.getBoundingClientRect();
+        const rail = right.getBoundingClientRect();
+        return {
+          left: box.left - paneBox.left,
+          rightGap: rail.left - box.right,
+          overlap: box.right > rail.left - 0.5,
+          leftRail: !!pane.querySelector('[data-rail-pair="left"]'),
+          fullLeft: card.getAttribute('data-feature-card-full-left') || '',
+          width: box.width,
+          paneW: paneBox.width,
+        };
+      });
+      if (place && Math.abs(place.left - 10) <= 2 && !place.overlap) break;
+      await page.waitForTimeout(50);
+    }
+    check(
+      `${vp.name} analyze card left edge is 10px from the pane`,
+      !!place && Math.abs(place.left - 10) <= 2 && place.fullLeft === '1',
+      JSON.stringify(place),
+    );
+    check(
+      `${vp.name} analyze card does not overlap the right rail`,
+      !!place && place.rightGap >= 8 && !place.overlap && !place.leftRail,
+      JSON.stringify(place),
+    );
     const display = await page.evaluate(() => {
       const el = document.querySelector('[data-mobile-stage-home-indicator]');
       return el ? window.getComputedStyle(el).display : 'missing';

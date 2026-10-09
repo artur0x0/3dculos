@@ -200,7 +200,12 @@ console.log('feature sheet card — source');
     && /enabled=\{mode !== 'game'\}/.test(view)
     && /feaSheetOpen/.test(view)
     && /feaSheetOpen\s*\n\s*\? 'fea'/.test(view)
-    && /Analyze uses it too/.test(arch));
+    && /Analyze uses it too/.test(arch)
+    && /fullLeft/.test(feaChip)
+    && /fullLeft/.test(feaSheet)
+    && /fullLeft = false/.test(shell)
+    && /measureFeatureSheetWidth\(pane, rootPx = 16, \{ fullLeft = false \} = \{\}\)/.test(layout)
+    && !/data-fea-/.test(shell));
   check('helper sheets use the card in CAD; game keeps the old sheet and does not slide',
     /<FeatureSheet\b/.test(helper)
     && /useCard/.test(helper)
