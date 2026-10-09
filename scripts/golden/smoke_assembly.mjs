@@ -134,19 +134,18 @@ const BAD = 'let part = Manifold.cube([10, 10, 10], true);\nreturn part.missingM
     && /Add to Repo/.test(feed)
     && /Upload/.test(feed)
     && /data-assembly-load/.test(feed));
-  check('mobile pager order is CAD, Parts, then Script',
+  check('mobile pager order is CAD then Parts, with no script button',
     (() => {
       const cad = toggle.indexOf('data-stage-dot="cad"');
-      const script = toggle.indexOf('data-stage-dot="script"');
       const parts = toggle.indexOf('data-stage-dot="parts"');
       const cadBtn = toggle.indexOf('data-stage-btn="cad"');
       const partsBtn = toggle.indexOf('data-stage-btn="parts"');
-      const scriptBtn = toggle.indexOf('data-stage-btn="script"');
-      return cad >= 0 && cad < parts && parts < script
-        && cadBtn >= 0 && cadBtn < partsBtn && partsBtn < scriptBtn
+      return cad >= 0 && cad < parts
+        && cadBtn >= 0 && cadBtn < partsBtn
+        && !/data-stage-btn="script"/.test(toggle)
+        && !/data-stage-dot="script"/.test(toggle)
         && /data-stage-icon="box"/.test(toggle)
         && /data-stage-icon="layout-list"/.test(toggle)
-        && /data-stage-icon="square-text"/.test(toggle)
         && /data-stage-pane="parts"/.test(app);
     })());
   const titleStart = view.indexOf('data-viewer-title');

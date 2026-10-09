@@ -49,14 +49,24 @@ console.log('hidden script editor, pencil drawer and sheet');
     && /data-script-drawer-resize/.test(drawer)
     && /invisible pointer-events-none/.test(drawer)
     && /open \? '' : 'invisible/.test(drawer));
-  check('phone script stage is a full-screen sheet with back',
+  const toggle = read('../../src/components/MobileStageToggle.jsx');
+  const stage = read('../../src/utils/mobileStage.js');
+  check('phone script stage is a full-screen sheet with an arrow back to parts',
     /data-script-sheet/.test(app)
     && /data-script-editor-close/.test(editor)
     && /isScriptStage \? 'z-40'/.test(app)
-    && /Back to CAD/.test(editor));
-  check('a stored script stage is not the landing view',
+    && /aria-label=\{isMobile \? 'Back to parts' : 'Back to CAD'\}/.test(editor)
+    && /ArrowLeft/.test(editor)
+    && /h-11 w-11/.test(editor)
+    && !/font-medium">CAD</.test(editor)
+    && /setMobileStageSticky\('parts', \{ sync: false \}/.test(app));
+  check('a stored or linked script stage opens Parts, and the pill has no script button',
     /A stored Script stage is not the landing view/.test(app)
-    && !/return s === 'script' \? 'script' : 'cad'/.test(app));
+    && /landingMobileStage/.test(app)
+    && /named === 'script' \|\| named === 'parts'/.test(stage)
+    && /data-stage-btn="cad"/.test(toggle)
+    && /data-stage-btn="parts"/.test(toggle)
+    && !/data-stage-btn="script"/.test(toggle));
   check('pencil on each part row uses the blue accent',
     /data-part-edit-script=\{row\.id\}/.test(feed)
     && /<Pencil size=\{16\}/.test(feed)

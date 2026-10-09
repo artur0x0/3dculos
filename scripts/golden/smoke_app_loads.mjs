@@ -18,10 +18,14 @@
  */
 /* The `page.evaluate` callbacks below are serialised and run INSIDE the
    browser, where `document` exists — eslint lints this file as Node. */
-/* global document */
+/* global document, sessionStorage */
 import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { chromium } from 'playwright-core';
+
+const SHOT_DIR = process.env.GOLDEN_SHOT_DIR || tmpdir();
 
 const PORT = Number(process.env.SMOKE_PORT || 4317);
 const APP_URL = `http://localhost:${PORT}/`;
@@ -148,10 +152,6 @@ try {
   check('#root has rendered children (not a blank screen)', rootChildren > 0,
     `#root child count = ${rootChildren}`);
 
-  check('no uncaught page errors', pageErrors.length === 0, pageErrors.slice(0, 3).join(' | '));
-  check('no unexpected console errors', consoleErrors.length === 0,
-    consoleErrors.slice(0, 3).join(' | '));
-
   // Real chrome, not just any DOM: the editor pane and the viewport canvas.
   const canvas = await page.locator('canvas').count();
   check('the 3D canvas mounted', canvas > 0);
@@ -159,6 +159,52 @@ try {
   check('the CAD toolbar strip mounted', strip > 0);
   const run = await page.locator('[data-cad-run]').count();
   check('the Run button is present', run > 0);
+
+  // 390px: the bottom pill is CAD and Parts. A saved Script stage opens Parts.
+  const phone = await browser.newPage({
+    viewport: { width: 390, height: 844 },
+    hasTouch: true,
+    isMobile: true,
+    userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+  });
+  phone.on('pageerror', (e) => pageErrors.push(String(e && e.message ? e.message : e)));
+  phone.on('console', (msg) => {
+    if (msg.type() !== 'error') return;
+    const text = msg.text();
+    if (ALLOWED.some((re) => re.test(text))) return;
+    consoleErrors.push(text);
+  });
+  await phone.route('**/api/auth/me', (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ authenticated: false }),
+  }));
+  await phone.route('**/api/config', (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({}),
+  }));
+  await phone.addInitScript(() => {
+    sessionStorage.setItem('3dculos.mobileStage', 'script');
+  });
+  await phone.goto(APP_URL, { waitUntil: 'load', timeout: 45000 });
+  await phone.waitForSelector('[data-mobile-stage-toggle]', { timeout: 20000 });
+  const stageButtons = await phone.locator('[data-stage-btn]').count();
+  const scriptButtons = await phone.locator('[data-stage-btn="script"]').count();
+  const cadButtons = await phone.locator('[data-stage-btn="cad"]').count();
+  const partsButtons = await phone.locator('[data-stage-btn="parts"]').count();
+  const stage = await phone.locator('[data-mobile-stage]').getAttribute('data-mobile-stage');
+  const stored = await phone.evaluate(() => sessionStorage.getItem('3dculos.mobileStage'));
+  check('phone toggle has CAD and Parts only', stageButtons === 2 && cadButtons === 1 && partsButtons === 1 && scriptButtons === 0,
+    `buttons=${stageButtons} cad=${cadButtons} parts=${partsButtons} script=${scriptButtons}`);
+  check('a saved script stage opens Parts', stage === 'parts' && stored === 'parts',
+    `stage=${stage} stored=${stored}`);
+  mkdirSync(SHOT_DIR, { recursive: true });
+  await phone.screenshot({ path: join(SHOT_DIR, 'cad-mobile-toggle-390.png') });
+
+  check('no uncaught page errors', pageErrors.length === 0, pageErrors.slice(0, 3).join(' | '));
+  check('no unexpected console errors', consoleErrors.length === 0,
+    consoleErrors.slice(0, 3).join(' | '));
 } catch (err) {
   check('the page loaded', false, String(err && err.message ? err.message : err));
 } finally {

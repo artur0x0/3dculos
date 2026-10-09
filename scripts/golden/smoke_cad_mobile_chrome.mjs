@@ -57,6 +57,15 @@ console.log('cad mobile chrome harmonized to puzzle');
   const editor = read('../../src/components/CodeEditor.jsx');
   const toolbar = read('../../src/components/Toolbar.jsx');
   const panel = read('../../src/components/CrossSectionPanel.jsx');
+  const toggle = read('../../src/components/MobileStageToggle.jsx');
+
+  check(
+    'phone mode toggle is CAD and Parts, with no script button',
+    /data-stage-btn="cad"/.test(toggle)
+    && /data-stage-btn="parts"/.test(toggle)
+    && !/data-stage-btn="script"/.test(toggle)
+    && !/SquareText/.test(toggle),
+  );
 
   check('right rail is vertical in both shells', /verticalRail\s*\n/.test(view));
   check('no CAD overlay toolbar is left anywhere', !/variant="overlay"/.test(view));
