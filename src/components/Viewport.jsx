@@ -56,6 +56,7 @@ import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 
 import Toolbar from './Toolbar';
+import PuzzleUnlock from './PuzzleUnlock';
 import ProfileChip from './ProfileChip';
 import CrossSectionPanel from './CrossSectionPanel';
 import HelperInsertPalette from './HelperInsertPalette';
@@ -721,8 +722,9 @@ const Viewport = forwardRef(({
   /** Mobile CAD mid-strip host (CodeEditor). Null on desktop and in game. */
   cadToolbarHost = null,
   /**
-   * When the script editor is closed, Upload / Download / Order / puzzle
-   * stay reachable in a temporary tray. Run and Select all stay in the editor.
+   * When the script editor is closed, Upload / Download / Order stay
+   * reachable in a temporary tray. Run and Select all stay in the editor.
+   * The puzzle is the corner easter egg, not a tray button.
    */
   scriptEditorVisible = true,
   /** CAD Run. When set, the strip runs the assembly instead of one script. */
@@ -8198,8 +8200,12 @@ const Viewport = forwardRef(({
         <ProfileChip variant="viewport" onAccount={onAccount} onSignedOut={onSignedOut} onClearLocalCadData={onClearLocalCadData} vaultName={profileVaultName} />
       )}
 
+      {/* Five taps in this corner enter the puzzle. It sits under the tray. */}
+      <PuzzleUnlock enabled={mode !== 'game'} onUnlock={onStartGame} />
+
       {/* Temporary home for the editor ribbon's model buttons while Monaco is hidden.
-          Later PRs move these. Undo/redo stay on the feature bar. */}
+          Later PRs move these. Undo/redo stay on the feature bar. The puzzle
+          is not one of these buttons. */}
       {mode !== 'game' && !scriptEditorVisible && (
         <div
           data-cad-io-tray=""
@@ -8220,7 +8226,6 @@ const Viewport = forwardRef(({
             isExecuting={isExecuting}
             isDownloading={isDownloading}
             isUploading={isUploading}
-            onStartGame={onStartGame}
             onExitGame={onExitGame}
             onRun={onRun}
             onRunScript={runCadScript}
@@ -8251,7 +8256,6 @@ const Viewport = forwardRef(({
           isExecuting={isExecuting}
           isDownloading={isDownloading}
           isUploading={isUploading}
-          onStartGame={onStartGame}
           onExitGame={onExitGame}
           onRun={onRun}
           onRunScript={runCadScript}

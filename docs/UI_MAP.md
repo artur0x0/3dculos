@@ -46,7 +46,8 @@ one shell you must change the other.
 - **Pencil** (`data-part-edit-script`) on each part row, blue, same size as the eye. It activates that part if needed and opens Monaco for it only.
 - **Desktop drawer** (`data-script-drawer-side="right"`): under the feature ribbon (`top: 8rem`), inset so the left rail stays clear, drag the left edge to resize, Escape or Back closes it.
 - **Phone sheet** (`data-script-sheet`, 390px): full-screen over the home pill, Back to CAD (`data-script-editor-close`). A stored Script stage is not restored on load.
-- **Temporary tray** (`data-cad-io-tray`, viewport top-left) while the editor is closed: Upload, Download, Order, puzzle. Run, Select all, Undo, and Redo are not in that tray.
+- **Temporary tray** (`data-cad-io-tray`, viewport top-left) while the editor is closed: Upload, Download, Order. The puzzle is not in the tray. Run, Select all, Undo, and Redo are not in that tray.
+- **Puzzle easter egg** (`data-puzzle-unlock`, 44×44, viewport top-left, under the tray so the tray buttons stay clickable): five taps in three seconds while `useAuthState().signedIn` (grey reauth counts) call `handleStartGame` and show `data-puzzle-unlock-toast` ("Puzzle unlocked"). The taps are not stored. Signed-out and pending sessions have no target and no toast.
 
 **The seam between the two panes is draggable** in both shells
 (`SplitDivider.jsx`, pointer-capture based): left/right on desktop
@@ -352,7 +353,7 @@ That yields **four** layout combinations; check both flags when editing chrome.
 
 | | `mode === 'cad'` | `mode === 'game'` |
 | --- | --- | --- |
-| Toolbar contents | **run + select-all** (green run first, own section) then open/upload/undo/save/download/quote/puzzle (Account moved to viewport profile chip, G9) | back, undo/redo, run, picker, hint (`src/components/Toolbar.jsx`) |
+| Toolbar contents | **run + select-all** (green run first, own section) then upload/download/undo/redo/quote (Account is the profile chip). The puzzle is not on this strip | back, undo/redo, run, picker, hint (`src/components/Toolbar.jsx`) |
 | Toolbar placement | portaled strip above the editor, both shells | strip inside CodeEditor, both shells |
 | Title chip | always (filename) | always (puzzle title) |
 | Helper rail | `layout="cad"` — Block, Build, Shape, Polish, Move | `layout="game"` — the same five sections |
@@ -375,6 +376,8 @@ All of these are absolutely positioned inside the shell at
 | --- | --- | --- | --- |
 | *editor header* (portal) | Toolbar, all CAD | `Toolbar.jsx` `variant="strip"` | `:3530` |
 | top-center | CAD: part, the word in, assembly. Game: puzzle name | `data-viewer-title` / `ViewportTitleChip` | Viewport |
+| top-left, 44×44, under the IO tray | puzzle easter egg, signed-in only (`useAuthState().signedIn`) | `data-puzzle-unlock` | `PuzzleUnlock` |
+| below the feature bar, centered | "Puzzle unlocked" toast after the fifth tap | `data-puzzle-unlock-toast` | `PuzzleUnlock` |
 | bottom, centered in the gap between the rails (same card as Shell; `bottom-14` on a phone) | Paint popup: 8 swatches (grid padded so the selection ring is not clipped), custom `#rrggbb`, Part, Undo, Clear, Remove unmatched colors, Confirm, Cancel. A tap paints the face immediately. Double-tap paints that body. Confirm saves the session. X and Cancel revert it | `PaintModeChip` `data-paint-mode` | Viewport |
 | centered | "Match!" success banner | inline | `:3595` |
 | left-2/4 bottom-2.5 | helper insert rail (height paired to right). Block, Build, Shape, Polish, Move. Shape includes Sheet Metal (blue plate with a bent flange, `data-sheet-metal-button`) with the other shape tools | `HelperInsertPalette.jsx` | Viewport |
