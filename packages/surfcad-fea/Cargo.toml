@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
 publish = false
-description = "SurfCAD finite-element solver compiled to single-threaded SIMD WebAssembly. Phase 0 stub plus a TET10 linear-static solver."
+description = "SurfCAD finite-element solver compiled to single-threaded SIMD WebAssembly. Phase 0 stub, a TET10 solver, and a 6-node MITC shell."
 
 [lib]
 crate-type = ["cdylib", "rlib"]

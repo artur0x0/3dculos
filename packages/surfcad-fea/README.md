@@ -6,8 +6,9 @@ Two entry points share the module:
 
 - `solve` is still the phase-0 **stub**. It returns a deterministic fake von Mises field and always sets `source` to `"stub"`. `capabilities()` still reports `solvers: ["stub"]`. The app worker calls only this entry; wiring the real solver into the page is a later change.
 - `solve_tet10` is a clean-room linear-elastic static solver for 10-node tetrahedra. It sets `source` to `"fem"`.
+- `solve_shell` is a clean-room linear shell for 6-node triangles. It sets `source` to `"shell"`.
 
-The linear algebra is [faer](https://crates.io/crates/faer) 0.24 (MIT / Apache-2.0), built **without** the `rayon` feature so the factorization stays single-threaded (`Par::Seq`). Shells and tet meshing are not in this crate.
+The linear algebra is [faer](https://crates.io/crates/faer) 0.24 (MIT / Apache-2.0), built **without** the `rayon` feature so the factorization stays single-threaded (`Par::Seq`). Tet meshing is not in this crate. The shell does not need a separate mesher: the caller passes the 6-node triangulation.
 
 The crate is Apache-2.0, the same license as the rest of the project.
 
@@ -21,6 +22,19 @@ Units are millimetres, newtons and megapascals. They are consistent (`1 MPa = 1 
 - Loads are nodal forces (N) and uniform pressure on 6-node faces (MPa). Face order is `(c0, c1, c2, mid01, mid12, mid20)`. Positive pressure pushes against the right-hand normal of `(c0, c1, c2)`.
 - Two solvers, chosen per call. `"cholesky"` is faer's supernodal sparse Cholesky. `"pcg"` is Jacobi-preconditioned CG (`tol` default `1e-8`, `maxIter` default `20000`). `"auto"` (the default) uses Cholesky when the free-DOF count is at or below `choleskyMaxDofs` (default `20000`) and PCG otherwise.
 - Stress is recovered at the Gauss points, extrapolated to the element nodes, and averaged (the tensor is averaged, then von Mises is taken). The result is a per-node von Mises field plus `min`, `max` and nearest-rank `p95`. `safetyFactor` is `yield_MPa / p95` when yield is set and `p95 > 0`.
+
+## Shell solver
+
+The element is a **6-node** MITC triangle, not a 3-node one. A linear triangle does not contain the quadratic transverse displacement of a constant-curvature patch, so MITC3 only passes that patch with extra constraints and converges slowly on a curved roof. The 6-node element has quadratic displacements and geometry (a curved edge can follow a cylinder) and a linear rotation field, so constant membrane strain and constant curvature are in the space.
+
+Transverse shear uses the MITC6-b tying from Lee and Bathe (2004): along each edge the tangential covariant shear is sampled at the two Gauss points and replaced by a linear assumed field. Constant shear is reproduced exactly, which keeps the patch tests, and a thin element is not forced to satisfy the Kirchhoff constraint at every quadrature point. The drilling rotation about the director is stabilized with a Hughes–Brezzi penalty `G t (θ·n − ω)²`, where `ω` is the midsurface spin. That term is zero for a rigid rotation.
+
+- Six DOF per node, `(ux, uy, uz, θx, θy, θz)`, translations in millimetres and rotations in radians. `Dirichlet` indices are `node * 6 + component`.
+- Thickness is **per element**, in millimetres. Nodal directors are the area-weighted average of the geometric normals, so a smooth shell shares a director and a fold (two plates meeting at a kink) is not a separate junction model.
+- Loads are nodal forces (N) and uniform normal pressure (MPa). Positive pressure pushes against the right-hand normal of corners `(n0, n1, n2)`.
+- Fixtures are clamped (all six DOFs) and pinned (translations only).
+- The shell solve **prefers supernodal Cholesky**, including above the 20 000-DOF auto threshold used by `solve_tet10`. Pass `solver: "pcg"` or `"auto"` to override.
+- Stress is the plane-stress von Mises on the top (`ζ = +1`), mid, and bottom (`ζ = −1`) surfaces. Tensors are averaged at the node, then von Mises is taken. `min`, `max`, and `p95` are computed on the combined top and bottom samples. `nodal` is the pointwise maximum of top and bottom.
 
 ## Build
 
@@ -46,16 +60,17 @@ Regenerate and commit `pkg/` after any Rust change:
 npm run fea:build
 ```
 
-CI runs `node scripts/fea/check-wasm-fresh.mjs`, which rebuilds into a scratch directory and fails if any committed `pkg` file differs. `cargo test --locked` covers the stub and the TET10 checks (patch, cantilever, thick cylinder, plate with a hole, Cholesky versus PCG). `cargo deny --manifest-path packages/surfcad-fea/Cargo.toml check licenses` enforces `deny.toml`.
+CI runs `node scripts/fea/check-wasm-fresh.mjs`, which rebuilds into a scratch directory and fails if any committed `pkg` file differs. `cargo test --locked` covers the stub, the TET10 checks (patch, cantilever, thick cylinder, plate with a hole, Cholesky versus PCG), and the shell checks (membrane and bending patches, Navier plate, clamped circular plate, cantilever strip, Scordelis–Lo roof, shear-locking ratios). `cargo deny --manifest-path packages/surfcad-fea/Cargo.toml check licenses` enforces `deny.toml`.
 
 A native scale check is not part of `cargo test`. Run one size per process so the peak is not cumulative:
 
 ```bash
 cargo bench --bench scale -- 40000
 cargo bench --bench scale -- 100000
+cargo bench --bench scale -- shell 120000
 ```
 
-It prints DOFs, assembly time, solve time and peak resident memory. Above the auto threshold the run uses Jacobi PCG.
+It prints DOFs, assembly time, solve time and peak resident memory. Above the auto threshold the tet run uses Jacobi PCG. The shell run uses supernodal Cholesky.
 
 ## Units
 
@@ -67,7 +82,7 @@ Material numbers are **megapascals** for modulus and yield, and dimensionless fo
 | `nu` | Poisson's ratio, required, in the open interval `(-1, 0.5)`. |
 | `yield_MPa` (alias `yield`) | Yield strength in MPa. |
 
-If both a canonical name and its alias are present they must be equal. Mesh coordinates are millimetres. The stub does not convert them into a real stress; it still labels the field `MPa`. `solve_tet10` uses the consistent mm / N / MPa system above.
+If both a canonical name and its alias are present they must be equal. Mesh coordinates are millimetres. The stub does not convert them into a real stress; it still labels the field `MPa`. `solve_tet10` and `solve_shell` use the consistent mm / N / MPa system above.
 
 ## API
 
@@ -169,3 +184,49 @@ const result = solve_tet10(
 ```
 
 `p95` uses the same nearest-rank rule as the stub. `iterations` and `residual` are 0 for Cholesky.
+
+### `solve_shell`
+
+Same calling convention as `solve_tet10`. Not wired through `createFeaClient()`.
+
+```js
+import init, { solve_shell } from './pkg/surfcad_fea.js';
+
+await init();
+const result = solve_shell(
+  {
+    nodes: Float64Array,        // xyz in mm
+    elements: Uint32Array,      // 6 indices per triangle
+    thickness: Float64Array,    // one mm value per element, or a single value
+  },
+  { E_MPa, nu, yield_MPa },
+  {
+    clampedNodes: Uint32Array,  // six DOFs fixed at 0
+    pinnedNodes: Uint32Array,   // three translations fixed at 0
+    fixedDofs: Uint32Array,     // node * 6 + component; optional
+    fixedValues: Float64Array,  // omitted means 0
+    forceNodes: Uint32Array,
+    forceValues: Float64Array,  // three components per node, N
+    pressures: Float64Array,    // one MPa per element, or one value for all
+    pressureElements: Uint32Array, // optional subset
+  },
+  { solver: 'cholesky', tol: 1e-8, maxIter: 20000, choleskyMaxDofs: 20000 },
+);
+// {
+//   source: "shell",
+//   field: "von_mises",
+//   units: "MPa",
+//   nodal: Float64Array,           // max(top, bottom) per node
+//   vonMisesTop: Float64Array,
+//   vonMisesMid: Float64Array,
+//   vonMisesBottom: Float64Array,
+//   displacement: Float64Array,    // ux,uy,uz,θx,θy,θz per node
+//   min, max, p95,                 // over the top and bottom samples together
+//   safetyFactor, fos,
+//   warnings: [{ code, msg }],
+//   solver: "cholesky" | "pcg",
+//   stats: { dofs, freeDofs, nodes, elements, iterations, residual, assemblyMs, solveMs, ms }
+// }
+```
+
+Omitting `options` or `options.solver` selects supernodal Cholesky.

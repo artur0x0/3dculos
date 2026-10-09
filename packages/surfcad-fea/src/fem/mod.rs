@@ -1,16 +1,18 @@
-//! Linear-elastic statics for 10-node tetrahedra.
+//! Linear-elastic statics.
 //!
 //! Units are millimetres, newtons and megapascals. Those are consistent:
 //! `1 MPa = 1 N/mm²`, so Young's modulus in MPa, coordinates in mm and forces
 //! in N produce displacements in mm and stresses in MPa with no conversion.
 //!
-//! Each element is integrated with the 4-point tetrahedron rule (exact for
-//! polynomials through degree 2). Straight-edged TET10 elements therefore have
-//! an exact stiffness for linear elasticity. The global matrix is stored as
-//! symmetric sparse CSC (lower triangle, including the diagonal).
+//! [`solve_tet10`] integrates 10-node tetrahedra with the 4-point rule.
+//! [`solve_shell`] integrates 6-node MITC triangles with 6 DOF per node.
+//! Both store the free-DOF matrix as symmetric sparse CSC (lower triangle,
+//! including the diagonal) and solve it with the same supernodal Cholesky
+//! or Jacobi PCG.
 
 mod assemble;
 mod linear;
+mod shell;
 mod stress;
 pub(crate) mod tet10;
 
@@ -19,6 +21,11 @@ mod tests;
 
 use assemble::Reduced;
 use linear::{pcg, supernodal_cholesky};
+
+pub use shell::{
+    clamp_node, consistent_traction, pin_node, shell_solve_options, solve_shell, ShellOutput,
+    ShellPressure, SHELL_DOF_PER_NODE,
+};
 
 /// Free-DOF count at or below which [`SolverChoice::Auto`] uses supernodal
 /// Cholesky. Larger systems use Jacobi-preconditioned CG.
@@ -277,7 +284,7 @@ pub fn solve_tet10(
 ///
 /// `std::time::Instant` panics on `wasm32-unknown-unknown` ("time not
 /// implemented on this platform"), so the wasm build uses `Date.now`.
-struct Clock {
+pub(crate) struct Clock {
     #[cfg(not(target_arch = "wasm32"))]
     start: std::time::Instant,
     #[cfg(target_arch = "wasm32")]
@@ -285,7 +292,7 @@ struct Clock {
 }
 
 impl Clock {
-    fn start() -> Self {
+    pub(crate) fn start() -> Self {
         Self {
             #[cfg(not(target_arch = "wasm32"))]
             start: std::time::Instant::now(),
@@ -294,7 +301,7 @@ impl Clock {
         }
     }
 
-    fn elapsed_secs(&self) -> f64 {
+    pub(crate) fn elapsed_secs(&self) -> f64 {
         #[cfg(not(target_arch = "wasm32"))]
         {
             self.start.elapsed().as_secs_f64()
@@ -306,7 +313,7 @@ impl Clock {
     }
 }
 
-fn select_solver(choice: SolverChoice, free_dofs: usize, limit: usize) -> SolverUsed {
+pub(crate) fn select_solver(choice: SolverChoice, free_dofs: usize, limit: usize) -> SolverUsed {
     match choice {
         SolverChoice::Cholesky => SolverUsed::Cholesky,
         SolverChoice::Pcg => SolverUsed::Pcg,
@@ -320,7 +327,7 @@ fn select_solver(choice: SolverChoice, free_dofs: usize, limit: usize) -> Solver
     }
 }
 
-fn solve_reduced(
+pub(crate) fn solve_reduced(
     reduced: &Reduced,
     choice: SolverUsed,
     options: &SolveOptions,
@@ -449,7 +456,10 @@ fn validate_loads(
     Ok(())
 }
 
-fn dirichlet_map(n_dof: usize, dirichlet: &[Dirichlet]) -> Result<(Vec<bool>, Vec<f64>), FemError> {
+pub(crate) fn dirichlet_map(
+    n_dof: usize,
+    dirichlet: &[Dirichlet],
+) -> Result<(Vec<bool>, Vec<f64>), FemError> {
     let mut fixed = vec![false; n_dof];
     let mut prescribed = vec![0.0; n_dof];
     for bc in dirichlet {
@@ -478,7 +488,7 @@ fn dirichlet_map(n_dof: usize, dirichlet: &[Dirichlet]) -> Result<(Vec<bool>, Ve
     Ok((fixed, prescribed))
 }
 
-fn range_and_p95(von_mises: &[f64]) -> (f64, f64, f64) {
+pub(crate) fn range_and_p95(von_mises: &[f64]) -> (f64, f64, f64) {
     if von_mises.is_empty() {
         return (0.0, 0.0, 0.0);
     }

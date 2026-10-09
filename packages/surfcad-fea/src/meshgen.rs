@@ -1,4 +1,4 @@
-//! Programmatic TET10 meshes for the native tests and the scale bench.
+//! Programmatic meshes for the native tests and the scale bench.
 //!
 //! A hex grid is split into six tetrahedra around the space diagonal, then
 //! each edge (including the diagonals the split introduces) gets a midside
@@ -401,6 +401,155 @@ fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
         a[2] * b[0] - a[0] * b[2],
         a[0] * b[1] - a[1] * b[0],
     ]
+}
+
+/// Six-node shell triangulation. Node order in each element is
+/// `(n0, n1, n2, mid01, mid12, mid20)`.
+#[derive(Clone, Debug)]
+pub struct ShellMesh {
+    pub nodes: Vec<[f64; 3]>,
+    pub elements: Vec<[u32; 6]>,
+}
+
+/// Flat plate in the xy-plane, `z = 0`, split into 6-node triangles.
+///
+/// `nx` and `ny` are the number of quad cells. The node grid is
+/// `(2 nx + 1)` by `(2 ny + 1)`, so every edge midpoint is a node.
+pub fn plate_shell(nx: usize, ny: usize, length: f64, width: f64) -> ShellMesh {
+    assert!(nx >= 1 && ny >= 1);
+    let nu = 2 * nx + 1;
+    let nv = 2 * ny + 1;
+    let mut nodes = Vec::with_capacity(nu * nv);
+    for j in 0..nv {
+        for i in 0..nu {
+            nodes.push([
+                length * i as f64 / (2 * nx) as f64,
+                width * j as f64 / (2 * ny) as f64,
+                0.0,
+            ]);
+        }
+    }
+    let id = |i: usize, j: usize| (j * nu + i) as u32;
+    let mut elements = Vec::with_capacity(nx * ny * 2);
+    for cy in 0..ny {
+        for cx in 0..nx {
+            let i = 2 * cx;
+            let j = 2 * cy;
+            elements.push([
+                id(i, j),
+                id(i + 2, j),
+                id(i + 2, j + 2),
+                id(i + 1, j),
+                id(i + 2, j + 1),
+                id(i + 1, j + 1),
+            ]);
+            elements.push([
+                id(i, j),
+                id(i + 2, j + 2),
+                id(i, j + 2),
+                id(i + 1, j + 1),
+                id(i + 1, j + 2),
+                id(i, j + 1),
+            ]);
+        }
+    }
+    ShellMesh { nodes, elements }
+}
+
+/// Flat disk of the given radius in the xy-plane.
+///
+/// `n_rad` annular layers and `n_circ` sectors. Outer-edge midpoints sit on
+/// the circle; interior edges stay straight.
+pub fn disk_shell(n_rad: usize, n_circ: usize, radius: f64) -> ShellMesh {
+    assert!(n_rad >= 1 && n_circ >= 3 && radius > 0.0);
+    let o_corner = 1_usize;
+    let o_circ = o_corner + n_rad * n_circ;
+    let o_rad = o_circ + n_rad * n_circ;
+    let o_quad = o_rad + n_rad * n_circ;
+    let n_nodes = o_quad + n_rad.saturating_sub(1) * n_circ;
+    let mut nodes = vec![[0.0; 3]; n_nodes];
+    let theta = |j: usize| 2.0 * std::f64::consts::PI * (j % n_circ) as f64 / n_circ as f64;
+    let place = |r: f64, ang: f64| [r * ang.cos(), r * ang.sin(), 0.0];
+    for i in 1..=n_rad {
+        let r = radius * i as f64 / n_rad as f64;
+        for j in 0..n_circ {
+            nodes[o_corner + (i - 1) * n_circ + j] = place(r, theta(j));
+            let ang_m = theta(j) + std::f64::consts::PI / n_circ as f64;
+            nodes[o_circ + (i - 1) * n_circ + j] = place(r, ang_m);
+        }
+    }
+    for interval in 0..n_rad {
+        let r0 = radius * interval as f64 / n_rad as f64;
+        let r1 = radius * (interval + 1) as f64 / n_rad as f64;
+        let r_m = 0.5 * (r0 + r1);
+        for j in 0..n_circ {
+            nodes[o_rad + interval * n_circ + j] = place(r_m, theta(j));
+        }
+    }
+    for inner in 1..n_rad {
+        let r0 = radius * inner as f64 / n_rad as f64;
+        let r1 = radius * (inner + 1) as f64 / n_rad as f64;
+        let r_m = 0.5 * (r0 + r1);
+        for j in 0..n_circ {
+            let ang_m = theta(j) + std::f64::consts::PI / n_circ as f64;
+            nodes[o_quad + (inner - 1) * n_circ + j] = place(r_m, ang_m);
+        }
+    }
+    let corner = |i: usize, j: usize| (o_corner + (i - 1) * n_circ + (j % n_circ)) as u32;
+    let circ = |i: usize, j: usize| (o_circ + (i - 1) * n_circ + (j % n_circ)) as u32;
+    let radial = |interval: usize, j: usize| (o_rad + interval * n_circ + (j % n_circ)) as u32;
+    let quad = |inner: usize, j: usize| (o_quad + (inner - 1) * n_circ + (j % n_circ)) as u32;
+    let mut elements = Vec::new();
+    for j in 0..n_circ {
+        elements.push([
+            0,
+            corner(1, j),
+            corner(1, j + 1),
+            radial(0, j),
+            circ(1, j),
+            radial(0, j + 1),
+        ]);
+    }
+    for inner in 1..n_rad {
+        for j in 0..n_circ {
+            let a = corner(inner, j);
+            let b = corner(inner, j + 1);
+            let c = corner(inner + 1, j + 1);
+            let d = corner(inner + 1, j);
+            let center = quad(inner, j);
+            // Both triangles are wound counterclockwise when θ increases from
+            // +x toward +y. The shared edge is the diagonal from a to c.
+            elements.push([a, c, b, center, radial(inner, j + 1), circ(inner, j)]);
+            elements.push([a, d, c, radial(inner, j), circ(inner + 1, j), center]);
+        }
+    }
+    ShellMesh { nodes, elements }
+}
+
+/// Cylindrical panel. `x` runs along the axis from 0 to `length`.
+/// `phi` is measured from +z toward +y: `y = R sin φ`, `z = R cos φ`.
+/// Mid-edge nodes lie on the same rulings, so circumferential edges pass
+/// through the cylinder.
+pub fn cylinder_panel(
+    nx: usize,
+    nphi: usize,
+    radius: f64,
+    length: f64,
+    phi0: f64,
+    phi1: f64,
+) -> ShellMesh {
+    assert!(nx >= 1 && nphi >= 1 && radius > 0.0 && length > 0.0);
+    let mut mesh = plate_shell(nx, nphi, length, 1.0);
+    let nu = 2 * nx + 1;
+    let nv = 2 * nphi + 1;
+    for j in 0..nv {
+        let phi = phi0 + (phi1 - phi0) * j as f64 / (2 * nphi) as f64;
+        for i in 0..nu {
+            let x = length * i as f64 / (2 * nx) as f64;
+            mesh.nodes[j * nu + i] = [x, radius * phi.sin(), radius * phi.cos()];
+        }
+    }
+    mesh
 }
 
 #[cfg(test)]
