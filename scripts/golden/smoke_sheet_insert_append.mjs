@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * Start designing in sheet-metal mode writes a base flange, not a cube,
- * on a fresh part (the 20 mm starter). A busy part is left byte-for-byte
- * alone. Both at 390px and on desktop.
+ * Inserting Sheet Metal into a part that already has a box and a fillet
+ * appends one flange block. Earlier feature blocks stay byte-identical
+ * and the body still contains the box. 390px and desktop.
  *
  * Screenshots go to GOLDEN_SHOT_DIR or os.tmpdir() only.
  */
@@ -14,14 +14,26 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
-import { newPartStarterScript } from '../../src/utils/helperPaletteSnippets.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../..');
 const read = (rel) => readFileSync(join(ROOT, rel), 'utf8');
 const shotDir = process.env.GOLDEN_SHOT_DIR || tmpdir();
-const PORT = Number(process.env.SHEET_START_PORT || 4331);
+const PORT = Number(process.env.SHEET_INSERT_PORT || 4338);
 const catalog = read('scripts/golden/fixtures/scs/catalog.json');
 const specs = read('scripts/golden/fixtures/scs/specs.json');
+
+const BOX_FILLET = `// --- cube begin ---
+let box1 = Manifold.cube([40, 30, 20], true);
+let part = box1;
+// --- cube end ---
+// --- fillet-mode begin ---
+const selEdges = edgesBetween(part, 0, 2); // boundary edge 1
+const path = makeSweepPath(selEdges); // edge→sweep path
+part = filletAlongPath(part, path, 2); // sweep fillet wedge
+// --- fillet-mode end ---
+return part;
+`;
+const KEPT = BOX_FILLET.slice(0, BOX_FILLET.indexOf('// --- fillet-mode end ---') + '// --- fillet-mode end ---'.length);
 
 const CHROME_CANDIDATES = [
   process.env.CHROME_PATH,
@@ -39,29 +51,25 @@ function check(name, cond, detail = '') {
   }
 }
 
-console.log('sheet start designing — flange, not a cube');
+console.log('sheet insert append — earlier features survive');
 
 {
   const app = read('src/App.jsx');
   const script = read('src/utils/sheetMetal/sheetMetalScript.js');
-  check('Start designing builds a sheet starter', /export function sheetStarterScript/.test(script)
-    && /sheetStarterScript\(record\)/.test(app));
-  check('a new Sheet part is created from that flange', /handleAddPart\(sheetName, \{ script: starter\.script \}\)/.test(app));
-  check('a pending cube auto-run is dropped before the flange is written',
-    /refreshGenRef\.current \+= 1;[\s\S]{0,240}applyBuffer\?\.\(starter\.script/.test(app));
+  check('fresh parts still take the starter flange', /sheetMetalFresh\(live\)/.test(app)
+    && /applyBuffer\?\.\(starter\.script/.test(app));
+  check('a featured part is appended, not replaced and not a new Sheet part',
+    /part = part\.add\(sheetMetalSolid\(sheetSpec\)\)/.test(script)
+    && /appendSheetBlock/.test(script)
+    && /if \(!doc\.activeId\)/.test(app));
 }
 
 const exe = CHROME_CANDIDATES.find((p) => existsSync(p));
 check('system Chrome available', !!exe, 'set CHROME_PATH');
 
-function plateOk(probe) {
-  const size = probe?.bbox?.size;
-  if (!size) return false;
-  const sorted = [...size].sort((a, b) => a - b);
-  const thin = sorted[0] > 1.5 && sorted[0] < 3.2;
-  const plate = sorted[1] > 40 && sorted[2] > 40 && sorted[0] < sorted[1] * 0.2;
-  const notCube = Math.abs(sorted[2] - sorted[0]) > 20;
-  return thin && plate && notCube && probe.hasSheet && !probe.hasCube && probe.chip === 'sheetMetal';
+function spanOf(bbox) {
+  if (!bbox?.size) return null;
+  return bbox.size;
 }
 
 if (exe && failed === 0) {
@@ -107,17 +115,14 @@ if (exe && failed === 0) {
           if (v > max[a]) max[a] = v;
         }
       }
-      bbox = { size: min.map((v, i) => max[i] - v) };
+      bbox = { min, max, size: min.map((v, i) => max[i] - v) };
     }
     const chips = [...document.querySelectorAll('[data-feature-chip]')].map((el) => el.getAttribute('data-feature-chip'));
     return {
       stage: document.querySelector('[data-sheet-metal-mode]')?.getAttribute('data-sheet-metal-mode') || '',
       chips,
-      chip: chips[0] || '',
       parts: [...document.querySelectorAll('[data-part-name]')].map((el) => (el.textContent || '').trim()),
       script,
-      hasSheet: /sheet-metal begin/.test(script) && /sheetMetalSolid/.test(script),
-      hasCube: /Manifold\.cube/.test(script),
       bbox,
       volume: window.__MANIFOLD_CONTEXT__?.lastResult?.volume ?? null,
     };
@@ -134,12 +139,10 @@ if (exe && failed === 0) {
         args: ['--no-sandbox', '--use-gl=swiftshader', '--enable-unsafe-swiftshader'],
       });
       const cases = [
-        ['fresh desktop', false, 1280, 900],
-        ['fresh 390', false, 390, 844],
-        ['busy desktop', true, 1280, 900],
-        ['busy 390', true, 390, 844],
+        ['desktop', 1280, 900],
+        ['390', 390, 844],
       ];
-      for (const [label, busy, width, height] of cases) {
+      for (const [label, width, height] of cases) {
         const context = await browser.newContext({ viewport: { width, height } });
         const page = await context.newPage();
         const errors = [];
@@ -159,16 +162,30 @@ if (exe && failed === 0) {
         await page.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'domcontentloaded', timeout: 60000 });
         await page.waitForSelector('[data-sheet-metal-button]', { timeout: 90000 });
         await page.waitForFunction(() => window.monaco?.editor?.getModels?.()?.length > 0, null, { timeout: 30000 });
-        const planted = busy
-          ? 'let part = Manifold.sphere(8, 32);\nreturn part;\n'
-          : newPartStarterScript();
         await page.evaluate((text) => {
           window.monaco.editor.getModels()[0].setValue(text);
-        }, planted);
-        await page.waitForFunction((needle) => {
-          const model = window.monaco?.editor?.getModels?.()?.[0];
-          return !!model && model.getValue().includes(needle);
-        }, busy ? 'Manifold.sphere(8, 32)' : 'Manifold.cube([20, 20, 20]', { timeout: 5000 });
+        }, BOX_FILLET);
+        await page.evaluate(() => document.querySelector('[data-cad-run]')?.click());
+        const ran = await page.waitForFunction(() => {
+          const mesh = window.__MANIFOLD_CONTEXT__?.lastResult?.mesh;
+          if (!mesh?.vertProperties) return false;
+          const vp = mesh.vertProperties;
+          const stride = mesh.numProp || 3;
+          const min = [Infinity, Infinity, Infinity];
+          const max = [-Infinity, -Infinity, -Infinity];
+          for (let i = 0; i < vp.length; i += stride) {
+            for (let a = 0; a < 3; a++) {
+              const v = vp[i + a];
+              if (v < min[a]) min[a] = v;
+              if (v > max[a]) max[a] = v;
+            }
+          }
+          const size = min.map((v, i) => max[i] - v).sort((a, b) => a - b);
+          return size[0] > 15 && size[0] < 25 && size[2] > 35 && size[2] < 45;
+        }, null, { timeout: 45000 }).then(() => true).catch(() => false);
+        const beforeShot = join(shotDir, `sheet-insert-before-${label}.png`);
+        await page.screenshot({ path: beforeShot });
+        console.log(`  shot ${beforeShot}`);
         await page.locator('[data-sheet-metal-button]').click();
         await page.waitForSelector('[data-sheet-metal-picker]', { timeout: 10000 });
         await page.waitForFunction(() => [...document.querySelectorAll('#sm-material option')].some((o) => o.value), null, { timeout: 15000 });
@@ -179,50 +196,51 @@ if (exe && failed === 0) {
         }, null, { timeout: 10000 });
         await page.selectOption('#sm-gauge', 'ALU-090');
         await page.locator('[data-sheet-metal-start]').click();
-        const ready = busy
-          ? await page.waitForFunction(() => {
-            const stage = document.querySelector('[data-sheet-metal-mode]')?.getAttribute('data-sheet-metal-mode') || '';
-            const script = (window.monaco?.editor?.getModels?.() || []).map((m) => m.getValue()).join('\n');
-            return stage === 'plane' && script.includes('Manifold.sphere(8, 32)') && !/sheetMetalSolid/.test(script);
-          }, null, { timeout: 15000 }).then(() => true).catch(() => false)
-          : await page.waitForFunction(() => {
-            const models = window.monaco?.editor?.getModels?.() || [];
-            const script = models.map((m) => m.getValue()).join('\n');
-            if (!/sheetMetalSolid/.test(script) || /Manifold\.cube/.test(script)) return false;
-            const mesh = window.__MANIFOLD_CONTEXT__?.lastResult?.mesh;
-            if (!mesh?.vertProperties) return false;
-            const stride = mesh.numProp || 3;
-            const min = [Infinity, Infinity, Infinity];
-            const max = [-Infinity, -Infinity, -Infinity];
-            for (let i = 0; i < mesh.vertProperties.length; i += stride) {
-              for (let a = 0; a < 3; a++) {
-                const v = mesh.vertProperties[i + a];
-                if (v < min[a]) min[a] = v;
-                if (v > max[a]) max[a] = v;
-              }
+        await page.waitForSelector('[data-sheet-metal-step="plane"]', { timeout: 10000 });
+        const afterStart = await page.evaluate(probe);
+        check(`${label}: Start does not rewrite a part that already has features`,
+          ran && afterStart.script === BOX_FILLET && afterStart.stage === 'plane'
+          && !afterStart.parts.some((name) => name.startsWith('Sheet')),
+          JSON.stringify({ ran, stage: afterStart.stage, parts: afterStart.parts, same: afterStart.script === BOX_FILLET, errors: errors.slice(0, 3) }));
+        await page.locator('[data-sm-plane="XY"]').click();
+        await page.waitForSelector('[data-sheet-metal-base]', { timeout: 10000 });
+        await page.locator('[data-sheet-metal-base] [data-sm-accept]').click();
+        const accepted = await page.waitForFunction((kept) => {
+          const script = (window.monaco?.editor?.getModels?.() || []).map((m) => m.getValue()).join('\n');
+          if (!script.startsWith(kept) || !script.includes('part = part.add(sheetMetalSolid(sheetSpec))')) return false;
+          const mesh = window.__MANIFOLD_CONTEXT__?.lastResult?.mesh;
+          if (!mesh?.vertProperties) return false;
+          const vp = mesh.vertProperties;
+          const stride = mesh.numProp || 3;
+          const min = [Infinity, Infinity, Infinity];
+          const max = [-Infinity, -Infinity, -Infinity];
+          for (let i = 0; i < vp.length; i += stride) {
+            for (let a = 0; a < 3; a++) {
+              const v = vp[i + a];
+              if (v < min[a]) min[a] = v;
+              if (v > max[a]) max[a] = v;
             }
-            const sorted = min.map((v, i) => max[i] - v).sort((a, b) => a - b);
-            return sorted[0] > 1.5 && sorted[0] < 3.2 && sorted[1] > 40 && sorted[0] < sorted[1] * 0.2;
-          }, null, { timeout: 45000 }).then(() => true).catch(() => false);
-        const after = await page.evaluate(probe);
-        const shot = join(shotDir, `sheet-start-${label.replace(/\s+/g, '-')}.png`);
-        await page.screenshot({ path: shot });
-        console.log(`  shot ${shot}`);
-        const sorted = after.bbox?.size ? [...after.bbox.size].sort((a, b) => a - b) : [];
-        if (busy) {
-          check(`${label}: Start leaves the open part's script in place`,
-            ready && after.script === planted && after.stage === 'plane'
-            && !after.parts.some((name) => name.startsWith('Sheet')),
-            JSON.stringify({ after, errors: errors.slice(0, 3) }));
-        } else {
-          check(`${label}: Start designing produced a sheet plate`, ready && plateOk(after) && after.stage === 'plane',
-            JSON.stringify({ after, errors: errors.slice(0, 3), sorted }));
-          if (after.volume != null) {
-            const vol = Number(after.volume);
-            check(`${label}: volume is a 100×60×t plate, not an 8000 mm³ cube`,
-              vol > 12000 && vol < 16000, `volume ${vol}`);
           }
-        }
+          const size = min.map((v, i) => max[i] - v);
+          return min[2] < -8 && max[2] > 8 && size[0] > 70 && size[2] > 15;
+        }, KEPT, { timeout: 45000 }).then(() => true).catch(() => false);
+        const after = await page.evaluate(probe);
+        const afterShot = join(shotDir, `sheet-insert-after-${label}.png`);
+        await page.screenshot({ path: afterShot });
+        console.log(`  shot ${afterShot}`);
+        const size = spanOf(after.bbox);
+        check(`${label}: Accept appends the flange and keeps earlier blocks`,
+          accepted && after.script.startsWith(KEPT)
+          && after.script.includes('part = part.add(sheetMetalSolid(sheetSpec))')
+          && after.script.includes('"t":2.286')
+          && after.script.includes('"plane":"XY"')
+          && after.chips.includes('cube') && after.chips.includes('fillet') && after.chips.includes('sheetMetal')
+          && !after.parts.some((name) => name.startsWith('Sheet')),
+          JSON.stringify({ accepted, chips: after.chips, parts: after.parts, size, errors: errors.slice(0, 4), head: after.script.slice(0, 80) }));
+        check(`${label}: the body still contains the box`,
+          !!size && after.bbox.min[2] < -8 && after.bbox.max[2] > 8 && size[0] > 70 && size[2] > 15
+          && Number(after.volume) > 30000,
+          JSON.stringify({ size, min: after.bbox?.min, volume: after.volume }));
         await context.close();
       }
     }
@@ -236,4 +254,4 @@ if (failed) {
   console.log(`\n${failed} check(s) failed`);
   process.exit(1);
 }
-console.log('\nStart designing produces a sheet flange.');
+console.log('\nSheet insert appends onto earlier features.');

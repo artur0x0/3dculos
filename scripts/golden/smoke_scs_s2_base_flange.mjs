@@ -92,7 +92,13 @@ console.log('SCS S2 — script block');
   check('existing block is replaced in place', res2.ok && res2.buffer.startsWith('// header\n')
     && res2.buffer.includes('// tail') && readSheetMetalSpec(res2.buffer).width === 150
     && res2.buffer.split(SHEET_METAL_BEGIN).length === 2);
-  check('busy part refuses', !composeSheetMetalCommit('let part = Manifold.sphere(4);', spec).ok);
+  const busySrc = 'let part = Manifold.sphere(4);\nreturn part;\n';
+  const busy = composeSheetMetalCommit(busySrc, spec);
+  check('busy part appends the flange and keeps the earlier line',
+    busy.ok && busy.buffer.startsWith('let part = Manifold.sphere(4);\n')
+    && /part = part\.add\(sheetMetalSolid\(sheetSpec\)\)/.test(busy.buffer)
+    && busy.buffer.includes('return part;')
+    && busy.buffer.slice(0, busySrc.indexOf('return part;')) === busySrc.slice(0, busySrc.indexOf('return part;')));
   const chips = parseFeatureMarkers(sheetMetalBlock(spec));
   check('feature strip shows a Sheet chip', chips.length === 1 && chips[0].kind === 'sheetMetal' && chips[0].label === 'Sheet');
 }

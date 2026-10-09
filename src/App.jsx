@@ -80,7 +80,7 @@ import {
   withInsertedGroup,
 } from './utils/partGroups';
 import { sheetMetalBinding } from './utils/scs/scsCatalog';
-import { composeSheetMetalCommit, readSheetMetalSpec, sheetMetalReady, sheetStarterScript } from './utils/sheetMetal/sheetMetalScript';
+import { composeSheetMetalCommit, readSheetMetalSpec, sheetMetalFresh, sheetStarterScript } from './utils/sheetMetal/sheetMetalScript';
 import {
   historyForPart,
   pushPartHistory,
@@ -4897,16 +4897,20 @@ const App = () => {
     return true;
   };
 
-  /** S1 sheet metal: can the editor part take a sheet-metal block as-is? */
-  const getSheetMetalReady = () => sheetMetalReady(codeEditorRef.current?.getContent?.() ?? '');
+  /**
+   * S1 sheet metal: Start edits the open part in place. A new Sheet (n)
+   * part is created only when nothing is open.
+   */
+  const getSheetMetalReady = () => !!assemblyRef.current?.activeId;
 
   /**
-   * S1 Start designing: bind the SendCutSend SKU and put a base flange in
-   * the part. Empty / demo / starter-cube parts take that flange in place.
-   * A part with other features is left alone — a new "Sheet (n)" part is
-   * created from the flange, not the auto-dropped cube. An existing sheet
-   * block is kept so Viewport can re-thickness it. The plane step stays
-   * open (spec null) until Accept.
+   * S1 Start designing: bind the SendCutSend SKU on the open part.
+   * A fresh part (empty or the 20 mm starter cube) takes the default base
+   * flange in place, and a refreshGen bump drops a pending cube auto-run.
+   * A part that already has features is not rewritten here and no Sheet (n)
+   * part is created — plane Accept appends one block. An existing sheet
+   * block is kept so Viewport can re-thickness it. Spec stays null until
+   * Accept when the part does not already have a sheet block.
    */
   const handleBindSheetMetal = (record) => {
     const binding = sheetMetalBinding(record);
@@ -4917,7 +4921,7 @@ const App = () => {
     if (!doc) return { ok: false };
     let created = false;
     const live = codeEditorRef.current?.getContent?.() ?? '';
-    if (!doc.activeId || !getSheetMetalReady()) {
+    if (!doc.activeId) {
       const names = doc.parts.map((part) => part.name);
       const sheetName = nextNumberedName('Sheet', names);
       // handleAddPart bumps refreshGen before loadContent, so the new part
@@ -4926,8 +4930,8 @@ const App = () => {
       if (assemblyRef.current?.activeId === doc.activeId) return { ok: false };
       doc = assemblyRef.current;
       created = true;
-    } else if (!readSheetMetalSpec(live)) {
-      // Drop a pending demo/cube auto-run, then write the default flange.
+    } else if (sheetMetalFresh(live) && !readSheetMetalSpec(live)) {
+      // Drop a pending cube auto-run, then write the default flange.
       refreshGenRef.current += 1;
       const wrote = codeEditorRef.current?.applyBuffer?.(starter.script, 'Sheet metal');
       if (!wrote) return { ok: false };
