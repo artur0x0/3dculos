@@ -316,6 +316,10 @@ function calculateDeliveryDate(businessDays) {
 /**
  * Get mock rates for development/testing
  */
+export function mockRatesForPackage(packageInfo) {
+  return getMockRates(packageInfo);
+}
+
 function getMockRates(packageInfo) {
   const baseRate = 8.99;
   const weightMultiplier = packageInfo.weight * 0.5;

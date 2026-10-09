@@ -1,6 +1,7 @@
 // services/email.js - Azure Communication Services email (kebab-case schema)
 import { EmailClient } from '@azure/communication-email';
 import config from '../config/index.js';
+import { lineTableHtml, lineTableText } from './orderMail.js';
 
 let emailClient = null;
 
@@ -24,13 +25,6 @@ function getOrderFields(order) {
     guestEmail: order['guest-email'] || order.guestEmail,
     createdAt: order['created-at'] || order.createdAt,
   };
-}
-
-function copyCount(order) {
-  const modelData = order?.['model-data'] || order?.modelData || {};
-  const n = Number(modelData.quantity);
-  if (!Number.isInteger(n) || n < 1 || n > 999) return 1;
-  return n;
 }
 
 /**
@@ -222,9 +216,10 @@ export async function sendOrderConfirmation(order, customerEmail) {
     return false;
   }
   
-  const { orderNumber, modelData } = getOrderFields(order);
+  const { orderNumber } = getOrderFields(order);
   const address = getAddressFields(order.shipping.address);
-  const qty = copyCount(order);
+  const linesHtml = lineTableHtml(order);
+  const linesText = lineTableText(order);
   
   const subject = `Order Confirmed: ${orderNumber}`;
   
@@ -262,22 +257,7 @@ export async function sendOrderConfirmation(order, customerEmail) {
           <span class="label">Order Number</span>
           <span class="value">${orderNumber}</span>
         </div>
-        <div class="detail-row">
-          <span class="label">Process</span>
-          <span class="value">${modelData.process}</span>
-        </div>
-        <div class="detail-row">
-          <span class="label">Material</span>
-          <span class="value">${modelData.material}</span>
-        </div>
-        <div class="detail-row">
-          <span class="label">Infill</span>
-          <span class="value">${modelData.infill}%</span>
-        </div>
-        <div class="detail-row">
-          <span class="label">Quantity</span>
-          <span class="value">Qty ${qty}</span>
-        </div>
+        ${linesHtml}
         <div class="detail-row">
           <span class="label">Shipping</span>
           <span class="value">${order.shipping.service || 'Standard'}</span>
@@ -314,10 +294,7 @@ Thank you for your order! We've received your order and will begin manufacturing
 
 Order Details:
 - Order Number: ${orderNumber}
-- Process: ${modelData.process}
-- Material: ${modelData.material}
-- Infill: ${modelData.infill}%
-- Quantity: Qty ${qty}
+${linesText}
 - Shipping: ${order.shipping.service || 'Standard'}
 - Total: $${order.quote.total.toFixed(2)}
 
@@ -365,10 +342,10 @@ export async function sendAdminOrderNotification(order, customerEmail) {
     return false;
   }
   
-  const { orderNumber, modelData } = getOrderFields(order);
+  const { orderNumber } = getOrderFields(order);
   const address = getAddressFields(order.shipping.address);
-  const volumeMm3 = modelData['volume-mm3'] || modelData.volume;
-  const qty = copyCount(order);
+  const linesHtml = lineTableHtml(order, { downloads: true });
+  const boxCount = Number(order.shipping?.['package-count']) || 1;
   
   const subject = `🔔 New Order: ${orderNumber} - $${order.quote.total.toFixed(2)}`;
   
@@ -392,12 +369,11 @@ export async function sendAdminOrderNotification(order, customerEmail) {
       <tr><th>Order #</th><td>${orderNumber}</td></tr>
       <tr><th>Customer</th><td>${customerEmail}</td></tr>
       <tr><th>Status</th><td>${order.status}</td></tr>
-      <tr><th>Process</th><td>${modelData.process}</td></tr>
-      <tr><th>Material</th><td>${modelData.material}</td></tr>
-      <tr><th>Infill</th><td>${modelData.infill}%</td></tr>
-      <tr><th>Quantity</th><td>Qty ${qty}</td></tr>
-      <tr><th>Volume</th><td>${volumeMm3?.toFixed(1) || 'N/A'} mm³</td></tr>
+      ${boxCount > 1 ? `<tr><th>Boxes</th><td>${boxCount}</td></tr>` : ''}
     </table>
+
+    <h3>Parts</h3>
+    ${linesHtml}
     
     <h3>Pricing</h3>
     <table>
@@ -462,7 +438,7 @@ export async function sendShippingNotification(order, customerEmail) {
   
   const { orderNumber } = getOrderFields(order);
   const address = getAddressFields(order.shipping.address);
-  const qty = copyCount(order);
+  const linesHtml = lineTableHtml(order);
   const trackingNumber = order.shipping['tracking-number'] || order.shipping.trackingNumber;
   const trackingUrl = order.shipping['tracking-url'] || order.shipping.trackingUrl || 
     `https://www.ups.com/track?tracknum=${trackingNumber}`;
@@ -491,7 +467,7 @@ export async function sendShippingNotification(order, customerEmail) {
     </div>
     <div class="content">
       <p>Great news! Your order <strong>${orderNumber}</strong> is on its way.</p>
-      <p>Qty ${qty}</p>
+      ${linesHtml}
       
       <div class="tracking-box">
         <p style="margin: 0 0 10px 0;">Tracking Number</p>
@@ -556,8 +532,8 @@ export async function sendAdminDisputeNotification(order, dispute, customerEmail
     return false;
   }
 
-  const { orderNumber, modelData } = getOrderFields(order);
-  const qty = copyCount(order);
+  const { orderNumber } = getOrderFields(order);
+  const linesHtml = lineTableHtml(order);
   const disputeAmount = (dispute.amount / 100).toFixed(2);
   const disputeReason = dispute.reason?.replace(/_/g, ' ') || 'Unknown reason';
   const disputeStatus = dispute.status || 'open';
@@ -596,12 +572,8 @@ export async function sendAdminDisputeNotification(order, dispute, customerEmail
     </table>
 
     <h3>Order Summary</h3>
-    <table>
-      <tr><th>Process</th><td>${modelData.process}</td></tr>
-      <tr><th>Material</th><td>${modelData.material}</td></tr>
-      <tr><th>Quantity</th><td>Qty ${qty}</td></tr>
-      <tr><th>Created</th><td>${new Date(order['created-at'] || order.createdAt).toLocaleString()}</td></tr>
-    </table>
+    ${linesHtml}
+    <p>Created: ${new Date(order['created-at'] || order.createdAt).toLocaleString()}</p>
 
     <p style="margin-top: 24px; color: #555;">
       <strong>Action required:</strong> Review evidence requirements and respond within the deadline.<br>

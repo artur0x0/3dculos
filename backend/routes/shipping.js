@@ -1,6 +1,8 @@
 // routes/shipping.js - Shipping quote and validation routes
 import { Router } from 'express';
 import ups from '../services/ups.js';
+import { previewPackages } from '../services/packOrder.js';
+import { validateOrderLineCount } from '../services/orderLines.js';
 
 const router = Router();
 
@@ -79,6 +81,27 @@ router.post('/validate', async (req, res) => {
  */
 router.post('/calculate-package', (req, res) => {
   try {
+    if (Array.isArray(req.body?.lines)) {
+      const count = validateOrderLineCount(req.body.lines);
+      if (!count.ok) return res.status(400).json({ error: count.error });
+      for (const line of req.body.lines) {
+        if (!line?.boundingBox || line.materialGrams == null) {
+          return res.status(400).json({ error: 'Bounding box and material grams are required' });
+        }
+      }
+      // Preview only. Create recomputes the boxes and does not trust this body.
+      // `materialGrams` is already extended (unit × qty).
+      return res.json({
+        success: true,
+        packageInfo: previewPackages(req.body.lines.map((line) => ({
+          boundingBox: line.boundingBox,
+          materialGrams: line.materialGrams,
+          quantity: line.quantity,
+          grams: line.materialGrams,
+        }))),
+      });
+    }
+
     const { boundingBox, materialGrams, quantity } = req.body;
     
     if (!boundingBox || !materialGrams) {

@@ -14,8 +14,26 @@ const stripe = config.stripe.secretKey
  * @param {Object} options - Additional options
  * @returns {Promise<Object>} Payment intent with client secret
  */
+function isMultiLineOrder(order) {
+  return Array.isArray(order?.lines) && order.lines.length > 0;
+}
+
+/**
+ * Stripe metadata values are strings. Line metadata is name and quantity
+ * only — prices stay on the order document.
+ */
+export function lineMetadataValue(lines) {
+  const summary = (lines || []).map((line) => {
+    const name = String(line.partName || 'Part').replace(/[|,]/g, ' ').slice(0, 40);
+    const qty = Number(line.quantity) || 1;
+    return `${name}×${qty}`;
+  }).join(', ');
+  return summary.slice(0, 500);
+}
+
 export async function createPaymentIntent(order, options = {}) {
-  if (!stripe) {
+  const client = options.stripeClient || stripe;
+  if (!client) {
     throw new Error('Stripe not configured');
   }
   
@@ -27,6 +45,7 @@ export async function createPaymentIntent(order, options = {}) {
   // Get order number (handle both formats)
   const orderNumber = order['order-number'] || order.orderNumber;
   const modelData = order['model-data'] || order.modelData;
+  const multi = isMultiLineOrder(order);
   
   const quantity = orderQuantity(modelData);
   const paymentIntentParams = {
@@ -35,12 +54,21 @@ export async function createPaymentIntent(order, options = {}) {
     automatic_payment_methods: {
       enabled: true,
     },
-    metadata: {
-      orderId: order._id.toString(),
-      orderNumber: orderNumber,
-      quantity: String(quantity),
-    },
-    description: `Order ${orderNumber} - ${modelData.process} ${modelData.material} ×${quantity}`,
+    metadata: multi
+      ? {
+          orderId: order._id.toString(),
+          orderNumber: orderNumber,
+          lineCount: String(order.lines.length),
+          lines: lineMetadataValue(order.lines),
+        }
+      : {
+          orderId: order._id.toString(),
+          orderNumber: orderNumber,
+          quantity: String(quantity),
+        },
+    description: multi
+      ? `Order ${orderNumber} — ${order.lines.length} lines`
+      : `Order ${orderNumber} - ${modelData.process} ${modelData.material} ×${quantity}`,
     receipt_email: customerEmail || order['guest-email'] || order.guestEmail,
   };
   
@@ -64,8 +92,13 @@ export async function createPaymentIntent(order, options = {}) {
       },
     };
   }
-  
-  const paymentIntent = await stripe.paymentIntents.create(paymentIntentParams);
+
+  // One PaymentIntent for the whole order. Retries with this key return the same PI.
+  const paymentIntent = multi
+    ? await client.paymentIntents.create(paymentIntentParams, {
+        idempotencyKey: `order_${order._id}`,
+      })
+    : await client.paymentIntents.create(paymentIntentParams);
   
   console.log(`[Stripe] Created PaymentIntent ${paymentIntent.id} for order ${orderNumber}`);
   
