@@ -1,56 +1,45 @@
 /**
- * Measure the exported 3MF (the file the client already generated) and
- * return volume + one-part bounding box for the shared quote math.
- *
- * If the mesh cannot be measured and the failure is not fatal (too many
- * vertices), fall back to the client volume and bounding box after
- * `boundClientGeometry`. Client prices are never read here. See
- * docs/architecture.md.
+ * Measure the exported 3MF and return its volume and one-part bounding box.
+ * Client volume, bounding box, and prices are never read. If the mesh cannot
+ * be measured, the order is rejected — a client-supplied volume must not
+ * become the price. A mesh over the vertex cap is its own error.
  */
 import JSZip from 'jszip';
-import { boundClientGeometry } from '../../src/utils/quoteMath.js';
 import {
   MeshMeasureError,
   geometryFromMesh,
   meshFrom3mfXml,
 } from '../../src/utils/meshMeasure.js';
 
-const CLIENT_BOUNDED_NOTE =
-  'Server could not measure the exported mesh. Priced from the client volume and bounding box after bounds checks (positive, finite, inside the process build box, volume not larger than the box). Client prices are ignored.';
+export const UNMEASURABLE_PART_ERROR =
+  "We couldn't measure this part. Please re-export and try again";
 
 export async function measureExportedPart(modelData) {
-  const process = modelData?.process;
   const raw = modelData?.modelFile?.data ?? modelData?.modelFile?.['data'];
-  let note = null;
+  if (!raw) {
+    return rejectMeasure('No exported model file was attached.');
+  }
 
-  if (raw) {
-    try {
-      const xml = await modelXmlFromPayload(raw);
-      const geometry = geometryFromMesh(meshFrom3mfXml(xml));
-      if (geometry.volume > 0) {
-        return { ok: true, source: 'mesh', geometry, note: null };
-      }
-      note = 'Exported mesh volume was not positive.';
-    } catch (err) {
-      if (err instanceof MeshMeasureError && err.fatal) {
-        return { ok: false, error: err.message };
-      }
-      note = err?.message || 'Could not read the exported mesh.';
+  try {
+    const xml = await modelXmlFromPayload(raw);
+    const geometry = geometryFromMesh(meshFrom3mfXml(xml));
+    if (!(geometry.volume > 0)) {
+      return rejectMeasure('Exported mesh volume was not positive.');
     }
-  } else {
-    note = 'No exported model file was attached.';
+    return { ok: true, source: 'mesh', geometry };
+  } catch (err) {
+    const reason = err?.message || 'Could not read the exported mesh.';
+    if (err instanceof MeshMeasureError && err.fatal) {
+      console.error('[Orders] Could not measure exported 3MF:', reason);
+      return { ok: false, error: reason };
+    }
+    return rejectMeasure(reason);
   }
+}
 
-  const bounded = boundClientGeometry(modelData, process);
-  if (!bounded.ok) {
-    return { ok: false, error: bounded.error };
-  }
-  return {
-    ok: true,
-    source: 'client-bounded',
-    geometry: bounded.geometry,
-    note: `${note} ${CLIENT_BOUNDED_NOTE}`,
-  };
+function rejectMeasure(reason) {
+  console.error('[Orders] Could not measure exported 3MF:', reason);
+  return { ok: false, error: UNMEASURABLE_PART_ERROR, detail: reason };
 }
 
 async function modelXmlFromPayload(raw) {

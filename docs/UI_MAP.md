@@ -427,7 +427,7 @@ phones, centered dialog on desktop**.
 | Login | Profile chip → Sign in (signed out / guest) | `LoginModal.jsx` / `ProfileChip.jsx` | `/api/auth/login`, `/register` |
 | Account | Viewport profile chip (signed in) | `AccountModal.jsx` / `ProfileChip.jsx` | tabs `info` / `orders` |
 | Quote | Toolbar → Truck | `QuoteModal.jsx` | process / material / infill / quantity stepper 1–999 (`data-quote-quantity`) → `utils/quoting.js` |
-| Order | Quote → Order | `OrderModal.jsx` + `components/order/*` | six steps, `STEPS` at `OrderModal.jsx`: Auth → Address → Shipping → Payment → Confirmation → Convert. Quantity stepper again. Pay uses the server total; a mismatch shows “Price updated to $X” and disables Pay until confirmed |
+| Order | Quote → Order | `OrderModal.jsx` + `components/order/*` | six steps, `STEPS` at `OrderModal.jsx`: Auth → Address → Shipping → Payment → Confirmation → Convert. Quantity stepper again. Pay uses the server total; a mismatch shows “Price updated to $X” and disables Pay until confirmed. An unmeasurable export shows “We couldn't measure this part. Please re-export and try again.” |
 | Helper params | any helper-rail button | `HelperParamModal.jsx` | **not** a full-screen modal: docks bottom-centre *of the viewport* (`absolute inset-0`, click-through overlay, no scrim) so the rails and the live preview stay visible and usable. No click-outside-to-cancel — X / Cancel only. Also serves as the refuse/explain dialog |
 | Puzzle picker | Toolbar → List (game) | `PuzzlePickerModal.jsx` | |
 | Hints | Toolbar → BookOpen (game) | `GameHintsModal.jsx` | |

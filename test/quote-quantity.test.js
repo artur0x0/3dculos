@@ -3,7 +3,6 @@ import { describe, test } from 'node:test';
 import { stackAlongShortestSide } from '../src/utils/packageSize.js';
 import {
   applyClientQuantity,
-  boundClientGeometry,
   clientOrderQuote,
   quoteFromGeometry,
 } from '../src/utils/quoteMath.js';
@@ -104,19 +103,5 @@ describe('quote quantity', () => {
       width: 20, height: 10, depth: 20,
     });
     assert.deepEqual(stackAlongShortestSide(BOX, 1), BOX);
-  });
-
-  test('a missing volume cannot be priced, and a volume larger than the box is rejected', () => {
-    const missing = boundClientGeometry({ boundingBox: BOX, process: 'FDM' }, 'FDM');
-    assert.equal(missing.ok, false);
-    const oversized = boundClientGeometry({
-      volume: 999999,
-      boundingBox: BOX,
-      process: 'FDM',
-    }, 'FDM');
-    assert.equal(oversized.ok, false);
-    const ok = boundClientGeometry({ volume: 1000, boundingBox: BOX }, 'FDM');
-    assert.equal(ok.ok, true);
-    assert.equal(ok.geometry.volume, 1000);
   });
 });

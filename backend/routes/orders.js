@@ -55,10 +55,11 @@ router.post('/create', requireGuestOrAuth, async (req, res) => {
       return res.status(400).json({ error: 'Quantity must be an integer from 1 to 999' });
     }
 
-    // Measure the exported part and price it here. Client money fields are
-    // comparison-only; the PaymentIntent uses this result.
+    // Measure the exported part and price it here. Client volume and money
+    // fields are not used. The PaymentIntent uses this result.
     const measured = await measureExportedPart(modelData);
     if (!measured.ok) {
+      console.error('[Orders] Create rejected:', measured.detail || measured.error);
       return res.status(400).json({ error: measured.error });
     }
 
@@ -200,8 +201,6 @@ router.post('/create', requireGuestOrAuth, async (req, res) => {
     return res.status(201).json({
       success: true,
       priceUpdated: priced.priceUpdated,
-      geometrySource: measured.source,
-      geometryNote: measured.note,
       order: {
         id: order._id,
         orderNumber: order['order-number'],

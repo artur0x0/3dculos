@@ -256,6 +256,7 @@ const PaymentStep = ({
   onError,
 }) => {
   const [isCreatingOrder, setIsCreatingOrder] = useState(true);
+  const [createError, setCreateError] = useState(null);
   const [order, setOrder] = useState(null);
   const [clientSecret, setClientSecret] = useState(null);
   const [stripeKey, setStripeKey] = useState(null);
@@ -271,6 +272,7 @@ const PaymentStep = ({
 
   const createOrder = async () => {
     setIsCreatingOrder(true);
+    setCreateError(null);
 
     try {
       const response = await fetch('/api/orders/create', {
@@ -314,6 +316,7 @@ const PaymentStep = ({
 
     } catch (error) {
       console.error('Order creation error:', error);
+      setCreateError(error.message);
       onError(error.message);
     } finally {
       setIsCreatingOrder(false);
@@ -337,7 +340,7 @@ const PaymentStep = ({
   if (!order || !clientSecret || !stripeKey) {
     return (
       <div className="p-8 text-center">
-        <p className="text-red-400">Failed to initialize payment.</p>
+        <p className="text-red-400">{createError || 'Failed to initialize payment.'}</p>
         <button
           onClick={createOrder}
           className="mt-4 px-6 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-600 transition-colors"

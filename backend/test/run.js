@@ -5,3 +5,4 @@
  * Run: cd backend && npm install && node --test test/
  */
 import './cart-order.test.js';
+import './measure-part.test.js';
