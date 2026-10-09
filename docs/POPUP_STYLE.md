@@ -25,7 +25,7 @@ over inventing a new modal layout.
   the last drafted face; Clear drops drafted faces and keeps the neutral.
   One angle, default 2°. Confirm writes one `draftFaces()`; X exits
   with no write. No shift-click. Hidden in game.
-- **`CutModeChip.jsx`** — cyan glass card (same shell as Shell). The plane is a
+- **`CutModeChip.jsx`** — the shared feature card (`FeatureSheet`). The plane is a
   planar face or an explicit XY / YZ / ZX plane. Offset is along that normal
   for both. A face is written as `{ center, normal }`, plus `offset` when it
   is not 0 — not a world-axis name. Bodies use the Shell sticky picker: tap
@@ -33,8 +33,8 @@ over inventing a new modal layout.
   list. Pieces shows each resulting body in its own slightly translucent
   color; tap hides that piece, tap again brings it back, Undo drops the last
   hide, Clear unhides every piece and keeps the plane. No shift-click.
-  Confirm writes one `cut()`; grey X exits with no write.
-- **`BooleanModeChip.jsx`** — cyan glass card (same shell as Cut). Union,
+  Confirm writes one `cut()`; X exits with no write. Hidden in game.
+- **`BooleanModeChip.jsx`** — the shared feature card (`FeatureSheet`). Union,
   Difference, or Intersect. Bodies use the Shell sticky picker: the first tap
   is the target, later taps are tools, tap again removes. Intersect opens
   Pieces: tap hides a leftover, tap again brings it back (the hidden piece
@@ -44,21 +44,22 @@ over inventing a new modal layout.
   first). A tool on another part shows a yellow-edged line on the chip
   (`data-boolean-cross-part="1"`) and is copied into the target at Confirm.
   Confirm writes one `booleanBodies()` and replaces a previous Boolean
-  block; grey X exits with no write. Undo drops the latest pick on any part.
-  The chip is not a scrim (`z-20`, `pointer-events-auto` on the card only).
+  block; X exits with no write. Undo drops the latest pick on any part.
+  The card is not a scrim (`z-20` on `FeatureSheet`, `pointer-events-auto` on the card only).
   The cross-section panel stays at `z-40`, so section stays usable while
   picking. Hiding a part in the part manager does not clear that part's picks.
   `data-boolean-allow-section` and `data-boolean-survives-parts` mark that contract.
+  Hidden in game.
 - **Contour Add / Subtract** — Extrude, Revolve, Sweep, and Loft (not Profile
   or Workplane) show Add and Subtract on `ContourModeChip` (`data-contour-combine`).
   Block solids (cube, rounded box, cylinder, sphere, tube, hex prism) use the same Mode select on the helper sheet. Default is Add. The sheet also has Pos X Y Z and Rot X Y Z (degrees). While it is open the viewport shows that Manifold solid with the CAD flat normal shading, and edits update it live. Subtract draws the cutter translucent, in front of the host. Confirm writes size, pose, and Add or Subtract. Cancel and the grey X clear the preview and write nothing. An identity pose is left off the script.
-- **`MoveModeChip.jsx`** — cyan glass card (same shell as Shell). Double-click
+- **`MoveModeChip.jsx`** — the shared feature card (`FeatureSheet`). Double-click
   selects the body (one click still selects the full face and does not change
   the target). XYZ are `NumberField` deltas, slider and type-in. Cut (when the
   previous operation is a cut) and Face (a picked face) take one distance along
   that normal. The body is previewed at the new translation until Confirm. No
   viewport arrows. Confirm writes one `move()` and replaces a previous Move
-  block; grey X exits with no write.
+  block; X exits with no write. Hidden in game.
 - **`MoveFaceModeChip.jsx`** — the shared feature card (`FeatureSheet`). Tap adds a
   face, tap again removes it. Undo drops the last face. Clear drops the faces.
   Distance is along each face normal. Flip reverses that normal. No shift-click.
