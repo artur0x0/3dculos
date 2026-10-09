@@ -1,0 +1,2 @@
+pkg/*.wasm binary
+pkg/*.js linguist-generated

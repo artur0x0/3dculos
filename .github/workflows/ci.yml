@@ -9,9 +9,11 @@
 #   - license
 #   - cargo-deny
 #   - wasm freshness
+#   - mesh wasm freshness
 # cargo-deny and wasm freshness run their real checks when
-# packages/surfcad-fea is present. If those files are absent the jobs skip
-# and exit 0, because a skipped job would not satisfy a required check.
+# packages/surfcad-fea is present. Mesh wasm freshness runs when
+# packages/surfcad-mesh/pkg is present. If those files are absent the jobs
+# skip and exit 0, because a skipped job would not satisfy a required check.
 # GPL, AGPL, and LGPL fail the Rust license check because they are not in
 # packages/surfcad-fea/deny.toml's allow list.
 #
@@ -41,7 +43,8 @@ jobs:
   check:
     name: lint, build, unit
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Volume-mesh tests call fTetWild (box, cylinder, plate, L-bracket, cantilever).
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -299,3 +302,52 @@ jobs:
       - name: Rebuild the committed wasm and fail on drift
         if: steps.crate.outputs.wasm == 'true'
         run: node scripts/fea/check-wasm-fresh.mjs
+
+  # Rebuilds the committed fTetWild wasm with emsdk 6.0.12 and fails if
+  # packages/surfcad-mesh/pkg differs byte for byte. Separate from the
+  # surfcad-fea wasm-pack job: this module is emscripten, not wasm-bindgen.
+  mesh-wasm-freshness:
+    name: mesh wasm freshness
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect the committed mesh wasm
+        id: mesh
+        run: |
+          if [[ -f packages/surfcad-mesh/pkg/surfcad_mesh.wasm && -f scripts/fea/build-mesh-wasm.mjs ]]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "skip: packages/surfcad-mesh wasm is not in this revision"
+          fi
+
+      - uses: actions/setup-node@v4
+        if: steps.mesh.outputs.present == 'true'
+        with:
+          node-version: 22
+
+      - name: Cache emsdk 6.0.12
+        if: steps.mesh.outputs.present == 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/emsdk
+          key: emsdk-6.0.12-${{ runner.os }}
+
+      - name: Cache mesh dependency sources
+        if: steps.mesh.outputs.present == 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            packages/surfcad-mesh/.deps/src
+            packages/surfcad-mesh/.deps/fetch-wasm
+          key: mesh-deps-${{ runner.os }}-${{ hashFiles('scripts/fea/build-mesh-wasm.mjs', 'scripts/fea/overlay/Rational.h', 'scripts/fea/overlay/Logger.cpp', 'packages/surfcad-mesh/CMakeLists.txt', 'packages/surfcad-mesh/src/api.cpp') }}
+
+      - name: Install the host build tools
+        if: steps.mesh.outputs.present == 'true'
+        run: sudo apt-get update && sudo apt-get install -y cmake g++ python3
+
+      - name: Rebuild the committed mesh wasm and fail on drift
+        if: steps.mesh.outputs.present == 'true'
+        run: node scripts/fea/check-mesh-wasm-fresh.mjs
