@@ -27,7 +27,7 @@ const _up = new Vector3();
  * Already in the clear band, or above it: 0. Magnitude is clamped.
  *
  * @param {number} pointNdcY  NDC y of the point that must clear the card (+1 top)
- * @param {number} cardFraction  cardHeight / paneHeight, 0..1
+ * @param {number} cardFraction  pane fraction from the bottom edge up to the card top, 0..1
  */
 export function featureSheetSlideNdc(pointNdcY, cardFraction) {
   const y = Number(pointNdcY);
@@ -132,6 +132,18 @@ export function boxCornerPoints(box, offset = null) {
     ));
   }
   return pts;
+}
+
+/**
+ * Fraction of the pane from its bottom edge up to the card's top.
+ * The card sits above the home pill, so this is taller than cardHeight / paneHeight.
+ */
+export function featureSheetCoveredFraction(paneRect, cardRect) {
+  const height = Number(paneRect?.height);
+  const bottom = Number(paneRect?.bottom);
+  const top = Number(cardRect?.top);
+  if (!(height > 0) || !Number.isFinite(bottom) || !Number.isFinite(top)) return 0;
+  return Math.min(0.95, Math.max(0, (bottom - top) / height));
 }
 
 /** NDC y of the card's top edge. The card covers [-1, cardTopNdc]. */

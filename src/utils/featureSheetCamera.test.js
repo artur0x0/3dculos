@@ -6,12 +6,12 @@ import { applyTrackballFeel } from './trackballFeel.js';
 import { panViewByNdcY } from './viewCamera.js';
 import {
   FEATURE_SHEET_SLIDE_MAX,
-  applyViewPose,
   boxCornerPoints,
   captureViewPose,
   createSheetCameraSession,
   featureSheetCardTopNdc,
   featureSheetClearanceNdc,
+  featureSheetCoveredFraction,
   featureSheetSlideForYs,
   featureSheetSlideNdc,
   posesMatch,
@@ -55,6 +55,14 @@ function rig() {
   controls.update();
   return { camera, controls };
 }
+
+test('the covered fraction includes the gap under the card', () => {
+  const pane = { top: 0, bottom: 664, height: 664 };
+  const card = { top: 256, bottom: 616, height: 360 };
+  const covered = featureSheetCoveredFraction(pane, card);
+  assert.ok(Math.abs(covered - (664 - 256) / 664) < 1e-6);
+  assert.ok(covered > 360 / 664);
+});
 
 test('a point already in the clear band does not slide', () => {
   assert.equal(featureSheetSlideNdc(0.2, 0.4), 0);

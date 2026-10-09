@@ -32,7 +32,6 @@ console.log('mobile B: home-indicator + feature strip');
   const strip = read('../../src/components/FeatureStrip.jsx');
   const markers = read('../../src/utils/featureMarkers.js');
   const editor = read('../../src/components/CodeEditor.jsx');
-  const contourChip = read('../../src/components/ContourModeChip.jsx');
   const filletChip = read('../../src/components/FilletModeChip.jsx');
 
   check(

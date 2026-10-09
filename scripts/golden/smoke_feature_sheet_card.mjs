@@ -5,7 +5,7 @@
  * Screenshots go to GOLDEN_SHOT_DIR or os.tmpdir(), never the artifacts dir.
  */
 /* The evaluate callbacks run in the browser, where document exists. */
-/* global document, window, getComputedStyle */
+/* global document, window, getComputedStyle, requestAnimationFrame */
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -106,7 +106,7 @@ console.log('feature sheet card — source');
     && /FEATURE_SHEET_SLIDE_MAX = 0\.6/.test(camera)
     && /remountTrackball/.test(camera)
     && /featureSheetCameraOwned/.test(app)
-    && /prefers-reduced-motion/.test(camera));
+    && /prefers-reduced-motion/.test(view));
   check('docs name the shell',
     /## Feature card/.test(arch) && /FeatureSheet/.test(arch)
     && /data-feature-card/.test(map));
@@ -122,21 +122,19 @@ console.log('feature sheet card — camera');
       removeEventListener() {},
     };
   }
-  function fakeDom() {
-    return {
-      style: {},
-      ownerDocument: {
-        documentElement: { clientWidth: 800, clientHeight: 600, clientLeft: 0, clientTop: 0 },
-      },
-      addEventListener() {},
-      removeEventListener() {},
-      setPointerCapture() {},
-      releasePointerCapture() {},
-      getBoundingClientRect() {
-        return { left: 0, top: 0, width: 800, height: 600, right: 800, bottom: 600 };
-      },
-    };
-  }
+  const fakeDom = () => ({
+    style: {},
+    ownerDocument: {
+      documentElement: { clientWidth: 800, clientHeight: 600, clientLeft: 0, clientTop: 0 },
+    },
+    addEventListener() {},
+    removeEventListener() {},
+    setPointerCapture() {},
+    releasePointerCapture() {},
+    getBoundingClientRect() {
+      return { left: 0, top: 0, width: 800, height: 600, right: 800, bottom: 600 };
+    },
+  });
   const camera = new PerspectiveCamera(45, 1, 0.1, 2000);
   camera.position.set(80, -80, 60);
   camera.up.set(0, 0, 1);
@@ -146,7 +144,6 @@ console.log('feature sheet card — camera');
   applyTrackballFeel(controls);
   controls.target.set(0, 0, 10);
   controls.update();
-  const before = captureViewPose(camera, controls);
   const box = { min: [-8, -8, 0], max: [8, 8, 16] };
   const fraction = 0.42;
   const cardTop = featureSheetCardTopNdc(fraction);
@@ -262,9 +259,11 @@ function Stage() {
     const cardFraction = () => {
       const pane = paneRef.current;
       const card = pane?.querySelector('[data-feature-card]');
-      const ph = pane?.getBoundingClientRect().height || 1;
-      const ch = card?.getBoundingClientRect().height || 0;
-      return ch / ph;
+      const paneBox = pane?.getBoundingClientRect();
+      const cardBox = card?.getBoundingClientRect();
+      const ph = paneBox?.height || 1;
+      if (!cardBox || !paneBox) return 0;
+      return Math.min(0.95, Math.max(0, (paneBox.bottom - cardBox.top) / ph));
     };
     const lowY = () => Math.min(...selectionNdcYs(camera, boxCornerPoints(PART)));
     api.current = {
@@ -442,7 +441,7 @@ html, body, #root { margin: 0; height: 100%; background: #111; }
         document.querySelector(`[data-harness-compact="${phone ? '1' : '0'}"]`).click();
         document.querySelector(`[data-harness-entry="${next}"]`).click();
       }, { entry, compact });
-      await page.waitForFunction(({ entry: next, phone }) => {
+      await page.waitForFunction(({ entry: next, compact: phone }) => {
         const card = document.querySelector('[data-feature-card]');
         const title = document.querySelector('[data-feature-card-title]');
         return card
@@ -579,7 +578,6 @@ html, body, #root { margin: 0; height: 100%; background: #111; }
       sheet.session.slideBy(-0.25);
       const cam = sheet.camera;
       const ctl = sheet.controls();
-      const axis = { x: 0, y: 0, z: 1 };
       const rot = (v, ang) => {
         const c = Math.cos(ang);
         const s = Math.sin(ang);

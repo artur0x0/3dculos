@@ -27,10 +27,14 @@ function scrollFieldIntoView(el) {
   const footerTop = footer ? footer.getBoundingClientRect().top : box.bottom;
   const overlap = Math.max(0, box.bottom - footerTop);
   const bottomLimit = box.bottom - overlap - 8;
+  // Extra 12px of clearance when the control still fits. If that would clip
+  // the top of the field, pin the top instead so the focused number stays visible.
   if (field.bottom > bottomLimit) {
-    scroller.scrollTop += field.bottom - bottomLimit + 12;
-  } else if (field.top < box.top + 8) {
-    scroller.scrollTop -= box.top - field.top + 12;
+    const delta = field.bottom - bottomLimit + 12;
+    if (field.top - delta < box.top) scroller.scrollTop += field.top - box.top;
+    else scroller.scrollTop += delta;
+  } else if (field.top < box.top) {
+    scroller.scrollTop -= box.top - field.top;
   }
 }
 

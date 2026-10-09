@@ -334,6 +334,7 @@ import {
   boxCornerPoints,
   createSheetCameraSession,
   featureSheetClearanceNdc,
+  featureSheetCoveredFraction,
 } from '../utils/featureSheetCamera';
 
 import { validateScript, formatValidationErrors } from '../utils/scriptValidator';
@@ -1117,8 +1118,8 @@ const Viewport = forwardRef(({
     const container = containerRef.current;
     if (!camera || !controls?.target || !container) return 0;
     const card = container.querySelector('[data-feature-card]');
-    const paneH = container.getBoundingClientRect().height || 1;
-    const cardH = card ? card.getBoundingClientRect().height : 0;
+    const paneBox = container.getBoundingClientRect();
+    const cardBox = card ? card.getBoundingClientRect() : null;
     const offset = partWorldOffset(resultRef.current);
     const face = selectedFaceRef.current;
     const edges = selectedEdgesRef.current;
@@ -1141,37 +1142,9 @@ const Viewport = forwardRef(({
       camera,
       controls,
       points,
-      cardFraction: cardH / paneH,
+      cardFraction: featureSheetCoveredFraction(paneBox, cardBox),
     });
   };
-  const contourSheetOpen = mode !== 'game' && !!contourMode;
-  useEffect(() => {
-    if (!contourSheetOpen) return undefined;
-    let alive = true;
-    const tick = () => {
-      if (!alive) return;
-      sheetCameraRef.current?.slideBy(sheetSlideDeltaRef.current());
-    };
-    const raf = requestAnimationFrame(tick);
-    const pane = containerRef.current;
-    const ro = new ResizeObserver(tick);
-    if (pane) ro.observe(pane);
-    const card = pane?.querySelector('[data-feature-card]');
-    if (card) ro.observe(card);
-    return () => {
-      alive = false;
-      cancelAnimationFrame(raf);
-      ro.disconnect();
-      sheetCameraRef.current?.restore();
-    };
-  }, [contourSheetOpen]);
-  useEffect(() => {
-    if (!contourSheetOpen) return undefined;
-    const raf = requestAnimationFrame(() => {
-      sheetCameraRef.current?.slideBy(sheetSlideDeltaRef.current());
-    });
-    return () => cancelAnimationFrame(raf);
-  }, [contourSheetOpen, selectedFace, selectedEdges, modelBounds]);
 
   /**
    * Toast payload. Errors carry an Undo affordance so a bad Accept is one tap
@@ -1247,6 +1220,36 @@ const Viewport = forwardRef(({
   // rebinding listeners on every recompute.
   const modelBoundsRef = useRef(null);
   modelBoundsRef.current = modelBounds;
+  // After modelBounds. The dep array is evaluated during render; reading the
+  // state earlier is a temporal dead zone and the production bundle white-screens.
+  const contourSheetOpen = mode !== 'game' && !!contourMode;
+  useEffect(() => {
+    if (!contourSheetOpen) return undefined;
+    let alive = true;
+    const tick = () => {
+      if (!alive) return;
+      sheetCameraRef.current?.slideBy(sheetSlideDeltaRef.current());
+    };
+    const raf = requestAnimationFrame(tick);
+    const pane = containerRef.current;
+    const ro = new ResizeObserver(tick);
+    if (pane) ro.observe(pane);
+    const card = pane?.querySelector('[data-feature-card]');
+    if (card) ro.observe(card);
+    return () => {
+      alive = false;
+      cancelAnimationFrame(raf);
+      ro.disconnect();
+      sheetCameraRef.current?.restore();
+    };
+  }, [contourSheetOpen]);
+  useEffect(() => {
+    if (!contourSheetOpen) return undefined;
+    const raf = requestAnimationFrame(() => {
+      sheetCameraRef.current?.slideBy(sheetSlideDeltaRef.current());
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [contourSheetOpen, selectedFace, selectedEdges, modelBounds]);
   const [cachedMeshData, setCachedMeshData] = useState(null);
   /** Always-current mesh for failed Auto-Run restore (state alone is stale in closures). */
   const cachedMeshDataRef = useRef(null);
