@@ -362,6 +362,9 @@ export default function PartFeed({
   const cancelBtnRef = useRef(null);
   const [openPicker, setOpenPicker] = useState(null); // null | { kind, items, loading, error, draft }
   const [deleteAssembly, setDeleteAssembly] = useState(null);
+  // Blocks a second delete before React re-renders `busy`. State alone
+  // loses the double tap that lands in the same turn.
+  const deleteInFlightRef = useRef(false);
   const pathInputRef = useRef(null);
   // G3 commit flow: null | { stage: 'message'|'busy'|'ask-force'|'done'|'error', ... }
   const [commitFlow, setCommitFlow] = useState(null);
@@ -481,6 +484,7 @@ export default function PartFeed({
       name,
       loading: true,
       busy: false,
+      busyAction: '',
       error: '',
       partCount: 0,
       referenced: [],
@@ -512,31 +516,54 @@ export default function PartFeed({
     }
   };
 
+  const closeDeleteAssembly = () => {
+    if (deleteInFlightRef.current) return;
+    setDeleteAssembly(null);
+  };
+
+  const deleteAssemblyFailed = (result) => (
+    result?.status === 'error' || result?.status === 'failed'
+  );
+
   const runDeleteAssembly = async (mode) => {
+    if (deleteInFlightRef.current) return;
     const pending = deleteAssembly;
     if (!pending?.name || pending.loading || pending.busy) return;
     if (mode === 'drop' && String(pending.typed || '').trim() !== pending.name) return;
-    setDeleteAssembly({ ...pending, busy: true, error: '' });
-    const result = (await onDeleteAssembly?.(pending.name, mode))
-      || { status: 'error', error: 'Delete unavailable' };
-    if (result.status === 'error') {
+    deleteInFlightRef.current = true;
+    setDeleteAssembly({ ...pending, busy: true, busyAction: mode, error: '' });
+    try {
+      const result = (await onDeleteAssembly?.(pending.name, mode))
+        || { status: 'error', error: 'Delete unavailable' };
+      if (deleteAssemblyFailed(result)) {
+        setDeleteAssembly((prev) => (prev ? {
+          ...prev,
+          busy: false,
+          busyAction: '',
+          error: result.error || 'Could not delete assembly',
+        } : prev));
+        return;
+      }
+      setDeleteAssembly(null);
+      setOpenPicker((prev) => {
+        if (!prev || prev.kind !== 'open-assembly') return prev;
+        const assemblies = (prev.assemblies || []).filter((item) => item.name !== pending.name);
+        return {
+          ...prev,
+          assemblies,
+          error: assemblies.length ? '' : 'No assemblies in the repo yet.',
+        };
+      });
+    } catch (err) {
       setDeleteAssembly((prev) => (prev ? {
         ...prev,
         busy: false,
-        error: result.error || 'Could not delete assembly',
+        busyAction: '',
+        error: err?.message || 'Could not delete assembly',
       } : prev));
-      return;
+    } finally {
+      deleteInFlightRef.current = false;
     }
-    setDeleteAssembly(null);
-    setOpenPicker((prev) => {
-      if (!prev || prev.kind !== 'open-assembly') return prev;
-      const assemblies = (prev.assemblies || []).filter((item) => item.name !== pending.name);
-      return {
-        ...prev,
-        assemblies,
-        error: assemblies.length ? '' : 'No assemblies in the repo yet.',
-      };
-    });
   };
 
   const askOpenAssemblyChoice = (name) => {
@@ -1695,11 +1722,12 @@ export default function PartFeed({
           typed={deleteAssembly.typed}
           loading={deleteAssembly.loading}
           busy={deleteAssembly.busy}
+          busyAction={deleteAssembly.busyAction || ''}
           error={deleteAssembly.error}
           onTyped={(value) => setDeleteAssembly((prev) => (prev ? { ...prev, typed: value } : prev))}
           onKeep={() => { void runDeleteAssembly('keep'); }}
           onDrop={() => { void runDeleteAssembly('drop'); }}
-          onClose={deleteAssembly.busy ? undefined : () => setDeleteAssembly(null)}
+          onClose={closeDeleteAssembly}
         />
       )}
       {openPicker && typeof document !== 'undefined' && openPicker.kind === 'open-choice' && (

@@ -1,4 +1,5 @@
-import { Trash2 } from 'lucide-react';
+import { useEffect } from 'react';
+import { Loader2, Trash2 } from 'lucide-react';
 import VaultPickerDialog from './VaultPickerDialog';
 import {
   PARTS_DIALOG_BTN_GHOST,
@@ -8,7 +9,7 @@ import {
 } from '../utils/partsChrome.js';
 
 const ROW_TRASH = 'shrink-0 rounded p-1 text-gray-500 hover:bg-red-500/15 hover:text-red-300';
-const DANGER_BTN = 'rounded-md bg-red-600 text-xs font-medium text-white hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-red-600';
+const DANGER_BTN = 'rounded-md bg-red-600 text-xs font-medium text-white hover:bg-red-500 disabled:cursor-not-allowed disabled:hover:bg-red-600';
 
 /**
  * One Open assembly row: the name opens it, the trash asks before delete.
@@ -74,6 +75,22 @@ export function AssemblyOpenList({ items, current, onOpen, onDelete }) {
  * the primary. Deleting the part files stays disabled until the assembly
  * name is typed. A copy another assembly uses moves to /parts either way.
  */
+function DeleteButtonFace({ label, spinning, which }) {
+  return (
+    <>
+      <span className={spinning ? 'invisible' : undefined}>{label}</span>
+      {spinning ? (
+        <span
+          className="pointer-events-none absolute inset-0 flex items-center justify-center"
+          data-assembly-delete-spinner={which}
+        >
+          <Loader2 size={16} className="animate-spin" aria-hidden="true" />
+        </span>
+      ) : null}
+    </>
+  );
+}
+
 export default function DeleteAssemblyDialog({
   assemblyName,
   partCount = 0,
@@ -81,6 +98,7 @@ export default function DeleteAssemblyDialog({
   typed = '',
   loading = false,
   busy = false,
+  busyAction = '',
   error = '',
   onTyped,
   onKeep,
@@ -91,6 +109,21 @@ export default function DeleteAssemblyDialog({
   const countLabel = `${count} ${count === 1 ? 'part' : 'parts'}`;
   const confirmed = String(typed || '').trim() === assemblyName;
   const locked = loading || busy;
+  const keepSpinning = busy && busyAction === 'keep';
+  const dropSpinning = busy && busyAction === 'drop';
+  // Capture Escape even when focus is still in the list underneath. A delete
+  // in flight swallows it; otherwise this popup closes and the list stays.
+  useEffect(() => {
+    const onKey = (event) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (locked) return;
+      onClose?.();
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [locked, onClose]);
   return (
     <VaultPickerDialog
       title="Delete assembly?"
@@ -102,25 +135,27 @@ export default function DeleteAssemblyDialog({
           <button
             type="button"
             data-assembly-delete-keep=""
-            className={`inline-flex h-10 w-full items-center justify-center ${PARTS_DIALOG_BTN_PRIMARY}`}
+            className={`relative inline-flex h-10 w-full items-center justify-center disabled:cursor-not-allowed ${keepSpinning ? '' : 'disabled:opacity-40'} ${PARTS_DIALOG_BTN_PRIMARY}`}
             disabled={locked}
+            aria-busy={keepSpinning ? 'true' : 'false'}
             onClick={() => onKeep?.()}
           >
-            Delete assembly, keep parts
+            <DeleteButtonFace label="Delete assembly, keep parts" spinning={keepSpinning} which="keep" />
           </button>
           <button
             type="button"
             data-assembly-delete-parts=""
             data-assembly-delete-parts-enabled={confirmed && !locked ? 'true' : 'false'}
-            className={`inline-flex h-10 w-full items-center justify-center ${DANGER_BTN}`}
+            className={`relative inline-flex h-10 w-full items-center justify-center disabled:cursor-not-allowed ${dropSpinning ? '' : 'disabled:opacity-40'} ${DANGER_BTN}`}
             disabled={locked || !confirmed}
+            aria-busy={dropSpinning ? 'true' : 'false'}
             onClick={() => onDrop?.()}
           >
-            Delete assembly and its parts
+            <DeleteButtonFace label="Delete assembly and its parts" spinning={dropSpinning} which="drop" />
           </button>
           <button
             type="button"
-            className={`inline-flex h-10 w-full items-center justify-center ${PARTS_DIALOG_BTN_GHOST}`}
+            className={`inline-flex h-10 w-full items-center justify-center disabled:cursor-not-allowed disabled:opacity-40 ${PARTS_DIALOG_BTN_GHOST}`}
             onClick={onClose}
             data-git-dialog-cancel=""
             disabled={locked}

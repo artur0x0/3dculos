@@ -121,7 +121,14 @@ Desktop specifics:
   a script only when no other assembly cites it (`parts[].id`, a path when the
   id is missing, or `groups[].partIds`, including the open document and this
   branch's queued outbox). A cited copy moves into `parts/`. Cancel leaves
-  the assembly. Folder →
+  the assembly. While the delete runs, the clicked button shows a spinner
+  (`data-assembly-delete-spinner`) and keeps its width. Both delete buttons
+  and Cancel stay disabled, the scrim and Escape do not dismiss, and a
+  second tap does not start another delete. Success closes the popup. A
+  failure leaves it open with the message in `data-assembly-delete-error`
+  and enables the buttons again. That wait includes the local IndexedDB
+  update and the queued git sync. An assembly that is still opening
+  (`assemblyOpenLockRef`) refuses the delete until that open finishes. Folder →
   Assembly and the open search share that list on desktop and on the phone.
   Live search is `data-git-open-search` / `filterVaultOpenIndex`; empty
   query shows the full list, no hits show *No matches*. Vault files,
@@ -145,7 +152,7 @@ Desktop specifics:
   shows a `local:` id. Add to Repo (`data-part-add-to-repo`) shows when `isSynced` is false, and when the flag
   is unset and the row id is not a repo path. Text inputs on Parts/git
   use `partsChrome.js` `PARTS_TEXT_INPUT_CLASS` (≥16px) to block iOS Safari focus-zoom.
-  Git create, Save, rename, copy, and delete show `data-part-pending` spinner in place of the Save icon while that branch's outbox op is queued or sending. A failed sync shows a red mark (`data-part-sync-failed`). A failed rename or assembly delete shows a toast with Retry and Revert (`data-rename-toast`). A moved remote tip opens the conflict popup and does not overwrite.
+  Git create, Save, rename, copy, and delete show `data-part-pending` spinner in place of the Save icon while that branch's outbox op is queued or sending. A failed sync shows a red mark (`data-part-sync-failed`). A failed rename or assembly delete shows a toast with Retry and Revert (`data-rename-toast`). The delete popup also keeps that failure inline (`data-assembly-delete-error`) until the user retries or cancels. A moved remote tip opens the conflict popup and does not overwrite.
 - `PromptInput` is passed `isMobile={false}` explicitly (`src/App.jsx:1345`).
 
 ### Mobile shell (`src/App.jsx` mobile branch) — CAD stages + game stack
