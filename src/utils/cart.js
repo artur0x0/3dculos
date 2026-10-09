@@ -14,6 +14,9 @@ export const CART_THUMB_MAX_CHARS = 24_000;
 export const CART_MAX_TOMBSTONES = 200;
 export const CART_TOMBSTONE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 export const CART_CHIP_BREAKPOINT = 768;
+// Keep in step with QUOTE_TTL_MS in backend/services/cartMerge.js.
+export const QUOTE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const QUOTE_ID_MAX = 128;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -73,6 +76,22 @@ export function toCartIso(value) {
   const t = date.getTime();
   if (!Number.isFinite(t)) return new Date().toISOString();
   return new Date(t).toISOString();
+}
+
+function toCartIsoOrNull(value) {
+  const date = value instanceof Date ? value : new Date(value);
+  const t = date.getTime();
+  if (!Number.isFinite(t)) return null;
+  return new Date(t).toISOString();
+}
+
+/** True when quoteId is missing or quotedAt is older than the 7-day TTL. */
+export function isQuoteExpired(line, now = new Date()) {
+  if (line?.quoteId == null || String(line.quoteId).trim() === '') return true;
+  const quotedMs = new Date(line.quotedAt).getTime();
+  if (!Number.isFinite(quotedMs)) return true;
+  const nowMs = (now instanceof Date ? now : new Date(now)).getTime();
+  return nowMs - quotedMs > QUOTE_TTL_MS;
 }
 
 function timeOf(value) {
@@ -275,6 +294,8 @@ function normalizeLine(raw, fallbackIso) {
   const partName = String(raw.partName || '').trim();
   const hash = String(raw.scriptHash || '').trim();
   if (!assemblyName || !partId || !partName || !hash) return null;
+  const options = normalizeOptions(raw.options);
+  const quote = normalizeQuote(raw, options);
   return {
     lineId,
     source: raw.source,
@@ -285,10 +306,40 @@ function normalizeLine(raw, fallbackIso) {
     scriptHash: hash,
     thumbDataUrl: capThumb(raw.thumbDataUrl),
     qty: clampQty(raw.qty || 1),
-    options: normalizeOptions(raw.options),
+    options,
+    quotedUnitPrice: quote.quotedUnitPrice,
+    quoteId: quote.quoteId,
+    quotedAt: quote.quotedAt,
     addedAt: toCartIso(raw.addedAt || fallbackIso),
     updatedAt: toCartIso(raw.updatedAt || fallbackIso),
   };
+}
+
+/**
+ * Keep a complete v3 quote on the line so localStorage and the next PUT
+ * do not drop it. A partial quote is stored as unquoted; the part stays.
+ */
+function normalizeQuote(raw, options) {
+  const price = raw.quotedUnitPrice;
+  const quoteId = raw.quoteId == null ? '' : String(raw.quoteId).trim();
+  const hasPrice = !(price == null || price === '');
+  const hasId = quoteId !== '';
+  const hasAt = !(raw.quotedAt == null || raw.quotedAt === '');
+  const empty = { quotedUnitPrice: null, quoteId: null, quotedAt: null };
+  if (!hasPrice && !hasId && !hasAt) return empty;
+  const priceNum = typeof price === 'number' ? price : Number(price);
+  const quotedAt = hasAt ? toCartIsoOrNull(raw.quotedAt) : null;
+  const process = options?.process == null ? '' : String(options.process).trim();
+  const material = options?.material == null ? '' : String(options.material).trim();
+  const infill = options?.infill;
+  const locked = process !== ''
+    && material !== ''
+    && infill != null
+    && Number.isFinite(infill);
+  if (!locked || !hasPrice || !Number.isFinite(priceNum) || priceNum < 0 || !hasId || quoteId.length > QUOTE_ID_MAX || !quotedAt) {
+    return empty;
+  }
+  return { quotedUnitPrice: priceNum, quoteId, quotedAt };
 }
 
 function normalizeOptions(options) {
@@ -373,9 +424,10 @@ export function resolveCartLine(doc, scripts, line) {
 }
 
 /** Rows for the sheet. No open document yet: keep the stored name, don't invent a miss. */
-export function presentCartLines(doc, scripts, cart) {
+export function presentCartLines(doc, scripts, cart, now = new Date()) {
   const openName = String(doc?.name || '').trim();
   return normalizeCart(cart).lines.map((line) => {
+    const quoteExpired = isQuoteExpired(line, now);
     if (!doc) {
       return {
         ...line,
@@ -383,6 +435,7 @@ export function presentCartLines(doc, scripts, cart) {
         elsewhere: false,
         liveName: line.partName,
         hashStale: false,
+        quoteExpired,
       };
     }
     const resolved = resolveCartLine(doc, scripts, line);
@@ -398,6 +451,7 @@ export function presentCartLines(doc, scripts, cart) {
       elsewhere,
       liveName: resolved.part?.name || line.partName,
       hashStale: !!(resolved.script && scriptHash(resolved.script) !== line.scriptHash),
+      quoteExpired,
     };
   });
 }

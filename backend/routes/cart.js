@@ -10,7 +10,14 @@ import {
 
 const router = Router();
 
-function plainLine(line) {
+function isoOrNull(value) {
+  if (value == null || value === '') return null;
+  const t = new Date(value).getTime();
+  if (!Number.isFinite(t)) return null;
+  return new Date(t).toISOString();
+}
+
+export function plainLine(line) {
   const o = line?.toObject ? line.toObject() : line;
   if (!o) return null;
   return {
@@ -24,6 +31,9 @@ function plainLine(line) {
     thumbDataUrl: o.thumbDataUrl || null,
     qty: o.qty,
     options: o.options || null,
+    quotedUnitPrice: o.quotedUnitPrice == null ? null : o.quotedUnitPrice,
+    quoteId: o.quoteId || null,
+    quotedAt: isoOrNull(o.quotedAt),
     addedAt: o.addedAt,
     updatedAt: o.updatedAt,
   };
