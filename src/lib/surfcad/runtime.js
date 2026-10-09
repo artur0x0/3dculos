@@ -2674,7 +2674,7 @@ function getDimensions(manifold) {
 }
 
 // ============================================================================
-// C4 — Selection + Feature helpers for Manifold JS (3dculos sandbox)
+// C4 — Selection + Feature helpers for Manifold JS (SurfCAD sandbox)
 // Ported from cadgen-workspace/harness/c4_helpers.mjs (all 21 harness tests
 // green; verified against real dataset STEP ground truth).
 //

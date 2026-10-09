@@ -1,6 +1,6 @@
 # SurfCAD
 
-Browser CAD at [surfcad.com](https://surfcad.com). This repo is `3dculos`. The kernel is the shipped Manifold build in `built/manifold.js` and `built/manifold.wasm` ([ManifoldCAD](https://github.com/elalish/manifold)). npm `manifold-3d` is a different build.
+Browser CAD at [surfcad.com](https://surfcad.com). This repo is `surfcad` (repo artur0x0/surfcad). The kernel is the shipped Manifold build in `built/manifold.js` and `built/manifold.wasm` ([ManifoldCAD](https://github.com/elalish/manifold)). npm `manifold-3d` is a different build.
 
 ## Modes
 
