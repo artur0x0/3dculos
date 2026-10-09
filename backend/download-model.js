@@ -57,8 +57,11 @@ async function downloadModelFile(orderNumber, outputPath) {
     const filename = outputPath || `${orderNumber}.3mf`;
     fs.writeFileSync(filename, buffer);
 
+    const copies = Number(order['model-data']?.quantity) || 1;
+
     console.log(`Successfully saved model to: ${filename}`);
     console.log(`File size: ${buffer.length} bytes`);
+    console.log(`Copies to print: ${copies}`);
 
   } catch (error) {
     console.error('Error:', error.message);

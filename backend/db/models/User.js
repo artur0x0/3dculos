@@ -56,6 +56,33 @@ const addressSchema = new mongoose.Schema({
   },
 }, { _id: true });
 
+const cartOptionsSchema = new mongoose.Schema({
+  process: { type: String, default: null },
+  material: { type: String, default: null },
+  infill: { type: Number, default: null },
+}, { _id: false });
+
+const cartLineSchema = new mongoose.Schema({
+  lineId: { type: String, required: true },
+  source: { type: String, enum: ['local', 'git'], required: true },
+  assemblyName: { type: String, required: true },
+  partId: { type: String, required: true },
+  surfId: { type: String, default: null },
+  partName: { type: String, required: true },
+  scriptHash: { type: String, required: true },
+  // Route strips data URLs over 24_000 characters before save.
+  thumbDataUrl: { type: String, default: null, maxlength: 24000 },
+  qty: { type: Number, required: true, min: 1, max: 999, default: 1 },
+  options: { type: cartOptionsSchema, default: null },
+  addedAt: { type: Date, required: true },
+  updatedAt: { type: Date, required: true },
+}, { _id: false });
+
+const cartTombstoneSchema = new mongoose.Schema({
+  lineId: { type: String, required: true },
+  deletedAt: { type: Date, required: true },
+}, { _id: false });
+
 const userSchema = new mongoose.Schema({
   email: {
     type: String,
@@ -158,6 +185,21 @@ const userSchema = new mongoose.Schema({
       type: Boolean,
       default: false,
     },
+  },
+
+  // Live part references. Not the vault. Missing on old users; defaults apply
+  // on the next read/save. Readers still use `user.cart || []`.
+  cart: {
+    type: [cartLineSchema],
+    default: () => [],
+  },
+  cartVersion: {
+    type: Number,
+    default: 0,
+  },
+  cartTombstones: {
+    type: [cartTombstoneSchema],
+    default: () => [],
   },
 }, {
   timestamps: true,
@@ -383,6 +425,9 @@ userSchema.set('toJSON', {
     delete ret.verificationAttempts;
     delete ret.lastVerificationAttempt;
     delete ret.__v;
+    delete ret.cart;
+    delete ret.cartVersion;
+    delete ret.cartTombstones;
     return ret;
   },
 });

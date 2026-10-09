@@ -27,6 +27,7 @@ const ConfirmationStep = ({ order, isGuest, onConvertAccount, onClose, onViewOrd
         <p className="text-2xl font-mono font-bold text-white tracking-wider">
           {order.orderNumber}
         </p>
+        <p className="text-gray-400 text-sm mt-2">Qty {order.quantity || 1}</p>
       </div>
 
       {/* Order Details */}

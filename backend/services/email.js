@@ -26,6 +26,13 @@ function getOrderFields(order) {
   };
 }
 
+function copyCount(order) {
+  const modelData = order?.['model-data'] || order?.modelData || {};
+  const n = Number(modelData.quantity);
+  if (!Number.isInteger(n) || n < 1 || n > 999) return 1;
+  return n;
+}
+
 /**
  * Helper to get address fields
  */
@@ -217,6 +224,7 @@ export async function sendOrderConfirmation(order, customerEmail) {
   
   const { orderNumber, modelData } = getOrderFields(order);
   const address = getAddressFields(order.shipping.address);
+  const qty = copyCount(order);
   
   const subject = `Order Confirmed: ${orderNumber}`;
   
@@ -267,6 +275,10 @@ export async function sendOrderConfirmation(order, customerEmail) {
           <span class="value">${modelData.infill}%</span>
         </div>
         <div class="detail-row">
+          <span class="label">Quantity</span>
+          <span class="value">Qty ${qty}</span>
+        </div>
+        <div class="detail-row">
           <span class="label">Shipping</span>
           <span class="value">${order.shipping.service || 'Standard'}</span>
         </div>
@@ -305,6 +317,7 @@ Order Details:
 - Process: ${modelData.process}
 - Material: ${modelData.material}
 - Infill: ${modelData.infill}%
+- Quantity: Qty ${qty}
 - Shipping: ${order.shipping.service || 'Standard'}
 - Total: $${order.quote.total.toFixed(2)}
 
@@ -355,6 +368,7 @@ export async function sendAdminOrderNotification(order, customerEmail) {
   const { orderNumber, modelData } = getOrderFields(order);
   const address = getAddressFields(order.shipping.address);
   const volumeMm3 = modelData['volume-mm3'] || modelData.volume;
+  const qty = copyCount(order);
   
   const subject = `🔔 New Order: ${orderNumber} - $${order.quote.total.toFixed(2)}`;
   
@@ -381,6 +395,7 @@ export async function sendAdminOrderNotification(order, customerEmail) {
       <tr><th>Process</th><td>${modelData.process}</td></tr>
       <tr><th>Material</th><td>${modelData.material}</td></tr>
       <tr><th>Infill</th><td>${modelData.infill}%</td></tr>
+      <tr><th>Quantity</th><td>Qty ${qty}</td></tr>
       <tr><th>Volume</th><td>${volumeMm3?.toFixed(1) || 'N/A'} mm³</td></tr>
     </table>
     
@@ -447,6 +462,7 @@ export async function sendShippingNotification(order, customerEmail) {
   
   const { orderNumber } = getOrderFields(order);
   const address = getAddressFields(order.shipping.address);
+  const qty = copyCount(order);
   const trackingNumber = order.shipping['tracking-number'] || order.shipping.trackingNumber;
   const trackingUrl = order.shipping['tracking-url'] || order.shipping.trackingUrl || 
     `https://www.ups.com/track?tracknum=${trackingNumber}`;
@@ -475,6 +491,7 @@ export async function sendShippingNotification(order, customerEmail) {
     </div>
     <div class="content">
       <p>Great news! Your order <strong>${orderNumber}</strong> is on its way.</p>
+      <p>Qty ${qty}</p>
       
       <div class="tracking-box">
         <p style="margin: 0 0 10px 0;">Tracking Number</p>
@@ -540,6 +557,7 @@ export async function sendAdminDisputeNotification(order, dispute, customerEmail
   }
 
   const { orderNumber, modelData } = getOrderFields(order);
+  const qty = copyCount(order);
   const disputeAmount = (dispute.amount / 100).toFixed(2);
   const disputeReason = dispute.reason?.replace(/_/g, ' ') || 'Unknown reason';
   const disputeStatus = dispute.status || 'open';
@@ -581,6 +599,7 @@ export async function sendAdminDisputeNotification(order, dispute, customerEmail
     <table>
       <tr><th>Process</th><td>${modelData.process}</td></tr>
       <tr><th>Material</th><td>${modelData.material}</td></tr>
+      <tr><th>Quantity</th><td>Qty ${qty}</td></tr>
       <tr><th>Created</th><td>${new Date(order['created-at'] || order.createdAt).toLocaleString()}</td></tr>
     </table>
 

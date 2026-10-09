@@ -79,15 +79,24 @@ router.post('/validate', async (req, res) => {
  */
 router.post('/calculate-package', (req, res) => {
   try {
-    const { boundingBox, materialGrams } = req.body;
+    const { boundingBox, materialGrams, quantity } = req.body;
     
     if (!boundingBox || !materialGrams) {
       return res.status(400).json({ 
         error: 'Bounding box and material grams are required' 
       });
     }
+
+    // `quantity` omitted → one part (old clients). Grams are already extended;
+    // do not multiply them again. Copies stack on the shortest side.
+    if (quantity != null && quantity !== '' && !Number.isInteger(Number(quantity))) {
+      return res.status(400).json({ error: 'Quantity must be an integer from 1 to 999' });
+    }
+    if (quantity != null && quantity !== '' && (Number(quantity) < 1 || Number(quantity) > 999)) {
+      return res.status(400).json({ error: 'Quantity must be an integer from 1 to 999' });
+    }
     
-    const dimensions = ups.calculatePackageDimensions(boundingBox);
+    const dimensions = ups.calculatePackageDimensions(boundingBox, 1, quantity);
     const weight = ups.calculatePackageWeight(materialGrams);
     
     return res.json({

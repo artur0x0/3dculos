@@ -2,11 +2,13 @@ import React, { useState, useEffect } from 'react';
 import { X, DollarSign, Clock, Package, ShoppingCart } from 'lucide-react';
 import { PROCESSES } from '../utils/quoting';
 import { generate3MFBlob } from '../utils/exportModel';
+import QuantityStepper from './order/QuantityStepper';
 
 const QuoteModal = ({ onClose, onGetQuote, onOrder, currentScript, currentFilename }) => {
   const [selectedProcess, setSelectedProcess] = useState('FDM');
   const [selectedMaterial, setSelectedMaterial] = useState('PLA');
   const [infill, setInfill] = useState(20);
+  const [quantity, setQuantity] = useState(1);
   const [quoteResult, setQuoteResult] = useState(null);
   const [error, setError] = useState(null);
 
@@ -21,7 +23,8 @@ const QuoteModal = ({ onClose, onGetQuote, onOrder, currentScript, currentFilena
         const result = await onGetQuote({
           process: selectedProcess,
           material: selectedMaterial,
-          infill: infill
+          infill: infill,
+          quantity,
         });
 
         setQuoteResult(result);
@@ -32,7 +35,7 @@ const QuoteModal = ({ onClose, onGetQuote, onOrder, currentScript, currentFilena
     };
 
     getQuote();
-  }, [selectedProcess, selectedMaterial, infill, onGetQuote]);
+  }, [selectedProcess, selectedMaterial, infill, quantity, onGetQuote]);
 
   const handleProcessChange = (process) => {
     if (PROCESSES[process].disabled) return;
@@ -62,10 +65,19 @@ const QuoteModal = ({ onClose, onGetQuote, onOrder, currentScript, currentFilena
       infill: infill,
       volume: quoteResult.volume,
       surfaceArea: quoteResult.surfaceArea,
+      // Extended (unit × qty). An old orders route ignores quantity and
+      // charges subtotal once, so this must already include the copies.
       materialCost: quoteResult.costs.material,
       machineCost: quoteResult.costs.machine,
-      subtotal: quoteResult.costs.total,
-      materialGrams: quoteResult.materialUsage.grams,
+      subtotal: quoteResult.subtotal,
+      materialGrams: quoteResult.materialGrams,
+      quantity: quoteResult.quantity || quantity,
+      unitSubtotal: quoteResult.unitSubtotal,
+      unitMaterial: quoteResult.unitMaterial,
+      unitMachine: quoteResult.unitMachine,
+      unitGrams: quoteResult.unitGrams,
+      unitPrintTime: quoteResult.unitPrintTime,
+      printTime: quoteResult.printTime,
     };
 
     const modelData = {
@@ -172,6 +184,8 @@ const QuoteModal = ({ onClose, onGetQuote, onOrder, currentScript, currentFilena
             </div>
           </div>
 
+          <QuantityStepper id="quote-quantity" value={quantity} onChange={setQuantity} />
+
           {/* Infill Slider */}
           <div>
             <label className="block text-sm font-medium text-gray-300 mb-3">
@@ -230,6 +244,15 @@ const QuoteModal = ({ onClose, onGetQuote, onOrder, currentScript, currentFilena
                   </span>
                 </div>
 
+                <div className="flex items-center justify-between text-gray-300">
+                  <span>Qty {quoteResult.quantity || quantity}</span>
+                  {quoteResult.quantity > 1 && (
+                    <span className="font-medium text-sm text-gray-400">
+                      ${quoteResult.unitSubtotal.toFixed(2)} each
+                    </span>
+                  )}
+                </div>
+
                 <div className="border-t border-gray-600 my-4"></div>
 
                 {/* Cost Breakdown */}
@@ -256,6 +279,7 @@ const QuoteModal = ({ onClose, onGetQuote, onOrder, currentScript, currentFilena
                   <div>Process: {selectedProcess}</div>
                   <div>Material: {selectedMaterial}</div>
                   <div>Infill: {infill}%</div>
+                  <div>Qty {quoteResult.quantity || quantity}</div>
                 </div>
 
                 {/* Order Button */}
