@@ -12,6 +12,7 @@ import { resolveFilletStrategy } from '../utils/filletAlongPath';
 import {
   NumberField, SelectField, CheckField, PopupButton, POPUP_TEXT,
 } from './controls/popupUI';
+import { FeatureDeleteButton } from './FeatureEditDelete';
 
 /** Helper sheets are neutral; the accent chips own cyan/amber. */
 const ACCENT = 'slate';
@@ -32,6 +33,7 @@ const HelperParamModal = ({
   refuseMessage = null,
   refuseTitle = null,
   onValuesChange = null,
+  onDelete = null,
 }) => {
   const params = item?.params || [];
   const bodies = useMemo(() => listBodyNames(buffer), [buffer]);
@@ -307,7 +309,7 @@ const HelperParamModal = ({
           </div>
         )}
 
-        <div className="overflow-y-auto p-4 space-y-3 text-sm text-gray-200">
+        <div className="overflow-y-auto min-h-0 flex-1 p-4 space-y-3 text-sm text-gray-200">
           {visibleParams.length === 0 && (
             <p className="text-xs text-gray-400">No options — confirm to insert.</p>
           )}
@@ -361,7 +363,9 @@ const HelperParamModal = ({
           })}
         </div>
 
-        <div className="flex items-center justify-end gap-2 px-4 py-3 border-t border-gray-700 shrink-0">
+        <div className="flex items-center gap-2 px-4 py-3 border-t border-gray-700 shrink-0">
+          {onDelete ? <FeatureDeleteButton onClick={onDelete} /> : null}
+          <div className="ml-auto flex items-center gap-2">
           <PopupButton accent={ACCENT} onClick={() => onCancel?.()}>
             Cancel
           </PopupButton>
@@ -374,6 +378,7 @@ const HelperParamModal = ({
             <Check size={16} />
             {sizeGuardFail ? `Clamp & Confirm (${safeBlendMax})` : 'Confirm'}
           </PopupButton>
+          </div>
         </div>
       </div>
     </div>

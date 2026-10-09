@@ -8,7 +8,7 @@
  */
 
 import { parseFeatureMarkers } from './featureMarkers.js';
-import { featureBlockText, liveSheetFeature, inferExtrudeSense } from './featureSheetWriteback.js';
+import { deleteFeatureBlock, featureBlockText, liveSheetFeature, inferExtrudeSense } from './featureSheetWriteback.js';
 import { scriptWithFeatureCount } from './partHistory.js';
 import { shellFaceKey } from './shellMode.js';
 
@@ -993,6 +993,146 @@ export function confirmFeatureEdit(script, feature, draft = {}) {
     || after.find((f) => f.id === live.id);
   if (!again) return { ok: false, message: 'Edit lost the feature block — refusing.' };
   return { ok: true, buffer, changed: true, run: true, feature: again };
+}
+
+const STALE_FEATURE = 'That feature is not in this part\'s script any more — pick it again.';
+
+function markerBlocks(script) {
+  return parseFeatureMarkers(script).map((feature) => script.slice(feature.startOffset, feature.endOffset));
+}
+
+/**
+ * Drop one marked feature. The block is the same span Confirm rewrites
+ * (`liveSheetFeature`: id and kind, else kind and index). One bordering
+ * newline is collapsed so neighbours do not gain a blank row. Every other
+ * marked block stays byte-identical, including comments outside the span.
+ */
+export function deleteFeatureEdit(script, feature) {
+  const text = typeof script === 'string' ? script : '';
+  const live = liveSheetFeature(text, feature);
+  if (!live) return { ok: false, message: STALE_FEATURE };
+  const features = parseFeatureMarkers(text);
+  const kept = features
+    .filter((item) => item.startOffset !== live.startOffset)
+    .map((item) => text.slice(item.startOffset, item.endOffset));
+  const result = deleteFeatureBlock(text, live);
+  if (!result.ok) return result;
+  const after = markerBlocks(result.buffer);
+  if (after.length !== kept.length || after.some((block, i) => block !== kept[i])) {
+    return { ok: false, message: 'Delete would change another feature — refusing.' };
+  }
+  if (result.buffer === text) {
+    return { ok: false, message: 'Delete did not remove the feature — refusing.' };
+  }
+  return { ok: true, buffer: result.buffer, changed: true, run: true, feature: live };
+}
+
+function codeText(block) {
+  let src = String(block || '').replace(/\/\*[\s\S]*?\*\//g, '');
+  src = src.replace(/'(?:\\.|[^'\n])*'|"(?:\\.|[^"\n])*"|`(?:\\.|[^`])*`/g, '""');
+  src = src.replace(/\/\/[^\n]*/g, '');
+  return src;
+}
+
+function declaredNamesIn(block) {
+  const names = new Set();
+  const re = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)/g;
+  let match;
+  const src = codeText(block);
+  while ((match = re.exec(src))) names.add(match[1]);
+  return names;
+}
+
+/** Bodies this block creates or writes. Later edge and face calls name these. */
+function assignedBodies(block) {
+  const names = new Set();
+  const re = /(?:^|[\n;])\s*(?:(?:const|let|var)\s+)?([A-Za-z_$][\w$]*)\s*=/g;
+  let match;
+  const src = codeText(block);
+  while ((match = re.exec(src))) names.add(match[1]);
+  return names;
+}
+
+function callBodies(block, fns) {
+  const names = new Set();
+  const re = new RegExp(`\\b(?:${fns})\\s*\\(\\s*([A-Za-z_$][\\w$]*)`, 'g');
+  let match;
+  const src = codeText(block);
+  while ((match = re.exec(src))) names.add(match[1]);
+  return names;
+}
+
+function mentionsName(block, name) {
+  if (declaredNamesIn(block).has(name)) return false;
+  return new RegExp(`\\b${name}\\b`).test(codeText(block));
+}
+
+function dependentMessage(label, reason, name) {
+  const who = label || 'A later feature';
+  if (reason === 'edges') return `${who} uses this feature's edges and may fail`;
+  if (reason === 'faces') return `${who} uses this feature's faces and may fail`;
+  return `${who} uses ${name} from this feature and may fail`;
+}
+
+function suffixOutsideFeatures(script, endOffset, later) {
+  let out = '';
+  let cursor = endOffset;
+  for (const feature of later) {
+    if (feature.startOffset < cursor) continue;
+    out += script.slice(cursor, feature.startOffset);
+    cursor = Math.max(cursor, feature.endOffset);
+  }
+  out += script.slice(cursor);
+  return out;
+}
+
+/**
+ * Later features that reference this one.
+ *
+ * The mesh feature graph names edges and faces, not which block created
+ * them, so this reads the script. A later fillet, chamfer, or sweep that
+ * calls `edgesBetween` / `edge` / `filletAlongPath` on a body this block
+ * writes is an edge dependent. A later cut, Move Face, Delete Face, shell,
+ * or draft that stores a face (`center:`) on that body is a face dependent.
+ * A `const` / `let` / `var` this block declares (other than `part`) that
+ * later code uses is a variable dependent. Earlier features are ignored.
+ */
+export function featureDependents(script, feature) {
+  const text = typeof script === 'string' ? script : '';
+  const live = liveSheetFeature(text, feature);
+  if (!live) return [];
+  const block = text.slice(live.startOffset, live.endOffset);
+  const owns = assignedBodies(block);
+  const vars = [...declaredNamesIn(block)].filter((name) => name !== 'part');
+  const later = parseFeatureMarkers(text).filter((item) => item.startOffset >= live.endOffset);
+  const out = [];
+  const push = (item, reason, name) => {
+    const label = item?.chipLabel || item?.label || 'Later code';
+    out.push({
+      id: item?.id || null,
+      kind: item?.kind || null,
+      label,
+      reason,
+      name: name || null,
+      message: dependentMessage(label, reason, name),
+    });
+  };
+  for (const next of later) {
+    const chunk = text.slice(next.startOffset, next.endOffset);
+    const edgeBodies = callBodies(chunk, 'edgesBetween|edge|filletEdges|chamferEdges|filletAlongPath');
+    if ([...edgeBodies].some((body) => owns.has(body))) push(next, 'edges');
+    const faceBodies = callBodies(chunk, 'moveFace|deleteFace|cut|hollow|draftFaces');
+    const targetsFace = /center\s*:/.test(codeText(chunk)) || /facesByNormal\s*\(/.test(codeText(chunk));
+    if (targetsFace && [...faceBodies].some((body) => owns.has(body))) push(next, 'faces');
+    for (const name of vars) {
+      if (mentionsName(chunk, name)) push(next, 'variable', name);
+    }
+  }
+  const gap = suffixOutsideFeatures(text, live.endOffset, later);
+  for (const name of vars) {
+    if (mentionsName(gap, name)) push(null, 'variable', name);
+  }
+  return out;
 }
 
 /**

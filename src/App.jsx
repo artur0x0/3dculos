@@ -19,7 +19,7 @@ import {
   isFeatureSheetEditable,
   liveSheetFeature,
 } from './utils/featureSheetWriteback';
-import { confirmFeatureEdit } from './utils/featureEdit';
+import { confirmFeatureEdit, deleteFeatureEdit } from './utils/featureEdit';
 import QuoteModal from './components/QuoteModal';
 import OrderModal from './components/OrderModal';
 import LoginModal from './components/LoginModal';
@@ -504,6 +504,43 @@ const App = () => {
     if (!wrote) {
       viewportRef.current?.softFailContour?.(
         'Could not write the feature edit into the editor — try again.',
+      );
+      return false;
+    }
+    if (result.run) {
+      setTimeout(() => {
+        handleGameRun();
+      }, 0);
+    }
+    return true;
+  };
+  /**
+   * Delete from the open feature-edit dialog. One applyBuffer, so Undo is
+   * one step on this part and restores the previous script. The dialog stays
+   * up while an assembly open holds the worker.
+   */
+  const handleDeleteFeatureEdit = (feature) => {
+    if (!feature) return false;
+    if (assemblyOpenLockRef.current) {
+      viewportRef.current?.softFailContour?.(
+        'An assembly is opening — delete the feature again once it finishes.',
+      );
+      return false;
+    }
+    focusWritePartRef.current(null);
+    const buf = codeEditorRef.current?.getContent?.() || currentScript || '';
+    const result = deleteFeatureEdit(buf, feature);
+    if (!result.ok) {
+      viewportRef.current?.softFailContour?.(result.message);
+      return false;
+    }
+    const wrote = codeEditorRef.current?.applyBuffer?.(
+      result.buffer,
+      `Delete ${feature.chipLabel || feature.label || feature.kind || 'feature'}`,
+    );
+    if (!wrote) {
+      viewportRef.current?.softFailContour?.(
+        'Could not delete the feature from the editor — try again.',
       );
       return false;
     }
@@ -6014,6 +6051,7 @@ const App = () => {
               onCommitContourProfile={handleCommitContourProfile}
               onCommitFillet={handleCommitFillet}
               onCommitFeatureEdit={handleCommitFeatureEdit}
+              onDeleteFeatureEdit={handleDeleteFeatureEdit}
               assemblyRunLockRef={assemblyOpenLockRef}
               onCommitShell={handleCommitShell}
               onCommitPaint={handleCommitPaint}
@@ -6472,6 +6510,7 @@ const App = () => {
             onCommitContourProfile={handleCommitContourProfile}
             onCommitFillet={handleCommitFillet}
             onCommitFeatureEdit={handleCommitFeatureEdit}
+            onDeleteFeatureEdit={handleDeleteFeatureEdit}
             assemblyRunLockRef={assemblyOpenLockRef}
               onCommitShell={handleCommitShell}
               onCommitPaint={handleCommitPaint}

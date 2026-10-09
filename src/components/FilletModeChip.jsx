@@ -1,6 +1,7 @@
 import React, { useEffect } from 'react';
 import { Check, X } from 'lucide-react';
 import { NumberField } from './controls/popupUI';
+import { FeatureDeleteButton } from './FeatureEditDelete';
 
 const ACCENT = 'amber';
 
@@ -28,6 +29,7 @@ const FilletModeChip = ({
   onParamChange,
   missingLabel = '',
   onClearMissing,
+  onDelete = null,
 }) => {
   const chamfer = kind === 'chamfer';
   const sizeKey = chamfer ? 'chamfer' : 'radius';
@@ -164,7 +166,8 @@ const FilletModeChip = ({
       </div>
       {/* Space Clear/Undo away from Accept; strategy helper text removed.
           This Undo pops the last edge only. It is not the CAD script Undo. */}
-      <div className="mt-4 flex items-center justify-end gap-2" data-fillet-accept-row="">
+      <div className="mt-4 flex items-center justify-between gap-2" data-fillet-accept-row="">
+        {onDelete ? <FeatureDeleteButton onClick={onDelete} /> : <span />}
         <button
           type="button"
           onClick={() => onAccept?.()}

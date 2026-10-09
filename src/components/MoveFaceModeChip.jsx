@@ -1,6 +1,7 @@
 import React from 'react';
 import { Check, X } from 'lucide-react';
 import { NumberField } from './controls/popupUI';
+import { FeatureDeleteButton } from './FeatureEditDelete';
 
 const ACCENT = 'cyan';
 
@@ -22,6 +23,7 @@ const MoveFaceModeChip = ({
   onClear,
   onConfirm,
   onDismiss,
+  onDelete = null,
 }) => {
   const faceCount = Array.isArray(faces) ? faces.length : 0;
   const distNum = Number(distance);
@@ -135,9 +137,12 @@ const MoveFaceModeChip = ({
       </div>
 
       <div className="mt-2 flex items-center justify-between gap-2 shrink-0">
-        <span className="text-[11px] text-cyan-200/70 leading-tight">
-          moveFace(body, faces, distance)
-        </span>
+        <div className="flex items-center gap-2 min-w-0">
+          {onDelete ? <FeatureDeleteButton onClick={onDelete} /> : null}
+          <span className="text-[11px] text-cyan-200/70 leading-tight">
+            moveFace(body, faces, distance)
+          </span>
+        </div>
         <button
           type="button"
           onClick={() => onConfirm?.()}

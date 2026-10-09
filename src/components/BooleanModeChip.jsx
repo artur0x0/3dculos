@@ -7,6 +7,7 @@ import {
   booleanTargetPartId,
   booleanCrossPart,
 } from '../utils/booleanMode';
+import { FeatureDeleteButton } from './FeatureEditDelete';
 
 /**
  * Boolean chip — same shell as CutModeChip.
@@ -33,6 +34,7 @@ const BooleanModeChip = ({
   onClear,
   onConfirm,
   onDismiss,
+  onDelete = null,
 }) => {
   const op = booleanOp(state?.op);
   const pick = state?.pick === 'pieces' && op === 'intersect' ? 'pieces' : 'bodies';
@@ -182,9 +184,12 @@ const BooleanModeChip = ({
       </div>
 
       <div className="mt-2 flex items-center justify-between gap-2 shrink-0">
-        <span className="text-[11px] text-cyan-200/70 leading-tight">
-          booleanBodies
-        </span>
+        <div className="flex items-center gap-2 min-w-0">
+          {onDelete ? <FeatureDeleteButton onClick={onDelete} /> : null}
+          <span className="text-[11px] text-cyan-200/70 leading-tight">
+            booleanBodies
+          </span>
+        </div>
         <button
           type="button"
           onClick={() => onConfirm?.()}
