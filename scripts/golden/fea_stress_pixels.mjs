@@ -228,11 +228,16 @@ function installProbe(page) {
   });
 }
 
-async function snap(page, key) {
-  const viaHook = await page.evaluate((name) => {
-    if (typeof window.__VIEWPORT__?.stageSnap === 'function') return !!window.__VIEWPORT__.stageSnap(name);
+// Looking down the beam, the default snap margin parks a wide desktop camera
+// inside the solid. A larger margin backs up past the root and tip faces.
+const END_SNAP_MARGIN = 3;
+
+async function snap(page, key, margin) {
+  const viaHook = await page.evaluate(({ name, margin }) => {
+    window.__feaView = name;
+    if (typeof window.__VIEWPORT__?.stageSnap === 'function') return !!window.__VIEWPORT__.stageSnap(name, margin);
     return false;
-  }, key);
+  }, { name: key, margin });
   if (viaHook) {
     await page.waitForTimeout(250);
     return true;
@@ -253,14 +258,15 @@ async function sampleSides(page) {
       return;
     }
     const orig = renderer.render.bind(renderer);
+    let best = null;
+    let timer = 0;
     renderer.render = function hooked(scene, camera) {
       const out = orig(scene, camera);
-      renderer.render = orig;
       const gl = renderer.getContext();
       const w = gl.drawingBufferWidth;
       const h = gl.drawingBufferHeight;
       const buf = new Uint8Array(w * h * 4);
-      const paint = [239, 68, 68];
+      gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, buf);
       let minX = Infinity;
       let maxX = -Infinity;
       const pts = [];
@@ -276,45 +282,81 @@ async function sampleSides(page) {
           if (x > maxX) maxX = x;
         }
       }
-      if (!pts.length) {
-        resolve({ model: 0, red: 0, leftN: 0, rightN: 0, leftHeat: 0, rightHeat: 0 });
-        return;
-      }
-      const span = Math.max(1, maxX - minX);
-      const leftCut = minX + span * 0.33;
-      const rightCut = minX + span * 0.67;
-      let red = 0;
-      let leftN = 0;
-      let rightN = 0;
-      let leftHeat = 0;
-      let rightHeat = 0;
-      for (const p of pts) {
-        const redD = Math.abs(p.r - paint[0]) + Math.abs(p.g - paint[1]) + Math.abs(p.b - paint[2]);
-        if (redD <= 180) red += 1;
-        const heat = p.r + p.g - p.b;
-        if (p.x <= leftCut) {
-          leftN += 1;
-          leftHeat += heat;
-        } else if (p.x >= rightCut) {
-          rightN += 1;
-          rightHeat += heat;
+      const sample = { model: 0, red: 0, leftN: 0, rightN: 0, leftHeat: 0, rightHeat: 0 };
+      if (pts.length) {
+        const span = Math.max(1, maxX - minX);
+        const leftCut = minX + span * 0.33;
+        const rightCut = minX + span * 0.67;
+        let red = 0;
+        let leftN = 0;
+        let rightN = 0;
+        let leftHeat = 0;
+        let rightHeat = 0;
+        for (const p of pts) {
+          // #ef4444 stays red-dominant under the viewport lights. Viridis purple
+          // sits near that swatch in raw distance, so distance alone is not a paint test.
+          if (p.r >= 140 && p.g < 160 && p.b < 160 && p.r > p.g + 40 && p.r > p.b + 40) red += 1;
+          const heat = p.r + p.g - p.b;
+          if (p.x <= leftCut) {
+            leftN += 1;
+            leftHeat += heat;
+          } else if (p.x >= rightCut) {
+            rightN += 1;
+            rightHeat += heat;
+          }
         }
+        sample.model = pts.length;
+        sample.red = red;
+        sample.leftN = leftN;
+        sample.rightN = rightN;
+        sample.leftHeat = leftN ? leftHeat / leftN : 0;
+        sample.rightHeat = rightN ? rightHeat / rightN : 0;
       }
-      resolve({
-        model: pts.length,
-        red,
-        leftN,
-        rightN,
-        leftHeat: leftN ? leftHeat / leftN : 0,
-        rightHeat: rightN ? rightHeat / rightN : 0,
-      });
+      if (!best || sample.model > best.model) best = sample;
+      if (!timer) {
+        timer = setTimeout(() => {
+          const key = window.__feaView || 'front';
+          if (typeof window.__VIEWPORT__?.stageSnap === 'function') window.__VIEWPORT__.stageSnap(key);
+          renderer.render = orig;
+          resolve(best);
+        }, 100);
+      }
       return out;
     };
+    const key = window.__feaView || 'front';
+    if (typeof window.__VIEWPORT__?.stageSnap === 'function') window.__VIEWPORT__.stageSnap(key);
   }));
 }
 
 async function readColors(page) {
   return sampleSides(page);
+}
+
+function endFacePoints(page) {
+  return page.evaluate(() => {
+    const canvas = document.querySelector('.viewport-shell > canvas');
+    if (!canvas) return [];
+    const rect = canvas.getBoundingClientRect();
+    const pts = [];
+    // The desktop Analyze chip sits on the canvas center once the force
+    // row is open. Upper-center and either side of that chip still land
+    // on the end face. The phone sheet covers the top, so keep mid points.
+    const spots = [
+      [0.5, 0.28],
+      [0.5, 0.34],
+      [0.28, 0.5],
+      [0.72, 0.5],
+      [0.5, 0.46],
+      [0.5, 0.5],
+      [0.5, 0.42],
+    ];
+    for (const [fx, fy] of spots) {
+      const x = rect.left + rect.width * fx;
+      const y = rect.top + rect.height * fy;
+      if (document.elementFromPoint(x, y) === canvas) pts.push({ x, y });
+    }
+    return pts;
+  });
 }
 
 function facePoints(page) {
@@ -325,9 +367,10 @@ function facePoints(page) {
       return;
     }
     const orig = renderer.render.bind(renderer);
+    let best = [];
+    let timer = 0;
     renderer.render = function hooked(scene, camera) {
       const out = orig(scene, camera);
-      renderer.render = orig;
       const gl = renderer.getContext();
       const dpr = renderer.getPixelRatio();
       const w = gl.drawingBufferWidth;
@@ -349,16 +392,24 @@ function facePoints(page) {
           pts.push({ x: cssX, y: cssY });
         }
       }
-      if (!pts.length) {
-        resolve([]);
-        return;
-      }
       const picks = [];
-      const step = Math.max(1, Math.floor(pts.length / 6));
-      for (let i = step >> 1; i < pts.length && picks.length < 6; i += step) picks.push(pts[i]);
-      resolve(picks);
+      if (pts.length) {
+        const step = Math.max(1, Math.floor(pts.length / 6));
+        for (let i = step >> 1; i < pts.length && picks.length < 6; i += step) picks.push(pts[i]);
+      }
+      if (picks.length > best.length) best = picks;
+      if (!timer) {
+        timer = setTimeout(() => {
+          const key = window.__feaView || 'front';
+          if (typeof window.__VIEWPORT__?.stageSnap === 'function') window.__VIEWPORT__.stageSnap(key);
+          renderer.render = orig;
+          resolve(best);
+        }, 100);
+      }
       return out;
     };
+    const key = window.__feaView || 'front';
+    if (typeof window.__VIEWPORT__?.stageSnap === 'function') window.__VIEWPORT__.stageSnap(key);
   }));
 }
 
@@ -423,17 +474,19 @@ async function runCase(browser, vp) {
   await page.locator(shell).waitFor({ timeout: 8000 });
   await page.locator('[data-fea-material]').selectOption('pla-ultimaker');
   await solidReady(page);
-  check(`${vp.name} left snap`, await snap(page, 'left'));
-  const root = await facePoints(page);
+  check(`${vp.name} left snap`, await snap(page, 'left', END_SNAP_MARGIN));
+  const root = await endFacePoints(page);
   check(`${vp.name} root face is tappable`, root.length > 0, `points=${root.length}`);
   await page.locator('[data-fea-target="fixture"]').click();
-  check(`${vp.name} fixture`, await tapUntil(page, vp.touch, root, 'data-fea-fixture-count', '1'));
+  const fixed = await tapUntil(page, vp.touch, root, 'data-fea-fixture-count', '1');
+  const fixNotice = fixed ? '' : await page.locator('[data-fea-notice]').textContent().catch(() => '');
+  check(`${vp.name} fixture`, fixed, fixNotice);
   await page.locator('[data-fea-target="force"]').click();
   const down = page.locator(`${shell} button`, { hasText: '\u2212Z' });
   await down.scrollIntoViewIfNeeded();
   await down.click();
-  check(`${vp.name} right snap`, await snap(page, 'right'));
-  const tip = await facePoints(page);
+  check(`${vp.name} right snap`, await snap(page, 'right', END_SNAP_MARGIN));
+  const tip = await endFacePoints(page);
   check(`${vp.name} tip face is tappable`, tip.length > 0, `points=${tip.length}`);
   check(`${vp.name} force`, await tapUntil(page, vp.touch, tip, 'data-fea-load-count', '1'));
   check(`${vp.name} front snap after picks`, await snap(page, 'front'));
