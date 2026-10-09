@@ -1,7 +1,7 @@
 {
   "name": "surfcad-fea",
   "type": "module",
-  "description": "SurfCAD finite-element scaffold compiled to single-threaded SIMD WebAssembly. Phase 0 is a stub solver.",
+  "description": "SurfCAD finite-element solver compiled to single-threaded SIMD WebAssembly. Phase 0 stub plus a TET10 linear-static solver.",
   "version": "0.1.0",
   "license": "Apache-2.0",
   "files": [

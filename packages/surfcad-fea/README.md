@@ -1,10 +1,26 @@
 # surfcad-fea
 
-Phase 0 scaffold for the SurfCAD finite-element solver. The crate compiles to a **single-threaded** WebAssembly module with **WASM SIMD** (`simd128`). It does not use shared memory, so the page does not need `Cross-Origin-Opener-Policy` or `Cross-Origin-Embedder-Policy` headers.
+SurfCAD finite-element solver compiled to a **single-threaded** WebAssembly module with **WASM SIMD** (`simd128`). It does not use shared memory or threads, so the page does not need `Cross-Origin-Opener-Policy` or `Cross-Origin-Embedder-Policy` headers.
 
-The solver in this phase is a **stub**. `solve` returns a deterministic fake von Mises field and always sets `source` to `"stub"`. A real TET10 / shell solver is a later phase. `faer` is not a dependency yet: it is unused here and expensive to compile.
+Two entry points share the module:
+
+- `solve` is still the phase-0 **stub**. It returns a deterministic fake von Mises field and always sets `source` to `"stub"`. `capabilities()` still reports `solvers: ["stub"]`. The app worker calls only this entry; wiring the real solver into the page is a later change.
+- `solve_tet10` is a clean-room linear-elastic static solver for 10-node tetrahedra. It sets `source` to `"fem"`.
+
+The linear algebra is [faer](https://crates.io/crates/faer) 0.24 (MIT / Apache-2.0), built **without** the `rayon` feature so the factorization stays single-threaded (`Par::Seq`). Shells and tet meshing are not in this crate.
 
 The crate is Apache-2.0, the same license as the rest of the project.
+
+## TET10 solver
+
+Units are millimetres, newtons and megapascals. They are consistent (`1 MPa = 1 N/mm²`), so a modulus in MPa, coordinates in mm and forces in N produce displacements in mm and stresses in MPa with no conversion.
+
+- Elements are quadratic tetrahedra in VTK order: corners 0, 1, 2, 3, then edge midpoints 0-1, 1-2, 2-0, 0-3, 1-3, 2-3.
+- Stiffness uses the 4-point tetrahedron rule (exact through degree 2). A straight-sided element therefore has an exact linear-elastic stiffness.
+- The global matrix is symmetric sparse CSC, lower triangle including the diagonal. Dirichlet DOFs are eliminated. A prescribed displacement may be nonzero.
+- Loads are nodal forces (N) and uniform pressure on 6-node faces (MPa). Face order is `(c0, c1, c2, mid01, mid12, mid20)`. Positive pressure pushes against the right-hand normal of `(c0, c1, c2)`.
+- Two solvers, chosen per call. `"cholesky"` is faer's supernodal sparse Cholesky. `"pcg"` is Jacobi-preconditioned CG (`tol` default `1e-8`, `maxIter` default `20000`). `"auto"` (the default) uses Cholesky when the free-DOF count is at or below `choleskyMaxDofs` (default `20000`) and PCG otherwise.
+- Stress is recovered at the Gauss points, extrapolated to the element nodes, and averaged (the tensor is averaged, then von Mises is taken). The result is a per-node von Mises field plus `min`, `max` and nearest-rank `p95`. `safetyFactor` is `yield_MPa / p95` when yield is set and `p95 > 0`.
 
 ## Build
 
@@ -30,7 +46,16 @@ Regenerate and commit `pkg/` after any Rust change:
 npm run fea:build
 ```
 
-CI runs `node scripts/fea/check-wasm-fresh.mjs`, which rebuilds into a scratch directory and fails if any committed `pkg` file differs. `cargo test` covers the stub on the host. `cargo deny --manifest-path packages/surfcad-fea/Cargo.toml check licenses` enforces `deny.toml`.
+CI runs `node scripts/fea/check-wasm-fresh.mjs`, which rebuilds into a scratch directory and fails if any committed `pkg` file differs. `cargo test --locked` covers the stub and the TET10 checks (patch, cantilever, thick cylinder, plate with a hole, Cholesky versus PCG). `cargo deny --manifest-path packages/surfcad-fea/Cargo.toml check licenses` enforces `deny.toml`.
+
+A native scale check is not part of `cargo test`. Run one size per process so the peak is not cumulative:
+
+```bash
+cargo bench --bench scale -- 40000
+cargo bench --bench scale -- 100000
+```
+
+It prints DOFs, assembly time, solve time and peak resident memory. Above the auto threshold the run uses Jacobi PCG.
 
 ## Units
 
@@ -42,7 +67,7 @@ Material numbers are **megapascals** for modulus and yield, and dimensionless fo
 | `nu` | Poisson's ratio, required, in the open interval `(-1, 0.5)`. |
 | `yield_MPa` (alias `yield`) | Yield strength in MPa. |
 
-If both a canonical name and its alias are present they must be equal. Mesh coordinates stay in the length unit the caller already uses (the study schema uses millimetres). The stub does not convert them into a real stress; the returned unit label is `MPa` because that is the contract the later solver will keep.
+If both a canonical name and its alias are present they must be equal. Mesh coordinates are millimetres. The stub does not convert them into a real stress; it still labels the field `MPa`. `solve_tet10` uses the consistent mm / N / MPa system above.
 
 ## API
 
@@ -103,3 +128,44 @@ stress = distance * (load_magnitude / load_area)
 `E_MPa` and `nu` are validated and not used. `yield_MPa` is used only for the safety factor. Every result includes a warning whose text starts with `STUB, not a real result`.
 
 `maxDofs` is a hint for a later solid model (about 16k nodes on a phone-class 512 MiB heap, more on desktop). The stub still returns a field when the hint is exceeded and adds a `dof-hint` warning.
+
+### `solve_tet10`
+
+Called on the wasm exports directly. Typed arrays are copied across the bindgen ABI. This is not yet wired through `createFeaClient()`.
+
+```js
+import init, { solve_tet10 } from './pkg/surfcad_fea.js';
+
+await init();
+const result = solve_tet10(
+  {
+    nodes: Float64Array,       // or positions: Float32Array, xyz in mm
+    elements: Uint32Array,     // 10 indices per TET10
+  },
+  { E_MPa, nu, yield_MPa },    // yield_MPa may be null
+  {
+    fixedNodes: Uint32Array,   // three DOFs fixed at 0; optional
+    fixedDofs: Uint32Array,    // node * 3 + axis; optional, overrides fixedNodes
+    fixedValues: Float64Array, // mm, same length as fixedDofs, or omitted for 0
+    forceNodes: Uint32Array,
+    forceValues: Float64Array, // three components per node, N
+    pressureFaces: Uint32Array,// six nodes per face
+    pressures: Float64Array,   // one MPa value per face
+  },
+  { solver: 'auto', tol: 1e-8, maxIter: 20000, choleskyMaxDofs: 20000 },
+);
+// {
+//   source: "fem",
+//   field: "von_mises",
+//   units: "MPa",
+//   nodal: Float64Array,          // von Mises, one value per node
+//   displacement: Float64Array,   // xyzxyz… in mm
+//   min, max, p95,
+//   safetyFactor, fos,            // yield / p95, or null
+//   warnings: [{ code, msg }],
+//   solver: "cholesky" | "pcg",
+//   stats: { dofs, freeDofs, nodes, elements, iterations, residual, assemblyMs, solveMs, ms }
+// }
+```
+
+`p95` uses the same nearest-rank rule as the stub. `iterations` and `residual` are 0 for Cholesky.

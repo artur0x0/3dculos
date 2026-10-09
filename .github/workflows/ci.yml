@@ -214,7 +214,10 @@ jobs:
   wasm-freshness:
     name: wasm freshness
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # faer (sparse supernodal Cholesky) is a large crate. A cold debug
+    # `cargo test` plus a release wasm-pack build with LTO does not fit in
+    # the original 15 minutes.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
