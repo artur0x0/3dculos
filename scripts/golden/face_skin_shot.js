@@ -6,6 +6,7 @@
 import * as THREE from 'three';
 import { buildSolidGeometry } from '../../src/utils/partSolidCache.js';
 import { syncFaceColorSkin } from '../../src/utils/faceColorSkin.js';
+import { makeDefaultPartMaterial } from '../../src/utils/partMaterial.js';
 
 const W = 390;
 const H = 520;
@@ -115,7 +116,7 @@ function windowSample(frame, cx, cy, rad) {
 
 function hostFrom(meshData) {
   const { geometry } = buildSolidGeometry(meshData);
-  const host = new THREE.Mesh(geometry, new THREE.MeshNormalMaterial({ flatShading: true }));
+  const host = new THREE.Mesh(geometry, makeDefaultPartMaterial());
   return host;
 }
 

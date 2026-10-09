@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { X, DollarSign, Clock, Package, ShoppingCart } from 'lucide-react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback } from 'react';
+import { X, DollarSign, Clock, Package, ShoppingCart, ChevronDown } from 'lucide-react';
 import { PROCESSES } from '../utils/quoting';
 import { generate3MFBlob } from '../utils/exportModel';
 import { scriptHash } from '../utils/cart.js';
@@ -61,9 +61,25 @@ const QuoteModal = ({
   const onGetQuoteRef = useRef(onGetQuote);
   onGetQuoteRef.current = onGetQuote;
   const route = useMemo(() => sheetCheckoutRoute(currentScript), [currentScript]);
+  const bodyRef = useRef(null);
+  const [moreBelow, setMoreBelow] = useState(false);
+  const syncScrollHint = useCallback(() => {
+    const el = bodyRef.current;
+    if (!el) return;
+    setMoreBelow(el.scrollHeight - el.scrollTop - el.clientHeight > 8);
+  }, []);
   // Checkout of a stored line stays on the SurfCAD quote. The handoff is only
   // the part-row Order path, and it does not write or remove a line.
   const showHandoff = addingToCart && route === 'scs' && !surfInstead;
+  useLayoutEffect(() => {
+    syncScrollHint();
+    const el = bodyRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return undefined;
+    const observer = new ResizeObserver(() => syncScrollHint());
+    observer.observe(el);
+    for (const child of el.children) observer.observe(child);
+    return () => observer.disconnect();
+  }, [syncScrollHint, quoteResult, showHandoff, error, selectedProcess, infill, quantity]);
 
   const currentProcess = PROCESSES[selectedProcess];
   const handoffName = String(currentFilename || 'sheet').replace(/\.js$/i, '') || 'sheet';
@@ -233,8 +249,14 @@ const QuoteModal = ({
 
         {checkoutStep && !showHandoff ? <CheckoutStepper {...checkoutStep} /> : null}
 
-        {/* Content */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-6">
+        {/* Content. The hint sits outside the scroller so it is not a sticky footer. */}
+        <div className="relative flex min-h-0 flex-1 flex-col">
+        <div
+          ref={bodyRef}
+          className="quote-scroll min-h-0 flex-1 overflow-y-auto p-6 space-y-6"
+          data-quote-scroll=""
+          onScroll={syncScrollHint}
+        >
         {showHandoff ? (
           <ScsHandoff
             script={currentScript}
@@ -430,6 +452,16 @@ const QuoteModal = ({
           )}
         </>
         )}
+        </div>
+        {moreBelow ? (
+          <div
+            className="pointer-events-none absolute inset-x-0 bottom-0 flex h-12 items-end justify-center bg-gradient-to-t from-gray-900 to-transparent"
+            data-quote-scroll-hint=""
+            aria-hidden="true"
+          >
+            <ChevronDown size={18} className="mb-1 text-gray-100" />
+          </div>
+        ) : null}
         </div>
       </div>
     </ModalFit>

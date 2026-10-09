@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 import { buildSheetOverlay } from '../../src/utils/sheetMetal/sheetOverlay.js';
 import { makeSheetMetalMaterial } from '../../src/utils/sheetMetal/sheetMaterial.js';
+import { makeDefaultPartMaterial } from '../../src/utils/partMaterial.js';
 
 const W = 390;
 const H = 700;
@@ -135,7 +136,7 @@ export function renderSheetMaterialShots(canvas, payload) {
     group.add(hi);
     return group;
   };
-  const cube = () => new THREE.Mesh(cubeGeom, new THREE.MeshNormalMaterial({ flatShading: true }));
+  const cube = () => new THREE.Mesh(cubeGeom, makeDefaultPartMaterial());
 
   const dark = 0x1e1e1e;
   const lightBg = 0xf4f5f7;

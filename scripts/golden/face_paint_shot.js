@@ -12,6 +12,7 @@ import CrossSectionPanel from '../../src/components/CrossSectionPanel.jsx';
 import FeatureStrip from '../../src/components/FeatureStrip.jsx';
 import { buildSolidGeometry } from '../../src/utils/partSolidCache.js';
 import { syncFaceColorSkin } from '../../src/utils/faceColorSkin.js';
+import { makeDefaultPartMaterial } from '../../src/utils/partMaterial.js';
 
 const CUBES = [1, 2, 3, 4]
   .map(() => '// --- cube begin ---\nlet part = 1;\n// --- cube end ---')
@@ -115,7 +116,7 @@ export function renderLivePaintCanvas(canvas, payload) {
   camera.add(light);
   scene.add(camera);
   const solid = buildSolidGeometry(payload.mesh);
-  const host = new THREE.Mesh(solid.geometry, new THREE.MeshNormalMaterial({ flatShading: true }));
+  const host = new THREE.Mesh(solid.geometry, makeDefaultPartMaterial());
   host.userData.surfId = payload.surfId;
   scene.add(host);
   framePaint(camera, host);

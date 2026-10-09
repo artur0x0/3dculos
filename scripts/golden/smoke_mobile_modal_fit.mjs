@@ -91,6 +91,16 @@ console.log('mobile modal fit — source');
     && quoteBody.includes('<ScsHandoff')
     && /ModalFit/.test(quote)
     && !/sticky bottom/.test(quoteBody));
+  const scrollCss = css.slice(css.indexOf('.quote-scroll'), css.indexOf('.quote-scroll') + 700);
+  check('the quote body shows a thin scrollbar',
+    /quote-scroll/.test(quote)
+    && /::-webkit-scrollbar/.test(scrollCss)
+    && /scrollbar-width:\s*thin/.test(scrollCss)
+    && /scrollbar-color:/.test(scrollCss));
+  check('the quote scroll hint is a chevron outside the scroller',
+    /data-quote-scroll-hint/.test(quote)
+    && /ChevronDown/.test(quote)
+    && !/sticky bottom/.test(quote));
   check('checkout, login, and the address step use the same shell',
     /ModalFit/.test(page)
     && /overflow-y-auto/.test(page)
@@ -350,8 +360,28 @@ window.fetch = async (url) => {
     };
 
     await page.waitForSelector('[data-quote-add]', { timeout: 15000 });
+    const hintTop = await page.evaluate(() => {
+      const hint = document.querySelector('[data-quote-scroll-hint]');
+      const body = document.querySelector('.quote-scroll');
+      if (!hint || !body) return null;
+      const rect = hint.getBoundingClientRect();
+      return {
+        w: rect.width,
+        h: rect.height,
+        chevron: !!hint.querySelector('svg'),
+        scrollTop: body.scrollTop,
+        overflowY: getComputedStyle(body).overflowY,
+      };
+    });
+    check('quote scroll hint shows at the top',
+      !!hintTop && hintTop.h > 8 && hintTop.w > 40 && hintTop.chevron
+      && hintTop.scrollTop < 2
+      && (hintTop.overflowY === 'auto' || hintTop.overflowY === 'scroll'),
+      JSON.stringify(hintTop));
     await snap('modal-fit-quote-390-top.png');
     await assertFit('quote', '[data-quote-add]', { requireScroll: true });
+    const hintBottom = await page.evaluate(() => document.querySelector('[data-quote-scroll-hint]'));
+    check('quote scroll hint hides at the bottom', hintBottom == null, hintBottom ? 'still shown' : '');
     await snap('modal-fit-quote-390-bottom.png');
 
     await page.evaluate(() => {

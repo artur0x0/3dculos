@@ -332,8 +332,10 @@ function facePoint(page) {
           const r = buf[i];
           const g = buf[i + 1];
           const b = buf[i + 2];
-          const score = Math.abs(r - 128) + Math.abs(g - 128) + Math.abs(b - 255);
-          if (b < 200 || r < 90 || g < 90 || score > 40) continue;
+          // Unpainted faces are DEFAULT_PART_COLOR (#ECEAE4). A face toward the
+          // camera is that off-white. The old finder looked for tie-dye blue.
+          const score = Math.abs(r - 236) + Math.abs(g - 234) + Math.abs(b - 228);
+          if (score > 60 || r < 180 || g < 180 || b < 170) continue;
           const cssX = rect.left + (x + 0.5) / dpr;
           const cssY = rect.top + (h - y - 0.5) / dpr;
           if (document.elementFromPoint(cssX, cssY) !== canvas) continue;

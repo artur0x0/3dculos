@@ -33,30 +33,68 @@ export const VIEW_SNAP_MARGIN = 1.35;
 const EPS = 1e-9;
 
 /**
- * Frame a geometry so it fills the viewport, optionally along a fixed view direction.
+ * World-space box of one part mesh. Hidden meshes are skipped. A sheet-metal
+ * edit hides the solid while the overlay is the draft; that solid still counts.
+ * @param {import('three').Object3D|null|undefined} mesh
+ * @returns {import('three').Box3|null}
+ */
+export function meshWorldBox(mesh) {
+  const geometry = mesh?.geometry;
+  const count = geometry?.attributes?.position?.count || 0;
+  if (!mesh || !count) return null;
+  if (mesh.visible === false && mesh.userData?.sheetMetalHidden !== true) return null;
+  mesh.updateWorldMatrix(true, false);
+  geometry.computeBoundingBox();
+  const local = geometry.boundingBox;
+  if (!local || local.isEmpty() || !Number.isFinite(local.min.x) || !Number.isFinite(local.max.z)) return null;
+  return local.clone().applyMatrix4(mesh.matrixWorld);
+}
+
+/**
+ * Union of meshWorldBox() over the given meshes. Null when none qualify.
+ * @param {Iterable<import('three').Object3D>} meshes
+ * @returns {import('three').Box3|null}
+ */
+export function unionWorldBox(meshes) {
+  let box = null;
+  for (const mesh of meshes || []) {
+    const next = meshWorldBox(mesh);
+    if (!next) continue;
+    if (!box) box = next;
+    else box.union(next);
+  }
+  return box;
+}
+
+/**
+ * Frame a geometry, or a world-space box, so it fills the viewport.
  *
  * Distance is solved exactly for the bounding box (not the bounding sphere), per
  * camera-space axis, so tall-thin and flat-wide parts both come out properly filled
  * instead of shrunken to their diagonal. Safe on empty/degenerate geometry: it
  * declines to fit and reports false rather than moving the camera to a NaN.
+ * Pass `box` to frame several parts at once. Omit it to frame `geometry`.
  *
  * @param {Object} o
  * @param {import('three').PerspectiveCamera} o.camera
  * @param {import('three').TrackballControls} [o.controls]
- * @param {import('three').BufferGeometry} o.geometry
+ * @param {import('three').BufferGeometry} [o.geometry]
+ * @param {import('three').Box3} [o.box]
  * @param {number[]} [o.dir]  view direction; omit to keep the current orientation
  * @param {number[]} [o.up]   camera up hint; omit to keep the current up
  * @param {number}   [o.margin=1.15] >1 leaves breathing room around the part
  * @returns {boolean} true when the camera was moved
  */
-export function fitView({ camera, controls, geometry, dir, up, margin = 1.15 }) {
-  if (!camera || !geometry?.attributes?.position) return false;
-
-  // Recompute every time: the mesh may have been replaced or edited since the last fit,
-  // and a stale box silently frames the wrong volume.
-  geometry.computeBoundingBox();
-  const box = geometry.boundingBox;
-  if (!box || box.isEmpty() || !Number.isFinite(box.min.x) || !Number.isFinite(box.max.z)) return false;
+export function fitView({ camera, controls, geometry, box: boxArg, dir, up, margin = 1.15 }) {
+  let box = boxArg || null;
+  if (!box) {
+    if (!camera || !geometry?.attributes?.position) return false;
+    // Recompute every time: the mesh may have been replaced or edited since the last fit,
+    // and a stale box silently frames the wrong volume.
+    geometry.computeBoundingBox();
+    box = geometry.boundingBox;
+  }
+  if (!camera || !box || box.isEmpty() || !Number.isFinite(box.min.x) || !Number.isFinite(box.max.z)) return false;
 
   const center = box.getCenter(new Vector3());
   const size = box.getSize(new Vector3());
