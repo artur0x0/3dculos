@@ -6,9 +6,10 @@
 // terminates the worker.
 //
 // Units: material.E_MPa and material.yield_MPa are megapascals. material.nu
-// is dimensionless. The returned field is von Mises in MPa, labeled
-// source: "stub" until a real solver replaces it. profile is "phone" or
-// "desktop".
+// is dimensionless and required. yield_MPa may be null; the safety factor
+// is then null and the result carries a missing-yield warning. The returned
+// field is von Mises in MPa, labeled source: "stub" until a real solver
+// replaces it. profile is "phone" or "desktop".
 
 import FeaWorker from '../workers/feaWorker.js?worker';
 import { packMesh } from './meshTransfer.js';

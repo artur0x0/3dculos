@@ -149,7 +149,7 @@ fn parse_study(value: &JsValue) -> Result<Study, stub::SolveError> {
 fn parse_material(value: &JsValue) -> Result<Material, stub::SolveError> {
     if value.is_null() || value.is_undefined() {
         return Err(stub::SolveError::BadMaterial(
-            "material is required ({E_MPa, nu, yield_MPa}, megapascals)".into(),
+            "material is required ({E_MPa, nu, yield_MPa}, megapascals; a null yield leaves safetyFactor null)".into(),
         ));
     }
     serde_wasm_bindgen::from_value(value.clone())

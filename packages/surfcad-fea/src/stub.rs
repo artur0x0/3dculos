@@ -17,7 +17,9 @@
 //! Coordinates are whatever length unit the caller used (the study schema uses
 //! millimetres). The number is labeled MPa only because that is the contract
 //! the real solver will use. Material `E_MPa` and `nu` are validated and then
-//! ignored. `yield_MPa` is used only for `safetyFactor = yield_MPa / p95`.
+//! ignored. `yield_MPa`, when present, is used only for
+//! `safetyFactor = yield_MPa / p95`. A null or omitted yield leaves
+//! `safetyFactor` null and adds a `missing-yield` warning.
 //!
 //! `p95` is the nearest-rank 95th percentile: sort ascending, 1-based rank
 //! `ceil(0.95 * n)`, index `rank - 1` (the only value when `n == 1`, and 0
@@ -174,7 +176,9 @@ pub struct FaceRef {
 pub struct Material {
     pub e_mpa: f64,
     pub nu: f64,
-    pub yield_mpa: f64,
+    /// None when the caller has no yield strength. The stress field is still
+    /// returned; safetyFactor is null and a missing-yield warning is attached.
+    pub yield_mpa: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -191,7 +195,7 @@ struct MaterialRaw {
 }
 
 impl Material {
-    pub fn from_raw_parts(e_mpa: f64, nu: f64, yield_mpa: f64) -> Result<Self, SolveError> {
+    pub fn from_raw_parts(e_mpa: f64, nu: f64, yield_mpa: Option<f64>) -> Result<Self, SolveError> {
         if !e_mpa.is_finite() || e_mpa <= 0.0 {
             return Err(SolveError::BadMaterial(
                 "material.E_MPa must be a finite number greater than 0 (megapascals)".into(),
@@ -202,10 +206,12 @@ impl Material {
                 "material.nu must be finite and in the open interval (-1, 0.5)".into(),
             ));
         }
-        if !yield_mpa.is_finite() || yield_mpa < 0.0 {
-            return Err(SolveError::BadMaterial(
-                "material.yield_MPa must be a finite number greater than or equal to 0 (megapascals)".into(),
-            ));
+        if let Some(yield_mpa) = yield_mpa {
+            if !yield_mpa.is_finite() || yield_mpa < 0.0 {
+                return Err(SolveError::BadMaterial(
+                    "material.yield_MPa must be a finite number greater than or equal to 0 (megapascals), or null when yield is unknown".into(),
+                ));
+            }
         }
         Ok(Self {
             e_mpa,
@@ -219,7 +225,7 @@ impl<'de> Deserialize<'de> for Material {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let raw = MaterialRaw::deserialize(deserializer)?;
         let e_mpa = pick_alias(raw.e_mpa, raw.e, "E_MPa", "E").map_err(serde::de::Error::custom)?;
-        let yield_mpa = pick_alias(raw.yield_mpa, raw.yield_alias, "yield_MPa", "yield")
+        let yield_mpa = optional_alias(raw.yield_mpa, raw.yield_alias, "yield_MPa", "yield")
             .map_err(serde::de::Error::custom)?;
         Material::from_raw_parts(e_mpa, raw.nu, yield_mpa).map_err(serde::de::Error::custom)
     }
@@ -240,6 +246,24 @@ fn pick_alias(
         (None, None) => Err(format!(
             "material.{primary_name} (or {alias_name}) is required, in megapascals"
         )),
+    }
+}
+
+/// Yield may be omitted or null. A present value is still checked for
+/// alias disagreement. A missing yield is not an error: safetyFactor is null.
+fn optional_alias(
+    primary: Option<f64>,
+    alias: Option<f64>,
+    primary_name: &str,
+    alias_name: &str,
+) -> Result<Option<f64>, String> {
+    match (primary, alias) {
+        (Some(a), Some(b)) if a != b => Err(format!(
+            "material.{primary_name} and material.{alias_name} disagree ({a} vs {b}); pass megapascals as {primary_name}"
+        )),
+        (Some(a), _) => Ok(Some(a)),
+        (None, Some(b)) => Ok(Some(b)),
+        (None, None) => Ok(None),
     }
 }
 
@@ -342,10 +366,9 @@ pub fn solve(
         (min, max)
     };
     let p95 = percentile_95(&nodal);
-    let safety_factor = if p95.is_finite() && p95 > 0.0 {
-        Some(material.yield_mpa / f64::from(p95))
-    } else {
-        None
+    let safety_factor = match material.yield_mpa {
+        Some(yield_mpa) if p95.is_finite() && p95 > 0.0 => Some(yield_mpa / f64::from(p95)),
+        _ => None,
     };
 
     let mut warnings = vec![Warning {
@@ -364,7 +387,12 @@ pub fn solve(
             msg: "a vertex coordinate was not finite; that vertex was given stress 0".into(),
         });
     }
-    if vertex_count > 0 && p95 == 0.0 {
+    if material.yield_mpa.is_none() {
+        warnings.push(Warning {
+            code: "missing-yield",
+            msg: "material.yield_MPa is null, so safetyFactor is null".into(),
+        });
+    } else if vertex_count > 0 && p95 == 0.0 {
         warnings.push(Warning {
             code: "zero-stress",
             msg: "p95 is 0, so safetyFactor is null (yield / p95 is undefined)".into(),
@@ -442,7 +470,7 @@ mod tests {
     use super::*;
 
     fn aluminum() -> Material {
-        Material::from_raw_parts(68_900.0, 0.33, 276.0).unwrap()
+        Material::from_raw_parts(68_900.0, 0.33, Some(276.0)).unwrap()
     }
 
     fn empty_mesh_study() -> Study {
@@ -575,9 +603,35 @@ mod tests {
 
     #[test]
     fn material_rejects_non_physical_constants() {
-        assert!(Material::from_raw_parts(0.0, 0.3, 1.0).is_err());
-        assert!(Material::from_raw_parts(1.0, 0.5, 1.0).is_err());
-        assert!(Material::from_raw_parts(1.0, 0.3, -1.0).is_err());
+        assert!(Material::from_raw_parts(0.0, 0.3, Some(1.0)).is_err());
+        assert!(Material::from_raw_parts(1.0, 0.5, Some(1.0)).is_err());
+        assert!(Material::from_raw_parts(1.0, 0.3, Some(-1.0)).is_err());
+        assert!(Material::from_raw_parts(1.0, 0.3, None).is_ok());
+    }
+
+    #[test]
+    fn missing_yield_nulls_the_safety_factor() {
+        let material = Material::from_raw_parts(1_700.0, 0.39, None).unwrap();
+        let out = solve(
+            &Study::default(),
+            &[0.0, 0.0, 0.0, 0.0, 0.0, 10.0],
+            &[],
+            &[],
+            material,
+            Profile::Desktop,
+        )
+        .unwrap();
+        assert!(out.p95 > 0.0);
+        assert_eq!(out.safety_factor, None);
+        assert!(out
+            .warnings
+            .iter()
+            .any(|warning| warning.code == "missing-yield"));
+        let parsed: Material =
+            serde_json::from_str(r#"{"E_MPa":1700,"nu":0.39,"yield_MPa":null}"#).unwrap();
+        assert_eq!(parsed.yield_mpa, None);
+        let omitted: Material = serde_json::from_str(r#"{"E_MPa":1700,"nu":0.39}"#).unwrap();
+        assert_eq!(omitted.yield_mpa, None);
     }
 
     #[test]
