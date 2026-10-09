@@ -7,6 +7,7 @@
  * Anything else: keep the local cart and try again later. No toast.
  */
 import { interpretCartResponse } from './cartApi.js';
+import { normalizeCart } from './cart.js';
 import {
   hasCartUploaded,
   markCartUploaded,
@@ -93,11 +94,7 @@ export async function exchangeCart({
     uploaded,
   });
   const baseVersion = Number(server.version) || 0;
-  const body = {
-    baseVersion,
-    lines: local.lines,
-    tombstones: local.tombstones,
-  };
+  const body = cartSyncPayload(local, baseVersion);
 
   let put;
   try {
@@ -134,6 +131,36 @@ export async function exchangeCart({
       lines: merged.lines,
       tombstones: Array.isArray(merged.tombstones) ? merged.tombstones : [],
     },
+  };
+}
+
+/**
+ * PUT body. Quote fields ride the same merge. A line without a quote sends
+ * nulls so an old server that only knows the v2 shape can still drop them,
+ * and a v3 server keeps them.
+ */
+export function cartSyncPayload(cart, baseVersion) {
+  const state = normalizeCart(cart);
+  return {
+    baseVersion: Number(baseVersion) || 0,
+    lines: state.lines.map((line) => ({
+      lineId: line.lineId,
+      source: line.source,
+      assemblyName: line.assemblyName,
+      partId: line.partId,
+      surfId: line.surfId,
+      partName: line.partName,
+      scriptHash: line.scriptHash,
+      thumbDataUrl: line.thumbDataUrl,
+      qty: line.qty,
+      options: line.options,
+      quotedUnitPrice: line.quotedUnitPrice,
+      quoteId: line.quoteId,
+      quotedAt: line.quotedAt,
+      addedAt: line.addedAt,
+      updatedAt: line.updatedAt,
+    })),
+    tombstones: state.tombstones,
   };
 }
 

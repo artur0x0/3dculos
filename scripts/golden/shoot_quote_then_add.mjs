@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
- * Cart screenshots at 390 and 1440. Writes PNGs under GOLDEN_SHOT_DIR or
- * os.tmpdir(). Not a CI golden — smoke_cart.mjs is the source check.
+ * Quote-then-add screenshots at 390 and 1440: the quote modal ending in
+ * Add to cart, the thumbnail flight, and a stale cart line.
+ * Writes PNGs under GOLDEN_SHOT_DIR or os.tmpdir().
  *
  * Needs a production build (`npm run build`) and system Chrome.
  */
@@ -12,11 +13,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { chromium } from 'playwright-core';
 import { serializeAssembly } from '../../src/utils/assembly.js';
-import { scriptHash } from '../../src/utils/cart.js';
 
-const PORT = Number(process.env.SMOKE_PORT || 4318);
+const PORT = Number(process.env.SMOKE_PORT || 4324);
 const APP_URL = `http://127.0.0.1:${PORT}/`;
-const OUT = process.env.GOLDEN_SHOT_DIR || join(tmpdir(), 'surfcad-cart-shots');
+const OUT = process.env.GOLDEN_SHOT_DIR || join(tmpdir(), 'surfcad-quote-then-add-shots');
 const CHROME = [
   process.env.CHROME_PATH,
   '/usr/bin/google-chrome',
@@ -42,6 +42,7 @@ const DOC = serializeAssembly({
     { id: 'part-plate', name: 'Plate', visible: true, order: 1 },
   ],
 });
+const QUOTED_AT = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString();
 const SEEDED = {
   version: 0,
   lines: [{
@@ -51,10 +52,13 @@ const SEEDED = {
     partId: 'part-bracket',
     surfId: null,
     partName: 'Bracket',
-    scriptHash: scriptHash(SCRIPT_A),
+    scriptHash: 'not-the-live-script',
     thumbDataUrl: null,
     qty: 1,
-    options: null,
+    options: { process: 'FDM', material: 'PLA', infill: 20 },
+    quotedUnitPrice: 4.5,
+    quoteId: 'quote-old',
+    quotedAt: QUOTED_AT,
     addedAt: '2026-10-01T00:00:00.000Z',
     updatedAt: '2026-10-01T00:00:00.000Z',
   }],
@@ -62,11 +66,11 @@ const SEEDED = {
 };
 
 if (!CHROME) {
-  console.log('cart shots: no system Chrome — set CHROME_PATH. Skipping.');
+  console.log('quote-then-add shots: no system Chrome — set CHROME_PATH. Skipping.');
   process.exit(0);
 }
 if (!existsSync(new URL('../../dist/index.html', import.meta.url))) {
-  console.log('cart shots: dist/ missing — run npm run build first');
+  console.log('quote-then-add shots: dist/ missing — run npm run build first');
   process.exit(1);
 }
 
@@ -134,6 +138,14 @@ async function showParts(page, width) {
   await page.waitForSelector('[data-parts-feed]', { timeout: 10000 });
 }
 
+function fulfill(route, status, body) {
+  return route.fulfill({
+    status,
+    contentType: 'application/json',
+    body: JSON.stringify(body),
+  });
+}
+
 async function capture(browser, width, height) {
   const page = await browser.newPage({ viewport: { width, height } });
   page.on('pageerror', (err) => console.log(`  pageerror ${width}: ${err.message}`));
@@ -143,86 +155,60 @@ async function capture(browser, width, height) {
   await page.route('**/api/**', (route) => {
     const url = route.request().url();
     if (url.includes('/api/auth/me')) {
-      return route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ authenticated: true, user: USER }),
-      });
+      return fulfill(route, 200, { authenticated: true, user: USER });
     }
     if (url.includes('/api/config')) {
-      return route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: '{}',
-      });
+      return fulfill(route, 200, {});
     }
     if (url.includes('/api/quotes') && route.request().method() === 'POST') {
       const sent = route.request().postDataJSON() || {};
-      return route.fulfill({
-        status: 201,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          success: true,
-          quoteId: 'quote-shot',
-          quotedAt: new Date().toISOString(),
-          quotedUnitPrice: 6.5,
-          scriptHash: sent.scriptHash,
-          process: sent.process || 'FDM',
-          material: sent.material || 'PLA',
-          infill: sent.infill ?? 20,
-        }),
+      return fulfill(route, 201, {
+        success: true,
+        quoteId: 'quote-shot',
+        quotedAt: new Date().toISOString(),
+        quotedUnitPrice: 6.5,
+        scriptHash: sent.scriptHash,
+        process: sent.process || 'FDM',
+        material: sent.material || 'PLA',
+        infill: sent.infill ?? 20,
       });
     }
-    return route.fulfill({
-      status: 404,
-      contentType: 'application/json',
-      body: '{}',
-    });
+    return fulfill(route, 404, {});
   });
 
   await page.goto(APP_URL, { waitUntil: 'load', timeout: 45000 });
   await seedAssembly(page);
   await page.reload({ waitUntil: 'load', timeout: 45000 });
-  // Phone parts pane stays mounted but `invisible` until the stage pill.
-  await page.waitForSelector('[data-part-order="part-plate"]', { state: 'attached', timeout: 40000 });
+  await page.waitForSelector('[data-part-order="part-bracket"]', { state: 'attached', timeout: 40000 });
   await showParts(page, width);
   await page.waitForSelector('[data-part-order="part-bracket"]', { state: 'visible', timeout: 10000 });
-  // Viewport, parts, and script chips all mount. Only the on-screen one is visible.
-  await page.locator('[data-cart-badge]:visible').first().waitFor({ timeout: 10000 });
-  await shot(page, `cart-${width}-row.png`);
-
-  await page.locator('[data-part-order="part-plate"]').click();
+  await page.locator('[data-part-order="part-bracket"]').click();
   const add = page.locator('[data-quote-add]');
   await add.waitFor({ timeout: 90000 });
+  await add.scrollIntoViewIfNeeded();
+  await page.waitForSelector('[data-quote-mode="add"]', { timeout: 5000 });
+  await shot(page, `quote-then-add-${width}-modal.png`);
+
   await add.click();
   await page.waitForSelector('[data-cart-flight]', { timeout: 90000 });
   await page.waitForTimeout(260);
   await page.evaluate(() => {
     for (const anim of document.getAnimations()) anim.pause();
   });
-  await shot(page, `cart-${width}-flight.png`);
+  await shot(page, `quote-then-add-${width}-flight.png`);
   await page.evaluate(() => {
     for (const anim of document.getAnimations()) anim.finish();
   });
 
-  await page.waitForFunction(
-    () => document.querySelector('[data-cart-badge]')?.getAttribute('data-cart-count') === '2',
-    null,
-    { timeout: 5000 },
-  );
   await page.locator('[data-cart-badge]:visible').first().click();
   await page.waitForSelector('[data-cart-sheet]', { timeout: 5000 });
-  await page.waitForFunction(
-    () => document.querySelectorAll('[data-cart-line]').length >= 2,
-    null,
-    { timeout: 5000 },
-  );
-  await shot(page, `cart-${width}-sheet.png`);
+  await page.waitForSelector('[data-cart-stale]', { timeout: 5000 });
+  await shot(page, `quote-then-add-${width}-stale.png`);
   await page.close();
 }
 
 if (!await waitForServer()) {
-  console.log(`cart shots: preview did not start on ${APP_URL}`);
+  console.log(`quote-then-add shots: preview did not start on ${APP_URL}`);
   stop();
   process.exit(1);
 }
@@ -234,7 +220,7 @@ const browser = await chromium.launch({
 try {
   await capture(browser, 390, 844);
   await capture(browser, 1440, 900);
-  console.log(`cart shots in ${OUT}`);
+  console.log(`quote-then-add shots in ${OUT}`);
 } finally {
   await browser.close();
   stop();

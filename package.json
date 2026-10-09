@@ -159,6 +159,7 @@
         "golden:profile-chip": "node scripts/golden/smoke_profile_chip.mjs",
         "golden:cart": "node scripts/golden/smoke_cart.mjs",
         "golden:cart-checkout": "node scripts/golden/smoke_cart_checkout.mjs",
+        "golden:quote-then-add": "node scripts/golden/smoke_quote_then_add.mjs",
         "golden:github-reauth": "node scripts/golden/smoke_github_reauth.mjs",
         "golden:clear-local-cad": "node scripts/golden/smoke_clear_local_cad.mjs",
         "golden:clear-local-cache": "node scripts/golden/smoke_clear_local_cache.mjs",

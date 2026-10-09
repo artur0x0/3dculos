@@ -126,12 +126,36 @@ export function cartCount(cart) {
   return (cart?.lines || []).reduce((sum, line) => sum + clampQty(line?.qty || 0), 0);
 }
 
+/** Unquoted lines share one identity. A locked quote is process, material, and infill. */
+function optionIdentity(options) {
+  const locked = normalizeOptions(options);
+  if (!locked) return '';
+  const process = locked.process == null ? '' : String(locked.process).trim();
+  const material = locked.material == null ? '' : String(locked.material).trim();
+  const infill = locked.infill == null || !Number.isFinite(Number(locked.infill))
+    ? ''
+    : String(Number(locked.infill));
+  if (!process || !material || infill === '') {
+    if (!process && !material && infill === '') return '';
+    return `partial\0${process}\0${material}\0${infill}`;
+  }
+  return `${process}\0${material}\0${infill}`;
+}
+
+/**
+ * Same cart line when the part (id, or surf id after a git rename), the
+ * locked options, and the quoted script hash all match. A different
+ * material, infill, or script is a new line.
+ */
 function samePart(line, draft) {
   if (!line || !draft) return false;
   if (line.source !== draft.source) return false;
   if (String(line.assemblyName || '') !== String(draft.assemblyName || '')) return false;
-  if (line.partId && line.partId === draft.partId) return true;
-  return !!(line.surfId && draft.surfId && line.surfId === draft.surfId);
+  const byId = !!(line.partId && draft.partId && line.partId === draft.partId);
+  const bySurf = !!(line.surfId && draft.surfId && line.surfId === draft.surfId);
+  if (!byId && !bySurf) return false;
+  if (String(line.scriptHash || '') !== String(draft.scriptHash || '')) return false;
+  return optionIdentity(line.options) === optionIdentity(draft.options);
 }
 
 export function pruneCartTombstones(tombstones, now = new Date()) {
@@ -166,9 +190,10 @@ function tombstoneCovers(tomb, updatedAt) {
 }
 
 /**
- * Order button. Same part (part id, or surf id after a git rename) bumps qty.
- * A new line past the cap is refused. Tombstones are not cleared by a later add
- * of a different line id.
+ * Add to cart. Same part, locked options, and script hash bumps qty and
+ * refreshes the accepted quote. Anything else is a new line. A new line
+ * past the cap is refused. Tombstones are not cleared by a later add of a
+ * different line id.
  */
 export function addPartLine(cart, draft, now = new Date()) {
   const state = normalizeCart(cart);
@@ -177,6 +202,13 @@ export function addPartLine(cart, draft, now = new Date()) {
   const index = lines.findIndex((line) => samePart(line, draft));
   if (index >= 0) {
     const prev = lines[index];
+    const locked = normalizeOptions(draft.options) || prev.options;
+    const incoming = normalizeQuote(draft, locked);
+    const quote = incoming.quoteId ? incoming : {
+      quotedUnitPrice: prev.quotedUnitPrice ?? null,
+      quoteId: prev.quoteId ?? null,
+      quotedAt: prev.quotedAt ?? null,
+    };
     lines[index] = {
       ...prev,
       partId: draft.partId || prev.partId,
@@ -185,6 +217,10 @@ export function addPartLine(cart, draft, now = new Date()) {
       scriptHash: draft.scriptHash || prev.scriptHash,
       thumbDataUrl: capThumb(draft.thumbDataUrl) || prev.thumbDataUrl || null,
       qty: clampQty((Number(prev.qty) || 1) + (Number(draft.qty) || 1)),
+      options: locked,
+      quotedUnitPrice: quote.quotedUnitPrice,
+      quoteId: quote.quoteId,
+      quotedAt: quote.quotedAt,
       updatedAt: iso,
     };
     return { ok: true, cart: { ...state, lines }, lineId: prev.lineId, bumped: true };
@@ -366,7 +402,18 @@ export function normalizeCart(cart, now = new Date()) {
   };
 }
 
-export function makeCartDraft({ doc, part, script, thumbDataUrl, now = new Date(), qty = 1 }) {
+export function makeCartDraft({
+  doc,
+  part,
+  script,
+  thumbDataUrl,
+  now = new Date(),
+  qty = 1,
+  options = null,
+  quotedUnitPrice = null,
+  quoteId = null,
+  quotedAt = null,
+}) {
   const iso = toCartIso(now);
   const source = doc?.source === 'git' ? 'git' : 'local';
   const assemblyName = String(doc?.name || '').trim() || 'Assembly';
@@ -380,7 +427,10 @@ export function makeCartDraft({ doc, part, script, thumbDataUrl, now = new Date(
     scriptHash: scriptHash(script),
     thumbDataUrl: capThumb(thumbDataUrl),
     qty: clampQty(qty),
-    options: null,
+    options: normalizeOptions(options),
+    quotedUnitPrice,
+    quoteId,
+    quotedAt,
     addedAt: iso,
     updatedAt: iso,
   };
@@ -454,6 +504,11 @@ export function presentCartLines(doc, scripts, cart, now = new Date()) {
       quoteExpired,
     };
   });
+}
+
+/** Sheet badge: the script changed, or the quote is missing / past the TTL. */
+export function cartLineIsStale(line) {
+  return !!(line && (line.hashStale || line.quoteExpired));
 }
 
 /** Fill a null thumbnail from the open feed. Over-cap stays null. */

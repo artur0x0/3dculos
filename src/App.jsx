@@ -6692,6 +6692,22 @@ const App = () => {
   const quoteFilename = checkoutLine ? `${checkoutLine.partName}.js` : currentFilename;
   const orderScript = orderData?.script || checkoutLine?.script || currentScript;
   const checkoutHasNext = !!(cartCheckout && cartCheckout.index < cartCheckout.lines.length - 1);
+  const partQuote = cartChrome.partQuote;
+  const partQuoteModal = partQuote ? (
+    <QuoteModal
+      key={`add-${partQuote.partId}`}
+      mode="add"
+      onClose={() => cartChrome.closePartQuote?.()}
+      onGetQuote={(options) => calculateQuote(partQuote.script, {
+        ...(options || {}),
+        partId: partQuote.partId,
+      })}
+      onAddToCart={(payload) => cartChrome.commitQuotedLine?.(payload)}
+      currentScript={partQuote.script}
+      currentFilename={partQuote.filename}
+      partId={partQuote.partId}
+    />
+  ) : null;
 
   if (isMobile) {
     // Keep h-dvh while the keyboard is closed so Monaco can take a real
@@ -7021,6 +7037,7 @@ const App = () => {
               checkoutStep={checkoutStep}
             />
           )}
+          {partQuoteModal}
           
           {/* Order Modal */}
           {showOrderModal && orderData && (
@@ -7358,6 +7375,7 @@ const App = () => {
             checkoutStep={checkoutStep}
           />
         )}
+        {partQuoteModal}
         
         {/* Order Modal */}
         {showOrderModal && orderData && (

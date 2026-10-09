@@ -120,7 +120,9 @@ Desktop specifics:
   left cluster is folder, **+**, then Upload (`data-part-upload`) and
   Download (`data-part-download`). Upload adds a new part from STL, OBJ,
   3MF, or STEP. Download saves the selected part as 3MF. Each row's Order
-  button (`data-part-order`) adds that part to the cart. A signed-in row
+  button (`data-part-order`) opens a quote for that part. Add to cart
+  (`data-quote-add`) stores the locked options, server unit price, and
+  script hash, then the thumbnail flies. A signed-in row
   whose mesh is not in the vault yet shows `local only`
   (`data-part-mesh-local`). Save on a connected vault commits that `.mesh`
   and clears the badge. Signed out, the badge is hidden and the mesh stays
@@ -459,8 +461,8 @@ phones, centered dialog on desktop**.
 | --- | --- | --- | --- |
 | Login | Profile chip → Sign in (signed out / guest) | `LoginModal.jsx` / `ProfileChip.jsx` | `/api/auth/login`, `/register` |
 | Account | Viewport profile chip (signed in) | `AccountModal.jsx` / `ProfileChip.jsx` | tabs `info` / `orders` |
-| Cart | part row Order (`data-part-order`); profile menu Cart (`data-profile-cart`); chip count (`data-cart-badge`) | `CartSheet.jsx` | signed-in lines only. Checkout (`data-cart-checkout`) walks lines in this assembly (`data-checkout-stepper`, Line N of M). Part missing and Not in this assembly stay in the cart. |
-| Quote | cart Checkout, one line at a time | `QuoteModal.jsx` | process / material / infill. Qty is the cart line's (`data-quote-qty`), not a second stepper. `calculateQuote(lineScript, { ...options, quantity, partId })`. An `importMesh` line reads the asset cache; a miss shows that line's error. |
+| Cart | part row Order (`data-part-order`); profile menu Cart (`data-profile-cart`); chip count (`data-cart-badge`) | `CartSheet.jsx` | signed-in lines only. Each quoted line shows its server unit price (`data-cart-unit-price`) and a stale badge (`data-cart-stale`) when the script hash changed or the quote expired (7 days, or no quote id). Checkout (`data-cart-checkout`) still walks lines in this assembly (`data-checkout-stepper`, Line N of M). Part missing and Not in this assembly stay in the cart. |
+| Quote | part-row Order (`data-quote-mode="add"`) and cart Checkout (`data-quote-mode="checkout"`) | `QuoteModal.jsx` | process / material / infill. Checkout qty is the cart line's (`data-quote-qty`) and the button says Order. Add to cart qty is editable; the button is Add to cart (`data-quote-add`). That path POSTs `/api/quotes` and stores `quoteId`, `quotedAt`, and `quotedUnitPrice`. A 404 shows an error and does not write a line. The browser `calculateQuote` fills the modal; the line stores the server unit price. An `importMesh` checkout line reads the asset cache; a miss shows that line's error. |
 | Order | Quote → Order | `OrderModal.jsx` + `components/order/*` | six steps, `STEPS` at `OrderModal.jsx`: Auth → Address → Shipping → Payment → Confirmation → Convert. The checkout stepper stays on the line. Shipping, payment, confirmation, and the account orders tab show Qty. Pay uses the server total; a mismatch shows “Price updated to $X” and disables Pay until confirmed. An unmeasurable export shows “We couldn't measure this part. Please re-export and try again.” A server that rejects `quantity` shows that instead of crashing. |
 | Helper params | any helper-rail button | `HelperParamModal.jsx` | **not** a full-screen modal: docks bottom-centre *of the viewport* (`absolute inset-0`, click-through overlay, no scrim) so the rails and the live preview stay visible and usable. No click-outside-to-cancel — X / Cancel only. Also serves as the refuse/explain dialog |
 | Puzzle picker | Toolbar → List (game) | `PuzzlePickerModal.jsx` | |
