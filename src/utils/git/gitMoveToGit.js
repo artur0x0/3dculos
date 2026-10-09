@@ -140,6 +140,7 @@ export function planMoveToGit(doc, scripts, {
  */
 export async function moveToGit(adapter, {
   vaultName = DEFAULT_VAULT_NAME,
+  storedName = null,
   doc,
   scripts,
   sharedIds = [],
@@ -154,7 +155,7 @@ export async function moveToGit(adapter, {
   // Plan first so a bad document fails before a repo is created.
   const plan = planMoveToGit(doc, scripts, { sharedIds, liveId, liveScript });
 
-  const found = await findOrCreateVault(adapter, { name });
+  const found = await findOrCreateVault(adapter, { name, storedName });
   if (found.status === 'invalid-name' || found.status === 'not-a-vault' || found.status === 'missing') {
     return { status: found.status, vaultName: name, repo: found.repo || null };
   }

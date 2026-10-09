@@ -96,7 +96,7 @@ export default function ProfilePanel({
         <div className="px-3 py-1" data-profile-delete-confirm="">
           <p className="text-xs text-gray-200">
             This deletes your SurfCAD account and your GitHub repo
-            (usually <span className="font-mono text-gray-100">surfcad</span>).
+            (usually <span className="font-mono text-gray-100">surfcad-vault</span>).
             This cannot be undone.
           </p>
           {error ? (

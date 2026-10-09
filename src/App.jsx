@@ -186,6 +186,8 @@ import {
   canDeleteVaultBranch,
   squashMergeVaultBranch,
   DEFAULT_VAULT_NAME,
+  LEGACY_VAULT_NAME,
+  storedVaultNameFromUser,
   sanitizeVaultName,
   planMoveToGit,
   moveToGit,
@@ -2137,12 +2139,42 @@ const App = () => {
     }
   };
 
+  const storedVaultName = () => (
+    isAuthenticated ? storedVaultNameFromUser(user) : null
+  );
+
+  /** Move queued `owner/surfcad` rows onto the resolved repo, then remember the name. */
+  const noteResolvedVault = async (vaultRepo) => {
+    if (!vaultRepo?.owner || !vaultRepo?.name) return;
+    try {
+      await gitSync().rekeyRepo(
+        { owner: vaultRepo.owner, name: LEGACY_VAULT_NAME },
+        vaultRepo,
+      );
+    } catch (err) {
+      console.warn('[git] vault rekey failed', err?.message || err);
+    }
+    if (!isAuthenticated || vaultRepo.name === storedVaultName()) return;
+    const token = loadGithubToken();
+    if (!token) return;
+    try {
+      await fetch('/api/auth/vault-name', {
+        method: 'PUT',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ vaultName: vaultRepo.name, access_token: token }),
+      });
+    } catch (err) {
+      console.warn('[git] vault name write-back failed', err?.message || err);
+    }
+  };
+
   const ensureGitVault = async () => {
     ensureGitAdapter();
     if (gitVaultRef.current) return gitVaultRef.current;
     const VAULT_TIMEOUT_MS = 45000;
     const result = await Promise.race([
-      findOrCreateVault(gitAdapterRef.current),
+      findOrCreateVault(gitAdapterRef.current, { storedName: storedVaultName() }),
       new Promise((_, reject) => {
         setTimeout(() => reject(new Error(
           'Repo lookup timed out — check network / GitHub Connect and try again',
@@ -2158,6 +2190,7 @@ const App = () => {
       headSha: result.headSha || null,
       private: result.private !== false,
     };
+    await noteResolvedVault(vault.repo);
     gitVaultRef.current = vault;
     return vault;
   };
@@ -2256,6 +2289,7 @@ const App = () => {
     }
     if (result.status === 'failed') {
       if (result.toast) setRenameNotice(result.toast);
+      if (result.code === 'not_a_vault' && result.error) setUploadError(result.error);
       return result;
     }
     if ((result.status === 'synced' || result.status === 'failed') && result.layoutMoves?.length && assemblyRef.current) {
@@ -2410,7 +2444,7 @@ const App = () => {
     return true;
   };
 
-  /** G6: vault name the Move to Git dialog starts with (current vault, else surfcad). */
+  /** G6: vault name the Move to Git dialog starts with (current vault, else surfcad-vault). */
   const gitDefaultVaultName = () => gitVaultRef.current?.repo?.name || DEFAULT_VAULT_NAME;
 
   /** Live editor text for the active part, unless the editor shows a placeholder. */
@@ -2448,6 +2482,7 @@ const App = () => {
       }
       const result = await moveToGit(ensureGitAdapter(), {
         vaultName,
+        storedName: storedVaultName(),
         doc,
         scripts: partScriptsRef.current,
         sharedIds,
@@ -2478,6 +2513,7 @@ const App = () => {
         headSha: result.sha,
         private: result.vault.private,
       };
+      await noteResolvedVault(result.vault.repo);
       await applyCommittedWorkspace({ doc: result.doc, scripts: result.scripts });
       rememberGitBaseline(result.baseline);
       if (result.sha) await gitSync().setLastSyncedSha(result.vault.repo, result.sha, 'main');
@@ -3905,7 +3941,9 @@ const App = () => {
 
   // G10: GitHub token enables vault/git source; without it, stay on silent IndexedDB (local).
   // No user-facing Local|Git toggle — identity strip is display-only.
+  // Wait until auth has settled so a stored vaultName is visible before resolve.
   useEffect(() => {
+    if (authLoading) return undefined;
     const doc = assemblyRef.current;
     if (!doc) return undefined;
     if (githubConnected) {
@@ -3952,12 +3990,13 @@ const App = () => {
       setGitBehindToast(null);
     }
     return undefined;
-  }, [githubConnected, assemblyDoc]); // eslint-disable-line react-hooks/exhaustive-deps -- vault helpers via refs
+  }, [githubConnected, assemblyDoc, authLoading]); // eslint-disable-line react-hooks/exhaustive-deps -- vault helpers via refs
 
   // After reload, baseline is gone but IndexedDB may still hold an in-repo
   // assembly. Reseed baseline from the current branch tip (do not replace the
   // working copy) so dirty = IDB vs tip — in-sync open stays clean.
   useEffect(() => {
+    if (authLoading) return undefined;
     if (!githubConnected) return undefined;
     const doc = assemblyRef.current;
     if (!doc || doc.source !== 'git') return undefined;
@@ -4053,7 +4092,7 @@ const App = () => {
       }
     })();
     return () => { cancelled = true; };
-  }, [githubConnected, assemblyDoc, gitBaseline]); // eslint-disable-line react-hooks/exhaustive-deps -- vault helpers via refs
+  }, [githubConnected, assemblyDoc, gitBaseline, authLoading]); // eslint-disable-line react-hooks/exhaustive-deps -- vault helpers via refs
 
   /** Flush working copy to IndexedDB (local Save for assembly leave guard). */
   const handleFlushLocalAssembly = async () => {

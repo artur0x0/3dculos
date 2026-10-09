@@ -23,6 +23,7 @@ import {
 } from '../../src/utils/git/githubAuth.js';
 import { fetchGithubUserProfile, splitGithubDisplayName } from '../../backend/services/githubUser.js';
 import { deleteGithubVaultRepo } from '../../backend/services/githubVaultDelete.js';
+import { vaultMarkerContent } from '../../src/utils/git/vault.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -196,29 +197,44 @@ console.log('\ngit G8 — fetchGithubUserProfile');
 
 console.log('\ngit G8 — deleteGithubVaultRepo');
 {
+  const marker = Buffer.from(vaultMarkerContent(), 'utf8').toString('base64');
   const fetchImpl = async (url, opts) => {
-    ok('DELETE method', opts?.method === 'DELETE');
+    const method = opts?.method || 'GET';
+    if (method === 'GET' && /\/repos\/octo\/surfcad-vault$/.test(url)) {
+      return { status: 200, json: async () => ({ name: 'surfcad-vault', owner: { login: 'octo' }, default_branch: 'main' }) };
+    }
+    if (method === 'GET' && /surfcad\.json/.test(url)) {
+      return { status: 200, json: async () => ({ type: 'file', encoding: 'base64', content: marker }) };
+    }
+    ok('DELETE method', method === 'DELETE');
     return { status: 204, json: async () => ({}) };
   };
   const r = await deleteGithubVaultRepo({
-    accessToken: 'tok', owner: 'octo', name: 'surfcad', fetchImpl,
+    accessToken: 'tok', owner: 'octo', name: 'surfcad-vault', fetchImpl,
   });
-  ok('204 deleted', r.ok && r.deleted === true && r.repo === 'octo/surfcad');
+  ok('204 deleted', r.ok && r.deleted === true && r.repo === 'octo/surfcad-vault');
 }
 {
   const r = await deleteGithubVaultRepo({
-    accessToken: 'tok', owner: 'octo', name: 'surfcad',
+    accessToken: 'tok', owner: 'octo', name: 'surfcad-vault',
     fetchImpl: async () => ({ status: 404, json: async () => ({ message: 'Not Found' }) }),
   });
-  ok('404 treated as ok (already gone)', r.ok && r.deleted === false);
+  ok('404 treated as ok (already gone)', r.ok && r.deleted === false && r.gone === true);
 }
 {
+  const marker = Buffer.from(vaultMarkerContent(), 'utf8').toString('base64');
   const r = await deleteGithubVaultRepo({
-    accessToken: 'tok', owner: 'octo', name: 'surfcad',
-    fetchImpl: async () => ({
-      status: 403,
-      json: async () => ({ message: 'Must have admin rights to Repository.' }),
-    }),
+    accessToken: 'tok', owner: 'octo', name: 'surfcad-vault',
+    fetchImpl: async (url, opts) => {
+      const method = opts?.method || 'GET';
+      if (method === 'GET' && /surfcad\.json/.test(url)) {
+        return { status: 200, json: async () => ({ type: 'file', encoding: 'base64', content: marker }) };
+      }
+      if (method === 'GET') {
+        return { status: 200, json: async () => ({ name: 'surfcad-vault', owner: { login: 'octo' }, default_branch: 'main' }) };
+      }
+      return { status: 403, json: async () => ({ message: 'Must have admin rights to Repository.' }) };
+    },
   });
   ok('403 missing delete permission', r.ok === false && r.code === 'missing_delete_permission'
     && /delete_repo|Administration/.test(r.error));
@@ -299,7 +315,7 @@ console.log('\ngit G8 — UI + wiring (source)');
   ok('auth route POST /github', /router\.post\('\/github'/.test(authRoutes));
   ok('auth route uses fetchGithubUserProfile', /fetchGithubUserProfile/.test(authRoutes));
   ok('auth route deletes account + vault', /router\.delete\('\/account'/.test(authRoutes)
-    && /deleteGithubVaultRepo/.test(authRoutes));
+    && /deleteResolvedGithubVault/.test(authRoutes));
   ok('findOrCreateOAuth backfills names', /Backfill names from GitHub/.test(readFileSync(join(root, 'backend/db/models/User.js'), 'utf8')));
   ok('auth route findOrCreateOAuth github', /findOrCreateOAuth\(profile,\s*'github'\)/.test(authRoutes));
   ok('auth route does not store token', !/access_token.*=.*user/.test(authRoutes)

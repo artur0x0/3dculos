@@ -2,6 +2,7 @@
 import mongoose from 'mongoose';
 import bcrypt from 'bcrypt';
 import crypto from 'crypto';
+import { defaultVaultName } from '../vaultNameDefaults.js';
 
 const addressSchema = new mongoose.Schema({
   label: {
@@ -76,6 +77,18 @@ const userSchema = new mongoose.Schema({
   providerId: {
     type: String,
     default: null, // OAuth provider's user ID
+  },
+  // GitHub repo that holds this user's parts. New accounts get surfcad-vault.
+  // The default is a function so init/hydrate of an existing document does
+  // not invent the name: Mongo stays unset until resolution writes back the
+  // repo it actually found. A string default would look like surfcad-vault
+  // on every old user and could be saved on the next unrelated write.
+  // There is no settings UI for this field.
+  vaultName: {
+    type: String,
+    trim: true,
+    maxlength: 100,
+    default: defaultVaultName,
   },
   // GitHub numeric user id (string). Set on Sign in with GitHub / Connect upsert.
   githubId: {

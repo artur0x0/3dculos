@@ -232,8 +232,8 @@ const commitSrc = readFileSync(new URL('../../src/utils/git/gitCommit.js', impor
 const vaultSrc = readFileSync(new URL('../../src/utils/git/vault.js', import.meta.url), 'utf8');
 ok('null baseline head resolves tip before commit', /expectedBase = opts\.baseline\?\.headSha/.test(commitSrc)
   && /adapter\.getBranch\(repo, branch\)/.test(commitSrc));
-ok('vault findOrCreate prefers getBranch over size===0', /classifyExistingVault/.test(vaultSrc)
-  && /size === 0/.test(vaultSrc) && /non_fast_forward/.test(vaultSrc));
+ok('vault findOrCreate prefers getBranch over size===0', /inspectRepo/.test(vaultSrc)
+  && /getBranch/.test(vaultSrc) && /size === 0/.test(vaultSrc) && /non_fast_forward/.test(vaultSrc));
 ok('G10 suppresses Upload Error for main-moved vault race', /moved:\\s\*head/i.test(app));
 ok('Connect still git-only (G7 gates on client id)',
   /data-git-connect=""/.test(feed) && /source === 'git'/.test(feed)

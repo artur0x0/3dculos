@@ -6,7 +6,8 @@ import User from '../db/models/User.js';
 import email from '../services/email.js';
 import config from '../config/index.js';
 import { fetchGithubUserProfile } from '../services/githubUser.js';
-import { deleteGithubVaultRepo } from '../services/githubVaultDelete.js';
+import { deleteResolvedGithubVault } from '../services/githubVaultDelete.js';
+import { confirmAndRememberVaultName, storedVaultNameFromUser } from '../services/vaultName.js';
 
 const router = Router();
 
@@ -30,9 +31,13 @@ function buildRedirectUrl(baseUrl, returnPath, additionalParams = {}) {
  */
 router.get('/me', (req, res) => {
   if (req.isAuthenticated()) {
+    const user = req.user.toJSON();
+    // Null when the Mongo document never stored a name. Do not substitute the
+    // schema default here — resolution must still be free to adopt a legacy vault.
+    user.vaultName = storedVaultNameFromUser(req.user);
     return res.json({
       authenticated: true,
-      user: req.user,
+      user,
     });
   }
   
@@ -669,10 +674,74 @@ router.post('/change-password', async (req, res) => {
 
 
 /**
+ * PUT /api/auth/vault-name
+ * Store the repo name the client resolved. The server re-reads surfcad.json
+ * and saves GitHub's name only when the marker matches.
+ * Body: { vaultName: string, access_token: string }
+ */
+router.put('/vault-name', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const user = await User.findById(req.user._id);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    const accessToken = typeof req.body?.access_token === 'string'
+      ? req.body.access_token.trim()
+      : '';
+    if (!accessToken) {
+      return res.status(400).json({
+        error: 'GitHub token required to confirm the vault.',
+        code: 'missing_token',
+      });
+    }
+    const looked = await fetchGithubUserProfile({ accessToken });
+    if (!looked.ok) {
+      return res.status(looked.status || 400).json({
+        error: looked.error || 'Could not verify GitHub token',
+        code: looked.status === 401 ? 'invalid_token' : 'github_lookup_failed',
+      });
+    }
+    const owner = looked.profile.login;
+    if (!owner) {
+      return res.status(400).json({ error: 'GitHub login missing', code: 'missing_login' });
+    }
+    const saved = await confirmAndRememberVaultName(user, {
+      accessToken,
+      owner,
+      vaultName: req.body?.vaultName,
+    });
+    if (!saved.ok) {
+      return res.status(saved.status || 409).json({
+        error: saved.error,
+        code: saved.code || 'not_a_vault',
+      });
+    }
+    if (saved.changed) await user.save();
+    return res.json({
+      vaultName: saved.vaultName,
+      repo: saved.repo ? `${saved.repo.owner}/${saved.repo.name}` : null,
+    });
+  } catch (error) {
+    console.error('[Auth] Vault name error:', error);
+    return res.status(500).json({ error: error?.message || 'Failed to store vault name' });
+  }
+});
+
+/**
  * DELETE /api/auth/account
- * Delete the SurfCAD user record and (when a GitHub token is provided) the
+ * Delete the SurfCAD user record and, when a GitHub token is provided, the
  * vault repo. Confirmed from the profile Danger zone.
- * Body: { access_token?: string, vault_name?: string } — vault defaults to surfcad.
+ * Body: { access_token?: string, vault_name?: string }
+ * vault_name is ignored. The server resolves stored user.vaultName, then
+ * surfcad-vault, then a marked legacy surfcad, and deletes only a match.
+ *
+ * An unmarked repo is not deleted. The SurfCAD account is still deleted:
+ * the GitHub repo may be the app itself or an unrelated project, and blocking
+ * account deletion on that would trap the user. The response reports
+ * vault.skipped so the client can say the repo was left in place.
+ * A GitHub error (permissions, network) does not delete the user.
  */
 router.delete('/account', async (req, res) => {
   try {
@@ -688,10 +757,7 @@ router.delete('/account', async (req, res) => {
     const accessToken = typeof req.body?.access_token === 'string'
       ? req.body.access_token.trim()
       : '';
-    const vaultNameRaw = typeof req.body?.vault_name === 'string'
-      ? req.body.vault_name.trim()
-      : '';
-    const vaultName = vaultNameRaw || 'surfcad';
+    const storedName = storedVaultNameFromUser(user);
 
     let vault = null;
     if (user.githubId || accessToken) {
@@ -713,10 +779,10 @@ router.delete('/account', async (req, res) => {
       if (!owner) {
         return res.status(400).json({ error: 'GitHub login missing', code: 'missing_login' });
       }
-      const del = await deleteGithubVaultRepo({
+      const del = await deleteResolvedGithubVault({
         accessToken,
         owner,
-        name: vaultName,
+        storedName,
       });
       if (!del.ok) {
         return res.status(del.status || 403).json({
@@ -724,7 +790,13 @@ router.delete('/account', async (req, res) => {
           code: del.code || 'vault_delete_failed',
         });
       }
-      vault = { repo: del.repo, deleted: del.deleted };
+      vault = {
+        repo: del.repo,
+        deleted: !!del.deleted,
+        skipped: !!del.skipped,
+        reason: del.reason || null,
+        gone: !!del.gone,
+      };
     }
 
     const email = user.email;

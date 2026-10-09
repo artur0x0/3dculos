@@ -58,6 +58,7 @@ export const GIT_ADAPTER_ERROR_CODES = Object.freeze([
   'non_fast_forward',
   'invalid',
   'unauthorized',
+  'not_a_vault',
 ]);
 
 export class GitAdapterError extends Error {

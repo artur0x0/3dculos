@@ -34,7 +34,7 @@ function eq(name, got, want) {
 console.log('git G2 — seed vault with two assemblies');
 const gh = createMockGithubAdapter({ login: 'artur' });
 const vault = await findOrCreateVault(gh);
-eq('vault ready', [vault.status, vault.repo.name], ['created', 'surfcad']);
+eq('vault ready', [vault.status, vault.repo.name], ['created', 'surfcad-vault']);
 const gearbox = {
   source: 'git',
   name: 'Gearbox',

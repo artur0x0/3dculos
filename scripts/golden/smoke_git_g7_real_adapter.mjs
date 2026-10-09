@@ -18,6 +18,7 @@ import {
 } from '../../src/utils/git/githubAdapterInterface.js';
 import { createMockGithubAdapter } from '../../src/utils/git/mockGithubAdapter.js';
 import { createGithubAdapter } from '../../src/utils/git/githubAdapter.js';
+import { vaultMarkerContent } from '../../src/utils/git/vault.js';
 import {
   GITHUB_CALLBACK_PATH, GITHUB_TOKEN_STORAGE_KEY, GITHUB_TOKEN_EXCHANGE_PATH,
   GITHUB_OAUTH_STATE_MISSING_HINT,
@@ -568,16 +569,17 @@ function makeFakeGithub() {
   await throwsCode('bad name', () => real.createRepo({ name: 'a b' }), 'invalid');
 
   eq('empty branches', await real.listBranches(repo), []);
+  const marker = vaultMarkerContent();
   const c1 = await real.commitFiles(repo, {
-    branch: 'main', message: 'one', baseSha: null,
-    files: [fileWrite('a.txt', 'A'), fileWrite('dir/b.txt', 'B')],
+    branch: 'main', message: 'one', baseSha: null, seed: true,
+    files: [fileWrite('surfcad.json', marker), fileWrite('a.txt', 'A'), fileWrite('dir/b.txt', 'B')],
   });
   ok('first commit sha', /^[0-9a-f]{40}$/i.test(c1.sha));
   eq('first parents', c1.parents, []);
   eq('main listed', (await real.listBranches(repo)).map((b) => b.name), ['main']);
   eq('read a.txt', (await real.readFile(repo, 'a.txt')).content, 'A');
   eq('read missing', await real.readFile(repo, 'nope.txt'), null);
-  eq('tree', (await real.listTree(repo, 'main')).map((e) => e.path), ['a.txt', 'dir/b.txt']);
+  eq('tree', (await real.listTree(repo, 'main')).map((e) => e.path), ['a.txt', 'dir/b.txt', 'surfcad.json']);
   eq('tree prefix', (await real.listTree(repo, 'main', { prefix: 'dir/' })).map((e) => e.path), ['dir/b.txt']);
   eq('empty-repo first commit is root', c1.parents, []);
   ok('empty-repo multi-file landed both paths',
@@ -590,12 +592,17 @@ function makeFakeGithub() {
     eq('solo empty', solo.empty, true);
     const soloRepo = { owner: 'octo-user', name: 'solo-empty' };
     const sc = await real.commitFiles(soloRepo, {
-      branch: 'main', message: 'solo', baseSha: null,
-      files: [fileWrite('only.txt', 'ONE')],
+      branch: 'main', message: 'solo', baseSha: null, seed: true,
+      files: [fileWrite('surfcad.json', marker)],
     });
     ok('solo sha', /^[0-9a-f]{40}$/i.test(sc.sha));
     eq('solo parents', sc.parents, []);
-    eq('solo content', (await real.readFile(soloRepo, 'only.txt')).content, 'ONE');
+    eq('solo content', (await real.readFile(soloRepo, 'surfcad.json')).content, marker);
+    await real.createRepo({ name: 'not-a-vault', private: true });
+    await throwsCode('unmarked empty repo is not seeded', () => real.commitFiles(
+      { owner: 'octo-user', name: 'not-a-vault' },
+      { branch: 'main', message: 'nope', baseSha: null, files: [fileWrite('only.txt', 'ONE')] },
+    ), 'not_a_vault');
   }
 
   const c2 = await real.commitFiles(repo, {
@@ -603,7 +610,7 @@ function makeFakeGithub() {
     files: [fileWrite('a.txt', 'A2'), fileDelete('dir/b.txt'), fileWrite('c.txt', 'C')],
   });
   eq('second parents', c2.parents, [c1.sha]);
-  eq('after c2 tree', (await real.listTree(repo, 'main')).map((e) => e.path), ['a.txt', 'c.txt']);
+  eq('after c2 tree', (await real.listTree(repo, 'main')).map((e) => e.path), ['a.txt', 'c.txt', 'surfcad.json']);
   eq('read at old sha', (await real.readFile(repo, 'a.txt', c1.sha)).content, 'A');
   await throwsCode('stale baseSha', () => real.commitFiles(repo, {
     branch: 'main', message: 'x', baseSha: c1.sha, files: [fileWrite('a.txt', 'z')],

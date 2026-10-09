@@ -4,7 +4,7 @@ How SurfCAD stores a Git vault today. The app is [surfcad.com](https://surfcad.c
 
 Sources: `src/utils/git/vaultLayout.js`, `vault.js`, `surfJson.js`, `surfId.js`, `gitWorkspace.js`, `gitDeleteAssembly.js`, `gitRename.js`, `syncStore.js`, `syncWorker.js`, `src/utils/partGroups.js`, `src/utils/assembly.js`.
 
-Local mode is not this layout. With no GitHub token the working copy autosaves in IndexedDB `surfcad-assembly`. A part row id is a bare key with no `local:` prefix; a load-time migration strips that legacy prefix. A GitHub token find-or-creates one private repo (default name `surfcad`) and writes the layout below.
+Local mode is not this layout. With no GitHub token the working copy autosaves in IndexedDB `surfcad-assembly`. A part row id is a bare key with no `local:` prefix; a load-time migration strips that legacy prefix. A GitHub token find-or-creates one private repo (default name `surfcad-vault`, or a marked legacy `surfcad` when that is the vault) and writes the layout below.
 
 ## Tree
 
@@ -24,7 +24,7 @@ parts/M3 bolt.js
 
 | Path | What it is |
 | --- | --- |
-| `surfcad.json` | Vault marker. A non-empty repo without it is not written. |
+| `surfcad.json` | Vault marker. A repo without it is not written. Only an empty repo the app just created is seeded. |
 | `assemblies/<Name>/.surf.json` | Assembly document. The file name is `.surf.json`, not `<Name>.surf.json`. |
 | `parts/<Part>.js` | Part script. New parts land here. Flat: `parts/a/b.js` is not a part path. |
 | `assemblies/<Name>/<Part>.js` | Copy to this assembly only. New surf id. A name already in the folder becomes `Name (2)`. |
