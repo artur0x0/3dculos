@@ -1312,11 +1312,19 @@ const Viewport = forwardRef(({
                             : '';
   featureCardKindRef.current = featureCardKind;
   sheetCameraOwnedRef.current = featureCardKind !== '';
+  // A view snap or zoom-to-fit wins over the card slide. Close still restores
+  // the snapshot taken when the card opened.
+  const sheetSlideArmedRef = useRef(true);
+  const holdSheetSlide = () => {
+    sheetSlideArmedRef.current = false;
+    sheetCameraRef.current?.slideBy(0);
+  };
   useEffect(() => {
     if (!featureCardKind) return undefined;
+    sheetSlideArmedRef.current = true;
     let alive = true;
     const tick = () => {
-      if (!alive) return;
+      if (!alive || !sheetSlideArmedRef.current) return;
       sheetCameraRef.current?.slideBy(sheetSlideDeltaRef.current());
     };
     const raf = requestAnimationFrame(tick);
@@ -1343,6 +1351,7 @@ const Viewport = forwardRef(({
   useEffect(() => {
     if (!featureCardKind) return undefined;
     const raf = requestAnimationFrame(() => {
+      if (!sheetSlideArmedRef.current) return;
       sheetCameraRef.current?.slideBy(sheetSlideDeltaRef.current());
     });
     return () => cancelAnimationFrame(raf);
@@ -6717,6 +6726,7 @@ const Viewport = forwardRef(({
           stageFit: ({ az = 35, el = 20, margin = 1.15 } = {}) => {
             const cam = cameraRef.current, ctl = controlsRef.current, res = resultRef.current;
             if (!cam || !res || !res.geometry) return false;
+            holdSheetSlide();
             const azr = (az * Math.PI) / 180, elr = (el * Math.PI) / 180;
             const ok = fitView({
               camera: cam, controls: ctl, geometry: res.geometry,
@@ -7206,6 +7216,7 @@ const Viewport = forwardRef(({
     for (const mesh of assemblyExtrasRef.current.values()) meshes.push(mesh);
     const box = unionWorldBox(meshes);
     if (!box) return;
+    holdSheetSlide();
     if (fitView({ camera: cameraRef.current, controls: controlsRef.current, box })) {
       console.log('[Viewport] Zoomed to fit');
     }
@@ -7217,6 +7228,7 @@ const Viewport = forwardRef(({
   const handleViewSnap = useCallback((key, margin = VIEW_SNAP_MARGIN) => {
     const preset = VIEW_PRESETS[key] || VIEW_PRESETS.iso;
     if (!resultRef.current?.geometry || !cameraRef.current) return false;
+    holdSheetSlide();
     const ok = fitView({
       camera: cameraRef.current,
       controls: controlsRef.current,
