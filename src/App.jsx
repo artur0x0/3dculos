@@ -26,6 +26,7 @@ import OrderModal from './components/OrderModal';
 import LoginModal from './components/LoginModal';
 import AccountModal from './components/AccountModal';
 import { useAuth } from './hooks/useAuth';
+import { useAuthState } from './hooks/useAuthState';
 import { 
   importFile,
 } from './utils/importModel';
@@ -107,6 +108,7 @@ import {
 } from './utils/assemblyStore';
 import {
   bootUserId,
+  bootWouldClobber,
   bootWriteAllowed,
   planReloadAssembly,
   pointerForUser,
@@ -123,7 +125,6 @@ import {
   clearGithubToken,
   resolveGithubClientId,
   rememberGithubClientId,
-  establishGithubSession,
   buildAuthorizeUrl,
   createOAuthState,
   githubRedirectUri,
@@ -306,6 +307,8 @@ const App = () => {
   const finishOpenedPartRef = useRef(async () => {});
   /** idle until auth settles; opening while a reload is in flight; done after. */
   const bootGateRef = useRef('idle');
+  /** Reauth reopen must not write IndexedDB, the outbox, or the demo. */
+  const bootReadOnlyRef = useRef(false);
   const [bootEpoch, setBootEpoch] = useState(0);
   const [bootResume, setBootResume] = useState('pending');
   const ensureGitVaultRef = useRef(async () => null);
@@ -714,39 +717,33 @@ const App = () => {
 
 
   const { user, isAuthenticated, isLoading: authLoading, checkAuth } = useAuth();
+  const gitSession = useAuthState();
+  const noteBootEmptyRef = useRef(gitSession.noteBootEmpty);
+  noteBootEmptyRef.current = gitSession.noteBootEmpty;
 
-  // Stay signed in across a reload. /api/auth/me runs first. If the cookie
-  // is gone, refresh an expiring GitHub App user token and upsert the
-  // session again before treating the reload as signed out.
+  // Chip, Open, and this boot all follow gitSession.phase. Pending waits.
+  // Reauth (session in, GitHub token missing) must not look connected and
+  // must not flip the working copy to a local file browser.
   useEffect(() => {
-    if (authLoading) {
+    if (gitSession.phase === 'pending') {
       setBootResume('pending');
-      return undefined;
+      return;
     }
-    if (isAuthenticated) {
+    if (gitSession.phase === 'connected') {
+      setGithubConnected(true);
+      bootReadOnlyRef.current = false;
       setBootResume('in');
-      return undefined;
+      return;
     }
-    let cancelled = false;
-    (async () => {
-      const fresh = await refreshGithubAccessToken();
-      if (cancelled) return;
-      const token = fresh.ok ? (fresh.accessToken || loadGithubToken()) : '';
-      if (token) {
-        setGithubConnected(true);
-        const session = await establishGithubSession({ accessToken: token });
-        if (cancelled) return;
-        if (session.ok) {
-          await checkAuth();
-          return;
-        }
-      } else if (!hasGithubToken()) {
-        setGithubConnected(false);
-      }
-      if (!cancelled) setBootResume('out');
-    })();
-    return () => { cancelled = true; };
-  }, [authLoading, isAuthenticated, checkAuth]);
+    if (gitSession.phase === 'reauth') {
+      setGithubConnected(false);
+      setBootResume('reauth');
+      return;
+    }
+    setGithubConnected(false);
+    bootReadOnlyRef.current = false;
+    setBootResume('out');
+  }, [gitSession.phase]);
 
   const viewportRef = useRef(null);
 
@@ -1096,7 +1093,9 @@ const App = () => {
       } catch {
         // Offline / no backend — VITE_GITHUB_APP_CLIENT_ID still works.
       }
-      if (!cancelled) setGithubConnected(hasGithubToken());
+      // Never force connected off. A late config response used to clear a
+      // token the session probe had just restored from the durable bundle.
+      if (!cancelled && hasGithubToken()) setGithubConnected(true);
     })();
     return () => { cancelled = true; };
   }, []);
@@ -1108,6 +1107,13 @@ const App = () => {
   // creates nothing.
   useEffect(() => {
     if (!manifoldReady || bootResume === 'pending') return undefined;
+    // Reconnect finished after a read-only reopen. Keep the open document.
+    // The source flip below turns it into a vault once the token is back.
+    if (bootResume === 'in' && bootGateRef.current === 'done' && assemblyRef.current) {
+      bootReadOnlyRef.current = false;
+      noteBootEmptyRef.current(false);
+      return undefined;
+    }
     let cancelled = false;
 
     const params = new URLSearchParams(window.location.search);
@@ -1176,10 +1182,14 @@ const App = () => {
     };
 
     const run = async () => {
-      if (bootResume !== 'in') {
+      if (bootResume === 'out') {
+        bootReadOnlyRef.current = false;
+        noteBootEmptyRef.current(false);
         clearChip();
         return;
       }
+      const reauth = bootResume === 'reauth';
+      bootReadOnlyRef.current = reauth;
       bootGateRef.current = 'opening';
       const userId = bootUserId(user);
       const pointer = pointerForUser(readLastOpenedMap(browserStorage()), userId);
@@ -1187,10 +1197,11 @@ const App = () => {
       if (loaded.status === 'timeout') loaded = await loadAssemblyDocumentStatus();
       if (cancelled) return;
 
-      const github = !!(githubConnected || hasGithubToken());
+      const github = !reauth && !!(githubConnected || hasGithubToken());
       const decide = (vaultStatus) => planReloadAssembly({
         me: 'in',
         refresh: 'idle',
+        reauth,
         cacheStatus: loaded.status,
         cachedDoc: loaded.doc,
         pointer,
@@ -1211,10 +1222,12 @@ const App = () => {
         }
       }
       if (cancelled) return;
-      if (bootWriteAllowed(plan) || plan.action === 'clear') {
+      if (bootWriteAllowed(plan) || plan.action === 'clear' || plan.action === 'empty') {
+        noteBootEmptyRef.current(plan.action === 'empty');
         clearChip();
         return;
       }
+      noteBootEmptyRef.current(false);
       if (plan.action === 'wait') {
         bootGateRef.current = 'idle';
         return;
@@ -1289,10 +1302,13 @@ const App = () => {
               }
               if (draft && localIds.draftPartId !== draft.partId) {
                 draft = { ...draft, partId: localIds.draftPartId };
-                try { await saveEditorDraft(draft); } catch { /* ignore */ }
+                if (!bootReadOnlyRef.current) {
+                  try { await saveEditorDraft(draft); } catch { /* ignore */ }
+                }
               }
             }
-            if (migrated.changed || localIds.changed || Object.keys(flags).length) {
+            const readOnly = plan.readOnly === true || bootReadOnlyRef.current;
+            if (!readOnly && !bootWouldClobber(loaded.doc, doc) && (migrated.changed || localIds.changed || Object.keys(flags).length)) {
               try {
                 await saveAssemblyDocument(doc);
                 if (migrated.changed || localIds.changed) {
@@ -1327,7 +1343,7 @@ const App = () => {
             scripts = restored.scripts;
             const nextScript = restored.script;
             let nextFilename = restored.filename || filename || active.name;
-            if (restored.persistActive && nextScript) {
+            if (!readOnly && restored.persistActive && nextScript) {
               try { await savePartScript(active.id, nextScript); } catch { /* ignore */ }
             }
             if (!nextFilename) nextFilename = active.name;
@@ -1348,7 +1364,9 @@ const App = () => {
             setAssemblyDoc(doc);
             setPartScripts(scripts);
             setBootEpoch((n) => n + 1);
-            if (userId) rememberLastOpened(browserStorage(), userId, doc);
+            if (!readOnly && userId && !bootWouldClobber(null, doc)) {
+              rememberLastOpened(browserStorage(), userId, doc);
+            }
             try {
               const store = gitSync();
               await store.ready();
@@ -1393,6 +1411,7 @@ const App = () => {
     const scriptAtSchedule = currentScript;
     const filenameAtSchedule = currentFilename;
     const timer = setTimeout(() => {
+      if (bootReadOnlyRef.current) return;
       if (epoch !== partSaveEpochRef.current) return;
       if (!idAtSchedule || assemblyRef.current?.activeId !== idAtSchedule) return;
       if (suppressPartSaveRef.current || typeof scriptAtSchedule !== 'string') return;
@@ -1416,6 +1435,7 @@ const App = () => {
   useEffect(() => {
     if (!manifoldReady || editorInitialScript === null) return undefined;
     const flush = () => {
+      if (bootReadOnlyRef.current) return;
       if (appModeRef.current === 'game' || !editorLiveRef.current) return;
       const live = codeEditorRef.current?.getContent?.() ?? currentScript;
       const id = assemblyRef.current?.activeId;
@@ -1715,10 +1735,12 @@ const App = () => {
     const clean = serializeAssembly(doc);
     assemblyRef.current = clean;
     setAssemblyDoc(clean);
-    assemblyDocPersistRef.current = saveAssemblyDocument(clean);
-    const id = bootUserId(user);
-    if (id) {
-      try { rememberLastOpened(globalThis.localStorage, id, clean); } catch { /* private mode */ }
+    if (!bootReadOnlyRef.current) {
+      assemblyDocPersistRef.current = saveAssemblyDocument(clean);
+      const id = bootUserId(user);
+      if (id) {
+        try { rememberLastOpened(globalThis.localStorage, id, clean); } catch { /* private mode */ }
+      }
     }
     return clean;
   };
@@ -2251,6 +2273,7 @@ const App = () => {
 
   const handleGitDisconnect = () => {
     clearGithubToken();
+    gitSession.markNeedsReauth();
     setGithubConnected(false);
     gitAdapterRef.current = null;
     gitVaultRef.current = null;
@@ -4120,6 +4143,7 @@ const App = () => {
   useEffect(() => {
     if (authLoading) return undefined;
     if (bootGateRef.current !== 'done') return undefined;
+    if (bootResume === 'reauth' || bootReadOnlyRef.current) return undefined;
     const doc = assemblyRef.current;
     if (!doc) return undefined;
     if (githubConnected) {
@@ -4166,7 +4190,7 @@ const App = () => {
       setGitBehindToast(null);
     }
     return undefined;
-  }, [githubConnected, assemblyDoc, authLoading, bootEpoch]); // eslint-disable-line react-hooks/exhaustive-deps -- vault helpers via refs
+  }, [githubConnected, assemblyDoc, authLoading, bootEpoch, bootResume]); // eslint-disable-line react-hooks/exhaustive-deps -- vault helpers via refs
 
   // After reload, baseline is gone but IndexedDB may still hold an in-repo
   // assembly. Reseed baseline from the current branch tip (do not replace the
@@ -6049,7 +6073,7 @@ const App = () => {
       onRenameRevert={handleRenameRevert}
       syncConflict={syncConflict}
       onSyncConflictClear={() => setSyncConflict(null)}
-      canCommit={assemblyDoc.source === 'git' && !!sourceDirty}
+      canCommit={assemblyDoc.source === 'git' && !!sourceDirty && gitSession.phase === 'connected'}
       onGitCommit={handleGitCommit}
       behindPartIds={behindPartIdSet}
       assemblyBehind={!!behindMarkers.assemblyBehind}

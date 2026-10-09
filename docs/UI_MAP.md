@@ -72,9 +72,11 @@ names are sanitised
 (`sanitizePartName`) because they end up in `${name}.js` downloads. The part
 chip is `onRenameFile` → `setCurrentFilename`. The assembly chip is
 `onRenameAssembly` → the document `name`. Game keeps a single puzzle-name
-chip. A signed-in reload shows the last opened assembly. Signed out, both
-chips are absent (`data-viewer-title-empty`, `showCadTitle` off); reload does
-not load or create `Part (1)` in `Assembly`.
+chip. A signed-in, GitHub-connected reload shows the last opened assembly.
+Signed out, both chips are absent (`data-viewer-title-empty`, `showCadTitle`
+off); reload does not load or create `Part (1)` in `Assembly`. Signed in
+without a usable GitHub token reopens a real cached assembly read-only, or
+shows an empty reconnect prompt. It does not plant the demo.
 
 Desktop specifics:
 - **Feature strip (desktop CAD viewer):** `FeatureStrip.jsx` mounts as a
@@ -90,7 +92,14 @@ Desktop specifics:
 - **Profile chip:** desktop (above the 768px mobile breakpoint) shows only
   the CAD viewport chip, top-right. Mobile shows that chip plus one on the
   Parts ribbon and one on the Script toolbar (same `ProfileChip`). Signed-out
-  = grey User icon; signed-in = green initials. The account menu includes
+  = grey User icon; signed-in and GitHub-connected = green initials. Signed in
+  without a GitHub token = grey initials plus an exclamation badge
+  (`data-profile-badge="reauth"`). Tap spins, tries a quiet refresh, then a
+  silent GitHub popup; **Reconnect** is the full-page flow after that fails.
+  Open follows the same phase and does not open local files in that state.
+  Other features call `useAuthState()` (`src/hooks/useAuthState.js`): `signedIn`
+  is that live session, `githubConnected` is the vault.
+  The account menu includes
   **Clear local cache** (`data-clear-cache`), which opens the confirm popup
   (`data-clear-cache-dialog`) and warns about unpushed outbox entries and
   unsynced parts. GitHub Sign-in uses the runtime Client ID cache from

@@ -121,6 +121,12 @@ export function rememberLastOpened(storage, userId, doc) {
  * the global working copy wins (another user, or the demo seed that used to
  * overwrite `current`). A legacy `local:` active id still counts as the
  * same assembly when the names match.
+ *
+ * `reauth` is signed in at /me with no usable GitHub token (missing,
+ * expired, or a refresh the backend does not implement). Reopen a real
+ * cached assembly read-only. The stock demo is not a cached assembly:
+ * showing it or saving it is how Part (1) came back. Vault open waits
+ * until GitHub is connected again.
  */
 export function chooseSignedInTarget({
   cacheStatus = 'pending',
@@ -152,6 +158,14 @@ function blocked() {
  * Reload decision. `persist`, `commit`, `enqueue`, and `createAssembly` are
  * always false: opening must not write the demo or push an outbox op.
  */
+function usableCachedDoc(cacheStatus, cachedDoc) {
+  return cacheStatus === 'hit'
+    && cachedDoc
+    && Array.isArray(cachedDoc.parts)
+    && cachedDoc.parts.length > 0
+    && !isBootDemoDocument(cachedDoc);
+}
+
 export function planReloadAssembly({
   me = 'pending',
   refresh = 'idle',
@@ -161,6 +175,7 @@ export function planReloadAssembly({
   userId = '',
   vaultStatus = 'idle',
   githubConnected = false,
+  reauth = false,
 } = {}) {
   const auth = resolveBootAuth({ me, refresh });
   const base = blocked();
@@ -170,6 +185,42 @@ export function planReloadAssembly({
   if (auth === 'out') {
     const reason = refresh === 'failed' ? 'session-refresh-failed' : 'signed-out';
     return { ...base, action: 'clear', chip: 'clear', reason, doc: null, name: '' };
+  }
+
+  // Signed in, GitHub not usable. Never seed, never write, never treat the
+  // stock demo as the last assembly. A real IndexedDB document is read-only.
+  if (reauth) {
+    if (cacheStatus === 'pending') {
+      return {
+        ...base,
+        action: 'wait',
+        chip: 'unchanged',
+        reason: 'cache-pending',
+        readOnly: true,
+        doc: null,
+        name: '',
+      };
+    }
+    if (usableCachedDoc(cacheStatus, cachedDoc)) {
+      return {
+        ...base,
+        action: 'reopen-cache',
+        chip: 'show',
+        reason: 'reauth-cache',
+        readOnly: true,
+        doc: cachedDoc,
+        name: assemblyIdentity(cachedDoc),
+      };
+    }
+    return {
+      ...base,
+      action: 'empty',
+      chip: 'clear',
+      reason: cacheStatus === 'timeout' ? 'reauth-timeout' : 'reauth-empty',
+      readOnly: true,
+      doc: null,
+      name: '',
+    };
   }
 
   if (cacheStatus === 'pending') {
