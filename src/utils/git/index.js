@@ -19,3 +19,4 @@ export * from './gitRename.js';
 export * from './gitDeleteAssembly.js';
 export * from './syncStore.js';
 export * from './syncWorker.js';
+export * from './gitAssemblyRename.js';

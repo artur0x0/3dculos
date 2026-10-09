@@ -76,6 +76,8 @@ export async function flushSyncQueue({
   const promoted = {};
   const syncedPartIds = [];
   const layoutMoves = [];
+  const assemblyRenames = [];
+  let otherWrites = false;
   for (const item of queued) {
     await store.setOpStatus(item.id, 'sending');
     await store.setPartsState(repo, item.partIds, 'sending', item.branch || branch);
@@ -112,6 +114,14 @@ export async function flushSyncQueue({
       head = res.sha;
       if (plannedMoves) layoutMoves.push(...plannedMoves);
       syncedPartIds.push(...(item.partIds || []));
+      if (item.op === 'rename' && item.payload?.kind === 'assembly') {
+        assemblyRenames.push({
+          fromName: item.payload.fromName,
+          toName: item.payload.toName,
+        });
+      } else {
+        otherWrites = true;
+      }
       await store.setLastSyncedSha(repo, head, branch);
       await store.setOpStatus(item.id, 'done');
       await store.setPartsState(repo, item.partIds, 'clean', item.branch || branch);
@@ -124,6 +134,24 @@ export async function flushSyncQueue({
           op: item,
           error: err.message || vaultWriteRefusalMessage(writeRepo),
           code: 'not_a_vault',
+          sha: head,
+          branch,
+          promoted,
+          partIds: syncedPartIds,
+          layoutMoves,
+          pending: store.pending(repo, branch).length,
+        };
+      }
+      // A failed assembly rename stays queued so the next flush retries it.
+      // The row shows the yellow unsynced dot, not a dropped op.
+      if (item.op === 'rename' && item.payload?.kind === 'assembly') {
+        await store.setOpStatus(item.id, 'queued', err?.message || 'Sync failed');
+        await store.setPartsState(repo, item.partIds, 'queued', item.branch || branch);
+        return {
+          status: 'failed',
+          op: item,
+          error: err?.message || 'Sync failed',
+          code: 'rename-held',
           sha: head,
           branch,
           promoted,
@@ -149,5 +177,14 @@ export async function flushSyncQueue({
       };
     }
   }
-  return { status: 'synced', sha: head, branch, promoted, partIds: syncedPartIds, layoutMoves };
+  return {
+    status: 'synced',
+    sha: head,
+    branch,
+    promoted,
+    partIds: syncedPartIds,
+    layoutMoves,
+    assemblyRenames,
+    assemblyRenameOnly: assemblyRenames.length > 0 && !otherWrites,
+  };
 }

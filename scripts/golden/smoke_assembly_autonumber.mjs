@@ -345,6 +345,93 @@ createRoot(document.getElementById('root')).render(
   }
 }
 
+console.log('\nassembly rename — 390px spinner and post-rename row');
+{
+  const shotDir = process.env.GOLDEN_SHOT_DIR || tmpdir();
+  mkdirSync(shotDir, { recursive: true });
+  const chrome = ['/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser', process.env.CHROME_PATH]
+    .find((p) => p && existsSync(p));
+  ok('chrome available for the rename row shots', !!chrome);
+  if (chrome) {
+    const css = await postcss([
+      tailwindcss({ config: join(ROOT, 'tailwind.config.js') }),
+      autoprefixer(),
+    ]).process(read('src/index.css'), { from: join(ROOT, 'src/index.css') });
+    const pageBundle = await build({
+      stdin: {
+        contents: `import { createRoot } from 'react-dom/client';
+import PartFeed from './src/components/PartFeed.jsx';
+const shot = window.__RENAME_SHOT || 'spinner';
+const pending = shot === 'spinner';
+const dirty = shot === 'dot';
+const path = 'assemblies/Transmission/Bracket.js';
+createRoot(document.getElementById('root')).render(
+  <div style={{ width: '390px', height: '844px', background: '#1e1e1e' }} data-rename-shot={shot}>
+    <PartFeed
+      placement="mobile"
+      source="git"
+      assemblyName="Transmission"
+      currentBranch="main"
+      sourceDirty={dirty}
+      canCommit={dirty}
+      rows={[{ id: path, name: 'Bracket', visible: true, order: 0, pending, dirty }]}
+      activeId={path}
+    />
+  </div>
+);`,
+        resolveDir: ROOT,
+        loader: 'jsx',
+      },
+      bundle: true,
+      format: 'iife',
+      platform: 'browser',
+      write: false,
+      jsx: 'automatic',
+      define: { 'process.env.NODE_ENV': '"production"' },
+      logLevel: 'error',
+    });
+    const htmlFor = (shot) => `<!doctype html><html class="dark"><head><meta charset="utf-8"><style>${css.css}</style></head>
+<body style="margin:0;background:#1e1e1e;color-scheme:dark"><div id="root"></div>
+<script>window.__RENAME_SHOT=${JSON.stringify(shot)}</script>
+<script>${pageBundle.outputFiles[0].text}</script></body></html>`;
+    const browser = await chromium.launch({
+      executablePath: chrome,
+      args: ['--no-sandbox', '--disable-dev-shm-usage'],
+    });
+    try {
+      const page = await browser.newPage({
+        viewport: { width: 390, height: 844 },
+        deviceScaleFactor: 1,
+        colorScheme: 'dark',
+      });
+      await page.setContent(htmlFor('spinner'), { waitUntil: 'load' });
+      await page.waitForSelector('[data-part-pending-spinner]');
+      const spinning = await page.locator('[data-assembly-name]').first().innerText();
+      ok('spinner shot shows the new assembly name', spinning.includes('Transmission'));
+      ok('row spinner is the create spinner', await page.locator('[data-part-pending-spinner]').count() === 1);
+      const spinShot = join(shotDir, 'assembly-rename-spinner-390.png');
+      await page.screenshot({ path: spinShot });
+      ok('spinner shot is 390px and stays out of artifacts',
+        (await page.viewportSize()).width === 390 && !spinShot.includes('/opt/cursor/artifacts') && existsSync(spinShot));
+      console.log(`  shot ${spinShot}`);
+
+      await page.setContent(htmlFor('clean'), { waitUntil: 'load' });
+      await page.waitForSelector('[data-part-save]');
+      const renamed = await page.locator('[data-assembly-name]').first().innerText();
+      ok('post-rename shot shows Transmission', renamed.includes('Transmission'));
+      ok('post-rename row is not spinning', await page.locator('[data-part-pending-spinner]').count() === 0);
+      ok('post-rename row has no unsynced dot', await page.locator('span[data-part-dirty]').count() === 0);
+      const cleanShot = join(shotDir, 'assembly-rename-clean-390.png');
+      await page.screenshot({ path: cleanShot });
+      ok('clean shot is 390px and stays out of artifacts',
+        (await page.viewportSize()).width === 390 && !cleanShot.includes('/opt/cursor/artifacts') && existsSync(cleanShot));
+      console.log(`  shot ${cleanShot}`);
+    } finally {
+      await browser.close();
+    }
+  }
+}
+
 if (failed) {
   console.log(`\nassembly autonumber: ${failed} failed, ${passed} passed`);
   process.exit(1);
