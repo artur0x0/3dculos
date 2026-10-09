@@ -294,7 +294,8 @@ export { default as FeatureStrip } from './src/components/FeatureStrip.jsx';`,
     /ok: false,[\s\S]{0,200}featureId: typeof error\?\.featureId === 'string'/.test(vp));
   check('App maps the tracked block first and feeds every sheet',
     /failedFeatureFromOutcome\(script, \{ featureId, featureBlock, scriptLine \}\)/.test(app)
-    && (app.match(/failedIds=\{sheetFailedIds\}/g) || []).length === 3
+    && (app.match(/featureEditFailedIds=\{sheetFailedIds\}/g) || []).length === 2
+    && /failedIds=\{featureEditFailedIds\}/.test(vp)
     && (app.match(/failedIds=\{stripFailedIds\}/g) || []).length === 3);
   const arch = read('docs/architecture.md');
   check('architecture.md documents block tracking, the Safari fallback and the sheet red',

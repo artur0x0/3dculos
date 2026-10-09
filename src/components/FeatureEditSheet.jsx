@@ -7,8 +7,6 @@ import {
   NotebookPen,
   TriangleRight,
   Code2,
-  X,
-  Check,
   Trash2,
   Box,
   Cylinder,
@@ -45,15 +43,14 @@ import {
   parseFeatureSheetParams,
   isFeatureSheetEditable,
 } from '../utils/featureSheetWriteback';
+import FeatureSheet from './FeatureSheet';
 
 /**
- * Slice Mobile C.1 — full-width horizontal feature sheet under the part name.
- *
- * Replaces the Mobile C bottom-sheet chrome. Params + Accept / Cancel / Edit
- * script stay. Mounts on CAD and Script stages. Desktop never mounts this.
- *
- * Layout: title/actions row on top; params scroll horizontally underneath so
- * narrow phones keep Accept visible without hiding Distance / Sense.
+ * Fallback editor and the feature picker, on the shared bottom card.
+ * Kinds with a creation dialog reopen that dialog instead (`beginFeatureEdit`).
+ * This card is what stays when that dialog does not open, plus the picker.
+ * X and Esc write nothing. Confirm saves and closes. There is no swipe.
+ * Game does not mount it.
  */
 
 const FEATURE_ICONS = Object.freeze({
@@ -109,43 +106,6 @@ function snippetPreview(text, maxLines = 2) {
   return `${lines.slice(0, maxLines - 1).join('\n')}\n…`;
 }
 
-/** Shared outer shell: full-width under title (top-14).
- *  Mobile: cap height below feature strip + finger clearance; body scrolls. */
-/**
- * `placement`:
- *   'stage'    — phone, full-width under the title (the original).
- *   'viewport' — desktop, inside the 3D pane. Same anchor (just under the
- *                part-name chip) but capped in width, because a sheet spanning
- *                a 1000px viewer reads as a banner, not a popup. It also sits
- *                clear of the left rail, which is full-length on desktop.
- */
-function SheetShell({ children, placement = 'stage', ...attrs }) {
-  const a = accentOf(ACCENT);
-  const viewport = placement === 'viewport';
-  return (
-    <div
-      className={`pointer-events-auto absolute top-14 z-40 flex justify-center
-        ${viewport ? 'left-20 right-4 lg:left-24' : 'inset-x-0 px-2'}`}
-      data-feature-sheet=""
-      data-feature-sheet-layout="under-title-horizontal"
-      data-feature-sheet-placement={placement}
-      role="dialog"
-      {...attrs}
-    >
-      <div
-        className={`w-full rounded-xl border shadow-xl surface-glass-chip
-          ${a.panel} px-3 py-2 overflow-hidden flex flex-col min-h-0
-          ${viewport ? 'max-w-2xl max-h-[calc(100%-1rem)]' : 'max-h-[calc(100dvh-10rem)]'}`}
-        data-feature-sheet-panel=""
-      >
-        <div className="min-h-0 overflow-y-auto rail-scroll" data-feature-sheet-scroll="">
-          {children}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function TypeBadge({ index }) {
   if (!index) return null;
   return (
@@ -161,7 +121,7 @@ function TypeBadge({ index }) {
   );
 }
 
-export default function FeatureSheet({
+export default function FeatureEditSheet({
   feature = null,
   features = null,
   script = '',
@@ -172,8 +132,8 @@ export default function FeatureSheet({
   onPickFeature,
   /** Ids the last run failed in (red border, wins over the external yellow). */
   failedIds = null,
-  /** 'stage' (phone) | 'viewport' (desktop, inside the 3D pane). */
-  placement = 'stage',
+  /** Phone. The card docks to the pane bottom and the stage switcher hides. */
+  compact = false,
 }) {
   const a = accentOf(ACCENT);
   const block = useMemo(
@@ -193,65 +153,59 @@ export default function FeatureSheet({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [feature?.id, block]);
 
-  // Picker mode: multiple features, none selected yet — horizontal chip row.
+  // Picker: several features, none selected. X closes and writes nothing.
   if (!feature && Array.isArray(features) && features.length > 0) {
     return (
-      <SheetShell
-        placement={placement}
-        data-feature-sheet-picker=""
-        aria-label="Choose feature to edit"
+      <FeatureSheet
+        title="Edit feature"
+        compact={compact}
+        onCancel={onCancel}
+        cardAttrs={{
+          'data-feature-sheet': '',
+          'data-feature-sheet-layout': 'feature-card',
+          'data-feature-sheet-picker': '',
+          'data-feature-sheet-cancel': '',
+          'aria-label': 'Choose feature to edit',
+        }}
       >
-        <div className="flex items-center gap-2 min-w-0">
-          <div className={`${POPUP_TEXT.title} text-white shrink-0`}>Edit feature</div>
-          <div className="flex flex-row gap-1.5 overflow-x-auto rail-scroll flex-1 min-w-0">
-            {features.map((f) => {
-              const editable = isFeatureSheetEditable(f.kind);
-              const failed = !!failedIds?.has?.(f.id);
-              const typeIndex = f.typeIndex || ((f.index ?? 0) + 1);
-              return (
-                <button
-                  key={f.id}
-                  type="button"
-                  data-feature-sheet-pick={f.id}
-                  data-feature-kind={f.kind}
-                  data-feature-type-index={typeIndex}
-                  onClick={() => onPickFeature?.(f)}
-                  data-feature-sheet-failed={failed ? '1' : undefined}
-                  aria-invalid={failed || undefined}
-                  title={failed ? `${f.chipLabel} — failed on the last run` : undefined}
-                  className={`relative shrink-0 flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-left
-                    ${sheetPickTone(editable, failed)}`}
-                >
-                  <span className="relative inline-flex">
-                    <FeatureGlyph kind={f.kind} size={16} />
-                    <TypeBadge index={typeIndex} />
-                  </span>
-                  <span className={`${POPUP_TEXT.value} font-medium whitespace-nowrap`}>{f.chipLabel}</span>
-                  {!editable && (
-                    <span className="text-[10px] uppercase tracking-wide text-gray-400">script</span>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-          <button
-            type="button"
-            aria-label="Cancel"
-            data-feature-sheet-cancel=""
-            onClick={() => onCancel?.()}
-            className="shrink-0 rounded-md p-1.5 text-gray-300 hover:text-white"
-          >
-            <X size={16} />
-          </button>
+        <div className="flex flex-col gap-1.5 py-1">
+          {features.map((f) => {
+            const editable = isFeatureSheetEditable(f.kind);
+            const failed = !!failedIds?.has?.(f.id);
+            const typeIndex = f.typeIndex || ((f.index ?? 0) + 1);
+            return (
+              <button
+                key={f.id}
+                type="button"
+                data-feature-sheet-pick={f.id}
+                data-feature-kind={f.kind}
+                data-feature-type-index={typeIndex}
+                onClick={() => onPickFeature?.(f)}
+                data-feature-sheet-failed={failed ? '1' : undefined}
+                aria-invalid={failed || undefined}
+                title={failed ? `${f.chipLabel} — failed on the last run` : undefined}
+                className={`relative flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-left
+                  ${sheetPickTone(editable, failed)}`}
+              >
+                <span className="relative inline-flex">
+                  <FeatureGlyph kind={f.kind} size={16} />
+                  <TypeBadge index={typeIndex} />
+                </span>
+                <span className={`${POPUP_TEXT.value} font-medium whitespace-nowrap`}>{f.chipLabel}</span>
+                {!editable && (
+                  <span className="text-[10px] uppercase tracking-wide text-gray-400">script</span>
+                )}
+              </button>
+            );
+          })}
         </div>
-      </SheetShell>
+      </FeatureSheet>
     );
   }
 
   if (!feature) return null;
 
   const editable = !!(parsed && parsed.editable);
-  const stub = !editable;
   const typeIndex = feature.typeIndex || ((feature.index ?? 0) + 1);
   // Same red as the strip chip (failedFeatureIds on this script).
   const failed = !!failedIds?.has?.(feature.id);
@@ -270,111 +224,114 @@ export default function FeatureSheet({
   if (editable && feature.kind === 'extrude') {
     fields = (
       <>
-        <div className="shrink-0 min-w-[10rem]">
-          <NumberField
-            id="sheet-extrude-distance"
-            label="Distance"
-            accent={ACCENT}
-            value={draft.distance}
-            onChange={(v) => setNum('distance', v, 10)}
-            min={0.1}
-            max={120}
-            step={0.5}
-          />
-        </div>
-        <div className="shrink-0 min-w-[10rem]">
-          <ChoiceRow
-            label="Sense"
-            accent={ACCENT}
-            value={draft.sense || 'positive'}
-            onChange={(sense) => setDraft((prev) => ({ ...prev, sense }))}
-            options={[
-              { value: 'positive', label: 'Out' },
-              { value: 'negative', label: 'In' },
-              { value: 'both', label: 'Both' },
-            ]}
-          />
-        </div>
+        <NumberField
+          id="sheet-extrude-distance"
+          label="Distance"
+          accent={ACCENT}
+          value={draft.distance}
+          onChange={(v) => setNum('distance', v, 10)}
+          min={0.1}
+          max={120}
+          step={0.5}
+        />
+        <ChoiceRow
+          label="Sense"
+          accent={ACCENT}
+          value={draft.sense || 'positive'}
+          onChange={(sense) => setDraft((prev) => ({ ...prev, sense }))}
+          options={[
+            { value: 'positive', label: 'Out' },
+            { value: 'negative', label: 'In' },
+            { value: 'both', label: 'Both' },
+          ]}
+        />
       </>
     );
   } else if (editable && feature.kind === 'fillet') {
     fields = (
-      <div className="shrink-0 min-w-[10rem]">
-        <NumberField
-          id="sheet-fillet-radius"
-          label="Radius"
-          accent={ACCENT}
-          value={draft.radius}
-          onChange={(v) => setNum('radius', v, 2)}
-          min={0.01}
-          max={40}
-          step={0.25}
-        />
-      </div>
+      <NumberField
+        id="sheet-fillet-radius"
+        label="Radius"
+        accent={ACCENT}
+        value={draft.radius}
+        onChange={(v) => setNum('radius', v, 2)}
+        min={0.01}
+        max={40}
+        step={0.25}
+      />
     );
   } else if (editable && feature.kind === 'revolve') {
     fields = (
-      <div className="shrink-0 min-w-[10rem]">
-        <NumberField
-          id="sheet-revolve-angle"
-          label="Angle"
-          accent={ACCENT}
-          value={draft.angle}
-          onChange={(v) => setNum('angle', v, 360)}
-          min={0.1}
-          max={360}
-          step={1}
-        />
-      </div>
+      <NumberField
+        id="sheet-revolve-angle"
+        label="Angle"
+        accent={ACCENT}
+        value={draft.angle}
+        onChange={(v) => setNum('angle', v, 360)}
+        min={0.1}
+        max={360}
+        step={1}
+      />
     );
   } else {
     fields = (
-      <p className={`${POPUP_TEXT.note} ${a.muted} shrink-0 max-w-[16rem]`} data-feature-sheet-stub="">
+      <p className={`${POPUP_TEXT.note} ${a.muted}`} data-feature-sheet-stub="">
         Params for {feature.label} aren’t editable here yet. Use Edit script.
       </p>
     );
   }
 
+  const subtitle = failed
+    ? 'Failed on the last run'
+    : feature.external
+      ? 'External copy · not linked · Delete removes it'
+      : 'Feature sheet';
+
   return (
-    <SheetShell
-      placement={placement}
-      data-feature-sheet-kind={feature.kind}
-      data-feature-sheet-id={feature.id}
-      data-feature-sheet-editable={editable ? 'true' : 'false'}
-      aria-label={`${feature.chipLabel} feature sheet`}
-    >
-      {/* Row 1: identity + actions (always visible on narrow phones). */}
-      <div
-        className="flex flex-row flex-wrap items-center gap-x-2 gap-y-1.5 w-full min-w-0"
-        data-feature-sheet-row="identity"
-      >
-        <span
-          className={`relative inline-flex items-center justify-center rounded-lg bg-cyan-900/70 p-1.5 shrink-0 ${
-            sheetIdentityTone(feature.external, failed)
-          }`}
-          data-feature-sheet-external={feature.external ? '1' : undefined}
-          data-feature-sheet-failed={failed ? '1' : undefined}
+    <FeatureSheet
+      title={feature.chipLabel}
+      subtitle={subtitle}
+      compact={compact}
+      onCancel={onCancel}
+      onConfirm={editable ? () => onAccept?.(feature, draft) : undefined}
+      note={(
+        <button
+          type="button"
+          aria-label="Delete feature"
+          data-feature-sheet-delete=""
+          title="Delete this feature from the script"
+          onClick={() => onDelete?.(feature)}
+          className="inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-[13px]
+            font-medium text-red-200 border border-red-700/60 bg-red-950/50
+            hover:bg-red-900/70 hover:text-white"
         >
-          <FeatureGlyph kind={feature.kind} size={18} />
-          <TypeBadge index={typeIndex} />
-        </span>
-        {/* `shrink-0` here fought `flex-1` and won, so the title block kept its
-            full content width and pushed itself under the actions on a phone —
-            `truncate` never got the chance to fire. It must be allowed to
-            shrink; the action buttons are the ones that hold their size. */}
-        <div className="min-w-0 flex-1">
-          <div className={`${POPUP_TEXT.title} text-white truncate`}>{feature.chipLabel}</div>
-          <div className={`${POPUP_TEXT.subtitle} text-cyan-100/80 truncate`}>
-            {failed
-              ? 'Failed on the last run · fix and Accept, or Edit script'
-              : feature.external ? 'External copy · not linked · Delete removes it' : 'Feature sheet'}
-          </div>
-        </div>
-        {/* The four actions are ~315px on their own, which is more than a 360px
-            phone has left after the icon — so the cluster wraps to its own line
-            instead of colliding with the title or being clipped by the shell's
-            overflow-hidden. `ml-auto` keeps it right-aligned either way. */}
-        <div className="flex items-center gap-1.5 shrink-0 ml-auto">
+          <Trash2 size={14} aria-hidden="true" />
+          Delete
+        </button>
+      )}
+      cardAttrs={{
+        'data-feature-sheet': '',
+        'data-feature-sheet-layout': 'feature-card',
+        'data-feature-sheet-kind': feature.kind,
+        'data-feature-sheet-id': feature.id,
+        'data-feature-sheet-editable': editable ? 'true' : 'false',
+        'data-feature-sheet-accept': editable ? '' : undefined,
+        'data-feature-sheet-cancel': '',
+        'aria-label': `${feature.chipLabel} feature sheet`,
+      }}
+    >
+      <div className="flex flex-col gap-2 py-1" data-feature-sheet-params="">
+        <div className="flex items-center gap-2 min-w-0">
+          <span
+            className={`relative inline-flex items-center justify-center rounded-lg bg-cyan-900/70 p-1.5 shrink-0 ${
+              sheetIdentityTone(feature.external, failed)
+            }`}
+            data-feature-sheet-external={feature.external ? '1' : undefined}
+            data-feature-sheet-failed={failed ? '1' : undefined}
+          >
+            <FeatureGlyph kind={feature.kind} size={18} />
+            <TypeBadge index={typeIndex} />
+          </span>
           <PopupButton
             variant="ghost"
             accent={ACCENT}
@@ -384,57 +341,17 @@ export default function FeatureSheet({
             <Code2 size={14} aria-hidden="true" />
             Edit script
           </PopupButton>
-          {!stub && (
-            <PopupButton
-              variant="primary"
-              accent={ACCENT}
-              data-feature-sheet-accept=""
-              onClick={() => onAccept?.(feature, draft)}
-            >
-              <Check size={14} aria-hidden="true" />
-              Accept
-            </PopupButton>
-          )}
-          <button
-            type="button"
-            aria-label="Delete feature"
-            data-feature-sheet-delete=""
-            title="Delete this feature from the script"
-            onClick={() => onDelete?.(feature)}
-            className="inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-[13px]
-              font-medium text-red-200 border border-red-700/60 bg-red-950/50
-              hover:bg-red-900/70 hover:text-white"
-          >
-            <Trash2 size={14} aria-hidden="true" />
-            Delete
-          </button>
-          <button
-            type="button"
-            aria-label="Cancel"
-            data-feature-sheet-cancel=""
-            onClick={() => onCancel?.()}
-            className="rounded-md p-1.5 text-gray-300 hover:text-white"
-          >
-            <X size={16} />
-          </button>
         </div>
-      </div>
-
-      {/* Row 2: params scroll horizontally when they don’t fit. */}
-      <div
-        className="mt-2 flex flex-row items-start gap-3 font-sans overflow-x-auto rail-scroll"
-        data-feature-sheet-params=""
-      >
         {fields}
         <div
-          className="shrink-0 rounded-md border border-cyan-800/60 bg-black/35 px-2 py-1
-            font-mono text-[10px] leading-snug text-cyan-100/85 max-w-[10rem] max-h-12 overflow-hidden"
+          className="rounded-md border border-cyan-800/60 bg-black/35 px-2 py-1
+            font-mono text-[10px] leading-snug text-cyan-100/85 max-h-12 overflow-hidden"
           data-feature-sheet-snippet=""
           aria-hidden="true"
         >
           <pre className="whitespace-pre-wrap break-all m-0">{snippetPreview(block)}</pre>
         </div>
       </div>
-    </SheetShell>
+    </FeatureSheet>
   );
 }

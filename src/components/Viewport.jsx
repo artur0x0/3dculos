@@ -64,6 +64,7 @@ import { FeatureDeleteToast } from './FeatureEditDelete';
 import ContourModeRail from './ContourModeRail';
 import ContourModeChip from './ContourModeChip';
 import FeatureSheet from './FeatureSheet';
+import FeatureEditSheet from './FeatureEditSheet';
 import FilletModeChip from './FilletModeChip';
 import ShellModeChip from './ShellModeChip';
 import { PaintModeChip } from './PaintModeChip';
@@ -330,7 +331,8 @@ import { formatViewerTitle, sanitizePartName } from '../utils/assembly.js';
 import { createCuttingPlaneWidget, updateCuttingPlaneWidget } from '../utils/cuttingPlaneWidget';
 import { AxesHelper } from 'three';
 import { calculateMeasurements, createMeasurementLines, disposeMeasurementLines } from '../utils/measurementTool';
-import { fitView, meshWorldBox, unionWorldBox, VIEW_PRESETS, VIEW_SNAP_MARGIN, panViewByNdcY, easeInOutCubic } from '../utils/viewCamera';
+import { fitView, meshWorldBox, unionWorldBox, VIEW_PRESETS, VIEW_SNAP_MARGIN } from '../utils/viewCamera';
+import { listFeatureSheetTargets } from '../utils/featureSheetWriteback';
 import {
   boxCornerPoints,
   createSheetCameraSession,
@@ -753,6 +755,21 @@ const Viewport = forwardRef(({
   onCommitPaint = null,
   /** Write the FEA study comment block. False leaves the in-memory study. */
   onCommitFea = null,
+  /**
+   * Fallback feature editor and the picker (`FeatureEditSheet`).
+   * null | { mode: 'picker' } | { mode: 'edit', feature }.
+   * Game and a hidden phone stage pass null.
+   */
+  featureEdit = null,
+  featureEditScript = '',
+  featureEditFailedIds = null,
+  onFeatureEditAccept = null,
+  onFeatureEditCancel = null,
+  onFeatureEditDelete = null,
+  onFeatureEditScript = null,
+  onFeatureEditPick = null,
+  /** Another card took the pane. Close the edit card and write nothing. */
+  onFeatureEditDismiss = null,
 }, ref) => {
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
@@ -1090,25 +1107,12 @@ const Viewport = forwardRef(({
   /** G1 tangent chain propagation for Edge pick — ON by default (circular / fillet loops). */
   const [tangentProp, setTangentProp] = useState(true);
   const tangentPropRef = useRef(true);
-  /** Mobile C.2 — current feature-sheet camera lift in NDC-Y (0 = none). */
-  const sheetLiftNdcRef = useRef(0);
-  const sheetLiftTweenRef = useRef(null);
   /** Bottom feature card owns the camera. Game never sets this. */
   const sheetCameraOwnedRef = useRef(false);
   const featureCardKindRef = useRef('');
-  const flattenFeatureSheetLift = () => {
-    if (sheetLiftTweenRef.current) {
-      cancelAnimationFrame(sheetLiftTweenRef.current);
-      sheetLiftTweenRef.current = null;
-    }
-    const from = sheetLiftNdcRef.current;
-    sheetLiftNdcRef.current = 0;
-    const camera = cameraRef.current;
-    const controls = controlsRef.current;
-    if (camera && controls?.target && Math.abs(from) > 1e-6) {
-      panViewByNdcY({ camera, controls, ndcY: -from });
-    }
-  };
+  const yieldToFeatureEditCardRef = useRef(() => {});
+  const onFeatureEditDismissRef = useRef(onFeatureEditDismiss);
+  onFeatureEditDismissRef.current = onFeatureEditDismiss;
   const sheetCameraRef = useRef(null);
   if (!sheetCameraRef.current) {
     sheetCameraRef.current = createSheetCameraSession({
@@ -1117,7 +1121,6 @@ const Viewport = forwardRef(({
       setControls: (next) => { controlsRef.current = next; },
       reducedMotion: () => typeof window !== 'undefined'
         && window.matchMedia('(prefers-reduced-motion: reduce)').matches,
-      flattenLift: flattenFeatureSheetLift,
       getVisibleFrame: () => {
         const pane = containerRef.current;
         if (!pane || typeof pane.getBoundingClientRect !== 'function') return null;
@@ -1267,8 +1270,26 @@ const Viewport = forwardRef(({
         ? String(sheetMetalMode.draft.kind)
         : (sheetMetalMode?.stage || 'edit');
   const paintSheetOpen = mode !== 'game' && !!paintMode;
+  const featureEditRequested = mode !== 'game'
+    && !!featureEdit
+    && (featureEdit.mode === 'edit' || featureEdit.mode === 'picker');
+  const editSheetOpen = featureEditRequested
+    && !contourSheetOpen
+    && !filletSheetOpen
+    && !shellSheetOpen
+    && !draftSheetOpen
+    && !moveFaceSheetOpen
+    && !deleteFaceSheetOpen
+    && !cutSheetOpen
+    && !booleanSheetOpen
+    && !moveSheetOpen
+    && !sheetMetalSheetOpen
+    && !helperSheetOpen
+    && !paintSheetOpen
+    && !feaActive;
   const edgeSheetOpen = mode !== 'game'
     && !helperCardOpen
+    && !editSheetOpen
     && pickMode === 'edge'
     && !contourMode
     && !filletMode
@@ -1307,9 +1328,11 @@ const Viewport = forwardRef(({
                         ? 'paint'
                         : helperSheetOpen
                           ? 'helper'
-                          : edgeSheetOpen
-                            ? 'edge'
-                            : '';
+                          : editSheetOpen
+                            ? `edit:${featureEdit.mode}:${featureEdit.feature?.id || 'picker'}`
+                            : edgeSheetOpen
+                              ? 'edge'
+                              : '';
   featureCardKindRef.current = featureCardKind;
   sheetCameraOwnedRef.current = featureCardKind !== '';
   // A view snap or zoom-to-fit wins over the card slide. Close still restores
@@ -1356,6 +1379,11 @@ const Viewport = forwardRef(({
     });
     return () => cancelAnimationFrame(raf);
   }, [featureCardKind, selectedFace, selectedEdges, modelBounds]);
+  useEffect(() => {
+    if (!featureCardKind || String(featureCardKind).startsWith('edit:')) return undefined;
+    onFeatureEditDismissRef.current?.();
+    return undefined;
+  }, [featureCardKind]);
   const [cachedMeshData, setCachedMeshData] = useState(null);
   /** Always-current mesh for failed Auto-Run restore (state alone is stale in closures). */
   const cachedMeshDataRef = useRef(null);
@@ -1574,6 +1602,8 @@ const Viewport = forwardRef(({
      * a pick retargets onto that part before the graphs are used.
      */
     beginFeatureEdit: (feature, script) => beginFeatureEditRef.current?.(feature, script) === true,
+    /** Close every other card without writing, so the edit card can open alone. */
+    yieldToFeatureEditCard: () => yieldToFeatureEditCardRef.current(),
     placeAssembly: (payload) => placeAssemblyRef.current(payload),
     /** Move the pick mesh onto a part the user just touched. */
     swapPickPart: (payload) => swapPickPartRef.current(payload),
@@ -1581,50 +1611,7 @@ const Viewport = forwardRef(({
     showCadBodyHighlight: () => showCadBodyHighlightRef.current(),
     /** Install one part's solid and rebuild face, edge, and contour graphs. */
     adoptActiveSolid: (payload) => adoptActiveSolidRef.current(payload),
-    /**
-     * Mobile C.2 — tween the part away from an open under-title feature sheet.
-     * `ndcY` is the target lift in NDC-Y units (positive → part moves DOWN on
-     * screen, clear of a top sheet). Pass 0 to return. Edge-pick chips must
-     * NOT call this. Desktop no-ops when camera/controls missing.
-     */
-    setFeatureSheetLift: (ndcY, opts = {}) => {
-      const camera = cameraRef.current;
-      const controls = controlsRef.current;
-      if (!camera || !controls?.target) return false;
-      const target = Number(ndcY) || 0;
-      const from = sheetLiftNdcRef.current;
-      const delta = target - from;
-      if (Math.abs(delta) < 1e-6) {
-        sheetLiftNdcRef.current = target;
-        return true;
-      }
-      if (sheetLiftTweenRef.current) {
-        cancelAnimationFrame(sheetLiftTweenRef.current);
-        sheetLiftTweenRef.current = null;
-      }
-      const ms = Math.max(120, Number(opts.ms) || 280);
-      const t0 = performance.now();
-      let applied = 0;
-      const step = (now) => {
-        const t = Math.min(1, (now - t0) / ms);
-        const eased = easeInOutCubic(t);
-        const want = delta * eased;
-        const slice = want - applied;
-        if (Math.abs(slice) > 1e-8) {
-          panViewByNdcY({ camera, controls, ndcY: slice });
-          applied = want;
-        }
-        if (t < 1) {
-          sheetLiftTweenRef.current = requestAnimationFrame(step);
-        } else {
-          sheetLiftTweenRef.current = null;
-          sheetLiftNdcRef.current = target;
-        }
-      };
-      sheetLiftTweenRef.current = requestAnimationFrame(step);
-      return true;
-    },
-    /** True while the bottom feature card (contour) owns the camera. Game is never. */
+    /** True while a bottom feature card owns the camera. Game is never. */
     featureSheetCameraOwned: () => sheetCameraOwnedRef.current,
   }));
 
@@ -5415,6 +5402,29 @@ const Viewport = forwardRef(({
     setShellToast(null);
   }, [clearHighlight, clearDeleteFacePreview]);
 
+  yieldToFeatureEditCardRef.current = () => {
+    if (contourModeRef.current) exitContourMode();
+    if (filletModeRef.current) exitFilletMode();
+    if (shellModeRef.current) exitShellMode();
+    if (draftModeRef.current) exitDraftMode();
+    if (cutModeRef.current) exitCutMode();
+    if (booleanModeRef.current) exitBooleanMode();
+    if (moveModeRef.current) exitMoveMode();
+    if (moveFaceModeRef.current) exitMoveFaceMode();
+    if (deleteFaceModeRef.current) exitDeleteFaceMode();
+    exitSheetMetalChromeRef.current();
+    if (paintModeRef.current) exitPaintModeRef.current();
+    if (helperCardOpenRef.current) setHelperCardOpen(false);
+    if (feaActive) feaToggleRef.current?.();
+    clearEdgeHover();
+    clearEdgeHighlight();
+    setSelectedEdges([]);
+    if (pickModeRef.current === 'edge') {
+      pickModeRef.current = 'face';
+      setPickMode('face');
+    }
+  };
+
   const commitDeleteFaceState = useCallback((next) => {
     deleteFaceModeRef.current = next;
     setDeleteFaceMode(next);
@@ -6948,45 +6958,6 @@ const Viewport = forwardRef(({
             return true;
           },
           setAxes: (on) => { setAxisHelperEnabled(!!on); return true; },
-          /** Mobile C.2 — same tween as the imperative handle (playtest). */
-          setFeatureSheetLift: (ndcY, opts = {}) => {
-            const camera = cameraRef.current;
-            const controls = controlsRef.current;
-            if (!camera || !controls?.target) return false;
-            const target = Number(ndcY) || 0;
-            const from = sheetLiftNdcRef.current;
-            const delta = target - from;
-            if (Math.abs(delta) < 1e-6) {
-              sheetLiftNdcRef.current = target;
-              return true;
-            }
-            if (sheetLiftTweenRef.current) {
-              cancelAnimationFrame(sheetLiftTweenRef.current);
-              sheetLiftTweenRef.current = null;
-            }
-            const ms = Math.max(120, Number(opts.ms) || 280);
-            const t0 = performance.now();
-            let applied = 0;
-            const step = (now) => {
-              const t = Math.min(1, (now - t0) / ms);
-              const eased = easeInOutCubic(t);
-              const want = delta * eased;
-              const slice = want - applied;
-              if (Math.abs(slice) > 1e-8) {
-                panViewByNdcY({ camera, controls, ndcY: slice });
-                applied = want;
-              }
-              if (t < 1) {
-                sheetLiftTweenRef.current = requestAnimationFrame(step);
-              } else {
-                sheetLiftTweenRef.current = null;
-                sheetLiftNdcRef.current = target;
-              }
-            };
-            sheetLiftTweenRef.current = requestAnimationFrame(step);
-            return true;
-          },
-          sheetLiftNdc: () => sheetLiftNdcRef.current,
         };
       }
 
@@ -9302,9 +9273,27 @@ const Viewport = forwardRef(({
         </div>
       )}
 
+      {/* Fallback feature editor and the picker. Game mounts no card. */}
+      {editSheetOpen && (
+        <FeatureEditSheet
+          feature={featureEdit.mode === 'edit' ? featureEdit.feature : null}
+          features={featureEdit.mode === 'picker'
+            ? listFeatureSheetTargets(featureEditScript || '')
+            : null}
+          script={featureEditScript || ''}
+          failedIds={featureEditFailedIds}
+          compact={isMobile}
+          onAccept={onFeatureEditAccept}
+          onCancel={onFeatureEditCancel}
+          onDelete={onFeatureEditDelete}
+          onEditScript={onFeatureEditScript}
+          onPickFeature={onFeatureEditPick}
+        />
+      )}
+
       {/* Standalone edge pick — same card, no Confirm. X clears and leaves edge pick.
           Hidden in fillet, contour, and game. Numbered badges stay on the edges. */}
-      {mode !== 'game' && !helperCardOpen && pickMode === 'edge' && !contourMode && !filletMode && !shellMode && !draftMode && !moveFaceMode && !deleteFaceMode && !cutMode && !booleanMode && !moveMode && !sheetMetalMode && !sheetMetalPicker && !paintMode && selectedEdges.length > 0 && (
+      {mode !== 'game' && !helperCardOpen && pickMode === 'edge' && !contourMode && !filletMode && !shellMode && !draftMode && !moveFaceMode && !deleteFaceMode && !cutMode && !booleanMode && !moveMode && !sheetMetalMode && !sheetMetalPicker && !editSheetOpen && !paintMode && selectedEdges.length > 0 && (
         <FeatureSheet
           cardAttrs={{ 'data-edge-selector': 'standalone' }}
           title={`Edge pick · ${selectedEdges.length} selected`}

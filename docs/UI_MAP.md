@@ -288,25 +288,22 @@ Mobile specifics:
   Chamfer/`TriangleRight`). Markers from `parseFeatureMarkers` (`typeIndex`).
   Desktop's strip is the horizontal bar under the title (see Desktop
   specifics above); mobile CAD/Script mounts stay as documented here.
-- **Feature sheets (Slice Mobile C → C.1):** `FeatureSheet.jsx` — full-width
-  **horizontal** glass bar just below the part name (`top-14`,
-  `data-feature-sheet-layout="under-title-horizontal"`) on **CAD and Script**
-  stages. Caps at `max-h-[calc(100dvh-10rem)]` with internal `rail-scroll` so
-  mobile popups stay below the feature strip with finger clearance for viewport
-  picks (Contour/Fillet chips use `max-h-[calc(100dvh-12rem)]` similarly).
-  Horizontal scroll when params overflow. The CAD strip, the desktop strip, and
-  long-press reopen the **creation dialog** for that feature (`beginFeatureEdit`),
-  pre-filled from the block. Confirm rewrites that block in place
-  (`confirmFeatureEdit`); Cancel writes nothing. The red Delete button sits
-  opposite Confirm. Delete removes that one block and rebuilds immediately.
-  When a later feature uses this feature's edges, faces, or variables, a
-  toast names it and offers Undo. No dependents means no toast. Undo restores
-  the script in one step. A stored
-  edge or face the
+- **Feature sheets (Slice Mobile C → the feature card):** `FeatureEditSheet.jsx`
+  sits on the shared bottom card (`data-feature-card`,
+  `data-feature-sheet-layout="feature-card"`). On a phone it docks to the CAD
+  pane bottom and hides the stage switcher. Desktop uses the same card in the
+  viewer. The Script stage does not float a second card over the editor.
+  The CAD strip, the desktop strip, and long-press reopen the **creation dialog**
+  for that feature (`beginFeatureEdit`), pre-filled from the block. Confirm
+  rewrites that block in place (`confirmFeatureEdit`); X and Esc write nothing.
+  The red Delete button sits opposite Confirm. Delete removes that one block
+  and rebuilds immediately. When a later feature uses this feature's edges,
+  faces, or variables, a toast names it and offers Undo. No dependents means
+  no toast. Undo restores the script in one step. A stored edge or face the
   prefix graph cannot resolve stays listed (`N edges not found`) with Clear.
-  The under-title `FeatureSheet` remains for a failed-chip read and for kinds
-  with no creation dialog. Accept / Cancel / Edit script / Delete stay on that
-  sheet. Desktop/game do not mount it (`featureSheetEnabled` false).
+  The edit card remains for a failed-chip read and for kinds with no creation
+  dialog, and the picker uses the same card. Edit script and Delete stay.
+  Game mounts no card (`featureSheetEnabled` is the phone long-press gate).
 - **Viewport backdrop:** `viewport-shell` + Three.js clear/background use Monaco
   gray `#1e1e1e` (not Tailwind `gray-900` / `#111827`).
 - **Face description popup:** removed in Slice Mobile C.1 (was under-title B.1

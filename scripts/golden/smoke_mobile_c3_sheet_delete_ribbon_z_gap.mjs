@@ -63,7 +63,7 @@ console.log('mobile C.3: sheet delete + ribbon z + CAD gap + Block + rail height
     /export function deleteFeatureBlock/.test(writeback) &&
       /deleteFeatureBlock/.test(app) &&
       /handleFeatureSheetDelete/.test(app) &&
-      /onDelete=\{handleFeatureSheetDelete\}/.test(app) &&
+      /onFeatureEditDelete=\{handleFeatureSheetDelete\}/.test(app) &&
       /applyBuffer\?\.\(/.test(app) &&
       /handleGameRun/.test(app),
   );

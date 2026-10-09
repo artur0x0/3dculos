@@ -464,18 +464,15 @@ const contourRail = read('../../src/components/ContourModeRail.jsx');
       && /title="Done — close cross-section options"/.test(panel));
 }
 
-// ── AC19: the feature sheet header survives a narrow phone ──
+// ── AC19: the feature card header survives a narrow phone ──
 {
   const sheet = read('../../src/components/FeatureEditSheet.jsx');
-  const row = sheet.slice(sheet.indexOf('data-feature-sheet-row="identity"'));
-  const header = row.slice(0, row.indexOf('data-feature-sheet-params'));
+  const card = read('../../src/components/FeatureSheet.jsx');
+  const header = card.slice(card.indexOf('data-feature-sheet-header'), card.indexOf('data-feature-sheet-body'));
+  check('the edit sheet uses the shared card header',
+    /<FeatureSheet\b/.test(sheet) && /data-feature-sheet-header/.test(card));
   check('the title block may shrink so truncate can fire',
-    /<div className="min-w-0 flex-1">/.test(header) && !/shrink-0 min-w-0 flex-1/.test(header));
-  check('both title lines truncate', (header.match(/truncate/g) || []).length >= 2);
-  check('the header wraps rather than colliding',
-    /flex-row flex-wrap items-center/.test(sheet));
-  check('the action cluster stays right-aligned when it wraps',
-    /gap-1\.5 shrink-0 ml-auto/.test(header));
+    /min-w-0 flex-1/.test(header) && /truncate/.test(header));
 }
 
 // ── AC18: nothing between the flyout and the viewport may clip it ──

@@ -11,7 +11,6 @@ import { failedPartIdsFor } from './utils/failedPartOutline';
 import { bodyCountOfWorkerMesh } from './utils/meshBodyComponents';
 import ErrorPopup from './components/ErrorPopup';
 import AssemblyOpenSpinner, { AssemblyOpenFailureToast } from './components/AssemblyOpenSpinner';
-import FeatureSheet from './components/FeatureEditSheet';
 import { FeaStudySheetGate } from './components/fea/FeaStudyHost';
 import { landingMobileStage, linkedMobileStage } from './utils/mobileStage';
 import {
@@ -441,9 +440,13 @@ const App = () => {
     focusWritePartRef.current(null);
     setFeatureStripActiveId(feature.id);
     codeEditorRef.current?.revealRange?.(feature.startOffset, feature.endOffset);
-    setFeatureSheet({ mode: 'edit', feature });
     const buf = codeEditorRef.current?.getContent?.() || currentScript || '';
-    if (viewportRef.current?.beginFeatureEdit?.(feature, buf)) setFeatureSheet(null);
+    if (viewportRef.current?.beginFeatureEdit?.(feature, buf)) {
+      setFeatureSheet(null);
+      return;
+    }
+    viewportRef.current?.yieldToFeatureEditCard?.();
+    setFeatureSheet({ mode: 'edit', feature });
   };
   /** Desktop "Edit script": open the drawer and reveal that block. */
   const handleDesktopFeatureSheetEditScript = (feature) => {
@@ -454,9 +457,10 @@ const App = () => {
     codeEditorRef.current?.revealRange?.(feature.startOffset, feature.endOffset);
   };
   /**
-   * Slice Mobile C.1 — feature sheet (CAD + Script stages, under-title horizontal).
+   * Fallback feature editor and the picker, on the shared bottom card.
    * null | { mode: 'picker' } | { mode: 'edit', feature }
-   * Desktop / game never open this.
+   * A kind with a creation dialog reopens that dialog and leaves this null.
+   * Game never opens it.
    */
   const [featureSheet, setFeatureSheet] = useState(null);
   const closeFeatureSheet = () => {
@@ -468,9 +472,13 @@ const App = () => {
     // The sheet reads and writes the editor buffer: make it the picked part's.
     focusWritePartRef.current(null);
     setFeatureStripActiveId(feature.id);
-    setFeatureSheet({ mode: 'edit', feature });
     const buf = codeEditorRef.current?.getContent?.() || currentScript || '';
-    if (viewportRef.current?.beginFeatureEdit?.(feature, buf)) setFeatureSheet(null);
+    if (viewportRef.current?.beginFeatureEdit?.(feature, buf)) {
+      setFeatureSheet(null);
+      return;
+    }
+    viewportRef.current?.yieldToFeatureEditCard?.();
+    setFeatureSheet({ mode: 'edit', feature });
   };
   const openFeatureSheetFromCad = () => {
     focusWritePartRef.current(null);
@@ -492,6 +500,7 @@ const App = () => {
       openFeatureSheetFor(preferred);
       return;
     }
+    viewportRef.current?.yieldToFeatureEditCard?.();
     setFeatureSheet({ mode: 'picker' });
   };
   const STALE_FEATURE_MSG = 'That feature is not in this part\'s script any more — pick it again.';
@@ -682,6 +691,7 @@ const App = () => {
       openPicker: () => {
         const buf = codeEditorRef.current?.getContent?.() || currentScript || '';
         if (!listFeatureSheetTargets(buf).length) return false;
+        viewportRef.current?.yieldToFeatureEditCard?.();
         setFeatureSheet({ mode: 'picker' });
         return true;
       },
@@ -802,45 +812,6 @@ const App = () => {
   }, [gitSession.phase]);
 
   const viewportRef = useRef(null);
-
-  // Mobile C.2 — when a large under-title feature sheet opens, tween the part
-  // clear of the sheet (DOWN on screen for top chrome). Reverse on close.
-  // The bottom feature card slides the other way (content UP) and owns the
-  // camera itself; this lift stays out of that. Edge-pick chips do NOT lift.
-  // Game mode does not slide.
-  useEffect(() => {
-    if (viewportRef.current?.featureSheetCameraOwned?.()) return undefined;
-    if (!isMobile || appMode === 'game') {
-      viewportRef.current?.setFeatureSheetLift?.(0, { ms: 160 });
-      return undefined;
-    }
-    const open = featureSheet?.mode === 'edit' || featureSheet?.mode === 'picker';
-    if (!open) {
-      viewportRef.current?.setFeatureSheetLift?.(0);
-      return undefined;
-    }
-    let cancelled = false;
-    const id = requestAnimationFrame(() => {
-      if (cancelled) return;
-      const sheet = document.querySelector('[data-feature-sheet]');
-      const pane = document.querySelector('[data-stage-pane="cad"]')
-        || document.querySelector('[data-stage-pane="script"]');
-      let ndcY = 0.28; // fallback ~14% of viewport height (NDC half-span = 1)
-      if (sheet && pane) {
-        const sh = sheet.getBoundingClientRect().height;
-        const ph = pane.getBoundingClientRect().height || 1;
-        // Sheet covers the top — shift part down by ~half the sheet fraction.
-        // NDC full height = 2, so frac of viewport → ndc = 2 * frac * 0.55.
-        const frac = Math.min(0.45, Math.max(0.08, sh / ph));
-        ndcY = 2 * frac * 0.55;
-      }
-      viewportRef.current?.setFeatureSheetLift?.(ndcY);
-    });
-    return () => {
-      cancelled = true;
-      cancelAnimationFrame(id);
-    };
-  }, [featureSheet, isMobile, appMode, featureSession]);
 
   const codeEditorRef = useRef(null);
   const gameTimerStartRef = useRef(0);
@@ -2155,7 +2126,7 @@ const App = () => {
   };
 
   /** A palette tap opens a Block sheet or feature mode: edit the picked part.
-   * One card: the under-title editor closes and writes nothing. */
+   * One card: the edit card closes and writes nothing. */
   const handleFeatureOpen = () => {
     focusWritePart(null);
     setFeatureSheet((cur) => (cur ? null : cur));
@@ -2166,8 +2137,8 @@ const App = () => {
     // Opening a feature on a picked part edits that part from the start, so
     // its buffer, commit mode and Undo stack are the ones the feature sees.
     if (on && !featureSessionRef.current) focusWritePart(null);
-    // One sheet. A tool (contour, fillet, …) cancels the under-title edit
-    // sheet without writing. The tool's own X / Confirm is the sheet that stays.
+    // One card. A tool (contour, fillet, …) cancels the edit card
+    // without writing. The tool's own X / Confirm is the card that stays.
     if (on) setFeatureSheet((cur) => (cur ? null : cur));
     featureSessionRef.current = on;
     setFeatureSession((prev) => (prev === on ? prev : on));
@@ -6803,6 +6774,15 @@ const App = () => {
               getBooleanContext={assemblyPartContext}
               onFeatureSessionChange={handleFeatureSession}
               partLabels={partLabels}
+              featureEdit={appMode === 'game' || (useStages && !isCadStage) ? null : featureSheet}
+              featureEditScript={currentScript}
+              featureEditFailedIds={sheetFailedIds}
+              onFeatureEditAccept={handleFeatureSheetAccept}
+              onFeatureEditCancel={closeFeatureSheet}
+              onFeatureEditDelete={handleFeatureSheetDelete}
+              onFeatureEditScript={handleFeatureSheetEditScript}
+              onFeatureEditPick={(f) => openFeatureSheetFor(f)}
+              onFeatureEditDismiss={() => setFeatureSheet((cur) => (cur ? null : cur))}
             />
     );
 
@@ -6954,27 +6934,6 @@ const App = () => {
                 {partFeed}
               </div>
 
-              {/* C.1: feature sheets — full-width under-title, CAD + Script stages. */}
-              {featureSheet?.mode === 'picker' && (
-                <FeatureSheet
-                  features={listFeatureSheetTargets(currentScript)}
-                  script={currentScript}
-                  failedIds={sheetFailedIds}
-                  onCancel={closeFeatureSheet}
-                  onPickFeature={(f) => openFeatureSheetFor(f)}
-                />
-              )}
-              {featureSheet?.mode === 'edit' && featureSheet.feature && (
-                <FeatureSheet
-                  feature={featureSheet.feature}
-                  script={currentScript}
-                  failedIds={sheetFailedIds}
-                  onAccept={handleFeatureSheetAccept}
-                  onCancel={closeFeatureSheet}
-                  onDelete={handleFeatureSheetDelete}
-                  onEditScript={handleFeatureSheetEditScript}
-                />
-              )}
               <FeaStudySheetGate mobile />
 
               {/* Bottom home-indicator stage pill. A feature card hides it
@@ -7302,22 +7261,16 @@ const App = () => {
             getBooleanContext={assemblyPartContext}
             onFeatureSessionChange={handleFeatureSession}
             partLabels={partLabels}
+            featureEdit={appMode === 'game' ? null : featureSheet}
+            featureEditScript={currentScript}
+            featureEditFailedIds={sheetFailedIds}
+            onFeatureEditAccept={handleFeatureSheetAccept}
+            onFeatureEditCancel={closeFeatureSheet}
+            onFeatureEditDelete={handleFeatureSheetDelete}
+            onFeatureEditScript={handleDesktopFeatureSheetEditScript}
+            onFeatureEditPick={(f) => openFeatureSheetFor(f)}
+            onFeatureEditDismiss={() => setFeatureSheet((cur) => (cur ? null : cur))}
           />
-          {/* Feature sheets live INSIDE the viewer on desktop: the horizontal
-              CAD bar sits under the title, and editing a feature happens over
-              the model it changes rather than over the script. */}
-          {appMode !== 'game' && featureSheet?.mode === 'edit' && featureSheet.feature && (
-            <FeatureSheet
-              placement="viewport"
-              feature={featureSheet.feature}
-              script={currentScript}
-              failedIds={sheetFailedIds}
-              onAccept={handleFeatureSheetAccept}
-              onCancel={closeFeatureSheet}
-              onDelete={handleFeatureSheetDelete}
-              onEditScript={handleDesktopFeatureSheetEditScript}
-            />
-          )}
           {assemblyOpenSpinner}
           {appMode !== 'game' && (
             <ScriptEditorDrawer open={scriptEditorOpen}>

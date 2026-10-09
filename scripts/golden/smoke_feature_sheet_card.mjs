@@ -67,7 +67,6 @@ console.log('feature sheet card — source');
   const camera = read('src/utils/featureSheetCamera.js');
   const hook = read('src/hooks/useModalViewport.js');
   const view = read('src/components/Viewport.jsx');
-  const app = read('src/App.jsx');
   const arch = read('docs/architecture.md');
   const map = read('docs/UI_MAP.md');
 
@@ -201,13 +200,26 @@ console.log('feature sheet card — source');
     && /sheetMetalPicker && mode !== 'game'/.test(view)
     && /sheetMetalSheetOpen/.test(view)
     && /SmPopup/.test(arch));
+  const editSheet = read('src/components/FeatureEditSheet.jsx');
+  check('the feature edit sheet and its picker use the card; X cancels; Confirm saves; game mounts no card',
+    /<FeatureSheet\b/.test(editSheet)
+    && /data-feature-sheet-picker/.test(editSheet)
+    && /data-feature-sheet-edit-script/.test(editSheet)
+    && /data-feature-sheet-delete/.test(editSheet)
+    && /onConfirm=\{editable/.test(editSheet)
+    && /onCancel=\{onCancel\}/.test(editSheet)
+    && /editSheetOpen/.test(view)
+    && /mode !== 'game'/.test(view)
+    && /yieldToFeatureEditCard/.test(view)
+    && /FeatureEditSheet/.test(arch)
+    && /Game mounts no card/.test(read('docs/POPUP_STYLE.md')));
   check('camera snapshots the pose, slides up, retargets orbit, and restores it',
     /export function captureViewPose/.test(camera)
     && /export function aimOrbitAtVisibleCenter/.test(camera)
     && /FEATURE_SHEET_SLIDE_MAX = 0\.6/.test(camera)
     && /remountTrackball/.test(camera)
     && /getVisibleFrame/.test(view)
-    && /featureSheetCameraOwned/.test(app)
+    && /featureSheetCameraOwned/.test(view)
     && /prefers-reduced-motion/.test(view));
   check('docs name the shell, the hidden switcher, and the visible-area orbit',
     /## Feature card/.test(arch) && /FeatureSheet/.test(arch)
@@ -1351,6 +1363,169 @@ html, body, #root { margin: 0; height: 100%; background: #111; }
       && !!document.querySelector('#helper-param-title')
       && !!document.querySelector('.pointer-events-none'));
     check('game helper sheet is the old docked dialog, not a feature card', true);
+
+    const editBundle = await build({
+      stdin: {
+        contents: `import { createRoot } from 'react-dom/client';
+import { useState } from 'react';
+import FeatureEditSheet from './src/components/FeatureEditSheet.jsx';
+import { parseFeatureMarkers } from './src/utils/featureMarkers.js';
+
+const SCRIPT = \`// --- contour-mode extrude begin ---
+let part = placeInFrame(xs.plane, makeExtrude(xs.contours, 12), [0, 0, 0]);
+// --- contour-mode extrude end ---
+// --- fillet-mode begin ---
+part = filletAlongPath(part, path, 2);
+// --- fillet-mode end ---
+return part;
+\`;
+const features = parseFeatureMarkers(SCRIPT);
+
+function EditStage() {
+  const [mode, setMode] = useState('edit');
+  const [compact, setCompact] = useState(true);
+  const [log, setLog] = useState('');
+  const feature = features.find((item) => item.kind === 'extrude');
+  return (
+    <div data-mobile-stage="cad" style={{ position: 'relative', width: '100%', height: '100%' }}>
+      <div className="viewport-shell relative h-full w-full overflow-hidden" data-harness-pane="" style={{ background: '#1e1e1e' }}>
+        <div data-rail-pair="left" className="absolute bottom-2.5 left-2.5 h-48 w-14" />
+        <div data-rail-pair="right" className="absolute bottom-2.5 right-2.5 h-48 w-14" />
+        {mode === 'picker' ? (
+          <FeatureEditSheet
+            features={features}
+            script={SCRIPT}
+            compact={compact}
+            onCancel={() => setLog('cancel')}
+            onPickFeature={() => setLog('pick')}
+          />
+        ) : (
+          <FeatureEditSheet
+            feature={feature}
+            script={SCRIPT}
+            compact={compact}
+            onAccept={() => setLog('confirm')}
+            onCancel={() => setLog('cancel')}
+            onDelete={() => setLog('delete')}
+            onEditScript={() => setLog('script')}
+          />
+        )}
+      </div>
+      <div className="absolute bottom-0 left-1/2 z-30 -translate-x-1/2" data-mobile-stage-home-indicator="">
+        <div data-home-indicator-pill="" className="h-8 w-24 rounded-full bg-gray-800" />
+      </div>
+      <button type="button" data-edit-mode="edit" onClick={() => setMode('edit')}>edit</button>
+      <button type="button" data-edit-mode="picker" onClick={() => setMode('picker')}>picker</button>
+      <button type="button" data-edit-compact="1" onClick={() => setCompact(true)}>phone</button>
+      <button type="button" data-edit-compact="0" onClick={() => setCompact(false)}>desk</button>
+      <div data-edit-log="">{log}</div>
+    </div>
+  );
+}
+
+createRoot(document.getElementById('edit-root')).render(<EditStage />);
+`,
+        resolveDir: ROOT,
+        loader: 'jsx',
+      },
+      bundle: true,
+      format: 'iife',
+      platform: 'browser',
+      write: false,
+      jsx: 'automatic',
+      logLevel: 'error',
+      loader: { '.css': 'empty', '.svg': 'text', '.png': 'dataurl' },
+    });
+    const editHtml = `<!doctype html><html><head><meta charset="utf-8" />
+<style>${processed.css}
+html, body, #edit-root { margin: 0; height: 100%; background: #111; }
+button[data-edit-mode], button[data-edit-compact] { display: none; }
+</style></head><body><div id="edit-root"></div><script>${editBundle.outputFiles[0].text}</script></body></html>`;
+    await page.setContent(editHtml, { waitUntil: 'load' });
+    await page.setViewportSize(PHONE);
+    await page.waitForSelector('[data-feature-card][data-feature-sheet-kind="extrude"]');
+    const phoneEdit = await page.evaluate(() => {
+      const card = document.querySelector('[data-feature-card]');
+      const pane = document.querySelector('[data-harness-pane]').getBoundingClientRect();
+      const box = card.getBoundingClientRect();
+      const pill = document.querySelector('[data-mobile-stage-home-indicator]');
+      return {
+        cards: document.querySelectorAll('[data-feature-card]').length,
+        compact: card.getAttribute('data-feature-card-compact'),
+        layout: card.getAttribute('data-feature-sheet-layout'),
+        bottom: Math.round(pane.bottom - box.bottom),
+        switcher: getComputedStyle(pill).display,
+        confirm: document.querySelector('[data-feature-card-confirm]')?.textContent || '',
+        editScript: !!document.querySelector('[data-feature-sheet-edit-script]'),
+        del: !!document.querySelector('[data-feature-sheet-delete]'),
+      };
+    });
+    check('phone edit card docks on the pane and hides the switcher',
+      phoneEdit.cards === 1
+      && phoneEdit.compact === '1'
+      && phoneEdit.layout === 'feature-card'
+      && phoneEdit.bottom <= 2
+      && phoneEdit.switcher === 'none'
+      && /Confirm/.test(phoneEdit.confirm)
+      && phoneEdit.editScript
+      && phoneEdit.del,
+      JSON.stringify(phoneEdit));
+    await page.screenshot({ path: join(shotDir, 'feature-sheet-edit-390.png') });
+    await page.click('[data-feature-card-cancel]');
+    const cancelled = await page.evaluate(() => document.querySelector('[data-edit-log]')?.textContent || '');
+    check('edit card X cancels and does not confirm', cancelled === 'cancel', cancelled);
+
+    await page.evaluate(() => document.querySelector('[data-edit-mode="edit"]').click());
+    await page.waitForSelector('[data-feature-card-confirm]');
+    await page.click('[data-feature-card-confirm]');
+    const confirmed = await page.evaluate(() => document.querySelector('[data-edit-log]')?.textContent || '');
+    check('edit card Confirm saves', confirmed === 'confirm', confirmed);
+
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.evaluate(() => {
+      document.querySelector('[data-edit-compact="0"]').click();
+      document.querySelector('[data-edit-mode="edit"]').click();
+    });
+    await page.waitForFunction(() => {
+      const card = document.querySelector('[data-feature-card]');
+      return card && card.getAttribute('data-feature-card-compact') === '0';
+    });
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const desk = await page.evaluate(() => {
+      const card = document.querySelector('[data-feature-card]');
+      const pane = document.querySelector('[data-harness-pane]').getBoundingClientRect();
+      const box = card.getBoundingClientRect();
+      return {
+        compact: card.getAttribute('data-feature-card-compact'),
+        bottom: Math.round(pane.bottom - box.bottom),
+        cards: document.querySelectorAll('[data-feature-card]').length,
+      };
+    });
+    check('desktop edit card stays about 10px off the pane',
+      desk.compact === '0' && desk.cards === 1 && desk.bottom >= 8 && desk.bottom <= 16,
+      JSON.stringify(desk));
+    await page.screenshot({ path: join(shotDir, 'feature-sheet-edit-desktop.png') });
+
+    await page.setViewportSize(PHONE);
+    await page.evaluate(() => {
+      document.querySelector('[data-edit-compact="1"]').click();
+      document.querySelector('[data-edit-mode="picker"]').click();
+    });
+    await page.waitForSelector('[data-feature-sheet-picker]');
+    const picker = await page.evaluate(() => {
+      const card = document.querySelector('[data-feature-card]');
+      const picks = document.querySelectorAll('[data-feature-sheet-pick]').length;
+      return {
+        layout: card?.getAttribute('data-feature-sheet-layout') || '',
+        picks,
+        confirm: !!document.querySelector('[data-feature-card-confirm]'),
+        cards: document.querySelectorAll('[data-feature-card]').length,
+      };
+    });
+    check('picker is the same card, with no Confirm',
+      picker.layout === 'feature-card' && picker.picks >= 2 && picker.confirm === false && picker.cards === 1,
+      JSON.stringify(picker));
+    await page.screenshot({ path: join(shotDir, 'feature-sheet-picker-390.png') });
 
     check('the page did not throw', pageErrors.length === 0, pageErrors.join(' | '));
   } finally {

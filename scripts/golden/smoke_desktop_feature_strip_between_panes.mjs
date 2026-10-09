@@ -75,9 +75,10 @@ console.log('desktop: feature strip on CAD viewer');
       })(),
   );
   check(
-    'the desktop sheet is placed inside the viewer pane',
-    /placement="viewport"/.test(app) &&
-      app.indexOf('placement="viewport"') > app.indexOf('<SplitDivider orientation="vertical"'),
+    'the desktop edit card is placed inside the viewer Viewport',
+    /featureEdit=\{appMode === 'game' \? null : featureSheet\}/.test(app) &&
+      app.indexOf('featureEdit={appMode === \'game\' ? null : featureSheet}') > app.indexOf('<SplitDivider orientation="vertical"') &&
+      /<FeatureEditSheet\b/.test(read('../../src/components/Viewport.jsx')),
   );
   check(
     'the viewer pane is a positioning context for it',
