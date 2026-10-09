@@ -24,7 +24,6 @@ import {
   FlipHorizontal2,
   Boxes,
   Layers3,
-  FoldVertical,
   Scissors,
   Move,
   SquareArrowOutUpRight,
@@ -33,6 +32,7 @@ import {
 import SquareRoundCorner from './icons/SquareRoundCorner';
 import RectangleCircle from './icons/RectangleCircle';
 import Angle from './icons/Angle';
+import SheetMetalPlate from './icons/SheetMetalPlate';
 import { parseFeatureMarkers, featureShowsSeparateBody } from '../utils/featureMarkers';
 import { featureBarWindowMode } from '../utils/featureBarLayout';
 import { chipTone } from '../utils/featureChipTone';
@@ -87,8 +87,20 @@ const FEATURE_ICONS = Object.freeze({
   array: Boxes,
   polarArray: Boxes,
   workplane: Layers3,
-  sheetMetal: FoldVertical,
+  sheetMetal: SheetMetalPlate,
 });
+
+function FeatureGlyph({ kind, size }) {
+  const Icon = FEATURE_ICONS[kind] || NotebookPen;
+  return (
+    <Icon
+      size={size}
+      strokeWidth={2}
+      aria-hidden="true"
+      className={kind === 'sheetMetal' ? 'text-blue-400' : undefined}
+    />
+  );
+}
 
 /** Title text for one chip. */
 function chipTitle(f, failed, bodyCount) {
@@ -312,7 +324,6 @@ export default function FeatureStrip({
             {features.map((f) => {
               const active = activeId === f.id;
               const failed = !!failedIds?.has?.(f.id);
-              const Icon = FEATURE_ICONS[f.kind] || NotebookPen;
               const typeIndex = f.typeIndex || 1;
               const separateLive = featureShowsSeparateBody(f, bodyCount);
               return (
@@ -334,7 +345,7 @@ export default function FeatureStrip({
                   className={`relative shrink-0 rounded-lg p-1.5 flex items-center justify-center
                     border transition-colors active:opacity-80 ${chipTone(active, f.external, failed)}`}
                 >
-                  <Icon size={16} strokeWidth={2} aria-hidden="true" />
+                  <FeatureGlyph kind={f.kind} size={16} />
                   <TypeBadge index={typeIndex} />
                   <SeparateBodyMarker on={separateLive} />
                 </button>
@@ -384,7 +395,6 @@ export default function FeatureStrip({
       {features.map((f) => {
         const active = activeId === f.id;
         const failed = !!failedIds?.has?.(f.id);
-        const Icon = FEATURE_ICONS[f.kind] || NotebookPen;
         const typeIndex = f.typeIndex || 1;
         const separateLive = featureShowsSeparateBody(f, bodyCount);
         return (
@@ -406,7 +416,7 @@ export default function FeatureStrip({
             className={`relative shrink-0 rounded-lg p-1.5 flex items-center justify-center
               border transition-colors active:opacity-80 ${chipTone(active, f.external, failed)}`}
           >
-            <Icon size={16} strokeWidth={2} aria-hidden="true" />
+            <FeatureGlyph kind={f.kind} size={16} />
             <TypeBadge index={typeIndex} />
             <SeparateBodyMarker on={separateLive} />
           </button>

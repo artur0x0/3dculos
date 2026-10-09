@@ -77,7 +77,7 @@ import {
   sheetTap,
   sheetToolsFor,
 } from '../utils/sheetMetal/sheetMetalMode';
-import { buildSheetOverlay, disposeSheetOverlay, sheetPickFromHits } from '../utils/sheetMetal/sheetOverlay';
+import { buildSheetOverlay, disposeSheetOverlay, sheetPickFromHits, syncSheetEdgeLineResolution } from '../utils/sheetMetal/sheetOverlay';
 import { ensureBodyMaterial } from '../utils/sheetMetal/sheetMaterial';
 import DraftModeChip from './DraftModeChip';
 import CutModeChip from './CutModeChip';
@@ -4880,6 +4880,8 @@ const Viewport = forwardRef(({
       });
       if (group && scene) {
         anchorToActivePart(group);
+        const host = containerRef.current;
+        syncSheetEdgeLineResolution(group, host?.clientWidth || 390, host?.clientHeight || 844);
         scene.add(group);
         sheetMetalOverlayRef.current = group;
       }
@@ -6673,7 +6675,7 @@ const Viewport = forwardRef(({
         rendererRef.current.setSize(width, height);
 
         // Keep LineMaterial screen-space widths correct after canvas resize.
-        for (const root of [edgeHighlightRef.current, edgeHoverRef.current]) {
+        for (const root of [edgeHighlightRef.current, edgeHoverRef.current, sheetMetalOverlayRef.current]) {
           if (!root || typeof root.traverse !== 'function') continue;
           root.traverse((child) => {
             if (child.material?.resolution) {

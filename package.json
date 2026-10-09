@@ -94,6 +94,7 @@
         "golden:page-zoom-lock": "node scripts/golden/smoke_page_zoom_lock.mjs",
         "golden:hook-dep-tdz": "node scripts/golden/smoke_hook_dep_tdz.mjs",
         "golden:ui-polish": "node scripts/golden/smoke_ui_polish_icons_layout.mjs",
+        "golden:ui-polish-four": "node scripts/golden/smoke_ui_polish_four.mjs",
         "golden:ui-six-tweaks": "node scripts/golden/smoke_ui_six_tweaks_strip_viewport.mjs",
         "golden:script-insert-part-binding": "node scripts/golden/smoke_script_insert_part_binding.mjs",
         "golden:shell-draft-tube": "node scripts/golden/smoke_shell_draft_tube.mjs",

@@ -30,6 +30,7 @@ import {
 import SquareRoundCorner from './icons/SquareRoundCorner';
 import RectangleCircle from './icons/RectangleCircle';
 import Angle from './icons/Angle';
+import SheetMetalPlate from './icons/SheetMetalPlate';
 import { HELPER_PALETTE_ITEMS, itemsByGroup, paletteRailSections } from '../utils/helperPaletteSnippets';
 import {
   RAIL_PAIR_HEIGHT_CLASS,
@@ -378,22 +379,7 @@ const HelperInsertPalette = ({
                 className={`${pad} rounded text-blue-700 hover:bg-blue-100 active:bg-blue-200
                     flex items-center justify-center transition-colors`}
               >
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  width={iconSize}
-                  height={iconSize}
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth={2}
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                  data-sheet-metal-icon=""
-                >
-                  <path d="M4 10h11l5-4v10l-5 4H4z" />
-                  <path d="M12 10v10" />
-                </svg>
+                <SheetMetalPlate size={iconSize} strokeWidth={2} data-sheet-metal-icon="" />
               </button>
             )}
           </div>

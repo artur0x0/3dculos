@@ -27,12 +27,12 @@ import {
   FlipHorizontal2,
   Boxes,
   Move,
-  FoldVertical,
 } from 'lucide-react';
 import { sheetIdentityTone, sheetPickTone } from '../utils/featureChipTone';
 import SquareRoundCorner from './icons/SquareRoundCorner';
 import RectangleCircle from './icons/RectangleCircle';
 import Angle from './icons/Angle';
+import SheetMetalPlate from './icons/SheetMetalPlate';
 import {
   NumberField,
   ChoiceRow,
@@ -86,8 +86,20 @@ const FEATURE_ICONS = Object.freeze({
   mirror: FlipHorizontal2,
   array: Boxes,
   polarArray: Boxes,
-  sheetMetal: FoldVertical,
+  sheetMetal: SheetMetalPlate,
 });
+
+function FeatureGlyph({ kind, size }) {
+  const Icon = FEATURE_ICONS[kind] || NotebookPen;
+  return (
+    <Icon
+      size={size}
+      strokeWidth={2}
+      aria-hidden="true"
+      className={kind === 'sheetMetal' ? 'text-blue-400' : undefined}
+    />
+  );
+}
 
 const ACCENT = 'cyan';
 
@@ -193,7 +205,6 @@ export default function FeatureSheet({
           <div className={`${POPUP_TEXT.title} text-white shrink-0`}>Edit feature</div>
           <div className="flex flex-row gap-1.5 overflow-x-auto rail-scroll flex-1 min-w-0">
             {features.map((f) => {
-              const Icon = FEATURE_ICONS[f.kind] || NotebookPen;
               const editable = isFeatureSheetEditable(f.kind);
               const failed = !!failedIds?.has?.(f.id);
               const typeIndex = f.typeIndex || ((f.index ?? 0) + 1);
@@ -212,7 +223,7 @@ export default function FeatureSheet({
                     ${sheetPickTone(editable, failed)}`}
                 >
                   <span className="relative inline-flex">
-                    <Icon size={16} strokeWidth={2} aria-hidden="true" />
+                    <FeatureGlyph kind={f.kind} size={16} />
                     <TypeBadge index={typeIndex} />
                   </span>
                   <span className={`${POPUP_TEXT.value} font-medium whitespace-nowrap`}>{f.chipLabel}</span>
@@ -239,7 +250,6 @@ export default function FeatureSheet({
 
   if (!feature) return null;
 
-  const Icon = FEATURE_ICONS[feature.kind] || NotebookPen;
   const editable = !!(parsed && parsed.editable);
   const stub = !editable;
   const typeIndex = feature.typeIndex || ((feature.index ?? 0) + 1);
@@ -345,7 +355,7 @@ export default function FeatureSheet({
           data-feature-sheet-external={feature.external ? '1' : undefined}
           data-feature-sheet-failed={failed ? '1' : undefined}
         >
-          <Icon size={18} strokeWidth={2} aria-hidden="true" />
+          <FeatureGlyph kind={feature.kind} size={18} />
           <TypeBadge index={typeIndex} />
         </span>
         {/* `shrink-0` here fought `flex-1` and won, so the title block kept its
