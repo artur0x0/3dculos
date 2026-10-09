@@ -11,6 +11,7 @@ import {
 } from '@stripe/react-stripe-js';
 import { Loader2, Lock, CreditCard, ShieldCheck } from 'lucide-react';
 import TermsModal from '../TermsModal';
+import { clientOrderQuote } from '../../utils/quoteMath.js';
 
 // Stripe promise - loaded once
 let stripePromise = null;
@@ -36,6 +37,7 @@ const PaymentForm = ({
   const [paymentError, setPaymentError] = useState(null);
   const [termsAccepted, setTermsAccepted] = useState(false);
   const [showTermsModal, setShowTermsModal] = useState(false);
+  const [priceConfirmed, setPriceConfirmed] = useState(false);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -111,12 +113,16 @@ const PaymentForm = ({
           
           <div className="space-y-2 text-sm">
             <div className="flex justify-between text-gray-400">
+              <span>Qty {order.quantity || quoteData.quantity || 1}</span>
+              <span></span>
+            </div>
+            <div className="flex justify-between text-gray-400">
               <span>{quoteData.process} - {quoteData.material}</span>
-              <span>${quoteData.subtotal.toFixed(2)}</span>
+              <span>${(order.subtotal ?? quoteData.subtotal).toFixed(2)}</span>
             </div>
             <div className="flex justify-between text-gray-400">
               <span>{shippingOption.service}</span>
-              <span>${shippingOption.price.toFixed(2)}</span>
+              <span>${(order.shipping ?? shippingOption.price).toFixed(2)}</span>
             </div>
             {order.tax > 0 && (
               <div className="flex justify-between text-gray-400">
@@ -175,6 +181,26 @@ const PaymentForm = ({
           </label>
         </div>
 
+        {order.priceUpdated && (
+          <div className="bg-amber-900/30 border border-amber-500/50 rounded-xl p-4 space-y-3" data-price-updated>
+            <p className="text-amber-200 text-sm font-medium">
+              Price updated to ${order.total.toFixed(2)}
+            </p>
+            <p className="text-amber-100/80 text-xs">
+              The server recomputed this order. Confirm the new total before paying.
+            </p>
+            {!priceConfirmed && (
+              <button
+                type="button"
+                onClick={() => setPriceConfirmed(true)}
+                className="w-full py-2 bg-amber-500 text-black rounded-lg font-medium hover:bg-amber-400 transition-colors"
+              >
+                Confirm updated price
+              </button>
+            )}
+          </div>
+        )}
+
         {/* Payment Error */}
         {paymentError && (
           <div className="bg-red-900/30 border border-red-500/50 rounded-xl p-4">
@@ -191,7 +217,7 @@ const PaymentForm = ({
         {/* Submit Button */}
         <button
           type="submit"
-          disabled={!stripe || isProcessing}
+          disabled={!stripe || isProcessing || (order.priceUpdated && !priceConfirmed)}
           className="w-full py-4 bg-green-600 text-white rounded-xl font-medium hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
         >
           {isProcessing ? (
@@ -230,6 +256,7 @@ const PaymentStep = ({
   onError,
 }) => {
   const [isCreatingOrder, setIsCreatingOrder] = useState(true);
+  const [createError, setCreateError] = useState(null);
   const [order, setOrder] = useState(null);
   const [clientSecret, setClientSecret] = useState(null);
   const [stripeKey, setStripeKey] = useState(null);
@@ -245,6 +272,7 @@ const PaymentStep = ({
 
   const createOrder = async () => {
     setIsCreatingOrder(true);
+    setCreateError(null);
 
     try {
       const response = await fetch('/api/orders/create', {
@@ -260,14 +288,10 @@ const PaymentStep = ({
             volume: quoteData.volume,
             surfaceArea: quoteData.surfaceArea,
             boundingBox: modelData.boundingBox,
-            modelFile: modelData.modelFile
+            modelFile: modelData.modelFile,
+            quantity: quoteData.quantity || 1,
           },
-          quote: {
-            material: quoteData.materialCost,
-            machine: quoteData.machineCost,
-            subtotal: quoteData.subtotal,
-            shipping: shippingOption.price,
-          },
+          quote: clientOrderQuote(quoteData, shippingOption.price),
           shipping: {
             address,
             method: shippingOption.method,
@@ -283,12 +307,16 @@ const PaymentStep = ({
         throw new Error(data.error || 'Failed to create order');
       }
 
-      setOrder(data.order);
+      setOrder({
+        ...data.order,
+        priceUpdated: data.priceUpdated === true,
+      });
       setClientSecret(data.clientSecret);
       setStripeKey(data.publishableKey);
 
     } catch (error) {
       console.error('Order creation error:', error);
+      setCreateError(error.message);
       onError(error.message);
     } finally {
       setIsCreatingOrder(false);
@@ -312,7 +340,7 @@ const PaymentStep = ({
   if (!order || !clientSecret || !stripeKey) {
     return (
       <div className="p-8 text-center">
-        <p className="text-red-400">Failed to initialize payment.</p>
+        <p className="text-red-400">{createError || 'Failed to initialize payment.'}</p>
         <button
           onClick={createOrder}
           className="mt-4 px-6 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-600 transition-colors"

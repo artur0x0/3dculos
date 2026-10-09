@@ -3,8 +3,17 @@ import { Router } from 'express';
 import Order from '../db/models/Order.js';
 import stripe from '../services/stripe.js';
 import email from '../services/email.js';
-import { calculateTax } from '../config/taxRates.js';
+import ups from '../services/ups.js';
+import { priceOrder } from '../services/orderPrice.js';
+import { quoteFromGeometry, clampQuantity } from '../../src/utils/quoteMath.js';
+import { measureExportedPart } from '../services/measurePart.js';
 import { requireAuth, requireGuestOrAuth } from '../auth/session.js';
+
+function copyCount(order) {
+  const n = Number(order?.['model-data']?.quantity);
+  if (!Number.isInteger(n) || n < 1 || n > 999) return 1;
+  return n;
+}
 
 const router = Router();
 
@@ -24,6 +33,10 @@ router.post('/create', requireGuestOrAuth, async (req, res) => {
     if (!modelData || !modelData.script || !modelData.process || !modelData.material) {
       return res.status(400).json({ error: 'Model data is required' });
     }
+
+    if (!modelData.modelFile?.data && !modelData.modelFile?.['data']) {
+      return res.status(400).json({ error: 'Model file is required' });
+    }
     
     if (!quote || typeof quote.subtotal !== 'number') {
       return res.status(400).json({ error: 'Quote data is required' });
@@ -36,17 +49,64 @@ router.post('/create', requireGuestOrAuth, async (req, res) => {
     // Get state from address (handle both formats)
     const shippingState = shipping.address.state || shipping.address['state'];
     const shippingCountry = shipping.address.country || shipping.address['country'] || 'US';
-    
-    // Calculate tax based on shipping state
-    const taxableAmount = quote.subtotal + (quote.shipping || 0);
-    const { tax, rate: taxRate } = calculateTax(
-      taxableAmount, 
-      shippingState,
-      shippingCountry
+
+    const qty = clampQuantity(modelData.quantity, { missing: 1 });
+    if (modelData.quantity != null && modelData.quantity !== '' && qty == null) {
+      return res.status(400).json({ error: 'Quantity must be an integer from 1 to 999' });
+    }
+
+    // Measure the exported part and price it here. Client volume and money
+    // fields are not used. The PaymentIntent uses this result.
+    const measured = await measureExportedPart(modelData);
+    if (!measured.ok) {
+      console.error('[Orders] Create rejected:', measured.detail || measured.error);
+      return res.status(400).json({ error: measured.error });
+    }
+
+    let preview;
+    try {
+      preview = quoteFromGeometry({
+        volume: measured.geometry.volume,
+        boundingBox: measured.geometry.boundingBox,
+        process: modelData.process,
+        material: modelData.material,
+        infill: modelData.infill || 20,
+        quantity: qty,
+      });
+    } catch (err) {
+      return res.status(400).json({ error: err.message });
+    }
+
+    const dimensions = ups.calculatePackageDimensions(
+      measured.geometry.boundingBox,
+      1,
+      qty,
     );
-    
-    // Calculate final total
-    const total = quote.subtotal + (quote.shipping || 0) + tax;
+    const weight = ups.calculatePackageWeight(preview.materialGrams);
+    const rates = await ups.getShippingRates(shipping.address, { dimensions, weight });
+    const selectedRate = (rates || []).find((rate) => rate.code === shipping.method);
+    if (!selectedRate || !Number.isFinite(selectedRate.price)) {
+      return res.status(400).json({ error: 'Could not price the selected shipping method' });
+    }
+
+    const priced = priceOrder({
+      volume: measured.geometry.volume,
+      boundingBox: measured.geometry.boundingBox,
+      process: modelData.process,
+      material: modelData.material,
+      infill: modelData.infill || 20,
+      quantity: qty,
+      shippingCost: selectedRate.price,
+      state: shippingState,
+      country: shippingCountry,
+      clientQuote: quote,
+    });
+    if (!priced.ok) {
+      return res.status(400).json({ error: priced.error });
+    }
+
+    const { tax, taxRate, total } = priced;
+    const onePartBox = priced.quote.boundingBox;
 
     // Map address to kebab-case (handle both incoming formats)
     const mappedAddress = {
@@ -67,13 +127,14 @@ router.post('/create', requireGuestOrAuth, async (req, res) => {
         process: modelData.process,
         material: modelData.material,
         infill: modelData.infill || 20,
-        'volume-mm3': modelData.volume || modelData['volume-mm3'],
-        'surface-area-mm2': modelData.surfaceArea || modelData['surface-area-mm2'],
-        'bounding-box': modelData.boundingBox ? {
-          'width-mm': modelData.boundingBox.width || modelData.boundingBox['width-mm'],
-          'height-mm': modelData.boundingBox.height || modelData.boundingBox['height-mm'],
-          'depth-mm': modelData.boundingBox.depth || modelData.boundingBox['depth-mm'],
-        } : undefined,
+        'volume-mm3': priced.quote.volume,
+        'surface-area-mm2': priced.quote.surfaceArea,
+        quantity: priced.quantity,
+        'bounding-box': {
+          'width-mm': onePartBox.width,
+          'height-mm': onePartBox.height,
+          'depth-mm': onePartBox.depth,
+        },
         'model-file': {
           'content-type': modelData.modelFile.contentType || modelData.modelFile['content-type'],
           'filename': modelData.modelFile.filename || modelData.modelFile['filename'],
@@ -81,10 +142,10 @@ router.post('/create', requireGuestOrAuth, async (req, res) => {
         }
       },
       quote: {
-        'material-cost': quote.material || quote['material-cost'],
-        'machine-cost': quote.machine || quote['machine-cost'],
-        subtotal: quote.subtotal,
-        'shipping-cost': quote.shipping || quote['shipping-cost'] || 0,
+        'material-cost': priced.quote.costs.material,
+        'machine-cost': priced.quote.costs.machine,
+        subtotal: priced.quote.subtotal,
+        'shipping-cost': priced.shipping,
         tax,
         'tax-rate': taxRate,
         total,
@@ -139,11 +200,17 @@ router.post('/create', requireGuestOrAuth, async (req, res) => {
     
     return res.status(201).json({
       success: true,
+      priceUpdated: priced.priceUpdated,
       order: {
         id: order._id,
         orderNumber: order['order-number'],
         total: order.quote.total,
         tax: order.quote.tax,
+        subtotal: order.quote.subtotal,
+        shipping: order.quote['shipping-cost'],
+        material: order.quote['material-cost'],
+        machine: order.quote['machine-cost'],
+        quantity: copyCount(order),
       },
       clientSecret,
       publishableKey: stripe.getPublishableKey(),
@@ -226,6 +293,7 @@ router.post('/:orderId/confirm', requireGuestOrAuth, async (req, res) => {
         orderNumber: order['order-number'],
         status: order.status,
         total: order.quote.total,
+        quantity: copyCount(order),
       },
     });
     
@@ -326,6 +394,7 @@ router.get('/lookup/:orderNumber', async (req, res) => {
         orderNumber: order['order-number'],
         status: order.status,
         createdAt: order['created-at'],
+        quantity: copyCount(order),
         quote: order.quote,
         shipping: {
           method: order.shipping.method,

@@ -72,6 +72,7 @@ const ShippingStep = ({ address, quoteData, modelData, onComplete, onError }) =>
             depth: 50,
           },
           materialGrams: quoteData.materialGrams || 100,
+          quantity: quoteData.quantity || 1,
         }),
       });
       
@@ -283,6 +284,10 @@ const ShippingStep = ({ address, quoteData, modelData, onComplete, onError }) =>
       {/* Order Summary Preview */}
       <div className="bg-gray-800/30 rounded-xl p-4 mt-6">
         <div className="flex justify-between text-sm text-gray-400">
+          <span>Qty {quoteData.quantity || 1}</span>
+          <span>{quoteData.quantity > 1 ? `$${(quoteData.unitSubtotal || quoteData.subtotal).toFixed(2)} each` : ''}</span>
+        </div>
+        <div className="flex justify-between text-sm text-gray-400 mt-1">
           <span>Subtotal</span>
           <span>${quoteData.subtotal.toFixed(2)}</span>
         </div>

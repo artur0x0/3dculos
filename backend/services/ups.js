@@ -1,5 +1,6 @@
 // services/ups.js - UPS API integration for shipping quotes
 import config from '../config/index.js';
+import { stackAlongShortestSide } from '../../src/utils/packageSize.js';
 
 // UPS Service codes and names
 export const UPS_SERVICES = {
@@ -112,13 +113,16 @@ async function getAccessToken() {
  * Calculate package dimensions from model bounding box
  * Adds padding for packaging materials
  */
-export function calculatePackageDimensions(boundingBox, paddingInches = 1) {
+export function calculatePackageDimensions(boundingBox, paddingInches = 1, quantity = 1) {
   const mmToInches = 0.0393701;
-  
+  // Stack copies on the shortest side in millimetres, then convert.
+  // `quantity` omitted is one part (old clients).
+  const stacked = stackAlongShortestSide(boundingBox, quantity);
+
   // Convert mm to inches and add padding
-  const length = Math.ceil((boundingBox.width * mmToInches) + (paddingInches * 2));
-  const width = Math.ceil((boundingBox.height * mmToInches) + (paddingInches * 2));
-  const height = Math.ceil((boundingBox.depth * mmToInches) + (paddingInches * 2));
+  const length = Math.ceil((stacked.width * mmToInches) + (paddingInches * 2));
+  const width = Math.ceil((stacked.height * mmToInches) + (paddingInches * 2));
+  const height = Math.ceil((stacked.depth * mmToInches) + (paddingInches * 2));
   
   // Minimum package size (UPS requirement)
   return {
@@ -129,8 +133,9 @@ export function calculatePackageDimensions(boundingBox, paddingInches = 1) {
 }
 
 /**
- * Calculate package weight from material usage
- * Adds weight for packaging
+ * Calculate package weight from material usage.
+ * Adds packaging weight once. `materialGrams` must already be unit × quantity;
+ * this function does not multiply by quantity.
  */
 export function calculatePackageWeight(materialGrams, packagingGrams = 100) {
   const gramsToLbs = 0.00220462;

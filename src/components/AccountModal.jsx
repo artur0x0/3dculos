@@ -392,7 +392,7 @@ const AccountModal = ({ onClose, user, selectedTab = 'info' }) => {
                         </div>
                       )}
                       <div className="text-sm text-gray-400">
-                        Process: {order['model-data'].process} | Material: {order['model-data'].material}
+                        Process: {order['model-data'].process} | Material: {order['model-data'].material} | Qty {Number(order['model-data'].quantity) || 1}
                       </div>
                     </div>
                   ))}

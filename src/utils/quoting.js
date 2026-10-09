@@ -1,5 +1,6 @@
 // utils/quoting.js
 import manifoldContext from './ManifoldWorker';
+import { quoteFromGeometry } from './quoteMath.js';
 
 /**
  * Calculate manufacturing quote for a Manifold model
@@ -11,7 +12,7 @@ import manifoldContext from './ManifoldWorker';
  * @returns {Promise<Object>} Quote details including costs, time, and material usage
  */
 export async function calculateQuote(currentScript, options) {
-  const { process, material, infill } = options;
+  const { process, material, infill, quantity = 1 } = options;
   
   if (!currentScript) {
     throw new Error('No model to quote');
@@ -35,102 +36,25 @@ export async function calculateQuote(currentScript, options) {
   const height = boundingBox.max[1] - boundingBox.min[1];
   const depth = boundingBox.max[2] - boundingBox.min[2];
 
-  // Define max build volumes for each process
-  const processLimits = {
-    'FDM': { x: 256, y: 256, z: 256 },
-    'SLA': { x: 145, y: 145, z: 175 },
-    'SLS': { x: 300, y: 300, z: 300 },
-    'MP': { x: 250, y: 250, z: 250 }
-  };
-
-  const limits = processLimits[process] || processLimits['FDM'];
-  
-  // Check if part fits within build volume
-  if (width > limits.x || height > limits.y || depth > limits.z) {
-    throw new Error(
-      `Part is too large for ${process} process. ` +
-      `Part size: ${width.toFixed(0)} × ${height.toFixed(0)} × ${depth.toFixed(0)} mm. ` +
-      `Max printable size: ${limits.x} × ${limits.y} × ${limits.z} mm.`
-    );
-  }
-  
-  // Estimate surface area (rough approximation for a box-like shape)
   const surfaceArea = 2 * (width * height + width * depth + height * depth);
-
   console.log('[Quote] Volume:', volume, 'mm³');
   console.log('[Quote] Bounding box:', { width, height, depth });
   console.log('[Quote] Estimated surface area:', surfaceArea, 'mm²');
 
-  // Material properties
-  const materialData = {
-    'PLA': { density: 1.24, costPerKg: 20, printSpeed: 60 },
-    'PETG': { density: 1.27, costPerKg: 25, printSpeed: 45 },
-    'ABS': { density: 1.04, costPerKg: 22, printSpeed: 45 },
-    'TPU': { density: 1.21, costPerKg: 40, printSpeed: 25 },
-    'Nylon': { density: 1.14, costPerKg: 45, printSpeed: 35 }
-  };
-
-  const matData = materialData[material] || materialData['PLA'];
-  
-  // Calculate material usage
-  const infillRatio = infill / 100;
-  const wallThickness = 1.2; // mm (3 perimeters at 0.4mm)
-  
-  // Estimate solid volume (walls + infill)
-  const shellVolume = surfaceArea * wallThickness;
-  const infillVolume = volume * infillRatio;
-  const totalSolidVolume = Math.min(shellVolume + infillVolume, volume);
-  
-  // Convert to grams
-  const volumeCm3 = totalSolidVolume / 1000;
-  const materialGrams = volumeCm3 * matData.density;
-  
-  // Estimate print time
-  const printSpeed = matData.printSpeed;
-  const layerHeight = 0.2;
-  const numLayers = height / layerHeight;
-
-  const perimeterLength = surfaceArea * 2;
-  const infillPathLength = (volume / layerHeight) * infillRatio * 0.5;
-  const totalPathLength = perimeterLength + infillPathLength;
-  const printTimeHours = (totalPathLength / printSpeed / 3600) + (numLayers * 5 / 3600);
-  
-  // Calculate costs
-  const materialCost = (materialGrams / 1000) * matData.costPerKg;
-  const machineCost = printTimeHours * 5;
-  const totalCost = materialCost + machineCost;
-  
-  return {
-    materialUsage: {
-      grams: parseFloat(materialGrams.toFixed(1)),
-      meters: 0
-    },
-    materialGrams: parseFloat(materialGrams.toFixed(1)),
-    printTime: parseFloat(printTimeHours.toFixed(1)),
-    costs: {
-      material: parseFloat(materialCost.toFixed(2)),
-      machine: parseFloat(machineCost.toFixed(2)),
-      total: parseFloat(totalCost.toFixed(2))
-    },
-    material: parseFloat(materialCost.toFixed(2)),
-    machine: parseFloat(machineCost.toFixed(2)),
-    subtotal: parseFloat(totalCost.toFixed(2)),
-    infill,
-    materialName: material,
-    process,
-    volume: parseFloat(volume.toFixed(1)),
-    surfaceArea: parseFloat(surfaceArea.toFixed(1)),
+  return quoteFromGeometry({
+    volume,
     boundingBox: {
-      width: parseFloat(width.toFixed(1)),
-      height: parseFloat(height.toFixed(1)),
-      depth: parseFloat(depth.toFixed(1)),
-    },
-    bounds: {
+      width,
+      height,
+      depth,
       min: boundingBox.min,
       max: boundingBox.max,
-      size: [width, height, depth],
     },
-  };
+    process,
+    material,
+    infill,
+    quantity,
+  });
 }
 
 /**

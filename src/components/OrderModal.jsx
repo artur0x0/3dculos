@@ -1,5 +1,5 @@
 // components/OrderModal.jsx - Main order flow modal with checkout state persistence
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { X, ArrowLeft } from 'lucide-react';
 import AuthStep from './order/AuthStep';
 import AddressStep from './order/AddressStep';
@@ -7,6 +7,8 @@ import ShippingStep from './order/ShippingStep';
 import PaymentStep from './order/PaymentStep';
 import ConfirmationStep from './order/ConfirmationStep';
 import ConvertAccountStep from './order/ConvertAccountStep';
+import QuantityStepper from './order/QuantityStepper';
+import { applyClientQuantity, clampQuantity } from '../utils/quoteMath.js';
 import { saveCheckoutState, getOAuthReturnUrl } from '../utils/checkoutStorage';
 import { saveEditorState } from '../utils/editorStorage';
 import { startGithubOAuth } from '../utils/git/githubAuth.js';
@@ -40,6 +42,11 @@ const OrderModal = ({
   const [_shippingRates, setShippingRates] = useState([]);
   const [order, setOrder] = useState(null);
   const [error, setError] = useState(null);
+  const [quantity, setQuantity] = useState(() => clampQuantity(quoteData?.quantity, { missing: 1 }) || 1);
+  const liveQuote = useMemo(
+    () => applyClientQuantity(quoteData, quantity),
+    [quoteData, quantity],
+  );
 
   // Check existing auth on mount
   useEffect(() => {
@@ -95,7 +102,7 @@ const OrderModal = ({
     
     // Save checkout state
     saveCheckoutState({
-      quoteData,
+      quoteData: liveQuote,
       modelData,
       currentStep,
       address,
@@ -115,7 +122,7 @@ const OrderModal = ({
     const authUrl = `/api/auth/${provider}?returnTo=${returnUrl}`;
     
     window.location.href = authUrl;
-  }, [quoteData, modelData, currentScript, currentStep, address, guestEmail]);
+  }, [liveQuote, modelData, currentScript, currentStep, address, guestEmail]);
 
   // Handle auth completion (for non-OAuth flows like guest checkout)
   const handleAuthComplete = useCallback((authData) => {
@@ -228,8 +235,9 @@ const OrderModal = ({
       case STEPS.SHIPPING:
         return (
           <ShippingStep
+            key={`${liveQuote.quantity}:${liveQuote.materialGrams}`}
             address={address}
-            quoteData={quoteData}
+            quoteData={liveQuote}
             modelData={modelData}
             onComplete={handleShippingComplete}
             onError={setError}
@@ -239,7 +247,8 @@ const OrderModal = ({
       case STEPS.PAYMENT:
         return (
           <PaymentStep
-            quoteData={quoteData}
+            key={`${liveQuote.quantity}:${liveQuote.subtotal}:${shippingOption?.method}:${shippingOption?.price}`}
+            quoteData={liveQuote}
             modelData={modelData}
             address={address}
             shippingOption={shippingOption}
@@ -331,6 +340,22 @@ const OrderModal = ({
                 </React.Fragment>
               ))}
             </div>
+          </div>
+        )}
+
+        {currentStep !== STEPS.CONFIRMATION && currentStep !== STEPS.CONVERT && (
+          <div className="px-5 pt-4">
+            <QuantityStepper
+              id="order-quantity"
+              value={quantity}
+              onChange={(next) => {
+                setQuantity(next);
+                if (currentStep === STEPS.PAYMENT) {
+                  setShippingOption(null);
+                  setCurrentStep(STEPS.SHIPPING);
+                }
+              }}
+            />
           </div>
         )}
 

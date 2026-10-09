@@ -49,6 +49,14 @@ const modelDataSchema = new mongoose.Schema({
   },
   'bounding-box': boundingBoxSchema,
   'model-file': modelFileSchema,
+  // Copies of this one part. Old documents omit it; readers use
+  // `Number(modelData.quantity) || 1`. The default does not backfill a raw read.
+  quantity: {
+    type: Number,
+    default: 1,
+    min: 1,
+    max: 999,
+  },
 }, { _id: false });
 
 const quoteSchema = new mongoose.Schema({

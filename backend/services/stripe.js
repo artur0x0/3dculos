@@ -1,6 +1,7 @@
 // services/stripe.js - Stripe payment integration (kebab-case schema)
 import Stripe from 'stripe';
 import config from '../config/index.js';
+import { orderQuantity } from './orderPrice.js';
 
 // Initialize Stripe
 const stripe = config.stripe.secretKey 
@@ -27,6 +28,7 @@ export async function createPaymentIntent(order, options = {}) {
   const orderNumber = order['order-number'] || order.orderNumber;
   const modelData = order['model-data'] || order.modelData;
   
+  const quantity = orderQuantity(modelData);
   const paymentIntentParams = {
     amount,
     currency: 'usd',
@@ -36,8 +38,9 @@ export async function createPaymentIntent(order, options = {}) {
     metadata: {
       orderId: order._id.toString(),
       orderNumber: orderNumber,
+      quantity: String(quantity),
     },
-    description: `Order ${orderNumber} - ${modelData.process} ${modelData.material}`,
+    description: `Order ${orderNumber} - ${modelData.process} ${modelData.material} ×${quantity}`,
     receipt_email: customerEmail || order['guest-email'] || order.guestEmail,
   };
   
