@@ -120,3 +120,51 @@ export function legendGradientCss(scale = {}) {
   const parts = legendStops(scale).map((stop) => `${rgbCss(stop.rgb)} ${(stop.t * 100).toFixed(2)}%`);
   return `linear-gradient(90deg, ${parts.join(', ')})`;
 }
+
+function displacementEnds(scale = {}) {
+  const min = finiteOrNull(scale.min);
+  const max = finiteOrNull(scale.max);
+  return {
+    min: min == null ? 0 : min,
+    max: max == null ? (min == null ? 0 : min) : max,
+    known: min != null && max != null,
+  };
+}
+
+/** sRGB viridis from min to max millimetres. Non-finite samples are grey. */
+export function displacementColor(valueMm, scale = {}) {
+  const value = Number(valueMm);
+  if (!Number.isFinite(value)) return [GREY[0], GREY[1], GREY[2]];
+  const ends = displacementEnds(scale);
+  if (!ends.known) return viridis(0);
+  const span = ends.max - ends.min;
+  if (!(span > 0)) return viridis(0);
+  return viridis(clamp01((value - ends.min) / span));
+}
+
+/** Evenly spaced magnitudes from min through max. Default is 5 ticks. */
+export function displacementTicks(scale = {}, count = 5) {
+  const ends = displacementEnds(scale);
+  const n = Math.max(2, count | 0);
+  const ticks = [];
+  for (let i = 0; i < n; i += 1) ticks.push(ends.min + (ends.max - ends.min) * (i / (n - 1)));
+  return ticks;
+}
+
+function displacementStops(scale = {}, samples = 16) {
+  const ends = displacementEnds(scale);
+  const n = Math.max(1, samples | 0);
+  const stops = [];
+  for (let i = 0; i <= n; i += 1) {
+    const t = i / n;
+    const value = ends.known ? ends.min + (ends.max - ends.min) * t : 0;
+    stops.push({ t, value, rgb: displacementColor(value, scale) });
+  }
+  return stops;
+}
+
+/** CSS linear-gradient for the displacement legend. Left is the minimum. */
+export function displacementGradientCss(scale = {}) {
+  const parts = displacementStops(scale).map((stop) => `${rgbCss(stop.rgb)} ${(stop.t * 100).toFixed(2)}%`);
+  return `linear-gradient(90deg, ${parts.join(', ')})`;
+}

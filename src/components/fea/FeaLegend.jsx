@@ -1,5 +1,12 @@
 import React from 'react';
-import { legendGradientCss, legendTicks, scaleTop } from '../../fea/colormap.js';
+import {
+  displacementGradientCss,
+  displacementTicks,
+  legendGradientCss,
+  legendTicks,
+  scaleTop,
+} from '../../fea/colormap.js';
+import { activePlot } from '../../fea/resultsView.js';
 import { formatSolveSummary, runSafetyFactor } from '../../fea/studyPanel.js';
 
 function formatMPa(value) {
@@ -9,9 +16,57 @@ function formatMPa(value) {
   return String(rounded);
 }
 
+function formatMm(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 'n/a';
+  const rounded = Math.round(n * 100) / 100;
+  return String(rounded);
+}
+
+function DisplacementLegend({ result }) {
+  const known = Number.isFinite(Number(result.displacementMin)) && Number.isFinite(Number(result.displacementMax));
+  const scale = known
+    ? { min: Number(result.displacementMin), max: Number(result.displacementMax) }
+    : null;
+  const ticks = scale ? displacementTicks(scale, 5) : [];
+  const min = formatMm(result.displacementMin);
+  const max = formatMm(result.displacementMax);
+  return (
+    <div
+      data-fea-summary=""
+      data-fea-legend=""
+      data-fea-source={result.source || ''}
+      data-fea-plot-legend="displacement"
+      data-fea-stale="0"
+      className="rounded border border-amber-300/50 bg-amber-400/10 px-2 py-1.5"
+    >
+      <div
+        data-fea-legend-bar=""
+        className="h-2 w-full rounded"
+        style={{ background: scale ? displacementGradientCss(scale) : 'rgb(128, 128, 128)' }}
+        title={scale ? `${min} to ${max} mm` : 'displacement'}
+      />
+      {ticks.length > 0 && (
+        <div
+          data-fea-legend-ticks=""
+          className="mt-0.5 flex justify-between gap-1 text-[10px] tabular-nums text-cyan-100/90"
+        >
+          {ticks.map((tick, index) => (
+            <span key={index}>{formatMm(tick)}</span>
+          ))}
+        </div>
+      )}
+      <div className="text-[12px] text-cyan-50" data-fea-displacement="">
+        min {min} mm · max {max} mm
+      </div>
+    </div>
+  );
+}
+
 /**
  * Gradient, ticks, and the stub summary. Sits in the Analyze chip and the
- * phone sheet. A stale result keeps the last numbers grey and says Re-run.
+ * phone sheet. Stress is von Mises. Displacement is magnitude in millimetres.
+ * A stale result keeps the last stress numbers grey and says Re-run.
  * The coloured skin is already gone; this bar is not a live scale.
  */
 function PreviewLegend({ result, preview }) {
@@ -71,9 +126,12 @@ function PreviewLegend({ result, preview }) {
   );
 }
 
-export function FeaLegend({ result, preview }) {
+export function FeaLegend({ result, preview, plot = 'stress' }) {
   if (preview?.showing) return <PreviewLegend result={result} preview={preview} />;
   if (!result) return null;
+  if (activePlot(plot) === 'displacement' && result.stale !== true) {
+    return <DisplacementLegend result={result} />;
+  }
   const summary = formatSolveSummary(result);
   const stale = result.stale === true;
   const scale = { p95: result.p95, yield_MPa: result.yield_MPa };

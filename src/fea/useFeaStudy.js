@@ -11,6 +11,7 @@ import { boundingBox, detectFeaProfile } from './deviceProfile.js';
 import { createFeaClient } from './feaClient.js';
 import { initialFeaProgress, logFeaTiming, reduceFeaProgress } from './feaProgress.js';
 import { studyForSolve } from './renderFaceIds.js';
+import { activePlot, showResults } from './resultsView.js';
 import { bindStressField, setStressSkinSource } from './stressMap.js';
 import { composeFeaStudy, readFeaStudy, scriptOutsideFeaStudy } from './studyScript.js';
 import {
@@ -105,10 +106,13 @@ export function useFeaStudy({
   const [runReport, setRunReport] = useState(() => initialFeaProgress());
   const [notice, setNotice] = useState('');
   const [preview, setPreview] = useState(EMPTY_PREVIEW);
+  const [plot, setPlotState] = useState('stress');
+  const [dismissed, setDismissed] = useState(false);
   const writtenRef = useRef(null);
   const clientRef = useRef(null);
   const runAbortRef = useRef(null);
   const stressFieldRef = useRef(null);
+  const displacementFieldRef = useRef(null);
   const solvedOutsideRef = useRef(null);
   const markStaleRef = useRef(() => {});
   const draftRef = useRef(draft);
@@ -139,8 +143,13 @@ export function useFeaStudy({
   onHighlightRef.current = onHighlight;
   onClaimRef.current = onClaim;
 
-  markStaleRef.current = () => {
+  const clearFields = () => {
     stressFieldRef.current = null;
+    displacementFieldRef.current = null;
+  };
+
+  markStaleRef.current = () => {
+    clearFields();
     setResult((prev) => (prev && !prev.stale ? { ...prev, stale: true } : prev));
   };
 
@@ -243,7 +252,7 @@ export function useFeaStudy({
     setStudy(next);
     // Material, fixture, and load edits all come through here. The last
     // colours belong to the previous study, so they come off.
-    stressFieldRef.current = null;
+    clearFields();
     setResult((prev) => (prev && !prev.stale ? { ...prev, stale: true } : prev));
   }, []);
 
@@ -307,11 +316,13 @@ export function useFeaStudy({
       customMode: !read.material?.id,
       custom: customSeed(read),
     }));
-    stressFieldRef.current = null;
+    clearFields();
     previewFieldRef.current = null;
     previewNodalRef.current = null;
     previewDragRef.current = false;
     solvedOutsideRef.current = null;
+    setPlotState('stress');
+    setDismissed(false);
     setResult(null);
     setRunReport(initialFeaProgress());
     setPreview((prev) => ({ ...EMPTY_PREVIEW, available: prev.available }));
@@ -342,7 +353,7 @@ export function useFeaStudy({
     const outside = scriptOutsideFeaStudy(live);
     if (solvedOutsideRef.current != null && outside !== solvedOutsideRef.current) {
       solvedOutsideRef.current = outside;
-      stressFieldRef.current = null;
+      clearFields();
       setResult((prev) => (prev && !prev.stale ? { ...prev, stale: true } : prev));
     }
     const read = readFeaStudy(live);
@@ -455,8 +466,9 @@ export function useFeaStudy({
     const solid = getSolidRef.current?.();
     const geometry = solid?.geometry || null;
     const mesh = meshArraysFromGeometry(geometry, solid?.faceIDs);
+    setDismissed(false);
     if (!mesh) {
-      stressFieldRef.current = null;
+      clearFields();
       setResult({
         source: 'tet10',
         min: null,
@@ -499,17 +511,29 @@ export function useFeaStudy({
         },
       });
       const nodal = solved?.nodal instanceof Float32Array ? solved.nodal : null;
+      const magnitude = solved?.displacement instanceof Float32Array ? solved.displacement : null;
       const now = getSolidRef.current?.()?.geometry;
       const moved = !geometry || now !== geometry;
       const bound = !moved && nodal ? bindStressField(geometry, nodal, solid?.faceIDs) : null;
+      const dispBound = !moved && magnitude ? bindStressField(geometry, magnitude, solid?.faceIDs) : null;
       const liveScript = typeof getScriptRef.current === 'function' ? (getScriptRef.current() || '') : '';
       solvedOutsideRef.current = scriptOutsideFeaStudy(liveScript);
+      const onStale = () => markStaleRef.current();
       stressFieldRef.current = bound ? {
         geometry,
         field: bound,
         scale: { p95: solved.p95, yield_MPa: resolved.material.yield_MPa },
-        onStale: () => markStaleRef.current(),
+        onStale,
       } : null;
+      displacementFieldRef.current = dispBound ? {
+        geometry,
+        field: dispBound,
+        ramp: 'displacement',
+        scale: { min: solved.displacementMin, max: solved.displacementMax },
+        onStale,
+      } : null;
+      setPlotState('stress');
+      setDismissed(false);
       setResult({
         source: solved.source,
         field: solved.field,
@@ -517,6 +541,8 @@ export function useFeaStudy({
         min: solved.min,
         p95: solved.p95,
         max: solved.max,
+        displacementMin: solved.displacementMin ?? null,
+        displacementMax: solved.displacementMax ?? null,
         safetyFactor: solved.safetyFactor != null ? solved.safetyFactor : (solved.fos ?? null),
         warnings: Array.isArray(solved.warnings) ? solved.warnings : [],
         yield_MPa: resolved.material.yield_MPa ?? null,
@@ -565,6 +591,22 @@ export function useFeaStudy({
     return () => clearInterval(id);
   }, [runReport.status]);
 
+  const setPlot = useCallback((next) => {
+    setPlotState(activePlot(next));
+  }, []);
+
+  const backToSetup = useCallback(() => {
+    setPlotState('stress');
+    setDismissed(true);
+  }, []);
+
+  const results = showResults({
+    running,
+    status: runReport.status,
+    result,
+    dismissed,
+  });
+
   useEffect(() => {
     if (!open) {
       setStressSkinSource(null);
@@ -574,9 +616,15 @@ export function useFeaStudy({
       setStressSkinSource(previewFieldRef.current);
       return;
     }
-    if (!result || result.stale || !stressFieldRef.current) setStressSkinSource(null);
-    else setStressSkinSource(stressFieldRef.current);
-  }, [open, result, preview.showing, preview.ms]);
+    if (!results) {
+      setStressSkinSource(null);
+      return;
+    }
+    const src = activePlot(plot) === 'displacement'
+      ? displacementFieldRef.current
+      : stressFieldRef.current;
+    setStressSkinSource(src || null);
+  }, [open, results, plot, result, preview.showing, preview.ms]);
 
   useEffect(() => {
     controllerRef.current = createPreviewController({
@@ -682,6 +730,7 @@ export function useFeaStudy({
     controllerRef.current?.cancel();
     openRef.current = false;
     stressFieldRef.current = null;
+    displacementFieldRef.current = null;
     previewFieldRef.current = null;
     setStressSkinSource(null);
     publishedToken = '';
@@ -718,6 +767,11 @@ export function useFeaStudy({
     previewInput,
     previewCommit,
     selectPreviewLoad,
+    results,
+    plot: activePlot(plot),
+    setPlot,
+    dismissed,
+    backToSetup,
   };
 
   const token = JSON.stringify({
@@ -730,6 +784,9 @@ export function useFeaStudy({
     runReport,
     notice,
     preview,
+    results,
+    plot: activePlot(plot),
+    dismissed,
   });
 
   useEffect(() => {

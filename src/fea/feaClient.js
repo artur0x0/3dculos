@@ -1,8 +1,10 @@
 // Main-thread client for the FEA module worker.
 //
 // createFeaClient() loads the wasm inside the worker. solve() transfers the
-// mesh typed arrays in and transfers the nodal Float32Array back. The worker
-// meshes the surface and runs solve_tet10. cancel() rejects the in-flight
+// mesh typed arrays in and transfers the nodal stress and displacement
+// Float32Arrays back. Displacement is the magnitude in millimetres at each
+// render vertex. The worker meshes the surface and runs solve_tet10.
+// cancel() rejects the in-flight
 // solve. dispose() terminates the worker.
 //
 // Units: material.E_MPa and material.yield_MPa are megapascals. material.nu

@@ -58,6 +58,16 @@ test('a 40x10x10 cantilever is within 10% of beam theory', { timeout: 180_000 },
   assert.equal(result.nodal.length, surface.positions.length / 3);
   const error = Math.abs(result.max - theory) / theory;
   assert.ok(error <= 0.1, `max ${result.max} MPa vs beam theory ${theory} MPa (${(100 * error).toFixed(2)}%)`);
+  const inertia = width * height ** 3 / 12;
+  const tip = (force * length ** 3) / (3 * pla.E_MPa * inertia);
+  assert.equal(result.displacement instanceof Float32Array, true);
+  assert.equal(result.displacement.length, surface.positions.length / 3);
+  const dispError = Math.abs(result.displacementMax - tip) / tip;
+  assert.ok(
+    dispError <= 0.1,
+    `displacement max ${result.displacementMax} mm vs beam theory ${tip} mm (${(100 * dispError).toFixed(2)}%)`,
+  );
+  assert.ok(result.displacementMin >= 0 && result.displacementMin < result.displacementMax);
   assert.ok(result.p95 > 0 && result.p95 <= result.max);
   assert.ok(Math.abs(result.safetyFactor - (pla.yield_MPa / result.p95)) < 1e-6);
   assert.equal(result.stats.edgeLength, 4);

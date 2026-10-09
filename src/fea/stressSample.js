@@ -1,10 +1,12 @@
 /**
- * Sample TET10 nodal von Mises onto the render mesh.
+ * Sample TET10 nodal fields onto the render mesh.
  *
  * The skin looks up (faceID, vertex index) and reads one value per render
  * vertex. Each render vertex is matched to the boundary triangles of the
- * faces it belongs to, by position, and the stress is the quadratic
- * interpolation on the closest 6-node face.
+ * faces it belongs to, by position, and the value is the quadratic
+ * interpolation on the closest 6-node face. Stress samples von Mises.
+ * Displacement samples the nodal vector the same way and stores its
+ * magnitude in millimetres. The render mesh is not deformed.
  */
 
 import { quadShape } from './traction.js';
@@ -88,15 +90,9 @@ function interpolate(bary, values) {
   return stress;
 }
 
-/**
- * `vonMises[node]` is the solver field. The return value is one megapascal
- * per render vertex. Vertices that no boundary face owns stay NaN.
- */
-export function sampleSurfaceStress(positions, indices, faceIDs, mesh, vonMises) {
-  const vertexCount = positions.length / 3;
-  const out = new Float32Array(vertexCount);
-  out.fill(NaN);
+function facesById(mesh, valuesFor) {
   const byFace = new Map();
+  if (!mesh?.faceIds || !mesh.faces || !mesh.nodes) return byFace;
   const faceCount = mesh.faceIds.length;
   for (let f = 0; f < faceCount; f += 1) {
     const id = mesh.faceIds[f];
@@ -110,12 +106,15 @@ export function sampleSurfaceStress(positions, indices, faceIDs, mesh, vonMises)
       const node = ids[k];
       return [mesh.nodes[node * 3], mesh.nodes[node * 3 + 1], mesh.nodes[node * 3 + 2]];
     });
-    const stress = [0, 1, 2, 3, 4, 5].map((k) => vonMises[ids[k]]);
-    list.push({ corners, stress });
+    list.push({ corners, sample: valuesFor(ids) });
   }
+  return byFace;
+}
 
+function incidentFaces(indices, faceIDs) {
   const incident = new Map();
-  const triangles = Math.floor(indices.length / 3);
+  if (!indices || !faceIDs) return incident;
+  const triangles = Math.floor(Math.min(indices.length, faceIDs.length * 3) / 3);
   for (let t = 0; t < triangles; t += 1) {
     const face = faceIDs[t];
     for (let k = 0; k < 3; k += 1) {
@@ -128,11 +127,19 @@ export function sampleSurfaceStress(positions, indices, faceIDs, mesh, vonMises)
       set.add(face);
     }
   }
+  return incident;
+}
 
-  for (const [vertex, faces] of incident) {
+function sampleVertices(positions, indices, faceIDs, mesh, valuesFor, mix) {
+  const vertexCount = positions.length / 3;
+  const out = new Float32Array(vertexCount);
+  out.fill(NaN);
+  const byFace = facesById(mesh, valuesFor);
+  if (!byFace.size) return out;
+  for (const [vertex, faces] of incidentFaces(indices, faceIDs)) {
     const p = [positions[vertex * 3], positions[vertex * 3 + 1], positions[vertex * 3 + 2]];
     let best = Infinity;
-    let stress = NaN;
+    let value = NaN;
     for (const face of faces) {
       const list = byFace.get(face);
       if (!list) continue;
@@ -141,13 +148,52 @@ export function sampleSurfaceStress(positions, indices, faceIDs, mesh, vonMises)
         const dist = length(sub(p, q));
         if (dist < best) {
           best = dist;
-          stress = interpolate(barycentric(q, tri.corners[0], tri.corners[1], tri.corners[2]), tri.stress);
+          value = mix(tri.sample, barycentric(q, tri.corners[0], tri.corners[1], tri.corners[2]));
         }
       }
     }
-    if (Number.isFinite(stress)) out[vertex] = stress;
+    if (Number.isFinite(value)) out[vertex] = value;
   }
   return out;
+}
+
+/**
+ * `vonMises[node]` is the solver field. The return value is one megapascal
+ * per render vertex. Vertices that no boundary face owns stay NaN.
+ */
+export function sampleSurfaceStress(positions, indices, faceIDs, mesh, vonMises) {
+  if (!positions || !vonMises) return new Float32Array();
+  return sampleVertices(positions, indices, faceIDs, mesh, (ids) => (
+    [0, 1, 2, 3, 4, 5].map((k) => vonMises[ids[k]])
+  ), (sample, bary) => interpolate(bary, sample));
+}
+
+/**
+ * `displacement` is xyzxyz… in millimetres, three components per solver
+ * node. The return value is the magnitude in millimetres at each render
+ * vertex. The vector is interpolated, then its length is taken, on the
+ * same closest face as stress. Vertices that no boundary face owns stay NaN.
+ */
+export function sampleSurfaceDisplacement(positions, indices, faceIDs, mesh, displacement) {
+  if (!positions || !displacement) return new Float32Array();
+  return sampleVertices(positions, indices, faceIDs, mesh, (ids) => {
+    const ux = new Array(6);
+    const uy = new Array(6);
+    const uz = new Array(6);
+    for (let k = 0; k < 6; k += 1) {
+      const base = ids[k] * 3;
+      ux[k] = displacement[base];
+      uy[k] = displacement[base + 1];
+      uz[k] = displacement[base + 2];
+    }
+    return [ux, uy, uz];
+  }, (sample, bary) => {
+    const ux = interpolate(bary, sample[0]);
+    const uy = interpolate(bary, sample[1]);
+    const uz = interpolate(bary, sample[2]);
+    if (!Number.isFinite(ux) || !Number.isFinite(uy) || !Number.isFinite(uz)) return NaN;
+    return Math.hypot(ux, uy, uz);
+  });
 }
 
 /** Nearest-rank p95. Same rule as the solver: rank ceil(0.95 * n), 1-based. */

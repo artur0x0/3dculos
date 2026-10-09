@@ -3,6 +3,9 @@ import test from 'node:test';
 import {
   GREY,
   MAGENTA,
+  displacementColor,
+  displacementGradientCss,
+  displacementTicks,
   legendGradientCss,
   legendStops,
   legendTicks,
@@ -91,4 +94,16 @@ test('legend gradient paints magenta only past the limit', () => {
   assert.notDeepEqual(atYield.rgb, [1, 0, 1]);
   const above = stops.find((stop) => stop.value > 50);
   assert.deepEqual(above.rgb, [1, 0, 1]);
+});
+
+test('displacement runs viridis from min to max millimetres', () => {
+  const scale = { min: 0.2, max: 1.2 };
+  near(displacementColor(0.2, scale), OFFICIAL[0], 0.02);
+  near(displacementColor(0.7, scale), OFFICIAL[0.5], 0.02);
+  near(displacementColor(1.2, scale), OFFICIAL[1], 0.02);
+  assert.deepEqual(displacementColor(NaN, scale), [GREY[0], GREY[1], GREY[2]]);
+  const ticks = displacementTicks(scale, 5);
+  assert.equal(ticks[0], 0.2);
+  assert.equal(ticks[4], 1.2);
+  assert.match(displacementGradientCss(scale), /^linear-gradient\(90deg, /);
 });

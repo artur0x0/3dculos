@@ -14,6 +14,7 @@ export function FeaStudySheet({ panel }) {
       data-feature-sheet-layout="under-title-horizontal"
       data-feature-sheet-placement="stage"
       data-fea-sheet="1"
+      data-fea-view={panel.results ? 'results' : 'setup'}
       role="dialog"
       aria-label="Analyze"
       onPointerDown={(event) => event.stopPropagation()}
@@ -38,7 +39,7 @@ export function FeaStudySheet({ panel }) {
         </div>
         <div className="rail-scroll min-h-0 overflow-y-auto" data-feature-sheet-scroll="" data-fea-sheet-scroll="">
           <div className="flex flex-col gap-1.5 pb-1">
-            <FeaStudyControls panel={panel} />
+            {panel.results ? null : <FeaStudyControls panel={panel} />}
           </div>
         </div>
         <FeaRunBar panel={panel} />

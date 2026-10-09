@@ -9,9 +9,10 @@
  * previous visibility is put back on detach. The offset here is -2/-4 so a
  * frame where both are visible does not z-fight.
  *
- * Colours come from stressMap, keyed by this geometry and by faceID. A
- * rebuild that hands over a new geometry detaches the skin and tells the
- * study the result is stale. Stale colours are never left on screen.
+ * Colours come from stressMap, keyed by this geometry and by faceID. Stress
+ * is viridis von Mises. Displacement is viridis magnitude on the same mesh,
+ * undeformed. A rebuild that hands over a new geometry detaches the skin
+ * and tells the study the result is stale. Stale colours are never left on screen.
  */
 import {
   BufferAttribute,
@@ -21,7 +22,7 @@ import {
   Mesh,
   MeshStandardMaterial,
 } from 'three';
-import { stressColor } from './colormap.js';
+import { displacementColor, stressColor } from './colormap.js';
 import {
   getStressSkinSource,
   stressAt,
@@ -110,11 +111,16 @@ function faceIdsOf(geometry) {
   return geometry?.getAttribute?.('faceID')?.array || geometry?.attributes?.faceID?.array || null;
 }
 
-function buildGeometry(geometry, field, scale) {
+function colorFor(value, src) {
+  if (src?.ramp === 'displacement') return displacementColor(value, src.scale || {});
+  return stressColor(value, src?.scale || {});
+}
+
+function buildGeometry(geometry, field, src) {
   const index = geometry?.index?.array;
-  const src = geometry?.attributes?.position?.array;
+  const positionsSrc = geometry?.attributes?.position?.array;
   const faceIDs = faceIdsOf(geometry);
-  if (!index?.length || !src?.length || !faceIDs?.length) return null;
+  if (!index?.length || !positionsSrc?.length || !faceIDs?.length) return null;
   const triangles = Math.floor(index.length / 3);
   const positions = new Float32Array(triangles * 9);
   const colors = new Float32Array(triangles * 9);
@@ -124,14 +130,14 @@ function buildGeometry(geometry, field, scale) {
     for (let k = 0; k < 3; k++) {
       const vertex = index[t * 3 + k];
       const vi = vertex * 3;
-      const rgb = stressColor(stressAt(field, face, vertex), scale);
-      positions[w] = src[vi] ?? 0;
+      const rgb = colorFor(stressAt(field, face, vertex), src);
+      positions[w] = positionsSrc[vi] ?? 0;
       colors[w] = rgb[0];
       w += 1;
-      positions[w] = src[vi + 1] ?? 0;
+      positions[w] = positionsSrc[vi + 1] ?? 0;
       colors[w] = rgb[1];
       w += 1;
-      positions[w] = src[vi + 2] ?? 0;
+      positions[w] = positionsSrc[vi + 2] ?? 0;
       colors[w] = rgb[2];
       w += 1;
     }
@@ -177,7 +183,7 @@ export function syncStressSkin(host) {
     hidePaintSkin(host);
     return host.userData.stressSkin;
   }
-  const painted = buildGeometry(geometry, src.field, src.scale);
+  const painted = buildGeometry(geometry, src.field, src);
   detachStressSkin(host);
   if (!painted) return null;
   const skin = new Mesh(painted, makeStressMaterial(hostSide(host)));

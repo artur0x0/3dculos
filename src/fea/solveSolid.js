@@ -4,8 +4,9 @@
  * meshVolume turns the render triangles into a quadratic tet mesh and copies
  * face ids onto the boundary. Fixtures and loads on those face ids become
  * nodal constraints and consistent tractions. solve_tet10 returns nodal von
- * Mises. That field is sampled back onto the render vertices, keyed by
- * faceID and position, which is what the stress skin already reads.
+ * Mises and nodal displacement. Both are sampled onto the render vertices,
+ * keyed by faceID and position. Displacement is the magnitude in millimetres.
+ * The render mesh is not deformed.
  *
  * TODO: shells need a midsurface extraction before solve_shell. Solids always
  * use TET10 here. SHELLS_AVAILABLE stays false.
@@ -24,6 +25,7 @@ import {
 import {
   fieldRange,
   safetyFactor,
+  sampleSurfaceDisplacement,
   sampleSurfaceStress,
 } from './stressSample.js';
 import { PHONE_WASM_BYTES } from './wasmMemory.js';
@@ -231,6 +233,17 @@ export async function solveSolid({
   const postStarted = Date.now();
   const tetField = Float64Array.from(solved.nodal);
   const nodal = sampleSurfaceStress(positions, indices, faceIDs, volume, tetField);
+  let displacement = null;
+  let displacementMin = null;
+  let displacementMax = null;
+  const nodeCount = volume.nodes.length / 3;
+  const nodalDisp = solved.displacement;
+  if (nodalDisp && nodalDisp.length >= nodeCount * 3) {
+    displacement = sampleSurfaceDisplacement(positions, indices, faceIDs, volume, nodalDisp);
+    const dispRange = fieldRange(displacement);
+    displacementMin = dispRange.min;
+    displacementMax = dispRange.max;
+  }
   const tetRange = fieldRange(tetField);
   const min = asNumber(solved.min) ?? tetRange.min;
   const max = asNumber(solved.max) ?? tetRange.max;
@@ -249,6 +262,9 @@ export async function solveSolid({
     field: 'von_mises',
     units: 'MPa',
     nodal,
+    displacement,
+    displacementMin,
+    displacementMax,
     min,
     max,
     p95,

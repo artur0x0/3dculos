@@ -30,6 +30,8 @@ const PART_ID = 'fea-block';
 const USER_ID = 'user-fea';
 // σ = F L (h/2) / I, I = width * height³ / 12, force along Z, length along X.
 const BEAM_PEAK_MPA = 48;
+// δ = F L³ / (3 E I), PLA E = 3250 MPa, I = 10 * 10³ / 12.
+const BEAM_TIP_MM = (200 * 40 ** 3) / (3 * 3250 * (10 * 10 ** 3 / 12));
 
 const CHROME_CANDIDATES = [
   process.env.CHROME_PATH,
@@ -480,6 +482,62 @@ async function tapUntil(page, touch, points, attr, expected) {
   return false;
 }
 
+function heatChanged(before, after) {
+  if (!before || !after || before.model < 10 || after.model < 10) return false;
+  return Math.abs(before.leftHeat - after.leftHeat) > 15
+    || Math.abs(before.rightHeat - after.rightHeat) > 15;
+}
+
+async function assertResultsPlots(page, vp, shell, sample) {
+  const view = await page.locator(shell).getAttribute('data-fea-view');
+  check(`${vp.name} results view`, view === 'results', view || '');
+  check(`${vp.name} setup hidden`, await page.locator(`${shell} [data-fea-material]`).count() === 0);
+  check(`${vp.name} targets hidden`, await page.locator(`${shell} [data-fea-target="fixture"]`).count() === 0);
+  check(`${vp.name} preview sliders hidden`, await page.locator(`${shell} [data-fea-preview-sliders]`).count() === 0);
+  const stressPressed = await page.locator(`${shell} [data-fea-plot="stress"]`).getAttribute('aria-pressed');
+  check(`${vp.name} stress tab`, stressPressed === 'true', stressPressed || '');
+  check(`${vp.name} displacement tab`, await page.locator(`${shell} [data-fea-plot="displacement"]`).count() === 1);
+  check(
+    `${vp.name} timing under the plot`,
+    await page.locator(`${shell} [data-fea-timing]`).count() === 1
+      && await page.locator(`${shell} [data-fea-timing-details]`).count() === 1,
+  );
+  const stressPx = await sample(page);
+  const stressShot = join(SHOT_DIR, vp.touch ? 'fea-results-stress-390.png' : 'fea-results-stress-1280.png');
+  check(`${vp.name} stress shot dir`, !stressShot.startsWith('/opt/cursor/artifacts'), stressShot);
+  await page.screenshot({ path: stressShot });
+  check(`${vp.name} stress shot saved`, existsSync(stressShot), stressShot);
+  console.log(`  shot ${stressShot}`);
+
+  await page.locator(`${shell} [data-fea-plot="displacement"]`).click();
+  await page.locator(`${shell} [data-fea-displacement]`).waitFor({ timeout: 8000 });
+  await page.waitForTimeout(400);
+  const dispPx = await sample(page);
+  const dispText = ((await page.locator(`${shell} [data-fea-displacement]`).innerText()) || '').replace(/\s+/g, ' ').trim();
+  const maxMatch = dispText.match(/max ([0-9.]+) mm/);
+  const minMatch = dispText.match(/min ([0-9.]+) mm/);
+  const maxMm = maxMatch ? Number(maxMatch[1]) : NaN;
+  const minMm = minMatch ? Number(minMatch[1]) : NaN;
+  const tipError = Number.isFinite(maxMm) ? Math.abs(maxMm - BEAM_TIP_MM) / BEAM_TIP_MM : Infinity;
+  console.log(`  displacement ${vp.name} ${dispText} theory ${BEAM_TIP_MM.toFixed(3)} mm`);
+  check(`${vp.name} pixels change`, heatChanged(stressPx, dispPx), JSON.stringify({ stressPx, dispPx }));
+  check(`${vp.name} displacement legend`, /min .+ mm/.test(dispText) && /max .+ mm/.test(dispText), dispText);
+  check(`${vp.name} tip within 10% of beam theory`, tipError <= 0.1, `max ${maxMm} vs ${BEAM_TIP_MM}`);
+  check(`${vp.name} displacement min is below the tip`, Number.isFinite(minMm) && minMm >= 0 && minMm < maxMm, dispText);
+  const dispShot = join(SHOT_DIR, vp.touch ? 'fea-results-displacement-390.png' : 'fea-results-displacement-1280.png');
+  check(`${vp.name} displacement shot dir`, !dispShot.startsWith('/opt/cursor/artifacts'), dispShot);
+  await page.screenshot({ path: dispShot });
+  check(`${vp.name} displacement shot saved`, existsSync(dispShot), dispShot);
+  console.log(`  shot ${dispShot}`);
+
+  await page.locator(`${shell} [data-fea-back]`).click();
+  await page.locator(`${shell}[data-fea-view="setup"]`).waitFor({ timeout: 8000 });
+  check(`${vp.name} back restores material`, await page.locator(`${shell} [data-fea-material]`).count() === 1);
+  check(`${vp.name} back restores targets`, await page.locator(`${shell} [data-fea-target="force"]`).count() === 1);
+  check(`${vp.name} back hides plots`, await page.locator(`${shell} [data-fea-plot="stress"]`).count() === 0);
+  check(`${vp.name} back restores run`, await page.locator(`${shell} [data-fea-run]`).count() === 1);
+}
+
 async function legendBox(page) {
   return page.locator('[data-fea-legend]').evaluate((el) => {
     const box = el.getBoundingClientRect();
@@ -618,6 +676,8 @@ async function runCase(browser, vp) {
   check(`${vp.name} shot saved`, existsSync(shot), shot);
   console.log(`  shot ${shot}`);
 
+  await assertResultsPlots(page, vp, shell, readColors);
+
   await page.locator('[data-paint-chip]').click();
   await page.locator('[data-paint-mode="1"]').waitFor({ timeout: 8000 });
   check(`${vp.name} paint closes analyze`, await page.locator(shell).count() === 0);
@@ -643,6 +703,9 @@ async function runCase(browser, vp) {
     await page.locator('[data-fea-rerun]').waitFor({ timeout: 15000 });
     check(`${vp.name} geometry edit is stale`, true);
   } else {
+    if (await page.locator(`${shell}[data-fea-view="results"]`).count()) {
+      await page.locator('[data-fea-back]').click();
+    }
     await page.locator('[data-fea-material]').selectOption('al-6061-t6');
     await page.locator('[data-fea-rerun]').waitFor({ timeout: 8000 });
     check(`${vp.name} material edit is stale`, true, JSON.stringify(edited));

@@ -26,6 +26,8 @@ const PREVIEW = process.env.FEA_PREVIEW === '1';
 const STUDY = feaStudyBlock({ mesh: { target: 4 } });
 const CUBE = `const part = Manifold.cube([40, 10, 10], false);\nreturn part;\n${STUDY}`;
 const BEAM_PEAK_MPA = 48;
+// δ = F L³ / (3 E I), PLA E = 3250 MPa, I = 10 * 10³ / 12.
+const BEAM_TIP_MM = (200 * 40 ** 3) / (3 * 3250 * (10 * 10 ** 3 / 12));
 const PART_ID = 'fea-block';
 const USER_ID = 'user-fea';
 
@@ -492,6 +494,62 @@ function noticeOf(page) {
   return page.locator('[data-fea-notice]').textContent().catch(() => '');
 }
 
+function heatChanged(before, after) {
+  if (!before || !after || before.model < 10 || after.model < 10) return false;
+  return Math.abs(before.leftHeat - after.leftHeat) > 15
+    || Math.abs(before.rightHeat - after.rightHeat) > 15;
+}
+
+async function assertResultsPlots(page, vp, shell) {
+  const view = await page.locator(shell).getAttribute('data-fea-view');
+  check(`${vp.name} results view`, view === 'results', view || '');
+  check(`${vp.name} setup hidden`, await page.locator(`${shell} [data-fea-material]`).count() === 0);
+  check(`${vp.name} targets hidden`, await page.locator(`${shell} [data-fea-target="fixture"]`).count() === 0);
+  check(`${vp.name} preview sliders hidden`, await page.locator(`${shell} [data-fea-preview-sliders]`).count() === 0);
+  const stressPressed = await page.locator(`${shell} [data-fea-plot="stress"]`).getAttribute('aria-pressed');
+  check(`${vp.name} stress tab`, stressPressed === 'true', stressPressed || '');
+  check(`${vp.name} displacement tab`, await page.locator(`${shell} [data-fea-plot="displacement"]`).count() === 1);
+  check(
+    `${vp.name} timing under the plot`,
+    await page.locator(`${shell} [data-fea-timing]`).count() === 1
+      && await page.locator(`${shell} [data-fea-timing-details]`).count() === 1,
+  );
+  const stressPx = await sampleSides(page);
+  const stressShot = join(SHOT_DIR, vp.touch ? 'fea-study-results-stress-390.png' : 'fea-study-results-stress-1280.png');
+  check(`${vp.name} stress shot dir`, !stressShot.startsWith('/opt/cursor/artifacts'), stressShot);
+  await page.screenshot({ path: stressShot });
+  check(`${vp.name} stress shot saved`, existsSync(stressShot), stressShot);
+  console.log(`  shot ${stressShot}`);
+
+  await page.locator(`${shell} [data-fea-plot="displacement"]`).click();
+  await page.locator(`${shell} [data-fea-displacement]`).waitFor({ timeout: 8000 });
+  await page.waitForTimeout(400);
+  const dispPx = await sampleSides(page);
+  const dispText = ((await page.locator(`${shell} [data-fea-displacement]`).innerText()) || '').replace(/\s+/g, ' ').trim();
+  const maxMatch = dispText.match(/max ([0-9.]+) mm/);
+  const minMatch = dispText.match(/min ([0-9.]+) mm/);
+  const maxMm = maxMatch ? Number(maxMatch[1]) : NaN;
+  const minMm = minMatch ? Number(minMatch[1]) : NaN;
+  const tipError = Number.isFinite(maxMm) ? Math.abs(maxMm - BEAM_TIP_MM) / BEAM_TIP_MM : Infinity;
+  console.log(`  displacement ${vp.name} ${dispText} theory ${BEAM_TIP_MM.toFixed(3)} mm`);
+  check(`${vp.name} pixels change`, heatChanged(stressPx, dispPx), JSON.stringify({ stressPx, dispPx }));
+  check(`${vp.name} displacement legend`, /min .+ mm/.test(dispText) && /max .+ mm/.test(dispText), dispText);
+  check(`${vp.name} tip within 10% of beam theory`, tipError <= 0.1, `max ${maxMm} vs ${BEAM_TIP_MM}`);
+  check(`${vp.name} displacement min is below the tip`, Number.isFinite(minMm) && minMm >= 0 && minMm < maxMm, dispText);
+  const dispShot = join(SHOT_DIR, vp.touch ? 'fea-study-results-displacement-390.png' : 'fea-study-results-displacement-1280.png');
+  check(`${vp.name} displacement shot dir`, !dispShot.startsWith('/opt/cursor/artifacts'), dispShot);
+  await page.screenshot({ path: dispShot });
+  check(`${vp.name} displacement shot saved`, existsSync(dispShot), dispShot);
+  console.log(`  shot ${dispShot}`);
+
+  await page.locator(`${shell} [data-fea-back]`).click();
+  await page.locator(`${shell}[data-fea-view="setup"]`).waitFor({ timeout: 8000 });
+  check(`${vp.name} back restores material`, await page.locator(`${shell} [data-fea-material]`).count() === 1);
+  check(`${vp.name} back restores targets`, await page.locator(`${shell} [data-fea-target="force"]`).count() === 1);
+  check(`${vp.name} back hides plots`, await page.locator(`${shell} [data-fea-plot="stress"]`).count() === 0);
+  check(`${vp.name} back restores run`, await page.locator(`${shell} [data-fea-run]`).count() === 1);
+}
+
 async function readStudyScripts(page) {
   return page.evaluate(() => new Promise((resolve, reject) => {
     const req = indexedDB.open('surfcad-assembly', 1);
@@ -643,6 +701,8 @@ async function runCase(browser, vp) {
   check(`${vp.name} shot saved`, existsSync(shot), shot);
   console.log(`  shot ${shot}`);
 
+  await assertResultsPlots(page, vp, shell);
+
   const notice = (await noticeOf(page) || '').trim();
   check(`${vp.name} study write accepted`, notice === '', notice);
   const drawerOpen = await page.locator('[data-script-editor-open="true"]').count();
@@ -773,6 +833,9 @@ async function runSheetCase(browser, vp) {
   check(`${vp.name} sheet no stub`, summary.stubs === 0, JSON.stringify(summary));
   check(`${vp.name} sheet tet10`, summary.source === 'tet10', summary.source);
   check(`${vp.name} sheet stress finite`, Number.isFinite(maxMPa) && maxMPa > 0.05 && maxMPa < 5000, summary.stress);
+  check(`${vp.name} sheet results view`, await page.locator(`${shell}[data-fea-view="results"]`).count() === 1);
+  check(`${vp.name} sheet setup hidden`, await page.locator(`${shell} [data-fea-material]`).count() === 0);
+  check(`${vp.name} sheet preview sliders hidden`, await page.locator(`${shell} [data-fea-preview-sliders]`).count() === 0);
   check(`${vp.name} sheet no jacobian failure`, !/Jacobian|non-positive/i.test(summary.notice), summary.notice);
   const shot = join(SHOT_DIR, vp.touch ? 'fea-sheet-390.png' : 'fea-sheet-1280.png');
   check(`${vp.name} sheet shot dir`, !shot.startsWith('/opt/cursor/artifacts'), shot);
