@@ -60,6 +60,7 @@ import ProfileChip from './ProfileChip';
 import CrossSectionPanel from './CrossSectionPanel';
 import HelperInsertPalette from './HelperInsertPalette';
 import ErrorPopup from './ErrorPopup';
+import { FeatureDeleteConfirm } from './FeatureEditDelete';
 import ContourModeRail from './ContourModeRail';
 import ContourModeChip from './ContourModeChip';
 import FilletModeChip from './FilletModeChip';
@@ -163,6 +164,7 @@ import {
   contourFieldsFromState,
   creationDialogFor,
   editPreviewScript,
+  featureDependents,
   openFeatureEdit,
 } from '../utils/featureEdit';
 import {
@@ -683,6 +685,8 @@ const Viewport = forwardRef(({
   onCommitContourProfile = null,
   onCommitFillet = null,
   onCommitFeatureEdit = null,
+  /** Delete from the open feature-edit dialog. False leaves the dialog up. */
+  onDeleteFeatureEdit = null,
   /**
    * True while an assembly open owns the worker. Feature-edit preview and
    * the cancel/unchanged restore must not post in front of that build, and
@@ -829,8 +833,11 @@ const Viewport = forwardRef(({
   const executeScriptRef = useRef(null);
   const onCommitFeatureEditRef = useRef(onCommitFeatureEdit);
   onCommitFeatureEditRef.current = onCommitFeatureEdit;
+  const onDeleteFeatureEditRef = useRef(onDeleteFeatureEdit);
+  onDeleteFeatureEditRef.current = onDeleteFeatureEdit;
   const [helperEdit, setHelperEdit] = useState(null);
   const [featureEditBanner, setFeatureEditBanner] = useState('');
+  const [featureDeleteAsk, setFeatureDeleteAsk] = useState(null);
   const cadBodyStickyRef = useRef(false);
   const showCadBodyHighlightRef = useRef(() => false);
   const swapPickPartRef = useRef(() => false);
@@ -7354,6 +7361,7 @@ const Viewport = forwardRef(({
     featureEditRef.current = null;
     setHelperEdit(null);
     setFeatureEditBanner('');
+    setFeatureDeleteAsk(null);
     if (full && !editPreviewBlocked()) executeScriptRef.current?.(full, { editPreview: true });
   };
 
@@ -7370,6 +7378,52 @@ const Viewport = forwardRef(({
     if (full && !editPreviewBlocked()) executeScriptRef.current?.(full, { editPreview: true });
     return true;
   };
+
+  const dismissFeatureEditAfterDelete = () => {
+    // Clear the session before the mode exits. Those exits call cancel, which
+    // would otherwise rebuild the preview of the script we just deleted.
+    featureEditRef.current = null;
+    setHelperEdit(null);
+    setFeatureEditBanner('');
+    setFeatureDeleteAsk(null);
+    if (contourModeRef.current) exitContourMode();
+    if (filletModeRef.current) exitFilletMode();
+    if (shellModeRef.current) exitShellMode();
+    if (draftModeRef.current) exitDraftMode();
+    if (cutModeRef.current) exitCutMode();
+    if (booleanModeRef.current) exitBooleanMode();
+    if (moveModeRef.current) exitMoveMode();
+    if (moveFaceModeRef.current) exitMoveFaceMode();
+    if (deleteFaceModeRef.current) exitDeleteFaceMode();
+    if (sheetMetalModeRef.current) {
+      sheetMetalModeRef.current = null;
+      setSheetMetalMode(null);
+    }
+  };
+
+  const openFeatureDeleteConfirm = () => {
+    const edit = featureEditRef.current;
+    if (!edit?.feature) return;
+    const script = (typeof getHelperBuffer === 'function' ? getHelperBuffer() : '') || edit.script || '';
+    const dependents = featureDependents(script, edit.feature);
+    setFeatureDeleteAsk({
+      label: edit.feature.chipLabel || edit.feature.label || 'this feature',
+      dependents,
+    });
+  };
+
+  const confirmFeatureDelete = () => {
+    const edit = featureEditRef.current;
+    if (!edit?.feature) {
+      setFeatureDeleteAsk(null);
+      return;
+    }
+    const ok = onDeleteFeatureEditRef.current?.(edit.feature);
+    if (!ok) return;
+    dismissFeatureEditAfterDelete();
+  };
+
+  const featureEditDelete = featureEditRef.current ? openFeatureDeleteConfirm : null;
 
   const liveGraphFaces = () => {
     const geom = resultRef.current?.geometry;
@@ -8250,6 +8304,7 @@ const Viewport = forwardRef(({
           onEditConfirm={({ fields }) => commitFeatureEditRef.current?.({
             fields: { ...(featureEditRef.current?.session?.fields || {}), ...fields },
           })}
+          onEditDelete={helperEdit ? featureEditDelete : null}
           onEditCancel={() => cancelFeatureEditRef.current?.(featureEditRef.current?.kind || 'helper')}
         />
       )}
@@ -8290,6 +8345,7 @@ const Viewport = forwardRef(({
             cancelFeatureEditRef.current?.('sheetMetal');
             setSheetMetalMode(null);
           }}
+          onDeleteFeature={featureEditRef.current?.dialog === 'sheetMetal' ? featureEditDelete : null}
           compact={isMobile}
           mesh={cachedMeshData}
           script={sheetMetalMode.exportOpen && typeof getHelperBuffer === 'function' ? getHelperBuffer() : null}
@@ -8507,6 +8563,7 @@ const Viewport = forwardRef(({
             prev ? { ...prev, merge: merge !== false } : prev
           ))}
           onConfirm={confirmContourProfile}
+          onDelete={featureEditRef.current?.dialog === 'contour' ? featureEditDelete : null}
           onUndoPoint={() => setContourMode((prev) => {
             if (!prev || prev.tool !== 'polyline') return prev;
             const points = (prev.params?.points || []).slice(0, -1);
@@ -8582,6 +8639,7 @@ const Viewport = forwardRef(({
             setFeatureEditBanner('');
             setFilletMode((prev) => (prev ? { ...prev, missingLabel: '' } : prev));
           }}
+          onDelete={featureEditRef.current?.dialog === 'fillet' || featureEditRef.current?.dialog === 'chamfer' ? featureEditDelete : null}
           onParamChange={(next, extra) => setFilletMode((prev) => (
             prev
               ? {
@@ -8623,6 +8681,7 @@ const Viewport = forwardRef(({
             publishFacePicks([], resultRef.current?.geometry, null, null);
           }}
           onConfirm={acceptShell}
+          onDelete={featureEditRef.current?.dialog === 'shell' ? featureEditDelete : null}
           onDismiss={exitShellMode}
         />
       )}
@@ -8661,6 +8720,7 @@ const Viewport = forwardRef(({
           onUndo={() => commitDraftState(popLastDraftFace(draftModeRef.current))}
           onClear={() => commitDraftState(clearDraftFaces(draftModeRef.current))}
           onConfirm={acceptDraft}
+          onDelete={featureEditRef.current?.dialog === 'draft' ? featureEditDelete : null}
           onDismiss={exitDraftMode}
         />
       )}
@@ -8676,6 +8736,7 @@ const Viewport = forwardRef(({
           onUndo={() => commitCutState(popLastCutPick(cutModeRef.current))}
           onClear={() => commitCutState(clearCutPicks(cutModeRef.current))}
           onConfirm={acceptCut}
+          onDelete={featureEditRef.current?.dialog === 'cut' ? featureEditDelete : null}
           onDismiss={exitCutMode}
         />
       )}
@@ -8693,6 +8754,7 @@ const Viewport = forwardRef(({
           onUndo={() => commitBooleanState(popLastBooleanPick(booleanModeRef.current, activePartIdRef.current))}
           onClear={() => commitBooleanState(clearBooleanPicks(booleanModeRef.current, activePartIdRef.current))}
           onConfirm={acceptBoolean}
+          onDelete={featureEditRef.current?.dialog === 'boolean' ? featureEditDelete : null}
           onDismiss={exitBooleanMode}
         />
       )}
@@ -8733,6 +8795,7 @@ const Viewport = forwardRef(({
             clearHighlight();
           }}
           onConfirm={acceptMove}
+          onDelete={featureEditRef.current?.dialog === 'move' ? featureEditDelete : null}
           onDismiss={exitMoveMode}
         />
       )}
@@ -8749,6 +8812,7 @@ const Viewport = forwardRef(({
           onUndo={() => commitMoveFaceState(popLastMoveFace(moveFaceModeRef.current))}
           onClear={() => commitMoveFaceState(clearMoveFaces(moveFaceModeRef.current))}
           onConfirm={acceptMoveFace}
+          onDelete={featureEditRef.current?.dialog === 'moveFace' ? featureEditDelete : null}
           onDismiss={exitMoveFaceMode}
         />
       )}
@@ -8761,6 +8825,7 @@ const Viewport = forwardRef(({
           onUndo={() => commitDeleteFaceState(popLastDeleteFace(deleteFaceModeRef.current))}
           onClear={() => commitDeleteFaceState(clearDeleteFaces(deleteFaceModeRef.current))}
           onConfirm={acceptDeleteFace}
+          onDelete={featureEditRef.current?.dialog === 'deleteFace' ? featureEditDelete : null}
           onDismiss={exitDeleteFaceMode}
         />
       )}
@@ -8860,6 +8925,14 @@ const Viewport = forwardRef(({
           </div>
         </div>
       )}
+
+      <FeatureDeleteConfirm
+        open={!!featureDeleteAsk}
+        label={featureDeleteAsk?.label}
+        dependents={featureDeleteAsk?.dependents || []}
+        onCancel={() => setFeatureDeleteAsk(null)}
+        onConfirm={confirmFeatureDelete}
+      />
 
       {edgeModeToast && createPortal(
         <div className="fixed top-16 left-1/2 -translate-x-1/2 z-50 pointer-events-none max-w-[min(22rem,calc(100%-2rem))]">

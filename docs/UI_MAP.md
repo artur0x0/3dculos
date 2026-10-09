@@ -246,7 +246,11 @@ Mobile specifics:
   Horizontal scroll when params overflow. The CAD strip, the desktop strip, and
   long-press reopen the **creation dialog** for that feature (`beginFeatureEdit`),
   pre-filled from the block. Confirm rewrites that block in place
-  (`confirmFeatureEdit`); Cancel writes nothing. A stored edge or face the
+  (`confirmFeatureEdit`); Cancel writes nothing. The red Delete button sits
+  opposite Confirm. It asks first, and the confirm names later features that
+  use this feature's edges, faces, or variables. Confirming delete removes
+  that one block and rebuilds; Undo restores the script in one step. A stored
+  edge or face the
   prefix graph cannot resolve stays listed (`N edges not found`) with Clear.
   The under-title `FeatureSheet` remains for a failed-chip read and for kinds
   with no creation dialog. Accept / Cancel / Edit script / Delete stay on that

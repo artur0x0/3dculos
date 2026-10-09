@@ -1,6 +1,7 @@
 import React from 'react';
 import { Check, X } from 'lucide-react';
 import { NumberField } from './controls/popupUI';
+import { FeatureDeleteButton } from './FeatureEditDelete';
 
 const ACCENT = 'cyan';
 
@@ -25,6 +26,7 @@ const DraftModeChip = ({
   onClear,
   onConfirm,
   onDismiss,
+  onDelete = null,
 }) => {
   const faceCount = Array.isArray(drafts) ? drafts.length : 0;
 
@@ -139,9 +141,12 @@ const DraftModeChip = ({
       </div>
 
       <div className="mt-2 flex items-center justify-between gap-2 shrink-0">
-        <span className="text-[11px] text-cyan-200/70 leading-tight">
-          draftFaces(body, faces, angle)
-        </span>
+        <div className="flex items-center gap-2 min-w-0">
+          {onDelete ? <FeatureDeleteButton onClick={onDelete} /> : null}
+          <span className="text-[11px] text-cyan-200/70 leading-tight">
+            draftFaces(body, faces, angle)
+          </span>
+        </div>
         <button
           type="button"
           onClick={() => onConfirm?.()}

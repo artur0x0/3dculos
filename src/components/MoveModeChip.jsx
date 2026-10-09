@@ -1,6 +1,7 @@
 import React from 'react';
 import { Check, X } from 'lucide-react';
 import { NumberField } from './controls/popupUI';
+import { FeatureDeleteButton } from './FeatureEditDelete';
 import { moveTargetLabel, validateMoveAccept } from '../utils/moveMode';
 
 const ACCENT = 'cyan';
@@ -27,6 +28,7 @@ const MoveModeChip = ({
   onClear,
   onConfirm,
   onDismiss,
+  onDelete = null,
 }) => {
   const gate = validateMoveAccept({
     target, dx, dy, dz, direction, distance, cutNormal, faceNormal,
@@ -165,9 +167,12 @@ const MoveModeChip = ({
       </div>
 
       <div className="mt-2 flex items-center justify-between gap-2 shrink-0">
-        <span className="text-[11px] text-cyan-200/70 leading-tight">
-          {along ? 'move along the normal' : 'move(body, [dx, dy, dz])'}
-        </span>
+        <div className="flex items-center gap-2 min-w-0">
+          {onDelete ? <FeatureDeleteButton onClick={onDelete} /> : null}
+          <span className="text-[11px] text-cyan-200/70 leading-tight">
+            {along ? 'move along the normal' : 'move(body, [dx, dy, dz])'}
+          </span>
+        </div>
         <button
           type="button"
           onClick={() => onConfirm?.()}

@@ -24,6 +24,7 @@ import { SCS_ORDER_URL } from '../../utils/scs/scsCatalog';
 import { downloadBlob } from '../../utils/model-io';
 import SheetMetalModeChip from './SheetMetalModeChip';
 import { SmButton, SmMmSlider, SmPopup, SmSelect, SmSlider, SmToggle } from './SmControls';
+import { FeatureDeleteButton } from '../FeatureEditDelete';
 
 /**
  * Sheet-metal flow chrome by stage. Viewport owns the mode state, overlay
@@ -299,7 +300,10 @@ const TOOL_HINTS = {
   tapped: 'Tap a face to place a tapped hole.',
 };
 
-const SheetMetalFlow = ({ mode, setMode, onCommit, onExit, compact = false, mesh = null, script = null, partName = '' }) => {
+const SheetMetalFlow = ({
+  mode, setMode, onCommit, onExit, compact = false, mesh = null, script = null, partName = '',
+  onDeleteFeature = null,
+}) => {
   const [unit, setUnit] = useState(() => loadSheetDisplayUnit());
   const onUnit = (next) => setUnit(saveSheetDisplayUnit(next));
   if (!mode) return null;
@@ -395,14 +399,17 @@ const SheetMetalFlow = ({ mode, setMode, onCommit, onExit, compact = false, mesh
             {TOOL_HINTS[mode.tool] || 'Pick a tool on the left rail.'}
           </div>
           {mode.toast && <div className="mt-1 text-[12px] text-amber-200" data-sm-toast="1">{mode.toast}</div>}
-          <SmButton
-            variant="primary"
-            className="mt-2 w-full"
-            data-sm-export="1"
-            onClick={() => setMode((m) => openSheetExport(m))}
-          >
-            Check &amp; Export
-          </SmButton>
+          <div className="mt-2 flex items-center gap-2">
+            {onDeleteFeature ? <FeatureDeleteButton onClick={onDeleteFeature} /> : null}
+            <SmButton
+              variant="primary"
+              className={onDeleteFeature ? 'flex-1' : 'w-full'}
+              data-sm-export="1"
+              onClick={() => setMode((m) => openSheetExport(m))}
+            >
+              Check &amp; Export
+            </SmButton>
+          </div>
         </div>
       )}
     </SheetMetalModeChip>

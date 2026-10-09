@@ -135,6 +135,7 @@ const HelperInsertPalette = ({
   /** Reopen this palette item with the feature's saved fields. Confirm edits in place. */
   editSession = null,
   onEditConfirm = null,
+  onEditDelete = null,
   onEditCancel = null,
 }) => {
   const grouped = itemsByGroup();
@@ -156,9 +157,23 @@ const HelperInsertPalette = ({
     onBlockPreviewRef.current?.(null);
   }, []);
 
+  const featureEditOpenRef = useRef(false);
   // Feature edit reuses this sheet. Defaults are the saved block, not the palette's.
+  // Clearing the session (Delete confirmed) must close this sheet too.
   useEffect(() => {
-    if (!editSession?.helperId) return;
+    if (!editSession?.helperId) {
+      if (!featureEditOpenRef.current) return;
+      featureEditOpenRef.current = false;
+      setPending(null);
+      setFaceSnapshot(null);
+      setEdgeSnapshot(null);
+      setRefuseMessage(null);
+      setRefuseTitle(null);
+      setModalMode('default');
+      onBlockPreviewRef.current?.(null);
+      return;
+    }
+    featureEditOpenRef.current = true;
     const item = HELPER_PALETTE_ITEMS.find((h) => h.id === editSession.helperId);
     if (!item) return;
     const fields = editSession.fields || {};
@@ -397,6 +412,7 @@ const HelperInsertPalette = ({
       {pending && modalMode !== 'refuse' && (
         <HelperParamModal
           item={pending}
+          onDelete={pending?._featureEdit ? onEditDelete : null}
           buffer={bufferSnapshot}
           faceInfo={faceSnapshot}
           edgeInfo={edgeSnapshot}

@@ -1,6 +1,7 @@
 import React from 'react';
 import { Check } from 'lucide-react';
 import { NumberField } from './controls/popupUI';
+import { FeatureDeleteButton } from './FeatureEditDelete';
 
 const ACCENT = 'cyan';
 
@@ -58,6 +59,7 @@ const ContourModeChip = ({
   merge = true,
   onMergeChange,
   compact = false,
+  onDelete = null,
 }) => {
   const isExtrude = entry === 'makeExtrude';
   const isRevolve = entry === 'makeRevolve';
@@ -648,13 +650,16 @@ const ContourModeChip = ({
         </label>
       )}
       <div className="mt-2 flex items-center justify-between gap-2 shrink-0">
-        <span className="text-[11px] text-cyan-200/70 leading-tight">
+        <div className="flex items-center gap-2 min-w-0">
+          {onDelete ? <FeatureDeleteButton onClick={onDelete} /> : null}
+          <span className="text-[11px] text-cyan-200/70 leading-tight min-w-0">
           {isWorkplane
             ? 'Confirm writes a construction plane'
             : commitName
               ? `Confirm writes ${commitName} (${combineOp === 'subtract' ? 'cuts' : merge === false ? 'separate body' : 'adds'} if part exists)`
               : 'Confirm writes Profile only'}
-        </span>
+          </span>
+        </div>
         <button
           type="button"
           onClick={() => onConfirm?.()}
