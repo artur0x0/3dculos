@@ -720,6 +720,11 @@ const Viewport = forwardRef(({
   getHelperBuffer = null,
   /** Mobile CAD mid-strip host (CodeEditor). Null on desktop and in game. */
   cadToolbarHost = null,
+  /**
+   * When the script editor is closed, Upload / Download / Order / puzzle
+   * stay reachable in a temporary tray. Run and Select all stay in the editor.
+   */
+  scriptEditorVisible = true,
   /** CAD Run. When set, the strip runs the assembly instead of one script. */
   onRunAssembly = null,
   /** Slice Mobile C: long-press on body opens feature sheet (mobile CAD only). */
@@ -8156,6 +8161,13 @@ const Viewport = forwardRef(({
     typeof assemblyName === 'string' ? assemblyName : '',
   );
 
+  const titleClearsTray = mode !== 'game' && !scriptEditorVisible;
+  const titlePlace = !titleClearsTray
+    ? 'left-1/2 -translate-x-1/2 max-w-[min(36rem,calc(100%-2rem))]'
+    : isMobile
+      ? 'left-40 right-14 justify-center'
+      : 'left-1/2 -translate-x-1/2 max-w-[min(28rem,calc(100%-13rem))]';
+
   return (
     <div ref={containerRef} className="viewport-shell relative w-full h-full bg-[#1e1e1e] overflow-hidden">
       {partChoice?.choices?.length > 1 && (
@@ -8184,6 +8196,42 @@ const Viewport = forwardRef(({
       {/* G9: circular profile chip — top-right of the CAD viewport. Desktop's only chip. */}
       {mode !== 'game' && (
         <ProfileChip variant="viewport" onAccount={onAccount} onSignedOut={onSignedOut} onClearLocalCadData={onClearLocalCadData} vaultName={profileVaultName} />
+      )}
+
+      {/* Temporary home for the editor ribbon's model buttons while Monaco is hidden.
+          Later PRs move these. Undo/redo stay on the feature bar. */}
+      {mode !== 'game' && !scriptEditorVisible && (
+        <div
+          data-cad-io-tray=""
+          data-cad-io-tray-placement="viewport-top-left"
+          className="absolute left-2 top-3 z-30 flex max-w-[calc(100%-5.5rem)] items-center overflow-hidden rounded-md border border-white/10 bg-gray-900/90 px-0.5 shadow-lg"
+        >
+          <Toolbar
+            mode="cad"
+            variant="strip"
+            chrome="io"
+            onDownload={handleDownloadModel}
+            onQuote={onQuote}
+            onUpload={onUpload}
+            onUndo={onUndo}
+            onRedo={onRedo}
+            canUndo={canUndo}
+            canRedo={canRedo}
+            isExecuting={isExecuting}
+            isDownloading={isDownloading}
+            isUploading={isUploading}
+            onStartGame={onStartGame}
+            onExitGame={onExitGame}
+            onRun={onRun}
+            onRunScript={runCadScript}
+            onSelectAll={onSelectAll}
+            onHint={onHint}
+            onPickPuzzle={onPickPuzzle}
+            gameElapsedMs={gameElapsedMs}
+            gameSuccess={gameSuccess}
+            gameBestTimeMs={gameBestTimeMs}
+          />
+        </div>
       )}
 
       {/* CAD chrome lives in the editor mid-strip in BOTH shells (desktop matches
@@ -8224,7 +8272,8 @@ const Viewport = forwardRef(({
       {mode !== 'game' && (
         showCadTitle ? (
         <div
-          className="pointer-events-none absolute top-4 left-1/2 z-10 flex max-w-[min(36rem,calc(100%-2rem))] -translate-x-1/2 items-center gap-2"
+          className={`pointer-events-none absolute top-4 z-10 flex items-center gap-2 ${titlePlace}`}
+          data-viewer-title-clearance={titleClearsTray ? 'io-tray' : undefined}
           data-viewer-title=""
           data-viewer-title-text={titleParts.text}
         >

@@ -35,6 +35,12 @@ const Toolbar = ({
   onRunScript,
   /** CAD strip Select all — drives the editor through App's ref. */
   onSelectAll,
+  /**
+   * `full` is the editor ribbon (Run, Select all, history, model I/O).
+   * `io` is the temporary CAD-view cluster: Upload, Download, Order, puzzle.
+   * Undo/redo stay on the feature bar. Run and Select all stay in the editor.
+   */
+  chrome = 'full',
   onHint,
   onPickPuzzle,
   gameElapsedMs = 0,
@@ -180,10 +186,12 @@ const Toolbar = ({
     const icon = 18;
     const blue = 'text-blue-400';
     const divider = 'shrink-0 w-px bg-gray-600 mx-0.5 self-stretch my-1';
+    const ioOnly = chrome === 'io';
     return (
       <div
         className="flex items-center gap-0.5 sm:gap-1 flex-1 min-w-0 overflow-x-auto"
         data-toolbar-variant="strip"
+        data-toolbar-chrome={ioOnly ? 'io' : 'full'}
       >
         <input
           type="file"
@@ -194,6 +202,9 @@ const Toolbar = ({
           data-script-upload-input=""
         />
 
+        {/* Run and Select all are code-only. The temporary CAD tray omits them. */}
+        {!ioOnly && (
+        <>
         {/* Run is first and sits in its own section: it is the one button you
             press over and over, and it must not be one slot away from Upload.
             Green while idle, spinner while the script is executing. */}
@@ -232,6 +243,8 @@ const Toolbar = ({
           <SquareDashedBottomCode size={icon} />
         </button>
         <div className={divider} />
+        </>
+        )}
 
         {/* G12: Script model I/O is Upload + Download only. File Open/Save and
             vault Commit/Branch/Open live on Parts (G11). */}
@@ -266,6 +279,10 @@ const Toolbar = ({
           )}
         </button>
 
+        {/* Undo/redo already sit on the CAD feature bar. The editor ribbon
+            keeps them; the temporary tray does not add another pair. */}
+        {!ioOnly && (
+        <>
         <div className={divider} />
 
         <button
@@ -286,6 +303,8 @@ const Toolbar = ({
         >
           <Redo size={icon} />
         </button>
+        </>
+        )}
 
         <div className={divider} />
 

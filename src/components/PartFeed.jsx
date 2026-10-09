@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Eye, EyeOff, FolderOpen, GripVertical, Loader2, Plus, Save, Trash2 } from 'lucide-react';
+import { Eye, EyeOff, FolderOpen, GripVertical, Loader2, Pencil, Plus, Save, Trash2 } from 'lucide-react';
 import { partCanDeleteFromRepo, partListDeleteAction, sanitizeAssemblyName, sanitizePartName } from '../utils/assembly.js';
 import { partListSubtitles } from '../utils/git/partListSubtitle.js';
 import {
@@ -283,6 +283,8 @@ export default function PartFeed({
   rows = [],
   activeId = null,
   onSelect,
+  /** Pencil: make this part active if needed, then open its script. */
+  onEditScript = null,
   onToggleVisible,
   onReorder,
   onLoadFile,
@@ -1307,6 +1309,22 @@ export default function PartFeed({
                   </button>
                 )
               ) : null}
+              <button
+                type="button"
+                data-part-edit-script={row.id}
+                aria-label={`Edit script for ${row.name || 'part'}`}
+                title="Edit script"
+                className="shrink-0 rounded-full p-1.5 text-blue-400 hover:bg-white/10"
+                onPointerDown={(event) => event.stopPropagation()}
+                onDragStart={(event) => event.stopPropagation()}
+                onKeyDown={(event) => event.stopPropagation()}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onEditScript?.(row.id);
+                }}
+              >
+                <Pencil size={16} />
+              </button>
               <button
                 type="button"
                 data-part-visibility={row.id}

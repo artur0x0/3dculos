@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect, forwardRef, useImperativeHandle } from 'react';
 import Editor from '@monaco-editor/react';
+import { ArrowLeft } from 'lucide-react';
 import Toolbar from './Toolbar';
 import ProfileChip from './ProfileChip';
 import { composeHelperInsert } from '../utils/helperPaletteSnippets';
@@ -60,6 +61,10 @@ const CodeEditor = forwardRef(({
   onClearLocalCadData = null,
   profileVaultName = null,
   onAccount = null,
+  /** False while the CAD drawer/sheet is closed. Monaco stays mounted. */
+  shown = true,
+  /** Back to the CAD view. Omitted in the puzzle. */
+  onClose = null,
 }, ref) => {
   const [editorValue, setEditorValue] = useState(initialScript);
   const editorRef = useRef(null);
@@ -375,7 +380,7 @@ const CodeEditor = forwardRef(({
     // Only auto-focus on fine pointers; on touch, focus inside the gesture.
     const coarse = typeof window !== 'undefined'
       && !!window.matchMedia?.('(pointer: coarse)').matches;
-    if (!coarse && !isMobile) {
+    if (shown && !coarse && !isMobile) {
       editor.focus();
     } else {
       const dom = editor.getDomNode();
@@ -435,6 +440,28 @@ const CodeEditor = forwardRef(({
     };
   }, []);
 
+  // Opening the drawer/sheet gives Monaco a real box again. Layout, then focus.
+  useEffect(() => {
+    if (!shown) return undefined;
+    const ed = editorRef.current;
+    if (!ed) return undefined;
+    try { ed.layout(); } catch { /* hidden mount has no box yet */ }
+    if (!isMobile) {
+      try { ed.focus(); } catch { /* ignore */ }
+    }
+    return undefined;
+  }, [shown, isMobile]);
+
+  useEffect(() => {
+    if (!shown || typeof onClose !== 'function') return undefined;
+    const onKey = (event) => {
+      if (event.key !== 'Escape') return;
+      onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [shown, onClose]);
+
   const options = {
     automaticLayout: true,
     minimap: { enabled: false },
@@ -456,6 +483,19 @@ const CodeEditor = forwardRef(({
         data-editor-ribbon=""
         className="relative z-30 w-full flex items-center gap-1 px-1 py-0.5 border-b border-gray-700/60 bg-gray-900 shrink-0"
       >
+        {typeof onClose === 'function' && (
+          <button
+            type="button"
+            data-script-editor-close=""
+            onClick={onClose}
+            className="shrink-0 p-1.5 flex items-center gap-1 rounded text-blue-400 hover:bg-gray-700/60 active:opacity-80"
+            title="Back to CAD"
+            aria-label="Back to CAD"
+          >
+            <ArrowLeft size={18} />
+            {isMobile ? <span className="pr-0.5 text-xs font-medium">CAD</span> : null}
+          </button>
+        )}
         {isGame && (
           <Toolbar
             mode="game"
