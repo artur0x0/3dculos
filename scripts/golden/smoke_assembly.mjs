@@ -118,7 +118,7 @@ const BAD = 'let part = Manifold.cube([10, 10, 10], true);\nreturn part.missingM
     && !/requestAnimationFrame/.test(preview)
     && /takePartPreview\(meshRef\.current\)/.test(feed)
     && /\[previewKey\]/.test(feed)
-    && /assemblyNameForLoad\(raw, filename\)/.test(app)
+    && /assemblyNameForLoad\(raw, filename\)/.test(read('src/utils/assembly.js'))
     && /saveAssemblyDocument\(clean\)/.test(store));
   const del = app.slice(app.indexOf('const handleDeletePart'), app.indexOf('const handleGameRun'));
   check('delete removes that part from the document, the script, and the viewport',

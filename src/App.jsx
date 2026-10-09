@@ -3,6 +3,7 @@ import CodeEditor from './components/CodeEditor';
 import Viewport from './components/Viewport';
 import PromptInput from './components/PromptInput';
 import SplitDivider from './components/SplitDivider';
+import ScriptEditorDrawer from './components/ScriptEditorDrawer';
 import MobileStageToggle from './components/MobileStageToggle';
 import FeatureStrip from './components/FeatureStrip';
 import { failedFeatureFromOutcome, failedFeatureIds } from './utils/featureFailure';
@@ -94,6 +95,7 @@ import {
   runTrackedAssemblyOpen,
 } from './utils/assemblyOpenOverlay';
 import { featureWriteTarget, leftoverPickSolids, shouldSyncScript } from './utils/pickRetarget';
+import { shouldRebuildOnEditorClose } from './utils/scriptEditorClose';
 import { clearPaintColors, commitPaintColors, removeUnmatchedColors } from './utils/facePaint';
 import {
   deletePartScript,
@@ -343,12 +345,15 @@ const App = () => {
   const [mobileStage, setMobileStage] = useState(() => {
     try {
       const s = sessionStorage.getItem('3dculos.mobileStage');
+      // A stored Script stage is not the landing view. The pencil or the pill opens it.
       if (s === 'parts') return 'parts';
-      return s === 'script' ? 'script' : 'cad';
+      return 'cad';
     } catch {
       return 'cad';
     }
   });
+  /** Desktop CAD: right-hand script drawer. Closed until a part pencil or Edit script. */
+  const [scriptEditorOpen, setScriptEditorOpen] = useState(false);
   const setMobileStageSticky = (stage) => {
     const next = stage === 'parts' ? 'parts' : stage === 'script' ? 'script' : 'cad';
     setMobileStage(next);
@@ -404,10 +409,11 @@ const App = () => {
     const buf = codeEditorRef.current?.getContent?.() || currentScript || '';
     if (viewportRef.current?.beginFeatureEdit?.(feature, buf)) setFeatureSheet(null);
   };
-  /** Desktop "Edit script": the editor is already visible — just reveal it. */
+  /** Desktop "Edit script": open the drawer and reveal that block. */
   const handleDesktopFeatureSheetEditScript = (feature) => {
     if (!feature) return;
     setFeatureSheet(null);
+    setScriptEditorOpen(true);
     // revealRange already selects, scrolls and focuses the editor.
     codeEditorRef.current?.revealRange?.(feature.startOffset, feature.endOffset);
   };
@@ -606,6 +612,7 @@ const App = () => {
     if (!feature) return;
     setFeatureSheet(null);
     setFeatureStripActiveId(feature.id);
+    setScriptEditorOpen(true);
     setMobileStageSticky('script');
     // Defer reveal until Script pane is interactive; then clear highlight.
     setTimeout(() => {
@@ -789,6 +796,10 @@ const App = () => {
   currentPuzzleRef.current = currentPuzzle;
   /** False until the editor reports its first buffer (see handleExecute). */
   const editorLiveRef = useRef(false);
+  /** Last buffer handed to refreshAssembly. Close must not build it again. */
+  const lastAssemblyScriptRef = useRef(null);
+  /** Editor auto-run already queued for this exact text. */
+  const pendingAutoRunRef = useRef(null);
   const appModeRef = useRef(appMode);
   appModeRef.current = appMode;
 
@@ -1760,6 +1771,7 @@ const App = () => {
   const refreshAssembly = async (activeScript, opts = {}) => {
     const doc = assemblyRef.current;
     if (!doc || appModeRef.current === 'game') return false;
+    if (typeof activeScript === 'string') lastAssemblyScriptRef.current = activeScript;
     const persistActive = opts.persistActive !== false && !suppressPartSaveRef.current;
     let scripts = { ...partScriptsRef.current };
     const activeId = doc.activeId;
@@ -5325,7 +5337,9 @@ const App = () => {
       // so every visible part is drawn, not only the buffer in Monaco.
       // A generation bump (open / hydrate) drops this scheduled run.
       const scheduledGen = refreshGenRef.current;
+      pendingAutoRunRef.current = script;
       setTimeout(() => {
+        if (pendingAutoRunRef.current === script) pendingAutoRunRef.current = null;
         // An open is already building this part. A second post queues behind
         // it, or bumps the generation and drops the build the spinner awaits.
         if (assemblyOpenLockRef.current) return;
@@ -5959,6 +5973,27 @@ const App = () => {
   const partLabels = {};
   for (const row of assemblyDoc?.parts || []) partLabels[row.id] = row.name || row.id;
   const assemblyLabel = assemblyName(assemblyDoc);
+
+  const openPartScript = (id) => {
+    if (id != null) handleSelectPart(id);
+    setScriptEditorOpen(true);
+    if (isMobile) setMobileStageSticky('script');
+  };
+
+  const closeScriptEditor = () => {
+    const live = codeEditorRef.current?.getContent?.();
+    setScriptEditorOpen(false);
+    if (isMobile) setMobileStageSticky('cad');
+    if (!shouldRebuildOnEditorClose({
+      live,
+      lastBuilt: lastAssemblyScriptRef.current,
+      pendingAutoRun: pendingAutoRunRef.current,
+      assemblyOpenLocked: assemblyOpenLockRef.current,
+      game: appModeRef.current === 'game',
+    })) return;
+    refreshAssemblyRef.current?.(live);
+  };
+
   const partFeed = appMode !== 'game' && assemblyDoc ? (
     <PartFeed
       placement={isMobile ? 'mobile' : 'desktop'}
@@ -5970,6 +6005,7 @@ const App = () => {
       rows={partRows}
       activeId={cadHighlightId}
       onSelect={handleSelectPart}
+      onEditScript={openPartScript}
       onToggleVisible={handleTogglePartVisible}
       onReorder={handleReorderParts}
       onLoadFile={handleLoadAssembly}
@@ -6148,6 +6184,7 @@ const App = () => {
               onCommitDeleteFace={handleCommitDeleteFace}
               getHelperBuffer={() => codeEditorRef.current?.getContent?.() || ''}
               cadToolbarHost={cadToolbarHost}
+              scriptEditorVisible={appMode === 'game' || isScriptStage}
               onRunAssembly={() => {
                 const code = codeEditorRef.current?.getContent?.();
                 if (code == null) return false;
@@ -6187,6 +6224,8 @@ const App = () => {
                   gameBestTimeMs={gameBestTimeMs}
                   onCadToolbarHost={setCadToolbarHost}
                   monacoEndPadClassName={isScriptStage ? 'pr-11' : ''}
+                  shown={appMode === 'game' ? true : isScriptStage}
+                  onClose={appMode === 'game' ? null : closeScriptEditor}
                   onAccount={handleAccount}
                   onSignedOut={handleProfileSignedOut}
                   onClearLocalCadData={openClearLocalCache}
@@ -6254,9 +6293,11 @@ const App = () => {
               </div>
               <div
                 className={`absolute inset-0 flex flex-col min-h-0 ${
-                  isScriptStage ? 'z-10' : 'invisible pointer-events-none'
+                  isScriptStage ? 'z-40' : 'invisible pointer-events-none'
                 }`}
                 data-stage-pane="script"
+                data-script-sheet=""
+                data-script-editor-open={isScriptStage ? 'true' : 'false'}
                 aria-hidden={!isScriptStage}
               >
                 {/* Script ribbon is full viewport width: editor stack is
@@ -6485,11 +6526,12 @@ const App = () => {
           </div>
         )}
         <div ref={splitShellRef} className="relative flex h-full min-w-0 flex-1">
+        {appMode === 'game' && (
         <div className="flex flex-col min-w-0" style={{ width: `${splitPct}%` }}>
           <div className="flex-1 min-h-0">
             <CodeEditor 
               ref={codeEditorRef}
-              initialScript={editorInitialScript}
+              initialScript=""
               onExecute={handleExecute}
               onCodeChange={handleCodeChange}
               isMobile={isMobile}
@@ -6513,22 +6555,11 @@ const App = () => {
               profileVaultName={gitDefaultVaultName()}
             />
           </div>
-          {/* AI prompt row is HIDDEN, not removed: it stays mounted (and keeps
-              its state and handlers) while we design a tighter integration
-              into the editor itself. Drop the `hidden` to bring it back. */}
-          {appMode !== 'game' && (
-            <div className="flex-shrink-0 hidden" data-ai-prompt-row="hidden">
-              <PromptInput 
-                onCodeGenerated={handleCodeGenerated}
-                currentCode={codeEditorRef.current?.getContent() || ''}
-                selectedFace={selectedFace}
-                onClearFaceSelection={handleClearFaceSelection}
-                isMobile={false}
-              />
-            </div>
-          )}
         </div>
+        )}
+        {appMode === 'game' && (
         <SplitDivider orientation="vertical" onDrag={(x) => handleSplitDragX(x)} />
+        )}
         <div className="relative flex-1 min-w-0">
           {/* Desktop CAD viewer feature bar (horizontal under title) — replaces
               the old vertical seam strip between editor and viewer. */}
@@ -6608,6 +6639,7 @@ const App = () => {
               onCommitDeleteFace={handleCommitDeleteFace}
             getHelperBuffer={() => codeEditorRef.current?.getContent?.() || ''}
             cadToolbarHost={cadToolbarHost}
+            scriptEditorVisible={appMode === 'game' || scriptEditorOpen}
             onRunAssembly={() => {
               const code = codeEditorRef.current?.getContent?.();
               if (code == null) return false;
@@ -6636,6 +6668,49 @@ const App = () => {
             />
           )}
           {assemblyOpenSpinner}
+          {appMode !== 'game' && (
+            <ScriptEditorDrawer open={scriptEditorOpen}>
+              <CodeEditor
+                ref={codeEditorRef}
+                initialScript={editorInitialScript}
+                onExecute={handleExecute}
+                onCodeChange={handleCodeChange}
+                isMobile={isMobile}
+                mode={appMode}
+                onExitGame={handleExitGame}
+                onUndo={handleUndo}
+                onRedo={handleRedo}
+                canUndo={canUndo()}
+                canRedo={canRedo()}
+                isExecuting={gameRunBusy}
+                onRun={handleGameRun}
+                onHint={handleGameHint}
+                onPickPuzzle={handlePickPuzzle}
+                gameElapsedMs={gameElapsedMs}
+                gameSuccess={gameSuccess}
+                gameBestTimeMs={gameBestTimeMs}
+                onCadToolbarHost={setCadToolbarHost}
+                shown={scriptEditorOpen}
+                onClose={closeScriptEditor}
+                onAccount={handleAccount}
+                onSignedOut={handleProfileSignedOut}
+                onClearLocalCadData={openClearLocalCache}
+                profileVaultName={gitDefaultVaultName()}
+              />
+              {/* AI prompt row is HIDDEN, not removed: it stays mounted (and keeps
+                  its state and handlers) while we design a tighter integration
+                  into the editor itself. Drop the `hidden` to bring it back. */}
+              <div className="flex-shrink-0 hidden" data-ai-prompt-row="hidden">
+                <PromptInput
+                  onCodeGenerated={handleCodeGenerated}
+                  currentCode={codeEditorRef.current?.getContent() || ''}
+                  selectedFace={selectedFace}
+                  onClearFaceSelection={handleClearFaceSelection}
+                  isMobile={false}
+                />
+              </div>
+            </ScriptEditorDrawer>
+          )}
         </div>
 
         {clearCacheDialog}

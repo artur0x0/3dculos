@@ -38,8 +38,15 @@ one shell you must change the other.
 │ │ PromptInput (hidden)   │ │ ║ │  profile chip top-right      │
 │ └────────────────────────┘ │ ║ │                              │
 └────────────────────────────┴───┴──────────────────────────────┘
-  Parts feed sits left of the editor. Desktop hides its profile chip.
+  Parts feed sits left of the CAD view. The script editor is a right drawer, closed
+  by default. Desktop hides its profile chip.
 ```
+
+- **Default CAD layout:** the parts feed and the viewport. Monaco is mounted but hidden (`data-script-editor-open="false"`).
+- **Pencil** (`data-part-edit-script`) on each part row, blue, same size as the eye. It activates that part if needed and opens Monaco for it only.
+- **Desktop drawer** (`data-script-drawer-side="right"`): under the feature ribbon (`top: 8rem`), inset so the left rail stays clear, drag the left edge to resize, Escape or Back closes it.
+- **Phone sheet** (`data-script-sheet`, 390px): full-screen over the home pill, Back to CAD (`data-script-editor-close`). A stored Script stage is not restored on load.
+- **Temporary tray** (`data-cad-io-tray`, viewport top-left) while the editor is closed: Upload, Download, Order, puzzle. Run, Select all, Undo, and Redo are not in that tray.
 
 **The seam between the two panes is draggable** in both shells
 (`SplitDivider.jsx`, pointer-capture based): left/right on desktop
@@ -207,8 +214,8 @@ Mobile specifics:
   iPhone Home Screen–style glass pill (`data-mobile-stage-home-indicator`,
   `data-home-indicator-pill`) with three Lucide icons: CAD (`Box`), Parts
   (`LayoutList`), Script (`square-text`). Tap a third to switch stage.
-  Desktop has no mode toggle; the parts list and the script editor sit side
-  by side.
+  Desktop has no mode toggle. The parts list sits left of the CAD view. The script
+  editor is closed until the pencil or Edit script opens the right-hand drawer.
   The Parts stage is the part list, including group rows and the thread
   (same markup as desktop). Each row shows the same cached solid
   snapshot as desktop. Delete asks first. Confirm removes that part only
