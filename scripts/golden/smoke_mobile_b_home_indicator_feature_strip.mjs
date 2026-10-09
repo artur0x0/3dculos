@@ -32,7 +32,6 @@ console.log('mobile B: home-indicator + feature strip');
   const strip = read('../../src/components/FeatureStrip.jsx');
   const markers = read('../../src/utils/featureMarkers.js');
   const editor = read('../../src/components/CodeEditor.jsx');
-  const contourChip = read('../../src/components/ContourModeChip.jsx');
   const filletChip = read('../../src/components/FilletModeChip.jsx');
 
   check(
@@ -105,9 +104,12 @@ console.log('mobile B: home-indicator + feature strip');
     /handleFeatureStripJump/.test(app) &&
       /codeEditorRef\.current\?\.revealRange\?/.test(app),
   );
+  const sheetLayout = read('../../src/utils/featureSheetLayout.js');
   check(
-    'Contour/Fillet mobile chips raised above home indicator (bottom-14)',
-    /bottom-14/.test(contourChip) && /bottom-14/.test(filletChip),
+    'Contour card clears the home pill; Fillet chip stays bottom-14',
+    /FEATURE_SHEET_BOTTOM_PHONE/.test(sheetLayout)
+      && /30px \+ max\(8px, env\(safe-area-inset-bottom, 0px\)\) \+ 10px/.test(sheetLayout)
+      && /bottom-14/.test(filletChip),
   );
   check(
     'FeatureStrip mobile mounts intact (2 stage mounts + optional desktop seam)',

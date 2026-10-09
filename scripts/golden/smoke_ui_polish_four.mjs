@@ -59,7 +59,7 @@ const SPEC = {
 console.log('ui polish — source');
 {
   const strip = read('src/components/FeatureStrip.jsx');
-  const sheet = read('src/components/FeatureSheet.jsx');
+  const sheet = read('src/components/FeatureEditSheet.jsx');
   const icon = read('src/components/icons/SheetMetalPlate.jsx');
   const palette = read('src/components/HelperInsertPalette.jsx');
   const feed = read('src/components/PartFeed.jsx');

@@ -11,7 +11,7 @@ import { failedPartIdsFor } from './utils/failedPartOutline';
 import { bodyCountOfWorkerMesh } from './utils/meshBodyComponents';
 import ErrorPopup from './components/ErrorPopup';
 import AssemblyOpenSpinner, { AssemblyOpenFailureToast } from './components/AssemblyOpenSpinner';
-import FeatureSheet from './components/FeatureSheet';
+import FeatureSheet from './components/FeatureEditSheet';
 import { FeaStudySheetGate } from './components/fea/FeaStudyHost';
 import { landingMobileStage, linkedMobileStage } from './utils/mobileStage';
 import {
@@ -805,8 +805,11 @@ const App = () => {
 
   // Mobile C.2 — when a large under-title feature sheet opens, tween the part
   // clear of the sheet (DOWN on screen for top chrome). Reverse on close.
-  // Edge-pick chips (FilletModeChip / standalone edge selector) do NOT lift.
+  // The bottom feature card slides the other way (content UP) and owns the
+  // camera itself; this lift stays out of that. Edge-pick chips do NOT lift.
+  // Game mode does not slide.
   useEffect(() => {
+    if (viewportRef.current?.featureSheetCameraOwned?.()) return undefined;
     if (!isMobile || appMode === 'game') {
       viewportRef.current?.setFeatureSheetLift?.(0, { ms: 160 });
       return undefined;
@@ -837,7 +840,7 @@ const App = () => {
       cancelled = true;
       cancelAnimationFrame(id);
     };
-  }, [featureSheet, isMobile, appMode]);
+  }, [featureSheet, isMobile, appMode, featureSession]);
 
   const codeEditorRef = useRef(null);
   const gameTimerStartRef = useRef(0);
@@ -2161,6 +2164,9 @@ const App = () => {
     // Opening a feature on a picked part edits that part from the start, so
     // its buffer, commit mode and Undo stack are the ones the feature sees.
     if (on && !featureSessionRef.current) focusWritePart(null);
+    // One sheet. A tool (contour, fillet, …) cancels the under-title edit
+    // sheet without writing. The tool's own X / Confirm is the sheet that stays.
+    if (on) setFeatureSheet((cur) => (cur ? null : cur));
     featureSessionRef.current = on;
     setFeatureSession((prev) => (prev === on ? prev : on));
   };

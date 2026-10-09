@@ -42,7 +42,7 @@ console.log('mobile C.3: sheet delete + ribbon z + CAD gap + Block + rail height
 
 {
   const app = read('../../src/App.jsx');
-  const sheet = read('../../src/components/FeatureSheet.jsx');
+  const sheet = read('../../src/components/FeatureEditSheet.jsx');
   const writeback = read('../../src/utils/featureSheetWriteback.js');
   const editor = read('../../src/components/CodeEditor.jsx');
   const palette = read('../../src/components/HelperInsertPalette.jsx');

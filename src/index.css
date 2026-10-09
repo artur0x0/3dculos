@@ -94,6 +94,47 @@ body {
   border-radius: 9999px;
 }
 
+/* Feature card. Not the full-screen .modal-fit shell: the same viewport
+   variables cap this card, and 5.5rem keeps the part-name chip above it.
+   The body paints an 8px gray-500/45 track because iOS Safari fades the
+   overlay bar. Number and select text is 16px so iOS does not zoom. */
+.feature-sheet-card {
+  background-color: rgb(17 24 39 / 0.72);
+  max-height: min(
+    22.5rem,
+    calc(
+      var(--modal-vvh, 100dvh) - var(--modal-vv-top, 0px)
+      - var(--feature-sheet-bottom, 0px)
+      - 5.5rem
+    )
+  );
+}
+.feature-sheet-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(107, 114, 128, 0.45) rgba(107, 114, 128, 0.25);
+}
+.feature-sheet-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+.feature-sheet-scroll::-webkit-scrollbar-track {
+  background: rgba(107, 114, 128, 0.25);
+  border-radius: 9999px;
+}
+.feature-sheet-scroll::-webkit-scrollbar-thumb {
+  background-color: rgba(107, 114, 128, 0.45);
+  border-radius: 9999px;
+}
+[data-feature-card] input,
+[data-feature-card] select,
+[data-feature-card] textarea {
+  font-size: 16px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .feature-sheet-card {
+    scroll-behavior: auto;
+  }
+}
+
 /* View-snap flyout keeps ~10px clear of the viewport edges.
    The viewport shell is a size container, so the flyout can measure itself
    against the *pane* (half the window on desktop) rather than the window. If

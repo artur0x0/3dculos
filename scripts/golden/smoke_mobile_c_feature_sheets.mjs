@@ -39,7 +39,7 @@ console.log('mobile C: feature sheets');
 
 {
   const app = read('../../src/App.jsx');
-  const sheet = read('../../src/components/FeatureSheet.jsx');
+  const sheet = read('../../src/components/FeatureEditSheet.jsx');
   const writeback = read('../../src/utils/featureSheetWriteback.js');
   const viewport = read('../../src/components/Viewport.jsx');
   const strip = read('../../src/components/FeatureStrip.jsx');

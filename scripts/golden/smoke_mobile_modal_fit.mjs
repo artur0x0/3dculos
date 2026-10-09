@@ -8,7 +8,7 @@
  * Screenshots go to GOLDEN_SHOT_DIR or os.tmpdir(), never the artifacts dir.
  */
 /* The evaluate callbacks run in the browser, where document exists. */
-/* global document, window, getComputedStyle, Event */
+/* global document, window, getComputedStyle, Event, requestAnimationFrame */
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -380,6 +380,10 @@ window.fetch = async (url) => {
       JSON.stringify(hintTop));
     await snap('modal-fit-quote-390-top.png');
     await assertFit('quote', '[data-quote-add]', { requireScroll: true });
+    // Setting scrollTop delivers the scroll event on the next frame in this Chrome.
+    await page.evaluate(() => new Promise((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(resolve));
+    }));
     const hintBottom = await page.evaluate(() => document.querySelector('[data-quote-scroll-hint]'));
     check('quote scroll hint hides at the bottom', hintBottom == null, hintBottom ? 'still shown' : '');
     await snap('modal-fit-quote-390-bottom.png');

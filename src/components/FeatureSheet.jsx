@@ -1,440 +1,204 @@
-import React, { useMemo, useState, useEffect } from 'react';
-import {
-  ArrowUpFromLine,
-  Rotate3d,
-  Pyramid,
-  Route,
-  NotebookPen,
-  TriangleRight,
-  Code2,
-  X,
-  Check,
-  Trash2,
-  Box,
-  Cylinder,
-  Circle,
-  Torus,
-  Hexagon,
-  Squircle,
-  Drill,
-  Grid3x3,
-  Bolt,
-  Cone,
-  PackageOpen,
-  Scissors,
-  Focus,
-  AlignVerticalJustifyCenter,
-  FlipHorizontal2,
-  Boxes,
-  Move,
-} from 'lucide-react';
-import { sheetIdentityTone, sheetPickTone } from '../utils/featureChipTone';
-import SquareRoundCorner from './icons/SquareRoundCorner';
-import RectangleCircle from './icons/RectangleCircle';
-import Angle from './icons/Angle';
-import SheetMetalPlate from './icons/SheetMetalPlate';
-import {
-  NumberField,
-  ChoiceRow,
-  PopupButton,
-  POPUP_TEXT,
-  accentOf,
-} from './controls/popupUI';
-import {
-  featureBlockText,
-  parseFeatureSheetParams,
-  isFeatureSheetEditable,
-} from '../utils/featureSheetWriteback';
+import React, { useEffect, useRef, useState } from 'react';
+import { Check, ChevronDown, X } from 'lucide-react';
+import { useModalViewport } from '../hooks/useModalViewport';
+import { featureSheetBottom, measureFeatureSheetWidth } from '../utils/featureSheetLayout';
 
 /**
- * Slice Mobile C.1 — full-width horizontal feature sheet under the part name.
+ * Shared feature card. Mode chips, helper sheets, and the edit sheet
+ * render inside this. One card, bottom center, on the phone and on desktop.
  *
- * Replaces the Mobile C bottom-sheet chrome. Params + Accept / Cancel / Edit
- * script stay. Mounts on CAD and Script stages. Desktop never mounts this.
+ * Props:
+ * - title, subtitle
+ * - onCancel: X, Esc, and the rail X. Writes nothing.
+ * - onConfirm: saves and closes. No swipe-to-dismiss.
+ * - confirmDisabled
+ * - confirmLabel (default Confirm)
+ * - children: scrolling body
+ * - footer: sticky blocks above the confirm row (Add/Subtract, Merge, Delete)
+ * - note: node on the left of Confirm
+ * - compact: phone bottom offset (home pill). Desktop when false.
+ * - bodyAttrs / cardAttrs: extra data attributes for the pilot that owns the card
  *
- * Layout: title/actions row on top; params scroll horizontally underneath so
- * narrow phones keep Accept visible without hiding Distance / Sense.
+ * The card is pointer-events-auto and stops pointerdown. The pane around it
+ * is not covered, so orbit and pinch hit the canvas. Game mode does not mount it.
  */
+export default function FeatureSheet({
+  title,
+  subtitle = '',
+  onCancel,
+  onConfirm,
+  confirmDisabled = false,
+  confirmLabel = 'Confirm',
+  children,
+  footer = null,
+  note = null,
+  compact = false,
+  bodyAttrs = null,
+  cardAttrs = null,
+}) {
+  useModalViewport();
+  const cardRef = useRef(null);
+  const bodyRef = useRef(null);
+  const [frame, setFrame] = useState(null);
+  const [overflow, setOverflow] = useState(false);
+  const [moreBelow, setMoreBelow] = useState(false);
+  const [thumb, setThumb] = useState(null);
 
-const FEATURE_ICONS = Object.freeze({
-  profile: NotebookPen,
-  extrude: ArrowUpFromLine,
-  revolve: Rotate3d,
-  loft: Pyramid,
-  sweep: Route,
-  fillet: SquareRoundCorner,
-  chamfer: TriangleRight,
-  cube: Box,
-  roundedBox: Squircle,
-  cylinder: Cylinder,
-  sphere: Circle,
-  tube: Torus,
-  hexPrism: Hexagon,
-  hole: Drill,
-  holePattern: Grid3x3,
-  clearanceHole: Bolt,
-  tapDrillHole: Drill,
-  cboreHole: Cylinder,
-  cskHole: Cone,
-  shell: PackageOpen,
-  draft: Angle,
-  cut: Scissors,
-  boolean: RectangleCircle,
-  move: Move,
-  center: Focus,
-  align: AlignVerticalJustifyCenter,
-  mirror: FlipHorizontal2,
-  array: Boxes,
-  polarArray: Boxes,
-  sheetMetal: SheetMetalPlate,
-});
+  useEffect(() => {
+    const onKey = (event) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      onCancel?.();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onCancel]);
 
-function FeatureGlyph({ kind, size }) {
-  const Icon = FEATURE_ICONS[kind] || NotebookPen;
-  return (
-    <Icon
-      size={size}
-      strokeWidth={2}
-      aria-hidden="true"
-      className={kind === 'sheetMetal' ? 'text-blue-400' : undefined}
-    />
-  );
-}
+  useEffect(() => {
+    const card = cardRef.current;
+    const pane = card?.closest('.viewport-shell') || card?.offsetParent;
+    if (!pane) return undefined;
+    const measure = () => {
+      const root = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+      setFrame(measureFeatureSheetWidth(pane, root));
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(pane);
+    const left = pane.querySelector('[data-rail-pair="left"]');
+    const right = pane.querySelector('[data-rail-pair="right"]');
+    if (left) ro.observe(left);
+    if (right) ro.observe(right);
+    window.addEventListener('resize', measure);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', measure);
+    };
+  }, []);
 
-const ACCENT = 'cyan';
+  useEffect(() => {
+    const el = bodyRef.current;
+    if (!el) return undefined;
+    const measure = () => {
+      const extra = el.scrollHeight - el.clientHeight;
+      const over = extra > 1;
+      setOverflow(over);
+      setMoreBelow(over && el.scrollTop < extra - 2);
+      if (!over) {
+        setThumb(null);
+        return;
+      }
+      const ratio = el.clientHeight / el.scrollHeight;
+      const thumbH = Math.max(24, el.clientHeight * ratio);
+      const maxTop = Math.max(0, el.clientHeight - thumbH);
+      const top = extra > 0 ? (el.scrollTop / extra) * maxTop : 0;
+      setThumb({ height: thumbH, top });
+    };
+    measure();
+    el.addEventListener('scroll', measure, { passive: true });
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => {
+      el.removeEventListener('scroll', measure);
+      ro.disconnect();
+    };
+  }, [children, footer, title, subtitle]);
 
-function snippetPreview(text, maxLines = 2) {
-  const lines = String(text || '').split(/\r?\n/);
-  if (lines.length <= maxLines) return lines.join('\n');
-  return `${lines.slice(0, maxLines - 1).join('\n')}\n…`;
-}
+  const bottom = featureSheetBottom(compact);
+  const placed = !!(frame && frame.width > 0);
+  const stop = (event) => event.stopPropagation();
 
-/** Shared outer shell: full-width under title (top-14).
- *  Mobile: cap height below feature strip + finger clearance; body scrolls. */
-/**
- * `placement`:
- *   'stage'    — phone, full-width under the title (the original).
- *   'viewport' — desktop, inside the 3D pane. Same anchor (just under the
- *                part-name chip) but capped in width, because a sheet spanning
- *                a 1000px viewer reads as a banner, not a popup. It also sits
- *                clear of the left rail, which is full-length on desktop.
- */
-function SheetShell({ children, placement = 'stage', ...attrs }) {
-  const a = accentOf(ACCENT);
-  const viewport = placement === 'viewport';
   return (
     <div
-      className={`pointer-events-auto absolute top-14 z-40 flex justify-center
-        ${viewport ? 'left-20 right-4 lg:left-24' : 'inset-x-0 px-2'}`}
-      data-feature-sheet=""
-      data-feature-sheet-layout="under-title-horizontal"
-      data-feature-sheet-placement={placement}
+      ref={cardRef}
       role="dialog"
-      {...attrs}
+      aria-label={title || 'Feature'}
+      data-feature-card=""
+      data-feature-card-compact={compact ? '1' : '0'}
+      className={`feature-sheet-card pointer-events-auto absolute z-20 flex min-h-0 flex-col overflow-hidden
+        rounded-xl border border-gray-500/50 text-white shadow-lg surface-glass-chip
+        ${placed ? '' : 'left-1/2 w-[min(22rem,calc(100%-9.5rem))] -translate-x-1/2'}`}
+      style={{
+        bottom,
+        '--feature-sheet-bottom': bottom,
+        ...(placed ? { left: `${frame.left}px`, width: `${frame.width}px`, transform: 'none' } : null),
+      }}
+      onPointerDown={stop}
+      onPointerUp={stop}
+      onClick={stop}
+      {...cardAttrs}
     >
-      <div
-        className={`w-full rounded-xl border shadow-xl surface-glass-chip
-          ${a.panel} px-3 py-2 overflow-hidden flex flex-col min-h-0
-          ${viewport ? 'max-w-2xl max-h-[calc(100%-1rem)]' : 'max-h-[calc(100dvh-10rem)]'}`}
-        data-feature-sheet-panel=""
-      >
-        <div className="min-h-0 overflow-y-auto rail-scroll" data-feature-sheet-scroll="">
+      <div className="flex shrink-0 items-start gap-2 px-3 pb-1 pt-2" data-feature-sheet-header="">
+        <div className="min-w-0 flex-1">
+          <div className="truncate font-sans text-sm font-semibold text-white" data-feature-card-title="">
+            {title}
+          </div>
+          {subtitle ? (
+            <div className="mt-0.5 font-sans text-[11px] text-gray-300" data-feature-card-subtitle="">
+              {subtitle}
+            </div>
+          ) : null}
+        </div>
+        <button
+          type="button"
+          aria-label="Cancel"
+          title="Cancel"
+          data-feature-card-cancel=""
+          onClick={() => onCancel?.()}
+          className="shrink-0 rounded-md p-1.5 text-gray-300 hover:bg-white/10 hover:text-white"
+        >
+          <X size={16} />
+        </button>
+      </div>
+      <div className="relative flex min-h-0 flex-auto flex-col">
+        <div
+          ref={bodyRef}
+          className="feature-sheet-scroll min-h-0 flex-auto overflow-y-auto px-3 pb-1"
+          data-feature-sheet-body=""
+          {...bodyAttrs}
+        >
           {children}
+        </div>
+        {overflow && thumb ? (
+          <div
+            className="pointer-events-none absolute bottom-1 right-1 top-1 w-2 rounded-full bg-gray-500/25"
+            data-feature-sheet-scrollbar=""
+            aria-hidden="true"
+          >
+            <div
+              className="absolute left-0 w-2 rounded-full bg-gray-500/45"
+              style={{ height: `${thumb.height}px`, top: `${thumb.top}px` }}
+            />
+          </div>
+        ) : null}
+        {moreBelow ? (
+          <div
+            className="pointer-events-none absolute inset-x-0 bottom-0 flex h-8 items-end justify-center bg-gradient-to-t from-gray-900/80 to-transparent"
+            data-feature-sheet-scroll-hint=""
+            aria-hidden="true"
+          >
+            <ChevronDown size={14} className="mb-0.5 text-gray-200" />
+          </div>
+        ) : null}
+      </div>
+      <div className="shrink-0 px-3 pb-2 pt-1" data-feature-sheet-footer="">
+        {footer}
+        <div className="mt-2 flex items-center justify-between gap-2">
+          <div className="min-w-0 text-[11px] leading-tight text-gray-300">{note}</div>
+          <button
+            type="button"
+            onClick={() => onConfirm?.()}
+            disabled={confirmDisabled}
+            data-feature-card-confirm=""
+            className="inline-flex shrink-0 items-center gap-1 rounded-md bg-cyan-600 px-2 py-1
+              text-[13px] font-medium text-white hover:bg-cyan-500 active:bg-cyan-400
+              disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <Check size={14} />
+            {confirmLabel}
+          </button>
         </div>
       </div>
     </div>
-  );
-}
-
-function TypeBadge({ index }) {
-  if (!index) return null;
-  return (
-    <span
-      className="absolute -bottom-1 -right-1 min-w-[0.85rem] h-[0.85rem] px-0.5
-        rounded-full bg-cyan-500 text-[8px] leading-[0.85rem] text-center
-        font-bold text-white"
-      data-feature-type-badge={index}
-      aria-hidden="true"
-    >
-      {index}
-    </span>
-  );
-}
-
-export default function FeatureSheet({
-  feature = null,
-  features = null,
-  script = '',
-  onAccept,
-  onCancel,
-  onDelete,
-  onEditScript,
-  onPickFeature,
-  /** Ids the last run failed in (red border, wins over the external yellow). */
-  failedIds = null,
-  /** 'stage' (phone) | 'viewport' (desktop, inside the 3D pane). */
-  placement = 'stage',
-}) {
-  const a = accentOf(ACCENT);
-  const block = useMemo(
-    () => (feature ? featureBlockText(script, feature) : ''),
-    [script, feature],
-  );
-  const parsed = useMemo(
-    () => (feature ? parseFeatureSheetParams(feature.kind, block) : null),
-    [feature, block],
-  );
-
-  const [draft, setDraft] = useState(() => parsed?.params || {});
-
-  useEffect(() => {
-    setDraft(parsed?.params || {});
-    // Re-seed draft when the open feature (or its parsed literals) changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [feature?.id, block]);
-
-  // Picker mode: multiple features, none selected yet — horizontal chip row.
-  if (!feature && Array.isArray(features) && features.length > 0) {
-    return (
-      <SheetShell
-        placement={placement}
-        data-feature-sheet-picker=""
-        aria-label="Choose feature to edit"
-      >
-        <div className="flex items-center gap-2 min-w-0">
-          <div className={`${POPUP_TEXT.title} text-white shrink-0`}>Edit feature</div>
-          <div className="flex flex-row gap-1.5 overflow-x-auto rail-scroll flex-1 min-w-0">
-            {features.map((f) => {
-              const editable = isFeatureSheetEditable(f.kind);
-              const failed = !!failedIds?.has?.(f.id);
-              const typeIndex = f.typeIndex || ((f.index ?? 0) + 1);
-              return (
-                <button
-                  key={f.id}
-                  type="button"
-                  data-feature-sheet-pick={f.id}
-                  data-feature-kind={f.kind}
-                  data-feature-type-index={typeIndex}
-                  onClick={() => onPickFeature?.(f)}
-                  data-feature-sheet-failed={failed ? '1' : undefined}
-                  aria-invalid={failed || undefined}
-                  title={failed ? `${f.chipLabel} — failed on the last run` : undefined}
-                  className={`relative shrink-0 flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-left
-                    ${sheetPickTone(editable, failed)}`}
-                >
-                  <span className="relative inline-flex">
-                    <FeatureGlyph kind={f.kind} size={16} />
-                    <TypeBadge index={typeIndex} />
-                  </span>
-                  <span className={`${POPUP_TEXT.value} font-medium whitespace-nowrap`}>{f.chipLabel}</span>
-                  {!editable && (
-                    <span className="text-[10px] uppercase tracking-wide text-gray-400">script</span>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-          <button
-            type="button"
-            aria-label="Cancel"
-            data-feature-sheet-cancel=""
-            onClick={() => onCancel?.()}
-            className="shrink-0 rounded-md p-1.5 text-gray-300 hover:text-white"
-          >
-            <X size={16} />
-          </button>
-        </div>
-      </SheetShell>
-    );
-  }
-
-  if (!feature) return null;
-
-  const editable = !!(parsed && parsed.editable);
-  const stub = !editable;
-  const typeIndex = feature.typeIndex || ((feature.index ?? 0) + 1);
-  // Same red as the strip chip (failedFeatureIds on this script).
-  const failed = !!failedIds?.has?.(feature.id);
-
-  const setNum = (key, raw, fallback) => {
-    let next = raw;
-    if (raw === '' || raw === '-' || raw === '.') next = raw;
-    else {
-      const n = Number(raw);
-      next = Number.isFinite(n) ? n : (draft[key] ?? fallback);
-    }
-    setDraft((prev) => ({ ...prev, [key]: next }));
-  };
-
-  let fields = null;
-  if (editable && feature.kind === 'extrude') {
-    fields = (
-      <>
-        <div className="shrink-0 min-w-[10rem]">
-          <NumberField
-            id="sheet-extrude-distance"
-            label="Distance"
-            accent={ACCENT}
-            value={draft.distance}
-            onChange={(v) => setNum('distance', v, 10)}
-            min={0.1}
-            max={120}
-            step={0.5}
-          />
-        </div>
-        <div className="shrink-0 min-w-[10rem]">
-          <ChoiceRow
-            label="Sense"
-            accent={ACCENT}
-            value={draft.sense || 'positive'}
-            onChange={(sense) => setDraft((prev) => ({ ...prev, sense }))}
-            options={[
-              { value: 'positive', label: 'Out' },
-              { value: 'negative', label: 'In' },
-              { value: 'both', label: 'Both' },
-            ]}
-          />
-        </div>
-      </>
-    );
-  } else if (editable && feature.kind === 'fillet') {
-    fields = (
-      <div className="shrink-0 min-w-[10rem]">
-        <NumberField
-          id="sheet-fillet-radius"
-          label="Radius"
-          accent={ACCENT}
-          value={draft.radius}
-          onChange={(v) => setNum('radius', v, 2)}
-          min={0.01}
-          max={40}
-          step={0.25}
-        />
-      </div>
-    );
-  } else if (editable && feature.kind === 'revolve') {
-    fields = (
-      <div className="shrink-0 min-w-[10rem]">
-        <NumberField
-          id="sheet-revolve-angle"
-          label="Angle"
-          accent={ACCENT}
-          value={draft.angle}
-          onChange={(v) => setNum('angle', v, 360)}
-          min={0.1}
-          max={360}
-          step={1}
-        />
-      </div>
-    );
-  } else {
-    fields = (
-      <p className={`${POPUP_TEXT.note} ${a.muted} shrink-0 max-w-[16rem]`} data-feature-sheet-stub="">
-        Params for {feature.label} aren’t editable here yet. Use Edit script.
-      </p>
-    );
-  }
-
-  return (
-    <SheetShell
-      placement={placement}
-      data-feature-sheet-kind={feature.kind}
-      data-feature-sheet-id={feature.id}
-      data-feature-sheet-editable={editable ? 'true' : 'false'}
-      aria-label={`${feature.chipLabel} feature sheet`}
-    >
-      {/* Row 1: identity + actions (always visible on narrow phones). */}
-      <div
-        className="flex flex-row flex-wrap items-center gap-x-2 gap-y-1.5 w-full min-w-0"
-        data-feature-sheet-row="identity"
-      >
-        <span
-          className={`relative inline-flex items-center justify-center rounded-lg bg-cyan-900/70 p-1.5 shrink-0 ${
-            sheetIdentityTone(feature.external, failed)
-          }`}
-          data-feature-sheet-external={feature.external ? '1' : undefined}
-          data-feature-sheet-failed={failed ? '1' : undefined}
-        >
-          <FeatureGlyph kind={feature.kind} size={18} />
-          <TypeBadge index={typeIndex} />
-        </span>
-        {/* `shrink-0` here fought `flex-1` and won, so the title block kept its
-            full content width and pushed itself under the actions on a phone —
-            `truncate` never got the chance to fire. It must be allowed to
-            shrink; the action buttons are the ones that hold their size. */}
-        <div className="min-w-0 flex-1">
-          <div className={`${POPUP_TEXT.title} text-white truncate`}>{feature.chipLabel}</div>
-          <div className={`${POPUP_TEXT.subtitle} text-cyan-100/80 truncate`}>
-            {failed
-              ? 'Failed on the last run · fix and Accept, or Edit script'
-              : feature.external ? 'External copy · not linked · Delete removes it' : 'Feature sheet'}
-          </div>
-        </div>
-        {/* The four actions are ~315px on their own, which is more than a 360px
-            phone has left after the icon — so the cluster wraps to its own line
-            instead of colliding with the title or being clipped by the shell's
-            overflow-hidden. `ml-auto` keeps it right-aligned either way. */}
-        <div className="flex items-center gap-1.5 shrink-0 ml-auto">
-          <PopupButton
-            variant="ghost"
-            accent={ACCENT}
-            data-feature-sheet-edit-script=""
-            onClick={() => onEditScript?.(feature)}
-          >
-            <Code2 size={14} aria-hidden="true" />
-            Edit script
-          </PopupButton>
-          {!stub && (
-            <PopupButton
-              variant="primary"
-              accent={ACCENT}
-              data-feature-sheet-accept=""
-              onClick={() => onAccept?.(feature, draft)}
-            >
-              <Check size={14} aria-hidden="true" />
-              Accept
-            </PopupButton>
-          )}
-          <button
-            type="button"
-            aria-label="Delete feature"
-            data-feature-sheet-delete=""
-            title="Delete this feature from the script"
-            onClick={() => onDelete?.(feature)}
-            className="inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-[13px]
-              font-medium text-red-200 border border-red-700/60 bg-red-950/50
-              hover:bg-red-900/70 hover:text-white"
-          >
-            <Trash2 size={14} aria-hidden="true" />
-            Delete
-          </button>
-          <button
-            type="button"
-            aria-label="Cancel"
-            data-feature-sheet-cancel=""
-            onClick={() => onCancel?.()}
-            className="rounded-md p-1.5 text-gray-300 hover:text-white"
-          >
-            <X size={16} />
-          </button>
-        </div>
-      </div>
-
-      {/* Row 2: params scroll horizontally when they don’t fit. */}
-      <div
-        className="mt-2 flex flex-row items-start gap-3 font-sans overflow-x-auto rail-scroll"
-        data-feature-sheet-params=""
-      >
-        {fields}
-        <div
-          className="shrink-0 rounded-md border border-cyan-800/60 bg-black/35 px-2 py-1
-            font-mono text-[10px] leading-snug text-cyan-100/85 max-w-[10rem] max-h-12 overflow-hidden"
-          data-feature-sheet-snippet=""
-          aria-hidden="true"
-        >
-          <pre className="whitespace-pre-wrap break-all m-0">{snippetPreview(block)}</pre>
-        </div>
-      </div>
-    </SheetShell>
   );
 }

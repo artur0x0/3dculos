@@ -1,7 +1,7 @@
 import React from 'react';
-import { Check } from 'lucide-react';
 import { NumberField } from './controls/popupUI';
 import { FeatureDeleteButton } from './FeatureEditDelete';
+import FeatureSheet from './FeatureSheet';
 
 const ACCENT = 'cyan';
 
@@ -60,6 +60,7 @@ const ContourModeChip = ({
   onMergeChange,
   compact = false,
   onDelete = null,
+  onCancel = null,
 }) => {
   const isExtrude = entry === 'makeExtrude';
   const isRevolve = entry === 'makeRevolve';
@@ -176,38 +177,75 @@ const ContourModeChip = ({
     );
   }
 
-  // Mobile: stay below feature strip + leave finger room to pick faces in the
-  // viewport. ~top-20 strip + strip height + ~3–4rem clearance ≈ 12rem reserved.
-  const mobileMaxH = 'max-h-[calc(100dvh-12rem)]';
+  const title = isWorkplane ? 'Workplane' : `Contour · ${tool}`;
+  const note = isWorkplane
+    ? 'Confirm writes a construction plane'
+    : commitName
+      ? `Confirm writes ${commitName} (${combineOp === 'subtract' ? 'cuts' : merge === false ? 'separate body' : 'adds'} if part exists)`
+      : 'Confirm writes Profile only';
 
   return (
-    <div
-      className={`absolute bg-cyan-950/80 surface-glass-chip border border-cyan-400/70 text-white px-3 py-2
-        rounded-lg text-xs z-20 shadow-lg flex flex-col min-h-0 ${
-          // Bottom-CENTRE of the viewport, between the two rails, so the chip
-        // stops covering the right-hand cluster. 10px off the bottom edge like
-        // the rest of the viewport chrome.
-        // Mobile B: raise above the home-indicator stage pill (~bottom-12 + safe area).
-        compact
-            ? ((isLoft || isSweep || isWorkplane)
-              ? `bottom-14 left-1/2 -translate-x-1/2 max-w-[min(18rem,calc(100%-9rem))] ${mobileMaxH}`
-              : `bottom-14 left-1/2 -translate-x-1/2 max-w-[min(16rem,calc(100%-9rem))] ${mobileMaxH}`)
-            : ((isLoft || isSweep || isWorkplane)
-              ? 'bottom-2.5 left-1/2 -translate-x-1/2 max-w-[18rem]'
-              : 'bottom-2.5 left-1/2 -translate-x-1/2 max-w-[16rem]')
-        }`}
-      data-contour-chip=""
+    <FeatureSheet
+      title={title}
+      subtitle={`Plane · ${planeLabel}`}
+      compact={compact}
+      onCancel={onCancel}
+      onConfirm={onConfirm}
+      cardAttrs={{ 'data-contour-chip': '' }}
+      bodyAttrs={{ 'data-contour-chip-scroll': '' }}
+      note={note}
+      footer={(
+        <>
+          {solidEntry && (
+            <div className="flex gap-1" role="group" aria-label="Add or subtract">
+              {[
+                { id: 'add', label: 'Add' },
+                { id: 'subtract', label: 'Subtract' },
+              ].map((opt) => {
+                const on = combineOp === opt.id;
+                return (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => onCombineChange?.(opt.id)}
+                    aria-pressed={on}
+                    data-contour-combine={opt.id}
+                    className={`flex-1 px-2 py-1 rounded text-[13px] ${
+                      on ? 'bg-cyan-600 text-white' : 'bg-cyan-950/80 text-cyan-100 border border-cyan-700/70'
+                    }`}
+                    title={opt.id === 'subtract'
+                      ? 'Cut this solid out of the part'
+                      : 'Union this solid onto the part'}
+                  >
+                    {opt.label}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          {solidEntry && combineOp === 'add' && (
+            <label
+              className="mt-1.5 flex items-center gap-2 text-[13px] text-cyan-100"
+              title="On: union into the part. Off: keep this solid as a separate body in the same part."
+            >
+              <input
+                type="checkbox"
+                checked={merge !== false}
+                onChange={(e) => onMergeChange?.(e.target.checked)}
+                data-contour-merge={merge !== false ? 'on' : 'off'}
+                className="h-3.5 w-3.5 accent-cyan-400"
+              />
+              Merge bodies
+            </label>
+          )}
+          {onDelete ? (
+            <div className="mt-1.5">
+              <FeatureDeleteButton onClick={onDelete} />
+            </div>
+          ) : null}
+        </>
+      )}
     >
-      <div className="font-bold font-sans text-cyan-200 shrink-0">
-        {isWorkplane ? 'Workplane' : `Contour · ${tool}`}
-      </div>
-      <div className="text-[11px] text-cyan-100/90 normal-case font-sans mt-0.5 shrink-0">
-        Plane · {planeLabel}
-      </div>
-      <div
-        className={compact ? 'mt-0 min-h-0 flex-1 overflow-y-auto rail-scroll' : undefined}
-        data-contour-chip-scroll=""
-      >
       <div className="mt-1.5 font-sans" data-plane-editor="1" role="group" aria-label="Contour plane">
         <div className="flex gap-1 flex-wrap">
           {['x', 'y', 'z'].map((axis) => {
@@ -606,78 +644,7 @@ const ContourModeChip = ({
       )}
       </>
       )}
-      </div>
-      {solidEntry && (
-        <div className="mt-1.5 flex gap-1 shrink-0" role="group" aria-label="Add or subtract">
-          {[
-            { id: 'add', label: 'Add' },
-            { id: 'subtract', label: 'Subtract' },
-          ].map((opt) => {
-            const on = combineOp === opt.id;
-            return (
-              <button
-                key={opt.id}
-                type="button"
-                onClick={() => onCombineChange?.(opt.id)}
-                aria-pressed={on}
-                data-contour-combine={opt.id}
-                className={`flex-1 px-2 py-1 rounded text-[13px] ${
-                  on ? 'bg-cyan-600 text-white' : 'bg-cyan-950/80 text-cyan-100 border border-cyan-700/70'
-                }`}
-                title={opt.id === 'subtract'
-                  ? 'Cut this solid out of the part'
-                  : 'Union this solid onto the part'}
-              >
-                {opt.label}
-              </button>
-            );
-          })}
-        </div>
-      )}
-      {solidEntry && combineOp === 'add' && (
-        <label
-          className="mt-1.5 flex items-center gap-2 text-[13px] text-cyan-100 shrink-0"
-          title="On: union into the part. Off: keep this solid as a separate body in the same part."
-        >
-          <input
-            type="checkbox"
-            checked={merge !== false}
-            onChange={(e) => onMergeChange?.(e.target.checked)}
-            data-contour-merge={merge !== false ? 'on' : 'off'}
-            className="h-3.5 w-3.5 accent-cyan-400"
-          />
-          Merge bodies
-        </label>
-      )}
-      <div className="mt-2 flex items-center justify-between gap-2 shrink-0">
-        <div className="flex items-center gap-2 min-w-0">
-          {onDelete ? <FeatureDeleteButton onClick={onDelete} /> : null}
-          <span className="text-[11px] text-cyan-200/70 leading-tight min-w-0">
-          {isWorkplane
-            ? 'Confirm writes a construction plane'
-            : commitName
-              ? `Confirm writes ${commitName} (${combineOp === 'subtract' ? 'cuts' : merge === false ? 'separate body' : 'adds'} if part exists)`
-              : 'Confirm writes Profile only'}
-          </span>
-        </div>
-        <button
-          type="button"
-          onClick={() => onConfirm?.()}
-          className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[13px] font-medium
-            bg-cyan-600 hover:bg-cyan-500 active:bg-cyan-400 text-white shrink-0"
-          title={
-            isWorkplane
-              ? 'Commit a marked construction plane (literal PlaneFrame). Pickable when Plane overlay is on.'
-              : commitName
-                ? `Commit or update ${commitName}. Second Confirm updates the same block.`
-                : 'Commit or update in-mode Profile (makeCrossSection). Does not Extrude, Revolve, Loft, or Sweep.'
-          }
-        >
-          <Check size={14} />
-          Confirm
-        </button>
-      </div>
-    </div>
+    </FeatureSheet>
   );
 };
 
