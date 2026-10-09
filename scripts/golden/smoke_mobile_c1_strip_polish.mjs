@@ -49,14 +49,13 @@ console.log('mobile C.1: strip polish + UI reorg');
 
   // B
   const edgeBlock = (() => {
-    const i = viewport.indexOf('data-edge-selector="standalone"');
+    const i = viewport.indexOf("'data-edge-selector': 'standalone'");
     return i < 0 ? '' : viewport.slice(i, i + 450);
   })();
   check(
-    'B: edge-pick chip horizontally centered + raised',
-    /data-edge-selector="standalone"/.test(viewport) &&
-      /left-1\/2 -translate-x-1\/2/.test(edgeBlock) &&
-      /bottom-20/.test(edgeBlock) &&
+    'B: edge-pick chip is the feature card, not the old corner chip',
+    /'data-edge-selector': 'standalone'/.test(viewport) &&
+      /<FeatureSheet\b/.test(viewport) &&
       !/bottom-4 right-2/.test(edgeBlock) &&
       !/bottom-4 left-\[4\.5rem\]/.test(edgeBlock),
   );

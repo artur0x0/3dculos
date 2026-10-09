@@ -112,7 +112,7 @@ console.log('fillet easy/hard — chip keeps Accept enabled, no hard warning');
     && !/Quality may be poor/.test(chip)
     && !/AlertTriangle/.test(chip)
     && !/bg-red-950/.test(chip));
-  check('Accept is not disabled by class', /data-fillet-accept="enabled"/.test(chip) && !/disabled=\{[^}]*hard/.test(chip));
+  check('Confirm is not disabled by class', /data-fillet-accept': 'enabled'/.test(chip) && !/disabled=\{[^}]*hard/.test(chip));
   check('chip does not render the class reason', !/edgeClass\.reason/.test(chip));
 }
 

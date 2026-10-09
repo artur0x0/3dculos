@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Feature card (PR A): shared shell, contour pilot, keyboard, camera pose.
+ * Feature card: shared shell, contour pilot, fillet / chamfer / edge card, keyboard, camera pose.
  *
  * Screenshots go to GOLDEN_SHOT_DIR or os.tmpdir(), never the artifacts dir.
  */
@@ -101,6 +101,28 @@ console.log('feature sheet card — source');
     /<FeatureSheet\b/.test(chip)
     && /onCancel=\{exitContourMode\}/.test(view)
     && /contourMode && mode !== 'game'/.test(view));
+  const fillet = read('src/components/FilletModeChip.jsx');
+  check('fillet and chamfer use the shell; Confirm saves; X cancels; game mounts no card',
+    /<FeatureSheet\b/.test(fillet)
+    && /onConfirm=\{onAccept\}/.test(fillet)
+    && /onCancel=\{onDismiss\}/.test(fillet)
+    && /data-edge-blend/.test(fillet)
+    && /Tangent \{tangentOn/.test(fillet)
+    && !/>\s*Accept\s*</.test(fillet)
+    && /filletMode && mode !== 'game'/.test(view));
+  const edgeAt = view.indexOf("'data-edge-selector': 'standalone'");
+  const edgeSlice = view.slice(Math.max(0, edgeAt - 500), edgeAt + 700);
+  check('standalone edge card is the shell, X clears and leaves edge pick, no Confirm',
+    edgeAt > 0
+    && /<FeatureSheet\b/.test(edgeSlice)
+    && !/onConfirm=/.test(edgeSlice)
+    && /setPickMode\('face'\)/.test(edgeSlice)
+    && /mode !== 'game' && pickMode === 'edge' && !contourMode && !filletMode/.test(view));
+  check('fillet, contour, and the edge card share one camera and do not stack',
+    /featureCardKind/.test(view)
+    && /filletSheetOpen/.test(view)
+    && /edgeSheetOpen/.test(view)
+    && /if \(!next \|\| next === featureCardKind\)/.test(view));
   check('camera snapshots the pose, slides up, and restores it',
     /export function captureViewPose/.test(camera)
     && /FEATURE_SHEET_SLIDE_MAX = 0\.6/.test(camera)
@@ -202,6 +224,7 @@ import {
 import { TrackballControls } from 'three/addons/controls/TrackballControls.js';
 import { applyTrackballFeel } from './src/utils/trackballFeel.js';
 import ContourModeChip from './src/components/ContourModeChip.jsx';
+import FilletModeChip from './src/components/FilletModeChip.jsx';
 import {
   applyViewPose, boxCornerPoints, captureViewPose, createSheetCameraSession,
   featureSheetClearanceNdc, selectionNdcYs,
@@ -214,6 +237,7 @@ function Stage() {
   const paneRef = useRef(null);
   const [entry, setEntry] = useState('crossSection');
   const [compact, setCompact] = useState(true);
+  const [panel, setPanel] = useState('contour');
   const api = useRef(null);
 
   useEffect(() => {
@@ -322,21 +346,41 @@ function Stage() {
           <div data-home-indicator-pill="" className="mx-auto rounded-full border border-white/20 bg-gray-900/70" style={{ width: 112, height: 30 }} />
         </div>
       ) : null}
-      <ContourModeChip
-        tool="circle"
-        entry={entry}
-        params={{ radius: 5, segments: 64 }}
-        extrude={{ distance: 10, direction: 'normal', sense: 'positive' }}
-        combine="add"
-        merge
-        planeLabel="default +Z top"
-        compact={compact}
-        onCancel={() => {}}
-        onConfirm={() => {}}
-      />
+      {panel === 'fillet' ? (
+        <FilletModeChip
+          kind="fillet"
+          edgeCount={3}
+          partCount={1}
+          tangentOn
+          params={{ radius: 2, _sweepMax: 20 }}
+          pathOk
+          componentCount={1}
+          compact={compact}
+          onToggleTangent={() => {}}
+          onClear={() => {}}
+          onAccept={() => {}}
+          onBack={() => {}}
+          onDismiss={() => {}}
+          onParamChange={() => {}}
+        />
+      ) : (
+        <ContourModeChip
+          tool="circle"
+          entry={entry}
+          params={{ radius: 5, segments: 64 }}
+          extrude={{ distance: 10, direction: 'normal', sense: 'positive' }}
+          combine="add"
+          merge
+          planeLabel="default +Z top"
+          compact={compact}
+          onCancel={() => {}}
+          onConfirm={() => {}}
+        />
+      )}
       <div data-harness="" style={{ position: 'absolute', left: 0, top: 0, opacity: 0 }}>
-        <button type="button" data-harness-entry="crossSection" onClick={() => setEntry('crossSection')}>circle</button>
-        <button type="button" data-harness-entry="makeExtrude" onClick={() => setEntry('makeExtrude')}>extrude</button>
+        <button type="button" data-harness-entry="crossSection" onClick={() => { setPanel('contour'); setEntry('crossSection'); }}>circle</button>
+        <button type="button" data-harness-entry="makeExtrude" onClick={() => { setPanel('contour'); setEntry('makeExtrude'); }}>extrude</button>
+        <button type="button" data-harness-panel="fillet" onClick={() => setPanel('fillet')}>fillet</button>
         <button type="button" data-harness-compact="1" onClick={() => setCompact(true)}>phone</button>
         <button type="button" data-harness-compact="0" onClick={() => setCompact(false)}>desktop</button>
       </div>
@@ -571,6 +615,76 @@ html, body, #root { margin: 0; height: 100%; background: #111; }
     await show('makeExtrude', false);
     await parkAndShoot('feature-sheet-extrude-desktop-before.png', { slide: false });
     await parkAndShoot('feature-sheet-extrude-desktop-after.png', { slide: true });
+
+    const showFillet = async (phone) => {
+      await page.setViewportSize(phone ? PHONE : { width: 1280, height: 800 });
+      await page.evaluate((next) => {
+        document.querySelector(`[data-harness-compact="${next ? '1' : '0'}"]`).click();
+        document.querySelector('[data-harness-panel="fillet"]').click();
+      }, phone);
+      await page.waitForFunction((next) => {
+        const card = document.querySelector('[data-feature-card]');
+        const title = document.querySelector('[data-feature-card-title]');
+        const confirm = document.querySelector('[data-feature-card-confirm]');
+        return card
+          && card.getAttribute('data-edge-blend') === 'fillet'
+          && card.getAttribute('data-feature-card-compact') === (next ? '1' : '0')
+          && title
+          && title.textContent.includes('Fillet')
+          && confirm
+          && confirm.textContent.includes('Confirm')
+          && !confirm.textContent.includes('Accept');
+      }, phone, { timeout: 5000 });
+      await page.evaluate(() => window.__sheet.fit());
+      await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    };
+
+    await showFillet(true);
+    const filletPhone = await readCard();
+    check('fillet card on a phone uses the same rail gap and pill clearance',
+      filletPhone.compact === '1'
+      && filletPhone.width <= filletPhone.cap + 1.5
+      && filletPhone.gapLeft >= 8
+      && filletPhone.gapRight >= 8
+      && filletPhone.pillGap != null
+      && filletPhone.pillGap >= 8
+      && filletPhone.pillGap <= 14
+      && filletPhone.height < 360,
+      JSON.stringify(filletPhone));
+    const filletPick = await page.evaluate(() => {
+      const pane = document.querySelector('[data-harness-pane]');
+      const box = pane.getBoundingClientRect();
+      const el = document.elementFromPoint(box.left + box.width / 2, box.top + 36);
+      return {
+        tag: el && el.tagName,
+        onCard: !!(el && el.closest('[data-feature-card]')),
+      };
+    });
+    check('a point above the fillet card is the canvas, so edge picks still land',
+      filletPick.tag === 'CANVAS' && filletPick.onCard === false,
+      JSON.stringify(filletPick));
+    await parkAndShoot('feature-sheet-fillet-390-before.png', { slide: false });
+    const filletAfter = await parkAndShoot('feature-sheet-fillet-390-after.png', { slide: true });
+    check('phone fillet: projected part box sits above the card',
+      Number.isFinite(filletAfter.low) && filletAfter.low + 0.02 >= filletAfter.cardTop,
+      JSON.stringify(filletAfter));
+
+    await showFillet(false);
+    const filletDesk = await readCard();
+    check('fillet card on desktop stays a card clear of the rails',
+      filletDesk.compact === '0'
+      && filletDesk.width <= filletDesk.cap + 1.5
+      && filletDesk.bottomGap >= 8
+      && filletDesk.bottomGap <= 16
+      && filletDesk.gapLeft >= 8
+      && filletDesk.gapRight >= 8
+      && filletDesk.pillGap == null,
+      JSON.stringify(filletDesk));
+    await parkAndShoot('feature-sheet-fillet-desktop-before.png', { slide: false });
+    const filletDeskAfter = await parkAndShoot('feature-sheet-fillet-desktop-after.png', { slide: true });
+    check('desktop fillet: projected part box sits above the card',
+      Number.isFinite(filletDeskAfter.low) && filletDeskAfter.low + 0.02 >= filletDeskAfter.cardTop,
+      JSON.stringify(filletDeskAfter));
 
     const orbit = await page.evaluate(() => {
       const sheet = window.__sheet;

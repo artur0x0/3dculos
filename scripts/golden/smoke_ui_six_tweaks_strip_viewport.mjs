@@ -109,9 +109,10 @@ console.log('ui six-tweaks: strip / highlight / viewport / popup height');
       /data-feature-sheet-scroll/.test(sheet),
   );
   check(
-    '6: HelperParamModal / FilletModeChip respect dvh cap',
+    '6: HelperParamModal keeps its dvh cap; Fillet uses the feature card cap',
     /max-h-\[min\(70%,calc\(100dvh-11rem\)\)\]/.test(helper) &&
-      /max-h-\[calc\(100dvh-12rem\)\]/.test(fillet),
+      /<FeatureSheet\b/.test(fillet) &&
+      /22\.5rem/.test(read('../../src/index.css')),
   );
 }
 

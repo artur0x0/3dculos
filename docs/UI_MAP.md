@@ -410,9 +410,7 @@ All of these are absolutely positioned inside the shell at
 | top-16, portaled `z-50`, `inset-x-3` (most of the viewport width, same card on desktop) | execution error toast: fixed card, label "Error", Undo and dismiss on the right, description on the next line (`ErrorPopup` `layout="stacked"`), glass `rounded-lg` | `ErrorPopup.jsx` | Viewport |
 | centered on the viewport pane (desktop) and the phone shell | assembly-open spinner: ring + `Opening <name>…`, optional `part 3 of 7`. Hidden for the first 150ms. `pointer-events-none`, `z-[45]`, under the toasts | `AssemblyOpenSpinner.jsx` `data-assembly-open-spinner` | App |
 | *(removed C.1)* | Selected Face readout | — | — |
-| bottom center, between the rails, 10px above the home pill on a phone (`data-feature-card`) | contour card (circle, rectangle, polygon, polyline, extrude, revolve, loft, sweep, workplane). Grey shell, cyan Confirm. Hidden in game | `FeatureSheet.jsx` + `ContourModeChip.jsx` | Viewport |
-| bottom-4 right-2/4 | fillet param chip | `FilletModeChip.jsx:43` | `:3835` |
-| bottom-center (raised) | Edge-pick chip (`data-edge-selector`): Tangent / Undo / Clear | inline | Viewport |
+| bottom center, between the rails, 10px above the home pill on a phone (`data-feature-card`) | contour card (circle, rectangle, polygon, polyline, extrude, revolve, loft, sweep, workplane), fillet, chamfer, and the standalone edge card. Grey shell, cyan Confirm. The edge card has X and no Confirm. Hidden in game | `FeatureSheet.jsx`, `ContourModeChip.jsx`, `FilletModeChip.jsx` | Viewport |
 | top-16 center, portaled `z-50` | toasts: edge-mode, contour, fillet-scrap, fillet, shell — same `ErrorPopup` card | `ErrorPopup.jsx` | Viewport |
 | bottom-left | measurement readout | inline | `:3961` |
 | fills the pane | WebGL canvas | `<canvas ref={canvasRef}>` | `:3985` |
@@ -523,9 +521,9 @@ Contour / Extrude / Revolve / Loft / Sweep: `src/utils/contourMode.js` +
 `ContourModeRail.jsx` + `ContourModeChip.jsx`; enter/exit/confirm at
 `src/components/Viewport.jsx:1337-1401`.
 Fillet / Chamfer: `src/utils/filletMode.js` + `FilletModeChip.jsx` (same
-edge-pick chip; both commit path sweeps — Fillet → `filletAlongPath`,
-Chamfer → `filletAlongPath({ profile: 'chamfer' })`). Chip: Tangent / Clear / Undo / Accept. Undo undoes the last edge pick only; X / Escape / dismiss without Accept clears all picks and exits; no hard-edge warning; no
-strategy helper line; Accept row spaced below Clear/Undo.
+edge-pick card on `FeatureSheet`; both commit path sweeps — Fillet → `filletAlongPath`,
+Chamfer → `filletAlongPath({ profile: 'chamfer' })`). Card: Tangent / Clear / Undo / Confirm. Undo undoes the last edge pick only; X / Escape / dismiss without Confirm clears all picks and exits; no hard-edge warning; no
+strategy helper line. Confirm is the card footer. The standalone edge card has no Confirm.
 Enter/exit/accept at `src/components/Viewport.jsx` `enterFilletMode` /
 `acceptFillet`. Disjoint edge picks split via `splitEdgePathComponents` and
 Accept emits one `makeSweepPath` + `filletAlongPath` pair per contiguous
@@ -628,8 +626,8 @@ Import `src/utils/importModel.js` (+ `POST /api/convert/step`); export
   the expanded panel closes with a green `Check`. No chevrons — they said
   "up/down", not what would happen.
 - **Bottom-centre is for mode chips and the param popup**; the bottom corners
-  belong to the rails. Contour and Fillet chips are
-  `bottom-2.5 left-1/2 -translate-x-1/2`, the right-hand cluster is
+  belong to the rails. Contour, Fillet, Chamfer, and the standalone edge card
+  share the feature card (bottom center, between the rails). The right-hand cluster is
   `bottom-2.5 right-2.5` (10px off both edges), and the helper rail keeps
   `left-2 lg:left-4`.
 - **Responsive insets** are written `left-2 lg:left-4` / `right-2 lg:right-4`
