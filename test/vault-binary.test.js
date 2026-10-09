@@ -150,13 +150,13 @@ describe('mesh path classification', () => {
 describe('outbox binary round-trip', () => {
   test('normalize + structured clone keeps Uint8Array and Blob bytes', async () => {
     const bytes = Uint8Array.from([0, 255, 7, 8]);
-    const blob = new Blob([bytes]);
+    const blob = new globalThis.Blob([bytes]);
     const stored = await normalizeOutboxFiles([
       fileWrite('parts/Bracket.mesh', bytes),
       fileWrite('parts/FromBlob.mesh', blob),
       fileWrite('parts/Bracket.js', 'return 1;\n'),
     ]);
-    const cloned = structuredClone(stored);
+    const cloned = globalThis.structuredClone(stored);
     assert.equal(typeof cloned[0].content, 'object');
     assert.ok(!(typeof cloned[0].content === 'string'));
     sameBytes(cloned[0].content, bytes);
@@ -343,7 +343,7 @@ function makeBinaryGithub() {
   const repos = new Map();
   const calls = [];
   let n = 1;
-  const nextSha = () => n.toString(16).padStart(40, '0');
+  const nextSha = () => (n++).toString(16).padStart(40, '0');
 
   function ensure(owner, name) {
     const key = `${owner}/${name}`;
