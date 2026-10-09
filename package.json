@@ -175,6 +175,7 @@
         "golden:face-skin": "node scripts/golden/smoke_face_skin.mjs",
         "golden:face-paint": "node scripts/golden/smoke_face_paint.mjs",
         "golden:fea-study": "node scripts/golden/fea_study_panel.mjs",
+        "golden:fea-stress": "node scripts/golden/fea_stress_pixels.mjs",
         "golden:face-paint-tap-pixels": "node scripts/golden/smoke_face_paint_tap_pixels.mjs",
     "golden:face-select-boundaries": "node scripts/golden/smoke_face_select_boundaries.mjs",
     "golden:loftzilla": "node scripts/golden/smoke_loftzilla_fillet_band.mjs"

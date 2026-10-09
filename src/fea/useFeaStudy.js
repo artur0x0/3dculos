@@ -8,7 +8,8 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { fingerprintsFromGeometry, paintPickFromClick } from '../utils/facePaint.js';
 import { createFeaClient } from './feaClient.js';
-import { composeFeaStudy, readFeaStudy } from './studyScript.js';
+import { bindStressField, setStressSkinSource } from './stressMap.js';
+import { composeFeaStudy, readFeaStudy, scriptOutsideFeaStudy } from './studyScript.js';
 import {
   applyFacePick,
   customSeed,
@@ -68,6 +69,9 @@ export function useFeaStudy({
   const [notice, setNotice] = useState('');
   const writtenRef = useRef(null);
   const clientRef = useRef(null);
+  const stressFieldRef = useRef(null);
+  const solvedOutsideRef = useRef(null);
+  const markStaleRef = useRef(() => {});
   const draftRef = useRef(draft);
   const openRef = useRef(open);
   draftRef.current = draft;
@@ -85,10 +89,18 @@ export function useFeaStudy({
   onHighlightRef.current = onHighlight;
   onClaimRef.current = onClaim;
 
+  markStaleRef.current = () => {
+    stressFieldRef.current = null;
+    setResult((prev) => (prev && !prev.stale ? { ...prev, stale: true } : prev));
+  };
+
   const replaceStudy = useCallback((next) => {
     studyRef.current = next;
     setStudy(next);
-    setResult(null);
+    // Material, fixture, and load edits all come through here. The last
+    // colours belong to the previous study, so they come off.
+    stressFieldRef.current = null;
+    setResult((prev) => (prev && !prev.stale ? { ...prev, stale: true } : prev));
   }, []);
 
   const paintHighlight = useCallback((next) => {
@@ -146,6 +158,8 @@ export function useFeaStudy({
       customMode: !read.material?.id,
       custom: customSeed(read),
     }));
+    stressFieldRef.current = null;
+    solvedOutsideRef.current = null;
     setResult(null);
     setNotice('');
     setOpen(true);
@@ -171,6 +185,12 @@ export function useFeaStudy({
     if (writtenRef.current != null && text === writtenRef.current) return;
     const live = typeof getScriptRef.current === 'function' ? (getScriptRef.current() || '') : text;
     if (writtenRef.current != null && live === writtenRef.current) return;
+    const outside = scriptOutsideFeaStudy(live);
+    if (solvedOutsideRef.current != null && outside !== solvedOutsideRef.current) {
+      solvedOutsideRef.current = outside;
+      stressFieldRef.current = null;
+      setResult((prev) => (prev && !prev.stale ? { ...prev, stale: true } : prev));
+    }
     const read = readFeaStudy(live);
     if (!read) return;
     studyRef.current = read;
@@ -274,8 +294,10 @@ export function useFeaStudy({
       return;
     }
     const solid = getSolidRef.current?.();
-    const mesh = meshArraysFromGeometry(solid?.geometry, solid?.faceIDs);
+    const geometry = solid?.geometry || null;
+    const mesh = meshArraysFromGeometry(geometry, solid?.faceIDs);
     if (!mesh) {
+      stressFieldRef.current = null;
       setResult({
         source: 'stub',
         min: null,
@@ -283,6 +305,8 @@ export function useFeaStudy({
         max: null,
         safetyFactor: null,
         warnings: [{ code: 'empty-mesh', msg: 'n/a' }],
+        yield_MPa: resolved.material.yield_MPa ?? null,
+        stale: false,
       });
       setNotice('');
       return;
@@ -297,7 +321,30 @@ export function useFeaStudy({
         material: resolved.material,
         profile: compact ? 'phone' : 'desktop',
       });
-      setResult(solved);
+      const nodal = solved?.nodal instanceof Float32Array ? solved.nodal : null;
+      const now = getSolidRef.current?.()?.geometry;
+      const moved = !geometry || now !== geometry;
+      const bound = !moved && nodal ? bindStressField(geometry, nodal, solid?.faceIDs) : null;
+      const liveScript = typeof getScriptRef.current === 'function' ? (getScriptRef.current() || '') : '';
+      solvedOutsideRef.current = scriptOutsideFeaStudy(liveScript);
+      stressFieldRef.current = bound ? {
+        geometry,
+        field: bound,
+        scale: { p95: solved.p95, yield_MPa: resolved.material.yield_MPa },
+        onStale: () => markStaleRef.current(),
+      } : null;
+      setResult({
+        source: solved.source,
+        field: solved.field,
+        units: solved.units,
+        min: solved.min,
+        p95: solved.p95,
+        max: solved.max,
+        safetyFactor: solved.safetyFactor != null ? solved.safetyFactor : (solved.fos ?? null),
+        warnings: Array.isArray(solved.warnings) ? solved.warnings : [],
+        yield_MPa: resolved.material.yield_MPa ?? null,
+        stale: moved || !bound,
+      });
     } catch (err) {
       if (err?.name === 'AbortError') return;
       setNotice(err?.message || 'The study did not run');
@@ -306,10 +353,17 @@ export function useFeaStudy({
     }
   }, [compact]);
 
+  useEffect(() => {
+    if (!open || !result || result.stale || !stressFieldRef.current) setStressSkinSource(null);
+    else setStressSkinSource(stressFieldRef.current);
+  }, [open, result]);
+
   useEffect(() => () => {
     const client = clientRef.current;
     clientRef.current = null;
     client?.dispose?.();
+    stressFieldRef.current = null;
+    setStressSkinSource(null);
     publishedToken = '';
     publish({ open: false }, 'closed');
   }, []);

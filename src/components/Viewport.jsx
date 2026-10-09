@@ -263,6 +263,7 @@ import {
   setFaceColorSkinVisible,
   syncFaceColorSkin,
 } from '../utils/faceColorSkin';
+import { detachStressSkin, subscribeStressSkin, syncStressSkin } from '../fea/stressSkin';
 import { dropPlanarFins, highlightBoundaryPositions } from '../utils/planarSeam';
 import { classifySelectedFace } from '../utils/faceFeaturePlacement';
 import { classifyFilletEdges, countDegenerateTriangles } from '../utils/filletEdgeClass';
@@ -756,6 +757,7 @@ const Viewport = forwardRef(({
   const assemblyColorsRef = useRef(assemblyColors);
   const partSurfIdRef = useRef(new Map());
   const applyFaceSkinRef = useRef(() => {});
+  const applyStressSkinRef = useRef(() => {});
   /** Built solid geometry per mesh data (pick mesh + other parts). */
   const solidCacheRef = useRef(null);
   if (!solidCacheRef.current) solidCacheRef.current = createSolidCache();
@@ -6948,6 +6950,7 @@ const Viewport = forwardRef(({
     const wants = rainbow || !!(entry && (entry.part || (Array.isArray(entry.faces) && entry.faces.length)));
     if (!wants) {
       detachFaceColorSkin(host);
+      if (host === resultRef.current) applyStressSkinRef.current(host);
       return;
     }
     const cached = solidEntryForGeometry(solidCacheRef.current, host.geometry);
@@ -6958,6 +6961,11 @@ const Viewport = forwardRef(({
       colors,
       rainbow,
     });
+    if (host === resultRef.current) applyStressSkinRef.current(host);
+  };
+
+  applyStressSkinRef.current = (host) => {
+    if (host) syncStressSkin(host);
   };
 
   // Helper to render mesh data from the worker
@@ -7010,6 +7018,7 @@ const Viewport = forwardRef(({
     }
 
     applyFaceSkinRef.current(resultRef.current);
+    applyStressSkinRef.current(resultRef.current);
 
     const renderer = rendererRef.current;
     const scene = sceneRef.current;
@@ -7017,6 +7026,20 @@ const Viewport = forwardRef(({
     if (renderer && scene && camera) {
       renderer.render(scene, camera);
     }
+  }, []);
+
+  // The study publishes a new field without a mesh rebuild (Run, close, stale).
+  useEffect(() => {
+    const sync = () => {
+      applyStressSkinRef.current(resultRef.current);
+      const renderer = rendererRef.current;
+      const scene = sceneRef.current;
+      const camera = cameraRef.current;
+      if (renderer && scene && camera) renderer.render(scene, camera);
+    };
+    const unsubscribe = subscribeStressSkin(sync);
+    sync();
+    return unsubscribe;
   }, []);
 
   // Colors can arrive without a new mesh (a document load). Empty skips the work.
@@ -7093,6 +7116,7 @@ const Viewport = forwardRef(({
       clearFilletBlendPreview();
       if (resultRef.current) {
         removeContactSeam(resultRef.current);
+        detachStressSkin(resultRef.current);
         resultRef.current.geometry?.dispose();
         resultRef.current.geometry = new BufferGeometry();
       }
@@ -7950,6 +7974,7 @@ const Viewport = forwardRef(({
       setCachedMeshData(null);
       cachedMeshDataRef.current = null;
       detachFaceColorSkin(resultRef.current);
+      detachStressSkin(resultRef.current);
       resultRef.current.userData.surfId = null;
       removeContactSeam(resultRef.current);
       releaseGeometryIn(solidCacheRef.current, resultRef.current.geometry);
