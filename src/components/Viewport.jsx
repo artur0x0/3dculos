@@ -67,6 +67,7 @@ import ContourModeChip from './ContourModeChip';
 import FilletModeChip from './FilletModeChip';
 import ShellModeChip from './ShellModeChip';
 import { PaintModeChip } from './PaintModeChip';
+import { FeaStudyHost } from './fea/FeaStudyHost';
 import SheetMetalPicker from './sheetMetal/SheetMetalPicker';
 import SheetMetalRail from './sheetMetal/SheetMetalRail';
 import SheetMetalFlow from './sheetMetal/SheetMetalFlow';
@@ -749,6 +750,8 @@ const Viewport = forwardRef(({
   assemblyColors = null,
   /** Paint Confirm / Clear / Remove unmatched. Writes assembly colors. */
   onCommitPaint = null,
+  /** Write the FEA study comment block. False leaves the in-memory study. */
+  onCommitFea = null,
 }, ref) => {
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
@@ -933,6 +936,9 @@ const Viewport = forwardRef(({
   /** Paint session. Null when the popup is closed. Colors stay here until Confirm. */
   const [paintMode, setPaintMode] = useState(null);
   const paintModeRef = useRef(null);
+  const [feaActive, setFeaActive] = useState(false);
+  const feaPickRef = useRef(null);
+  const feaToggleRef = useRef(() => {});
   const exitPaintModeRef = useRef(() => {});
   const applyLivePaintTapRef = useRef(() => {});
   /** SCS sheet metal: picker popup (S1) + mode state (stage, sku, partId). */
@@ -1187,13 +1193,14 @@ const Viewport = forwardRef(({
     contourMode || filletMode || shellMode || draftMode || cutMode
     || booleanMode || moveMode || moveFaceMode || deleteFaceMode
     || paintMode
+    || feaActive
   );
 
   useEffect(() => {
     onFeatureSessionChangeRef.current?.(featureSessionRef.current);
   }, [
     contourMode, filletMode, shellMode, draftMode, cutMode,
-    booleanMode, moveMode, moveFaceMode, deleteFaceMode, paintMode,
+    booleanMode, moveMode, moveFaceMode, deleteFaceMode, paintMode, feaActive,
   ]);
 
   useEffect(() => {
@@ -2974,6 +2981,41 @@ const Viewport = forwardRef(({
   }, [
     mode, exitContourMode, clearFilletBlendPreview, clearHighlight, clearEdgeHover, clearEdgeHighlight,
   ]);
+
+  // Analyze takes the canvas the way Paint does. Other mode chips close first.
+  // This does not post a build and does not touch the assembly-open lock.
+  const releaseModesForFea = useCallback(() => {
+    exitContourMode();
+    setFilletMode(null);
+    filletModeRef.current = null;
+    clearFilletBlendPreview();
+    setShellMode(null);
+    shellModeRef.current = null;
+    setDraftMode(null);
+    draftModeRef.current = null;
+    if (cutModeRef.current || moveModeRef.current || moveFaceModeRef.current || deleteFaceModeRef.current) clearHighlight();
+    setCutMode(null);
+    cutModeRef.current = null;
+    setBooleanMode(null);
+    booleanModeRef.current = null;
+    setMoveMode(null);
+    moveModeRef.current = null;
+    clearMoveFacePreviewRef.current();
+    setMoveFaceMode(null);
+    moveFaceModeRef.current = null;
+    clearDeleteFacePreviewRef.current();
+    setDeleteFaceMode(null);
+    deleteFaceModeRef.current = null;
+    cancelFeatureEditRef.current?.('sheetMetal');
+    setSheetMetalMode(null);
+    sheetMetalModeRef.current = null;
+    setSheetMetalPicker(null);
+    exitPaintMode();
+    setPickMode('face');
+    clearEdgeHover();
+    clearEdgeHighlight();
+    setSelectedEdges([]);
+  }, [exitContourMode, clearFilletBlendPreview, clearHighlight, exitPaintMode, clearEdgeHover, clearEdgeHighlight]);
 
   const acceptShell = useCallback(() => {
     const state = shellModeRef.current;
@@ -5608,7 +5650,7 @@ const Viewport = forwardRef(({
     // Screen-space pick with finger slop — no mesh-face hit required.
     // A hit on another part retargets first so the edge graph is that part's.
     // Paint keeps the face-graph pick, even if the right rail is on edges.
-    if (pickModeRef.current === 'edge' && !paintModeRef.current) {
+    if (pickModeRef.current === 'edge' && !paintModeRef.current && !feaPickRef.current) {
       if (clickTimerRef.current) {
         clearTimeout(clickTimerRef.current);
         clickTimerRef.current = null;
@@ -5685,7 +5727,7 @@ const Viewport = forwardRef(({
     }
     // Cut, Boolean, and Paint own the canvas: a saved contour under the cursor
     // must not eat the tap (same as a construction plane sitting on the cut).
-    if (!moveFaceModeRef.current && !deleteFaceModeRef.current && !cutModeRef.current && !booleanModeRef.current && !paintModeRef.current && showContoursRef.current && !moveModeRef.current && contourModeRef.current?.tool !== 'polyline') {
+    if (!moveFaceModeRef.current && !deleteFaceModeRef.current && !cutModeRef.current && !booleanModeRef.current && !paintModeRef.current && !feaPickRef.current && showContoursRef.current && !moveModeRef.current && contourModeRef.current?.tool !== 'polyline') {
       // Saved contours are in the editor part's frame.
       const hitC = pickContourByRay(
         toPartLocal(origin, savedContourOffsetRef.current),
@@ -5711,7 +5753,7 @@ const Viewport = forwardRef(({
     const solidD = partChoiceHit.hit?.distance ?? Infinity;
     // Cut taps a body or a piece. A construction plane that sits on the cut
     // (the XY plane through a centered part) must not swallow that click.
-    if (!cutModeRef.current && !booleanModeRef.current && !paintModeRef.current && planeHits.length && !moveModeRef.current && !moveFaceModeRef.current && !deleteFaceModeRef.current && planeD <= solidD + 0.5) {
+    if (!cutModeRef.current && !booleanModeRef.current && !paintModeRef.current && !feaPickRef.current && planeHits.length && !moveModeRef.current && !moveFaceModeRef.current && !deleteFaceModeRef.current && planeD <= solidD + 0.5) {
       const ud = planeHits[0].object.userData?.plane
         ? planeHits[0].object.userData
         : planeHits[0].object.parent?.userData;
@@ -5787,6 +5829,17 @@ const Viewport = forwardRef(({
     // Paint applies on this mouseup. One tap is one face. A second tap on
     // that face inside the double-tap window upgrades it to the body. The
     // delayed processClick path must not also run, or the tap is counted twice.
+    if (feaPickRef.current) {
+      if (clickTimerRef.current) {
+        clearTimeout(clickTimerRef.current);
+        clickTimerRef.current = null;
+      }
+      clickCountRef.current = 0;
+      pendingClickDataRef.current = null;
+      feaPickRef.current(clickData);
+      return;
+    }
+
     if (paintModeRef.current) {
       if (clickTimerRef.current) {
         clearTimeout(clickTimerRef.current);
@@ -8319,7 +8372,7 @@ const Viewport = forwardRef(({
       )}
       
       {/* Left helper rail. Block, Build, Shape, Polish, Move. */}
-      {onInsertHelper && !paintMode && !contourMode && !filletMode && !shellMode && !draftMode && !cutMode && !booleanMode && !moveMode && !moveFaceMode && !deleteFaceMode && !sheetMetalMode && (
+      {onInsertHelper && !paintMode && !feaActive && !contourMode && !filletMode && !shellMode && !draftMode && !cutMode && !booleanMode && !moveMode && !moveFaceMode && !deleteFaceMode && !sheetMetalMode && (
         <HelperInsertPalette
           layout={mode === 'game' ? 'game' : 'cad'}
           onInsert={onInsertHelper}
@@ -8454,6 +8507,9 @@ const Viewport = forwardRef(({
           showPaint={mode !== 'game'}
           paintActive={!!paintMode}
           onPaintToggle={() => (paintMode ? exitPaintMode() : enterPaintMode())}
+          showAnalyze={mode !== 'game'}
+          analyzeActive={feaActive}
+          onAnalyzeToggle={() => feaToggleRef.current?.()}
           onPickModeChange={(mode) => {
             const next = mode === 'edge' ? 'edge' : 'face';
             setPickMode(next);
@@ -8737,6 +8793,32 @@ const Viewport = forwardRef(({
           onDismiss={exitShellMode}
         />
       )}
+
+      <FeaStudyHost
+        enabled={mode !== 'game'}
+        compact={!!isMobile}
+        paintOpen={!!paintMode}
+        script={currentScript}
+        getScript={() => (typeof getHelperBuffer === 'function' ? getHelperBuffer() : '') || currentScript || ''}
+        onCommit={onCommitFea}
+        assemblyLocked={() => assemblyRunLockRef?.current === true}
+        getSolid={() => ({
+          geometry: resultRef.current?.geometry,
+          faceIDs: faceIDsRef.current,
+        })}
+        onHighlight={(indices) => {
+          const geom = resultRef.current?.geometry;
+          if (!indices?.length || !geom) {
+            clearHighlight();
+            return;
+          }
+          highlightFace(indices, geom, geom.attributes?.position, geom.index?.array, 0x22d3ee, 'fea-highlight');
+        }}
+        onClaim={releaseModesForFea}
+        onActive={setFeaActive}
+        pickRef={feaPickRef}
+        toggleRef={feaToggleRef}
+      />
 
       {paintMode && mode !== 'game' && (
         <PaintModeChip

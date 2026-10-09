@@ -12,6 +12,7 @@ import { bodyCountOfWorkerMesh } from './utils/meshBodyComponents';
 import ErrorPopup from './components/ErrorPopup';
 import AssemblyOpenSpinner, { AssemblyOpenFailureToast } from './components/AssemblyOpenSpinner';
 import FeatureSheet from './components/FeatureSheet';
+import { FeaStudySheetGate } from './components/fea/FeaStudyHost';
 import {
   writeFeatureSheetParams,
   deleteFeatureBlock,
@@ -5133,6 +5134,51 @@ const App = () => {
     return true;
   };
 
+  /**
+   * Write the FEA study comment into the active part. The script drawer can
+   * stay closed: the part script is stored here, and a mounted editor only
+   * receives the same buffer. Does not post a build of its own and does not
+   * call preemptInflight. While an assembly open holds the worker, the write
+   * is refused and the lock is left alone. Reauth stays read-only.
+   */
+  const handleCommitFea = (script) => {
+    if (typeof script !== 'string') return false;
+    if (assemblyOpenLockRef.current) {
+      viewportRef.current?.notify?.('An assembly is opening — save the study again once it finishes.');
+      return false;
+    }
+    const editor = codeEditorRef.current;
+    const current = editor?.getContent?.() ?? '';
+    if (editor?.applyBuffer) {
+      if (script !== current) {
+        let wrote = false;
+        try {
+          wrote = !!editor.applyBuffer(script, 'FEA study');
+        } catch {
+          wrote = false;
+        }
+        if (!wrote) {
+          editorLiveRef.current = true;
+          setCurrentScript(script);
+          handleCodeChange(script, 'FEA study');
+        }
+      }
+    } else if (script !== current) {
+      editorLiveRef.current = true;
+      setCurrentScript(script);
+      handleCodeChange(script, 'FEA study');
+    }
+    if (bootReadOnlyRef.current || suppressPartSaveRef.current) return true;
+    const id = assemblyRef.current?.activeId;
+    if (!id) return true;
+    const next = { ...partScriptsRef.current, [id]: script };
+    partScriptsRef.current = next;
+    setPartScripts(next);
+    savePartScript(id, script);
+    saveEditorDraft({ script, filename: currentFilename, partId: id });
+    return true;
+  };
+
   /** Shell face-pick Confirm — hollow() + SHELL markers; Auto-Run. */
   const handleCommitShell = (payload) => {
     if (!focusWritePart(payload?.partId)) {
@@ -6195,6 +6241,7 @@ const App = () => {
               assemblyRunLockRef={assemblyOpenLockRef}
               onCommitShell={handleCommitShell}
               onCommitPaint={handleCommitPaint}
+              onCommitFea={handleCommitFea}
               onCommitDraft={handleCommitDraft}
               onCommitCut={handleCommitCut}
               onCommitBoolean={handleCommitBoolean}
@@ -6393,6 +6440,7 @@ const App = () => {
                   onEditScript={handleFeatureSheetEditScript}
                 />
               )}
+              <FeaStudySheetGate mobile />
 
               {/* Bottom home-indicator stage pill — clears Contour/Fillet chips via their raised mobile bottom. */}
               <div
@@ -6650,6 +6698,7 @@ const App = () => {
             assemblyRunLockRef={assemblyOpenLockRef}
               onCommitShell={handleCommitShell}
               onCommitPaint={handleCommitPaint}
+              onCommitFea={handleCommitFea}
               onCommitDraft={handleCommitDraft}
               onCommitCut={handleCommitCut}
               onCommitBoolean={handleCommitBoolean}

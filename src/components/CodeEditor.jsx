@@ -298,6 +298,9 @@ const CodeEditor = forwardRef(({
             }
           } catch { /* ignore */ }
           return true;
+        } catch {
+          // A closed drawer still mounts Monaco. If the edit cannot land,
+          // the buffer below is the write getContent and the part save see.
         } finally {
           paletteInsertRef.current = false;
         }

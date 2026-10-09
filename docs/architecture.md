@@ -169,6 +169,13 @@ Part paints `colors[surfId].part` for every body of the part. A double-tap paint
 
 Nothing is written to the assembly until Confirm. The session is viewport state, and the skin reads it while the popup is open. Confirm writes that session once through `rememberAssembly` and, in Git mode, one outbox op, then closes. That is one assembly undo step. Local and signed-out save the local assembly. Part `isSynced` is unchanged, same as a group rename. Face colors are `faceColorKey` entries in `faces[]`. A saved key that uniquely matches that face is replaced, so a repaint does not duplicate it. X, Cancel, and Esc drop the session, repaint the colors from when the popup opened, and write nothing. Undo steps back one paint action. Clear restores those pre-session colors and can itself be undone. Remove unmatched colors edits the session only. Ambiguous and missing keys are left in place until that button. The swatch grid is padded so each circle and its selection ring stay inside the scroller, including the wrapped row on a phone. A bad custom hex does not paint and does not confirm.
 
+## FEA study panel
+
+- Analyze (`data-analyze-chip`, Lucide `Gauge`) is the first button of the right-rail inspection group, next to Paint. It uses the same blue as the neighbouring rail icons and turns green only while the study is open. It is not on the left rail and it is hidden in game mode.
+- Opening Analyze closes Paint. Opening Paint closes Analyze. Desktop shows a bottom-centre cyan chip (`data-fea-mode`), the same shell as Paint. A phone (≤768 px) shows the same controls in the under-title FeatureSheet (`data-fea-sheet`).
+- The panel picks a library material or a custom E, ν, and yield. An assumed or missing ν or yield shows an assumed badge. Face taps reuse the paint pick and `faceColorMatch` fingerprints. Fix, force (newtons and a direction), or pressure (MPa) adds that face; the list removes it. Run calls `feaClient.solve()` and shows min, p95, and max in MPa, the safety factor or n/a, and a STUB badge. The numbers are not a real result.
+- The study is the comment block after `return part;`, written and read by `studyScript`. The commit stores that part script itself, so the drawer can stay closed and Monaco does not have to be open. A mounted editor receives the same buffer. The write does not call `preemptInflight`. While an assembly open holds the worker the write is refused, and no build is posted. A reauth boot stays read-only.
+
 ## Contour paint
 
 What you see as an edge is not one list.

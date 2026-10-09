@@ -17,7 +17,7 @@
  *
  * Screenshots: GOLDEN_SHOT_DIR or os.tmpdir() only.
  */
-/* global document, indexedDB, window */
+/* global document, indexedDB, localStorage, window */
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -212,6 +212,22 @@ async function seed(page, doc, partId, script = CUBE) {
           partId: id,
           savedAt: Date.now(),
         }, 'current');
+        // Signed in without a token is reauth. Id migration does not persist
+        // while that boot is read-only, so the stored row stays `local:`.
+        localStorage.setItem('surfcad.github.tokenBundle', JSON.stringify({
+          accessToken: 'ghu_paint',
+          refreshToken: '',
+          expiresAt: Date.now() + 86_400_000,
+          refreshExpiresAt: 0,
+        }));
+        localStorage.setItem('surfcad.lastAssembly', JSON.stringify({
+          'user-paint': {
+            name: nextDoc.name,
+            activeId: nextDoc.activeId,
+            source: nextDoc.source || 'local',
+            savedAt: Date.now(),
+          },
+        }));
         tx.oncomplete = () => { db.close(); resolve(); };
         tx.onerror = () => reject(tx.error);
       };
@@ -250,11 +266,39 @@ function installProbe(page) {
   });
 }
 
-async function ready(page) {
+const PAINT_USER = 'user-paint';
+
+async function signIn(page) {
+  // A signed-out reload clears the chip and does not open IndexedDB.
+  // This golden signs in so the seeded assembly is the last-opened document.
+  await page.route('**/api/**', (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ authenticated: false }),
+  }));
+  await page.route('**/api/auth/me', (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({
+      authenticated: true,
+      user: { id: PAINT_USER, email: 'paint@surfcad.test', vaultName: null },
+    }),
+  }));
+  await page.route('https://api.github.com/**', (route) => route.fulfill({
+    status: 401,
+    contentType: 'application/json',
+    body: JSON.stringify({ message: 'Bad credentials' }),
+  }));
+}
+
+async function bootReady(page) {
   await page.waitForFunction(() => {
     const canvas = document.querySelector('.viewport-shell > canvas');
     return !!(canvas && canvas.clientWidth > 0 && window.__VIEWPORT__ && window.__MANIFOLD_CONTEXT__?.isReady);
   }, null, { timeout: 90000 });
+}
+
+async function meshReady(page) {
   await page.waitForFunction(() => (
     (window.__MANIFOLD_CONTEXT__?.worker?.pendingRequests?.size || 0) === 0
     && (window.__VIEWPORT__?._renderCount || 0) >= 1
@@ -354,16 +398,12 @@ async function runCase(browser, vp) {
   const page = await context.newPage();
   const errors = [];
   page.on('pageerror', (err) => errors.push(String(err).slice(0, 240)));
-  await page.route('**/api/**', (route) => route.fulfill({
-    status: 200,
-    contentType: 'application/json',
-    body: JSON.stringify({ authenticated: false }),
-  }));
+  await signIn(page);
   await page.goto(APP_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
-  await ready(page);
+  await bootReady(page);
   await seed(page, DOC, PART);
   await page.reload({ waitUntil: 'domcontentloaded' });
-  await ready(page);
+  await meshReady(page);
   await installProbe(page);
   await page.locator('[data-paint-chip]').click();
   await page.locator('[data-paint-mode="1"]').waitFor();
@@ -491,16 +531,12 @@ async function runLegacyColor(browser) {
   const page = await context.newPage();
   const errors = [];
   page.on('pageerror', (err) => errors.push(String(err).slice(0, 240)));
-  await page.route('**/api/**', (route) => route.fulfill({
-    status: 200,
-    contentType: 'application/json',
-    body: JSON.stringify({ authenticated: false }),
-  }));
+  await signIn(page);
   await page.goto(APP_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
-  await ready(page);
+  await bootReady(page);
   await seed(page, DOC_LEGACY, LEGACY);
   await page.reload({ waitUntil: 'domcontentloaded' });
-  await ready(page);
+  await meshReady(page);
   await installProbe(page);
   await page.evaluate(() => window.__VIEWPORT__.stageSnap('front'));
   const blob = await swatchBlob(page);
@@ -695,16 +731,12 @@ async function runLoftZilla(browser) {
   const page = await context.newPage();
   const errors = [];
   page.on('pageerror', (err) => errors.push(String(err).slice(0, 240)));
-  await page.route('**/api/**', (route) => route.fulfill({
-    status: 200,
-    contentType: 'application/json',
-    body: JSON.stringify({ authenticated: false }),
-  }));
+  await signIn(page);
   await page.goto(APP_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
-  await ready(page);
+  await bootReady(page);
   await seed(page, LOFT_DOC, LOFT_PART, LOFT_SCRIPT);
   await page.reload({ waitUntil: 'domcontentloaded' });
-  await ready(page);
+  await meshReady(page);
   await page.waitForFunction(
     () => (window.__VIEWPORT__.stageVerifyFraming?.().tris || 0) > 1000
       && (window.__MANIFOLD_CONTEXT__?.worker?.pendingRequests?.size || 0) === 0,
