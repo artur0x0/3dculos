@@ -2,9 +2,13 @@
 //
 // `meshVolume` turns a closed triangle surface (Manifold's positions, indices,
 // and a per-triangle face id) into a TET10 mesh. fTetWild, compiled to a
-// single-threaded SIMD wasm module, produces the TET4 mesh. This file inserts
-// mid-edge nodes, snaps boundary mids back onto the input surface, and copies
-// each boundary face's face id from the nearest input triangle.
+// single-threaded SIMD wasm module, produces the TET4 mesh. This file orients
+// each tet so its signed volume is positive, inserts mid-edge nodes, snaps
+// boundary mids back onto the input surface, and copies each boundary face's
+// face id from the nearest input triangle. A snap that folds a quadratic tet
+// (non-positive Jacobian at a Gauss point or a corner) is rolled back to the
+// straight-edge midpoint, shared by every element on that edge. Elements that
+// stay folded fail here, during meshing.
 //
 // The module does not use shared memory. solveSolid loads it on the first
 // Analyze run. A phone solve passes memoryCeilingBytes so the heap stops
@@ -327,21 +331,206 @@ function meshTet4(module, positions, indices, edgeLength, epsilon, maxTets) {
   }
 }
 
-function withPositiveVolumes(positions, tets) {
-  const oriented = new Uint32Array(tets);
+/**
+ * Swap two corners of every TET4 with a negative signed volume so the tet is
+ * right-handed before mid-edge nodes are inserted. A zero-volume tet is left
+ * as it is; the Jacobian check reports it.
+ */
+export function orientTet4s(positions, tets) {
+  const oriented = new Uint32Array(tets.length);
+  oriented.set(tets);
+  let flipped = 0;
   for (let t = 0; t < oriented.length; t += 4) {
     const tet = [oriented[t], oriented[t + 1], oriented[t + 2], oriented[t + 3]];
     if (tetVolume(positions, tet) < 0) {
       const swap = oriented[t];
       oriented[t] = oriented[t + 1];
       oriented[t + 1] = swap;
+      flipped += 1;
     }
   }
-  return oriented;
+  return { tets: oriented, flipped };
+}
+
+// 4-point rule from packages/surfcad-fea tet10.rs, then the four corners.
+const GAUSS_SQRT5 = Math.sqrt(5);
+const GAUSS_ALPHA = (5 + 3 * GAUSS_SQRT5) / 20;
+const GAUSS_BETA = (5 - GAUSS_SQRT5) / 20;
+const TET10_JACOBIAN_SAMPLES = [
+  [GAUSS_BETA, GAUSS_BETA, GAUSS_BETA],
+  [GAUSS_ALPHA, GAUSS_BETA, GAUSS_BETA],
+  [GAUSS_BETA, GAUSS_ALPHA, GAUSS_BETA],
+  [GAUSS_BETA, GAUSS_BETA, GAUSS_ALPHA],
+  [0, 0, 0],
+  [1, 0, 0],
+  [0, 1, 0],
+  [0, 0, 1],
+];
+
+/** Solver treats |det| below this as a singular Jacobian. */
+const MIN_JACOBIAN = 1e-30;
+
+function nodeXYZ(nodes, index) {
+  if (nodes instanceof Float64Array || nodes instanceof Float32Array) {
+    return [nodes[index * 3], nodes[index * 3 + 1], nodes[index * 3 + 2]];
+  }
+  const point = nodes[index];
+  return [point[0], point[1], point[2]];
+}
+
+function writeNode(nodes, index, xyz) {
+  if (nodes instanceof Float64Array || nodes instanceof Float32Array) {
+    nodes[index * 3] = xyz[0];
+    nodes[index * 3 + 1] = xyz[1];
+    nodes[index * 3 + 2] = xyz[2];
+    return;
+  }
+  nodes[index][0] = xyz[0];
+  nodes[index][1] = xyz[1];
+  nodes[index][2] = xyz[2];
+}
+
+function shapeDerivatives(l1, l2, l3) {
+  const l0 = 1 - l1 - l2 - l3;
+  const d0 = -(4 * l0 - 1);
+  return [
+    [d0, d0, d0],
+    [4 * l1 - 1, 0, 0],
+    [0, 4 * l2 - 1, 0],
+    [0, 0, 4 * l3 - 1],
+    [4 * (l0 - l1), -4 * l1, -4 * l1],
+    [4 * l2, 4 * l1, 0],
+    [-4 * l2, 4 * (l0 - l2), -4 * l2],
+    [-4 * l3, -4 * l3, 4 * (l0 - l3)],
+    [4 * l3, 0, 4 * l1],
+    [0, 4 * l3, 4 * l2],
+  ];
+}
+
+function jacobianDet(xyz, sample) {
+  const dn = shapeDerivatives(sample[0], sample[1], sample[2]);
+  const jac = [
+    [0, 0, 0],
+    [0, 0, 0],
+    [0, 0, 0],
+  ];
+  for (let a = 0; a < 10; a += 1) {
+    const point = xyz[a];
+    for (let row = 0; row < 3; row += 1) {
+      jac[row][0] += dn[a][0] * point[row];
+      jac[row][1] += dn[a][1] * point[row];
+      jac[row][2] += dn[a][2] * point[row];
+    }
+  }
+  return jac[0][0] * (jac[1][1] * jac[2][2] - jac[1][2] * jac[2][1])
+    - jac[0][1] * (jac[1][0] * jac[2][2] - jac[1][2] * jac[2][0])
+    + jac[0][2] * (jac[1][0] * jac[2][1] - jac[1][1] * jac[2][0]);
+}
+
+/** Minimum det(J) at the Gauss points and the corners. Non-finite if any sample is. */
+export function tet10MinJacobian(nodes, elem) {
+  const xyz = [];
+  for (let a = 0; a < 10; a += 1) xyz.push(nodeXYZ(nodes, elem[a]));
+  let min = Infinity;
+  for (let s = 0; s < TET10_JACOBIAN_SAMPLES.length; s += 1) {
+    const det = jacobianDet(xyz, TET10_JACOBIAN_SAMPLES[s]);
+    if (!Number.isFinite(det)) return det;
+    if (det < min) min = det;
+  }
+  return min;
+}
+
+export function jacobianAcceptable(det) {
+  return Number.isFinite(det) && det > MIN_JACOBIAN;
+}
+
+/**
+ * Straighten snapped mid-edge nodes of every TET10 whose Jacobian is not
+ * positive. A mid-node is one index shared by every element on that edge, so
+ * the rollback is the same point for all of them. Repeats until the mesh is
+ * valid or no snapped mid-node is left to move.
+ */
+export function repairTet10Jacobians(nodes, elements, midMeta) {
+  let rolled = 0;
+  const limit = 8;
+  const nTets = elements.length / 10;
+  for (let pass = 0; pass < limit; pass += 1) {
+    const bad = [];
+    for (let t = 0; t < nTets; t += 1) {
+      const elem = elements.subarray(t * 10, t * 10 + 10);
+      if (!jacobianAcceptable(tet10MinJacobian(nodes, elem))) bad.push(t);
+    }
+    if (bad.length === 0) return { invalid: 0, rolled, passes: pass };
+    let moved = 0;
+    for (let i = 0; i < bad.length; i += 1) {
+      const base = bad[i] * 10;
+      for (let slot = 4; slot < 10; slot += 1) {
+        const id = elements[base + slot];
+        const meta = midMeta.get(id);
+        if (!meta || !meta.snapped) continue;
+        writeNode(nodes, id, meta.straight);
+        meta.snapped = false;
+        moved += 1;
+        rolled += 1;
+      }
+    }
+    if (moved === 0) return { invalid: bad.length, rolled, passes: pass + 1 };
+  }
+  let invalid = 0;
+  for (let t = 0; t < nTets; t += 1) {
+    const elem = elements.subarray(t * 10, t * 10 + 10);
+    if (!jacobianAcceptable(tet10MinJacobian(nodes, elem))) invalid += 1;
+  }
+  return { invalid, rolled, passes: limit };
+}
+
+/**
+ * How many corner-tets a segment crosses. Used to count elements through a
+ * wall: `origin` on the outer face, `direction` the inward normal, `distance`
+ * the gauge.
+ */
+export function countTetsAlong(nodes, elements, origin, direction, distance, steps = 48) {
+  const span = length(direction);
+  if (!(span > 0) || !(distance > 0)) return 0;
+  const unit = scale(direction, 1 / span);
+  const seen = new Set();
+  const nTets = elements.length / 10;
+  for (let s = 1; s < steps; s += 1) {
+    const point = add(origin, scale(unit, (distance * s) / steps));
+    for (let t = 0; t < nTets; t += 1) {
+      if (seen.has(t)) continue;
+      const base = t * 10;
+      const bary = tetBarycentric(
+        point,
+        nodeXYZ(nodes, elements[base]),
+        nodeXYZ(nodes, elements[base + 1]),
+        nodeXYZ(nodes, elements[base + 2]),
+        nodeXYZ(nodes, elements[base + 3]),
+      );
+      if (bary && bary[0] >= -1e-8 && bary[1] >= -1e-8 && bary[2] >= -1e-8 && bary[3] >= -1e-8) {
+        seen.add(t);
+      }
+    }
+  }
+  return seen.size;
+}
+
+function tetBarycentric(p, a, b, c, d) {
+  const ab = sub(b, a);
+  const ac = sub(c, a);
+  const ad = sub(d, a);
+  const ap = sub(p, a);
+  const det = dot(ab, cross(ac, ad));
+  if (!(Math.abs(det) > 1e-18)) return null;
+  const u = dot(ap, cross(ac, ad)) / det;
+  const v = dot(ab, cross(ap, ad)) / det;
+  const w = dot(ab, cross(ac, ap)) / det;
+  return [1 - u - v - w, u, v, w];
 }
 
 function upgradeTet10(tet4Positions, tet4Tets, inputPositions, inputIndices, inputFaceIds, edgeLength, epsilon) {
-  tet4Tets = withPositiveVolumes(tet4Positions, tet4Tets);
+  const oriented = orientTet4s(tet4Positions, tet4Tets);
+  tet4Tets = oriented.tets;
   const inputTriangles = [];
   for (let i = 0; i < inputIndices.length; i += 3) {
     inputTriangles.push({
@@ -412,13 +601,16 @@ function upgradeTet10(tet4Positions, tet4Tets, inputPositions, inputIndices, inp
     nodes.push([tet4Positions[i], tet4Positions[i + 1], tet4Positions[i + 2]]);
   }
   const mids = new Map();
+  const midMeta = new Map();
   const midOf = (a, b) => {
     const key = edgeKey(a, b);
     const existing = mids.get(key);
     if (existing !== undefined) return existing;
     const pa = nodes[a];
     const pb = nodes[b];
-    let mid = scale(add(pa, pb), 0.5);
+    const straight = scale(add(pa, pb), 0.5);
+    let mid = straight;
+    let snapped = false;
     const allowed = boundaryEdgeIds.get(key);
     if (allowed) {
       let best = Infinity;
@@ -432,10 +624,14 @@ function upgradeTet10(tet4Positions, tet4Tets, inputPositions, inputIndices, inp
           bestPoint = q;
         }
       }
-      if (best <= snapTol) mid = bestPoint;
+      if (best <= snapTol && length(sub(bestPoint, straight)) > 1e-12) {
+        mid = bestPoint;
+        snapped = true;
+      }
     }
     const id = nodes.length;
-    nodes.push(mid);
+    nodes.push([mid[0], mid[1], mid[2]]);
+    midMeta.set(id, { straight: [straight[0], straight[1], straight[2]], snapped });
     mids.set(key, id);
     return id;
   };
@@ -471,13 +667,28 @@ function upgradeTet10(tet4Positions, tet4Tets, inputPositions, inputIndices, inp
     faceIds[i] = boundary[i].faceId;
   }
 
+  const repair = repairTet10Jacobians(nodes, elements, midMeta);
+  if (repair.invalid > 0) {
+    const noun = repair.invalid === 1 ? 'element still has' : 'elements still have';
+    throw new Error(
+      `Meshing stopped: ${repair.invalid} TET10 ${noun} a non-positive Jacobian after straightening curved mid-edge nodes.`,
+    );
+  }
+
   const flat = new Float64Array(nodes.length * 3);
   for (let i = 0; i < nodes.length; i += 1) {
     flat[i * 3] = nodes[i][0];
     flat[i * 3 + 1] = nodes[i][1];
     flat[i * 3 + 2] = nodes[i][2];
   }
-  return { nodes: flat, elements, faces, faceIds };
+  return {
+    nodes: flat,
+    elements,
+    faces,
+    faceIds,
+    flipped: oriented.flipped,
+    rolled: repair.rolled,
+  };
 }
 
 function qualityStats(nodes, elements) {
@@ -591,6 +802,8 @@ export async function meshVolume(surface, options = {}) {
       meanAspect: quality.meanAspect,
       maxAspect: quality.maxAspect,
       positive: quality.positive,
+      oriented: upgraded.flipped,
+      straightenedMids: upgraded.rolled,
       ms: Date.now() - started,
       wasmBytes,
       dofs: upgraded.nodes.length,

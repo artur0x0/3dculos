@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   appCapabilities,
+  chooseEdgeLength,
   chooseSolver,
   detectFeaProfile,
   dofCap,
@@ -10,6 +11,8 @@ import {
   partShape,
   PHONE_DOF_CAPS,
   SHELLS_AVAILABLE,
+  THIN_ELEMENTS_THROUGH,
+  wallThickness,
 } from './deviceProfile.js';
 import { box } from './meshShapes.js';
 
@@ -29,6 +32,26 @@ test('a cube is compact and uses PCG', () => {
   assert.equal(chooseSolver(shape), 'pcg');
   assert.equal(dofCap('phone', false, 'pcg'), PHONE_DOF_CAPS.tet10CompactPcg);
   assert.equal(dofCap('phone', false, 'cholesky'), PHONE_DOF_CAPS.tet10CompactCholesky);
+});
+
+test('a thin auto edge asks for two through the wall, then keeps a non-sliver edge when the cap cannot', () => {
+  const surface = box([80, 2, 40]);
+  const shape = partShape(surface.positions, surface.indices);
+  assert.equal(isThinPart(shape), true);
+  const wall = wallThickness(shape);
+  assert.ok(Math.abs(wall - 2) < 0.3, `wall ${wall}`);
+  const two = wall / THIN_ELEMENTS_THROUGH;
+  const desktop = chooseEdgeLength(shape, 'auto', Infinity);
+  const phone = chooseEdgeLength(shape, 'auto', PHONE_DOF_CAPS.tet10Thin);
+  assert.ok(desktop.requested <= two * 1.01, `requested ${desktop.requested} vs ${two}`);
+  assert.equal(phone.requested, desktop.requested);
+  if (desktop.coarsened) {
+    assert.ok(desktop.edgeLength > two, 'a coarsened edge is longer than the two-element edge');
+    const sliver = desktop.edgeLength > two * 1.05 && desktop.edgeLength < wall * 1.25;
+    assert.equal(sliver, false);
+  }
+  const explicit = chooseEdgeLength(shape, 4, PHONE_DOF_CAPS.tet10Thin);
+  assert.equal(explicit.requested, 4);
 });
 
 test('the DOF cap lengthens an edge that would pass it', () => {

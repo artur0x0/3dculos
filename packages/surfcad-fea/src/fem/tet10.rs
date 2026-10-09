@@ -137,6 +137,67 @@ fn gradients(xyz: &[[f64; 3]; 10], l1: f64, l2: f64, l3: f64) -> Result<([[f64; 
     Ok((grad, det))
 }
 
+fn jacobian_matrix(xyz: &[[f64; 3]; 10], l1: f64, l2: f64, l3: f64) -> [[f64; 3]; 3] {
+    let dn = dshape(l1, l2, l3);
+    let mut jac = [[0.0; 3]; 3];
+    for a in 0..10 {
+        for row in 0..3 {
+            jac[row][0] += dn[a][0] * xyz[a][row];
+            jac[row][1] += dn[a][1] * xyz[a][row];
+            jac[row][2] += dn[a][2] * xyz[a][row];
+        }
+    }
+    jac
+}
+
+fn det3(m: [[f64; 3]; 3]) -> f64 {
+    m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
+        - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+        + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0])
+}
+
+fn gauss_bary() -> [(f64, f64, f64); 4] {
+    let (alpha, beta, _) = gauss_tet();
+    [
+        (beta, beta, beta),
+        (alpha, beta, beta),
+        (beta, alpha, beta),
+        (beta, beta, alpha),
+    ]
+}
+
+/// Smallest det(J) at the four Gauss points. Non-finite if any sample is.
+fn min_gauss_jacobian(xyz: &[[f64; 3]; 10]) -> f64 {
+    let mut min_det = f64::INFINITY;
+    for (l1, l2, l3) in gauss_bary() {
+        let det = det3(jacobian_matrix(xyz, l1, l2, l3));
+        if !det.is_finite() {
+            return det;
+        }
+        if det < min_det {
+            min_det = det;
+        }
+    }
+    min_det
+}
+
+fn jacobian_mesh_error(element: usize, min_det: f64) -> FemError {
+    let shown = if min_det.is_finite() {
+        format!("{min_det:.6e}")
+    } else {
+        "non-finite".to_string()
+    };
+    if !min_det.is_finite() || min_det.abs() < 1e-30 {
+        FemError::BadMesh(format!(
+            "TET10 element {element} has a singular Jacobian (min {shown})"
+        ))
+    } else {
+        FemError::BadMesh(format!(
+            "a TET10 element {element} has a non-positive Jacobian (min {shown}); node order must be right-handed"
+        ))
+    }
+}
+
 fn elem_coords(nodes: &[[f64; 3]], elem: &[u32; 10]) -> [[f64; 3]; 10] {
     let mut xyz = [[0.0; 3]; 10];
     for a in 0..10 {
@@ -167,32 +228,28 @@ pub fn tet_volume(xyz: &[[f64; 3]; 10]) -> Result<f64, ()> {
 }
 
 /// 30×30 element stiffness, row-major. Returns the element volume too.
+///
+/// `element` is the mesh index, reported when the Jacobian is singular or
+/// not positive. The check uses the minimum det(J) over the four Gauss points.
 pub fn element_stiffness(
     nodes: &[[f64; 3]],
     elem: &[u32; 10],
+    element: usize,
     c: &[f64; 36],
 ) -> Result<([f64; 900], f64), FemError> {
     let xyz = elem_coords(nodes, elem);
-    let (alpha, beta, weight) = gauss_tet();
-    let points = [
-        (beta, beta, beta),
-        (alpha, beta, beta),
-        (beta, alpha, beta),
-        (beta, beta, alpha),
-    ];
+    let min_det = min_gauss_jacobian(&xyz);
+    if !min_det.is_finite() || min_det <= 0.0 || min_det.abs() < 1e-30 {
+        return Err(jacobian_mesh_error(element, min_det));
+    }
+    let (_, _, weight) = gauss_tet();
     let mut ke = [0.0; 900];
     let mut volume = 0.0;
-    for (l1, l2, l3) in points {
-        let (grad, det) = gradients(&xyz, l1, l2, l3).map_err(|_| {
-            FemError::BadMesh(
-                "a TET10 element has a singular Jacobian (collapsed or inverted)".into(),
-            )
-        })?;
+    for (l1, l2, l3) in gauss_bary() {
+        let (grad, det) = gradients(&xyz, l1, l2, l3)
+            .map_err(|_| jacobian_mesh_error(element, min_det))?;
         if det <= 0.0 {
-            return Err(FemError::BadMesh(
-                "a TET10 element has a non-positive Jacobian; node order must be right-handed"
-                    .into(),
-            ));
+            return Err(jacobian_mesh_error(element, min_det));
         }
         let wdet = det * weight;
         volume += wdet;
@@ -240,10 +297,15 @@ pub fn element_stiffness(
 pub fn gauss_stress(
     nodes: &[[f64; 3]],
     elem: &[u32; 10],
+    element: usize,
     c: &[f64; 36],
     displacement: &[f64],
 ) -> Result<[[f64; 6]; 4], FemError> {
     let xyz = elem_coords(nodes, elem);
+    let min_det = min_gauss_jacobian(&xyz);
+    if !min_det.is_finite() || min_det <= 0.0 || min_det.abs() < 1e-30 {
+        return Err(jacobian_mesh_error(element, min_det));
+    }
     let mut ue = [0.0; 30];
     for a in 0..10 {
         let base = elem[a] as usize * 3;
@@ -251,21 +313,12 @@ pub fn gauss_stress(
         ue[a * 3 + 1] = displacement[base + 1];
         ue[a * 3 + 2] = displacement[base + 2];
     }
-    let (alpha, beta, _) = gauss_tet();
-    let points = [
-        (beta, beta, beta),
-        (alpha, beta, beta),
-        (beta, alpha, beta),
-        (beta, beta, alpha),
-    ];
     let mut out = [[0.0; 6]; 4];
-    for (g, (l1, l2, l3)) in points.into_iter().enumerate() {
+    for (g, (l1, l2, l3)) in gauss_bary().into_iter().enumerate() {
         let (grad, det) = gradients(&xyz, l1, l2, l3)
-            .map_err(|_| FemError::BadMesh("a TET10 element has a singular Jacobian".into()))?;
+            .map_err(|_| jacobian_mesh_error(element, min_det))?;
         if det <= 0.0 {
-            return Err(FemError::BadMesh(
-                "a TET10 element has a non-positive Jacobian".into(),
-            ));
+            return Err(jacobian_mesh_error(element, min_det));
         }
         let mut strain = [0.0; 6];
         for a in 0..10 {
@@ -528,5 +581,25 @@ mod tests {
                 f[mid]
             );
         }
+    }
+
+    #[test]
+    fn inverted_element_names_its_index_and_min_jacobian() {
+        let mut nodes = unit_tet();
+        nodes[3] = [0.0, 0.0, -1.0];
+        nodes[7] = [0.0, 0.0, -0.5];
+        nodes[8] = [0.5, 0.0, -0.5];
+        nodes[9] = [0.0, 0.5, -0.5];
+        let elem = [0u32, 1, 2, 3, 4, 5, 6, 7, 8, 9];
+        let material = Material {
+            young: 210_000.0,
+            poisson: 0.3,
+            yield_mpa: Some(250.0),
+        };
+        let err = element_stiffness(&nodes, &elem, 7, &elasticity(material)).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("element 7"), "{msg}");
+        assert!(msg.contains("non-positive Jacobian"), "{msg}");
+        assert!(msg.contains("min -"), "{msg}");
     }
 }

@@ -14,6 +14,21 @@ export const SHELLS_AVAILABLE = false;
 /** Degrees of freedom measured on an 18 mm cube: about 66 per (volume / edge³). */
 export const DOFS_PER_CELL = 66;
 
+/** Elements to place through a thin wall when the DOF budget allows it. */
+export const THIN_ELEMENTS_THROUGH = 2;
+
+/**
+ * Desktop budget for that wall edge. A 3.175 mm bracket (volume about
+ * 48 000 mm³) needs an edge near 1.5 mm for two elements through the gauge,
+ * which estimates about 960 000 degrees of freedom. Supernodal Cholesky does
+ * not finish in memory at that size. The phone cap is tighter and is applied
+ * first. An edge the budget pushes into the band between gauge/2 and the
+ * gauge itself is not used: on this bracket a 3.16 mm target (the 100k
+ * phone edge) meshed with aspect ratio about 30, while the bbox default
+ * stays near 8 and still puts one layer through the wall.
+ */
+export const THIN_WALL_DOF_BUDGET = 180_000;
+
 export const PHONE_DOF_CAPS = Object.freeze({
   tet10Thin: 100_000,
   tet10CompactCholesky: 40_000,
@@ -131,6 +146,63 @@ export function preferredEdgeLength(diagonal, target) {
   if (typeof target === 'number' && Number.isFinite(target) && target > 0) return target;
   if (!(diagonal > 0)) return 1;
   return diagonal / 20;
+}
+
+/**
+ * Gauge estimate. Volume/area of a plate is about half the wall, so twice
+ * that is the thickness a tet stack has to cross.
+ */
+export function wallThickness(shape) {
+  if (!shape || !(shape.thickness > 0)) return 0;
+  return 2 * shape.thickness;
+}
+
+/**
+ * Edge length for a study.
+ *
+ * An explicit `mesh.target` is kept, then grown to the DOF cap. Auto on a
+ * thin part requests the shorter of the bbox default and `wall / 2`. When
+ * the phone cap or `THIN_WALL_DOF_BUDGET` cannot afford that edge, the mesh
+ * keeps the bbox default instead of an intermediate length that slivers, and
+ * `coarsened` is set so the study can warn.
+ */
+export function chooseEdgeLength(shape, target, cap) {
+  const diagonal = shape && shape.diagonal > 0 ? shape.diagonal : 0;
+  const volume = shape && shape.volume > 0 ? shape.volume : 0;
+  const explicit = typeof target === 'number' && Number.isFinite(target) && target > 0;
+  const preferred = preferredEdgeLength(diagonal, explicit ? target : 0);
+  const wallMm = wallThickness(shape);
+  if (explicit || !shape || !isThinPart(shape)) {
+    const capped = edgeForCap(volume, preferred, cap);
+    return {
+      edgeLength: capped.edgeLength,
+      coarsened: capped.coarsened,
+      requested: preferred,
+      wallMm,
+      elementsThrough: wallMm > 0 ? wallMm / capped.edgeLength : null,
+    };
+  }
+  const two = wallMm > 0 ? wallMm / THIN_ELEMENTS_THROUGH : 0;
+  const requested = two > 0 ? Math.min(preferred, two) : preferred;
+  const limit = Number.isFinite(cap) ? Math.min(cap, THIN_WALL_DOF_BUDGET) : THIN_WALL_DOF_BUDGET;
+  const fitted = edgeForCap(volume, requested, limit);
+  let edgeLength = fitted.edgeLength;
+  let coarsened = fitted.coarsened;
+  // An edge between gauge/2 and the gauge slivers (aspect about 30 at
+  // 3.16 mm on this 3 mm wall). Keep the bbox default instead. fTetWild
+  // still refines to the wall; on this bracket that is 3 elements through
+  // 3.175 mm, so the fallback is not a one-element mesh and does not warn.
+  if (wallMm > 0 && edgeLength > two * 1.05 && edgeLength < wallMm * 1.25) {
+    edgeLength = preferred;
+    coarsened = edgeLength > preferred * 1.02;
+  }
+  return {
+    edgeLength,
+    coarsened,
+    requested,
+    wallMm,
+    elementsThrough: wallMm > 0 ? wallMm / edgeLength : null,
+  };
 }
 
 /**

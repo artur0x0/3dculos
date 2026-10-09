@@ -32,8 +32,8 @@ pub fn nodal_stress(
     let c = elasticity(material);
     let mut acc = vec![[0.0; 6]; nodes.len()];
     let mut count = vec![0_u32; nodes.len()];
-    for elem in elements {
-        let gauss = tet10::gauss_stress(nodes, elem, &c, displacement)?;
+    for (element, elem) in elements.iter().enumerate() {
+        let gauss = tet10::gauss_stress(nodes, elem, element, &c, displacement)?;
         for comp in 0..6 {
             let samples = [
                 gauss[0][comp],

@@ -16,6 +16,7 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { chromium } from 'playwright-core';
+import { SHEET_METALLICA_SCRIPT } from '../../src/fea/fixtures/sheetMetallica.js';
 import { feaStudyBlock } from '../../src/fea/studyScript.js';
 
 const PORT = Number(process.env.SMOKE_PORT || 4327);
@@ -670,6 +671,118 @@ async function runCase(browser, vp) {
   await context.close();
 }
 
+async function runSheetCase(browser, vp) {
+  const context = await browser.newContext({
+    viewport: { width: vp.width, height: vp.height },
+    hasTouch: vp.touch,
+    isMobile: vp.touch,
+    deviceScaleFactor: vp.touch ? 2 : 1,
+    colorScheme: 'dark',
+    userAgent: vp.touch
+      ? 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1'
+      : undefined,
+  });
+  const page = await context.newPage();
+  const timingLogs = [];
+  page.on('console', (msg) => {
+    const text = msg.text();
+    if (text.includes('[fea-timing]')) timingLogs.push(text);
+  });
+  const errors = await boot(page);
+  await page.evaluate(async ({ script, partId, userId }) => {
+    await new Promise((resolve, reject) => {
+      const req = indexedDB.deleteDatabase('surfcad-assembly');
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error);
+      req.onblocked = () => resolve();
+    });
+    await new Promise((resolve, reject) => {
+      const req = indexedDB.open('surfcad-assembly', 1);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains('assembly')) db.createObjectStore('assembly');
+        if (!db.objectStoreNames.contains('parts')) db.createObjectStore('parts');
+      };
+      req.onerror = () => reject(req.error);
+      req.onsuccess = () => {
+        const db = req.result;
+        const tx = db.transaction(['assembly', 'parts'], 'readwrite');
+        tx.objectStore('assembly').put({
+          version: 1,
+          source: 'git',
+          name: 'Study',
+          activeId: partId,
+          parts: [{ id: partId, name: 'Bracket', visible: true, order: 0 }],
+        }, 'current');
+        tx.objectStore('parts').put({ id: partId, script, savedAt: Date.now() }, partId);
+        localStorage.setItem('surfcad.github.tokenBundle', JSON.stringify({
+          accessToken: 'ghu_fea',
+          refreshToken: '',
+          expiresAt: Date.now() + 86_400_000,
+          refreshExpiresAt: 0,
+        }));
+        localStorage.setItem('surfcad.lastAssembly', JSON.stringify({
+          [userId]: {
+            name: 'Study',
+            activeId: partId,
+            source: 'git',
+            savedAt: Date.now(),
+          },
+        }));
+        tx.oncomplete = () => { db.close(); resolve(); };
+        tx.onerror = () => reject(tx.error);
+      };
+    });
+  }, { script: SHEET_METALLICA_SCRIPT, partId: 'fea-sheet', userId: USER_ID });
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('canvas', { timeout: 40000 });
+  await solidReady(page);
+
+  const shell = vp.touch ? '[data-fea-sheet="1"]' : '[data-fea-mode="1"]';
+  await page.locator('[data-analyze-chip]').click();
+  await page.locator(shell).waitFor({ timeout: 8000 });
+  const seeded = await page.evaluate(() => ({
+    material: document.querySelector('[data-fea-material]')?.value || '',
+    fixtures: document.querySelector('[data-fea-fixture-count]')?.getAttribute('data-fea-fixture-count') || '',
+    loads: document.querySelector('[data-fea-load-count]')?.getAttribute('data-fea-load-count') || '',
+  }));
+  check(`${vp.name} sheet material`, seeded.material === 'al-6061-t6', seeded.material);
+  check(`${vp.name} sheet fixture`, seeded.fixtures === '1', JSON.stringify(seeded));
+  check(`${vp.name} sheet load`, seeded.loads === '1', JSON.stringify(seeded));
+
+  await page.locator('[data-fea-run]').click();
+  await page.locator('[data-fea-summary]').waitFor({ timeout: 180000 });
+  await page.locator(`${shell} [data-fea-timing]`).waitFor({ timeout: 10000 });
+  const timingText = ((await page.locator(`${shell} [data-fea-timing]`).innerText()) || '').replace(/\s+/g, ' ').trim();
+  check(`${vp.name} sheet timing text`, /Meshed in .* solved in .* DOF.*total/.test(timingText), timingText);
+  check(
+    `${vp.name} sheet timing log`,
+    timingLogs.some((line) => line.startsWith('[fea-timing]')),
+    timingLogs.join(' | '),
+  );
+  const summary = await page.evaluate(() => ({
+    stubs: document.querySelectorAll('[data-fea-stub="1"]').length,
+    source: document.querySelector('[data-fea-source]')?.getAttribute('data-fea-source') || '',
+    stress: document.querySelector('[data-fea-stress]')?.textContent || '',
+    warning: document.querySelector('[data-fea-warning]')?.textContent || '',
+    notice: document.querySelector('[data-fea-notice]')?.textContent || '',
+  }));
+  const maxMatch = summary.stress.match(/max ([0-9.]+) MPa/);
+  const maxMPa = maxMatch ? Number(maxMatch[1]) : NaN;
+  console.log(`  sheet ${vp.name} max ${maxMPa} MPa ${timingText}`);
+  check(`${vp.name} sheet no stub`, summary.stubs === 0, JSON.stringify(summary));
+  check(`${vp.name} sheet tet10`, summary.source === 'tet10', summary.source);
+  check(`${vp.name} sheet stress finite`, Number.isFinite(maxMPa) && maxMPa > 0.05 && maxMPa < 5000, summary.stress);
+  check(`${vp.name} sheet no jacobian failure`, !/Jacobian|non-positive/i.test(summary.notice), summary.notice);
+  const shot = join(SHOT_DIR, vp.touch ? 'fea-sheet-390.png' : 'fea-sheet-1280.png');
+  check(`${vp.name} sheet shot dir`, !shot.startsWith('/opt/cursor/artifacts'), shot);
+  await page.screenshot({ path: shot });
+  check(`${vp.name} sheet shot saved`, existsSync(shot), shot);
+  console.log(`  shot ${shot}`);
+  check(`${vp.name} sheet no page errors`, errors.length === 0, errors.slice(0, 3).join(' | '));
+  await context.close();
+}
+
 const viewArg = process.env.FEA_VIEW || '';
 const viewports = [
   { name: '390', width: 390, height: 844, touch: true },
@@ -690,6 +803,8 @@ try {
   for (const vp of viewports) {
     console.log(` ${vp.name}`);
     await runCase(browser, vp);
+    console.log(` ${vp.name} sheet`);
+    await runSheetCase(browser, vp);
   }
 } finally {
   if (browser) await browser.close();
