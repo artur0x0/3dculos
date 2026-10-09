@@ -9,7 +9,7 @@
  *
  * Screenshots go to GOLDEN_SHOT_DIR or os.tmpdir() only.
  */
-/* global document, indexedDB */
+/* global document, indexedDB, localStorage */
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
