@@ -69,6 +69,84 @@ function studyFaces(entries) {
  * two ids; the study stores the majority id plus `triangleFaceIDs` for the
  * whole paint patch. Matching any of them covers the wall.
  */
+/**
+ * Faces that share a node, or a corner that lands on the same point, are one
+ * wall. When the same ids occur on two walls, the wall closest to `at` is
+ * the one the study stored.
+ */
+function nearestPatch(faces, at) {
+  if (faces.length < 2) return faces;
+  const parent = faces.map((_, index) => index);
+  const find = (index) => {
+    let root = index;
+    while (parent[root] !== root) root = parent[root];
+    while (parent[index] !== root) {
+      const next = parent[index];
+      parent[index] = root;
+      index = next;
+    }
+    return root;
+  };
+  const union = (a, b) => {
+    const ra = find(a);
+    const rb = find(b);
+    if (ra !== rb) parent[ra] = rb;
+  };
+  const byNode = new Map();
+  const byPoint = new Map();
+  for (let i = 0; i < faces.length; i += 1) {
+    const ids = faces[i].ids;
+    const xyz = faces[i].xyz;
+    for (let k = 0; k < ids.length; k += 1) {
+      const node = ids[k];
+      const previous = byNode.get(node);
+      if (previous === undefined) byNode.set(node, i);
+      else union(previous, i);
+      const point = xyz[k];
+      const key = `${Math.round(point[0] * 1e4)},${Math.round(point[1] * 1e4)},${Math.round(point[2] * 1e4)}`;
+      const seenAt = byPoint.get(key);
+      if (seenAt === undefined) byPoint.set(key, i);
+      else union(seenAt, i);
+    }
+  }
+  const groups = new Map();
+  for (let i = 0; i < faces.length; i += 1) {
+    const root = find(i);
+    let group = groups.get(root);
+    if (!group) {
+      group = [];
+      groups.set(root, group);
+    }
+    group.push(faces[i]);
+  }
+  if (groups.size < 2) return faces;
+  let best = faces;
+  let bestDist = Infinity;
+  for (const group of groups.values()) {
+    let weight = 0;
+    const centroid = [0, 0, 0];
+    for (let i = 0; i < group.length; i += 1) {
+      const face = group[i];
+      const area = face.area > 0 ? face.area : 1;
+      weight += area;
+      centroid[0] += face.centroid[0] * area;
+      centroid[1] += face.centroid[1] * area;
+      centroid[2] += face.centroid[2] * area;
+    }
+    if (weight > 0) {
+      centroid[0] /= weight;
+      centroid[1] /= weight;
+      centroid[2] /= weight;
+    }
+    const dist = Math.hypot(centroid[0] - at[0], centroid[1] - at[1], centroid[2] - at[2]);
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = group;
+    }
+  }
+  return best;
+}
+
 function triangleIdsOf(pick) {
   const ids = [];
   const seen = new Set();
@@ -113,7 +191,12 @@ export function matchBoundaryFaces(mesh, picked, { diagonal = 1 } = {}) {
       if (group) listed = listed.concat(group);
     }
     if (listed.length) {
-      for (const face of listed) {
+      // A Manifold face id is reused on disconnected coplanar walls. The two
+      // outer flanges of a hat share ids, so an id match covers both and the
+      // load lands on fixed nodes. Keep the connected patch nearest the
+      // stored point.
+      const patch = Array.isArray(pick.at) ? nearestPatch(listed, pick.at) : listed;
+      for (const face of patch) {
         if (seen.has(face.index)) continue;
         seen.add(face.index);
         chosen.push(face);

@@ -6,9 +6,12 @@ import { chooseEdgeLength, isThinPart, partShape, PHONE_DOF_CAPS, THIN_ELEMENTS_
 import { SHEET_FLANGE_PROBE, SHEET_METALLICA_SCRIPT } from './fixtures/sheetMetallica.js';
 import { formatDoneText } from './feaProgress.js';
 import { countTetsAlong, jacobianAcceptable, meshVolume, tet10MinJacobian } from './meshVolume.js';
+import { studyForSolve } from './renderFaceIds.js';
 import { readFeaStudy } from './studyScript.js';
 import { solveSolid } from './solveSolid.js';
+import { meshArraysFromGeometry } from './studyPanel.js';
 import { runScript } from '../lib/surfcad/index.js';
+import { buildSolidGeometry } from '../utils/partSolidCache.js';
 
 const wasmUrl = new URL('../../packages/surfcad-fea/pkg/surfcad_fea_bg.wasm', import.meta.url);
 const initFea = fea.default ?? fea.init;
@@ -61,7 +64,7 @@ describe('sheet metallica bracket', { concurrency: 1 }, () => {
     // Two isotropic elements through 3.175 mm want an edge near 1.5 mm, about
     // 960 000 degrees of freedom on this bracket. That is past the phone cap
     // and the thin-wall budget, and the cap's own edge (near the gauge) slivers.
-    // The mesh keeps one well-shaped layer instead. `through` is that count.
+    // The bbox edge stays. fTetWild still stacks several tets through the flange.
     console.log(`bracket mesh dofs ${mesh.stats.dofs} elements ${mesh.stats.elements} edge ${shapeEdge.edgeLength.toFixed(2)} mm through ${through} worstJ ${worst} at ${worstAt} straightened ${mesh.stats.straightenedMids} oriented ${mesh.stats.oriented} ms ${mesh.stats.ms}`);
     assert.equal(mesh.stats.positive, true);
     // Measured on the fixed flange: the ray through 3.175 mm crosses more
@@ -73,10 +76,14 @@ describe('sheet metallica bracket', { concurrency: 1 }, () => {
   });
 
   test('phone and desktop solves finish with a finite stress field', { timeout: 300_000 }, async () => {
-    const surface = await surfaceOf();
+    const built = await runScript(SHEET_METALLICA_SCRIPT);
+    const solid = buildSolidGeometry(built.mesh);
+    const surface = meshArraysFromGeometry(solid.geometry, solid.faceIDs);
+    const expanded = studyForSolve(study, solid.geometry, solid.faceIDs);
+    try { built.manifold?.delete?.(); } catch { /* already freed */ }
     for (const profile of ['phone', 'desktop']) {
       const result = await solveSolid({
-        study,
+        study: expanded,
         positions: surface.positions,
         indices: surface.indices,
         faceIDs: surface.faceIDs,
@@ -101,7 +108,7 @@ describe('sheet metallica bracket', { concurrency: 1 }, () => {
       });
       assert.match(timing, /Meshed in .+ solved in .+ DOF.+total/);
       assert.equal(result.warnings.some((warning) => warning.code === 'mesh-coarse'), false);
-      console.log(`${profile} dofs ${result.stats.dofs} mesh ${result.stats.meshMs} ms solve ${result.stageTimings.solving} ms max ${result.max.toFixed(2)} MPa ${timing}`);
+      console.log(`${profile} dofs ${result.stats.dofs} mesh ${result.stats.meshMs} ms solve ${result.stageTimings.solving} ms max ${result.max.toFixed(2)} MPa p95 ${result.p95.toFixed(2)} ${timing}`);
     }
   });
 });
