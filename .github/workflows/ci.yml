@@ -9,10 +9,11 @@
 #   - license
 #   - cargo-deny
 #   - wasm freshness
-# A job that is skipped entirely does not satisfy a required check, so the
-# cargo-deny and wasm jobs are green no-ops until their files exist. When
-# those files land, the jobs fail closed until the real command in the step
-# is filled in. Do that in the PR that adds the crate, not here.
+# cargo-deny and wasm freshness run their real checks when
+# packages/surfcad-fea is present. If those files are absent the jobs skip
+# and exit 0, because a skipped job would not satisfy a required check.
+# GPL, AGPL, and LGPL fail the Rust license check because they are not in
+# packages/surfcad-fea/deny.toml's allow list.
 #
 # Triggers are pull requests into main and pushes to main. There is no spark branch.
 # If a step needs the repository name, use ${{ github.repository }}. Do not
@@ -149,18 +150,9 @@ jobs:
       - name: Reject GPL, AGPL, and LGPL production dependencies
         run: node scripts/ci/check-npm-licenses.mjs
 
-  # cargo-deny for the future FEA crate at packages/surfcad-fea.
-  # Runs the deny step only when packages/surfcad-fea/Cargo.toml exists.
-  # No Rust toolchain is installed in this workflow today.
-  #
-  # When that Cargo.toml lands, replace the fail-closed step with a pinned
-  # cargo-deny, for example:
-  #   cargo install cargo-deny --version <pin> --locked
-  #   cargo deny --manifest-path packages/surfcad-fea/Cargo.toml check licenses
-  # deny.toml beside the crate should allow MIT, Apache-2.0, BSD-2-Clause,
-  # BSD-3-Clause, Zlib, and MPL-2.0, and should deny GPL, AGPL, and LGPL
-  # (every -only / -or-later form). Do not let this job pass just because
-  # the crate appeared.
+  # License gate for packages/surfcad-fea. cargo-deny is a pinned binary;
+  # it reads the lockfile and does not need a Rust toolchain. The allow list
+  # in deny.toml is fail-closed: GPL, AGPL, and LGPL are not listed.
   cargo-deny:
     name: cargo-deny
     runs-on: ubuntu-latest
@@ -178,42 +170,110 @@ jobs:
             echo "skip: packages/surfcad-fea/Cargo.toml is not in this revision"
           fi
 
-      - name: cargo deny check licenses
+      - name: Install cargo-deny 0.20.2
         if: steps.crate.outputs.present == 'true'
         run: |
-          echo "packages/surfcad-fea/Cargo.toml is present, but cargo-deny is not wired yet."
-          echo "See the comments on this job. Refusing to pass an unconfigured Rust license gate."
-          exit 1
+          set -euo pipefail
+          version=0.20.2
+          sha=9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f
+          archive="cargo-deny-${version}-x86_64-unknown-linux-musl.tar.gz"
+          url="https://github.com/EmbarkStudios/cargo-deny/releases/download/${version}/${archive}"
+          curl -fsSL -o "/tmp/${archive}" "$url"
+          echo "${sha}  /tmp/${archive}" | sha256sum -c -
+          tar -xzf "/tmp/${archive}" -C /tmp
+          mkdir -p "$HOME/.local/bin"
+          install -m 755 "/tmp/cargo-deny-${version}-x86_64-unknown-linux-musl/cargo-deny" "$HOME/.local/bin/cargo-deny"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
-  # Skip-if-absent stub. Later this job rebuilds the committed FEA wasm and
-  # fails if packages/surfcad-fea/pkg drifted from that rebuild. Today there
-  # is no committed wasm-pack output, so the job logs a skip and exits 0.
-  # No Rust toolchain and no wasm-pack run in this workflow.
-  #
-  # When a .wasm file is committed under packages/surfcad-fea/pkg, replace
-  # the fail-closed branch with:
-  #   1. Install the pinned Rust toolchain and wasm-pack.
-  #   2. wasm-pack build packages/surfcad-fea --target web --out-dir pkg-rebuild
-  #      using the same flags as the fea:build script.
-  #   3. Diff the rebuilt pkg against the committed packages/surfcad-fea/pkg
-  #      (.wasm and JS bindings; ignore generated markdown if wasm-pack rewrites it).
-  #   4. Fail if the committed artifact is stale.
+      - name: cargo deny check licenses
+        if: steps.crate.outputs.present == 'true'
+        run: cargo deny --manifest-path packages/surfcad-fea/Cargo.toml check licenses
+
+  # Rebuilds the committed FEA wasm with the pinned toolchain and wasm-pack,
+  # then fails if packages/surfcad-fea/pkg differs byte for byte. Also runs
+  # `cargo test` for the stub. Skips when the crate or the wasm is absent.
   wasm-freshness:
     name: wasm freshness
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
-      - name: Skip until a committed FEA wasm exists
+      - name: Detect the FEA crate and committed wasm
+        id: crate
         run: |
+          if [[ -f packages/surfcad-fea/Cargo.toml ]]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "skip: packages/surfcad-fea/Cargo.toml is not in this revision"
+          fi
           shopt -s nullglob globstar
           artifacts=(packages/surfcad-fea/pkg/**/*.wasm)
           if (( ${#artifacts[@]} == 0 )); then
+            echo "wasm=false" >> "$GITHUB_OUTPUT"
             echo "skip: no committed wasm under packages/surfcad-fea/pkg"
-            exit 0
+          else
+            echo "wasm=true" >> "$GITHUB_OUTPUT"
+            printf '  %s\n' "${artifacts[@]}"
           fi
-          echo "Committed FEA wasm is present, but the rebuild-and-diff check is not wired yet."
-          echo "See the comments on this job. Refusing to pass a freshness gate that cannot see drift."
-          printf '  %s\n' "${artifacts[@]}"
-          exit 1
+
+      - name: Read the pinned Rust channel
+        id: rust
+        if: steps.crate.outputs.present == 'true'
+        run: |
+          channel=$(sed -n 's/^channel = "\(.*\)"/\1/p' packages/surfcad-fea/rust-toolchain.toml)
+          test -n "$channel"
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+
+      - name: Install the pinned Rust toolchain
+        if: steps.crate.outputs.present == 'true'
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.rust.outputs.channel }}
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Cargo
+        if: steps.crate.outputs.present == 'true'
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packages/surfcad-fea
+          cache-on-failure: true
+
+      - name: cargo test
+        if: steps.crate.outputs.present == 'true'
+        working-directory: packages/surfcad-fea
+        run: cargo test --locked
+
+      - uses: actions/setup-node@v4
+        if: steps.crate.outputs.wasm == 'true'
+        with:
+          node-version: 22
+
+      - name: Cache wasm-pack downloads
+        if: steps.crate.outputs.wasm == 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/wasm-pack
+            ~/.cache/.wasm-pack
+          key: wasm-pack-0.15.0-${{ runner.os }}-${{ hashFiles('packages/surfcad-fea/Cargo.lock') }}
+
+      - name: Install wasm-pack 0.15.0
+        if: steps.crate.outputs.wasm == 'true'
+        run: |
+          set -euo pipefail
+          version=0.15.0
+          sha=c09f971ecaed9a2efc80fdcea7a00ef6b53c7fadc8c57d1f61b53a6aa66b668a
+          archive="wasm-pack-v${version}-x86_64-unknown-linux-musl.tar.gz"
+          url="https://github.com/wasm-bindgen/wasm-pack/releases/download/v${version}/${archive}"
+          curl -fsSL -o "/tmp/${archive}" "$url"
+          echo "${sha}  /tmp/${archive}" | sha256sum -c -
+          tar -xzf "/tmp/${archive}" -C /tmp
+          mkdir -p "$HOME/.local/bin"
+          install -m 755 "/tmp/wasm-pack-v${version}-x86_64-unknown-linux-musl/wasm-pack" "$HOME/.local/bin/wasm-pack"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Rebuild the committed wasm and fail on drift
+        if: steps.crate.outputs.wasm == 'true'
+        run: node scripts/fea/check-wasm-fresh.mjs

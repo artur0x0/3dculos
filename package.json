@@ -6,6 +6,7 @@
     "scripts": {
         "dev": "vite --host",
         "build": "vite build",
+        "fea:build": "node scripts/fea/build-wasm.mjs",
         "export:agent": "node scripts/export-agent-catalog.mjs",
         "golden:agent-catalog": "node scripts/golden/smoke_agent_catalog.mjs",
         "golden:agent-headless": "node scripts/golden/smoke_agent_headless.mjs",

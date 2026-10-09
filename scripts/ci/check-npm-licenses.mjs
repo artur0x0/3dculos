@@ -13,8 +13,8 @@
  * when every alternative is copyleft. A missing license field fails closed.
  * This is not a general OSI allow-list.
  *
- * The Rust half of the gate (cargo-deny for packages/surfcad-fea) lives in
- * CI and runs only once that crate's Cargo.toml exists. This script is npm.
+ * The Rust half of the gate is `cargo deny check licenses` for
+ * packages/surfcad-fea (see that crate's deny.toml). This script is npm.
  */
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
