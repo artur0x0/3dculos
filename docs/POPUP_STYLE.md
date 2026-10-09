@@ -52,7 +52,8 @@ over inventing a new modal layout.
   Hidden in game.
 - **Contour Add / Subtract** — Extrude, Revolve, Sweep, and Loft (not Profile
   or Workplane) show Add and Subtract on `ContourModeChip` (`data-contour-combine`).
-  Block solids (cube, rounded box, cylinder, sphere, tube, hex prism) use the same Mode select on the helper sheet. Default is Add. The sheet also has Pos X Y Z and Rot X Y Z (degrees). While it is open the viewport shows that Manifold solid with the CAD flat normal shading, and edits update it live. Subtract draws the cutter translucent, in front of the host. Confirm writes size, pose, and Add or Subtract. Cancel and the grey X clear the preview and write nothing. An identity pose is left off the script.
+  Block solids (cube, rounded box, cylinder, sphere, tube, hex prism) use the same Mode select on the helper card. Default is Add. The card also has Pos X Y Z and Rot X Y Z (degrees). While it is open the viewport shows that Manifold solid with the CAD flat normal shading, and edits update it live. Subtract draws the cutter translucent, in front of the host. Confirm writes size, pose, and Add or Subtract. Cancel and the grey X clear the preview and write nothing. An identity pose is left off the script.
+- **`HelperParamModal.jsx`** — CAD uses the shared feature card for cube, round box, cylinder, sphere, tube, hex, hole, mirror, center, align, array, path, and refuse. Fields stay in the body. Delete stays in the note when a feature edit is open. X and Esc write nothing. Confirm saves and closes. Refuse's footer says OK and writes nothing. There is no swipe and no click-outside. Game keeps the previous bottom-centre sheet: click-through, no scrim, no card, no slide.
 - **`MoveModeChip.jsx`** — the shared feature card (`FeatureSheet`). Double-click
   selects the body (one click still selects the full face and does not change
   the target). XYZ are `NumberField` deltas, slider and type-in. Cut (when the

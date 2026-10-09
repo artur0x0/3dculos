@@ -2,6 +2,8 @@
 /**
  * Feature card: shared shell, contour pilot, fillet / chamfer / edge card,
  * shell / draft / move face / delete face, cut / boolean / move,
+ * helper sheets (cube, round box, cylinder, sphere, tube, hex, hole,
+ * mirror, center, align, array, path, refuse),
  * keyboard, camera pose.
  *
  * Screenshots go to GOLDEN_SHOT_DIR or os.tmpdir(), never the artifacts dir.
@@ -122,7 +124,7 @@ console.log('feature sheet card — source');
     && /<FeatureSheet\b/.test(edgeSlice)
     && !/onConfirm=/.test(edgeSlice)
     && /setPickMode\('face'\)/.test(edgeSlice)
-    && /mode !== 'game' && pickMode === 'edge' && !contourMode && !filletMode/.test(view));
+    && /mode !== 'game' && !helperCardOpen && pickMode === 'edge' && !contourMode && !filletMode/.test(view));
   check('fillet, contour, and the edge card share one camera and do not stack',
     /featureCardKind/.test(view)
     && /filletSheetOpen/.test(view)
@@ -163,6 +165,19 @@ console.log('feature sheet card — source');
     && /'data-boolean-allow-section': '1'/.test(read('src/components/BooleanModeChip.jsx'))
     && /z-20/.test(read('src/components/FeatureSheet.jsx'))
     && /pointer-events-auto/.test(read('src/components/FeatureSheet.jsx')));
+  const helper = read('src/components/HelperParamModal.jsx');
+  const palette = read('src/components/HelperInsertPalette.jsx');
+  check('helper sheets use the card in CAD; game keeps the old sheet and does not slide',
+    /<FeatureSheet\b/.test(helper)
+    && /useCard/.test(helper)
+    && /absolute inset-0 z-50 flex items-end justify-center/.test(helper)
+    && /const useCard = layout !== 'game'/.test(palette)
+    && /useCard=\{useCard\}/.test(palette)
+    && /onHelperCard=\{setHelperCardOpen\}/.test(view)
+    && /const helperSheetOpen = mode !== 'game' && helperCardOpen/.test(view)
+    && /helperSheetOpen\s*\n\s*\? 'helper'/.test(view)
+    && /!helperCardOpen && pickMode === 'edge'/.test(view)
+    && /Game keeps the previous helper sheet/.test(arch));
   check('camera snapshots the pose, slides up, retargets orbit, and restores it',
     /export function captureViewPose/.test(camera)
     && /export function aimOrbitAtVisibleCenter/.test(camera)
@@ -277,6 +292,8 @@ import MobileStageToggle from './src/components/MobileStageToggle.jsx';
 import CutModeChip from './src/components/CutModeChip.jsx';
 import BooleanModeChip from './src/components/BooleanModeChip.jsx';
 import MoveModeChip from './src/components/MoveModeChip.jsx';
+import HelperParamModal from './src/components/HelperParamModal.jsx';
+import { HELPER_PALETTE_ITEMS } from './src/utils/helperPaletteSnippets.js';
 import {
   applyViewPose, boxCornerPoints, captureViewPose, createSheetCameraSession,
   featureSheetClearanceNdc, selectionNdcYs,
@@ -291,6 +308,8 @@ function Stage() {
   const [compact, setCompact] = useState(true);
   const [panel, setPanel] = useState('contour');
   const [cardOpen, setCardOpen] = useState(true);
+  const [helperId, setHelperId] = useState('cube');
+  const [useCard, setUseCard] = useState(true);
   const api = useRef(null);
 
   useEffect(() => {
@@ -533,6 +552,23 @@ function Stage() {
           onConfirm={() => {}}
           onDismiss={() => setCardOpen(false)}
         />
+      ) : cardOpen && panel === 'helper' ? (
+        <HelperParamModal
+          useCard={useCard}
+          compact={compact}
+          item={HELPER_PALETTE_ITEMS.find((entry) => entry.id === helperId)}
+          buffer=""
+          onCancel={() => setCardOpen(false)}
+          onConfirm={() => {}}
+        />
+      ) : cardOpen && panel === 'refuse' ? (
+        <HelperParamModal
+          useCard={useCard}
+          compact={compact}
+          refuseMessage="This face is not planar. Pick a flat face, then try again."
+          refuseTitle="Face not supported"
+          onCancel={() => setCardOpen(false)}
+        />
       ) : cardOpen ? (
         <ContourModeChip
           tool="circle"
@@ -558,6 +594,20 @@ function Stage() {
         <button type="button" data-harness-panel="cut" onClick={() => setPanel('cut')}>cut</button>
         <button type="button" data-harness-panel="boolean" onClick={() => setPanel('boolean')}>boolean</button>
         <button type="button" data-harness-panel="move" onClick={() => setPanel('move')}>move</button>
+        <button type="button" data-harness-helper="cube" onClick={() => { setPanel('helper'); setHelperId('cube'); setUseCard(true); }}>cube</button>
+        <button type="button" data-harness-helper="roundedBox" onClick={() => { setPanel('helper'); setHelperId('roundedBox'); setUseCard(true); }}>round</button>
+        <button type="button" data-harness-helper="cylinder" onClick={() => { setPanel('helper'); setHelperId('cylinder'); setUseCard(true); }}>cylinder</button>
+        <button type="button" data-harness-helper="sphere" onClick={() => { setPanel('helper'); setHelperId('sphere'); setUseCard(true); }}>sphere</button>
+        <button type="button" data-harness-helper="tube" onClick={() => { setPanel('helper'); setHelperId('tube'); setUseCard(true); }}>tube</button>
+        <button type="button" data-harness-helper="hexPrism" onClick={() => { setPanel('helper'); setHelperId('hexPrism'); setUseCard(true); }}>hex</button>
+        <button type="button" data-harness-helper="hole" onClick={() => { setPanel('helper'); setHelperId('hole'); setUseCard(true); }}>hole</button>
+        <button type="button" data-harness-helper="mirror" onClick={() => { setPanel('helper'); setHelperId('mirror'); setUseCard(true); }}>mirror</button>
+        <button type="button" data-harness-helper="center" onClick={() => { setPanel('helper'); setHelperId('center'); setUseCard(true); }}>center</button>
+        <button type="button" data-harness-helper="align" onClick={() => { setPanel('helper'); setHelperId('align'); setUseCard(true); }}>align</button>
+        <button type="button" data-harness-helper="array3D" onClick={() => { setPanel('helper'); setHelperId('array3D'); setUseCard(true); }}>array</button>
+        <button type="button" data-harness-helper="sweepPath" onClick={() => { setPanel('helper'); setHelperId('sweepPath'); setUseCard(true); }}>path</button>
+        <button type="button" data-harness-panel="refuse" onClick={() => { setPanel('refuse'); setUseCard(true); }}>refuse</button>
+        <button type="button" data-harness-use-card="0" onClick={() => setUseCard(false)}>sheet</button>
         <button type="button" data-harness-compact="1" onClick={() => setCompact(true)}>phone</button>
         <button type="button" data-harness-compact="0" onClick={() => setCompact(false)}>desktop</button>
         <button type="button" data-harness-card="1" onClick={() => setCardOpen(true)}>open</button>
@@ -1175,6 +1225,109 @@ html, body, #root { margin: 0; height: 100%; background: #111; }
     await phoneDocked('move card on a phone');
     await parkAndShoot('feature-sheet-move-390-before.png', { slide: false });
     await parkAndShoot('feature-sheet-move-390-after.png', { slide: true });
+
+    const showHelper = async (id, titleText, marker, confirmText = 'Confirm') => {
+      await page.setViewportSize(PHONE);
+      await page.evaluate((helper) => {
+        document.querySelector('[data-harness-compact="1"]').click();
+        document.querySelector('[data-harness-card="1"]').click();
+        document.querySelector(`[data-harness-helper="${helper}"]`).click();
+      }, id);
+      await page.waitForFunction(({ titleText: want, marker: attr, confirmText: confirmWant, id: wantId }) => {
+        const cards = document.querySelectorAll('[data-feature-card]');
+        const card = cards[0];
+        const title = document.querySelector('[data-feature-card-title]');
+        const confirm = document.querySelector('[data-feature-card-confirm]');
+        const cancel = document.querySelector('[data-feature-card-cancel]');
+        return cards.length === 1
+          && card
+          && card.getAttribute(attr) === wantId
+          && card.id === 'helper-param-title'
+          && card.getAttribute('data-feature-card-compact') === '1'
+          && title
+          && title.textContent.includes(want)
+          && confirm
+          && confirm.textContent.includes(confirmWant)
+          && cancel
+          && !document.querySelector('.absolute.inset-0.z-50');
+      }, { titleText, marker, confirmText, id }, { timeout: 5000 });
+      await page.evaluate(() => window.__sheet.fit());
+      await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    };
+
+    const helpers = [
+      ['cube', 'Cube'],
+      ['roundedBox', 'Round box'],
+      ['cylinder', 'Cylinder'],
+      ['sphere', 'Sphere'],
+      ['tube', 'Tube'],
+      ['hexPrism', 'Hex'],
+      ['hole', 'Hole'],
+      ['mirror', 'Mirror'],
+      ['center', 'Center'],
+      ['align', 'Align'],
+      ['array3D', 'Array'],
+      ['sweepPath', 'Path'],
+    ];
+    for (const [id, titleText] of helpers) {
+      await showHelper(id, titleText, 'data-helper-param');
+      await phoneDocked(`${titleText} card on a phone`);
+      const slug = id === 'roundedBox' ? 'round-box' : id === 'hexPrism' ? 'hex' : id === 'array3D' ? 'array' : id === 'sweepPath' ? 'path' : id;
+      await parkAndShoot(`feature-sheet-${slug}-390-before.png`, { slide: false });
+      const after = await parkAndShoot(`feature-sheet-${slug}-390-after.png`, { slide: true });
+      if (id === 'cube') {
+        const above = await page.evaluate(() => {
+          const pane = document.querySelector('[data-harness-pane]');
+          const box = pane.getBoundingClientRect();
+          const el = document.elementFromPoint(box.left + box.width / 2, box.top + 36);
+          return {
+            tag: el && el.tagName,
+            onCard: !!(el && el.closest('[data-feature-card]')),
+            cards: document.querySelectorAll('[data-feature-card]').length,
+          };
+        });
+        check('a point above the cube card is the canvas',
+          above.tag === 'CANVAS' && above.onCard === false && above.cards === 1,
+          JSON.stringify(above));
+        check('phone cube: projected part box sits above the card',
+          Number.isFinite(after.low) && after.low + 0.02 >= after.cardTop,
+          JSON.stringify(after));
+      }
+    }
+
+    await page.setViewportSize(PHONE);
+    await page.evaluate(() => {
+      document.querySelector('[data-harness-compact="1"]').click();
+      document.querySelector('[data-harness-card="1"]').click();
+      document.querySelector('[data-harness-panel="refuse"]').click();
+    });
+    await page.waitForFunction(() => {
+      const cards = document.querySelectorAll('[data-feature-card]');
+      const card = cards[0];
+      const title = document.querySelector('[data-feature-card-title]');
+      const confirm = document.querySelector('[data-feature-card-confirm]');
+      return cards.length === 1
+        && card
+        && card.getAttribute('data-helper-refuse') === '1'
+        && card.getAttribute('data-feature-card-compact') === '1'
+        && title
+        && title.textContent.includes('Face not supported')
+        && confirm
+        && confirm.textContent.includes('OK');
+    }, null, { timeout: 5000 });
+    await page.evaluate(() => window.__sheet.fit());
+    await phoneDocked('refuse card on a phone');
+    await parkAndShoot('feature-sheet-refuse-390-before.png', { slide: false });
+    await parkAndShoot('feature-sheet-refuse-390-after.png', { slide: true });
+
+    await page.evaluate(() => {
+      document.querySelector('[data-harness-helper="cube"]').click();
+      document.querySelector('[data-harness-use-card="0"]').click();
+    });
+    await page.waitForFunction(() => !document.querySelector('[data-feature-card]')
+      && !!document.querySelector('#helper-param-title')
+      && !!document.querySelector('.pointer-events-none'));
+    check('game helper sheet is the old docked dialog, not a feature card', true);
 
     check('the page did not throw', pageErrors.length === 0, pageErrors.join(' | '));
   } finally {

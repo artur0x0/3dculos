@@ -1237,6 +1237,10 @@ const Viewport = forwardRef(({
   modelBoundsRef.current = modelBounds;
   // After modelBounds. The dep array is evaluated during render; reading the
   // state earlier is a temporal dead zone and the production bundle white-screens.
+  const [helperCardOpen, setHelperCardOpen] = useState(false);
+  const helperCardOpenRef = useRef(false);
+  helperCardOpenRef.current = helperCardOpen;
+  const helperSheetOpen = mode !== 'game' && helperCardOpen;
   const contourSheetOpen = mode !== 'game' && !!contourMode;
   const filletSheetOpen = mode !== 'game' && !!filletMode;
   const shellSheetOpen = mode !== 'game' && !!shellMode;
@@ -1247,6 +1251,7 @@ const Viewport = forwardRef(({
   const booleanSheetOpen = mode !== 'game' && !!booleanMode;
   const moveSheetOpen = mode !== 'game' && !!moveMode;
   const edgeSheetOpen = mode !== 'game'
+    && !helperCardOpen
     && pickMode === 'edge'
     && !contourMode
     && !filletMode
@@ -1276,9 +1281,11 @@ const Viewport = forwardRef(({
                   ? 'boolean'
                   : moveSheetOpen
                     ? 'move'
-                    : edgeSheetOpen
-                      ? 'edge'
-                      : '';
+                    : helperSheetOpen
+                      ? 'helper'
+                      : edgeSheetOpen
+                        ? 'edge'
+                        : '';
   featureCardKindRef.current = featureCardKind;
   sheetCameraOwnedRef.current = featureCardKind !== '';
   useEffect(() => {
@@ -6466,7 +6473,7 @@ const Viewport = forwardRef(({
     const onPointerDown = (event) => {
       if (!featureSheetEnabledRef.current) return;
       if (event.button != null && event.button !== 0) return;
-      if (contourModeRef.current || filletModeRef.current || shellModeRef.current || draftModeRef.current || moveModeRef.current || moveFaceModeRef.current || deleteFaceModeRef.current || sheetMetalModeRef.current) return;
+      if (contourModeRef.current || filletModeRef.current || shellModeRef.current || draftModeRef.current || moveModeRef.current || moveFaceModeRef.current || deleteFaceModeRef.current || sheetMetalModeRef.current || helperCardOpenRef.current) return;
       if (measurementEnabled) return;
       CLEAR_LP();
       featureLongPressFiredRef.current = false;
@@ -6476,7 +6483,7 @@ const Viewport = forwardRef(({
         const origin = featureLongPressOriginRef.current;
         featureLongPressOriginRef.current = null;
         if (!origin || !featureSheetEnabledRef.current) return;
-        if (contourModeRef.current || filletModeRef.current || shellModeRef.current || draftModeRef.current || moveModeRef.current || moveFaceModeRef.current || deleteFaceModeRef.current || sheetMetalModeRef.current) return;
+        if (contourModeRef.current || filletModeRef.current || shellModeRef.current || draftModeRef.current || moveModeRef.current || moveFaceModeRef.current || deleteFaceModeRef.current || sheetMetalModeRef.current || helperCardOpenRef.current) return;
         featureLongPressFiredRef.current = true;
         onFeatureLongPressRef.current?.({ clientX: origin.x, clientY: origin.y });
       }, 450);
@@ -8629,6 +8636,7 @@ const Viewport = forwardRef(({
             ? () => setSheetMetalPicker({ willCreatePart: getSheetMetalReady ? !getSheetMetalReady() : false })
             : null}
           compact={isMobile}
+          onHelperCard={setHelperCardOpen}
           editSession={helperEdit}
           onEditConfirm={({ fields }) => commitFeatureEditRef.current?.({
             fields: { ...(featureEditRef.current?.session?.fields || {}), ...fields },
@@ -9237,7 +9245,7 @@ const Viewport = forwardRef(({
 
       {/* Standalone edge pick — same card, no Confirm. X clears and leaves edge pick.
           Hidden in fillet, contour, and game. Numbered badges stay on the edges. */}
-      {mode !== 'game' && pickMode === 'edge' && !contourMode && !filletMode && !shellMode && !draftMode && !moveFaceMode && !deleteFaceMode && !cutMode && !booleanMode && !moveMode && selectedEdges.length > 0 && (
+      {mode !== 'game' && !helperCardOpen && pickMode === 'edge' && !contourMode && !filletMode && !shellMode && !draftMode && !moveFaceMode && !deleteFaceMode && !cutMode && !booleanMode && !moveMode && selectedEdges.length > 0 && (
         <FeatureSheet
           cardAttrs={{ 'data-edge-selector': 'standalone' }}
           title={`Edge pick · ${selectedEdges.length} selected`}

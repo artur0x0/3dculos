@@ -13,14 +13,17 @@ import {
   NumberField, SelectField, CheckField, PopupButton, POPUP_TEXT,
 } from './controls/popupUI';
 import { FeatureDeleteButton } from './FeatureEditDelete';
+import FeatureSheet from './FeatureSheet';
 
 /** Helper sheets are neutral; the accent chips own cyan/amber. */
 const ACCENT = 'slate';
 
 /**
- * Slice 10/11/12/21 — param popup for guided helper insert.
- * Slice 11: optional face banner, sliders for continuous numbers, refuse mode.
- * Slice 12: edge banner; hide U/V when Placement=center.
+ * Param sheet for guided helper insert.
+ * CAD mounts the shared feature card: X and Esc write nothing, Confirm saves
+ * and closes. Game keeps the previous bottom-centre sheet (click-through, no
+ * scrim, no card, no slide).
+ * Face banner, sliders, refuse, and the live pose preview stay.
  * Confirm → parent builds/inserts; Cancel → no-op.
  */
 const HelperParamModal = ({
@@ -34,6 +37,9 @@ const HelperParamModal = ({
   refuseTitle = null,
   onValuesChange = null,
   onDelete = null,
+  /** CAD feature card. Game passes false and keeps the docked sheet. */
+  useCard = false,
+  compact = false,
 }) => {
   const params = item?.params || [];
   const bodies = useMemo(() => listBodyNames(buffer), [buffer]);
@@ -68,14 +74,36 @@ const HelperParamModal = ({
     [item?._minEdgeLength, edgeInfo],
   );
 
-  // Both shells dock to the BOTTOM-CENTRE OF THE VIEWPORT, not the screen:
-  // `absolute` resolves against the viewport shell (this modal renders as a
-  // sibling of the helper rail inside it), so the panel lands between the two
-  // bottom rails instead of covering them. The overlay is click-through
+  // Game keeps the docked sheet: BOTTOM-CENTRE OF THE VIEWPORT, not the
+  // screen. `absolute` resolves against the viewport shell (this modal renders
+  // as a sibling of the helper rail inside it), so the panel lands between the
+  // two bottom rails instead of covering them. The overlay is click-through
   // (`pointer-events-none`) and undimmed so the part, the rails and the live
   // preview all stay visible and usable while you tune params — which also
-  // means there is no click-outside-to-cancel any more; the X and Cancel
-  // buttons are the way out.
+  // means there is no click-outside-to-cancel; the X and Cancel buttons are
+  // the way out. CAD uses the shared feature card instead (no overlay).
+  const refuseHeading = refuseTitle
+    || (/edge/i.test(refuseMessage || '') ? 'Select edges' : 'Face not supported');
+  if (refuseMessage && useCard) {
+    return (
+      <FeatureSheet
+        title={refuseHeading}
+        compact={compact}
+        onCancel={onCancel}
+        onConfirm={onCancel}
+        confirmLabel="OK"
+        cardAttrs={{
+          id: 'helper-refuse-title',
+          'data-helper-refuse': '1',
+        }}
+      >
+        <div className="flex items-start gap-2 py-1 text-sm leading-relaxed text-gray-200">
+          <AlertTriangle size={18} className="mt-0.5 shrink-0 text-amber-400" />
+          <p>{refuseMessage}</p>
+        </div>
+      </FeatureSheet>
+    );
+  }
   if (refuseMessage) {
     return (
       <div
@@ -91,8 +119,7 @@ const HelperParamModal = ({
             <div className="min-w-0 flex items-center gap-2">
               <AlertTriangle size={18} className="text-amber-400 shrink-0" />
               <h2 id="helper-refuse-title" className="font-semibold text-sm text-white truncate">
-                {refuseTitle
-                  || (/edge/i.test(refuseMessage || '') ? 'Select edges' : 'Face not supported')}
+                {refuseHeading}
               </h2>
             </div>
             <button
@@ -227,6 +254,141 @@ const HelperParamModal = ({
     return true;
   });
 
+  const banners = (
+    <>
+      {faceInfo && (
+        <div className="px-4 py-2 border-b border-cyan-900/50 bg-cyan-950/40 text-[11px] text-cyan-100/90 shrink-0">
+          <span className="font-semibold uppercase tracking-wide text-cyan-300">
+            {faceInfo.type} face
+          </span>
+          {' · '}
+          n {faceInfo.normal.map((v) => Number(v).toFixed(2)).join(', ')}
+          {' · '}
+          c {faceInfo.center.map((v) => Number(v).toFixed(1)).join(', ')}
+        </div>
+      )}
+
+      {edgeInfo && edgeInfo.length > 0 && (
+        <div className="px-4 py-2 border-b border-amber-900/50 bg-amber-950/40 text-[11px] text-amber-100/90 shrink-0">
+          <span className="font-semibold uppercase tracking-wide text-amber-300">
+            {edgeInfo.length} edge{edgeInfo.length === 1 ? '' : 's'} selected
+          </span>
+          {' · '}
+          Fillet/Chamfer will use the picked set
+          {minEdgeLength != null && (
+            <>
+              {' · '}
+              min L={minEdgeLength.toFixed(2)}{item?._minEdgeLength != null ? ' (effective)' : ''}
+              {applySizeGuard && (
+                <>
+                  {' · '}
+                  keep r &lt; {(EDGE_BLEND_SIZE_GUARD * minEdgeLength).toFixed(2)} (planar)
+                </>
+              )}
+              {resolvedStrategy === 'sweep' && (
+                <>
+                  {' · '}
+                  sweep — no 0.45·L clamp (max {Number(sweepMax).toFixed(0)})
+                </>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      {sizeGuardFail && (
+        <div className="px-4 py-2 border-b border-red-900/50 bg-red-950/50 text-[11px] text-red-100 shrink-0 flex items-start gap-2">
+          <AlertTriangle size={14} className="text-red-400 shrink-0 mt-0.5" />
+          <div>
+            <span className="font-semibold">{blendParamName === 'chamfer' ? 'Chamfer' : 'Radius'} {blendNum}</span>
+            {' ≥ '}
+            size guard ({EDGE_BLEND_SIZE_GUARD}× min L = {(EDGE_BLEND_SIZE_GUARD * minEdgeLength).toFixed(2)}).
+            {' '}Confirm will clamp to {safeBlendMax}.
+          </div>
+        </div>
+      )}
+    </>
+  );
+
+  const fields = (
+    <>
+      {visibleParams.length === 0 && (
+        <p className="text-xs text-gray-400">No options — confirm to insert.</p>
+      )}
+      {visibleParams.map((p) => {
+        if (p.type === 'bool') {
+          return (
+            <CheckField
+              key={p.name}
+              label={p.label}
+              accent={ACCENT}
+              checked={!!values[p.name]}
+              onChange={(v) => setField(p.name, v, 'bool')}
+            />
+          );
+        }
+        if (p.type === 'select' || p.type === 'body') {
+          return (
+            <SelectField
+              key={p.name}
+              label={p.label}
+              accent={ACCENT}
+              value={String(values[p.name] ?? p.default)}
+              onChange={(v) => setField(p.name, v, p.type)}
+              options={(p.type === 'body' ? bodies : p.options || []).map((opt) => ({
+                value: optionValue(opt),
+                label: optionLabel(opt),
+              }))}
+            />
+          );
+        }
+        // Blend sizes re-scale under Strategy=sweep, which has its own max.
+        const isBlend = p.name === 'radius' || p.name === 'chamfer';
+        const sweepScaled = isBlend && resolvedStrategy === 'sweep';
+        return (
+          <NumberField
+            key={p.name}
+            id={p.name}
+            label={p.label}
+            accent={ACCENT}
+            value={values[p.name]}
+            onChange={(v) => setField(p.name, v, 'number')}
+            min={p.min ?? (typeof p.default === 'number' && p.default < 0 ? p.default * 2 : 0)}
+            max={sweepScaled
+              ? sweepMax
+              : (p.max ?? Math.max(100, Math.abs(Number(p.default) || 0) * 4, 40))}
+            step={sweepScaled
+              ? Math.max(0.5, Math.round((sweepMax / 40) * 100) / 100)
+              : (p.step ?? 0.5)}
+          />
+        );
+      })}
+    </>
+  );
+
+  if (useCard) {
+    return (
+      <FeatureSheet
+        title={item.label}
+        subtitle={item.title || ''}
+        compact={compact}
+        onCancel={onCancel}
+        onConfirm={handleConfirm}
+        confirmLabel={sizeGuardFail ? `Clamp & Confirm (${safeBlendMax})` : 'Confirm'}
+        cardAttrs={{
+          id: 'helper-param-title',
+          'data-helper-param': item.id,
+        }}
+        note={onDelete ? <FeatureDeleteButton onClick={onDelete} /> : null}
+      >
+        {banners}
+        <div className="space-y-3 py-1 text-sm text-gray-200">
+          {fields}
+        </div>
+      </FeatureSheet>
+    );
+  }
+
   return (
     <div
       className="absolute inset-0 z-50 flex items-end justify-center p-3 pointer-events-none"
@@ -257,110 +419,10 @@ const HelperParamModal = ({
           </button>
         </div>
 
-        {faceInfo && (
-          <div className="px-4 py-2 border-b border-cyan-900/50 bg-cyan-950/40 text-[11px] text-cyan-100/90 shrink-0">
-            <span className="font-semibold uppercase tracking-wide text-cyan-300">
-              {faceInfo.type} face
-            </span>
-            {' · '}
-            n {faceInfo.normal.map((v) => Number(v).toFixed(2)).join(', ')}
-            {' · '}
-            c {faceInfo.center.map((v) => Number(v).toFixed(1)).join(', ')}
-          </div>
-        )}
-
-        {edgeInfo && edgeInfo.length > 0 && (
-          <div className="px-4 py-2 border-b border-amber-900/50 bg-amber-950/40 text-[11px] text-amber-100/90 shrink-0">
-            <span className="font-semibold uppercase tracking-wide text-amber-300">
-              {edgeInfo.length} edge{edgeInfo.length === 1 ? '' : 's'} selected
-            </span>
-            {' · '}
-            Fillet/Chamfer will use the picked set
-            {minEdgeLength != null && (
-              <>
-                {' · '}
-                min L={minEdgeLength.toFixed(2)}{item?._minEdgeLength != null ? ' (effective)' : ''}
-                {applySizeGuard && (
-                  <>
-                    {' · '}
-                    keep r &lt; {(EDGE_BLEND_SIZE_GUARD * minEdgeLength).toFixed(2)} (planar)
-                  </>
-                )}
-                {resolvedStrategy === 'sweep' && (
-                  <>
-                    {' · '}
-                    sweep — no 0.45·L clamp (max {Number(sweepMax).toFixed(0)})
-                  </>
-                )}
-              </>
-            )}
-          </div>
-        )}
-
-        {sizeGuardFail && (
-          <div className="px-4 py-2 border-b border-red-900/50 bg-red-950/50 text-[11px] text-red-100 shrink-0 flex items-start gap-2">
-            <AlertTriangle size={14} className="text-red-400 shrink-0 mt-0.5" />
-            <div>
-              <span className="font-semibold">{blendParamName === 'chamfer' ? 'Chamfer' : 'Radius'} {blendNum}</span>
-              {' ≥ '}
-              size guard ({EDGE_BLEND_SIZE_GUARD}× min L = {(EDGE_BLEND_SIZE_GUARD * minEdgeLength).toFixed(2)}).
-              {' '}Confirm will clamp to {safeBlendMax}.
-            </div>
-          </div>
-        )}
+        {banners}
 
         <div className="overflow-y-auto min-h-0 flex-1 p-4 space-y-3 text-sm text-gray-200">
-          {visibleParams.length === 0 && (
-            <p className="text-xs text-gray-400">No options — confirm to insert.</p>
-          )}
-          {visibleParams.map((p) => {
-            if (p.type === 'bool') {
-              return (
-                <CheckField
-                  key={p.name}
-                  label={p.label}
-                  accent={ACCENT}
-                  checked={!!values[p.name]}
-                  onChange={(v) => setField(p.name, v, 'bool')}
-                />
-              );
-            }
-            if (p.type === 'select' || p.type === 'body') {
-              return (
-                <SelectField
-                  key={p.name}
-                  label={p.label}
-                  accent={ACCENT}
-                  value={String(values[p.name] ?? p.default)}
-                  onChange={(v) => setField(p.name, v, p.type)}
-                  options={(p.type === 'body' ? bodies : p.options || []).map((opt) => ({
-                    value: optionValue(opt),
-                    label: optionLabel(opt),
-                  }))}
-                />
-              );
-            }
-            // Blend sizes re-scale under Strategy=sweep, which has its own max.
-            const isBlend = p.name === 'radius' || p.name === 'chamfer';
-            const sweepScaled = isBlend && resolvedStrategy === 'sweep';
-            return (
-              <NumberField
-                key={p.name}
-                id={p.name}
-                label={p.label}
-                accent={ACCENT}
-                value={values[p.name]}
-                onChange={(v) => setField(p.name, v, 'number')}
-                min={p.min ?? (typeof p.default === 'number' && p.default < 0 ? p.default * 2 : 0)}
-                max={sweepScaled
-                  ? sweepMax
-                  : (p.max ?? Math.max(100, Math.abs(Number(p.default) || 0) * 4, 40))}
-                step={sweepScaled
-                  ? Math.max(0.5, Math.round((sweepMax / 40) * 100) / 100)
-                  : (p.step ?? 0.5)}
-              />
-            );
-          })}
+          {fields}
         </div>
 
         <div className="flex items-center gap-2 px-4 py-3 border-t border-gray-700 shrink-0">
