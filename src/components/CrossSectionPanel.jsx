@@ -1,7 +1,7 @@
 // components/CrossSectionPanel.jsx
 /* eslint-disable react-hooks/exhaustive-deps -- see Viewport note; same ref-backed pattern */
 import React, { useState, useEffect } from 'react';
-import { FlipHorizontal, Check, Maximize2, Ruler, Move3d, Spline, RectangleHorizontal, Layers3, NotebookPen, Palette, X } from 'lucide-react';
+import { FlipHorizontal, Check, Gauge, Maximize2, Ruler, Move3d, Spline, RectangleHorizontal, Layers3, NotebookPen, Palette, X } from 'lucide-react';
 import TrianglesCenterlineDashedVertical from './icons/TrianglesCenterlineDashedVertical';
 import ViewSnapControl from './ViewSnapControl';
 import { PLANE_PRESETS } from '../utils/crossSection';
@@ -30,6 +30,10 @@ const CrossSectionPanel = ({
   showPaint = false,
   paintActive = false,
   onPaintToggle = null,
+  /** Analyze. Inspection group, next to Paint. Hidden in game. */
+  showAnalyze = false,
+  analyzeActive = false,
+  onAnalyzeToggle = null,
   /** Stack tools vertically on the right edge. Both shells pass this now — desktop
    *  matches phone; the wrapping-row fallback is kept for any other caller. */
   verticalRail = false,
@@ -312,6 +316,30 @@ const handleButtonClick = () => {
           </>
         )}
 
+        <div
+          className={`flex gap-1 ${verticalRail ? 'flex-col' : 'flex-row'}`}
+          role="group"
+          aria-label="Inspection"
+          data-selector-group="inspection"
+        >
+        {showAnalyze && (
+          <button
+            type="button"
+            onClick={() => onAnalyzeToggle?.()}
+            className={`p-2 rounded ${
+              analyzeActive
+                ? 'text-green-600 bg-green-100'
+                : 'text-blue-600 hover:bg-gray-100 active:bg-blue-100'
+            }`}
+            title={analyzeActive ? 'Leave analyze' : 'Analyze'}
+            aria-label={analyzeActive ? 'Leave analyze' : 'Analyze'}
+            aria-pressed={!!analyzeActive}
+            data-analyze-chip=""
+            data-analyze-chip-state={analyzeActive ? 'on' : 'off'}
+          >
+            <Gauge size={20} />
+          </button>
+        )}
         <button
           onClick={onAxisHelperToggle}
           className={`p-2 rounded ${axisHelperEnabled ? 'text-green-600 bg-green-100' : 'text-blue-600'} hover:bg-gray-100 active:bg-blue-100`}
@@ -348,6 +376,7 @@ const handleButtonClick = () => {
             <TrianglesCenterlineDashedVertical size={20} />
           </button>
         )}
+        </div>
       </div>
     );
   }

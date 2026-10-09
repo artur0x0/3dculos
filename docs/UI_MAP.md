@@ -379,6 +379,7 @@ All of these are absolutely positioned inside the shell at
 | top-left, 44×44, under the IO tray | puzzle easter egg, signed-in only (`useAuthState().signedIn`) | `data-puzzle-unlock` | `PuzzleUnlock` |
 | below the feature bar, centered | "Puzzle unlocked" toast after the fifth tap | `data-puzzle-unlock-toast` | `PuzzleUnlock` |
 | bottom, centered in the gap between the rails (same card as Shell; `bottom-14` on a phone) | Paint popup: 8 swatches (grid padded so the selection ring is not clipped), custom `#rrggbb`, Part, Undo, Clear, Remove unmatched colors, Confirm, Cancel. A tap paints the face immediately. Double-tap paints that body. Confirm saves the session. X and Cancel revert it | `PaintModeChip` `data-paint-mode` | Viewport |
+| bottom-centre chip on desktop; under-title FeatureSheet on a phone (≤768 px) | Analyze: material (library or custom E/ν/yield, assumed badge), Fix / Force / Pressure, fixture and load list, Run. Summary is min/p95/max MPa, safety factor or n/a, and a STUB badge. Mutually exclusive with Paint | `FeaStudyChip` `data-fea-mode`, `FeaStudySheet` `data-fea-sheet` | Viewport, App |
 | centered | "Match!" success banner | inline | `:3595` |
 | left-2/4 bottom-2.5 | helper insert rail (height paired to right). Block, Build, Shape, Polish, Move. Shape includes Sheet Metal (blue plate with a bent flange, `data-sheet-metal-button`) with the other shape tools | `HelperInsertPalette.jsx` | Viewport |
 | left-2/4 bottom-2.5 | contour tool rail (replaces the helper rail) | `ContourModeRail.jsx` | Viewport |
@@ -390,7 +391,7 @@ All of these are absolutely positioned inside the shell at
 | bottom sheet `z-50` (short) | Tab popup (Width, Depth, Centered, Offset) / Hole popup (Ø or Thread, Csk Ø, U, V) | `sheetMetal/SheetMetalFlow.jsx` | Viewport |
 | bottom sheet `z-50` | Check & Export popup: DFM fails (red) / warnings (amber) in the mm\|in display unit, Download DXF, Download STEP, Order on SendCutSend (opens the app; all disabled on a hard fail), ✕ | `sheetMetal/SheetMetalFlow.jsx` | Viewport |
 | scene | plane quads / sheet preview / bendable-edge lines (2.5px core, opacity 0.65; undrawn pick box; taps route here first) | `utils/sheetMetal/sheetOverlay.js` | Viewport |
-| right-2/4 bottom-4 | view / pick / paint / inspection cluster. Paint (`data-paint-chip`) is in the plane and contour group, green only while paint mode is on, hidden in game | `CrossSectionPanel.jsx` collapsed rail | Viewport |
+| right-2/4 bottom-4 | view / pick / paint / inspection cluster. Paint (`data-paint-chip`) is in the plane and contour group, green only while paint mode is on, hidden in game. Analyze (`data-analyze-chip`, Lucide `Gauge`) is the first inspection button, next to Paint, same blue, green only while the study is open, hidden in game | `CrossSectionPanel.jsx` collapsed rail | Viewport |
 | inside that cluster | Front/Right/Top/**Iso** snap popup | `ViewSnapControl.jsx` | `CrossSectionPanel.jsx:181` |
 | top-16, portaled `z-50`, `inset-x-3` (most of the viewport width, same card on desktop) | execution error toast: fixed card, label "Error", Undo and dismiss on the right, description on the next line (`ErrorPopup` `layout="stacked"`), glass `rounded-lg` | `ErrorPopup.jsx` | Viewport |
 | centered on the viewport pane (desktop) and the phone shell | assembly-open spinner: ring + `Opening <name>…`, optional `part 3 of 7`. Hidden for the first 150ms. `pointer-events-none`, `z-[45]`, under the toasts | `AssemblyOpenSpinner.jsx` `data-assembly-open-spinner` | App |
@@ -403,6 +404,8 @@ All of these are absolutely positioned inside the shell at
 | fills the pane | WebGL canvas | `<canvas ref={canvasRef}>` | `:3985` |
 
 The canvas draws a face-color skin on top of a part when that assembly has `colors` (`src/utils/faceColorSkin.js`). The skin is under crease lines and pick highlights. `?debugFaces=1` or `localStorage` key `surfcad.debugFaces` = `1` paints each face patch a different color. The flag is off unless set, and it is not a rail button. The right rail has no patch-colour toggle.
+
+**Analyze.** The Analyze button is on the right rail, in the inspection group, immediately after the divider that follows Paint. The icon is Lucide `Gauge` at 20px, blue like the axis, measure, and section buttons, and green only while the study is open. It is not on the left rail. Game mode hides it. Desktop opens a bottom-centre chip (`data-fea-mode`). A phone opens the under-title FeatureSheet (`data-fea-sheet`). Analyze and Paint close each other. Run shows a stub summary only; the stress colours are not drawn yet.
 
 **Paint.** The paint button is on the right rail and is CAD-only. A tap paints that face immediately on the skin, in the selected color. There is no selection step. A second tap on the same face within 300 ms paints every face of that body and stays one undo entry. Part paints the whole part (`colors[surfId].part`), which is every body, so it stays next to double-tap. Confirm writes the session once through the assembly save (local document, and one git outbox op in Git mode) and closes. X, Cancel, and Esc revert every paint from this session and write nothing. Undo steps back one paint. Clear restores the colors from when the popup opened. The swatch grid is padded so the selection ring stays inside the scroller. Game mode hides the button. The helper rail hides while the popup is open, same as Shell.
 
@@ -426,7 +429,7 @@ Retry (`data-assembly-open-retry`). The overlay does not take clicks
 `prefers-reduced-motion` stops the ring (`data-assembly-open-ring`).
 
 **Mutual-exclusion rules.** The helper rail hides while `contourMode`,
-`filletMode`, or paint mode is set (and the other feature modes); the Edge-pick chip needs `pickMode === 'edge'`, no active mode, **and at
+`filletMode`, paint mode, or Analyze is set (and the other feature modes). Analyze and Paint close each other. The Edge-pick chip needs `pickMode === 'edge'`, no active mode, **and at
 least one selected edge**. Break these and overlays stack in the same corner.
 
 **View snaps.** `ViewSnapControl`'s button only opens and closes its popup —
@@ -676,7 +679,7 @@ Import `src/utils/importModel.js` (+ `POST /api/convert/step`); export
   Polar, and the `array3D` build delegates to `polarArray`'s for Polar.
   `holePattern` likewise: Hole's "n×m pattern" tick emits `holePattern()`.
   Hide a tool this way rather than deleting an item other code builds with.
-- **The right rail is content-height**, not paired: view-snap then zoom-to-fit (`Maximize2`) at the top, then Face, Edge, plane overlays, contour overlays, and Paint, then a divider, then the XYZ triad (`Move3d` / `AxesHelper`), measure, and cross-section. There is no patch-colour toggle. The green Lucide `Frame` (`#` / auto-fit-on-run) was removed — it duplicated zoom-to-fit. A shared 26rem cap used to crop Cross-section off the bottom,
+- **The right rail is content-height**, not paired: view-snap then zoom-to-fit (`Maximize2`) at the top, then Face, Edge, plane overlays, contour overlays, and Paint, then a divider, then Analyze (`Gauge`), the XYZ triad (`Move3d` / `AxesHelper`), measure, and cross-section. There is no patch-colour toggle. The green Lucide `Frame` (`#` / auto-fit-on-run) was removed — it duplicated zoom-to-fit. A shared 26rem cap used to crop Cross-section off the bottom,
   where — being bottom-anchored 10px above the viewport edge — it was out of
   reach. It keeps `overflow-visible` plus a `max-h` that respects the pane.
 - **The view-snap flyout must never `flex-wrap`.** It is absolutely positioned

@@ -12,6 +12,7 @@ import { bodyCountOfWorkerMesh } from './utils/meshBodyComponents';
 import ErrorPopup from './components/ErrorPopup';
 import AssemblyOpenSpinner, { AssemblyOpenFailureToast } from './components/AssemblyOpenSpinner';
 import FeatureSheet from './components/FeatureSheet';
+import { FeaStudySheetGate } from './components/fea/FeaStudyHost';
 import {
   writeFeatureSheetParams,
   deleteFeatureBlock,
@@ -5133,6 +5134,22 @@ const App = () => {
     return true;
   };
 
+  /**
+   * Write the FEA study comment into the editor part. Does not post a build
+   * of its own and does not call preemptInflight. While an assembly open
+   * holds the worker, the write is refused and the lock is left alone.
+   */
+  const handleCommitFea = (script) => {
+    if (typeof script !== 'string') return false;
+    if (assemblyOpenLockRef.current) {
+      viewportRef.current?.notify?.('An assembly is opening — save the study again once it finishes.');
+      return false;
+    }
+    const current = codeEditorRef.current?.getContent?.() || '';
+    if (script === current) return true;
+    return !!codeEditorRef.current?.applyBuffer?.(script, 'FEA study');
+  };
+
   /** Shell face-pick Confirm — hollow() + SHELL markers; Auto-Run. */
   const handleCommitShell = (payload) => {
     if (!focusWritePart(payload?.partId)) {
@@ -6195,6 +6212,7 @@ const App = () => {
               assemblyRunLockRef={assemblyOpenLockRef}
               onCommitShell={handleCommitShell}
               onCommitPaint={handleCommitPaint}
+              onCommitFea={handleCommitFea}
               onCommitDraft={handleCommitDraft}
               onCommitCut={handleCommitCut}
               onCommitBoolean={handleCommitBoolean}
@@ -6393,6 +6411,7 @@ const App = () => {
                   onEditScript={handleFeatureSheetEditScript}
                 />
               )}
+              <FeaStudySheetGate mobile />
 
               {/* Bottom home-indicator stage pill — clears Contour/Fillet chips via their raised mobile bottom. */}
               <div
@@ -6650,6 +6669,7 @@ const App = () => {
             assemblyRunLockRef={assemblyOpenLockRef}
               onCommitShell={handleCommitShell}
               onCommitPaint={handleCommitPaint}
+              onCommitFea={handleCommitFea}
               onCommitDraft={handleCommitDraft}
               onCommitCut={handleCommitCut}
               onCommitBoolean={handleCommitBoolean}
