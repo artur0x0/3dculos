@@ -212,6 +212,14 @@ async function seed(page, doc, partId, script = CUBE) {
           partId: id,
           savedAt: Date.now(),
         }, 'current');
+        // Signed in without a token is reauth. Id migration does not persist
+        // while that boot is read-only, so the stored row stays `local:`.
+        localStorage.setItem('surfcad.github.tokenBundle', JSON.stringify({
+          accessToken: 'ghu_paint',
+          refreshToken: '',
+          expiresAt: Date.now() + 86_400_000,
+          refreshExpiresAt: 0,
+        }));
         localStorage.setItem('surfcad.lastAssembly', JSON.stringify({
           'user-paint': {
             name: nextDoc.name,
@@ -275,6 +283,11 @@ async function signIn(page) {
       authenticated: true,
       user: { id: PAINT_USER, email: 'paint@surfcad.test', vaultName: null },
     }),
+  }));
+  await page.route('https://api.github.com/**', (route) => route.fulfill({
+    status: 401,
+    contentType: 'application/json',
+    body: JSON.stringify({ message: 'Bad credentials' }),
   }));
 }
 

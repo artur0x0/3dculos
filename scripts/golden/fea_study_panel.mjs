@@ -106,17 +106,27 @@ async function seed(page) {
         const tx = db.transaction(['assembly', 'parts'], 'readwrite');
         tx.objectStore('assembly').put({
           version: 1,
-          source: 'local',
+          source: 'git',
           name: 'Study',
           activeId: partId,
           parts: [{ id: partId, name: 'Block', visible: true, order: 0 }],
         }, 'current');
         tx.objectStore('parts').put({ id: partId, script, savedAt: Date.now() }, partId);
+        // A signed-in /me with no GitHub token is reauth and read-only, so
+        // the study save is skipped. A still-valid access token (no refresh)
+        // is connected. The part id is not a vault path, and source git
+        // reopens this cache without a repo lookup.
+        localStorage.setItem('surfcad.github.tokenBundle', JSON.stringify({
+          accessToken: 'ghu_fea',
+          refreshToken: '',
+          expiresAt: Date.now() + 86_400_000,
+          refreshExpiresAt: 0,
+        }));
         localStorage.setItem('surfcad.lastAssembly', JSON.stringify({
           [userId]: {
             name: 'Study',
             activeId: partId,
-            source: 'local',
+            source: 'git',
             savedAt: Date.now(),
           },
         }));
@@ -140,6 +150,11 @@ async function boot(page) {
       authenticated: true,
       user: { id: USER_ID, email: 'fea@surfcad.test', vaultName: null },
     }),
+  }));
+  await page.route('https://api.github.com/**', (route) => route.fulfill({
+    status: 401,
+    contentType: 'application/json',
+    body: JSON.stringify({ message: 'Bad credentials' }),
   }));
   const errors = [];
   page.on('pageerror', (err) => errors.push(String(err).slice(0, 400)));
@@ -369,7 +384,11 @@ async function runCase(browser, vp) {
   check(`${vp.name} shot saved`, existsSync(shot), shot);
   console.log(`  shot ${shot}`);
 
-  await page.waitForTimeout(1200);
+  const notice = (await noticeOf(page) || '').trim();
+  check(`${vp.name} study write accepted`, notice === '', notice);
+  const drawerOpen = await page.locator('[data-script-editor-open="true"]').count();
+  check(`${vp.name} script drawer stays closed`, drawerOpen === 0, `open=${drawerOpen}`);
+  await page.waitForTimeout(200);
   const scripts = await readStudyScripts(page);
   const stored = scripts.find((script) => script.includes('// @fea-study ') && script.includes('pla-ultimaker'));
   check(`${vp.name} study stored`, !!stored, scripts.map((script) => script.slice(0, 80)).join(' | '));

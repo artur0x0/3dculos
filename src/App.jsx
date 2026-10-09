@@ -5136,10 +5136,10 @@ const App = () => {
 
   /**
    * Write the FEA study comment into the active part. The script drawer can
-   * stay closed: a hidden editor still holds the buffer, and a missing editor
-   * writes the part script directly. Does not post a build of its own and
-   * does not call preemptInflight. While an assembly open holds the worker,
-   * the write is refused and the lock is left alone.
+   * stay closed: the part script is stored here, and a mounted editor only
+   * receives the same buffer. Does not post a build of its own and does not
+   * call preemptInflight. While an assembly open holds the worker, the write
+   * is refused and the lock is left alone. Reauth stays read-only.
    */
   const handleCommitFea = (script) => {
     if (typeof script !== 'string') return false;
@@ -5148,24 +5148,34 @@ const App = () => {
       return false;
     }
     const editor = codeEditorRef.current;
+    const current = editor?.getContent?.() ?? '';
     if (editor?.applyBuffer) {
-      const current = editor.getContent?.() ?? '';
-      if (script === current) return true;
-      return !!editor.applyBuffer(script, 'FEA study');
+      if (script !== current) {
+        let wrote = false;
+        try {
+          wrote = !!editor.applyBuffer(script, 'FEA study');
+        } catch {
+          wrote = false;
+        }
+        if (!wrote) {
+          editorLiveRef.current = true;
+          setCurrentScript(script);
+          handleCodeChange(script, 'FEA study');
+        }
+      }
+    } else if (script !== current) {
+      editorLiveRef.current = true;
+      setCurrentScript(script);
+      handleCodeChange(script, 'FEA study');
     }
+    if (bootReadOnlyRef.current || suppressPartSaveRef.current) return true;
     const id = assemblyRef.current?.activeId;
-    const stored = id ? partScriptsRef.current?.[id] : '';
-    const current = (typeof currentScript === 'string' && currentScript) || (typeof stored === 'string' ? stored : '');
-    if (script === current) return true;
-    editorLiveRef.current = true;
-    setCurrentScript(script);
-    if (id) {
-      const next = { ...partScriptsRef.current, [id]: script };
-      partScriptsRef.current = next;
-      setPartScripts(next);
-      savePartScript(id, script);
-    }
-    handleCodeChange(script, 'FEA study');
+    if (!id) return true;
+    const next = { ...partScriptsRef.current, [id]: script };
+    partScriptsRef.current = next;
+    setPartScripts(next);
+    savePartScript(id, script);
+    saveEditorDraft({ script, filename: currentFilename, partId: id });
     return true;
   };
 
