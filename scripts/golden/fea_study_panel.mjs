@@ -775,7 +775,7 @@ async function runCase(browser, vp) {
   await page.locator('[data-fea-summary]').waitFor({ timeout: 120000 });
   await page.locator(`${shell} [data-fea-timing]`).waitFor({ timeout: 10000 });
   const timingText = ((await page.locator(`${shell} [data-fea-timing]`).innerText()) || '').replace(/\s+/g, ' ').trim();
-  check(`${vp.name} timing text`, /Meshed in .* solved in .* DOF.*total/.test(timingText), timingText);
+  check(`${vp.name} timing text`, /Solid mesh in .* solved in .* DOF.*total/.test(timingText), timingText);
   check(
     `${vp.name} timing log`,
     timingLogs.some((line) => line.startsWith('[fea-timing]')),
@@ -837,10 +837,10 @@ async function runCase(browser, vp) {
   await page.locator(`${shell} [data-fea-run]`).click();
   await page.waitForFunction((sel) => {
     const el = document.querySelector(sel);
-    return !!el && /Mesh reused/.test(el.textContent || '');
+    return !!el && /mesh reused/i.test(el.textContent || '');
   }, `${shell} [data-fea-timing]`, { timeout: 120000 });
   const reusedTiming = ((await page.locator(`${shell} [data-fea-timing]`).innerText()) || '').replace(/\s+/g, ' ').trim();
-  check(`${vp.name} mesh reused timing`, /Mesh reused, solved in .* DOF.*total/.test(reusedTiming), reusedTiming);
+  check(`${vp.name} mesh reused timing`, /Solid mesh reused, solved in .* DOF.*total/.test(reusedTiming), reusedTiming);
   await page.locator(`${shell} [data-fea-timing-details] summary`).click();
   const meshStage = ((await page.locator(`${shell} [data-fea-stage="meshing"]`).innerText()) || '').replace(/\s+/g, ' ').trim();
   check(`${vp.name} stage times say mesh reused`, /Meshing: Mesh reused/.test(meshStage), meshStage);
@@ -985,7 +985,7 @@ async function runSheetCase(browser, vp) {
   await page.locator('[data-fea-summary]').waitFor({ timeout: 180000 });
   await page.locator(`${shell} [data-fea-timing]`).waitFor({ timeout: 10000 });
   const timingText = ((await page.locator(`${shell} [data-fea-timing]`).innerText()) || '').replace(/\s+/g, ' ').trim();
-  check(`${vp.name} sheet timing text`, /Meshed in .* solved in .* DOF.*total/.test(timingText), timingText);
+  check(`${vp.name} sheet timing text`, /Shell mesh in .* solved in .* DOF.*total/.test(timingText), timingText);
   check(
     `${vp.name} sheet timing log`,
     timingLogs.some((line) => line.startsWith('[fea-timing]')),
@@ -1002,7 +1002,7 @@ async function runSheetCase(browser, vp) {
   const maxMPa = maxMatch ? Number(maxMatch[1]) : NaN;
   console.log(`  sheet ${vp.name} max ${maxMPa} MPa ${timingText}`);
   check(`${vp.name} sheet no stub`, summary.stubs === 0, JSON.stringify(summary));
-  check(`${vp.name} sheet tet10`, summary.source === 'tet10', summary.source);
+  check(`${vp.name} sheet shell`, summary.source === 'shell', summary.source);
   check(`${vp.name} sheet stress finite`, Number.isFinite(maxMPa) && maxMPa > 0.05 && maxMPa < 5000, summary.stress);
   check(`${vp.name} sheet results view`, await page.locator(`${shell}[data-fea-view="results"]`).count() === 1);
   check(`${vp.name} sheet setup hidden`, await page.locator(`${shell} [data-fea-material]`).count() === 0);

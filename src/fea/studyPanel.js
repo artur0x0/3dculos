@@ -250,7 +250,7 @@ export function studyWithLoadVector(study, index, vector) {
  * yield divided by the preview p95.
  */
 export function runSafetyFactor(result) {
-  if (!result || result.source !== 'tet10') return null;
+  if (!result || (result.source !== 'tet10' && result.source !== 'shell')) return null;
   const fos = result.safetyFactor != null ? result.safetyFactor : result.fos;
   return typeof fos === 'number' && Number.isFinite(fos) ? fos : null;
 }

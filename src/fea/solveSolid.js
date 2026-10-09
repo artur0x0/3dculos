@@ -18,8 +18,10 @@
  * cached mesh. The phone cache holds one mesh; desktop holds two. Evicting
  * an entry releases its arrays.
  *
- * TODO: shells need a midsurface extraction before solve_shell. Solids always
- * use TET10 here. SHELLS_AVAILABLE stays false.
+ * A pure sheet-metal part (`sheetMetalSolid`, study model "auto" or "shell")
+ * is meshed on its mid-surface and solved with solve_shell. study model
+ * "solid" keeps TET10. A non-sheet part stays on TET10; the general
+ * thin-solid midsurface heuristic is not implemented.
  */
 
 import { boundaryConditions } from './boundaryConditions.js';
@@ -30,8 +32,15 @@ import {
   isThinPart,
   partShape,
   SHELLS_AVAILABLE,
+  shellDofCap,
   THIN_ELEMENTS_THROUGH,
 } from './deviceProfile.js';
+import {
+  buildSheetShell,
+  chooseAnalysisModel,
+  sampleShellSurface,
+  shellBoundaryConditions,
+} from './sheetMidsurface.js';
 import {
   fieldRange,
   safetyFactor,
@@ -66,9 +75,10 @@ function asNumber(value) {
 }
 
 /**
- * `solveTet10` and `solveStub` are the wasm exports. `meshVolume` is injected
- * in tests; the app loads it on the first call so the mesher stays out of the
- * initial bundle. `fallback: "stub"` is the dev-only placeholder.
+ * `solveTet10`, `solveShell`, and `solveStub` are the wasm exports.
+ * `meshVolume` is injected in tests; the app loads it on the first call so
+ * the mesher stays out of the initial bundle. `fallback: "stub"` is the
+ * dev-only placeholder. `sheetSpec` is the pure sheet-metal spec, or null.
  * `cache` is the worker's mesh cache (`createMeshCache`). Without it, every
  * call meshes.
  */
@@ -97,7 +107,9 @@ export async function solveSolid({
   profile,
   fallback,
   solveTet10,
+  solveShell,
   solveStub,
+  sheetSpec,
   meshVolume,
   cache,
   isCancelled,
@@ -130,18 +142,38 @@ export async function solveSolid({
   if (!(shape.volume > 0) || !(indices && indices.length)) {
     throw new Error('The part has no solid volume to mesh.');
   }
+  const modelChoice = chooseAnalysisModel(study, sheetSpec);
+  if (modelChoice.kind === 'shell') {
+    if (typeof solveShell !== 'function') {
+      throw new Error('The shell solver is not loaded.');
+    }
+    const tools = await import('./meshVolume.js');
+    return solveSheetMetal({
+      study,
+      positions,
+      indices,
+      faceIDs,
+      material,
+      profile,
+      sheetSpec,
+      solveShell,
+      cache,
+      tools,
+      isCancelled,
+      onProgress,
+      memory,
+      noteMemory,
+      peakMemory,
+      shape,
+    });
+  }
   const thin = isThinPart(shape);
   const solver = chooseSolver(shape);
   const cap = dofCap(profile, thin, solver);
   const target = study && study.mesh ? study.mesh.target : undefined;
   const edge = chooseEdgeLength(shape, target, cap);
   const warnings = [];
-  if (study && study.model === 'shell') {
-    warnings.push({
-      code: 'shell-unsupported',
-      msg: 'Shells need a midsurface extraction, which this build does not do. The solid was solved with TET10.',
-    });
-  }
+  if (modelChoice.warning) warnings.push(modelChoice.warning);
   if (edge.coarsened) {
     const short = edge.elementsThrough != null && edge.elementsThrough < THIN_ELEMENTS_THROUGH;
     const throughText = short
@@ -417,6 +449,9 @@ function clearSolution(entry) {
   if (!solution) return;
   solution.nodal = null;
   solution.displacement = null;
+  solution.vonMisesTop = null;
+  solution.vonMisesMid = null;
+  solution.vonMisesBottom = null;
 }
 
 function blankMesh(mesh) {
@@ -425,6 +460,9 @@ function blankMesh(mesh) {
   mesh.elements = null;
   mesh.faces = null;
   mesh.faceIds = null;
+  mesh.regions = null;
+  mesh.directors = null;
+  mesh.elementRegion = null;
   if (mesh.stats && typeof mesh.stats === 'object') mesh.stats.wasmBytes = 0;
 }
 
@@ -452,7 +490,7 @@ function rememberSolution(entry, material, signature, solved, linear) {
   const E = Number(material && material.E_MPa);
   const nu = Number(material && material.nu);
   if (!(E > 0) || !Number.isFinite(nu) || !solved || !solved.nodal || !solved.displacement) return;
-  entry.solution = {
+  const solution = {
     E,
     nu,
     linear: linear === true,
@@ -466,6 +504,12 @@ function rememberSolution(entry, material, signature, solved, linear) {
     dofs: solved.stats && solved.stats.dofs != null ? solved.stats.dofs : null,
     freeDofs: solved.stats && solved.stats.freeDofs != null ? solved.stats.freeDofs : 0,
   };
+  if (solved.vonMisesTop && solved.vonMisesMid && solved.vonMisesBottom) {
+    solution.vonMisesTop = Float64Array.from(solved.vonMisesTop);
+    solution.vonMisesMid = Float64Array.from(solved.vonMisesMid);
+    solution.vonMisesBottom = Float64Array.from(solved.vonMisesBottom);
+  }
+  entry.solution = solution;
 }
 
 function rescaleSolution(entry, material, yieldMPa, signature) {
@@ -493,7 +537,7 @@ function rescaleSolution(entry, material, yieldMPa, signature) {
       msg: 'p95 is 0, so safetyFactor is null (yield / p95 is undefined)',
     });
   }
-  return {
+  const scaled = {
     nodal: saved.nodal,
     displacement,
     min: saved.min,
@@ -508,6 +552,203 @@ function rescaleSolution(entry, material, yieldMPa, signature) {
       iterations: 0,
       residual: 0,
       solveMs: 0,
+    },
+  };
+  if (saved.vonMisesTop) {
+    scaled.vonMisesTop = saved.vonMisesTop;
+    scaled.vonMisesMid = saved.vonMisesMid;
+    scaled.vonMisesBottom = saved.vonMisesBottom;
+  }
+  return scaled;
+}
+
+async function solveSheetMetal({
+  study,
+  positions,
+  indices,
+  faceIDs,
+  material,
+  profile,
+  sheetSpec,
+  solveShell,
+  cache,
+  tools,
+  isCancelled,
+  onProgress,
+  memory,
+  noteMemory,
+  peakMemory,
+  shape,
+}) {
+  const cancelled = () => (typeof isCancelled === 'function' ? isCancelled() : false);
+  const progress = (update) => {
+    if (typeof onProgress === 'function') onProgress(update);
+  };
+  const warnings = [];
+  const cap = shellDofCap(profile);
+  const target = study && study.mesh ? study.mesh.target : 'auto';
+  const device = profile === 'phone' ? 'phone' : 'desktop';
+  const cacheKey = cache
+    ? `shell|${tools.meshCacheKey({ positions, indices, faceIDs }, target, device)}|${JSON.stringify(sheetSpec)}`
+    : '';
+  let entry = cache ? takeCacheEntry(cache, cacheKey) : null;
+  let shellMesh = entry?.mesh?.nodes ? entry.mesh : null;
+  let meshReused = false;
+  progress({ stage: 'loading-mesher', fraction: 1 });
+  await yieldTurn();
+  if (cancelled()) throw abortError();
+  const started = Date.now();
+  if (shellMesh) {
+    meshReused = true;
+    progress({ stage: 'meshing', fraction: 1 });
+  } else {
+    entry = null;
+    if (cache) evictCache(cache, tools.meshCacheLimit(device), tools.releaseMesh);
+    progress({ stage: 'meshing', fraction: 0 });
+    await yieldTurn();
+    if (cancelled()) throw abortError();
+    shellMesh = buildSheetShell(sheetSpec, { target, cap });
+    progress({ stage: 'meshing', fraction: 1 });
+    if (cancelled()) throw abortError();
+    if (cache) entry = pushCacheEntry(cache, cacheKey, shellMesh);
+  }
+  const meshMs = meshReused ? 0 : (shellMesh.stats.ms || (Date.now() - started));
+  if (typeof noteMemory === 'function') noteMemory({ stats: { wasmBytes: shellMesh.stats.wasmBytes || 0 } });
+  if (shellMesh.stats.coarsened) {
+    warnings.push({
+      code: 'mesh-coarse',
+      msg: `The phone shell DOF cap (${cap}) coarsened the mid-surface mesh from ${shellMesh.stats.requested.toFixed(2)} mm to ${shellMesh.stats.edgeLength.toFixed(2)} mm edges.`,
+    });
+  }
+  if (Number.isFinite(cap) && shellMesh.stats.dofs > cap * 1.25) {
+    warnings.push({
+      code: 'dof-cap',
+      msg: `The shell mesh has ${shellMesh.stats.dofs} degrees of freedom, above the phone cap of ${cap}.`,
+    });
+  }
+
+  progress({ stage: 'assembling' });
+  await yieldTurn();
+  if (cancelled()) throw abortError();
+  const assembleStarted = Date.now();
+  const bcs = shellBoundaryConditions(shellMesh, positions, indices, faceIDs, study || {}, { diagonal: shape.diagonal });
+  const assembling = Date.now() - assembleStarted;
+  warnings.push(...bcs.warnings);
+  if (!bcs.clampedNodes.length) throw new Error('Fix a face before running the study.');
+  const bcPayload = { clampedNodes: bcs.clampedNodes };
+  if (bcs.forceNodes.length) {
+    bcPayload.forceNodes = bcs.forceNodes;
+    bcPayload.forceValues = bcs.forceValues;
+  }
+  if (bcs.pressureElements.length) {
+    bcPayload.pressureElements = bcs.pressureElements;
+    bcPayload.pressures = bcs.pressures;
+  }
+  const yieldMPa = material && material.yield_MPa != null && Number.isFinite(Number(material.yield_MPa))
+    ? Number(material.yield_MPa)
+    : null;
+  const signature = bcSignature(study);
+  let solved = rescaleSolution(entry, material, yieldMPa, signature);
+  let rescaled = !!solved;
+  if (!solved) {
+    progress({
+      stage: 'solving',
+      solver: 'cholesky',
+      blocking: true,
+      choleskyStep: 'factor',
+      fraction: 0.5,
+    });
+    await yieldTurn();
+    if (cancelled()) throw abortError();
+    const solveStarted = Date.now();
+    try {
+      solved = solveShell(
+        {
+          nodes: shellMesh.nodes,
+          elements: shellMesh.elements,
+          thickness: new Float64Array([shellMesh.thickness]),
+        },
+        { E_MPa: material.E_MPa, nu: material.nu, yield_MPa: yieldMPa },
+        bcPayload,
+        { solver: 'cholesky' },
+      );
+    } finally {
+      if (!solved) progress({ stage: 'solving', solver: 'cholesky', blocking: false });
+    }
+    solved.stageSolveMs = Date.now() - solveStarted;
+  } else {
+    solved.stageSolveMs = 0;
+  }
+  const solvedStats = solved && solved.stats ? solved.stats : {};
+  const solvedDofs = solvedStats.dofs != null ? solvedStats.dofs : shellMesh.stats.dofs;
+  progress({
+    stage: 'solving',
+    solver: 'cholesky',
+    blocking: false,
+    choleskyStep: 'solve',
+    fraction: 1,
+    dofs: solvedDofs,
+  });
+  if (typeof noteMemory === 'function') noteMemory({ stats: { wasmBytes: shellMesh.stats.wasmBytes || 0 } });
+  if (cancelled()) throw abortError();
+  if (entry && !rescaled) rememberSolution(entry, material, signature, solved, linearLoads(study));
+
+  progress({ stage: 'post-processing', fraction: 0.9, dofs: solvedDofs });
+  const postStarted = Date.now();
+  const sampled = sampleShellSurface(positions, indices, faceIDs, shellMesh, {
+    top: Float64Array.from(solved.vonMisesTop),
+    mid: Float64Array.from(solved.vonMisesMid),
+    bottom: Float64Array.from(solved.vonMisesBottom),
+    displacement: Float64Array.from(solved.displacement),
+  });
+  const dispRange = fieldRange(sampled.displacement);
+  const solverWarnings = plainWarnings(solved.warnings);
+  for (const warning of solverWarnings) {
+    if (warning.code === 'missing-yield' || warning.code === 'zero-stress') warnings.push(warning);
+  }
+  const postMs = Date.now() - postStarted;
+  progress({ stage: 'post-processing', fraction: 1, dofs: solvedDofs });
+  const elapsed = Date.now() - started;
+  return {
+    source: 'shell',
+    field: 'von_mises',
+    units: 'MPa',
+    nodal: sampled.stress,
+    displacement: sampled.displacement,
+    displacementMin: dispRange.min,
+    displacementMax: dispRange.max,
+    min: asNumber(solved.min),
+    max: asNumber(solved.max),
+    p95: asNumber(solved.p95),
+    safetyFactor: solved.safetyFactor == null ? null : solved.safetyFactor,
+    fos: solved.fos == null ? (solved.safetyFactor == null ? null : solved.safetyFactor) : solved.fos,
+    warnings,
+    solver: solved.solver || 'cholesky',
+    meshReused,
+    rescaled,
+    stageTimings: {
+      'loading-mesher': 0,
+      meshing: meshMs,
+      assembling,
+      solving: rescaled ? 0 : (solved.stageSolveMs || (solvedStats.solveMs || 0)),
+      'post-processing': postMs,
+    },
+    thin: true,
+    shells: SHELLS_AVAILABLE,
+    stats: {
+      dofs: solvedDofs,
+      freeDofs: solvedStats.freeDofs || 0,
+      ms: elapsed,
+      meshMs,
+      solveMs: rescaled ? 0 : (solvedStats.solveMs || solved.stageSolveMs || 0),
+      vertices: positions.length / 3,
+      triangles: indices.length / 3,
+      elements: shellMesh.stats.elements,
+      edgeLength: shellMesh.stats.edgeLength,
+      peakMemoryBytes: typeof peakMemory === 'function'
+        ? peakMemory()
+        : peakBytes(memory, { stats: { wasmBytes: shellMesh.stats.wasmBytes || 0 } }),
+      wasmMemoryMaxBytes: profile === 'phone' ? PHONE_WASM_BYTES : null,
     },
   };
 }

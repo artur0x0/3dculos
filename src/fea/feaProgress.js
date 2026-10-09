@@ -126,13 +126,21 @@ function detailsFrom(timings, meshReused = false) {
   });
 }
 
+function meshKind(source) {
+  if (source === 'shell') return 'Shell';
+  if (source === 'tet10') return 'Solid';
+  return '';
+}
+
 export function formatDoneText(state) {
   const timings = state.timings || {};
   const solvedMs = timings.solving || 0;
   const dofs = formatDofCount(state.dofs) || '0';
   const tail = `solved in ${formatSeconds(solvedMs)} (${dofs} DOF), total ${formatSeconds(elapsedMs(state))}`;
-  if (state.meshReused) return `Mesh reused, ${tail}`;
+  const kind = meshKind(state.source);
+  if (state.meshReused) return kind ? `${kind} mesh reused, ${tail}` : `Mesh reused, ${tail}`;
   const meshedMs = (timings['loading-mesher'] || 0) + (timings.meshing || 0);
+  if (kind) return `${kind} mesh in ${formatSeconds(meshedMs)}, ${tail}`;
   return `Meshed in ${formatSeconds(meshedMs)}, ${tail}`;
 }
 
@@ -254,6 +262,7 @@ export function reduceFeaProgress(state, event) {
       outcome: 'ok',
       now,
       timings,
+      source: event.source || current.source || '',
       dofs: event.dofs != null ? event.dofs : current.dofs,
       error: '',
       indeterminate: false,

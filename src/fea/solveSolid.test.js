@@ -53,7 +53,7 @@ test('a 40x10x10 cantilever is within 10% of beam theory', { timeout: 180_000 },
 
   assert.equal(result.source, 'tet10');
   assert.equal(result.solver, 'cholesky');
-  assert.equal(result.shells, false);
+  assert.equal(result.shells, true);
   assert.equal(result.nodal instanceof Float32Array, true);
   assert.equal(result.nodal.length, surface.positions.length / 3);
   const error = Math.abs(result.max - theory) / theory;
@@ -80,7 +80,7 @@ test('a 40x10x10 cantilever is within 10% of beam theory', { timeout: 180_000 },
   console.log(`cantilever max ${result.max} p95 ${result.p95} ms ${result.stats.ms} dofs ${result.stats.dofs}`);
 });
 
-test('a shell study warns and still solves TET10', { timeout: 180_000 }, async () => {
+test('a shell study on a non-sheet solid falls back to TET10', { timeout: 180_000 }, async () => {
   const surface = box([40, 10, 10]);
   const result = await solveSolid({
     study: beamStudy(200, 'shell'),
@@ -94,7 +94,7 @@ test('a shell study warns and still solves TET10', { timeout: 180_000 }, async (
     meshVolume,
   });
   assert.equal(result.source, 'tet10');
-  assert.ok(result.warnings.some((warning) => warning.code === 'shell-unsupported'));
+  assert.ok(result.warnings.some((warning) => warning.code === 'shell-heuristic-deferred'));
 });
 
 test('fallback stub keeps the placeholder source', async () => {

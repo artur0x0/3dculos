@@ -3,9 +3,9 @@
 // createFeaClient() loads the wasm inside the worker. solve() transfers the
 // mesh typed arrays in and transfers the nodal stress and displacement
 // Float32Arrays back. Displacement is the magnitude in millimetres at each
-// render vertex. The worker meshes the surface and runs solve_tet10.
-// cancel() rejects the in-flight
-// solve. dispose() terminates the worker.
+// render vertex. The worker meshes a solid with TET10, or a pure sheet-metal
+// part on its mid-surface with the shell solver. cancel() rejects the
+// in-flight solve. dispose() terminates the worker.
 //
 // Units: material.E_MPa and material.yield_MPa are megapascals. material.nu
 // is dimensionless and required. yield_MPa may be null; the safety factor
@@ -14,8 +14,9 @@
 // badge. profile is "phone" or "desktop". On a phone the worker instantiates
 // non-shared wasm memories with a 512 MiB ceiling.
 //
-// TODO: shells need a midsurface extraction. capabilities().shells is false
-// and solids always use TET10.
+// A pure sheetMetalSolid part is solved with the shell when the study model
+// is "auto" or "shell". Pass `sheetSpec` from shellSheetFromScript. Model
+// "solid" stays on TET10. A non-sheet part has no midsurface heuristic.
 
 import FeaWorker from '../workers/feaWorker.js?worker';
 import { appCapabilities } from './deviceProfile.js';
@@ -45,6 +46,7 @@ export async function createFeaClient(options = {}) {
         positions: mesh.positions,
         indices: mesh.indices,
         faceIDs: mesh.faceIDs,
+        sheetSpec: request && request.sheetSpec ? request.sheetSpec : null,
       }, mesh.transfer, hooks);
     },
 

@@ -1,15 +1,17 @@
 /**
- * Phone versus desktop for a TET10 study.
+ * Phone versus desktop for a TET10 or shell study.
  *
  * A phone is a touch device that also has a small screen or a small
  * deviceMemory. Thin solids use supernodal Cholesky. Compact solids use
- * Jacobi PCG. Shells are not selected here.
+ * Jacobi PCG. A pure sheet-metal part uses the MITC6 shell when the study
+ * model is "auto" or "shell". "solid" stays on TET10.
  *
- * TODO: shells need a midsurface extraction before solve_shell. Solids in
- * this build always use TET10, including when the study model is "shell".
+ * General thin solids still have no midsurface. That heuristic is deferred
+ * (`SHELL_HEURISTIC` in sheetMidsurface.js). A shell study on a non-sheet
+ * part falls back to TET10.
  */
 
-export const SHELLS_AVAILABLE = false;
+export const SHELLS_AVAILABLE = true;
 
 /** Degrees of freedom measured on an 18 mm cube: about 66 per (volume / edge³). */
 export const DOFS_PER_CELL = 66;
@@ -33,6 +35,11 @@ export const PHONE_DOF_CAPS = Object.freeze({
   tet10Thin: 100_000,
   tet10CompactCholesky: 40_000,
   tet10CompactPcg: 100_000,
+  // Native Cholesky peaks from benches/scale.rs (this machine, 2026-10-09):
+  // 120k DOF 459.6 MiB, 90k DOF 343.6 MiB, 70k DOF 259.2 MiB. The phone wasm
+  // heap stops at 512 MiB, so 120k is too close. 90k is the largest measured
+  // size whose native peak stays under about 360 MiB.
+  shell: 90_000,
 });
 
 const THIN_BBOX_RATIO = 0.25;
@@ -139,6 +146,12 @@ export function dofCap(profile, thin, solver) {
   if (thin) return PHONE_DOF_CAPS.tet10Thin;
   if (solver === 'cholesky') return PHONE_DOF_CAPS.tet10CompactCholesky;
   return PHONE_DOF_CAPS.tet10CompactPcg;
+}
+
+/** Phone DOF cap for a shell. Desktop is limited only by memory. */
+export function shellDofCap(profile) {
+  if (profile !== 'phone') return Infinity;
+  return PHONE_DOF_CAPS.shell;
 }
 
 /** Study mesh target, or fTetWild's default of 1/20 of the bbox diagonal. */
@@ -262,6 +275,7 @@ export function appCapabilities(wasmCaps = {}) {
   const solvers = new Set(Array.isArray(wasmCaps.solvers) ? wasmCaps.solvers : []);
   solvers.add('tet10');
   solvers.add('stub');
+  if (SHELLS_AVAILABLE) solvers.add('shell');
   return {
     ...wasmCaps,
     solvers: [...solvers],
