@@ -44,6 +44,11 @@ export default [
       'built/**', // emscripten-generated wasm glue — not ours to lint
       'packages/surfcad-fea/pkg/**', // wasm-pack glue
       'packages/surfcad-fea/target/**',
+      'packages/surfcad-mesh/pkg/**', // emscripten glue
+      'packages/surfcad-mesh/.deps/**',
+      'packages/surfcad-mesh/build-native/**',
+      'packages/surfcad-mesh/build-wasm/**',
+      'packages/surfcad-mesh/pkg-rebuild/**',
       'backend/node_modules/**',
       'public/**',
       '.deploy-backups/**', // gitignored snapshots incl. minified bundles (flat config ignores .gitignore on its own)
