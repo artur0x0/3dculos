@@ -26,6 +26,7 @@ import { fileDelete, fileWrite } from './githubAdapterInterface.js';
 import {
   assemblyDir,
   assemblyFilePath,
+  assetPathForScript,
   legacyAssemblyFilePath,
   listAssemblies,
   parseVaultPath,
@@ -468,10 +469,23 @@ export function planDeleteAssembly(entries, assemblyName, mode = 'keep', {
   for (const entry of list) {
     if (typeof entry?.path === 'string' && entry.path.startsWith(prefix)) deletes.add(entry.path);
   }
-  for (const path of dropShared) deletes.add(path);
+  for (const path of dropShared) {
+    deletes.add(path);
+    const mesh = assetPathForScript(path);
+    if (mesh && list.some((entry) => entry?.path === mesh)) deletes.add(mesh);
+  }
   for (const move of moves) {
     writes.set(move.to, move.content ?? '');
     deletes.add(move.from);
+    const fromMesh = assetPathForScript(move.from);
+    const toMesh = assetPathForScript(move.to);
+    if (!fromMesh || !toMesh || fromMesh === toMesh) continue;
+    const mesh = list.find((entry) => entry?.path === fromMesh);
+    if (mesh == null || mesh.content == null) continue;
+    const dest = list.find((entry) => entry?.path === toMesh);
+    if (dest) continue;
+    writes.set(toMesh, mesh.content);
+    deletes.add(fromMesh);
   }
   for (const file of otherAssemblyFiles(list, name)) {
     const next = rewriteSurfForDelete(file.content || '', { moves, sourcePaths });

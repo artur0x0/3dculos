@@ -1,3 +1,5 @@
+export * from './binaryContent.js';
+export * from './assetCache.js';
 export * from './githubAdapterInterface.js';
 export * from './mockGithubAdapter.js';
 export * from './githubAdapter.js';

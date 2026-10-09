@@ -5,7 +5,9 @@
  *   README.md
  *   assemblies/<name>/.surf.json                  assembly metadata (nameless)
  *   assemblies/<name>/<part>.js                   Copy to this assembly only (new id)
+ *   assemblies/<name>/<part>.mesh                 mesh asset for that assembly copy
  *   parts/<part>.js                               part scripts, referenced by path
+ *   parts/<part>.mesh                             mesh asset for that shared part
  *
  * Legacy (read-compat only; writes always use the layout above):
  *   assemblies/<name>/<name>.surf.json
@@ -27,6 +29,8 @@ export const ASSEMBLY_META_FILE = '.surf.json';
 /** @deprecated use ASSEMBLY_META_FILE — kept as alias for older imports. */
 export const ASSEMBLY_EXT = ASSEMBLY_META_FILE;
 export const PART_EXT = '.js';
+/** Mesh stored beside a part script. Not a script and not assembly metadata. */
+export const ASSET_EXT = '.mesh';
 
 /**
  * One path segment from an assembly or part name: no path or
@@ -103,12 +107,46 @@ export function sharedPartPath(partName) {
   return `${SHARED_PARTS_DIR}/${need(partBase(partName), 'part')}${PART_EXT}`;
 }
 
+function assetRecord(part, assembly, legacy) {
+  const script = assembly
+    ? (legacy
+      ? `${ASSEMBLIES_DIR}/${assembly}/${SHARED_PARTS_DIR}/${part}${PART_EXT}`
+      : `${ASSEMBLIES_DIR}/${assembly}/${part}${PART_EXT}`)
+    : `${SHARED_PARTS_DIR}/${part}${PART_EXT}`;
+  const info = { kind: 'asset', part, script };
+  if (assembly) info.assembly = assembly;
+  if (legacy) info.legacy = true;
+  return info;
+}
+
+function isMeshLeaf(leaf) {
+  return typeof leaf === 'string' && leaf.endsWith(ASSET_EXT) && leaf.length > ASSET_EXT.length;
+}
+
+/**
+ * `<Part>.mesh` beside a part script.
+ * Shared: `parts/<Part>.mesh`. Assembly copy: `assemblies/<Name>/<Part>.mesh`.
+ * Legacy nested: `assemblies/<Name>/parts/<Part>.mesh`.
+ */
+export function assetPathForScript(scriptPath) {
+  const info = parseVaultPath(scriptPath);
+  if (!info) return null;
+  if (info.kind === 'asset') return normalizeRepoPath(scriptPath);
+  if (info.kind === 'shared-part') return `${SHARED_PARTS_DIR}/${info.part}${ASSET_EXT}`;
+  if (info.kind === 'assembly-part' && info.legacy) {
+    return `${ASSEMBLIES_DIR}/${info.assembly}/${SHARED_PARTS_DIR}/${info.part}${ASSET_EXT}`;
+  }
+  if (info.kind === 'assembly-part') return `${ASSEMBLIES_DIR}/${info.assembly}/${info.part}${ASSET_EXT}`;
+  return null;
+}
+
 /**
  * Classify a repo path:
  *   { kind: 'marker' }
  *   { kind: 'assembly', assembly, legacy?: true }
  *   { kind: 'assembly-part', assembly, part, legacy?: true }
  *   { kind: 'shared-part', part }
+ *   { kind: 'asset', part, script, assembly?, legacy?: true }
  *   { kind: 'other' }
  * null for a path normalizeRepoPath rejects.
  */
@@ -119,6 +157,9 @@ export function parseVaultPath(path) {
   const seg = p.split('/');
   if (seg.length === 2 && seg[0] === SHARED_PARTS_DIR && seg[1].endsWith(PART_EXT) && seg[1].length > PART_EXT.length) {
     return { kind: 'shared-part', part: seg[1].slice(0, -PART_EXT.length) };
+  }
+  if (seg.length === 2 && seg[0] === SHARED_PARTS_DIR && isMeshLeaf(seg[1])) {
+    return assetRecord(seg[1].slice(0, -ASSET_EXT.length), null, false);
   }
   if (seg[0] === ASSEMBLIES_DIR && seg.length === 3) {
     const asm = seg[1];
@@ -135,11 +176,18 @@ export function parseVaultPath(path) {
     if (leaf.endsWith(PART_EXT) && leaf.length > PART_EXT.length && leaf !== ASSEMBLY_META_FILE) {
       return { kind: 'assembly-part', assembly: asm, part: leaf.slice(0, -PART_EXT.length) };
     }
+    if (isMeshLeaf(leaf)) {
+      return assetRecord(leaf.slice(0, -ASSET_EXT.length), asm, false);
+    }
   }
   // Legacy parts: assemblies/<Name>/parts/<Part>.js
   if (seg[0] === ASSEMBLIES_DIR && seg.length === 4 && seg[2] === SHARED_PARTS_DIR
     && seg[3].endsWith(PART_EXT) && seg[3].length > PART_EXT.length) {
     return { kind: 'assembly-part', assembly: seg[1], part: seg[3].slice(0, -PART_EXT.length), legacy: true };
+  }
+  // Legacy mesh beside a nested part: assemblies/<Name>/parts/<Part>.mesh
+  if (seg[0] === ASSEMBLIES_DIR && seg.length === 4 && seg[2] === SHARED_PARTS_DIR && isMeshLeaf(seg[3])) {
+    return assetRecord(seg[3].slice(0, -ASSET_EXT.length), seg[1], true);
   }
   return { kind: 'other' };
 }
@@ -238,7 +286,8 @@ export function legacyCleanupPaths(assemblyName, tree) {
   for (const entry of tree || []) {
     const path = entry?.path ?? entry;
     if (path === legacyMeta) out.push(path);
-    else if (typeof path === 'string' && path.startsWith(nestedPrefix) && path.endsWith(PART_EXT)) {
+    else if (typeof path === 'string' && path.startsWith(nestedPrefix)
+      && (path.endsWith(PART_EXT) || path.endsWith(ASSET_EXT))) {
       out.push(path);
     }
   }

@@ -7,6 +7,7 @@
  * When IndexedDB is missing (goldens, private mode) memory still works.
  */
 import { idbWithTimeout, IDB_OP_TIMEOUT_MS } from '../idbWithTimeout.js';
+import { isBinaryContent, normalizeOutboxFiles, toUint8Array } from './binaryContent.js';
 import { canonicalSurfId, migrateOutboxOp, rewriteVaultFile } from './surfIdMigration.js';
 
 const DB_NAME = 'surfcad-sync';
@@ -79,6 +80,11 @@ function txDone(db, storeName, mode, work) {
     tx.onabort = () => resolve(null);
     tx.onerror = () => resolve(null);
   });
+}
+
+function copyTreeContent(content) {
+  if (isBinaryContent(content)) return toUint8Array(content);
+  return content ?? '';
 }
 
 export function repoKeyOf(repo) {
@@ -175,7 +181,7 @@ export function createSyncStore({ persist = true } = {}) {
       op: op.op,
       status: 'queued',
       message: op.message || '',
-      files: op.files || null,
+      files: await normalizeOutboxFiles(op.files || null),
       partIds: op.partIds || [],
       payload: op.payload || {},
       error: '',
@@ -329,7 +335,7 @@ export function createSyncStore({ persist = true } = {}) {
     const built = [];
     for (const entry of entries) {
       if (!entry?.path) throw new Error('Delete cache snapshot has an empty path');
-      built.push({ path: entry.path, content: entry.content ?? '' });
+      built.push({ path: entry.path, content: copyTreeContent(entry.content) });
     }
     const slot = branchKeyOf(repo, branch);
     const had = trees.has(slot);

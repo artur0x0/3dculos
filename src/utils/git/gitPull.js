@@ -9,11 +9,14 @@
  *
  * Mock adapter only; nothing here talks to the network.
  */
+import { putAsset } from './assetCache.js';
+import { isBinaryContent } from './binaryContent.js';
 import { GitAdapterError, assertGithubAdapter, fileWrite } from './githubAdapterInterface.js';
+import { readVaultAsset } from './githubAdapter.js';
 import { detectCommitBase, commitBranchName } from './gitCommit.js';
 import { captureBaseline } from './gitWorkspace.js';
 import { parseSurfJson, stringifySurfJson } from './surfJson.js';
-import { vaultSegment } from './vaultLayout.js';
+import { assetPathForScript, vaultSegment } from './vaultLayout.js';
 
 /** First free branch name: base, base-2, base-3 … */
 async function freeBranchName(adapter, repo, base) {
@@ -32,6 +35,11 @@ async function freeBranchName(adapter, repo, base) {
  */
 export function behindPathsFromFiles(files, { assemblyPath = null, partIds = [] } = {}) {
   const want = new Set((partIds || []).map(String));
+  const meshOwners = new Map();
+  for (const id of want) {
+    const mesh = assetPathForScript(id);
+    if (mesh) meshOwners.set(mesh, id);
+  }
   const asm = assemblyPath || null;
   const partIdsOut = [];
   let assemblyBehind = false;
@@ -44,6 +52,10 @@ export function behindPathsFromFiles(files, { assemblyPath = null, partIds = [] 
       relevant.push(f);
     } else if (want.has(path)) {
       partIdsOut.push(path);
+      relevant.push(f);
+    } else if (meshOwners.has(path)) {
+      const id = meshOwners.get(path);
+      if (!partIdsOut.includes(id)) partIdsOut.push(id);
       relevant.push(f);
     }
   }
@@ -195,6 +207,7 @@ export async function reloadFromRemote(adapter, repo, {
       assemblyName: vaultSegment(nextDoc.name) || baseline.assemblyName,
       doc: nextDoc,
       scripts: nextScripts,
+      assets: baseline.assets,
       branch: baseline.branch || branch,
       headSha: baseline.headSha,
     });
@@ -211,9 +224,17 @@ export async function reloadFromRemote(adapter, repo, {
     };
   }
   const nextScripts = { ...(scripts || {}), [path]: content };
+  const mesh = assetPathForScript(path);
+  const asset = mesh ? await cacheRemoteAsset(adapter, repo, mesh, branch) : null;
+  const nextAssets = { ...(baseline.assets || {}) };
+  if (mesh) {
+    if (asset?.sha) nextAssets[mesh] = asset.sha;
+    else delete nextAssets[mesh];
+  }
   const baselineNext = {
     ...baseline,
     scripts: { ...(baseline.scripts || {}), [path]: content },
+    assets: nextAssets,
     partIds: baseline.partIds?.includes(path)
       ? baseline.partIds
       : [...(baseline.partIds || []), path],
@@ -222,9 +243,20 @@ export async function reloadFromRemote(adapter, repo, {
     kind: 'part',
     path,
     content,
+    asset,
     scripts: nextScripts,
     baseline: baselineNext,
   };
+}
+
+/** Blob-read a mesh and store it in the asset cache. Null when the path is absent. */
+async function cacheRemoteAsset(adapter, repo, meshPath, branch) {
+  if (typeof adapter?.readBlob !== 'function') return null;
+  const got = await readVaultAsset(adapter, repo, meshPath, branch);
+  if (!(got?.bytes instanceof Uint8Array)) return null;
+  let sha = got.sha;
+  try { sha = await putAsset(got.bytes); } catch { /* keep the tree sha */ }
+  return { path: meshPath, sha, bytes: got.bytes };
 }
 
 /**
@@ -249,6 +281,7 @@ export async function checkInMineToBranch(adapter, repo, {
   path,
   kind, // 'part' | 'assembly'
   message = '',
+  assets = null,
   now = new Date(),
 } = {}) {
   assertGithubAdapter(adapter);
@@ -265,10 +298,14 @@ export async function checkInMineToBranch(adapter, repo, {
     : (scripts?.[path] ?? '');
   const msg = String(message || '').trim()
     || `Keep mine: ${path.split('/').pop() || path}`;
+  const files = [fileWrite(path, content)];
+  const mesh = kind === 'part' ? assetPathForScript(path) : null;
+  const meshBytes = mesh && assets ? (assets[mesh] ?? assets[path]) : null;
+  if (mesh && isBinaryContent(meshBytes)) files.push(fileWrite(mesh, meshBytes));
   const side = await adapter.commitFiles(repo, {
     branch: sideName,
     message: msg,
-    files: [fileWrite(path, content)],
+    files,
     baseSha: base.baseSha,
   });
   return {
