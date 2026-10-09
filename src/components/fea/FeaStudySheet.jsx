@@ -4,9 +4,10 @@ import { FeaResultsReadout, FeaRunBar, FeaStudyControls } from './FeaStudyContro
 
 /**
  * Analyze on the shared feature card (phone). Docks at the pane bottom.
- * The stage switcher hides while this card is open. Same body and footer
- * as the desktop card. Stage times scroll in the body so Back to Setup
- * stays on screen. There is no Confirm.
+ * The stage switcher hides while this card is open. The left tool rail
+ * is hidden too, so fullLeft brings the left edge to the pane inset.
+ * Same body and footer as the desktop card. Stage times scroll in the
+ * body so Back to Setup stays on screen. There is no Confirm.
  */
 export function FeaStudySheet({ panel }) {
   const results = panel.results === true;
@@ -15,6 +16,7 @@ export function FeaStudySheet({ panel }) {
       title="Analyze"
       subtitle={results ? '' : 'Fix a face, add a load, then Run.'}
       compact
+      fullLeft
       onCancel={() => panel.close?.()}
       footer={<FeaRunBar panel={panel} />}
       cardAttrs={{

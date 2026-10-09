@@ -4,9 +4,11 @@ import { FeaResultsReadout, FeaRunBar, FeaStudyControls } from './FeaStudyContro
 
 /**
  * Analyze on the shared feature card (desktop). The same panel feeds the
- * phone card. Setup stays in the body. After a solve, the legend, the plot
- * tabs, and Stage times scroll in the body. The footer is Run, or Back to
- * Setup. X and Esc close Analyze through FeatureSheet onCancel. There is no Confirm.
+ * phone card. The left tool rail is hidden here too, so fullLeft brings
+ * the left edge to the pane inset. Setup stays in the body. After a solve,
+ * the legend, the plot tabs, and Stage times scroll in the body. The footer
+ * is Run, or Back to Setup. X and Esc close Analyze through FeatureSheet
+ * onCancel. There is no Confirm.
  */
 export function FeaStudyChip({ panel, compact = false }) {
   const results = panel.results === true;
@@ -15,6 +17,7 @@ export function FeaStudyChip({ panel, compact = false }) {
       title="Analyze"
       subtitle={results ? '' : 'Fix a face, add a load, then Run.'}
       compact={compact}
+      fullLeft
       onCancel={() => panel.close?.()}
       footer={<FeaRunBar panel={panel} />}
       cardAttrs={{

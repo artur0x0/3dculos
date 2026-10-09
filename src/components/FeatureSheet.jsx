@@ -19,6 +19,9 @@ import { featureSheetBottom, measureFeatureSheetWidth } from '../utils/featureSh
  * - note: node on the left of Confirm
  * - compact: phone. The card bottom docks to the hidden stage switcher.
  *   Desktop when false (10px, no switcher to hide).
+ * - fullLeft: the left tool rail is not there. The left edge is the 10px
+ *   pane inset. The right edge stays clear of the right rail. Other cards
+ *   leave this false and stay between both rails.
  * - bodyAttrs / cardAttrs: extra data attributes for the pilot that owns the card
  *
  * The card is pointer-events-auto and stops pointerdown. The pane around it
@@ -35,6 +38,7 @@ export default function FeatureSheet({
   footer = null,
   note = null,
   compact = false,
+  fullLeft = false,
   bodyAttrs = null,
   cardAttrs = null,
 }) {
@@ -62,7 +66,7 @@ export default function FeatureSheet({
     if (!pane) return undefined;
     const measure = () => {
       const root = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
-      setFrame(measureFeatureSheetWidth(pane, root));
+      setFrame(measureFeatureSheetWidth(pane, root, { fullLeft }));
     };
     measure();
     const ro = new ResizeObserver(measure);
@@ -76,7 +80,7 @@ export default function FeatureSheet({
       ro.disconnect();
       window.removeEventListener('resize', measure);
     };
-  }, []);
+  }, [fullLeft]);
 
   useEffect(() => {
     const el = bodyRef.current;
@@ -117,6 +121,7 @@ export default function FeatureSheet({
       aria-label={title || 'Feature'}
       data-feature-card=""
       data-feature-card-compact={compact ? '1' : '0'}
+      {...(fullLeft ? { 'data-feature-card-full-left': '1' } : null)}
       className={`feature-sheet-card pointer-events-auto absolute z-20 flex min-h-0 flex-col overflow-hidden
         rounded-xl border border-gray-500/50 text-white shadow-lg surface-glass-chip
         ${placed ? '' : 'left-1/2 w-[min(22rem,calc(100%-9.5rem))] -translate-x-1/2'}`}
