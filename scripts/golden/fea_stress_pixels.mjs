@@ -465,60 +465,6 @@ function endFacePoints(page) {
   });
 }
 
-function facePoints(page) {
-  return page.evaluate(() => new Promise((resolve) => {
-    const { canvas, renderer } = window.__feaProbe.bits();
-    if (!canvas || !renderer) {
-      resolve([]);
-      return;
-    }
-    const orig = renderer.render.bind(renderer);
-    let best = [];
-    let timer = 0;
-    renderer.render = function hooked(scene, camera) {
-      const out = orig(scene, camera);
-      const gl = renderer.getContext();
-      const dpr = renderer.getPixelRatio();
-      const w = gl.drawingBufferWidth;
-      const h = gl.drawingBufferHeight;
-      const buf = new Uint8Array(w * h * 4);
-      gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, buf);
-      const rect = canvas.getBoundingClientRect();
-      const pts = [];
-      for (let y = 4; y < h - 4; y += 4) {
-        for (let x = 4; x < w - 4; x += 4) {
-          const i = (y * w + x) * 4;
-          const r = buf[i];
-          const g = buf[i + 1];
-          const b = buf[i + 2];
-          if (r < 140 || g > 140 || b > 140) continue;
-          const cssX = rect.left + (x + 0.5) / dpr;
-          const cssY = rect.top + (h - y - 0.5) / dpr;
-          if (document.elementFromPoint(cssX, cssY) !== canvas) continue;
-          pts.push({ x: cssX, y: cssY });
-        }
-      }
-      const picks = [];
-      if (pts.length) {
-        const step = Math.max(1, Math.floor(pts.length / 6));
-        for (let i = step >> 1; i < pts.length && picks.length < 6; i += step) picks.push(pts[i]);
-      }
-      if (picks.length > best.length) best = picks;
-      if (!timer) {
-        timer = setTimeout(() => {
-          const key = window.__feaView || 'front';
-          if (typeof window.__VIEWPORT__?.stageSnap === 'function') window.__VIEWPORT__.stageSnap(key);
-          renderer.render = orig;
-          resolve(best);
-        }, 100);
-      }
-      return out;
-    };
-    const key = window.__feaView || 'front';
-    if (typeof window.__VIEWPORT__?.stageSnap === 'function') window.__VIEWPORT__.stageSnap(key);
-  }));
-}
-
 async function tap(page, touch, point) {
   if (touch) await page.touchscreen.tap(point.x, point.y);
   else await page.mouse.click(point.x, point.y);
