@@ -7,6 +7,12 @@
 // are discarded on close: the camera tweens back to that snapshot, then
 // TrackballControls is remounted so leftover damping cannot walk the pose
 // off the snapshot along the new up vector.
+//
+// While the card is open, the orbit target moves to the world point at the
+// current target's depth on the ray through the center of the pane above
+// the card. A view offset keeps that point on that screen pixel, so
+// Trackball's lookAt still rotates around the middle of the visible area.
+// Close clears the offset with the snapshot.
 import { Quaternion, Vector3 } from 'three';
 import { TrackballControls } from 'three/addons/controls/TrackballControls.js';
 import { easeInOutCubic, panViewByNdcY } from './viewCamera.js';
@@ -136,7 +142,7 @@ export function boxCornerPoints(box, offset = null) {
 
 /**
  * Fraction of the pane from its bottom edge up to the card's top.
- * The card sits above the home pill, so this is taller than cardHeight / paneHeight.
+ * Includes whatever gap sits under the card. On a phone that gap is 0.
  */
 export function featureSheetCoveredFraction(paneRect, cardRect) {
   const height = Number(paneRect?.height);
@@ -153,6 +159,123 @@ export function featureSheetCardTopNdc(cardFraction) {
   return -1 + 2 * frac;
 }
 
+const _ndc = new Vector3();
+const _point = new Vector3();
+const _shift = new Vector3();
+
+/**
+ * NDC of the center of the pane region above the card.
+ * x is the pane center. y is halfway from the pane top to the card top.
+ * +y is up, matching `Vector3.project`.
+ */
+export function visibleCenterNdc(paneRect, cardRect) {
+  const width = Number(paneRect?.width);
+  const height = Number(paneRect?.height);
+  const top = Number(paneRect?.top);
+  if (!(width > 0) || !(height > 0) || !Number.isFinite(top)) return null;
+  const paneBottom = Number.isFinite(Number(paneRect.bottom))
+    ? Number(paneRect.bottom)
+    : top + height;
+  const cardTop = Number(cardRect?.top);
+  const cover = Number.isFinite(cardTop)
+    ? Math.min(Math.max(cardTop, top), paneBottom)
+    : paneBottom;
+  const sy = Math.max(0, cover - top) / 2;
+  return {
+    x: 0,
+    y: 1 - (sy / height) * 2,
+  };
+}
+
+function readViewOffset(camera) {
+  const view = camera?.view;
+  if (!view?.enabled) return null;
+  return {
+    fullWidth: view.fullWidth,
+    fullHeight: view.fullHeight,
+    offsetX: view.offsetX,
+    offsetY: view.offsetY,
+    width: view.width,
+    height: view.height,
+  };
+}
+
+function applyPoseViewOffset(camera, offset) {
+  if (!offset) {
+    if (camera.view?.enabled && typeof camera.clearViewOffset === 'function') {
+      camera.clearViewOffset();
+    }
+    return;
+  }
+  camera.setViewOffset(
+    offset.fullWidth,
+    offset.fullHeight,
+    offset.offsetX,
+    offset.offsetY,
+    offset.width,
+    offset.height,
+  );
+}
+
+function lerpViewOffset(from, to, t) {
+  if (!from && !to) return null;
+  if (t >= 1) return to || null;
+  if (t <= 0) return from || null;
+  const base = to || from;
+  const a = from || { offsetX: 0, offsetY: 0 };
+  const b = to || { offsetX: 0, offsetY: 0 };
+  return {
+    fullWidth: base.fullWidth,
+    fullHeight: base.fullHeight,
+    width: base.width,
+    height: base.height,
+    offsetX: a.offsetX + (b.offsetX - a.offsetX) * t,
+    offsetY: a.offsetY + (b.offsetY - a.offsetY) * t,
+  };
+}
+
+/**
+ * Point the orbit at the world point under the visible-area center, at the
+ * current target's view depth. The camera shifts with the target so the
+ * view direction stays, and a view offset puts that look axis on the
+ * visible center. TrackballControls.update() can lookAt without jumping.
+ * Idempotent. Does nothing when the rects are missing.
+ */
+export function aimOrbitAtVisibleCenter(camera, controls, paneRect, cardRect) {
+  if (!camera?.isPerspectiveCamera || !controls?.target || !paneRect) return false;
+  const ndc = visibleCenterNdc(paneRect, cardRect);
+  if (!ndc) return false;
+  const width = Number(paneRect.width);
+  const height = Number(paneRect.height);
+  if (!(width > 0) || !(height > 0)) return false;
+
+  camera.updateMatrixWorld(true);
+  _v.copy(controls.target).project(camera);
+  if (!Number.isFinite(_v.z) || !Number.isFinite(_v.x) || !Number.isFinite(_v.y)) return false;
+
+  _ndc.set(ndc.x, ndc.y, _v.z);
+  _point.copy(_ndc).unproject(camera);
+  if (!Number.isFinite(_point.x) || !Number.isFinite(_point.y) || !Number.isFinite(_point.z)) return false;
+
+  _shift.copy(_point).sub(controls.target);
+  camera.position.add(_shift);
+  controls.target.copy(_point);
+  camera.lookAt(controls.target);
+  camera.updateMatrixWorld(true);
+
+  const aspect = camera.aspect;
+  if (Math.abs(ndc.x) > 1e-4 || Math.abs(ndc.y) > 1e-4) {
+    camera.setViewOffset(width, height, -ndc.x * width / 2, ndc.y * height / 2, width, height);
+    camera.aspect = aspect;
+    camera.updateProjectionMatrix();
+  } else if (camera.view?.enabled) {
+    camera.clearViewOffset();
+    camera.aspect = aspect;
+    camera.updateProjectionMatrix();
+  }
+  return true;
+}
+
 export function captureViewPose(camera, controls) {
   return {
     position: camera.position.toArray(),
@@ -163,6 +286,8 @@ export function captureViewPose(camera, controls) {
     near: camera.near,
     far: camera.far,
     zoom: camera.zoom,
+    aspect: camera.aspect,
+    viewOffset: readViewOffset(camera),
   };
 }
 
@@ -193,6 +318,8 @@ export function applyViewPose(camera, controls, pose) {
   camera.near = pose.near;
   camera.far = pose.far;
   if (Number.isFinite(pose.zoom)) camera.zoom = pose.zoom;
+  if (Number.isFinite(pose.aspect)) camera.aspect = pose.aspect;
+  applyPoseViewOffset(camera, pose.viewOffset);
   camera.updateProjectionMatrix();
   if (controls?.target) controls.target.fromArray(pose.target);
   camera.lookAt(controls.target);
@@ -230,6 +357,10 @@ function lerpPose(camera, controls, from, to, t) {
   if (Number.isFinite(from.zoom) && Number.isFinite(to.zoom)) {
     camera.zoom = from.zoom + (to.zoom - from.zoom) * u;
   }
+  if (Number.isFinite(from.aspect) && Number.isFinite(to.aspect)) {
+    camera.aspect = from.aspect + (to.aspect - from.aspect) * u;
+  }
+  applyPoseViewOffset(camera, lerpViewOffset(from.viewOffset, to.viewOffset, u));
   camera.updateProjectionMatrix();
   camera.updateMatrixWorld();
 }
@@ -281,6 +412,7 @@ export function createSheetCameraSession({
   requestFrame = (fn) => requestAnimationFrame(fn),
   cancelFrame = (id) => cancelAnimationFrame(id),
   tweenMs = FEATURE_SHEET_TWEEN_MS,
+  getVisibleFrame = null,
 } = {}) {
   let snapshot = null;
   let generation = 0;
@@ -293,6 +425,16 @@ export function createSheetCameraSession({
       cancelFrame(frame);
       frame = 0;
     }
+  }
+
+  function aimIfOpen() {
+    if (restoring || !snapshot) return;
+    const frame = getVisibleFrame?.();
+    if (!frame?.paneRect) return;
+    const camera = getCamera?.();
+    const controls = getControls?.();
+    if (!camera || !controls?.target) return;
+    aimOrbitAtVisibleCenter(camera, controls, frame.paneRect, frame.cardRect);
   }
 
   function runTween(step, done) {
@@ -337,7 +479,10 @@ export function createSheetCameraSession({
         snapshot = captureViewPose(getCamera(), getControls());
       }
       const delta = Number(ndcDelta) || 0;
-      if (Math.abs(delta) < 1e-6) return true;
+      if (Math.abs(delta) < 1e-6) {
+        aimIfOpen();
+        return true;
+      }
       let applied = 0;
       runTween((t) => {
         const cam = getCamera();
@@ -349,7 +494,7 @@ export function createSheetCameraSession({
           panViewByNdcY({ camera: cam, controls: ctl, ndcY: slice });
           applied = want;
         }
-      }, () => {});
+      }, () => { aimIfOpen(); });
       return true;
     },
     /** Tween to the pre-open pose. Orbit during the sheet is discarded. */

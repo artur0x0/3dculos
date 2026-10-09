@@ -6,6 +6,7 @@ import { applyTrackballFeel } from './trackballFeel.js';
 import { panViewByNdcY } from './viewCamera.js';
 import {
   FEATURE_SHEET_SLIDE_MAX,
+  aimOrbitAtVisibleCenter,
   boxCornerPoints,
   captureViewPose,
   createSheetCameraSession,
@@ -16,6 +17,7 @@ import {
   featureSheetSlideNdc,
   posesMatch,
   selectionNdcYs,
+  visibleCenterNdc,
 } from './featureSheetCamera.js';
 
 if (typeof globalThis.window === 'undefined') {
@@ -147,6 +149,58 @@ test('projected part box sits above the card after the slide', () => {
   panViewByNdcY({ camera, controls, ndcY: delta });
   const cleared = Math.min(...selectionNdcYs(camera, points));
   assert.ok(cleared + 0.02 >= cardTop, `cleared ${cleared} cardTop ${cardTop} delta ${delta}`);
+});
+
+test('orbit target projects to the visible-area center and survives controls.update', () => {
+  const { camera, controls } = rig();
+  const pane = { left: 0, top: 0, width: 800, height: 600, right: 800, bottom: 600 };
+  const card = { left: 200, top: 360, width: 400, height: 240, right: 600, bottom: 600 };
+  const want = visibleCenterNdc(pane, card);
+  assert.ok(want.y > 0.2, `visible center should sit above the pane center, ndc ${want.y}`);
+  assert.equal(aimOrbitAtVisibleCenter(camera, controls, pane, card), true);
+  controls.update();
+  const projected = controls.target.clone().project(camera);
+  assert.ok(Math.abs(projected.x - want.x) < 0.01, `ndc x ${projected.x}`);
+  assert.ok(Math.abs(projected.y - want.y) < 0.01, `ndc y ${projected.y} want ${want.y}`);
+  const parked = camera.position.clone();
+  aimOrbitAtVisibleCenter(camera, controls, pane, card);
+  controls.update();
+  assert.ok(camera.position.distanceTo(parked) < 1e-3, 'a second aim must not walk the camera');
+  const again = controls.target.clone().project(camera);
+  assert.ok(Math.abs(again.y - want.y) < 0.01);
+});
+
+test('close restores the pre-open pose after aiming and orbiting', () => {
+  const { camera, controls } = rig();
+  let current = controls;
+  const pane = { left: 0, top: 0, width: 800, height: 600, right: 800, bottom: 600 };
+  const card = { left: 200, top: 360, width: 400, height: 240, right: 600, bottom: 600 };
+  const session = createSheetCameraSession({
+    getCamera: () => camera,
+    getControls: () => current,
+    setControls: (next) => { current = next; },
+    reducedMotion: () => true,
+    flattenLift: () => {},
+    getVisibleFrame: () => ({ paneRect: pane, cardRect: card }),
+  });
+  const before = captureViewPose(camera, current);
+  session.slideBy(0);
+  const open = controls.target.clone().project(camera);
+  const want = visibleCenterNdc(pane, card);
+  assert.ok(Math.abs(open.y - want.y) < 0.01, `open ndc ${open.y}`);
+  const eye = camera.position.clone().sub(current.target);
+  eye.applyAxisAngle(new Vector3(0, 0, 1), 0.45);
+  camera.position.copy(current.target).add(eye);
+  camera.up.applyAxisAngle(new Vector3(0, 0, 1), 0.2);
+  camera.lookAt(current.target);
+  current.update();
+  assert.equal(posesMatch(captureViewPose(camera, current), before, 1e-3), false);
+  session.restore();
+  current.update();
+  const after = captureViewPose(camera, current);
+  assert.equal(posesMatch(after, before, 1e-3), true, JSON.stringify({ before, after }));
+  assert.equal(!!camera.view?.enabled, false);
+  assert.equal(session.hasSnapshot(), false);
 });
 
 test('a part buried past 0.6 NDC slides only as far as the clamp', () => {

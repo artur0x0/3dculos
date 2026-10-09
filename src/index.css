@@ -135,6 +135,12 @@ body {
   }
 }
 
+/* Phone stage switcher. While any feature card is open, the pill hides and
+   the card uses its bottom edge. Desktop never mounts the pill. */
+[data-mobile-stage]:has([data-feature-card]) [data-mobile-stage-home-indicator] {
+  display: none;
+}
+
 /* View-snap flyout keeps ~10px clear of the viewport edges.
    The viewport shell is a size container, so the flyout can measure itself
    against the *pane* (half the window on desktop) rather than the window. If
