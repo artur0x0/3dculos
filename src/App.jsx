@@ -1848,6 +1848,14 @@ const App = () => {
    * part passes noShadow and is omitted. Other parts are meshes beside it.
    */
   const refreshAssembly = async (activeScript, opts = {}) => {
+    if (!assemblyRef.current && appModeRef.current !== 'game') {
+      const text = typeof activeScript === 'string'
+        ? activeScript
+        : (codeEditorRef.current?.getContent?.() ?? '');
+      // Mount auto-runs an empty buffer. That must not create an assembly.
+      // Run, and any later build of a real script, seeds Part (1) first.
+      if (text.trim()) await seedOpenAssembly(text);
+    }
     const doc = assemblyRef.current;
     if (!doc || appModeRef.current === 'game') return false;
     if (typeof activeScript === 'string') lastAssemblyScriptRef.current = activeScript;
@@ -5225,9 +5233,60 @@ const App = () => {
 
   /**
    * S1 sheet metal: Start edits the open part in place. A new Sheet (n)
-   * part is created only when nothing is open.
+   * part is created only when an assembly is open and no part is active.
    */
   const getSheetMetalReady = () => !!assemblyRef.current?.activeId;
+  const sheetBindLockRef = useRef(false);
+
+  /**
+   * Signed-out boot creates no assembly. Start designing is the explicit
+   * create: Assembly / Part (1), holding whatever the editor already has.
+   * The fresh and busy rules below then decide if that buffer becomes the flange.
+   */
+  const seedOpenAssembly = async (script) => {
+    const seedId = newLocalPartId();
+    const source = githubConnected ? 'git' : 'local';
+    const name = nextAssemblyName(await collectTakenAssemblyNames());
+    const text = typeof script === 'string' ? script : '';
+    const seedDoc = serializeAssembly({
+      source,
+      name,
+      activeId: seedId,
+      parts: [{
+        id: seedId,
+        name: DEFAULT_PART_NAME,
+        visible: true,
+        order: 0,
+        ...(source === 'git' ? { isSynced: false } : {}),
+      }],
+    });
+    refreshGenRef.current += 1;
+    partMeshMetaRef.current = {};
+    setPartMeshMeta({});
+    rememberScripts({ [seedId]: text });
+    rememberAssembly(seedDoc);
+    rememberGitBaseline(null);
+    rememberGitBehind(null, { showToast: false, resetResolved: true });
+    setGitBehindToast(null);
+    for (const key of Object.keys(partHistoriesRef.current)) {
+      if (key !== '__game__') delete partHistoriesRef.current[key];
+    }
+    partSaveEpochRef.current += 1;
+    focusPartHistory(seedId, text);
+    suppressPartSaveRef.current = false;
+    setCurrentFilename(DEFAULT_PART_NAME);
+    const current = codeEditorRef.current?.getContent?.() ?? '';
+    if (current !== text) {
+      codeEditorRef.current?.loadContent(text, DEFAULT_PART_NAME, false);
+    }
+    saveEditorDraft({ script: text, filename: DEFAULT_PART_NAME, partId: seedId });
+    try {
+      await savePartScript(seedId, text, source === 'git' ? { isSynced: false } : {});
+    } catch (err) {
+      setUploadError(err?.message || 'Could not create assembly');
+    }
+    return assemblyRef.current;
+  };
 
   /**
    * S1 Start designing: bind the SendCutSend SKU on the open part.
@@ -5237,42 +5296,52 @@ const App = () => {
    * part is created — plane Accept appends one block. An existing sheet
    * block is kept so Viewport can re-thickness it. Spec stays null until
    * Accept when the part does not already have a sheet block.
+   * No assembly yet: seed one from the editor buffer, then those same rules.
    */
-  const handleBindSheetMetal = (record) => {
+  const handleBindSheetMetal = async (record) => {
     const binding = sheetMetalBinding(record);
     if (!binding || appModeRef.current === 'game') return { ok: false };
     const starter = sheetStarterScript(record);
     if (!starter?.script) return { ok: false };
-    let doc = assemblyRef.current;
-    if (!doc) return { ok: false };
-    let created = false;
-    const live = codeEditorRef.current?.getContent?.() ?? '';
-    if (!doc.activeId) {
-      const names = doc.parts.map((part) => part.name);
-      const sheetName = nextNumberedName('Sheet', names);
-      // handleAddPart bumps refreshGen before loadContent, so the new part
-      // runs this flange and a pending cube auto-run cannot paint over it.
-      handleAddPart(sheetName, { script: starter.script });
-      if (assemblyRef.current?.activeId === doc.activeId) return { ok: false };
-      doc = assemblyRef.current;
-      created = true;
-    } else if (sheetMetalFresh(live) && !readSheetMetalSpec(live)) {
-      // Drop a pending cube auto-run, then write the default flange.
-      refreshGenRef.current += 1;
-      const wrote = codeEditorRef.current?.applyBuffer?.(starter.script, 'Sheet metal');
-      if (!wrote) return { ok: false };
-      if (doc.activeId) {
-        rememberScripts({ ...partScriptsRef.current, [doc.activeId]: starter.script });
+    if (sheetBindLockRef.current) return { ok: false };
+    sheetBindLockRef.current = true;
+    try {
+      if (!assemblyRef.current) {
+        await seedOpenAssembly(codeEditorRef.current?.getContent?.() ?? '');
+        if (!assemblyRef.current?.activeId) return { ok: false };
       }
-      setTimeout(() => {
-        handleGameRun();
-      }, 0);
+      let doc = assemblyRef.current;
+      let created = false;
+      const live = codeEditorRef.current?.getContent?.() ?? '';
+      if (!doc.activeId) {
+        const names = doc.parts.map((part) => part.name);
+        const sheetName = nextNumberedName('Sheet', names);
+        // handleAddPart bumps refreshGen before loadContent, so the new part
+        // runs this flange and a pending cube auto-run cannot paint over it.
+        handleAddPart(sheetName, { script: starter.script });
+        if (assemblyRef.current?.activeId === doc.activeId) return { ok: false };
+        doc = assemblyRef.current;
+        created = true;
+      } else if (sheetMetalFresh(live) && !readSheetMetalSpec(live)) {
+        // Drop a pending cube auto-run, then write the default flange.
+        refreshGenRef.current += 1;
+        const wrote = codeEditorRef.current?.applyBuffer?.(starter.script, 'Sheet metal');
+        if (!wrote) return { ok: false };
+        if (doc.activeId) {
+          rememberScripts({ ...partScriptsRef.current, [doc.activeId]: starter.script });
+        }
+        setTimeout(() => {
+          handleGameRun();
+        }, 0);
+      }
+      const partId = doc.activeId;
+      rememberAssembly(setPartSheetMetal(doc, partId, binding));
+      const hadSheet = !created && !!readSheetMetalSpec(live);
+      const spec = hadSheet ? readSheetMetalSpec(codeEditorRef.current?.getContent?.() ?? '') : null;
+      return { ok: true, partId, created, spec };
+    } finally {
+      sheetBindLockRef.current = false;
     }
-    const partId = doc.activeId;
-    rememberAssembly(setPartSheetMetal(doc, partId, binding));
-    const hadSheet = !created && !!readSheetMetalSpec(live);
-    const spec = hadSheet ? readSheetMetalSpec(codeEditorRef.current?.getContent?.() ?? '') : null;
-    return { ok: true, partId, created, spec };
   };
 
   /** Sheet-metal step (base flange, bend, tab, hole …): rewrite the one block; Auto-Run. */
