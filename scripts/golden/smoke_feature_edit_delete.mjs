@@ -121,9 +121,6 @@ async function runSize(label, compact, width, height) {
     warningText.some((line) => /uses this feature's edges and may fail/.test(line)),
     warningText.join(' | '));
   await page.locator('[data-feature-edit-delete-toast] [data-error-undo]').waitFor({ timeout: 5000 });
-  const toastShot = join(shotDir, `feature-edit-delete-toast-${label}.png`);
-  await page.screenshot({ path: toastShot });
-  console.log(`  shot ${toastShot}`);
 
   await page.waitForFunction(() => !document.querySelector('#helper-param-title'), null, { timeout: 10000 });
   await page.waitForFunction(() => {
@@ -152,6 +149,9 @@ async function runSize(label, compact, width, height) {
   check(`${label}: one undo step`, after.head === headBefore + 1, `head ${headBefore} -> ${after.head}`);
   check(`${label}: edit dialog is gone and toast stays`, !after.confirm && !after.helper && after.toast, after.err);
   check(`${label}: delete did not raise the error popup`, !after.executionError, after.err);
+  const toastShot = join(shotDir, `feature-edit-delete-toast-${label}.png`);
+  await page.screenshot({ path: toastShot });
+  console.log(`  shot ${toastShot}`);
 
   await page.locator('[data-feature-edit-delete-toast] [data-error-undo]').click();
   await page.waitForFunction((expected) => window.__SCRIPT__ === expected && window.__MESH_SIG__?.() === window.__ORIGINAL_SIG__,
