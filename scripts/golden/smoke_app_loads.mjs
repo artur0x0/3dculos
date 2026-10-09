@@ -117,15 +117,20 @@ try {
     consoleErrors.push(text);
   });
 
-  // `vite preview` proxies /api to the backend on :3000, which this smoke does
-  // not start, so the boot-time auth probe got a proxy 500 and logged
-  // "Auth check failed" on every machine without a backend. Answer that one
-  // probe as a signed-out visitor so the run is hermetic; every other console
-  // error still fails the test.
+  // `vite preview` reuses the dev proxy, so /api hits :3000. This smoke does
+  // not start that backend, and a proxy 500 is a Chrome console error even
+  // when the app catches it. Answer the two boot probes (signed-out, no
+  // GitHub app config) so the run is hermetic; every other console error
+  // still fails the test.
   await page.route('**/api/auth/me', (route) => route.fulfill({
     status: 200,
     contentType: 'application/json',
     body: JSON.stringify({ authenticated: false }),
+  }));
+  await page.route('**/api/config', (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({}),
   }));
 
   await page.goto(APP_URL, { waitUntil: 'load', timeout: 45000 });

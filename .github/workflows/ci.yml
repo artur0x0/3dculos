@@ -1,0 +1,219 @@
+# Pull-request and default-branch CI.
+#
+# This workflow is not a required status check, and it does not touch branch
+# protection. To require it later, add the job names below as required checks
+# on the default branch (repository Settings → Rules → Rulesets, or Branch
+# protection rules → Require status checks to pass):
+#   - lint, build, unit
+#   - golden app-loads
+#   - license
+#   - cargo-deny
+#   - wasm freshness
+# A job that is skipped entirely does not satisfy a required check, so the
+# cargo-deny and wasm jobs are green no-ops until their files exist. When
+# those files land, the jobs fail closed until the real command in the step
+# is filled in. Do that in the PR that adds the crate, not here.
+#
+# Triggers are pull requests into main and pushes to main. There is no spark branch.
+# If a step needs the repository name, use ${{ github.repository }}. Do not
+# hard-code it; the remote may be renamed.
+
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# Cancel a run when a newer commit is pushed to the same branch or PR.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Fast static checks. Share one npm ci. `npm run verify` is intentionally
+  # absent: it calls an external cadgen-workspace gate that is not on the runner.
+  check:
+    name: lint, build, unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: npm ci
+        run: npm ci
+
+      # Clean on main. A failure here is a real regression, not a known baseline.
+      - name: lint
+        run: npm run lint
+
+      - name: vite build
+        run: npm run build
+
+      # Bare `node --test` also matches scripts/golden/*playtest*, which are
+      # browser goldens (the default pattern is *test*). Pass explicit
+      # patterns so those stay out. Node 22 exits 0 when a pattern matches
+      # nothing, so an empty tree is success and later files are picked up:
+      #   src/**/*.test.{js,mjs,cjs}
+      #   test/**/*.{js,mjs,cjs}
+      #   tests/**/*.{js,mjs,cjs}
+      - name: node --test
+        run: |
+          node --test --test-reporter spec \
+            'src/**/*.test.js' \
+            'src/**/*.test.mjs' \
+            'src/**/*.test.cjs' \
+            'test/**/*.js' \
+            'test/**/*.mjs' \
+            'test/**/*.cjs' \
+            'tests/**/*.js' \
+            'tests/**/*.mjs' \
+            'tests/**/*.cjs'
+
+  # Cheapest existing golden that proves the bundle actually boots: a real
+  # headless Chrome, vite preview, #root painted, canvas + toolbar + Run.
+  # Pixel goldens are not in this job. Chrome comes from the runner via
+  # setup-chrome; playwright-core does not download a browser. The script
+  # exits 0 when CHROME_PATH is missing, so CI checks the binary first and
+  # refuses that skip.
+  #
+  # Shots go to GOLDEN_SHOT_DIR (${{ runner.temp }}/golden) or os.tmpdir().
+  # Never /opt/cursor/artifacts.
+  smoke:
+    name: golden app-loads
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: npm ci
+        run: npm ci
+
+      - name: vite build
+        run: npm run build
+
+      - name: Install Chrome
+        id: setup-chrome
+        uses: browser-actions/setup-chrome@v2
+        with:
+          chrome-version: stable
+          install-dependencies: true
+
+      - name: App-load golden
+        env:
+          CHROME_PATH: ${{ steps.setup-chrome.outputs.chrome-path }}
+          GOLDEN_SHOT_DIR: ${{ runner.temp }}/golden
+        run: |
+          test -n "$CHROME_PATH"
+          test -x "$CHROME_PATH"
+          test -n "$GOLDEN_SHOT_DIR"
+          mkdir -p "$GOLDEN_SHOT_DIR"
+          "$CHROME_PATH" --version
+          node scripts/golden/smoke_app_loads.mjs | tee "${RUNNER_TEMP}/app-loads.log"
+          if grep -q 'no system Chrome found' "${RUNNER_TEMP}/app-loads.log"; then
+            echo "app-load golden skipped because Chrome was not found; CI must launch it"
+            exit 1
+          fi
+
+  # npm copyleft gate. Always runs. The cargo-deny step is a separate job so
+  # it can stay a no-op until the FEA crate exists.
+  license:
+    name: license
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: npm ci
+        run: npm ci
+
+      - name: Reject GPL, AGPL, and LGPL production dependencies
+        run: node scripts/ci/check-npm-licenses.mjs
+
+  # cargo-deny for the future FEA crate at packages/surfcad-fea.
+  # Runs the deny step only when packages/surfcad-fea/Cargo.toml exists.
+  # No Rust toolchain is installed in this workflow today.
+  #
+  # When that Cargo.toml lands, replace the fail-closed step with a pinned
+  # cargo-deny, for example:
+  #   cargo install cargo-deny --version <pin> --locked
+  #   cargo deny --manifest-path packages/surfcad-fea/Cargo.toml check licenses
+  # deny.toml beside the crate should allow MIT, Apache-2.0, BSD-2-Clause,
+  # BSD-3-Clause, Zlib, and MPL-2.0, and should deny GPL, AGPL, and LGPL
+  # (every -only / -or-later form). Do not let this job pass just because
+  # the crate appeared.
+  cargo-deny:
+    name: cargo-deny
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect the FEA crate
+        id: crate
+        run: |
+          if [[ -f packages/surfcad-fea/Cargo.toml ]]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "skip: packages/surfcad-fea/Cargo.toml is not in this revision"
+          fi
+
+      - name: cargo deny check licenses
+        if: steps.crate.outputs.present == 'true'
+        run: |
+          echo "packages/surfcad-fea/Cargo.toml is present, but cargo-deny is not wired yet."
+          echo "See the comments on this job. Refusing to pass an unconfigured Rust license gate."
+          exit 1
+
+  # Skip-if-absent stub. Later this job rebuilds the committed FEA wasm and
+  # fails if packages/surfcad-fea/pkg drifted from that rebuild. Today there
+  # is no committed wasm-pack output, so the job logs a skip and exits 0.
+  # No Rust toolchain and no wasm-pack run in this workflow.
+  #
+  # When a .wasm file is committed under packages/surfcad-fea/pkg, replace
+  # the fail-closed branch with:
+  #   1. Install the pinned Rust toolchain and wasm-pack.
+  #   2. wasm-pack build packages/surfcad-fea --target web --out-dir pkg-rebuild
+  #      using the same flags as the fea:build script.
+  #   3. Diff the rebuilt pkg against the committed packages/surfcad-fea/pkg
+  #      (.wasm and JS bindings; ignore generated markdown if wasm-pack rewrites it).
+  #   4. Fail if the committed artifact is stale.
+  wasm-freshness:
+    name: wasm freshness
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Skip until a committed FEA wasm exists
+        run: |
+          shopt -s nullglob globstar
+          artifacts=(packages/surfcad-fea/pkg/**/*.wasm)
+          if (( ${#artifacts[@]} == 0 )); then
+            echo "skip: no committed wasm under packages/surfcad-fea/pkg"
+            exit 0
+          fi
+          echo "Committed FEA wasm is present, but the rebuild-and-diff check is not wired yet."
+          echo "See the comments on this job. Refusing to pass a freshness gate that cannot see drift."
+          printf '  %s\n' "${artifacts[@]}"
+          exit 1
