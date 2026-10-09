@@ -1,7 +1,8 @@
 import React from 'react';
 import { Check } from 'lucide-react';
 import { ChoiceRow, NumberField } from '../controls/popupUI';
-import { FORCE_DIRECTIONS, formatSolveSummary } from '../../fea/studyPanel.js';
+import { FORCE_DIRECTIONS } from '../../fea/studyPanel.js';
+import { FeaLegend } from './FeaLegend';
 import { FeaLoadList } from './FeaLoadList';
 import { FeaMaterialPicker } from './FeaMaterialPicker';
 
@@ -90,30 +91,9 @@ export function FeaStudyControls({ panel }) {
 }
 
 export function FeaRunBar({ panel }) {
-  const summary = panel.result ? formatSolveSummary(panel.result) : null;
   return (
     <div className="mt-1 flex shrink-0 flex-col gap-1">
-      {summary && (
-        <div data-fea-summary="" className="rounded border border-amber-300/50 bg-amber-400/10 px-2 py-1.5">
-          {summary.stub && (
-            <div
-              data-fea-stub="1"
-              className="mb-1 inline-block rounded bg-amber-400 px-1.5 py-0.5 text-[12px] font-bold tracking-wide text-amber-950"
-            >
-              STUB
-            </div>
-          )}
-          <div className="text-[12px] text-cyan-50" data-fea-stress="">
-            min {summary.min} MPa · p95 {summary.p95} MPa · max {summary.max} MPa
-          </div>
-          <div className="text-[12px] text-cyan-50" data-fea-fos={summary.fos}>
-            safety factor {summary.fos}
-          </div>
-          {summary.warning && (
-            <div className="text-[11px] text-amber-100" data-fea-warning="">{summary.warning}</div>
-          )}
-        </div>
-      )}
+      <FeaLegend result={panel.result} />
       <div className="flex items-center justify-end gap-2">
       <button
         type="button"
