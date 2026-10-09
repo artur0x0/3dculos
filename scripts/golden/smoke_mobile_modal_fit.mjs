@@ -8,7 +8,7 @@
  * Screenshots go to GOLDEN_SHOT_DIR or os.tmpdir(), never the artifacts dir.
  */
 /* The evaluate callbacks run in the browser, where document exists. */
-/* global document, window */
+/* global document, window, getComputedStyle, Event */
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -263,6 +263,9 @@ window.fetch = async (url) => {
     const show = (view) => page.evaluate((name) => {
       document.querySelector(`[data-harness-view="${name}"]`).click();
     }, view);
+    const syncViewport = () => page.evaluate(() => {
+      window.dispatchEvent(new Event('resize'));
+    });
     const snap = (name) => page.screenshot({ path: join(shotDir, name) });
     const readBox = () => page.evaluate(() => {
       const overlay = document.querySelector('[data-modal-fit]');
@@ -363,9 +366,14 @@ window.fetch = async (url) => {
       && shrunk.bottom <= shrunk.innerHeight + 1
       && shrunk.height <= 420,
       JSON.stringify(shrunk));
-    await page.setViewportSize(VIEW);
+    await syncViewport();
+    const restored = await readBox();
+    check('a viewport resize reads visualViewport again',
+      Math.abs(restored.vvH - restored.innerHeight) < 2 && restored.vvTop === 0,
+      JSON.stringify({ vvH: restored.vvH, vvTop: restored.vvTop, ih: restored.innerHeight }));
 
     await page.setViewportSize({ width: 1440, height: 900 });
+    await syncViewport();
     await page.waitForSelector('[data-quote-add]');
     await page.evaluate(() => {
       const body = document.querySelector('[data-modal-fit] .overflow-y-auto');
@@ -381,6 +389,7 @@ window.fetch = async (url) => {
     await snap('modal-fit-quote-desktop.png');
 
     await page.setViewportSize(VIEW);
+    await syncViewport();
     await show('checkout');
     await page.waitForSelector('[data-checkout-review]', { timeout: 15000 });
     await page.waitForSelector('[data-address-form]', { timeout: 5000 });
