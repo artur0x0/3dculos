@@ -11,6 +11,7 @@ import { boundingBox, detectFeaProfile } from './deviceProfile.js';
 import { createFeaClient } from './feaClient.js';
 import { initialFeaProgress, logFeaTiming, reduceFeaProgress } from './feaProgress.js';
 import { studyForSolve } from './renderFaceIds.js';
+import { shellSheetFromScript } from './sheetMidsurface.js';
 import { activePlot, showResults } from './resultsView.js';
 import { bindStressField, setStressSkinSource } from './stressMap.js';
 import { composeFeaStudy, readFeaStudy, scriptOutsideFeaStudy } from './studyScript.js';
@@ -479,11 +480,13 @@ export function useFeaStudy({
         abort.name = 'AbortError';
         throw abort;
       }
+      const liveForShell = typeof getScriptRef.current === 'function' ? (getScriptRef.current() || '') : '';
       const solved = await clientRef.current.solve({
         study: studyForSolve(studyRef.current, geometry, solid?.faceIDs),
         mesh,
         material: resolved.material,
         profile,
+        sheetSpec: shellSheetFromScript(liveForShell),
       }, {
         signal: controller.signal,
         onProgress: (event) => {
@@ -536,6 +539,7 @@ export function useFeaStudy({
         dofs: solved?.stats?.dofs ?? null,
         stageTimings: solved?.stageTimings || null,
         meshReused: solved?.meshReused === true,
+        source: solved?.source || '',
       }));
     } catch (err) {
       if (err?.outcome === 'worker-died') {

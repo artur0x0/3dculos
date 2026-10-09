@@ -113,6 +113,32 @@ test('a finished run reads Meshed in, solved in, DOF, and total', () => {
   assert.match(log, /solving=1400ms/);
 });
 
+test('a finished shell or solid names the mesh kind', () => {
+  const shell = run([
+    { type: 'start', now: 0 },
+    {
+      type: 'finish',
+      now: 2500,
+      dofs: 29520,
+      source: 'shell',
+      stageTimings: { 'loading-mesher': 0, meshing: 20, assembling: 10, solving: 460, 'post-processing': 80 },
+    },
+  ]);
+  assert.match(shell.text, /^Shell mesh in .+ solved in .+ DOF.+total/);
+  const solid = run([
+    { type: 'start', now: 0 },
+    {
+      type: 'finish',
+      now: 4000,
+      dofs: 12000,
+      source: 'tet10',
+      meshReused: true,
+      stageTimings: { meshing: 0, solving: 400, 'post-processing': 20 },
+    },
+  ]);
+  assert.match(solid.text, /^Solid mesh reused, solved in .+ DOF.+total/);
+});
+
 test('a reused mesh says Mesh reused instead of Meshed in', () => {
   const state = run([
     { type: 'start', now: 1000 },

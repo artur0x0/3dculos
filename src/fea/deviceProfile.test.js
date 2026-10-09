@@ -88,11 +88,13 @@ test('phone is touch plus a small screen or a small deviceMemory', () => {
   assert.equal(mouse, 'desktop');
 });
 
-test('capabilities add TET10 and leave shells off', () => {
-  assert.equal(SHELLS_AVAILABLE, false);
+test('capabilities add TET10 and the shell solver', () => {
+  assert.equal(SHELLS_AVAILABLE, true);
+  assert.equal(PHONE_DOF_CAPS.shell, 90_000);
   const caps = appCapabilities({ solvers: ['stub'], maxDofs: { phone: 1, desktop: 2 } });
-  assert.equal(caps.shells, false);
+  assert.equal(caps.shells, true);
   assert.ok(caps.solvers.includes('tet10'));
+  assert.ok(caps.solvers.includes('shell'));
   assert.ok(caps.solvers.includes('stub'));
   assert.equal(caps.maxDofs.phone, 1);
 });
