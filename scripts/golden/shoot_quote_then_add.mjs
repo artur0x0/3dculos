@@ -185,7 +185,16 @@ async function capture(browser, width, height) {
   await page.locator('[data-part-order="part-bracket"]').click();
   const add = page.locator('[data-quote-add]');
   await add.waitFor({ timeout: 90000 });
-  await add.scrollIntoViewIfNeeded();
+  await add.evaluate((node) => {
+    const scroller = node.closest('.overflow-y-auto');
+    if (!scroller) {
+      node.scrollIntoView({ block: 'center', inline: 'nearest' });
+      return;
+    }
+    const rect = node.getBoundingClientRect();
+    const box = scroller.getBoundingClientRect();
+    scroller.scrollTop += rect.bottom - box.bottom + 24;
+  });
   await page.waitForSelector('[data-quote-mode="add"]', { timeout: 5000 });
   await shot(page, `quote-then-add-${width}-modal.png`);
 
