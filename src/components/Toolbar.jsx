@@ -1,7 +1,7 @@
 import React, { useRef } from 'react';
 import {
   Download, Undo, Redo,
-  Truck, Upload, ArrowLeft, Play, BookOpen, Puzzle, List, SquareDashedBottomCode
+  Truck, Upload, ArrowLeft, Play, BookOpen, List, SquareDashedBottomCode
 } from 'lucide-react';
 import { formatGameTime } from '../utils/gamePuzzle';
 
@@ -28,7 +28,6 @@ const Toolbar = ({
   isExecuting,
   isDownloading,
   isUploading,
-  onStartGame,
   onExitGame,
   onRun,
   /** CAD strip Run — executes the live editor buffer (game uses onRun). */
@@ -37,7 +36,8 @@ const Toolbar = ({
   onSelectAll,
   /**
    * `full` is the editor ribbon (Run, Select all, history, model I/O).
-   * `io` is the temporary CAD-view cluster: Upload, Download, Order, puzzle.
+   * `io` is the temporary CAD-view cluster: Upload, Download, Order.
+   * The puzzle is not a button here.
    * Undo/redo stay on the feature bar. Run and Select all stay in the editor.
    */
   chrome = 'full',
@@ -315,14 +315,6 @@ const Toolbar = ({
           title="Get Quote"
         >
           <Truck size={icon} />
-        </button>
-        <button
-          type="button"
-          onClick={onStartGame}
-          className={`${btn} text-cyan-400`}
-          title="Play match-the-part puzzle"
-        >
-          <Puzzle size={icon} />
         </button>
       </div>
     );

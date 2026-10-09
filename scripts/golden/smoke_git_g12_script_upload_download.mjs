@@ -2,7 +2,7 @@
 /**
  * G12 Script strip: model Upload + Download only. File Open/Save and vault
  * chrome live on Parts (G11). Editor actions (Run, Select all, Undo/Redo,
- * Quote, Puzzle) stay on the Script strip.
+ * Quote) stay on the Script strip. The puzzle is not a strip button.
  */
 import { readFileSync } from 'node:fs';
 
@@ -31,7 +31,8 @@ ok('no vault chrome on Script Toolbar', !/data-git-commit/.test(toolbar) && !/da
 ok('model accept types kept', /accept="\.stl,\.obj,\.3mf,\.step,\.stp"/.test(toolbar));
 ok('editor actions remain', /data-cad-run/.test(toolbar) && /data-cad-select-all/.test(toolbar)
   && /title="Undo"/.test(toolbar) && /title="Redo"/.test(toolbar)
-  && /Get Quote/.test(toolbar) && /Puzzle/.test(toolbar));
+  && /Get Quote/.test(toolbar) && !/Play match-the-part puzzle/.test(toolbar)
+  && !/onStartGame/.test(toolbar));
 
 ok('App dropped script file Open/Save handlers', !/const handleOpen = async/.test(app)
   && !/const handleSave = /.test(app) && !/onOpen=\{handleOpen\}/.test(app)

@@ -73,7 +73,7 @@ console.log('hidden script editor, pencil drawer and sheet');
     && /editorLiveRef\.current/.test(app)
     && /\}, 600\);/.test(app)
     && !/setEditorInitialScript\(DEFAULT_SCRIPT\)/.test(app));
-  check('temporary tray is upload, download, order, puzzle — not run or undo',
+  check('temporary tray is upload, download, order — not run, undo, or puzzle',
     /data-cad-io-tray/.test(view)
     && /data-cad-io-tray-placement="viewport-top-left"/.test(view)
     && /chrome="io"/.test(view)
@@ -81,7 +81,9 @@ console.log('hidden script editor, pencil drawer and sheet');
     && /data-script-upload/.test(toolbar)
     && /data-script-download/.test(toolbar)
     && /onQuote/.test(toolbar)
-    && /onStartGame/.test(toolbar)
+    && !/Play match-the-part puzzle/.test(toolbar)
+    && !/onStartGame/.test(toolbar)
+    && /PuzzleUnlock/.test(view)
     && /!ioOnly &&/.test(toolbar)
     && /data-cad-run/.test(toolbar)
     && /data-cad-select-all/.test(toolbar));
