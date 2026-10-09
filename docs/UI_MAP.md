@@ -72,7 +72,9 @@ Desktop specifics:
   **horizontal** bar on the CAD viewport under the title
   (`data-desktop-feature-strip`, `data-cad-feature-strip="desktop"`,
   `data-feature-strip-placement="viewer-under-title-horizontal"`). Same chip
-  set as mobile CAD; tap jumps the Monaco caret and reopens the creation dialog
+  set as mobile CAD. A sheet-metal chip uses the blue bent-plate glyph
+  (`SheetMetalPlate`, `text-blue-400`), the same plate as the Shape rail.
+  Tap jumps the Monaco caret and reopens the creation dialog
   for that feature (`handleDesktopFeatureStripJump` → `beginFeatureEdit`). The old vertical seam strip
   between editor and viewer is gone. Hidden in game mode. SplitDivider sits
   directly between editor and viewer.
@@ -97,6 +99,12 @@ Desktop specifics:
 - **Parts feed:** the same list as the mobile Parts stage, mounted to the left
   of the editor (`data-parts-feed-placement="desktop-left"`). The assembly
   name sits in the middle of the ribbon (`data-parts-ribbon-center`).
+  Signed out (local, no GitHub token), the **+** menu (`data-part-add-dropdown`)
+  and the folder menu (`data-part-open-dropdown`) both offer **Part** and
+  **Assembly**. Part opens the name dialog and creates a local-only part
+  (bare id, no repo path) — the same `startNewPart` path as a signed-in local
+  part. Folder → Assembly still opens a `.json` file. Git mode folder → Part
+  still opens the repo part list.
   On mobile the profile chip is right-justified in `data-parts-ribbon-end`;
   desktop leaves that slot empty. Each row thumbnail
   (`data-part-thumbnail`, `data-part-preview="manifold"`) is a cached snapshot
@@ -121,7 +129,11 @@ Desktop specifics:
   a script only when no other assembly cites it (`parts[].id`, a path when the
   id is missing, or `groups[].partIds`, including the open document and this
   branch's queued outbox). A cited copy moves into `parts/`. Cancel leaves
-  the assembly. While the delete runs, the clicked button shows a spinner
+  the assembly. While the dialog says Checking parts
+  (`data-git-dialog-loading`), a small border spinner
+  (`data-assembly-delete-checking-spinner`, the same `border-b-2 animate-spin`
+  ring as the assembly-open spinner, 16px) sits under that line and leaves
+  when the check finishes. While the delete runs, the clicked button shows a spinner
   (`data-assembly-delete-spinner`) and keeps its width. Both delete buttons
   and Cancel stay disabled, the scrim and Escape do not dismiss, and a
   second tap does not start another delete. Success closes the popup. A
@@ -225,7 +237,9 @@ Mobile specifics:
   the latest chips stay on screen and earlier ones sit outside that window.
   Undo and Redo stay visible, call the same `handleUndo` / `handleRedo` as the
   editor toolbar, and do not change which chips appear. Strip taps / long-press
-  reopen that feature's **creation dialog** (same path on mobile and desktop). `hideWhenEmpty` skips the "No features" caption;
+  reopen that feature's **creation dialog** (same path on mobile and desktop).
+  Sheet-metal chips use `SheetMetalPlate` (blue), same as desktop.
+  `hideWhenEmpty` skips the "No features" caption;
   the bar itself stays mounted so Undo and Redo remain. A chip whose block holds a
   frozen copy of another part's geometry (`externalBody`) has a 2px yellow border
   (`data-feature-external="1"`), active or not; its feature sheet says External copy.
@@ -354,7 +368,7 @@ All of these are absolutely positioned inside the shell at
 | bottom sheet `z-50` (short) | Bend popup: Angle, Flange length, Flip, R·K·BD, Back / Accept / Delete, ✕ | `sheetMetal/SheetMetalFlow.jsx` | Viewport |
 | bottom sheet `z-50` (short) | Tab popup (Width, Depth, Centered, Offset) / Hole popup (Ø or Thread, Csk Ø, U, V) | `sheetMetal/SheetMetalFlow.jsx` | Viewport |
 | bottom sheet `z-50` | Check & Export popup: DFM fails (red) / warnings (amber) in the mm\|in display unit, Download DXF, Download STEP, Order on SendCutSend (opens the app; all disabled on a hard fail), ✕ | `sheetMetal/SheetMetalFlow.jsx` | Viewport |
-| scene | plane quads / sheet preview / edge handles (taps route here first) | `utils/sheetMetal/sheetOverlay.js` | Viewport |
+| scene | plane quads / sheet preview / bendable-edge lines (2.5px core, opacity 0.65; undrawn pick box; taps route here first) | `utils/sheetMetal/sheetOverlay.js` | Viewport |
 | right-2/4 bottom-4 | view / pick / paint / inspection cluster. Paint (`data-paint-chip`) is in the plane and contour group, green only while paint mode is on, hidden in game | `CrossSectionPanel.jsx` collapsed rail | Viewport |
 | inside that cluster | Front/Right/Top/**Iso** snap popup | `ViewSnapControl.jsx` | `CrossSectionPanel.jsx:181` |
 | top-16, portaled `z-50`, `inset-x-3` (most of the viewport width, same card on desktop) | execution error toast: fixed card, label "Error", Undo and dismiss on the right, description on the next line (`ErrorPopup` `layout="stacked"`), glass `rounded-lg` | `ErrorPopup.jsx` | Viewport |
@@ -584,18 +598,20 @@ Import `src/utils/importModel.js` (+ `POST /api/convert/step`); export
 - **Feature-entry toasts:** Contour / Extrude / Revolve / Loft / Sweep / Fillet /
   Chamfer / Shell open **without** an informational toast. Soft-fail / enterRefuse /
   validation / workplane-miss toasts stay.
-- **Icons** are `lucide-react` only, with three vendored exceptions in
+- **Icons** are `lucide-react` only, with vendored exceptions in
   `src/components/icons/`: `SquareRoundCorner.jsx` (Fillet), `Angle.jsx`
   (Draft), `TrianglesCenterlineDashedVertical.jsx` (cross-section options),
   and `SquareText.jsx` (Script pager). They postdate lucide 0.469, which this
   project pins. Delete them and import from `lucide-react` once the dep moves.
+  `SheetMetalPlate.jsx` is the bent-plate glyph (not a lucide icon). The Shape
+  rail and every sheet-metal feature badge use it.
   Overlay buttons carry `title` *and*
   `aria-label`; toggles carry `aria-pressed`. **No two buttons in the same rail
   share a glyph** — the right rail's selectors are deliberately distinct:
   `RectangleHorizontal` = Face pick, `Layers3` = plane overlays,
   `NotebookPen` = sketch (contour) overlays, `Spline` = Edge pick,
   `Palette` = Paint. In the left
-  rail, Sheet Metal is a plate with a bend line and a bent flange (Shape, after Loft, same blue as the other rail icons), Loft is `Pyramid` (a tapered stack of profiles), not `Layers`, and
+  rail, Sheet Metal is `SheetMetalPlate` (a plate with a bend line and a bent flange, Shape, after Loft, same blue as the other rail icons; feature badges use the same glyph in `text-blue-400`), Loft is `Pyramid` (a tapered stack of profiles), not `Layers`, and
   Fillet is `SquareRoundCorner` — so `Squircle` now means roundedBox alone.
   Chamfer is `TriangleRight`.
   **Two left-rail tools deliberately share a glyph with a right-rail toggle:**
@@ -625,7 +641,8 @@ Import `src/utils/importModel.js` (+ `POST /api/convert/step`); export
   Loft. Add a preview → call `makePreviewSkinMaterial` /
   `makePreviewOutlineMaterial`.
   Sheet-metal parts are the exception: faces are light gray brushed metal
-  (`#c8ccd2`, both sides), not the normal material; orange bend/edge handles stay unlit on top.
+  (`#c8ccd2`, both sides), not the normal material. Bendable edges are unlit
+  screen-space lines (2.5 CSS px core, opacity 0.65, 5px halo at 0.16) on top.
 - **`railHidden` items** are palette entries with no button:
   `paletteRailSections` filters them, `itemsByGroup` does not. `sweepPath`
   (Path) stays so Sweep can still compose an edge wire. `clearanceHole`,

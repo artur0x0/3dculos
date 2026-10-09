@@ -48,6 +48,7 @@ console.log('sheet metal: Shape group on desktop and the 390px feature bar');
   const panel = read('src/components/CrossSectionPanel.jsx');
   const view = read('src/components/Viewport.jsx');
   const snippets = read('src/utils/helperPaletteSnippets.js');
+  const icon = read('src/components/icons/SheetMetalPlate.jsx');
   const shapeAt = palette.indexOf("section.section === 'shape' && onOpenSheetMetal");
   const shapeBlock = shapeAt < 0 ? '' : palette.slice(shapeAt, shapeAt + 1600);
   const railBlue = 'text-blue-700 hover:bg-blue-100 active:bg-blue-200';
@@ -61,14 +62,16 @@ console.log('sheet metal: Shape group on desktop and the 390px feature bar');
   check('Sheet Metal is the Shape button, same blue, plate with a bent flange',
     shapeAt > 0
     && shapeBlock.includes(railBlue)
+    && shapeBlock.includes('SheetMetalPlate')
     && palette.includes(railBlue)
     && !/orange/.test(shapeBlock)
     && !/FoldVertical/.test(shapeBlock)
     && /data-sheet-metal-button="1"/.test(shapeBlock)
     && /data-sheet-metal-icon/.test(shapeBlock)
-    && /M4 10h11l5-4v10l-5 4H4z/.test(shapeBlock)
-    && /M12 10v10/.test(shapeBlock)
-    && /stroke="currentColor"/.test(shapeBlock)
+    && /M4 10h11l5-4v10l-5 4H4z/.test(icon)
+    && /M12 10v10/.test(icon)
+    && /stroke="currentColor"/.test(icon)
+    && /strokeWidth=\{strokeWidth\}/.test(icon)
     && /strokeWidth=\{2\}/.test(shapeBlock)
     && /aria-label="Sheet Metal: pick SendCutSend material and gauge"/.test(shapeBlock)
     && /onClick=\{\(\) => onOpenSheetMetal\(\)\}/.test(shapeBlock));

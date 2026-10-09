@@ -17,6 +17,9 @@ import {
   Shape,
   Vector3,
 } from 'three';
+import { LineSegments2 } from 'three/addons/lines/LineSegments2.js';
+import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js';
+import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import { SHEET_PLANES, normalizeSheetSpec, panelPoint, sheetFreeEdges, solveSheet, vAdd, vMul } from './sheetModel.js';
 import { makeSheetMetalMaterial } from './sheetMaterial.js';
 
@@ -28,6 +31,54 @@ const COLORS = {
   edgeHot: 0x22d3ee,
   hole: 0x0f172a,
 };
+
+/**
+ * Bend/tab edge highlight, in CSS pixels.
+ * LineMaterial treats `linewidth` as pixels of `resolution` (the canvas CSS
+ * size, not the drawing buffer). A 2.5px core is about 5 device pixels at
+ * DPR 2 and 8 at DPR 3, so it stays a thin line on a 390px phone instead of
+ * vanishing the way a 1px WebGL line does. Opacity is below the old
+ * 0.85 / 0.95 fat bars and still reads as orange on the gray sheet.
+ * The halo is wider and faint so the core stays a line.
+ */
+export const SHEET_EDGE_LINE = Object.freeze({
+  corePx: 2.5,
+  haloPx: 5,
+  opacity: 0.65,
+  hotOpacity: 0.82,
+  haloOpacity: 0.16,
+});
+
+function sheetEdgeLine(a, b, { color, linewidth, opacity, resolution }) {
+  const geom = new LineSegmentsGeometry();
+  geom.setPositions([a[0], a[1], a[2], b[0], b[1], b[2]]);
+  const mat = new LineMaterial({
+    color,
+    linewidth,
+    transparent: true,
+    opacity,
+    depthTest: false,
+    depthWrite: false,
+    worldUnits: false,
+  });
+  const [rw, rh] = resolution;
+  mat.resolution.set(Math.max(1, rw || 1), Math.max(1, rh || 1));
+  const line = new LineSegments2(geom, mat);
+  line.frustumCulled = false;
+  // The undrawn box is the fingertip target. A screen-space line raycast
+  // would steal taps from that volume.
+  line.raycast = () => {};
+  return line;
+}
+
+/** Keep edge linewidths in CSS pixels after the canvas is resized. */
+export function syncSheetEdgeLineResolution(root, width, height) {
+  const w = Math.max(1, Number(width) || 1);
+  const h = Math.max(1, Number(height) || 1);
+  root?.traverse?.((obj) => {
+    if (obj.material?.isLineMaterial) obj.material.resolution.set(w, h);
+  });
+}
 
 const basis = (X, Y, Z, o) => new Matrix4()
   .makeBasis(new Vector3(...X), new Vector3(...Y), new Vector3(...Z))
@@ -138,33 +189,58 @@ export function buildSheetOverlay(mode) {
     m.userData.sm = { kind: 'hole', id: h.id };
     group.add(m);
   }
-  // Edge handles: fat, translucent, only for the active tool.
+  // Edge highlights: a thin screen-space line, plus an undrawn box so a
+  // fingertip still hits the edge. Only for the active tool.
   if (mode.stage === 'edit' && !mode.draft && (mode.tool === 'bend' || mode.tool === 'tab')) {
     const hot = mode.hotEdge ? `${mode.hotEdge.panel}:${mode.hotEdge.edge}` : '';
-    // Fat enough for a fingertip at fit-to-view zoom.
+    const resolution = Array.isArray(mode.lineResolution) && mode.lineResolution.length >= 2
+      ? mode.lineResolution
+      : [390, 844];
+    // Same footprint as the old fat bar (≥ 5% of the base). Not drawn.
     const size = Math.max(4, spec.t * 3, Math.max(spec.width, spec.height) * 0.05);
     for (const e of sheetFreeEdges(spec, solved)) {
       if (mode.tool === 'bend' ? !e.bendable : !e.tabbable) continue;
       if (!(e.length > 1e-3)) continue;
+      const key = `${e.panel}:${e.edge}`;
+      const isHot = key === hot;
+      const sm = { kind: 'edge', panel: e.panel, edge: e.edge };
+      const handle = new Group();
+      handle.name = 'sheetEdgeHandle';
+      handle.userData.sm = sm;
       const dir = new Vector3(...e.b).sub(new Vector3(...e.a));
       const len = dir.length();
       const g = new BoxGeometry(size, len, size);
       const mid = new Vector3(...e.a).add(new Vector3(...e.b)).multiplyScalar(0.5);
-      const m = new Mesh(g, new MeshBasicMaterial({
-        color: `${e.panel}:${e.edge}` === hot ? COLORS.edgeHot : COLORS.edge,
+      const hit = new Mesh(g, new MeshBasicMaterial({
         transparent: true,
-        // Opaque enough to stay orange on the gray sheet and on a light ground.
-        opacity: `${e.panel}:${e.edge}` === hot ? 0.95 : 0.85,
+        opacity: 0,
         depthWrite: false,
-        polygonOffset: true,
-        polygonOffsetFactor: -2,
-        polygonOffsetUnits: -2,
+        colorWrite: false,
       }));
-      m.quaternion.setFromUnitVectors(new Vector3(0, 1, 0), dir.normalize());
-      m.position.copy(mid);
-      m.renderOrder = 6;
-      m.userData.sm = { kind: 'edge', panel: e.panel, edge: e.edge };
-      group.add(m);
+      hit.quaternion.setFromUnitVectors(new Vector3(0, 1, 0), dir.normalize());
+      hit.position.copy(mid);
+      hit.userData.sm = sm;
+      hit.userData.sheetEdgeHit = true;
+      handle.add(hit);
+      const color = isHot ? COLORS.edgeHot : COLORS.edge;
+      const halo = sheetEdgeLine(e.a, e.b, {
+        color,
+        linewidth: SHEET_EDGE_LINE.haloPx,
+        opacity: SHEET_EDGE_LINE.haloOpacity,
+        resolution,
+      });
+      const core = sheetEdgeLine(e.a, e.b, {
+        color,
+        linewidth: SHEET_EDGE_LINE.corePx,
+        opacity: isHot ? SHEET_EDGE_LINE.hotOpacity : SHEET_EDGE_LINE.opacity,
+        resolution,
+      });
+      halo.renderOrder = 7;
+      core.renderOrder = 8;
+      core.userData.sheetEdgeLine = { role: 'core', hot: isHot, ...SHEET_EDGE_LINE };
+      handle.add(halo);
+      handle.add(core);
+      group.add(handle);
     }
   }
   return group;

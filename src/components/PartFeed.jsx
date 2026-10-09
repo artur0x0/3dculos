@@ -1353,8 +1353,8 @@ export default function PartFeed({
               type="button"
               className={STRIP_BTN}
               data-assembly-load=""
-              title={source === 'git' ? 'Open part or assembly' : 'Open assembly'}
-              aria-label={source === 'git' ? 'Open part or assembly' : 'Open assembly'}
+              title={source === 'git' ? 'Open part or assembly' : 'Part or assembly'}
+              aria-label={source === 'git' ? 'Open part or assembly' : 'Part or assembly'}
               aria-expanded={folderMenuOpen ? 'true' : 'false'}
               aria-haspopup="menu"
               onClick={() => {
@@ -1370,21 +1370,23 @@ export default function PartFeed({
                 role="menu"
                 className="absolute left-0 top-full z-50 mt-1 min-w-[8.5rem] rounded-md border border-gray-600 bg-gray-900 py-1 shadow-lg"
               >
-                {source === 'git' && (
-                  <button
-                    type="button"
-                    role="menuitem"
-                    data-part-open-action="part"
-                    data-git-open-part-action=""
-                    className="block w-full px-3 py-1.5 text-left text-xs text-gray-100 hover:bg-white/10"
-                    onClick={() => {
-                      setFolderMenuOpen(false);
-                      void startOpenPart();
-                    }}
-                  >
-                    Part
-                  </button>
-                )}
+                <button
+                  type="button"
+                  role="menuitem"
+                  data-part-open-action="part"
+                  data-git-open-part-action={source === 'git' ? '' : undefined}
+                  data-part-open-local={source === 'git' ? undefined : 'part'}
+                  className="block w-full px-3 py-1.5 text-left text-xs text-gray-100 hover:bg-white/10"
+                  onClick={() => {
+                    setFolderMenuOpen(false);
+                    // Git opens a repo part. Signed out stays local-only:
+                    // the same name dialog as + → Part (bare id, no repo path).
+                    if (source === 'git') void startOpenPart();
+                    else startNewPart();
+                  }}
+                >
+                  Part
+                </button>
                 <button
                   type="button"
                   role="menuitem"

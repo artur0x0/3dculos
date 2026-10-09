@@ -165,7 +165,17 @@ export default function DeleteAssemblyDialog({
         </div>
       )}
     >
-      {loading && <p className="text-xs text-gray-400" data-git-dialog-loading="">Checking parts…</p>}
+      {loading && (
+        <div data-assembly-delete-checking="">
+          <p className="text-xs text-gray-400" data-git-dialog-loading="">Checking parts…</p>
+          <div
+            className="mt-2 h-4 w-4 animate-spin motion-reduce:animate-none rounded-full border-b-2 border-white"
+            data-assembly-delete-checking-spinner=""
+            role="status"
+            aria-label="Checking parts"
+          />
+        </div>
+      )}
       {!loading && (
         <>
           <p className="text-xs text-gray-300" data-assembly-delete-summary="">
