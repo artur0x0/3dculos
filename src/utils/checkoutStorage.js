@@ -14,7 +14,9 @@ export function saveCheckoutState(state) {
       currentStep,
       address,
       guestEmail,
-      checkout
+      checkout,
+      lineId,
+      script,
     } = state;
 
     const serialized = {
@@ -24,6 +26,8 @@ export function saveCheckoutState(state) {
       address,
       guestEmail,
       checkout,
+      lineId: lineId || null,
+      script: typeof script === 'string' ? script : null,
       savedAt: Date.now(),
     };
 
@@ -67,6 +71,8 @@ export function restoreCheckoutState() {
       currentStep: parsed.currentStep,
       address: parsed.address,
       guestEmail: parsed.guestEmail,
+      lineId: parsed.lineId || null,
+      script: typeof parsed.script === 'string' ? parsed.script : null,
     };
   } catch (err) {
     console.error('[CheckoutStorage] Failed to restore state:', err);

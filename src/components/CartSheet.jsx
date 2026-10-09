@@ -1,7 +1,6 @@
 /**
- * Cart sheet. Checkout stays disabled until the stepper (slice 4c).
- * Opening the quote flow here would price the editor buffer, and only
- * the first line.
+ * Cart sheet. Checkout walks the lines that can be quoted from this
+ * assembly. Missing parts and parts in another assembly stay in the cart.
  */
 import React, { useEffect } from 'react';
 import { createPortal } from 'react-dom';
@@ -26,6 +25,8 @@ export default function CartSheet() {
   if (!open || typeof document === 'undefined') return null;
 
   const lines = cart.lines || [];
+  const canCheckout = (cart.checkoutLines || []).length > 0;
+  const skipNote = cart.checkoutNote || '';
 
   return createPortal(
     <div
@@ -146,15 +147,18 @@ export default function CartSheet() {
           <button
             type="button"
             data-cart-checkout=""
-            disabled
+            disabled={!canCheckout}
             className="w-full rounded-md bg-emerald-700 px-3 py-2 text-sm font-semibold text-white
               disabled:cursor-not-allowed disabled:opacity-50"
+            onClick={() => cart.startCheckout?.()}
           >
             Checkout
           </button>
-          <p className="mt-2 text-center text-[11px] text-gray-400" data-cart-checkout-note="">
-            Checkout is coming next
-          </p>
+          {skipNote ? (
+            <p className="mt-2 text-center text-[11px] text-gray-400" data-cart-checkout-skip="">
+              {skipNote}
+            </p>
+          ) : null}
         </div>
       </div>
     </div>,

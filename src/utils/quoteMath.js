@@ -31,6 +31,117 @@ export function roundMoney(value) {
   return Math.round(Number(value) * 100) / 100;
 }
 
+function finite(primary, fallback) {
+  const a = Number(primary);
+  if (Number.isFinite(a)) return a;
+  const b = Number(fallback);
+  return Number.isFinite(b) ? b : 0;
+}
+
+/**
+ * Multiply a one-part quote by `qty`. Unit fields win, so calling this on
+ * an already extended quote does not multiply twice. The bounding box stays
+ * one part. `calculateQuote` and `quoteFromGeometry` both go through here.
+ */
+export function extendQuote(unit, qty) {
+  const n = clampQuantity(qty, { missing: 1 });
+  if (!unit || typeof unit !== 'object') {
+    throw new Error('Invalid quote');
+  }
+  if (!n) {
+    throw new Error('Quantity must be an integer from 1 to 999');
+  }
+  const unitSubtotal = finite(unit.unitSubtotal, unit.subtotal);
+  const unitMaterial = finite(
+    unit.unitMaterial,
+    unit.costs?.material ?? unit.materialCost,
+  );
+  const unitMachine = finite(
+    unit.unitMachine,
+    unit.costs?.machine ?? unit.machineCost,
+  );
+  const unitGrams = finite(unit.unitGrams, unit.materialGrams);
+  const unitPrintTime = finite(unit.unitPrintTime, unit.printTime);
+  const subtotal = parseFloat((unitSubtotal * n).toFixed(2));
+  const materialExt = parseFloat((unitMaterial * n).toFixed(2));
+  const machineExt = parseFloat((unitMachine * n).toFixed(2));
+  const gramsExt = parseFloat((unitGrams * n).toFixed(1));
+  const printExt = parseFloat((unitPrintTime * n).toFixed(1));
+  const next = {
+    ...unit,
+    quantity: n,
+    unitSubtotal,
+    unitMaterial,
+    unitMachine,
+    unitGrams,
+    unitPrintTime,
+    subtotal,
+    materialGrams: gramsExt,
+    printTime: printExt,
+    materialCost: materialExt,
+    machineCost: machineExt,
+    costs: {
+      ...(unit.costs || {}),
+      material: materialExt,
+      machine: machineExt,
+      total: subtotal,
+    },
+    materialUsage: {
+      grams: gramsExt,
+      meters: unit.materialUsage?.meters || 0,
+    },
+    boundingBox: unit.boundingBox,
+  };
+  if (typeof unit.material === 'number') next.material = materialExt;
+  if (typeof unit.machine === 'number') next.machine = machineExt;
+  return next;
+}
+
+/**
+ * An old order service can reject the `quantity` field instead of ignoring
+ * it. Callers show this instead of throwing the raw body.
+ */
+export const QUANTITY_UNSUPPORTED_MESSAGE =
+  "This server doesn't accept a quantity on checkout yet. The order service needs that update before copies can be ordered.";
+
+export function payloadErrorText(body) {
+  if (body == null) return '';
+  if (typeof body === 'string') return body;
+  const parts = [body.error, body.message, body.details]
+    .filter((part) => typeof part === 'string');
+  return parts.join(' ');
+}
+
+/**
+ * `null` when the failure is not about quantity. Our own "1 to 999"
+ * validation is already clear and is returned as written.
+ */
+export function quantityRejectionMessage(status, body) {
+  const text = payloadErrorText(body);
+  if (!/quantity/i.test(text)) return null;
+  if (/integer from 1 to 999/i.test(text)) return text;
+  const statusNum = Number(status);
+  const failed = !Number.isFinite(statusNum) || statusNum >= 400 || body?.success === false;
+  if (!failed) return null;
+  return QUANTITY_UNSUPPORTED_MESSAGE;
+}
+
+/** Never throws. A non-JSON body becomes `{ error }` so the UI can show it. */
+export async function readJsonSafe(response) {
+  let text = '';
+  try {
+    text = await response.text();
+  } catch (err) {
+    return { error: err?.message || 'The server sent an unreadable response.' };
+  }
+  if (!text) return {};
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { error: text.slice(0, 280) };
+  }
+}
+
 /**
  * More than one cent apart. A one-cent gap is rounding, not a price change.
  */
@@ -112,28 +223,22 @@ export function quoteFromGeometry({
   const unitGrams = parseFloat(materialGrams.toFixed(1));
   const unitPrintTime = parseFloat(printTimeHours.toFixed(1));
 
-  const materialExt = parseFloat((unitMaterial * qty).toFixed(2));
-  const machineExt = parseFloat((unitMachine * qty).toFixed(2));
-  const subtotal = parseFloat((unitSubtotal * qty).toFixed(2));
-  const gramsExt = parseFloat((unitGrams * qty).toFixed(1));
-  const printExt = parseFloat((unitPrintTime * qty).toFixed(1));
-
-  return {
+  return extendQuote({
     materialUsage: {
-      grams: gramsExt,
+      grams: unitGrams,
       meters: 0,
     },
-    materialGrams: gramsExt,
-    printTime: printExt,
+    materialGrams: unitGrams,
+    printTime: unitPrintTime,
     costs: {
-      material: materialExt,
-      machine: machineExt,
-      total: subtotal,
+      material: unitMaterial,
+      machine: unitMachine,
+      total: unitSubtotal,
     },
-    material: materialExt,
-    machine: machineExt,
-    subtotal,
-    quantity: qty,
+    material: unitMaterial,
+    machine: unitMachine,
+    subtotal: unitSubtotal,
+    quantity: 1,
     unitSubtotal,
     unitMaterial,
     unitMachine,
@@ -154,7 +259,7 @@ export function quoteFromGeometry({
       max: boundingBox.max,
       size: [width, height, depth],
     },
-  };
+  }, qty);
 }
 
 /**
@@ -165,47 +270,7 @@ export function quoteFromGeometry({
 export function applyClientQuantity(quote, quantity) {
   const qty = clampQuantity(quantity, { missing: 1 });
   if (!quote || !qty) return quote;
-  const unitSubtotal = finite(quote.unitSubtotal, quote.subtotal);
-  const unitMaterial = finite(quote.unitMaterial, quote.materialCost);
-  const unitMachine = finite(quote.unitMachine, quote.machineCost);
-  const unitGrams = finite(quote.unitGrams, quote.materialGrams);
-  const unitPrintTime = finite(quote.unitPrintTime, quote.printTime);
-  const subtotal = parseFloat((unitSubtotal * qty).toFixed(2));
-  const materialCost = parseFloat((unitMaterial * qty).toFixed(2));
-  const machineCost = parseFloat((unitMachine * qty).toFixed(2));
-  const materialGrams = parseFloat((unitGrams * qty).toFixed(1));
-  const printTime = parseFloat((unitPrintTime * qty).toFixed(1));
-  return {
-    ...quote,
-    quantity: qty,
-    unitSubtotal,
-    unitMaterial,
-    unitMachine,
-    unitGrams,
-    unitPrintTime,
-    subtotal,
-    materialCost,
-    machineCost,
-    materialGrams,
-    printTime,
-    costs: quote.costs ? {
-      ...quote.costs,
-      material: materialCost,
-      machine: machineCost,
-      total: subtotal,
-    } : quote.costs,
-    materialUsage: quote.materialUsage ? {
-      ...quote.materialUsage,
-      grams: materialGrams,
-    } : quote.materialUsage,
-  };
-}
-
-function finite(primary, fallback) {
-  const a = Number(primary);
-  if (Number.isFinite(a)) return a;
-  const b = Number(fallback);
-  return Number.isFinite(b) ? b : 0;
+  return extendQuote(quote, qty);
 }
 
 /**

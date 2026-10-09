@@ -3,6 +3,7 @@
    the intended once-per-mount contract; adding fn deps would refetch on every render */
 import React, { useState, useEffect, useRef } from 'react';
 import { Truck, Plane, Zap, Package, Calendar } from 'lucide-react';
+import { quantityRejectionMessage, readJsonSafe } from '../../utils/quoteMath.js';
 
 const SHIPPING_ICONS = {
   ground: Truck,
@@ -76,10 +77,16 @@ const ShippingStep = ({ address, quoteData, modelData, onComplete, onError }) =>
         }),
       });
       
-      const packageData = await packageResponse.json();
+      const packageData = await readJsonSafe(packageResponse);
+      const packageRejected = quantityRejectionMessage(packageResponse.status, packageData);
+      if (packageRejected) {
+        const err = new Error(packageRejected);
+        err.quantityRejected = true;
+        throw err;
+      }
       
-      if (!packageData.success) {
-        throw new Error('Failed to calculate package dimensions');
+      if (!packageResponse.ok || !packageData.success) {
+        throw new Error(packageData.error || 'Failed to calculate package dimensions');
       }
       
       setPackageInfo(packageData.packageInfo);
@@ -95,9 +102,15 @@ const ShippingStep = ({ address, quoteData, modelData, onComplete, onError }) =>
         }),
       });
       
-      const ratesData = await ratesResponse.json();
+      const ratesData = await readJsonSafe(ratesResponse);
+      const ratesRejected = quantityRejectionMessage(ratesResponse.status, ratesData);
+      if (ratesRejected) {
+        const err = new Error(ratesRejected);
+        err.quantityRejected = true;
+        throw err;
+      }
       
-      if (!ratesData.success) {
+      if (!ratesResponse.ok || !ratesData.success) {
         throw new Error(ratesData.error || 'Failed to get shipping rates');
       }
       
@@ -111,6 +124,11 @@ const ShippingStep = ({ address, quoteData, modelData, onComplete, onError }) =>
     } catch (error) {
       console.error('Failed to fetch shipping rates:', error);
       onError(error.message);
+      if (error.quantityRejected) {
+        setRates([]);
+        setSelectedRate(null);
+        return;
+      }
       
       // Fallback rates if API fails
       setRates([

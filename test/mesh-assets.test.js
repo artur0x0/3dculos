@@ -12,7 +12,9 @@ import {
   importMeshScript,
   localMeshBadgeTitle,
   meshAssetName,
+  meshResolveError,
   rememberPartAssets,
+  resolvePartMeshes,
   selectedPartDownload,
   showLocalMeshBadge,
 } from '../src/utils/meshAssets.js';
@@ -144,6 +146,20 @@ test('selected-part download refuses hidden and failed parts', () => {
   const cold = selectedPartDownload({ part: { name: 'Wedge', visible: true } });
   assert.equal(cold.ok, false);
   assert.equal(cold.needsRun, true);
+});
+
+test('an unresolved importMesh keeps the line error instead of a throw', async () => {
+  const prepared = await resolvePartMeshes('part', "return importMesh('Bracket.mesh');\n", {
+    assets: {},
+    getAssetBytes: async () => { throw new Error('cache down'); },
+  });
+  assert.deepEqual(prepared.missing, ['Bracket.mesh']);
+  assert.equal(prepared.importedModels['Bracket.mesh'], undefined);
+  assert.equal(
+    meshResolveError(prepared.missing, 'Missing mesh asset: Bracket.mesh'),
+    'Missing mesh asset: Bracket.mesh',
+  );
+  assert.match(meshResolveError(prepared.missing, ''), /Bracket\.mesh/);
 });
 
 test('the local-only badge follows signed-in state, not the GitHub token', () => {

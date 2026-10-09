@@ -8,6 +8,7 @@ import PaymentStep from './order/PaymentStep';
 import ConfirmationStep from './order/ConfirmationStep';
 import ConvertAccountStep from './order/ConvertAccountStep';
 import QuantityStepper from './order/QuantityStepper';
+import CheckoutStepper from './CheckoutStepper';
 import { applyClientQuantity, clampQuantity } from '../utils/quoteMath.js';
 import { saveCheckoutState, getOAuthReturnUrl } from '../utils/checkoutStorage';
 import { saveEditorState } from '../utils/editorStorage';
@@ -30,7 +31,12 @@ const OrderModal = ({
   restoredStep,
   restoredAddress,
   restoredGuestEmail,
-  onOpenAccount
+  onOpenAccount,
+  checkoutStep = null,
+  lineId = null,
+  onOrderPlaced,
+  hasNextPart = false,
+  onNextPart,
 }) => {
   const [currentStep, setCurrentStep] = useState(restoredStep || STEPS.AUTH);
   const [user, setUser] = useState(null);
@@ -107,7 +113,9 @@ const OrderModal = ({
       currentStep,
       address,
       guestEmail,
-      checkout
+      checkout,
+      lineId,
+      script: currentScript,
     });
 
     // G8: GitHub reuses githubAuth → /git/callback (not passport /api/auth/github)
@@ -122,7 +130,7 @@ const OrderModal = ({
     const authUrl = `/api/auth/${provider}?returnTo=${returnUrl}`;
     
     window.location.href = authUrl;
-  }, [liveQuote, modelData, currentScript, currentStep, address, guestEmail]);
+  }, [liveQuote, modelData, currentScript, currentStep, address, guestEmail, lineId]);
 
   // Handle auth completion (for non-OAuth flows like guest checkout)
   const handleAuthComplete = useCallback((authData) => {
@@ -153,8 +161,9 @@ const OrderModal = ({
   // Handle payment completion
   const handlePaymentComplete = useCallback((orderData) => {
     setOrder(orderData);
+    onOrderPlaced?.(orderData);
     setCurrentStep(STEPS.CONFIRMATION);
-  }, []);
+  }, [onOrderPlaced]);
 
   // Handle account conversion prompt
   const handleConvertAccount = useCallback(() => {
@@ -268,6 +277,7 @@ const OrderModal = ({
             onConvertAccount={handleConvertAccount}
             onClose={onClose}
             onViewOrders={handleViewOrders}
+            onNextPart={hasNextPart ? onNextPart : null}
           />
         );
         
@@ -314,6 +324,8 @@ const OrderModal = ({
             </button>
           )}
         </div>
+
+        {checkoutStep ? <CheckoutStepper {...checkoutStep} /> : null}
 
         {/* Progress Indicator */}
         {currentStep !== STEPS.CONFIRMATION && currentStep !== STEPS.CONVERT && (
