@@ -133,7 +133,7 @@ const SheetMetalPicker = ({
             </div>
           )}
           {willCreatePart && (
-            <p className="text-xs text-gray-300">This part already has features — Start makes a new sheet part.</p>
+            <p className="text-xs text-gray-300">No part is open — Start makes a new sheet part.</p>
           )}
         </>
       )}

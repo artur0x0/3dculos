@@ -222,8 +222,10 @@ console.log('SCS S1 — mode entry + chrome');
     && !/data-palette-section="sheet"/.test(palette));
   check('rail swaps while in sheet metal', /!deleteFaceMode && !sheetMetalMode && \(/.test(view) && /<SheetMetalRail/.test(view));
   check('Start binds then enters mode', /onBindSheetMetal\?\.\(record\)/.test(view) && /enterSheetMetalMode\(record, bound\.partId/.test(view));
-  check('App binds SKU to the part (new part when busy)',
+  check('App binds SKU on the open part; Sheet (n) only when none is open',
     /setPartSheetMetal\(doc, partId, binding\)/.test(app)
+    && /sheetMetalFresh\(live\)/.test(app)
+    && /if \(!doc\.activeId\)/.test(app)
     && /nextNumberedName\('Sheet', names\)/.test(app)
     && /handleAddPart\(sheetName/.test(app));
   const arch = read('docs/architecture.md');

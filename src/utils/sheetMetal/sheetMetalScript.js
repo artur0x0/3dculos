@@ -3,7 +3,6 @@
  * one marked block holds the sheet spec (JSON) and builds the solid.
  */
 import { newPartStarterScript } from '../helperPaletteSnippets.js';
-import { DEFAULT_SCRIPT } from '../defaultScript.js';
 import { createSheetSpec } from './sheetModel.js';
 import { defaultBaseDims } from './sheetMetalMode.js';
 import {
@@ -15,15 +14,34 @@ import {
 export { SHEET_METAL_BEGIN, SHEET_METAL_END, hasSheetMetalBlock };
 
 /**
- * Can sheet-metal mode write into this part without clobbering work?
- * Empty, the new-part starter cube, the demo script, or an existing
- * sheet-metal block → yes. Anything else → Start makes a new part.
+ * May Start designing replace this buffer with the base-flange starter?
+ * Empty, comments-only, a bare `return part;`, or the auto-dropped 20 mm
+ * cube. The demo script and any other part that already has features are
+ * not fresh — Accept appends a block onto them.
+ */
+export function sheetMetalFresh(script) {
+  const s = String(script ?? '').trim();
+  if (!s) return true;
+  if (s === newPartStarterScript().trim()) return true;
+  const body = s
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/\/\/[^\n]*/g, '')
+    .replace(/\breturn\s+part\s*;?/g, '')
+    .trim();
+  return body.length === 0;
+}
+
+/**
+ * Can sheet-metal mode write into this part in place?
+ * Fresh buffers and an existing sheet block are rewritten. A part with
+ * other features is still written in place (the block is appended); it is
+ * not fresh, so Start does not replace the script and does not spawn a part.
  */
 export function sheetMetalReady(script) {
   const s = String(script ?? '').trim();
   if (!s) return true;
   if (hasSheetMetalBlock(s)) return true;
-  return s === newPartStarterScript().trim() || s === DEFAULT_SCRIPT.trim();
+  return sheetMetalFresh(s);
 }
 
 const SPEC_LINE = /const sheetSpec\s*=\s*(\{.*\});/;
@@ -41,16 +59,54 @@ export function sheetStarterScript(record) {
   return { script: res.buffer, spec };
 }
 
-/** Block text for a spec (one JSON line so diffs stay one-line per edit). */
-export function sheetMetalBlock(spec) {
+/**
+ * Block text for a spec (one JSON line so diffs stay one-line per edit).
+ * `union` adds the flange onto a part that already has a solid. The
+ * sheet-only form declares `part`.
+ */
+export function sheetMetalBlock(spec, { union = false } = {}) {
   const label = [spec.material, spec.sku].filter(Boolean).join(' · ');
+  const assign = union
+    ? 'part = part.add(sheetMetalSolid(sheetSpec));'
+    : 'let part = sheetMetalSolid(sheetSpec);';
   return [
     SHEET_METAL_BEGIN,
     `// SendCutSend ${label} — edit in Sheet Metal mode`,
     `const sheetSpec = ${JSON.stringify(spec)};`,
-    'let part = sheetMetalSolid(sheetSpec);',
+    assign,
     SHEET_METAL_END,
   ].join('\n');
+}
+
+function blockUnions(text) {
+  return /part\s*=\s*part\.add\(\s*sheetMetalSolid\s*\(/.test(String(text || ''));
+}
+
+/** Code outside the sheet block other than comments and `return part;`. */
+function outsideHasWork(script, start, end) {
+  const rest = `${script.slice(0, start)}\n${script.slice(end)}`;
+  return rest
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/\/\/[^\n]*/g, '')
+    .replace(/\breturn\s+part\s*;?/g, '')
+    .trim().length > 0;
+}
+
+const TRAILING_RETURN = /^(?<head>[\s\S]*?)(?<tail>\r?\nreturn\s+part\s*;[ \t]*\r?\n?)$/;
+const ONLY_RETURN = /^(?<tail>return\s+part\s*;[ \t]*\r?\n?)$/;
+
+/** Insert `block` after every earlier line, immediately before a trailing return. */
+function appendSheetBlock(buffer, block) {
+  const s = String(buffer ?? '');
+  const m = s.match(TRAILING_RETURN) || s.match(ONLY_RETURN);
+  if (!m) {
+    const base = s.replace(/\s*$/, '');
+    return base ? `${base}\n${block}\n` : `${block}\n`;
+  }
+  const head = m.groups.head || '';
+  const tail = m.groups.tail;
+  const glue = head.length === 0 || head.endsWith('\n') ? '' : '\n';
+  return `${head}${glue}${block}${tail}`;
 }
 
 /** Parse the spec back out of a script (null when absent / unreadable). */
@@ -69,11 +125,6 @@ export function readSheetMetalSpec(script) {
   }
 }
 
-/**
- * Write the spec into a buffer: replace the existing block, or take over a
- * sheet-ready buffer (empty / starter). Anything else refuses (App makes a
- * new part before it gets here).
- */
 /** The block assigns `part` but does not return it. One trailing return does. */
 function withSheetReturn(buffer) {
   const s = String(buffer ?? '');
@@ -81,18 +132,24 @@ function withSheetReturn(buffer) {
   return `${s.replace(/\s*$/, '')}\nreturn part;\n`;
 }
 
+/**
+ * Write the spec into a buffer: replace the existing block, take over a
+ * fresh buffer (empty / starter cube), or append after earlier feature
+ * blocks. Appending unions the flange onto `part` so those blocks stay
+ * byte-identical and the solid keeps their geometry.
+ */
 export function composeSheetMetalCommit(buffer, spec) {
   const s = String(buffer ?? '');
-  const block = sheetMetalBlock(spec);
   let next;
   if (hasSheetMetalBlock(s)) {
     const i = s.indexOf(SHEET_METAL_BEGIN);
     const j = s.indexOf(SHEET_METAL_END, i) + SHEET_METAL_END.length;
-    next = `${s.slice(0, i)}${block}${s.slice(j)}`;
-  } else if (sheetMetalReady(s)) {
-    next = `${block}\n`;
+    const union = blockUnions(s.slice(i, j)) || outsideHasWork(s, i, j);
+    next = `${s.slice(0, i)}${sheetMetalBlock(spec, { union })}${s.slice(j)}`;
+  } else if (sheetMetalFresh(s)) {
+    next = `${sheetMetalBlock(spec)}\n`;
   } else {
-    return { ok: false, message: 'This part has other features — start sheet metal on a new part.' };
+    next = appendSheetBlock(s, sheetMetalBlock(spec, { union: true }));
   }
   // The return stays outside the markers so a later edit of the block keeps it,
   // and so code after the block still runs. Goldens that only exec the block

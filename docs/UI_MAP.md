@@ -480,10 +480,13 @@ Both modes share the shape: tool rail on the left, param chip on the right,
 commit writes script text back through `App.jsx`.
 Sheet metal (SendCutSend): left rail **Shape** → Sheet Metal (no separate
 Sheet section) → `SheetMetalPicker`. Start designing binds the SKU on the
-part row (`part.sheetMetal`), writes the default base flange
-(`sheetStarterScript` → `sheetMetalSolid`, Top plane, SKU thickness) over an
-empty, demo, or starter-cube script, and enters `sheetMetalMode` still on the
-plane step. A busy part gets a new `Sheet (n)` whose script is that flange.
+open part (`part.sheetMetal`). A fresh part (empty or the 20 mm starter cube)
+gets the default base flange (`sheetStarterScript` → `sheetMetalSolid`, Top
+plane, SKU thickness) and enters `sheetMetalMode` still on the plane step.
+A part that already has features stays put: Start does not rewrite it and
+does not create `Sheet (n)`. Plane Accept appends one sheet block
+(`part = part.add(sheetMetalSolid(sheetSpec))`, chosen plane, SKU thickness)
+after the existing blocks. `Sheet (n)` is created only when no part is open.
 The rail then lists
 Tab / Bend / Hole / Tap under **Shape**. The chip (material, hint, Check &
 Export) is centered in the measured gap between the side rails. An mm|in
