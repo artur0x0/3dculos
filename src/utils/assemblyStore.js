@@ -177,18 +177,47 @@ export async function loadPartScript(id) {
 /**
  * `isSynced` is local to this record. Omit it to keep the stored flag.
  * Pass a boolean to set it. Never written to `.surf.json`.
+ *
+ * `assets` is `{ '<Part>.mesh': gitBlobSha }`. Omit it to keep the stored
+ * map. `meshSynced` stays false until a later PR puts the blob in the vault.
  */
 export async function savePartScript(id, script, opts = {}) {
   if (!id || typeof script !== 'string') return false;
+  const existing = await loadPartRecord(id);
   let isSynced = opts.isSynced;
-  if (typeof isSynced !== 'boolean') {
-    const existing = await loadPartRecord(id);
-    if (typeof existing?.isSynced === 'boolean') isSynced = existing.isSynced;
+  if (typeof isSynced !== 'boolean' && typeof existing?.isSynced === 'boolean') {
+    isSynced = existing.isSynced;
+  }
+  let assets = opts.assets;
+  if (assets === undefined && existing?.assets && typeof existing.assets === 'object') {
+    assets = existing.assets;
+  }
+  let meshSynced = opts.meshSynced;
+  if (typeof meshSynced !== 'boolean' && typeof existing?.meshSynced === 'boolean') {
+    meshSynced = existing.meshSynced;
   }
   const record = { id: String(id), script, savedAt: Date.now() };
   if (typeof isSynced === 'boolean') record.isSynced = isSynced;
+  if (assets && typeof assets === 'object' && !Array.isArray(assets) && Object.keys(assets).length) {
+    record.assets = assets;
+  }
+  if (typeof meshSynced === 'boolean') record.meshSynced = meshSynced;
   const { ok } = await runTx(PART_STORE, 'readwrite', (store) => store.put(record, record.id));
   return ok;
+}
+
+/** Row id → `{ assets, meshSynced }` for records that store a mesh map. */
+export async function loadPartAssets(ids) {
+  const out = {};
+  for (const id of ids || []) {
+    const record = await loadPartRecord(id);
+    if (!record?.assets || typeof record.assets !== 'object' || Array.isArray(record.assets)) continue;
+    out[String(id)] = {
+      assets: record.assets,
+      meshSynced: record.meshSynced === true,
+    };
+  }
+  return out;
 }
 
 /** Row id → isSynced for records that store the flag. */

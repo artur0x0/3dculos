@@ -48,13 +48,15 @@ console.log('\ncart — UI wiring (source)');
     /data-part-order=\{row\.id\}/.test(row)
     && /stopPropagation\(\)/.test(row)
     && /disabled=\{!!\(row\.missing \|\| row\.error\)\}/.test(row));
-  ok('truck left the toolbar; tray is still upload and download',
+  ok('truck left the toolbar; upload and download left the tray',
     !/Get Quote/.test(toolbar)
     && !/<Truck /.test(toolbar)
     && !/onQuote/.test(toolbar)
-    && /data-script-upload/.test(toolbar)
-    && /data-script-download/.test(toolbar)
-    && /data-cad-io-tray/.test(view)
+    && !/data-script-upload/.test(toolbar)
+    && !/data-script-download/.test(toolbar)
+    && /data-part-upload/.test(feed)
+    && /data-part-download/.test(feed)
+    && !/data-cad-io-tray/.test(view)
     && !/onQuote/.test(view));
   ok('chip badge and signed-in profile cart row',
     /data-cart-badge/.test(chip)

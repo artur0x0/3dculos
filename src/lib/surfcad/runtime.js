@@ -8334,6 +8334,17 @@ const executeScript = (script, importedModels) => {
   const limitedWindow = {
     __importedManifolds: importedManifolds
   };
+
+  // New uploads. The arrays were resolved on the main thread and passed
+  // in `importedModels`; this worker has no IndexedDB and no fetch.
+  const importMesh = (name) => {
+    const key = String(name ?? '');
+    const meshData = importedModels && importedModels[key];
+    if (!meshData || !meshData.vertProperties || !meshData.triVerts) {
+      throw new Error(`Missing mesh asset: ${key}`);
+    }
+    return reconstructManifold(meshData);
+  };
   
   // Which marked feature block is running (feature strip red border). This
   // does not depend on the engine's stack format, unlike `scriptLine`.
@@ -8345,6 +8356,7 @@ const executeScript = (script, importedModels) => {
     ...manifoldModule,        // Core Manifold API (Manifold, CrossSection, etc.)
     ...HELPER_FUNCTIONS,      // Extended helper functions
     window: limitedWindow,    // Limited window object for imports
+    importMesh,               // return importMesh('<Part>.mesh')
     [FEATURE_TRACE_ENTER]: tracker.enter,
     [FEATURE_TRACE_LEAVE]: tracker.leave,
   };

@@ -10,6 +10,7 @@ import {
   resolvePartId,
   sortParts,
 } from './assembly.js';
+import { missingMeshMessage, resolvePartMeshes } from './meshAssets.js';
 
 export async function runAssemblyParts({ doc, scripts, execute, ids = null }) {
   const only = ids ? new Set(ids) : null;
@@ -32,9 +33,27 @@ export async function runAssemblyParts({ doc, scripts, execute, ids = null }) {
       Object.assign(runs, recordPartRun(runs, part.id, { ok: false, empty: true }));
       continue;
     }
+    let importedModels = null;
+    try {
+      const prepared = await resolvePartMeshes(part.id, resolved.script);
+      if (prepared.missing.length) {
+        Object.assign(runs, recordPartRun(runs, part.id, {
+          ok: false,
+          error: missingMeshMessage(prepared.missing),
+        }));
+        continue;
+      }
+      importedModels = prepared.importedModels;
+    } catch (err) {
+      Object.assign(runs, recordPartRun(runs, part.id, {
+        ok: false,
+        error: err?.message || String(err),
+      }));
+      continue;
+    }
     let outcome;
     try {
-      const result = await execute(resolved.script);
+      const result = await execute(resolved.script, { importedModels });
       const mesh = result?.mesh && result.mesh.vertProperties ? result.mesh : null;
       const bodyCount = Array.isArray(result?.bodyCentroids)
         ? result.bodyCentroids.length

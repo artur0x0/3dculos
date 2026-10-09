@@ -255,9 +255,11 @@ ok('index exports G11 helpers', typeof gitIndex.createVaultBranch === 'function'
 ok('adapter has deleteBranch + squashMerge', typeof gitIndex.createMockGithubAdapter({}).deleteBranch === 'function'
   && typeof gitIndex.createMockGithubAdapter({}).squashMerge === 'function');
 ok('architecture mentions G11 Parts chrome', /G11/.test(arch) && /Save = Commit|Save \(commit\)|Parts vault chrome/i.test(arch));
-ok('Toolbar Script is Upload+Download only (G12)', (() => {
+ok('model Upload and Download live on Parts, not the Script strip (G12)', (() => {
   const toolbar = readFileSync(new URL('../../src/components/Toolbar.jsx', import.meta.url), 'utf8');
-  return /data-script-upload=""/.test(toolbar) && /data-script-download=""/.test(toolbar)
+  const parts = readFileSync(new URL('../../src/components/PartFeed.jsx', import.meta.url), 'utf8');
+  return /data-script-upload=""/.test(parts) && /data-script-download=""/.test(parts)
+    && !/data-script-upload/.test(toolbar) && !/data-script-download/.test(toolbar)
     && !/title="Open File"/.test(toolbar) && !/onSave/.test(toolbar)
     && !/FolderOpen/.test(toolbar);
 })());

@@ -34,6 +34,18 @@ import CartDrop from './components/CartDrop';
 import { 
   importFile,
 } from './utils/importModel';
+import { downloadModelFromMesh } from './utils/exportModel';
+import { encodeMesh } from './utils/meshFormat';
+import {
+  checkRawUpload,
+  checkStoredMesh,
+  dedupedImportName,
+  forgetPartAssets,
+  importMeshScript,
+  meshAssetName,
+  rememberPartAssets,
+  selectedPartDownload,
+} from './utils/meshAssets';
 import { 
   hasCheckoutReturnFlag, 
   hasPendingCheckout,
@@ -105,6 +117,7 @@ import { clearPaintColors, commitPaintColors, removeUnmatchedColors } from './ut
 import {
   deletePartScript,
   loadAssemblyDocumentStatus,
+  loadPartAssets,
   loadPartScripts,
   loadPartSyncFlags,
   saveAssemblyDocument,
@@ -210,6 +223,7 @@ import {
   sanitizeVaultName,
   planMoveToGit,
   moveToGit,
+  putAsset,
 } from './utils/git';
 import PartFeed from './components/PartFeed';
 import manifoldContext from './utils/ManifoldWorker';
@@ -679,7 +693,11 @@ const App = () => {
   const [showOrderModal, setShowOrderModal] = useState(false);
   const [orderData, setOrderData] = useState(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
   const [uploadError, setUploadError] = useState(null);
+  const [uploadNotice, setUploadNotice] = useState(null);
+  const partMeshMetaRef = useRef({});
+  const [partMeshMeta, setPartMeshMeta] = useState({});
   const [manifoldReady, setManifoldReady] = useState(false);
   const manifoldReadyRef = useRef(false);
   const [showLoginModal, setShowLoginModal] = useState(false);
@@ -1749,11 +1767,12 @@ const App = () => {
     setPartRuns(partRunsRef.current);
   };
 
-  const rememberAssembly = (doc) => {
+  const rememberAssembly = (doc, opts = {}) => {
     const clean = serializeAssembly(doc);
     assemblyRef.current = clean;
     setAssemblyDoc(clean);
-    if (!bootReadOnlyRef.current) {
+    // Reauth boot is read-only, but an explicit upload is a user write.
+    if (!bootReadOnlyRef.current || opts.force) {
       assemblyDocPersistRef.current = saveAssemblyDocument(clean);
       const id = bootUserId(user);
       if (id) {
@@ -1842,9 +1861,12 @@ const App = () => {
           doc,
           scripts,
           ids: otherIds,
-          execute: (script) => {
+          execute: (script, execOpts) => {
             noteBuild();
-            return manifoldContext.executeScript(script, { timeoutMs: 30000 });
+            return manifoldContext.executeScript(script, {
+              timeoutMs: 30000,
+              importedModels: execOpts?.importedModels,
+            });
           },
         });
       } catch (err) {
@@ -1856,7 +1878,11 @@ const App = () => {
       const runs = { ...(other.runs || {}) };
       if (willBuildActive) {
         noteBuild();
-        const runOpts = { noShadow: true, preservePicks: opts.preservePicks === true };
+        const runOpts = {
+          noShadow: true,
+          preservePicks: opts.preservePicks === true,
+          partId: viewId,
+        };
         let run = await viewportRef.current?.executeScript(scripts[viewId], runOpts);
         if (run == null || run === false) {
           await new Promise((resolve) => { setTimeout(resolve, 200); });
@@ -1922,6 +1948,22 @@ const App = () => {
   };
 
   const finishOpenedPart = async (saved, scripts, progress) => {
+    try {
+      const ids = (saved?.parts || []).map((part) => part.id);
+      const loaded = await loadPartAssets(ids);
+      const next = {};
+      for (const id of ids) {
+        const row = loaded[String(id)];
+        if (!row?.assets || typeof row.assets !== 'object' || Array.isArray(row.assets)) continue;
+        if (!Object.keys(row.assets).length) continue;
+        next[String(id)] = { assets: row.assets, meshSynced: row.meshSynced === true };
+        rememberPartAssets(id, row.assets);
+      }
+      partMeshMetaRef.current = next;
+      setPartMeshMeta(next);
+    } catch (err) {
+      console.warn('[App] Mesh asset hydrate failed:', err?.message || err);
+    }
     const active = saved?.parts?.find((part) => part.id === saved.activeId) || saved?.parts?.[0];
     if (!active) return;
     setCurrentFilename(active.name);
@@ -4389,6 +4431,8 @@ const App = () => {
       }],
     });
     refreshGenRef.current += 1;
+    partMeshMetaRef.current = {};
+    setPartMeshMeta({});
     // Optimistic: show the seeded assembly immediately, then persist.
     rememberScripts({ [seedId]: starter });
     rememberAssembly(seedDoc);
@@ -4562,6 +4606,13 @@ const App = () => {
     scripts = dropPartRecord(scripts, key);
     rememberScripts(scripts);
     deletePartScript(key);
+    forgetPartAssets(key);
+    if (partMeshMetaRef.current[key]) {
+      const nextMeta = { ...partMeshMetaRef.current };
+      delete nextMeta[key];
+      partMeshMetaRef.current = nextMeta;
+      setPartMeshMeta(nextMeta);
+    }
     dropPartHistory(key);
     delete partLeftoversRef.current[key];
 
@@ -5857,36 +5908,176 @@ const App = () => {
     setOrderData(null);
   };
 
-  // Model import handler function
+  // Upload creates a new part. It never overwrites the script that is open.
+  // The mesh stays in the local asset cache. This does not commit to the vault.
   const handleImport = async (file) => {
+    if (!file) return;
     if (!manifoldReady) {
       setUploadError('Manifold not ready. Please wait...');
       return;
     }
-    
+    const doc = assemblyRef.current;
+    if (!doc) {
+      setUploadError('Open or create an assembly before uploading a model.');
+      return;
+    }
+
     setIsUploading(true);
     setUploadError(null);
-    
-    const filename = file.name;
-    const ext = filename.toLowerCase().slice(filename.lastIndexOf('.'));
-    
+    setUploadNotice(null);
+
     try {
-      console.log(`[App] Importing ${ext} file...`);
-      
-      // Unified import handles routing to frontend (STL/OBJ/3MF) or backend (STEP)
-      const result = await importFile(file);
-      
-      // Load the generated script into the editor
-      codeEditorRef.current?.loadContent(result.script, `Imported ${result.filename}`);
-      
-      // Set filename (without extension for display)
-      setCurrentFilename(result.filename.replace(/\.[^/.]+$/, ''));
-      
+      const raw = checkRawUpload(file.size);
+      if (!raw.ok) {
+        setUploadError(raw.message);
+        return;
+      }
+
+      const result = await importFile(file, { skipCache: true });
+      const mesh = result?.meshData;
+      if (!mesh?.vertProperties || !mesh?.triVerts) {
+        setUploadError('That file did not produce a mesh.');
+        return;
+      }
+      const bytes = encodeMesh(mesh);
+      const stored = checkStoredMesh(bytes.byteLength);
+      if (!stored.ok) {
+        setUploadError(stored.message);
+        return;
+      }
+      const sha = await putAsset(bytes);
+
+      const live = codeEditorRef.current?.getContent?.();
+      const prev = doc.activeId;
+      const scripts = { ...partScriptsRef.current };
+      if (prev && !suppressPartSaveRef.current && typeof live === 'string') {
+        scripts[prev] = live;
+        savePartScript(prev, live);
+        stashPartHistory(prev, live);
+      }
+
+      const name = dedupedImportName(file.name, (doc.parts || []).map((part) => part.name));
+      const assetName = meshAssetName(name);
+      const id = newLocalPartId();
+      let starter = importMeshScript(assetName);
+      let surfId = null;
+      if (doc.source === 'git') {
+        surfId = mintSurfId();
+        starter = withSurfId(starter, surfId);
+      }
+      const order = doc.parts.length;
+      const part = {
+        id,
+        name,
+        visible: true,
+        order,
+        position: order === 0 ? undefined : [order * 40, 0, 0],
+        ...(doc.source === 'git' ? { isSynced: false, ...(surfId ? { surfId } : {}) } : {}),
+      };
+      const assets = { [assetName]: sha };
+      scripts[id] = starter;
+      rememberScripts(scripts);
+      rememberPartAssets(id, assets);
+      const nextMeta = {
+        ...partMeshMetaRef.current,
+        [id]: { assets, meshSynced: false },
+      };
+      partMeshMetaRef.current = nextMeta;
+      setPartMeshMeta(nextMeta);
+      partSaveEpochRef.current += 1;
+      refreshGenRef.current += 1;
+      rememberCadPart(id);
+      rememberAssembly({
+        ...doc,
+        activeId: id,
+        parts: [...doc.parts, part],
+      }, { force: true });
+      focusPartHistory(id, starter);
+      suppressPartSaveRef.current = false;
+      setCurrentFilename(name);
+      try {
+        const saved = await savePartScript(id, starter, {
+          assets,
+          meshSynced: false,
+          ...(doc.source === 'git' ? { isSynced: false } : {}),
+        });
+        if (!saved) throw new Error('Could not save the uploaded part');
+        saveEditorDraft({ script: starter, filename: name, partId: id });
+        codeEditorRef.current?.loadContent(starter, name, false);
+        if (stored.warn) setUploadNotice(stored.message);
+      } catch (err) {
+        const cur = assemblyRef.current;
+        if (cur?.parts?.some((row) => row.id === id)) {
+          rememberAssembly(removePart(cur, id), { force: true });
+          rememberScripts(dropPartRecord(partScriptsRef.current, id));
+        }
+        forgetPartAssets(id);
+        const dropped = { ...partMeshMetaRef.current };
+        delete dropped[id];
+        partMeshMetaRef.current = dropped;
+        setPartMeshMeta(dropped);
+        try { await deletePartScript(id); } catch { /* ignore */ }
+        rememberCadPart(prev || null);
+        const prevPart = assemblyRef.current?.parts?.find((row) => row.id === prev);
+        setCurrentFilename(prevPart?.name || null);
+        setUploadNotice(null);
+        setUploadError(err?.message || 'Could not save the uploaded part');
+      }
     } catch (error) {
       console.error('[App] Import error:', error);
       setUploadError(error.message || 'Failed to import file');
     } finally {
       setIsUploading(false);
+    }
+  };
+
+  const handleDownloadPart = async () => {
+    const doc = assemblyRef.current;
+    const id = cadPartIdRef.current || doc?.activeId;
+    const part = doc?.parts?.find((row) => row.id === id) || null;
+    const run = id ? partRunsRef.current?.[id] : null;
+    const leftover = id ? partLeftoversRef.current?.[id] : null;
+    let decision = selectedPartDownload({ part, run, leftover });
+    if (!decision.ok && !decision.needsRun) {
+      setUploadNotice(null);
+      setUploadError(decision.message);
+      return;
+    }
+    setIsDownloading(true);
+    setUploadError(null);
+    try {
+      if (!decision.ok) {
+        const scripts = { ...partScriptsRef.current };
+        const live = codeEditorRef.current?.getContent?.();
+        if (id === doc.activeId && !suppressPartSaveRef.current && typeof live === 'string') {
+          scripts[id] = live;
+        }
+        const result = await runAssemblyParts({
+          doc,
+          scripts,
+          ids: [id],
+          execute: (script, execOpts) => manifoldContext.executeScript(script, {
+            timeoutMs: 30000,
+            importedModels: execOpts?.importedModels,
+          }),
+        });
+        const ran = result.runs?.[id];
+        if (ran?.ok && ran.mesh?.vertProperties) {
+          partLeftoversRef.current[id] = ran.mesh;
+          decision = { ok: true, mesh: ran.mesh, filename: decision.filename || part.name };
+        } else {
+          const why = ran?.error && ran.error !== 'failed' && ran.error !== 'missing'
+            ? ran.error
+            : (decision.message || 'No model to export');
+          setUploadError(part ? `${part.name} failed: ${why}` : why);
+          return;
+        }
+      }
+      await downloadModelFromMesh(decision.mesh, decision.filename || part.name || 'part');
+    } catch (error) {
+      setUploadError(error?.message || 'Could not download part');
+    } finally {
+      setIsDownloading(false);
     }
   };
 
@@ -6028,8 +6219,12 @@ const App = () => {
         renameHeld: !!gitBaseline?.renamePending,
       });
       const offerRepo = assemblyDoc.source === 'git' && showAddToRepo(row);
+      const meshMeta = partMeshMeta[row.id];
+      const meshAssets = meshMeta?.assets;
       return {
         ...row,
+        meshLocal: !!(meshAssets && typeof meshAssets === 'object' && Object.keys(meshAssets).length),
+        meshSynced: meshMeta?.meshSynced === true,
         dirty: chrome.dirty,
         behind: behindPartIdSet.has(row.id),
         pending: chrome.pending,
@@ -6093,6 +6288,10 @@ const App = () => {
       onLoadFile={handleLoadAssembly}
       onResolveFile={handleResolvePartFile}
       onAddPart={handleAddPart}
+      onUpload={handleImport}
+      onDownload={handleDownloadPart}
+      isUploading={isUploading}
+      isDownloading={isDownloading}
       onNewAssembly={handleNewAssembly}
       onFlushLocalAssembly={handleFlushLocalAssembly}
       assemblyLeaveSafe={!needsAssemblyLeaveGuard(assemblyDoc, {
@@ -6219,7 +6418,6 @@ const App = () => {
               profileVaultName={gitDefaultVaultName()}
               currentScript={currentScript}
               onFaceSelected={handleFaceSelected}
-              onUpload={handleImport}
               onUndo={handleUndo}
               onRedo={handleRedo}
               canUndo={canUndo()}
@@ -6230,7 +6428,6 @@ const App = () => {
               onRenameFile={handleRenameFile}
               onRenameAssembly={handleRenameAssembly}
               onSelectAll={handleSelectAll}
-              isUploading={isUploading || gameLoading}
               mode={appMode}
               ghostMeshData={ghostMeshData}
               onStartGame={handleStartGame}
@@ -6266,7 +6463,6 @@ const App = () => {
               onCommitDeleteFace={handleCommitDeleteFace}
               getHelperBuffer={() => codeEditorRef.current?.getContent?.() || ''}
               cadToolbarHost={cadToolbarHost}
-              scriptEditorVisible={appMode === 'game' || isScriptStage}
               onRunAssembly={() => {
                 const code = codeEditorRef.current?.getContent?.();
                 if (code == null) return false;
@@ -6562,7 +6758,7 @@ const App = () => {
             </div>
           )}
           {uploadError && (
-            <div className="absolute top-4 left-1/2 transform -translate-x-1/2 z-50 max-w-md">
+            <div className="absolute top-4 left-1/2 transform -translate-x-1/2 z-50 max-w-md" data-upload-toast="" data-upload-toast-kind="error">
               <ErrorPopup
                 tone="banner"
                 onDismiss={() => setUploadError(null)}
@@ -6574,7 +6770,18 @@ const App = () => {
               </ErrorPopup>
             </div>
           )}
-          {gitBehindToast && !uploadError && (
+          {uploadNotice && !uploadError && (
+            <div className="absolute top-4 left-1/2 transform -translate-x-1/2 z-50 max-w-md" data-upload-toast="" data-upload-toast-kind="warn">
+              <ErrorPopup
+                tone="warn"
+                onDismiss={() => setUploadNotice(null)}
+                className="px-4 py-2"
+              >
+                {uploadNotice}
+              </ErrorPopup>
+            </div>
+          )}
+          {gitBehindToast && !uploadError && !uploadNotice && (
             <div className="absolute top-4 left-1/2 transform -translate-x-1/2 z-50 max-w-md" data-git-behind-toast="">
               <ErrorPopup
                 tone="warn"
@@ -6680,7 +6887,6 @@ const App = () => {
             profileVaultName={gitDefaultVaultName()}
             currentScript={currentScript}
             onFaceSelected={handleFaceSelected}
-            onUpload={handleImport}
             onUndo={handleUndo}
             onRedo={handleRedo}
             canUndo={canUndo()}
@@ -6691,7 +6897,6 @@ const App = () => {
             onRenameFile={handleRenameFile}
             onRenameAssembly={handleRenameAssembly}
             onSelectAll={handleSelectAll}
-            isUploading={isUploading || gameLoading}
             mode={appMode}
             ghostMeshData={ghostMeshData}
             onStartGame={handleStartGame}
@@ -6727,7 +6932,6 @@ const App = () => {
               onCommitDeleteFace={handleCommitDeleteFace}
             getHelperBuffer={() => codeEditorRef.current?.getContent?.() || ''}
             cadToolbarHost={cadToolbarHost}
-            scriptEditorVisible={appMode === 'game' || scriptEditorOpen}
             onRunAssembly={() => {
               const code = codeEditorRef.current?.getContent?.();
               if (code == null) return false;
@@ -6878,7 +7082,7 @@ const App = () => {
             </div>
           )}
         {uploadError && (
-            <div className="absolute top-4 left-1/2 transform -translate-x-1/2 z-50 max-w-md">
+            <div className="absolute top-4 left-1/2 transform -translate-x-1/2 z-50 max-w-md" data-upload-toast="" data-upload-toast-kind="error">
               <ErrorPopup
                 tone="banner"
                 onDismiss={() => setUploadError(null)}
@@ -6890,7 +7094,18 @@ const App = () => {
               </ErrorPopup>
             </div>
           )}
-          {gitBehindToast && !uploadError && (
+          {uploadNotice && !uploadError && (
+            <div className="absolute top-4 left-1/2 transform -translate-x-1/2 z-50 max-w-md" data-upload-toast="" data-upload-toast-kind="warn">
+              <ErrorPopup
+                tone="warn"
+                onDismiss={() => setUploadNotice(null)}
+                className="px-4 py-2"
+              >
+                {uploadNotice}
+              </ErrorPopup>
+            </div>
+          )}
+          {gitBehindToast && !uploadError && !uploadNotice && (
             <div className="absolute top-4 left-1/2 transform -translate-x-1/2 z-50 max-w-md" data-git-behind-toast="">
               <ErrorPopup
                 tone="warn"

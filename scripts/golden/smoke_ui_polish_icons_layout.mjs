@@ -418,12 +418,12 @@ const contourRail = read('../../src/components/ContourModeRail.jsx');
   check('CAD strip has a Run button', runAt > 0);
   // First means first: no other button may open before it.
   check('Run is the first button in the strip',
-    runAt < strip.indexOf('data-script-upload=""'));
+    runAt > 0 && !/<button/.test(strip.slice(0, runAt)));
   check('Account left the strip for the viewport profile chip (G9)',
     !/onClick=\{onAccount\}/.test(strip) && !/title="Account"/.test(strip));
   check('Run is green', /text-green-400 disabled:opacity-60/.test(strip));
-  // Run's section now holds Run + Select all (both editor actions), then the
-  // divider before the model Upload/Download buttons (G12).
+  // Run's section holds Run + Select all (both editor actions), then a divider.
+  // Model Upload and Download live on the Parts ribbon.
   check('Run shares its section with Select all, then a divider',
     /data-cad-run[\s\S]{0,900}?data-cad-select-all[\s\S]{0,300}?<\/button>\s*<div className=\{divider\} \/>/.test(strip));
   check('Select all is at Run\'s icon size, not its old 16',
