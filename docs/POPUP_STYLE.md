@@ -14,17 +14,17 @@ over inventing a new modal layout.
 - **`sheetMetal/SmControls.jsx`** — orange glass bottom sheet (`SmPopup`) for
   Sheet Metal: ✕ top-right exits the flow, Back / Accept footer, 44px tap
   targets, ≥16px number / select fields (`PARTS_TEXT_INPUT_*`).
-- **`ShellModeChip.jsx`** — cyan glass card (same shell as Contour / Loft /
-  Workplane); face-pick opening + Wall `NumberField` + Face/Closed segmented
-  control. Taps add faces with no modifier (tap a selected face to remove it,
-  same as the edge picker). Undo drops the last face; Clear drops all.
-  Confirm writes one `hollow()`; grey X exits with no write.
-- **`DraftModeChip.jsx`** — cyan glass card (same shell as Shell); first tap
+- **`ShellModeChip.jsx`** — the shared feature card (`FeatureSheet`); face-pick
+  opening + Wall `NumberField` + Face/Closed segmented control. Taps add faces
+  with no modifier (tap a selected face to remove it, same as the edge picker).
+  Undo drops the last face; Clear drops all. Confirm writes one `hollow()`;
+  X exits with no write. Hidden in game.
+- **`DraftModeChip.jsx`** — the shared feature card (`FeatureSheet`); first tap
   is the neutral face (its normal is the pull), Flip reverses that normal,
   later taps are the faces to draft (tap again to remove). Undo drops only
   the last drafted face; Clear drops drafted faces and keeps the neutral.
-  One angle, default 2°. Confirm writes one `draftFaces()`; grey X exits
-  with no write. No shift-click.
+  One angle, default 2°. Confirm writes one `draftFaces()`; X exits
+  with no write. No shift-click. Hidden in game.
 - **`CutModeChip.jsx`** — cyan glass card (same shell as Shell). The plane is a
   planar face or an explicit XY / YZ / ZX plane. Offset is along that normal
   for both. A face is written as `{ center, normal }`, plus `offset` when it
@@ -59,19 +59,19 @@ over inventing a new modal layout.
   that normal. The body is previewed at the new translation until Confirm. No
   viewport arrows. Confirm writes one `move()` and replaces a previous Move
   block; grey X exits with no write.
-- **`MoveFaceModeChip.jsx`** — cyan glass card (same shell as Shell). Tap adds a
+- **`MoveFaceModeChip.jsx`** — the shared feature card (`FeatureSheet`). Tap adds a
   face, tap again removes it. Undo drops the last face. Clear drops the faces.
   Distance is along each face normal. Flip reverses that normal. No shift-click.
   A double click does not select the body. Confirm writes one `moveFace()` and
-  replaces a previous Move Face block; grey X exits with no write. Live preview
-  while the distance changes. This is not the body `move()` helper.
-- **`DeleteFaceModeChip.jsx`** — cyan glass card (same shell as Shell). Tap adds a
+  replaces a previous Move Face block; X exits with no write. Live preview
+  while the distance changes. This is not the body `move()` helper. Hidden in game.
+- **`DeleteFaceModeChip.jsx`** — the shared feature card (`FeatureSheet`). Tap adds a
   face, tap again removes it. The tap does not run `deleteFace`. Undo drops the
   last face. Clear drops the faces. No shift-click. A double click does not
   select the body. Confirm writes one `deleteFace()` for every picked face and
-  replaces a previous Delete Face block; grey X exits with no write. A heal
+  replaces a previous Delete Face block; X exits with no write. A heal
   that cannot stay a closed solid throws when Confirm runs the script, not on
-  the tap.
+  the tap. Hidden in game.
 
 ## Error toasts
 

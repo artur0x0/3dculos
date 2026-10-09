@@ -128,6 +128,11 @@ const Yp = { center: [0, 15, 0], normal: [0, 1, 0] };
   check('missed tap does not clear the draft set', /Preserve draft face selection/.test(view));
   check('Viewport confirm is acceptDraft', /onConfirm=\{acceptDraft\}/.test(view) && /onCommitDraft/.test(view));
   check('App writes composeDraftCommit', /composeDraftCommit/.test(app) && /onCommitDraft=\{handleCommitDraft\}/.test(app));
+  check('draft uses the shared feature card',
+    /<FeatureSheet\b/.test(chip)
+    && /onCancel=\{onDismiss\}/.test(chip)
+    && /onConfirm=\{onConfirm\}/.test(chip)
+    && /draftMode && mode !== 'game'/.test(view));
   check('chip has Flip, Undo, Clear',
     /data-draft-flip/.test(chip) && /data-draft-undo/.test(chip) && /data-draft-clear/.test(chip));
   check('chip default angle is signed', /min=\{-45\}/.test(chip) && /id="draft-angle"/.test(chip));

@@ -66,8 +66,12 @@ const CHAMFER = { center: [4, 0, 4], normal: [Math.SQRT1_2, 0, Math.SQRT1_2] };
   check('sticky picker has Undo and Clear and no shift',
     /data-delete-face-undo/.test(chip) && /data-delete-face-clear/.test(chip)
     && !/shiftKey/.test(chip));
-  check('phone chip uses the compact shell',
-    /bottom-14 left-1\/2 -translate-x-1\/2 max-w-\[min\(16rem,calc\(100%-9rem\)\)\]/.test(chip));
+  check('delete face uses the shared feature card',
+    /<FeatureSheet\b/.test(chip)
+    && /compact=\{compact\}/.test(chip)
+    && /onCancel=\{onDismiss\}/.test(chip)
+    && /onConfirm=\{onConfirm\}/.test(chip)
+    && /deleteFaceMode && mode !== 'game'/.test(view));
   check('App writes one composeDeleteFaceCommit on both viewports',
     /composeDeleteFaceCommit/.test(app)
     && (app.match(/onCommitDeleteFace=\{handleCommitDeleteFace\}/g) || []).length === 2);
