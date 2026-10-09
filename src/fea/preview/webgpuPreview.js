@@ -8,6 +8,7 @@
  * is a failed probe: the panel hides the sliders and Run is unchanged.
  */
 
+/* global GPUBufferUsage, GPUShaderStage, GPUMapMode */
 import { PRE_SMOOTH, POST_SMOOTH, solveCoarse } from './multigrid.js';
 import { PREVIEW_WGSL } from './previewShader.js';
 import { finishVoxelPreview, prepareVoxelPreview } from './solvePreview.js';

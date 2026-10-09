@@ -9,6 +9,7 @@
  * the script reports the skip and exits 0. Screenshots go to
  * GOLDEN_SHOT_DIR or os.tmpdir(), never /opt/cursor/artifacts.
  */
+/* global document, indexedDB, localStorage, navigator, Event, PointerEvent */
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';

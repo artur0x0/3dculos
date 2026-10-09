@@ -181,6 +181,6 @@ function solved(value) {
 
 function flush() {
   return new Promise((resolve) => {
-    setImmediate(resolve);
+    setTimeout(resolve, 0);
   });
 }
