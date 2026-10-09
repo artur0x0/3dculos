@@ -58,5 +58,9 @@ logo.*
 # OCCT STEP→OBJ converter — built locally against ~/occt-install, binary never committed
 backend/converter/obj_converter
 
+# FEA crate build output. packages/surfcad-fea/pkg is the committed wasm artifact.
+packages/surfcad-fea/target/
+packages/surfcad-fea/pkg-rebuild/
+
 # Puzzle win capture (Slice 04)
 backend/data/wins.jsonl
