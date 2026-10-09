@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test, { describe } from 'node:test';
 import * as fea from '../../packages/surfcad-fea/pkg/surfcad_fea.js';
+import { effectiveMaterial } from './materials.js';
 import { packMesh } from './meshTransfer.js';
 
 const wasmUrl = new URL('../../packages/surfcad-fea/pkg/surfcad_fea_bg.wasm', import.meta.url);
@@ -90,6 +91,36 @@ test('fixture distance and material aliases stay deterministic', () => {
   assert.equal(canonical.p95, 5);
   assert.equal(canonical.safetyFactor, 276 / 5);
   assert.equal(alias.safetyFactor, canonical.safetyFactor);
+});
+
+test('a null yield leaves the safety factor null and does not throw', () => {
+  const pa12 = effectiveMaterial('pa12-hp-mjf');
+  assert.equal(pa12.yield_MPa, null);
+  assert.equal(pa12.nu, 0.39);
+  const positions = new Float32Array([0, 0, 0, 0, 0, 10]);
+  const result = fea.solve(
+    null,
+    positions,
+    new Uint32Array(),
+    new Uint32Array(),
+    { E_MPa: pa12.E_MPa, nu: pa12.nu, yield_MPa: pa12.yield_MPa },
+    'desktop',
+  );
+  assert.ok(result.p95 > 0);
+  assert.equal(result.safetyFactor, null);
+  assert.equal(result.fos, null);
+  assert.ok(result.warnings.some((warning) => warning.code === 'missing-yield'));
+
+  const omitted = fea.solve(
+    null,
+    positions,
+    new Uint32Array(),
+    new Uint32Array(),
+    { E_MPa: pa12.E_MPa, nu: pa12.nu },
+    'desktop',
+  );
+  assert.equal(omitted.safetyFactor, null);
+  assert.ok(omitted.warnings.some((warning) => warning.code === 'missing-yield'));
 });
 
 test('an empty mesh is still labeled as a stub', () => {

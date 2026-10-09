@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { MATERIALS, getMaterial, solverMaterial, solverMaterialForStudy } from './materials.js';
+import { MATERIALS, effectiveMaterial, getMaterial, solverMaterial, solverMaterialForStudy } from './materials.js';
 
 const IDS = [
   'al-6061-t6',
@@ -41,7 +41,15 @@ test('every library entry has SI units, a citation, and sane bounds', () => {
       // Megapascals, not gigapascals: metals are tens of thousands, not ~70.
       assert.ok(entry.E_MPa >= 1000 && entry.E_MPa <= 250000, entry.id);
     }
-    if (entry.nu != null) assert.ok(entry.nu > 0 && entry.nu < 0.5, entry.id);
+    if (entry.nu != null) {
+      assert.ok(entry.nu > 0 && entry.nu < 0.5, entry.id);
+      assert.equal(entry.nu_assumed, undefined, entry.id);
+    } else {
+      assert.equal(entry.nuSource, 'assumed', entry.id);
+      assert.ok(entry.nu_assumed > 0 && entry.nu_assumed < 0.5, entry.id);
+      assert.equal(typeof entry.nuRationale, 'string');
+      assert.ok(entry.nuRationale.length > 0, entry.id);
+    }
     if (entry.yield_MPa != null) assert.ok(entry.yield_MPa > 0 && entry.yield_MPa < 2000, entry.id);
     // kg/m³, not g/cm³: metals sit in the thousands.
     assert.ok(entry.density_kg_m3 >= 800 && entry.density_kg_m3 <= 20000, entry.id);
@@ -108,4 +116,47 @@ test('printed plastics keep the datasheet orientation and do not invent Poisson 
   const study = solverMaterialForStudy({ material: { id: 'pla-ultimaker' } });
   assert.equal(study.ok, false);
   assert.match(study.errors.join(' '), /nu/);
+});
+
+test('effectiveMaterial fills an assumed Poisson ratio and leaves a missing yield null', () => {
+  const sourced = effectiveMaterial('al-6061-t6');
+  assert.deepEqual(sourced, {
+    E_MPa: 68900,
+    nu: 0.33,
+    yield_MPa: 276,
+    assumptions: [],
+    warnings: [],
+  });
+  assert.equal(getMaterial('al-6061-t6').nuSource, undefined);
+
+  const stainless = effectiveMaterial('ss-304-annealed');
+  assert.equal(getMaterial('ss-304-annealed').nu, null);
+  assert.equal(stainless.nu, 0.29);
+  assert.equal(stainless.yield_MPa, 205);
+  assert.deepEqual(stainless.assumptions, [{
+    field: 'nu',
+    value: 0.29,
+    source: 'assumed',
+    rationale: getMaterial('ss-304-annealed').nuRationale,
+  }]);
+  assert.match(stainless.assumptions[0].rationale, /0\.27/);
+  assert.deepEqual(stainless.warnings, []);
+
+  assert.equal(effectiveMaterial('pla-ultimaker').nu, 0.36);
+  assert.equal(effectiveMaterial('pla-ultimaker').yield_MPa, 52.5);
+  assert.equal(effectiveMaterial('abs-m30').nu, 0.35);
+  assert.equal(effectiveMaterial('petg-prusament').nu, 0.38);
+
+  const pa12 = effectiveMaterial('pa12-hp-mjf');
+  assert.equal(getMaterial('pa12-hp-mjf').nu, null);
+  assert.equal(getMaterial('pa12-hp-mjf').yield_MPa, null);
+  assert.equal(pa12.nu, 0.39);
+  assert.equal(pa12.yield_MPa, null);
+  assert.equal(pa12.assumptions.length, 1);
+  assert.equal(pa12.assumptions[0].source, 'assumed');
+  assert.equal(pa12.warnings.length, 1);
+  assert.equal(pa12.warnings[0].code, 'missing-yield');
+  assert.match(pa12.warnings[0].msg, /safety factor is null/);
+
+  assert.throws(() => effectiveMaterial('not-a-material'), /unknown material id/);
 });

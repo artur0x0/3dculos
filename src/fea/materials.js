@@ -4,9 +4,13 @@
  * Stored units match feaClient.solve(): E_MPa and yield_MPa are megapascals,
  * nu is dimensionless, density_kg_m3 is kilograms per cubic metre
  * (g/cm³ × 1000). A null field was not on the cited source. Do not fill it
- * in. Printed polymers are anisotropic: the stored E and yield are one
- * orientation, named on the entry, and a different orientation is a
- * different material.
+ * in. Entries with no single sourced Poisson ratio carry `nu_assumed`,
+ * `nuSource: 'assumed'`, and a one-line `nuRationale`. That number is not a
+ * datasheet value. `effectiveMaterial` is what feaClient should pass:
+ * it uses the assumed ratio so solve() has a ν, and a null yield stays
+ * null so the safety factor is null instead of a crash. Printed polymers
+ * are anisotropic: the stored E and yield are one orientation, named on
+ * the entry, and a different orientation is a different material.
  *
  * Values were read from the cited URLs on 2026-10-09. asm.matweb.com and
  * www.matweb.com answered direct fetches with a gateway timeout or a
@@ -111,6 +115,9 @@ const MATERIALS_LIST = [
     E_MPa: 193000,
     nu: null,
     nuBasis: 'unverified',
+    nu_assumed: 0.29,
+    nuSource: 'assumed',
+    nuRationale: 'Midpoint of the eFunda annealed range 0.27–0.30; that page does not give a single Poisson ratio.',
     yield_MPa: 205,
     density_kg_m3: 8000,
     anisotropic: false,
@@ -149,6 +156,9 @@ const MATERIALS_LIST = [
     E_MPa: 3250,
     nu: null,
     nuBasis: 'unverified',
+    nu_assumed: 0.36,
+    nuSource: 'assumed',
+    nuRationale: 'Assumed. The UltiMaker TDS has no Poisson ratio; 0.36 is a PLA value used in published FEA (https://link.springer.com/article/10.1007/s00170-025-15314-3), not a measurement of this filament.',
     yield_MPa: 52.5,
     density_kg_m3: 1240,
     anisotropic: true,
@@ -169,6 +179,9 @@ const MATERIALS_LIST = [
     E_MPa: 2400,
     nu: null,
     nuBasis: 'unverified',
+    nu_assumed: 0.35,
+    nuSource: 'assumed',
+    nuRationale: 'Assumed. The Stratasys ABS-M30 sheet has no Poisson ratio; 0.35 is a common generic-ABS textbook value and was not confirmed on a live datasheet for this FDM grade.',
     yield_MPa: 30.8,
     density_kg_m3: 1050,
     anisotropic: true,
@@ -189,6 +202,9 @@ const MATERIALS_LIST = [
     E_MPa: 1500,
     nu: null,
     nuBasis: 'unverified',
+    nu_assumed: 0.38,
+    nuSource: 'assumed',
+    nuRationale: 'Assumed. The Prusament TDS has no Poisson ratio; 0.38 is a commonly used PETG value and was not confirmed on a manufacturer sheet for this filament.',
     yield_MPa: 47,
     density_kg_m3: 1270,
     anisotropic: true,
@@ -209,6 +225,9 @@ const MATERIALS_LIST = [
     E_MPa: 1700,
     nu: null,
     nuBasis: 'unverified',
+    nu_assumed: 0.39,
+    nuSource: 'assumed',
+    nuRationale: 'Assumed. The public HP PA 12 sheet has no Poisson ratio; 0.39 is a generic nylon-12 listing (https://engdatabase.com/compare/pa12-vs-pc-abs-blend), not this MJF grade.',
     yield_MPa: null,
     density_kg_m3: 1010,
     anisotropic: true,
@@ -244,8 +263,49 @@ export function getMaterial(id) {
 }
 
 /**
- * The { E_MPa, nu, yield_MPa } object feaClient.solve() accepts.
- * Incomplete datasheet entries (null nu or yield) do not invent a number.
+ * Constants feaClient.solve() should use. Sourced ν is preferred. When the
+ * datasheet has no single ν, `nu` is `nu_assumed` and `assumptions` carries
+ * the badge. `yield_MPa` stays null when the datasheet has no yield: the
+ * solver then returns a null safety factor and a warning, and does not throw.
+ */
+export function effectiveMaterial(id) {
+  const entry = typeof id === 'string' ? getMaterial(id) : null;
+  if (!entry) throw new Error(`unknown material id "${id}"`);
+  const assumptions = [];
+  let nu = entry.nu;
+  if (typeof nu !== 'number') {
+    if (entry.nuSource !== 'assumed' || typeof entry.nu_assumed !== 'number') {
+      throw new Error(`${entry.id}: nu is unset and no assumed Poisson ratio is recorded`);
+    }
+    nu = entry.nu_assumed;
+    assumptions.push({
+      field: 'nu',
+      value: entry.nu_assumed,
+      source: 'assumed',
+      rationale: entry.nuRationale,
+    });
+  }
+  const warnings = [];
+  if (entry.yield_MPa == null) {
+    warnings.push({
+      code: 'missing-yield',
+      field: 'yield_MPa',
+      msg: `${entry.name}: yield strength is not on the cited datasheet, so the safety factor is null`,
+    });
+  }
+  return {
+    E_MPa: entry.E_MPa,
+    nu,
+    yield_MPa: entry.yield_MPa == null ? null : entry.yield_MPa,
+    assumptions,
+    warnings,
+  };
+}
+
+/**
+ * The { E_MPa, nu, yield_MPa } object from the cited datasheet only.
+ * A null sourced ν or yield is an error here. Call effectiveMaterial when
+ * the solver needs a ν and an explicit assumption list.
  */
 export function solverMaterial(id) {
   const entry = typeof id === 'string' ? getMaterial(id) : id;
