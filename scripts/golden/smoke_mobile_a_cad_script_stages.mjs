@@ -35,7 +35,8 @@ console.log('mobile A: CAD / Script stages');
     'mobileStage state defaults to CAD and is session-sticky',
     /sessionStorage\.getItem\('3dculos\.mobileStage'\)/.test(app) &&
       /sessionStorage\.setItem\('3dculos\.mobileStage'/.test(app) &&
-      /return s === 'script' \? 'script' : 'cad'/.test(app),
+      /landingMobileStage/.test(app) &&
+      !/return s === 'script' \? 'script' : 'cad'/.test(app),
   );
   check(
     'stages apply only to mobile CAD (game keeps stacked split)',
@@ -62,12 +63,14 @@ console.log('mobile A: CAD / Script stages');
     /orientation="horizontal"/.test(app) && /height: mobileEditorPx/.test(app),
   );
   check(
-    'toggle offers CAD and Script buttons',
-    /data-stage-btn="cad"/.test(toggle) && /data-stage-btn="script"/.test(toggle),
+    'toggle offers CAD and Parts, not Script',
+    /data-stage-btn="cad"/.test(toggle) &&
+      /data-stage-btn="parts"/.test(toggle) &&
+      !/data-stage-btn="script"/.test(toggle),
   );
   check(
     'toggle marks pressed state for a11y',
-    /aria-pressed=\{isCad\}/.test(toggle) && /aria-pressed=\{isScript\}/.test(toggle),
+    /aria-pressed=\{isCad\}/.test(toggle) && /aria-pressed=\{isParts\}/.test(toggle),
   );
 }
 

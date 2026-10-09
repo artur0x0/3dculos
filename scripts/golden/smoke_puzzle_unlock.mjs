@@ -73,6 +73,11 @@ console.log('puzzle easter egg');
     /data-puzzle-unlock-toast/.test(unlock)
     && /Puzzle unlocked/.test(unlock)
     && !/localStorage|sessionStorage/.test(unlock));
+  const toggle = read('../../src/components/MobileStageToggle.jsx');
+  check('phone toggle cannot leave CAD for an empty script stage',
+    /data-stage-btn="cad"/.test(toggle)
+    && /data-stage-btn="parts"/.test(toggle)
+    && !/data-stage-btn="script"/.test(toggle));
 }
 
 if (failed) {

@@ -2,8 +2,9 @@
 /**
  * Slice Mobile B — home-indicator stage pill + Script-stage feature strip.
  *
- * Top CAD|Script text chrome is gone. Bottom glass pill with two dots
- * switches CAD ↔ Script (session sticky). Script stage shows a chip strip
+ * Top CAD|Script text chrome is gone. Bottom glass pill with two icons
+ * switches CAD ↔ Parts (session sticky). The script editor opens from a
+ * part pencil, not this pill. Script stage shows a chip strip
  * over marked Contour/Extrude/Fillet/… blocks; chips jump Monaco caret.
  * AI-on-pill-tap is hook-only (not wired). Desktop + game unchanged.
  */
@@ -44,19 +45,21 @@ console.log('mobile B: home-indicator + feature strip');
       /<MobileStageToggle stage=\{mobileStage\} onChange=\{setMobileStageSticky\} \/>/.test(app),
   );
   check(
-    'pill is a home-indicator with glass chip + two dots',
+    'pill is a home-indicator with glass chip + CAD and Parts icons',
     /data-home-indicator/.test(toggle) &&
       /data-home-indicator-pill/.test(toggle) &&
       /surface-glass-chip/.test(toggle) &&
       /data-stage-dot="cad"/.test(toggle) &&
-      /data-stage-dot="script"/.test(toggle),
+      /data-stage-dot="parts"/.test(toggle) &&
+      !/data-stage-dot="script"/.test(toggle),
   );
   check(
-    'pill keeps CAD/Script half hit targets + pressed a11y',
+    'pill keeps CAD/Parts hit targets + pressed a11y, and no script button',
     /data-stage-btn="cad"/.test(toggle) &&
-      /data-stage-btn="script"/.test(toggle) &&
+      /data-stage-btn="parts"/.test(toggle) &&
+      !/data-stage-btn="script"/.test(toggle) &&
       /aria-pressed=\{isCad\}/.test(toggle) &&
-      /aria-pressed=\{isScript\}/.test(toggle),
+      /aria-pressed=\{isParts\}/.test(toggle),
   );
   check(
     'safe-area inset padding on home indicator',

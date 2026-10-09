@@ -45,7 +45,7 @@ one shell you must change the other.
 - **Default CAD layout:** the parts feed and the viewport. Monaco is mounted but hidden (`data-script-editor-open="false"`).
 - **Pencil** (`data-part-edit-script`) on each part row, blue, same size as the eye. It activates that part if needed and opens Monaco for it only.
 - **Desktop drawer** (`data-script-drawer-side="right"`): under the feature ribbon (`top: 8rem`), inset so the left rail stays clear, drag the left edge to resize, Escape or Back closes it.
-- **Phone sheet** (`data-script-sheet`, 390px): full-screen over the home pill, Back to CAD (`data-script-editor-close`). A stored Script stage is not restored on load.
+- **Phone sheet** (`data-script-sheet`, 390px): full-screen over the home pill. Back is an ArrowLeft icon only (`data-script-editor-close`, `aria-label="Back to parts"`, 44×44) and returns to Parts with the same close-save. A stored or linked Script stage opens Parts.
 - **CAD corner.** There is no `data-cad-io-tray`. Upload and Download are on the Parts ribbon. Order is the part-row cart button (`data-part-order`). Run, Select all, Undo, and Redo stay in the editor.
 - **Puzzle easter egg** (`data-puzzle-unlock`, 44×44, viewport top-left): five taps in three seconds while `useAuthState().signedIn` (grey reauth counts) call `handleStartGame` and show `data-puzzle-unlock-toast` ("Puzzle unlocked"). The taps are not stored. Signed-out and pending sessions have no target and no toast. Nothing covers that corner.
 
@@ -231,8 +231,8 @@ Mobile specifics:
 - **Page zoom lock:** a pinch in the CAD view zooms the camera, not the browser page (iOS Safari and the installed PWA). Viewport meta locks scale (`maximum-scale=1`, `user-scalable=no`; `viewport-fit=cover` stays). The canvas and the right rail are `touch-action: none`; the left rail is `pan-y` so the tool list still scrolls; buttons are `manipulation` so a double-tap does not zoom. Off-canvas two-finger moves and Safari `gesture*` events are cancelled. One-finger scroll in Parts, Script, and scrolling popups stays. Inputs stay ≥16px so focus does not zoom.
 - **Stage toggle (Slice Mobile B):** `MobileStageToggle.jsx` is a bottom-centered
   iPhone Home Screen–style glass pill (`data-mobile-stage-home-indicator`,
-  `data-home-indicator-pill`) with three Lucide icons: CAD (`Box`), Parts
-  (`LayoutList`), Script (`square-text`). Tap a third to switch stage.
+  `data-home-indicator-pill`) with two Lucide icons: CAD (`Box`) and Parts
+  (`LayoutList`). There is no Script button. A part-row pencil opens the editor.
   Desktop has no mode toggle. The parts list sits left of the CAD view. The script
   editor is closed until the pencil or Edit script opens the right-hand drawer.
   The Parts stage is the part list, including group rows and the thread
@@ -637,7 +637,7 @@ Import `src/utils/importModel.js` (+ `POST /api/convert/step`); export
 - **Icons** are `lucide-react` only, with vendored exceptions in
   `src/components/icons/`: `SquareRoundCorner.jsx` (Fillet), `Angle.jsx`
   (Draft), `TrianglesCenterlineDashedVertical.jsx` (cross-section options),
-  and `SquareText.jsx` (Script pager). They postdate lucide 0.469, which this
+  and `SquareText.jsx` (unused; the phone pill no longer has a Script glyph). They postdate lucide 0.469, which this
   project pins. Delete them and import from `lucide-react` once the dep moves.
   `SheetMetalPlate.jsx` is the bent-plate glyph (not a lucide icon). The Shape
   rail and every sheet-metal feature badge use it.

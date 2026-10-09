@@ -13,6 +13,7 @@ import ErrorPopup from './components/ErrorPopup';
 import AssemblyOpenSpinner, { AssemblyOpenFailureToast } from './components/AssemblyOpenSpinner';
 import FeatureSheet from './components/FeatureSheet';
 import { FeaStudySheetGate } from './components/fea/FeaStudyHost';
+import { landingMobileStage, linkedMobileStage } from './utils/mobileStage';
 import {
   writeFeatureSheetParams,
   deleteFeatureBlock,
@@ -369,23 +370,29 @@ const App = () => {
   /** Editor column width % (desktop) and editor height px (mobile, null = auto). */
   const [splitPct, setSplitPct] = useState(50);
   const [mobileEditorPxOverride, setMobileEditorPx] = useState(null);
-  /** Mobile CAD only: 'cad' (viewport+rails) vs 'script' (fullscreen editor). Session-sticky. */
+  /** Mobile CAD: 'cad', 'parts', or the full-screen editor ('script'). Session-sticky. */
   const [mobileStage, setMobileStage] = useState(() => {
     try {
       const s = sessionStorage.getItem('3dculos.mobileStage');
-      // A stored Script stage is not the landing view. The pencil or the pill opens it.
-      if (s === 'parts') return 'parts';
-      return 'cad';
+      const link = linkedMobileStage(window.location.search, window.location.hash);
+      // A stored Script stage is not the landing view. It opens Parts.
+      const next = landingMobileStage(s, link);
+      if (s === 'script' && next === 'parts') {
+        try { sessionStorage.setItem('3dculos.mobileStage', 'parts'); } catch { /* private mode */ }
+      }
+      return next;
     } catch {
       return 'cad';
     }
   });
   /** Desktop CAD: right-hand script drawer. Closed until a part pencil or Edit script. */
   const [scriptEditorOpen, setScriptEditorOpen] = useState(false);
-  const setMobileStageSticky = (stage) => {
+  const setMobileStageSticky = (stage, opts) => {
     const next = stage === 'parts' ? 'parts' : stage === 'script' ? 'script' : 'cad';
     setMobileStage(next);
     try { sessionStorage.setItem('3dculos.mobileStage', next); } catch { /* private mode */ }
+    // Back to Parts keeps the editor-close rebuild. Skip the parts-surface sync.
+    if (opts?.sync === false) return;
     if (shouldSyncScript({ surface: next })) syncCadScriptRef.current();
   };
   /** Script-stage feature strip: which chip is selected (null = none). */
@@ -6475,7 +6482,7 @@ const App = () => {
   const closeScriptEditor = () => {
     const live = codeEditorRef.current?.getContent?.();
     setScriptEditorOpen(false);
-    if (isMobile) setMobileStageSticky('cad');
+    if (isMobile) setMobileStageSticky('parts', { sync: false });
     if (!shouldRebuildOnEditorClose({
       live,
       lastBuilt: lastAssemblyScriptRef.current,

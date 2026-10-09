@@ -1,14 +1,13 @@
 import React from 'react';
 import { Box, LayoutList } from 'lucide-react';
-import SquareText from './icons/SquareText';
 
 /**
  * Slice Mobile B — iPhone Home Screen–style stage control.
  *
- * Bottom translucent glass pill. Three Lucide icons, in order: CAD (box),
- * Parts (layout-list), Script (square-text). Tap a third to switch stage;
- * session sticky via the caller (`3dculos.mobileStage`). Desktop never
- * mounts this.
+ * Bottom translucent glass pill. Two Lucide icons, in order: CAD (box),
+ * Parts (layout-list). The script editor is not a pill stage: a part-row
+ * pencil opens it. Session sticky via the caller (`3dculos.mobileStage`).
+ * Desktop never mounts this.
  *
  * Future (NOT this PR): tapping the control invokes the AI prompt. An inert
  * center affordance (`data-ai-prompt-hook`) marks the wire-up site — do not
@@ -16,11 +15,9 @@ import SquareText from './icons/SquareText';
  */
 export default function MobileStageToggle({ stage = 'cad', onChange }) {
   const isCad = stage === 'cad';
-  const isScript = stage === 'script';
   const isParts = stage === 'parts';
 
   const goCad = () => onChange?.('cad');
-  const goScript = () => onChange?.('script');
   const goParts = () => onChange?.('parts');
 
   const glyph = (on) => (on ? 'text-white' : 'text-white/35');
@@ -31,12 +28,12 @@ export default function MobileStageToggle({ stage = 'cad', onChange }) {
       data-mobile-stage-toggle=""
       data-home-indicator=""
       role="group"
-      aria-label="CAD, Parts, or Script"
+      aria-label="CAD or Parts"
       style={{ paddingBottom: 'max(8px, env(safe-area-inset-bottom, 0px))' }}
     >
       <div
         className="relative flex items-center justify-center rounded-full shadow-lg border border-white/20 bg-gray-900/55 surface-glass-chip"
-        style={{ width: 168, height: 30 }}
+        style={{ width: 112, height: 30 }}
         data-home-indicator-pill=""
       >
         <button
@@ -45,7 +42,7 @@ export default function MobileStageToggle({ stage = 'cad', onChange }) {
           aria-label="CAD stage"
           aria-pressed={isCad}
           onClick={goCad}
-          className="absolute inset-y-0 left-0 w-1/3 z-10 rounded-l-full active:bg-white/10"
+          className="absolute inset-y-0 left-0 w-1/2 z-10 rounded-l-full active:bg-white/10"
         />
         <button
           type="button"
@@ -53,15 +50,7 @@ export default function MobileStageToggle({ stage = 'cad', onChange }) {
           aria-label="Parts stage"
           aria-pressed={isParts}
           onClick={goParts}
-          className="absolute inset-y-0 left-1/3 w-1/3 z-10 active:bg-white/10"
-        />
-        <button
-          type="button"
-          data-stage-btn="script"
-          aria-label="Script stage"
-          aria-pressed={isScript}
-          onClick={goScript}
-          className="absolute inset-y-0 right-0 w-1/3 z-10 rounded-r-full active:bg-white/10"
+          className="absolute inset-y-0 right-0 w-1/2 z-10 rounded-r-full active:bg-white/10"
         />
 
         {/*
@@ -85,9 +74,6 @@ export default function MobileStageToggle({ stage = 'cad', onChange }) {
           </span>
           <span data-stage-dot="parts" data-stage-icon="layout-list" className={`flex items-center ${glyph(isParts)}`}>
             <LayoutList size={16} strokeWidth={isParts ? 2.25 : 1.75} />
-          </span>
-          <span data-stage-dot="script" data-stage-icon="square-text" className={`flex items-center ${glyph(isScript)}`}>
-            <SquareText size={16} strokeWidth={isScript ? 2.25 : 1.75} />
           </span>
         </div>
       </div>

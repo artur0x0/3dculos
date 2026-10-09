@@ -491,12 +491,13 @@ const CodeEditor = forwardRef(({
             type="button"
             data-script-editor-close=""
             onClick={onClose}
-            className="shrink-0 p-1.5 flex items-center gap-1 rounded text-blue-400 hover:bg-gray-700/60 active:opacity-80"
-            title="Back to CAD"
-            aria-label="Back to CAD"
+            className={isMobile
+              ? 'inline-flex h-11 w-11 shrink-0 items-center justify-center rounded text-blue-400 hover:bg-gray-700/60 active:opacity-80'
+              : 'shrink-0 p-1.5 flex items-center gap-1 rounded text-blue-400 hover:bg-gray-700/60 active:opacity-80'}
+            title={isMobile ? 'Back to parts' : 'Back to CAD'}
+            aria-label={isMobile ? 'Back to parts' : 'Back to CAD'}
           >
             <ArrowLeft size={18} />
-            {isMobile ? <span className="pr-0.5 text-xs font-medium">CAD</span> : null}
           </button>
         )}
         {isGame && (
