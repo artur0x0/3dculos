@@ -13,6 +13,12 @@
 // The module does not use shared memory. solveSolid loads it on the first
 // Analyze run. A phone solve passes memoryCeilingBytes so the heap stops
 // at 512 MiB.
+//
+// solveSolid keeps the mesh this function returns. meshCacheKey is that
+// cache's key: the surface bytes, the mesh target, and the device profile.
+// A later run with the same key reuses the mesh. releaseMesh drops the
+// typed arrays when the cache evicts an entry. The phone cache holds one
+// mesh so the worker stays inside its 512 MiB budget.
 
 import { capWasmMemory } from './wasmMemory.js';
 
@@ -809,4 +815,73 @@ export async function meshVolume(surface, options = {}) {
       dofs: upgraded.nodes.length,
     },
   };
+}
+
+/**
+ * One cached mesh on a phone, where the worker heap stops at 512 MiB.
+ * Desktop keeps two, so a switch between two geometries can still hit.
+ */
+export function meshCacheLimit(profile) {
+  return profile === 'phone' ? 1 : 2;
+}
+
+/** Drop the mesh arrays so the worker can return those bytes to the GC. */
+export function releaseMesh(mesh) {
+  if (!mesh || typeof mesh !== 'object') return;
+  mesh.nodes = null;
+  mesh.elements = null;
+  mesh.faces = null;
+  mesh.faceIds = null;
+  if (mesh.stats && typeof mesh.stats === 'object') mesh.stats.wasmBytes = 0;
+}
+
+/**
+ * Key for the TET10 cache. Positions, indices, and face ids are hashed
+ * from their bytes, so a geometry edit misses. The mesh target and the
+ * device profile select the edge length, so they are part of the key.
+ * Material, loads, and fixtures are not.
+ */
+export function meshCacheKey(surface, target, profile) {
+  const source = surface || {};
+  const faceIDs = source.faceIDs ?? source.faceIds;
+  const profileKey = profile === 'phone' ? 'phone' : 'desktop';
+  let targetKey = '';
+  if (typeof target === 'number' && Number.isFinite(target)) targetKey = `n:${target}`;
+  else if (target != null && target !== '') targetKey = `s:${String(target)}`;
+  return [
+    hashBuffer(source.positions),
+    hashBuffer(source.indices),
+    hashBuffer(faceIDs),
+    targetKey,
+    profileKey,
+  ].join('|');
+}
+
+function hashBuffer(view) {
+  if (view == null) return 'none';
+  let bytes;
+  if (ArrayBuffer.isView(view)) {
+    bytes = new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
+  } else if (typeof view.length === 'number') {
+    const packed = Float64Array.from(view);
+    bytes = new Uint8Array(packed.buffer);
+  } else {
+    return 'none';
+  }
+  const n = bytes.length;
+  let h0 = (0x811c9dc5 ^ n) >>> 0;
+  let h1 = (0x811c9dc5 ^ Math.imul(n, 0x01000193)) >>> 0;
+  let h2 = (0x811c9dc5 ^ 0x9e3779b9) >>> 0;
+  let h3 = (0x811c9dc5 ^ 0x85ebca6b) >>> 0;
+  const end = n & ~3;
+  for (let i = 0; i < end; i += 4) {
+    h0 = Math.imul(h0 ^ bytes[i], 0x01000193) >>> 0;
+    h1 = Math.imul(h1 ^ bytes[i + 1], 0x01000193) >>> 0;
+    h2 = Math.imul(h2 ^ bytes[i + 2], 0x01000193) >>> 0;
+    h3 = Math.imul(h3 ^ bytes[i + 3], 0x01000193) >>> 0;
+  }
+  for (let i = end; i < n; i += 1) {
+    h0 = Math.imul(h0 ^ bytes[i], 0x01000193) >>> 0;
+  }
+  return `${n.toString(16)}:${h0.toString(16)}:${h1.toString(16)}:${h2.toString(16)}:${h3.toString(16)}`;
 }

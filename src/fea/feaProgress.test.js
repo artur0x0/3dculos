@@ -113,6 +113,34 @@ test('a finished run reads Meshed in, solved in, DOF, and total', () => {
   assert.match(log, /solving=1400ms/);
 });
 
+test('a reused mesh says Mesh reused instead of Meshed in', () => {
+  const state = run([
+    { type: 'start', now: 1000 },
+    { type: 'stage', stage: 'assembling', now: 1100 },
+    {
+      type: 'finish',
+      now: 1800,
+      dofs: 4200,
+      meshReused: true,
+      stageTimings: {
+        'loading-mesher': 0,
+        meshing: 0,
+        assembling: 30,
+        solving: 400,
+        'post-processing': 50,
+      },
+    },
+  ]);
+  assert.equal(state.meshReused, true);
+  assert.equal(state.text, 'Mesh reused, solved in 0.4 s (4.2k DOF), total 0.8 s');
+  assert.equal(state.details.find((row) => row.id === 'meshing').seconds, 'Mesh reused');
+  assert.equal(state.details.find((row) => row.id === 'solving').seconds, '0.4 s');
+  const log = formatFeaTimingLog(state);
+  assert.match(log, /reused=1/);
+  assert.match(log, /meshed=0ms/);
+  assert.match(log, /solved=400ms/);
+});
+
 test('stopping mid-solve names the stage, the elapsed time, the DOF count, and the error', () => {
   const state = run([
     { type: 'start', now: 1000 },
