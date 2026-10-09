@@ -159,6 +159,14 @@ async function seed(page, current) {
         for (const [id, script] of Object.entries(scripts)) {
           tx.objectStore('parts').put({ id, script, savedAt: Date.now() }, id);
         }
+        localStorage.setItem('surfcad.lastAssembly', JSON.stringify({
+          'user-open': {
+            name: doc.name,
+            activeId: doc.activeId,
+            source: doc.source || 'local',
+            savedAt: Date.now(),
+          },
+        }));
         tx.oncomplete = () => { db.close(); resolve(); };
         tx.onerror = () => reject(tx.error);
       };
@@ -198,15 +206,25 @@ async function overlayGone(page, label) {
 }
 
 async function boot(page) {
+  // A signed-out reload clears the chip and does not open IndexedDB.
+  // This golden signs in so a seeded assembly is the last-opened document.
   await page.route('**/api/**', (route) => route.fulfill({
     status: 200,
     contentType: 'application/json',
     body: JSON.stringify({ authenticated: false }),
   }));
+  await page.route('**/api/auth/me', (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({
+      authenticated: true,
+      user: { id: 'user-open', email: 'open@surfcad.test', vaultName: null },
+    }),
+  }));
   const errors = [];
   page.on('pageerror', (err) => errors.push(String(err).slice(0, 240)));
   await page.goto(APP_URL, { waitUntil: 'domcontentloaded', timeout: 45000 });
-  await page.waitForSelector('[data-assembly-file]', { timeout: 40000, state: 'attached' });
+  await page.waitForSelector('canvas', { timeout: 40000 });
   return errors;
 }
 

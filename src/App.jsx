@@ -97,12 +97,21 @@ import { featureWriteTarget, leftoverPickSolids, shouldSyncScript } from './util
 import { clearPaintColors, commitPaintColors, removeUnmatchedColors } from './utils/facePaint';
 import {
   deletePartScript,
-  loadAssemblyDocument,
+  loadAssemblyDocumentStatus,
   loadPartScripts,
   loadPartSyncFlags,
   saveAssemblyDocument,
   savePartScript,
 } from './utils/assemblyStore';
+import {
+  bootUserId,
+  bootWriteAllowed,
+  planReloadAssembly,
+  pointerForUser,
+  readLastOpenedMap,
+  rememberLastOpened,
+} from './utils/assemblyBoot';
+import { refreshGithubAccessToken } from './utils/git/githubTokenRefresh';
 import {
   createMockGithubAdapter,
   createGithubAdapter,
@@ -293,6 +302,13 @@ const App = () => {
   // script behind (or in front of) the build the spinner is waiting on.
   const assemblyOpenLockRef = useRef(false);
   const finishOpenedPartRef = useRef(async () => {});
+  /** idle until auth settles; opening while a reload is in flight; done after. */
+  const bootGateRef = useRef('idle');
+  const [bootEpoch, setBootEpoch] = useState(0);
+  const [bootResume, setBootResume] = useState('pending');
+  const ensureGitVaultRef = useRef(async () => null);
+  const openVaultAssemblyRef = useRef(async () => {});
+  const gitTokenRef = useRef(null);
   if (assemblyOpenCtrlRef.current == null) {
     assemblyOpenCtrlRef.current = createAssemblyOpenController({
       onChange: (ui) => {
@@ -692,18 +708,35 @@ const App = () => {
 
   const { user, isAuthenticated, isLoading: authLoading, checkAuth } = useAuth();
 
-  // GitHub vault token without Express session (upsert soft-failed earlier):
-  // retry session so ProfileChip gets initials + green after /api/config path.
+  // Stay signed in across a reload. /api/auth/me runs first. If the cookie
+  // is gone, refresh an expiring GitHub App user token and upsert the
+  // session again before treating the reload as signed out.
   useEffect(() => {
-    if (authLoading || isAuthenticated) return undefined;
-    if (!hasGithubToken()) return undefined;
-    const token = loadGithubToken();
-    if (!token) return undefined;
+    if (authLoading) {
+      setBootResume('pending');
+      return undefined;
+    }
+    if (isAuthenticated) {
+      setBootResume('in');
+      return undefined;
+    }
     let cancelled = false;
     (async () => {
-      const session = await establishGithubSession({ accessToken: token });
-      if (cancelled || !session.ok) return;
-      await checkAuth();
+      const fresh = await refreshGithubAccessToken();
+      if (cancelled) return;
+      const token = fresh.ok ? (fresh.accessToken || loadGithubToken()) : '';
+      if (token) {
+        setGithubConnected(true);
+        const session = await establishGithubSession({ accessToken: token });
+        if (cancelled) return;
+        if (session.ok) {
+          await checkAuth();
+          return;
+        }
+      } else if (!hasGithubToken()) {
+        setGithubConnected(false);
+      }
+      if (!cancelled) setBootResume('out');
     })();
     return () => { cancelled = true; };
   }, [authLoading, isAuthenticated, checkAuth]);
@@ -1057,28 +1090,24 @@ const App = () => {
     return () => { cancelled = true; };
   }, []);
 
-  // Restore editor + assembly once Manifold is ready.
-  // CRITICAL (Tailscale / Safari after GitHub OAuth): never block the Loading
-  // gate on IndexedDB. Soft-nav returns to `/` without `?auth=success`, so the
-  // old gate waited on IDB while open/tx could hang forever ("Restoring
-  // document…"). Unblock synchronously (OAuth localStorage hand-off or default),
-  // then hydrate IDB in the background with per-op timeouts.
+  // Restore editor + assembly. Reload opens the last assembly only after
+  // auth has settled. A slow /api/auth/me or vault resolve must not paint
+  // or save the stock demo (Part (1) in Assembly). IndexedDB `current` is
+  // not overwritten on a timeout. Signed out clears the title chip and
+  // creates nothing.
   useEffect(() => {
-    if (!manifoldReady) return undefined;
+    if (!manifoldReady || bootResume === 'pending') return undefined;
     let cancelled = false;
 
     const params = new URLSearchParams(window.location.search);
     const isAuthReturn = params.get('auth') === 'success';
     const isAccountReturn = params.get('account') === 'true';
     const isCheckoutReturn = hasCheckoutReturnFlag();
-    // GitHub soft-nav lands on `/` with no query flag — still honor the hand-off.
     const pendingOAuthEditor = hasPendingEditorState();
 
-    let script = DEFAULT_SCRIPT;
+    let oauthScript = '';
     let filename = null;
     let restoredEditor = false;
-    let shouldOpenAccount = false;
-    let restoredCheckout = null;
 
     console.log('[App] Initialization check:', {
       isAuthReturn,
@@ -1086,6 +1115,7 @@ const App = () => {
       isCheckoutReturn,
       hasPendingEditor: pendingOAuthEditor,
       hasPendingCheckout: hasPendingCheckout(),
+      bootResume,
     });
 
     if (pendingOAuthEditor) {
@@ -1096,7 +1126,7 @@ const App = () => {
         scriptLength: restored?.currentScript?.length,
       });
       if (restored?.currentScript) {
-        script = restored.currentScript;
+        oauthScript = restored.currentScript;
         restoredEditor = true;
       }
       if (restored?.currentFilename) filename = restored.currentFilename;
@@ -1105,55 +1135,104 @@ const App = () => {
     if (isCheckoutReturn || (isAuthReturn && hasPendingCheckout())) {
       const checkoutState = restoreCheckoutState();
       if (checkoutState) {
-        restoredCheckout = {
+        setOrderData({
           quoteData: checkoutState.quoteData,
           modelData: checkoutState.modelData,
           restoredStep: checkoutState.currentStep,
           restoredAddress: checkoutState.address,
           restoredGuestEmail: checkoutState.guestEmail,
-        };
+        });
+        setShowOrderModal(true);
       }
       clearCheckoutState();
     }
-    if (isAccountReturn) shouldOpenAccount = true;
+    if (isAccountReturn) setShowAccountModal(true);
     if (isAuthReturn || isAccountReturn || isCheckoutReturn) clearCheckoutReturnFlag();
 
-    // Seed in-memory assembly so Parts can mount without waiting on IDB.
-    const seedId = newLocalPartId();
-    const seedDoc = serializeAssembly({
-      source: 'local',
-      activeId: seedId,
-      parts: [{ id: seedId, name: filename || DEFAULT_PART_NAME, visible: true, order: 0 }],
-    });
-    const seedScripts = { [seedId]: script };
-    assemblyRef.current = seedDoc;
-    partScriptsRef.current = seedScripts;
-    setAssemblyDoc(seedDoc);
-    setPartScripts(seedScripts);
-    if (filename) setCurrentFilename(filename);
-    if (restoredCheckout) {
-      setOrderData(restoredCheckout);
-      setShowOrderModal(true);
-    }
-    if (shouldOpenAccount) setShowAccountModal(true);
-    // Unblock Loading THIS tick — before any await.
-    setEditorInitialScript(script);
+    const browserStorage = () => {
+      try { return globalThis.localStorage; } catch { return null; }
+    };
 
-    const hydrate = async () => {
-      // Capture generation so a vault Open / branch switch / New assembly that
-      // lands while IDB is slow cannot be clobbered by a stale local document.
+    const clearChip = () => {
+      assemblyRef.current = null;
+      partScriptsRef.current = {};
+      setAssemblyDoc(null);
+      setPartScripts({});
+      setCurrentFilename(null);
+      bootGateRef.current = 'done';
+      setEditorInitialScript('');
+      setBootEpoch((n) => n + 1);
+    };
+
+    const run = async () => {
+      if (bootResume !== 'in') {
+        clearChip();
+        return;
+      }
+      bootGateRef.current = 'opening';
+      const userId = bootUserId(user);
+      const pointer = pointerForUser(readLastOpenedMap(browserStorage()), userId);
+      let loaded = await loadAssemblyDocumentStatus();
+      if (loaded.status === 'timeout') loaded = await loadAssemblyDocumentStatus();
+      if (cancelled) return;
+
+      const github = !!(githubConnected || hasGithubToken());
+      const decide = (vaultStatus) => planReloadAssembly({
+        me: 'in',
+        refresh: 'idle',
+        cacheStatus: loaded.status,
+        cachedDoc: loaded.doc,
+        pointer,
+        userId,
+        vaultStatus,
+        githubConnected: github,
+      });
+      let plan = decide(github ? 'idle' : 'unavailable');
+      if (plan.action === 'wait' && plan.reason === 'vault-pending') {
+        try {
+          await ensureGitVaultRef.current();
+          if (cancelled) return;
+          plan = decide('ready');
+        } catch (err) {
+          console.warn('[App] Vault resolve during reload failed:', err?.message || err);
+          if (cancelled) return;
+          plan = decide('failed');
+        }
+      }
+      if (cancelled) return;
+      if (bootWriteAllowed(plan) || plan.action === 'clear') {
+        clearChip();
+        return;
+      }
+      if (plan.action === 'wait') {
+        bootGateRef.current = 'idle';
+        return;
+      }
+
+      if (plan.action === 'reopen-vault') {
+        setEditorInitialScript('');
+        try {
+          await openVaultAssemblyRef.current(plan.name);
+        } catch (err) {
+          console.warn('[App] Reload vault open failed:', err?.message || err);
+        }
+        if (cancelled) return;
+        if (!assemblyRef.current) clearChip();
+        else {
+          bootGateRef.current = 'done';
+          setBootEpoch((n) => n + 1);
+        }
+        return;
+      }
+
       const genAtStart = refreshGenRef.current;
-      let nextScript = script;
-      let nextFilename = filename;
-      let nextRestoredEditor = restoredEditor;
-
       try {
         await runTrackedAssemblyOpen(assemblyOpenCtrlRef.current, {
-          name: 'assembly',
+          name: plan.name || 'assembly',
           retry: () => { window.location.reload(); },
           load: async ({ progress, signal }) => {
             let draft = null;
-            if (!nextRestoredEditor) {
+            if (!restoredEditor) {
               try {
                 draft = await loadEditorDraft();
               } catch (err) {
@@ -1163,111 +1242,82 @@ const App = () => {
             }
             if (cancelled || !signal()) return;
 
-            let doc = null;
-            let scripts = {};
-            doc = await loadAssemblyDocument();
-            if (doc?.name) {
-              progress({ name: doc.name, index: 0, total: doc.parts?.length || 0 });
+            let doc = plan.doc;
+            if (!doc?.parts?.length) return;
+            progress({ name: doc.name, index: 0, total: doc.parts?.length || 0 });
+            let scripts = await loadPartScripts(doc.parts.map((part) => part.id), {
+              onProgress: (update) => progress({ ...update, name: doc.name }),
+            });
+            const migrated = migrateAssemblyRecords({ doc, scripts });
+            if (migrated.changed) {
+              doc = migrated.doc;
+              scripts = migrated.scripts;
             }
-            if (doc) {
-              scripts = await loadPartScripts(doc.parts.map((part) => part.id), {
-                onProgress: (update) => progress({ ...update, name: doc.name }),
-              });
-              const migrated = migrateAssemblyRecords({ doc, scripts });
-              if (migrated.changed) {
-                doc = migrated.doc;
-                scripts = migrated.scripts;
+            const flags = await loadPartSyncFlags((doc.parts || []).map((part) => part.id));
+            if (Object.keys(flags).length) {
+              doc = {
+                ...doc,
+                parts: (doc.parts || []).map((part) => (
+                  typeof flags[part.id] === 'boolean' ? { ...part, isSynced: flags[part.id] } : part
+                )),
+              };
+            }
+            const localIds = migrateLocalPartIds({
+              doc,
+              scripts,
+              histories: partHistoriesRef.current,
+              selection: { activeId: doc.activeId, cadPartId: cadPartIdRef.current },
+              draftPartId: draft?.partId ?? null,
+            });
+            if (localIds.changed) {
+              doc = localIds.doc;
+              scripts = localIds.scripts;
+              partHistoriesRef.current = localIds.histories || partHistoriesRef.current;
+              if (localIds.selection?.cadPartId && localIds.selection.cadPartId !== cadPartIdRef.current) {
+                cadPartIdRef.current = localIds.selection.cadPartId;
               }
-              const flags = await loadPartSyncFlags((doc.parts || []).map((part) => part.id));
-              if (Object.keys(flags).length) {
-                // Keep color keys until the local: migration rewrites them.
-                // serializeAssembly would drop a key that is not yet a surf id.
-                doc = {
-                  ...doc,
-                  parts: (doc.parts || []).map((part) => (
-                    typeof flags[part.id] === 'boolean' ? { ...part, isSynced: flags[part.id] } : part
-                  )),
-                };
+              if (draft && localIds.draftPartId !== draft.partId) {
+                draft = { ...draft, partId: localIds.draftPartId };
+                try { await saveEditorDraft(draft); } catch { /* ignore */ }
               }
-              const localIds = migrateLocalPartIds({
-                doc,
-                scripts,
-                histories: partHistoriesRef.current,
-                selection: { activeId: doc.activeId, cadPartId: cadPartIdRef.current },
-                draftPartId: draft?.partId ?? null,
-              });
-              if (localIds.changed) {
-                doc = localIds.doc;
-                scripts = localIds.scripts;
-                partHistoriesRef.current = localIds.histories || partHistoriesRef.current;
-                if (localIds.selection?.cadPartId && localIds.selection.cadPartId !== cadPartIdRef.current) {
-                  cadPartIdRef.current = localIds.selection.cadPartId;
-                }
-                if (draft && localIds.draftPartId !== draft.partId) {
-                  draft = { ...draft, partId: localIds.draftPartId };
-                  try { await saveEditorDraft(draft); } catch { /* ignore */ }
-                }
-              }
-              if (migrated.changed || localIds.changed || Object.keys(flags).length) {
-                try {
-                  await saveAssemblyDocument(doc);
-                  if (migrated.changed || localIds.changed) {
-                    for (const [id, text] of Object.entries(scripts)) {
-                      const part = (doc.parts || []).find((row) => row.id === id);
-                      await savePartScript(
-                        id,
-                        text,
-                        typeof part?.isSynced === 'boolean' ? { isSynced: part.isSynced } : {},
-                      );
-                    }
+            }
+            if (migrated.changed || localIds.changed || Object.keys(flags).length) {
+              try {
+                await saveAssemblyDocument(doc);
+                if (migrated.changed || localIds.changed) {
+                  for (const [id, text] of Object.entries(scripts)) {
+                    const part = (doc.parts || []).find((row) => row.id === id);
+                    await savePartScript(
+                      id,
+                      text,
+                      typeof part?.isSynced === 'boolean' ? { isSynced: part.isSynced } : {},
+                    );
                   }
-                  if (localIds.changed) {
-                    for (const { from } of localIds.pairs) {
-                      try { await deletePartScript(from); } catch { /* ignore */ }
-                    }
-                  }
-                } catch (err) {
-                  console.warn('[App] Part id migration persist failed:', err?.message || err);
                 }
+                if (localIds.changed) {
+                  for (const { from } of localIds.pairs) {
+                    try { await deletePartScript(from); } catch { /* ignore */ }
+                  }
+                }
+              } catch (err) {
+                console.warn('[App] Part id migration persist failed:', err?.message || err);
               }
             }
             if (cancelled || !signal()) return;
 
-            if (!doc || !doc.parts.length) {
-              // Persist the seed we already showed.
-              const latest = assemblyRef.current || seedDoc;
-              const latestScripts = partScriptsRef.current || seedScripts;
-              const activeId = latest.activeId || seedId;
-              try {
-                await savePartScript(activeId, latestScripts[activeId] || nextScript);
-                await saveAssemblyDocument(latest);
-              } catch (err) {
-                console.warn('[App] Seed assembly persist failed:', err);
-              }
-              return;
-            }
-
             const active = doc.parts.find((part) => part.id === doc.activeId) || doc.parts[0];
             doc = serializeAssembly({ ...doc, activeId: active.id });
-            // Draft may only override the active row when bound to that part id —
-            // never bleed another part's buffer into this slot (playtest: new cube
-            // became a second FilletKilla after leave/return).
             const restored = resolveActiveRestore({
               active,
               scripts,
-              draft: nextRestoredEditor ? null : draft,
-              fallbackScript: nextScript,
+              draft: restoredEditor ? null : draft,
+              fallbackScript: oauthScript || '',
             });
             scripts = restored.scripts;
-            nextScript = restored.script;
-            nextFilename = restored.filename || nextFilename || active.name;
-            if (restored.fromDraft) nextRestoredEditor = true;
-            if (restored.persistActive) {
+            const nextScript = restored.script;
+            let nextFilename = restored.filename || filename || active.name;
+            if (restored.persistActive && nextScript) {
               try { await savePartScript(active.id, nextScript); } catch { /* ignore */ }
-            }
-            if (restored.fromDraft) {
-              setEditorInitialScript(nextScript);
-              if (nextFilename) setCurrentFilename(nextFilename);
             }
             if (!nextFilename) nextFilename = active.name;
             if (cancelled || !signal()) return;
@@ -1275,18 +1325,19 @@ const App = () => {
               console.log('[App] Skipping stale IDB hydrate; assembly already replaced');
               return;
             }
-            // Vault-backed working copy won the race — never re-inject IndexedDB local parts.
             if (gitBaselineRef.current?.headSha) {
               console.log('[App] Skipping IDB hydrate; vault baseline already set');
               return;
             }
 
-            // Drop the seed auto-run so it cannot paint over this document.
             refreshGenRef.current += 1;
             assemblyRef.current = doc;
             partScriptsRef.current = scripts;
+            bootGateRef.current = 'done';
             setAssemblyDoc(doc);
             setPartScripts(scripts);
+            setBootEpoch((n) => n + 1);
+            if (userId) rememberLastOpened(browserStorage(), userId, doc);
             try {
               const store = gitSync();
               await store.ready();
@@ -1300,11 +1351,20 @@ const App = () => {
       } catch (err) {
         console.warn('[App] Assembly restore failed:', err);
       }
+      if (cancelled || bootGateRef.current === 'done') return;
+      if (!assemblyRef.current) clearChip();
+      else {
+        bootGateRef.current = 'done';
+        setBootEpoch((n) => n + 1);
+        const id = assemblyRef.current.activeId;
+        const text = partScriptsRef.current?.[id];
+        setEditorInitialScript(typeof text === 'string' ? text : '');
+      }
     };
 
-    void hydrate();
+    void run();
     return () => { cancelled = true; };
-  }, [manifoldReady]);
+  }, [manifoldReady, bootResume, githubConnected, user]);
 
   // Mirror the live CAD buffer into IndexedDB so a reload restores it.
   // Debounced: the editor calls onExecute on every keystroke, and the draft
@@ -1645,6 +1705,10 @@ const App = () => {
     assemblyRef.current = clean;
     setAssemblyDoc(clean);
     assemblyDocPersistRef.current = saveAssemblyDocument(clean);
+    const id = bootUserId(user);
+    if (id) {
+      try { rememberLastOpened(globalThis.localStorage, id, clean); } catch { /* private mode */ }
+    }
     return clean;
   };
 
@@ -2151,7 +2215,8 @@ const App = () => {
     const wantReal = !!token;
     const have = gitAdapterRef.current;
     const haveReal = have?.kind === 'real';
-    if (!have || wantReal !== haveReal) {
+    if (!have || wantReal !== haveReal || gitTokenRef.current !== token) {
+      gitTokenRef.current = token;
       gitAdapterRef.current = wantReal
         ? createGithubAdapter({ token })
         : createMockGithubAdapter({ login: 'local-user' });
@@ -2218,6 +2283,12 @@ const App = () => {
   };
 
   const ensureGitVault = async () => {
+    const fresh = await refreshGithubAccessToken();
+    if (fresh.refreshed || (fresh.ok && fresh.accessToken && fresh.accessToken !== gitTokenRef.current)) {
+      gitAdapterRef.current = null;
+      gitVaultRef.current = null;
+      gitTokenRef.current = '';
+    }
     ensureGitAdapter();
     if (gitVaultRef.current) return gitVaultRef.current;
     const VAULT_TIMEOUT_MS = 45000;
@@ -2242,6 +2313,7 @@ const App = () => {
     gitVaultRef.current = vault;
     return vault;
   };
+  ensureGitVaultRef.current = ensureGitVault;
 
   /** Branch the working copy is on (baseline), else the vault default. */
   const gitWorkingBranch = () => {
@@ -2845,6 +2917,7 @@ const App = () => {
       console.warn('[App] Open assembly failed:', err?.message || err);
     }
   };
+  openVaultAssemblyRef.current = handleOpenVaultAssembly;
 
   const handleAddExistingPart = async (path) => {
     const doc = assemblyRef.current;
@@ -4034,6 +4107,7 @@ const App = () => {
   // Wait until auth has settled so a stored vaultName is visible before resolve.
   useEffect(() => {
     if (authLoading) return undefined;
+    if (bootGateRef.current !== 'done') return undefined;
     const doc = assemblyRef.current;
     if (!doc) return undefined;
     if (githubConnected) {
@@ -4080,13 +4154,14 @@ const App = () => {
       setGitBehindToast(null);
     }
     return undefined;
-  }, [githubConnected, assemblyDoc, authLoading]); // eslint-disable-line react-hooks/exhaustive-deps -- vault helpers via refs
+  }, [githubConnected, assemblyDoc, authLoading, bootEpoch]); // eslint-disable-line react-hooks/exhaustive-deps -- vault helpers via refs
 
   // After reload, baseline is gone but IndexedDB may still hold an in-repo
   // assembly. Reseed baseline from the current branch tip (do not replace the
   // working copy) so dirty = IDB vs tip — in-sync open stays clean.
   useEffect(() => {
     if (authLoading) return undefined;
+    if (bootGateRef.current !== 'done') return undefined;
     if (!githubConnected) return undefined;
     const doc = assemblyRef.current;
     if (!doc || doc.source !== 'git') return undefined;
@@ -4225,7 +4300,7 @@ const App = () => {
       }
     })();
     return () => { cancelled = true; };
-  }, [githubConnected, assemblyDoc, gitBaseline, authLoading]); // eslint-disable-line react-hooks/exhaustive-deps -- vault helpers via refs
+  }, [githubConnected, assemblyDoc, gitBaseline, authLoading, bootEpoch]); // eslint-disable-line react-hooks/exhaustive-deps -- vault helpers via refs
 
   /** Flush working copy to IndexedDB (local Save for assembly leave guard). */
   const handleFlushLocalAssembly = async () => {
@@ -5716,17 +5791,17 @@ const App = () => {
   };
 
 
-  // Tailscale / mobile: never leave the user on "Loading..." forever if Manifold
-  // or IndexedDB restore stalls past the worker init budget.
+  // Tailscale / mobile: never leave the user on "Loading..." forever if the
+  // CAD engine stalls. A slow /api/auth/me or vault resolve keeps the
+  // "Restoring document…" gate; it must not paint the stock cube.
   useEffect(() => {
     if (manifoldReady && editorInitialScript !== null) return undefined;
     if (initError) return undefined;
-    // Manifold budget is 60s; give a little headroom. Document restore must not
-    // hold Loading anymore (sync unblock above) — this is Manifold-stuck only.
-    const LOADING_WATCHDOG_MS = manifoldReady ? 8000 : 75000;
+    const restoring = manifoldReady && editorInitialScript == null;
+    const LOADING_WATCHDOG_MS = restoring ? 90000 : 75000;
     const id = setTimeout(() => {
       if (manifoldReady && editorInitialScript == null) {
-        setEditorInitialScript(DEFAULT_SCRIPT);
+        setInitError((prev) => prev || 'Could not restore the last assembly. Tap Retry.');
         return;
       }
       setInitError((prev) => prev || 'Still loading after 75s — CAD engine stalled. Tap Retry.');
@@ -6029,6 +6104,7 @@ const App = () => {
               canUndo={canUndo()}
               canRedo={canRedo()}
               currentFilename={currentFilename}
+              showCadTitle={!!assemblyDoc}
               assemblyName={assemblyLabel}
               onRenameFile={handleRenameFile}
               onRenameAssembly={handleRenameAssembly}
@@ -6488,6 +6564,7 @@ const App = () => {
             canUndo={canUndo()}
             canRedo={canRedo()}
             currentFilename={currentFilename}
+            showCadTitle={!!assemblyDoc}
             assemblyName={assemblyLabel}
             onRenameFile={handleRenameFile}
             onRenameAssembly={handleRenameAssembly}

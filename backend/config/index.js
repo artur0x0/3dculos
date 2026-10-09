@@ -2,6 +2,7 @@
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { SESSION_MAX_AGE_MS } from '../../src/utils/sessionPolicy.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -29,7 +30,7 @@ const config = {
   // Session
   session: {
     secret: process.env.SESSION_SECRET,
-    maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+    maxAge: SESSION_MAX_AGE_MS,
   },
   
   // OAuth - Google

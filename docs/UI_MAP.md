@@ -65,7 +65,9 @@ names are sanitised
 (`sanitizePartName`) because they end up in `${name}.js` downloads. The part
 chip is `onRenameFile` → `setCurrentFilename`. The assembly chip is
 `onRenameAssembly` → the document `name`. Game keeps a single puzzle-name
-chip.
+chip. A signed-in reload shows the last opened assembly. Signed out, both
+chips are absent (`data-viewer-title-empty`, `showCadTitle` off); reload does
+not load or create `Part (1)` in `Assembly`.
 
 Desktop specifics:
 - **Feature strip (desktop CAD viewer):** `FeatureStrip.jsx` mounts as a

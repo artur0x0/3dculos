@@ -2,6 +2,7 @@
 import session from 'express-session';
 import MongoStore from 'connect-mongo';
 import config from '../config/index.js';
+import { SESSION_ROLLING, SESSION_TOUCH_AFTER_SEC } from '../../src/utils/sessionPolicy.js';
 
 /**
  * Create session middleware with MongoDB store
@@ -12,6 +13,7 @@ export function createSessionMiddleware() {
     secret: config.session.secret,
     resave: false,
     saveUninitialized: false,
+    rolling: SESSION_ROLLING,
     name: 'surfcad.sid',
     cookie: {
       secure: config.env === 'production', // HTTPS only in production
@@ -28,7 +30,7 @@ export function createSessionMiddleware() {
       collectionName: 'sessions',
       ttl: config.session.maxAge / 1000, // TTL in seconds
       autoRemove: 'native', // Use MongoDB TTL index
-      touchAfter: 24 * 60 * 60, // Only update session once per day unless changed
+      touchAfter: SESSION_TOUCH_AFTER_SEC,
     });
     console.log('[Session] Using MongoDB session store');
   } else {

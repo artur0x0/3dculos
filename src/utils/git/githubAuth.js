@@ -14,7 +14,13 @@
  * on the GitHub App for every host you use (prod, localhost, Tailscale IP).
  * OAuth `state` is sessionStorage (origin-scoped): Connect and callback
  * must share the same origin.
+ *
+ * Expiring GitHub App user tokens also return a refresh token. That bundle
+ * is stored by githubTokenRefresh.js; this file still keeps the access
+ * token in sessionStorage.
  */
+import { clearGithubTokenBundle, rememberGithubTokenBundle } from './githubTokenRefresh.js';
+
 export const GITHUB_TOKEN_STORAGE_KEY = 'surfcad.github.token';
 export const GITHUB_OAUTH_STATE_KEY = 'surfcad.github.oauth.state';
 export const GITHUB_CALLBACK_PATH = '/git/callback';
@@ -103,6 +109,7 @@ export function saveGithubToken(token) {
 
 export function clearGithubToken() {
   saveGithubToken(null);
+  clearGithubTokenBundle();
 }
 
 export function hasGithubToken() {
@@ -143,7 +150,7 @@ export function resolveGithubClientId({ configClientId, viteClientId } = {}) {
 
 /**
  * POST code to the stateless exchange endpoint. Returns
- * `{ access_token, token_type?, scope? }` or throws.
+ * `{ access_token, token_type?, scope?, refresh_token?, expires_in? }` or throws.
  * Never logs the token.
  */
 export async function exchangeCodeForToken({
@@ -178,6 +185,9 @@ export async function exchangeCodeForToken({
     access_token: body.access_token,
     token_type: body.token_type || 'bearer',
     scope: body.scope || '',
+    refresh_token: body.refresh_token || '',
+    expires_in: Number(body.expires_in) || 0,
+    refresh_token_expires_in: Number(body.refresh_token_expires_in) || 0,
   };
 }
 
@@ -234,6 +244,7 @@ export async function completeGithubCallback(search, options = {}) {
       });
       clearOAuthState();
       saveGithubToken(token.access_token);
+      rememberGithubTokenBundle(token);
       return { ok: true, token: token.access_token };
     } catch (e) {
       clearOAuthState();

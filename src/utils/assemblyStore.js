@@ -28,7 +28,7 @@ function idbAvailable() {
 }
 
 function openDB() {
-  if (!idbAvailable()) return Promise.resolve(null);
+  if (!idbAvailable()) return Promise.resolve({ db: null, reason: 'error' });
   if (dbPromise) return dbPromise;
   dbPromise = new Promise((resolve) => {
     let req;
@@ -36,7 +36,7 @@ function openDB() {
       req = indexedDB.open(DB_NAME, DB_VERSION);
     } catch (err) {
       console.warn('[Assembly] indexedDB.open threw:', err);
-      resolve(null);
+      resolve({ db: null, reason: 'error' });
       return;
     }
     req.onupgradeneeded = () => {
@@ -50,31 +50,32 @@ function openDB() {
         try { db.close(); } catch { /* already closing */ }
         dbPromise = null;
       };
-      resolve(db);
+      resolve({ db, reason: '' });
     };
     req.onerror = () => {
       console.warn('[Assembly] indexedDB.open failed:', req.error);
-      resolve(null);
+      resolve({ db: null, reason: 'error' });
     };
-    req.onblocked = () => resolve(null);
+    req.onblocked = () => resolve({ db: null, reason: 'error' });
   });
   return idbWithTimeout(dbPromise, IDB_OP_TIMEOUT_MS, 'Assembly open').catch((err) => {
     console.warn('[Assembly] indexedDB.open timed out:', err?.message || err);
     dbPromise = null;
-    return null;
+    const timed = /timed out/.test(String(err?.message || ''));
+    return { db: null, reason: timed ? 'timeout' : 'error' };
   });
 }
 
 function runTx(storeName, mode, work) {
-  const op = openDB().then((db) => {
-    if (!db) return { ok: false, value: null };
+  const op = openDB().then(({ db, reason }) => {
+    if (!db) return { ok: false, value: null, reason: reason || 'error' };
     return new Promise((resolve) => {
       let tx;
       try {
         tx = db.transaction(storeName, mode);
       } catch (err) {
         console.warn('[Assembly] transaction failed:', err);
-        resolve({ ok: false, value: null });
+        resolve({ ok: false, value: null, reason: 'error' });
         return;
       }
       let settled = false;
@@ -87,22 +88,21 @@ function runTx(storeName, mode, work) {
       const req = work(tx.objectStore(storeName));
       if (req) req.onsuccess = () => { out = req.result; };
       tx.oncomplete = () => finish({ ok: true, value: out });
-      tx.onabort = () => finish({ ok: false, value: null });
-      tx.onerror = () => finish({ ok: false, value: null });
+      tx.onabort = () => finish({ ok: false, value: null, reason: 'error' });
+      tx.onerror = () => finish({ ok: false, value: null, reason: 'error' });
     });
   }).catch((err) => {
     console.warn('[Assembly] store unavailable:', err);
-    return { ok: false, value: null };
+    return { ok: false, value: null, reason: 'error' };
   });
   return idbWithTimeout(op, IDB_OP_TIMEOUT_MS, 'Assembly tx').catch((err) => {
     console.warn('[Assembly] tx timed out:', err?.message || err);
-    return { ok: false, value: null };
+    const timed = /timed out/.test(String(err?.message || ''));
+    return { ok: false, value: null, reason: timed ? 'timeout' : 'error' };
   });
 }
 
-export async function loadAssemblyDocument() {
-  const { ok, value } = await runTx(DOC_STORE, 'readonly', (store) => store.get(DOC_KEY));
-  if (!ok || !value) return null;
+async function documentFromStored(value) {
   try {
     // serializeAssembly drops a color key that is not a surf id. Strip a
     // legacy `local:` prefix first so `local:<surfId>` still round-trips.
@@ -126,6 +126,25 @@ export async function loadAssemblyDocument() {
   } catch {
     return null;
   }
+}
+
+/**
+ * `hit` is a stored document. `miss` is an empty store. `timeout` is a slow
+ * read — the previous document may still be there, so callers must not
+ * write a replacement.
+ */
+export async function loadAssemblyDocumentStatus() {
+  const { ok, value, reason } = await runTx(DOC_STORE, 'readonly', (store) => store.get(DOC_KEY));
+  if (reason === 'timeout') return { status: 'timeout', doc: null };
+  if (!ok) return { status: 'error', doc: null };
+  if (!value) return { status: 'miss', doc: null };
+  const doc = await documentFromStored(value);
+  return doc ? { status: 'hit', doc } : { status: 'error', doc: null };
+}
+
+export async function loadAssemblyDocument() {
+  const loaded = await loadAssemblyDocumentStatus();
+  return loaded.status === 'hit' ? loaded.doc : null;
 }
 
 export async function saveAssemblyDocument(doc) {
