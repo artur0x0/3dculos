@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { X, DollarSign, Clock, Package, ShoppingCart } from 'lucide-react';
 import { PROCESSES } from '../utils/quoting';
 import { generate3MFBlob } from '../utils/exportModel';
+import { scriptHash } from '../utils/cart.js';
+import { requestPartQuote } from '../utils/quoteApi.js';
 import CheckoutStepper from './CheckoutStepper';
 import QuantityStepper from './order/QuantityStepper';
 
@@ -18,10 +20,19 @@ function initialMaterial(options) {
   return list.includes(want) ? want : list[0];
 }
 
+function addFailure(reason) {
+  if (reason === 'full') return 'The cart is full.';
+  if (reason === 'incomplete-quote') return 'The quote was incomplete. Nothing was added to the cart.';
+  if (reason === 'signed-out') return 'Sign in to add this part to the cart.';
+  return 'Could not add this part. Nothing was added to the cart.';
+}
+
 const QuoteModal = ({
   onClose,
   onGetQuote,
   onOrder,
+  onAddToCart,
+  mode = 'checkout',
   currentScript,
   currentFilename,
   fixedQuantity = null,
@@ -30,7 +41,8 @@ const QuoteModal = ({
   lineError = '',
   checkoutStep = null,
 }) => {
-  const locked = Number.isInteger(fixedQuantity) && fixedQuantity >= 1;
+  const addingToCart = mode === 'add';
+  const locked = !addingToCart && Number.isInteger(fixedQuantity) && fixedQuantity >= 1;
   const [selectedProcess, setSelectedProcess] = useState(() => initialProcess(initialOptions));
   const [selectedMaterial, setSelectedMaterial] = useState(() => initialMaterial(initialOptions));
   const [infill, setInfill] = useState(() => {
@@ -41,6 +53,7 @@ const QuoteModal = ({
   const qty = locked ? fixedQuantity : quantity;
   const [quoteResult, setQuoteResult] = useState(null);
   const [error, setError] = useState(null);
+  const [adding, setAdding] = useState(false);
   const onGetQuoteRef = useRef(onGetQuote);
   onGetQuoteRef.current = onGetQuote;
 
@@ -77,33 +90,43 @@ const QuoteModal = ({
     setSelectedMaterial(PROCESSES[process].materials[0]);
   };
 
-  // Handle order button click
-  const handleOrder = async () => {
-    if (!quoteResult || !onOrder) return;
-
-    let name;
-    if (currentFilename) {
-      name = currentFilename.split('.')[0] + '.3mf'
-    } else {
-      name = "model.3mf"
+  const exportModelFile = async () => {
+    const name = currentFilename
+      ? `${currentFilename.split('.')[0]}.3mf`
+      : 'model.3mf';
+    const blob = await generate3MFBlob(currentScript, { partId, lineError });
+    const arrayBuffer = await blob.arrayBuffer();
+    const bytes = new Uint8Array(arrayBuffer);
+    let binary = '';
+    const chunk = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunk) {
+      binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
     }
+    return {
+      blob,
+      modelFile: {
+        contentType: 'application/vnd.ms-package.3dmanufacturing-3dmodel+xml',
+        sizeBytes: blob.size,
+        filename: name,
+        data: btoa(binary),
+      },
+    };
+  };
 
-    let blob;
-    let base64;
+  // Checkout still hands one part to OrderModal. Add to cart prices on the server first.
+  const handleOrder = async () => {
+    if (!quoteResult || !onOrder || adding) return;
+
+    let exported;
     try {
-      blob = await generate3MFBlob(currentScript, { partId, lineError });
-      const arrayBuffer = await blob.arrayBuffer();
-      const bytes = new Uint8Array(arrayBuffer);
-      let binary = '';
-      const chunk = 0x8000;
-      for (let i = 0; i < bytes.length; i += chunk) {
-        binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
-      }
-      base64 = btoa(binary);
+      exported = await exportModelFile();
     } catch (err) {
       setError(err?.message || lineError || 'Could not export this part.');
       return;
     }
+    const { blob, modelFile } = exported;
+    const base64 = modelFile.data;
+    const name = modelFile.filename;
 
     const quoteData = {
       process: selectedProcess,
@@ -143,8 +166,44 @@ const QuoteModal = ({
     onOrder(quoteData, modelData);
   };
 
+  const handleAddToCart = async () => {
+    if (!quoteResult || adding) return;
+    if (!onAddToCart) {
+      setError('Could not add this part.');
+      return;
+    }
+    setAdding(true);
+    setError(null);
+    try {
+      const { modelFile } = await exportModelFile();
+      const accepted = await requestPartQuote({
+        scriptHash: scriptHash(currentScript),
+        process: selectedProcess,
+        material: selectedMaterial,
+        infill,
+        modelFile,
+      });
+      const wrote = await onAddToCart({
+        process: selectedProcess,
+        material: selectedMaterial,
+        infill,
+        quantity: qty,
+        script: currentScript,
+        quote: accepted,
+      });
+      if (wrote && wrote.ok === false) setError(addFailure(wrote.reason));
+    } catch (err) {
+      setError(err?.message || 'Could not add this part. Nothing was added to the cart.');
+    } finally {
+      setAdding(false);
+    }
+  };
+
   return (
-    <div className="fixed inset-0 surface-scrim flex items-center justify-center z-50 p-4">
+    <div
+      className="fixed inset-0 surface-scrim flex items-center justify-center z-50 p-4"
+      data-quote-mode={addingToCart ? 'add' : 'checkout'}
+    >
       <div className="surface-glass rounded-lg shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-hidden flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-gray-700">
@@ -258,7 +317,7 @@ const QuoteModal = ({
 
           {/* Error Display */}
           {error && (
-            <div className="bg-red-900/20 border border-red-500/50 rounded-lg p-4">
+            <div className="bg-red-900/20 border border-red-500/50 rounded-lg p-4" data-quote-error="">
               <div className="text-red-400 text-sm">{error}</div>
             </div>
           )}
@@ -335,11 +394,15 @@ const QuoteModal = ({
                 {/* Order Button */}
                 <div className="pt-4">
                   <button
-                    onClick={handleOrder}
-                    className="w-full px-6 py-4 bg-green-600 hover:bg-green-700 text-white rounded-lg flex items-center justify-center gap-2 text-lg font-semibold transition-colors"
+                    type="button"
+                    onClick={addingToCart ? handleAddToCart : handleOrder}
+                    disabled={adding}
+                    data-quote-add={addingToCart ? '' : undefined}
+                    data-quote-order={addingToCart ? undefined : ''}
+                    className="w-full px-6 py-4 bg-green-600 hover:bg-green-700 text-white rounded-lg flex items-center justify-center gap-2 text-lg font-semibold transition-colors disabled:cursor-wait disabled:opacity-70"
                   >
                     <ShoppingCart size={24} />
-                    Order
+                    {addingToCart ? (adding ? 'Adding…' : 'Add to cart') : 'Order'}
                   </button>
                 </div>
               </div>

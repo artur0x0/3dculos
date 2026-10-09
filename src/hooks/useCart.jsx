@@ -12,6 +12,7 @@ import {
   checkoutSkipNote,
   emptyCart,
   makeCartDraft,
+  normalizeCart,
   orderIntent,
   presentCartLines,
   refillThumbs,
@@ -113,6 +114,8 @@ export function useCart({
   const [cart, setCart] = useState(emptyCart);
   const [open, setOpen] = useState(false);
   const [flight, setFlight] = useState(null);
+  const [partQuote, setPartQuoteState] = useState(null);
+  const partQuoteRef = useRef(null);
   const rev = useRef(0);
   const flightSeq = useRef(0);
   const syncing = useRef(false);
@@ -129,6 +132,11 @@ export function useCart({
   signedInRef.current = signedIn;
   pendingRef.current = pending;
   onNeedLoginRef.current = onNeedLogin;
+
+  const setPartQuote = useCallback((next) => {
+    partQuoteRef.current = next;
+    setPartQuoteState(next);
+  }, []);
 
   const persist = useCallback((next) => {
     rev.current += 1;
@@ -172,6 +180,7 @@ export function useCart({
     if (!signedIn || !userId) {
       setCart(emptyCart());
       setOpen(false);
+      setPartQuote(null);
       seenUser.current = '';
       return undefined;
     }
@@ -189,7 +198,7 @@ export function useCart({
       window.removeEventListener('focus', onWake);
       window.removeEventListener('online', onWake);
     };
-  }, [signedIn, userId, runSync]);
+  }, [signedIn, userId, runSync, setPartQuote]);
 
   const scheduleSync = useCallback(() => {
     const id = userIdRef.current;
@@ -233,23 +242,68 @@ export function useCart({
     if (!picked.ok || !picked.part) {
       return { ok: false, reason: picked.reason || 'missing' };
     }
+    const name = String(picked.part.name || '').trim() || 'Part';
+    setPartQuote({
+      partId: String(picked.part.id),
+      part: {
+        id: picked.part.id,
+        name: picked.part.name,
+        surfId: picked.part.surfId || null,
+      },
+      script: picked.script,
+      filename: `${name}.js`,
+    });
+    return { ok: true, quoting: true };
+  }, [assemblyRef, liveScriptRef, partScriptsRef, setPartQuote]);
+
+  const closePartQuote = useCallback(() => setPartQuote(null), [setPartQuote]);
+
+  const commitQuotedLine = useCallback((payload) => {
+    const session = partQuoteRef.current;
+    if (!signedInRef.current || !userIdRef.current) {
+      return { ok: false, reason: 'signed-out' };
+    }
+    if (!session) return { ok: false, reason: 'closed' };
+    const quote = payload?.quote;
+    if (!quote?.quoteId || quote.quotedUnitPrice == null || !quote.quotedAt) {
+      return { ok: false, reason: 'incomplete-quote' };
+    }
+    const doc = assemblyRef?.current;
+    const script = typeof payload.script === 'string' && payload.script.length
+      ? payload.script
+      : session.script;
+    const options = {
+      process: quote.process || payload.process,
+      material: quote.material || payload.material,
+      infill: quote.infill == null ? payload.infill : quote.infill,
+    };
     const draft = makeCartDraft({
       doc,
-      part: picked.part,
-      script: picked.script,
-      thumbDataUrl: thumbForPart(partId),
+      part: session.part,
+      script,
+      thumbDataUrl: thumbForPart(session.partId),
+      qty: payload.quantity,
+      options,
+      quotedUnitPrice: quote.quotedUnitPrice,
+      quoteId: quote.quoteId,
+      quotedAt: quote.quotedAt,
     });
+    const preview = normalizeCart({ version: 0, lines: [draft], tombstones: [] });
+    if (!preview.lines[0]?.quoteId) return { ok: false, reason: 'incomplete-quote' };
     const result = addPartLine(readCart(localStorage, userIdRef.current), draft);
     if (!result.ok) return result;
+    const stored = result.cart.lines.find((row) => row.lineId === result.lineId);
+    if (!stored?.quoteId) return { ok: false, reason: 'incomplete-quote' };
     persist(result.cart);
     scheduleSync();
-    const shot = measureFlight(partId);
+    const shot = measureFlight(session.partId);
     if (shot) {
       flightSeq.current += 1;
       setFlight({ id: flightSeq.current, ...shot });
     }
+    setPartQuote(null);
     return result;
-  }, [assemblyRef, liveScriptRef, partScriptsRef, persist, scheduleSync]);
+  }, [assemblyRef, persist, scheduleSync, setPartQuote]);
 
   const changeQty = useCallback((lineId, qty) => {
     if (!signedInRef.current) return;
@@ -273,6 +327,7 @@ export function useCart({
       return { ok: false, reason: 'signed-out' };
     }
     if (intent !== 'add') return { ok: false, reason: 'pending' };
+    setPartQuote(null);
     const doc = assemblyRef?.current || null;
     const scripts = scriptsForOrder(partScriptsRef?.current, liveScriptRef?.current);
     const queue = checkoutQueue(
@@ -285,7 +340,7 @@ export function useCart({
     setOpen(false);
     onCheckoutRef.current?.(queue);
     return { ok: true, ...queue };
-  }, [assemblyRef, liveScriptRef, partRunsRef, partScriptsRef]);
+  }, [assemblyRef, liveScriptRef, partRunsRef, partScriptsRef, setPartQuote]);
 
   const refill = useCallback(() => {
     if (!signedInRef.current) return;
@@ -309,9 +364,12 @@ export function useCart({
     checkoutNote: checkoutSkipNote(queue),
     open,
     flight,
+    partQuote,
     openCart,
     closeCart,
     orderPart,
+    closePartQuote,
+    commitQuotedLine,
     changeQty,
     removeLine,
     refill,
@@ -324,9 +382,12 @@ export function useCart({
     queue,
     open,
     flight,
+    partQuote,
     openCart,
     closeCart,
     orderPart,
+    closePartQuote,
+    commitQuotedLine,
     changeQty,
     removeLine,
     refill,

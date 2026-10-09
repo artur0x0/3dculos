@@ -6,11 +6,13 @@ import {
   capThumb,
   cartChipSelector,
   cartCount,
+  cartLineIsStale,
   cartUserId,
   checkoutQueue,
   checkoutSkipNote,
   emptyCart,
   isQuoteExpired,
+  makeCartDraft,
   orderIntent,
   presentCartLines,
   reduceCartOps,
@@ -28,6 +30,7 @@ import {
   writeCart,
 } from '../src/utils/cartStorage.js';
 import { scriptForRow } from '../src/utils/assembly.js';
+import { cartSyncPayload } from '../src/utils/cartSync.js';
 
 function id(n) {
   return `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
@@ -217,6 +220,105 @@ describe('cart storage and order rules', () => {
     assert.equal(cartChipSelector(1440), '[data-profile-chip-variant="viewport"]');
     assert.equal(cartChipSelector(768), '[data-parts-profile-chip] [data-profile-chip]');
   });
+
+  test('a line matches on part, options, and script hash', () => {
+    const quoted = {
+      source: 'local',
+      assemblyName: 'Bracket Box',
+      partId: 'part-1',
+      surfId: 'surf-1',
+      partName: 'Bracket',
+      scriptHash: 'hash-a',
+      qty: 1,
+      options: { process: 'FDM', material: 'PLA', infill: 20 },
+      quotedUnitPrice: 4,
+      quoteId: 'q1',
+      quotedAt: '2026-06-01T00:00:00.000Z',
+      addedAt: '2026-06-01T00:00:00.000Z',
+      updatedAt: '2026-06-01T00:00:00.000Z',
+      lineId: id(1),
+    };
+    const added = addPartLine(emptyCart(), quoted);
+    const otherMaterial = addPartLine(added.cart, {
+      ...quoted,
+      lineId: id(2),
+      options: { process: 'FDM', material: 'PETG', infill: 20 },
+      quoteId: 'q2',
+    });
+    assert.equal(otherMaterial.bumped, false);
+    assert.equal(otherMaterial.cart.lines.length, 2);
+    const otherHash = addPartLine(otherMaterial.cart, {
+      ...quoted,
+      lineId: id(3),
+      scriptHash: 'hash-b',
+      quoteId: 'q3',
+    });
+    assert.equal(otherHash.bumped, false);
+    const otherInfill = addPartLine(otherHash.cart, {
+      ...quoted,
+      lineId: id(4),
+      options: { process: 'FDM', material: 'PLA', infill: 40 },
+      quoteId: 'q4',
+    });
+    assert.equal(otherInfill.bumped, false);
+    assert.equal(otherInfill.cart.lines.length, 4);
+    const again = addPartLine(otherInfill.cart, {
+      ...quoted,
+      lineId: id(5),
+      qty: 2,
+      quoteId: 'q5',
+      quotedUnitPrice: 5,
+      quotedAt: '2026-06-02T00:00:00.000Z',
+    });
+    assert.equal(again.bumped, true);
+    assert.equal(again.cart.lines.length, 4);
+    const bumped = again.cart.lines.find((row) => row.lineId === id(1));
+    assert.equal(bumped.qty, 3);
+    assert.equal(bumped.quoteId, 'q5');
+    assert.equal(bumped.quotedUnitPrice, 5);
+    assert.equal(bumped.quotedAt, '2026-06-02T00:00:00.000Z');
+    const renamed = addPartLine(again.cart, {
+      ...quoted,
+      lineId: id(6),
+      partId: 'part-renamed',
+      quoteId: 'q6',
+      quotedUnitPrice: 6,
+      quotedAt: '2026-06-03T00:00:00.000Z',
+    });
+    assert.equal(renamed.bumped, true);
+    assert.equal(renamed.cart.lines.find((row) => row.quoteId === 'q6').partId, 'part-renamed');
+    const unquoted = addPartLine(emptyCart(), line(1, '2026-06-02T00:00:00.000Z', {
+      partId: 'part-1',
+      scriptHash: 'hash-a',
+    }));
+    const beside = addPartLine(unquoted.cart, { ...quoted, lineId: id(2) });
+    assert.equal(beside.bumped, false);
+    assert.equal(beside.cart.lines.length, 2);
+  });
+
+  test('makeCartDraft locks the quoted script and the server price', () => {
+    const script = 'return 1;';
+    const draft = makeCartDraft({
+      doc: { source: 'local', name: 'Bracket Box' },
+      part: { id: 'part-1', name: 'Bracket', surfId: 'surf-1' },
+      script,
+      qty: 3,
+      options: { process: 'FDM', material: 'PLA', infill: 20 },
+      quotedUnitPrice: 4.5,
+      quoteId: 'q-new',
+      quotedAt: '2026-06-01T00:00:00.000Z',
+    });
+    assert.equal(draft.scriptHash, scriptHash(script));
+    assert.equal(draft.qty, 3);
+    assert.equal(draft.options.material, 'PLA');
+    assert.equal(draft.options.infill, 20);
+    const stored = addPartLine(emptyCart(), draft);
+    assert.equal(stored.ok, true);
+    assert.equal(stored.cart.lines[0].scriptHash, scriptHash(script));
+    assert.equal(stored.cart.lines[0].quotedUnitPrice, 4.5);
+    assert.equal(stored.cart.lines[0].quoteId, 'q-new');
+    assert.equal(stored.cart.lines[0].quotedAt, '2026-06-01T00:00:00.000Z');
+  });
 });
 
 describe('cart line v3 sync', () => {
@@ -263,6 +365,18 @@ describe('cart line v3 sync', () => {
     assert.equal(dropped.lines[0].lineId, id(3));
     assert.equal(dropped.lines[0].quotedUnitPrice, null);
     assert.equal(dropped.lines[0].quoteId, null);
+
+    const payload = cartSyncPayload(stored, 4);
+    assert.equal(payload.baseVersion, 4);
+    assert.equal(payload.lines[1].quotedUnitPrice, 18.25);
+    assert.equal(payload.lines[1].quoteId, 'quote-2');
+    assert.equal(payload.lines[1].quotedAt, quotedAt);
+    assert.equal(payload.lines[1].scriptHash, 'quoted-hash');
+    assert.equal(payload.lines[1].options.process, 'SLS');
+    assert.equal(payload.lines[1].options.material, 'Nylon');
+    assert.equal(payload.lines[1].options.infill, 40);
+    assert.equal(payload.lines[0].quotedUnitPrice, null);
+    assert.equal(payload.lines[0].quoteId, null);
   });
 
   test('quoteExpired follows the 7-day TTL and does not remove the line from checkout', () => {
@@ -302,6 +416,8 @@ describe('cart line v3 sync', () => {
     assert.equal(view[0].quoteExpired, false);
     assert.equal(view[0].hashStale, false);
     assert.equal(view[1].quoteExpired, true);
+    assert.equal(cartLineIsStale(view[0]), false);
+    assert.equal(cartLineIsStale(view[1]), true);
     const queue = checkoutQueue(doc, scripts, cart);
     assert.deepEqual(queue.lines.map((row) => row.partId), ['part-1', 'part-2']);
     assert.equal(queue.skipped.length, 0);

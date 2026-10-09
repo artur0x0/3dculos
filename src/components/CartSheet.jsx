@@ -1,12 +1,20 @@
 /**
- * Cart sheet. Checkout walks the lines that can be quoted from this
+ * Cart sheet. Checkout still walks the lines that can be quoted from this
  * assembly. Missing parts and parts in another assembly stay in the cart.
+ * A line shows its server unit price and a stale badge when the script
+ * hash changed or the quote expired.
  */
 import React, { useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Minus, Plus, X } from 'lucide-react';
 import { useCartChrome } from '../hooks/useCart';
-import { CART_QTY_MAX, CART_QTY_MIN } from '../utils/cart.js';
+import { CART_QTY_MAX, CART_QTY_MIN, cartLineIsStale } from '../utils/cart.js';
+
+function staleLabel(line) {
+  if (line.hashStale && line.quoteExpired) return 'Stale';
+  if (line.hashStale) return 'Script changed';
+  return 'Quote expired';
+}
 
 export default function CartSheet() {
   const cart = useCartChrome();
@@ -103,9 +111,19 @@ export default function CartSheet() {
                     Not in this assembly
                   </p>
                 ) : null}
-                {line.hashStale && !line.missing ? (
-                  <p className="text-[11px] text-gray-500" data-cart-hash-stale="">
-                    Script changed
+                {Number.isFinite(line.quotedUnitPrice) ? (
+                  <p className="text-[11px] tabular-nums text-gray-300" data-cart-unit-price="">
+                    ${Number(line.quotedUnitPrice).toFixed(2)} each
+                  </p>
+                ) : null}
+                {cartLineIsStale(line) ? (
+                  <p
+                    className="mt-0.5 inline-flex rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-200"
+                    data-cart-stale=""
+                    data-cart-hash-stale={line.hashStale ? '' : undefined}
+                    data-cart-quote-expired={line.quoteExpired ? '' : undefined}
+                  >
+                    {staleLabel(line)}
                   </p>
                 ) : null}
               </div>
