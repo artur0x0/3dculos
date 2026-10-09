@@ -23,8 +23,6 @@ import {
 } from '../../utils/sheetMetal/sheetMetalMode';
 import { buildSheetExport } from '../../utils/sheetMetal/sheetExport';
 import { formatSheetLength, loadSheetDisplayUnit, saveSheetDisplayUnit } from '../../utils/sheetMetal/sheetUnits';
-import { SCS_ORDER_URL } from '../../utils/scs/scsCatalog';
-import { downloadBlob } from '../../utils/model-io';
 import SheetMetalModeChip from './SheetMetalModeChip';
 import { SmButton, SmMmSlider, SmPopup, SmSelect, SmSlider, SmToggle } from './SmControls';
 import { FeatureDeleteButton } from '../FeatureEditDelete';
@@ -203,12 +201,7 @@ const HolePopup = ({ mode, setMode, onCommit, onExit, unit, onUnit }) => {
 };
 
 
-const downloadText = (file) => {
-  if (!file?.text) return;
-  downloadBlob(new Blob([file.text], { type: `${file.mime || 'text/plain'};charset=utf-8` }), file.name);
-};
-
-/** DFM + DXF / STEP / Order on SendCutSend. Hard fails block downloads + order. */
+/** DFM, flat size, and the STEP source. Downloads and Order live on the quote handoff. */
 const ExportPopup = ({ mode, setMode, mesh, script, partName, unit, onUnit }) => {
   const bundle = React.useMemo(
     () => buildSheetExport(mode.spec, { mesh: mesh || null, script: script ?? null, partName: partName || mode.partId || 'sheet', unit }),
@@ -234,21 +227,7 @@ const ExportPopup = ({ mode, setMode, mesh, script, partName, unit, onUnit }) =>
       unit={unit}
       onUnit={onUnit}
       footer={(
-        <>
-          <SmButton onClick={close} data-sm-back="1">Close</SmButton>
-          <SmButton
-            variant="primary"
-            data-sm-order="1"
-            disabled={blocked}
-            title={blocked ? 'Fix DFM fails first' : 'Open SendCutSend to upload DXF or STEP'}
-            onClick={() => {
-              if (blocked) return;
-              window.open(SCS_ORDER_URL, '_blank', 'noopener,noreferrer');
-            }}
-          >
-            Order on SendCutSend
-          </SmButton>
-        </>
+        <SmButton onClick={close} data-sm-back="1">Close</SmButton>
       )}
     >
       {size && (
@@ -280,24 +259,6 @@ const ExportPopup = ({ mode, setMode, mesh, script, partName, unit, onUnit }) =>
           ))}
         </ul>
       )}
-      <div className="grid grid-cols-2 gap-2">
-        <SmButton
-          data-sm-dxf="1"
-          disabled={blocked || !files.dxf}
-          title={blocked ? 'Fix DFM fails first' : files.dxf?.name}
-          onClick={() => downloadText(files.dxf)}
-        >
-          Download DXF
-        </SmButton>
-        <SmButton
-          data-sm-step="1"
-          disabled={blocked || !files.step}
-          title={blocked ? 'Fix DFM fails first' : (files.step?.name || 'Run the part first')}
-          onClick={() => downloadText(files.step)}
-        >
-          Download STEP
-        </SmButton>
-      </div>
       <p className="text-[11px] text-gray-400" data-sm-step-source={stepSource || 'none'}>
         DXF is the flat cut (mm). STEP is the bent 3D part
         {stepSource === 'spec' ? `, built from the sheet spec with exact bends${bendCount ? ` (${bendCount} cylindrical)` : ''}` : ''}
