@@ -115,8 +115,8 @@ const contourRail = read('../../src/components/ContourModeRail.jsx');
     'standalone edge chip requires at least one selected edge',
     /pickMode === 'edge' && !contourMode && !filletMode && selectedEdges\.length > 0 && \(/.test(view),
   );
-  check('edge chip keeps its test hook', /data-edge-selector="standalone"/.test(view));
-  const edgeBlock = view.slice(view.indexOf('data-edge-selector="standalone"'));
+  check('edge chip keeps its test hook', /'data-edge-selector': 'standalone'/.test(view));
+  const edgeBlock = view.slice(view.indexOf("'data-edge-selector': 'standalone'"));
   const edgeEnd = edgeBlock.indexOf('edgeModeToast');
   const edgeChip = edgeEnd > 0 ? edgeBlock.slice(0, edgeEnd) : edgeBlock.slice(0, 1800);
   check(

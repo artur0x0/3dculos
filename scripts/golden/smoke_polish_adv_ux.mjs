@@ -226,7 +226,7 @@ const { Manifold, CrossSection } = wasm;
   check(
     'standalone edge chip is hidden during contour mode',
     /pickMode === 'edge' && !contourMode && !filletMode/.test(view)
-      && /data-edge-selector="standalone"/.test(view),
+      && /'data-edge-selector': 'standalone'/.test(view),
   );
   const chip = readFileSync(join(here, '../../src/components/ContourModeChip.jsx'), 'utf8');
   check('Sweep path selector is embedded in the popup', /data-sweep-path-selector="embedded"/.test(chip));

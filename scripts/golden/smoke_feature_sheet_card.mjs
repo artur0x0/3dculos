@@ -110,7 +110,7 @@ console.log('feature sheet card — source');
     && /Tangent \{tangentOn/.test(fillet)
     && !/>\s*Accept\s*</.test(fillet)
     && /filletMode && mode !== 'game'/.test(view));
-  const edgeAt = view.indexOf('data-edge-selector="standalone"');
+  const edgeAt = view.indexOf("'data-edge-selector': 'standalone'");
   const edgeSlice = view.slice(Math.max(0, edgeAt - 500), edgeAt + 700);
   check('standalone edge card is the shell, X clears and leaves edge pick, no Confirm',
     edgeAt > 0
