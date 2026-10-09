@@ -1,6 +1,6 @@
 /**
- * Feature-edit Delete: open the cylinder dialog, confirm past a dependent
- * warning, rebuild, then Undo through the per-part history.
+ * Feature-edit Delete: the button removes the block immediately. A toast
+ * with Undo appears only when a later feature depends on it.
  */
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';

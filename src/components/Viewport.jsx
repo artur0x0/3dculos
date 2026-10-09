@@ -60,7 +60,7 @@ import ProfileChip from './ProfileChip';
 import CrossSectionPanel from './CrossSectionPanel';
 import HelperInsertPalette from './HelperInsertPalette';
 import ErrorPopup from './ErrorPopup';
-import { FeatureDeleteConfirm } from './FeatureEditDelete';
+import { FeatureDeleteToast } from './FeatureEditDelete';
 import ContourModeRail from './ContourModeRail';
 import ContourModeChip from './ContourModeChip';
 import FilletModeChip from './FilletModeChip';
@@ -165,6 +165,7 @@ import {
   creationDialogFor,
   editPreviewScript,
   featureDependents,
+  dependentToastLines,
   openFeatureEdit,
 } from '../utils/featureEdit';
 import {
@@ -837,7 +838,7 @@ const Viewport = forwardRef(({
   onDeleteFeatureEditRef.current = onDeleteFeatureEdit;
   const [helperEdit, setHelperEdit] = useState(null);
   const [featureEditBanner, setFeatureEditBanner] = useState('');
-  const [featureDeleteAsk, setFeatureDeleteAsk] = useState(null);
+  const [featureDeleteToast, setFeatureDeleteToast] = useState(null);
   const cadBodyStickyRef = useRef(false);
   const showCadBodyHighlightRef = useRef(() => false);
   const swapPickPartRef = useRef(() => false);
@@ -1124,6 +1125,9 @@ const Viewport = forwardRef(({
   materialsRef.current = materials;
   const [isExecuting, setIsExecuting] = useState(false);
   const [executionError, setExecutionError] = useState(null);
+  useEffect(() => {
+    if (executionError) setFeatureDeleteToast(null);
+  }, [executionError]);
   const [isDownloading, setIsDownloading] = useState(false);
   
   // Cross-section state
@@ -7361,7 +7365,6 @@ const Viewport = forwardRef(({
     featureEditRef.current = null;
     setHelperEdit(null);
     setFeatureEditBanner('');
-    setFeatureDeleteAsk(null);
     if (full && !editPreviewBlocked()) executeScriptRef.current?.(full, { editPreview: true });
   };
 
@@ -7385,7 +7388,6 @@ const Viewport = forwardRef(({
     featureEditRef.current = null;
     setHelperEdit(null);
     setFeatureEditBanner('');
-    setFeatureDeleteAsk(null);
     if (contourModeRef.current) exitContourMode();
     if (filletModeRef.current) exitFilletMode();
     if (shellModeRef.current) exitShellMode();
@@ -7401,29 +7403,18 @@ const Viewport = forwardRef(({
     }
   };
 
-  const openFeatureDeleteConfirm = () => {
+  const deleteFeatureFromEdit = () => {
     const edit = featureEditRef.current;
     if (!edit?.feature) return;
     const script = (typeof getHelperBuffer === 'function' ? getHelperBuffer() : '') || edit.script || '';
-    const dependents = featureDependents(script, edit.feature);
-    setFeatureDeleteAsk({
-      label: edit.feature.chipLabel || edit.feature.label || 'this feature',
-      dependents,
-    });
-  };
-
-  const confirmFeatureDelete = () => {
-    const edit = featureEditRef.current;
-    if (!edit?.feature) {
-      setFeatureDeleteAsk(null);
-      return;
-    }
+    const lines = dependentToastLines(featureDependents(script, edit.feature));
     const ok = onDeleteFeatureEditRef.current?.(edit.feature);
     if (!ok) return;
     dismissFeatureEditAfterDelete();
+    setFeatureDeleteToast(lines.length ? lines : null);
   };
 
-  const featureEditDelete = featureEditRef.current ? openFeatureDeleteConfirm : null;
+  const featureEditDelete = featureEditRef.current ? deleteFeatureFromEdit : null;
 
   const liveGraphFaces = () => {
     const geom = resultRef.current?.geometry;
@@ -8926,13 +8917,14 @@ const Viewport = forwardRef(({
         </div>
       )}
 
-      <FeatureDeleteConfirm
-        open={!!featureDeleteAsk}
-        label={featureDeleteAsk?.label}
-        dependents={featureDeleteAsk?.dependents || []}
-        onCancel={() => setFeatureDeleteAsk(null)}
-        onConfirm={confirmFeatureDelete}
-      />
+      {featureDeleteToast && !executionError ? (
+        <FeatureDeleteToast
+          lines={featureDeleteToast}
+          canUndo={canUndo}
+          onUndo={onUndo}
+          onDismiss={() => setFeatureDeleteToast(null)}
+        />
+      ) : null}
 
       {edgeModeToast && createPortal(
         <div className="fixed top-16 left-1/2 -translate-x-1/2 z-50 pointer-events-none max-w-[min(22rem,calc(100%-2rem))]">

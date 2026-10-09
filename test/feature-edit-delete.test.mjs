@@ -20,7 +20,7 @@ import {
   MOVE_FACE_END,
 } from '../src/utils/helperPaletteSnippets.js';
 import { parseFeatureMarkers } from '../src/utils/featureMarkers.js';
-import { deleteFeatureEdit, featureDependents } from '../src/utils/featureEdit.js';
+import { deleteFeatureEdit, dependentToastLines, featureDependents } from '../src/utils/featureEdit.js';
 import {
   emptyPartHistory,
   historyForPart,
@@ -240,7 +240,23 @@ test('delete waits on the assembly open lock and does not take it', () => {
   assert.equal(/assemblyOpenLockRef\.current\s*=/.test(fn), false);
   assert.match(fn, /deleteFeatureEdit/);
   assert.match(view, /featureDependents/);
+  assert.match(view, /dependentToastLines/);
   assert.match(view, /onDeleteFeatureEditRef/);
+  assert.match(view, /deleteFeatureFromEdit/);
+  assert.doesNotMatch(view, /FeatureDeleteConfirm|data-feature-edit-delete-dialog/);
   assert.match(dialog, /data-feature-edit-delete/);
+  assert.match(dialog, /data-feature-edit-delete-toast/);
+  assert.doesNotMatch(dialog, /data-feature-edit-delete-dialog/);
   assert.equal(/assemblyOpenLockRef\.current\s*=/.test(view), false);
+});
+
+test('a dependent warning is toast copy, and no dependents means no toast', () => {
+  const host = byKind(script, 'cube');
+  const lines = dependentToastLines(featureDependents(script, host));
+  assert.ok(lines.some((line) => /uses this feature's edges and may fail/.test(line)));
+  assert.ok(lines.some((line) => /uses this feature's faces and may fail/.test(line)));
+  assert.deepEqual(dependentToastLines([]), []);
+  assert.deepEqual(dependentToastLines(null), []);
+  const last = byKind(script, 'moveFace');
+  assert.deepEqual(dependentToastLines(featureDependents(script, last)), []);
 });

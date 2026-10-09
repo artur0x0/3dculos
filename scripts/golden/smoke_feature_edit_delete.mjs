@@ -3,9 +3,9 @@
 /**
  * Feature-edit Delete.
  *
- * At 390px and desktop: open the edit dialog, tap Delete, see the confirm
- * with a dependent warning, confirm, check the feature is gone and the model
- * rebuilt, then Undo and check the script and model are restored.
+ * At 390px and desktop: open the edit dialog, tap Delete, see no confirm,
+ * the block gone immediately, a toast with Undo only when a later feature
+ * depends on it, then Undo from that toast restores the script and model.
  *
  * Shots go to GOLDEN_SHOT_DIR or os.tmpdir() only.
  */
@@ -111,21 +111,20 @@ async function runSize(label, compact, width, height) {
   await page.screenshot({ path: dialogShot });
   console.log(`  shot ${dialogShot}`);
 
+  const headBefore = await page.evaluate(() => window.__HISTORY_HEAD__);
   await page.locator('[data-feature-edit-delete]').click();
-  await page.locator('[data-feature-edit-delete-dialog]').waitFor({ timeout: 10000 });
-  const warning = page.locator('[data-feature-edit-dependent]');
-  await warning.first().waitFor({ timeout: 5000 });
-  const warningText = await warning.allTextContents();
-  check(`${label}: confirm names an edge dependent`,
+  check(`${label}: no confirm dialog`, await page.locator('[data-feature-edit-delete-dialog]').count() === 0);
+  const toast = page.locator('[data-feature-edit-delete-toast]');
+  await toast.waitFor({ timeout: 10000 });
+  const warningText = await page.locator('[data-feature-edit-dependent]').allTextContents();
+  check(`${label}: toast names an edge dependent`,
     warningText.some((line) => /uses this feature's edges and may fail/.test(line)),
     warningText.join(' | '));
-  const confirmShot = join(shotDir, `feature-edit-delete-confirm-${label}.png`);
-  await page.screenshot({ path: confirmShot });
-  console.log(`  shot ${confirmShot}`);
+  await page.locator('[data-feature-edit-delete-toast] [data-error-undo]').waitFor({ timeout: 5000 });
+  const toastShot = join(shotDir, `feature-edit-delete-toast-${label}.png`);
+  await page.screenshot({ path: toastShot });
+  console.log(`  shot ${toastShot}`);
 
-  const headBefore = await page.evaluate(() => window.__HISTORY_HEAD__);
-  await page.locator('[data-feature-edit-delete-confirm]').click();
-  await page.waitForFunction(() => !document.querySelector('[data-feature-edit-delete-dialog]'), null, { timeout: 10000 });
   await page.waitForFunction(() => !document.querySelector('#helper-param-title'), null, { timeout: 10000 });
   await page.waitForFunction(() => {
     const script = window.__SCRIPT__ || '';
@@ -142,18 +141,19 @@ async function runSize(label, compact, width, height) {
     sig: window.__MESH_SIG__(),
     head: window.__HISTORY_HEAD__,
     err: window.__DELETE_ERROR__ || '',
-    dialog: !!document.querySelector('[data-feature-edit-delete-dialog]'),
+    confirm: !!document.querySelector('[data-feature-edit-delete-dialog]'),
     helper: !!document.querySelector('#helper-param-title'),
-    errorPopup: !!document.querySelector('[data-error-popup]'),
+    toast: !!document.querySelector('[data-feature-edit-delete-toast]'),
+    executionError: !!document.querySelector('[data-execution-error]'),
   }));
   check(`${label}: cylinder block is gone`, !after.script.includes('cylinder begin') && after.script.includes('cube begin'));
   check(`${label}: comments and fillet stay`, after.script.includes('// kept between') && after.script.includes('fillet-mode begin') && after.script.includes('// header comment'));
   check(`${label}: model rebuilt`, after.sig && after.sig !== original.sig, `was ${original.sig} now ${after.sig}`);
   check(`${label}: one undo step`, after.head === headBefore + 1, `head ${headBefore} -> ${after.head}`);
-  check(`${label}: dialog and confirm are gone`, !after.dialog && !after.helper, after.err);
-  check(`${label}: delete did not raise the error popup`, !after.errorPopup, after.err);
+  check(`${label}: edit dialog is gone and toast stays`, !after.confirm && !after.helper && after.toast, after.err);
+  check(`${label}: delete did not raise the error popup`, !after.executionError, after.err);
 
-  await page.locator('[data-feature-bar-undo]').click();
+  await page.locator('[data-feature-edit-delete-toast] [data-error-undo]').click();
   await page.waitForFunction((expected) => window.__SCRIPT__ === expected && window.__MESH_SIG__?.() === window.__ORIGINAL_SIG__,
     original.script,
     { timeout: 30000 });
@@ -161,24 +161,54 @@ async function runSize(label, compact, width, height) {
     script: window.__SCRIPT__,
     sig: window.__MESH_SIG__(),
     head: window.__HISTORY_HEAD__,
+    toast: !!document.querySelector('[data-feature-edit-delete-toast]'),
   }));
-  check(`${label}: undo restores the identical script`, restored.script === original.script);
-  check(`${label}: undo restores the model`, restored.sig === original.sig, `sig ${restored.sig}`);
-  check(`${label}: undo steps back once`, restored.head === headBefore, `head ${restored.head}`);
+  check(`${label}: toast Undo restores the identical script`, restored.script === original.script);
+  check(`${label}: toast Undo restores the model`, restored.sig === original.sig, `sig ${restored.sig}`);
+  check(`${label}: toast Undo steps back once`, restored.head === headBefore, `head ${restored.head}`);
+  check(`${label}: toast closes after Undo`, !restored.toast);
+
+  const openedFillet = await page.evaluate(() => window.__OPEN_EDIT__('fillet'));
+  check(`${label}: fillet edit opened`, openedFillet === true);
+  await page.locator('[data-feature-edit-delete]').waitFor({ timeout: 15000 });
+  await page.locator('[data-feature-edit-delete]').click();
+  await page.waitForFunction(() => {
+    const script = window.__SCRIPT__ || '';
+    return script.includes('cube begin')
+      && script.includes('cylinder begin')
+      && !script.includes('fillet-mode begin')
+      && window.__MESH_SIG__?.()
+      && window.__MESH_SIG__() !== window.__ORIGINAL_SIG__;
+  }, null, { timeout: 30000 });
+  const quiet = await page.evaluate(() => ({
+    confirm: !!document.querySelector('[data-feature-edit-delete-dialog]'),
+    toast: !!document.querySelector('[data-feature-edit-delete-toast]'),
+    executionError: !!document.querySelector('[data-execution-error]'),
+  }));
+  check(`${label}: no toast when nothing depends on the feature`, !quiet.toast && !quiet.confirm && !quiet.executionError);
+
+  await page.locator('[data-feature-bar-undo]').click();
+  await page.waitForFunction(
+    (expected) => window.__SCRIPT__ === expected && window.__MESH_SIG__?.() === window.__ORIGINAL_SIG__,
+    original.script,
+    { timeout: 30000 },
+  );
 
   if (label === '390') {
     const openedCube = await page.evaluate(() => window.__OPEN_EDIT__('cube'));
     check('390: cube edit opened', openedCube === true);
+    await page.locator('[data-feature-edit-delete]').waitFor({ timeout: 15000 });
     await page.locator('[data-feature-edit-delete]').click();
-    await page.locator('[data-feature-edit-delete-confirm]').click();
-    await page.locator('[data-error-popup]').waitFor({ timeout: 20000 });
-    await page.locator('[data-error-undo]').waitFor({ timeout: 5000 });
+    check('390: cube delete has no confirm dialog', await page.locator('[data-feature-edit-delete-dialog]').count() === 0);
+    await page.locator('[data-execution-error]').waitFor({ timeout: 20000 });
+    await page.locator('[data-execution-error] [data-error-undo]').waitFor({ timeout: 5000 });
     const broken = await page.evaluate(() => ({
       script: window.__SCRIPT__ || '',
-      dialog: !!document.querySelector('[data-feature-edit-delete-dialog]'),
+      confirm: !!document.querySelector('[data-feature-edit-delete-dialog]'),
       helper: !!document.querySelector('#helper-param-title'),
-      popup: !!document.querySelector('[data-error-popup]'),
-      undo: !!document.querySelector('[data-error-undo]'),
+      popup: !!document.querySelector('[data-execution-error]'),
+      undo: !!document.querySelector('[data-execution-error] [data-error-undo]'),
+      toast: !!document.querySelector('[data-feature-edit-delete-toast]'),
     }));
     check('390: failed rerun leaves the cube block fully removed',
       !broken.script.includes('cube begin')
@@ -186,8 +216,8 @@ async function runSize(label, compact, width, height) {
       && broken.script.includes('fillet-mode begin')
       && broken.script.includes('// kept between'));
     check('390: error popup has Undo', broken.popup && broken.undo);
-    check('390: no stuck dialog after a failed delete', !broken.dialog && !broken.helper);
-    await page.locator('[data-error-undo]').click();
+    check('390: no stuck dialog after a failed delete', !broken.confirm && !broken.helper && !broken.toast);
+    await page.locator('[data-execution-error] [data-error-undo]').click();
     await page.waitForFunction((expected) => window.__SCRIPT__ === expected, original.script, { timeout: 30000 });
     check('390: error Undo restores the script', (await page.evaluate(() => window.__SCRIPT__)) === original.script);
   }

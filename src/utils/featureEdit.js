@@ -1135,6 +1135,14 @@ export function featureDependents(script, feature) {
   return out;
 }
 
+/** Lines for the post-delete toast. An empty list means no toast. */
+export function dependentToastLines(dependents) {
+  if (!Array.isArray(dependents)) return [];
+  return dependents
+    .map((item) => item?.message)
+    .filter((line) => typeof line === 'string' && line.length > 0);
+}
+
 /**
  * Seed passed to the contour chip so its fields match the saved block.
  */
