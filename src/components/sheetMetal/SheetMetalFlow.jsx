@@ -14,8 +14,11 @@ import {
   holeRange,
   openSheetExport,
   pickSheetPlane,
+  pushSheetHistory,
   setBaseDims,
+  sheetStepCount,
   TAP_SIZES,
+  undoSheetStep,
   updateDraft,
 } from '../../utils/sheetMetal/sheetMetalMode';
 import { buildSheetExport } from '../../utils/sheetMetal/sheetExport';
@@ -43,7 +46,15 @@ const DraftFooter = ({ mode, setMode, onCommit }) => (
         data-sm-delete="1"
         onClick={() => {
           const { mode: next, spec } = deleteDraftFeature(mode);
-          if (!spec || onCommit?.(spec, { step: `delete-${mode.draft.kind}` }) !== false) setMode(() => next);
+          if (!spec) {
+            setMode(() => next);
+            return;
+          }
+          if (mode.reopen) {
+            setMode((m) => pushSheetHistory(m, spec));
+            return;
+          }
+          if (onCommit?.(spec, { step: `delete-${mode.draft.kind}` }) !== false) setMode(() => next);
         }}
       >
         Delete
@@ -55,7 +66,12 @@ const DraftFooter = ({ mode, setMode, onCommit }) => (
       data-sm-accept="1"
       onClick={() => {
         const { mode: next, spec } = acceptDraft(mode);
-        if (spec && onCommit?.(spec, { step: mode.draft.kind }) !== false) setMode(() => next);
+        if (!spec) return;
+        if (mode.reopen) {
+          setMode((m) => pushSheetHistory(m, spec));
+          return;
+        }
+        if (onCommit?.(spec, { step: mode.draft.kind }) !== false) setMode(() => next);
       }}
     >
       Accept
@@ -301,7 +317,7 @@ const TOOL_HINTS = {
 };
 
 const SheetMetalFlow = ({
-  mode, setMode, onCommit, onExit, compact = false, mesh = null, script = null, partName = '',
+  mode, setMode, onCommit, onConfirm, onExit, compact = false, mesh = null, script = null, partName = '',
   onDeleteFeature = null,
 }) => {
   const [unit, setUnit] = useState(() => loadSheetDisplayUnit());
@@ -394,11 +410,40 @@ const SheetMetalFlow = ({
         </div>
       )}
       {mode.stage === 'edit' && (
-        <div className="mt-1.5 font-sans" data-sheet-metal-step="edit">
+        <div
+          className="mt-1.5 font-sans"
+          data-sheet-metal-step="edit"
+          data-sm-reopen={mode.reopen ? '1' : '0'}
+          data-sm-step={Number.isInteger(mode.step) ? mode.step : ''}
+          data-sm-step-count={sheetStepCount(mode.spec)}
+          data-sm-bends={mode.spec?.bends?.length || 0}
+          data-sm-tabs={mode.spec?.tabs?.length || 0}
+          data-sm-holes={mode.spec?.holes?.length || 0}
+        >
           <div className="text-[12px] text-orange-100 whitespace-normal break-words" data-sm-hint="">
             {TOOL_HINTS[mode.tool] || 'Pick a tool on the left rail.'}
           </div>
           {mode.toast && <div className="mt-1 text-[12px] text-amber-200" data-sm-toast="1">{mode.toast}</div>}
+          {mode.reopen && (
+            <div className="mt-2 flex items-center gap-2">
+              <SmButton
+                data-sm-undo="1"
+                title="Undo the last bend or feature"
+                onClick={() => setMode((m) => undoSheetStep(m))}
+              >
+                Undo
+              </SmButton>
+              <SmButton
+                variant="primary"
+                className="flex-1"
+                data-sm-confirm="1"
+                title="Write this sheet and close"
+                onClick={() => onConfirm?.()}
+              >
+                Confirm
+              </SmButton>
+            </div>
+          )}
           <div className="mt-2 flex items-center gap-2">
             {onDeleteFeature ? <FeatureDeleteButton onClick={onDeleteFeature} /> : null}
             <SmButton

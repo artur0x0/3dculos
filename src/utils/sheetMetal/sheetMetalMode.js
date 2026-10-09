@@ -68,6 +68,97 @@ export function enterSheetMetalMode(record, partId = null, existingSpec = null) 
   return { stage: 'plane', sku: record, partId: partId ?? null, spec: null, base: null };
 }
 
+/**
+ * Gauge line for a saved spec. The ribbon reopen does not have the live
+ * catalog record; thickness comes from the spec, and inch/gauge from the
+ * part binding when the SKU matches. Both numbers are always finite so
+ * `scsGaugeLabel` can render.
+ */
+export function skuFromSheetSpec(spec, binding = null) {
+  const clean = normalizeSheetSpec(spec) || spec || {};
+  const t = Number(clean.t);
+  const thicknessMm = Number.isFinite(t) && t > 0 ? t : null;
+  const bound = binding?.sku && clean.sku && binding.sku === clean.sku ? binding : null;
+  const boundIn = Number(bound?.thicknessIn);
+  const thicknessIn = Number.isFinite(boundIn) && boundIn > 0
+    ? boundIn
+    : (thicknessMm ? thicknessMm / IN : null);
+  const mm = thicknessMm || (thicknessIn ? thicknessIn * IN : null);
+  return {
+    sku: bound?.sku || clean.sku || '',
+    name: bound?.name || clean.material || clean.sku || 'Sheet',
+    bendable: !!clean.limits?.bendable,
+    thicknessMm: mm,
+    thicknessIn,
+    gauge: bound?.gauge ?? null,
+    services: Array.isArray(clean.limits?.services) ? [...clean.limits.services] : [],
+  };
+}
+
+/** Bends + tabs + holes on the spec currently shown. */
+export function sheetStepCount(spec) {
+  if (!spec) return 0;
+  return (spec.bends?.length || 0) + (spec.tabs?.length || 0) + (spec.holes?.length || 0);
+}
+
+/**
+ * One spec per committed step, blank first. Bends replay in array order
+ * (parent before child). Tabs and holes follow, each waiting until its
+ * panel exists. The last step is the saved spec, so Confirm with no undo
+ * is byte-identical.
+ */
+export function sheetStepHistory(spec) {
+  const clean = normalizeSheetSpec(spec);
+  if (!clean) return [];
+  const blank = { ...clean, bends: [], tabs: [], holes: [] };
+  const pending = [
+    ...(clean.bends || []).map((f) => ({ key: 'bends', f })),
+    ...(clean.tabs || []).map((f) => ({ key: 'tabs', f })),
+    ...(clean.holes || []).map((f) => ({ key: 'holes', f })),
+  ];
+  const steps = [blank];
+  let cur = blank;
+  const placed = new Set(['base']);
+  const take = (idx) => {
+    const item = pending.splice(idx, 1)[0];
+    cur = { ...cur, [item.key]: [...(cur[item.key] || []), item.f] };
+    steps.push(cur);
+    if (item.key === 'bends') placed.add(item.f.id);
+  };
+  let guard = pending.length * pending.length + 1;
+  while (pending.length && guard-- > 0) {
+    const idx = pending.findIndex((item) => placed.has(item.f.panel || 'base'));
+    if (idx < 0) break;
+    take(idx);
+  }
+  while (pending.length) take(0);
+  if (steps.length > 1) steps[steps.length - 1] = clean;
+  else steps[0] = clean;
+  return steps;
+}
+
+/**
+ * Ribbon reopen: last committed screen (edit), saved blank + bends +
+ * features, and a step index at the end of that history. Writes wait
+ * for Confirm.
+ */
+export function reopenSheetMetalMode(spec, partId = null, binding = null) {
+  const clean = normalizeSheetSpec(spec);
+  if (!clean) return null;
+  const history = sheetStepHistory(clean);
+  const sku = skuFromSheetSpec(clean, binding);
+  return {
+    stage: 'edit',
+    sku,
+    partId: partId ?? null,
+    spec: history[history.length - 1] || clean,
+    tool: defaultTool(sku),
+    history,
+    step: Math.max(0, history.length - 1),
+    reopen: true,
+  };
+}
+
 export function defaultTool(record) {
   return record?.bendable ? 'bend' : 'tab';
 }
@@ -243,6 +334,42 @@ export function acceptDraft(mode) {
   if (!mode?.draft) return { mode, spec: null };
   const spec = draftPreviewSpec(mode);
   return { mode: { ...mode, spec, draft: null, hotEdge: null, toast: null }, spec };
+}
+
+/** Append one committed spec. Steps after the current index are dropped. */
+export function pushSheetHistory(mode, spec) {
+  if (!mode || !spec) return mode;
+  const hist = Array.isArray(mode.history) ? mode.history : [];
+  const step = Number.isInteger(mode.step) ? mode.step : Math.max(0, hist.length - 1);
+  const history = [...hist.slice(0, step + 1), spec];
+  return {
+    ...mode,
+    spec,
+    history,
+    step: history.length - 1,
+    draft: null,
+    hotEdge: null,
+    toast: null,
+  };
+}
+
+/**
+ * Pop one bend or feature. The blank (step 0) stays put — undo does not
+ * exit the flow. A no-op returns the same mode.
+ */
+export function undoSheetStep(mode) {
+  if (!mode?.reopen || !Array.isArray(mode.history)) return mode;
+  if (mode.draft || mode.exportOpen) return mode;
+  if (!(mode.step > 0)) return mode;
+  const step = mode.step - 1;
+  return {
+    ...mode,
+    step,
+    spec: mode.history[step],
+    draft: null,
+    hotEdge: null,
+    toast: null,
+  };
 }
 
 /** Back from a feature popup: drop the draft, stay in edge / face pick. */

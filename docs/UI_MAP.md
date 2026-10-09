@@ -537,7 +537,7 @@ plane, SKU thickness) and enters `sheetMetalMode` still on the plane step.
 A part that already has features stays put: Start does not rewrite it and
 does not create `Sheet (n)`. Plane Accept appends one sheet block
 (`part = part.add(sheetMetalSolid(sheetSpec))`, chosen plane, SKU thickness)
-after the existing blocks. `Sheet (n)` is created only when no part is open.
+after the existing blocks. `Sheet (n)` is created only when an assembly is open and no part is active. With no assembly, Start seeds `Assembly` / `Part (1)` from the editor buffer and then follows those same rules. Run of a non-empty script seeds that assembly before it builds.
 The rail then lists
 Tab / Bend / Hole / Tap under **Shape**. The chip (material, hint, Check &
 Export) is centered in the measured gap between the side rails. An mm|in
@@ -545,7 +545,10 @@ toggle on the popups is display only (stored mm, preference in localStorage).
 Out-of-stock gauges stay visible and disabled. Catalog/cache in `src/utils/scs/`.
 The committed script is the sheet block plus `return part;`. The worker and
 `runScript` unwrap a sheet wrapper (`solid` + spec or flat pattern) and still
-reject any other non-Manifold.
+reject any other non-Manifold. Tapping the Sheet chip on the feature ribbon
+reopens that flow at the edit step with the saved blank, bends, and features.
+Undo on the chip pops one bend or feature and stops on the flat blank.
+Confirm writes the spec; ✕ cancels and leaves the saved block unchanged.
 
 ### Viewport furniture
 Camera and snaps `src/utils/viewCamera.js`; cutting plane

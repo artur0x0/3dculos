@@ -75,6 +75,8 @@ import {
   baseDraftSpec,
   draftPreviewSpec,
   enterSheetMetalMode,
+  pushSheetHistory,
+  reopenSheetMetalMode,
   setSheetTool,
   sheetTap,
   sheetToolsFor,
@@ -4898,6 +4900,24 @@ const Viewport = forwardRef(({
   sheetMetalTapRef.current = (pick) => {
     setSheetMetalMode((prev) => (prev ? sheetTap(prev, pick) : prev));
   };
+  if (import.meta.env?.DEV && typeof window !== 'undefined') {
+    window.__SHEET__ = {
+      tap: (pick) => sheetMetalTapRef.current?.(pick),
+      state: () => {
+        const m = sheetMetalModeRef.current;
+        if (!m) return null;
+        return {
+          stage: m.stage,
+          reopen: !!m.reopen,
+          step: Number.isInteger(m.step) ? m.step : null,
+          bends: m.spec?.bends?.length || 0,
+          tabs: m.spec?.tabs?.length || 0,
+          holes: m.spec?.holes?.length || 0,
+          tool: m.tool || '',
+        };
+      },
+    };
+  }
   useEffect(() => {
     const scene = sceneRef.current;
     disposeSheetOverlay(scene, sheetMetalOverlayRef.current);
@@ -7581,18 +7601,11 @@ const Viewport = forwardRef(({
             script: text,
           });
         } else if (dialog.dialog === 'sheetMetal' && active.spec) {
-          setSheetMetalMode({
-            stage: 'edit',
-            sku: {
-              sku: active.spec.sku,
-              name: active.spec.material || active.spec.sku,
-              bendable: true,
-              thicknessMm: active.spec.t,
-            },
-            partId: activePartIdRef.current,
-            spec: active.spec,
-            tool: 'bend',
-          });
+          const binding = sheetMetalBinding?.sku && sheetMetalBinding.sku === active.spec.sku
+            ? sheetMetalBinding
+            : null;
+          const next = reopenSheetMetalMode(active.spec, activePartIdRef.current, binding);
+          if (next) setSheetMetalMode(next);
         } else if (dialog.dialog === 'shell') {
           enterShellMode();
           const face = (active.resolvedFaces || [])[0] || null;
@@ -8385,20 +8398,23 @@ const Viewport = forwardRef(({
           mode={sheetMetalMode}
           setMode={(fn) => setSheetMetalMode((prev) => (prev ? fn(prev) : prev))}
           onCommit={(spec, meta) => {
-            if (featureEditRef.current?.kind === 'sheetMetal') {
-              const ok = commitFeatureEditRef.current?.({
-                fields: {
-                  ...(featureEditRef.current?.session?.fields || {}),
-                  width: spec?.width,
-                  height: spec?.height,
-                  sku: spec?.sku,
-                  t: spec?.t,
-                },
-              });
-              if (ok) setSheetMetalMode(null);
-              return !!ok;
+            if (sheetMetalMode.reopen) {
+              setSheetMetalMode((prev) => (prev ? pushSheetHistory(prev, spec) : prev));
+              return true;
             }
             return onCommitSheetMetal?.(spec, { ...meta, partId: sheetMetalMode.partId }) ?? false;
+          }}
+          onConfirm={() => {
+            const mode = sheetMetalModeRef.current;
+            const edit = featureEditRef.current;
+            if (!mode?.reopen || edit?.kind !== 'sheetMetal') return;
+            const ok = commitFeatureEditRef.current?.({
+              fields: { ...(edit.session?.fields || {}) },
+              spec: mode.spec,
+            });
+            if (!ok) return;
+            sheetMetalModeRef.current = null;
+            setSheetMetalMode(null);
           }}
           onExit={() => {
             cancelFeatureEditRef.current?.('sheetMetal');
@@ -8417,15 +8433,22 @@ const Viewport = forwardRef(({
           willCreatePart={!!sheetMetalPicker.willCreatePart}
           onCancel={() => setSheetMetalPicker(null)}
           onStart={(record) => {
-            const bound = onBindSheetMetal?.(record);
-            setSheetMetalPicker(null);
-            if (!bound?.ok) return;
-            const next = enterSheetMetalMode(record, bound.partId, bound.spec || null);
-            // Re-binding a part that already has sheet metal re-thicknesses it now.
-            if (next?.stage === 'edit' && next.spec) {
-              onCommitSheetMetal?.(next.spec, { partId: bound.partId, step: 'rebind' });
+            const start = onBindSheetMetal?.(record);
+            const finish = (bound) => {
+              setSheetMetalPicker(null);
+              if (!bound?.ok) return;
+              const next = enterSheetMetalMode(record, bound.partId, bound.spec || null);
+              // Re-binding a part that already has sheet metal re-thicknesses it now.
+              if (next?.stage === 'edit' && next.spec) {
+                onCommitSheetMetal?.(next.spec, { partId: bound.partId, step: 'rebind' });
+              }
+              setSheetMetalMode(next);
+            };
+            if (start && typeof start.then === 'function') {
+              start.then(finish, () => setSheetMetalPicker(null));
+              return;
             }
-            setSheetMetalMode(next);
+            finish(start);
           }}
         />
       )}
