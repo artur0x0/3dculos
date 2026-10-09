@@ -10,7 +10,8 @@ import { featureSheetBottom, measureFeatureSheetWidth } from '../utils/featureSh
  * Props:
  * - title, subtitle
  * - onCancel: X, Esc, and the rail X. Writes nothing.
- * - onConfirm: saves and closes. No swipe-to-dismiss.
+ * - onConfirm: saves and closes. Omit it when the card has nothing to write
+ *   (the standalone edge card). No swipe-to-dismiss.
  * - confirmDisabled
  * - confirmLabel (default Confirm)
  * - children: scrolling body
@@ -181,24 +182,30 @@ export default function FeatureSheet({
           </div>
         ) : null}
       </div>
-      <div className="shrink-0 px-3 pb-2 pt-1" data-feature-sheet-footer="">
-        {footer}
-        <div className="mt-2 flex items-center justify-between gap-2">
-          <div className="min-w-0 text-[11px] leading-tight text-gray-300">{note}</div>
-          <button
-            type="button"
-            onClick={() => onConfirm?.()}
-            disabled={confirmDisabled}
-            data-feature-card-confirm=""
-            className="inline-flex shrink-0 items-center gap-1 rounded-md bg-cyan-600 px-2 py-1
-              text-[13px] font-medium text-white hover:bg-cyan-500 active:bg-cyan-400
-              disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            <Check size={14} />
-            {confirmLabel}
-          </button>
+      {(footer || note || onConfirm) ? (
+        <div className="shrink-0 px-3 pb-2 pt-1" data-feature-sheet-footer="">
+          {footer}
+          {(note || onConfirm) ? (
+            <div className={`flex items-center justify-between gap-2 ${footer ? 'mt-2' : ''}`}>
+              <div className="min-w-0 text-[11px] leading-tight text-gray-300">{note}</div>
+              {onConfirm ? (
+                <button
+                  type="button"
+                  onClick={() => onConfirm()}
+                  disabled={confirmDisabled}
+                  data-feature-card-confirm=""
+                  className="inline-flex shrink-0 items-center gap-1 rounded-md bg-cyan-600 px-2 py-1
+                    text-[13px] font-medium text-white hover:bg-cyan-500 active:bg-cyan-400
+                    disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <Check size={14} />
+                  {confirmLabel}
+                </button>
+              ) : null}
+            </div>
+          ) : null}
         </div>
-      </div>
+      ) : null}
     </div>
   );
 }

@@ -83,6 +83,8 @@ console.log('mobile C.2: popup shift + fillet tangent + strip polish');
       /remountTrackball/.test(slide) &&
       /Positive pan moves content DOWN/.test(slide) &&
       /mode !== 'game' && !!contourMode/.test(viewport) &&
+      /filletSheetOpen/.test(viewport) &&
+      /edgeSheetOpen/.test(viewport) &&
       /onCancel=\{exitContourMode\}/.test(viewport) &&
       /featureSheetCameraOwned/.test(app) &&
       /data-feature-card/.test(card),

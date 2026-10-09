@@ -63,6 +63,7 @@ import ErrorPopup from './ErrorPopup';
 import { FeatureDeleteToast } from './FeatureEditDelete';
 import ContourModeRail from './ContourModeRail';
 import ContourModeChip from './ContourModeChip';
+import FeatureSheet from './FeatureSheet';
 import FilletModeChip from './FilletModeChip';
 import ShellModeChip from './ShellModeChip';
 import { PaintModeChip } from './PaintModeChip';
@@ -1084,9 +1085,9 @@ const Viewport = forwardRef(({
   /** Mobile C.2 — current feature-sheet camera lift in NDC-Y (0 = none). */
   const sheetLiftNdcRef = useRef(0);
   const sheetLiftTweenRef = useRef(null);
-  /** Bottom feature card owns the camera (contour pilot). Game never sets this. */
+  /** Bottom feature card owns the camera. Game never sets this. */
   const sheetCameraOwnedRef = useRef(false);
-  sheetCameraOwnedRef.current = mode !== 'game' && !!contourMode;
+  const featureCardKindRef = useRef('');
   const flattenFeatureSheetLift = () => {
     if (sheetLiftTweenRef.current) {
       cancelAnimationFrame(sheetLiftTweenRef.current);
@@ -1223,8 +1224,23 @@ const Viewport = forwardRef(({
   // After modelBounds. The dep array is evaluated during render; reading the
   // state earlier is a temporal dead zone and the production bundle white-screens.
   const contourSheetOpen = mode !== 'game' && !!contourMode;
+  const filletSheetOpen = mode !== 'game' && !!filletMode;
+  const edgeSheetOpen = mode !== 'game'
+    && pickMode === 'edge'
+    && !contourMode
+    && !filletMode
+    && selectedEdges.length > 0;
+  const featureCardKind = filletSheetOpen
+    ? 'fillet'
+    : contourSheetOpen
+      ? 'contour'
+      : edgeSheetOpen
+        ? 'edge'
+        : '';
+  featureCardKindRef.current = featureCardKind;
+  sheetCameraOwnedRef.current = featureCardKind !== '';
   useEffect(() => {
-    if (!contourSheetOpen) return undefined;
+    if (!featureCardKind) return undefined;
     let alive = true;
     const tick = () => {
       if (!alive) return;
@@ -1236,20 +1252,28 @@ const Viewport = forwardRef(({
     if (pane) ro.observe(pane);
     const card = pane?.querySelector('[data-feature-card]');
     if (card) ro.observe(card);
+    const watch = requestAnimationFrame(() => {
+      const next = pane?.querySelector('[data-feature-card]');
+      if (next) ro.observe(next);
+      tick();
+    });
     return () => {
       alive = false;
       cancelAnimationFrame(raf);
+      cancelAnimationFrame(watch);
       ro.disconnect();
-      sheetCameraRef.current?.restore();
+      // A different open card keeps the first snapshot. Close and unmount restore.
+      const next = featureCardKindRef.current;
+      if (!next || next === featureCardKind) sheetCameraRef.current?.restore();
     };
-  }, [contourSheetOpen]);
+  }, [featureCardKind]);
   useEffect(() => {
-    if (!contourSheetOpen) return undefined;
+    if (!featureCardKind) return undefined;
     const raf = requestAnimationFrame(() => {
       sheetCameraRef.current?.slideBy(sheetSlideDeltaRef.current());
     });
     return () => cancelAnimationFrame(raf);
-  }, [contourSheetOpen, selectedFace, selectedEdges, modelBounds]);
+  }, [featureCardKind, selectedFace, selectedEdges, modelBounds]);
   const [cachedMeshData, setCachedMeshData] = useState(null);
   /** Always-current mesh for failed Auto-Run restore (state alone is stale in closures). */
   const cachedMeshDataRef = useRef(null);
@@ -8877,8 +8901,8 @@ const Viewport = forwardRef(({
         </div>
       ) : null}
 
-      {/* Slice 27: Fillet-in-mode chip — Tangent / Clear / Undo / Accept */}
-      {filletMode && (
+      {/* Slice 27: Fillet / Chamfer on the shared card. Game mounts no card. */}
+      {filletMode && mode !== 'game' && (
         <FilletModeChip
           kind={filletMode.entry === 'chamferEdges' ? 'chamfer' : 'fillet'}
           edgeCount={selectedEdges.length}
@@ -9167,64 +9191,57 @@ const Viewport = forwardRef(({
         </div>
       )}
 
-      {/* Edge pick chip — Edge mode alone is not enough: it stays out of the way
-          until at least one edge is actually selected. */}
-      {/* Slice Mobile C.1: center + raise — clear of right rail and home-indicator / CAD|Script dots. */}
-      {pickMode === 'edge' && !contourMode && !filletMode && selectedEdges.length > 0 && (
-        <div
-          data-edge-selector="standalone"
-          className={`absolute bg-amber-950/80 surface-glass-chip border border-amber-500/70 text-white px-3 py-2 rounded-lg text-xs z-20 shadow-lg max-w-[min(16rem,calc(100%-3rem))] left-1/2 -translate-x-1/2 ${
-            mode === 'game' || isMobile
-              ? 'bottom-20'
-              : 'bottom-14'
-          }`}
+      {/* Standalone edge pick — same card, no Confirm. X clears and leaves edge pick.
+          Hidden in fillet, contour, and game. Numbered badges stay on the edges. */}
+      {mode !== 'game' && pickMode === 'edge' && !contourMode && !filletMode && selectedEdges.length > 0 && (
+        <FeatureSheet
+          cardAttrs={{ 'data-edge-selector': 'standalone' }}
+          title={`Edge pick · ${selectedEdges.length} selected`}
+          subtitle="Tap near an edge to toggle · Fillet / Chamfer uses this set"
+          compact={isMobile}
+          onCancel={() => {
+            clearEdgeHover();
+            clearEdgeHighlight();
+            setSelectedEdges([]);
+            setPickMode('face');
+          }}
         >
-          <div className="font-bold font-sans text-amber-200">
-            Edge pick · {selectedEdges.length} selected
-          </div>
-          <div className="text-[10px] text-amber-100/90 normal-case font-sans mt-0.5">
-            Tap near an edge to toggle · Fillet / Chamfer uses this set
-          </div>
           <div className="mt-1.5 flex items-center gap-3 font-sans flex-wrap">
             <button
               type="button"
-              className={`text-[10px] underline ${tangentProp ? 'text-cyan-300' : 'text-amber-200/70'}`}
+              className={`text-[11px] underline ${tangentProp ? 'text-cyan-300' : 'text-gray-300'}`}
               onClick={() => setTangentProp((v) => !v)}
               title="When on, picking one edge adds G1-connected (tangent) edges in the loop"
               aria-pressed={tangentProp}
             >
               Tangent {tangentProp ? 'on' : 'off'}
             </button>
-            {selectedEdges.length > 0 && (
-              <>
-                <button
-                  type="button"
-                  className="text-[10px] text-amber-200 underline"
-                  onClick={() => {
-                    clearEdgeHover();
-                    setSelectedEdges((prev) => popLastEdgeSelection(prev));
-                  }}
-                  title="Undo last selected edge"
-                  aria-label="Undo last selected edge"
-                >
-                  Undo
-                </button>
-                <button
-                  type="button"
-                  className="text-[10px] text-amber-200 underline"
-                  onClick={() => {
-                    clearEdgeHover();
-                    clearEdgeHighlight();
-                    setSelectedEdges([]);
-                  }}
-                  title="Clear all selected edges"
-                >
-                  Clear
-                </button>
-              </>
-            )}
+            <button
+              type="button"
+              className="text-[11px] text-gray-200 underline"
+              onClick={() => {
+                clearEdgeHover();
+                setSelectedEdges((prev) => popLastEdgeSelection(prev));
+              }}
+              title="Undo last selected edge"
+              aria-label="Undo last selected edge"
+            >
+              Undo
+            </button>
+            <button
+              type="button"
+              className="text-[11px] text-gray-200 underline"
+              onClick={() => {
+                clearEdgeHover();
+                clearEdgeHighlight();
+                setSelectedEdges([]);
+              }}
+              title="Clear all selected edges"
+            >
+              Clear
+            </button>
           </div>
-        </div>
+        </FeatureSheet>
       )}
 
       {featureDeleteToast && !executionError ? (

@@ -43,7 +43,9 @@ console.log('fillet follow-up — Accept chrome + blend loud-fail');
   const view = readFileSync(new URL('../../src/components/Viewport.jsx', import.meta.url), 'utf8');
   // The label is built from `title` (Fillet | Chamfer) — match the template,
   // not the old hard-coded string.
-  check('chip has X dismiss without committing', /Dismiss \$\{title\} mode without committing/.test(chip)
+  check('chip X is the feature card cancel and writes nothing',
+    /<FeatureSheet\b/.test(chip)
+    && /onCancel=\{onDismiss\}/.test(chip)
     && /data-fillet-dismiss/.test(chip));
   check('Accept leaves Fillet mode', /exitFilletMode\(\)/.test(view) && /commitMode:/.test(view));
   check('Undo undoes last edge pick', /data-fillet-back/.test(chip)
@@ -57,7 +59,11 @@ console.log('fillet follow-up — Accept chrome + blend loud-fail');
   check('dismiss/exit clears all edge picks', /exitFilletMode[\s\S]{0,280}setSelectedEdges\(\[\]\)/.test(view)
     && /onDismiss=\{exitFilletMode\}/.test(view)
     && !/Strategy ·/.test(chip));
-  check('Clear/Undo spaced from Accept', /data-fillet-accept-row/.test(chip) && /mt-4/.test(chip));
+  check('Clear/Undo sit in the body; Confirm is the card footer',
+    /data-fillet-clear/.test(chip)
+    && /data-fillet-back/.test(chip)
+    && /onConfirm=\{onAccept\}/.test(chip)
+    && !/>\s*Accept\s*</.test(chip));
   check(
     'Accept does not force Face pick',
     !/if \(ok\) \{[\s\S]{0,220}setPickMode\('face'\)/.test(view),

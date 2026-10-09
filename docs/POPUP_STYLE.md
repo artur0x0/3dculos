@@ -9,8 +9,8 @@ over inventing a new modal layout.
 - **`ContourModeChip.jsx`** — cyan glass card; plane editor + profile / Extrude /
   Revolve / **Loft** / Sweep / **Workplane** sections. Loft (#94) and Workplane
   use the compact mobile max-height + internal scroll described below.
-- **`FilletModeChip.jsx`** — amber glass card; same placement and scroll rules,
-  edge-pick Tangent / Clear / Undo / Accept / grey X dismiss. No hard-edge warning.
+- **`FilletModeChip.jsx`** — the shared feature card (`FeatureSheet`); edge-pick
+  Tangent / Clear / Undo, cyan Confirm, grey X dismiss. No hard-edge warning.
 - **`sheetMetal/SmControls.jsx`** — orange glass bottom sheet (`SmPopup`) for
   Sheet Metal: ✕ top-right exits the flow, Back / Accept footer, 44px tap
   targets, ≥16px number / select fields (`PARTS_TEXT_INPUT_*`).

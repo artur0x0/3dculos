@@ -343,7 +343,9 @@ const contourRail = read('../../src/components/ContourModeRail.jsx');
         && !/rounded-(?:lg|2xl) bg-gray-900\b/.test(src));
   }
   check('Contour card is frosted', /surface-glass-chip/.test(read('../../src/components/FeatureSheet.jsx')));
-  check('FilletModeChip is frosted', /surface-glass-chip/.test(read('../../src/components/FilletModeChip.jsx')));
+  check('FilletModeChip uses the frosted feature card',
+    /<FeatureSheet\b/.test(read('../../src/components/FilletModeChip.jsx'))
+      && /surface-glass-chip/.test(read('../../src/components/FeatureSheet.jsx')));
   const errorPopup = read('../../src/components/ErrorPopup.jsx');
   // ErrorPopup consolidates execution/soft-fail/scrap toast frosting (was ≥8
   // inline surface-glass-chip hits in Viewport alone).
@@ -363,8 +365,8 @@ const contourRail = read('../../src/components/ContourModeRail.jsx');
       && !/bottom-4 right-2/.test(featureCard));
   {
     const src = read('../../src/components/FilletModeChip.jsx');
-    check('FilletModeChip is bottom-centre, not right-justified',
-      /bottom-2\.5 left-1\/2 -translate-x-1\/2/.test(src)
+    check('FilletModeChip is the shared bottom-centre card, not right-justified',
+      /<FeatureSheet\b/.test(src)
         && !/bottom-4 right-2/.test(src));
   }
   check('right-hand cluster sits 10px off both edges',
