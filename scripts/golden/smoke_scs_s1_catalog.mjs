@@ -225,7 +225,7 @@ console.log('SCS S1 — mode entry + chrome');
   check('App binds SKU to the part (new part when busy)',
     /setPartSheetMetal\(doc, partId, binding\)/.test(app)
     && /nextNumberedName\('Sheet', names\)/.test(app)
-    && /handleAddPart\(sheetName\)/.test(app));
+    && /handleAddPart\(sheetName/.test(app));
   const arch = read('docs/architecture.md');
   check('architecture.md has the SCS section', /## SendCutSend sheet metal/.test(arch) && /sendcutsend-catalog-v1\.2\.json/.test(arch));
 }

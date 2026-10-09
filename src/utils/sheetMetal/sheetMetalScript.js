@@ -4,6 +4,8 @@
  */
 import { newPartStarterScript } from '../helperPaletteSnippets.js';
 import { DEFAULT_SCRIPT } from '../defaultScript.js';
+import { createSheetSpec } from './sheetModel.js';
+import { defaultBaseDims } from './sheetMetalMode.js';
 import {
   SHEET_METAL_BEGIN,
   SHEET_METAL_END,
@@ -25,6 +27,19 @@ export function sheetMetalReady(script) {
 }
 
 const SPEC_LINE = /const sheetSpec\s*=\s*(\{.*\});/;
+
+/**
+ * Script for Start designing. A default base flange (Top plane, SKU
+ * thickness, 100×60 mm raised to the SKU minimums) replaces the auto-dropped
+ * cube. Null when the record has no SKU.
+ */
+export function sheetStarterScript(record) {
+  if (!record?.sku) return null;
+  const spec = createSheetSpec(record, 'XY', defaultBaseDims(record));
+  const res = composeSheetMetalCommit('', spec);
+  if (!res.ok) return null;
+  return { script: res.buffer, spec };
+}
 
 /** Block text for a spec (one JSON line so diffs stay one-line per edit). */
 export function sheetMetalBlock(spec) {
