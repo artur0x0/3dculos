@@ -62,5 +62,11 @@ backend/converter/obj_converter
 packages/surfcad-fea/target/
 packages/surfcad-fea/pkg-rebuild/
 
+# Volume mesher: committed wasm is packages/surfcad-mesh/pkg. Deps and build trees are not.
+packages/surfcad-mesh/.deps/
+packages/surfcad-mesh/build-native/
+packages/surfcad-mesh/build-wasm/
+packages/surfcad-mesh/pkg-rebuild/
+
 # Puzzle win capture (Slice 04)
 backend/data/wins.jsonl

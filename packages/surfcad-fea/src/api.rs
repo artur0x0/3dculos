@@ -2,7 +2,9 @@
 //! (copied into the wasm heap by the bindgen ABI) and receives `nodal` back
 //! as a `Float32Array` the worker copies out before transferring to the page.
 
-use crate::fem::{self, Dirichlet, FacePressure, NodalForce, SolveOptions, SolverChoice};
+use crate::fem::{
+    self, Dirichlet, FacePressure, NodalForce, ShellPressure, SolveOptions, SolverChoice,
+};
 use crate::stub::{self, Material, Profile, Study, Warning, SOURCE_STUB, VERSION};
 use wasm_bindgen::prelude::*;
 
@@ -177,7 +179,7 @@ pub fn solve_tet10(
     let elements = read_elements(mesh, nodes.len()).map_err(fem_failure)?;
     let material = parse_material(material).map_err(failure)?;
     let (dirichlet, forces, pressures) = read_bcs(bcs, nodes.len()).map_err(fem_failure)?;
-    let options = read_options(options).map_err(fem_failure)?;
+    let options = read_options(options, SolverChoice::Auto).map_err(fem_failure)?;
     let fem_material = fem::Material {
         young: material.e_mpa,
         poisson: material.nu,
@@ -247,6 +249,122 @@ pub fn solve_tet10(
     };
     let value = serde_wasm_bindgen::to_value(&wire).map_err(|err| js_err(&err.to_string()))?;
     attach_f64(&value, "nodal", &output.von_mises)?;
+    attach_f64(&value, "displacement", &output.displacement)?;
+    set_number_or_null(&value, "safetyFactor", output.safety_factor)?;
+    set_number_or_null(&value, "fos", output.safety_factor)?;
+    Ok(value)
+}
+
+/// Linear shell solve for 6-node triangles, 6 DOF per node.
+///
+/// `mesh.nodes` is xyz in millimetres. `mesh.elements` is six indices per
+/// triangle: corners `(n0, n1, n2)` then edge midpoints `(mid01, mid12, mid20)`.
+/// `mesh.thickness` is one millimetre value per element, or a single value
+/// applied to every element.
+///
+/// `bcs` carries typed arrays:
+///
+/// - `clampedNodes`: all six DOFs fixed at 0.
+/// - `pinnedNodes`: the three translations fixed at 0, rotations free.
+/// - `fixedDofs` / `fixedValues`: prescribed DOFs (`node * 6 + component`,
+///   components `ux, uy, uz, θx, θy, θz`). Missing values mean 0.
+/// - `forceNodes` / `forceValues`: nodal forces, three components per node, N.
+/// - `pressures`: one MPa value per element, or a single value for every
+///   element. `pressureElements` selects a subset instead. Positive pressure
+///   pushes against the right-hand normal of `(n0, n1, n2)`.
+///
+/// `options.solver` defaults to `"cholesky"` (supernodal). `"auto"` and
+/// `"pcg"` are the same switches as `solve_tet10`.
+#[wasm_bindgen(js_name = solve_shell)]
+pub fn solve_shell(
+    mesh: &JsValue,
+    material: &JsValue,
+    bcs: &JsValue,
+    options: &JsValue,
+) -> Result<JsValue, JsValue> {
+    let started = js_sys::Date::now();
+    let nodes = read_nodes(mesh).map_err(fem_failure)?;
+    let elements = read_shell_elements(mesh, nodes.len()).map_err(fem_failure)?;
+    let thickness = read_thickness(mesh, elements.len()).map_err(fem_failure)?;
+    let material = parse_material(material).map_err(failure)?;
+    let (dirichlet, forces, pressures) =
+        read_shell_bcs(bcs, nodes.len(), elements.len()).map_err(fem_failure)?;
+    let options = read_options(options, SolverChoice::Cholesky).map_err(fem_failure)?;
+    let fem_material = fem::Material {
+        young: material.e_mpa,
+        poisson: material.nu,
+        yield_mpa: material.yield_mpa,
+    };
+    let output = fem::solve_shell(
+        &nodes,
+        &elements,
+        &thickness,
+        fem_material,
+        &dirichlet,
+        &forces,
+        &pressures,
+        &options,
+    )
+    .map_err(fem_failure)?;
+    let elapsed = js_sys::Date::now() - started;
+    #[derive(serde::Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Wire<'a> {
+        source: &'static str,
+        field: &'static str,
+        units: &'static str,
+        min: f64,
+        max: f64,
+        p95: f64,
+        safety_factor: Option<f64>,
+        fos: Option<f64>,
+        warnings: &'a [fem::Warning],
+        solver: &'static str,
+        stats: FemStats,
+    }
+    #[derive(serde::Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct FemStats {
+        dofs: u32,
+        free_dofs: u32,
+        nodes: u32,
+        elements: u32,
+        iterations: u32,
+        residual: f64,
+        assembly_ms: f64,
+        solve_ms: f64,
+        ms: f64,
+    }
+    let wire = Wire {
+        source: "shell",
+        field: "von_mises",
+        units: "MPa",
+        min: output.min,
+        max: output.max,
+        p95: output.p95,
+        safety_factor: output.safety_factor,
+        fos: output.safety_factor,
+        warnings: &output.warnings,
+        solver: output.solver.as_str(),
+        stats: FemStats {
+            dofs: output.dofs as u32,
+            free_dofs: output.free_dofs as u32,
+            nodes: nodes.len() as u32,
+            elements: elements.len() as u32,
+            iterations: output.iterations as u32,
+            residual: output.residual,
+            assembly_ms: output.assembly_secs * 1.0e3,
+            solve_ms: output.solve_secs * 1.0e3,
+            ms: elapsed,
+        },
+    };
+    let value = serde_wasm_bindgen::to_value(&wire).map_err(|err| js_err(&err.to_string()))?;
+    // `nodal` is the top/bottom envelope at each node, the same role as the
+    // TET10 von Mises array. The three surfaces are attached beside it.
+    attach_f64(&value, "nodal", &output.von_mises_envelope)?;
+    attach_f64(&value, "vonMisesTop", &output.von_mises_top)?;
+    attach_f64(&value, "vonMisesMid", &output.von_mises_mid)?;
+    attach_f64(&value, "vonMisesBottom", &output.von_mises_bottom)?;
     attach_f64(&value, "displacement", &output.displacement)?;
     set_number_or_null(&value, "safetyFactor", output.safety_factor)?;
     set_number_or_null(&value, "fos", output.safety_factor)?;
@@ -385,11 +503,165 @@ fn read_bcs(
     Ok((dirichlet, forces, pressures))
 }
 
-fn read_options(options: &JsValue) -> Result<SolveOptions, fem::FemError> {
-    if options.is_null() || options.is_undefined() {
-        return Ok(SolveOptions::default());
+fn read_shell_elements(mesh: &JsValue, n_nodes: usize) -> Result<Vec<[u32; 6]>, fem::FemError> {
+    let flat = object_u32(mesh, "elements")?;
+    if flat.len() % 6 != 0 {
+        return Err(fem::FemError::BadMesh(
+            "mesh.elements length must be a multiple of 6".into(),
+        ));
     }
-    let mut out = SolveOptions::default();
+    let mut elements = Vec::with_capacity(flat.len() / 6);
+    for chunk in flat.chunks_exact(6) {
+        let mut elem = [0_u32; 6];
+        elem.copy_from_slice(chunk);
+        if elem.iter().any(|id| *id as usize >= n_nodes) {
+            return Err(fem::FemError::BadMesh(
+                "mesh.elements references a node outside mesh.nodes".into(),
+            ));
+        }
+        elements.push(elem);
+    }
+    Ok(elements)
+}
+
+fn read_thickness(mesh: &JsValue, n_elem: usize) -> Result<Vec<f64>, fem::FemError> {
+    let values = object_f64(mesh, "thickness")?;
+    if values.len() == n_elem {
+        return Ok(values);
+    }
+    if values.len() == 1 {
+        return Ok(vec![values[0]; n_elem]);
+    }
+    Err(fem::FemError::BadMesh(format!(
+        "mesh.thickness must contain one value per element or a single value, got {}",
+        values.len()
+    )))
+}
+
+fn read_shell_bcs(
+    bcs: &JsValue,
+    n_nodes: usize,
+    n_elem: usize,
+) -> Result<(Vec<Dirichlet>, Vec<NodalForce>, Vec<ShellPressure>), fem::FemError> {
+    if bcs.is_null() || bcs.is_undefined() {
+        return Err(fem::FemError::BadLoad(
+            "bcs is required (clampedNodes / pinnedNodes, forces, pressures)".into(),
+        ));
+    }
+    let n_dof = n_nodes * 6;
+    let mut dirichlet = Vec::new();
+    if has_field(bcs, "pinnedNodes") {
+        for node in object_u32(bcs, "pinnedNodes")? {
+            if node as usize >= n_nodes {
+                return Err(fem::FemError::BadLoad(format!(
+                    "pinnedNodes references node {node} outside the mesh"
+                )));
+            }
+            fem::pin_node(node, &mut dirichlet);
+        }
+    }
+    if has_field(bcs, "clampedNodes") {
+        for node in object_u32(bcs, "clampedNodes")? {
+            if node as usize >= n_nodes {
+                return Err(fem::FemError::BadLoad(format!(
+                    "clampedNodes references node {node} outside the mesh"
+                )));
+            }
+            fem::clamp_node(node, &mut dirichlet);
+        }
+    }
+    if has_field(bcs, "fixedDofs") {
+        let dofs = object_u32(bcs, "fixedDofs")?;
+        let values = if has_field(bcs, "fixedValues") {
+            object_f64(bcs, "fixedValues")?
+        } else {
+            Vec::new()
+        };
+        if !values.is_empty() && values.len() != dofs.len() {
+            return Err(fem::FemError::BadLoad(
+                "bcs.fixedValues must be empty or the same length as bcs.fixedDofs".into(),
+            ));
+        }
+        for (i, dof) in dofs.into_iter().enumerate() {
+            if dof as usize >= n_dof {
+                return Err(fem::FemError::BadLoad(format!(
+                    "fixedDofs index {dof} is outside the shell mesh (node * 6 + component)"
+                )));
+            }
+            dirichlet.push(Dirichlet {
+                dof,
+                value: values.get(i).copied().unwrap_or(0.0),
+            });
+        }
+    }
+    let mut forces = Vec::new();
+    if has_field(bcs, "forceNodes") || has_field(bcs, "forceValues") {
+        let nodes = object_u32(bcs, "forceNodes")?;
+        let values = object_f64(bcs, "forceValues")?;
+        if values.len() != nodes.len() * 3 {
+            return Err(fem::FemError::BadLoad(
+                "bcs.forceValues must contain three components per forceNodes entry".into(),
+            ));
+        }
+        for (i, node) in nodes.into_iter().enumerate() {
+            forces.push(NodalForce {
+                node,
+                force: [values[i * 3], values[i * 3 + 1], values[i * 3 + 2]],
+            });
+        }
+    }
+    let mut pressures = Vec::new();
+    if has_field(bcs, "pressureElements") || has_field(bcs, "pressures") {
+        let values = object_f64(bcs, "pressures")?;
+        if has_field(bcs, "pressureElements") {
+            let elems = object_u32(bcs, "pressureElements")?;
+            if elems.len() != values.len() {
+                return Err(fem::FemError::BadLoad(
+                    "bcs.pressureElements must have one index per pressures entry".into(),
+                ));
+            }
+            for (element, pressure) in elems.into_iter().zip(values) {
+                if element as usize >= n_elem {
+                    return Err(fem::FemError::BadLoad(format!(
+                        "pressureElements references element {element} outside the mesh"
+                    )));
+                }
+                pressures.push(ShellPressure { element, pressure });
+            }
+        } else if values.len() == n_elem || values.len() == 1 {
+            let uniform = values.len() == 1;
+            for element in 0..n_elem as u32 {
+                let pressure = if uniform {
+                    values[0]
+                } else {
+                    values[element as usize]
+                };
+                pressures.push(ShellPressure { element, pressure });
+            }
+        } else {
+            return Err(fem::FemError::BadLoad(format!(
+                "bcs.pressures must contain one value per element or a single value, got {}",
+                values.len()
+            )));
+        }
+    }
+    Ok((dirichlet, forces, pressures))
+}
+
+fn read_options(
+    options: &JsValue,
+    default_solver: SolverChoice,
+) -> Result<SolveOptions, fem::FemError> {
+    if options.is_null() || options.is_undefined() {
+        return Ok(SolveOptions {
+            solver: default_solver,
+            ..SolveOptions::default()
+        });
+    }
+    let mut out = SolveOptions {
+        solver: default_solver,
+        ..SolveOptions::default()
+    };
     if has_field(options, "solver") {
         let name = object_string(options, "solver")?;
         out.solver = match name.as_str() {
