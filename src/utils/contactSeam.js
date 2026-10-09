@@ -1,9 +1,9 @@
 /**
  * Shared boundary between two solids that sit flush.
  *
- * Body edges in the viewport are not a stroke. MeshNormalMaterial, flat
- * shaded, colors each face by its view-space normal, so a silhouette or a
- * body edge is the place two different normals meet. A cut that keeps both
+ * Body edges in the viewport are not a stroke. The solid is flat-shaded
+ * off-white, so a silhouette or a body edge is the shade break where two
+ * view-space normals meet. A cut that keeps both
  * pieces leaves those pieces flush: the new boundary is a real 90° edge on
  * each piece, but the two side faces have the same normal, so the color
  * never changes and the cut disappears.

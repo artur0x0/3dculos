@@ -1,7 +1,7 @@
 /**
  * Mini snapshot of one part solid for the parts feed.
  *
- * Same look as the CAD viewer: flat normal shading for ordinary parts,
+ * Same look as the CAD viewer: off-white for ordinary parts,
  * the sheet-metal gray for a sheet mesh, and the #1e1e1e background.
  * One shared renderer draws a part once.
  * The bitmap is cached by the mesh, so an idle row and a scroll do not
@@ -12,13 +12,13 @@ import {
   BufferGeometry,
   Color,
   Mesh,
-  MeshNormalMaterial,
   PerspectiveCamera,
   PointLight,
   Scene,
   WebGLRenderer,
 } from 'three';
 import { dropPlanarFins } from './planarSeam.js';
+import { makeDefaultPartMaterial } from './partMaterial.js';
 import { ensureBodyMaterial } from './sheetMetal/sheetMaterial.js';
 import { VIEW_PRESETS, fitView } from './viewCamera.js';
 
@@ -132,7 +132,7 @@ function ensureRenderer() {
     const light = new PointLight(0xffffff, 1);
     camera.add(light);
     scene.add(camera);
-    normalMaterial = new MeshNormalMaterial({ flatShading: true });
+    normalMaterial = makeDefaultPartMaterial();
     body = new Mesh(new BufferGeometry(), normalMaterial);
     scene.add(body);
     return true;

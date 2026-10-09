@@ -109,7 +109,7 @@ const BAD = 'let part = Manifold.cube([10, 10, 10], true);\nreturn part.missingM
     && /data-part-delete=/.test(feed)
     && !/fillRect\(sx, sy/.test(feed));
   check('part snapshot uses the viewer material, light, and background, and caches the mesh',
-    /MeshNormalMaterial\(\{ flatShading: true \}\)/.test(preview)
+    /makeDefaultPartMaterial\(\)/.test(preview)
     && /new PointLight\(0xffffff, 1\)/.test(preview)
     && /0x1e1e1e/.test(preview)
     && /fitView\(/.test(preview)

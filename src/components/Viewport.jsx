@@ -11,7 +11,6 @@ import {
   PointLight,
   Mesh as ThreeMesh,
   MeshLambertMaterial,
-  MeshNormalMaterial,
   MeshBasicMaterial,
   PlaneGeometry,
   ExtrudeGeometry,
@@ -83,6 +82,7 @@ import {
 } from '../utils/sheetMetal/sheetMetalMode';
 import { buildSheetOverlay, disposeSheetOverlay, sheetPickFromHits, syncSheetEdgeLineResolution } from '../utils/sheetMetal/sheetOverlay';
 import { ensureBodyMaterial } from '../utils/sheetMetal/sheetMaterial';
+import { makeDefaultPartMaterial } from '../utils/partMaterial';
 import DraftModeChip from './DraftModeChip';
 import CutModeChip from './CutModeChip';
 import BooleanModeChip from './BooleanModeChip';
@@ -329,7 +329,7 @@ import { formatViewerTitle, sanitizePartName } from '../utils/assembly.js';
 import { createCuttingPlaneWidget, updateCuttingPlaneWidget } from '../utils/cuttingPlaneWidget';
 import { AxesHelper } from 'three';
 import { calculateMeasurements, createMeasurementLines, disposeMeasurementLines } from '../utils/measurementTool';
-import { fitView, VIEW_PRESETS, VIEW_SNAP_MARGIN, panViewByNdcY, easeInOutCubic } from '../utils/viewCamera';
+import { fitView, meshWorldBox, unionWorldBox, VIEW_PRESETS, VIEW_SNAP_MARGIN, panViewByNdcY, easeInOutCubic } from '../utils/viewCamera';
 
 import { validateScript, formatValidationErrors } from '../utils/scriptValidator';
 import manifoldContext from '../utils/ManifoldWorker';
@@ -1640,7 +1640,8 @@ const Viewport = forwardRef(({
         haloPx: EDGE_HALO_PX,
       });
       const idle = paintEdgeLines(rest, {
-        color: 0xe2e8f0,
+        // Dark wire: slate-200 disappeared on DEFAULT_PART_COLOR.
+        color: 0x3f3f46,
         name: 'contourIdle',
         // Local to the part group below, not anchored to the pick mesh.
         position: [0, 0, 0],
@@ -4120,7 +4121,7 @@ const Viewport = forwardRef(({
       const geom = geometryFromPreviewMesh(piece.mesh);
       if (!geom) continue;
       if (!piece.selected) {
-        addMesh(geom, new MeshNormalMaterial({ flatShading: true }));
+        addMesh(geom, makeDefaultPartMaterial());
         continue;
       }
       const color = CUT_PIECE_COLORS[colorI % CUT_PIECE_COLORS.length];
@@ -6522,6 +6523,86 @@ const Viewport = forwardRef(({
             renderer.render(sceneRef.current, cameraRef.current);
             return ok;
           },
+          // Center canvas pixel after a render. Used to check face color.
+          stageSampleCenter: () => {
+            const glRenderer = rendererRef.current;
+            const cam = cameraRef.current;
+            const scene = sceneRef.current;
+            if (!glRenderer || !cam || !scene) return null;
+            glRenderer.render(scene, cam);
+            const gl = glRenderer.getContext();
+            const w = gl.drawingBufferWidth;
+            const h = gl.drawingBufferHeight;
+            const buf = new Uint8Array(4);
+            gl.readPixels(Math.floor(w / 2), Math.floor(h / 2), 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, buf);
+            return [buf[0], buf[1], buf[2]];
+          },
+          // The Zoom-to-Fit button. Frames every visible part, not the active one.
+          stageZoomToFit: () => {
+            handleZoomToFit();
+            const cam = cameraRef.current;
+            if (cam && sceneRef.current) renderer.render(sceneRef.current, cam);
+            return true;
+          },
+          // NDC bounds of each visible part after the current camera. Hidden
+          // rows are absent. `inside` is every corner inside the frame.
+          stageVisibleFraming: () => {
+            const cam = cameraRef.current;
+            if (!cam) return { ok: false, parts: [] };
+            cam.updateMatrixWorld();
+            const mvp = new Matrix4().multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);
+            const p = new Vector4();
+            const project = (box) => {
+              let minU = Infinity;
+              let maxU = -Infinity;
+              let minV = Infinity;
+              let maxV = -Infinity;
+              for (let i = 0; i < 8; i++) {
+                p.set(
+                  i & 1 ? box.max.x : box.min.x,
+                  i & 2 ? box.max.y : box.min.y,
+                  i & 4 ? box.max.z : box.min.z,
+                  1
+                ).applyMatrix4(mvp);
+                if (!isFinite(p.x) || !isFinite(p.y) || Math.abs(p.w) < 1e-12) continue;
+                const u = p.x / p.w;
+                const v = p.y / p.w;
+                minU = Math.min(minU, u);
+                maxU = Math.max(maxU, u);
+                minV = Math.min(minV, v);
+                maxV = Math.max(maxV, v);
+              }
+              const extent = Math.max(Math.abs(minU), Math.abs(maxU), Math.abs(minV), Math.abs(maxV));
+              return {
+                minU: +minU.toFixed(3),
+                maxU: +maxU.toFixed(3),
+                minV: +minV.toFixed(3),
+                maxV: +maxV.toFixed(3),
+                extent: Number.isFinite(extent) ? +extent.toFixed(3) : null,
+                inside: Number.isFinite(extent) && extent <= 1.02,
+              };
+            };
+            const parts = [];
+            const push = (mesh, id) => {
+              const box = meshWorldBox(mesh);
+              if (!box) return;
+              parts.push({ id: id == null ? null : String(id), ...project(box) });
+            };
+            push(resultRef.current, activePartIdRef.current);
+            for (const [id, mesh] of assemblyExtrasRef.current) push(mesh, id);
+            const meshes = [];
+            if (resultRef.current) meshes.push(resultRef.current);
+            for (const mesh of assemblyExtrasRef.current.values()) meshes.push(mesh);
+            const union = unionWorldBox(meshes);
+            return {
+              ok: parts.length > 0 && parts.every((part) => part.inside),
+              parts,
+              target: controlsRef.current?.target?.toArray?.() || null,
+              union: union && !union.isEmpty()
+                ? { min: union.min.toArray(), max: union.max.toArray() }
+                : null,
+            };
+          },
           stageAutoFit: (on) => { setAutoFitEnabled(!!on); return true; },
           // Framing assertion for automated review: projects the part's 8 bounding-box
           // corners through the live camera and reports whether they land inside the
@@ -6815,7 +6896,7 @@ const Viewport = forwardRef(({
   useEffect(() => {
     const defineMaterials = () => {
       const matls = [
-        new MeshNormalMaterial({ flatShading: true }),
+        makeDefaultPartMaterial(),
         new MeshLambertMaterial({ color: 'red', flatShading: true }),
         new MeshLambertMaterial({ color: 'blue', flatShading: true })
       ];
@@ -6906,10 +6987,17 @@ const Viewport = forwardRef(({
     };
   }, [ghostMeshData]);
 
-  // Zoom camera to fit the model (keeps the current orbit direction)
+  // Zoom to fit every visible part (keeps the current orbit direction).
+  // Hidden rows are not in the scene, so they are not in the box. One
+  // visible part is that part's own box.
   const handleZoomToFit = useCallback(() => {
-    if (!resultRef.current?.geometry || !cameraRef.current) return;
-    if (fitView({ camera: cameraRef.current, controls: controlsRef.current, geometry: resultRef.current.geometry })) {
+    if (!cameraRef.current) return;
+    const meshes = [];
+    if (resultRef.current) meshes.push(resultRef.current);
+    for (const mesh of assemblyExtrasRef.current.values()) meshes.push(mesh);
+    const box = unionWorldBox(meshes);
+    if (!box) return;
+    if (fitView({ camera: cameraRef.current, controls: controlsRef.current, box })) {
       console.log('[Viewport] Zoomed to fit');
     }
   }, []);
@@ -7004,7 +7092,7 @@ const Viewport = forwardRef(({
     faceIDsRef.current = solid.faceIDs;
 
     // Sheet parts take the gray metal. Everything else keeps the shared
-    // normal-material array. The array itself is never disposed.
+    // off-white material array. The array itself is never disposed.
     if (meshData?.sheetMetal || materialsRef.current?.length) {
       ensureBodyMaterial(resultRef.current, meshData, materialsRef.current);
     }
@@ -7812,7 +7900,7 @@ const Viewport = forwardRef(({
     const group = assemblyGroupRef.current;
     let mesh = assemblyExtrasRef.current.get(id);
     if (!mesh) {
-      mesh = new ThreeMesh(undefined, new MeshNormalMaterial({ flatShading: true }));
+      mesh = new ThreeMesh(undefined, makeDefaultPartMaterial());
       mesh.name = 'assembly-part';
       mesh.userData.assemblyPartId = id;
       group.add(mesh);
@@ -7929,7 +8017,7 @@ const Viewport = forwardRef(({
       keep.add(solid.id);
       let mesh = assemblyExtrasRef.current.get(solid.id);
       if (!mesh) {
-        mesh = new ThreeMesh(undefined, new MeshNormalMaterial({ flatShading: true }));
+        mesh = new ThreeMesh(undefined, makeDefaultPartMaterial());
         mesh.name = 'assembly-part';
         mesh.userData.assemblyPartId = solid.id;
         group.add(mesh);
@@ -7954,7 +8042,7 @@ const Viewport = forwardRef(({
       keep.add(solid.id);
       let mesh = assemblyExtrasRef.current.get(solid.id);
       if (!mesh) {
-        mesh = new ThreeMesh(undefined, new MeshNormalMaterial({ flatShading: true }));
+        mesh = new ThreeMesh(undefined, makeDefaultPartMaterial());
         mesh.name = 'assembly-part';
         mesh.userData.assemblyPartId = solid.id;
         group.add(mesh);

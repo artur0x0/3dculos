@@ -329,7 +329,10 @@ Mobile specifics:
   (`data-ribbon-bg="editor"`), matching the code editor shell.
 - **Default view snaps (Slice Mobile B.1):** `VIEW_SNAP_MARGIN = 1.35` (was
   implicit 1.15) for top / right / front / iso (and other `VIEW_PRESETS`).
-  Zoom-to-Fit keeps `fitView` default 1.15; game puzzle enter keeps 1.55.
+  Zoom-to-Fit (`data-zoom-to-fit`) keeps `fitView` margin 1.15 and frames the
+  union box of every visible part. A hidden row is left out. One visible part
+  is that part alone. Parts far apart stay inside the frame. View snaps still
+  frame the active part. Game puzzle enter keeps 1.55.
 - **Both panes stay mounted** across stages (WebGL + Monaco + editor refs /
   portal host). Off-stage pane is `invisible pointer-events-none`.
 - **Editor budget** (`mobileEditorPx`) still applies to the **game** stack as a
@@ -414,7 +417,7 @@ All of these are absolutely positioned inside the shell at
 | bottom-left | measurement readout | inline | `:3961` |
 | fills the pane | WebGL canvas | `<canvas ref={canvasRef}>` | `:3985` |
 
-The canvas draws a face-color skin on top of a part when that assembly has `colors` (`src/utils/faceColorSkin.js`). The skin is under crease lines and pick highlights. `?debugFaces=1` or `localStorage` key `surfcad.debugFaces` = `1` paints each face patch a different color. The flag is off unless set, and it is not a rail button. The right rail has no patch-colour toggle.
+Unpainted faces are one off-white, `DEFAULT_PART_COLOR` (`#ECEAE4`, `src/utils/partMaterial.js`). Face paint, the stress skin, selection and hover, and piece-preview colors draw over it. The canvas draws a face-color skin on top of a part when that assembly has `colors` (`src/utils/faceColorSkin.js`). The skin is under crease lines and pick highlights. `?debugFaces=1` or `localStorage` key `surfcad.debugFaces` = `1` paints each face patch a different color. The flag is off unless set, and it is not a rail button. The right rail has no patch-colour toggle.
 
 **Analyze.** The Analyze button is on the right rail, in the inspection group, immediately after the divider that follows Paint. The icon is Lucide `Gauge` at 20px, blue like the axis, measure, and section buttons, and green only while the study is open. It is not on the left rail. Game mode hides it. Desktop opens a bottom-centre chip (`data-fea-mode`). A phone opens the under-title FeatureSheet (`data-fea-sheet`). Analyze and Paint close each other. Run meshes the solid and draws the TET10 von Mises field. The legend in the chip or sheet is a viridis bar, five ticks, min / p95 / max in MPa, and the safety factor or n/a. The STUB badge is absent on that result. The button reads Meshing, Solving, or Post-processing, and Cancel is next to it while the solve is in flight. The paint skin is hidden while that overlay is visible and comes back when Analyze closes or Paint opens. A geometry, material, fixture, or load edit greys the legend and shows Re-run. The overlay does not keep the old colours.
 
@@ -686,7 +689,7 @@ Import `src/utils/importModel.js` (+ `POST /api/convert/step`); export
   Loft. Add a preview → call `makePreviewSkinMaterial` /
   `makePreviewOutlineMaterial`.
   Sheet-metal parts are the exception: faces are light gray brushed metal
-  (`#c8ccd2`, both sides), not the normal material. Bendable edges are unlit
+  (`#c8ccd2`, both sides), not the off-white default. Bendable edges are unlit
   screen-space lines (2.5 CSS px core, opacity 0.65, 5px halo at 0.16) on top.
 - **`railHidden` items** are palette entries with no button:
   `paletteRailSections` filters them, `itemsByGroup` does not. `sweepPath`

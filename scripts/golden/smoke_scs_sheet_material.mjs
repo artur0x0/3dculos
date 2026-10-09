@@ -106,7 +106,10 @@ console.log('sheet material — wiring');
   check('viewport uses the sheet material for sheet meshes', /ensureBodyMaterial\(resultRef\.current, meshData, materialsRef\.current\)/.test(view));
   check('assembly parts use it too', /ensureBodyMaterial\(mesh, meshData\)/.test(view)
     && /ensureBodyMaterial\(mesh, solid\.mesh\)/.test(view));
-  check('ordinary bodies stay on MeshNormalMaterial', /new MeshNormalMaterial\(\{ flatShading: true \}\)/.test(view));
+  check('ordinary bodies use the off-white part material',
+    /makeDefaultPartMaterial\(\)/.test(view)
+    && /export const DEFAULT_PART_COLOR = 0xeceae4/.test(read('src/utils/partMaterial.js'))
+    && !/new MeshNormalMaterial\(\{ flatShading: true \}\)/.test(view));
   check('face highlight stays unlit', /const highlightMesh = new ThreeMesh\(highlightGeometry, new MeshBasicMaterial\(\{/.test(view));
   check('thumbnails share the material path', /ensureBodyMaterial\(body, mesh, normalMaterial\)/.test(preview));
   check('overlay panels use the sheet material, draft stays unlit', /makeSheetMetalMaterial\(\)/.test(overlay)
@@ -216,7 +219,14 @@ try {
   check('orange handles on the dark ground', result.overlayDark.orange > 80, `orange ${result.overlayDark.orange}`);
   check('orange handles on the light ground', result.overlayLight.orange > 80, `orange ${result.overlayLight.orange}`);
   check('face highlight stays visible', result.highlight.yellow > 50, `yellow ${result.highlight.yellow}`);
-  check('a cube stays on normal-material color', result.cube.satFrac > 0.4, `sat ${result.cube.satFrac?.toFixed?.(2)}`);
+  // Mean of every lit pixel, including sides the headlight shades. A face
+  // aimed at the camera is #ECEAE4; this average sits a bit below that.
+  check('a cube stays the default off-white',
+    result.cube.satFrac < 0.2
+    && result.cube.r > 150 && result.cube.g > 150 && result.cube.b > 140
+    && Math.abs(result.cube.r - result.cube.g) < 25
+    && Math.abs(result.cube.g - result.cube.b) < 30,
+    `rgb ${result.cube.r?.toFixed?.(0)},${result.cube.g?.toFixed?.(0)},${result.cube.b?.toFixed?.(0)} sat ${result.cube.satFrac?.toFixed?.(2)}`);
 
   const save = (name, row) => {
     if (!row?.png) return;

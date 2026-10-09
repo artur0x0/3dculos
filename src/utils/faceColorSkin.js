@@ -3,7 +3,7 @@
  *
  * Reads the face graph already built for the shown mesh, matches the saved
  * `colors[surfId]` entry, and adds a child mesh of those triangles. The child
- * does not raycast. The base material stays MeshNormal (or the sheet metal).
+ * does not raycast. The base material stays the off-white part color (or the sheet metal).
  * Ambiguous and missing keys are skipped. This does not write the color map.
  *
  * The viewport point light decays to nothing at a fitted view, so the skin

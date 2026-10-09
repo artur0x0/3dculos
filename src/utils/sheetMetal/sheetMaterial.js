@@ -1,5 +1,5 @@
 /**
- * Sheet-metal faces. Other parts stay on flat MeshNormalMaterial.
+ * Sheet-metal faces. Other parts stay on the off-white default part material.
  *
  * The viewport's camera point light is intensity 1 with physical decay 2.
  * At a fitted view that light is ~0, so a Lambert or Standard sheet renders
@@ -9,7 +9,8 @@
  * so the ghost and every non-sheet part are unchanged. DoubleSide plus the
  * headlight lights whichever side of the thin wall faces the camera.
  */
-import { DoubleSide, MeshNormalMaterial, MeshStandardMaterial } from 'three';
+import { DoubleSide, MeshStandardMaterial } from 'three';
+import { makeDefaultPartMaterial } from '../partMaterial.js';
 import { isSheetMesh } from './sheetMeshFlag.js';
 
 export const SHEET_METAL_COLOR = 0xc8ccd2;
@@ -49,11 +50,12 @@ export function makeSheetMetalMaterial() {
 }
 
 /**
- * Point the mesh at the sheet material or back at `normalMaterial`.
- * The shared normal-material array is never disposed. The sheet material
- * is cached on the mesh and reused.
+ * Point the mesh at the sheet material or back at `bodyMaterial`.
+ * The shared body-material array is never disposed. The sheet material
+ * is cached on the mesh and reused. A mesh with no shared material gets
+ * its own default part material, cached on the mesh.
  */
-export function ensureBodyMaterial(mesh, meshData, normalMaterial = null) {
+export function ensureBodyMaterial(mesh, meshData, bodyMaterial = null) {
   if (!mesh) return;
   const wantSheet = isSheetMesh(meshData);
   const current = mesh.material;
@@ -61,20 +63,20 @@ export function ensureBodyMaterial(mesh, meshData, normalMaterial = null) {
   if (wantSheet) {
     if (sheetNow) return;
     if (!mesh.userData.sheetMaterial) mesh.userData.sheetMaterial = makeSheetMetalMaterial();
-    if (!Array.isArray(current) && current && current !== normalMaterial && current !== mesh.userData.sheetMaterial) {
+    if (!Array.isArray(current) && current && current !== bodyMaterial && current !== mesh.userData.sheetMaterial) {
       current.dispose?.();
     }
     mesh.material = mesh.userData.sheetMaterial;
     return;
   }
   if (sheetNow) {
-    if (!normalMaterial) {
-      if (!mesh.userData.normalMaterial) mesh.userData.normalMaterial = new MeshNormalMaterial({ flatShading: true });
-      mesh.material = mesh.userData.normalMaterial;
+    if (!bodyMaterial) {
+      if (!mesh.userData.defaultPartMaterial) mesh.userData.defaultPartMaterial = makeDefaultPartMaterial();
+      mesh.material = mesh.userData.defaultPartMaterial;
     } else {
-      mesh.material = normalMaterial;
+      mesh.material = bodyMaterial;
     }
     return;
   }
-  if (normalMaterial && current !== normalMaterial) mesh.material = normalMaterial;
+  if (bodyMaterial && current !== bodyMaterial) mesh.material = bodyMaterial;
 }
