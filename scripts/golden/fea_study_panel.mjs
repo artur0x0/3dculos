@@ -254,16 +254,23 @@ async function tap(page, touch, point) {
   else await page.mouse.click(point.x, point.y);
 }
 
-async function tapUntil(page, touch, attr, expected) {
-  const points = await facePoints(page);
-  if (!points.length) return { ok: false, points: 0, notice: await noticeOf(page) };
-  for (const point of points) {
+async function canvasPoints(page, points) {
+  return page.evaluate((pts) => {
+    const canvas = document.querySelector('.viewport-shell > canvas');
+    return pts.filter((point) => document.elementFromPoint(point.x, point.y) === canvas);
+  }, points);
+}
+
+async function tapUntil(page, touch, points, attr, expected) {
+  const live = await canvasPoints(page, points);
+  if (!live.length) return { ok: false, points: 0, notice: await noticeOf(page) };
+  for (const point of live) {
     await tap(page, touch, point);
-    await page.waitForTimeout(400);
+    await page.waitForTimeout(500);
     const count = await page.locator(`[${attr}]`).getAttribute(attr).catch(() => null);
-    if (count === expected) return { ok: true, points: points.length };
+    if (count === expected) return { ok: true, points: live.length };
   }
-  return { ok: false, points: points.length, notice: await noticeOf(page) };
+  return { ok: false, points: live.length, notice: await noticeOf(page) };
 }
 
 function noticeOf(page) {
@@ -307,7 +314,7 @@ async function runCase(browser, vp) {
   await installProbe(page);
 
   const rail = await page.evaluate(() => [...document.querySelectorAll('[data-palette-section]')]
-    .map((el) => (el.querySelector('div')?.textContent || '').trim())
+    .map((el) => (el.querySelector('.truncate')?.textContent || '').trim())
     .filter(Boolean));
   check(`${vp.name} left rail order`, rail.join(',') === 'Block,Build,Shape,Polish,Move', rail.join(','));
 
@@ -329,12 +336,14 @@ async function runCase(browser, vp) {
   await page.locator('[data-fea-assumed="nu"]').waitFor({ timeout: 8000 });
   await solidReady(page);
 
+  const face = await facePoints(page);
+  check(`${vp.name} front face is tappable`, face.length > 0, `points=${face.length}`);
   await page.locator('[data-fea-target="fixture"]').click();
-  const fixed = await tapUntil(page, vp.touch, 'data-fea-fixture-count', '1');
+  const fixed = await tapUntil(page, vp.touch, face, 'data-fea-fixture-count', '1');
   check(`${vp.name} fixture on a face`, fixed.ok, JSON.stringify(fixed));
 
   await page.locator('[data-fea-target="force"]').click();
-  const loaded = await tapUntil(page, vp.touch, 'data-fea-load-count', '1');
+  const loaded = await tapUntil(page, vp.touch, face, 'data-fea-load-count', '1');
   check(`${vp.name} force on a face`, loaded.ok, JSON.stringify(loaded));
 
   await page.locator('[data-fea-run]').click();
