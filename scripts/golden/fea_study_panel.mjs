@@ -151,11 +151,34 @@ async function boot(page) {
       user: { id: USER_ID, email: 'fea@surfcad.test', vaultName: null },
     }),
   }));
-  await page.route('https://api.github.com/**', (route) => route.fulfill({
-    status: 401,
-    contentType: 'application/json',
-    body: JSON.stringify({ message: 'Bad credentials' }),
-  }));
+  // A connected session looks up the vault. Answer that lookup so the
+  // boot does not toast "Upload Error" over the study. Anything else 404s.
+  const marker = `${JSON.stringify({ kind: 'surfcad-vault', version: 1 }, null, 2)}\n`;
+  await page.route('https://api.github.com/**', (route) => {
+    const path = new URL(route.request().url()).pathname;
+    const send = (status, body) => route.fulfill({
+      status,
+      contentType: 'application/json',
+      body: JSON.stringify(body),
+    });
+    if (path === '/user') return send(200, { login: 'fea-user' });
+    if (path === '/repos/fea-user/surfcad-vault') {
+      return send(200, {
+        name: 'surfcad-vault',
+        private: true,
+        size: 1,
+        default_branch: 'main',
+        owner: { login: 'fea-user' },
+      });
+    }
+    if (path === '/repos/fea-user/surfcad-vault/branches/main') {
+      return send(200, { name: 'main', commit: { sha: 'a'.repeat(40) } });
+    }
+    if (path.startsWith('/repos/fea-user/surfcad-vault/contents/surfcad.json')) {
+      return send(200, { type: 'file', encoding: 'utf-8', content: marker, sha: 'b'.repeat(40) });
+    }
+    return send(404, { message: 'not found' });
+  });
   const errors = [];
   page.on('pageerror', (err) => errors.push(String(err).slice(0, 400)));
   await page.goto(APP_URL, { waitUntil: 'domcontentloaded', timeout: 45000 });
@@ -378,6 +401,12 @@ async function runCase(browser, vp) {
   check(`${vp.name} safety factor`, summary.fos !== '' && summary.fos !== 'n/a', summary.fos);
   check(`${vp.name} stub warning`, /STUB, not a real result/.test(summary.warning), summary.warning);
 
+  const uploadError = await page.evaluate(() => {
+    const text = document.body?.innerText || '';
+    const at = text.indexOf('Upload Error');
+    return at < 0 ? '' : text.slice(at, at + 80);
+  });
+  check(`${vp.name} no upload error`, uploadError === '', uploadError);
   const shot = join(SHOT_DIR, vp.touch ? 'fea-study-390.png' : 'fea-study-desktop.png');
   check(`${vp.name} shot dir`, !shot.startsWith('/opt/cursor/artifacts'), shot);
   await page.screenshot({ path: shot });
