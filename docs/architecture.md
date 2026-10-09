@@ -174,7 +174,7 @@ Nothing is written to the assembly until Confirm. The session is viewport state,
 - Analyze (`data-analyze-chip`, Lucide `Gauge`) is the first button of the right-rail inspection group, next to Paint. It uses the same blue as the neighbouring rail icons and turns green only while the study is open. It is not on the left rail and it is hidden in game mode.
 - Opening Analyze closes Paint. Opening Paint closes Analyze. Desktop shows a bottom-centre cyan chip (`data-fea-mode`), the same shell as Paint. A phone (≤768 px) shows the same controls in the under-title FeatureSheet (`data-fea-sheet`).
 - The panel picks a library material or a custom E, ν, and yield. An assumed or missing ν or yield shows an assumed badge. Face taps reuse the paint pick and `faceColorMatch` fingerprints. Fix, force (newtons and a direction), or pressure (MPa) adds that face; the list removes it. Run calls `feaClient.solve()` and shows min, p95, and max in MPa, the safety factor or n/a, and a STUB badge. The numbers are not a real result.
-- The study is the comment block after `return part;`, written and read by `studyScript`. The write uses the editor buffer. It does not call `preemptInflight`. While an assembly open holds the worker the write is refused, and no build is posted.
+- The study is the comment block after `return part;`, written and read by `studyScript`. The write uses the part buffer and does not require the script drawer to be open. It does not call `preemptInflight`. While an assembly open holds the worker the write is refused, and no build is posted.
 
 ## Contour paint
 

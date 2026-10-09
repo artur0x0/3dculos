@@ -5135,9 +5135,11 @@ const App = () => {
   };
 
   /**
-   * Write the FEA study comment into the editor part. Does not post a build
-   * of its own and does not call preemptInflight. While an assembly open
-   * holds the worker, the write is refused and the lock is left alone.
+   * Write the FEA study comment into the active part. The script drawer can
+   * stay closed: a hidden editor still holds the buffer, and a missing editor
+   * writes the part script directly. Does not post a build of its own and
+   * does not call preemptInflight. While an assembly open holds the worker,
+   * the write is refused and the lock is left alone.
    */
   const handleCommitFea = (script) => {
     if (typeof script !== 'string') return false;
@@ -5145,9 +5147,26 @@ const App = () => {
       viewportRef.current?.notify?.('An assembly is opening — save the study again once it finishes.');
       return false;
     }
-    const current = codeEditorRef.current?.getContent?.() || '';
+    const editor = codeEditorRef.current;
+    if (editor?.applyBuffer) {
+      const current = editor.getContent?.() ?? '';
+      if (script === current) return true;
+      return !!editor.applyBuffer(script, 'FEA study');
+    }
+    const id = assemblyRef.current?.activeId;
+    const stored = id ? partScriptsRef.current?.[id] : '';
+    const current = (typeof currentScript === 'string' && currentScript) || (typeof stored === 'string' ? stored : '');
     if (script === current) return true;
-    return !!codeEditorRef.current?.applyBuffer?.(script, 'FEA study');
+    editorLiveRef.current = true;
+    setCurrentScript(script);
+    if (id) {
+      const next = { ...partScriptsRef.current, [id]: script };
+      partScriptsRef.current = next;
+      setPartScripts(next);
+      savePartScript(id, script);
+    }
+    handleCodeChange(script, 'FEA study');
+    return true;
   };
 
   /** Shell face-pick Confirm — hollow() + SHELL markers; Auto-Run. */
