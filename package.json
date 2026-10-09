@@ -63,6 +63,7 @@
         "golden:hidden-script-editor": "node scripts/golden/smoke_hidden_script_editor.mjs",
         "golden:puzzle-unlock": "node scripts/golden/smoke_puzzle_unlock.mjs",
         "golden:mesh-upload-reload": "node scripts/golden/smoke_mesh_upload_reload.mjs",
+        "golden:mesh-vault-sync": "node scripts/golden/smoke_mesh_vault_sync.mjs",
         "golden:mobile-a-stages": "node scripts/golden/smoke_mobile_a_cad_script_stages.mjs",
         "golden:mobile-b-home-indicator": "node scripts/golden/smoke_mobile_b_home_indicator_feature_strip.mjs",
         "golden:mobile-b1-strip-icons-face-popup-zoom": "node scripts/golden/smoke_mobile_b1_strip_icons_face_popup_zoom.mjs",

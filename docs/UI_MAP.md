@@ -122,7 +122,10 @@ Desktop specifics:
   3MF, or STEP. Download saves the selected part as 3MF. Each row's Order
   button (`data-part-order`) adds that part to the cart. A signed-in row
   whose mesh is not in the vault yet shows `local only`
-  (`data-part-mesh-local`). The assembly
+  (`data-part-mesh-local`). Save on a connected vault commits that `.mesh`
+  and clears the badge. Signed out, the badge is hidden and the mesh stays
+  on this device. Without GitHub the badge stays (reconnect title) and Save
+  does not commit. The assembly
   name sits in the middle of the ribbon (`data-parts-ribbon-center`).
   Signed out (local, no GitHub token), the **+** menu (`data-part-add-dropdown`)
   and the folder menu (`data-part-open-dropdown`) both offer **Part** and

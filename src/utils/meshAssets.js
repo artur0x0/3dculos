@@ -3,8 +3,8 @@
  *
  * Bytes live in the #288 cache (`putAsset` / `getAssetBytes`, IndexedDB
  * `surfcad-assets`, keyed by git blob sha). This module does not commit.
- * The part record maps the script's asset name to that sha. A later sync
- * PR clears `meshSynced` once the blob is in the vault.
+ * Git Save (`meshSync.js`) sends unsynced bytes and sets `meshSynced`
+ * once that commit lands.
  */
 import { nextNumberedName, sanitizePartName } from './assembly.js';
 import { loadPartRecord } from './assemblyStore.js';
@@ -236,7 +236,7 @@ export function selectedPartDownload({ part, run, leftover } = {}) {
  * Signed-in rows with a mesh that is not in the vault yet.
  * Signed-out work is always local, so it does not wear the badge.
  * `githubConnected` only changes the wording: a vault is waiting, or
- * GitHub still needs to reconnect. `meshSynced` is how a later PR clears it.
+ * GitHub still needs to reconnect. `meshSynced` clears the badge after Save.
  */
 export function showLocalMeshBadge({ signedIn, meshLocal, meshSynced } = {}) {
   return signedIn === true && meshLocal === true && meshSynced !== true;

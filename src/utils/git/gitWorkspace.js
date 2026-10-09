@@ -15,7 +15,7 @@ import {
   sanitizeAssemblyName,
   serializeAssembly,
 } from '../assembly.js';
-import { putAsset } from './assetCache.js';
+import { readMeshBytes } from './meshSync.js';
 import { gitBlobSha, isBinaryContent, toUint8Array } from './binaryContent.js';
 import { assertGithubAdapter } from './githubAdapterInterface.js';
 import {
@@ -323,7 +323,7 @@ export async function openVaultAssembly(adapter, repo, assemblyName, {
  */
 async function loadPartMeshes(adapter, repo, branch, parts, fromOfNew) {
   const assets = {};
-  if (typeof adapter?.readBlob !== 'function' || typeof adapter?.listTree !== 'function') return assets;
+  if (typeof adapter?.listTree !== 'function') return assets;
   const tree = await adapter.listTree(repo, branch);
   const shaByPath = new Map((tree || []).filter((entry) => entry?.path).map((entry) => [entry.path, entry.sha]));
   for (const part of parts || []) {
@@ -337,10 +337,14 @@ async function loadPartMeshes(adapter, repo, branch, parts, fromOfNew) {
     if (!located) continue;
     const sha = shaByPath.get(located);
     if (!sha) continue;
-    const bytes = await adapter.readBlob(repo, sha);
-    if (!(bytes instanceof Uint8Array)) continue;
-    assets[mesh] = bytes;
-    try { await putAsset(bytes); } catch { /* bytes still travel on the workspace */ }
+    let got = null;
+    try {
+      got = await readMeshBytes(adapter, repo, branch, located, sha);
+    } catch {
+      got = null;
+    }
+    if (!(got?.bytes instanceof Uint8Array)) continue;
+    assets[mesh] = got.bytes;
   }
   return assets;
 }

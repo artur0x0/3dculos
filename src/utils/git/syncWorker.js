@@ -78,6 +78,7 @@ export async function flushSyncQueue({
   const syncedPartIds = [];
   const layoutMoves = [];
   const assemblyRenames = [];
+  const meshes = [];
   let otherWrites = false;
   for (const item of queued) {
     await store.setOpStatus(item.id, 'sending');
@@ -115,6 +116,7 @@ export async function flushSyncQueue({
       head = res.sha;
       if (plannedMoves) layoutMoves.push(...plannedMoves);
       syncedPartIds.push(...(item.partIds || []));
+      if (Array.isArray(item.payload?.meshes)) meshes.push(...item.payload.meshes);
       if (item.op === 'rename' && item.payload?.kind === 'assembly') {
         assemblyRenames.push({
           fromName: item.payload.fromName,
@@ -186,6 +188,7 @@ export async function flushSyncQueue({
     partIds: syncedPartIds,
     layoutMoves,
     assemblyRenames,
+    meshes,
     assemblyRenameOnly: assemblyRenames.length > 0 && !otherWrites,
   };
 }
