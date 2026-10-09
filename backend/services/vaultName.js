@@ -1,11 +1,12 @@
 /**
  * Per-user vault name.
  *
- * The User schema default returns `surfcad-vault` only while `isNew`.
- * Existing Mongo documents stay unset through init/hydrate, so resolution
- * can still adopt a marked legacy `surfcad` and write that name back.
- * Nothing here creates a GitHub repo.
+ * The User schema default lives in `backend/db/vaultNameDefaults.js` and
+ * returns `surfcad-vault` only while `isNew`. Existing documents stay unset,
+ * so resolution can still adopt a marked legacy `surfcad` and write that
+ * name back. Nothing here creates a GitHub repo.
  */
+import { rememberResolvedVaultName } from '../db/vaultNameDefaults.js';
 import {
   VAULT_MARKER_PATH,
   isVaultMarker,
@@ -14,7 +15,7 @@ import {
   walkVaultCandidates,
 } from '../../src/utils/git/vaultNames.js';
 
-export { storedVaultNameFromUser };
+export { rememberResolvedVaultName, storedVaultNameFromUser };
 
 export const GITHUB_API = 'https://api.github.com';
 
@@ -139,19 +140,6 @@ export async function resolveGithubVault({
     if (err?.lookup) return err.lookup;
     return { ok: false, status: 502, error: err?.message || 'GitHub lookup failed', code: 'lookup_failed' };
   }
-}
-
-/**
- * Write the resolved GitHub repo name onto the user. No GitHub calls.
- * Unset stays unset when `resolvedName` is empty. Idempotent when equal.
- */
-export function rememberResolvedVaultName(user, resolvedName) {
-  const prev = storedVaultNameFromUser(user);
-  const next = sanitizeVaultName(resolvedName);
-  if (!user || !next) return { changed: false, vaultName: prev };
-  if (prev === next) return { changed: false, vaultName: prev };
-  user.vaultName = next;
-  return { changed: true, vaultName: next };
 }
 
 /**

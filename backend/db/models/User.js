@@ -2,7 +2,7 @@
 import mongoose from 'mongoose';
 import bcrypt from 'bcrypt';
 import crypto from 'crypto';
-import { DEFAULT_VAULT_NAME } from '../../../src/utils/git/vaultNames.js';
+import { defaultVaultName } from '../vaultNameDefaults.js';
 
 const addressSchema = new mongoose.Schema({
   label: {
@@ -88,9 +88,7 @@ const userSchema = new mongoose.Schema({
     type: String,
     trim: true,
     maxlength: 100,
-    default: function defaultVaultName() {
-      return this.isNew ? DEFAULT_VAULT_NAME : undefined;
-    },
+    default: defaultVaultName,
   },
   // GitHub numeric user id (string). Set on Sign in with GitHub / Connect upsert.
   githubId: {

@@ -2,12 +2,18 @@
  * Vault rename guards. Mock fetch / in-memory adapter only — no network.
  */
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { describe, test } from 'node:test';
-import User from '../backend/db/models/User.js';
+import {
+  defaultVaultName,
+  existingUserVaultRecord,
+  newUserVaultRecord,
+  rememberResolvedVaultName,
+} from '../backend/db/vaultNameDefaults.js';
 import { deleteResolvedGithubVault } from '../backend/services/githubVaultDelete.js';
 import {
   confirmAndRememberVaultName,
-  rememberResolvedVaultName,
+  rememberResolvedVaultName as rememberFromService,
   resolveGithubVault,
   storedVaultNameFromUser,
 } from '../backend/services/vaultName.js';
@@ -30,23 +36,35 @@ function sortedPaths(tree) {
 
 describe('schema default and backfill', () => {
   test('schema default is surfcad-vault for new users only', () => {
-    const fresh = new User({ email: 'new@example.com' });
-    const def = User.schema.path('vaultName').defaultValue;
-    assert.equal(typeof def, 'function');
-    assert.equal(def.call({ isNew: true }), 'surfcad-vault');
-    assert.equal(def.call({ isNew: false }), undefined);
+    const fresh = newUserVaultRecord({ email: 'new@example.com' });
+    assert.equal(typeof defaultVaultName, 'function');
+    assert.equal(defaultVaultName.call({ isNew: true }), 'surfcad-vault');
+    assert.equal(defaultVaultName.call({ isNew: false }), undefined);
     assert.equal(fresh.vaultName, 'surfcad-vault');
     assert.equal(storedVaultNameFromUser(fresh), 'surfcad-vault');
+    assert.equal(rememberFromService, rememberResolvedVaultName);
+    const userSrc = readFileSync(new URL('../backend/db/models/User.js', import.meta.url), 'utf8');
+    assert.match(userSrc, /import \{ defaultVaultName \} from '\.\.\/vaultNameDefaults\.js'/);
+    assert.match(userSrc, /default:\s*defaultVaultName/);
+    for (const rel of [
+      '../backend/db/vaultNameDefaults.js',
+      '../backend/services/vaultName.js',
+      '../backend/services/githubVaultDelete.js',
+    ]) {
+      const src = readFileSync(new URL(rel, import.meta.url), 'utf8');
+      assert.doesNotMatch(src, /from ['"](?:mongoose|express|bcrypt|connect-mongo)['"]/);
+    }
   });
 
   test('existing users stay unset and backfill does not create a vault', async () => {
-    const existing = User.hydrate({
+    const existing = existingUserVaultRecord({
       _id: '507f1f77bcf86cd799439011',
       email: 'old@example.com',
       authProvider: 'github',
       githubId: '9',
     });
     assert.equal(existing.isNew, false);
+    assert.equal(Object.prototype.hasOwnProperty.call(existing, 'vaultName'), false);
     assert.equal(storedVaultNameFromUser(existing), null);
 
     const stub = githubStub({
@@ -81,7 +99,7 @@ describe('schema default and backfill', () => {
   });
 
   test('nothing to adopt leaves the field unset and creates nothing', async () => {
-    const existing = User.hydrate({
+    const existing = existingUserVaultRecord({
       _id: '507f1f77bcf86cd799439012',
       email: 'empty@example.com',
       authProvider: 'local',
@@ -103,7 +121,7 @@ describe('schema default and backfill', () => {
 
 describe('resolution order and write-back', () => {
   test('stored unmarked name falls through to a marked surfcad-vault and is written back', async () => {
-    const user = User.hydrate({
+    const user = existingUserVaultRecord({
       _id: '507f1f77bcf86cd799439013',
       email: 'stored@example.com',
       authProvider: 'github',
@@ -152,7 +170,7 @@ describe('resolution order and write-back', () => {
   });
 
   test('unmarked client target is not stored', async () => {
-    const user = User.hydrate({
+    const user = existingUserVaultRecord({
       _id: '507f1f77bcf86cd799439014',
       email: 'keep@example.com',
       authProvider: 'github',
