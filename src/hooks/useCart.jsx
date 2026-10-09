@@ -8,6 +8,8 @@ import {
   cartChipSelector,
   cartCount,
   cartUserId,
+  checkoutQueue,
+  checkoutSkipNote,
   emptyCart,
   makeCartDraft,
   orderIntent,
@@ -17,6 +19,7 @@ import {
   scriptsForOrder,
   setCartQty,
 } from '../utils/cart.js';
+import { useAuthState } from './useAuthState';
 import { readCart, writeCart } from '../utils/cartStorage.js';
 import {
   acceptCartExchange,
@@ -96,13 +99,16 @@ function thumbsFromFeed() {
 
 export function useCart({
   user,
-  signedIn = false,
-  pending = false,
   onNeedLogin,
+  onCheckout,
   assemblyRef,
   partScriptsRef,
   liveScriptRef,
+  partRunsRef,
 }) {
+  const auth = useAuthState();
+  const signedIn = auth.signedIn;
+  const pending = auth.pending;
   const userId = cartUserId(user);
   const [cart, setCart] = useState(emptyCart);
   const [open, setOpen] = useState(false);
@@ -116,6 +122,8 @@ export function useCart({
   const signedInRef = useRef(signedIn);
   const pendingRef = useRef(pending);
   const onNeedLoginRef = useRef(onNeedLogin);
+  const onCheckoutRef = useRef(onCheckout);
+  onCheckoutRef.current = onCheckout;
   const seenUser = useRef('');
   userIdRef.current = userId;
   signedInRef.current = signedIn;
@@ -255,6 +263,30 @@ export function useCart({
     scheduleSync();
   }, [persist, scheduleSync]);
 
+  const startCheckout = useCallback(() => {
+    const intent = orderIntent({
+      signedIn: signedInRef.current,
+      pending: pendingRef.current,
+    });
+    if (intent === 'login') {
+      onNeedLoginRef.current?.();
+      return { ok: false, reason: 'signed-out' };
+    }
+    if (intent !== 'add') return { ok: false, reason: 'pending' };
+    const doc = assemblyRef?.current || null;
+    const scripts = scriptsForOrder(partScriptsRef?.current, liveScriptRef?.current);
+    const queue = checkoutQueue(
+      doc,
+      scripts,
+      readCart(localStorage, userIdRef.current),
+      partRunsRef?.current,
+    );
+    if (!queue.lines.length) return { ok: false, reason: 'empty', ...queue };
+    setOpen(false);
+    onCheckoutRef.current?.(queue);
+    return { ok: true, ...queue };
+  }, [assemblyRef, liveScriptRef, partRunsRef, partScriptsRef]);
+
   const refill = useCallback(() => {
     if (!signedInRef.current) return;
     const current = readCart(localStorage, userIdRef.current);
@@ -264,13 +296,17 @@ export function useCart({
     scheduleSync();
   }, [persist, scheduleSync]);
 
-  const doc = assemblyRef?.current;
+  const doc = signedIn ? assemblyRef?.current : null;
   const scripts = scriptsForOrder(partScriptsRef?.current, liveScriptRef?.current);
-  const lines = presentCartLines(signedIn ? doc : null, scripts, signedIn ? cart : emptyCart());
+  const stored = signedIn ? cart : emptyCart();
+  const lines = presentCartLines(doc, scripts, stored);
+  const queue = checkoutQueue(doc, scripts, stored, partRunsRef?.current);
 
   return useMemo(() => ({
     count: signedIn ? cartCount(cart) : 0,
     lines,
+    checkoutLines: queue.lines,
+    checkoutNote: checkoutSkipNote(queue),
     open,
     flight,
     openCart,
@@ -280,10 +316,12 @@ export function useCart({
     removeLine,
     refill,
     clearFlight,
+    startCheckout,
   }), [
     signedIn,
     cart,
     lines,
+    queue,
     open,
     flight,
     openCart,
@@ -293,6 +331,7 @@ export function useCart({
     removeLine,
     refill,
     clearFlight,
+    startCheckout,
   ]);
 }
 

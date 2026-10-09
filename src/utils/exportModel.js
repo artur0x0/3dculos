@@ -4,23 +4,55 @@
 import { saveAs } from 'file-saver';
 import manifoldContext from './ManifoldWorker';
 import { export3MF, blobToBase64 } from './model-io';
+import { meshResolveError, resolvePartMeshes } from './meshAssets.js';
 
 /**
  * Generate a 3MF blob from the current script
  * @param {string} currentScript - The Manifold script to execute
  * @returns {Promise<Blob>} The 3MF file as a Blob
  */
-export async function generate3MFBlob(currentScript) {
+export async function generate3MFBlob(currentScript, options = {}) {
   if (!currentScript) {
     throw new Error('No script provided');
   }
 
   if (!manifoldContext.isReady) {
+    try {
+      await manifoldContext.init();
+    } catch (err) {
+      throw new Error(err?.message || 'Manifold worker not initialized');
+    }
+  }
+  if (!manifoldContext.isReady) {
     throw new Error('Manifold worker not initialized');
   }
 
+  const lineError = options.lineError || '';
+  let importedModels = options.importedModels;
+  if (!importedModels) {
+    let prepared;
+    try {
+      prepared = await resolvePartMeshes(options.partId, currentScript);
+    } catch (err) {
+      throw new Error(lineError || err?.message || 'Missing mesh asset');
+    }
+    if (prepared.missing.length) {
+      throw new Error(meshResolveError(prepared.missing, lineError));
+    }
+    importedModels = prepared.importedModels;
+  }
+
   // Execute script via worker to get mesh data
-  const result = await manifoldContext.executeScript(currentScript);
+  let result;
+  try {
+    result = await manifoldContext.executeScript(currentScript, { importedModels });
+  } catch (err) {
+    const message = err?.message || 'Could not export this part.';
+    if (/mesh asset|importMesh/i.test(message)) {
+      throw new Error(lineError || message);
+    }
+    throw err instanceof Error ? err : new Error(message);
+  }
   
   if (!result || !result.mesh) {
     throw new Error('Invalid manifold result for export');

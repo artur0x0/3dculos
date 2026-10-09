@@ -1,16 +1,48 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { X, DollarSign, Clock, Package, ShoppingCart } from 'lucide-react';
 import { PROCESSES } from '../utils/quoting';
 import { generate3MFBlob } from '../utils/exportModel';
+import CheckoutStepper from './CheckoutStepper';
 import QuantityStepper from './order/QuantityStepper';
 
-const QuoteModal = ({ onClose, onGetQuote, onOrder, currentScript, currentFilename }) => {
-  const [selectedProcess, setSelectedProcess] = useState('FDM');
-  const [selectedMaterial, setSelectedMaterial] = useState('PLA');
-  const [infill, setInfill] = useState(20);
-  const [quantity, setQuantity] = useState(1);
+function initialProcess(options) {
+  const key = options?.process;
+  if (key && PROCESSES[key] && !PROCESSES[key].disabled) return key;
+  return 'FDM';
+}
+
+function initialMaterial(options) {
+  const process = initialProcess(options);
+  const want = options?.material;
+  const list = PROCESSES[process].materials;
+  return list.includes(want) ? want : list[0];
+}
+
+const QuoteModal = ({
+  onClose,
+  onGetQuote,
+  onOrder,
+  currentScript,
+  currentFilename,
+  fixedQuantity = null,
+  initialOptions = null,
+  partId = null,
+  lineError = '',
+  checkoutStep = null,
+}) => {
+  const locked = Number.isInteger(fixedQuantity) && fixedQuantity >= 1;
+  const [selectedProcess, setSelectedProcess] = useState(() => initialProcess(initialOptions));
+  const [selectedMaterial, setSelectedMaterial] = useState(() => initialMaterial(initialOptions));
+  const [infill, setInfill] = useState(() => {
+    const n = Number(initialOptions?.infill);
+    return Number.isFinite(n) ? n : 20;
+  });
+  const [quantity, setQuantity] = useState(locked ? fixedQuantity : 1);
+  const qty = locked ? fixedQuantity : quantity;
   const [quoteResult, setQuoteResult] = useState(null);
   const [error, setError] = useState(null);
+  const onGetQuoteRef = useRef(onGetQuote);
+  onGetQuoteRef.current = onGetQuote;
 
   const currentProcess = PROCESSES[selectedProcess];
 
@@ -20,22 +52,23 @@ const QuoteModal = ({ onClose, onGetQuote, onOrder, currentScript, currentFilena
       setError(null);
 
       try {
-        const result = await onGetQuote({
+        const result = await onGetQuoteRef.current({
           process: selectedProcess,
           material: selectedMaterial,
           infill: infill,
-          quantity,
+          quantity: qty,
         });
 
         setQuoteResult(result);
       } catch (err) {
         console.error('Quote error:', err);
-        setError(err.message || 'Failed to calculate quote. Please try again.');
+        setQuoteResult(null);
+        setError(err?.message || lineError || 'Failed to calculate quote. Please try again.');
       }
     };
 
     getQuote();
-  }, [selectedProcess, selectedMaterial, infill, quantity, onGetQuote]);
+  }, [selectedProcess, selectedMaterial, infill, qty, lineError]);
 
   const handleProcessChange = (process) => {
     if (PROCESSES[process].disabled) return;
@@ -55,9 +88,22 @@ const QuoteModal = ({ onClose, onGetQuote, onOrder, currentScript, currentFilena
       name = "model.3mf"
     }
 
-    const blob = await generate3MFBlob(currentScript);
-    const arrayBuffer = await blob.arrayBuffer();
-    const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+    let blob;
+    let base64;
+    try {
+      blob = await generate3MFBlob(currentScript, { partId, lineError });
+      const arrayBuffer = await blob.arrayBuffer();
+      const bytes = new Uint8Array(arrayBuffer);
+      let binary = '';
+      const chunk = 0x8000;
+      for (let i = 0; i < bytes.length; i += chunk) {
+        binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+      }
+      base64 = btoa(binary);
+    } catch (err) {
+      setError(err?.message || lineError || 'Could not export this part.');
+      return;
+    }
 
     const quoteData = {
       process: selectedProcess,
@@ -71,7 +117,7 @@ const QuoteModal = ({ onClose, onGetQuote, onOrder, currentScript, currentFilena
       machineCost: quoteResult.costs.machine,
       subtotal: quoteResult.subtotal,
       materialGrams: quoteResult.materialGrams,
-      quantity: quoteResult.quantity || quantity,
+      quantity: quoteResult.quantity || qty,
       unitSubtotal: quoteResult.unitSubtotal,
       unitMaterial: quoteResult.unitMaterial,
       unitMachine: quoteResult.unitMachine,
@@ -113,6 +159,8 @@ const QuoteModal = ({ onClose, onGetQuote, onOrder, currentScript, currentFilena
             <X size={24} />
           </button>
         </div>
+
+        {checkoutStep ? <CheckoutStepper {...checkoutStep} /> : null}
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
@@ -184,7 +232,9 @@ const QuoteModal = ({ onClose, onGetQuote, onOrder, currentScript, currentFilena
             </div>
           </div>
 
-          <QuantityStepper id="quote-quantity" value={quantity} onChange={setQuantity} />
+          {locked ? null : (
+            <QuantityStepper id="quote-quantity" value={quantity} onChange={setQuantity} />
+          )}
 
           {/* Infill Slider */}
           <div>
@@ -244,8 +294,8 @@ const QuoteModal = ({ onClose, onGetQuote, onOrder, currentScript, currentFilena
                   </span>
                 </div>
 
-                <div className="flex items-center justify-between text-gray-300">
-                  <span>Qty {quoteResult.quantity || quantity}</span>
+                <div className="flex items-center justify-between text-gray-300" data-quote-qty="">
+                  <span>Qty {quoteResult.quantity || qty}</span>
                   {quoteResult.quantity > 1 && (
                     <span className="font-medium text-sm text-gray-400">
                       ${quoteResult.unitSubtotal.toFixed(2)} each
@@ -268,7 +318,7 @@ const QuoteModal = ({ onClose, onGetQuote, onOrder, currentScript, currentFilena
                   
                   <div className="border-t border-gray-600 my-2"></div>
                   
-                  <div className="flex justify-between text-white text-lg font-bold">
+                  <div className="flex justify-between text-white text-lg font-bold" data-quote-total="">
                     <span>Total:</span>
                     <span className="text-green-400">${quoteResult.costs.total.toFixed(2)}</span>
                   </div>
@@ -279,7 +329,7 @@ const QuoteModal = ({ onClose, onGetQuote, onOrder, currentScript, currentFilena
                   <div>Process: {selectedProcess}</div>
                   <div>Material: {selectedMaterial}</div>
                   <div>Infill: {infill}%</div>
-                  <div>Qty {quoteResult.quantity || quantity}</div>
+                  <div>Qty {quoteResult.quantity || qty}</div>
                 </div>
 
                 {/* Order Button */}

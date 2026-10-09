@@ -69,12 +69,12 @@ console.log('\ncart — UI wiring (source)');
     && /cartChipSelector/.test(hook)
     && /data-parts-profile-chip/.test(cart)
     && /data-profile-chip-variant="viewport"/.test(cart));
-  ok('sheet has two-line rows, qty, and a disabled checkout',
+  ok('sheet has two-line rows, qty, and a checkout button',
     /data-cart-sheet/.test(sheet)
     && /data-cart-line=/.test(sheet)
     && /data-cart-checkout/.test(sheet)
-    && /disabled/.test(sheet)
-    && /Checkout is coming next/.test(sheet));
+    && /startCheckout/.test(sheet)
+    && !/Checkout is coming next/.test(sheet));
   ok('App wires the cart and login, not the old quote button',
     /useCart\(/.test(app)
     && /<CartSheet /.test(app)

@@ -1,9 +1,13 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { describe, test } from 'node:test';
 import { stackAlongShortestSide } from '../src/utils/packageSize.js';
 import {
   applyClientQuantity,
   clientOrderQuote,
+  extendQuote,
+  quantityRejectionMessage,
+  QUANTITY_UNSUPPORTED_MESSAGE,
   quoteFromGeometry,
 } from '../src/utils/quoteMath.js';
 
@@ -90,6 +94,48 @@ describe('quote quantity', () => {
     assert.equal(next.quantity, 4);
     assert.equal(next.subtotal, Number((once.unitSubtotal * 4).toFixed(2)));
     assert.deepEqual(next.boundingBox, once.boundingBox);
+  });
+
+  test('extendQuote multiplies a unit quote once and keeps the box', () => {
+    const once = unitQuote();
+    const triple = extendQuote(once, 3);
+    assert.equal(triple.quantity, 3);
+    assert.equal(triple.unitSubtotal, once.unitSubtotal);
+    assert.equal(triple.subtotal, Number((once.unitSubtotal * 3).toFixed(2)));
+    assert.equal(triple.costs.total, triple.subtotal);
+    assert.equal(triple.materialGrams, Number((once.unitGrams * 3).toFixed(1)));
+    assert.equal(triple.printTime, Number((once.unitPrintTime * 3).toFixed(1)));
+    assert.deepEqual(triple.boundingBox, once.boundingBox);
+    const again = extendQuote(triple, 3);
+    assert.equal(again.subtotal, triple.subtotal);
+    assert.equal(again.materialGrams, triple.materialGrams);
+  });
+
+  test('extendQuote rejects a quantity outside 1..999', () => {
+    assert.throws(() => extendQuote(unitQuote(), 0), /1 to 999/);
+    assert.throws(() => extendQuote(unitQuote(), 1000), /1 to 999/);
+  });
+
+  test('calculateQuote uses extendQuote without this file importing the worker', () => {
+    const quoting = readFileSync(new URL('../src/utils/quoting.js', import.meta.url), 'utf8');
+    assert.match(quoting, /return extendQuote\(/);
+    assert.match(quoting, /resolvePartMeshes\(/);
+    assert.match(quoting, /meshResolveError\(/);
+    const self = readFileSync(new URL(import.meta.url), 'utf8');
+    assert.equal(/from ['"][^'"]*quoting\.js['"]/.test(self), false);
+    assert.equal(/from ['"][^'"]*ManifoldWorker['"]/.test(self), false);
+  });
+
+  test('a server that rejects quantity gets a clear message', () => {
+    assert.equal(
+      quantityRejectionMessage(400, { error: "Unexpected field 'quantity'" }),
+      QUANTITY_UNSUPPORTED_MESSAGE,
+    );
+    assert.match(
+      quantityRejectionMessage(400, { error: 'Quantity must be an integer from 1 to 999' }),
+      /1 to 999/,
+    );
+    assert.equal(quantityRejectionMessage(400, { error: 'Model file is required' }), null);
   });
 
   test('copies stack on the shortest side in millimetres', () => {

@@ -23,6 +23,7 @@ import {
 } from './utils/featureSheetWriteback';
 import { confirmFeatureEdit, deleteFeatureEdit } from './utils/featureEdit';
 import QuoteModal from './components/QuoteModal';
+import { calculateQuote } from './utils/quoting';
 import OrderModal from './components/OrderModal';
 import LoginModal from './components/LoginModal';
 import AccountModal from './components/AccountModal';
@@ -692,6 +693,10 @@ const App = () => {
   const [showQuoteModal, setShowQuoteModal] = useState(false);
   const [showOrderModal, setShowOrderModal] = useState(false);
   const [orderData, setOrderData] = useState(null);
+  const [cartCheckout, setCartCheckout] = useState(null);
+  const cartCheckoutRef = useRef(null);
+  cartCheckoutRef.current = cartCheckout;
+  const onCartCheckoutRef = useRef(() => {});
   const [isUploading, setIsUploading] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const [uploadError, setUploadError] = useState(null);
@@ -747,12 +752,12 @@ const App = () => {
   };
   const cartChrome = useCart({
     user,
-    signedIn: gitSession.signedIn,
-    pending: gitSession.pending,
     onNeedLogin: () => setShowLoginModal(true),
+    onCheckout: (queue) => onCartCheckoutRef.current(queue),
     assemblyRef,
     partScriptsRef,
     liveScriptRef,
+    partRunsRef,
   });
   const noteBootEmptyRef = useRef(gitSession.noteBootEmpty);
   noteBootEmptyRef.current = gitSession.noteBootEmpty;
@@ -1194,6 +1199,8 @@ const App = () => {
           restoredStep: checkoutState.currentStep,
           restoredAddress: checkoutState.address,
           restoredGuestEmail: checkoutState.guestEmail,
+          lineId: checkoutState.lineId || null,
+          script: checkoutState.script || null,
         });
         setShowOrderModal(true);
       }
@@ -5885,20 +5892,54 @@ const App = () => {
     await checkAuth();
   };
 
-  // Handle quote modal close
-  const handleQuoteClose = () => {
-    setShowQuoteModal(false);
+  const clearCartCheckout = () => {
+    cartCheckoutRef.current = null;
+    setCartCheckout(null);
   };
 
-  // Handle get quote button
+  // Handle quote modal close. Closing cancels the remaining lines.
+  const handleQuoteClose = () => {
+    setShowQuoteModal(false);
+    clearCartCheckout();
+  };
+
+  // Cart lines quote their own script. The viewport method quotes the editor.
   const handleGetQuote = async (options) => {
-    return await viewportRef.current?.calculateQuote(options);
+    const session = cartCheckoutRef.current;
+    const line = session?.lines?.[session.index];
+    if (line) {
+      if (!line.script) {
+        throw new Error(line.lineError || 'This part is missing. It was left in the cart.');
+      }
+      try {
+        return await calculateQuote(line.script, {
+          ...(line.options || {}),
+          ...(options || {}),
+          quantity: line.qty,
+          partId: line.partId,
+          lineError: line.lineError || '',
+        });
+      } catch (err) {
+        const message = err?.message || line.lineError || 'Could not quote this part.';
+        if (line.lineError && /mesh asset|importMesh/i.test(message)) {
+          throw new Error(line.lineError);
+        }
+        throw err instanceof Error ? err : new Error(message);
+      }
+    }
+    return viewportRef.current?.calculateQuote(options);
   };
 
   // Handle start order
   const handleStartOrder = (quoteData, modelData) => {
+    const line = cartCheckoutRef.current?.lines?.[cartCheckoutRef.current.index];
     setShowQuoteModal(false);
-    setOrderData({ quoteData, modelData });
+    setOrderData({
+      quoteData,
+      modelData,
+      lineId: line?.lineId || null,
+      script: line?.script || null,
+    });
     setShowOrderModal(true);
   };
 
@@ -5906,6 +5947,37 @@ const App = () => {
   const handleOrderClose = () => {
     setShowOrderModal(false);
     setOrderData(null);
+    setShowQuoteModal(false);
+    clearCartCheckout();
+  };
+
+  const handleCartOrderPlaced = () => {
+    const lineId = orderData?.lineId
+      || cartCheckoutRef.current?.lines?.[cartCheckoutRef.current.index]?.lineId;
+    if (lineId) cartChrome.removeLine(lineId);
+  };
+
+  const handleCheckoutNext = () => {
+    const prev = cartCheckoutRef.current;
+    if (!prev || prev.index + 1 >= prev.lines.length) {
+      handleOrderClose();
+      return;
+    }
+    const next = { lines: prev.lines, index: prev.index + 1 };
+    cartCheckoutRef.current = next;
+    setCartCheckout(next);
+    setOrderData(null);
+    setShowOrderModal(false);
+    setShowQuoteModal(true);
+  };
+
+  onCartCheckoutRef.current = (queue) => {
+    const session = { lines: queue.lines, index: 0 };
+    cartCheckoutRef.current = session;
+    setCartCheckout(session);
+    setOrderData(null);
+    setShowOrderModal(false);
+    setShowQuoteModal(true);
   };
 
   // Upload creates a new part. It never overwrites the script that is open.
@@ -6389,6 +6461,19 @@ const App = () => {
     />
   );
 
+  const checkoutLine = cartCheckout?.lines?.[cartCheckout.index] || null;
+  const checkoutStep = checkoutLine ? {
+    index: cartCheckout.index,
+    total: cartCheckout.lines.length,
+    name: checkoutLine.partName,
+    qty: checkoutLine.qty,
+    scriptChanged: !!checkoutLine.hashStale,
+  } : null;
+  const quoteScript = checkoutLine?.script || currentScript;
+  const quoteFilename = checkoutLine ? `${checkoutLine.partName}.js` : currentFilename;
+  const orderScript = orderData?.script || checkoutLine?.script || currentScript;
+  const checkoutHasNext = !!(cartCheckout && cartCheckout.index < cartCheckout.lines.length - 1);
+
   if (isMobile) {
     // Keep h-dvh while the keyboard is closed so Monaco can take a real
     // user-gesture focus (iOS often refuses keyboard inside a fixed+overflow
@@ -6704,25 +6789,37 @@ const App = () => {
           {/* Quote Modal */}
           {showQuoteModal && (
             <QuoteModal
+              key={checkoutLine?.lineId || 'quote'}
               onClose={handleQuoteClose}
               onGetQuote={handleGetQuote}
               onOrder={handleStartOrder}
-              currentScript={currentScript}
-              currentFilename={currentFilename}
+              currentScript={quoteScript}
+              currentFilename={quoteFilename}
+              fixedQuantity={checkoutLine ? checkoutLine.qty : null}
+              initialOptions={checkoutLine?.options || null}
+              partId={checkoutLine?.partId || null}
+              lineError={checkoutLine?.lineError || ''}
+              checkoutStep={checkoutStep}
             />
           )}
           
           {/* Order Modal */}
           {showOrderModal && orderData && (
             <OrderModal
+              key={orderData.lineId || 'order'}
               onClose={handleOrderClose}
               quoteData={orderData.quoteData}
               modelData={orderData.modelData}
-              currentScript={currentScript}
+              currentScript={orderScript}
               restoredStep={orderData.restoredStep}
               restoredAddress={orderData.restoredAddress}
               restoredGuestEmail={orderData.restoredGuestEmail}
               onOpenAccount={handleAccount}
+              checkoutStep={checkoutStep}
+              lineId={orderData.lineId || null}
+              onOrderPlaced={handleCartOrderPlaced}
+              hasNextPart={checkoutHasNext}
+              onNextPart={handleCheckoutNext}
             />
           )}
           
@@ -7029,25 +7126,37 @@ const App = () => {
         {/* Quote Modal */}
         {showQuoteModal && (
           <QuoteModal
+            key={checkoutLine?.lineId || 'quote'}
             onClose={handleQuoteClose}
             onGetQuote={handleGetQuote}
             onOrder={handleStartOrder}
-            currentScript={currentScript}
-            currentFilename={currentFilename}
+            currentScript={quoteScript}
+            currentFilename={quoteFilename}
+            fixedQuantity={checkoutLine ? checkoutLine.qty : null}
+            initialOptions={checkoutLine?.options || null}
+            partId={checkoutLine?.partId || null}
+            lineError={checkoutLine?.lineError || ''}
+            checkoutStep={checkoutStep}
           />
         )}
         
         {/* Order Modal */}
         {showOrderModal && orderData && (
           <OrderModal
+            key={orderData.lineId || 'order'}
             onClose={handleOrderClose}
             quoteData={orderData.quoteData}
             modelData={orderData.modelData}
-            currentScript={currentScript}
+            currentScript={orderScript}
             restoredStep={orderData.restoredStep}
             restoredAddress={orderData.restoredAddress}
             restoredGuestEmail={orderData.restoredGuestEmail}
             onOpenAccount={handleOpenAccount}
+            checkoutStep={checkoutStep}
+            lineId={orderData.lineId || null}
+            onOrderPlaced={handleCartOrderPlaced}
+            hasNextPart={checkoutHasNext}
+            onNextPart={handleCheckoutNext}
           />
         )}
         

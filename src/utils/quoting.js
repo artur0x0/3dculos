@@ -1,6 +1,7 @@
 // utils/quoting.js
 import manifoldContext from './ManifoldWorker';
-import { quoteFromGeometry } from './quoteMath.js';
+import { meshResolveError, resolvePartMeshes } from './meshAssets.js';
+import { extendQuote, quoteFromGeometry } from './quoteMath.js';
 
 /**
  * Calculate manufacturing quote for a Manifold model
@@ -11,19 +12,48 @@ import { quoteFromGeometry } from './quoteMath.js';
  * @param {number} options.infill - Infill percentage (0-100)
  * @returns {Promise<Object>} Quote details including costs, time, and material usage
  */
-export async function calculateQuote(currentScript, options) {
-  const { process, material, infill, quantity = 1 } = options;
+export async function calculateQuote(currentScript, options = {}) {
+  const { process, material, infill, quantity = 1, partId, lineError } = options;
   
   if (!currentScript) {
     throw new Error('No model to quote');
   }
 
   if (!manifoldContext.isReady) {
+    try {
+      await manifoldContext.init();
+    } catch (err) {
+      throw new Error(err?.message || 'Manifold worker not initialized');
+    }
+  }
+  if (!manifoldContext.isReady) {
     throw new Error('Manifold worker not initialized');
   }
 
-  // Execute script to get fresh result with volume and bounding box
-  const result = await manifoldContext.executeScript(currentScript);
+  // Mesh bytes stay on this thread. The worker has no asset cache.
+  // A miss shows the line's error and does not enter the worker.
+  let prepared;
+  try {
+    prepared = await resolvePartMeshes(partId, currentScript);
+  } catch (err) {
+    throw new Error(lineError || err?.message || 'Missing mesh asset');
+  }
+  if (prepared.missing.length) {
+    throw new Error(meshResolveError(prepared.missing, lineError));
+  }
+
+  let result;
+  try {
+    result = await manifoldContext.executeScript(currentScript, {
+      importedModels: prepared.importedModels,
+    });
+  } catch (err) {
+    const message = err?.message || 'Could not quote this part.';
+    if (/mesh asset|importMesh/i.test(message)) {
+      throw new Error(meshResolveError(prepared.missing, lineError || message));
+    }
+    throw err instanceof Error ? err : new Error(message);
+  }
   
   const { volume, boundingBox } = result;
   
@@ -41,7 +71,7 @@ export async function calculateQuote(currentScript, options) {
   console.log('[Quote] Bounding box:', { width, height, depth });
   console.log('[Quote] Estimated surface area:', surfaceArea, 'mm²');
 
-  return quoteFromGeometry({
+  const unit = quoteFromGeometry({
     volume,
     boundingBox: {
       width,
@@ -53,8 +83,9 @@ export async function calculateQuote(currentScript, options) {
     process,
     material,
     infill,
-    quantity,
+    quantity: 1,
   });
+  return extendQuote(unit, quantity);
 }
 
 /**

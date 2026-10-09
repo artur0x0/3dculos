@@ -6,6 +6,8 @@ import {
   cartChipSelector,
   cartCount,
   cartUserId,
+  checkoutQueue,
+  checkoutSkipNote,
   emptyCart,
   orderIntent,
   presentCartLines,
@@ -212,5 +214,72 @@ describe('cart storage and order rules', () => {
     assert.equal(cartChipSelector(390), '[data-parts-profile-chip] [data-profile-chip]');
     assert.equal(cartChipSelector(1440), '[data-profile-chip-variant="viewport"]');
     assert.equal(cartChipSelector(768), '[data-parts-profile-chip] [data-profile-chip]');
+  });
+});
+
+describe('checkoutQueue', () => {
+  const doc = {
+    source: 'local',
+    name: 'Bracket Box',
+    parts: [
+      { id: 'part-1', name: 'Bracket' },
+      { id: 'part-2', name: 'Plate' },
+    ],
+  };
+  const scripts = {
+    'part-1': 'return 1;',
+    'part-2': "return importMesh('Plate.mesh');\n",
+  };
+
+  test('skips missing and other assemblies, and quotes a changed script', () => {
+    const cart = {
+      version: 1,
+      lines: [
+        line(1, '2026-06-02T00:00:00.000Z', {
+          partId: 'part-1',
+          partName: 'Bracket',
+          scriptHash: scriptHash('return 1;'),
+          qty: 2,
+        }),
+        line(2, '2026-06-02T00:00:00.000Z', {
+          partId: 'part-2',
+          partName: 'Plate',
+          scriptHash: scriptHash('old'),
+          qty: 4,
+        }),
+        line(3, '2026-06-02T00:00:00.000Z', { partId: 'part-missing', partName: 'Gone' }),
+        line(4, '2026-06-02T00:00:00.000Z', {
+          partId: 'part-x',
+          partName: 'Other',
+          assemblyName: 'Other Box',
+        }),
+      ],
+      tombstones: [],
+    };
+    const queue = checkoutQueue(doc, scripts, cart, {
+      'part-2': { ok: false, error: 'Missing mesh asset: Plate.mesh' },
+    });
+    assert.deepEqual(queue.lines.map((row) => row.partName), ['Bracket', 'Plate']);
+    assert.equal(queue.lines[0].qty, 2);
+    assert.equal(queue.lines[0].script, 'return 1;');
+    assert.equal(queue.lines[0].hashStale, false);
+    assert.equal(queue.lines[1].hashStale, true);
+    assert.equal(queue.lines[1].script, scripts['part-2']);
+    assert.equal(queue.lines[1].partId, 'part-2');
+    assert.equal(queue.lines[1].lineError, 'Missing mesh asset: Plate.mesh');
+    assert.deepEqual(queue.skipped.map((row) => row.reason), ['missing', 'elsewhere']);
+    assert.match(checkoutSkipNote(queue), /Missing parts are skipped/);
+    assert.match(checkoutSkipNote(queue), /another assembly/);
+  });
+
+  test('a closed assembly checks out nothing', () => {
+    const cart = {
+      version: 1,
+      lines: [line(1, '2026-06-02T00:00:00.000Z', { partId: 'part-1' })],
+      tombstones: [],
+    };
+    const closed = checkoutQueue(null, {}, cart);
+    assert.equal(closed.lines.length, 0);
+    assert.equal(checkoutSkipNote(closed), 'Open an assembly to check out.');
   });
 });

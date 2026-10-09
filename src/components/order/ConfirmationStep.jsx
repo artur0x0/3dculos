@@ -2,7 +2,7 @@
 import React from 'react';
 import { CheckCircle, Package, Mail } from 'lucide-react';
 
-const ConfirmationStep = ({ order, isGuest, onConvertAccount, onClose, onViewOrders }) => {
+const ConfirmationStep = ({ order, isGuest, onConvertAccount, onClose, onViewOrders, onNextPart }) => {
   return (
     <div className="p-6 text-center">
       {/* Success Animation */}
@@ -27,7 +27,7 @@ const ConfirmationStep = ({ order, isGuest, onConvertAccount, onClose, onViewOrd
         <p className="text-2xl font-mono font-bold text-white tracking-wider">
           {order.orderNumber}
         </p>
-        <p className="text-gray-400 text-sm mt-2">Qty {order.quantity || 1}</p>
+        <p className="text-gray-400 text-sm mt-2" data-order-qty="">Qty {order.quantity || 1}</p>
       </div>
 
       {/* Order Details */}
@@ -117,6 +117,17 @@ const ConfirmationStep = ({ order, isGuest, onConvertAccount, onClose, onViewOrd
           </button>
         </div>
       )}
+
+      {onNextPart ? (
+        <button
+          type="button"
+          data-checkout-next=""
+          onClick={onNextPart}
+          className="w-full py-3 mb-3 bg-green-600 text-white rounded-xl font-medium hover:bg-green-700 transition-colors"
+        >
+          Next part
+        </button>
+      ) : null}
 
       {/* Close Button */}
       <button

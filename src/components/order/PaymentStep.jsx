@@ -11,7 +11,7 @@ import {
 } from '@stripe/react-stripe-js';
 import { Loader2, Lock, CreditCard, ShieldCheck } from 'lucide-react';
 import TermsModal from '../TermsModal';
-import { clientOrderQuote } from '../../utils/quoteMath.js';
+import { clientOrderQuote, quantityRejectionMessage, readJsonSafe } from '../../utils/quoteMath.js';
 
 // Stripe promise - loaded once
 let stripePromise = null;
@@ -23,13 +23,66 @@ const getStripe = (publishableKey) => {
   return stripePromise;
 };
 
+function OrderSummary({ order, quoteData, shippingOption }) {
+  return (
+    <div className="bg-gray-800/30 rounded-xl p-4" data-payment-summary="">
+      <h3 className="text-sm font-medium text-gray-300 mb-3">Order Summary</h3>
+      <div className="space-y-2 text-sm">
+        <div className="flex justify-between text-gray-400" data-payment-qty="">
+          <span>Qty {order.quantity || quoteData.quantity || 1}</span>
+          <span></span>
+        </div>
+        <div className="flex justify-between text-gray-400">
+          <span>{quoteData.process} - {quoteData.material}</span>
+          <span>${(order.subtotal ?? quoteData.subtotal).toFixed(2)}</span>
+        </div>
+        <div className="flex justify-between text-gray-400">
+          <span>{shippingOption.service}</span>
+          <span>${(order.shipping ?? shippingOption.price).toFixed(2)}</span>
+        </div>
+        {order.tax > 0 && (
+          <div className="flex justify-between text-gray-400">
+            <span>Tax</span>
+            <span>${order.tax.toFixed(2)}</span>
+          </div>
+        )}
+        <div className="border-t border-gray-700 pt-2 mt-2 flex justify-between font-medium text-white">
+          <span>Total</span>
+          <span>${Number(order.total || 0).toFixed(2)}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+class StripeFrame extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { failed: false };
+  }
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  render() {
+    if (this.state.failed) {
+      return (
+        <p className="text-sm text-amber-200" data-payment-card-unavailable="">
+          The card form didn't load. The total above is still the amount to pay.
+        </p>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 // Inner payment form component
 const PaymentForm = ({ 
   order, 
   onComplete, 
   onError,
   quoteData,
-  shippingOption,
 }) => {
   const stripe = useStripe();
   const elements = useElements();
@@ -77,16 +130,18 @@ const PaymentForm = ({
           }),
         });
 
-        const confirmData = await confirmResponse.json();
+        const confirmData = await readJsonSafe(confirmResponse);
 
         if (!confirmResponse.ok) {
-          throw new Error(confirmData.error || 'Failed to confirm order');
+          const rejected = quantityRejectionMessage(confirmResponse.status, confirmData);
+          throw new Error(rejected || confirmData.error || 'Failed to confirm order');
         }
 
         onComplete({
-          orderNumber: confirmData.order.orderNumber,
-          total: confirmData.order.total,
-          status: confirmData.order.status,
+          orderNumber: confirmData.order?.orderNumber,
+          total: confirmData.order?.total,
+          status: confirmData.order?.status,
+          quantity: Number(confirmData.order?.quantity) || quoteData.quantity || 1,
         });
       }
     } catch (err) {
@@ -107,36 +162,6 @@ const PaymentForm = ({
   return (
     <>
       <form onSubmit={handleSubmit} className="space-y-6">
-        {/* Order Summary */}
-        <div className="bg-gray-800/30 rounded-xl p-4">
-          <h3 className="text-sm font-medium text-gray-300 mb-3">Order Summary</h3>
-          
-          <div className="space-y-2 text-sm">
-            <div className="flex justify-between text-gray-400">
-              <span>Qty {order.quantity || quoteData.quantity || 1}</span>
-              <span></span>
-            </div>
-            <div className="flex justify-between text-gray-400">
-              <span>{quoteData.process} - {quoteData.material}</span>
-              <span>${(order.subtotal ?? quoteData.subtotal).toFixed(2)}</span>
-            </div>
-            <div className="flex justify-between text-gray-400">
-              <span>{shippingOption.service}</span>
-              <span>${(order.shipping ?? shippingOption.price).toFixed(2)}</span>
-            </div>
-            {order.tax > 0 && (
-              <div className="flex justify-between text-gray-400">
-                <span>Tax</span>
-                <span>${order.tax.toFixed(2)}</span>
-              </div>
-            )}
-            <div className="border-t border-gray-700 pt-2 mt-2 flex justify-between font-medium text-white">
-              <span>Total</span>
-              <span>${order.total.toFixed(2)}</span>
-            </div>
-          </div>
-        </div>
-
         {/* Stripe Payment Element */}
         <div className="bg-gray-800/30 rounded-xl p-4">
           <div className="flex items-center gap-2 mb-4">
@@ -301,10 +326,11 @@ const PaymentStep = ({
         }),
       });
 
-      const data = await response.json();
+      const data = await readJsonSafe(response);
 
       if (!response.ok) {
-        throw new Error(data.error || 'Failed to create order');
+        const rejected = quantityRejectionMessage(response.status, data);
+        throw new Error(rejected || data.error || 'Failed to create order');
       }
 
       setOrder({
@@ -393,16 +419,18 @@ const PaymentStep = ({
   };
 
   return (
-    <div className="p-5">
-      <Elements stripe={getStripe(stripeKey)} options={options}>
-        <PaymentForm
-          order={order}
-          onComplete={onComplete}
-          onError={onError}
-          quoteData={quoteData}
-          shippingOption={shippingOption}
-        />
-      </Elements>
+    <div className="p-5 space-y-6">
+      <OrderSummary order={order} quoteData={quoteData} shippingOption={shippingOption} />
+      <StripeFrame>
+        <Elements stripe={getStripe(stripeKey)} options={options}>
+          <PaymentForm
+            order={order}
+            onComplete={onComplete}
+            onError={onError}
+            quoteData={quoteData}
+          />
+        </Elements>
+      </StripeFrame>
     </div>
   );
 };

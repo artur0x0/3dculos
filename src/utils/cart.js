@@ -428,3 +428,91 @@ export function scriptsForOrder(scripts, live) {
   }
   return next;
 }
+
+function runErrorFor(runs, ids) {
+  for (const id of ids) {
+    if (!id) continue;
+    const run = runs?.[id];
+    if (!run || run.ok !== false || run.empty || run.skipped) continue;
+    const text = typeof run.error === 'string' ? run.error.trim() : '';
+    if (text && text !== 'failed') return text;
+  }
+  return '';
+}
+
+/**
+ * Lines checkout can price. Part missing and "not in this assembly" stay
+ * in the cart. A changed script is included: the cart holds no script, so
+ * the quote is the part as it is now. `importMesh` bytes are resolved later
+ * from the asset cache, keyed by the live part id.
+ */
+export function checkoutQueue(doc, scripts, cart, runs = null) {
+  const view = presentCartLines(doc, scripts, cart);
+  const lines = [];
+  const skipped = [];
+  if (!doc) {
+    for (const line of view) {
+      skipped.push({
+        lineId: line.lineId,
+        reason: 'closed',
+        assemblyName: line.assemblyName,
+        partName: line.liveName || line.partName,
+      });
+    }
+    return { lines, skipped };
+  }
+  for (const line of view) {
+    const partName = line.liveName || line.partName;
+    if (line.missing) {
+      skipped.push({ lineId: line.lineId, reason: 'missing', assemblyName: line.assemblyName, partName });
+      continue;
+    }
+    if (line.elsewhere) {
+      skipped.push({ lineId: line.lineId, reason: 'elsewhere', assemblyName: line.assemblyName, partName });
+      continue;
+    }
+    const resolved = resolveCartLine(doc, scripts, line);
+    if (!resolved.script) {
+      skipped.push({ lineId: line.lineId, reason: 'missing', assemblyName: line.assemblyName, partName });
+      continue;
+    }
+    const partId = resolved.part?.id || line.partId;
+    lines.push({
+      lineId: line.lineId,
+      partId,
+      partName: resolved.part?.name || partName,
+      assemblyName: line.assemblyName,
+      qty: clampQty(line.qty),
+      options: line.options,
+      script: resolved.script,
+      hashStale: !!line.hashStale,
+      lineError: runErrorFor(runs, [partId, line.partId]),
+    });
+  }
+  return { lines, skipped };
+}
+
+/** Short note under Checkout. Empty when every line can be ordered. */
+export function checkoutSkipNote(queue) {
+  const skipped = queue?.skipped || [];
+  const eligible = queue?.lines?.length || 0;
+  if (!skipped.length) return '';
+  const reasons = new Set(skipped.map((row) => row.reason));
+  if (eligible === 0) {
+    if (reasons.has('closed')) return 'Open an assembly to check out.';
+    if (reasons.has('elsewhere') && !reasons.has('missing')) {
+      const name = skipped.find((row) => row.reason === 'elsewhere')?.assemblyName;
+      return name
+        ? `Open ${name} to check out these parts.`
+        : 'Open that assembly to check out these parts.';
+    }
+    if (reasons.has('missing') && !reasons.has('elsewhere')) {
+      return 'Missing parts stay in the cart.';
+    }
+    return 'Nothing in this assembly can be checked out yet.';
+  }
+  const notes = [];
+  if (reasons.has('missing')) notes.push('Missing parts are skipped.');
+  if (reasons.has('elsewhere')) notes.push('Parts in another assembly stay in the cart.');
+  return notes.join(' ');
+}

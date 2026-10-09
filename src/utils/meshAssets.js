@@ -193,6 +193,16 @@ export function missingMeshMessage(names) {
 }
 
 /**
+ * Quote failure for an `importMesh` the asset cache could not resolve.
+ * A line that already failed keeps that message. Otherwise name the assets.
+ */
+export function meshResolveError(missing, lineError) {
+  const text = typeof lineError === 'string' ? lineError.trim() : '';
+  if (text && text !== 'failed' && text !== 'missing') return text;
+  return missingMeshMessage(missing);
+}
+
+/**
  * 3MF of the selected row. Hidden and failed parts do not export.
  * A successful run wins; otherwise the leftover mesh. `needsRun` means
  * call `runAssemblyParts({ ids: [id] })` before giving up.
