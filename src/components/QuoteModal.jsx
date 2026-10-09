@@ -1,11 +1,13 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { X, DollarSign, Clock, Package, ShoppingCart } from 'lucide-react';
 import { PROCESSES } from '../utils/quoting';
 import { generate3MFBlob } from '../utils/exportModel';
 import { scriptHash } from '../utils/cart.js';
 import { requestPartQuote } from '../utils/quoteApi.js';
+import { sheetCheckoutRoute } from '../utils/sheetMetal/sheetCheckout.js';
 import CheckoutStepper from './CheckoutStepper';
 import QuantityStepper from './order/QuantityStepper';
+import ScsHandoff from './sheetMetal/ScsHandoff';
 
 function initialProcess(options) {
   const key = options?.process;
@@ -54,13 +56,21 @@ const QuoteModal = ({
   const [quoteResult, setQuoteResult] = useState(null);
   const [error, setError] = useState(null);
   const [adding, setAdding] = useState(false);
+  const [surfInstead, setSurfInstead] = useState(false);
   const onGetQuoteRef = useRef(onGetQuote);
   onGetQuoteRef.current = onGetQuote;
+  const route = useMemo(() => sheetCheckoutRoute(currentScript), [currentScript]);
+  // Checkout of a stored line stays on the SurfCAD quote. The handoff is only
+  // the part-row Order path, and it does not write or remove a line.
+  const showHandoff = addingToCart && route === 'scs' && !surfInstead;
 
   const currentProcess = PROCESSES[selectedProcess];
+  const handoffName = String(currentFilename || 'sheet').replace(/\.js$/i, '') || 'sheet';
 
-  // Auto-calculate quote when modal opens or options change
+  // Auto-calculate quote when modal opens or options change.
+  // The handoff does not price the part.
   useEffect(() => {
+    if (showHandoff) return;
     const getQuote = async () => {
       setError(null);
 
@@ -81,7 +91,7 @@ const QuoteModal = ({
     };
 
     getQuote();
-  }, [selectedProcess, selectedMaterial, infill, qty, lineError]);
+  }, [showHandoff, selectedProcess, selectedMaterial, infill, qty, lineError]);
 
   const handleProcessChange = (process) => {
     if (PROCESSES[process].disabled) return;
@@ -203,13 +213,14 @@ const QuoteModal = ({
     <div
       className="fixed inset-0 surface-scrim flex items-center justify-center z-50 p-4"
       data-quote-mode={addingToCart ? 'add' : 'checkout'}
+      data-scs-handoff={showHandoff ? '' : undefined}
     >
       <div className="surface-glass rounded-lg shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-hidden flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-gray-700">
           <h2 className="text-xl font-semibold text-white flex items-center gap-2">
-            <DollarSign size={24} />
-            Manufacturing Quote
+            {showHandoff ? null : <DollarSign size={24} />}
+            {showHandoff ? 'SendCutSend' : 'Manufacturing Quote'}
           </h2>
           <button
             onClick={onClose}
@@ -219,10 +230,18 @@ const QuoteModal = ({
           </button>
         </div>
 
-        {checkoutStep ? <CheckoutStepper {...checkoutStep} /> : null}
+        {checkoutStep && !showHandoff ? <CheckoutStepper {...checkoutStep} /> : null}
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
+        {showHandoff ? (
+          <ScsHandoff
+            script={currentScript}
+            partName={handoffName}
+            onQuoteInstead={() => setSurfInstead(true)}
+          />
+        ) : (
+        <>
         {/* Process Selection */}
         <div>
           <label className="block text-sm font-medium text-gray-300 mb-3">
@@ -408,6 +427,8 @@ const QuoteModal = ({
               </div>
             </div>
           )}
+        </>
+        )}
         </div>
       </div>
     </div>

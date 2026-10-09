@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 /**
- * SCS S5 — DFM + export. Hard DFM fails block DXF / STEP / Order; soft
+ * SCS S5 — DFM + export. Hard DFM fails block the SendCutSend handoff; soft
  * issues warn. Flat pattern (BA unfold) → cut-only DXF (mm); the spec → exact
  * STEP B-rep (smoke_scs_true_curve_step); the mesh writer stays as the
- * fallback and is still checked here. Order opens app.sendcutsend.com.
+ * fallback and is still checked here. Order opens app.sendcutsend.com from
+ * ScsHandoff, not from the Check & Export popup.
  */
 import { readFileSync } from 'node:fs';
 import { joinScsCatalog, findScsSku, SCS_ORDER_URL } from '../../src/utils/scs/scsCatalog.js';
@@ -174,10 +175,24 @@ console.log('SCS S5 — mode + UI wiring');
   check('cannot open export mid-draft', openSheetExport(drafting) === drafting);
   check('order URL is the SCS app', SCS_ORDER_URL === 'https://app.sendcutsend.com/');
   const flow = read('src/components/sheetMetal/SheetMetalFlow.jsx');
+  const handoff = read('src/components/sheetMetal/ScsHandoff.jsx');
   const view = read('src/components/Viewport.jsx');
+  const popup = flow.slice(flow.indexOf('const ExportPopup'), flow.indexOf('const TOOL_HINTS'));
   check('chip has Check & Export', /data-sm-export="1"/.test(flow) && /openSheetExport/.test(flow));
-  check('DXF / STEP / Order disabled while blocked', /data-sm-dxf="1"\s*\n\s*disabled=\{blocked/.test(flow) && /data-sm-step="1"\s*\n\s*disabled=\{blocked/.test(flow) && /data-sm-order="1"\s*\n\s*disabled=\{blocked\}/.test(flow));
-  check('Order opens SCS in a new tab without opener', /window\.open\(SCS_ORDER_URL, '_blank', 'noopener,noreferrer'\)/.test(flow));
+  check('export popup has no download or order button',
+    !/data-sm-dxf/.test(popup)
+    && !/data-sm-order/.test(popup)
+    && !/Download DXF/.test(popup)
+    && !/Download STEP/.test(popup)
+    && !/Order on SendCutSend/.test(popup)
+    && /data-sm-dfm-fails/.test(popup)
+    && /data-sm-flat-size/.test(popup)
+    && /data-sm-step-source/.test(popup));
+  check('DXF / STEP / Order live on the handoff and stay disabled while blocked',
+    /data-sm-dxf="1"\s*\n\s*disabled=\{blocked/.test(handoff)
+    && /data-sm-step="1"\s*\n\s*disabled=\{blocked/.test(handoff)
+    && /data-sm-order="1"\s*\n\s*disabled=\{blocked\}/.test(handoff));
+  check('Order opens SCS in a new tab without opener', /window\.open\(SCS_ORDER_URL, '_blank', 'noopener,noreferrer'\)/.test(handoff) && !/window\.open\(SCS_ORDER_URL/.test(flow));
   check('export DFM uses the display unit', /buildSheetExport\(mode\.spec, \{[^}]*unit/.test(flow) && /formatSheetLength/.test(flow));
   check('fails red, warns amber', /data-sm-dfm-fails/.test(flow) && /bg-red-950/.test(flow) && /data-sm-dfm-warns/.test(flow) && /bg-amber-950/.test(flow));
   check('Viewport passes the built mesh + part name', /mesh=\{cachedMeshData\}/.test(view) && /partName=\{partLabelsRef\.current/.test(view));
