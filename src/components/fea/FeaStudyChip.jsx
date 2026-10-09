@@ -1,11 +1,12 @@
 import React from 'react';
 import FeatureSheet from '../FeatureSheet';
-import { FeaRunBar, FeaStudyControls } from './FeaStudyControls';
+import { FeaResultsReadout, FeaRunBar, FeaStudyControls } from './FeaStudyControls';
 
 /**
  * Analyze on the shared feature card (desktop). The same panel feeds the
- * phone card. Setup stays in the body. The footer is Run, or Back to Setup
- * after a solve. X and Esc close Analyze. There is no Confirm.
+ * phone card. Setup stays in the body. After a solve, the legend, the plot
+ * tabs, and Stage times scroll in the body. The footer is Run, or Back to
+ * Setup. X and Esc close Analyze through FeatureSheet onCancel. There is no Confirm.
  */
 export function FeaStudyChip({ panel, compact = false }) {
   const results = panel.results === true;
@@ -22,7 +23,9 @@ export function FeaStudyChip({ panel, compact = false }) {
         'data-fea-view': results ? 'results' : 'setup',
       }}
     >
-      {results ? null : (
+      {results ? (
+        <FeaResultsReadout panel={panel} />
+      ) : (
         <div className="mt-1.5 flex flex-col gap-1.5 font-sans">
           <FeaStudyControls panel={panel} />
         </div>

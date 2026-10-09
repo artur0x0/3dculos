@@ -552,6 +552,45 @@ async function assertResultsPlots(page, vp, shell) {
     await page.locator(`${shell} [data-fea-timing]`).count() === 1
       && await page.locator(`${shell} [data-fea-timing-details]`).count() === 1,
   );
+  if (vp.touch) {
+    await page.locator(`${shell} [data-fea-timing-details] summary`).click();
+    await page.locator(`${shell} [data-fea-stage]`).first().waitFor({ timeout: 8000 });
+    const back = await page.locator(`${shell} [data-fea-back]`).evaluate((el) => {
+      const box = el.getBoundingClientRect();
+      const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+      return {
+        top: box.top,
+        bottom: box.bottom,
+        height: box.height,
+        vh: window.innerHeight,
+        display: window.getComputedStyle(el).display,
+        visibility: window.getComputedStyle(el).visibility,
+        inFooter: !!el.closest('[data-feature-sheet-footer]'),
+        hit: hit === el || el.contains(hit),
+        plotsInBody: !!document.querySelector('[data-fea-plots]')?.closest('[data-feature-sheet-body]'),
+        timingInBody: !!document.querySelector('[data-fea-timing]')?.closest('[data-feature-sheet-body]'),
+        legendInBody: !!document.querySelector('[data-fea-legend]')?.closest('[data-feature-sheet-body]'),
+      };
+    });
+    check(
+      `${vp.name} Back to Setup stays on screen with Stage times open`,
+      back.height > 0
+        && back.top >= 0
+        && back.bottom <= back.vh + 1
+        && back.display !== 'none'
+        && back.visibility !== 'hidden'
+        && back.inFooter
+        && back.hit
+        && back.plotsInBody
+        && back.timingInBody
+        && back.legendInBody,
+      JSON.stringify(back),
+    );
+    const stageShot = join(SHOT_DIR, 'fea-study-results-stage-times-390.png');
+    check(`${vp.name} stage times shot dir`, !stageShot.startsWith('/opt/cursor/artifacts'), stageShot);
+    await page.screenshot({ path: stageShot });
+    await page.locator(`${shell} [data-fea-timing-details]`).evaluate((el) => { el.open = false; });
+  }
   const stressPx = await sampleSides(page);
   const stressShot = join(SHOT_DIR, vp.touch ? 'fea-study-results-stress-390.png' : 'fea-study-results-stress-1280.png');
   check(`${vp.name} stress shot dir`, !stressShot.startsWith('/opt/cursor/artifacts'), stressShot);
@@ -639,6 +678,14 @@ async function runCase(browser, vp) {
   const shell = FEA_SHELL;
   await page.locator(shell).waitFor({ timeout: 8000 });
   await assertFeaSheet(page, vp, 'Run');
+  if (!vp.touch) {
+    await page.keyboard.press('Escape');
+    await page.locator(shell).waitFor({ state: 'detached', timeout: 8000 });
+    check(`${vp.name} Escape closes Analyze`, await page.locator(shell).count() === 0);
+    await page.locator('[data-analyze-chip]').click();
+    await page.locator(shell).waitFor({ timeout: 8000 });
+    await assertFeaSheet(page, vp, 'Run');
+  }
   check(`${vp.name} analyze open`, true);
   check(
     `${vp.name} paint stays closed`,

@@ -1,11 +1,12 @@
 import React from 'react';
 import FeatureSheet from '../FeatureSheet';
-import { FeaRunBar, FeaStudyControls } from './FeaStudyControls';
+import { FeaResultsReadout, FeaRunBar, FeaStudyControls } from './FeaStudyControls';
 
 /**
  * Analyze on the shared feature card (phone). Docks at the pane bottom.
  * The stage switcher hides while this card is open. Same body and footer
- * as the desktop card. There is no Confirm.
+ * as the desktop card. Stage times scroll in the body so Back to Setup
+ * stays on screen. There is no Confirm.
  */
 export function FeaStudySheet({ panel }) {
   const results = panel.results === true;
@@ -22,7 +23,9 @@ export function FeaStudySheet({ panel }) {
         'data-fea-view': results ? 'results' : 'setup',
       }}
     >
-      {results ? null : (
+      {results ? (
+        <FeaResultsReadout panel={panel} />
+      ) : (
         <div className="mt-1.5 flex flex-col gap-1.5 font-sans">
           <FeaStudyControls panel={panel} />
         </div>

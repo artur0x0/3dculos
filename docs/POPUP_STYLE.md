@@ -73,8 +73,8 @@ over inventing a new modal layout.
   while the distance changes. This is not the body `move()` helper. Hidden in game.
 - **`FeaStudyChip.jsx` / `FeaStudySheet.jsx`** — the shared feature card (`FeatureSheet`)
   on phone and desktop. Material, Fix / Force / Pressure, the load list, and the
-  preview sliders stay in the body during setup. The legend and the Stress /
-  Displacement tabs stay in the footer. The footer is Run, or Back to Setup
+  preview sliders stay in the body during setup. After a solve, the legend,
+  the Stress / Displacement tabs, and Stage times scroll in the body. The footer is Run, or Back to Setup
   after a solve. It does not say Confirm. X and Esc close Analyze. Hidden in game.
 - **`PaintModeChip.jsx`** — the shared feature card (`FeatureSheet`). Eight swatches,
   a custom hex, Part, Undo, and Clear stay in the body. The color preview
