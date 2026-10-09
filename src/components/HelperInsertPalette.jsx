@@ -138,6 +138,8 @@ const HelperInsertPalette = ({
   onEditConfirm = null,
   onEditDelete = null,
   onEditCancel = null,
+  /** CAD only. True while the helper card is open, so the camera can slide. */
+  onHelperCard = null,
 }) => {
   const grouped = itemsByGroup();
   // Content-height capped just below the part-name chip; narrows when no scroll.
@@ -153,9 +155,19 @@ const HelperInsertPalette = ({
   const [refuseTitle, setRefuseTitle] = useState(null);
   const onBlockPreviewRef = useRef(onBlockPreview);
   onBlockPreviewRef.current = onBlockPreview;
+  const onHelperCardRef = useRef(onHelperCard);
+  onHelperCardRef.current = onHelperCard;
+  // CAD uses the feature card. Game keeps the docked sheet and does not slide.
+  const useCard = layout !== 'game';
+  const signalCard = (open) => {
+    // Game never opens the card. Closing still clears a flag set in CAD.
+    if (open && !useCard) return;
+    onHelperCardRef.current?.(!!open);
+  };
   // Leaving the rail (another mode mounts over it) must drop the ghost.
   useEffect(() => () => {
     onBlockPreviewRef.current?.(null);
+    onHelperCardRef.current?.(false);
   }, []);
 
   const featureEditOpenRef = useRef(false);
@@ -172,6 +184,7 @@ const HelperInsertPalette = ({
       setRefuseTitle(null);
       setModalMode('default');
       onBlockPreviewRef.current?.(null);
+      onHelperCardRef.current?.(false);
       return;
     }
     featureEditOpenRef.current = true;
@@ -191,7 +204,8 @@ const HelperInsertPalette = ({
     setRefuseMessage(null);
     setRefuseTitle(null);
     setModalMode('default');
-  }, [editSession]);
+    if (layout !== 'game') onHelperCardRef.current?.(true);
+  }, [editSession, layout]);
 
   const openParams = (item) => {
     // First, so the buffer snapshot, preview and Confirm are all the picked part's.
@@ -204,6 +218,7 @@ const HelperInsertPalette = ({
       setRefuseTitle(item.label);
       setRefuseMessage(`${item.label} is not available yet.`);
       setModalMode('refuse');
+      signalCard(true);
       return;
     }
     setRefuseTitle(null);
@@ -282,6 +297,7 @@ const HelperInsertPalette = ({
       setEdgeSnapshot(resolved.edges || selectedEdges);
       setRefuseMessage(resolved.message);
       setModalMode('refuse');
+      signalCard(true);
       return;
     }
     if (resolved.mode === 'params') {
@@ -290,6 +306,7 @@ const HelperInsertPalette = ({
       setEdgeSnapshot(resolved.edges || selectedEdges);
       setRefuseMessage(null);
       setModalMode('params');
+      signalCard(true);
       return;
     }
     setPending(item);
@@ -297,6 +314,7 @@ const HelperInsertPalette = ({
     setEdgeSnapshot(null);
     setRefuseMessage(null);
     setModalMode('default');
+    signalCard(true);
   };
 
   const close = () => {
@@ -309,6 +327,7 @@ const HelperInsertPalette = ({
     onProfilePreview?.(null);
     onPathPreview?.(null);
     onBlockPreview?.(null);
+    signalCard(false);
   };
 
   const sections = paletteRailSections(layout, grouped).map((section) => ({
@@ -392,12 +411,16 @@ const HelperInsertPalette = ({
           refuseMessage={refuseMessage}
           refuseTitle={refuseTitle}
           onCancel={close}
+          useCard={useCard}
+          compact={compact}
         />
       )}
 
       {pending && modalMode !== 'refuse' && (
         <HelperParamModal
           item={pending}
+          useCard={useCard}
+          compact={compact}
           onDelete={pending?._featureEdit ? onEditDelete : null}
           buffer={bufferSnapshot}
           faceInfo={faceSnapshot}

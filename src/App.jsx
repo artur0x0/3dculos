@@ -2154,9 +2154,11 @@ const App = () => {
     return true;
   };
 
-  /** A palette tap opens a Block sheet or feature mode: edit the picked part. */
+  /** A palette tap opens a Block sheet or feature mode: edit the picked part.
+   * One card: the under-title editor closes and writes nothing. */
   const handleFeatureOpen = () => {
     focusWritePart(null);
+    setFeatureSheet((cur) => (cur ? null : cur));
   };
 
   const handleFeatureSession = (active) => {
