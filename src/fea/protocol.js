@@ -7,6 +7,7 @@ export const FeaMessage = {
   capabilities: 'capabilities',
   solve: 'solve',
   progress: 'progress',
+  heartbeat: 'heartbeat',
   cancel: 'cancel',
   dispose: 'dispose',
 };

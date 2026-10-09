@@ -520,6 +520,11 @@ async function runCase(browser, vp) {
       : undefined,
   });
   const page = await context.newPage();
+  const timingLogs = [];
+  page.on('console', (msg) => {
+    const text = msg.text();
+    if (text.includes('[fea-timing]')) timingLogs.push(text);
+  });
   const errors = await boot(page);
   await seed(page);
   await page.reload({ waitUntil: 'domcontentloaded' });
@@ -569,7 +574,34 @@ async function runCase(browser, vp) {
   check(`${vp.name} front snap after picks`, await snap(page, 'front'));
 
   await page.locator('[data-fea-run]').click();
+  const bar = page.locator(`${shell} [data-fea-progress-bar]`);
+  await bar.waitFor({ state: 'visible', timeout: 20000 });
+  const progressLabel = (await bar.locator('[data-fea-progress-stage]').innerText()).trim();
+  check(
+    `${vp.name} progress bar`,
+    /Loading mesher|Meshing|Assembling|Solving|Post-processing/.test(progressLabel),
+    progressLabel,
+  );
+  const progressShot = join(SHOT_DIR, vp.touch ? 'fea-study-390-progress.png' : 'fea-study-1280-progress.png');
+  check(`${vp.name} progress shot dir`, !progressShot.startsWith('/opt/cursor/artifacts'), progressShot);
+  await page.screenshot({ path: progressShot });
+  check(`${vp.name} progress shot saved`, existsSync(progressShot), progressShot);
+  console.log(`  shot ${progressShot}`);
+
   await page.locator('[data-fea-summary]').waitFor({ timeout: 120000 });
+  await page.locator(`${shell} [data-fea-timing]`).waitFor({ timeout: 10000 });
+  const timingText = ((await page.locator(`${shell} [data-fea-timing]`).innerText()) || '').replace(/\s+/g, ' ').trim();
+  check(`${vp.name} timing text`, /Meshed in .* solved in .* DOF.*total/.test(timingText), timingText);
+  check(
+    `${vp.name} timing log`,
+    timingLogs.some((line) => line.startsWith('[fea-timing]')),
+    timingLogs.join(' | '),
+  );
+  const timingShot = join(SHOT_DIR, vp.touch ? 'fea-study-390-timing.png' : 'fea-study-1280-timing.png');
+  check(`${vp.name} timing shot dir`, !timingShot.startsWith('/opt/cursor/artifacts'), timingShot);
+  await page.screenshot({ path: timingShot });
+  check(`${vp.name} timing shot saved`, existsSync(timingShot), timingShot);
+  console.log(`  shot ${timingShot}`);
   const summary = await page.evaluate(() => ({
     stubs: document.querySelectorAll('[data-fea-stub="1"]').length,
     source: document.querySelector('[data-fea-source]')?.getAttribute('data-fea-source') || '',

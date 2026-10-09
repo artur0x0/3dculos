@@ -76,16 +76,22 @@ export async function solveSolid({
   peakMemory,
 }) {
   const cancelled = () => (typeof isCancelled === 'function' ? isCancelled() : false);
-  const progress = (stage, fraction) => {
-    if (typeof onProgress === 'function') onProgress({ stage, fraction });
+  const progress = (update) => {
+    if (typeof onProgress === 'function') onProgress(update);
   };
+  const timings = {};
   if (cancelled()) throw abortError();
 
   if (fallback === 'stub') {
-    progress('meshing', 0);
+    const stubStarted = Date.now();
+    progress({ stage: 'meshing', fraction: 0 });
     const result = solveStub(study, positions, indices, faceIDs, material, profile || 'desktop');
-    progress('post-processing', 1);
+    timings.meshing = Date.now() - stubStarted;
+    timings.solving = 0;
+    timings['post-processing'] = 0;
+    progress({ stage: 'post-processing', fraction: 1, dofs: result && result.stats ? result.stats.dofs : null });
     if (typeof noteMemory === 'function') noteMemory();
+    if (result && typeof result === 'object') result.stageTimings = timings;
     return result;
   }
 
@@ -112,11 +118,16 @@ export async function solveSolid({
     });
   }
 
-  progress('meshing', 0.05);
+  progress({ stage: 'loading-mesher' });
   await yieldTurn();
   if (cancelled()) throw abortError();
-
+  const loadStarted = Date.now();
   const loadMesh = meshVolume || (await import('./meshVolume.js')).meshVolume;
+  timings['loading-mesher'] = Date.now() - loadStarted;
+
+  progress({ stage: 'meshing' });
+  await yieldTurn();
+  if (cancelled()) throw abortError();
   const ceiling = profile === 'phone' ? PHONE_WASM_BYTES : 0;
   const started = Date.now();
   const volume = await loadMesh(
@@ -126,8 +137,10 @@ export async function solveSolid({
       epsilon: 1e-3,
       maxTets: 0,
       memoryCeilingBytes: ceiling,
+      onProgress: (update) => progress({ stage: 'meshing', ...(update || {}) }),
     },
   );
+  timings.meshing = Date.now() - started;
   if (typeof noteMemory === 'function') noteMemory(volume);
   if (cancelled()) throw abortError();
   if (Number.isFinite(cap) && volume.stats.dofs > cap * 1.25) {
@@ -137,11 +150,12 @@ export async function solveSolid({
     });
   }
 
-  progress('solving', 0.55);
+  progress({ stage: 'assembling' });
   await yieldTurn();
   if (cancelled()) throw abortError();
-
+  const assembleStarted = Date.now();
   const bcs = boundaryConditions(volume, study || {}, { diagonal: shape.diagonal });
+  timings.assembling = Date.now() - assembleStarted;
   warnings.push(...bcs.warnings);
   if (!bcs.fixedNodes.length) {
     throw new Error('Fix a face before running the study.');
@@ -158,16 +172,56 @@ export async function solveSolid({
   const yieldMPa = material && material.yield_MPa != null && Number.isFinite(Number(material.yield_MPa))
     ? Number(material.yield_MPa)
     : null;
-  const solved = solveTet10(
-    { nodes: volume.nodes, elements: volume.elements },
-    { E_MPa: material.E_MPa, nu: material.nu, yield_MPa: yieldMPa },
-    bcPayload,
-    { solver },
-  );
+  progress({
+    stage: 'solving',
+    solver,
+    blocking: true,
+    choleskyStep: solver === 'cholesky' ? 'factor' : undefined,
+    fraction: solver === 'cholesky' ? 0.5 : undefined,
+  });
+  await yieldTurn();
+  if (cancelled()) throw abortError();
+  const solveStarted = Date.now();
+  let solved;
+  try {
+    solved = solveTet10(
+      { nodes: volume.nodes, elements: volume.elements },
+      { E_MPa: material.E_MPa, nu: material.nu, yield_MPa: yieldMPa },
+      bcPayload,
+      { solver },
+    );
+  } finally {
+    if (!solved) progress({ stage: 'solving', solver, blocking: false });
+  }
+  timings.solving = Date.now() - solveStarted;
+  const solvedStats = solved && solved.stats ? solved.stats : {};
+  const solvedDofs = solvedStats.dofs != null ? solvedStats.dofs : volume.stats.dofs;
+  if (solver === 'cholesky') {
+    progress({
+      stage: 'solving',
+      solver,
+      blocking: false,
+      choleskyStep: 'solve',
+      fraction: 1,
+      dofs: solvedDofs,
+    });
+  } else {
+    progress({
+      stage: 'solving',
+      solver,
+      blocking: false,
+      iteration: solvedStats.iterations,
+      residual: solvedStats.residual,
+      residual0: Number.isFinite(solvedStats.residual) ? 1 : undefined,
+      tol: 1e-8,
+      dofs: solvedDofs,
+    });
+  }
   if (typeof noteMemory === 'function') noteMemory(volume);
   if (cancelled()) throw abortError();
 
-  progress('post-processing', 0.9);
+  progress({ stage: 'post-processing', fraction: 0.9, dofs: solvedDofs });
+  const postStarted = Date.now();
   const tetField = Float64Array.from(solved.nodal);
   const nodal = sampleSurfaceStress(positions, indices, faceIDs, volume, tetField);
   const tetRange = fieldRange(tetField);
@@ -179,7 +233,8 @@ export async function solveSolid({
   for (const warning of solverWarnings) {
     if (warning.code === 'missing-yield' || warning.code === 'zero-stress') warnings.push(warning);
   }
-  progress('post-processing', 1);
+  timings['post-processing'] = Date.now() - postStarted;
+  progress({ stage: 'post-processing', fraction: 1, dofs: solvedDofs });
 
   const elapsed = Date.now() - started;
   return {
@@ -194,6 +249,14 @@ export async function solveSolid({
     fos: factor == null ? null : factor,
     warnings,
     solver: solved.solver || solver,
+    // Loading the worker is timed on the main thread. These four are the
+    // worker's own clocks.
+    stageTimings: {
+      meshing: timings.meshing,
+      assembling: timings.assembling,
+      solving: timings.solving,
+      'post-processing': timings['post-processing'],
+    },
     thin,
     shells: SHELLS_AVAILABLE,
     stats: {

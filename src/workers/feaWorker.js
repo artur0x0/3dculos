@@ -15,6 +15,32 @@ let ready = null;
 let memory = null;
 let cancelled = false;
 let peakBytes = 0;
+let heartbeatTimer = null;
+let heartbeatId = null;
+let heartbeatStage = '';
+let heartbeatBlocking = false;
+
+function stopHeartbeat() {
+  if (heartbeatTimer != null) clearInterval(heartbeatTimer);
+  heartbeatTimer = null;
+}
+
+function postHeartbeat() {
+  self.postMessage({
+    type: FeaMessage.heartbeat,
+    id: heartbeatId,
+    stage: heartbeatStage,
+    blocking: heartbeatBlocking,
+    t: Date.now(),
+  });
+}
+
+function startHeartbeat(id) {
+  stopHeartbeat();
+  heartbeatId = id ?? null;
+  postHeartbeat();
+  heartbeatTimer = setInterval(postHeartbeat, 1000);
+}
 
 function noteMemory(volume) {
   const feaBytes = memory && memory.buffer ? memory.buffer.byteLength : 0;
@@ -23,6 +49,8 @@ function noteMemory(volume) {
 }
 
 async function boot(profile) {
+  heartbeatStage = 'loading-mesher';
+  startHeartbeat(heartbeatId);
   const wasmUrl = new URL('../../packages/surfcad-fea/pkg/surfcad_fea_bg.wasm', import.meta.url);
   const response = await fetch(wasmUrl);
   if (!response.ok) throw new Error(`FEA wasm fetch failed (${response.status})`);
@@ -69,10 +97,12 @@ self.onmessage = async (event) => {
   const msg = event.data || {};
   if (msg.type === FeaMessage.cancel) {
     cancelled = true;
+    heartbeatBlocking = false;
     if (ready) ready.then(() => fea.cancel()).catch(() => {});
     return;
   }
   if (msg.type === FeaMessage.dispose) {
+    stopHeartbeat();
     if (ready) ready.then(() => fea.dispose()).catch(() => {});
     return;
   }
@@ -88,40 +118,56 @@ self.onmessage = async (event) => {
     }
     if (msg.type === FeaMessage.solve) {
       cancelled = false;
+      heartbeatBlocking = false;
       peakBytes = 0;
       noteMemory(null);
-      const result = await solveSolid({
-        study: msg.study,
-        positions: msg.positions,
-        indices: msg.indices,
-        faceIDs: msg.faceIDs,
-        material: msg.material,
-        profile: msg.profile,
-        fallback: msg.fallback,
-        solveTet10: fea.solve_tet10,
-        solveStub: fea.solve,
-        isCancelled: () => cancelled,
-        memory,
-        noteMemory,
-        peakMemory: () => {
-          noteMemory(null);
-          return peakBytes;
-        },
-        onProgress: (progress) => {
-          self.postMessage({
-            type: FeaMessage.progress,
-            id: msg.id,
-            stage: progress.stage,
-            fraction: progress.fraction,
-          });
-        },
-      });
-      if (cancelled) return;
-      noteMemory(null);
-      if (result && result.stats) result.stats.peakMemoryBytes = peakBytes;
-      const transfer = copyNodal(result);
-      const transfers = transfer ? [transfer] : [];
-      self.postMessage({ id: msg.id, ok: true, result }, transfers);
+      startHeartbeat(msg.id);
+      try {
+        const result = await solveSolid({
+          study: msg.study,
+          positions: msg.positions,
+          indices: msg.indices,
+          faceIDs: msg.faceIDs,
+          material: msg.material,
+          profile: msg.profile,
+          fallback: msg.fallback,
+          solveTet10: fea.solve_tet10,
+          solveStub: fea.solve,
+          isCancelled: () => cancelled,
+          memory,
+          noteMemory,
+          peakMemory: () => {
+            noteMemory(null);
+            return peakBytes;
+          },
+          onProgress: (progress) => {
+            const update = progress || {};
+            if (update.stage) heartbeatStage = update.stage;
+            if (update.blocking != null) heartbeatBlocking = !!update.blocking;
+            const payload = {
+              type: FeaMessage.progress,
+              id: msg.id,
+              t: Date.now(),
+            };
+            for (const key of [
+              'stage', 'fraction', 'solver', 'iteration', 'estimatedIterations',
+              'residual', 'residual0', 'tol', 'choleskyStep', 'dofs', 'blocking',
+            ]) {
+              if (update[key] != null) payload[key] = update[key];
+            }
+            self.postMessage(payload);
+          },
+        });
+        if (cancelled) return;
+        noteMemory(null);
+        if (result && result.stats) result.stats.peakMemoryBytes = peakBytes;
+        const transfer = copyNodal(result);
+        const transfers = transfer ? [transfer] : [];
+        self.postMessage({ id: msg.id, ok: true, result }, transfers);
+      } finally {
+        heartbeatBlocking = false;
+        stopHeartbeat();
+      }
       return;
     }
     self.postMessage({ id: msg.id, ok: false, error: `unknown FEA message ${msg.type}` });
