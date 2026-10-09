@@ -410,7 +410,7 @@ All of these are absolutely positioned inside the shell at
 | top-16, portaled `z-50`, `inset-x-3` (most of the viewport width, same card on desktop) | execution error toast: fixed card, label "Error", Undo and dismiss on the right, description on the next line (`ErrorPopup` `layout="stacked"`), glass `rounded-lg` | `ErrorPopup.jsx` | Viewport |
 | centered on the viewport pane (desktop) and the phone shell | assembly-open spinner: ring + `Opening <name>…`, optional `part 3 of 7`. Hidden for the first 150ms. `pointer-events-none`, `z-[45]`, under the toasts | `AssemblyOpenSpinner.jsx` `data-assembly-open-spinner` | App |
 | *(removed C.1)* | Selected Face readout | — | — |
-| bottom-4 right-2/4 | contour param chip | `ContourModeChip.jsx:176` | `:3733` |
+| bottom center, between the rails, 10px above the home pill on a phone (`data-feature-card`) | contour card (circle, rectangle, polygon, polyline, extrude, revolve, loft, sweep, workplane). Grey shell, cyan Confirm. Hidden in game | `FeatureSheet.jsx` + `ContourModeChip.jsx` | Viewport |
 | bottom-4 right-2/4 | fillet param chip | `FilletModeChip.jsx:43` | `:3835` |
 | bottom-center (raised) | Edge-pick chip (`data-edge-selector`): Tangent / Undo / Clear | inline | Viewport |
 | top-16 center, portaled `z-50` | toasts: edge-mode, contour, fillet-scrap, fillet, shell — same `ErrorPopup` card | `ErrorPopup.jsx` | Viewport |

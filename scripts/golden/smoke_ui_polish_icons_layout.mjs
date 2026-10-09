@@ -180,7 +180,7 @@ const contourRail = read('../../src/components/ContourModeRail.jsx');
   // Boolean wears lucide `rectangle-circle` (vendored: not in lucide-react 0.469).
   const boolIcon = read('../../src/components/icons/RectangleCircle.jsx');
   const strip = read('../../src/components/FeatureStrip.jsx');
-  const sheet = read('../../src/components/FeatureSheet.jsx');
+  const sheet = read('../../src/components/FeatureEditSheet.jsx');
   check('boolean uses RectangleCircle on the rail, strip, and sheet',
     /boolean: RectangleCircle,/.test(palette) && /boolean: RectangleCircle,/.test(strip)
       && /boolean: RectangleCircle,/.test(sheet)
@@ -342,10 +342,8 @@ const contourRail = read('../../src/components/ContourModeRail.jsx');
       !/bg-\[#1e1e1e\] (?:rounded-2xl|rounded-lg shadow-2xl)/.test(src)
         && !/rounded-(?:lg|2xl) bg-gray-900\b/.test(src));
   }
-  for (const name of ['ContourModeChip', 'FilletModeChip']) {
-    const src = read(`../../src/components/${name}.jsx`);
-    check(`${name} is frosted`, /surface-glass-chip/.test(src));
-  }
+  check('Contour card is frosted', /surface-glass-chip/.test(read('../../src/components/FeatureSheet.jsx')));
+  check('FilletModeChip is frosted', /surface-glass-chip/.test(read('../../src/components/FilletModeChip.jsx')));
   const errorPopup = read('../../src/components/ErrorPopup.jsx');
   // ErrorPopup consolidates execution/soft-fail/scrap toast frosting (was ≥8
   // inline surface-glass-chip hits in Viewport alone).
@@ -359,9 +357,13 @@ const contourRail = read('../../src/components/ContourModeRail.jsx');
 
 // ── AC13: mode chips are centred; the right cluster clears the edge by 10px ──
 {
-  for (const name of ['ContourModeChip', 'FilletModeChip']) {
-    const src = read(`../../src/components/${name}.jsx`);
-    check(`${name} is bottom-centre, not right-justified`,
+  const featureCard = read('../../src/components/FeatureSheet.jsx');
+  check('Contour card is bottom-centre, not right-justified',
+    /left-1\/2/.test(featureCard) && /-translate-x-1\/2/.test(featureCard)
+      && !/bottom-4 right-2/.test(featureCard));
+  {
+    const src = read('../../src/components/FilletModeChip.jsx');
+    check('FilletModeChip is bottom-centre, not right-justified',
       /bottom-2\.5 left-1\/2 -translate-x-1\/2/.test(src)
         && !/bottom-4 right-2/.test(src));
   }
@@ -462,7 +464,7 @@ const contourRail = read('../../src/components/ContourModeRail.jsx');
 
 // ── AC19: the feature sheet header survives a narrow phone ──
 {
-  const sheet = read('../../src/components/FeatureSheet.jsx');
+  const sheet = read('../../src/components/FeatureEditSheet.jsx');
   const row = sheet.slice(sheet.indexOf('data-feature-sheet-row="identity"'));
   const header = row.slice(0, row.indexOf('data-feature-sheet-params'));
   check('the title block may shrink so truncate can fire',

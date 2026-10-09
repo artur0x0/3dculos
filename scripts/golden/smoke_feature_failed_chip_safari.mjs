@@ -205,7 +205,7 @@ Error.prepareStackTrace = v8Prepare;
     stdin: {
       contents: `export { renderToStaticMarkup } from 'react-dom/server';
 export { createElement } from 'react';
-export { default as FeatureSheet } from './src/components/FeatureSheet.jsx';
+export { default as FeatureSheet } from './src/components/FeatureEditSheet.jsx';
 export { default as FeatureStrip } from './src/components/FeatureStrip.jsx';`,
       resolveDir: ROOT,
       loader: 'jsx',

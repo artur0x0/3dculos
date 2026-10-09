@@ -246,6 +246,14 @@ A chain like Artur's three-corner wrap (up a vertical edge, round the top perime
 
 `golden:fillet-chamfer-multi-rotation` runs both profiles on that chain. The chamfer is r = 2 (fixture `artur_playtest_chamfer_multi_rotation.txt`). The fillet is B's r = 3.73 variable-profile case (`artur_playtest_fillet_three_corner_wrap.txt`).
 
+## Feature card
+
+`FeatureSheet` (`src/components/FeatureSheet.jsx`) is the shared bottom card. The under-title editor stays `FeatureEditSheet` until it moves onto this shell. Props: `title`, `subtitle`, `onCancel`, `onConfirm`, `confirmDisabled`, `children`, plus `footer` and `note` for the actions a sheet already had. Contour (circle, rectangle, polygon, polyline, extrude, revolve, loft, sweep, workplane) is the pilot. X, Esc, and the contour rail X call `onCancel` and write nothing. Confirm saves and closes. There is no swipe. One tool at a time: opening a viewport feature session closes the under-title sheet without writing.
+
+The card floats at the bottom center of the 3D pane (`absolute`, not a scrim). Width is `measureFeatureSheetWidth` (`sheetChipBetweenRails`, 10px off each rail, cap 22rem). Phone bottom is 10px above the home pill, safe area included. Desktop bottom is 10px. Height caps at 22.5rem and at the visual viewport (`--modal-vvh` from `useModalViewport`) so a focused field stays above the keyboard. The body scrolls; the header and footer stay. Background `rgb(17 24 39 / 0.72)`, 8px blur, `gray-500/50` border. Confirm and the active segment stay cyan-600. Game mode mounts no card.
+
+Opening the card snapshots the camera pose and pans just enough that the selection, or the part box, sits in the band above the card (`featureSheetCamera.js`). Orbit and pinch stay on. Close tweens back to that exact pose and remounts Trackball so a drag during the sheet is not kept. `prefers-reduced-motion` jumps.
+
 ## UI confirm
 
 Sticky pickers (Shell, Draft, Cut, Boolean, Move, Move Face, Delete Face) write **one** call and **replace** the previous marked block of that kind. A second confirm does not append. Grey X writes nothing. Chip behaviour is `docs/POPUP_STYLE.md`.

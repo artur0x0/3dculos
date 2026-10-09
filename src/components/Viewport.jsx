@@ -330,6 +330,11 @@ import { createCuttingPlaneWidget, updateCuttingPlaneWidget } from '../utils/cut
 import { AxesHelper } from 'three';
 import { calculateMeasurements, createMeasurementLines, disposeMeasurementLines } from '../utils/measurementTool';
 import { fitView, meshWorldBox, unionWorldBox, VIEW_PRESETS, VIEW_SNAP_MARGIN, panViewByNdcY, easeInOutCubic } from '../utils/viewCamera';
+import {
+  boxCornerPoints,
+  createSheetCameraSession,
+  featureSheetClearanceNdc,
+} from '../utils/featureSheetCamera';
 
 import { validateScript, formatValidationErrors } from '../utils/scriptValidator';
 import manifoldContext from '../utils/ManifoldWorker';
@@ -807,6 +812,8 @@ const Viewport = forwardRef(({
   const DRAG_THRESHOLD = 3; // pixels - movement beyond this is considered a drag
   
   const [selectedFace, setSelectedFace] = useState(null);
+  const selectedFaceRef = useRef(null);
+  selectedFaceRef.current = selectedFace;
   /** Slice 12: 'face' | 'edge' — mutually exclusive pick modes. */
   const [pickMode, setPickMode] = useState('face');
   /**
@@ -1076,6 +1083,95 @@ const Viewport = forwardRef(({
   /** Mobile C.2 — current feature-sheet camera lift in NDC-Y (0 = none). */
   const sheetLiftNdcRef = useRef(0);
   const sheetLiftTweenRef = useRef(null);
+  /** Bottom feature card owns the camera (contour pilot). Game never sets this. */
+  const sheetCameraOwnedRef = useRef(false);
+  sheetCameraOwnedRef.current = mode !== 'game' && !!contourMode;
+  const flattenFeatureSheetLift = () => {
+    if (sheetLiftTweenRef.current) {
+      cancelAnimationFrame(sheetLiftTweenRef.current);
+      sheetLiftTweenRef.current = null;
+    }
+    const from = sheetLiftNdcRef.current;
+    sheetLiftNdcRef.current = 0;
+    const camera = cameraRef.current;
+    const controls = controlsRef.current;
+    if (camera && controls?.target && Math.abs(from) > 1e-6) {
+      panViewByNdcY({ camera, controls, ndcY: -from });
+    }
+  };
+  const sheetCameraRef = useRef(null);
+  if (!sheetCameraRef.current) {
+    sheetCameraRef.current = createSheetCameraSession({
+      getCamera: () => cameraRef.current,
+      getControls: () => controlsRef.current,
+      setControls: (next) => { controlsRef.current = next; },
+      reducedMotion: () => typeof window !== 'undefined'
+        && window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+      flattenLift: flattenFeatureSheetLift,
+    });
+  }
+  const sheetSlideDeltaRef = useRef(() => 0);
+  sheetSlideDeltaRef.current = () => {
+    const camera = cameraRef.current;
+    const controls = controlsRef.current;
+    const container = containerRef.current;
+    if (!camera || !controls?.target || !container) return 0;
+    const card = container.querySelector('[data-feature-card]');
+    const paneH = container.getBoundingClientRect().height || 1;
+    const cardH = card ? card.getBoundingClientRect().height : 0;
+    const offset = partWorldOffset(resultRef.current);
+    const face = selectedFaceRef.current;
+    const edges = selectedEdgesRef.current;
+    const bounds = modelBoundsRef.current;
+    const points = [];
+    const push = (arr) => {
+      if (!arr || arr.length < 3) return;
+      points.push(new Vector3(
+        arr[0] + (offset?.x || 0),
+        arr[1] + (offset?.y || 0),
+        arr[2] + (offset?.z || 0),
+      ));
+    };
+    if (face?.center) push(face.center);
+    else if (edges?.[0]?.mid) push(edges[0].mid);
+    else if (!bounds?.min) points.push(new Vector3(offset?.x || 0, offset?.y || 0, offset?.z || 0));
+    if (bounds?.min && bounds?.max) points.push(...boxCornerPoints(bounds, offset));
+    if (!points.length) points.push(new Vector3(0, 0, 0));
+    return featureSheetClearanceNdc({
+      camera,
+      controls,
+      points,
+      cardFraction: cardH / paneH,
+    });
+  };
+  const contourSheetOpen = mode !== 'game' && !!contourMode;
+  useEffect(() => {
+    if (!contourSheetOpen) return undefined;
+    let alive = true;
+    const tick = () => {
+      if (!alive) return;
+      sheetCameraRef.current?.slideBy(sheetSlideDeltaRef.current());
+    };
+    const raf = requestAnimationFrame(tick);
+    const pane = containerRef.current;
+    const ro = new ResizeObserver(tick);
+    if (pane) ro.observe(pane);
+    const card = pane?.querySelector('[data-feature-card]');
+    if (card) ro.observe(card);
+    return () => {
+      alive = false;
+      cancelAnimationFrame(raf);
+      ro.disconnect();
+      sheetCameraRef.current?.restore();
+    };
+  }, [contourSheetOpen]);
+  useEffect(() => {
+    if (!contourSheetOpen) return undefined;
+    const raf = requestAnimationFrame(() => {
+      sheetCameraRef.current?.slideBy(sheetSlideDeltaRef.current());
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [contourSheetOpen, selectedFace, selectedEdges, modelBounds]);
 
   /**
    * Toast payload. Errors carry an Undo affordance so a bad Accept is one tap
@@ -1419,6 +1515,8 @@ const Viewport = forwardRef(({
       sheetLiftTweenRef.current = requestAnimationFrame(step);
       return true;
     },
+    /** True while the bottom feature card (contour) owns the camera. Game is never. */
+    featureSheetCameraOwned: () => sheetCameraOwnedRef.current,
   }));
 
   // Clear face highlight
@@ -6787,7 +6885,7 @@ const Viewport = forwardRef(({
         if (!loopAlive) return;
         rafId = requestAnimationFrame(animate);
 
-        controls.update();
+        if (!sheetCameraRef.current?.isRestoring()) controlsRef.current?.update();
 
         animatePolylineHandles();
         updateEdgeChips();
@@ -8625,8 +8723,8 @@ const Viewport = forwardRef(({
       {/* Slice Mobile C.1: face-selected info popup removed (was under-title B.1).
           Selection still drives the left palette / PromptInput; no empty reserved band. */}
 
-      {/* Slice 24: contour chip — plane + profile params (Edge-pick pattern). */}
-      {contourMode && (
+      {/* Slice 24: contour card. Game keeps the rail and skips the card and the slide. */}
+      {contourMode && mode !== 'game' && (
         <ContourModeChip
           tool={contourMode.tool}
           entry={contourMode.entry}
@@ -8736,6 +8834,7 @@ const Viewport = forwardRef(({
             prev ? { ...prev, merge: merge !== false } : prev
           ))}
           onConfirm={confirmContourProfile}
+          onCancel={exitContourMode}
           onDelete={featureEditRef.current?.dialog === 'contour' ? featureEditDelete : null}
           onUndoPoint={() => setContourMode((prev) => {
             if (!prev || prev.tool !== 'polyline') return prev;

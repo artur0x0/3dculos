@@ -42,7 +42,7 @@ console.log('mobile C.2: popup shift + fillet tangent + strip polish');
   const camera = read('../../src/utils/viewCamera.js');
   const selectEdge = read('../../src/utils/selectEdge.js');
   const tangency = read('../../src/utils/edgeTangencyField.js');
-  const sheet = read('../../src/components/FeatureSheet.jsx');
+  const sheet = read('../../src/components/FeatureEditSheet.jsx');
   const filletChip = read('../../src/components/FilletModeChip.jsx');
 
   // --- Sheet lift ---
@@ -72,6 +72,20 @@ console.log('mobile C.2: popup shift + fillet tangent + strip polish');
     'FilletModeChip / edge selector have no setFeatureSheetLift',
     !/setFeatureSheetLift/.test(filletChip) &&
       !/data-edge-selector[\s\S]{0,400}setFeatureSheetLift/.test(viewport),
+  );
+  const slide = read('../../src/utils/featureSheetCamera.js');
+  const card = read('../../src/components/FeatureSheet.jsx');
+  check(
+    'bottom card slides content up and restores the pre-open pose',
+    /export function featureSheetSlideNdc/.test(slide) &&
+      /FEATURE_SHEET_SLIDE_MAX = 0\.6/.test(slide) &&
+      /export function captureViewPose/.test(slide) &&
+      /remountTrackball/.test(slide) &&
+      /Positive pan moves content DOWN/.test(slide) &&
+      /mode !== 'game' && !!contourMode/.test(viewport) &&
+      /onCancel=\{exitContourMode\}/.test(viewport) &&
+      /featureSheetCameraOwned/.test(app) &&
+      /data-feature-card/.test(card),
   );
 
   // --- Strip polish ---

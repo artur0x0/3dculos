@@ -21,18 +21,28 @@ function scrollFieldIntoView(el) {
   if (!scroller) return;
   const field = el.getBoundingClientRect();
   const box = scroller.getBoundingClientRect();
-  if (field.bottom > box.bottom - 8) {
-    scroller.scrollTop += field.bottom - box.bottom + 12;
+  // A sticky footer that overlaps the scroller (feature card) eats that strip.
+  const card = el.closest('[data-feature-card]');
+  const footer = card?.querySelector('[data-feature-sheet-footer]');
+  const footerTop = footer ? footer.getBoundingClientRect().top : box.bottom;
+  const overlap = Math.max(0, box.bottom - footerTop);
+  const bottomLimit = box.bottom - overlap - 8;
+  if (field.bottom > bottomLimit) {
+    scroller.scrollTop += field.bottom - bottomLimit + 12;
   } else if (field.top < box.top + 8) {
     scroller.scrollTop -= box.top - field.top + 12;
   }
 }
 
-function focusedField() {
-  const el = document.activeElement;
-  if (!el || !el.closest || !el.closest('.modal-fit')) return null;
+function sheetField(el) {
+  if (!el || !el.closest) return null;
   if (!/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) return null;
-  return el;
+  if (el.closest('.modal-fit') || el.closest('[data-feature-card]')) return el;
+  return null;
+}
+
+function focusedField() {
+  return sheetField(document.activeElement);
 }
 
 function start() {
@@ -60,9 +70,8 @@ function start() {
   vv?.addEventListener('scroll', apply);
   window.addEventListener('resize', onResize);
   const onFocus = (event) => {
-    const el = event.target;
-    if (!el || !el.closest || !el.closest('.modal-fit')) return;
-    if (!/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) return;
+    const el = sheetField(event.target);
+    if (!el) return;
     requestAnimationFrame(() => scrollFieldIntoView(el));
   };
   document.addEventListener('focusin', onFocus);

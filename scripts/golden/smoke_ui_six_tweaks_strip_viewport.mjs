@@ -24,7 +24,7 @@ console.log('ui six-tweaks: strip / highlight / viewport / popup height');
 {
   const app = read('../../src/App.jsx');
   const strip = read('../../src/components/FeatureStrip.jsx');
-  const sheet = read('../../src/components/FeatureSheet.jsx');
+  const sheet = read('../../src/components/FeatureEditSheet.jsx');
   const contour = read('../../src/components/ContourModeChip.jsx');
   const fillet = read('../../src/components/FilletModeChip.jsx');
   const helper = read('../../src/components/HelperParamModal.jsx');
@@ -95,11 +95,13 @@ console.log('ui six-tweaks: strip / highlight / viewport / popup height');
   );
 
   // 6 — mobile popup max-height + internal scroll
+  const featureCard = read('../../src/components/FeatureSheet.jsx');
   check(
-    '6: ContourModeChip mobile max-h + scroll body',
-    /max-h-\[calc\(100dvh-12rem\)\]/.test(contour) &&
-      /data-contour-chip-scroll/.test(contour) &&
-      /overflow-y-auto rail-scroll/.test(contour),
+    '6: ContourModeChip scrolls inside the feature card',
+    /data-contour-chip-scroll/.test(contour) &&
+      /<FeatureSheet\b/.test(contour) &&
+      /overflow-y-auto/.test(featureCard) &&
+      /22\.5rem/.test(read('../../src/index.css')),
   );
   check(
     '6: FeatureSheet SheetShell max-h + rail-scroll body',

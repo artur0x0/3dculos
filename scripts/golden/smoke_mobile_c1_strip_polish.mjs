@@ -31,7 +31,7 @@ console.log('mobile C.1: strip polish + UI reorg');
 
 {
   const app = read('../../src/App.jsx');
-  const sheet = read('../../src/components/FeatureSheet.jsx');
+  const sheet = read('../../src/components/FeatureEditSheet.jsx');
   const strip = read('../../src/components/FeatureStrip.jsx');
   const viewport = read('../../src/components/Viewport.jsx');
   const palette = read('../../src/components/HelperInsertPalette.jsx');
