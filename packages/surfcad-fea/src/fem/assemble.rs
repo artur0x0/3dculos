@@ -59,8 +59,8 @@ pub fn assemble(
     }
 
     let c = elasticity(material);
-    for elem in elements {
-        let (ke, _volume) = tet10::element_stiffness(nodes, elem, &c)?;
+    for (element, elem) in elements.iter().enumerate() {
+        let (ke, _volume) = tet10::element_stiffness(nodes, elem, element, &c)?;
         for li in 0..30 {
             let gi = elem[li / 3] as usize * 3 + (li % 3);
             for lj in 0..=li {

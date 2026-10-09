@@ -13,13 +13,13 @@
 
 import { boundaryConditions } from './boundaryConditions.js';
 import {
+  chooseEdgeLength,
   chooseSolver,
   dofCap,
-  edgeForCap,
   isThinPart,
   partShape,
-  preferredEdgeLength,
   SHELLS_AVAILABLE,
+  THIN_ELEMENTS_THROUGH,
 } from './deviceProfile.js';
 import {
   fieldRange,
@@ -102,8 +102,8 @@ export async function solveSolid({
   const thin = isThinPart(shape);
   const solver = chooseSolver(shape);
   const cap = dofCap(profile, thin, solver);
-  const preferred = preferredEdgeLength(shape.diagonal, study && study.mesh && study.mesh.target);
-  const edge = edgeForCap(shape.volume, preferred, cap);
+  const target = study && study.mesh ? study.mesh.target : undefined;
+  const edge = chooseEdgeLength(shape, target, cap);
   const warnings = [];
   if (study && study.model === 'shell') {
     warnings.push({
@@ -112,9 +112,16 @@ export async function solveSolid({
     });
   }
   if (edge.coarsened) {
+    const short = edge.elementsThrough != null && edge.elementsThrough < THIN_ELEMENTS_THROUGH;
+    const throughText = short
+      ? ` That is coarser than ${THIN_ELEMENTS_THROUGH} elements through the ${edge.wallMm.toFixed(2)} mm wall.`
+      : '';
+    const why = Number.isFinite(cap)
+      ? `The phone DOF cap (${cap}) coarsened the mesh from ${edge.requested.toFixed(2)} mm to ${edge.edgeLength.toFixed(2)} mm edges.`
+      : `A ${edge.requested.toFixed(2)} mm edge (2 through the ${edge.wallMm.toFixed(2)} mm wall) does not fit in memory, so the mesh keeps ${edge.edgeLength.toFixed(2)} mm edges.`;
     warnings.push({
       code: 'mesh-coarse',
-      msg: `The phone DOF cap (${cap}) coarsened the mesh from ${preferred.toFixed(2)} mm to ${edge.edgeLength.toFixed(2)} mm edges.`,
+      msg: `${why}${throughText}`,
     });
   }
 
