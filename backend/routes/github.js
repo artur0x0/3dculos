@@ -6,11 +6,11 @@
  */
 import { Router } from 'express';
 import config from '../config/index.js';
-import { exchangeGithubOAuthToken } from '../services/githubOAuth.js';
+import { exchangeGithubOAuthToken, refreshGithubOAuthToken } from '../services/githubOAuth.js';
 
 const router = Router();
 
-export { exchangeGithubOAuthToken } from '../services/githubOAuth.js';
+export { exchangeGithubOAuthToken, refreshGithubOAuthToken } from '../services/githubOAuth.js';
 
 /**
  * POST /oauth/token
@@ -37,6 +37,26 @@ router.post('/oauth/token', async (req, res) => {
     }
   }
 
+  return res.status(result.status).json(result.body);
+});
+
+/**
+ * POST /oauth/refresh
+ * Body: { refresh_token: string }
+ * Quiet renewal of an expiring GitHub App user token. Stores nothing.
+ */
+router.post('/oauth/refresh', async (req, res) => {
+  const refreshToken = typeof req.body?.refresh_token === 'string'
+    ? req.body.refresh_token
+    : '';
+  const result = await refreshGithubOAuthToken({
+    refreshToken,
+    clientId: config.githubApp?.clientId,
+    clientSecret: config.githubApp?.clientSecret,
+  });
+  if (!result.ok && result.status >= 500) {
+    console.error('[github-oauth] refresh failed:', result.status, result.body?.error);
+  }
   return res.status(result.status).json(result.body);
 });
 

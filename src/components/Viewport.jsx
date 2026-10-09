@@ -660,6 +660,8 @@ const Viewport = forwardRef(({
   canUndo,
   canRedo,
   currentFilename,
+  /** False when nothing is open: the part / assembly chips stay off the screen. */
+  showCadTitle = true,
   /** Assembly document name. Blank documents resolve to Assembly before this. */
   assemblyName = '',
   onRenameFile = null,
@@ -8220,6 +8222,7 @@ const Viewport = forwardRef(({
         <ViewportTitleChip>{gamePuzzleTitle || 'Puzzle'}</ViewportTitleChip>
       )}
       {mode !== 'game' && (
+        showCadTitle ? (
         <div
           className="pointer-events-none absolute top-4 left-1/2 z-10 flex max-w-[min(36rem,calc(100%-2rem))] -translate-x-1/2 items-center gap-2"
           data-viewer-title=""
@@ -8247,6 +8250,9 @@ const Viewport = forwardRef(({
             </ViewportTitleChip>
           ) : null}
         </div>
+        ) : (
+          <div data-viewer-title-empty="" hidden />
+        )
       )}
 
       {mode === 'game' && gameSuccess && (
