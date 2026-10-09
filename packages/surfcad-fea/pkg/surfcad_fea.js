@@ -61,6 +61,53 @@ export function solve(study, positions, indices, face_ids, material, profile) {
 }
 
 /**
+ * Linear shell solve for 6-node triangles, 6 DOF per node.
+ *
+ * `mesh.nodes` is xyz in millimetres. `mesh.elements` is six indices per
+ * triangle: corners `(n0, n1, n2)` then edge midpoints `(mid01, mid12, mid20)`.
+ * `mesh.thickness` is one millimetre value per element, or a single value
+ * applied to every element.
+ *
+ * `bcs` carries typed arrays:
+ *
+ * - `clampedNodes`: all six DOFs fixed at 0.
+ * - `pinnedNodes`: the three translations fixed at 0, rotations free.
+ * - `fixedDofs` / `fixedValues`: prescribed DOFs (`node * 6 + component`,
+ *   components `ux, uy, uz, θx, θy, θz`). Missing values mean 0.
+ * - `forceNodes` / `forceValues`: nodal forces, three components per node, N.
+ * - `pressures`: one MPa value per element, or a single value for every
+ *   element. `pressureElements` selects a subset instead. Positive pressure
+ *   pushes against the right-hand normal of `(n0, n1, n2)`.
+ *
+ * `options.solver` defaults to `"cholesky"` (supernodal). `"auto"` and
+ * `"pcg"` are the same switches as `solve_tet10`.
+ * @param {any} mesh
+ * @param {any} material
+ * @param {any} bcs
+ * @param {any} options
+ * @returns {any}
+ */
+export function solve_shell(mesh, material, bcs, options) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        wasm.solve_shell(retptr, addBorrowedObject(mesh), addBorrowedObject(material), addBorrowedObject(bcs), addBorrowedObject(options));
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        if (r2) {
+            throw takeObject(r1);
+        }
+        return takeObject(r0);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        heap[stack_pointer++] = undefined;
+        heap[stack_pointer++] = undefined;
+        heap[stack_pointer++] = undefined;
+        heap[stack_pointer++] = undefined;
+    }
+}
+
+/**
  * Linear-elastic TET10 solve.
  *
  * `mesh.nodes` is a Float64Array or Float32Array of xyz coordinates in

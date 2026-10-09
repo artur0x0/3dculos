@@ -10,6 +10,30 @@ export function dispose(): void;
 export function solve(study: any, positions: Float32Array, indices: Uint32Array, face_ids: Uint32Array, material: any, profile: string): any;
 
 /**
+ * Linear shell solve for 6-node triangles, 6 DOF per node.
+ *
+ * `mesh.nodes` is xyz in millimetres. `mesh.elements` is six indices per
+ * triangle: corners `(n0, n1, n2)` then edge midpoints `(mid01, mid12, mid20)`.
+ * `mesh.thickness` is one millimetre value per element, or a single value
+ * applied to every element.
+ *
+ * `bcs` carries typed arrays:
+ *
+ * - `clampedNodes`: all six DOFs fixed at 0.
+ * - `pinnedNodes`: the three translations fixed at 0, rotations free.
+ * - `fixedDofs` / `fixedValues`: prescribed DOFs (`node * 6 + component`,
+ *   components `ux, uy, uz, θx, θy, θz`). Missing values mean 0.
+ * - `forceNodes` / `forceValues`: nodal forces, three components per node, N.
+ * - `pressures`: one MPa value per element, or a single value for every
+ *   element. `pressureElements` selects a subset instead. Positive pressure
+ *   pushes against the right-hand normal of `(n0, n1, n2)`.
+ *
+ * `options.solver` defaults to `"cholesky"` (supernodal). `"auto"` and
+ * `"pcg"` are the same switches as `solve_tet10`.
+ */
+export function solve_shell(mesh: any, material: any, bcs: any, options: any): any;
+
+/**
  * Linear-elastic TET10 solve.
  *
  * `mesh.nodes` is a Float64Array or Float32Array of xyz coordinates in
@@ -39,6 +63,7 @@ export interface InitOutput {
     readonly capabilities: (a: number) => void;
     readonly dispose: () => void;
     readonly solve: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number) => void;
+    readonly solve_shell: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly solve_tet10: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly __wbindgen_export: (a: number, b: number) => number;
     readonly __wbindgen_export2: (a: number, b: number, c: number, d: number) => number;
