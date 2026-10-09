@@ -213,6 +213,40 @@ test('a second terminal event does not replace the first', () => {
   assert.equal(again.text, 'Stopped during Solving after 1.0 s (10 DOF): not positive definite');
 });
 
+test('a refine pass renames the stage and the timing line records convergence', () => {
+  const running = run([
+    { type: 'start', now: 0 },
+    { type: 'stage', stage: 'meshing', now: 10, refinePass: 2, refinePasses: 3 },
+  ]);
+  assert.equal(running.stageLabel, 'Refining 2/3');
+  const done = run([
+    { type: 'start', now: 0 },
+    { type: 'stage', stage: 'meshing', now: 0 },
+    {
+      type: 'finish',
+      now: 3000,
+      dofs: 8000,
+      refineCount: 2,
+      converged: true,
+      stageTimings: { meshing: 2000, solving: 800 },
+    },
+  ]);
+  assert.equal(done.text, 'Meshed in 2.0 s, solved in 0.8 s (8k DOF), total 3.0 s, refined 2x, converged');
+  const open = run([
+    { type: 'start', now: 0 },
+    {
+      type: 'finish',
+      now: 1000,
+      dofs: 1000,
+      refineCount: 1,
+      converged: false,
+      meshReused: true,
+      stageTimings: { solving: 200 },
+    },
+  ]);
+  assert.match(open.text, /^Mesh reused, solved in .+ DOF.*total .+, refined 1x, not converged$/);
+});
+
 test('DOF counts and seconds format for the chip', () => {
   assert.equal(formatDofCount(12), '12');
   assert.equal(formatDofCount(98000), '98k');

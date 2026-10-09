@@ -2,7 +2,8 @@
 /**
  * Analyze: open the study, fix the root of a small cantilever, load the
  * tip, run TET10, and reload. The study comment is still in the part script.
- * The legend max is within 10% of the beam-theory peak (48 MPa).
+ * The legend max stays near the beam-theory peak (48 MPa). Adaptive
+ * refine resolves the clamped corner, so the check allows 30%.
  * After that solve, the material changes and Run goes again: the mesh is
  * reused, the second run is much faster, and the legend matches the new yield.
  *
@@ -25,7 +26,7 @@ const PORT = Number(process.env.SMOKE_PORT || 4327);
 const APP_URL = `http://127.0.0.1:${PORT}/`;
 const SHOT_DIR = process.env.GOLDEN_SHOT_DIR || tmpdir();
 const PREVIEW = process.env.FEA_PREVIEW === '1';
-const STUDY = feaStudyBlock({ mesh: { target: 4 } });
+const STUDY = feaStudyBlock({ mesh: { target: 4, refine: 'auto' } });
 const CUBE = `const part = Manifold.cube([40, 10, 10], false);\nreturn part;\n${STUDY}`;
 const BEAM_PEAK_MPA = 48;
 const ALUMINUM_YIELD_MPA = 276;
@@ -763,7 +764,7 @@ async function runCase(browser, vp) {
   const progressLabel = (await bar.locator('[data-fea-progress-stage]').innerText()).trim();
   check(
     `${vp.name} progress bar`,
-    /Loading mesher|Meshing|Assembling|Solving|Post-processing/.test(progressLabel),
+    /Loading mesher|Meshing|Assembling|Solving|Post-processing|Refining \d+\/\d+/.test(progressLabel),
     progressLabel,
   );
   const progressShot = join(SHOT_DIR, vp.touch ? 'fea-study-390-progress.png' : 'fea-study-1280-progress.png');
@@ -772,10 +773,11 @@ async function runCase(browser, vp) {
   check(`${vp.name} progress shot saved`, existsSync(progressShot), progressShot);
   console.log(`  shot ${progressShot}`);
 
-  await page.locator('[data-fea-summary]').waitFor({ timeout: 120000 });
+  await page.locator('[data-fea-summary]').waitFor({ timeout: 300000 });
   await page.locator(`${shell} [data-fea-timing]`).waitFor({ timeout: 10000 });
   const timingText = ((await page.locator(`${shell} [data-fea-timing]`).innerText()) || '').replace(/\s+/g, ' ').trim();
   check(`${vp.name} timing text`, /Solid mesh in .* solved in .* DOF.*total/.test(timingText), timingText);
+  check(`${vp.name} convergence text`, /refined \d+x, (?:converged|not converged)/.test(timingText), timingText);
   check(
     `${vp.name} timing log`,
     timingLogs.some((line) => line.startsWith('[fea-timing]')),
@@ -803,7 +805,9 @@ async function runCase(browser, vp) {
   check(`${vp.name} no stub badge`, summary.stubs === 0, JSON.stringify(summary));
   check(`${vp.name} tet10 source`, summary.source === 'tet10', summary.source);
   check(`${vp.name} stress summary`, /min .+ MPa/.test(summary.stress) && /p95 /.test(summary.stress) && /max /.test(summary.stress), summary.stress);
-  check(`${vp.name} peak within 10% of beam theory`, peakError <= 0.1, `max ${maxMPa} vs ${BEAM_PEAK_MPA}`);
+  // Adaptive refine resolves the clamped corner, so the nodal max sits
+  // above the beam-theory outer fiber. 30% still rejects a broken solve.
+  check(`${vp.name} peak within 30% of beam theory`, peakError <= 0.3, `max ${maxMPa} vs ${BEAM_PEAK_MPA}`);
   check(`${vp.name} safety factor`, summary.fos !== '' && summary.fos !== 'n/a', summary.fos);
   check(`${vp.name} no stub warning`, !/STUB/.test(summary.warning), summary.warning);
   check(`${vp.name} solve time recorded`, Number(summary.ms) > 0, summary.ms);
@@ -860,7 +864,7 @@ async function runCase(browser, vp) {
   console.log(`  reuse ${vp.name} first ${firstSolveMs} ms second ${reusedMs} ms max ${reusedMax} MPa p95 ${reusedP95} fos ${reusedFos} (${reusedTiming})`);
   check(`${vp.name} reused run is current`, reused.stale === '0', reused.stale);
   check(`${vp.name} reused tet10 source`, reused.source === 'tet10', reused.source);
-  check(`${vp.name} reused peak within 10% of beam theory`, reusedPeakError <= 0.1, `max ${reusedMax} vs ${BEAM_PEAK_MPA}`);
+  check(`${vp.name} reused peak within 30% of beam theory`, reusedPeakError <= 0.3, `max ${reusedMax} vs ${BEAM_PEAK_MPA}`);
   check(
     `${vp.name} reused safety factor`,
     Number.isFinite(reusedFos) && Number.isFinite(fosExpected) && Math.abs(reusedFos - fosExpected) / fosExpected < 0.02,

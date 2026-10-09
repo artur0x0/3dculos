@@ -123,6 +123,8 @@ export function createFeaWorkerHost(worker, options = {}) {
       tol: data.tol,
       choleskyStep: data.choleskyStep,
       dofs: data.dofs,
+      refinePass: data.refinePass,
+      refinePasses: data.refinePasses,
     };
   }
 

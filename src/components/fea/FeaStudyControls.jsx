@@ -52,6 +52,15 @@ export function FeaStudyControls({ panel }) {
         onCustomMode={panel.setCustomMode}
         onCustomField={panel.setCustomField}
       />
+      <div data-fea-refine={panel.refine === 'off' ? 'off' : 'auto'}>
+        <ChoiceRow
+          label="Refine"
+          accent="cyan"
+          options={[{ value: 'auto', label: 'Auto' }, { value: 'off', label: 'Off' }]}
+          value={panel.refine === 'off' ? 'off' : 'auto'}
+          onChange={panel.setRefine}
+        />
+      </div>
       <div className="flex flex-col gap-1">
         <span className="text-[11px] font-semibold uppercase tracking-wide text-cyan-200/80">Tap adds</span>
       <FeaTabs

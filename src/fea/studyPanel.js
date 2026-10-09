@@ -365,8 +365,17 @@ export function libraryOptions() {
   }));
 }
 
-export function freshStudy() {
-  return defaultStudy();
+export function studyWithRefine(study, refine) {
+  const mesh = { ...(study && study.mesh), refine: refine === 'off' ? 'off' : 'auto' };
+  return patched(study, { mesh });
+}
+
+/** A new study. Phone defaults Refine to off; desktop defaults it to auto. */
+export function freshStudy(profile) {
+  if (profile !== 'phone' && profile !== 'desktop') return defaultStudy();
+  return defaultStudy({
+    mesh: { target: 'auto', refine: profile === 'phone' ? 'off' : 'auto' },
+  });
 }
 
 export function customSeed(study) {

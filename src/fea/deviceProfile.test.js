@@ -4,6 +4,7 @@ import {
   appCapabilities,
   chooseEdgeLength,
   chooseSolver,
+  DESKTOP_REFINE_DOF_CAP,
   detectFeaProfile,
   dofCap,
   edgeForCap,
@@ -12,6 +13,10 @@ import {
   PHONE_DOF_CAPS,
   SHELLS_AVAILABLE,
   THIN_ELEMENTS_THROUGH,
+  THIN_WALL_DOF_BUDGET,
+  refineDofCap,
+  refineMode,
+  refinePassLimit,
   wallThickness,
 } from './deviceProfile.js';
 import { box } from './meshShapes.js';
@@ -86,6 +91,18 @@ test('phone is touch plus a small screen or a small deviceMemory', () => {
     window: { innerWidth: 390, screen: { width: 390, height: 844 } },
   });
   assert.equal(mouse, 'desktop');
+});
+
+test('refine follows the device unless the study sets it', () => {
+  assert.equal(refineMode({ mesh: { refine: 'off' } }, 'desktop'), 'off');
+  assert.equal(refineMode({ mesh: { refine: 'auto' } }, 'phone'), 'auto');
+  assert.equal(refineMode({ mesh: { target: 'auto' } }, 'desktop'), 'auto');
+  assert.equal(refineMode({}, 'phone'), 'off');
+  assert.equal(refinePassLimit('phone'), 2);
+  assert.equal(refinePassLimit('desktop'), 3);
+  assert.equal(refineDofCap('phone', true, 'cholesky'), PHONE_DOF_CAPS.tet10Thin);
+  assert.equal(refineDofCap('desktop', true, 'cholesky'), THIN_WALL_DOF_BUDGET);
+  assert.equal(refineDofCap('desktop', false, 'pcg'), DESKTOP_REFINE_DOF_CAP);
 });
 
 test('capabilities add TET10 and the shell solver', () => {

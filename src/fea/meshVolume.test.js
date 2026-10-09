@@ -81,6 +81,35 @@ describe('volume mesh', { concurrency: 1 }, () => {
     assertMesh(surface, mesh);
   });
 
+  test('a sizing field refines a cube below the uniform edge', { timeout: 180_000 }, async () => {
+    const surface = box([10, 10, 10]);
+    const coarse = await meshVolume(surface, { edgeLength: 5, epsilon: 1e-3, maxTets: 20000 });
+    const sizing = {
+      positions: Float64Array.from([
+        0, 0, 0, 10, 0, 0, 10, 10, 0, 0, 10, 0,
+        0, 0, 10, 10, 0, 10, 10, 10, 10, 0, 10, 10,
+      ]),
+      tets: Uint32Array.from([
+        0, 1, 3, 4,
+        1, 2, 3, 6,
+        1, 4, 5, 6,
+        3, 4, 7, 6,
+        1, 3, 4, 6,
+      ]),
+      values: Float64Array.from([1.5, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5]),
+    };
+    const fine = await meshVolume(surface, {
+      edgeLength: 5,
+      epsilon: 1e-3,
+      maxTets: 80000,
+      sizing,
+    });
+    assert.ok(
+      fine.stats.elements > coarse.stats.elements,
+      `sized ${fine.stats.elements} tets vs uniform ${coarse.stats.elements}`,
+    );
+  });
+
   test('a cylinder becomes a quality TET10 mesh', { timeout: 180_000 }, async () => {
     const surface = cylinder(5, 10, 16);
     const mesh = await meshVolume(surface, { edgeLength: 3, epsilon: 1e-3, maxTets: 20000 });

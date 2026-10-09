@@ -21,7 +21,7 @@ const STUDY_KEYS = new Set(['v', 'id', 'name', 'type', 'units', 'material', 'mod
 const UNIT_KEYS = new Set(['length', 'force', 'stress', 'note']);
 const MATERIAL_ID_KEYS = new Set(['id']);
 const MATERIAL_CUSTOM_KEYS = new Set(['name', 'E_MPa', 'nu', 'yield_MPa']);
-const MESH_KEYS = new Set(['target']);
+const MESH_KEYS = new Set(['target', 'refine']);
 const FIXTURE_KEYS = new Set(['kind', 'faces']);
 const LOAD_KEYS = new Set(['kind', 'faces', 'vector', 'pressure_MPa']);
 const FACE_KEYS = new Set(['faceID', 'at', 'n', 'area', 'src', 'ord']);
@@ -239,7 +239,7 @@ function withDefaults(input) {
     model: input.model ?? 'auto',
     fixtures: input.fixtures ?? [],
     loads: input.loads ?? [],
-    mesh: { target: mesh.target ?? 'auto' },
+    mesh: meshWithRefine({ target: mesh.target ?? 'auto', refine: mesh.refine }),
     result: input.result === undefined ? null : input.result,
   };
 }
@@ -251,6 +251,18 @@ function canonicalMaterial(material) {
   out.E_MPa = material.E_MPa;
   out.nu = material.nu;
   out.yield_MPa = material.yield_MPa;
+  return out;
+}
+
+function meshWithRefine(mesh) {
+  const out = { target: mesh.target };
+  if (mesh.refine != null) out.refine = mesh.refine;
+  return out;
+}
+
+function canonicalMesh(mesh) {
+  const out = { target: mesh.target };
+  if (mesh.refine === 'off' || mesh.refine === 'auto') out.refine = mesh.refine;
   return out;
 }
 
@@ -270,7 +282,7 @@ function canonicalStudy(study) {
     model: study.model,
     fixtures: study.fixtures,
     loads: study.loads,
-    mesh: { target: study.mesh.target },
+    mesh: canonicalMesh(study.mesh),
     result: null,
   };
 }
@@ -327,6 +339,9 @@ export function validateStudy(input, { defaults = false } = {}) {
     const target = src.mesh.target;
     const targetOk = target === 'auto' || (finiteNumber(target) && target > 0);
     if (!targetOk) errors.push('study.mesh.target must be "auto" or a positive element size in mm');
+    if (src.mesh.refine != null && src.mesh.refine !== 'off' && src.mesh.refine !== 'auto') {
+      errors.push('study.mesh.refine must be "off" or "auto"');
+    }
   }
 
   if (src.result !== null) {
@@ -349,7 +364,7 @@ export function validateStudy(input, { defaults = false } = {}) {
       model: src.model,
       fixtures,
       loads,
-      mesh: { target: src.mesh.target },
+      mesh: canonicalMesh(src.mesh),
       result: null,
     }),
   };

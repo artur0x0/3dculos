@@ -116,6 +116,22 @@ test('faces carry faceID plus the face-paint fingerprint', () => {
   assert.match(text, /ord requires src/);
 });
 
+test('mesh.refine is optional and only off or auto', () => {
+  assert.deepEqual(defaultStudy().mesh, { target: 'auto' });
+  const auto = defaultStudy({ mesh: { target: 4, refine: 'auto' } });
+  assert.deepEqual(auto.mesh, { target: 4, refine: 'auto' });
+  assert.equal(JSON.parse(studyJson(auto)).mesh.refine, 'auto');
+  const off = validateStudy({ ...defaultStudy(), mesh: { target: 'auto', refine: 'off' } });
+  assert.equal(off.ok, true);
+  assert.deepEqual(off.study.mesh, { target: 'auto', refine: 'off' });
+  const omitted = validateStudy(defaultStudy());
+  assert.equal(omitted.ok, true);
+  assert.deepEqual(omitted.study.mesh, { target: 'auto' });
+  const bad = validateStudy({ ...defaultStudy(), mesh: { target: 'auto', refine: 'yes' } });
+  assert.equal(bad.ok, false);
+  assert.match(bad.errors.join('\n'), /refine/);
+});
+
 test('a partial study does not validate as a stored study', () => {
   const partial = validateStudy({ id: 's1', name: 'Static 1' });
   assert.equal(partial.ok, false);

@@ -302,28 +302,71 @@ async function loadMeshModule(ceilingBytes) {
   return modulePromise;
 }
 
-function meshTet4(module, positions, indices, edgeLength, epsilon, maxTets) {
+function meshTet4(module, positions, indices, edgeLength, epsilon, maxTets, sizing) {
   const nVertices = positions.length / 3;
   const nTriangles = indices.length / 3;
+  const sized = !!(sizing && sizing.positions && sizing.tets && sizing.values
+    && sizing.positions.length >= 12 && sizing.tets.length >= 4 && sizing.values.length >= 4);
   const posPtr = module._malloc(nVertices * 3 * 8);
   const indexPtr = module._malloc(nTriangles * 3 * 4);
   const bytesPtr = module._malloc(4);
-  if (posPtr === 0 || indexPtr === 0 || bytesPtr === 0) {
+  const sizingPositions = sized
+    ? (sizing.positions instanceof Float64Array ? sizing.positions : Float64Array.from(sizing.positions))
+    : null;
+  const sizingTets = sized
+    ? (sizing.tets instanceof Uint32Array ? sizing.tets : Uint32Array.from(sizing.tets))
+    : null;
+  const sizingValues = sized
+    ? (sizing.values instanceof Float64Array ? sizing.values : Float64Array.from(sizing.values))
+    : null;
+  const sizingPosPtr = sized ? module._malloc(sizingPositions.length * 8) : 0;
+  const sizingTetPtr = sized ? module._malloc(sizingTets.length * 4) : 0;
+  const sizingValPtr = sized ? module._malloc(sizingValues.length * 8) : 0;
+  if (posPtr === 0 || indexPtr === 0 || bytesPtr === 0
+    || (sized && (sizingPosPtr === 0 || sizingTetPtr === 0 || sizingValPtr === 0))) {
+    if (posPtr) module._free(posPtr);
+    if (indexPtr) module._free(indexPtr);
+    if (bytesPtr) module._free(bytesPtr);
+    if (sizingPosPtr) module._free(sizingPosPtr);
+    if (sizingTetPtr) module._free(sizingTetPtr);
+    if (sizingValPtr) module._free(sizingValPtr);
     throw new Error('mesh wasm is out of memory');
   }
   try {
     module.HEAPF64.set(positions, posPtr / 8);
     module.HEAPU32.set(indices, indexPtr / 4);
-    const blobPtr = module._surfcad_mesh_tet4(
-      posPtr,
-      nVertices,
-      indexPtr,
-      nTriangles,
-      edgeLength,
-      epsilon,
-      maxTets,
-      bytesPtr,
-    );
+    let blobPtr;
+    if (sized) {
+      module.HEAPF64.set(sizingPositions, sizingPosPtr / 8);
+      module.HEAPU32.set(sizingTets, sizingTetPtr / 4);
+      module.HEAPF64.set(sizingValues, sizingValPtr / 8);
+      blobPtr = module._surfcad_mesh_tet4_sized(
+        posPtr,
+        nVertices,
+        indexPtr,
+        nTriangles,
+        edgeLength,
+        epsilon,
+        maxTets,
+        sizingPosPtr,
+        sizingPositions.length / 3,
+        sizingTetPtr,
+        sizingTets.length / 4,
+        sizingValPtr,
+        bytesPtr,
+      );
+    } else {
+      blobPtr = module._surfcad_mesh_tet4(
+        posPtr,
+        nVertices,
+        indexPtr,
+        nTriangles,
+        edgeLength,
+        epsilon,
+        maxTets,
+        bytesPtr,
+      );
+    }
     if (blobPtr === 0) throw new Error('mesh wasm returned no result');
     const byteLength = module.getValue(bytesPtr, 'i32') >>> 0;
     const copy = new Uint8Array(byteLength);
@@ -334,6 +377,9 @@ function meshTet4(module, positions, indices, edgeLength, epsilon, maxTets) {
     module._free(posPtr);
     module._free(indexPtr);
     module._free(bytesPtr);
+    if (sizingPosPtr) module._free(sizingPosPtr);
+    if (sizingTetPtr) module._free(sizingTetPtr);
+    if (sizingValPtr) module._free(sizingValPtr);
   }
 }
 
@@ -742,7 +788,9 @@ function qualityStats(nodes, elements) {
  * fTetWild's relative default (1/20 of the bbox diagonal). `options.epsilon`
  * is fTetWild's relative envelope, a fraction of that diagonal. `0` leaves
  * the default `1e-3`. `options.maxTets` fails the call when the TET4 mesh
- * would be larger. `0` means no cap.
+ * would be larger. `0` means no cap. `options.sizing` is an optional
+ * background tet mesh `{ positions, tets, values }` of absolute target
+ * edge lengths. `edgeLength` should be the coarsest value in that field.
  *
  * Boundary `faces` are 6-node triangles in the same order `solve_tet10` uses
  * for pressure: corners, then mid-edge nodes 01, 12, 20. The right-hand
@@ -769,7 +817,15 @@ export async function meshVolume(surface, options = {}) {
   let decoded;
   let wasmBytes;
   try {
-    ({ decoded, wasmBytes } = meshTet4(module, positions, indices, edgeLength, epsilon, maxTets));
+    ({ decoded, wasmBytes } = meshTet4(
+      module,
+      positions,
+      indices,
+      edgeLength,
+      epsilon,
+      maxTets,
+      options.sizing,
+    ));
   } finally {
     if (typeof options.onProgress === 'function') {
       options.onProgress({ stage: 'meshing', blocking: false });
@@ -839,22 +895,26 @@ export function releaseMesh(mesh) {
  * Key for the TET10 cache. Positions, indices, and face ids are hashed
  * from their bytes, so a geometry edit misses. The mesh target and the
  * device profile select the edge length, so they are part of the key.
- * Material, loads, and fixtures are not.
+ * Material is not. `bcKey` is set only for an adaptive refine, where the
+ * final mesh depends on the fixtures and loads. An empty key keeps the
+ * uniform-mesh key used when refine is off.
  */
-export function meshCacheKey(surface, target, profile) {
+export function meshCacheKey(surface, target, profile, bcKey = '') {
   const source = surface || {};
   const faceIDs = source.faceIDs ?? source.faceIds;
   const profileKey = profile === 'phone' ? 'phone' : 'desktop';
   let targetKey = '';
   if (typeof target === 'number' && Number.isFinite(target)) targetKey = `n:${target}`;
   else if (target != null && target !== '') targetKey = `s:${String(target)}`;
-  return [
+  const parts = [
     hashBuffer(source.positions),
     hashBuffer(source.indices),
     hashBuffer(faceIDs),
     targetKey,
     profileKey,
-  ].join('|');
+  ];
+  if (bcKey) parts.push(String(bcKey));
+  return parts.join('|');
 }
 
 function hashBuffer(view) {

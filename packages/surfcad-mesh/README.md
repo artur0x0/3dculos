@@ -21,6 +21,8 @@ const mesh = await meshVolume(
 
 `positions` is xyz in the caller's length unit (millimetres for a study). `indices` is three indices per triangle. `faceIds` (or `faceIDs`) is one id per triangle. `edgeLength` `0` leaves fTetWild's default, 1/20 of the bbox diagonal. `epsilon` `0` leaves the relative envelope at `1e-3`. `maxTets` `0` means no cap.
 
+`options.sizing` is an optional background tet mesh: `{ positions, tets, values }`. `values` is one absolute target edge length per background vertex. fTetWild interpolates it inside each background tet and sets the local edge to that length (`sizing_scalar = value / ideal_edge_length`). Omit it for a uniform mesh. `edgeLength` should be the coarsest value in the field so the uniform pass starts there and the field only refines.
+
 The result is TET10 `nodes` and `elements` (VTK order: corners, then mid-edge nodes of edges 01, 12, 20, 03, 13, 23). `faces` are 6-node boundary triangles in the same order `solve_tet10` uses for pressure, with the corner normal pointing out. `faceIds` is one id per boundary triangle, taken from the nearest input triangle. Boundary mid-edge nodes are snapped back onto input triangles of the incident face ids when they land inside the snap tolerance. Each TET4 is oriented to a positive signed volume first. A snap that makes the TET10 Jacobian non-positive at a Gauss point or a corner is rolled back to the straight-edge midpoint, the same point for every element on that edge. Elements that stay folded fail in meshing, with the count. `stats` includes volume, the input volume, the relative volume error, dihedral angles, aspect ratios, time, the wasm heap size, and the degree-of-freedom count.
 
 ## Build

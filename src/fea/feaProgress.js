@@ -21,7 +21,10 @@ export const FEA_STAGES = Object.freeze([
 
 const STAGE_LABEL = Object.fromEntries(FEA_STAGES.map((stage) => [stage.id, stage.label]));
 
-export function stageLabel(id) {
+export function stageLabel(id, extra) {
+  const pass = Number(extra && extra.refinePass);
+  const total = Number(extra && extra.refinePasses);
+  if (pass > 0 && total > 0) return `Refining ${pass}/${total}`;
   if (!id) return '';
   return STAGE_LABEL[id] || String(id);
 }
@@ -132,16 +135,23 @@ function meshKind(source) {
   return '';
 }
 
+function refineSuffix(state) {
+  const count = Number(state && state.refineCount);
+  if (!(count > 0)) return '';
+  return `, refined ${Math.round(count)}x, ${state.converged ? 'converged' : 'not converged'}`;
+}
+
 export function formatDoneText(state) {
   const timings = state.timings || {};
   const solvedMs = timings.solving || 0;
   const dofs = formatDofCount(state.dofs) || '0';
   const tail = `solved in ${formatSeconds(solvedMs)} (${dofs} DOF), total ${formatSeconds(elapsedMs(state))}`;
   const kind = meshKind(state.source);
-  if (state.meshReused) return kind ? `${kind} mesh reused, ${tail}` : `Mesh reused, ${tail}`;
+  const suffix = refineSuffix(state);
+  if (state.meshReused) return kind ? `${kind} mesh reused, ${tail}${suffix}` : `Mesh reused, ${tail}${suffix}`;
   const meshedMs = (timings['loading-mesher'] || 0) + (timings.meshing || 0);
-  if (kind) return `${kind} mesh in ${formatSeconds(meshedMs)}, ${tail}`;
-  return `Meshed in ${formatSeconds(meshedMs)}, ${tail}`;
+  if (kind) return `${kind} mesh in ${formatSeconds(meshedMs)}, ${tail}${suffix}`;
+  return `Meshed in ${formatSeconds(meshedMs)}, ${tail}${suffix}`;
 }
 
 export function formatStoppedText(state) {
@@ -238,7 +248,7 @@ export function reduceFeaProgress(state, event) {
     const next = withMeasure({
       ...current,
       stage: event.stage || current.stage,
-      stageLabel: stageLabel(event.stage || current.stage),
+      stageLabel: stageLabel(event.stage || current.stage, event),
       stageStartedAt: same ? current.stageStartedAt : now,
       timings,
       now,
@@ -269,6 +279,8 @@ export function reduceFeaProgress(state, event) {
       fraction: 1,
       percent: 100,
       meshReused: event.meshReused === true,
+      refineCount: Number(event.refineCount) || 0,
+      converged: event.converged === true,
     };
     done.text = formatDoneText(done);
     done.elapsedText = formatSeconds(elapsedMs(done));
