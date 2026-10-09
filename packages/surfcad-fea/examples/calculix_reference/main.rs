@@ -18,17 +18,19 @@
 //! C3D10, so the job does not loosen it.
 
 mod ccx_io;
+mod face_load;
 
 use ccx_io::{ccx_bin, run_case, Deck, ElementKind};
+use face_load::{face_pressure_forces, face_traction_forces};
 use std::collections::HashSet;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 use surfcad_fea::fem::{
-    consistent_traction, face_pressure_forces, face_traction_forces, percentile_95_f64, pin_node,
-    shell_solve_options, solve_shell, solve_tet10, Dirichlet, FacePressure, Material, NodalForce,
-    ShellPressure, SolveOptions, SolverChoice,
+    consistent_traction, percentile_95_f64, pin_node, shell_solve_options, solve_shell,
+    solve_tet10, Dirichlet, FacePressure, Material, NodalForce, ShellPressure, SolveOptions,
+    SolverChoice,
 };
 use surfcad_fea::meshgen::{
     brick_tet10, cylinder_panel, plate_shell, quarter_cylinder, quarter_plate_hole,

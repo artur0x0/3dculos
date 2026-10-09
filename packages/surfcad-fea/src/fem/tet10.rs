@@ -358,9 +358,7 @@ fn face_coords(nodes: &[[f64; 3]], face: &[u32; 6]) -> [[f64; 3]; 6] {
 /// Consistent nodal forces for a constant traction (N/mm²) on a 6-node face.
 ///
 /// The returned forces are newtons on the six face nodes, in face order.
-/// Compiled only for the native target. The CalculiX reference example uses
-/// it so both solvers see the same discrete traction. It is not a wasm export.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(test)]
 pub fn face_traction_forces(xyz: &[[f64; 3]; 6], traction: [f64; 3]) -> [[f64; 3]; 6] {
     let mut force = [[0.0; 3]; 6];
     for (bary, weight) in gauss_tri() {

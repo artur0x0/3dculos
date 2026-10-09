@@ -400,7 +400,8 @@ jobs:
             echo "available=false" >> "$GITHUB_OUTPUT"
           else
             echo "available=true" >> "$GITHUB_OUTPUT"
-            ccx -v
+            # ccx -v prints the banner and exits 201. The install itself succeeded.
+            ccx -v || true
           fi
 
       - name: Read the pinned Rust channel
