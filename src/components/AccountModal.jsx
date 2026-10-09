@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import { X, User, Mail, Loader2, Phone } from 'lucide-react';
+import { displayOrderLines } from '../utils/checkoutPage.js';
 
 const AccountModal = ({ onClose, user, selectedTab = 'info' }) => {
   const [activeTab, setActiveTab] = useState(selectedTab);
@@ -383,7 +384,7 @@ const AccountModal = ({ onClose, user, selectedTab = 'info' }) => {
                         </span>
                       </div>
                       <div className="text-sm text-gray-400">Date: {new Date(order['created-at']).toLocaleDateString()}</div>
-                      <div className="text-sm text-gray-400">Total: ${order.quote.total.toFixed(2)}</div>
+                      <div className="text-sm text-gray-400">Total: ${Number(order.quote?.total || 0).toFixed(2)}</div>
                       {order.shipping && order.shipping['tracking-number'] && (
                         <div className="text-sm text-gray-400">
                           Tracking: <a href={order.shipping['tracking-url']} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">
@@ -391,8 +392,16 @@ const AccountModal = ({ onClose, user, selectedTab = 'info' }) => {
                           </a>
                         </div>
                       )}
-                      <div className="text-sm text-gray-400">
-                        Process: {order['model-data'].process} | Material: {order['model-data'].material} | Qty {Number(order['model-data'].quantity) || 1}
+                      <div className="space-y-1" data-order-lines="">
+                        {displayOrderLines(order).map((line, index) => (
+                          <div key={line.lineId || `line-${index}`} className="text-sm text-gray-400" data-order-line="">
+                            <span data-order-line-name="">{line.partName}</span>
+                            {' · '}
+                            {line.process || '—'} | {line.material || '—'}
+                            {line.infill != null && line.infill !== '' ? ` | ${line.infill}%` : ''}
+                            {' | Qty '}{line.quantity}
+                          </div>
+                        ))}
                       </div>
                     </div>
                   ))}
