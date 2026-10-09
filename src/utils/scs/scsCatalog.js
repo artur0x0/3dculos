@@ -176,12 +176,21 @@ export function scsMaterialOptions(records) {
   ));
 }
 
-/** `0.090" · 11 ga · 2.29 mm` */
+/** `0.090" · 11 ga · 2.29 mm`. A partial record (no inch or mm) does not throw. */
 export function scsGaugeLabel(rec) {
   if (!rec) return '';
-  const inch = `${rec.thicknessIn.toFixed(3)}"`;
+  const inchN = Number(rec.thicknessIn);
+  const mmN = Number(rec.thicknessMm);
+  if (!Number.isFinite(inchN) || !Number.isFinite(mmN)) {
+    const bits = [];
+    if (Number.isFinite(inchN)) bits.push(`${inchN.toFixed(3)}"`);
+    if (rec.gauge != null) bits.push(`${rec.gauge} ga`);
+    if (Number.isFinite(mmN)) bits.push(`${mmN.toFixed(2)} mm`);
+    return bits.join(' · ');
+  }
+  const inch = `${inchN.toFixed(3)}"`;
   const ga = rec.gauge != null ? ` · ${rec.gauge} ga` : '';
-  return `${inch}${ga} · ${rec.thicknessMm.toFixed(2)} mm`;
+  return `${inch}${ga} · ${mmN.toFixed(2)} mm`;
 }
 
 /**

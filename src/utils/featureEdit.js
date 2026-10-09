@@ -11,6 +11,7 @@ import { parseFeatureMarkers } from './featureMarkers.js';
 import { deleteFeatureBlock, featureBlockText, liveSheetFeature, inferExtrudeSense } from './featureSheetWriteback.js';
 import { scriptWithFeatureCount } from './partHistory.js';
 import { shellFaceKey } from './shellMode.js';
+import { normalizeSheetSpec } from './sheetMetal/sheetModel.js';
 
 const NUM = '[-+]?(?:\\d+\\.?\\d*|\\.\\d+)(?:[eE][-+]?\\d+)?';
 
@@ -942,7 +943,11 @@ function rewriteBlock(block, session, draft) {
   } else if (kind === 'polarArray') {
     setNum(new RegExp(`(polarArray\\s*\\(\\s*[^,]+,\\s*)(${NUM})`), 'count');
   } else if (kind === 'sheetMetal') {
-    if (!sameValue(fields.width, prev.width)) {
+    const nextSpec = draft.spec ? normalizeSheetSpec(draft.spec) : null;
+    const prevSpec = session.spec ? normalizeSheetSpec(session.spec) : null;
+    if (nextSpec && JSON.stringify(nextSpec) !== JSON.stringify(prevSpec)) {
+      next = next.replace(/const sheetSpec\s*=\s*\{.*\};/, `const sheetSpec = ${JSON.stringify(nextSpec)};`);
+    } else if (!sameValue(fields.width, prev.width)) {
       next = next.replace(/("width"\s*:\s*)(-?\d+(?:\.\d+)?)/, `$1${lit(fields.width)}`);
     }
   }
@@ -951,6 +956,14 @@ function rewriteBlock(block, session, draft) {
     next = rewriteEdges(next, draft.edgeIds);
   }
   return next;
+}
+
+function sheetSpecUnchanged(session, draft) {
+  if (!draft?.spec || session?.kind !== 'sheetMetal') return true;
+  const next = normalizeSheetSpec(draft.spec);
+  const prev = normalizeSheetSpec(session.spec);
+  if (!next || !prev) return false;
+  return JSON.stringify(next) === JSON.stringify(prev);
 }
 
 function draftEdgeIds(session, draft) {
@@ -976,7 +989,7 @@ export function confirmFeatureEdit(script, feature, draft = {}) {
   const edgesSame = edgeIds == null || JSON.stringify(edgeIds) === JSON.stringify(edgeIdList(session.edges));
   const facesSame = !Array.isArray(draft.faces)
     || JSON.stringify(draft.faces) === JSON.stringify(session.faces);
-  if (fieldsEqual(fields, session.fields) && edgesSame && facesSame && !draft.clearMissing) {
+  if (fieldsEqual(fields, session.fields) && edgesSame && facesSame && !draft.clearMissing && sheetSpecUnchanged(session, draft)) {
     return { ok: true, buffer: text, changed: false, run: false };
   }
   const beforeCount = parseFeatureMarkers(text).length;
