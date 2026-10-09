@@ -688,7 +688,7 @@ async function runCase(browser, vp) {
     !!paintedAgain && paintedAgain.red > paintedAgain.model * 0.45,
     JSON.stringify(paintedAgain),
   );
-  await page.locator('[data-paint-dismiss]').click();
+  await page.locator('[data-paint-mode="1"] [data-feature-card-cancel]').click();
   await page.locator('[data-paint-mode="1"]').waitFor({ state: 'detached', timeout: 8000 });
 
   await page.locator('[data-analyze-chip]').click();

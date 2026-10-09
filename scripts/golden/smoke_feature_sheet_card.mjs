@@ -3,7 +3,7 @@
  * Feature card: shared shell, contour pilot, fillet / chamfer / edge card,
  * shell / draft / move face / delete face, cut / boolean / move,
  * helper sheets (cube, round box, cylinder, sphere, tube, hex, hole,
- * mirror, center, align, array, path, refuse),
+ * mirror, center, align, array, path, refuse), paint,
  * keyboard, camera pose.
  *
  * Screenshots go to GOLDEN_SHOT_DIR or os.tmpdir(), never the artifacts dir.
@@ -167,6 +167,16 @@ console.log('feature sheet card — source');
     && /pointer-events-auto/.test(read('src/components/FeatureSheet.jsx')));
   const helper = read('src/components/HelperParamModal.jsx');
   const palette = read('src/components/HelperInsertPalette.jsx');
+  const paint = read('src/components/PaintModeChip.jsx');
+  check('paint uses the shell; Confirm saves; X cancels; game mounts no card',
+    /<FeatureSheet\b/.test(paint)
+    && /onCancel=\{onDismiss\}/.test(paint)
+    && /onConfirm=\{onConfirm\}/.test(paint)
+    && /data-paint-mode/.test(paint)
+    && /paintMode && mode !== 'game'/.test(view)
+    && /paintSheetOpen/.test(view)
+    && /paintSheetOpen\s*\n\s*\? 'paint'/.test(view)
+    && /!paintMode && selectedEdges/.test(view));
   check('helper sheets use the card in CAD; game keeps the old sheet and does not slide',
     /<FeatureSheet\b/.test(helper)
     && /useCard/.test(helper)
