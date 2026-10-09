@@ -101,6 +101,58 @@ test('a box voxel grid is solid and tags every face id', () => {
   assert.ok(Math.abs(fz + 200) < 1e-6, `tip force ${fz}`);
 });
 
+test('a reused face id keeps the voxel patch nearest the stored point', () => {
+  const nx = 4;
+  const ny = 2;
+  const nz = 2;
+  const occupancy = new Uint8Array(nx * ny * nz);
+  const faceSide = new Int32Array(nx * ny * nz * 6);
+  faceSide.fill(-1);
+  const mark = (i, j, k, side, id) => {
+    const cell = i + nx * (j + ny * k);
+    occupancy[cell] = 1;
+    faceSide[cell * 6 + side] = id;
+  };
+  mark(0, 0, 0, 0, 2);
+  mark(0, 0, 0, 1, 1);
+  mark(0, 1, 0, 1, 1);
+  mark(3, 0, 0, 1, 1);
+  const grid = {
+    nx,
+    ny,
+    nz,
+    hx: 1,
+    hy: 1,
+    hz: 1,
+    origin: [0, 0, 0],
+    occupancy,
+    faceSide,
+  };
+  const study = (at) => ({
+    fixtures: [{ kind: 'fixed', faces: [{ faceID: 2, at: [0, 0.5, 0.5], n: [-1, 0, 0], area: 1 }] }],
+    loads: [{
+      kind: 'force',
+      vector: [0, 0, -10],
+      faces: [{ faceID: 1, triangleFaceIDs: [1], at, n: [1, 0, 0], area: 2 }],
+    }],
+  });
+  const nxp = nx + 1;
+  const nyp = ny + 1;
+  const node = (i, j, k) => i + nxp * (j + nyp * k);
+  const fzAt = (rhs, i, j, k) => rhs[node(i, j, k) * 3 + 2];
+  const near = assemblePreviewBCs(grid, study([1, 1, 0.5]));
+  assert.ok(fzAt(near.rhs, 1, 0, 0) < 0);
+  assert.ok(fzAt(near.rhs, 1, 2, 0) < 0);
+  assert.equal(fzAt(near.rhs, 4, 0, 0), 0);
+  assert.equal(fzAt(near.rhs, 4, 1, 0), 0);
+  const far = assemblePreviewBCs(grid, study([4, 0.5, 0.5]));
+  assert.equal(fzAt(far.rhs, 1, 0, 0), 0);
+  assert.ok(fzAt(far.rhs, 4, 0, 0) < 0);
+  let total = 0;
+  for (let i = 2; i < near.rhs.length; i += 3) total += near.rhs[i];
+  assert.ok(Math.abs(total + 10) < 1e-6, `near force ${total}`);
+});
+
 test('V-cycles reduce the cantilever residual after the first correction', () => {
   const surface = box([40, 10, 10]);
   const grid = voxelizeSolid(surface.positions, surface.indices, surface.faceIds, 16);

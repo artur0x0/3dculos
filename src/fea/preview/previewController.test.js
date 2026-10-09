@@ -133,7 +133,7 @@ test('a magnitude drag scales the last preview without another solve', async () 
 });
 
 test('WGSL exposes the matrix-free kernels', () => {
-  for (const name of ['fn matvec', 'fn jacobi', 'fn restrict', 'fn prolongAdd', 'fn axpy', 'fn dotPartial']) {
+  for (const name of ['fn matvec', 'fn jacobi', 'fn restrictToCoarse', 'fn prolongAdd', 'fn axpy', 'fn dotPartial']) {
     assert.equal(PREVIEW_WGSL.includes(name), true, name);
   }
 });

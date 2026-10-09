@@ -109,6 +109,9 @@ async function waitForServer(timeoutMs = 40000) {
 
 async function adapterName(browser) {
   const page = await browser.newPage();
+  // about:blank is not a secure context, so navigator.gpu is missing there
+  // even when this Chrome can create a software adapter on localhost.
+  await page.goto(APP_URL, { waitUntil: 'domcontentloaded', timeout: 45000 });
   const name = await page.evaluate(async () => {
     if (!navigator.gpu) return '';
     const adapter = await navigator.gpu.requestAdapter();
@@ -223,6 +226,13 @@ async function runCase(browser, vp) {
   });
   const page = await context.newPage();
   const errors = await boot(page);
+  const gpuErrors = [];
+  page.on('console', (msg) => {
+    const text = msg.text();
+    if (text.includes('Invalid CommandBuffer') || text.includes('WGSL') || text.includes('synchronization scope')) {
+      gpuErrors.push(text.slice(0, 180));
+    }
+  });
   await seed(page);
   await page.reload({ waitUntil: 'domcontentloaded' });
   await page.waitForSelector('canvas', { timeout: 40000 });
@@ -235,6 +245,35 @@ async function runCase(browser, vp) {
   const shell = vp.touch ? '[data-fea-sheet="1"]' : '[data-fea-mode="1"]';
   await page.locator(shell).waitFor({ timeout: 8000 });
   const sliders = await page.locator('[data-fea-preview-sliders]').waitFor({ timeout: 8000 }).then(() => 1).catch(() => 0);
+  if (sliders !== 1) {
+    const debug = await page.evaluate(async () => {
+      const scripts = await new Promise((resolve) => {
+        const req = indexedDB.open('surfcad-assembly', 1);
+        req.onsuccess = () => {
+          const db = req.result;
+          const tx = db.transaction(['assembly', 'parts'], 'readonly');
+          const out = { doc: null, parts: [] };
+          tx.objectStore('assembly').get('current').onsuccess = (ev) => { out.doc = ev.target.result; };
+          tx.objectStore('parts').getAll().onsuccess = (ev) => { out.parts = ev.target.result; };
+          tx.oncomplete = () => { db.close(); resolve(out); };
+        };
+        req.onerror = () => resolve({ error: 'idb' });
+      });
+      return {
+        solids: document.querySelector('[data-assembly-solids]')?.getAttribute('data-assembly-solids') || '',
+        mode: document.querySelector('[data-fea-mode]')?.getAttribute('data-fea-mode') || '',
+        sheet: document.querySelector('[data-fea-sheet]')?.getAttribute('data-fea-sheet') || '',
+        analyze: document.querySelector('[data-analyze-chip-state]')?.getAttribute('data-analyze-chip-state') || '',
+        doc: scripts.doc,
+        parts: (scripts.parts || []).map((part) => ({
+          id: part.id,
+          script: String(part.script || '').slice(0, 500),
+        })),
+        text: (document.body.innerText || '').replace(/\s+/g, ' ').slice(0, 240),
+      };
+    });
+    console.log(`  debug ${vp.name}`, JSON.stringify(debug));
+  }
   check(`${vp.name} preview sliders`, sliders === 1, 'hidden — probe failed or the study has no force');
   if (sliders === 1) {
     const slider = page.locator('[data-fea-preview-slider="magnitude"]');
@@ -243,7 +282,7 @@ async function runCase(browser, vp) {
       el.dispatchEvent(new Event('input', { bubbles: true }));
       el.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
     });
-    await page.locator('[data-fea-preview-badge]').waitFor({ timeout: 20000 });
+    await page.locator('[data-fea-preview-badge]').waitFor({ timeout: 90000 });
     const badge = await page.evaluate(() => ({
       source: document.querySelector('[data-fea-source]')?.getAttribute('data-fea-source') || '',
       fosFrom: document.querySelector('[data-fea-fos-from]')?.getAttribute('data-fea-fos-from') || '',
@@ -264,6 +303,7 @@ async function runCase(browser, vp) {
   await page.screenshot({ path: shot });
   check(`${vp.name} shot saved`, existsSync(shot), shot);
   console.log(`  shot ${shot}`);
+  check(`${vp.name} gpu passes`, gpuErrors.length === 0, gpuErrors.slice(0, 2).join(' | '));
   check(`${vp.name} no page errors`, errors.length === 0, errors.slice(0, 2).join(' | '));
   await context.close();
 }

@@ -1,7 +1,9 @@
 /**
  * Voxel stress preview.
  *
- * The solid is an occupancy grid with faceIDs on boundary sides. 8-node
+ * The solid is an occupancy grid with faceIDs on boundary sides. A face
+ * id reused on a disconnected wall keeps the connected patch nearest the
+ * stored point (`nearestPatch`, the same rule as the TET10 match). 8-node
  * hexes are solved by CG, preconditioned with f32-style geometric
  * multigrid (the JS reference uses f64 accumulation; the GPU path stores
  * the same Ke as f32). The returned nodal array is von Mises in MPa on the
@@ -9,9 +11,10 @@
  * This result is not a safety factor. `safetyFactor` is always null.
  */
 
+import { nearestPatch } from '../boundaryConditions.js';
+import { fieldRange } from '../stressSample.js';
 import { SIDE_LOCAL, SIDE_NORMAL, materialC, sideArea, stressAt, vonMises } from './hexElement.js';
 import { buildHierarchy, levelBytes, pcg } from './multigrid.js';
-import { fieldRange } from '../stressSample.js';
 import { padGrid, voxelizeSolid } from './voxelize.js';
 
 function idsOf(faces) {
@@ -57,7 +60,48 @@ function sideNodes(grid, cell, side) {
   return SIDE_LOCAL[side].map((local) => all[local]);
 }
 
-function eachTagged(grid, ids, visit) {
+function nodePoint(grid, node) {
+  const nxp = grid.nx + 1;
+  const nyp = grid.ny + 1;
+  const i = node % nxp;
+  const t = (node / nxp) | 0;
+  const j = t % nyp;
+  const k = (t / nyp) | 0;
+  return [
+    grid.origin[0] + i * grid.hx,
+    grid.origin[1] + j * grid.hy,
+    grid.origin[2] + k * grid.hz,
+  ];
+}
+
+function sideRecord(grid, cell, side) {
+  const nodes = sideNodes(grid, cell, side);
+  const xyz = new Array(nodes.length);
+  const centroid = [0, 0, 0];
+  for (let n = 0; n < nodes.length; n += 1) {
+    const point = nodePoint(grid, nodes[n]);
+    xyz[n] = point;
+    centroid[0] += point[0];
+    centroid[1] += point[1];
+    centroid[2] += point[2];
+  }
+  const scale = nodes.length || 1;
+  centroid[0] /= scale;
+  centroid[1] /= scale;
+  centroid[2] /= scale;
+  return {
+    cell,
+    side,
+    ids: nodes,
+    xyz,
+    centroid,
+    area: sideArea(side, grid.hx, grid.hy, grid.hz),
+  };
+}
+
+/** Exposed sides grouped by the Manifold face id painted onto them. */
+function boundaryByFace(grid) {
+  const byId = new Map();
   const { nx, ny, nz, faceSide, occupancy } = grid;
   for (let k = 0; k < nz; k += 1) {
     for (let j = 0; j < ny; j += 1) {
@@ -67,24 +111,70 @@ function eachTagged(grid, ids, visit) {
         const base = cell * 6;
         for (let side = 0; side < 6; side += 1) {
           const face = faceSide[base + side];
-          if (face >= 0 && ids.has(face)) visit(cell, side);
+          if (face < 0) continue;
+          let list = byId.get(face);
+          if (!list) {
+            list = [];
+            byId.set(face, list);
+          }
+          list.push(sideRecord(grid, cell, side));
         }
       }
     }
+  }
+  return byId;
+}
+
+/**
+ * Sides for these picks. A face id reused on a disconnected wall is cut
+ * down to the connected patch nearest the stored point, the same rule as
+ * the TET10 match.
+ */
+function patchSides(byId, faces) {
+  const chosen = [];
+  const seen = new Set();
+  for (const pick of faces || []) {
+    const ids = idsOf([pick]);
+    let listed = [];
+    for (const id of ids) {
+      const group = byId.get(id);
+      if (group) listed = listed.concat(group);
+    }
+    const patch = Array.isArray(pick?.at) ? nearestPatch(listed, pick.at) : listed;
+    for (let i = 0; i < patch.length; i += 1) {
+      const hit = patch[i];
+      const key = hit.cell * 6 + hit.side;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      chosen.push(hit);
+    }
+  }
+  return chosen;
+}
+
+function addSideForce(rhs, fixed, nodes, fx, fy, fz) {
+  for (let n = 0; n < nodes.length; n += 1) {
+    if (fixed[nodes[n]]) continue;
+    const at = nodes[n] * 3;
+    rhs[at] += fx;
+    rhs[at + 1] += fy;
+    rhs[at + 2] += fz;
   }
 }
 
 export function assemblePreviewBCs(grid, study) {
   const nodeCount = (grid.nx + 1) * (grid.ny + 1) * (grid.nz + 1);
   const fixed = new Uint8Array(nodeCount);
-  const fixtureIds = new Set();
+  const byId = boundaryByFace(grid);
+  const fixtureFaces = [];
   for (const fixture of study?.fixtures || []) {
-    for (const id of idsOf(fixture.faces)) fixtureIds.add(id);
+    for (const face of fixture.faces || []) fixtureFaces.push(face);
   }
-  eachTagged(grid, fixtureIds, (cell, side) => {
-    const nodes = sideNodes(grid, cell, side);
+  const fixtureSides = patchSides(byId, fixtureFaces);
+  for (let s = 0; s < fixtureSides.length; s += 1) {
+    const nodes = fixtureSides[s].ids;
     for (let n = 0; n < nodes.length; n += 1) fixed[nodes[n]] = 1;
-  });
+  }
   let fixedCount = 0;
   for (let i = 0; i < fixed.length; i += 1) fixedCount += fixed[i];
   if (!fixedCount) throw new Error('Fix a face before previewing the study.');
@@ -92,47 +182,28 @@ export function assemblePreviewBCs(grid, study) {
   const rhs = new Float64Array(nodeCount * 3);
   const loads = study?.loads || [];
   for (const load of loads) {
-    const ids = idsOf(load.faces);
+    const sides = patchSides(byId, load.faces);
     if (load.kind === 'pressure') {
       const pressure = Number(load.pressure_MPa);
       if (!Number.isFinite(pressure) || pressure === 0) continue;
-      eachTagged(grid, ids, (cell, side) => {
-        const area = sideArea(side, grid.hx, grid.hy, grid.hz);
-        const normal = SIDE_NORMAL[side];
-        const share = (-pressure * area) / 4;
-        const nodes = sideNodes(grid, cell, side);
-        for (let n = 0; n < nodes.length; n += 1) {
-          if (fixed[nodes[n]]) continue;
-          const at = nodes[n] * 3;
-          rhs[at] += share * normal[0];
-          rhs[at + 1] += share * normal[1];
-          rhs[at + 2] += share * normal[2];
-        }
-      });
+      for (let s = 0; s < sides.length; s += 1) {
+        const hit = sides[s];
+        const share = (-pressure * hit.area) / 4;
+        const normal = SIDE_NORMAL[hit.side];
+        addSideForce(rhs, fixed, hit.ids, share * normal[0], share * normal[1], share * normal[2]);
+      }
       continue;
     }
     const vector = load.vector || [0, 0, 0];
     let area = 0;
-    const hits = [];
-    eachTagged(grid, ids, (cell, side) => {
-      const patch = sideArea(side, grid.hx, grid.hy, grid.hz);
-      area += patch;
-      hits.push([cell, side, patch]);
-    });
-    if (!(area > 0) || !hits.length) {
+    for (let s = 0; s < sides.length; s += 1) area += sides[s].area;
+    if (!(area > 0) || !sides.length) {
       throw new Error('A loaded face did not land on the voxel grid.');
     }
-    for (let h = 0; h < hits.length; h += 1) {
-      const [cell, side, patch] = hits[h];
-      const share = patch / area / 4;
-      const nodes = sideNodes(grid, cell, side);
-      for (let n = 0; n < nodes.length; n += 1) {
-        if (fixed[nodes[n]]) continue;
-        const at = nodes[n] * 3;
-        rhs[at] += vector[0] * share;
-        rhs[at + 1] += vector[1] * share;
-        rhs[at + 2] += vector[2] * share;
-      }
+    for (let s = 0; s < sides.length; s += 1) {
+      const hit = sides[s];
+      const share = hit.area / area / 4;
+      addSideForce(rhs, fixed, hit.ids, vector[0] * share, vector[1] * share, vector[2] * share);
     }
   }
   return { fixed, rhs, fixedCount };

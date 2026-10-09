@@ -107,7 +107,6 @@ class GpuPreview {
     this.pipelines = null;
     this.mainLayout = null;
     this.dotLayout = null;
-    this.dummy = null;
     this.live = () => true;
   }
 
@@ -163,12 +162,13 @@ class GpuPreview {
     this.pipelines = {
       matvec: make('matvec', plain),
       jacobi: make('jacobi', plain),
-      restrict: make('restrict', plain),
+      restrict: make('restrictToCoarse', plain),
       prolongAdd: make('prolongAdd', plain),
       axpy: make('axpy', plain),
       dotPartial: make('dotPartial', dotted),
     };
-    this.dummy = this.empty(4);
+    this.dummyRead = this.empty(4);
+    this.dummyWrite = this.empty(4);
     return { ok: true };
   }
 
@@ -256,8 +256,8 @@ class GpuPreview {
         { binding: 5, resource: { buffer: level.vec[a] || level.zeros } },
         { binding: 6, resource: { buffer: level.vec[b] || level.zeros } },
         { binding: 7, resource: { buffer: level.vec[c] || level.zeros } },
-        { binding: 8, resource: { buffer: coarse ? coarse.fixed : this.dummy } },
-        { binding: 9, resource: { buffer: coarse ? coarse.vec.rhs : this.dummy } },
+        { binding: 8, resource: { buffer: coarse ? coarse.fixed : this.dummyRead } },
+        { binding: 9, resource: { buffer: coarse ? coarse.vec.rhs : this.dummyWrite } },
       ],
     });
     if (!this.enc) this.enc = this.device.createCommandEncoder();
@@ -308,7 +308,10 @@ class GpuPreview {
   }
 
   async dot(level, a, c) {
-    this.encode('dotPartial', level, null, { a, b: 'z', c, dotted: true });
+    // dotPartial does not write fieldB. Binding 6 is still read-write, so it
+    // must not be the same buffer as fieldA or fieldC.
+    const spare = ['az', 'defect', 'z2', 'u2', 'r2', 'p'].find((name) => name !== a && name !== c) || 'z2';
+    this.encode('dotPartial', level, null, { a, b: spare, c, dotted: true });
     const raw = await this.readBuffer(level.partial, level.partialGroups * 4);
     let sum = 0;
     for (let i = 0; i < raw.length; i += 1) sum += raw[i];
@@ -447,7 +450,8 @@ class GpuPreview {
 
   destroy() {
     for (const [key, gpu] of this.levels) this.destroyLevel(key, gpu);
-    this.dummy?.destroy?.();
+    this.dummyRead?.destroy?.();
+    this.dummyWrite?.destroy?.();
     for (let i = 0; i < this.paramPool.length; i += 1) this.paramPool[i].destroy?.();
     this.device?.destroy?.();
   }

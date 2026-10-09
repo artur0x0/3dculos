@@ -159,7 +159,7 @@ fn weight1(delta: i32) -> f32 {
 }
 
 @compute @workgroup_size(64)
-fn restrict(@builtin(global_invocation_id) gid: vec3u) {
+fn restrictToCoarse(@builtin(global_invocation_id) gid: vec3u) {
   let coarse = i32(gid.x);
   if (coarse >= params.cnodeCount) {
     return;
