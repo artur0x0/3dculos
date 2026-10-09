@@ -8,11 +8,10 @@ import {
   cartChipSelector,
   cartCount,
   cartUserId,
-  checkoutQueue,
-  checkoutSkipNote,
   emptyCart,
   makeCartDraft,
   normalizeCart,
+  noteLineQuote,
   orderIntent,
   presentCartLines,
   refillThumbs,
@@ -20,6 +19,7 @@ import {
   scriptsForOrder,
   setCartQty,
 } from '../utils/cart.js';
+import { checkoutPageNote, planCheckout } from '../utils/checkoutPage.js';
 import { useAuthState } from './useAuthState';
 import { readCart, writeCart } from '../utils/cartStorage.js';
 import {
@@ -317,6 +317,14 @@ export function useCart({
     scheduleSync();
   }, [persist, scheduleSync]);
 
+  const noteQuote = useCallback((lineId, quote) => {
+    if (!signedInRef.current) return null;
+    const next = noteLineQuote(readCart(localStorage, userIdRef.current), lineId, quote);
+    persist(next);
+    scheduleSync();
+    return next;
+  }, [persist, scheduleSync]);
+
   const startCheckout = useCallback(() => {
     const intent = orderIntent({
       signedIn: signedInRef.current,
@@ -330,16 +338,16 @@ export function useCart({
     setPartQuote(null);
     const doc = assemblyRef?.current || null;
     const scripts = scriptsForOrder(partScriptsRef?.current, liveScriptRef?.current);
-    const queue = checkoutQueue(
+    const plan = planCheckout(
       doc,
       scripts,
       readCart(localStorage, userIdRef.current),
       partRunsRef?.current,
     );
-    if (!queue.lines.length) return { ok: false, reason: 'empty', ...queue };
+    if (!plan.payable.length) return { ok: false, reason: 'empty', ...plan };
     setOpen(false);
-    onCheckoutRef.current?.(queue);
-    return { ok: true, ...queue };
+    onCheckoutRef.current?.(plan);
+    return { ok: true, ...plan };
   }, [assemblyRef, liveScriptRef, partRunsRef, partScriptsRef, setPartQuote]);
 
   const refill = useCallback(() => {
@@ -355,13 +363,13 @@ export function useCart({
   const scripts = scriptsForOrder(partScriptsRef?.current, liveScriptRef?.current);
   const stored = signedIn ? cart : emptyCart();
   const lines = presentCartLines(doc, scripts, stored);
-  const queue = checkoutQueue(doc, scripts, stored, partRunsRef?.current);
+  const plan = planCheckout(doc, scripts, stored, partRunsRef?.current);
 
   return useMemo(() => ({
     count: signedIn ? cartCount(cart) : 0,
     lines,
-    checkoutLines: queue.lines,
-    checkoutNote: checkoutSkipNote(queue),
+    checkoutLines: plan.payable,
+    checkoutNote: checkoutPageNote(plan),
     open,
     flight,
     partQuote,
@@ -372,6 +380,7 @@ export function useCart({
     commitQuotedLine,
     changeQty,
     removeLine,
+    noteQuote,
     refill,
     clearFlight,
     startCheckout,
@@ -379,7 +388,7 @@ export function useCart({
     signedIn,
     cart,
     lines,
-    queue,
+    plan,
     open,
     flight,
     partQuote,
@@ -390,6 +399,7 @@ export function useCart({
     commitQuotedLine,
     changeQty,
     removeLine,
+    noteQuote,
     refill,
     clearFlight,
     startCheckout,

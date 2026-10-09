@@ -253,6 +253,34 @@ export function setCartQty(cart, lineId, qty, now = new Date()) {
   return { ...state, lines };
 }
 
+/**
+ * Write the quote the checkout just accepted back onto the cart line.
+ * A partial quote is dropped by the normalizer and the previous line stays.
+ */
+export function noteLineQuote(cart, lineId, quote, now = new Date()) {
+  const state = normalizeCart(cart);
+  const iso = toCartIso(now);
+  const id = String(lineId || '');
+  const lines = state.lines.map((line) => {
+    if (line.lineId !== id) return line;
+    const next = normalizeLine({
+      ...line,
+      scriptHash: quote?.scriptHash || line.scriptHash,
+      options: {
+        process: quote?.process ?? line.options?.process,
+        material: quote?.material ?? line.options?.material,
+        infill: quote?.infill ?? line.options?.infill,
+      },
+      quotedUnitPrice: quote?.quotedUnitPrice,
+      quoteId: quote?.quoteId,
+      quotedAt: quote?.quotedAt,
+      updatedAt: iso,
+    }, iso);
+    return next || line;
+  });
+  return { ...state, lines };
+}
+
 export function removeCartLine(cart, lineId, now = new Date()) {
   const state = normalizeCart(cart);
   const iso = toCartIso(now);

@@ -33,6 +33,7 @@ import { useAuthState } from './hooks/useAuthState';
 import { CartChromeProvider, useCart } from './hooks/useCart';
 import CartSheet from './components/CartSheet';
 import CartDrop from './components/CartDrop';
+import CheckoutPage from './components/checkout/CheckoutPage';
 import { 
   importFile,
 } from './utils/importModel';
@@ -707,6 +708,7 @@ const App = () => {
   const [showOrderModal, setShowOrderModal] = useState(false);
   const [orderData, setOrderData] = useState(null);
   const [cartCheckout, setCartCheckout] = useState(null);
+  const [showCheckoutPage, setShowCheckoutPage] = useState(false);
   const cartCheckoutRef = useRef(null);
   cartCheckoutRef.current = cartCheckout;
   const onCartCheckoutRef = useRef(() => {});
@@ -6190,13 +6192,10 @@ const App = () => {
     setShowQuoteModal(true);
   };
 
-  onCartCheckoutRef.current = (queue) => {
-    const session = { lines: queue.lines, index: 0 };
-    cartCheckoutRef.current = session;
-    setCartCheckout(session);
-    setOrderData(null);
-    setShowOrderModal(false);
-    setShowQuoteModal(true);
+  // Cart checkout is one page. The per-line stepper stays mounted so a
+  // checkout already in flight (including an OAuth return) can finish.
+  onCartCheckoutRef.current = () => {
+    setShowCheckoutPage(true);
   };
 
   // Upload creates a new part. It never overwrites the script that is open.
@@ -7141,6 +7140,24 @@ const App = () => {
         </div>
         <CartSheet />
         <CartDrop />
+        {showCheckoutPage && (
+          <CheckoutPage
+            assemblyRef={assemblyRef}
+            partScriptsRef={partScriptsRef}
+            liveScriptRef={liveScriptRef}
+            partRunsRef={partRunsRef}
+            onClose={() => setShowCheckoutPage(false)}
+            onPaid={(lineIds) => {
+              for (const id of lineIds || []) {
+                if (id) cartChrome.removeLine(id);
+              }
+            }}
+            onOpenAccount={(tab) => {
+              setShowCheckoutPage(false);
+              handleOpenAccount(tab);
+            }}
+          />
+        )}
       </CartChromeProvider>
     );
   }
@@ -7479,6 +7496,24 @@ const App = () => {
       </div>
       <CartSheet />
       <CartDrop />
+      {showCheckoutPage && (
+        <CheckoutPage
+          assemblyRef={assemblyRef}
+          partScriptsRef={partScriptsRef}
+          liveScriptRef={liveScriptRef}
+          partRunsRef={partRunsRef}
+          onClose={() => setShowCheckoutPage(false)}
+          onPaid={(lineIds) => {
+            for (const id of lineIds || []) {
+              if (id) cartChrome.removeLine(id);
+            }
+          }}
+          onOpenAccount={(tab) => {
+            setShowCheckoutPage(false);
+            handleOpenAccount(tab);
+          }}
+        />
+      )}
     </CartChromeProvider>
   );
 };
