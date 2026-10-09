@@ -46,8 +46,8 @@ one shell you must change the other.
 - **Pencil** (`data-part-edit-script`) on each part row, blue, same size as the eye. It activates that part if needed and opens Monaco for it only.
 - **Desktop drawer** (`data-script-drawer-side="right"`): under the feature ribbon (`top: 8rem`), inset so the left rail stays clear, drag the left edge to resize, Escape or Back closes it.
 - **Phone sheet** (`data-script-sheet`, 390px): full-screen over the home pill, Back to CAD (`data-script-editor-close`). A stored Script stage is not restored on load.
-- **Temporary tray** (`data-cad-io-tray`, viewport top-left) while the editor is closed: Upload, Download. Order is the part-row cart button (`data-part-order`), not this tray. The puzzle is not in the tray. Run, Select all, Undo, and Redo are not in that tray.
-- **Puzzle easter egg** (`data-puzzle-unlock`, 44×44, viewport top-left, under the tray so the tray buttons stay clickable): five taps in three seconds while `useAuthState().signedIn` (grey reauth counts) call `handleStartGame` and show `data-puzzle-unlock-toast` ("Puzzle unlocked"). The taps are not stored. Signed-out and pending sessions have no target and no toast. Upload and Download still cover part of that corner.
+- **CAD corner.** There is no `data-cad-io-tray`. Upload and Download are on the Parts ribbon. Order is the part-row cart button (`data-part-order`). Run, Select all, Undo, and Redo stay in the editor.
+- **Puzzle easter egg** (`data-puzzle-unlock`, 44×44, viewport top-left): five taps in three seconds while `useAuthState().signedIn` (grey reauth counts) call `handleStartGame` and show `data-puzzle-unlock-toast` ("Puzzle unlocked"). The taps are not stored. Signed-out and pending sessions have no target and no toast. Nothing covers that corner.
 
 **The seam between the two panes is draggable** in both shells
 (`SplitDivider.jsx`, pointer-capture based): left/right on desktop
@@ -116,7 +116,13 @@ Desktop specifics:
   (`src/components/Viewport.jsx:3682`, `:3848`, `:3937`).
 - CAD title is the same "part in assembly" line as mobile. No toolbar carries it.
 - **Parts feed:** the same list as the mobile Parts stage, mounted to the left
-  of the editor (`data-parts-feed-placement="desktop-left"`). The assembly
+  of the editor (`data-parts-feed-placement="desktop-left"`). The ribbon's
+  left cluster is folder, **+**, then Upload (`data-part-upload`) and
+  Download (`data-part-download`). Upload adds a new part from STL, OBJ,
+  3MF, or STEP. Download saves the selected part as 3MF. Each row's Order
+  button (`data-part-order`) adds that part to the cart. A signed-in row
+  whose mesh is not in the vault yet shows `local only`
+  (`data-part-mesh-local`). The assembly
   name sits in the middle of the ribbon (`data-parts-ribbon-center`).
   Signed out (local, no GitHub token), the **+** menu (`data-part-add-dropdown`)
   and the folder menu (`data-part-open-dropdown`) both offer **Part** and

@@ -11,11 +11,10 @@ const TOAST_MS = 3200;
 /**
  * Hidden 44×44 corner of the CAD view.
  *
- * Placement: the square is the viewport's top-left (`top: 0`, `left: 0`),
- * stacked under the temporary IO tray (`z-20` under the tray's `z-30`).
- * On a phone the tray (`left-2 top-3`) covers its own buttons, so Upload,
- * Download, and Order stay clickable. The corner the tray does not cover
- * is the tap target. The square is not shifted off the corner.
+ * Placement: the square is the viewport's top-left (`top: 0`, `left: 0`,
+ * `z-20`). The IO tray is gone, so this corner is the tap target. The
+ * square is not shifted off the corner. The placement marker stays
+ * `under-io-tray`.
  *
  * A tap calls stopPropagation and keeps pointer capture, so
  * TrackballControls (listening on the canvas) never sees it and the

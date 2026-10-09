@@ -1,7 +1,7 @@
-import React, { useRef } from 'react';
+import React from 'react';
 import {
-  Download, Undo, Redo,
-  Upload, ArrowLeft, Play, BookOpen, List, SquareDashedBottomCode
+  Undo, Redo,
+  ArrowLeft, Play, BookOpen, List, SquareDashedBottomCode
 } from 'lucide-react';
 import { formatGameTime } from '../utils/gamePuzzle';
 
@@ -10,61 +10,34 @@ import { formatGameTime } from '../utils/gamePuzzle';
  * - CAD (both shells): action bar in the Monaco mid-strip, above the editor.
  *   Desktop used to float a collapsible overlay over the viewport; it now matches
  *   phone, so there is no overlay and no collapse chevron for CAD at all.
- *   G12: Script I/O is Upload + Download only (model import/export). File Open /
- *   Save and vault chrome live on Parts (G11).
+ *   Model Upload and Download live on the Parts ribbon. Order is the part-row
+ *   cart button. This strip keeps Run, Select all, Undo, and Redo. The CAD
+ *   tray is gone. The puzzle is the corner easter egg.
  * - Game: the same strip, rendered inline by CodeEditor (variant="strip"), with an
  *   overlay fallback for any non-strip caller.
  */
 const Toolbar = ({
   mode = 'cad',
   variant = 'overlay',
-  onDownload,
-  onUpload,
   onUndo,
   onRedo,
   canUndo,
   canRedo,
   isExecuting,
-  isDownloading,
-  isUploading,
   onExitGame,
   onRun,
   /** CAD strip Run — executes the live editor buffer (game uses onRun). */
   onRunScript,
   /** CAD strip Select all — drives the editor through App's ref. */
   onSelectAll,
-  /**
-   * `full` is the editor ribbon (Run, Select all, history, model I/O).
-   * `io` is the temporary CAD-view cluster: Upload and Download.
-   * Order lives on the part row. The puzzle is not a button here.
-   * Undo/redo stay on the feature bar. Run and Select all stay in the editor.
-   */
-  chrome = 'full',
   onHint,
   onPickPuzzle,
   gameElapsedMs = 0,
   gameSuccess = false,
   gameBestTimeMs = null,
 }) => {
-  const uploadModelRef = useRef(null);
-
   const isGame = mode === 'game';
   const isStrip = variant === 'strip';
-
-  const handleModelUpload = async (event) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    try {
-      await onUpload(file);
-    } catch (err) {
-      console.error('Error uploading STEP file:', err);
-    }
-
-    if (uploadModelRef.current) {
-      uploadModelRef.current.value = '';
-    }
-  };
 
   // ── Game mode: back, undo/redo, run, picker, hint (BookOpen only) ──
   // Slice 08: rendered inline in CodeEditor mid-strip (no absolute overlay,
@@ -185,28 +158,15 @@ const Toolbar = ({
     const icon = 18;
     const blue = 'text-blue-400';
     const divider = 'shrink-0 w-px bg-gray-600 mx-0.5 self-stretch my-1';
-    const ioOnly = chrome === 'io';
     return (
       <div
         className="flex items-center gap-0.5 sm:gap-1 flex-1 min-w-0 overflow-x-auto"
         data-toolbar-variant="strip"
-        data-toolbar-chrome={ioOnly ? 'io' : 'full'}
+        data-toolbar-chrome="full"
       >
-        <input
-          type="file"
-          ref={uploadModelRef}
-          onChange={handleModelUpload}
-          className="hidden"
-          accept=".stl,.obj,.3mf,.step,.stp"
-          data-script-upload-input=""
-        />
-
-        {/* Run and Select all are code-only. The temporary CAD tray omits them. */}
-        {!ioOnly && (
-        <>
         {/* Run is first and sits in its own section: it is the one button you
-            press over and over, and it must not be one slot away from Upload.
-            Green while idle, spinner while the script is executing. */}
+            press over and over. Green while idle, spinner while the script
+            is executing. */}
         <button
           type="button"
           onClick={onRunScript}
@@ -242,48 +202,9 @@ const Toolbar = ({
           <SquareDashedBottomCode size={icon} />
         </button>
         <div className={divider} />
-        </>
-        )}
-
-        {/* G12: Script model I/O is Upload + Download only. File Open/Save and
-            vault Commit/Branch/Open live on Parts (G11). */}
-        <button
-          type="button"
-          onClick={() => uploadModelRef.current?.click()}
-          disabled={isUploading || isExecuting}
-          className={`${btn} ${blue} disabled:opacity-50`}
-          title="Upload model (STEP/STL/OBJ/3MF)"
-          aria-label="Upload model"
-          data-script-upload=""
-        >
-          {isUploading ? (
-            <div className="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
-          ) : (
-            <Upload size={icon} />
-          )}
-        </button>
-        <button
-          type="button"
-          onClick={onDownload}
-          disabled={isDownloading || isExecuting}
-          className={`${btn} ${blue} disabled:opacity-50`}
-          title="Download model"
-          aria-label="Download model"
-          data-script-download=""
-        >
-          {isDownloading ? (
-            <div className="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
-          ) : (
-            <Download size={icon} />
-          )}
-        </button>
 
         {/* Undo/redo already sit on the CAD feature bar. The editor ribbon
-            keeps them; the temporary tray does not add another pair. */}
-        {!ioOnly && (
-        <>
-        <div className={divider} />
-
+            keeps them too. */}
         <button
           type="button"
           onClick={onUndo}
@@ -302,8 +223,6 @@ const Toolbar = ({
         >
           <Redo size={icon} />
         </button>
-        </>
-        )}
       </div>
     );
   }

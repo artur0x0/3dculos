@@ -907,10 +907,16 @@ class ManifoldContext {
       throw new Error('ManifoldContext not initialized');
     }
     
-    // Gather imported models from cache
-    const importedModels = {};
-    for (const [filename, meshData] of this.meshCache) {
-      importedModels[filename] = meshData;
+    // The caller resolved this script's meshes on the main thread.
+    // An omitted map still means the legacy filename cache.
+    let importedModels;
+    if (options.importedModels && typeof options.importedModels === 'object') {
+      importedModels = options.importedModels;
+    } else {
+      importedModels = {};
+      for (const [filename, meshData] of this.meshCache) {
+        importedModels[filename] = meshData;
+      }
     }
     
     const result = await this.worker.execute(script, {

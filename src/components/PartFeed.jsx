@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Eye, EyeOff, FolderOpen, GripVertical, Loader2, Pencil, Plus, Save, Trash2, Truck } from 'lucide-react';
+import { Download, Eye, EyeOff, FolderOpen, GripVertical, Loader2, Pencil, Plus, Save, Trash2, Truck, Upload } from 'lucide-react';
 import { partCanDeleteFromRepo, partListDeleteAction, sanitizeAssemblyName, sanitizePartName } from '../utils/assembly.js';
 import { partListSubtitles } from '../utils/git/partListSubtitle.js';
 import {
@@ -16,6 +16,7 @@ import ProfileChip from './ProfileChip';
 import VaultPickerDialog from './VaultPickerDialog';
 import { useAuthState } from '../hooks/useAuthState';
 import { useCartChrome } from '../hooks/useCart';
+import { localMeshBadgeTitle, showLocalMeshBadge } from '../utils/meshAssets.js';
 import {
   PART_PREVIEW_SIZE,
   blitPartPreview,
@@ -353,10 +354,20 @@ export default function PartFeed({
   onSignedOut = null,
   onClearLocalCadData = null,
   profileVaultName = null,
+  onUpload = null,
+  onDownload = null,
+  isUploading = false,
+  isDownloading = false,
 }) {
   const gitSession = useAuthState();
   const cartChrome = useCartChrome();
   const openTarget = gitSession.openTarget;
+  const uploadRef = useRef(null);
+  const meshBadge = (row) => showLocalMeshBadge({
+    signedIn: gitSession.signedIn,
+    meshLocal: row.meshLocal === true,
+    meshSynced: row.meshSynced === true,
+  });
   const [renamingId, setRenamingId] = useState(null);
   const [collapsedGroups, setCollapsedGroups] = useState({});
   const [menuGroupId, setMenuGroupId] = useState(null);
@@ -1228,6 +1239,16 @@ export default function PartFeed({
                   editing={renamingId === row.id}
                   setEditing={(on) => setRenamingId(on ? row.id : null)}
                 />
+                {meshBadge(row) ? (
+                  <span
+                    data-part-mesh-local=""
+                    data-part-mesh-vault={gitSession.githubConnected ? 'connected' : 'offline'}
+                    title={localMeshBadgeTitle(gitSession.githubConnected)}
+                    className="mt-0.5 inline-flex rounded-full bg-amber-400/15 px-1.5 py-px text-[10px] font-medium text-amber-200"
+                  >
+                    local only
+                  </span>
+                ) : null}
                 {(subtitle || behindSet.has(row.id)) ? (
                 <div className="flex items-center gap-1 truncate text-[10px] text-gray-500">
                   {subtitle ? (
@@ -1518,6 +1539,51 @@ export default function PartFeed({
               </div>
             )}
           </div>
+          <input
+            ref={uploadRef}
+            type="file"
+            accept=".stl,.obj,.3mf,.step,.stp"
+            className="hidden"
+            data-part-upload-input=""
+            data-script-upload-input=""
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              event.target.value = '';
+              if (file) onUpload?.(file);
+            }}
+          />
+          <button
+            type="button"
+            className={`${STRIP_BTN} disabled:opacity-50`}
+            data-part-upload=""
+            data-script-upload=""
+            title="Upload model (STL, OBJ, 3MF, STEP)"
+            aria-label="Upload model"
+            disabled={isUploading}
+            onClick={() => uploadRef.current?.click()}
+          >
+            {isUploading ? (
+              <Loader2 size={STRIP_ICON} className="animate-spin" />
+            ) : (
+              <Upload size={STRIP_ICON} />
+            )}
+          </button>
+          <button
+            type="button"
+            className={`${STRIP_BTN} disabled:opacity-50`}
+            data-part-download=""
+            data-script-download=""
+            title="Download the selected part as 3MF"
+            aria-label="Download part"
+            disabled={isDownloading}
+            onClick={() => onDownload?.()}
+          >
+            {isDownloading ? (
+              <Loader2 size={STRIP_ICON} className="animate-spin" />
+            ) : (
+              <Download size={STRIP_ICON} />
+            )}
+          </button>
         </div>
         <div
           className="relative z-10 flex min-w-0 flex-1 items-center justify-center px-1"

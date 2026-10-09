@@ -73,20 +73,22 @@ console.log('hidden script editor, pencil drawer and sheet');
     && /editorLiveRef\.current/.test(app)
     && /\}, 600\);/.test(app)
     && !/setEditorInitialScript\(DEFAULT_SCRIPT\)/.test(app));
-  check('temporary tray is upload and download; order is the part row',
-    /data-cad-io-tray/.test(view)
-    && /data-cad-io-tray-placement="viewport-top-left"/.test(view)
-    && /chrome="io"/.test(view)
-    && /chrome === 'io'/.test(toolbar)
-    && /data-script-upload/.test(toolbar)
-    && /data-script-download/.test(toolbar)
+  check('io tray is gone; upload and download are on the parts ribbon; order is the part row',
+    !/data-cad-io-tray/.test(view)
+    && !/chrome="io"/.test(view)
+    && !/chrome === 'io'/.test(toolbar)
+    && !/data-script-upload/.test(toolbar)
+    && !/data-script-download/.test(toolbar)
+    && /data-part-upload/.test(feed)
+    && /data-part-download/.test(feed)
+    && /data-script-upload/.test(feed)
+    && /data-script-download/.test(feed)
     && !/Get Quote/.test(toolbar)
     && !/onQuote/.test(toolbar)
     && /data-part-order=\{row\.id\}/.test(feed)
     && !/Play match-the-part puzzle/.test(toolbar)
     && !/onStartGame/.test(toolbar)
     && /PuzzleUnlock/.test(view)
-    && /!ioOnly &&/.test(toolbar)
     && /data-cad-run/.test(toolbar)
     && /data-cad-select-all/.test(toolbar));
   check('editor ribbon still hosts the full CAD strip',

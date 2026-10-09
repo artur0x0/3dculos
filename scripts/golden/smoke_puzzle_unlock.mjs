@@ -54,19 +54,20 @@ console.log('puzzle easter egg');
     && /<PuzzleUnlock enabled=\{mode !== 'game'\} onUnlock=\{onStartGame\} \/>/.test(view)
     && /onStartGame=\{handleStartGame\}/.test(app)
     && /const handleStartGame = \(\) => \{/.test(app));
-  check('hit area is 44px at the top-left, under the tray, and does not drag',
+  check('hit area is 44px at the top-left and does not drag',
     /data-puzzle-unlock-placement="under-io-tray"/.test(unlock)
     && /width: 44, height: 44/.test(unlock)
     && /z-20/.test(unlock)
-    && /data-cad-io-tray/.test(view)
-    && /z-30/.test(view)
+    && !/data-cad-io-tray/.test(view)
     && /stopPropagation\(\)/.test(unlock)
     && /isStationaryTap/.test(unlock));
-  check('tray and editor ribbon have no puzzle button',
+  check('editor ribbon has no puzzle button; upload lives on the parts ribbon',
     !/Play match-the-part puzzle/.test(toolbar)
     && !/onStartGame/.test(toolbar)
-    && /data-script-upload/.test(toolbar)
-    && /data-script-download/.test(toolbar)
+    && !/data-script-upload/.test(toolbar)
+    && !/data-script-download/.test(toolbar)
+    && /data-part-upload/.test(read('../../src/components/PartFeed.jsx'))
+    && /data-script-upload/.test(read('../../src/components/PartFeed.jsx'))
     && !/Get Quote/.test(toolbar));
   check('unlock toast is present and the sequence is not stored',
     /data-puzzle-unlock-toast/.test(unlock)

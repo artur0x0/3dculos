@@ -210,7 +210,7 @@ const convertStepToManifold = async (file, deflection = 0.1) => {
 /**
  * Import STEP file via backend
  */
-export const importStepFile = async (file, deflection = 0.1) => {
+export const importStepFile = async (file, deflection = 0.1, options = {}) => {
   const startTime = Date.now();
   const filename = file.name;
   
@@ -225,9 +225,10 @@ export const importStepFile = async (file, deflection = 0.1) => {
     
     const meshData = response.data;
     
-    // Cache
-    await cacheManifoldData(filename, meshData);
-    manifoldContext.cacheImportedModel(filename, meshData);
+    if (!options.skipCache) {
+      await cacheManifoldData(filename, meshData);
+      manifoldContext.cacheImportedModel(filename, meshData);
+    }
     
     const script = generateImportScript(filename, meshData.volume);
     
@@ -249,7 +250,7 @@ export const importStepFile = async (file, deflection = 0.1) => {
  * Import STL, OBJ, or 3MF file
  * Converts to OBJ internally for reliable Manifold construction
  */
-export const importMeshFile = async (file) => {
+export const importMeshFile = async (file, options = {}) => {
   const startTime = Date.now();
   const filename = file.name;
   const ext = getExtension(filename);
@@ -291,9 +292,10 @@ export const importMeshFile = async (file) => {
       throw new Error('Failed to create Manifold from mesh');
     }
     
-    // Step 4: Cache
-    await cacheManifoldData(filename, result.mesh);
-    manifoldContext.cacheImportedModel(filename, result.mesh);
+    if (!options.skipCache) {
+      await cacheManifoldData(filename, result.mesh);
+      manifoldContext.cacheImportedModel(filename, result.mesh);
+    }
     
     // Step 5: Generate script
     const script = generateImportScript(filename, result.volume);
@@ -326,9 +328,9 @@ export const importFile = async (file, options = {}) => {
   const filename = file.name;
   
   if (isFrontendFormat(filename)) {
-    return importMeshFile(file);
+    return importMeshFile(file, options);
   } else if (isBackendFormat(filename)) {
-    return importStepFile(file, options.deflection || 0.1);
+    return importStepFile(file, options.deflection || 0.1, options);
   } else {
     const ext = getExtension(filename);
     throw new Error(`Unsupported format: ${ext}. Supported: STL, OBJ, 3MF, STEP, STP`);

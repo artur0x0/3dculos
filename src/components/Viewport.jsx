@@ -300,8 +300,8 @@ import {
   stampBoundaryOnSelection,
   filletOverlayTargets,
 } from '../utils/boundaryEdgeIds';
-import { downloadModelFromMesh, get3MFBase64FromMesh } from '../utils/exportModel';
-import { parseImportedModels, loadCachedModel } from '../utils/importModel';
+import { get3MFBase64FromMesh } from '../utils/exportModel';
+import { missingMeshMessage, resolvePartMeshes } from '../utils/meshAssets';
 import { calculateQuote } from '../utils/quoting';
 import { resolveViewportFaceClick, warmFaceGraph } from '../utils/selectFace';
 import {
@@ -655,7 +655,6 @@ const Viewport = forwardRef(({
   profileVaultName = null,
   currentScript, 
   onFaceSelected,
-  onUpload,
   onUndo,
   onRedo,
   canUndo,
@@ -668,7 +667,6 @@ const Viewport = forwardRef(({
   onRenameFile = null,
   /** Same click-to-edit as the part chip. Writes the document name. */
   onRenameAssembly = null,
-  isUploading,
   mode = 'cad',
   ghostMeshData = null,
   onStartGame,
@@ -721,13 +719,6 @@ const Viewport = forwardRef(({
   getHelperBuffer = null,
   /** Mobile CAD mid-strip host (CodeEditor). Null on desktop and in game. */
   cadToolbarHost = null,
-  /**
-   * When the script editor is closed, Upload and Download stay
-   * reachable in a temporary tray. Order is the part-row cart button.
-   * Run and Select all stay in the editor.
-   * The puzzle is the corner easter egg, not a tray button.
-   */
-  scriptEditorVisible = true,
   /** CAD Run. When set, the strip runs the assembly instead of one script. */
   onRunAssembly = null,
   /** Slice Mobile C: long-press on body opens feature sheet (mobile CAD only). */
@@ -1143,7 +1134,6 @@ const Viewport = forwardRef(({
   useEffect(() => {
     if (executionError) setFeatureDeleteToast(null);
   }, [executionError]);
-  const [isDownloading, setIsDownloading] = useState(false);
   
   // Cross-section state
   const [crossSectionEnabled, setCrossSectionEnabled] = useState(false);
@@ -7154,13 +7144,16 @@ const Viewport = forwardRef(({
         return false;
       }
 
-      // Step 2: Load cached models into ManifoldContext
-      const importedModels = parseImportedModels(script);
-      for (let i = 0; i < importedModels.length; i++) {
-        const modelData = await loadCachedModel(importedModels[i]);
-        if (modelData) {
-          manifoldContext.cacheImportedModel(importedModels[i], modelData);
-        }
+      // Step 2: Resolve meshes on this thread. The worker cannot touch
+      // IndexedDB. importMesh names come from the part record; legacy
+      // __importedManifolds names still come from SurfDB. An assembly run
+      // names the part; the ref still points at the previous solid until
+      // placeAssembly.
+      const meshPartId = opts.partId != null ? opts.partId : activePartIdRef.current;
+      if (opts.partId != null) activePartIdRef.current = opts.partId;
+      const prepared = await resolvePartMeshes(meshPartId, script);
+      if (prepared.missing.length) {
+        throw new Error(missingMeshMessage(prepared.missing));
       }
       
       // An assembly open may have taken the worker during import loading.
@@ -7178,6 +7171,7 @@ const Viewport = forwardRef(({
         timeoutMs: EXECUTION_LIMITS.timeoutMs,
         memoryLimitMB: EXECUTION_LIMITS.memoryLimitMB,
         nonce,
+        importedModels: prepared.importedModels,
       });
       
       if (abortController.aborted) {
@@ -8077,25 +8071,6 @@ const Viewport = forwardRef(({
     executeScript();
   }, [executeScript, onRunAssembly]);
 
-  const handleDownloadModel = useCallback(async () => {
-    if (!cachedMeshData?.vertProperties) {
-      setExecutionError('No model to export');
-      return;
-    }
-
-    setIsDownloading(true);
-
-    try {
-      const filename = currentFilename || 'model';
-      await downloadModelFromMesh(cachedMeshData, filename);
-    } catch (error) {
-      console.error('[Viewport] Export error:', error);
-      setExecutionError(`Export failed: ${error.message}`);
-    } finally {
-      setIsDownloading(false);
-    }
-  }, [cachedMeshData, currentFilename]);
-
   const paintSurfId = () => (
     resultRef.current?.userData?.surfId
     || partSurfIdRef.current.get(String(activePartIdRef.current || ''))
@@ -8216,12 +8191,7 @@ const Viewport = forwardRef(({
     typeof assemblyName === 'string' ? assemblyName : '',
   );
 
-  const titleClearsTray = mode !== 'game' && !scriptEditorVisible;
-  const titlePlace = !titleClearsTray
-    ? 'left-1/2 -translate-x-1/2 max-w-[min(36rem,calc(100%-2rem))]'
-    : isMobile
-      ? 'left-40 right-14 justify-center'
-      : 'left-1/2 -translate-x-1/2 max-w-[min(28rem,calc(100%-13rem))]';
+  const titlePlace = 'left-1/2 -translate-x-1/2 max-w-[min(36rem,calc(100%-2rem))]';
 
   return (
     <div ref={containerRef} className="viewport-shell relative w-full h-full bg-[#1e1e1e] overflow-hidden">
@@ -8253,60 +8223,22 @@ const Viewport = forwardRef(({
         <ProfileChip variant="viewport" onAccount={onAccount} onSignedOut={onSignedOut} onClearLocalCadData={onClearLocalCadData} vaultName={profileVaultName} />
       )}
 
-      {/* Five taps in this corner enter the puzzle. It sits under the tray. */}
+      {/* Five taps in this corner enter the puzzle. The IO tray is gone, so the corner itself is the target. */}
       <PuzzleUnlock enabled={mode !== 'game'} onUnlock={onStartGame} />
 
-      {/* Temporary home for Upload and Download while Monaco is hidden.
-          Order is the part-row button. Undo/redo stay on the feature bar.
-          The puzzle is not one of these buttons. */}
-      {mode !== 'game' && !scriptEditorVisible && (
-        <div
-          data-cad-io-tray=""
-          data-cad-io-tray-placement="viewport-top-left"
-          className="absolute left-2 top-3 z-30 flex max-w-[calc(100%-5.5rem)] items-center overflow-hidden rounded-md border border-white/10 bg-gray-900/90 px-0.5 shadow-lg"
-        >
-          <Toolbar
-            mode="cad"
-            variant="strip"
-            chrome="io"
-            onDownload={handleDownloadModel}
-            onUpload={onUpload}
-            onUndo={onUndo}
-            onRedo={onRedo}
-            canUndo={canUndo}
-            canRedo={canRedo}
-            isExecuting={isExecuting}
-            isDownloading={isDownloading}
-            isUploading={isUploading}
-            onExitGame={onExitGame}
-            onRun={onRun}
-            onRunScript={runCadScript}
-            onSelectAll={onSelectAll}
-            onHint={onHint}
-            onPickPuzzle={onPickPuzzle}
-            gameElapsedMs={gameElapsedMs}
-            gameSuccess={gameSuccess}
-            gameBestTimeMs={gameBestTimeMs}
-          />
-        </div>
-      )}
-
       {/* CAD chrome lives in the editor mid-strip in BOTH shells (desktop matches
-          phone now): rendered here so download/export busy state stays local —
-          and so Run can execute the live buffer without a round trip via App. */}
+          phone now): rendered here so Run can execute the live buffer without
+          a round trip via App. Upload and Download are on the Parts ribbon.
+          Order is the part-row cart button. */}
       {mode !== 'game' && cadToolbarHost && createPortal(
         <Toolbar
           mode="cad"
           variant="strip"
-          onDownload={handleDownloadModel}
-          onUpload={onUpload}
           onUndo={onUndo}
           onRedo={onRedo}
           canUndo={canUndo}
           canRedo={canRedo}
           isExecuting={isExecuting}
-          isDownloading={isDownloading}
-          isUploading={isUploading}
           onExitGame={onExitGame}
           onRun={onRun}
           onRunScript={runCadScript}
@@ -8328,7 +8260,6 @@ const Viewport = forwardRef(({
         showCadTitle ? (
         <div
           className={`pointer-events-none absolute top-4 z-10 flex items-center gap-2 ${titlePlace}`}
-          data-viewer-title-clearance={titleClearsTray ? 'io-tray' : undefined}
           data-viewer-title=""
           data-viewer-title-text={titleParts.text}
         >

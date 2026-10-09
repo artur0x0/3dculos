@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * G12 Script strip: model Upload + Download only. File Open/Save and vault
- * chrome live on Parts (G11). Editor actions (Run, Select all, Undo/Redo,
- * Quote) stay on the Script strip. The puzzle is not a strip button.
+ * G12: model Upload and Download live on the Parts ribbon. File Open/Save and
+ * vault chrome stay off the Script strip. Editor actions (Run, Select all,
+ * Undo/Redo) stay on the Script strip. Order is the part row. The puzzle is not a strip button.
  */
 import { readFileSync } from 'node:fs';
 
@@ -19,16 +19,19 @@ const view = readFileSync(new URL('../../src/components/Viewport.jsx', import.me
 const feed = readFileSync(new URL('../../src/components/PartFeed.jsx', import.meta.url), 'utf8');
 const arch = readFileSync(new URL('../../docs/architecture.md', import.meta.url), 'utf8');
 
-console.log('git G12 — Script Upload + Download only');
+console.log('git G12 — Parts ribbon Upload + Download');
 
-ok('Upload + Download markers', /data-script-upload=""/.test(toolbar) && /data-script-download=""/.test(toolbar));
+ok('Upload + Download markers on the Parts ribbon',
+  /data-script-upload=""/.test(feed) && /data-script-download=""/.test(feed)
+  && /data-part-upload=""/.test(feed) && /data-part-download=""/.test(feed)
+  && !/data-script-upload/.test(toolbar) && !/data-script-download/.test(toolbar));
 ok('no file Open on Script', !/title="Open File"/.test(toolbar) && !/FolderOpen/.test(toolbar)
   && !/accept="\.js,\.txt"/.test(toolbar) && !/handleFileSelect/.test(toolbar));
 ok('no file Save on Script', !/\bonSave\b/.test(toolbar) && !/\bSave\b/.test(toolbar.split('from \'lucide-react\'')[0])
   && !/Save As/.test(toolbar));
 ok('no vault chrome on Script Toolbar', !/data-git-commit/.test(toolbar) && !/data-git-branches/.test(toolbar)
   && !/data-git-save/.test(toolbar) && !/Move to Git/.test(toolbar) && !/GitBranch/.test(toolbar));
-ok('model accept types kept', /accept="\.stl,\.obj,\.3mf,\.step,\.stp"/.test(toolbar));
+ok('model accept types kept', /accept="\.stl,\.obj,\.3mf,\.step,\.stp"/.test(feed));
 ok('editor actions remain', /data-cad-run/.test(toolbar) && /data-cad-select-all/.test(toolbar)
   && /title="Undo"/.test(toolbar) && /title="Redo"/.test(toolbar)
   && !/Get Quote/.test(toolbar) && !/Play match-the-part puzzle/.test(toolbar)
