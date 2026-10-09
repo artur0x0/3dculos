@@ -102,10 +102,16 @@ export function dirtyPartIds(doc, scripts, baseline, { liveId = null, liveScript
   return out;
 }
 
-/** Assembly and/or any part dirty (or awaiting legacy-layout rewrite). */
+/**
+ * Assembly and/or any part dirty (or awaiting legacy-layout rewrite).
+ * `renamePending` is an assembly rename that is queued but not on the tip
+ * yet: the name already matches the working copy, and the yellow dot stays
+ * until that commit lands.
+ */
 export function isWorkspaceDirty(doc, scripts, baseline, opts) {
   if (!baseline) return false;
   if (baseline.legacyCleanup) return true;
+  if (baseline.renamePending) return true;
   if (isAssemblyDirty(doc, baseline)) return true;
   return dirtyPartIds(doc, scripts, baseline, opts).size > 0;
 }

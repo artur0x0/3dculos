@@ -303,6 +303,14 @@ export function createSyncStore({ persist = true } = {}) {
     return assemblies.get(`${repoKeyOf(repo)}\0${path}`) ?? null;
   }
 
+  async function dropAssembly(repo, path) {
+    await ready;
+    if (!path) return;
+    const slot = `${repoKeyOf(repo)}\0${path}`;
+    assemblies.delete(slot);
+    await persistKv(`asm:${slot}`, null);
+  }
+
   async function rememberPathId(repo, path, surfId) {
     await ready;
     if (!path || !surfId) return;
@@ -441,6 +449,14 @@ export function createSyncStore({ persist = true } = {}) {
     return { moved, from, to };
   }
 
+  async function dropPathId(repo, path) {
+    await ready;
+    if (!path) return;
+    const slot = `${repoKeyOf(repo)}\0${path}`;
+    pathIndex.delete(slot);
+    await persistKv(`path:${slot}`, null);
+  }
+
   function pathIndexFor(repo) {
     const prefix = `${repoKeyOf(repo)}\0`;
     const out = {};
@@ -471,7 +487,9 @@ export function createSyncStore({ persist = true } = {}) {
     getAlias,
     putAssembly,
     getAssembly,
+    dropAssembly,
     rememberPathId,
+    dropPathId,
     pathIndexFor,
     putTree,
     getTree,
