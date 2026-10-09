@@ -19,6 +19,10 @@ npm run preview
 
 GitHub sign-in needs the Express app in `backend/` (`npm run dev` there) and a Client ID (`VITE_GITHUB_APP_CLIENT_ID` or `/api/config`). Local CAD does not.
 
+## FEA
+
+The solver crate is `packages/surfcad-fea` (Apache-2.0). CalculiX is GPL-2.0-only and is not part of the build. CI may install the `ccx` binary with apt and compare displacements and von Mises against it. That binary is never vendored, linked, bundled, or committed, and it is never a Cargo dependency. The license gate and `cargo deny` stay closed to GPL. Details are in [packages/surfcad-fea/README.md](packages/surfcad-fea/README.md).
+
 ## Goldens
 
 `npm run verify` runs the external harness (`cadgen-workspace/harness/verify_all.mjs`). The contract is [VALIDATION.md](VALIDATION.md). Two pilot parts are known exclusions and report `fail(expected)`: `9771f32b` (a script that wedges the worker) and `f6f416e1` (no transpiled script).
