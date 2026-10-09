@@ -152,10 +152,14 @@ async function solidReady(page) {
   await page.waitForFunction(() => {
     const spinner = document.querySelector('[data-assembly-open-spinner]');
     const solids = document.querySelector('[data-assembly-solids]')?.getAttribute('data-assembly-solids');
-    const pending = window.__MANIFOLD_CONTEXT__?.worker?.pendingRequests?.size || 0;
-    return !spinner && solids === '1' && pending === 0 && window.__MANIFOLD_CONTEXT__?.isReady;
+    const ctx = window.__MANIFOLD_CONTEXT__;
+    const pending = ctx?.worker?.pendingRequests?.size || 0;
+    // Production preview does not publish the dev worker hook. The solid
+    // count and the open spinner are the signals that exist in both builds.
+    const booted = !ctx || ctx.isReady === true;
+    return !spinner && solids === '1' && pending === 0 && booted;
   }, null, { timeout: 40000 });
-  await page.waitForTimeout(250);
+  await page.waitForTimeout(400);
 }
 
 function installProbe(page) {
