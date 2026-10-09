@@ -13,7 +13,8 @@
  */
 import { GitAdapterError, assertGithubAdapter } from './githubAdapterInterface.js';
 import { normalizeRepoPath } from '../assembly.js';
-import { VAULT_MARKER_PATH } from './vaultLayout.js';
+import { decodeBase64, encodeBase64, prepareCommitFiles } from './binaryContent.js';
+import { parseVaultPath, VAULT_MARKER_PATH } from './vaultLayout.js';
 import { isVaultMarker, vaultWriteRefusalMessage } from './vaultNames.js';
 
 /**
@@ -227,13 +228,23 @@ export function createGithubAdapter({ token, fetchImpl = globalThis.fetch, apiBa
    * Contents API creates the branch; multi-file then replaces with one root
    * commit via Git Data + force-update so callers still see parents: [].
    */
+  function blobApiBody(file) {
+    if (file?.binary) return { content: encodeBase64(file.content), encoding: 'base64' };
+    return { content: String(file?.content ?? ''), encoding: 'utf-8' };
+  }
+
+  function contentsBase64(file) {
+    if (file?.binary) return encodeBase64(file.content);
+    return encodeBase64Utf8(file?.content ?? '');
+  }
+
   async function commitFilesOnEmptyRepo(repo, { target, message, files }) {
     const writes = [];
     for (const f of files) {
       const path = normalizeRepoPath(f?.path);
       if (!path) throw new GitAdapterError('invalid', `Bad path "${f?.path}"`);
       if (f.delete) continue; // nothing to delete on an empty repo
-      writes.push({ path, content: String(f.content ?? '') });
+      writes.push({ path, content: f.content, binary: !!f.binary });
     }
     if (writes.length === 0) {
       throw new GitAdapterError('invalid', 'commitFiles needs at least one file');
@@ -248,7 +259,7 @@ export function createGithubAdapter({ token, fetchImpl = globalThis.fetch, apiBa
         method: 'PUT',
         body: {
           message: writes.length === 1 ? msg : 'Initialize empty repository',
-          content: encodeBase64Utf8(first.content),
+          content: contentsBase64(first),
           branch: target,
         },
       },
@@ -271,7 +282,7 @@ export function createGithubAdapter({ token, fetchImpl = globalThis.fetch, apiBa
     for (const w of writes) {
       const { res, data } = await json(`${repoPath(repo)}/git/blobs`, {
         method: 'POST',
-        body: { content: w.content, encoding: 'utf-8' },
+        body: blobApiBody(w),
       });
       if (!res.ok) throw new GitAdapterError('invalid', data?.message || 'blob create failed');
       treeEntries.push({ path: w.path, mode: '100644', type: 'blob', sha: data.sha });
@@ -445,9 +456,29 @@ export function createGithubAdapter({ token, fetchImpl = globalThis.fetch, apiBa
       return { path: p, content, sha: data.sha };
     },
 
-    async commitFiles(repo, { branch, message, files, baseSha, seed = false } = {}) {
+    /**
+     * Binary read. GET /git/blobs/:sha (base64). Never the Contents API.
+     * Returns a Uint8Array, or null when the sha is missing.
+     */
+    async readBlob(repo, sha) {
+      const id = String(sha || '');
+      if (!id) return null;
+      const { res, data } = await json(`${repoPath(repo)}/git/blobs/${encodeURIComponent(id)}`);
+      if (res.status === 404) return null;
+      if (!res.ok) throw new GitAdapterError('invalid', data?.message || 'readBlob failed');
+      if (data?.encoding && data.encoding !== 'base64') {
+        throw new GitAdapterError('invalid', `Unexpected blob encoding ${data.encoding}`);
+      }
+      return decodeBase64(data?.content || '');
+    },
+
+    async commitFiles(repo, { branch, message, files, baseSha, seed = false, onLargeFile } = {}) {
       if (!Array.isArray(files) || files.length === 0) {
         throw new GitAdapterError('invalid', 'commitFiles needs at least one file');
+      }
+      const prepared = await prepareCommitFiles(files);
+      if (typeof onLargeFile === 'function') {
+        for (const item of prepared.largeFiles) onLargeFile(item);
       }
       repo = await guardVaultWrite(repo, { seed, files, ref: branch || null });
       const info = await this.getRepo(repo);
@@ -474,7 +505,8 @@ export function createGithubAdapter({ token, fetchImpl = globalThis.fetch, apiBa
       // Empty repo: Git Data API (POST /git/blobs) returns 409 "Git Repository
       // is empty." Contents API can create the first commit and the branch.
       if (!head) {
-        return commitFilesOnEmptyRepo(repo, { target, message, files });
+        const created = await commitFilesOnEmptyRepo(repo, { target, message, files: prepared.files });
+        return { ...created, largeFiles: prepared.largeFiles };
       }
 
       let baseEntries = [];
@@ -493,7 +525,7 @@ export function createGithubAdapter({ token, fetchImpl = globalThis.fetch, apiBa
       }
 
       const byPath = new Map(baseEntries.map((e) => [e.path, e]));
-      for (const f of files) {
+      for (const f of prepared.files) {
         const path = normalizeRepoPath(f?.path);
         if (!path) throw new GitAdapterError('invalid', `Bad path "${f?.path}"`);
         if (f.delete) {
@@ -501,7 +533,7 @@ export function createGithubAdapter({ token, fetchImpl = globalThis.fetch, apiBa
         } else {
           const { res, data } = await json(`${repoPath(repo)}/git/blobs`, {
             method: 'POST',
-            body: { content: String(f.content ?? ''), encoding: 'utf-8' },
+            body: blobApiBody(f),
           });
           if (!res.ok) throw new GitAdapterError('invalid', data?.message || 'blob create failed');
           byPath.set(path, { path, mode: '100644', type: 'blob', sha: data.sha });
@@ -553,7 +585,7 @@ export function createGithubAdapter({ token, fetchImpl = globalThis.fetch, apiBa
         throw new GitAdapterError('invalid', refData?.message || 'ref update failed');
       }
 
-      return { sha: newSha, parents: [head], branch: target };
+      return { sha: newSha, parents: [head], branch: target, largeFiles: prepared.largeFiles };
     },
 
     /**
@@ -639,6 +671,27 @@ export function createGithubAdapter({ token, fetchImpl = globalThis.fetch, apiBa
   };
 
   return assertGithubAdapter(adapter);
+}
+
+/**
+ * Read one asset by path. The sha comes from the git tree; the bytes come
+ * from GET /git/blobs/:sha. Contents GET is not used.
+ * -> { path, sha, bytes: Uint8Array } | null
+ */
+export async function readVaultAsset(adapter, repo, path, ref) {
+  const p = normalizeRepoPath(path);
+  if (!p) return null;
+  const info = parseVaultPath(p);
+  if (info?.kind !== 'asset') return null;
+  if (typeof adapter?.listTree !== 'function' || typeof adapter?.readBlob !== 'function') {
+    throw new GitAdapterError('invalid', 'Adapter cannot read a binary asset');
+  }
+  const tree = await adapter.listTree(repo, ref);
+  const entry = (tree || []).find((item) => item?.path === p);
+  if (!entry?.sha) return null;
+  const bytes = await adapter.readBlob(repo, entry.sha);
+  if (!(bytes instanceof Uint8Array)) return null;
+  return { path: p, sha: entry.sha, bytes };
 }
 
 function filterTree(tree, prefix) {

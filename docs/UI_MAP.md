@@ -377,7 +377,9 @@ current, and Open assembly on one right-aligned row), the folder menu's Assembly
 action, git open search, a branch switch, and the initial restore of the last
 assembly. The wait is the `.surf.json` and part-script fetch (IndexedDB
 cache-first, and GitHub when the vault is open; see [`vault-schema.md`](vault-schema.md)) plus the worker build that
-refresh paints. The label is `Opening <name>…` (`data-assembly-open-label`).
+refresh paints. A sibling `<Part>.mesh` is fetched with that part through the Git
+blob API (not Contents GET) and stored in IndexedDB `surfcad-assets`, keyed by
+blob sha, for a later mesh import. The label is `Opening <name>…` (`data-assembly-open-label`).
 While a part is in flight it also reads `part 3 of 7`
 (`data-assembly-open-progress`). The ring is the same border spinner as the
 boot loader. It stays hidden for 150ms so a fast open does not flash, and it

@@ -6,6 +6,7 @@
  *   - surfcad-assembly (document + part scripts)
  *   - surfcad-sync (outbox + kv)
  *   - SurfDB model cache (+ in-memory Manifold import cache)
+ *   - surfcad-assets (mesh bytes keyed by git blob sha)
  *   - OAuth editor hand-off localStorage (surfcad_editor) so a reload cannot
  *     resurrect the previous buffer
  *
@@ -15,6 +16,7 @@
  */
 import { clearEditorDraft } from './editorDraft.js';
 import { clearAssemblyStore } from './assemblyStore.js';
+import { clearAssetCache } from './git/assetCache.js';
 import { clearSyncStore } from './git/syncStore.js';
 import { clearModelCache } from './importModel.js';
 import { clearEditorState } from './editorStorage.js';
@@ -45,6 +47,13 @@ export async function clearLocalCadData() {
     results.sync = true;
   } catch (err) {
     console.warn('[ClearLocalCad] sync:', err);
+  }
+
+  try {
+    await clearAssetCache();
+    results.assets = true;
+  } catch (err) {
+    console.warn('[ClearLocalCad] assets:', err);
   }
 
   try {

@@ -8,7 +8,9 @@
  * secret: the real one receives a user token that lives only in the browser.
  *
  * All methods are async. `repo` is `{ owner, name }`. Paths are
- * repo-relative (see vaultLayout.js). File content is a UTF-8 string.
+ * repo-relative (see vaultLayout.js). Text file content is a UTF-8 string.
+ * A mesh asset is a Uint8Array or ArrayBuffer (Blob is accepted and stored
+ * as bytes). Binary writes use Git blob encoding base64.
  *
  *   getViewer()                                  -> { login }
  *   getRepo(repo)                                -> RepoInfo | null
@@ -20,10 +22,16 @@
  *       Refuses 'main' and missing branches (not_found / invalid).
  *   listTree(repo, ref, { prefix }?)             -> [{ path, type: 'blob', sha }]
  *   readFile(repo, path, ref?)                   -> { path, content, sha } | null
- *   commitFiles(repo, { branch, message, files, baseSha? })
- *                                                -> { sha, parents: [sha], branch }
+ *       Text only (Contents API). A `.mesh` is not read here.
+ *   readBlob(repo, sha)                          -> Uint8Array | null
+ *       Git Blobs API. Assets resolve the sha from the tree, then call this.
+ *   commitFiles(repo, { branch, message, files, baseSha?, onLargeFile? })
+ *                                                -> { sha, parents, branch, largeFiles }
  *       files: [{ path, content }] or [{ path, delete: true }], applied as
- *       ONE commit. With baseSha, the write is refused (GitAdapterError
+ *       ONE commit. content is a string, Uint8Array, or ArrayBuffer.
+ *       Over 40 MiB throws VaultFileTooLargeError. Over 20 MiB lists the
+ *       path in largeFiles and calls onLargeFile({ path, bytes }) when set.
+ *       With baseSha, the write is refused (GitAdapterError
  *       code 'non_fast_forward') when the branch head is not baseSha.
  *   compare(repo, base, head)                    -> CompareResult
  *   squashMerge(repo, { base, head, message })   -> { sha, base, head }
@@ -36,6 +44,15 @@
  *
  * RepoInfo = { owner, name, private, defaultBranch, empty }
  */
+import {
+  VAULT_FILE_WARN_BYTES,
+  assertVaultFileSize,
+  byteLengthOf,
+  isBinaryContent,
+  isBlobContent,
+  toUint8Array,
+  utf8ByteLength,
+} from './binaryContent.js';
 
 export const GITHUB_ADAPTER_METHODS = Object.freeze([
   'getViewer',
@@ -47,6 +64,7 @@ export const GITHUB_ADAPTER_METHODS = Object.freeze([
   'deleteBranch',
   'listTree',
   'readFile',
+  'readBlob',
   'commitFiles',
   'compare',
   'squashMerge',
@@ -96,9 +114,30 @@ export function assertGithubAdapter(adapter) {
   return adapter;
 }
 
-/** One file change for commitFiles. */
+/**
+ * One file change for commitFiles.
+ * A string stays text. Uint8Array, ArrayBuffer, and Blob stay binary
+ * (`encoding: 'base64'`). Over 40 MiB throws VaultFileTooLargeError.
+ * Over 20 MiB sets `large: true` on the returned file.
+ */
 export function fileWrite(path, content) {
-  return { path, content: String(content ?? '') };
+  if (isBlobContent(content)) {
+    const n = assertVaultFileSize(path, content.size);
+    const file = { path, content, encoding: 'base64' };
+    if (n > VAULT_FILE_WARN_BYTES) file.large = true;
+    return file;
+  }
+  if (isBinaryContent(content)) {
+    const n = assertVaultFileSize(path, byteLengthOf(content));
+    const file = { path, content: toUint8Array(content), encoding: 'base64' };
+    if (n > VAULT_FILE_WARN_BYTES) file.large = true;
+    return file;
+  }
+  const text = String(content ?? '');
+  const n = assertVaultFileSize(path, utf8ByteLength(text));
+  const file = { path, content: text };
+  if (n > VAULT_FILE_WARN_BYTES) file.large = true;
+  return file;
 }
 
 export function fileDelete(path) {

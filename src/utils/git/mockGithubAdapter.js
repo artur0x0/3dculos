@@ -10,6 +10,7 @@
  */
 import { GitAdapterError, assertGithubAdapter } from './githubAdapterInterface.js';
 import { normalizeRepoPath } from '../assembly.js';
+import { gitBlobSha, prepareCommitFiles } from './binaryContent.js';
 
 function fnv(str, seed) {
   let h = seed >>> 0;
@@ -68,19 +69,46 @@ export function createMockGithubAdapter(options = {}) {
     }
     return seen;
   }
+  function contentToken(content) {
+    if (content instanceof Uint8Array) return gitBlobSha(content);
+    return String(content);
+  }
+  function blobShaOf(content) {
+    if (content instanceof Uint8Array) return gitBlobSha(content);
+    return mockSha(`blob\0${String(content)}`);
+  }
+  function contentEqual(a, b) {
+    if (a === b) return true;
+    if (a instanceof Uint8Array && b instanceof Uint8Array) {
+      if (a.byteLength !== b.byteLength) return false;
+      for (let i = 0; i < a.byteLength; i += 1) if (a[i] !== b[i]) return false;
+      return true;
+    }
+    return false;
+  }
   function makeCommit(state, parent, tree, message) {
     counter += 1;
-    const body = [parent || '', message, counter, ...[...tree.entries()].sort().map(([p, c]) => `${p}\0${c}`)].join('\n');
+    const body = [parent || '', message, counter, ...[...tree.entries()].sort().map(([p, c]) => `${p}\0${contentToken(c)}`)].join('\n');
     const sha = mockSha(body);
     state.commits.set(sha, { sha, parents: parent ? [parent] : [], tree, message });
     return sha;
   }
   function seedFiles(state, files, message = 'Seed') {
     const tree = new Map();
-    for (const [p, c] of Object.entries(files)) tree.set(p, String(c));
+    for (const [p, c] of Object.entries(files)) {
+      tree.set(p, c instanceof Uint8Array ? c.slice() : String(c));
+    }
     const sha = makeCommit(state, null, tree, message);
     state.branches.set(state.defaultBranch, sha);
     return sha;
+  }
+  function findBlob(state, sha) {
+    for (const commit of state.commits.values()) {
+      for (const content of commit.tree.values()) {
+        if (blobShaOf(content) === sha) return content;
+      }
+    }
+    return undefined;
   }
 
   const adapter = {
@@ -160,7 +188,7 @@ export function createMockGithubAdapter(options = {}) {
       const out = [];
       for (const [path, content] of state.commits.get(sha).tree) {
         if (prefix && !path.startsWith(prefix)) continue;
-        out.push({ path, type: 'blob', sha: mockSha(`blob\0${content}`) });
+        out.push({ path, type: 'blob', sha: blobShaOf(content) });
       }
       return out.sort((a, b) => a.path.localeCompare(b.path));
     },
@@ -171,14 +199,26 @@ export function createMockGithubAdapter(options = {}) {
       if (!sha) return null;
       const content = state.commits.get(sha).tree.get(path);
       if (content == null) return null;
-      return { path, content, sha: mockSha(`blob\0${content}`) };
+      return { path, content, sha: blobShaOf(content) };
     },
 
-    async commitFiles(repo, { branch, message, files, baseSha } = {}) {
+    async readBlob(repo, sha) {
+      const state = repoState(repo);
+      const content = findBlob(state, sha);
+      if (content == null) return null;
+      if (content instanceof Uint8Array) return content.slice();
+      return new TextEncoder().encode(String(content));
+    },
+
+    async commitFiles(repo, { branch, message, files, baseSha, onLargeFile } = {}) {
       const state = repoState(repo);
       const target = branch || state.defaultBranch;
       if (!Array.isArray(files) || files.length === 0) {
         throw new GitAdapterError('invalid', 'commitFiles needs at least one file');
+      }
+      const prepared = await prepareCommitFiles(files);
+      if (typeof onLargeFile === 'function') {
+        for (const item of prepared.largeFiles) onLargeFile(item);
       }
       const head = state.branches.get(target) || null;
       if (!head && state.branches.size > 0) {
@@ -188,16 +228,17 @@ export function createMockGithubAdapter(options = {}) {
         throw new GitAdapterError('non_fast_forward', `${target} moved: head ${head}, base ${baseSha}`);
       }
       const tree = new Map(head ? state.commits.get(head).tree : []);
-      for (const f of files) {
+      for (const f of prepared.files) {
         const path = normalizeRepoPath(f?.path);
         if (!path) throw new GitAdapterError('invalid', `Bad path "${f?.path}"`);
         if (f.delete) tree.delete(path);
+        else if (f.binary) tree.set(path, f.content.slice());
         else tree.set(path, String(f.content ?? ''));
       }
       const sha = makeCommit(state, head, tree, String(message || 'Update'));
       state.branches.set(target, sha);
       log.push({ op: 'commitFiles', repo: key(repo), branch: target, sha, paths: files.map((f) => f.path) });
-      return { sha, parents: head ? [head] : [], branch: target };
+      return { sha, parents: head ? [head] : [], branch: target, largeFiles: prepared.largeFiles };
     },
 
     async squashMerge(repo, { base = 'main', head, message } = {}) {
@@ -245,7 +286,7 @@ export function createMockGithubAdapter(options = {}) {
       const files = [];
       for (const [p, c] of b) {
         if (!a.has(p)) files.push({ path: p, status: 'added' });
-        else if (a.get(p) !== c) files.push({ path: p, status: 'modified' });
+        else if (!contentEqual(a.get(p), c)) files.push({ path: p, status: 'modified' });
       }
       for (const p of a.keys()) if (!b.has(p)) files.push({ path: p, status: 'removed' });
       files.sort((x, y) => x.path.localeCompare(y.path));

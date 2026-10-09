@@ -16,12 +16,14 @@
  * Mock adapter only for now; nothing here talks to the network.
  */
 import { assemblyName, nextAssemblyName, serializeAssembly } from '../assembly.js';
+import { gitBlobSha, isBinaryContent, toUint8Array } from './binaryContent.js';
 import { GitAdapterError, assertGithubAdapter, fileWrite, fileDelete } from './githubAdapterInterface.js';
 import { captureBaseline, dirtyPartIds } from './gitWorkspace.js';
 import {
   ASSEMBLIES_DIR,
   assemblyFilePath,
   assemblyPartPath,
+  assetPathForScript,
   legacyCleanupPaths,
   parseVaultPath,
   vaultSegment,
@@ -164,6 +166,15 @@ export function buildCommitFiles(doc, scripts, baseline, opts = {}) {
     const dest = movedFrom.get(id) || id;
     writes.set(dest, workScripts[dest] ?? eff[id] ?? '');
     partPaths.push(dest);
+  }
+
+  if (opts.assets) {
+    const fromOf = new Map(moved.map((m) => [m.to, m.from]));
+    for (const part of workDoc.parts || []) {
+      const dest = part.id;
+      const from = fromOf.get(dest) || dest;
+      attachPartAsset(writes, deletes, partPaths, opts.assets, baseline, from, dest);
+    }
   }
 
   const assemblyText = stringifySurfJson(workDoc);
@@ -352,6 +363,7 @@ export async function commitPartToRepo(adapter, repo, {
       assemblyName: asmName,
       doc: workDoc,
       scripts: nextScripts,
+      assets: base.assets,
       branch,
       headSha: res.sha,
     });
@@ -418,8 +430,10 @@ export async function deletePartFromRepo(adapter, repo, {
   const branch = base.branch || 'main';
   const assemblyPath = assemblyFilePath(asmName);
   const assemblyText = stringifySurfJson(doc);
+  const mesh = assetPathForScript(path);
   const files = [
     fileDelete(path),
+    ...(mesh ? [fileDelete(mesh)] : []),
     fileWrite(assemblyPath, assemblyText),
   ];
   const leaf = path.split('/').pop()?.replace(/\.js$/i, '') || 'part';
@@ -445,6 +459,7 @@ export async function deletePartFromRepo(adapter, repo, {
       assemblyName: asmName,
       doc,
       scripts: nextScripts,
+      assets: base.assets,
       branch,
       headSha: res.sha,
     });
@@ -468,6 +483,56 @@ export async function deletePartFromRepo(adapter, repo, {
   }
 }
 
+
+function hasOwn(obj, key) {
+  return !!obj && !!key && Object.prototype.hasOwnProperty.call(obj, key);
+}
+
+function assetValue(assets, mesh, scriptPath) {
+  if (hasOwn(assets, mesh)) return assets[mesh];
+  if (hasOwn(assets, scriptPath)) return assets[scriptPath];
+  return undefined;
+}
+
+/**
+ * Write or delete `<Part>.mesh` in the same commit as its script.
+ * `assets` is keyed by mesh path (or the script path). A Uint8Array is the
+ * new bytes. `null` deletes a mesh the baseline still has. A matching git
+ * blob sha is left untouched.
+ */
+function attachPartAsset(writes, deletes, partPaths, assets, baseline, from, dest) {
+  const mesh = assetPathForScript(dest);
+  if (!mesh) return;
+  const fromMesh = from === dest ? mesh : assetPathForScript(from);
+  const direct = assetValue(assets, mesh, dest);
+  const prior = fromMesh && fromMesh !== mesh ? assetValue(assets, fromMesh, from) : undefined;
+  const value = direct !== undefined ? direct : prior;
+  const remember = () => {
+    if (!partPaths.includes(dest)) partPaths.push(dest);
+  };
+  if (fromMesh && fromMesh !== mesh) {
+    if (isBinaryContent(value)) {
+      writes.set(mesh, toUint8Array(value));
+      deletes.add(fromMesh);
+      remember();
+    }
+    return;
+  }
+  if (value === undefined) return;
+  if (value == null) {
+    if (baseline?.assets?.[mesh]) {
+      deletes.add(mesh);
+      remember();
+    }
+    return;
+  }
+  if (!isBinaryContent(value)) return;
+  const bytes = toUint8Array(value);
+  if (gitBlobSha(bytes) !== (baseline?.assets?.[mesh] || null)) {
+    writes.set(mesh, bytes);
+    remember();
+  }
+}
 
 function pad(n) {
   return String(n).padStart(2, '0');
@@ -519,6 +584,7 @@ function nextBaseline(doc, scripts, baseline, assemblyPath, branch, headSha) {
     assemblyName: vaultSegment(doc.name) || baseline.assemblyName,
     doc,
     scripts,
+    assets: baseline.assets,
     branch,
     headSha,
   });
@@ -537,6 +603,7 @@ export async function assembleCommitFiles(adapter, repo, {
   message = '',
   liveId = null,
   liveScript = null,
+  assets = null,
 } = {}) {
   assertGithubAdapter(adapter);
   if (!baseline) throw new Error('Open an assembly from the vault before committing');
@@ -556,7 +623,7 @@ export async function assembleCommitFiles(adapter, repo, {
     err.stray = stray.map((p) => ({ id: p.id, name: p.name || p.id }));
     throw err;
   }
-  const built = buildCommitFiles(doc, scripts, baseline, { liveId, liveScript });
+  const built = buildCommitFiles(doc, scripts, baseline, { liveId, liveScript, assets });
   const workDoc = built.doc || doc;
   // Rename move: delete any leftover blobs under the old assemblies/<old>/ tree
   // (Spare.js etc.) so the old folder does not linger after the move.

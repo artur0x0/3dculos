@@ -8,6 +8,7 @@
  * G13 conflict popup.
  * Otherwise push the queue. Part ids are not rewritten on push.
  */
+import { normalizeOutboxFiles } from './binaryContent.js';
 import { materializeRename, renameFailureToast } from './gitRename.js';
 import { deleteAssemblyFailureToast } from './gitDeleteAssembly.js';
 import { assertMigrationCommitSafe, readVaultIdEntries } from './surfIdMigration.js';
@@ -108,7 +109,7 @@ export async function flushSyncQueue({
       const res = await adapter.commitFiles(writeRepo, {
         branch,
         message: item.message || 'Sync',
-        files,
+        files: await normalizeOutboxFiles(files),
         baseSha: head,
       });
       head = res.sha;

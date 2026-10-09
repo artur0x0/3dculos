@@ -15,11 +15,14 @@ import {
   sanitizeAssemblyName,
   serializeAssembly,
 } from '../assembly.js';
+import { putAsset } from './assetCache.js';
+import { gitBlobSha, isBinaryContent, toUint8Array } from './binaryContent.js';
 import { assertGithubAdapter } from './githubAdapterInterface.js';
 import {
   assemblyFilePath,
   assemblyFilePathCandidates,
   assemblyPartPath,
+  assetPathForScript,
   isExternalPartPath,
   listAssemblies,
   listPartScripts,
@@ -33,11 +36,37 @@ import { parseSurfJson, stringifySurfJson } from './surfJson.js';
 import { isSurfId, mintSurfId, readSurfId, stripSurfId, withSurfId } from './surfId.js';
 
 /** Working-copy baseline taken at the last vault open (or explicit reset). */
+function assetShaValue(value) {
+  if (value == null) return null;
+  if (typeof value === 'string' && /^[0-9a-f]{40}$/i.test(value)) return value.toLowerCase();
+  if (isBinaryContent(value)) return gitBlobSha(toUint8Array(value));
+  if (isBinaryContent(value?.bytes)) return value.sha || gitBlobSha(toUint8Array(value.bytes));
+  if (typeof value?.sha === 'string' && /^[0-9a-f]{40}$/i.test(value.sha)) return value.sha.toLowerCase();
+  return null;
+}
+
+function baselineAssetMap(parts, assets) {
+  const assetMap = {};
+  if (!assets || typeof assets !== 'object') return assetMap;
+  for (const part of parts || []) {
+    const mesh = assetPathForScript(part.id);
+    if (!mesh) continue;
+    const value = Object.prototype.hasOwnProperty.call(assets, mesh)
+      ? assets[mesh]
+      : (Object.prototype.hasOwnProperty.call(assets, part.id) ? assets[part.id] : undefined);
+    if (value == null) continue;
+    const sha = assetShaValue(value);
+    if (sha) assetMap[mesh] = sha;
+  }
+  return assetMap;
+}
+
 export function captureBaseline({
   assemblyPath,
   assemblyName,
   doc,
   scripts,
+  assets = null,
   branch = 'main',
   headSha = null,
 } = {}) {
@@ -52,6 +81,7 @@ export function captureBaseline({
     assemblyName: vaultSegment(assemblyName || clean.name),
     assemblyText: stringifySurfJson(clean),
     scripts: scriptMap,
+    assets: baselineAssetMap(clean.parts, assets),
     partIds: clean.parts.map((p) => p.id),
     branch,
     headSha,
@@ -84,7 +114,7 @@ export function isPartDirty(path, script, baseline) {
  * Part ids that are dirty: script change, newly added, or removed from the
  * working document (removed ids are returned too so the UI can warn).
  */
-export function dirtyPartIds(doc, scripts, baseline, { liveId = null, liveScript = null } = {}) {
+export function dirtyPartIds(doc, scripts, baseline, { liveId = null, liveScript = null, assets = null } = {}) {
   const out = new Set();
   if (!baseline) return out;
   const parts = doc?.parts || [];
@@ -99,7 +129,25 @@ export function dirtyPartIds(doc, scripts, baseline, { liveId = null, liveScript
   for (const id of baseline.partIds || []) {
     if (!seen.has(id)) out.add(id);
   }
+  if (assets) {
+    for (const part of parts) {
+      if (isAssetDirty(part.id, assets, baseline)) out.add(part.id);
+    }
+  }
   return out;
+}
+
+function isAssetDirty(scriptPath, assets, baseline) {
+  const mesh = assetPathForScript(scriptPath);
+  if (!mesh || !assets) return false;
+  const hasMesh = Object.prototype.hasOwnProperty.call(assets, mesh);
+  const hasScript = Object.prototype.hasOwnProperty.call(assets, scriptPath);
+  if (!hasMesh && !hasScript) return false;
+  const value = hasMesh ? assets[mesh] : assets[scriptPath];
+  const prev = baseline?.assets?.[mesh] || null;
+  if (value == null) return !!prev;
+  if (!isBinaryContent(value)) return false;
+  return gitBlobSha(toUint8Array(value)) !== prev;
 }
 
 /**
@@ -249,6 +297,8 @@ export async function openVaultAssembly(adapter, repo, assemblyName, {
       return part.surfId === header ? part : { ...part, surfId: header };
     }),
   };
+  const fromOfNew = new Map((migrated.moved || []).map((move) => [move.to, move.from]));
+  const assets = await loadPartMeshes(adapter, repo, branch, doc.parts, fromOfNew);
   const assemblyPath = assemblyFilePath(name);
   const head = headSha || (await adapter.getBranch(repo, branch))?.sha || null;
   const baseline = captureBaseline({
@@ -256,6 +306,7 @@ export async function openVaultAssembly(adapter, repo, assemblyName, {
     assemblyName: name,
     doc,
     scripts,
+    assets,
     branch,
     headSha: head,
   });
@@ -263,7 +314,35 @@ export async function openVaultAssembly(adapter, repo, assemblyName, {
     baseline.legacyCleanup = true;
     baseline.legacyAssemblyPath = foundPath !== assemblyPath ? foundPath : null;
   }
-  return { doc, scripts, assemblyPath, baseline, migrated: migrated.changed };
+  return { doc, scripts, assets, assemblyPath, baseline, migrated: migrated.changed };
+}
+
+/**
+ * Download each part's `<Part>.mesh` through the blob API into the asset
+ * cache. Bytes are also returned, keyed by the current (flat) mesh path.
+ */
+async function loadPartMeshes(adapter, repo, branch, parts, fromOfNew) {
+  const assets = {};
+  if (typeof adapter?.readBlob !== 'function' || typeof adapter?.listTree !== 'function') return assets;
+  const tree = await adapter.listTree(repo, branch);
+  const shaByPath = new Map((tree || []).filter((entry) => entry?.path).map((entry) => [entry.path, entry.sha]));
+  for (const part of parts || []) {
+    const mesh = assetPathForScript(part.id);
+    if (!mesh) continue;
+    const legacyId = fromOfNew?.get(part.id);
+    const legacyMesh = legacyId ? assetPathForScript(legacyId) : null;
+    let located = null;
+    if (shaByPath.has(mesh)) located = mesh;
+    else if (legacyMesh && shaByPath.has(legacyMesh)) located = legacyMesh;
+    if (!located) continue;
+    const sha = shaByPath.get(located);
+    if (!sha) continue;
+    const bytes = await adapter.readBlob(repo, sha);
+    if (!(bytes instanceof Uint8Array)) continue;
+    assets[mesh] = bytes;
+    try { await putAsset(bytes); } catch { /* bytes still travel on the workspace */ }
+  }
+  return assets;
 }
 
 /**

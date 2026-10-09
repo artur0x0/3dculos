@@ -3,8 +3,9 @@
  * `.surf.json` that references that part id (or the old path, for repos
  * that have not been backfilled yet).
  */
+import { isBinaryContent, toUint8Array } from './binaryContent.js';
 import { fileDelete, fileWrite } from './githubAdapterInterface.js';
-import { assemblyDir, assemblyFilePath, assemblyPartPath, isAssemblyFile, parseVaultPath, sharedPartPath, vaultSegment } from './vaultLayout.js';
+import { assemblyDir, assemblyFilePath, assemblyPartPath, assetPathForScript, isAssemblyFile, parseVaultPath, sharedPartPath, vaultSegment } from './vaultLayout.js';
 import { isSurfId, isSurfJsonPath, readSurfId, withSurfId } from './surfId.js';
 
 /**
@@ -117,6 +118,18 @@ export function buildRenameCommitFiles({ entries, plan } = {}) {
     const body = plan.content != null ? plan.content : (byPath.get(plan.from) ?? '');
     if (plan.to) writes.set(plan.to, body);
     if (plan.from && plan.from !== plan.to) deletes.add(plan.from);
+    const fromMesh = assetPathForScript(plan.from);
+    const toMesh = assetPathForScript(plan.to);
+    if (fromMesh && toMesh && fromMesh !== toMesh) {
+      const raw = isBinaryContent(plan.asset) ? plan.asset : byPath.get(fromMesh);
+      if (isBinaryContent(raw)) {
+        writes.set(toMesh, toUint8Array(raw));
+        deletes.add(fromMesh);
+      } else if (raw != null && byPath.has(fromMesh)) {
+        writes.set(toMesh, raw);
+        deletes.add(fromMesh);
+      }
+    }
     for (const [path, text] of byPath) {
       if (!isAssemblyFile(path) && !isSurfJsonPath(path)) continue;
       const next = rewriteSurfText(text, { surfId: plan.surfId, from: plan.from, to: plan.to });
@@ -136,8 +149,13 @@ export function buildRenameCommitFiles({ entries, plan } = {}) {
       deletes.add(path);
     }
     for (const local of plan.localFiles || []) {
-      if (!local?.path || typeof local.content !== 'string') continue;
+      if (!local?.path) continue;
       const info = parseVaultPath(local.path);
+      if (info?.kind === 'asset' && isBinaryContent(local.content)) {
+        if (!info.assembly || info.assembly === toName) writes.set(local.path, toUint8Array(local.content));
+        continue;
+      }
+      if (typeof local.content !== 'string') continue;
       // Shared parts/ files do not move with the folder. Only an
       // assembly-local copy in the destination folder is overwritten.
       if (info?.kind !== 'assembly-part' || info.assembly !== toName) continue;
@@ -284,6 +302,13 @@ export async function readRenameEntries(adapter, repo, branch) {
   const entries = [];
   for (const entry of tree || []) {
     const path = entry?.path ?? entry;
+    const info = parseVaultPath(path);
+    if (info?.kind === 'asset') {
+      if (typeof adapter.readBlob !== 'function' || !entry?.sha) continue;
+      const bytes = await adapter.readBlob(repo, entry.sha);
+      if (bytes instanceof Uint8Array) entries.push({ path, content: bytes, sha: entry.sha });
+      continue;
+    }
     if (!isAssemblyFile(path) && !isPartScriptPath(path)) continue;
     const file = await adapter.readFile(repo, path, branch);
     if (file) entries.push({ path, content: file.content, sha: file.sha || entry.sha || null });
@@ -318,6 +343,7 @@ export async function materializeRename(adapter, repo, branch, payload) {
       from: payload?.from,
       to: payload?.to,
       content: payload?.content,
+      asset: payload?.asset,
     };
   return buildRenameCommitFiles({ entries, plan });
 }
