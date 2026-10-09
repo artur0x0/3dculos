@@ -45,21 +45,23 @@ console.log('mobile C: feature sheets');
   const strip = read('../../src/components/FeatureStrip.jsx');
   const popup = read('../../src/components/controls/popupUI.jsx');
 
+  const card = read('../../src/components/FeatureSheet.jsx');
   check(
-    'FeatureSheet component exists with glass sheet chrome + Accept/Cancel/Edit script',
-    /data-feature-sheet=/.test(sheet) &&
+    'Feature edit sheet uses the shared card + Confirm/Cancel/Edit script',
+    /<FeatureSheet\b/.test(sheet) &&
       /data-feature-sheet-accept/.test(sheet) &&
       /data-feature-sheet-cancel/.test(sheet) &&
       /data-feature-sheet-edit-script/.test(sheet) &&
-      /surface-glass-chip/.test(sheet) &&
-      /Edit script/.test(sheet),
+      /surface-glass-chip/.test(card) &&
+      /Edit script/.test(sheet) &&
+      /data-feature-card/.test(card),
   );
   check(
-    'FeatureSheet is under-title horizontal (C.1), not bottom sheet',
-    /data-feature-sheet-layout="under-title-horizontal"/.test(sheet) &&
-      /top-14/.test(sheet) &&
-      /overflow-x-auto/.test(sheet) &&
-      !/bottom-0 z-40/.test(sheet) &&
+    'Feature edit sheet is the bottom feature card, not the under-title bar',
+    /'data-feature-sheet-layout': 'feature-card'/.test(sheet) &&
+      /<FeatureSheet\b/.test(sheet) &&
+      !/under-title-horizontal/.test(sheet) &&
+      !/top-14/.test(sheet) &&
       !/rounded-t-2xl/.test(sheet),
   );
   check(
@@ -80,11 +82,13 @@ console.log('mobile C: feature sheets');
       /rewriteRevolveBlock|kind === 'revolve'/.test(writeback),
   );
   check(
-    'App mounts FeatureSheet on CAD + Script stages (shared under-title chrome)',
-    /featureSheet\?\.mode === 'edit'/.test(app) &&
-      /featureSheet\?\.mode === 'picker'/.test(app) &&
+    'App opens the edit card on the phone CAD pane and the desktop viewer',
+    /setFeatureSheet\(\{ mode: 'edit', feature \}\)/.test(app) &&
+      /setFeatureSheet\(\{ mode: 'picker' \}\)/.test(app) &&
       !/isCadStage && featureSheet\?\.mode === 'edit'/.test(app) &&
-      (app.match(/<FeatureSheet\b/g) || []).length >= 2,
+      /featureEdit=\{appMode === 'game' \|\| \(useStages && !isCadStage\) \? null : featureSheet\}/.test(app) &&
+      /featureEdit=\{appMode === 'game' \? null : featureSheet\}/.test(app) &&
+      /<FeatureEditSheet\b/.test(viewport),
   );
   check(
     'CAD-stage FeatureStrip opens sheets (hideWhenEmpty)',

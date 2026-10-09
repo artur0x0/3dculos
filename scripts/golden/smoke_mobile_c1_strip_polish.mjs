@@ -85,20 +85,21 @@ console.log('mobile C.1: strip polish + UI reorg');
 
   // D
   check(
-    'D: feature sheet under-title horizontal full-width (CAD + Script)',
-    /data-feature-sheet-layout="under-title-horizontal"/.test(sheet) &&
-      /top-14/.test(sheet) &&
-      /overflow-x-auto/.test(sheet) &&
-      /inset-x-0/.test(sheet) &&
-      !/rounded-t-2xl/.test(sheet) &&
-      !/bottom-0 z-40/.test(sheet),
+    'D: feature edit sheet is the shared bottom card',
+    /'data-feature-sheet-layout': 'feature-card'/.test(sheet) &&
+      /<FeatureSheet\b/.test(sheet) &&
+      /data-feature-card/.test(read('../../src/components/FeatureSheet.jsx')) &&
+      !/under-title-horizontal/.test(sheet) &&
+      !/rounded-t-2xl/.test(sheet),
   );
   check(
-    'D: App mounts sheets shared across stages (not CAD-only)',
-    /featureSheet\?\.mode === 'edit'/.test(app) &&
-      /featureSheet\?\.mode === 'picker'/.test(app) &&
+    'D: App opens the edit card from the phone and desktop viewers',
+    /setFeatureSheet\(\{ mode: 'edit', feature \}\)/.test(app) &&
+      /setFeatureSheet\(\{ mode: 'picker' \}\)/.test(app) &&
       !/isCadStage && featureSheet\?\.mode === 'edit'/.test(app) &&
-      (app.match(/<FeatureSheet\b/g) || []).length >= 2,
+      /featureEdit=\{appMode === 'game' \|\| \(useStages && !isCadStage\) \? null : featureSheet\}/.test(app) &&
+      /featureEdit=\{appMode === 'game' \? null : featureSheet\}/.test(app) &&
+      /<FeatureEditSheet\b/.test(viewport),
   );
   check(
     'D: Accept / Cancel / Edit script still present',

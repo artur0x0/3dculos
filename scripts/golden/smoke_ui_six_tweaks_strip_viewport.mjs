@@ -104,9 +104,11 @@ console.log('ui six-tweaks: strip / highlight / viewport / popup height');
       /22\.5rem/.test(read('../../src/index.css')),
   );
   check(
-    '6: FeatureSheet SheetShell max-h + rail-scroll body',
-    /max-h-\[calc\(100dvh-10rem\)\]/.test(sheet) &&
-      /data-feature-sheet-scroll/.test(sheet),
+    '6: the edit sheet scrolls inside the feature card',
+    /<FeatureSheet\b/.test(sheet) &&
+      /data-feature-sheet-body/.test(featureCard) &&
+      /overflow-y-auto/.test(featureCard) &&
+      /22\.5rem/.test(read('../../src/index.css')),
   );
   check(
     '6: HelperParamModal keeps its dvh cap; Fillet uses the feature card cap',

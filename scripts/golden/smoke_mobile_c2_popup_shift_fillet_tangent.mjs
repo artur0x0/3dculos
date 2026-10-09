@@ -52,21 +52,17 @@ console.log('mobile C.2: popup shift + fillet tangent + strip polish');
       /export function easeInOutCubic/.test(camera),
   );
   check(
-    'Viewport exposes setFeatureSheetLift tween API',
-    /setFeatureSheetLift:/.test(viewport) &&
-      /sheetLiftNdcRef/.test(viewport) &&
-      /panViewByNdcY/.test(viewport),
+    'the under-title NDC lift is gone',
+    !/setFeatureSheetLift/.test(viewport) &&
+      !/sheetLiftNdcRef/.test(viewport) &&
+      !/setFeatureSheetLift/.test(app),
   );
   check(
-    'App tweens lift on featureSheet open/close (not edge chips)',
-    /setFeatureSheetLift/.test(app) &&
-      /data-feature-sheet/.test(app) &&
-      /Edge-pick chips/.test(app),
-  );
-  check(
-    'FeatureSheet still under-title (large sheet that lifts)',
-    /data-feature-sheet-layout="under-title-horizontal"/.test(sheet) &&
-      /top-14/.test(sheet),
+    'the edit card uses the shared bottom-card slide',
+    /editSheetOpen/.test(viewport) &&
+      /featureSheetCameraOwned/.test(viewport) &&
+      /'data-feature-sheet-layout': 'feature-card'/.test(sheet) &&
+      /<FeatureSheet\b/.test(sheet),
   );
   check(
     'FilletModeChip / edge selector have no setFeatureSheetLift',
@@ -86,7 +82,7 @@ console.log('mobile C.2: popup shift + fillet tangent + strip polish');
       /filletSheetOpen/.test(viewport) &&
       /edgeSheetOpen/.test(viewport) &&
       /onCancel=\{exitContourMode\}/.test(viewport) &&
-      /featureSheetCameraOwned/.test(app) &&
+      /featureSheetCameraOwned/.test(viewport) &&
       /data-feature-card/.test(card),
   );
 
