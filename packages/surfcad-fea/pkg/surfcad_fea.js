@@ -59,6 +59,51 @@ export function solve(study, positions, indices, face_ids, material, profile) {
         wasm.__wbindgen_add_to_stack_pointer(16);
     }
 }
+
+/**
+ * Linear-elastic TET10 solve.
+ *
+ * `mesh.nodes` is a Float64Array or Float32Array of xyz coordinates in
+ * millimetres. `mesh.elements` is a Uint32Array, 10 indices per element
+ * (VTK order). `material` matches the stub (`E_MPa`, `nu`, optional
+ * `yield_MPa`). `bcs` carries typed arrays:
+ *
+ * - `fixedDofs` / `fixedValues`: prescribed DOFs (`node * 3 + axis`). Missing
+ *   values mean 0.
+ * - `fixedNodes`: nodes whose three DOFs are fixed at 0.
+ * - `forceNodes` / `forceValues`: nodal forces, three components per node, N.
+ * - `pressureFaces` / `pressures`: 6 node indices per face and one pressure
+ *   per face, MPa. Positive pressure pushes against the right-hand normal of
+ *   the first three nodes.
+ *
+ * `options.solver` is `"auto"` (default), `"cholesky"` or `"pcg"`. Auto uses
+ * supernodal Cholesky at or below `choleskyMaxDofs` (default 20000 free DOFs)
+ * and Jacobi PCG above that. `tol` and `maxIter` apply to PCG.
+ * @param {any} mesh
+ * @param {any} material
+ * @param {any} bcs
+ * @param {any} options
+ * @returns {any}
+ */
+export function solve_tet10(mesh, material, bcs, options) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        wasm.solve_tet10(retptr, addBorrowedObject(mesh), addBorrowedObject(material), addBorrowedObject(bcs), addBorrowedObject(options));
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        if (r2) {
+            throw takeObject(r1);
+        }
+        return takeObject(r0);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        heap[stack_pointer++] = undefined;
+        heap[stack_pointer++] = undefined;
+        heap[stack_pointer++] = undefined;
+        heap[stack_pointer++] = undefined;
+    }
+}
 function __wbg_get_imports() {
     const import0 = {
         __proto__: null,
@@ -135,6 +180,10 @@ function __wbg_get_imports() {
             const ret = getObject(arg0).done;
             return ret;
         },
+        __wbg_get_31af05bd4842a84f: function() { return handleError(function (arg0, arg1) {
+            const ret = Reflect.get(getObject(arg0), getObject(arg1));
+            return addHeapObject(ret);
+        }, arguments); },
         __wbg_get_658f6698067d9515: function() { return handleError(function (arg0, arg1) {
             const ret = Reflect.get(getObject(arg0), getObject(arg1));
             return addHeapObject(ret);
@@ -147,10 +196,44 @@ function __wbg_get_imports() {
             const ret = getObject(arg0)[getObject(arg1)];
             return addHeapObject(ret);
         },
+        __wbg_has_5d6706e5209576c1: function() { return handleError(function (arg0, arg1) {
+            const ret = Reflect.has(getObject(arg0), getObject(arg1));
+            return ret;
+        }, arguments); },
         __wbg_instanceof_ArrayBuffer_a99f175873e5d9b8: function(arg0) {
             let result;
             try {
                 result = getObject(arg0) instanceof ArrayBuffer;
+            } catch (_) {
+                result = false;
+            }
+            const ret = result;
+            return ret;
+        },
+        __wbg_instanceof_Float32Array_595afb0f28b828c9: function(arg0) {
+            let result;
+            try {
+                result = getObject(arg0) instanceof Float32Array;
+            } catch (_) {
+                result = false;
+            }
+            const ret = result;
+            return ret;
+        },
+        __wbg_instanceof_Float64Array_8a59377f9eec1b8b: function(arg0) {
+            let result;
+            try {
+                result = getObject(arg0) instanceof Float64Array;
+            } catch (_) {
+                result = false;
+            }
+            const ret = result;
+            return ret;
+        },
+        __wbg_instanceof_Uint32Array_53a4facaf04b8a8b: function(arg0) {
+            let result;
+            try {
+                result = getObject(arg0) instanceof Uint32Array;
             } catch (_) {
                 result = false;
             }
@@ -175,7 +258,19 @@ function __wbg_get_imports() {
             const ret = Symbol.iterator;
             return addHeapObject(ret);
         },
+        __wbg_length_511b1f84719d3462: function(arg0) {
+            const ret = getObject(arg0).length;
+            return ret;
+        },
+        __wbg_length_58572db4c38f3c3e: function(arg0) {
+            const ret = getObject(arg0).length;
+            return ret;
+        },
         __wbg_length_7f3c00c40364105e: function(arg0) {
+            const ret = getObject(arg0).length;
+            return ret;
+        },
+        __wbg_length_b5f0008bbf60cf59: function(arg0) {
             const ret = getObject(arg0).length;
             return ret;
         },
@@ -203,6 +298,10 @@ function __wbg_get_imports() {
             const ret = new Float32Array(getArrayF32FromWasm0(arg0, arg1));
             return addHeapObject(ret);
         },
+        __wbg_new_from_slice_f545fd22ddc142b8: function(arg0, arg1) {
+            const ret = new Float64Array(getArrayF64FromWasm0(arg0, arg1));
+            return addHeapObject(ret);
+        },
         __wbg_next_33784799010f1bbe: function(arg0) {
             const ret = getObject(arg0).next;
             return addHeapObject(ret);
@@ -215,8 +314,17 @@ function __wbg_get_imports() {
             const ret = Date.now();
             return ret;
         },
+        __wbg_prototypesetcall_06eb15da165dee8f: function(arg0, arg1, arg2) {
+            Uint32Array.prototype.set.call(getArrayU32FromWasm0(arg0, arg1), getObject(arg2));
+        },
+        __wbg_prototypesetcall_8b03c01e2c0f8066: function(arg0, arg1, arg2) {
+            Float32Array.prototype.set.call(getArrayF32FromWasm0(arg0, arg1), getObject(arg2));
+        },
         __wbg_prototypesetcall_bc27214492979395: function(arg0, arg1, arg2) {
             Uint8Array.prototype.set.call(getArrayU8FromWasm0(arg0, arg1), getObject(arg2));
+        },
+        __wbg_prototypesetcall_d49a4fab5ca427bc: function(arg0, arg1, arg2) {
+            Float64Array.prototype.set.call(getArrayF64FromWasm0(arg0, arg1), getObject(arg2));
         },
         __wbg_set_145a351398b48c65: function() { return handleError(function (arg0, arg1, arg2) {
             const ret = Reflect.set(getObject(arg0), getObject(arg1), getObject(arg2));
@@ -263,6 +371,12 @@ function addHeapObject(obj) {
 
     heap[idx] = obj;
     return idx;
+}
+
+function addBorrowedObject(obj) {
+    if (stack_pointer == 1) throw new Error('out of js stack');
+    heap[--stack_pointer] = obj;
+    return stack_pointer;
 }
 
 function debugString(val) {
@@ -341,6 +455,16 @@ function getArrayF32FromWasm0(ptr, len) {
     return getFloat32ArrayMemory0().subarray(ptr / 4, ptr / 4 + len);
 }
 
+function getArrayF64FromWasm0(ptr, len) {
+    ptr = ptr >>> 0;
+    return getFloat64ArrayMemory0().subarray(ptr / 8, ptr / 8 + len);
+}
+
+function getArrayU32FromWasm0(ptr, len) {
+    ptr = ptr >>> 0;
+    return getUint32ArrayMemory0().subarray(ptr / 4, ptr / 4 + len);
+}
+
 function getArrayU8FromWasm0(ptr, len) {
     ptr = ptr >>> 0;
     return getUint8ArrayMemory0().subarray(ptr / 1, ptr / 1 + len);
@@ -360,6 +484,14 @@ function getFloat32ArrayMemory0() {
         cachedFloat32ArrayMemory0 = new Float32Array(wasm.memory.buffer);
     }
     return cachedFloat32ArrayMemory0;
+}
+
+let cachedFloat64ArrayMemory0 = null;
+function getFloat64ArrayMemory0() {
+    if (cachedFloat64ArrayMemory0 === null || cachedFloat64ArrayMemory0.byteLength === 0) {
+        cachedFloat64ArrayMemory0 = new Float64Array(wasm.memory.buffer);
+    }
+    return cachedFloat64ArrayMemory0;
 }
 
 function getStringFromWasm0(ptr, len) {
@@ -452,6 +584,8 @@ function passStringToWasm0(arg, malloc, realloc) {
     return ptr;
 }
 
+let stack_pointer = 1024;
+
 function takeObject(idx) {
     const ret = getObject(idx);
     dropObject(idx);
@@ -494,6 +628,7 @@ function __wbg_finalize_init(instance, module) {
     wasmModule = module;
     cachedDataViewMemory0 = null;
     cachedFloat32ArrayMemory0 = null;
+    cachedFloat64ArrayMemory0 = null;
     cachedUint32ArrayMemory0 = null;
     cachedUint8ArrayMemory0 = null;
     return wasm;

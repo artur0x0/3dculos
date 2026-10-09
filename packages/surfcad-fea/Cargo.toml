@@ -4,12 +4,13 @@ version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
 publish = false
-description = "SurfCAD finite-element scaffold compiled to single-threaded SIMD WebAssembly. Phase 0 is a stub solver."
+description = "SurfCAD finite-element solver compiled to single-threaded SIMD WebAssembly. Phase 0 stub plus a TET10 linear-static solver."
 
 [lib]
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+faer = { version = "0.24.4", default-features = false, features = ["std", "sparse-linalg"] }
 serde = { version = "1", features = ["derive"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
@@ -28,6 +29,10 @@ lto = true
 opt-level = "s"
 panic = "abort"
 strip = "symbols"
+
+[[bench]]
+name = "scale"
+harness = false
 
 # wasm-pack 0.15 bundles wasm-opt 117, which rejects simd128 and bulk-memory
 # unless the features are named. Rust 1.99 emits both.
