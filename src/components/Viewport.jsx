@@ -950,6 +950,14 @@ const Viewport = forwardRef(({
   const [sheetMetalMode, setSheetMetalMode] = useState(null);
   const sheetMetalModeRef = useRef(null);
   sheetMetalModeRef.current = sheetMetalMode;
+  const exitSheetMetalChromeRef = useRef(() => {});
+  exitSheetMetalChromeRef.current = () => {
+    if (!sheetMetalModeRef.current && !sheetMetalPicker) return;
+    cancelFeatureEditRef.current?.('sheetMetal');
+    sheetMetalModeRef.current = null;
+    setSheetMetalMode(null);
+    setSheetMetalPicker(null);
+  };
   const sheetMetalOverlayRef = useRef(null);
   const [draftMode, setDraftMode] = useState(null);
   const draftModeRef = useRef(null);
@@ -1250,6 +1258,14 @@ const Viewport = forwardRef(({
   const cutSheetOpen = mode !== 'game' && !!cutMode;
   const booleanSheetOpen = mode !== 'game' && !!booleanMode;
   const moveSheetOpen = mode !== 'game' && !!moveMode;
+  const sheetMetalSheetOpen = mode !== 'game' && (!!sheetMetalMode || !!sheetMetalPicker);
+  const sheetMetalCardKey = sheetMetalPicker
+    ? 'picker'
+    : sheetMetalMode?.exportOpen
+      ? 'export'
+      : sheetMetalMode?.draft?.kind
+        ? String(sheetMetalMode.draft.kind)
+        : (sheetMetalMode?.stage || 'edit');
   const edgeSheetOpen = mode !== 'game'
     && !helperCardOpen
     && pickMode === 'edge'
@@ -1262,6 +1278,8 @@ const Viewport = forwardRef(({
     && !cutMode
     && !booleanMode
     && !moveMode
+    && !sheetMetalMode
+    && !sheetMetalPicker
     && selectedEdges.length > 0;
   const featureCardKind = filletSheetOpen
     ? 'fillet'
@@ -1281,11 +1299,13 @@ const Viewport = forwardRef(({
                   ? 'boolean'
                   : moveSheetOpen
                     ? 'move'
-                    : helperSheetOpen
-                      ? 'helper'
-                      : edgeSheetOpen
-                        ? 'edge'
-                        : '';
+                    : sheetMetalSheetOpen
+                      ? `sheetMetal:${sheetMetalCardKey}`
+                      : helperSheetOpen
+                        ? 'helper'
+                        : edgeSheetOpen
+                          ? 'edge'
+                          : '';
   featureCardKindRef.current = featureCardKind;
   sheetCameraOwnedRef.current = featureCardKind !== '';
   useEffect(() => {
@@ -2689,6 +2709,7 @@ const Viewport = forwardRef(({
 
   const enterContourMode = useCallback(({ entry } = {}) => {
     exitPaintModeRef.current();
+    exitSheetMetalChromeRef.current();
     setFilletMode(null);
     filletModeRef.current = null;
     clearFilletBlendPreview();
@@ -2854,6 +2875,7 @@ const Viewport = forwardRef(({
 
   const enterFilletMode = useCallback((opts = {}) => {
     exitPaintModeRef.current();
+    exitSheetMetalChromeRef.current();
     const entry = opts?.entry === 'chamferEdges' ? 'chamferEdges' : 'filletEdges';
     const picked = Array.isArray(opts.edges) ? opts.edges : selectedEdges;
     // Snapshot before exitContourMode, which forces face pick.
@@ -3058,6 +3080,7 @@ const Viewport = forwardRef(({
 
   const enterShellMode = useCallback(() => {
     exitPaintModeRef.current();
+    exitSheetMetalChromeRef.current();
     exitContourMode();
     setFilletMode(null);
     filletModeRef.current = null;
@@ -4101,6 +4124,7 @@ const Viewport = forwardRef(({
 
   const enterDraftMode = useCallback(() => {
     exitPaintModeRef.current();
+    exitSheetMetalChromeRef.current();
     exitContourMode();
     setFilletMode(null);
     filletModeRef.current = null;
@@ -4421,6 +4445,7 @@ const Viewport = forwardRef(({
 
   const enterCutMode = useCallback(() => {
     exitPaintModeRef.current();
+    exitSheetMetalChromeRef.current();
     exitContourMode();
     setFilletMode(null);
     filletModeRef.current = null;
@@ -4749,6 +4774,7 @@ const Viewport = forwardRef(({
 
   const enterBooleanMode = useCallback(() => {
     exitPaintModeRef.current();
+    exitSheetMetalChromeRef.current();
     exitContourMode();
     setFilletMode(null);
     filletModeRef.current = null;
@@ -4882,6 +4908,7 @@ const Viewport = forwardRef(({
 
   const enterMoveMode = useCallback(() => {
     exitPaintModeRef.current();
+    exitSheetMetalChromeRef.current();
     exitContourMode();
     setFilletMode(null);
     filletModeRef.current = null;
@@ -5256,6 +5283,7 @@ const Viewport = forwardRef(({
 
   const enterMoveFaceMode = useCallback(() => {
     exitPaintModeRef.current();
+    exitSheetMetalChromeRef.current();
     exitContourMode();
     setFilletMode(null);
     filletModeRef.current = null;
@@ -5382,6 +5410,7 @@ const Viewport = forwardRef(({
 
   const enterDeleteFaceMode = useCallback(() => {
     exitPaintModeRef.current();
+    exitSheetMetalChromeRef.current();
     exitContourMode();
     setFilletMode(null);
     filletModeRef.current = null;
@@ -7869,6 +7898,18 @@ const Viewport = forwardRef(({
             ? sheetMetalBinding
             : null;
           const next = reopenSheetMetalMode(active.spec, activePartIdRef.current, binding);
+          if (contourModeRef.current) exitContourMode();
+          if (filletModeRef.current) exitFilletMode();
+          if (shellModeRef.current) exitShellMode();
+          if (draftModeRef.current) exitDraftMode();
+          if (cutModeRef.current) exitCutMode();
+          if (booleanModeRef.current) exitBooleanMode();
+          if (moveModeRef.current) exitMoveMode();
+          if (moveFaceModeRef.current) exitMoveFaceMode();
+          if (deleteFaceModeRef.current) exitDeleteFaceMode();
+          if (paintModeRef.current) exitPaintModeRef.current();
+          if (helperCardOpenRef.current) setHelperCardOpen(false);
+          setSheetMetalPicker(null);
           if (next) setSheetMetalMode(next);
         } else if (dialog.dialog === 'shell') {
           enterShellMode();
@@ -8603,7 +8644,7 @@ const Viewport = forwardRef(({
       )}
       
       {/* Left helper rail. Block, Build, Shape, Polish, Move. */}
-      {onInsertHelper && !paintMode && !feaActive && !contourMode && !filletMode && !shellMode && !draftMode && !cutMode && !booleanMode && !moveMode && !moveFaceMode && !deleteFaceMode && !sheetMetalMode && (
+      {onInsertHelper && !paintMode && !feaActive && !contourMode && !filletMode && !shellMode && !draftMode && !cutMode && !booleanMode && !moveMode && !moveFaceMode && !sheetMetalPicker && !deleteFaceMode && !sheetMetalMode && (
         <HelperInsertPalette
           layout={mode === 'game' ? 'game' : 'cad'}
           onInsert={onInsertHelper}
@@ -8647,7 +8688,7 @@ const Viewport = forwardRef(({
       )}
 
       {/* SCS sheet metal: left rail swaps like contour mode. */}
-      {sheetMetalMode && (
+      {sheetMetalMode && mode !== 'game' && (
         <SheetMetalRail
           onExit={() => {
             cancelFeatureEditRef.current?.('sheetMetal');
@@ -8658,7 +8699,7 @@ const Viewport = forwardRef(({
           onSelectTool={(id) => setSheetMetalMode((prev) => (prev ? setSheetTool(prev, id) : prev))}
         />
       )}
-      {sheetMetalMode && (
+      {sheetMetalMode && mode !== 'game' && (
         <SheetMetalFlow
           mode={sheetMetalMode}
           setMode={(fn) => setSheetMetalMode((prev) => (prev ? fn(prev) : prev))}
@@ -8692,10 +8733,11 @@ const Viewport = forwardRef(({
           partName={partLabelsRef.current?.[sheetMetalMode.partId] || ''}
         />
       )}
-      {sheetMetalPicker && (
+      {sheetMetalPicker && mode !== 'game' && (
         <SheetMetalPicker
           binding={sheetMetalBinding}
           willCreatePart={!!sheetMetalPicker.willCreatePart}
+          compact={isMobile}
           onCancel={() => setSheetMetalPicker(null)}
           onStart={(record) => {
             const start = onBindSheetMetal?.(record);
@@ -9245,7 +9287,7 @@ const Viewport = forwardRef(({
 
       {/* Standalone edge pick — same card, no Confirm. X clears and leaves edge pick.
           Hidden in fillet, contour, and game. Numbered badges stay on the edges. */}
-      {mode !== 'game' && !helperCardOpen && pickMode === 'edge' && !contourMode && !filletMode && !shellMode && !draftMode && !moveFaceMode && !deleteFaceMode && !cutMode && !booleanMode && !moveMode && selectedEdges.length > 0 && (
+      {mode !== 'game' && !helperCardOpen && pickMode === 'edge' && !contourMode && !filletMode && !shellMode && !draftMode && !moveFaceMode && !deleteFaceMode && !cutMode && !booleanMode && !moveMode && !sheetMetalMode && !sheetMetalPicker && selectedEdges.length > 0 && (
         <FeatureSheet
           cardAttrs={{ 'data-edge-selector': 'standalone' }}
           title={`Edge pick · ${selectedEdges.length} selected`}

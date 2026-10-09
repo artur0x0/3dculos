@@ -1,4 +1,5 @@
 import React from 'react';
+import FeatureSheet from '../FeatureSheet';
 import { PARTS_TEXT_INPUT_CLASS, PARTS_TEXT_INPUT_STYLE } from '../../utils/partsChrome';
 import { displaySheetNumber, displaySheetStep, displayToMm } from '../../utils/sheetMetal/sheetUnits';
 
@@ -77,7 +78,7 @@ export const SmSlider = ({ id, label, value, onChange, min, max, step = 0.5, uni
 
 export const SmButton = ({ variant = 'ghost', className = '', children, ...rest }) => {
   const look = variant === 'primary'
-    ? 'bg-orange-500 text-white hover:bg-orange-400 active:bg-orange-600'
+    ? 'bg-cyan-600 text-white hover:bg-cyan-500 active:bg-cyan-400'
     : variant === 'danger'
       ? 'bg-red-900/60 text-red-100 hover:bg-red-800/70'
       : 'bg-white/10 text-gray-100 hover:bg-white/20 active:bg-white/25';
@@ -132,7 +133,7 @@ export const SmUnitToggle = ({ unit = 'mm', onChange }) => (
         aria-pressed={unit === u}
         onClick={() => onChange?.(u)}
         className={`min-h-[44px] min-w-[44px] rounded px-2 text-base font-medium ${
-          unit === u ? 'bg-orange-500 text-white' : 'text-gray-300 hover:text-white'
+          unit === u ? 'bg-cyan-600 text-white' : 'text-gray-300 hover:text-white'
         }`}
       >
         {u}
@@ -149,49 +150,61 @@ export const SmToggle = ({ id, label, checked, onChange }) => (
     aria-checked={!!checked}
     onClick={() => onChange?.(!checked)}
     className={`flex w-full items-center justify-between rounded-md px-3 ${SM_TAP} text-base
-      ${checked ? 'bg-orange-500/30 text-orange-100' : 'bg-white/10 text-gray-200'}`}
+      ${checked ? 'bg-cyan-600/30 text-cyan-100' : 'bg-white/10 text-gray-200'}`}
     data-sm-toggle={id}
   >
     <span>{label}</span>
-    <span className={`h-6 w-11 rounded-full p-0.5 transition-colors ${checked ? 'bg-orange-400' : 'bg-gray-600'}`}>
+    <span className={`h-6 w-11 rounded-full p-0.5 transition-colors ${checked ? 'bg-cyan-600' : 'bg-gray-600'}`}>
       <span className={`block h-5 w-5 rounded-full bg-white transition-transform ${checked ? 'translate-x-5' : ''}`} />
     </span>
   </button>
 );
 
-/** Translucent popup shell shared by the picker and feature popups (✕ top-right). */
+/**
+ * The one sheet-metal shell: the shared feature card.
+ * X and Esc call `onClose` and write nothing. There is no swipe.
+ * The mm|in toggle sits in the header (the subtitle row), because the
+ * shell has no header slot and its title has to stay the dialog name.
+ * Confirm stays a 44px button in `footer` — the shell's own confirm is
+ * shorter than that target, and this file does not restyle the shell.
+ */
 export const SmPopup = ({
-  title, subtitle, onClose, closeLabel = 'Close', children, footer, dataAttr, short = false,
-  unit = null, onUnit = null,
-}) => (
-  <div className="absolute inset-0 z-50 flex items-end justify-center p-3 pointer-events-none" role="presentation">
-    <div
-      role="dialog"
-      aria-label={title}
-      className={`pointer-events-auto w-full max-w-sm ${short ? 'max-h-[min(52%,calc(100dvh-8rem))]' : 'max-h-[min(78%,calc(100dvh-8rem))]'} mb-1 overflow-hidden flex flex-col rounded-lg surface-glass border border-orange-500/60 shadow-2xl`}
-      {...(dataAttr ? { [dataAttr]: '1' } : {})}
+  title,
+  subtitle,
+  onClose,
+  closeLabel = 'Close',
+  children,
+  footer = null,
+  dataAttr,
+  unit = null,
+  onUnit = null,
+  compact = false,
+  cardAttrs = null,
+  note = null,
+}) => {
+  const headerSubtitle = onUnit ? (
+    <span className="flex items-center justify-between gap-2">
+      <span className="min-w-0 flex-1 truncate">{subtitle}</span>
+      <SmUnitToggle unit={unit === 'in' ? 'in' : 'mm'} onChange={onUnit} />
+    </span>
+  ) : subtitle;
+  return (
+    <FeatureSheet
+      title={title}
+      subtitle={headerSubtitle}
+      onCancel={onClose}
+      compact={compact}
+      footer={footer}
+      note={note}
+      cardAttrs={{
+        ...(dataAttr ? { [dataAttr]: '1' } : {}),
+        title: closeLabel,
+        ...(cardAttrs || {}),
+      }}
     >
-      <div className="flex items-start justify-between gap-2 px-4 py-3 border-b border-gray-700 shrink-0">
-        <div className="min-w-0">
-          <h2 className="text-base font-semibold text-white truncate">{title}</h2>
-          {subtitle && <p className="text-xs text-gray-300 mt-0.5">{subtitle}</p>}
-        </div>
-        <div className="flex shrink-0 items-start gap-1">
-          {onUnit && <SmUnitToggle unit={unit === 'in' ? 'in' : 'mm'} onChange={onUnit} />}
-          <button
-            type="button"
-            onClick={() => onClose?.()}
-            className="-mr-2 -mt-1 h-11 w-11 shrink-0 inline-flex items-center justify-center rounded text-gray-300 hover:text-white hover:bg-white/10"
-            title={closeLabel}
-            aria-label={closeLabel}
-            data-sm-close="1"
-          >
-            <span aria-hidden className="text-xl leading-none">✕</span>
-          </button>
-        </div>
+      <div className="flex flex-col gap-3 py-1">
+        {children}
       </div>
-      <div className="px-4 py-3 flex flex-col gap-3 overflow-y-auto rail-scroll min-h-0">{children}</div>
-      {footer && <div className="px-4 py-3 border-t border-gray-700 shrink-0 flex gap-2 justify-end">{footer}</div>}
-    </div>
-  </div>
-);
+    </FeatureSheet>
+  );
+};

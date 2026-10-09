@@ -11,9 +11,12 @@ over inventing a new modal layout.
   use the compact mobile max-height + internal scroll described below.
 - **`FilletModeChip.jsx`** — the shared feature card (`FeatureSheet`); edge-pick
   Tangent / Clear / Undo, cyan Confirm, grey X dismiss. No hard-edge warning.
-- **`sheetMetal/SmControls.jsx`** — orange glass bottom sheet (`SmPopup`) for
-  Sheet Metal: ✕ top-right exits the flow, Back / Accept footer, 44px tap
-  targets, ≥16px number / select fields (`PARTS_TEXT_INPUT_*`).
+- **`sheetMetal/SmControls.jsx`** — `SmPopup` is the shared feature card
+  (`FeatureSheet`) for Sheet Metal: picker, plane and edit chip, base, bend,
+  tab, hole, countersink, tapped, and Check & Export. X and Esc write nothing.
+  Confirm is a 44px button and saves that step. The mm|in toggle is in the
+  header. The DFM list scrolls in the body. ≥16px number / select fields
+  (`PARTS_TEXT_INPUT_*`). Hidden in game.
 - **`ShellModeChip.jsx`** — the shared feature card (`FeatureSheet`); face-pick
   opening + Wall `NumberField` + Face/Closed segmented control. Taps add faces
   with no modifier (tap a selected face to remove it, same as the edge picker).

@@ -36,7 +36,7 @@ const EDGE_NAMES = { 'u+': '+X edge', 'u-': '−X edge', 'v+': '+Y edge', 'v-': 
 
 /** Accept / Back / Delete footer shared by feature popups. */
 const DraftFooter = ({ mode, setMode, onCommit }) => (
-  <>
+  <div className="flex flex-wrap items-center gap-2">
     {!mode.draft.isNew && (
       <SmButton
         variant="danger"
@@ -72,12 +72,12 @@ const DraftFooter = ({ mode, setMode, onCommit }) => (
         if (onCommit?.(spec, { step: mode.draft.kind }) !== false) setMode(() => next);
       }}
     >
-      Accept
+      Confirm
     </SmButton>
-  </>
+  </div>
 );
 
-const BendPopup = ({ mode, setMode, onCommit, onExit, unit, onUnit }) => {
+const BendPopup = ({ mode, setMode, onCommit, onExit, unit, onUnit, compact = false }) => {
   const d = mode.draft;
   const spec = mode.spec;
   const lim = bendLimits(spec);
@@ -85,7 +85,6 @@ const BendPopup = ({ mode, setMode, onCommit, onExit, unit, onUnit }) => {
   const where = d.panel === 'base' ? `Base ${EDGE_NAMES[d.edge] || d.edge}` : `Flange ${d.panel} tip`;
   return (
     <SmPopup
-      short
       title={d.isNew ? 'Bend' : `Bend ${d.id}`}
       subtitle={where}
       onClose={onExit}
@@ -93,6 +92,7 @@ const BendPopup = ({ mode, setMode, onCommit, onExit, unit, onUnit }) => {
       dataAttr="data-sheet-metal-bend"
       unit={unit}
       onUnit={onUnit}
+      compact={compact}
       footer={<DraftFooter mode={mode} setMode={setMode} onCommit={onCommit} />}
     >
       <SmSlider
@@ -119,7 +119,7 @@ const BendPopup = ({ mode, setMode, onCommit, onExit, unit, onUnit }) => {
         onClick={() => setMode((m) => updateDraft(m, { flip: !m.draft.flip }))}
         aria-pressed={!!d.flip}
         data-sm-flip="1"
-        className={d.flip ? '!bg-orange-500/40' : ''}
+        className={d.flip ? '!bg-cyan-600/40' : ''}
       >
         Flip {d.flip ? '(down)' : '(up)'}
       </SmButton>
@@ -130,13 +130,12 @@ const BendPopup = ({ mode, setMode, onCommit, onExit, unit, onUnit }) => {
   );
 };
 
-const TabPopup = ({ mode, setMode, onCommit, onExit, unit, onUnit }) => {
+const TabPopup = ({ mode, setMode, onCommit, onExit, unit, onUnit, compact = false }) => {
   const d = mode.draft;
   const span = Number(d.span) || Math.max(d.width, 1);
   const where = d.panel === 'base' ? `Base ${EDGE_NAMES[d.edge] || d.edge}` : `Flange ${d.panel} ${d.edge === 'u+' ? 'tip' : 'side'}`;
   return (
     <SmPopup
-      short
       title={d.isNew ? 'Tab' : `Tab ${d.id}`}
       subtitle={`${where} · edge ${formatSheetLength(span, unit, 1)}`}
       onClose={onExit}
@@ -144,6 +143,7 @@ const TabPopup = ({ mode, setMode, onCommit, onExit, unit, onUnit }) => {
       dataAttr="data-sheet-metal-tab"
       unit={unit}
       onUnit={onUnit}
+      compact={compact}
       footer={<DraftFooter mode={mode} setMode={setMode} onCommit={onCommit} />}
     >
       <SmMmSlider id="sm-tab-width" label="Width" mm={d.width} minMm={1} maxMm={span} stepMm={0.5} unit={unit}
@@ -163,14 +163,13 @@ const TabPopup = ({ mode, setMode, onCommit, onExit, unit, onUnit }) => {
 
 const HOLE_TITLES = { hole: 'Hole', countersink: 'Countersunk hole', tapped: 'Tapped hole' };
 
-const HolePopup = ({ mode, setMode, onCommit, onExit, unit, onUnit }) => {
+const HolePopup = ({ mode, setMode, onCommit, onExit, unit, onUnit, compact = false }) => {
   const d = mode.draft;
   const range = holeRange(mode) || { u0: -50, u1: 50, v0: -50, v1: 50 };
   const minHole = Number(mode.spec.limits?.minHole) || 0;
   const type = d.type || 'hole';
   return (
     <SmPopup
-      short
       title={d.isNew ? HOLE_TITLES[type] : `${HOLE_TITLES[type]} ${d.id}`}
       subtitle={`${d.panel === 'base' ? 'Base' : `Flange ${d.panel}`} face${minHole ? ` · SKU min Ø ${formatSheetLength(minHole, unit)}` : ''}`}
       onClose={onExit}
@@ -178,6 +177,7 @@ const HolePopup = ({ mode, setMode, onCommit, onExit, unit, onUnit }) => {
       dataAttr="data-sheet-metal-hole"
       unit={unit}
       onUnit={onUnit}
+      compact={compact}
       footer={<DraftFooter mode={mode} setMode={setMode} onCommit={onCommit} />}
     >
       {type === 'tapped' ? (
@@ -202,7 +202,7 @@ const HolePopup = ({ mode, setMode, onCommit, onExit, unit, onUnit }) => {
 
 
 /** DFM, flat size, and the STEP source. Downloads and Order live on the quote handoff. */
-const ExportPopup = ({ mode, setMode, mesh, script, partName, unit, onUnit }) => {
+const ExportPopup = ({ mode, setMode, mesh, script, partName, unit, onUnit, compact = false }) => {
   const bundle = React.useMemo(
     () => buildSheetExport(mode.spec, { mesh: mesh || null, script: script ?? null, partName: partName || mode.partId || 'sheet', unit }),
     [mode.spec, mode.partId, partName, mesh, script, unit],
@@ -226,9 +226,7 @@ const ExportPopup = ({ mode, setMode, mesh, script, partName, unit, onUnit }) =>
       dataAttr="data-sheet-metal-export"
       unit={unit}
       onUnit={onUnit}
-      footer={(
-        <SmButton onClick={close} data-sm-back="1">Close</SmButton>
-      )}
+      compact={compact}
     >
       {size && (
         <p className="text-xs text-gray-300" data-sm-flat-size="1">
@@ -286,17 +284,17 @@ const SheetMetalFlow = ({
   if (!mode) return null;
 
   if (mode.stage === 'edit' && mode.exportOpen) {
-    return <ExportPopup mode={mode} setMode={setMode} mesh={mesh} script={script} partName={partName} unit={unit} onUnit={onUnit} />;
+    return <ExportPopup mode={mode} setMode={setMode} mesh={mesh} script={script} partName={partName} unit={unit} onUnit={onUnit} compact={compact} />;
   }
 
   if (mode.stage === 'edit' && mode.draft?.kind === 'bend') {
-    return <BendPopup mode={mode} setMode={setMode} onCommit={onCommit} onExit={onExit} unit={unit} onUnit={onUnit} />;
+    return <BendPopup mode={mode} setMode={setMode} onCommit={onCommit} onExit={onExit} unit={unit} onUnit={onUnit} compact={compact} />;
   }
   if (mode.stage === 'edit' && mode.draft?.kind === 'tab') {
-    return <TabPopup mode={mode} setMode={setMode} onCommit={onCommit} onExit={onExit} unit={unit} onUnit={onUnit} />;
+    return <TabPopup mode={mode} setMode={setMode} onCommit={onCommit} onExit={onExit} unit={unit} onUnit={onUnit} compact={compact} />;
   }
   if (mode.stage === 'edit' && mode.draft?.kind === 'hole') {
-    return <HolePopup mode={mode} setMode={setMode} onCommit={onCommit} onExit={onExit} unit={unit} onUnit={onUnit} />;
+    return <HolePopup mode={mode} setMode={setMode} onCommit={onCommit} onExit={onExit} unit={unit} onUnit={onUnit} compact={compact} />;
   }
 
   if (mode.stage === 'base' && mode.base) {
@@ -310,8 +308,9 @@ const SheetMetalFlow = ({
         dataAttr="data-sheet-metal-base"
         unit={unit}
         onUnit={onUnit}
+        compact={compact}
         footer={(
-          <>
+          <div className="flex flex-wrap items-center justify-end gap-2">
             <SmButton onClick={() => setMode((m) => backToPlanePick(m))} data-sm-back="1">Back</SmButton>
             <SmButton
               variant="primary"
@@ -321,9 +320,9 @@ const SheetMetalFlow = ({
                 if (spec && onCommit?.(spec, { step: 'base' }) !== false) setMode(() => next);
               }}
             >
-              Accept
+              Confirm
             </SmButton>
-          </>
+          </div>
         )}
       >
         <SmMmSlider

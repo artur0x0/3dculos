@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 /**
- * Phone layout: the sheet-metal chip (material, hint, Check & Export) sits
- * in the gap between the side rails. At 375 and 390 its box does not
- * intersect either toolbar. The hint wraps; the material line ellipsizes.
- * Desktop (1280) stays within the 22rem cap and also clears the rails.
+ * Phone layout: the sheet-metal chip (material, hint, Check & Export) is
+ * the shared feature card in the gap between the side rails. At 375 and
+ * 390 its box does not intersect either toolbar (10px off each rail).
+ * The hint wraps; the material line ellipsizes. Desktop (1280) stays
+ * within the 22rem cap and also clears the rails.
  *
  * Screenshots go to GOLDEN_SHOT_DIR or os.tmpdir(), never the artifacts dir.
  */
@@ -52,11 +53,15 @@ console.log('sheet chip: between the side rails');
 {
   const chip = read('src/components/sheetMetal/SheetMetalModeChip.jsx');
   const layout = read('src/utils/sheetMetal/sheetChipLayout.js');
+  const cardLayout = read('src/utils/featureSheetLayout.js');
   const flow = read('src/components/sheetMetal/SheetMetalFlow.jsx');
   const rail = read('src/components/sheetMetal/SheetMetalRail.jsx');
   const palette = read('src/components/HelperInsertPalette.jsx');
-  check('chip measures the rails', /sheetChipBetweenRails/.test(chip) && /data-rail-pair="left"/.test(chip)
-    && /data-rail-pair="right"/.test(chip));
+  check('chip is the feature card, which measures the rails',
+    /<SmPopup/.test(chip)
+    && /sheetChipBetweenRails/.test(cardLayout)
+    && /data-rail-pair="left"/.test(read('src/utils/featureSheetLayout.js'))
+    && /FEATURE_SHEET_SIDE_GAP_PX = 10/.test(cardLayout));
   check('layout uses measured boxes, not a phone-width guess',
     /leftRail\.right/.test(layout) && /rightRail\.left/.test(layout) && !/375|390/.test(layout));
   check('hint wraps and material truncates', /data-sm-hint/.test(flow) && /break-words/.test(flow)
@@ -200,7 +205,7 @@ createRoot(document.getElementById('root')).render(<Stage />);
       const c = chip.getBoundingClientRect();
       const l = left.getBoundingClientRect();
       const r = right.getBoundingClientRect();
-      const available = r.left - l.right - 16;
+      const available = r.left - l.right - 20;
       return c.width > 0 && Math.abs(c.width - available) < 2
         && c.left >= l.right - 0.5 && c.right <= r.left + 0.5;
     });
