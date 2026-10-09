@@ -272,8 +272,11 @@ console.log('face paint — cancel writes nothing');
   const repaintAt = exitBlock.indexOf('repaintFaceSkins');
   check('leaving paint does not write', exitAt > 0 && exitEnd > exitAt && !/onCommitPaint/.test(exitBlock)
     && nullAt >= 0 && repaintAt > nullAt);
-  check('cancel and the grey X dismiss', /data-paint-cancel/.test(readFileSync(new URL('../../src/components/PaintModeChip.jsx', import.meta.url), 'utf8'))
-    && /onDismiss\?\.\(\)/.test(readFileSync(new URL('../../src/components/PaintModeChip.jsx', import.meta.url), 'utf8')));
+  const paintChip = readFileSync(new URL('../../src/components/PaintModeChip.jsx', import.meta.url), 'utf8');
+  check('the grey X dismisses and writes nothing', /<FeatureSheet\b/.test(paintChip)
+    && /onCancel=\{onDismiss\}/.test(paintChip)
+    && /data-paint-mode/.test(paintChip)
+    && !/data-paint-cancel/.test(paintChip));
   const app = readFileSync(new URL('../../src/App.jsx', import.meta.url), 'utf8');
   const handlerAt = app.indexOf('const handleCommitPaint');
   const handler = app.slice(handlerAt, app.indexOf('const handleCommitShell', handlerAt));

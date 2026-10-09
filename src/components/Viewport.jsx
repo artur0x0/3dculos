@@ -1266,6 +1266,7 @@ const Viewport = forwardRef(({
       : sheetMetalMode?.draft?.kind
         ? String(sheetMetalMode.draft.kind)
         : (sheetMetalMode?.stage || 'edit');
+  const paintSheetOpen = mode !== 'game' && !!paintMode;
   const edgeSheetOpen = mode !== 'game'
     && !helperCardOpen
     && pickMode === 'edge'
@@ -1280,6 +1281,7 @@ const Viewport = forwardRef(({
     && !moveMode
     && !sheetMetalMode
     && !sheetMetalPicker
+    && !paintMode
     && selectedEdges.length > 0;
   const featureCardKind = filletSheetOpen
     ? 'fillet'
@@ -1301,18 +1303,28 @@ const Viewport = forwardRef(({
                     ? 'move'
                     : sheetMetalSheetOpen
                       ? `sheetMetal:${sheetMetalCardKey}`
-                      : helperSheetOpen
-                        ? 'helper'
-                        : edgeSheetOpen
-                          ? 'edge'
-                          : '';
+                      : paintSheetOpen
+                        ? 'paint'
+                        : helperSheetOpen
+                          ? 'helper'
+                          : edgeSheetOpen
+                            ? 'edge'
+                            : '';
   featureCardKindRef.current = featureCardKind;
   sheetCameraOwnedRef.current = featureCardKind !== '';
+  // A view snap or zoom-to-fit wins over the card slide. Close still restores
+  // the snapshot taken when the card opened.
+  const sheetSlideArmedRef = useRef(true);
+  const holdSheetSlide = () => {
+    sheetSlideArmedRef.current = false;
+    sheetCameraRef.current?.slideBy(0);
+  };
   useEffect(() => {
     if (!featureCardKind) return undefined;
+    sheetSlideArmedRef.current = true;
     let alive = true;
     const tick = () => {
-      if (!alive) return;
+      if (!alive || !sheetSlideArmedRef.current) return;
       sheetCameraRef.current?.slideBy(sheetSlideDeltaRef.current());
     };
     const raf = requestAnimationFrame(tick);
@@ -1339,6 +1351,7 @@ const Viewport = forwardRef(({
   useEffect(() => {
     if (!featureCardKind) return undefined;
     const raf = requestAnimationFrame(() => {
+      if (!sheetSlideArmedRef.current) return;
       sheetCameraRef.current?.slideBy(sheetSlideDeltaRef.current());
     });
     return () => cancelAnimationFrame(raf);
@@ -6502,7 +6515,7 @@ const Viewport = forwardRef(({
     const onPointerDown = (event) => {
       if (!featureSheetEnabledRef.current) return;
       if (event.button != null && event.button !== 0) return;
-      if (contourModeRef.current || filletModeRef.current || shellModeRef.current || draftModeRef.current || moveModeRef.current || moveFaceModeRef.current || deleteFaceModeRef.current || sheetMetalModeRef.current || helperCardOpenRef.current) return;
+      if (contourModeRef.current || filletModeRef.current || shellModeRef.current || draftModeRef.current || moveModeRef.current || moveFaceModeRef.current || deleteFaceModeRef.current || sheetMetalModeRef.current || helperCardOpenRef.current || paintModeRef.current) return;
       if (measurementEnabled) return;
       CLEAR_LP();
       featureLongPressFiredRef.current = false;
@@ -6512,7 +6525,7 @@ const Viewport = forwardRef(({
         const origin = featureLongPressOriginRef.current;
         featureLongPressOriginRef.current = null;
         if (!origin || !featureSheetEnabledRef.current) return;
-        if (contourModeRef.current || filletModeRef.current || shellModeRef.current || draftModeRef.current || moveModeRef.current || moveFaceModeRef.current || deleteFaceModeRef.current || sheetMetalModeRef.current || helperCardOpenRef.current) return;
+        if (contourModeRef.current || filletModeRef.current || shellModeRef.current || draftModeRef.current || moveModeRef.current || moveFaceModeRef.current || deleteFaceModeRef.current || sheetMetalModeRef.current || helperCardOpenRef.current || paintModeRef.current) return;
         featureLongPressFiredRef.current = true;
         onFeatureLongPressRef.current?.({ clientX: origin.x, clientY: origin.y });
       }, 450);
@@ -6713,6 +6726,7 @@ const Viewport = forwardRef(({
           stageFit: ({ az = 35, el = 20, margin = 1.15 } = {}) => {
             const cam = cameraRef.current, ctl = controlsRef.current, res = resultRef.current;
             if (!cam || !res || !res.geometry) return false;
+            holdSheetSlide();
             const azr = (az * Math.PI) / 180, elr = (el * Math.PI) / 180;
             const ok = fitView({
               camera: cam, controls: ctl, geometry: res.geometry,
@@ -7202,6 +7216,7 @@ const Viewport = forwardRef(({
     for (const mesh of assemblyExtrasRef.current.values()) meshes.push(mesh);
     const box = unionWorldBox(meshes);
     if (!box) return;
+    holdSheetSlide();
     if (fitView({ camera: cameraRef.current, controls: controlsRef.current, box })) {
       console.log('[Viewport] Zoomed to fit');
     }
@@ -7213,6 +7228,7 @@ const Viewport = forwardRef(({
   const handleViewSnap = useCallback((key, margin = VIEW_SNAP_MARGIN) => {
     const preset = VIEW_PRESETS[key] || VIEW_PRESETS.iso;
     if (!resultRef.current?.geometry || !cameraRef.current) return false;
+    holdSheetSlide();
     const ok = fitView({
       camera: cameraRef.current,
       controls: controlsRef.current,
@@ -9105,6 +9121,7 @@ const Viewport = forwardRef(({
         toggleRef={feaToggleRef}
       />
 
+      {/* Paint on the shared card. Game mounts no card. */}
       {paintMode && mode !== 'game' && (
         <PaintModeChip
           compact={isMobile}
@@ -9287,7 +9304,7 @@ const Viewport = forwardRef(({
 
       {/* Standalone edge pick — same card, no Confirm. X clears and leaves edge pick.
           Hidden in fillet, contour, and game. Numbered badges stay on the edges. */}
-      {mode !== 'game' && !helperCardOpen && pickMode === 'edge' && !contourMode && !filletMode && !shellMode && !draftMode && !moveFaceMode && !deleteFaceMode && !cutMode && !booleanMode && !moveMode && !sheetMetalMode && !sheetMetalPicker && selectedEdges.length > 0 && (
+      {mode !== 'game' && !helperCardOpen && pickMode === 'edge' && !contourMode && !filletMode && !shellMode && !draftMode && !moveFaceMode && !deleteFaceMode && !cutMode && !booleanMode && !moveMode && !sheetMetalMode && !sheetMetalPicker && !paintMode && selectedEdges.length > 0 && (
         <FeatureSheet
           cardAttrs={{ 'data-edge-selector': 'standalone' }}
           title={`Edge pick · ${selectedEdges.length} selected`}

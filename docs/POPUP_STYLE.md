@@ -70,6 +70,10 @@ over inventing a new modal layout.
   A double click does not select the body. Confirm writes one `moveFace()` and
   replaces a previous Move Face block; X exits with no write. Live preview
   while the distance changes. This is not the body `move()` helper. Hidden in game.
+- **`PaintModeChip.jsx`** — the shared feature card (`FeatureSheet`). Eight swatches,
+  a custom hex, Part, Undo, and Clear stay in the body. The color preview
+  stays in the note. A tap paints the face immediately. Confirm writes the
+  session and closes. X and Esc write nothing. There is no swipe. Hidden in game.
 - **`DeleteFaceModeChip.jsx`** — the shared feature card (`FeatureSheet`). Tap adds a
   face, tap again removes it. The tap does not run `deleteFace`. Undo drops the
   last face. Clear drops the faces. No shift-click. A double click does not

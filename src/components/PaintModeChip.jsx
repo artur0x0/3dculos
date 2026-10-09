@@ -1,12 +1,12 @@
 import React from 'react';
-import { Check, X } from 'lucide-react';
 import { PAINT_SWATCHES, parsePaintHex, resolvedPaintColor } from '../utils/facePaint';
+import FeatureSheet from './FeatureSheet';
 
 /**
- * Paint popup. Same card as Shell: between the rails, cyan glass, grey X
- * exits with no write. A tap paints immediately. Confirm writes the session.
- * Cancel writes nothing. The button that opens it lives on the right rail
- * (`data-paint-chip`).
+ * Paint on the shared feature card.
+ * A tap paints immediately. Confirm writes the session. X and Esc write
+ * nothing. The button that opens it lives on the right rail
+ * (`data-paint-chip`). Game mode does not mount this card.
  */
 export function PaintModeChip({
   compact = false,
@@ -30,38 +30,26 @@ export function PaintModeChip({
   const customInvalid = typed !== '' && !parsePaintHex(typed);
 
   return (
-    <div
-      className={`absolute bg-cyan-950/80 surface-glass-chip border border-cyan-400/70 text-white px-3 py-2
-        rounded-lg text-xs z-20 shadow-lg flex flex-col min-h-0 pointer-events-auto ${
-          compact
-            ? 'bottom-14 left-1/2 -translate-x-1/2 max-w-[min(18rem,calc(100%-9rem))] max-h-[calc(100dvh-12rem)]'
-            : 'bottom-2.5 left-1/2 -translate-x-1/2 max-w-[20rem] max-h-[calc(100dvh-12rem)]'
-        }`}
-      role="group"
-      aria-label="Paint"
-      data-paint-mode="1"
-      onPointerDown={(event) => event.stopPropagation()}
+    <FeatureSheet
+      title="Paint"
+      subtitle="Tap a face. Double-tap paints the body."
+      compact={compact}
+      onCancel={onDismiss}
+      onConfirm={onConfirm}
+      confirmDisabled={!canConfirm}
+      cardAttrs={{
+        'data-paint-mode': '1',
+        'data-paint-confirm': canConfirm ? 'enabled' : 'disabled',
+      }}
+      note={(
+        <span
+          className="inline-block h-4 w-4 rounded-full border border-white/40"
+          data-paint-preview=""
+          style={{ background: resolved || 'transparent' }}
+        />
+      )}
     >
-      <div className="flex items-start justify-between gap-2 shrink-0">
-        <div className="min-w-0">
-          <div className="font-bold font-sans text-cyan-200">Paint</div>
-          <div className="text-[11px] text-cyan-100/90 normal-case font-sans mt-0.5">
-            Tap a face. Double-tap paints the body.
-          </div>
-        </div>
-        <button
-          type="button"
-          onClick={() => onDismiss?.()}
-          className="shrink-0 text-gray-400 hover:text-white"
-          title="Exit paint mode without saving"
-          aria-label="Exit paint mode without saving"
-          data-paint-dismiss=""
-        >
-          <X size={14} />
-        </button>
-      </div>
-
-      <div className="mt-1.5 flex flex-col gap-1.5 font-sans overflow-y-auto rail-scroll min-h-0">
+      <div className="mt-1.5 flex flex-col gap-1.5 font-sans">
         <div
           className="flex flex-wrap gap-1.5 p-1"
           role="group"
@@ -89,7 +77,7 @@ export function PaintModeChip({
         </div>
 
         <label className="flex items-center gap-2">
-          <span className="shrink-0 text-[11px] text-cyan-100/80">Hex</span>
+          <span className="shrink-0 text-[11px] text-gray-300">Hex</span>
           <input
             data-paint-hex=""
             value={custom}
@@ -100,8 +88,8 @@ export function PaintModeChip({
             autoCorrect="off"
             aria-label="Custom hex color"
             aria-invalid={customInvalid}
-            className={`min-w-0 flex-1 rounded border bg-cyan-950/50 px-2 py-1 font-mono text-base text-white ${
-              customInvalid ? 'border-red-400/80' : 'border-cyan-700/70'
+            className={`min-w-0 flex-1 rounded border bg-gray-950/50 px-2 py-1 font-mono text-base text-white ${
+              customInvalid ? 'border-red-400/80' : 'border-gray-600'
             }`}
           />
         </label>
@@ -111,7 +99,7 @@ export function PaintModeChip({
             type="button"
             data-paint-part=""
             onClick={() => onPart?.()}
-            className="px-2.5 py-1 rounded text-[13px] bg-cyan-950/80 text-cyan-100 border border-cyan-700/70"
+            className="px-2.5 py-1 rounded text-[13px] bg-cyan-600 text-white"
             title="Paint the whole part"
           >
             Part
@@ -122,7 +110,7 @@ export function PaintModeChip({
             onClick={() => onUndo?.()}
             disabled={!canUndo}
             className={`px-2.5 py-1 rounded text-[13px] underline ${
-              canUndo ? 'text-cyan-200' : 'text-cyan-400/40 cursor-not-allowed'
+              canUndo ? 'text-cyan-300' : 'text-gray-500 cursor-not-allowed'
             }`}
             title="Step back one paint"
           >
@@ -134,7 +122,7 @@ export function PaintModeChip({
             onClick={() => onClear?.()}
             disabled={!canClear}
             className={`px-2.5 py-1 rounded text-[13px] underline ${
-              canClear ? 'text-cyan-200' : 'text-cyan-400/40 cursor-not-allowed'
+              canClear ? 'text-cyan-300' : 'text-gray-500 cursor-not-allowed'
             }`}
             title="Remove the paints from this session"
           >
@@ -147,45 +135,13 @@ export function PaintModeChip({
             type="button"
             data-paint-unmatched=""
             onClick={() => onRemoveUnmatched?.()}
-            className="self-start text-[11px] text-cyan-200/80 underline"
+            className="self-start text-[11px] text-gray-300 underline"
             title="Drop saved face colors on this part that no longer match one face"
           >
             Remove unmatched colors
           </button>
         )}
       </div>
-
-      <div className="mt-2 flex items-center justify-end gap-2 shrink-0">
-        <span
-          className="mr-auto h-4 w-4 rounded-full border border-white/40"
-          data-paint-preview=""
-          style={{ background: resolved || 'transparent' }}
-        />
-        <button
-          type="button"
-          data-paint-cancel=""
-          onClick={() => onDismiss?.()}
-          className="px-2 py-1 rounded-md text-[13px] text-gray-300 hover:text-white"
-          title="Leave paint mode without saving"
-        >
-          Cancel
-        </button>
-        <button
-          type="button"
-          onClick={() => onConfirm?.()}
-          disabled={!canConfirm}
-          data-paint-confirm={canConfirm ? 'enabled' : 'disabled'}
-          className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-[13px] font-medium shrink-0 ${
-            canConfirm
-              ? 'bg-cyan-600 hover:bg-cyan-500 active:bg-cyan-400 text-white'
-              : 'bg-cyan-950/80 text-cyan-400/50 border border-cyan-800/60 cursor-not-allowed'
-          }`}
-          title={canConfirm ? 'Save colors and close' : 'Enter a valid hex color'}
-        >
-          <Check size={14} />
-          Confirm
-        </button>
-      </div>
-    </div>
+    </FeatureSheet>
   );
 }
