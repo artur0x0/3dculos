@@ -677,6 +677,13 @@ export default function PartFeed({
   const requestAssemblyAction = (pending) => {
     setPlusMenuOpen(false);
     setFolderMenuOpen(false);
+    // Reauth Open is the reconnect dialog. A Save/Discard guard would write
+    // or offer to, and the local file picker must stay closed.
+    if (openTarget === 'reconnect') {
+      showReconnectOpen();
+      return;
+    }
+    if (openTarget === 'wait') return;
     if (assemblyLeaveSafe) {
       proceedAssemblyAction(pending);
       return;
