@@ -168,6 +168,12 @@ export default [
     languageOptions: { ecmaVersion: 2022, sourceType: 'module', globals: nodeGlobals },
   },
 
+  // ── node:test suite ──
+  {
+    files: ['test/**/*.js'],
+    languageOptions: { ecmaVersion: 2022, sourceType: 'module', globals: nodeGlobals },
+  },
+
   // Generated prompt text (gitignored artifact): markdown inside a template
   // literal legitimately carries \/ \# \* escapes that look useless to eslint.
   {

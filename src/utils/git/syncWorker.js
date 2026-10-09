@@ -12,6 +12,7 @@ import { materializeRename, renameFailureToast } from './gitRename.js';
 import { deleteAssemblyFailureToast } from './gitDeleteAssembly.js';
 import { assertMigrationCommitSafe, readVaultIdEntries } from './surfIdMigration.js';
 import { planLayoutMigration } from './layoutMigration.js';
+import { isVaultWriteRefusal, repoHasVaultMarker, vaultWriteRefusalMessage } from './vault.js';
 
 /**
  * Push queued ops for one repo.
@@ -32,7 +33,32 @@ export async function flushSyncQueue({
   if (!online) return { status: 'offline', pending: queued.length, branch };
   if (!queued.length) return { status: 'idle', sha: store.getLastSyncedSha(repo, branch), branch };
 
-  const remote = (await adapter.getBranch(repo, branch))?.sha || null;
+  // Re-check the marker on every flush. A cached handle can outlive a rename
+  // that points this name at a different repo. Refusal leaves the outbox queued.
+  let marked;
+  try {
+    marked = await repoHasVaultMarker(adapter, repo, branch);
+  } catch (err) {
+    return {
+      status: 'failed',
+      error: err?.message || vaultWriteRefusalMessage(repo),
+      code: 'not_a_vault',
+      branch,
+      pending: queued.length,
+    };
+  }
+  if (!marked.ok) {
+    return {
+      status: 'failed',
+      error: vaultWriteRefusalMessage(marked.repo || repo),
+      code: 'not_a_vault',
+      branch,
+      pending: queued.length,
+    };
+  }
+  const writeRepo = marked.repo || repo;
+
+  const remote = (await adapter.getBranch(writeRepo, branch))?.sha || null;
   const synced = store.getLastSyncedSha(repo, branch);
   if (synced && remote && remote !== synced) {
     return {
@@ -56,7 +82,7 @@ export async function flushSyncQueue({
     try {
       let files = item.files || [];
       if (item.op === 'rename') {
-        const built = await materializeRename(adapter, repo, branch, item.payload);
+        const built = await materializeRename(adapter, writeRepo, branch, item.payload);
         files = built.files;
       }
       if (!files.length) {
@@ -67,7 +93,7 @@ export async function flushSyncQueue({
       if (item.op === 'migrate-ids') assertMigrationCommitSafe(files);
       let plannedMoves = null;
       if (item.op === 'migrate-layout') {
-        const entries = await readVaultIdEntries(adapter, repo, branch);
+        const entries = await readVaultIdEntries(adapter, writeRepo, branch);
         const plan = planLayoutMigration(entries);
         if (!plan.changed) {
           await store.setOpStatus(item.id, 'done');
@@ -77,7 +103,7 @@ export async function flushSyncQueue({
         files = plan.files;
         plannedMoves = plan.moves;
       }
-      const res = await adapter.commitFiles(repo, {
+      const res = await adapter.commitFiles(writeRepo, {
         branch,
         message: item.message || 'Sync',
         files,
@@ -90,6 +116,22 @@ export async function flushSyncQueue({
       await store.setOpStatus(item.id, 'done');
       await store.setPartsState(repo, item.partIds, 'clean', item.branch || branch);
     } catch (err) {
+      if (isVaultWriteRefusal(err)) {
+        await store.setOpStatus(item.id, 'queued', '');
+        await store.setPartsState(repo, item.partIds, 'queued', item.branch || branch);
+        return {
+          status: 'failed',
+          op: item,
+          error: err.message || vaultWriteRefusalMessage(writeRepo),
+          code: 'not_a_vault',
+          sha: head,
+          branch,
+          promoted,
+          partIds: syncedPartIds,
+          layoutMoves,
+          pending: store.pending(repo, branch).length,
+        };
+      }
       await store.setOpStatus(item.id, 'failed', err?.message || 'Sync failed');
       await store.setPartsState(repo, item.partIds, 'failed', item.branch || branch);
       return {

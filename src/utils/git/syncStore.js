@@ -389,6 +389,58 @@ export function createSyncStore({ persist = true } = {}) {
     return { changed };
   }
 
+  function rekeySlot(slot, fromKey, toKey) {
+    if (slot === fromKey) return toKey;
+    const prefix = `${fromKey}\0`;
+    if (typeof slot === 'string' && slot.startsWith(prefix)) {
+      return `${toKey}\0${slot.slice(prefix.length)}`;
+    }
+    return null;
+  }
+
+  async function rekeyMap(map, fromKey, toKey, persistPrefix) {
+    let moved = 0;
+    for (const [slot, value] of [...map.entries()]) {
+      const next = rekeySlot(slot, fromKey, toKey);
+      if (next == null) continue;
+      if (!map.has(next)) {
+        map.set(next, value);
+        if (persistPrefix) await persistKv(`${persistPrefix}${next}`, value);
+      }
+      map.delete(slot);
+      if (persistPrefix) await persistKv(`${persistPrefix}${slot}`, null);
+      moved += 1;
+    }
+    return moved;
+  }
+
+  /**
+   * Move surfcad-sync rows from one repo key to another. A second call
+   * finds nothing to move. Destination keys that already exist are kept.
+   */
+  async function rekeyRepo(fromRepo, toRepo) {
+    await ready;
+    const from = repoKeyOf(fromRepo);
+    const to = repoKeyOf(toRepo);
+    if (!from || !to || from === to) return { moved: 0, from, to };
+    let moved = 0;
+    for (const op of ops) {
+      if (op.repoKey !== from) continue;
+      op.repoKey = to;
+      moved += 1;
+      await persistOp(op);
+    }
+    moved += await rekeyMap(partState, from, to, 'state:');
+    moved += await rekeyMap(repoSha, from, to, 'sha:');
+    moved += await rekeyMap(parts, from, to, 'part:');
+    moved += await rekeyMap(aliases, from, to, 'alias:');
+    moved += await rekeyMap(assemblies, from, to, 'asm:');
+    moved += await rekeyMap(pathIndex, from, to, 'path:');
+    moved += await rekeyMap(trees, from, to, 'tree:');
+    if (moved) emit();
+    return { moved, from, to };
+  }
+
   function pathIndexFor(repo) {
     const prefix = `${repoKeyOf(repo)}\0`;
     const out = {};
@@ -424,6 +476,7 @@ export function createSyncStore({ persist = true } = {}) {
     putTree,
     getTree,
     migrateLocalSurfIds,
+    rekeyRepo,
     partStates,
     subscribe,
     ops: () => ops.slice(),

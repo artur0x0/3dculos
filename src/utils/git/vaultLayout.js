@@ -1,5 +1,5 @@
 /**
- * Vault / repo layout (one private repo per user, default `surfcad`):
+ * Vault / repo layout (one private repo per user, default `surfcad-vault`):
  *
  *   surfcad.json                                  vault marker
  *   README.md

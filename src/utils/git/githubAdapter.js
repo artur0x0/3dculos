@@ -13,6 +13,8 @@
  */
 import { GitAdapterError, assertGithubAdapter } from './githubAdapterInterface.js';
 import { normalizeRepoPath } from '../assembly.js';
+import { VAULT_MARKER_PATH } from './vaultLayout.js';
+import { isVaultMarker, vaultWriteRefusalMessage } from './vaultNames.js';
 
 /**
  * GitHub Contents API path. Each segment is encodeURIComponent; slashes stay
@@ -132,6 +134,83 @@ export function createGithubAdapter({ token, fetchImpl = globalThis.fetch, apiBa
     if (br) return br.sha;
     if (/^[0-9a-f]{40}$/i.test(String(ref))) return String(ref);
     return null;
+  }
+
+  function filesIncludeVaultMarker(files) {
+    for (const file of files || []) {
+      if (!file || file.delete) continue;
+      const path = normalizeRepoPath(file.path);
+      if (path === VAULT_MARKER_PATH && isVaultMarker(String(file.content ?? ''))) return true;
+    }
+    return false;
+  }
+
+  async function readMarkerContent(repo, ref) {
+    const q = ref ? `?ref=${encodeURIComponent(ref)}` : '';
+    const { res, data } = await json(
+      `${repoPath(repo)}/contents/${encodeURIComponent(VAULT_MARKER_PATH)}${q}`,
+    );
+    if (res.status === 404) return null;
+    if (!res.ok) throw new GitAdapterError('invalid', data?.message || 'readFile failed');
+    if (data?.type !== 'file') return null;
+    if (data.encoding === 'base64' && data.content) {
+      return decodeBase64Utf8(String(data.content).replace(/\n/g, ''));
+    }
+    return typeof data.content === 'string' ? data.content : null;
+  }
+
+  async function listBranchNames(repo) {
+    const { res, data } = await json(`${repoPath(repo)}/branches?per_page=100`);
+    if (res.status === 404) return [];
+    if (!res.ok) throw new GitAdapterError('invalid', data?.message || 'listBranches failed');
+    return (data || []).map((branch) => branch.name).filter(Boolean);
+  }
+
+  /**
+   * Confirm surfcad.json before any contents PUT or ref PATCH/DELETE/POST.
+   * An empty repo may be seeded only when `seed` is set and the commit
+   * itself writes a valid marker — that is the repo find-or-create just created.
+   */
+  async function guardVaultWrite(repo, { seed = false, files = null, ref = null } = {}) {
+    const { res, data } = await json(repoPath(repo));
+    if (res.status === 404) {
+      throw new GitAdapterError('not_found', `Repo ${repo.owner}/${repo.name} not found`);
+    }
+    if (!res.ok) throw new GitAdapterError('invalid', data?.message || 'getRepo failed');
+    const info = infoFromRepo(data);
+    const canonical = { owner: info.owner || repo.owner, name: info.name || repo.name };
+    const refuse = () => {
+      throw new GitAdapterError('not_a_vault', vaultWriteRefusalMessage(canonical));
+    };
+    const marked = async (branchName) => {
+      const content = await readMarkerContent(canonical, branchName);
+      return !!(content && isVaultMarker(content));
+    };
+
+    const target = ref || info.defaultBranch || 'main';
+    const head = await getBranchInner(canonical, target);
+    if (head?.sha) {
+      if (await marked(target)) return canonical;
+      return refuse();
+    }
+
+    const defaultBranch = info.defaultBranch || 'main';
+    if (target !== defaultBranch) {
+      const defaultHead = await getBranchInner(canonical, defaultBranch);
+      if (defaultHead?.sha) {
+        if (await marked(defaultBranch)) return canonical;
+        return refuse();
+      }
+    }
+
+    const branches = await listBranchNames(canonical);
+    if (branches.length > 0) {
+      if (await marked(branches[0])) return canonical;
+      return refuse();
+    }
+
+    if (seed && filesIncludeVaultMarker(files)) return canonical;
+    return refuse();
   }
 
   async function getBranchInner(repo, branch) {
@@ -289,6 +368,7 @@ export function createGithubAdapter({ token, fetchImpl = globalThis.fetch, apiBa
 
     async createBranch(repo, branch, fromSha) {
       if (!branch) throw new GitAdapterError('name_exists', 'Branch name required');
+      repo = await guardVaultWrite(repo);
       const { res, data } = await json(`${repoPath(repo)}/git/refs`, {
         method: 'POST',
         body: { ref: `refs/heads/${branch}`, sha: fromSha },
@@ -314,6 +394,7 @@ export function createGithubAdapter({ token, fetchImpl = globalThis.fetch, apiBa
     async deleteBranch(repo, branch) {
       if (!branch) throw new GitAdapterError('invalid', 'Branch name required');
       if (branch === 'main') throw new GitAdapterError('invalid', 'Cannot delete main');
+      repo = await guardVaultWrite(repo);
       const { res, data } = await json(
         `${repoPath(repo)}/git/refs/heads/${encodeURIComponent(branch)}`,
         { method: 'DELETE' },
@@ -364,10 +445,11 @@ export function createGithubAdapter({ token, fetchImpl = globalThis.fetch, apiBa
       return { path: p, content, sha: data.sha };
     },
 
-    async commitFiles(repo, { branch, message, files, baseSha } = {}) {
+    async commitFiles(repo, { branch, message, files, baseSha, seed = false } = {}) {
       if (!Array.isArray(files) || files.length === 0) {
         throw new GitAdapterError('invalid', 'commitFiles needs at least one file');
       }
+      repo = await guardVaultWrite(repo, { seed, files, ref: branch || null });
       const info = await this.getRepo(repo);
       if (!info) throw new GitAdapterError('not_found', `Repo ${repo.owner}/${repo.name} not found`);
       const target = branch || info.defaultBranch || 'main';
@@ -480,6 +562,7 @@ export function createGithubAdapter({ token, fetchImpl = globalThis.fetch, apiBa
      */
     async squashMerge(repo, { base = 'main', head, message } = {}) {
       if (!head) throw new GitAdapterError('invalid', 'squashMerge needs head');
+      repo = await guardVaultWrite(repo, { ref: base });
       const baseBr = await getBranchInner(repo, base);
       const headBr = await getBranchInner(repo, head);
       if (!baseBr?.sha) throw new GitAdapterError('not_found', `Branch ${base} not found`);

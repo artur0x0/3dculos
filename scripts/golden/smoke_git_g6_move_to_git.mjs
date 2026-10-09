@@ -180,7 +180,7 @@ console.log('\ngit G6 — existing vault, conflicts, bad names');
 
   const def = createMockGithubAdapter({ login: 'artur' });
   const dflt = await moveToGit(def, { doc, scripts });
-  eq('default vault name surfcad', dflt.vault.repo.name, 'surfcad');
+  eq('default vault name surfcad-vault', dflt.vault.repo.name, 'surfcad-vault');
   eq('default matches findOrCreateVault', (await findOrCreateVault(def)).status, 'found');
 }
 

@@ -6,6 +6,7 @@ import { partListSubtitles } from '../utils/git/partListSubtitle.js';
 import {
   filterVaultOpenIndex, filterVaultPartItems, groupVaultOpenPartRows, vaultOpenAssemblies, vaultOpenPartRows,
 } from '../utils/git/gitWorkspace.js';
+import { DEFAULT_VAULT_NAME } from '../utils/git/vault.js';
 import { layoutPartFeed } from '../utils/partGroups.js';
 import PartGroupBlock from './PartGroupBlock';
 import { PARTS_TEXT_INPUT_CLASS, PARTS_TEXT_INPUT_STYLE } from '../utils/partsChrome.js';
@@ -335,7 +336,7 @@ export default function PartFeed({
   onBranchUiClose = null,
   // G6 Local → Git
   onMoveToGit = null,
-  defaultVaultName = 'surfcad',
+  defaultVaultName = DEFAULT_VAULT_NAME,
   sanitizeVaultName = null,
   // G7 Connect GitHub (sr-only — profile chip is the visible sign-in control)
   githubConnectReady = false,
@@ -685,7 +686,7 @@ export default function PartFeed({
   const closeMove = () => setMoveFlow(null);
   const startMoveToGit = () => {
     setMoveFlow({
-      stage: 'form', vaultName: defaultVaultName || 'surfcad', result: null, error: '',
+      stage: 'form', vaultName: defaultVaultName || DEFAULT_VAULT_NAME, result: null, error: '',
     });
   };
   const moveVaultClean = moveFlow

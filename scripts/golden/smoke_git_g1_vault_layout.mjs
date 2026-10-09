@@ -170,12 +170,12 @@ threw = false; try { toSurfJson({ name: 'A', parts: [{ id: 'local:123', name: 'p
 ok('toSurfJson refuses local ids', threw);
 
 console.log('\ngit G1 — find-or-create vault');
-eq('default name', DEFAULT_VAULT_NAME, 'surfcad');
+eq('default name', DEFAULT_VAULT_NAME, 'surfcad-vault');
 eq('sanitize rename', sanitizeVaultName('  My CAD vault! '), 'My-CAD-vault');
 eq('sanitize empty', sanitizeVaultName('..'), '');
 const gh = createMockGithubAdapter({ login: 'artur' });
 const v1 = await findOrCreateVault(gh);
-eq('creates surfcad', [v1.status, v1.repo, v1.private, v1.defaultBranch], ['created', { owner: 'artur', name: 'surfcad' }, true, 'main']);
+eq('creates surfcad-vault', [v1.status, v1.repo, v1.private, v1.defaultBranch], ['created', { owner: 'artur', name: 'surfcad-vault' }, true, 'main']);
 eq('seed tree', (await gh.listTree(v1.repo, 'main')).map((e) => e.path), ['assemblies/.gitkeep', 'parts/.gitkeep', 'README.md', 'surfcad.json'].sort((a, b) => a.localeCompare(b)));
 ok('marker valid', isVaultMarker((await gh.readFile(v1.repo, 'surfcad.json')).content));
 eq('seed is one commit', (await gh.compare(v1.repo, 'main', 'main')).headSha, v1.headSha);
@@ -200,7 +200,10 @@ gh._seedRepo({ name: 'busy', files: { 'index.html': '<p>' } });
 const v4 = await findOrCreateVault(gh, { name: 'busy' });
 eq('non-vault repo untouched', [v4.status, (await gh.listTree(v4.repo, 'main')).length], ['not-a-vault', 1]);
 gh._seedRepo({ name: 'blank' });
-eq('empty repo initialized', (await findOrCreateVault(gh, { name: 'blank' })).status, 'initialized');
+{
+  const blank = await findOrCreateVault(gh, { name: 'blank' });
+  eq('empty repo not seeded', [blank.status, (await gh.listTree({ owner: 'artur', name: 'blank' }, 'main')).length], ['not-a-vault', 0]);
+}
 eq('look-only missing', (await findOrCreateVault(gh, { name: 'nothing', create: false })).status, 'missing');
 eq('invalid name', (await findOrCreateVault(gh, { name: '!!' })).status, 'invalid-name');
 // layout write → read through the vault

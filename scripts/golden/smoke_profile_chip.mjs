@@ -143,7 +143,7 @@ console.log('\nG9 — UI wiring (source)');
     && /GitHub repo/.test(readFileSync(join(root, 'src/components/ProfilePanel.jsx'), 'utf8')));
   ok('DELETE /api/auth/account wired',
     /router\.delete\('\/account'/.test(readFileSync(join(root, 'backend/routes/auth.js'), 'utf8'))
-    && /deleteGithubVaultRepo/.test(readFileSync(join(root, 'backend/routes/auth.js'), 'utf8')));
+    && /deleteResolvedGithubVault/.test(readFileSync(join(root, 'backend/routes/auth.js'), 'utf8')));
   ok('App clears vault state on profile sign-out',
     /handleProfileSignedOut/.test(app) && /setGithubConnected\(false\)/.test(app));
   ok('architecture documents G9', /Profile chip \(G9\)/.test(arch)
