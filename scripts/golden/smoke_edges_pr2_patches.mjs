@@ -7,7 +7,7 @@
  * - filleted box → 6 planar + 1 blend; blend does not absorb neighbouring flats
  * - shelled fillet box → outer + inner blends stay separate; flats stay flats
  * - roundedBox → 6 large planar faces remain distinct from blends
- * - loft → each large wall is exactly one patch
+ * - loft → the wall is one patch, caps stay their own faces
  * - worker execute payload does NOT ship partGraph (lazy / off critical path —
  *   #88 shipped it every serializeResult and caused iOS Safari black viewport)
  */
@@ -177,12 +177,15 @@ const xs0 = makeCrossSection(fr, profileCircle(5, 32));
 const xs1 = makeCrossSection(offsetPlaneFrame(fr, 20), profileRectangle(20, 12, true));
 return placeInFrame(fr, makeLoft([xs0, xs1]));
 `);
-  const g = buildPartGraphPatches(meshArrays(payload.mesh));
+  const arrays = meshArrays(payload.mesh);
+  arrays.triSource = triangleSources(payload.mesh, null, arrays.indices.length / 3);
+  const g = buildPartGraphPatches(arrays);
   const walls = g.patches.filter((p) => p.area > 50);
-  check('loft has ~6 large face patches (walls+caps)', walls.length >= 5 && walls.length <= 10,
-    `n=${walls.length}`);
-  const side = walls.filter((p) => Math.abs(p.normal[2]) < 0.5);
-  check('loft side walls are single patches each', side.length >= 4, `n=${side.length}`);
+  const wall = walls.find((p) => p.kind === 'blend');
+  const caps = walls.filter((p) => p.kind === 'planar');
+  check('loft is one wall plus two caps', walls.length === 3 && caps.length === 2,
+    `n=${walls.length} caps=${caps.length}`);
+  check('loft wall is one patch', !!wall && wall.area > 800, wall ? `area=${wall.area.toFixed(0)}` : 'none');
 }
 
 {

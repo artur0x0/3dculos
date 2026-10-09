@@ -10,11 +10,16 @@
  * included) still resolve after the load-time id migration: the face pixel
  * is the saved swatch, and `.surf.json` keeps that same key.
  *
+ * LoftZilla at 390 px: one tap on the loft wall paints that whole face.
+ * Pixels of the visible wall that still match the pre-paint color are the
+ * leftover. The shredded graph leaves a large share; a fringe from antialias
+ * against the fillet is the only allowance.
+ *
  * Screenshots: GOLDEN_SHOT_DIR or os.tmpdir() only.
  */
 /* global document, indexedDB, window */
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { chromium } from 'playwright-core';
@@ -29,6 +34,12 @@ const PART = 'paint';
 const LEGACY = `local:${PART}`;
 const CUBE = 'return Manifold.cube([20, 16, 12], true);\n';
 const SWATCH = [0xef, 0x44, 0x44];
+// Visible-wall pixels still equal to the pre-paint color. Main leaves the
+// unpainted patches, a large share of this view. A passing run leaves the
+// antialiased silhouette where the wall meets the fillet: measured at 5 of
+// 43215 pixels (0.01%). 0.1% is that fringe with room for a one-pixel shift,
+// and it is still far below a shredded wall.
+const LOFT_OLD_FRAC = 0.001;
 const FACE = {
   color: '#22c55e',
   key: { at: [0, 0, 6], n: [0, 0, 1], area: 192 },
@@ -158,7 +169,7 @@ async function waitForServer(timeoutMs = 40000) {
   return false;
 }
 
-async function seed(page, doc, partId) {
+async function seed(page, doc, partId, script = CUBE) {
   await page.evaluate(async ({ doc: nextDoc, script, partId: id }) => {
     const drop = (name) => new Promise((resolve) => {
       const req = indexedDB.deleteDatabase(name);
@@ -205,7 +216,7 @@ async function seed(page, doc, partId) {
         tx.onerror = () => reject(tx.error);
       };
     });
-  }, { doc, script: CUBE, partId });
+  }, { doc, script, partId });
 }
 
 function installProbe(page) {
@@ -503,6 +514,246 @@ async function runLegacyColor(browser) {
   await context.close();
 }
 
+const LOFT_SCRIPT = readFileSync(new URL('./fixtures/LoftZilla.js', import.meta.url), 'utf8');
+const LOFT_SURF = '2026-10-08-22-00-00-0002-cd34';
+const LOFT_PART = 'loftzilla';
+const LOFT_DOC = {
+  version: 1,
+  source: 'local',
+  name: 'LoftZilla',
+  activeId: LOFT_PART,
+  parts: [{ id: LOFT_PART, name: 'LoftZilla', visible: true, order: 0, surfId: LOFT_SURF }],
+};
+
+function loftMask(page) {
+  return page.evaluate(() => new Promise((resolve) => {
+    const { canvas, renderer } = window.__paintProbe.bits();
+    const orig = renderer.render.bind(renderer);
+    renderer.render = function hooked(scene, camera) {
+      const out = orig(scene, camera);
+      renderer.render = orig;
+      const gl = renderer.getContext();
+      const dpr = renderer.getPixelRatio();
+      const w = gl.drawingBufferWidth;
+      const h = gl.drawingBufferHeight;
+      let host = null;
+      scene.traverse((obj) => {
+        if (!obj.isMesh || obj.userData?.faceColorSkin) return;
+        const n = obj.geometry?.index?.count || 0;
+        if (!host || n > (host.geometry?.index?.count || 0)) host = obj;
+      });
+      const pos = host?.geometry?.attributes?.position?.array;
+      const ix = host?.geometry?.index?.array;
+      const src = host?.geometry?.userData?.triSource;
+      if (!pos || !ix) {
+        resolve(null);
+        return out;
+      }
+      const mv = camera.matrixWorldInverse.elements;
+      const pr = camera.projectionMatrix.elements;
+      function project(x, y, z) {
+        const vx = mv[0] * x + mv[4] * y + mv[8] * z + mv[12];
+        const vy = mv[1] * x + mv[5] * y + mv[9] * z + mv[13];
+        const vz = mv[2] * x + mv[6] * y + mv[10] * z + mv[14];
+        const vw = mv[3] * x + mv[7] * y + mv[11] * z + mv[15];
+        const cx = pr[0] * vx + pr[4] * vy + pr[8] * vz + pr[12] * vw;
+        const cy = pr[1] * vx + pr[5] * vy + pr[9] * vz + pr[13] * vw;
+        const cz = pr[2] * vx + pr[6] * vy + pr[10] * vz + pr[14] * vw;
+        const cw = pr[3] * vx + pr[7] * vy + pr[11] * vz + pr[15] * vw;
+        if (!(cw > 1e-6)) return null;
+        const inv = 1 / cw;
+        return { x: (cx * inv * 0.5 + 0.5) * w, y: (cy * inv * 0.5 + 0.5) * h, z: cz * inv };
+      }
+      const nTri = ix.length / 3;
+      const depth = new Float32Array(w * h);
+      depth.fill(1e9);
+      const mask = new Uint8Array(w * h);
+      for (let t = 0; t < nTri; t++) {
+        const v = [0, 1, 2].map((k) => {
+          const i = ix[t * 3 + k] * 3;
+          return project(pos[i], pos[i + 1], pos[i + 2]);
+        });
+        if (v.some((p) => !p)) continue;
+        const area2 = (v[1].x - v[0].x) * (v[2].y - v[0].y) - (v[2].x - v[0].x) * (v[1].y - v[0].y);
+        if (area2 <= 0) continue;
+        const i0 = ix[t * 3] * 3;
+        const i1 = ix[t * 3 + 1] * 3;
+        const i2 = ix[t * 3 + 2] * 3;
+        const cz = (pos[i0 + 2] + pos[i1 + 2] + pos[i2 + 2]) / 3;
+        const ax = pos[i1] - pos[i0];
+        const ay = pos[i1 + 1] - pos[i0 + 1];
+        const az = pos[i1 + 2] - pos[i0 + 2];
+        const bx = pos[i2] - pos[i0];
+        const by = pos[i2 + 1] - pos[i0 + 1];
+        const bz = pos[i2 + 2] - pos[i0 + 2];
+        const nz = ax * by - ay * bx;
+        const nlen = Math.hypot(ay * bz - az * by, az * bx - ax * bz, nz) || 1;
+        const wall = cz > 10.8 && cz < 29.2 && nz / nlen < 0.9 && !(src && src[t] < 0);
+        let minX = Math.max(0, Math.floor(Math.min(v[0].x, v[1].x, v[2].x)));
+        let maxX = Math.min(w - 1, Math.ceil(Math.max(v[0].x, v[1].x, v[2].x)));
+        let minY = Math.max(0, Math.floor(Math.min(v[0].y, v[1].y, v[2].y)));
+        let maxY = Math.min(h - 1, Math.ceil(Math.max(v[0].y, v[1].y, v[2].y)));
+        const den = area2;
+        for (let y = minY; y <= maxY; y++) {
+          for (let x = minX; x <= maxX; x++) {
+            const px = x + 0.5;
+            const py = y + 0.5;
+            const w0 = ((v[1].x - px) * (v[2].y - py) - (v[2].x - px) * (v[1].y - py)) / den;
+            const w1 = ((v[2].x - px) * (v[0].y - py) - (v[0].x - px) * (v[2].y - py)) / den;
+            const w2 = 1 - w0 - w1;
+            if (w0 < 0 || w1 < 0 || w2 < 0) continue;
+            const z = w0 * v[0].z + w1 * v[1].z + w2 * v[2].z;
+            const id = y * w + x;
+            if (z >= depth[id]) continue;
+            depth[id] = z;
+            mask[id] = wall ? 1 : 0;
+          }
+        }
+      }
+      const buf = new Uint8Array(w * h * 4);
+      gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, buf);
+      const rect = canvas.getBoundingClientRect();
+      let n = 0;
+      let sx = 0;
+      let sy = 0;
+      let best = null;
+      let bestD = Infinity;
+      const cx = w / 2;
+      const cy = h * 0.62;
+      for (let i = 0; i < mask.length; i++) {
+        if (!mask[i]) continue;
+        n += 1;
+        const x = i % w;
+        const y = (i - x) / w;
+        sx += x;
+        sy += y;
+        const cssX = rect.left + (x + 0.5) / dpr;
+        const cssY = rect.top + (h - (y + 0.5)) / dpr;
+        if (document.elementFromPoint(cssX, cssY) !== canvas) continue;
+        const d = (x - cx) ** 2 + (y - cy) ** 2;
+        if (d < bestD) {
+          bestD = d;
+          best = { x: cssX, y: cssY };
+        }
+      }
+      window.__loftMask = mask;
+      window.__loftBefore = buf;
+      window.__loftSize = { w, h };
+      resolve({
+        n,
+        tap: best,
+        centroid: n ? { x: sx / n, y: sy / n } : null,
+      });
+      return out;
+    };
+  }));
+}
+
+function loftLeftover(page) {
+  return page.evaluate(() => new Promise((resolve) => {
+    const { renderer } = window.__paintProbe.bits();
+    const orig = renderer.render.bind(renderer);
+    renderer.render = function hooked(scene, camera) {
+      const out = orig(scene, camera);
+      renderer.render = orig;
+      const gl = renderer.getContext();
+      const w = gl.drawingBufferWidth;
+      const h = gl.drawingBufferHeight;
+      const before = window.__loftBefore;
+      const mask = window.__loftMask;
+      const size = window.__loftSize;
+      if (!before || !mask || !size || size.w !== w || size.h !== h) {
+        resolve(null);
+        return out;
+      }
+      const buf = new Uint8Array(w * h * 4);
+      gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, buf);
+      let old = 0;
+      let n = 0;
+      for (let i = 0; i < mask.length; i++) {
+        if (!mask[i]) continue;
+        n += 1;
+        const o = i * 4;
+        const d = Math.abs(buf[o] - before[o]) + Math.abs(buf[o + 1] - before[o + 1]) + Math.abs(buf[o + 2] - before[o + 2]);
+        if (d <= 12) old += 1;
+      }
+      resolve({ old, n, frac: n ? old / n : 1 });
+      return out;
+    };
+  }));
+}
+
+async function runLoftZilla(browser) {
+  const context = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    hasTouch: true,
+    isMobile: true,
+    deviceScaleFactor: 2,
+    colorScheme: 'dark',
+    userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+  });
+  const page = await context.newPage();
+  const errors = [];
+  page.on('pageerror', (err) => errors.push(String(err).slice(0, 240)));
+  await page.route('**/api/**', (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ authenticated: false }),
+  }));
+  await page.goto(APP_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await ready(page);
+  await seed(page, LOFT_DOC, LOFT_PART, LOFT_SCRIPT);
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await ready(page);
+  await page.waitForFunction(
+    () => (window.__VIEWPORT__.stageVerifyFraming?.().tris || 0) > 1000
+      && (window.__MANIFOLD_CONTEXT__?.worker?.pendingRequests?.size || 0) === 0,
+    null,
+    { timeout: 90000 },
+  );
+  await installProbe(page);
+  const tris = await page.evaluate(() => window.__VIEWPORT__.stageVerifyFraming?.().tris || 0);
+  check('LoftZilla ran', tris > 1000, `tris=${tris}`);
+  if (!(tris > 1000)) {
+    await context.close();
+    return;
+  }
+  await page.locator('[data-paint-chip]').click();
+  await page.locator('[data-paint-mode="1"]').waitFor();
+  await page.evaluate(() => window.__VIEWPORT__.stageFit({ az: 90, el: 28, margin: 1.45 }));
+  await page.waitForTimeout(200);
+  const frame = await loftMask(page);
+  console.log(`  loftzilla mask ${frame?.n ?? 0} tap ${JSON.stringify(frame?.tap)}`);
+  check('LoftZilla loft wall is on screen', !!frame && frame.n > 8000, `n=${frame?.n}`);
+  check('LoftZilla tap lands on the canvas', !!frame?.tap, JSON.stringify(frame?.tap));
+  if (!frame?.tap) {
+    await context.close();
+    return;
+  }
+  const beforePx = await sample(page, frame.tap.x, frame.tap.y);
+  await tap(page, true, frame.tap.x, frame.tap.y);
+  await page.waitForTimeout(400);
+  const afterPx = await sample(page, frame.tap.x, frame.tap.y);
+  const left = await loftLeftover(page);
+  console.log(`  loftzilla ${JSON.stringify(beforePx)} -> ${JSON.stringify(afterPx)} leftover ${left ? (left.frac * 100).toFixed(2) : '?'}% (${left?.old}/${left?.n})`);
+  check(
+    'LoftZilla tap moves toward the swatch',
+    dist(beforePx) > 80 && dist(afterPx) < 80,
+    `before ${dist(beforePx)} after ${dist(afterPx)} ${JSON.stringify(afterPx)}`,
+  );
+  check(
+    'LoftZilla wall has no leftover old-color pixels',
+    !!left && left.n > 8000 && left.frac <= LOFT_OLD_FRAC,
+    left ? `${(left.frac * 100).toFixed(2)}% (${left.old}/${left.n}), max ${(LOFT_OLD_FRAC * 100).toFixed(1)}%` : 'no read',
+  );
+  const shot = join(SHOT_DIR, 'face-paint-tap-loftzilla-390.png');
+  await page.screenshot({ path: shot });
+  check('LoftZilla shot saved outside artifacts', existsSync(shot) && !shot.startsWith('/opt/cursor/artifacts'), shot);
+  console.log(`  shot ${shot}`);
+  check('LoftZilla no page errors', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await context.close();
+}
+
 let browser;
 try {
   if (!await waitForServer()) {
@@ -517,6 +768,7 @@ try {
   await runCase(browser, { name: '390', width: 390, height: 844, touch: true });
   await runCase(browser, { name: 'desktop', width: 1280, height: 800, touch: false });
   await runLegacyColor(browser);
+  await runLoftZilla(browser);
 } finally {
   if (browser) await browser.close();
   stop();

@@ -10,7 +10,10 @@
  *      are just one fillet facet stay tiny; true flat faces grow large.
  *   2. Lock large coplanar groups as flat (area ≥ FRAC × largest coplanar
  *      group). Curvature-class stand-in for κ≈0; survives coarse G1 junctions
- *      (roundedBox ~11°) that inflate mean-κ on perimeter tris.
+ *      (roundedBox ~11°) that inflate mean-κ on perimeter tris. A group that
+ *      continues into the same non-feature surface across a shallow edge
+ *      (a loft wall flattening toward a rectangle) is not a flat: it stays
+ *      unlocked so the curved pass keeps that wall one face.
  *   3. Curved flood — among non-locked atoms, merge across dihedral ≤ SMOOTH
  *      when κ rate agrees. Never merge a locked flat into a curved atom.
  *
@@ -52,6 +55,17 @@ export const PATCH_K_FEATURE_DEG = 25;
  */
 /** Coplanar group area ≥ this × the largest coplanar group → locked flat. */
 export const PATCH_FLAT_AREA_FRAC_OF_MAX = 0.15;
+/**
+ * A locked coplanar group that meets the same non-feature surface across an
+ * edge this shallow is the flat part of that surface, not a face of its own.
+ * Measured on the 64-segment circle-to-rectangle loft: the wall's own
+ * continuation is ≤ 3°, and the four sides still meet above that, but the
+ * curved pass then walks the smooth end and the wall is one face. A real
+ * flat stays locked: a box edge is ~90°, and the radius-change fixture meets
+ * its bend at 6–14°. A fillet is another feature source, so it does not
+ * unlock the face it sits on.
+ */
+export const PATCH_FLAT_CONTINUATION_DEG = 3;
 /**
  * Gate for one feature's curved faces, from the tessellation the worker
  * stored with that source. `facetDeg` is the circular step (360°/segments,
@@ -424,6 +438,26 @@ export function buildPartGraphPatches(mesh, opts = {}) {
     }
     for (let a = 0; a < atomCount; a++) {
       if (facetTouch[patchUF.find(a)]) atomLockedFlat[a] = 0;
+    }
+  }
+  // A loft wall's flatter side is large enough to lock, and the lock then
+  // stops the curved pass. The triangles just outside it are the same wall
+  // (shared edge ≤ PATCH_FLAT_CONTINUATION_DEG, same source, not a fillet).
+  // Unlock that group. This needs triSource: without it a fillet reads as
+  // the same surface and the G1 join would unlock the flat it sits on.
+  // A box face has no such neighbour, so it stays locked.
+  if (triSource) {
+    const continuation = new Uint8Array(atomCount);
+    for (const rec of atomAdj) {
+      if (rec.max > PATCH_FLAT_CONTINUATION_DEG) continue;
+      if (atomSource[rec.a] !== atomSource[rec.b]) continue;
+      if (isOpAtom(rec.a) || isOpAtom(rec.b)) continue;
+      if (patchUF.find(rec.a) === patchUF.find(rec.b)) continue;
+      if (atomLockedFlat[rec.a] && !atomLockedFlat[rec.b]) continuation[patchUF.find(rec.a)] = 1;
+      if (atomLockedFlat[rec.b] && !atomLockedFlat[rec.a]) continuation[patchUF.find(rec.b)] = 1;
+    }
+    for (let a = 0; a < atomCount; a++) {
+      if (continuation[patchUF.find(a)]) atomLockedFlat[a] = 0;
     }
   }
   // Sharp-only islands (every neighbour dihedral > smoothDeg) used to be
