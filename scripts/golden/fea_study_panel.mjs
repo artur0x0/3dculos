@@ -249,6 +249,112 @@ async function snap(page, key, margin) {
     await page.waitForTimeout(250);
     return true;
   }
+  // vite preview does not publish __VIEWPORT__. Fit the same way from the
+  // live camera so a left or right end view still lands outside the beam.
+  const fitted = await page.evaluate(({ name, margin }) => new Promise((resolve) => {
+    const presets = {
+      front: { dir: [0, -1, 0], up: [0, 0, 1] },
+      right: { dir: [1, 0, 0], up: [0, 0, 1] },
+      left: { dir: [-1, 0, 0], up: [0, 0, 1] },
+      top: { dir: [0, 0, 1], up: [0, -1, 0] },
+      iso: { dir: [1, 1, 1], up: [0, 0, 1] },
+    };
+    const preset = presets[name];
+    const canvas = document.querySelector('.viewport-shell > canvas');
+    const root = document.getElementById('root');
+    const reactKey = root && Object.keys(root).find((k) => k.startsWith('__reactContainer'));
+    const start = reactKey ? (root[reactKey].current || root[reactKey]) : null;
+    const seen = new Set();
+    let renderer = null;
+    let controls = null;
+    function walk(fiber) {
+      if (!fiber || seen.has(fiber) || (renderer && controls)) return;
+      seen.add(fiber);
+      let hook = fiber.memoizedState;
+      for (let guard = 0; hook && guard < 900; guard += 1) {
+        const cur = hook.memoizedState && hook.memoizedState.current;
+        if (cur && cur.domElement === canvas && typeof cur.render === 'function') renderer = cur;
+        if (cur && cur.target && typeof cur.update === 'function' && typeof cur.rotateSpeed === 'number') controls = cur;
+        hook = hook.next;
+      }
+      walk(fiber.child);
+      walk(fiber.sibling);
+    }
+    if (!preset || !start) {
+      resolve(false);
+      return;
+    }
+    walk(start);
+    if (!renderer || !controls) {
+      resolve(false);
+      return;
+    }
+    const orig = renderer.render.bind(renderer);
+    renderer.render = function hooked(scene, camera) {
+      const out = orig(scene, camera);
+      renderer.render = orig;
+      let mesh = null;
+      let best = 0;
+      scene.traverse((obj) => {
+        const count = obj.geometry?.attributes?.position?.count || 0;
+        if (obj.isMesh && count > best) {
+          best = count;
+          mesh = obj;
+        }
+      });
+      const geometry = mesh?.geometry;
+      if (!geometry?.attributes?.position) {
+        resolve(false);
+        return out;
+      }
+      geometry.computeBoundingBox();
+      const box = geometry.boundingBox;
+      if (!box || box.isEmpty()) {
+        resolve(false);
+        return out;
+      }
+      const vec = () => camera.position.clone();
+      const center = box.getCenter(vec());
+      const d = vec().set(preset.dir[0], preset.dir[1], preset.dir[2]);
+      if (d.lengthSq() < 1e-12) d.set(1, 1, 1);
+      d.normalize();
+      let u = vec().set(preset.up[0], preset.up[1], preset.up[2]);
+      if (u.lengthSq() < 1e-12) u.set(0, 0, 1);
+      if (Math.abs(u.dot(d)) > 1 - 1e-6) u.set(0, 0, 1);
+      u.sub(d.clone().multiplyScalar(u.dot(d))).normalize();
+      const zAxis = d.clone();
+      const xAxis = vec().crossVectors(u, zAxis).normalize();
+      const yAxis = vec().crossVectors(zAxis, xAxis);
+      const tanY = Math.tan(((camera.fov || 45) * Math.PI) / 360) || 1e-6;
+      const tanX = tanY * (camera.aspect > 0 ? camera.aspect : 1);
+      let dist = 0;
+      const corner = vec();
+      for (let i = 0; i < 8; i += 1) {
+        corner.set(
+          i & 1 ? box.max.x : box.min.x,
+          i & 2 ? box.max.y : box.min.y,
+          i & 4 ? box.max.z : box.min.z,
+        ).sub(center);
+        dist = Math.max(dist, Math.abs(corner.dot(xAxis)) / tanX, Math.abs(corner.dot(yAxis)) / tanY);
+      }
+      const pad = Number.isFinite(margin) && margin > 0 ? margin : 1.35;
+      dist = (dist || 1) * pad;
+      camera.near = Math.max(dist / 1000, 1e-4);
+      camera.far = Math.max(dist * 10, camera.far || 2000);
+      camera.up.copy(u);
+      camera.position.copy(center).addScaledVector(d, dist);
+      camera.updateProjectionMatrix();
+      camera.lookAt(center);
+      controls.target.copy(center);
+      controls.update();
+      resolve(true);
+      return out;
+    };
+  }), { name: key, margin });
+  if (fitted) {
+    await page.waitForTimeout(250);
+    return true;
+  }
   const labels = { front: 'Snap to Front', right: 'Snap to Right', top: 'Snap to Top', iso: 'Snap to Isometric' };
   if (!labels[key]) return false;
   await page.locator('[aria-label="View snaps"]').click();
