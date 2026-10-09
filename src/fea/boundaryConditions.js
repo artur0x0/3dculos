@@ -74,7 +74,7 @@ function studyFaces(entries) {
  * wall. When the same ids occur on two walls, the wall closest to `at` is
  * the one the study stored.
  */
-function nearestPatch(faces, at) {
+export function nearestPatch(faces, at) {
   if (faces.length < 2) return faces;
   const parent = faces.map((_, index) => index);
   const find = (index) => {

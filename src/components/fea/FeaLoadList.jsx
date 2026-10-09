@@ -18,7 +18,7 @@ function loadText(load) {
 /**
  * Fixtures and loads already on the study, each with a remove button.
  */
-export function FeaLoadList({ study, onRemoveFixture, onRemoveLoad }) {
+export function FeaLoadList({ study, onRemoveFixture, onRemoveLoad, selectedLoad = -1, onSelectLoad = null }) {
   const fixtures = study?.fixtures || [];
   const loads = study?.loads || [];
   return (
@@ -53,8 +53,20 @@ export function FeaLoadList({ study, onRemoveFixture, onRemoveLoad }) {
         )}
         <ul className="mt-0.5 flex flex-col gap-0.5">
           {loads.map((load, index) => (
-            <li key={`load-${index}`} className="flex items-center gap-1 text-[12px] text-cyan-50" data-fea-load={index}>
-              <span className="min-w-0 flex-1 truncate">{loadText(load)} · {faceAt(load.faces?.[0])}</span>
+            <li key={`load-${index}`} className="flex items-center gap-1 text-[12px] text-cyan-50" data-fea-load={index} data-fea-load-selected={selectedLoad === index ? '1' : '0'}>
+              {onSelectLoad ? (
+                <button
+                  type="button"
+                  data-fea-load-select={index}
+                  aria-pressed={selectedLoad === index}
+                  onClick={() => onSelectLoad(index)}
+                  className={`min-w-0 flex-1 truncate rounded px-1 text-left ${selectedLoad === index ? 'bg-fuchsia-400/20 text-fuchsia-50' : ''}`}
+                >
+                  {loadText(load)} · {faceAt(load.faces?.[0])}
+                </button>
+              ) : (
+                <span className="min-w-0 flex-1 truncate">{loadText(load)} · {faceAt(load.faces?.[0])}</span>
+              )}
               <button
                 type="button"
                 data-fea-remove={`load-${index}`}
