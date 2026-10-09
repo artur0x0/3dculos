@@ -15,6 +15,7 @@
  *
  * Mock adapter only for now; nothing here talks to the network.
  */
+import { assemblyName, nextAssemblyName, serializeAssembly } from '../assembly.js';
 import { GitAdapterError, assertGithubAdapter, fileWrite, fileDelete } from './githubAdapterInterface.js';
 import { captureBaseline, dirtyPartIds } from './gitWorkspace.js';
 import {
@@ -39,6 +40,47 @@ export function effectiveScripts(scripts, { liveId = null, liveScript = null } =
   const out = { ...(scripts || {}) };
   if (liveId && typeof liveScript === 'string') out[liveId] = liveScript;
   return out;
+}
+
+/**
+ * Copy of an assembly under the next free name.
+ * The source name is always taken (the original stays). A free preferred
+ * name is not reused: `Gearbox` copies to `Gearbox (2)`, then `Gearbox (3)`,
+ * the same parenthesis rule as a part copy. Assembly-local part paths move
+ * into `assemblies/<new>/`. Shared `parts/` paths stay. Surf ids stay; this
+ * does not rewrite stored assemblies.
+ * -> { name, doc, scripts, moved }
+ */
+export function planDuplicateAssembly(doc, scripts = {}, taken = []) {
+  const current = assemblyName(doc);
+  const pool = [];
+  const seen = new Set();
+  const add = (name) => {
+    const seg = vaultSegment(name);
+    if (!seg) return;
+    const key = seg.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    pool.push(seg);
+  };
+  for (const name of taken || []) add(name);
+  add(current);
+  const name = vaultSegment(nextAssemblyName(pool, { preferred: current })) || current;
+  const oldSeg = vaultSegment(doc?.name);
+  const remapped = oldSeg && name && oldSeg.toLowerCase() !== name.toLowerCase()
+    ? remapAssemblyPaths({ ...doc, name }, scripts, oldSeg, name)
+    : { doc: { ...doc, name }, scripts: { ...(scripts || {}) }, moved: [] };
+  const nextDoc = serializeAssembly({
+    ...remapped.doc,
+    name,
+    source: doc?.source === 'git' ? 'git' : 'local',
+  });
+  return {
+    name: nextDoc.name,
+    doc: nextDoc,
+    scripts: remapped.scripts,
+    moved: remapped.moved || [],
+  };
 }
 
 /**

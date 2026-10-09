@@ -9,8 +9,10 @@
 import {
   DEFAULT_ASSEMBLY_NAME,
   DEFAULT_PART_NAME,
+  nextAssemblyName,
   normalizeRepoPath,
   numberedName,
+  sanitizeAssemblyName,
   serializeAssembly,
 } from '../assembly.js';
 import { assertGithubAdapter } from './githubAdapterInterface.js';
@@ -113,6 +115,57 @@ export async function listVaultAssemblies(adapter, repo, ref) {
   assertGithubAdapter(adapter);
   const tree = await adapter.listTree(repo, ref);
   return listAssemblies(tree);
+}
+
+/**
+ * Folder names a new assembly write must not reuse.
+ * `tree` is a listTree() result (repo folders). `local` is the open
+ * document, a baseline, or names opened this session. `except` is this
+ * assembly's own folder (a rename) and is not a collision.
+ * Comparison is case-insensitive. Saved documents are not renamed here.
+ */
+export function takenAssemblyNames({ tree = [], local = [], except = '' } = {}) {
+  const skip = vaultSegment(except).toLowerCase();
+  const seen = new Set();
+  const out = [];
+  const add = (name) => {
+    const seg = vaultSegment(name);
+    if (!seg) return;
+    const key = seg.toLowerCase();
+    if (skip && key === skip) return;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(seg);
+  };
+  for (const name of listAssemblies(tree || [])) add(name);
+  for (const name of local || []) add(name);
+  return out;
+}
+
+/**
+ * Folder to store for a rename. A free name is kept. A collision becomes
+ * `Name (2)`, `Name (3)`, … (`nextAssemblyName`, the part rename rule).
+ * When that folder is still taken (a 60-character segment ate the suffix),
+ * `{ ok: false }` so the caller blocks, the same way a part path collision
+ * blocks. The assembly's own folder (`except`) is not a collision.
+ */
+export function resolveAssemblyFolderName(requested, taken, { except = '' } = {}) {
+  const clean = sanitizeAssemblyName(requested);
+  if (!clean) return { ok: false, reason: 'blank' };
+  const self = vaultSegment(except);
+  const seg = vaultSegment(clean);
+  if (!seg) return { ok: false, reason: 'blank' };
+  if (self && seg.toLowerCase() === self.toLowerCase()) {
+    return { ok: true, name: self, unchanged: true };
+  }
+  const others = takenAssemblyNames({ local: taken, except });
+  const collides = (name) => others.some((item) => item.toLowerCase() === String(name || '').toLowerCase());
+  let name = seg;
+  if (collides(name)) {
+    name = vaultSegment(nextAssemblyName(others, { preferred: seg })) || '';
+  }
+  if (!name || collides(name)) return { ok: false, reason: 'taken', name: name || seg };
+  return { ok: true, name, numbered: name.toLowerCase() !== seg.toLowerCase() };
 }
 
 /**
