@@ -14,6 +14,18 @@
 import { GitAdapterError, assertGithubAdapter } from './githubAdapterInterface.js';
 import { normalizeRepoPath } from '../assembly.js';
 
+/**
+ * GitHub Contents API path. Each segment is encodeURIComponent; slashes stay
+ * separators. A space becomes `%20`. Parentheses are left as-is
+ * (`Assembly (1)` → `Assembly%20(1)`), which is what encodeURIComponent does
+ * and what the Contents API accepts.
+ */
+export function encodeGitHubContentsPath(path) {
+  const p = normalizeRepoPath(path);
+  if (!p) return '';
+  return p.split('/').map((seg) => encodeURIComponent(seg)).join('/');
+}
+
 const API = 'https://api.github.com';
 const REPO_NAME_RE = /^[A-Za-z0-9._-]{1,100}$/;
 
@@ -150,7 +162,7 @@ export function createGithubAdapter({ token, fetchImpl = globalThis.fetch, apiBa
 
     const msg = String(message || 'Update');
     const first = writes[0];
-    const encoded = first.path.split('/').map(encodeURIComponent).join('/');
+    const encoded = encodeGitHubContentsPath(first.path);
     const { res: putRes, data: putData } = await json(
       `${repoPath(repo)}/contents/${encoded}`,
       {
@@ -338,7 +350,7 @@ export function createGithubAdapter({ token, fetchImpl = globalThis.fetch, apiBa
       const p = normalizeRepoPath(path);
       if (!p) return null;
       const q = ref ? `?ref=${encodeURIComponent(ref)}` : '';
-      const encoded = p.split('/').map(encodeURIComponent).join('/');
+      const encoded = encodeGitHubContentsPath(p);
       const { res, data } = await json(`${repoPath(repo)}/contents/${encoded}${q}`);
       if (res.status === 404) return null;
       if (!res.ok) throw new GitAdapterError('invalid', data?.message || 'readFile failed');

@@ -116,9 +116,15 @@ export function numberedName(base, n) {
  * With `bareFirst`: `Base` when it is free, otherwise `Base (2)`, `Base (3)`, …
  * (a copy, an import, or a rename that collided). An existing `Base (n)`
  * occupies n, so the next free slot is n+1 when every lower slot is taken.
+ * `start` overrides that first parenthesis (a new assembly passes `1` so the
+ * second name is `Assembly (1)`, not `Assembly (2)`).
  * `taken` is an iterable of names. Matching is exact unless `caseInsensitive`.
  */
-export function nextNumberedName(base, taken, { bareFirst = false, caseInsensitive = false } = {}) {
+export function nextNumberedName(base, taken, {
+  bareFirst = false,
+  caseInsensitive = false,
+  start = null,
+} = {}) {
   const stem = String(base ?? '').replace(/\s+/g, ' ').trim() || 'Part';
   const keyOf = (value) => {
     const text = String(value ?? '').replace(/\s+/g, ' ').trim();
@@ -128,12 +134,42 @@ export function nextNumberedName(base, taken, { bareFirst = false, caseInsensiti
   for (const item of taken || []) used.add(keyOf(item));
   const free = (name) => !used.has(keyOf(name));
   if (bareFirst && free(stem)) return stem;
-  const start = bareFirst ? 2 : 1;
-  for (let n = start; n < 1000; n += 1) {
+  const from = (Number.isInteger(start) && start >= 1) ? start : (bareFirst ? 2 : 1);
+  for (let n = from; n < 1000; n += 1) {
     const name = numberedName(stem, n);
     if (free(name)) return name;
   }
   return numberedName(stem, Date.now());
+}
+
+/**
+ * Next assembly name. One helper, the part rule above.
+ * A new assembly (no `preferred`) is `Assembly`, then `Assembly (1)`,
+ * `Assembly (2)`. A copy, an import, or a rename keeps the requested name
+ * when it is free, otherwise `Name (2)`, `Name (3)`, … (`bareFirst`).
+ * Saved names are not rewritten. This only picks a name for a new write.
+ * Matching is case-insensitive: the name is a repo folder.
+ */
+export function nextAssemblyName(taken, { preferred = '', caseInsensitive = true } = {}) {
+  const want = sanitizeAssemblyName(preferred);
+  if (!want) {
+    return nextNumberedName(DEFAULT_ASSEMBLY_NAME, taken, {
+      bareFirst: true,
+      start: 1,
+      caseInsensitive,
+    });
+  }
+  return nextNumberedName(want, taken, { bareFirst: true, caseInsensitive });
+}
+
+/**
+ * Name to store when a file is opened into a workspace that may already
+ * have that assembly. A free name is kept. A collision uses `nextAssemblyName`
+ * (the part copy/import rule). Opening a repo assembly does not come through
+ * here — that name is already saved.
+ */
+export function assemblyNameForImport(raw, filename, taken = []) {
+  return nextAssemblyName(taken, { preferred: assemblyNameForLoad(raw, filename) });
 }
 
 /**

@@ -53,8 +53,12 @@ editor integration is designed. Remove the `hidden` class to bring it back.
 **The CAD title reads "part in assembly".** Part name, the word in, then the
 assembly name (`data-viewer-title`, `data-title-in`, `data-viewer-title-text`).
 Example: part1 in Assembly. The assembly name is the document `name`. A new
-assembly starts as Assembly. A blank or whitespace name is saved as Assembly
-when the document is loaded. A custom name is kept. A file name is used only
+assembly starts as Assembly, then Assembly (1), Assembly (2) when that name
+is taken. A copy, import, or colliding rename uses the part rule (`Name`, or
+`Name (2)` when `Name` is taken). The repo folder is `assemblies/<Name>/`;
+on the GitHub Contents API a space in that name is `%20` and parentheses are
+left as-is. A blank or whitespace name is saved as Assembly when the document
+is loaded. A custom name already saved is kept. A file name is used only
 when the saved document has none. Both chips rename in place: click, then an
 input. Enter or blur commits, Escape reverts, empty commits nothing. Part
 names are sanitised

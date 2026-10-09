@@ -48,7 +48,6 @@ import ClearCacheDialog from './components/ClearCacheDialog';
 import { resolveActiveRestore } from './utils/partScriptRestore';
 import {
   assemblyName,
-  assemblyNameForLoad,
   composeViewportParts,
   dropPartRecord,
   feedRows,
@@ -61,13 +60,13 @@ import {
   renameTargetId,
   sanitizePartName,
   reorderParts,
-  sanitizeAssemblyName,
   scriptForRow,
   serializeAssembly,
   setPartVisible,
   partSheetMetal,
   setPartSheetMetal,
-  DEFAULT_ASSEMBLY_NAME,
+  nextAssemblyName,
+  assemblyNameForImport,
   nextNumberedName,
   DEFAULT_PART_NAME,
   needsAssemblyLeaveGuard,
@@ -120,6 +119,8 @@ import {
   dirtyPartIds,
   isWorkspaceDirty,
   listVaultAssemblies,
+  takenAssemblyNames,
+  resolveAssemblyFolderName,
   listVaultBrowseItems,
   openVaultAssembly,
   planInsertVaultAssemblyParts,
@@ -1983,7 +1984,7 @@ const App = () => {
       setUploadError(err.message || 'Could not read assembly');
       return;
     }
-    const loadedName = assemblyNameForLoad(raw, filename);
+    const loadedName = assemblyNameForImport(raw, filename, await collectTakenAssemblyNames());
     if (loadedName !== doc.name) doc = serializeAssembly({ ...doc, name: loadedName });
     const migratedIds = migrateLocalPartIds({ doc });
     if (migratedIds.changed) doc = migratedIds.doc;
@@ -2174,6 +2175,34 @@ const App = () => {
     const prev = recentAssembliesRef.current.filter((item) => item !== seg);
     prev.push(seg);
     recentAssembliesRef.current = prev.slice(-12);
+  };
+
+  /**
+   * Assembly folders a new name must not reuse. Repo tree when GitHub is
+   * connected, plus the open baseline and assemblies opened this session.
+   * An unsaved local document is not included: New replaces it.
+   * `except` drops the assembly being renamed.
+   */
+  const collectTakenAssemblyNames = async ({ except = '' } = {}) => {
+    const local = [];
+    if (githubConnected) {
+      const baselineName = gitBaselineRef.current?.assemblyName;
+      if (baselineName) local.push(baselineName);
+      for (const name of recentAssembliesRef.current) local.push(name);
+    }
+    let tree = [];
+    if (githubConnected) {
+      try {
+        const vault = gitVaultRef.current || await ensureGitVault();
+        const adapter = gitAdapterRef.current;
+        if (vault?.repo && adapter?.listTree) {
+          tree = await adapter.listTree(vault.repo, gitWorkingBranch()) || [];
+        }
+      } catch (err) {
+        console.warn('[git] assembly names unavailable', err?.message || err);
+      }
+    }
+    return takenAssemblyNames({ tree, local, except });
   };
 
   const gitSync = () => {
@@ -4040,14 +4069,15 @@ const App = () => {
     if (latest) await saveAssemblyDocument(latest);
   };
 
-  /** Seed a blank default assembly (Parts + → Assembly → New). */
+  /** Seed a blank assembly (Parts + → Assembly). The folder menu imports or opens. */
   const handleNewAssembly = async () => {
     const seedId = newLocalPartId();
     const starter = DEFAULT_SCRIPT;
     const source = githubConnected ? 'git' : 'local';
+    const name = nextAssemblyName(await collectTakenAssemblyNames());
     const seedDoc = serializeAssembly({
       source,
-      name: DEFAULT_ASSEMBLY_NAME,
+      name,
       activeId: seedId,
       parts: [{
         id: seedId,
@@ -5243,11 +5273,21 @@ const App = () => {
     handleRenamePart(id, name);
   };
 
-  const handleRenameAssembly = (name) => {
-    const next = sanitizeAssemblyName(name);
-    if (!next) return;
+  const handleRenameAssembly = async (name) => {
     const doc = assemblyRef.current;
-    if (!doc || next === assemblyName(doc)) return;
+    if (!doc) return;
+    const current = assemblyName(doc);
+    const taken = await collectTakenAssemblyNames({ except: current });
+    const resolved = resolveAssemblyFolderName(name, taken, { except: current });
+    if (!resolved.ok) {
+      if (resolved.reason === 'taken') {
+        setUploadError('An assembly with that name already exists');
+      }
+      return;
+    }
+    if (resolved.unchanged) return;
+    const next = resolved.name;
+    if (next === current) return;
     if (doc.source !== 'git' || !gitVaultRef.current?.repo) {
       rememberAssembly({ ...doc, name: next });
       return;
