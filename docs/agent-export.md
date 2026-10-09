@@ -1,6 +1,6 @@
 # Agent export
 
-SurfCAD helpers stay in this repo. The external agent package pins a 3dculos commit and copies the files in `src/lib/surfcad/catalog/sync-files.json`. It does not keep a second copy of the helper source.
+SurfCAD helpers stay in this repo. The external agent package pins a surfcad repo commit and copies the files in `src/lib/surfcad/catalog/sync-files.json`. It does not keep a second copy of the helper source.
 
 This package is `"private": true`. Do not publish it as npm `surfcad`. That name belongs to the helper library the agent repo publishes.
 
@@ -63,7 +63,7 @@ Regenerate in this repo when a helper is added or its signature or docs change, 
 
 ## Sync
 
-Pin a 3dculos commit. Copy every path in `sync-files.json` `runtimeFiles` and `catalogFiles`, keeping those paths. The imports are static ESM relative to those paths, and the wasm sits next to `built/manifold.js`.
+Pin a surfcad repo commit. Copy every path in `sync-files.json` `runtimeFiles` and `catalogFiles`, keeping those paths. The imports are static ESM relative to those paths, and the wasm sits next to `built/manifold.js`.
 
 That is a sparse copy of the import graph of `src/lib/surfcad/index.js`, not a fork and not an npm subpath of this private package.
 

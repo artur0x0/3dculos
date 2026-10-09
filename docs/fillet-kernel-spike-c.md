@@ -1,7 +1,7 @@
 # Fillet Slice C — Kernel spike (hard edges)
 
 **Date:** 2026-09-25  
-**Repo:** artur0x0/3dculos  
+**Repo:** artur0x0/surfcad  
 **Context:** After #50 easy/hard split, loft-generator fillets still produce slivers / Area≈0 scrap under the dihedral sweep (`filletAlongPath`). Playtest: loft fillet sliver with selected face Area 0.0 mm².
 
 ## Goal
