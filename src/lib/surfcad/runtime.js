@@ -8484,9 +8484,9 @@ const checkMemoryUsage = (limitMB) => {
 //
 // Reference channel: STEP has no browser import path (backend obj_converter is
 // a x86_64 ELF and firejail is absent on this box), so references are pushed as
-// OBJ. The app's own importOBJ uses the STRICT constructor and is untouched;
-// these paths weld in JS first (exact float-identity, then tolerance grid),
-// because the WASM Mesh.merge() repair ladder crashes on unwelded input.
+// OBJ. importOBJ uses this same ladder (strict, then weld) so an STL
+// triangle soup can become a solid. Mesh.merge() is not used: that repair
+// crashes on unwelded input.
 // ============================================================================
 
 const _stagedReferences = new Map();   // filename -> { manifold, volume, boundingBox, source }
@@ -8959,18 +8959,15 @@ self.onmessage = async (event) => {
           triVerts[i * 3 + 2] = triangles[i][2];
         }
         
-        // FIX: Extract Mesh and Manifold from the module
-        const { Mesh, Manifold } = manifoldModule;
-        
-        // Create Manifold mesh
-        const mesh = new Mesh({ numProp: 3, vertProperties, triVerts });
-        const manifold = new Manifold(mesh);
-        
-        // Validate
-        const meshStatus = _c4StatusError(manifold);
-        if (meshStatus) {
-          // More descriptive error message
-          throw new Error(`Invalid mesh: status ${meshStatus}. The mesh may not be watertight.`);
+        // STL (and many OBJ/3MF files) repeats a corner on every triangle.
+        // The strict constructor throws "Not manifold" on that soup. Try it
+        // first, then weld identical positions, then a 0.0001 grid — the same
+        // ladder the stage reference path uses. Mesh.merge() is not used.
+        let manifold;
+        try {
+          manifold = _meshDataToManifold(vertProperties, triVerts, 0.0001).manifold;
+        } catch {
+          throw new Error('Invalid mesh. The mesh may not be watertight.');
         }
         
         // Cache for script access (import path — not a script execute nonce)

@@ -177,19 +177,23 @@ async function boot(page) {
     body: JSON.stringify({}),
   }));
   const errors = [];
+  const notes = [];
   page.on('pageerror', (err) => {
     const text = String(err);
+    notes.push(text.slice(0, 300));
     if (!ALLOWED.some((re) => re.test(text))) errors.push(text.slice(0, 240));
   });
   page.on('console', (msg) => {
-    if (msg.type() !== 'error') return;
+    if (msg.type() !== 'error' && msg.type() !== 'warning') return;
     const text = msg.text();
+    notes.push(text.slice(0, 300));
+    if (msg.type() !== 'error') return;
     if (ALLOWED.some((re) => re.test(text))) return;
     errors.push(text.slice(0, 240));
   });
   await page.goto(APP_URL, { waitUntil: 'domcontentloaded', timeout: 45000 });
   await page.waitForSelector('canvas', { timeout: 40000 });
-  return errors;
+  return { errors, notes };
 }
 
 async function showParts(page, touch) {
@@ -238,7 +242,7 @@ try {
         : undefined,
     });
     const page = await context.newPage();
-    const errors = await boot(page);
+    const { errors, notes } = await boot(page);
     await seed(page);
     await page.reload({ waitUntil: 'domcontentloaded' });
     await page.waitForSelector('[data-assembly-file]', { timeout: 40000, state: 'attached' });
@@ -260,11 +264,27 @@ try {
     check(`${vp.name} header shot`, existsSync(headerShot), headerShot);
 
     await page.setInputFiles('[data-part-upload-input]', stlPath);
-    await page.waitForFunction(() => {
-      const rows = [...document.querySelectorAll('[data-part-row]')];
-      return rows.some((row) => /wedge/i.test(row.textContent || ''))
-        && document.querySelector('[data-part-mesh-local]');
-    }, null, { timeout: 30000 });
+    let uploaded = false;
+    try {
+      await page.waitForFunction(() => {
+        const rows = [...document.querySelectorAll('[data-part-row]')];
+        return rows.some((row) => /wedge/i.test(row.textContent || ''))
+          && document.querySelector('[data-part-mesh-local]');
+      }, null, { timeout: 30000 });
+      uploaded = true;
+    } catch (err) {
+      const snap = await page.evaluate(() => ({
+        rows: [...document.querySelectorAll('[data-part-row]')].map((row) => (row.textContent || '').replace(/\s+/g, ' ').trim()),
+        toast: document.querySelector('[data-upload-toast]')?.textContent || '',
+        badge: !!document.querySelector('[data-part-mesh-local]'),
+        title: document.querySelector('[data-viewer-title]')?.textContent || '',
+      }));
+      check(`${vp.name} upload created wedge`, false, `${err.message} ${JSON.stringify(snap)} notes=${notes.slice(-8).join(' | ')}`);
+    }
+    if (!uploaded) {
+      await context.close();
+      continue;
+    }
     const badge = await page.evaluate(() => {
       const el = document.querySelector('[data-part-mesh-local]');
       return {
