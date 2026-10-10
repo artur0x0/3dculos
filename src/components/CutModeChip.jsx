@@ -1,8 +1,9 @@
 import React from 'react';
-import { NumberField } from './controls/popupUI';
+import { LengthNumberField } from './controls/popupUI';
 import { FeatureDeleteButton } from './FeatureEditDelete';
 import FeatureSheet from './FeatureSheet';
 import { CUT_EXPLICIT_PLANES, cutPlaneFromState } from '../utils/cutMode';
+import { cutTravelMm, travelRangeMm } from '../utils/sliderRange';
 
 const ACCENT = 'cyan';
 
@@ -27,6 +28,8 @@ const CutModeChip = ({
   onConfirm,
   onDismiss,
   onDelete = null,
+  bounds = null,
+  lengthMm = 100,
 }) => {
   const source = state?.planeSource === 'xy' || state?.planeSource === 'yz' || state?.planeSource === 'zx'
     ? state.planeSource
@@ -39,7 +42,8 @@ const CutModeChip = ({
   const dropCount = Array.isArray(state?.drop) ? state.drop.length : 0;
   const offset = state?.originOffset ?? 0;
   const offsetNum = Number(offset);
-  const offsetMax = Math.max(80, Number.isFinite(offsetNum) ? Math.abs(offsetNum) : 0);
+  const travel = travelRangeMm(cutTravelMm(bounds, plane), lengthMm);
+  const offsetMax = Math.max(travel, Number.isFinite(offsetNum) ? Math.abs(offsetNum) : 0);
 
   let status;
   if (!plane && source === 'face') {
@@ -135,15 +139,14 @@ const CutModeChip = ({
         </div>
 
         <div title="Offset along the plane normal. Positive moves with the normal. Zero keeps a face call as { center, normal }.">
-          <NumberField
+          <LengthNumberField
             id="cut-offset"
             label="Offset"
             accent={ACCENT}
-            value={offset}
-            onChange={(raw) => onOffset?.(raw)}
-            min={-offsetMax}
-            max={offsetMax}
-            step={1}
+            valueMm={offset}
+            onChangeMm={(raw) => onOffset?.(raw)}
+            maxMm={offsetMax}
+            signed
           />
         </div>
 

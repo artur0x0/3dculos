@@ -44,12 +44,12 @@ import {
   splitEdgePathComponents,
 } from './edgeSweepPath.js';
 import {
-  defaultEdgeBlendSize,
   edgeKey,
   pathLengthFromEdges,
   FILLET_DEFAULT_RADIUS,
   sweepBlendHardMax,
 } from './selectEdge.js';
+import { adjacentBlendSize } from './adjacentBlend.js';
 import { classifyFilletEdges } from './filletEdgeClass.js';
 import { shouldUseHardVariableSweep } from './filletKernelSpike.js';
 
@@ -72,10 +72,10 @@ export function isChamferEntry(id) {
   return id === 'chamferEdges';
 }
 
-export function enterChamferState(edges = null) {
+export function enterChamferState(edges = null, { neighbors = null } = {}) {
   const list = Array.isArray(edges) && edges.length ? edges : null;
-  const seeded = list ? defaultEdgeBlendSize(Math.min(...list.map((e) => Number(e.length) || Infinity))) : 2;
-  const chamfer = Number.isFinite(seeded) && seeded > 0 && seeded < Infinity ? seeded : 2;
+  const seeded = adjacentBlendSize(list, neighbors).defaultMm;
+  const chamfer = Number.isFinite(seeded) && seeded > 0 ? seeded : 2;
   return {
     entry: 'chamferEdges',
     params: { body: 'part', chamfer, edgeScope: 'selected' },
@@ -211,14 +211,13 @@ export function composeChamferCommit(buffer, {
 }
 
 /**
- * Untouched Fillet radius (FILLET_DEFAULT_RADIUS, selectEdge.js): a fixed
- * 2 mm, however many edges are picked and on however many parts. It used to
- * be 0.1 × the picked path length (clamped 1–6), so every extra edge grew it.
+ * Untouched Fillet radius when nothing is picked (FILLET_DEFAULT_RADIUS).
+ * A pick uses the adjacent edge instead (`defaultFilletRadius`).
  */
 export { FILLET_DEFAULT_RADIUS };
-/** A part thinner than 2 mm / this fraction clamps the default down. */
+/** No longer sizes the default. Kept so older readers still resolve. */
 export const FILLET_THIN_FRACTION = 0.45;
-/** Smallest default after a thin clamp. */
+/** Smallest chip default, unless the slider max is smaller. */
 export const FILLET_DEFAULT_MIN_RADIUS = 0.1;
 
 /**
@@ -250,23 +249,20 @@ export function solidMinExtent(geometryOrBox) {
 }
 
 /**
- * Default Fillet radius: 2 mm, clamped down only when the part is too thin
- * for it (FILLET_THIN_FRACTION × its smallest extent).
- * @param {{ minExtent?: number|null }} [opts]
+ * Default Fillet radius from the adjacent edge closest to perpendicular.
+ * `minExtent` is ignored. No picks → 2 mm.
+ * @param {{ picked?: object[]|null, neighbors?: object[]|null, minExtent?: number|null }} [opts]
  */
-export function defaultFilletRadius({ minExtent = null } = {}) {
-  const t = Number(minExtent);
-  if (!(Number.isFinite(t) && t > 0)) return FILLET_DEFAULT_RADIUS;
-  const cap = Math.floor(FILLET_THIN_FRACTION * t * 100) / 100;
-  return Math.max(FILLET_DEFAULT_MIN_RADIUS, Math.min(FILLET_DEFAULT_RADIUS, cap));
+export function defaultFilletRadius({ picked = null, neighbors = null } = {}) {
+  return adjacentBlendSize(picked, neighbors).defaultMm;
 }
 
 /**
- * Fillet mode defaults. `edges` no longer sizes the radius (kept for the
- * call sites); `minExtent` is the part's thinnest extent for the thin clamp.
+ * Fillet mode defaults. The radius is the adjacent-edge seed, not the
+ * path length and not the part's thinnest extent.
  */
-export function defaultFilletParams(_edges, { minExtent = null } = {}) {
-  const radius = defaultFilletRadius({ minExtent });
+export function defaultFilletParams(edges, { neighbors = null } = {}) {
+  const radius = defaultFilletRadius({ picked: edges, neighbors });
   return {
     body: 'part',
     strategy: 'sweep',
@@ -281,10 +277,10 @@ export function defaultFilletParams(_edges, { minExtent = null } = {}) {
 /**
  * Seed in-mode state. Empty edges are OK — never refuse on enter.
  */
-export function enterFilletState(edges = null) {
+export function enterFilletState(edges = null, { neighbors = null } = {}) {
   return {
     entry: 'filletEdges',
-    params: defaultFilletParams(edges),
+    params: defaultFilletParams(edges, { neighbors }),
     radiusTouched: false,
     lastEdges: Array.isArray(edges) && edges.length ? edges.slice() : [],
     enterRefuse: null,

@@ -33,11 +33,13 @@ import Angle from './icons/Angle';
 import SheetMetalPlate from './icons/SheetMetalPlate';
 import {
   NumberField,
+  LengthNumberField,
   ChoiceRow,
   PopupButton,
   POPUP_TEXT,
   accentOf,
 } from './controls/popupUI';
+import { growToFit, partLengthMm } from '../utils/sliderRange';
 import {
   featureBlockText,
   parseFeatureSheetParams,
@@ -134,6 +136,7 @@ export default function FeatureEditSheet({
   failedIds = null,
   /** Phone. The card docks to the pane bottom and the stage switcher hides. */
   compact = false,
+  lengthMm = 100,
 }) {
   const a = accentOf(ACCENT);
   const block = useMemo(
@@ -220,19 +223,20 @@ export default function FeatureEditSheet({
     setDraft((prev) => ({ ...prev, [key]: next }));
   };
 
+  const L = partLengthMm(lengthMm);
   let fields = null;
   if (editable && feature.kind === 'extrude') {
+    const distanceFit = growToFit(0.1, L, Number(draft.distance));
     fields = (
       <>
-        <NumberField
+        <LengthNumberField
           id="sheet-extrude-distance"
           label="Distance"
           accent={ACCENT}
-          value={draft.distance}
-          onChange={(v) => setNum('distance', v, 10)}
-          min={0.1}
-          max={120}
-          step={0.5}
+          valueMm={draft.distance}
+          onChangeMm={(v) => setNum('distance', v, 10)}
+          minMm={distanceFit.min}
+          maxMm={distanceFit.max}
         />
         <ChoiceRow
           label="Sense"
@@ -248,16 +252,17 @@ export default function FeatureEditSheet({
       </>
     );
   } else if (editable && feature.kind === 'fillet') {
+    const radiusNum = Number(draft.radius);
+    const radiusFit = growToFit(0.1, Math.max(40, Number.isFinite(radiusNum) ? radiusNum : 0), radiusNum);
     fields = (
-      <NumberField
+      <LengthNumberField
         id="sheet-fillet-radius"
         label="Radius"
         accent={ACCENT}
-        value={draft.radius}
-        onChange={(v) => setNum('radius', v, 2)}
-        min={0.01}
-        max={40}
-        step={0.25}
+        valueMm={draft.radius}
+        onChangeMm={(v) => setNum('radius', v, 2)}
+        minMm={radiusFit.min}
+        maxMm={radiusFit.max}
       />
     );
   } else if (editable && feature.kind === 'revolve') {

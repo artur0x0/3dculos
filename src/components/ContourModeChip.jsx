@@ -1,10 +1,9 @@
 import React, { useMemo } from 'react';
-import { NumberField } from './controls/popupUI';
+import { LengthNumberField, NumberField } from './controls/popupUI';
 import { FeatureDeleteButton } from './FeatureEditDelete';
 import FeatureSheet from './FeatureSheet';
-import { useDisplayUnit } from '../hooks/useDisplayUnit';
-import { displayToMm, lengthCaption, lengthToDisplay } from '../utils/displayUnit';
 import { contourStatusNote } from '../utils/contourStatus';
+import { partLengthMm } from '../utils/sliderRange';
 
 const ACCENT = 'cyan';
 
@@ -68,6 +67,7 @@ const ContourModeChip = ({
   compact = false,
   onDelete = null,
   onCancel = null,
+  lengthMm = 100,
 }) => {
   const isExtrude = entry === 'makeExtrude';
   const isRevolve = entry === 'makeRevolve';
@@ -79,7 +79,7 @@ const ContourModeChip = ({
     : isSweep ? 'Sweep' : isLoft ? 'Loft' : isRevolve ? 'Revolve' : isExtrude ? 'Extrude' : null;
   const solidEntry = !!(commitName && !isWorkplane);
   const combineOp = combine === 'subtract' ? 'subtract' : 'add';
-  const [displayUnit] = useDisplayUnit();
+  const L = partLengthMm(lengthMm);
   const statusNote = useMemo(
     () => (params?.contour ? contourStatusNote(params.contour) : null),
     [params],
@@ -92,9 +92,10 @@ const ContourModeChip = ({
     && loftStation.plane
     && (loftStation.planeKind === 'face' || loftStation.planeKind === 'workplane' || loftStation.planeKind === 'contour')
   );
-  const loftOffset = Number(loftStation?.offset);
-  const loftOffsetVal = Number.isFinite(loftOffset) ? loftOffset : 0;
-  const loftOffsetShown = Number.isFinite(loftOffset) ? lengthToDisplay(loftOffset, displayUnit) : '';
+  const rawLoftOffset = loftStation?.offset;
+  const loftOffsetVal = (rawLoftOffset === '' || rawLoftOffset === '-' || rawLoftOffset === '.')
+    ? rawLoftOffset
+    : (Number.isFinite(Number(rawLoftOffset)) ? Number(rawLoftOffset) : 0);
   const sketchPlanes = (savedContours || []).filter((c) => c?.plane?.center);
   const set = (name, raw, type) => {
     let v = raw;
@@ -110,7 +111,7 @@ const ContourModeChip = ({
     onParamChange?.({ ...params, [name]: v });
   };
 
-  // Shared field — slider + typed box, one size, one accent (controls/popupUI).
+  // Counts stay linear. Lengths use the curve and the part length.
   const numField = (name, label, { min, step, max } = {}) => (
     <NumberField
       key={name}
@@ -122,6 +123,18 @@ const ContourModeChip = ({
       min={min ?? 0.1}
       max={max ?? 80}
       step={step ?? 0.5}
+    />
+  );
+  const lenField = (name, label, { min = 0.1, max = L } = {}) => (
+    <LengthNumberField
+      key={name}
+      id={name}
+      label={label}
+      accent={ACCENT}
+      valueMm={params[name]}
+      onChangeMm={(v) => set(name, v, 'number')}
+      minMm={min}
+      maxMm={max}
     />
   );
 
@@ -138,15 +151,15 @@ const ContourModeChip = ({
   } else if (tool === 'circle') {
     fields = (
       <>
-        {numField('radius', 'Radius', { min: 0.1, step: 0.5, max: 80 })}
+        {lenField('radius', 'Radius', { min: 0.1, max: 0.8 * L })}
         {numField('segments', 'Segments', { min: 3, step: 1, max: 128 })}
       </>
     );
   } else if (tool === 'rectangle') {
     fields = (
       <>
-        {numField('width', 'Width', { min: 0.1, step: 0.5, max: 120 })}
-        {numField('height', 'Height', { min: 0.1, step: 0.5, max: 120 })}
+        {lenField('width', 'Width', { min: 0.1, max: 1.2 * L })}
+        {lenField('height', 'Height', { min: 0.1, max: 1.2 * L })}
         <label className="flex items-center gap-2 text-[13px] text-cyan-100">
           <input
             type="checkbox"
@@ -174,7 +187,7 @@ const ContourModeChip = ({
             <option value="hexagon">hexagon</option>
           </select>
         </label>
-        {numField('radius', 'Radius', { min: 0.1, step: 0.5, max: 80 })}
+        {lenField('radius', 'Radius', { min: 0.1, max: 0.8 * L })}
       </>
     );
   } else if (tool === 'polyline') {
@@ -364,12 +377,14 @@ const ContourModeChip = ({
           );
         })}
         {isWorkplane && (
-          <NumberField
+          <LengthNumberField
             id="workplane-offset"
             label="Offset"
             accent={ACCENT}
-            value={Number.isFinite(Number(planeOffset)) ? Number(planeOffset) : 0}
-            onChange={(v) => {
+            valueMm={(planeOffset === '' || planeOffset === '-' || planeOffset === '.')
+              ? planeOffset
+              : (Number.isFinite(Number(planeOffset)) ? Number(planeOffset) : 0)}
+            onChangeMm={(v) => {
               if (v === '' || v === '-' || v === '.') {
                 onPlaneOffset?.(v);
                 return;
@@ -377,9 +392,8 @@ const ContourModeChip = ({
               const n = Number(v);
               onPlaneOffset?.(Number.isFinite(n) ? n : 0);
             }}
-            min={-80}
-            max={80}
-            step={0.5}
+            maxMm={L}
+            signed
             className="mt-1"
           />
         )}
@@ -599,22 +613,21 @@ const ContourModeChip = ({
             </label>
           )}
           {!loftOwnsPlane && (
-            <NumberField
+            <LengthNumberField
               id="loft-offset"
-              label={lengthCaption('Offset', displayUnit)}
+              label="Offset"
               accent={ACCENT}
-              value={loftOffsetShown}
-              onChange={(v) => {
+              valueMm={loftOffsetVal}
+              onChangeMm={(v) => {
                 if (v === '' || v === '-' || v === '.') {
                   onLoftOffsetChange?.(v);
                   return;
                 }
-                const mm = displayToMm(v, displayUnit);
-                onLoftOffsetChange?.(Number.isFinite(mm) ? mm : loftOffsetVal);
+                const n = Number(v);
+                onLoftOffsetChange?.(Number.isFinite(n) ? n : 0);
               }}
-              min={lengthToDisplay(-80, displayUnit)}
-              max={lengthToDisplay(80, displayUnit)}
-              step={displayUnit === 'in' ? 0.05 : 0.5}
+              maxMm={L}
+              signed
             />
           )}
           <div className="text-[11px] text-cyan-200/70 leading-tight">
@@ -707,12 +720,12 @@ const ContourModeChip = ({
       {isExtrude && (
         <div className="mt-2 pt-1.5 border-t border-cyan-700/50 flex flex-col gap-1.5 font-sans">
           <div className="text-[11px] uppercase tracking-wide text-cyan-200/80">Extrude</div>
-          <NumberField
+          <LengthNumberField
             id="extrude-distance"
             label="Distance"
             accent={ACCENT}
-            value={extrude.distance}
-            onChange={(v) => {
+            valueMm={extrude.distance}
+            onChangeMm={(v) => {
               let next = v;
               if (v === '' || v === '-' || v === '.') next = v;
               else {
@@ -721,9 +734,8 @@ const ContourModeChip = ({
               }
               onExtrudeChange?.({ ...extrude, distance: next });
             }}
-            min={0.1}
-            max={80}
-            step={0.5}
+            minMm={0.1}
+            maxMm={L}
           />
           <label className="flex flex-col gap-0.5">
             <span className="text-[11px] uppercase tracking-wide text-cyan-200/80">Direction</span>

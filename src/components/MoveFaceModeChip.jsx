@@ -1,7 +1,8 @@
 import React from 'react';
-import { NumberField } from './controls/popupUI';
+import { LengthNumberField } from './controls/popupUI';
 import { FeatureDeleteButton } from './FeatureEditDelete';
 import FeatureSheet from './FeatureSheet';
+import { moveFaceRange } from '../utils/sliderRange';
 
 /**
  * Move Face on the shared feature card.
@@ -22,10 +23,13 @@ const MoveFaceModeChip = ({
   onConfirm,
   onDismiss,
   onDelete = null,
+  lengthMm = 100,
+  minExtent = null,
 }) => {
   const faceCount = Array.isArray(faces) ? faces.length : 0;
   const distNum = Number(distance);
-  const max = Math.max(20, Number.isFinite(distNum) ? Math.abs(distNum) : 0);
+  const range = moveFaceRange(lengthMm, minExtent);
+  const max = Math.max(range.maxMm, Number.isFinite(distNum) ? Math.abs(distNum) : 0);
 
   const setDistance = (raw) => {
     if (raw === '' || raw === '-' || raw === '.') {
@@ -108,15 +112,14 @@ const MoveFaceModeChip = ({
           )}
         </div>
 
-        <NumberField
+        <LengthNumberField
           id="move-face-distance"
           label="Distance"
           accent="cyan"
-          value={distance}
-          onChange={setDistance}
-          min={-max}
-          max={max}
-          step={0.5}
+          valueMm={distance}
+          onChangeMm={setDistance}
+          maxMm={max}
+          signed
         />
       </div>
     </FeatureSheet>

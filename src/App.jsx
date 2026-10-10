@@ -136,6 +136,8 @@ import {
   stripUndoLabel,
   undoJointStrip,
 } from './joints/jointUi';
+import { characteristicLengthFor } from './utils/characteristicLength';
+import { fallbackOffscreenDistance, offscreenRange } from './utils/sliderMap';
 import JointCard from './components/JointCard';
 import {
   applyAssemblyOpenHold,
@@ -6964,6 +6966,19 @@ const App = () => {
     ? (
       <JointCard
         card={jointCard}
+        distanceRangeMm={(() => {
+          const parts = assemblyDoc?.parts || [];
+          let longest = 0;
+          let seen = false;
+          for (const pick of jointCard?.picks || []) {
+            const part = parts.find((row) => row?.surfId && row.surfId === pick?.surfId);
+            if (!part?.id) continue;
+            seen = true;
+            longest = Math.max(longest, characteristicLengthFor({ partId: part.id }));
+          }
+          const lengthMm = seen && longest > 0 ? longest : 100;
+          return offscreenRange(fallbackOffscreenDistance(lengthMm));
+        })()}
         locked={!!assemblyOpenLockRef.current}
         onChange={handleJointCardChange}
         onConfirm={handleJointConfirm}
