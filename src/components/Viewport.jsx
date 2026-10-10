@@ -298,6 +298,7 @@ import {
   rememberCharacteristicLength,
 } from '../utils/characteristicLength';
 import { adjacentBlendSize } from '../utils/adjacentBlend';
+import { faceSliderFrame } from '../utils/helperSheetRange';
 import {
   directionOffscreenMm,
   moveFaceRange,
@@ -7163,6 +7164,8 @@ const Viewport = forwardRef(({
       };
     const payload = list.length > 1 ? { ...base, group: lite } : { ...base };
     const classified = classifySelectedFace(payload) || payload;
+    const span = faceSliderFrame(faceData?.vertices, classified.normal, classified.center);
+    if (span) classified.span = span;
     setSelectedFace(classified);
     onFaceSelected?.(classified);
     if (jointPickingRef.current && list.length === 1) {
@@ -9906,6 +9909,14 @@ const Viewport = forwardRef(({
           onOpenJoints={mode !== 'game' ? onOpenJoints : null}
           compact={isMobile}
           onHelperCard={setHelperCardOpen}
+          lengthMm={characteristicLengthMm({ bounds: modelBounds })}
+          bounds={modelBounds}
+          minExtent={solidMinExtent(resultRef.current?.geometry)}
+          onMeasure={(direction) => directionOffscreenMm(
+            cameraRef.current,
+            modelBoundsRef.current,
+            direction,
+          )}
           editSession={helperEdit}
           onEditConfirm={({ fields }) => commitFeatureEditRef.current?.({
             fields: { ...(featureEditRef.current?.session?.fields || {}), ...fields },

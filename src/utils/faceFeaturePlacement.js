@@ -23,13 +23,11 @@
 import {
   minSelectedEdgeLength,
   effectiveBlendEdgeLength,
-  defaultEdgeBlendSize,
-  edgeBlendHardMax,
   blendSliderStep,
   pathLengthFromEdges,
-  FILLET_DEFAULT_RADIUS,
   sweepBlendHardMax,
 } from './selectEdge.js';
+import { adjacentBlendSize } from './adjacentBlend.js';
 import { resolveFilletStrategy } from './filletAlongPath.js';
 import {
   CROSS_SECTION_REFUSE_NON_PLANAR,
@@ -992,9 +990,7 @@ export function resolveFaceModal(paletteItem, selectedFace, selectedEdges = null
   }
 
   // Slice 12 + polish: fillet/chamfer with user-selected edges (no face required).
-  // Planar: seed/cap under kernel size guard t < 0.45·L.
-  // Sweep (default / auto): NO planar size clamp — path-length defaults (r≈6 on box
-  // perimeter). Tessellated prior-fillet rims must not pin the slider ~0.04.
+  // The radius is the adjacent-edge seed. Sweep still skips the planar size guard.
   if (isEdgeFeature && hasEdges) {
     const body = { name: 'body', type: 'body', default: 'part', label: 'Body' };
     const edgeScope = {
@@ -1003,28 +999,24 @@ export function resolveFaceModal(paletteItem, selectedFace, selectedEdges = null
     };
     const minL = effectiveBlendEdgeLength(selectedEdges) ?? minSelectedEdgeLength(selectedEdges);
     const pathLen = pathLengthFromEdges(selectedEdges);
-    // Fillet: sweep is the universal default — open at the fixed 2 mm radius
-    // (not 0.1 × path length, which grew with every picked edge).
-    // Chamfer stays planar-guarded (no sweep strategy).
+    // Fillet and chamfer open on the adjacent-edge seed, the same one the
+    // mode card uses. Sweep still skips the planar 0.45·L size guard.
     const resolved = id === 'filletEdges'
       ? resolveFilletStrategy('sweep', selectedEdges)
       : 'planar';
     const useSweepSize = resolved === 'sweep';
-    const blendDefault = useSweepSize
-      ? FILLET_DEFAULT_RADIUS
-      : (minL != null ? defaultEdgeBlendSize(minL) : (id === 'filletEdges' ? 3 : 2));
-    const blendMax = useSweepSize
-      ? sweepBlendHardMax(pathLen ?? minL)
-      : (minL != null ? edgeBlendHardMax(minL) : undefined);
+    const sized = adjacentBlendSize(selectedEdges);
+    const blendDefault = sized.defaultMm;
+    const blendMax = sized.maxMm;
     const blendStep = blendSliderStep(blendMax);
     const blendParam = id === 'filletEdges'
       ? {
           name: 'radius', type: 'number', default: blendDefault, label: 'Radius',
-          min: 0.01, step: blendStep, slider: true, ...(blendMax != null ? { max: blendMax } : {}),
+          min: sized.minMm, step: blendStep, slider: true, max: blendMax,
         }
       : {
           name: 'chamfer', type: 'number', default: blendDefault, label: 'Chamfer',
-          min: 0.01, step: blendStep, slider: true, ...(blendMax != null ? { max: blendMax } : {}),
+          min: sized.minMm, step: blendStep, slider: true, max: blendMax,
         };
     let params;
     if (id === 'filletEdges') {
@@ -1122,12 +1114,9 @@ export function resolveFaceModal(paletteItem, selectedFace, selectedEdges = null
   const pathLenFace = hasEdges && isEdgeFeature ? pathLengthFromEdges(selectedEdges) : null;
   const useSweepSizeFace = id === 'filletEdges' && hasEdges
     && resolveFilletStrategy('sweep', selectedEdges) === 'sweep';
-  const blendDefault = useSweepSizeFace
-    ? FILLET_DEFAULT_RADIUS
-    : (minL != null ? defaultEdgeBlendSize(minL) : null);
-  const blendMax = useSweepSizeFace
-    ? sweepBlendHardMax(pathLenFace ?? minL)
-    : (minL != null ? edgeBlendHardMax(minL) : null);
+  const sizedFace = hasEdges && isEdgeFeature ? adjacentBlendSize(selectedEdges) : null;
+  const blendDefault = sizedFace ? sizedFace.defaultMm : null;
+  const blendMax = sizedFace ? sizedFace.maxMm : null;
   const blendStep = blendSliderStep(blendMax);
   // Prefer selected edges when both face + edges present for fillet/chamfer.
   const mergedParams = params.map((p) => {
@@ -1138,7 +1127,7 @@ export function resolveFaceModal(paletteItem, selectedFace, selectedEdges = null
     if (def !== p.default) next = { ...next, default: def };
     else if (seeds[p.name] !== undefined) next = { ...next, default: seeds[p.name] };
     if (blendMax != null && (p.name === 'radius' || p.name === 'chamfer')) {
-      next = { ...next, max: blendMax, step: blendStep, slider: true };
+      next = { ...next, min: sizedFace.minMm, max: blendMax, step: blendStep, slider: true };
     }
     return next;
   });

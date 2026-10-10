@@ -143,6 +143,10 @@ const HelperInsertPalette = ({
   onEditCancel = null,
   /** CAD only. True while the helper card is open, so the camera can slide. */
   onHelperCard = null,
+  lengthMm = 100,
+  bounds = null,
+  minExtent = null,
+  onMeasure = null,
 }) => {
   const grouped = itemsByGroup();
   // Content-height capped just below the part-name chip; narrows when no scroll.
@@ -441,6 +445,10 @@ const HelperInsertPalette = ({
           buffer={bufferSnapshot}
           faceInfo={faceSnapshot}
           edgeInfo={edgeSnapshot}
+          lengthMm={lengthMm}
+          bounds={bounds}
+          minExtent={minExtent}
+          onMeasure={onMeasure}
           onCancel={() => {
             if (pending?._featureEdit) onEditCancel?.();
             close();
