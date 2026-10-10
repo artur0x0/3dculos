@@ -2,12 +2,11 @@
 /**
  * Adding joints must not make the page the scroll container.
  *
- * Two Ground joints are confirmed through the create card. The document
- * then stays non-scrollable (scrollHeight <= innerHeight, scrollY 0),
- * including when an in-flow descendant taller than the viewport is added
- * under #root — that is the playtest case where new DOM escapes the
- * shells after the card's inline overflow lock drops. The left rail
- * still scrolls and a tap on Joints still opens the card.
+ * Two Ground joints are added through the create card. Add leaves the card
+ * open. The document stays non-scrollable (scrollHeight <= innerHeight,
+ * scrollY 0), including when an in-flow descendant taller than the viewport
+ * is added under #root, and again after X drops the inline sheet lock.
+ * The left rail still scrolls and a tap on Joints still opens the card.
  *
  * 390 and 1280. Screenshots go to GOLDEN_SHOT_DIR or os.tmpdir().
  */
@@ -341,10 +340,18 @@ async function addFixedJoint(page, worlds, partName) {
   ).catch(() => {});
   const typed = await cardState(page);
   if (typed.type !== 'fixed') return { ok: false, reason: 'ground missed', ground, typed };
+  const before = await jointCount(page);
+  const beforeMax = Math.max(0, ...(before.counts.length ? before.counts : [0]));
   const confirm = await pressControl(page, '[data-feature-card-confirm]');
-  await page.waitForSelector('[data-joint-card]', { state: 'detached', timeout: 8000 }).catch(() => {});
+  await page.waitForFunction((prev) => {
+    const strips = [...document.querySelectorAll('[data-assembly-joints]')];
+    const n = Math.max(0, ...strips.map((strip) => strip.querySelectorAll('[data-joint-id]').length), 0);
+    return n > prev;
+  }, beforeMax, { timeout: 8000 }).catch(() => {});
   const after = await cardState(page);
-  return { ok: !after.open, ground, confirm, after };
+  const counted = await jointCount(page);
+  const afterMax = Math.max(0, ...(counted.counts.length ? counted.counts : [0]));
+  return { ok: afterMax > beforeMax, ground, confirm, after, beforeMax, afterMax };
 }
 
 async function railStillWorks(page) {

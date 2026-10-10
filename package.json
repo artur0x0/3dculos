@@ -153,6 +153,7 @@
         "golden:joints-strip": "node scripts/golden/smoke_joints_strip.mjs",
         "golden:joints-blocks": "node scripts/golden/smoke_joints_blocks.mjs",
         "golden:joints-page-scroll": "node scripts/golden/smoke_joints_page_scroll.mjs",
+        "golden:joints-card": "node scripts/golden/smoke_joints_card.mjs",
         "golden:assembly-open-spinner": "node scripts/golden/smoke_assembly_open_spinner.mjs",
         "golden:assembly-open-clears": "node scripts/golden/smoke_assembly_open_clears.mjs",
         "golden:assembly-autonumber": "node scripts/golden/smoke_assembly_autonumber.mjs",

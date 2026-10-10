@@ -92,8 +92,44 @@ export function shouldArmJointPick({
   return kind === 'face' || kind === 'edge' || kind === 'point';
 }
 
-function hasAxis(pick) {
-  return !!(pick && (pick.kind === 'axis' || pick.axis === true));
+/** Parallel planar faces farther apart than this suggest distance, not coincident. */
+export const DISTANCE_SUGGEST_MM = 5;
+
+function roundPick(pick) {
+  if (!pick) return false;
+  if (pick.kind === 'axis' || pick.axis === true) return true;
+  if (pick.kind === 'edge' && Number(pick.key?.radius) > 0) return true;
+  return false;
+}
+
+function unitNormal(pick) {
+  const n = pick?.key?.n;
+  if (!Array.isArray(n) || n.length < 3) return null;
+  const len = Math.hypot(Number(n[0]) || 0, Number(n[1]) || 0, Number(n[2]) || 0);
+  if (len < 1e-9) return null;
+  return [n[0] / len, n[1] / len, n[2] / len];
+}
+
+function parallelPlanar(picks) {
+  const na = unitNormal(picks[0]);
+  const nb = unitNormal(picks[1]);
+  if (!na || !nb) return false;
+  const dot = na[0] * nb[0] + na[1] * nb[1] + na[2] * nb[2];
+  return Math.abs(Math.abs(dot) - 1) <= 1e-3;
+}
+
+/** Separation of the two face centers along the first normal, in millimetres. */
+export function planarGapMm(picks) {
+  const list = Array.isArray(picks) ? picks : [];
+  const n = unitNormal(list[0]);
+  const at = list[0]?.key?.at;
+  const bt = list[1]?.key?.at;
+  if (!n || !Array.isArray(at) || !Array.isArray(bt)) return 0;
+  return Math.abs(
+    ((Number(bt[0]) || 0) - (Number(at[0]) || 0)) * n[0]
+    + ((Number(bt[1]) || 0) - (Number(at[1]) || 0)) * n[1]
+    + ((Number(bt[2]) || 0) - (Number(at[2]) || 0)) * n[2],
+  );
 }
 
 function planarFace(pick) {
@@ -109,7 +145,7 @@ export function typeFits(type, picks) {
   if (type === 'coincident' || type === 'distance') {
     return planarFace(list[0]) && planarFace(list[1]);
   }
-  if (type === 'concentric') return hasAxis(list[0]) && hasAxis(list[1]);
+  if (type === 'concentric') return roundPick(list[0]) && roundPick(list[1]);
   if (type === 'angle') {
     return list.every((pick) => (
       pick.kind === 'face' || pick.kind === 'edge' || pick.kind === 'axis'
@@ -118,10 +154,21 @@ export function typeFits(type, picks) {
   return false;
 }
 
-/** Two planar faces suggest coincident. Two axes suggest concentric. Never fixed. */
+/**
+ * Two cylindrical faces or circular edges suggest concentric. Two planar
+ * faces suggest coincident. Parallel planar faces with a gap suggest
+ * distance. Never fixed. The type buttons can still override this.
+ */
 export function suggestJointType(picks) {
-  if (typeFits('coincident', picks)) return 'coincident';
   if (typeFits('concentric', picks)) return 'concentric';
+  if (
+    typeFits('distance', picks)
+    && parallelPlanar(picks)
+    && planarGapMm(picks) > DISTANCE_SUGGEST_MM
+  ) {
+    return 'distance';
+  }
+  if (typeFits('coincident', picks)) return 'coincident';
   return null;
 }
 
@@ -266,7 +313,9 @@ export function draftFromPicks(previous, picks, { joints = [] } = {}) {
     suggested,
     userPickedType: !!keepType,
     userNamed: !!previous?.userNamed,
-    valueMm: previous?.valueMm,
+    valueMm: Number.isFinite(Number(previous?.valueMm))
+      ? Number(previous.valueMm)
+      : (type === 'distance' ? planarGapMm(picks) : previous?.valueMm),
     sense: previous?.sense === -1 ? -1 : 1,
     opposed: previous?.opposed !== false,
     note: previous?.note || '',
