@@ -931,10 +931,17 @@ function jacobiEigen(S, n) {
   return { values, vectors: V };
 }
 
+function equationSkipped(skipId, id) {
+  if (skipId == null) return false;
+  if (typeof skipId === 'string') return id === skipId;
+  return typeof skipId.has === 'function' && skipId.has(id);
+}
+
 function factorAt(sys, x, skipId) {
   const { n } = sys;
-  const m = skipId
-    ? sys.eqs.reduce((c, eq) => c + (eq.id === skipId ? 0 : 1), 0)
+  const skipping = skipId != null && (typeof skipId !== 'string' || skipId !== '');
+  const m = skipping
+    ? sys.eqs.reduce((c, eq) => c + (equationSkipped(skipId, eq.id) ? 0 : 1), 0)
     : sys.m;
   if (m === 0) {
     const vectors = [];
@@ -949,13 +956,13 @@ function factorAt(sys, x, skipId) {
   let row = 0;
   const keep = [];
   sys.eqs.forEach((eq, i) => {
-    if (skipId && eq.id === skipId) return;
+    if (skipping && equationSkipped(skipId, eq.id)) return;
     scale[row] = sys.scale[i];
     keep.push(i);
     row += 1;
   });
   const residual = (xx, out) => {
-    if (!skipId) sys.residualAll(xx, out);
+    if (!skipping) sys.residualAll(xx, out);
     else {
       let k = 0;
       for (const i of keep) out[k++] = sys.eqs[i].fn(xx);
@@ -1246,9 +1253,25 @@ function assembleResult(model, sys, solved, fact, conflict, repeated) {
       for (const ref of entityTouches(model, id)) touched.add(ref);
     }
   }
+  // Grey and dark for everything the conflict does not touch come from the
+  // system with those items removed. One bad dimension must not paint the
+  // rest of the contour grey. If that subsystem is still inconsistent, the
+  // grey/dark pass is skipped and untouched entities stay under.
+  let paintSpace = fact.nullspace;
+  let paintConsistent = consistent;
+  if (conflict?.ids?.length) {
+    const skip = new Set(conflict.ids);
+    const trial = levenbergDropped(sys, solved.x, skip);
+    if (trial.scaledInf <= CONSISTENT_TOL) {
+      paintSpace = factorAt(sys, trial.x, skip).nullspace;
+      paintConsistent = true;
+    }
+  }
   const pointState = {};
   model.points.forEach((p, i) => {
-    pointState[p.id] = touched.has(p.id) ? 'conflict' : (consistent ? pointStatus(fact.nullspace, i * 2, 2) : 'under');
+    pointState[p.id] = touched.has(p.id)
+      ? 'conflict'
+      : (paintConsistent ? pointStatus(paintSpace, i * 2, 2) : 'under');
   });
   const lineState = {};
   for (const line of model.lines) {
@@ -1262,7 +1285,7 @@ function assembleResult(model, sys, solved, fact, conflict, repeated) {
   }
   const arcState = {};
   model.arcs.forEach((arc, i) => {
-    const radiusUnder = consistent && pointStatus(fact.nullspace, model.points.length * 2 + i, 1) === 'under';
+    const radiusUnder = paintConsistent && pointStatus(paintSpace, model.points.length * 2 + i, 1) === 'under';
     if (touched.has(arc.id) || pointState[arc.center] === 'conflict') arcState[arc.id] = 'conflict';
     else if (pointState[arc.center] === 'under' || radiusUnder
       || (arc.start && pointState[arc.start] === 'under')

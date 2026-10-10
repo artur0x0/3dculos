@@ -18,6 +18,7 @@ import {
   toolToProfileParams,
   writeLoftSelected,
 } from './contourMode.js';
+import { parseSolveContour } from './contourScript.js';
 
 function splitArgs(src) {
   const args = [];
@@ -184,6 +185,18 @@ function parseProfile(expr) {
       tool: 'rectangle',
       params: { width, height, centered: m[3] === 'true' },
     };
+  }
+  if (/^solveContour\s*\(/.test(t)) {
+    try {
+      const contour = parseSolveContour(t);
+      const points = (contour.points || []).map((p) => [Number(p.at?.[0]), Number(p.at?.[1])]);
+      if (!points.length || points.some((p) => !Number.isFinite(p[0]) || !Number.isFinite(p[1]))) {
+        return null;
+      }
+      return { tool: 'polyline', params: { points, contour } };
+    } catch {
+      return null;
+    }
   }
   m = t.match(/^profilePolygon\(\s*(\[[\s\S]*\])\s*\)$/);
   if (m) {

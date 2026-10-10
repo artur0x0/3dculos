@@ -47,6 +47,8 @@ Arc, Dimension, and Constraints sit on the contour rail after Polyline. They are
 
 Horizontal is constant `v`. Vertical is constant `u`. An under-defined contour is a normal result (`status: 'under'`). A conflict returns the least-squares shape and names the item (`status: 'conflict'`); it does not throw. A constraint that does not change the rank is `repeated`, which is a warning, not a red state and not an error. The point cap is 128. An open chain closes once it has three points. Joints do not call this solver.
 
+A promoted contour paints under `#9ca3af`, full `#3f3f46`, and conflict `#f87171` on the edit wire and on the saved ghost. An unpromoted circle, rectangle, polygon, or polyline stays cyan. The conflict note (`data-contour-conflict`) names the primary id. Repeated shows the word Repeated. Dragging a polyline point is a temporary lock in `src/utils/contourDrag.js`: right-button on desktop, one finger on touch. A fully constrained point and a contour already in conflict do not move. Seeds are written on pointer-up. The script is replaced only when a contour block is already there.
+
 `makeCrossSection` accepts the return value because it already accepts `{ type, contours }`. The tessellated loops are what extrude, revolve, loft, and sweep consume. Judgment calls for this work are `docs/contour-constraints-judgments.md`.
 
 ### Headless entry

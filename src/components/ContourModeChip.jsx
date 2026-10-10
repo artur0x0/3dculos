@@ -1,9 +1,10 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { NumberField } from './controls/popupUI';
 import { FeatureDeleteButton } from './FeatureEditDelete';
 import FeatureSheet from './FeatureSheet';
 import { useDisplayUnit } from '../hooks/useDisplayUnit';
 import { displayToMm, lengthCaption, lengthToDisplay } from '../utils/displayUnit';
+import { contourStatusNote } from '../utils/contourStatus';
 
 const ACCENT = 'cyan';
 
@@ -79,6 +80,10 @@ const ContourModeChip = ({
   const solidEntry = !!(commitName && !isWorkplane);
   const combineOp = combine === 'subtract' ? 'subtract' : 'add';
   const [displayUnit] = useDisplayUnit();
+  const statusNote = useMemo(
+    () => (params?.contour ? contourStatusNote(params.contour) : null),
+    [params],
+  );
   const loftProfiles = Array.isArray(loft.profiles) ? loft.profiles : [];
   const loftSelected = Number.isInteger(loft.selected) ? loft.selected : 0;
   const loftStation = loftProfiles[loftSelected] || null;
@@ -177,7 +182,7 @@ const ContourModeChip = ({
     fields = (
       <div className="flex items-center gap-2 flex-wrap">
         <span className="text-[13px] text-cyan-100">
-          {n} pt{n === 1 ? '' : 's'} · tap plane{n > 0 ? ' · right-drag to move' : ''}
+          {n} pt{n === 1 ? '' : 's'} · tap plane{n > 0 ? ' · right-drag or one-finger drag to move' : ''}
         </span>
         {n > 0 && (
           <>
@@ -213,11 +218,16 @@ const ContourModeChip = ({
   const subtitle = solidEntry && shapeLabel
     ? `${shapeLabel} · Plane · ${planeLabel}`
     : `Plane · ${planeLabel}`;
-  const note = isWorkplane
+  const confirmNote = isWorkplane
     ? 'Confirm writes a construction plane'
     : commitName
       ? `Confirm writes ${commitName} (${combineOp === 'subtract' ? 'cuts' : merge === false ? 'separate body' : 'adds'} if part exists)`
       : 'Confirm writes Profile only';
+  const note = statusNote?.text
+    ? (statusNote.conflict
+      ? <span data-contour-conflict={statusNote.primaryId || ''}>{statusNote.text}</span>
+      : statusNote.text)
+    : confirmNote;
 
   return (
     <FeatureSheet

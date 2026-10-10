@@ -80,7 +80,7 @@ export const CONTOUR_TOOLS = [
   { id: 'circle', label: 'Circle', title: 'Circle profile on the workplane' },
   { id: 'rectangle', label: 'Rect', title: 'Rectangle profile on the workplane' },
   { id: 'polygon', label: 'Polygon', title: 'Regular polygon profile on the workplane' },
-  { id: 'polyline', label: 'Polyline', title: 'Tap points on the workplane; right-drag a point to move it (closed on Confirm)' },
+  { id: 'polyline', label: 'Polyline', title: 'Tap points on the workplane; right-drag a point to move it, or drag it with one finger (closed on Confirm)' },
 ];
 
 export const CONTOUR_TOOL_IDS = CONTOUR_TOOLS.map((t) => t.id);
