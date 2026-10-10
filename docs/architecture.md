@@ -305,7 +305,9 @@ Load and save drop a joint whose surf id is not a part in the file (`pruneDangli
 
 Deleting a part drops every joint that named it. Copy to this assembly mints a new surf id and does not retarget joints onto that id. Field rules are `docs/vault-schema.md`. The choices locked for the rest of the feature are `docs/joints-judgments.md`.
 
-The rigid solver, stable-id re-resolution, the broken flag, and the feature-strip card are not in this storage change.
+The rigid solver is `solveResiduals` (`src/solver/residual.js`): Powell dogleg on JᵀJ, with a dense Cholesky and a trust region that damps toward the current pose. The unknown is a plain number vector. The core does not import joints, so a later sketcher can call it with its own residual. Joint equations (`src/joints/`) are the first adapter. Each free part has six unknowns, a left-multiplied rotation increment and a translation increment. Inside the solve a radian is weighted like 10 mm, so a gap that translation can close is not spent on a tilt. The residual the equations publish stays in raw rotation. `fixed` removes that part from the free set. Coincident, concentric, distance, and angle add the rows in `src/joints/equations.js`. A broken joint is left out of the system. Success is a residual under 1e-3 mm and 1e-3 rad. Under-constrained and redundant-but-consistent results are success. A conflict names the newest joint whose removal makes the rest succeed (`Joint "<name>" conflicts`), or the newest joint with `conflicts with more than one joint` when no single removal works. Placements stay at the last success. The solver does not delete a joint and does not edit a script.
+
+Stable-id re-resolution and the feature-strip card are not in this change.
 
 ## UI confirm
 

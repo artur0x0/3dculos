@@ -1,0 +1,199 @@
+/**
+ * Solve assembly joints from the current placements.
+ *
+ * A broken joint is not in the system. Success is every residual under
+ * 1e-3 (millimetres on a gap, radians on a direction). A conflict names
+ * the newest joint whose removal makes the rest succeed, and every
+ * placement stays at the seed. Nothing here deletes a joint or edits a script.
+ */
+import { solveResiduals } from '../solver/residual.js';
+import { evaluateJoints, localFrame, seedDrops } from './equations.js';
+import {
+  add3,
+  mulQuat,
+  normalizeQuat,
+  quatFromOmega,
+} from './rigid.js';
+
+export const JOINT_TOL = 1e-3;
+
+function partId(part) {
+  return part?.surfId || part?.id;
+}
+
+function seedPose(part) {
+  const raw = part?.placement;
+  const t = Array.isArray(raw?.t) && raw.t.length >= 3
+    ? [Number(raw.t[0]), Number(raw.t[1]), Number(raw.t[2])]
+    : [0, 0, 0];
+  const q = Array.isArray(raw?.q) && raw.q.length === 4
+    ? normalizeQuat(raw.q.map(Number))
+    : [0, 0, 0, 1];
+  return { t, q };
+}
+
+function isBroken(joint) {
+  return joint?.broken === true || joint?.status === 'broken';
+}
+
+function hasFrame(joint) {
+  if (joint.type === 'fixed') return !!joint.a?.part;
+  return !!(localFrame(joint.a, joint.type) && localFrame(joint.b, joint.type));
+}
+
+function posesAt(seeds, freeIds, x) {
+  const poses = new Map();
+  for (const [id, seed] of seeds) {
+    poses.set(id, { t: seed.t.slice(), q: seed.q.slice(), omega: [0, 0, 0] });
+  }
+  freeIds.forEach((id, index) => {
+    const base = index * 6;
+    const omega = [x[base], x[base + 1], x[base + 2]];
+    const dt = [x[base + 3], x[base + 4], x[base + 5]];
+    const seed = seeds.get(id);
+    poses.set(id, {
+      omega,
+      t: add3(seed.t, dt),
+      q: normalizeQuat(mulQuat(quatFromOmega(omega), seed.q)),
+    });
+  });
+  return poses;
+}
+
+function placementMap(poses) {
+  const out = {};
+  for (const [id, pose] of poses) {
+    out[id] = { t: pose.t.slice(), q: normalizeQuat(pose.q) };
+  }
+  return out;
+}
+
+function freeIdsOf(joints, seeds) {
+  const fixed = new Set();
+  const named = new Set();
+  for (const joint of joints) {
+    if (joint.a?.part) named.add(joint.a.part);
+    if (joint.b?.part) named.add(joint.b.part);
+    if (joint.type === 'fixed' && joint.a?.part) fixed.add(joint.a.part);
+  }
+  return [...named].filter((id) => seeds.has(id) && !fixed.has(id)).sort();
+}
+
+/**
+ * Residual and analytic Jacobian for `joints` on `parts`.
+ * The unknown is six numbers per free part, packed [ωx, ωy, ωz, Δtx, Δty, Δtz],
+ * in surf-id order. x = 0 is the seed placement.
+ */
+export function jointSystem(parts, joints) {
+  const seeds = new Map();
+  for (const part of parts || []) seeds.set(partId(part), seedPose(part));
+  const freeIds = freeIdsOf(joints, seeds);
+  const freeIndex = new Map(freeIds.map((id, i) => [id, i]));
+  const drops = seedDrops(joints, seeds);
+  const n = freeIds.length * 6;
+  const residual = (x) => evaluateJoints(joints, posesAt(seeds, freeIds, x), freeIndex, drops).residual;
+  const jacobian = (x) => evaluateJoints(joints, posesAt(seeds, freeIds, x), freeIndex, drops).jacobian;
+  return { n, residual, jacobian, freeIds, seeds };
+}
+
+// A radian is weighted like this many millimetres. Alignment that is already
+// satisfied then stays put, and the gap is closed by translation. An angle
+// joint still rotates: no translation can satisfy it.
+const ROTATION_WEIGHT_MM = 10;
+
+function solveOnce(parts, joints) {
+  const system = jointSystem(parts, joints);
+  const nFree = system.freeIds.length;
+  const unweight = (x) => {
+    const out = x.slice();
+    for (let i = 0; i < nFree; i++) {
+      out[i * 6] /= ROTATION_WEIGHT_MM;
+      out[i * 6 + 1] /= ROTATION_WEIGHT_MM;
+      out[i * 6 + 2] /= ROTATION_WEIGHT_MM;
+    }
+    return out;
+  };
+  const solvedWeighted = solveResiduals({
+    n: system.n,
+    residual: (x) => system.residual(unweight(x)),
+    jacobian: (x) => system.jacobian(unweight(x)).map((row) => row.map((value, col) => (
+      col % 6 < 3 ? value / ROTATION_WEIGHT_MM : value
+    ))),
+    x0: new Array(system.n).fill(0),
+    tol: JOINT_TOL,
+    maxIter: 80,
+  });
+  const solved = { ...solvedWeighted, x: unweight(solvedWeighted.x) };
+  const poses = posesAt(system.seeds, system.freeIds, solved.x);
+  return {
+    solved,
+    placements: placementMap(poses),
+    maxResidual: solved.residual.reduce((m, v) => Math.max(m, Math.abs(v)), 0),
+  };
+}
+
+function seedPlacements(parts) {
+  const out = {};
+  for (const part of parts || []) {
+    const pose = seedPose(part);
+    out[partId(part)] = pose;
+  }
+  return out;
+}
+
+/**
+ * @returns {{
+ *   ok: boolean,
+ *   placements: Record<string, { t: number[], q: number[] }>,
+ *   statuses: Record<string, 'ok' | 'broken' | 'conflict'>,
+ *   message: string | null,
+ *   residual: number,
+ * }}
+ */
+export function solveJoints({ parts, joints }) {
+  const statuses = {};
+  const active = [];
+  for (const joint of joints || []) {
+    if (isBroken(joint) || !hasFrame(joint)) {
+      statuses[joint.id] = 'broken';
+      continue;
+    }
+    active.push(joint);
+  }
+  const seeds = seedPlacements(parts);
+  const first = solveOnce(parts, active);
+  if (first.solved.ok) {
+    for (const joint of active) statuses[joint.id] = 'ok';
+    return {
+      ok: true,
+      placements: first.placements,
+      statuses,
+      message: null,
+      residual: first.maxResidual,
+    };
+  }
+  for (let i = active.length - 1; i >= 0; i--) {
+    const subset = active.filter((_, index) => index !== i);
+    const trial = solveOnce(parts, subset);
+    if (!trial.solved.ok) continue;
+    const offender = active[i];
+    for (const joint of active) statuses[joint.id] = joint === offender ? 'conflict' : 'ok';
+    return {
+      ok: false,
+      placements: seeds,
+      statuses,
+      message: `Joint "${offender.name}" conflicts`,
+      residual: first.maxResidual,
+    };
+  }
+  const newest = active[active.length - 1];
+  for (const joint of active) statuses[joint.id] = joint === newest ? 'conflict' : 'ok';
+  const message = newest ? `Joint "${newest.name}" conflicts with more than one joint` : null;
+  return {
+    ok: false,
+    placements: seeds,
+    statuses,
+    message,
+    residual: first.maxResidual,
+  };
+}
