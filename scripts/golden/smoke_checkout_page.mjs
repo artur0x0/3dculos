@@ -457,6 +457,7 @@ async function capture(browser, width, height) {
   console.log(`  wrote ${shotReview}`);
 
   await page.locator('[data-checkout-line="00000000-0000-4000-8000-000000000002"] [data-checkout-remove]').click();
+  await page.locator('[data-cart-remove-confirm]').click();
   await page.waitForFunction(
     () => document.querySelectorAll('[data-checkout-line]').length === 1,
     null,

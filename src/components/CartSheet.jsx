@@ -2,13 +2,15 @@
  * Cart sheet. Checkout still walks the lines that can be quoted from this
  * assembly. Missing parts and parts in another assembly stay in the cart.
  * A line shows its server unit price and a stale badge when the script
- * hash changed or the quote expired.
+ * hash changed or the quote expired. Removing a line asks first.
+ * A quantity change does not.
  */
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Minus, Plus, X } from 'lucide-react';
 import { useCartChrome } from '../hooks/useCart';
 import { CART_QTY_MAX, CART_QTY_MIN, cartLineIsStale } from '../utils/cart.js';
+import CartRemoveDialog from './CartRemoveDialog';
 import ModalFit from './ModalFit';
 
 function staleLabel(line) {
@@ -20,16 +22,23 @@ function staleLabel(line) {
 export default function CartSheet() {
   const cart = useCartChrome();
   const open = !!cart?.open;
+  const [pendingRemove, setPendingRemove] = useState(null);
+  const cartRef = useRef(cart);
+  cartRef.current = cart;
 
   useEffect(() => {
     if (!open) return undefined;
-    cart.refill?.();
+    // Once per open. Depending on the cart object refills again after every
+    // qty or remove, and that reschedules sync so the edit never goes out.
+    cartRef.current.refill?.();
     const onKey = (event) => {
-      if (event.key === 'Escape') cart.closeCart?.();
+      if (event.key !== 'Escape') return;
+      if (document.querySelector('[data-cart-remove-dialog]')) return;
+      cartRef.current.closeCart?.();
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [open, cart]);
+  }, [open]);
 
   if (!open || typeof document === 'undefined') return null;
 
@@ -38,6 +47,7 @@ export default function CartSheet() {
   const skipNote = cart.checkoutNote || '';
 
   return createPortal(
+    <>
     <ModalFit
       className="modal-fit-sheet z-[80] flex items-end justify-center sm:items-center"
       cap="85vh"
@@ -156,7 +166,10 @@ export default function CartSheet() {
                 type="button"
                 data-cart-remove=""
                 className="shrink-0 rounded-md px-2 py-1 text-[11px] text-red-300 hover:bg-red-500/15"
-                onClick={() => cart.removeLine?.(line.lineId)}
+                onClick={() => setPendingRemove({
+                  lineId: line.lineId,
+                  name: line.liveName || line.partName || 'this part',
+                })}
               >
                 Remove
               </button>
@@ -181,7 +194,18 @@ export default function CartSheet() {
           ) : null}
         </div>
       </div>
-    </ModalFit>,
+    </ModalFit>
+    <CartRemoveDialog
+      open={!!pendingRemove}
+      name={pendingRemove?.name || ''}
+      onCancel={() => setPendingRemove(null)}
+      onConfirm={() => {
+        const lineId = pendingRemove?.lineId;
+        setPendingRemove(null);
+        if (lineId) cart.removeLine?.(lineId);
+      }}
+    />
+    </>,
     document.body,
   );
 }

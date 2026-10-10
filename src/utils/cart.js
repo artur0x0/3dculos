@@ -551,7 +551,9 @@ export function refillThumbs(cart, thumbsByPartId, now = new Date()) {
     changed = true;
     return { ...line, thumbDataUrl: url, updatedAt: iso };
   });
-  return changed ? { ...state, lines } : state;
+  // Same reference when nothing was filled, so the sheet can call this on
+  // open without writing and scheduling another sync.
+  return changed ? { ...state, lines } : cart;
 }
 
 /**
