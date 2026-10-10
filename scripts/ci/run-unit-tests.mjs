@@ -20,13 +20,13 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../..');
 
-/** Default per-test timeout for an FEA file that does not set its own. */
-const FEA_TEST_TIMEOUT_MS = 180_000;
-
 /**
- * Wall clock for one FEA file. Long files cover their own test timeouts
- * (sheet metallica's refine test allows 420s). A startup hang still dies
- * here, with the path in the message, instead of at the 30 minute job limit.
+ * Node applies `--test-timeout` to the file as well as to tests that do not
+ * set their own. It has to cover the whole file: sheet metallica's tet
+ * comparison alone is allowed 240s, and one local run passed 180s while that
+ * test was still going. The external kill is this long plus a grace period,
+ * so a blocked event loop (which never services the test timeout) still dies
+ * and names the suite.
  */
 const FEA_FILE_TIMEOUT_MS = {
   'src/fea/sheetMetallica.test.js': 12 * 60 * 1000,
@@ -37,6 +37,7 @@ const FEA_FILE_TIMEOUT_MS = {
   'src/fea/meshCache.test.js': 5 * 60 * 1000,
 };
 const DEFAULT_FEA_FILE_TIMEOUT_MS = 4 * 60 * 1000;
+const KILL_GRACE_MS = 30_000;
 
 function rel(file) {
   return relative(ROOT, file).split('\\').join('/');
@@ -172,15 +173,16 @@ export async function main() {
 
   for (const file of fea) {
     const timeoutMs = feaFileTimeoutMs(file);
-    const seconds = Math.round(timeoutMs / 1000);
+    const killMs = timeoutMs + KILL_GRACE_MS;
+    const seconds = Math.round(killMs / 1000);
     console.log(`\n--- FEA suite ${rel(file)} (kill after ${seconds}s) ---`);
     const code = await runNode([
       '--test',
       '--test-reporter', 'spec',
-      '--test-timeout', String(FEA_TEST_TIMEOUT_MS),
+      '--test-timeout', String(timeoutMs),
       '--test-force-exit',
       file,
-    ], { timeoutMs, label: file });
+    ], { timeoutMs: killMs, label: file });
     if (code !== 0) return code;
   }
   return 0;

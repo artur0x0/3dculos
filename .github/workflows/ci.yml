@@ -76,10 +76,11 @@ jobs:
       #   src/**/*.test.{js,mjs,cjs}
       #   test/**/*.{js,mjs,cjs}
       #   tests/**/*.{js,mjs,cjs}
-      # FEA files run one at a time. Each has --test-timeout plus a
-      # wall-clock kill that names the suite. A hang during wasm or
-      # Manifold setup is outside any test, so the per-test timeout never
-      # arms; the kill is what stops it short of this job's 30 minute limit.
+      # FEA files run one at a time. Each file's --test-timeout covers that
+      # whole file (Node applies it to the file, not only to one test). A
+      # wall-clock kill a little later names the suite if the event loop is
+      # blocked and that timeout cannot fire. Either way a hang stops short
+      # of this job's 30 minute limit.
       - name: node --test
         run: node scripts/ci/run-unit-tests.mjs
 
