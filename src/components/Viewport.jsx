@@ -153,6 +153,11 @@ import {
   workplaneQuadCorners,
   writeLoftSelected,
 } from '../utils/contourMode';
+import {
+  holdContourOverlays,
+  releaseContourOverlays,
+  useTemporaryVisibility,
+} from '../hooks/useTemporaryVisibility';
 import { buildSweepPathPreview } from '../utils/edgeSweepPath';
 import {
   buildFilletBlendPreview,
@@ -839,11 +844,12 @@ const Viewport = forwardRef(({
   /** Slice 12: 'face' | 'edge' — mutually exclusive pick modes. */
   const [pickMode, setPickMode] = useState('face');
   /**
-   * Plane / contour overlay visibility. Independent of Face/Edge.
-   * Session state only (same as pick mode) — both default on.
+   * Plane / sketch overlay visibility. Independent of Face/Edge.
+   * Session only — not stored. Both default off.
+   * enterContourMode holds the keys that tool picks; exitContourMode releases them.
    */
-  const [showPlanes, setShowPlanes] = useState(true);
-  const [showContours, setShowContours] = useState(true);
+  const [showPlanes, setShowPlanes] = useState(false);
+  const [showContours, setShowContours] = useState(false);
   const [selectedEdges, setSelectedEdges] = useState([]);
   /** Slice B+C: latest selection for orbit-synced HTML edge chips (animate loop). */
   const selectedEdgesRef = useRef([]);
@@ -918,8 +924,26 @@ const Viewport = forwardRef(({
   const edgePickScratchA = useRef(new Vector3());
   const edgePickScratchB = useRef(new Vector3());
   const pickModeRef = useRef('face');
-  const showPlanesRef = useRef(true);
-  const showContoursRef = useRef(true);
+  const showPlanesRef = useRef(false);
+  const showContoursRef = useRef(false);
+  const overlayVis = useTemporaryVisibility({
+    planes: {
+      get: () => showPlanesRef.current,
+      set: (value) => {
+        showPlanesRef.current = value;
+        setShowPlanes(value);
+      },
+    },
+    contours: {
+      get: () => showContoursRef.current,
+      set: (value) => {
+        showContoursRef.current = value;
+        setShowContours(value);
+      },
+    },
+  });
+  const onShowPlanesChange = (next) => overlayVis.choose('planes', next);
+  const onShowContoursChange = (next) => overlayVis.choose('contours', next);
   const edgeModeToastShownRef = useRef(false);
   const edgeModeToastTimerRef = useRef(null);
   const [edgeModeToast, setEdgeModeToast] = useState(null);
@@ -1467,6 +1491,8 @@ const Viewport = forwardRef(({
     executeScript,
     /** Clear player attempt mesh (game mode enter: ghost-only until Run). */
     clearAttempt: () => {
+      // Game enter nulls contour mode without exitContourMode.
+      releaseContourOverlays(overlayVis);
       clearHighlight();
       disposeEdgeOverlayObject(sceneRef.current, edgeHighlightRef.current);
       edgeHighlightRef.current = null;
@@ -2703,6 +2729,7 @@ const Viewport = forwardRef(({
   }, [clearFilletBlendPreview, anchorToActivePart]);
 
   const exitContourMode = useCallback(() => {
+    releaseContourOverlays(overlayVis);
     cancelFeatureEditRef.current?.('contour');
     setContourMode(null);
     contourModeRef.current = null;
@@ -2726,6 +2753,7 @@ const Viewport = forwardRef(({
   }, [clearXsPreview, clearWorkplaneOverlay, clearPolylineDraft, clearExtrudePreview, clearRevolvePreview, clearLoftPreview, clearSweepPreview, applyContourPartGhost, clearSavedContourGhosts]);
 
   const enterContourMode = useCallback(({ entry } = {}) => {
+    holdContourOverlays(overlayVis, entry);
     feaCloseRef.current();
     exitPaintModeRef.current();
     exitSheetMetalChromeRef.current();
@@ -8881,8 +8909,8 @@ const Viewport = forwardRef(({
           pickMode={pickMode}
           showPlanes={showPlanes}
           showContours={showContours}
-          onShowPlanesChange={setShowPlanes}
-          onShowContoursChange={setShowContours}
+          onShowPlanesChange={onShowPlanesChange}
+          onShowContoursChange={onShowContoursChange}
           showPaint={mode !== 'game'}
           paintActive={!!paintMode}
           onPaintToggle={() => (paintMode ? exitPaintMode() : enterPaintMode())}

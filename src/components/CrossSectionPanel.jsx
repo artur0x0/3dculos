@@ -21,9 +21,9 @@ const CrossSectionPanel = ({
   /** Slice 12: 'face' | 'edge' pick mode */
   pickMode = 'face',
   onPickModeChange = null,
-  /** Plane / contour overlays. Independent of Face/Edge. Default on. Session only. */
-  showPlanes = true,
-  showContours = true,
+  /** Plane / sketch overlays. Independent of Face/Edge. Default off. Session only. */
+  showPlanes = false,
+  showContours = false,
   onShowPlanesChange = null,
   onShowContoursChange = null,
   /** Paint. Same slot the patch-colour toggle used. Hidden in game. */

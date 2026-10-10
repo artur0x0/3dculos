@@ -5,7 +5,7 @@
  * - Both rails show that set as Shape (the old Model section). Advanced is
  *   not also rendered.
  * - Fillet and Hole stay in Features.
- * - Plane and Contour display toggles default on, session-only, and gate
+ * - Plane and Contour display toggles default off, session-only, and gate
  *   overlay paint plus viewport picking. Face/Edge pick chrome stays.
  */
 import { readFileSync } from 'node:fs';
@@ -197,8 +197,8 @@ console.log('cad palette + plane/contour toggles');
     /aria-pressed=\{!!showPlanes\}/.test(panel) && /aria-pressed=\{!!showContours\}/.test(panel),
   );
   check(
-    'toggle defaults on',
-    /showPlanes = true/.test(panel) && /showContours = true/.test(panel),
+    'toggle defaults off',
+    /showPlanes = false/.test(panel) && /showContours = false/.test(panel),
   );
   check(
     'highlighted class when on',
@@ -212,9 +212,9 @@ console.log('cad palette + plane/contour toggles');
       && !/min-h-11 min-w-11/.test(panel),
   );
   check(
-    'session state defaults on',
-    /const \[showPlanes, setShowPlanes\] = useState\(true\)/.test(view)
-      && /const \[showContours, setShowContours\] = useState\(true\)/.test(view),
+    'session state defaults off',
+    /const \[showPlanes, setShowPlanes\] = useState\(false\)/.test(view)
+      && /const \[showContours, setShowContours\] = useState\(false\)/.test(view),
   );
   check(
     'overlay visibility is not written to storage',
