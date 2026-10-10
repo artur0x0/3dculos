@@ -88,12 +88,24 @@ function createLine(start, end, color, radius = 0.25, opacity = 1.0) {
  * @returns {Group} Three.js Group containing all measurement lines
  */
 export function createMeasurementLines(face1, face2) {
+  return createDeltaLines(face1?.center, face2?.center, face1?.normal);
+}
+
+/**
+ * X / Y / Z staircase between two points. An optional normal draws the
+ * projection off the first point.
+ * @param {number[]} start
+ * @param {number[]} end
+ * @param {number[]|null} [normal]
+ */
+export function createDeltaLines(start, end, normal = null) {
   const group = new Group();
   group.name = 'measurement-lines';
-  
-  const center1 = new Vector3(...face1.center);
-  const center2 = new Vector3(...face2.center);
-  const normal1 = new Vector3(...face1.normal).normalize();
+  if (!start || !end) return group;
+
+  const center1 = new Vector3(...start);
+  const center2 = new Vector3(...end);
+  const normal1 = normal ? new Vector3(...normal).normalize() : null;
   
   // Calculate the delta vector
   const delta = new Vector3().subVectors(center2, center1);
@@ -147,6 +159,7 @@ export function createMeasurementLines(face1, face2) {
   
   // Create normal projection line (gray)
   // This shows the distance along the first face's normal direction
+  if (!normal1) return group;
   const normalProjectionLength = delta.dot(normal1);
   const normalEnd = new Vector3().addVectors(
     center1,

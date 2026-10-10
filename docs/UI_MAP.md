@@ -111,9 +111,11 @@ Desktop specifics:
 - Both viewport rails are **vertical** in this shell too (`verticalRail` is passed
   unconditionally), and both use the same size as each other: 20px icons,
   `p-2` buttons, `p-2` shell.
-- Info chips (Selected Face, Edge pick, measurement readout) sit **bottom-left at
-  `left-[4.5rem] lg:left-[5.25rem]`** so they clear the helper rail
-  (`src/components/Viewport.jsx:3682`, `:3848`, `:3937`).
+- Measure is the shared feature card (`data-measure-mode` on `FeatureSheet`),
+  not a bottom-left readout. The header mm|in toggle is the global display
+  unit (`surfcad.displayUnit`). Length captions end with mm or in. Scripts
+  stay millimetres. Clear drops the picks. X closes and writes nothing.
+  Game mode mounts no card.
 - CAD title is the same "part in assembly" line as mobile. No toolbar carries it.
 - **Parts feed:** the same list as the mobile Parts stage, mounted to the left
   of the editor (`data-parts-feed-placement="desktop-left"`). The ribbon's
@@ -407,9 +409,9 @@ All of these are absolutely positioned inside the shell at
 | top-16, portaled `z-50`, `inset-x-3` (most of the viewport width, same card on desktop) | execution error toast: fixed card, label "Error", Undo and dismiss on the right, description on the next line (`ErrorPopup` `layout="stacked"`), glass `rounded-lg` | `ErrorPopup.jsx` | Viewport |
 | centered on the viewport pane (desktop) and the phone shell | assembly-open spinner: ring + `Opening <name>…`, optional `part 3 of 7`. Hidden for the first 150ms. `pointer-events-none`, `z-[45]`, under the toasts | `AssemblyOpenSpinner.jsx` `data-assembly-open-spinner` | App |
 | *(removed C.1)* | Selected Face readout | — | — |
-| bottom of the pane (`data-feature-card`). On a phone the stage switcher hides and the card sits on that switcher's bottom edge. Desktop stays 10px off the pane | contour card (circle, rectangle, polygon, polyline, extrude, revolve, loft, sweep, workplane), fillet, chamfer, the standalone edge card, shell, draft, move face, delete face, cut, boolean, move, paint, the CAD helper card (cube, round box, cylinder, sphere, tube, hex, hole, mirror, center, align, array, path, refuse), and sheet metal (picker, plane and edit chip, base, bend, tab, hole, countersink, tapped, export). Grey shell, cyan Confirm. The edge card has X and no Confirm. Analyze's footer is Run or Back to Setup, never Confirm. Fillet, chamfer, shell, draft, move face, delete face, cut, move, boolean, and paint use `fullLeft` (10px from the pane's left edge, clear of the right rail) because the left helper rail is hidden. The sheet metal picker and feature edit stay centered between both rails. Contour, the edge card, and the helper card stay between both rails too. Refuse's footer says OK. Sheet metal Confirm is 44px. Boolean stays `z-20`, under the section rail. The view-snap flyout (`z-40`) may cover a `fullLeft` card's right end and stays above it. Hidden in game. Game keeps the old helper sheet | `FeatureSheet.jsx`, `ContourModeChip.jsx`, `FilletModeChip.jsx`, `ShellModeChip.jsx`, `DraftModeChip.jsx`, `MoveFaceModeChip.jsx`, `DeleteFaceModeChip.jsx`, `CutModeChip.jsx`, `BooleanModeChip.jsx`, `MoveModeChip.jsx`, `PaintModeChip.jsx`, `fea/FeaStudyChip.jsx`, `fea/FeaStudySheet.jsx`, `HelperParamModal.jsx`, `sheetMetal/SmControls.jsx` | Viewport |
+| bottom of the pane (`data-feature-card`). On a phone the stage switcher hides and the card sits on that switcher's bottom edge. Desktop stays 10px off the pane | contour card (circle, rectangle, polygon, polyline, extrude, revolve, loft, sweep, workplane), fillet, chamfer, the standalone edge card, shell, draft, move face, delete face, cut, boolean, move, paint, the CAD helper card (cube, round box, cylinder, sphere, tube, hex, hole, mirror, center, align, array, path, refuse), and sheet metal (picker, plane and edit chip, base, bend, tab, hole, countersink, tapped, export). Grey shell, cyan Confirm. The edge card has X and no Confirm. Measure has X and no Confirm: Clear is in the body, and the mm|in toggle is in the header. Measure keeps the left rail, so it stays between both rails. Analyze's footer is Run or Back to Setup, never Confirm. Fillet, chamfer, shell, draft, move face, delete face, cut, move, boolean, and paint use `fullLeft` (10px from the pane's left edge, clear of the right rail) because the left helper rail is hidden. The sheet metal picker and feature edit stay centered between both rails. Contour, the edge card, and the helper card stay between both rails too. Refuse's footer says OK. Sheet metal Confirm is 44px. Boolean stays `z-20`, under the section rail. The view-snap flyout (`z-40`) may cover a `fullLeft` card's right end and stays above it. Hidden in game. Game keeps the old helper sheet | `FeatureSheet.jsx`, `ContourModeChip.jsx`, `FilletModeChip.jsx`, `ShellModeChip.jsx`, `DraftModeChip.jsx`, `MoveFaceModeChip.jsx`, `DeleteFaceModeChip.jsx`, `CutModeChip.jsx`, `BooleanModeChip.jsx`, `MoveModeChip.jsx`, `PaintModeChip.jsx`, `MeasureModeChip.jsx`, `fea/FeaStudyChip.jsx`, `fea/FeaStudySheet.jsx`, `HelperParamModal.jsx`, `sheetMetal/SmControls.jsx` | Viewport |
 | top-16 center, portaled `z-50` | toasts: edge-mode, contour, fillet-scrap, fillet, shell — same `ErrorPopup` card | `ErrorPopup.jsx` | Viewport |
-| bottom-left | measurement readout | inline | `:3961` |
+| bottom center feature card (`data-feature-card`, `data-measure-mode`). On a phone the stage switcher hides. Hidden in game | Measure: sticky point / edge / face / part picks, distance, angle, radius, diameter, ΔX ΔY ΔZ. Header mm\|in is the global `surfcad.displayUnit` (later length fields consume it; scripts stay mm). Length captions end with mm or in. Clear drops the picks. No Confirm. X closes and restores the camera | `MeasureModeChip.jsx` | Viewport |
 | fills the pane | WebGL canvas | `<canvas ref={canvasRef}>` | `:3985` |
 
 Unpainted faces are one off-white, `DEFAULT_PART_COLOR` (`#ECEAE4`, `src/utils/partMaterial.js`). Face paint, the stress skin, selection and hover, and piece-preview colors draw over it. The canvas draws a face-color skin on top of a part when that assembly has `colors` (`src/utils/faceColorSkin.js`). The skin is under crease lines and pick highlights. `?debugFaces=1` or `localStorage` key `surfcad.debugFaces` = `1` paints each face patch a different color. The flag is off unless set, and it is not a rail button. The right rail has no patch-colour toggle.
@@ -562,7 +564,7 @@ Check & Export shows DFM only. Part-row Order on a sheet-only part that passes t
 ### Viewport furniture
 Camera and snaps `src/utils/viewCamera.js`; cutting plane
 `src/utils/cuttingPlaneWidget.js`, `crossSection.js`,
-`crossSectionSubstrate.js`; measurement `src/utils/measurementTool.js`; saved
+`crossSectionSubstrate.js`; measurement `src/utils/measurementTool.js`, `src/utils/measurePicks.js`, `src/utils/displayUnit.js`; saved
 wires `src/utils/savedContours.js`.
 
 ### Files and commerce

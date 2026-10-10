@@ -349,10 +349,14 @@ const handleButtonClick = () => {
           <Move3d size={20} />
         </button>
         <button
+          type="button"
           onClick={onMeasurementToggle}
           className={`p-2 rounded ${measurementEnabled ? 'text-green-600 bg-green-100' : 'text-blue-600'} hover:bg-gray-100 active:bg-blue-100`}
           title={measurementEnabled ? 'Disable Measurement' : 'Enable Measurement'}
+          aria-label={measurementEnabled ? 'Disable Measurement' : 'Enable Measurement'}
           aria-pressed={!!measurementEnabled}
+          data-measure-toggle=""
+          data-measure-toggle-state={measurementEnabled ? 'on' : 'off'}
         >
           <Ruler size={20} />
         </button>
@@ -404,9 +408,14 @@ const handleButtonClick = () => {
           <Move3d size={20} />
         </button>
         <button
+          type="button"
           onClick={onMeasurementToggle}
           className={`p-2 rounded ${measurementEnabled ? 'text-green-600 bg-green-100' : 'text-blue-600'} hover:bg-gray-100`}
           title={measurementEnabled ? 'Disable Measurement' : 'Enable Measurement'}
+          aria-label={measurementEnabled ? 'Disable Measurement' : 'Enable Measurement'}
+          aria-pressed={!!measurementEnabled}
+          data-measure-toggle=""
+          data-measure-toggle-state={measurementEnabled ? 'on' : 'off'}
         >
           <Ruler size={20} />
         </button>

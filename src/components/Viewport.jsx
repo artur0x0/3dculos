@@ -66,6 +66,7 @@ import ContourModeChip from './ContourModeChip';
 import FeatureSheet from './FeatureSheet';
 import FeatureEditSheet from './FeatureEditSheet';
 import FilletModeChip from './FilletModeChip';
+import MeasureModeChip from './MeasureModeChip';
 import ShellModeChip from './ShellModeChip';
 import { PaintModeChip } from './PaintModeChip';
 import { FeaStudyHost } from './fea/FeaStudyHost';
@@ -279,6 +280,7 @@ import { classifySelectedFace } from '../utils/faceFeaturePlacement';
 import { classifyFilletEdges, countDegenerateTriangles } from '../utils/filletEdgeClass';
 import {
   pickNearestEdgeScreen,
+  propagateTangentEdges,
   resolveEdgePickSlopPx,
   toggleEdgeSelectionPropagated,
   popLastEdgeSelection,
@@ -286,6 +288,7 @@ import {
   pathLengthFromEdges,
   sweepBlendHardMax,
   projectWorldToCanvas,
+  distPointToSegment2D,
   edgeTrackPoint,
   edgePolyline,
 } from '../utils/selectEdge';
@@ -314,7 +317,7 @@ import {
 import { get3MFBase64FromMesh } from '../utils/exportModel';
 import { missingMeshMessage, resolvePartMeshes } from '../utils/meshAssets';
 import { calculateQuote } from '../utils/quoting';
-import { resolveViewportFaceClick, warmFaceGraph } from '../utils/selectFace';
+import { resolveViewportFaceClick, selectGraphFace, warmFaceGraph } from '../utils/selectFace';
 import {
   fingerprintsFromGeometry,
   PAINT_DOUBLE_TAP_MS,
@@ -336,7 +339,23 @@ import {
 import { formatViewerTitle, sanitizePartName } from '../utils/assembly.js';
 import { createCuttingPlaneWidget, updateCuttingPlaneWidget } from '../utils/cuttingPlaneWidget';
 import { AxesHelper } from 'three';
-import { calculateMeasurements, createMeasurementLines, disposeMeasurementLines } from '../utils/measurementTool';
+import { createDeltaLines, disposeMeasurementLines } from '../utils/measurementTool';
+import {
+  boundsOfTriangles,
+  buildEdgeMeasurePick,
+  buildFaceMeasurePick,
+  buildPartMeasurePick,
+  buildPointMeasurePick,
+  classifyMeasurePointer,
+  measureAnchor,
+  measureChainIsCircular,
+  measurePointerOnEdge,
+  measureSeedFromSelection,
+  pointSegmentDistance,
+  segmentParameter2D,
+  toggleMeasurePick,
+  triangleGroupStats,
+} from '../utils/measurePicks';
 import { fitView, meshWorldBox, unionWorldBox, VIEW_PRESETS, VIEW_SNAP_MARGIN } from '../utils/viewCamera';
 import { listFeatureSheetTargets } from '../utils/featureSheetWriteback';
 import {
@@ -831,7 +850,15 @@ const Viewport = forwardRef(({
   featureSheetEnabledRef.current = featureSheetEnabled;
   const onFeatureLongPressRef = useRef(onFeatureLongPress);
   onFeatureLongPressRef.current = onFeatureLongPress;
-  const measurementLinesRef = useRef(null); 
+  const measurementLinesRef = useRef(null);
+  const measureMarkerRef = useRef(null);
+  const measureEdgeRef = useRef(null);
+  const measurePicksRef = useRef([]);
+  const measurementEnabledRef = useRef(false);
+  const measureLastTapRef = useRef({ t: 0, x: 0, y: 0, pickId: null });
+  const measureTapTimerRef = useRef(null);
+  const pendingMeasureRef = useRef(null);
+  const exitMeasureModeRef = useRef(() => {}); 
 
   // Configuration for click detection
   const MULTI_CLICK_DELAY = 300; // ms to wait for additional clicks
@@ -1299,6 +1326,10 @@ const Viewport = forwardRef(({
         : (sheetMetalMode?.stage || 'edit');
   const paintSheetOpen = mode !== 'game' && !!paintMode;
   const feaSheetOpen = mode !== 'game' && feaActive;
+  const [measurementEnabled, setMeasurementEnabled] = useState(false);
+  const [measurePicks, setMeasurePicks] = useState([]);
+  measurementEnabledRef.current = measurementEnabled;
+  const measureSheetOpen = mode !== 'game' && measurementEnabled;
   const featureEditRequested = mode !== 'game'
     && !!featureEdit
     && (featureEdit.mode === 'edit' || featureEdit.mode === 'picker');
@@ -1331,9 +1362,9 @@ const Viewport = forwardRef(({
     && !moveMode
     && !sheetMetalMode
     && !sheetMetalPicker
-    && !paintMode
     && !feaActive
-    && selectedEdges.length > 0;
+    && !measurementEnabled
+    && !paintMode && selectedEdges.length > 0;
   const featureCardKind = filletSheetOpen
     ? 'fillet'
     : contourSheetOpen
@@ -1364,7 +1395,9 @@ const Viewport = forwardRef(({
                             ? `edit:${featureEdit.mode}:${featureEdit.feature?.id || 'picker'}`
                             : edgeSheetOpen
                               ? 'edge'
-                              : '';
+                              : measureSheetOpen
+                                ? 'measure'
+                                : '';
   featureCardKindRef.current = featureCardKind;
   sheetCameraOwnedRef.current = featureCardKind !== '';
   // A view snap or zoom-to-fit wins over the card slide. Close still restores
@@ -1372,7 +1405,8 @@ const Viewport = forwardRef(({
   const sheetSlideArmedRef = useRef(true);
   const holdSheetSlide = () => {
     sheetSlideArmedRef.current = false;
-    sheetCameraRef.current?.slideBy(0);
+    // A snap with no card open must not freeze the next card's restore pose.
+    if (featureCardKindRef.current) sheetCameraRef.current?.slideBy(0);
   };
   useEffect(() => {
     if (!featureCardKind) return undefined;
@@ -1423,9 +1457,8 @@ const Viewport = forwardRef(({
   /** Always-current mesh for failed Auto-Run restore (state alone is stale in closures). */
   const cachedMeshDataRef = useRef(null);
   
-  // Measurement tool and axis helper state
-  const [measurementEnabled, setMeasurementEnabled] = useState(false);
-  const [measurementFaces, setMeasurementFaces] = useState({ first: null, second: null });
+  // Measurement tool and axis helper state. measurementEnabled is declared
+  // above measureSheetOpen; the card kind is computed before this point.
   const [axisHelperEnabled, setAxisHelperEnabled] = useState(false);
   // Re-frame the part after each successful run, preserving the current orbit direction.
   const [autoFitEnabled, setAutoFitEnabled] = useState(true);
@@ -1469,6 +1502,7 @@ const Viewport = forwardRef(({
     if (mode === 'game') {
       exitPaintModeRef.current();
       feaCloseRef.current();
+      exitMeasureModeRef.current();
     }
   }, [mode]);
 
@@ -5577,18 +5611,92 @@ const Viewport = forwardRef(({
     }
   }, []);
 
-  const updateMeasurementVisualization = useCallback((face1, face2) => {
-    // Clear existing measurement lines
+  const clearMeasureDecor = useCallback(() => {
     clearMeasurementLines();
-    
-    if (face1 && face2 && sceneRef.current) {
-      // Create new measurement lines
-      const lines = createMeasurementLines(face1, face2);
-      anchorToActivePart(lines);
-      sceneRef.current.add(lines);
-      measurementLinesRef.current = lines;
+    if (measureMarkerRef.current) {
+      disposeEdgeOverlayObject(sceneRef.current, measureMarkerRef.current);
+      measureMarkerRef.current = null;
+    }
+    if (measureEdgeRef.current) {
+      disposeEdgeOverlayObject(sceneRef.current, measureEdgeRef.current);
+      measureEdgeRef.current = null;
     }
   }, [clearMeasurementLines]);
+
+  /**
+   * Cyan faces, violet parts, amber edges, pink points, and the X/Y/Z
+   * staircase between the last two picks. Local coordinates, anchored to
+   * the active part.
+   */
+  const paintMeasurePicks = useCallback((picks) => {
+    clearHighlight();
+    clearMeasureDecor();
+    if (!measurementEnabledRef.current || !sceneRef.current) return;
+    const list = Array.isArray(picks) ? picks : [];
+    const geom = resultRef.current?.geometry;
+    const positions = geom?.attributes?.position;
+    const index = geom?.index?.array;
+    const markers = new Group();
+    markers.name = 'measure-markers';
+    const edgeDraw = [];
+    for (const pick of list) {
+      if ((pick.kind === 'face' || pick.kind === 'part') && positions && index && pick.indices?.length) {
+        highlightFace(
+          pick.indices,
+          geom,
+          positions,
+          index,
+          pick.kind === 'part' ? 0x7c3aed : 0x22d3ee,
+          `measure-${pick.kind}`,
+        );
+      } else if (pick.kind === 'edge' && pick.draw?.length) {
+        edgeDraw.push(...pick.draw);
+      } else if (pick.kind === 'point' && pick.position) {
+        const marker = new ThreeMesh(
+          new SphereGeometry(1.1, 14, 14),
+          new MeshBasicMaterial({ color: 0xf472b6, depthTest: false, depthWrite: false }),
+        );
+        marker.position.set(pick.position[0], pick.position[1], pick.position[2]);
+        marker.renderOrder = 24;
+        marker.raycast = () => {};
+        markers.add(marker);
+      }
+    }
+    if (markers.children.length) {
+      anchorToActivePart(markers);
+      sceneRef.current.add(markers);
+      measureMarkerRef.current = markers;
+    }
+    if (edgeDraw.length) {
+      measureEdgeRef.current = paintEdgeLines(edgeDraw, {
+        color: 0xfbbf24,
+        name: 'measure-edges',
+        corePx: 4,
+        haloPx: 9,
+      });
+    }
+    if (list.length >= 2) {
+      const prev = list[list.length - 2];
+      const last = list[list.length - 1];
+      const from = measureAnchor(prev);
+      const to = measureAnchor(last);
+      if (from && to) {
+        const lines = createDeltaLines(from, to, prev?.normal || null);
+        anchorToActivePart(lines);
+        sceneRef.current.add(lines);
+        measurementLinesRef.current = lines;
+      }
+    }
+  }, [clearHighlight, clearMeasureDecor, highlightFace, paintEdgeLines]);
+
+  useEffect(() => {
+    if (!measurementEnabled) {
+      clearMeasureDecor();
+      return undefined;
+    }
+    paintMeasurePicks(measurePicks);
+    return undefined;
+  }, [measurementEnabled, measurePicks, paintMeasurePicks, clearMeasureDecor]);
 
 
   /** Shared screen-space edge pick. Occlusion raycast is opt-in (click path);
@@ -5634,6 +5742,168 @@ const Viewport = forwardRef(({
     if (!picked || pickEdges === localEdges) return picked;
     return localEdges.find((edge) => edge.key === picked.key) || null;
   }, [syncFeatureEdges]);
+
+  /** Face and owning body for one mesh hit. Patch id is the lowest triangle. */
+  const measureHitGeometry = useCallback((hit) => {
+    const mesh = resultRef.current;
+    const geometry = mesh?.geometry;
+    const positions = geometry?.attributes?.position;
+    const index = geometry?.index?.array;
+    if (!hit?.face || !geometry || !positions?.array || !index) return { face: null, part: null };
+    const seed = hit.faceIndex;
+    const graph = selectGraphFace(geometry, seed, faceIDsRef.current);
+    const indices = graph.indices?.length ? graph.indices : [seed];
+    const stats = triangleGroupStats(positions.array, index, indices);
+    const partId = activePartIdRef.current || '';
+    const face = buildFaceMeasurePick({
+      partId,
+      patchId: String(Math.min(...indices)),
+      center: stats.center,
+      normal: stats.normal,
+      points: stats.points,
+      indices,
+    });
+    const bodies = meshBodyComponents(positions, index);
+    const body = bodyContainingTriangle(bodies, seed);
+    let part = null;
+    if (body?.triangles?.length) {
+      const bounds = boundsOfTriangles(positions.array, index, body.triangles);
+      part = buildPartMeasurePick({
+        partId,
+        bodyKey: cutBodyKey(body),
+        center: bounds.center,
+        size: bounds.size,
+        indices: body.triangles,
+      });
+    }
+    return { face, part };
+  }, []);
+
+  /**
+   * One tap's point, edge, or face, plus the part a second tap in the same
+   * place selects. Screen endpoints win over the edge; the edge wins over
+   * the face. A miss returns null and leaves the set alone.
+   */
+  const readMeasurePointer = useCallback((clientX, clientY) => {
+    const canvas = canvasRef.current;
+    const camera = cameraRef.current;
+    const mesh = resultRef.current;
+    if (!canvas || !camera || !mesh?.geometry) return null;
+    const rect = canvas.getBoundingClientRect();
+    const px = clientX - rect.left;
+    const py = clientY - rect.top;
+    mouseRef.current.x = (px / rect.width) * 2 - 1;
+    mouseRef.current.y = -(py / rect.height) * 2 + 1;
+    raycasterRef.current.setFromCamera(mouseRef.current, camera);
+    const hits = raycasterRef.current.intersectObject(mesh, false);
+    const hit = hits.find((item) => item.face) || null;
+    const edge = pickEdgeAtClient(clientX, clientY, { occlude: true });
+    let edgeDist = Infinity;
+    let vertexDist = Infinity;
+    let vertexT = 0.5;
+    let vertexAt = null;
+    if (edge?.va && edge?.vb) {
+      const shift = partWorldOffset(mesh);
+      const lift = (p) => (shift ? [p[0] + shift.x, p[1] + shift.y, p[2] + shift.z] : p);
+      const sa = projectWorldToCanvas(camera, lift(edge.va), rect.width, rect.height, edgePickScratchA.current);
+      const sb = projectWorldToCanvas(camera, lift(edge.vb), rect.width, rect.height, edgePickScratchB.current);
+      if (sa && sb) {
+        edgeDist = distPointToSegment2D(px, py, sa.x, sa.y, sb.x, sb.y);
+        vertexT = segmentParameter2D(px, py, sa.x, sa.y, sb.x, sb.y);
+        const da = Math.hypot(px - sa.x, py - sa.y);
+        const db = Math.hypot(px - sb.x, py - sb.y);
+        vertexDist = Math.min(da, db);
+        vertexAt = da <= db ? edge.va : edge.vb;
+      }
+      if (hit?.point) {
+        const gap = pointSegmentDistance(
+          [hit.point.x, hit.point.y, hit.point.z],
+          lift(edge.va),
+          lift(edge.vb),
+        );
+        if (!measurePointerOnEdge({ edgeGap: gap, hasFace: true })) {
+          edgeDist = Infinity;
+          vertexDist = Infinity;
+          vertexAt = null;
+        }
+      }
+      // A circle's chords are a few pixels. Every vertex would otherwise be a point.
+      if (vertexAt && measureChainIsCircular(propagateTangentEdges(featureEdgesRef.current, edge))) {
+        vertexDist = Infinity;
+        vertexAt = null;
+      }
+    }
+    const kind = classifyMeasurePointer({
+      vertexDist,
+      vertexT,
+      edgeDist,
+      edgeSlop: resolveEdgePickSlopPx(),
+      hasFace: !!hit,
+    });
+    const partId = activePartIdRef.current || '';
+    let primary = null;
+    const geom = hit ? measureHitGeometry(hit) : { face: null, part: null };
+    if (kind === 'point' && vertexAt) {
+      primary = buildPointMeasurePick({ partId, position: vertexAt });
+    } else if (kind === 'edge' && edge) {
+      let chain = propagateTangentEdges(featureEdgesRef.current, edge);
+      if (!chain.length || chain.length > 128) chain = [edge];
+      const canon = chain.reduce((best, item) => (
+        String(item.key) < String(best.key) ? item : best
+      ), chain[0]);
+      primary = buildEdgeMeasurePick({
+        partId,
+        edge: canon,
+        chain,
+      });
+    } else if (kind === 'face') {
+      primary = geom.face;
+    }
+    if (!primary && !geom.part) return null;
+    return { primary, part: geom.part };
+  }, [pickEdgeAtClient, measureHitGeometry]);
+
+  const commitMeasurePicks = useCallback((next) => {
+    const list = Array.isArray(next) ? next : [];
+    measurePicksRef.current = list;
+    setMeasurePicks(list);
+  }, []);
+
+  /** Sticky tap. A second tap on the same spot, inside the double-tap window, selects the part. */
+  const applyMeasurePointer = useCallback((event) => {
+    const built = readMeasurePointer(event.clientX, event.clientY);
+    if (!built) return;
+    const now = Date.now();
+    const prev = measureLastTapRef.current;
+    const sameSpot = !!prev
+      && (now - prev.t) < (MULTI_CLICK_DELAY + 20)
+      && Math.hypot(event.clientX - prev.x, event.clientY - prev.y) < 22;
+    measureLastTapRef.current = { t: now, x: event.clientX, y: event.clientY, pickId: built.primary?.id || null };
+    if (sameSpot && built.part) {
+      if (measureTapTimerRef.current) {
+        clearTimeout(measureTapTimerRef.current);
+        measureTapTimerRef.current = null;
+      }
+      pendingMeasureRef.current = null;
+      commitMeasurePicks(toggleMeasurePick(measurePicksRef.current, built.part));
+      return;
+    }
+    if (measureTapTimerRef.current) {
+      clearTimeout(measureTapTimerRef.current);
+      measureTapTimerRef.current = null;
+      const queued = pendingMeasureRef.current;
+      pendingMeasureRef.current = null;
+      if (queued) commitMeasurePicks(toggleMeasurePick(measurePicksRef.current, queued));
+    }
+    if (!built.primary) return;
+    pendingMeasureRef.current = built.primary;
+    measureTapTimerRef.current = setTimeout(() => {
+      measureTapTimerRef.current = null;
+      const queued = pendingMeasureRef.current;
+      pendingMeasureRef.current = null;
+      if (queued) commitMeasurePicks(toggleMeasurePick(measurePicksRef.current, queued));
+    }, MULTI_CLICK_DELAY);
+  }, [readMeasurePointer, commitMeasurePicks]);
 
   /**
    * Handle mouse down - record position for drag detection
@@ -5943,6 +6213,20 @@ const Viewport = forwardRef(({
 
     if (!resultRef.current) return;
 
+    // Measure owns the tap: point, edge, face, or a second tap for the part.
+    // Picks stay until Clear, a second tap on the same one, or X.
+    if (measurementEnabled) {
+      if (clickTimerRef.current) {
+        clearTimeout(clickTimerRef.current);
+        clickTimerRef.current = null;
+      }
+      clickCountRef.current = 0;
+      pendingClickDataRef.current = null;
+      dismissPartChoice();
+      applyMeasurePointer(event);
+      return;
+    }
+
     // Slice 12 hotfix: Edge mode short-circuits face selection entirely.
     // Screen-space pick with finger slop — no mesh-face hit required.
     // A hit on another part retargets first so the edge graph is that part's.
@@ -6169,7 +6453,8 @@ const Viewport = forwardRef(({
     
   }, [onFaceSelected, measurementEnabled, clearHighlight, clearEdgeHover, clearEdgeHighlight,
     pickEdgeAtClient, endPolylinePointDrag, pickPolylinePointAtClient, commitBooleanState,
-    collectPartHits, retargetPickPart, showPartChoice, dismissPartChoice, clearGeomSelection]);
+    collectPartHits, retargetPickPart, showPartChoice, dismissPartChoice, clearGeomSelection,
+    applyMeasurePointer]);
 
 
   /**
@@ -6231,7 +6516,7 @@ const Viewport = forwardRef(({
     const clickData = pendingClickDataRef.current;
     if (!clickData) return;
 
-    if (paintModeRef.current) {
+    if (paintModeRef.current || measurementEnabledRef.current) {
       clickCountRef.current = 0;
       clickTimerRef.current = null;
       pendingClickDataRef.current = null;
@@ -6344,11 +6629,7 @@ const Viewport = forwardRef(({
       selectionMode // Include selection mode in face data for UI display
     };
     
-    // Handle measurement mode
-    if (measurementEnabled) {
-      handleMeasurementClick(faceData, faceIndices, geometry, positions, index);
-    } else {
-      // Normal face selection mode — clear edges so modes do not fight
+    // Normal face selection mode — clear edges so modes do not fight
       clearEdgeHighlight();
       setSelectedEdges([]);
       // Read the accumulated multi-pick BEFORE clearHighlight() drops it.
@@ -6468,9 +6749,7 @@ const Viewport = forwardRef(({
       if (picks.length > 1 && !shellModeRef.current) {
         console.log(`[Face Selection] ${picks.length} faces picked (shift-click to add more)`);
       }
-    }
-    
-  }, [measurementEnabled, measurementFaces, onFaceSelected, clearHighlight, clearEdgeHighlight, highlightFace, publishFacePicks, paintDraftPicks, commitCutState, paintMovePreview, commitMoveFaceState, commitDeleteFaceState, getHelperBuffer, commitBooleanState, crossSectionEnabled]);
+  }, [onFaceSelected, clearHighlight, clearEdgeHighlight, highlightFace, publishFacePicks, paintDraftPicks, commitCutState, paintMovePreview, commitMoveFaceState, commitDeleteFaceState, getHelperBuffer, commitBooleanState, crossSectionEnabled]);
 
   const chooseAmbiguousPart = useCallback((partId) => {
     const pending = ambiguousPickRef.current;
@@ -6526,42 +6805,6 @@ const Viewport = forwardRef(({
       processClick();
     }, MULTI_CLICK_DELAY);
   }, [retargetPickPart, pickEdgeAtClient, clearEdgeHover, clearHighlight, onFaceSelected, processClick]);
-
-  /**
-   * Handle face selection in measurement mode
-   */
-  const handleMeasurementClick = useCallback((faceData, faceIndices, geometry, positions, index) => {
-    if (!measurementFaces.first) {
-      // First face selected - clear any existing measurement lines
-      clearMeasurementLines();
-      setMeasurementFaces({ first: faceData, second: null });
-      
-      // Highlight first face in green
-      clearHighlight();
-      highlightFace(faceIndices, geometry, positions, index, 0x00ff00, 'first');
-      
-      console.log('[Measurement] First face selected');
-    } else if (!measurementFaces.second) {
-      // Second face selected - highlight and create measurement visualization
-      setMeasurementFaces(prev => {
-        // Create measurement lines with both faces
-        updateMeasurementVisualization(prev.first, faceData);
-        return { ...prev, second: faceData };
-      });
-      highlightFace(faceIndices, geometry, positions, index, 0xffff00, 'second');
-      
-      console.log('[Measurement] Second face selected');
-    } else {
-      // Third click - restart with this as first face
-      clearMeasurementLines();
-      setMeasurementFaces({ first: faceData, second: null });
-      
-      clearHighlight();
-      highlightFace(faceIndices, geometry, positions, index, 0x00ff00, 'first');
-      
-      console.log('[Measurement] Restarted with new first face');
-    }
-  }, [measurementFaces, clearHighlight, highlightFace, clearMeasurementLines, updateMeasurementVisualization]);
 
   // Slice Mobile C: long-press (~450ms, no drag) on the part opens a feature sheet.
   // Pointer events cover touch + mouse; cancelled on move past drag threshold or when
@@ -6670,16 +6913,30 @@ const Viewport = forwardRef(({
         clearTimeout(edgeModeToastTimerRef.current);
         edgeModeToastTimerRef.current = null;
       }
-      // Cleanup measurement lines on unmount
-      clearMeasurementLines();
+      if (measureTapTimerRef.current) {
+        clearTimeout(measureTapTimerRef.current);
+        measureTapTimerRef.current = null;
+      }
+      clearMeasureDecor();
     };
-  }, [clearMeasurementLines]);
+  }, [clearMeasureDecor]);
 
   useEffect(() => {
-    if (!measurementEnabled) {
-      clearMeasurementLines();
-    }
-  }, [measurementEnabled, clearMeasurementLines]);
+    if (!measurementEnabled) return undefined;
+    const other = !!(
+      contourMode || filletMode || shellMode || draftMode || cutMode
+      || booleanMode || moveMode || moveFaceMode || deleteFaceMode
+      || paintMode || feaActive || sheetMetalMode || sheetMetalPicker
+      || helperCardOpen || editSheetOpen
+    );
+    if (!other) return undefined;
+    exitMeasureModeRef.current();
+    return undefined;
+  }, [
+    measurementEnabled, contourMode, filletMode, shellMode, draftMode, cutMode,
+    booleanMode, moveMode, moveFaceMode, deleteFaceMode, paintMode, feaActive,
+    sheetMetalMode, sheetMetalPicker, helperCardOpen, editSheetOpen,
+  ]);
 
   // Page-zoom lock. Its own effect so StrictMode's extra mount removes the
   // document listeners (same cleanup shape as the orbit loop, #237). The
@@ -6976,6 +7233,20 @@ const Viewport = forwardRef(({
               bbox: b && !b.isEmpty() ? { min: b.min.toArray(), max: b.max.toArray() } : null,
             };
           },
+          stageProject: (world) => {
+            const cam = cameraRef.current;
+            const canvas = canvasRef.current;
+            if (!cam || !canvas || !world) return null;
+            cam.updateMatrixWorld();
+            const v = new Vector3(world[0], world[1], world[2]);
+            v.project(cam);
+            if (!Number.isFinite(v.x) || v.z < -1 || v.z > 1) return null;
+            const rect = canvas.getBoundingClientRect();
+            return {
+              x: rect.left + (v.x * 0.5 + 0.5) * rect.width,
+              y: rect.top + (-v.y * 0.5 + 0.5) * rect.height,
+            };
+          },
           // Fullscreen the viewport and hide every non-canvas element (toolbars, panels,
           // editor, modals) so captures show only the part on a clean background.
           stageIsolate: ({ bg = '#0d1116' } = {}) => {
@@ -7268,21 +7539,36 @@ const Viewport = forwardRef(({
     return ok;
   }, []);
 
-  const handleMeasurementToggle = () => {
-    if (!measurementEnabled && selectedFace) {
-      // Turning on measurement mode with a face already selected
-      setMeasurementFaces({ first: selectedFace, second: null });
-      // Keep the existing face highlighted - don't clear
-    } else {
-      // Turning off measurement mode or no face selected when turning on
-      setMeasurementFaces({ first: null, second: null });
-      if (measurementEnabled) {
-        // Clear highlights when turning off measurement mode
-        clearHighlight();
-      }
+  const exitMeasureMode = useCallback(() => {
+    if (measureTapTimerRef.current) {
+      clearTimeout(measureTapTimerRef.current);
+      measureTapTimerRef.current = null;
     }
-    
-    setMeasurementEnabled(!measurementEnabled);
+    pendingMeasureRef.current = null;
+    measurePicksRef.current = [];
+    setMeasurePicks([]);
+    setMeasurementEnabled(false);
+    clearMeasureDecor();
+    clearHighlight();
+  }, [clearMeasureDecor, clearHighlight]);
+  exitMeasureModeRef.current = exitMeasureMode;
+
+  const handleMeasurementToggle = () => {
+    if (measurementEnabled) {
+      exitMeasureMode();
+      return;
+    }
+    const seed = measureSeedFromSelection(
+      selectedFace,
+      facePickGroupRef.current,
+      activePartIdRef.current,
+    );
+    releaseModesForFea();
+    if (helperCardOpenRef.current) setHelperCardOpen(false);
+    onFeatureEditCancel?.();
+    measurePicksRef.current = seed;
+    setMeasurePicks(seed);
+    setMeasurementEnabled(true);
   };
 
   const handleAxisHelperToggle = () => {
@@ -9434,7 +9720,7 @@ const Viewport = forwardRef(({
 
       {/* Standalone edge pick — same card, no Confirm. X clears and leaves edge pick.
           Hidden in fillet, contour, and game. Numbered badges stay on the edges. */}
-      {mode !== 'game' && !helperCardOpen && pickMode === 'edge' && !contourMode && !filletMode && !shellMode && !draftMode && !moveFaceMode && !deleteFaceMode && !cutMode && !booleanMode && !moveMode && !sheetMetalMode && !sheetMetalPicker && !feaActive && !editSheetOpen && !paintMode && selectedEdges.length > 0 && (
+      {mode !== 'game' && !helperCardOpen && pickMode === 'edge' && !contourMode && !filletMode && !shellMode && !draftMode && !moveFaceMode && !deleteFaceMode && !cutMode && !booleanMode && !moveMode && !sheetMetalMode && !sheetMetalPicker && !feaActive && !editSheetOpen && !paintMode && !measurementEnabled && selectedEdges.length > 0 && (
         <FeatureSheet
           cardAttrs={{ 'data-edge-selector': 'standalone' }}
           title={`Edge pick · ${selectedEdges.length} selected`}
@@ -9571,29 +9857,14 @@ const Viewport = forwardRef(({
         document.body,
       )}
 
-      {/* Measurement Info Display */}
-      {measurementEnabled && measurementFaces.first && (
-        <div className={`absolute bottom-2.5 bg-black/45 surface-glass-chip text-white p-3 rounded-lg text-xs font-mono z-10 space-y-1 ${
-          mode === 'game' ? 'left-2 lg:left-4' : 'left-[4.5rem] lg:left-[5.25rem]'
-        }`}>
-          {measurementFaces.second ? (
-            <>
-                {(() => {
-                  const measurements = calculateMeasurements(measurementFaces.first, measurementFaces.second);
-                  return (
-                    <>
-                      <div className="text-gray-300">Normal: {measurements.normal.toFixed(2)} mm</div>
-                      <div className="text-red-300">X: {measurements.x.toFixed(2)} mm</div>
-                      <div className="text-green-300">Y: {measurements.y.toFixed(2)} mm</div>
-                      <div className="text-blue-300">Z: {measurements.z.toFixed(2)} mm</div>
-                    </>
-                  );
-                })()}
-            </>
-          ) : (
-            <div className="text-gray-400">Select second face...</div>
-          )}
-        </div>
+      {/* Measure on the shared card. Game mounts no card. X writes nothing. */}
+      {measurementEnabled && mode !== 'game' && (
+        <MeasureModeChip
+          picks={measurePicks}
+          compact={isMobile}
+          onClear={() => commitMeasurePicks([])}
+          onDismiss={exitMeasureMode}
+        />
       )}
       
       <canvas ref={canvasRef} />
