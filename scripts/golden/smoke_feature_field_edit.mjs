@@ -6,7 +6,7 @@
  * Screenshots go to GOLDEN_SHOT_DIR or os.tmpdir(), never the artifacts dir.
  */
 /* The evaluate callbacks run in the browser, where document exists. */
-/* global document, window, getComputedStyle, requestAnimationFrame */
+/* global document, navigator, window, getComputedStyle, requestAnimationFrame */
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
