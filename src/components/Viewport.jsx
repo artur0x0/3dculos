@@ -7363,6 +7363,25 @@ const Viewport = forwardRef(({
     return hosts;
   }
 
+  /** Column-major matrixWorld, else position, quaternion, and scale. */
+  function feaPartFrame(mesh) {
+    if (typeof mesh?.updateMatrixWorld === 'function') mesh.updateMatrixWorld(true);
+    const elements = mesh?.matrixWorld?.elements;
+    if (elements && elements.length >= 16) {
+      const matrix = new Array(16);
+      for (let i = 0; i < 16; i += 1) matrix[i] = Number(elements[i]) || 0;
+      return { matrix };
+    }
+    const p = mesh?.position;
+    const q = mesh?.quaternion;
+    const s = mesh?.scale;
+    return {
+      position: [p?.x || 0, p?.y || 0, p?.z || 0],
+      quaternion: [q?.x || 0, q?.y || 0, q?.z || 0, q?.w ?? 1],
+      scale: [s?.x ?? 1, s?.y ?? 1, s?.z ?? 1],
+    };
+  }
+
   function feaAssemblyParts() {
     const parts = [];
     const activeId = activePartIdRef.current;
@@ -7372,11 +7391,7 @@ const Viewport = forwardRef(({
         name: partLabelsRef.current?.[activeId] || String(activeId),
         geometry: resultRef.current.geometry,
         faceIDs: faceIDsRef.current,
-        position: [
-          resultRef.current.position.x,
-          resultRef.current.position.y,
-          resultRef.current.position.z,
-        ],
+        ...feaPartFrame(resultRef.current),
       });
     }
     for (const [id, mesh] of assemblyExtrasRef.current) {
@@ -7386,7 +7401,7 @@ const Viewport = forwardRef(({
         name: partLabelsRef.current?.[id] || String(id),
         geometry: mesh.geometry,
         faceIDs: cached?.faceIDs || mesh.geometry?.attributes?.faceID?.array || null,
-        position: [mesh.position.x, mesh.position.y, mesh.position.z],
+        ...feaPartFrame(mesh),
       });
     }
     return parts;

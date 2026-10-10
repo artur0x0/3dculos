@@ -556,7 +556,11 @@ export function useFeaStudy({
         return {
           id: String(row.id),
           name: row.name || String(row.id),
-          translation: row.position || [0, 0, 0],
+          matrix: row.matrix || null,
+          position: row.position || null,
+          quaternion: row.quaternion || null,
+          scale: row.scale || null,
+          translation: row.translation || null,
           geometry: row.geometry,
           faceIDs: copied.faceIDs,
           positions: copied.positions,
@@ -603,6 +607,10 @@ export function useFeaStudy({
         parts: assemblyPartsForSolve.map((part) => ({
           id: part.id,
           name: part.name,
+          matrix: part.matrix,
+          position: part.position,
+          quaternion: part.quaternion,
+          scale: part.scale,
           translation: part.translation,
           positions: part.positions,
           indices: part.indices,

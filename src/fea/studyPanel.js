@@ -11,6 +11,7 @@ import { matchFaceKeys } from '../utils/faceColorMatch.js';
 import { detectContacts, mergeContactPairs } from './contactDetect.js';
 import { effectiveMaterial, getMaterial, listMaterials } from './materials.js';
 import { partMaterialEntries } from './partMaterial.js';
+import { placementMatrix, transformPositions } from './partTransform.js';
 import { defaultStudy, validateStudy } from './studySchema.js';
 
 export const FORCE_DIRECTIONS = Object.freeze([
@@ -196,25 +197,15 @@ function selectedIds(study, rows) {
   return [];
 }
 
-/** World-frame copies so a translated part meets its neighbour. */
+/** World-frame copies so a moved, rotated, or scaled part meets its neighbour. */
 export function worldSurfaces(rows) {
   const out = [];
   for (const row of rows || []) {
     const mesh = meshArraysFromGeometry(row.geometry, row.faceIDs);
     if (!mesh) continue;
-    const p = row.position || [0, 0, 0];
-    const x = Number(p[0]) || 0;
-    const y = Number(p[1]) || 0;
-    const z = Number(p[2]) || 0;
-    if (x || y || z) {
-      const positions = mesh.positions;
-      for (let i = 0; i < positions.length; i += 3) {
-        positions[i] += x;
-        positions[i + 1] += y;
-        positions[i + 2] += z;
-      }
-    }
-    out.push({ id: String(row.id), ...mesh });
+    const matrix = placementMatrix(row);
+    const positions = matrix ? transformPositions(mesh.positions, matrix) : mesh.positions;
+    out.push({ id: String(row.id), positions, indices: mesh.indices, faceIDs: mesh.faceIDs });
   }
   return out;
 }

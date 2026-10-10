@@ -1,7 +1,9 @@
 /**
  * Bonded multi-part solve. Each part is meshed on its own. Slave nodes are
  * tied to master TET10 faces by the projection MPC in solve_bonded.
- * Sampling stays in part-local coordinates; the solver sees world nodes.
+ * The part matrix (or position, quaternion, and scale) is baked into the
+ * surface before the tet mesh, so a rotated or scaled part meets its
+ * neighbour. The sampled field stays in render-vertex order.
  *
  * The phone mesh cache holds one entry. Both volumes live on that one
  * entry so the first mesh is not released while the second is built.
@@ -19,6 +21,7 @@ import {
   partShape,
   THIN_ELEMENTS_THROUGH,
 } from './deviceProfile.js';
+import { placementMatrix, placeStudy, transformPositions } from './partTransform.js';
 import { solverRequestMaterial } from './studyPanel.js';
 import {
   fieldRange,
@@ -43,21 +46,6 @@ function yieldTurn() {
 function asNumber(value) {
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
-}
-
-function shiftNodes(nodes, translation) {
-  const out = Float64Array.from(nodes);
-  const t = translation || [0, 0, 0];
-  const x = Number(t[0]) || 0;
-  const y = Number(t[1]) || 0;
-  const z = Number(t[2]) || 0;
-  if (x === 0 && y === 0 && z === 0) return out;
-  for (let i = 0; i < out.length; i += 3) {
-    out[i] += x;
-    out[i + 1] += y;
-    out[i + 2] += z;
-  }
-  return out;
 }
 
 function offsetIds(ids, offset) {
@@ -129,8 +117,7 @@ function assemblyCacheKey(parts, study, profile, tools) {
       target,
       device,
     );
-    const t = part.translation || [0, 0, 0];
-    return `${meshKey}@${t[0] || 0},${t[1] || 0},${t[2] || 0}`;
+    return meshKey;
   }).join('||');
   return `${bodies}||bonded`;
 }
@@ -144,7 +131,9 @@ function plainWarnings(list) {
 }
 
 /**
- * `parts` are `{ id, name, positions, indices, faceIDs, translation }`.
+ * `parts` are local `{ id, name, positions, indices, faceIDs }` plus a
+ * placement: `matrix` (column-major 4x4), or `position` / `quaternion` /
+ * `scale`. `translation` is the position-only form.
  * `solveBonded` is the wasm export. `cache` is the worker mesh cache.
  */
 export async function solveAssembly({
@@ -167,7 +156,11 @@ export async function solveAssembly({
   if (typeof solveBonded !== 'function') {
     throw new Error('Bonded contact is not in this FEA build.');
   }
-  const bodies = (Array.isArray(parts) ? parts : []).filter((part) => part && part.positions?.length);
+  const bodies = (Array.isArray(parts) ? parts : []).filter((part) => part && part.positions?.length).map((part) => {
+    const matrix = placementMatrix(part);
+    if (!matrix) return { ...part, matrix: null };
+    return { ...part, matrix, positions: transformPositions(part.positions, matrix) };
+  });
   if (bodies.length < 1) throw new Error('The study has no parts to mesh.');
   if (cancelled()) throw abortError();
 
@@ -277,7 +270,7 @@ export async function solveAssembly({
   for (let i = 0; i < bodies.length; i += 1) {
     const local = volumes[i];
     const count = local.nodes.length / 3;
-    const scoped = studyForBody(study, bodies[i].id, hostId);
+    const scoped = placeStudy(studyForBody(study, bodies[i].id, hostId), bodies[i].matrix);
     if (scoped.fixtures.length || scoped.loads.length) {
       const bcs = boundaryConditions(local, scoped, { diagonal: shapes[i].diagonal });
       warnings.push(...bcs.warnings);
@@ -298,7 +291,7 @@ export async function solveAssembly({
       nodeCount: count,
       mesh: local,
       material: materials[i],
-      worldNodes: shiftNodes(local.nodes, bodies[i].translation),
+      worldNodes: local.nodes,
     });
     nodeOffset += count;
   }
