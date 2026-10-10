@@ -785,7 +785,7 @@ html, body, #root { margin: 0; height: 100%; background: #111; }
         return card
           && card.getAttribute('data-feature-card-compact') === (phone ? '1' : '0')
           && title
-          && (next === 'makeExtrude' ? title.textContent.includes('Extrude') || document.querySelector('[data-popup-number="extrude-distance"]') : title.textContent.includes('circle'));
+          && (next === 'makeExtrude' ? title.textContent.trim() === 'Extrude' : title.textContent.trim() === 'Contour · circle');
       }, { entry, compact }, { timeout: 5000 });
       await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     };
@@ -935,6 +935,16 @@ html, body, #root { margin: 0; height: 100%; background: #111; }
       JSON.stringify(phoneAfter));
 
     await show('makeExtrude', true);
+    const extrudeHeading = await page.evaluate(() => ({
+      title: (document.querySelector('[data-feature-card-title]')?.textContent || '').trim(),
+      subtitle: (document.querySelector('[data-feature-card-subtitle]')?.textContent || '').trim(),
+    }));
+    check('extrude card title is Extrude',
+      extrudeHeading.title === 'Extrude',
+      JSON.stringify(extrudeHeading));
+    check('extrude card subtitle shows the profile shape',
+      extrudeHeading.subtitle.includes('Circle') && extrudeHeading.subtitle.includes('default +Z top'),
+      JSON.stringify(extrudeHeading));
     await parkAndShoot('feature-sheet-extrude-390-before.png', { slide: false });
     await parkAndShoot('feature-sheet-extrude-390-after.png', { slide: true });
     const extrudeCard = await readCard();
