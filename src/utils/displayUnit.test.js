@@ -2,10 +2,13 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   DISPLAY_UNIT_KEY,
+  displayToMm,
   formatDisplayAngle,
   formatDisplayDelta,
   formatDisplayLength,
   getDisplayUnit,
+  lengthCaption,
+  lengthToDisplay,
   loadDisplayUnit,
   saveDisplayUnit,
   setDisplayUnit,
@@ -39,6 +42,24 @@ test('lengths convert and angles do not', () => {
   assert.equal(formatDisplayDelta(25.4, 'in'), '+1.0000 in');
   assert.equal(formatDisplayAngle(90), '90.0°');
   assert.equal(formatDisplayAngle(0), '0.0°');
+  assert.equal(formatDisplayAngle(90).includes('mm'), false);
+  assert.equal(formatDisplayAngle(90).includes('in'), false);
+});
+
+test('typed display numbers convert back to millimetres', () => {
+  assert.equal(displayToMm(30, 'mm'), 30);
+  assert.equal(displayToMm(1, 'in'), 25.4);
+  assert.equal(displayToMm(-0.5, 'in'), -12.7);
+  assert.equal(Number.isFinite(displayToMm('', 'in')), false);
+  assert.equal(displayToMm(lengthToDisplay(25.4, 'in'), 'in'), 25.4);
+});
+
+test('length captions carry the unit suffix', () => {
+  assert.equal(lengthCaption('Distance', 'mm'), 'Distance mm');
+  assert.equal(lengthCaption('Radius', 'in'), 'Radius in');
+  assert.equal(lengthCaption('ΔX', 'in'), 'ΔX in');
+  assert.equal(lengthCaption('Distance mm', 'mm'), 'Distance mm');
+  assert.equal(lengthCaption('', 'in'), 'in');
 });
 
 test('the store notifies subscribers and is the global cache', () => {

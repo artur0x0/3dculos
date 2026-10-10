@@ -122,6 +122,7 @@ async function readout(page) {
     const rows = [...document.querySelectorAll('[data-measure-id]')].map((el) => ({
       id: el.getAttribute('data-measure-id'),
       kind: el.querySelector('[data-measure-value]')?.getAttribute('data-measure-value') || '',
+      caption: el.querySelector('[data-measure-caption]')?.textContent.replace(/\s+/g, ' ').trim() || '',
       text: el.innerText.replace(/\s+/g, ' ').trim(),
     }));
     return {
@@ -203,6 +204,11 @@ async function runPhone(browser) {
   check('390 two faces show ΔY', near(dy, 18, 0.15), String(dy));
   check('390 two faces show ΔZ', near(dz, 0, 0.15), String(dz));
   check('390 measure has no Confirm', info.confirm === false);
+  const mmCaptions = info.rows.filter((item) => item.kind !== 'angle');
+  check('390 length captions end with mm',
+    mmCaptions.length > 0 && mmCaptions.every((item) => item.caption.endsWith(' mm'))
+      && !info.rows.find((item) => item.kind === 'angle')?.caption.endsWith(' mm'),
+    JSON.stringify(info.rows.map((item) => item.caption)));
   const shotFaces = join(SHOT_DIR, 'measure-390-faces.png');
   await page.screenshot({ path: shotFaces });
   check('390 face shot saved outside artifacts', existsSync(shotFaces) && !shotFaces.startsWith('/opt/cursor/artifacts'), shotFaces);
@@ -240,6 +246,11 @@ async function runPhone(browser) {
   const angleAfter = info.rows.find((item) => item.kind === 'angle')?.text || '';
   check('390 mm values convert to inches', converted && info.unit === 'in', JSON.stringify(info.rows));
   check('390 angle stays degrees', angleAfter === angleBefore);
+  const inCaptions = info.rows.filter((item) => item.kind !== 'angle');
+  check('390 length captions end with in',
+    inCaptions.length > 0 && inCaptions.every((item) => item.caption.endsWith(' in'))
+      && !(info.rows.find((item) => item.kind === 'angle')?.caption || '').endsWith(' in'),
+    JSON.stringify(info.rows.map((item) => item.caption)));
   const shotIn = join(SHOT_DIR, 'measure-390-inches.png');
   await page.screenshot({ path: shotIn });
   check('390 inch shot saved outside artifacts', existsSync(shotIn) && !shotIn.startsWith('/opt/cursor/artifacts'), shotIn);

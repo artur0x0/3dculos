@@ -1,10 +1,15 @@
 /**
- * Global display unit. Stored lengths stay millimetres. The UI converts
- * when it draws a number.
+ * Global display unit (the L2 seed).
  *
- * This is the seed for a later pass that shows mm|in on every field.
- * Only Measure reads it today. Sheet metal keeps its own key
- * (`surfcad.sheetMetal.displayUnit` in `sheetUnits.js`) until that pass.
+ * Scripts and the kernel stay millimetres. This module never writes a
+ * script and never changes a stored length. It only converts for display,
+ * and turns a typed display number back into millimetres before a later
+ * field writes. Length captions carry the unit suffix (`Distance mm`).
+ * Angles stay degrees.
+ *
+ * Persisted at `surfcad.displayUnit`. Measure is the only reader. Later
+ * length fields consume this setting instead of adding a key. Sheet metal
+ * keeps `surfcad.sheetMetal.displayUnit` (`sheetUnits.js`) until that pass.
  */
 export const DISPLAY_UNIT_KEY = 'surfcad.displayUnit';
 export const MM_PER_IN = 25.4;
@@ -59,10 +64,30 @@ export function subscribeDisplayUnit(fn) {
   return () => listeners.delete(fn);
 }
 
+/** Stored millimetres → the number a caption or field shows. */
 export function lengthToDisplay(mm, unit) {
   const n = Number(mm);
   if (!Number.isFinite(n)) return n;
   return normalizeDisplayUnit(unit) === 'in' ? n / MM_PER_IN : n;
+}
+
+/**
+ * A typed display number → millimetres. Non-finite input stays non-finite.
+ * Call this before a length is written. Do not parse a formatted caption.
+ */
+export function displayToMm(value, unit) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return n;
+  return normalizeDisplayUnit(unit) === 'in' ? n * MM_PER_IN : n;
+}
+
+/** `Distance mm` or `Radius in`. A caption that already ends with the unit stays. */
+export function lengthCaption(label, unit) {
+  const text = label == null ? '' : String(label).trim();
+  const suffix = normalizeDisplayUnit(unit);
+  if (!text) return suffix;
+  if (text.endsWith(` ${suffix}`)) return text;
+  return `${text} ${suffix}`;
 }
 
 /** `30.00 mm` or `1.1811 in`. Lengths only — angles stay degrees. */

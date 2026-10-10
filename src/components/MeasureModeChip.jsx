@@ -5,6 +5,7 @@ import {
   formatDisplayAngle,
   formatDisplayDelta,
   formatDisplayLength,
+  lengthCaption,
 } from '../utils/displayUnit';
 import { measureReadout } from '../utils/measurePicks';
 
@@ -42,6 +43,12 @@ function formatRow(row, unit) {
   if (row.kind === 'angle') return formatDisplayAngle(row.deg);
   if (String(row.kind).startsWith('delta')) return formatDisplayDelta(row.mm, unit);
   return formatDisplayLength(row.mm, unit);
+}
+
+/** Length captions end with mm or in. Angles keep the degree mark on the value. */
+function rowCaption(row, unit) {
+  if (row.kind === 'angle') return row.label;
+  return lengthCaption(row.label, unit);
 }
 
 /**
@@ -82,7 +89,9 @@ export default function MeasureModeChip({
             className="flex items-baseline justify-between gap-3 text-[13px]"
             data-measure-id={row.id}
           >
-            <span className="text-gray-300">{row.label}</span>
+            <span className="text-gray-300" data-measure-caption="">
+              {rowCaption(row, unit)}
+            </span>
             <span className="font-mono text-white" data-measure-value={row.kind}>
               {formatRow(row, unit)}
             </span>

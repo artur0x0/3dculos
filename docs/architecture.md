@@ -258,9 +258,17 @@ The card floats at the bottom center of the 3D pane (`absolute`, not a scrim). W
 
 Opening the card snapshots the camera pose and pans just enough that the selection, or the part box, sits in the band above the card (`featureSheetCamera.js`). Fillet, Chamfer, the standalone edge card, Shell, Draft, Move Face, Delete Face, Cut, Boolean, Move, the CAD helper card, sheet metal, Paint, Analyze, Measure, and the edit card use that same slide. Switching from one of those cards to another keeps the first snapshot. The orbit target then moves to the world point at the current target's depth along the ray through the center of the pane above the card. A view offset keeps that point at that screen center while Trackball rotates. Orbit and pinch stay on, including picks in the band above the card. A view snap or zoom-to-fit stops the slide and keeps that framing until the card changes. Close tweens back to the snapshot pose, clears the offset, and remounts Trackball so a drag during the sheet is not kept. `prefers-reduced-motion` jumps. Game mode mounts no card and does not slide.
 
+## Display unit
+
+Scripts and the kernel stay millimetres. This setting is not written into a script and is not passed to the kernel.
+
+`surfcad.displayUnit` (`src/utils/displayUnit.js`, hook `useDisplayUnit`) is the global mm|in choice. It persists in localStorage. It is a display conversion only. `lengthToDisplay`, `formatDisplayLength`, and `formatDisplayDelta` draw a stored length. `displayToMm` turns a typed length back into millimetres before a later field writes it. Do not parse a formatted caption back into a script. Length captions take the unit as a suffix (`lengthCaption`: `Distance mm`, `Radius in`). Angles stay degrees and do not take that suffix.
+
+This is the L2 seed. Measure is the only reader. Later length fields consume this setting instead of adding a key. Sheet metal keeps `surfcad.sheetMetal.displayUnit` until that pass.
+
 ## Measure
 
-A tap adds a point, an edge, a face, or — a second tap in the same place — the part. Tapping that pick again removes it. Nothing is held with a long-press or a modifier. The card reads the last two picks. Radius and diameter stay on every circular edge and cylindrical face in the set. The model stays millimetres. `surfcad.displayUnit` (`src/utils/displayUnit.js`) is the global mm|in choice and the seed for a later pass that shows units on every field. Measure is the only reader. Sheet metal keeps `surfcad.sheetMetal.displayUnit`.
+A tap adds a point, an edge, a face, or — a second tap in the same place — the part. Tapping that pick again removes it. Nothing is held with a long-press or a modifier. The card reads the last two picks. Radius and diameter stay on every circular edge and cylindrical face in the set. Length captions end with the display unit. The values are the same conversion. The script is not touched.
 
 | Picks | Distance | Angle | Radius / diameter | ΔX ΔY ΔZ |
 | --- | --- | --- | --- | --- |
