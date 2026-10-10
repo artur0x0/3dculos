@@ -222,7 +222,8 @@ async function selectPart(page, touch) {
   }
   const row = page.locator('[data-part-row="bracket"]');
   await row.waitFor({ state: 'visible', timeout: 15000 });
-  await row.click();
+  // The row's center is a button (eye / pencil). The grip selects the part.
+  await row.click({ position: { x: 12, y: 12 } });
   if (touch) {
     await page.locator('[data-stage-btn="cad"]').click();
     await page.waitForTimeout(200);
