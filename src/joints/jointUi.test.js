@@ -18,6 +18,8 @@ import {
   jointChipTitle,
   jointChips,
   jointConfirmDisabled,
+  jointTagAnchor,
+  stickyJointPick,
   jointsChromeMounted,
   nextJointName,
   pushAssemblyHistory,
@@ -229,6 +231,26 @@ test('an empty click clears the CAD part and leaves the active part', () => {
   const held = emptyClickCadSelection({ cadPartId: 'b.js', activeId: 'a.js', featureSession: true });
   assert.equal(held.cadPartId, 'b.js');
   assert.equal(held.activeId, 'a.js');
+});
+
+test('a sticky chip keeps the fingerprint off the id and labels an edge as a line', () => {
+  const chip = stickyJointPick({ surfId: A, partName: 'Shaft', kind: 'edge', key: { at: [1, 0, 0] } }, 0);
+  assert.equal(chip.id, `${A}:0`);
+  assert.equal(chip.kind, 'edge');
+  assert.equal(chip.label, 'Shaft · line');
+  assert.equal('key' in chip, false);
+});
+
+test('a joint tag sits on the midpoint of the two world references', () => {
+  const joint = {
+    id: J,
+    name: 'Coincident 1',
+    type: 'coincident',
+    a: { part: A, kind: 'face', key: { at: [0, 0, 0.5], n: [0, 0, 1], area: 1 } },
+    b: { part: B, kind: 'face', key: { at: [0, 0, -0.5], n: [0, 0, -1], area: 1 } },
+  };
+  assert.deepEqual(jointTagAnchor(docWith([joint]), joint), [0, 0, 2.5]);
+  assert.deepEqual(jointTagAnchor(docWith([joint]), { ...joint, b: undefined }), [0, 0, 0.5]);
 });
 
 test('broken and conflict chips carry the name and the sentence', () => {

@@ -1,10 +1,13 @@
 /**
- * Joints on the feature strip and the joint card.
+ * Joints on the feature strip, the shared sticky-pick card, and the
+ * floating tags.
  *
- * StickyPickApply has not merged. This module is the same contract:
- * sticky-pick 1–2 faces, lines, or points, then a suggested property,
- * then Confirm. The card can adopt that component later without
- * changing these steps.
+ * The create card is `StickyPickApply`: sticky-pick 1–2 faces, lines, or
+ * points, then a suggested property, then Confirm. The viewport and the
+ * card share the rich pick list, the same way a contour shares its list,
+ * because a joint fingerprint does not fit in the id/kind/label chip.
+ * A placed joint is a floating tag. Tap it for Delete and X. That popup
+ * does not reopen the card.
  *
  * Status is not stored. Undo is an in-memory snapshot of joints and
  * placements. A reload seeds one commit, so Undo starts empty and Redo
@@ -13,6 +16,7 @@
 import { nextNumberedName, serializeAssembly } from '../utils/assembly.js';
 import { mintSurfId } from '../utils/git/surfId.js';
 import { partPlacement } from '../utils/jointSchema.js';
+import { worldPoint } from '../utils/partPose.js';
 import { commitJointEdit } from './refreshJoints.js';
 
 export const SAME_PART_MESSAGE = 'A joint needs two parts';
@@ -28,7 +32,7 @@ export const JOINT_TYPE_LABEL = Object.freeze({
 
 /** The shared pick-and-apply steps. `component` records which UI shipped. */
 export const STICKY_PICK_CONTRACT = Object.freeze({
-  component: 'parallel',
+  component: 'StickyPickApply',
   picks: Object.freeze([1, 2]),
   kinds: Object.freeze(['face', 'edge', 'point']),
   then: 'suggested property',
@@ -140,6 +144,33 @@ function kindWord(pick) {
   if (pick.kind === 'axis') return 'axis';
   if (pick.kind === 'point') return 'point';
   return 'face';
+}
+
+/** Chip shown on StickyPickApply. The rich fingerprint stays on the pick. */
+export function stickyJointPick(pick, index = 0) {
+  const kind = pick?.kind || 'face';
+  const word = kind === 'edge' ? 'line' : kind;
+  const id = pick?.stickyId || `${pick?.surfId || 'part'}:${index}`;
+  return {
+    id: String(id),
+    kind: String(kind),
+    label: `${pick?.partName || 'Part'} · ${word}`,
+  };
+}
+
+/** World point a floating tag sits on. Two references use their midpoint. */
+export function jointTagAnchor(doc, joint) {
+  const atOf = (ref) => {
+    if (!ref?.part) return null;
+    const part = (doc?.parts || []).find((row) => row?.surfId === ref.part);
+    if (!part) return null;
+    const local = ref.key?.at || [0, 0, 0];
+    return worldPoint(local, partPlacement(part));
+  };
+  const a = atOf(joint?.a);
+  const b = atOf(joint?.b);
+  if (a && b) return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2];
+  return a || b || [0, 0, 0];
 }
 
 export function jointSubtitle(picks) {

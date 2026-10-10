@@ -117,11 +117,11 @@ import {
   assemblyHistoryKey,
   cadStripsShowJoints,
   acceptJointPick,
-  cardFromJoint,
   dismissJointEdit,
   draftFromPicks,
   emptyClickCadSelection,
   jointChips,
+  jointTagAnchor,
   jointsChromeMounted,
   nextJointName,
   pushAssemblyHistory,
@@ -132,8 +132,7 @@ import {
   stripUndoLabel,
   undoJointStrip,
 } from './joints/jointUi';
-import JointCard from './components/JointModeChip';
-import { getDisplayUnit } from './utils/displayUnit';
+import JointCard from './components/JointCard';
 import {
   applyAssemblyOpenHold,
   createAssemblyOpenController,
@@ -491,6 +490,7 @@ const App = () => {
    */
   const [featureSheet, setFeatureSheet] = useState(null);
   const [jointCard, setJointCard] = useState(null);
+  const [jointTagId, setJointTagId] = useState(null);
   const jointCardRef = useRef(null);
   const jointPicksRef = useRef([]);
   const jointCatalogsRef = useRef({});
@@ -5918,6 +5918,7 @@ const App = () => {
     });
     rememberCadPart(next.cadPartId);
     jointPicksRef.current = [];
+    setJointTagId(null);
     setJointCard((cur) => (cur?.mode === 'create' ? null : cur));
   };
 
@@ -5945,6 +5946,7 @@ const App = () => {
     jointPicksRef.current = accepted.picks;
     rememberCadPart(null);
     if (accepted.open) {
+      setJointTagId(null);
       setJointCard((cur) => draftFromPicks(cur?.mode === 'create' ? cur : null, accepted.picks, {
         joints: doc.joints || [],
       }));
@@ -5954,6 +5956,7 @@ const App = () => {
   const handleJointCardChange = (next) => {
     const doc = assemblyRef.current;
     if (!next) return;
+    if (Array.isArray(next.picks)) jointPicksRef.current = next.picks;
     if (next.userPickedType && next.type && !next.userNamed) {
       const named = nextJointName(next.type, doc?.joints || []);
       setJointCard({ ...next, name: next.name && next.userNamed ? next.name : named });
@@ -5999,28 +6002,6 @@ const App = () => {
       scripts,
       card,
       action: 'confirm',
-      locked,
-      preempt: null,
-      catalogs: jointCatalogsRef.current,
-    });
-    if (locked) {
-      viewportRef.current?.notify?.(result.message);
-      return;
-    }
-    finishJointWrite(result, scripts);
-  };
-
-  const handleJointDelete = () => {
-    const doc = assemblyRef.current;
-    const card = jointCardRef.current;
-    if (!doc || !card || card.mode !== 'edit') return;
-    const scripts = partScriptsRef.current;
-    const locked = !!assemblyOpenLockRef.current;
-    const result = applyJointCard({
-      doc,
-      scripts,
-      card,
-      action: 'delete',
       locked,
       preempt: null,
       catalogs: jointCatalogsRef.current,
@@ -6078,9 +6059,35 @@ const App = () => {
     const doc = assemblyRef.current;
     const joint = (doc?.joints || []).find((row) => row.id === chip?.id);
     if (!joint) return;
-    rememberCadPart(null);
-    const message = jointLiveRef.current.messages?.[joint.id] || '';
-    setJointCard(cardFromJoint(joint, doc, message));
+    setJointCard(null);
+    setJointTagId((cur) => (cur === joint.id ? null : joint.id));
+  };
+
+  const handleJointTagSelect = (id) => {
+    setJointCard(null);
+    setJointTagId(id || null);
+  };
+
+  const handleJointTagDelete = (id) => {
+    const doc = assemblyRef.current;
+    if (!doc || !id) return;
+    const scripts = partScriptsRef.current;
+    const locked = !!assemblyOpenLockRef.current;
+    const result = applyJointCard({
+      doc,
+      scripts,
+      card: { mode: 'edit', id },
+      action: 'delete',
+      locked,
+      preempt: null,
+      catalogs: jointCatalogsRef.current,
+    });
+    if (locked) {
+      viewportRef.current?.notify?.(result.message);
+      return;
+    }
+    finishJointWrite(result, scripts);
+    if (result.ok) setJointTagId(null);
   };
 
   const handleFaceSelected = (faceData) => {
@@ -6745,16 +6752,27 @@ const App = () => {
   const undoLabel = stripUndoLabel(showJoints ? null : cadPartId);
   const redoLabel = stripRedoLabel(showJoints ? null : cadPartId);
   const liveJointChips = showJoints ? jointChips(assemblyDoc, jointLive) : null;
-  const jointCardNode = (showJoints || jointCard?.mode === 'edit') && jointCard && appMode !== 'game'
+  const jointTagList = appMode === 'game' || featureSession
+    ? []
+    : (assemblyDoc?.joints || []).map((joint) => {
+      const chip = jointChips({ joints: [joint] }, jointLive)[0];
+      return {
+        id: joint.id,
+        type: joint.type,
+        label: joint.name,
+        title: chip?.title || joint.name,
+        invalid: !!chip?.invalid,
+        world: jointTagAnchor(assemblyDoc, joint),
+      };
+    });
+  const jointCardNode = showJoints && jointCard && jointCard.mode !== 'edit' && appMode !== 'game'
     ? (
       <JointCard
         card={jointCard}
-        unit={getDisplayUnit()}
         locked={!!assemblyOpenLockRef.current}
         onChange={handleJointCardChange}
         onConfirm={handleJointConfirm}
         onCancel={handleJointCancel}
-        onDelete={handleJointDelete}
         compact={isMobile}
       />
     )
@@ -7115,6 +7133,11 @@ const App = () => {
               jointPicking={showJoints}
               onJointPick={handleJointPick}
               jointCard={jointCardNode}
+              jointTags={jointTagList}
+              jointTagId={jointTagId}
+              onSelectJointTag={handleJointTagSelect}
+              onDeleteJointTag={handleJointTagDelete}
+              onCloseJointTag={() => setJointTagId(null)}
               cadPartSelected={cadPartId != null}
               onRunOutcome={handleRunOutcome}
               getBooleanContext={assemblyPartContext}
@@ -7618,6 +7641,11 @@ const App = () => {
             jointPicking={showJoints}
             onJointPick={handleJointPick}
             jointCard={jointCardNode}
+            jointTags={jointTagList}
+            jointTagId={jointTagId}
+            onSelectJointTag={handleJointTagSelect}
+            onDeleteJointTag={handleJointTagDelete}
+            onCloseJointTag={() => setJointTagId(null)}
             cadPartSelected={cadPartId != null}
             onRunOutcome={handleRunOutcome}
             getBooleanContext={assemblyPartContext}
