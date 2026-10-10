@@ -24,11 +24,18 @@ export function stickyPickToggle(picks, item, max = 2) {
     list.splice(index, 1);
     return list;
   }
-  list.push({
+  const next = {
     id: String(item.id),
     kind: String(item.kind),
     label: item.label ? String(item.label) : String(item.id),
-  });
+  };
+  // The dimension figure anchors on this UV. Joints do not set it.
+  if (Array.isArray(item.at) && item.at.length >= 2) {
+    const u = Number(item.at[0]);
+    const v = Number(item.at[1]);
+    if (Number.isFinite(u) && Number.isFinite(v)) next.at = [u, v];
+  }
+  list.push(next);
   if (list.length > cap) list.splice(0, list.length - cap);
   return list;
 }

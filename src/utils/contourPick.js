@@ -4,7 +4,10 @@
  * The caller projects plane UV into client pixels.
  */
 
-const HIT_PX = 10;
+/** On-screen slop for a sketch point, line, or arc. A finger needs more than the 3px stroke. */
+export const SKETCH_HIT_PX = 12;
+
+const HIT_PX = SKETCH_HIT_PX;
 
 export function planeUvToWorld(uv, plane) {
   const u = Number(uv?.[0]) || 0;
@@ -89,6 +92,34 @@ export function pickContourScreen(model, project, px, py, threshold = HIT_PX) {
     }
   }
   if (bestLine) return { kind: 'line', id: bestLine, label: bestLine };
+  return null;
+}
+
+function entityPoint(model, id) {
+  return (model?.points || []).find((p) => p.id === id)?.at || null;
+}
+
+/** Closest UV on a picked point or line. The dimension extension starts here. */
+export function anchorOnEntity(model, pick, uv) {
+  if (!model || !pick?.id) return null;
+  if (pick.kind === 'point') {
+    const at = entityPoint(model, pick.id);
+    return at ? [at[0], at[1]] : null;
+  }
+  if (pick.kind === 'line') {
+    const line = (model.lines || []).find((l) => l.id === pick.id);
+    const a = line && entityPoint(model, line.a);
+    const b = line && entityPoint(model, line.b);
+    if (!a || !b) return null;
+    if (!uv) return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+    const dx = b[0] - a[0];
+    const dy = b[1] - a[1];
+    const L2 = dx * dx + dy * dy;
+    if (!(L2 > 1e-12)) return [a[0], a[1]];
+    let t = ((uv[0] - a[0]) * dx + (uv[1] - a[1]) * dy) / L2;
+    t = Math.max(0, Math.min(1, t));
+    return [a[0] + t * dx, a[1] + t * dy];
+  }
   return null;
 }
 

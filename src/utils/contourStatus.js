@@ -21,6 +21,42 @@ export const CONTOUR_DRAFT_COLOR = 0x22d3ee;
 /** Selected saved ghost. Status colour is for every ghost that is not the pick. */
 export const CONTOUR_SELECTED_COLOR = 0xff9900;
 
+/** A dimension pick stays this colour until Add or X. Amber, same as a hovered dot. */
+export const CONTOUR_PICK_COLOR = 0xfbbf24;
+
+/**
+ * Paint the current dimension picks over status colour. A picked line also
+ * lights its two endpoints, so both dots stay visible with the edge.
+ */
+export function highlightContourPaint(paint, model, picks) {
+  if (!paint) return paint;
+  const list = Array.isArray(picks) ? picks : [];
+  if (!list.length) return paint;
+  const points = new Set();
+  const marked = new Set();
+  for (const pick of list) {
+    if (!pick?.id) continue;
+    if (pick.kind === 'point') points.add(pick.id);
+    else if (pick.kind === 'line') {
+      marked.add(pick.id);
+      const line = (model?.lines || []).find((l) => l.id === pick.id);
+      if (line) {
+        points.add(line.a);
+        points.add(line.b);
+      }
+    } else if (pick.kind === 'arc') marked.add(pick.id);
+  }
+  return {
+    ...paint,
+    pointColors: (paint.pointIds || []).map((id, i) => (
+      points.has(id) ? CONTOUR_PICK_COLOR : paint.pointColors[i]
+    )),
+    segments: (paint.segments || []).map((seg) => (
+      marked.has(seg.id) ? { ...seg, color: CONTOUR_PICK_COLOR, picked: true } : seg
+    )),
+  };
+}
+
 export function contourEntityColor(status) {
   return CONTOUR_STATUS_COLOR[status] || CONTOUR_STATUS_COLOR.under;
 }
@@ -137,6 +173,7 @@ export function contourPaintModel(spec) {
     const status = entities.lines?.[line.id] || 'under';
     segments.push({
       id: line.id,
+      kind: 'line',
       status,
       color: contourEntityColor(status),
       uvs: [a.slice(), b.slice()],
@@ -148,6 +185,7 @@ export function contourPaintModel(spec) {
     const status = entities.arcs?.[arc.id] || 'under';
     segments.push({
       id: arc.id,
+      kind: 'arc',
       status,
       color: contourEntityColor(status),
       uvs,

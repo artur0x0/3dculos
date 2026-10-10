@@ -6,12 +6,11 @@
 // The label point is the middle of that arrow or arc. The value chip sits there.
 
 const OFFSET_PX = 22;
-const GAP_PX = 6;
+const GAP_PX = 0;
 const PAST_PX = 7;
 const ARROW_PX = 9;
 const ARROW_W = 5.5;
 const ARC_PX = 36;
-const SHORT_PX = 48;
 
 function pointAt(model, id) {
   return (model?.points || []).find((p) => p.id === id)?.at || null;
@@ -36,12 +35,13 @@ function unit(x, y) {
   return { x: x / L, y: y / L, L };
 }
 
-function footOnLine(p, a, b) {
+function footOnLine(p, a, b, clamp = false) {
   const dx = b[0] - a[0];
   const dy = b[1] - a[1];
   const L2 = dx * dx + dy * dy;
   if (!(L2 > 1e-12)) return null;
-  const t = ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / L2;
+  let t = ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / L2;
+  if (clamp) t = Math.max(0, Math.min(1, t));
   return [a[0] + t * dx, a[1] + t * dy];
 }
 
@@ -109,10 +109,17 @@ export function dimensionEndpoints(model, dim) {
     const A = lineOf(model, dim.a);
     const B = lineOf(model, dim.b);
     if (!A || !B) return null;
-    const from = mid(A.a, A.b);
-    const foot = footOnLine(from, B.a, B.b);
-    if (!foot) return null;
-    return { a: from, b: foot };
+    // The two taps, snapped back onto the solved lines. A midpoint of the
+    // first edge sits off the point the user actually picked.
+    const anchors = Array.isArray(dim.anchors) ? dim.anchors : null;
+    const from = anchors?.[0]
+      ? (footOnLine(anchors[0], A.a, A.b, true) || anchors[0])
+      : mid(A.a, A.b);
+    const onto = anchors?.[1]
+      ? (footOnLine(anchors[1], B.a, B.b, true) || anchors[1])
+      : footOnLine(from, B.a, B.b);
+    if (!from || !onto) return null;
+    return { a: from, b: onto };
   }
   return null;
 }
@@ -154,6 +161,44 @@ function arrowHead(tip, dir) {
   };
 }
 
+function arrowBase(arrow) {
+  return {
+    x: (arrow.left.x + arrow.right.x) / 2,
+    y: (arrow.left.y + arrow.right.y) / 2,
+  };
+}
+
+/** Pull both ends of a polyline back by `inset` px so the stroke stops at the arrow base. */
+function trimEnds(samples, inset) {
+  const cut = (pts) => {
+    let remain = inset;
+    let i = 0;
+    while (i < pts.length - 1 && remain > 0) {
+      const L = hypot2(pts[i + 1].x - pts[i].x, pts[i + 1].y - pts[i].y);
+      if (!(L > 1e-6)) {
+        i += 1;
+        continue;
+      }
+      if (L > remain) {
+        const t = remain / L;
+        const p = {
+          x: pts[i].x + (pts[i + 1].x - pts[i].x) * t,
+          y: pts[i].y + (pts[i + 1].y - pts[i].y) * t,
+        };
+        return [p, ...pts.slice(i + 1)];
+      }
+      remain -= L;
+      i += 1;
+    }
+    return pts.slice(-1);
+  };
+  if (!samples || samples.length < 2 || !(inset > 0)) return samples;
+  const fromStart = cut(samples);
+  const rev = cut([...fromStart].reverse());
+  const out = rev.reverse();
+  return out.length >= 2 ? out : samples;
+}
+
 function extension(geo, dim) {
   const u = unit(dim.x - geo.x, dim.y - geo.y);
   if (!u) return null;
@@ -191,15 +236,19 @@ function linearLayout(kind, aUv, bUv, project) {
   const outwardA = unit(dimA.x - dimB.x, dimA.y - dimB.y);
   const outwardB = unit(dimB.x - dimA.x, dimB.y - dimA.y);
   if (!outwardA || !outwardB) return null;
-  const inward = span < SHORT_PX;
-  const arrows = inward
+  // Tips sit on the extension lines. The head points back along the dimension
+  // line, so the shaft can stop at that base and not cross the extension.
+  // A span too short for two heads puts the heads outside, still tip-on-line.
+  const outside = span < ARROW_PX * 2 + 4;
+  const arrows = outside
     ? [arrowHead(dimA, outwardB), arrowHead(dimB, outwardA)]
     : [arrowHead(dimA, outwardA), arrowHead(dimB, outwardB)];
+  const shaft = outside ? null : [arrowBase(arrows[0]), arrowBase(arrows[1])];
   return {
     kind,
     label: { x: (dimA.x + dimB.x) / 2, y: (dimA.y + dimB.y) / 2 },
     extensions: [extA, extB],
-    shaft: [dimA, dimB],
+    shaft,
     arc: null,
     arrows,
   };
@@ -250,13 +299,14 @@ function angleLayout(model, dim, project) {
   const extA = ext(endA);
   const extB = ext(endB);
   if (!extA || !extB) return null;
+  const arrows = [arrowHead(endA, tanA), arrowHead(endB, tanB)];
   return {
     kind: 'angle',
     label: midSample,
     extensions: [extA, extB],
     shaft: null,
-    arc: samples,
-    arrows: [arrowHead(endA, tanA), arrowHead(endB, tanB)],
+    arc: trimEnds(samples, ARROW_PX),
+    arrows,
   };
 }
 
@@ -284,8 +334,8 @@ function lineAttrs(a, b, extra) {
 /** SVG children for one figure. Strokes are a dark halo under a light core. */
 export function dimensionMarkup(fig) {
   if (!fig) return '';
-  const halo = 'stroke="#0f172a" stroke-opacity="0.55" fill="none" stroke-width="3.5" stroke-linecap="square"';
-  const core = 'stroke="#f8fafc" fill="none" stroke-width="1.5" stroke-linecap="square"';
+  const halo = 'stroke="#0f172a" stroke-opacity="0.55" fill="none" stroke-width="3.5" stroke-linecap="butt"';
+  const core = 'stroke="#f8fafc" fill="none" stroke-width="1.5" stroke-linecap="butt"';
   const parts = [];
   for (const ext of fig.extensions || []) {
     parts.push(`<line ${lineAttrs(ext.a, ext.b, halo)} />`);

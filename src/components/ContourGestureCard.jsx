@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Trash2 } from 'lucide-react';
 import StickyPickApply from './StickyPickApply';
 import { useDisplayUnit } from '../hooks/useDisplayUnit';
 import { displayToMm, lengthToDisplay } from '../utils/displayUnit';
@@ -29,8 +30,9 @@ function seedText(isArc, arc, suggestion, unit) {
 
 /**
  * Dimension, Arc, and Constraints cards. All are StickyPickApply.
- * Confirm saves the contour and stays in the gesture. X drops the pick
- * and writes nothing.
+ * Dimension and Constrain create say Add: it writes, clears the picks,
+ * and leaves the card open. X exits and writes nothing. A tag tap reopens
+ * that item: Confirm saves and closes, red Delete removes it, no Add.
  */
 const ContourGestureCard = ({
   gesture = 'dimension',
@@ -41,8 +43,11 @@ const ContourGestureCard = ({
   onRemovePick,
   onApply,
   onCancel,
+  onDelete,
   onLive,
   ignoreNameId = null,
+  editDimension = null,
+  editConstraint = null,
 }) => {
   const [unit] = useDisplayUnit();
   const isArc = gesture === 'arc';
@@ -53,17 +58,31 @@ const ContourGestureCard = ({
   const constraint = isConstraint ? suggestContourConstraint(model, picks) : null;
   const pickKey = (picks || []).map((p) => `${p.kind}:${p.id}`).join(',');
   const gestureKey = isConstraint ? 'constraints' : (isArc ? 'arc' : 'dimension');
-  const sessionKey = `${gestureKey}|${unit}|${pickKey}`;
-  const seededKind = isConstraint ? (constraint?.kind || '') : (suggestion?.kind || '');
+  const editingDimension = !isArc && !isConstraint && !!editDimension;
+  const editingConstraint = isConstraint && !!editConstraint;
+  const editing = editingDimension || editingConstraint;
+  const sessionKey = `${gestureKey}|${unit}|${pickKey}|${editDimension?.id || ''}|${editConstraint?.id || ''}`;
+  const seededKind = editingDimension
+    ? editDimension.kind
+    : editingConstraint
+      ? editConstraint.kind
+      : (isConstraint ? (constraint?.kind || '') : (suggestion?.kind || ''));
   const [property, setProperty] = useState(seededKind);
-  const [text, setText] = useState(() => (isConstraint ? '' : seedText(isArc, arc, suggestion, unit)));
-  const [name, setName] = useState('');
+  const [text, setText] = useState(() => (
+    editingDimension
+      ? formatPrefill(editDimension.kind, editDimension.value, unit)
+      : (isConstraint ? '' : seedText(isArc, arc, suggestion, unit))
+  ));
+  const [name, setName] = useState(() => (editingDimension ? (editDimension.name || '') : ''));
   const [filledKey, setFilledKey] = useState(sessionKey);
   // A new pick or unit refills before paint. Typing keeps the same key.
   if (filledKey !== sessionKey) {
     setFilledKey(sessionKey);
     setProperty(isArc ? '' : seededKind);
-    setText(isConstraint ? '' : seedText(isArc, arc, suggestion, unit));
+    setText(editingDimension
+      ? formatPrefill(editDimension.kind, editDimension.value, unit)
+      : (isConstraint ? '' : seedText(isArc, arc, suggestion, unit)));
+    setName(editingDimension ? (editDimension.name || '') : '');
   }
 
   const kinds = (isConstraint ? constraint?.kinds : suggestion?.kinds) || [];
@@ -167,11 +186,32 @@ const ContourGestureCard = ({
       onRemovePick={onRemovePick}
       onApply={apply}
       onCancel={onCancel}
-      applyLabel={isArc ? 'Round' : 'Confirm'}
+      applyLabel={isArc ? 'Round' : (editing ? 'Confirm' : 'Add')}
       applyDisabled={!ready}
-      note={noteNode}
+      note={editing ? (
+        <span className="flex min-w-0 items-center gap-2">
+          {noteNode ? <span className="min-w-0">{noteNode}</span> : null}
+          <button
+            type="button"
+            data-contour-dimension-delete={editingDimension ? '' : undefined}
+            data-contour-constraint-delete={editingConstraint ? '' : undefined}
+            onClick={() => onDelete?.()}
+            className="inline-flex shrink-0 items-center gap-1 rounded-md border border-red-700/60 bg-red-950/50 px-2.5 py-1.5 text-[13px] font-medium text-red-200 hover:bg-red-900/70 hover:text-white"
+          >
+            <Trash2 size={14} aria-hidden="true" />
+            Delete
+          </button>
+        </span>
+      ) : noteNode}
       compact={compact}
-      cardAttrs={{ 'data-contour-card': isArc ? 'arc' : isConstraint ? 'constraint' : 'dimension' }}
+      cardAttrs={{
+        'data-contour-card': isArc ? 'arc' : isConstraint ? 'constraint' : 'dimension',
+        ...(isConstraint
+          ? { 'data-contour-constraint-mode': editingConstraint ? 'edit' : 'add' }
+          : isArc
+            ? {}
+            : { 'data-contour-dimension-mode': editingDimension ? 'edit' : 'add' }),
+      }}
     >
       {!isConstraint && (
       <label className="flex flex-col gap-0.5">
