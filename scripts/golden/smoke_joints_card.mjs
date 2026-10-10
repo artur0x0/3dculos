@@ -64,7 +64,7 @@ check('shot dir is not the artifacts folder', !String(SHOT_DIR).startsWith('/opt
 {
   const card = read('src/components/JointCard.jsx');
   const view = read('src/components/Viewport.jsx');
-  check('Add is the joint apply label', card.includes('applyLabel="Add"'));
+  check('Add is the joint apply label', card.includes("editing ? 'Confirm' : 'Add'"));
   check('the joint card owns the sheet camera', view.includes("? 'joint'"));
   check('floating joint tags are not mounted', !view.includes('JointTags') && !existsSync(new URL('../../src/components/JointTags.jsx', import.meta.url)));
 }

@@ -39,6 +39,7 @@ The word is joints. Part scripts stay untouched. The file stays version 1.
 | 31 | Picks group by part in any order (`P1 P1 P2 P2`, `P1 P2 P1 P2`, and the rest). Two planar faces on each of two parts suggest symmetric. One reference on each part keeps the concentric, coincident, and distance rules. | This follow-up. |
 | 32 | A pick on a third part opens a popup titled `Change one of the parts?` with Discard last pick, Replace part 1, and Replace part 2. The new pick is not kept until one of those is chosen. | This follow-up. |
 | 33 | With no part selected, a joint chip tap reopens that joint in the card. The card shows the stored picks highlighted, the type, and the value, plus Delete and X. This covers every type, including symmetric and an angle written by Parallel or Perpendicular. | #362 returned null for `mode === 'edit'` and only toggled a chip popup, so the card never opened. |
+| 34 | A joint opened from a strip chip uses the feature-sheet edit row. Delete is the red danger button opposite Confirm. There is no Add button. Confirm saves that joint and closes. X closes and writes nothing. Create mode still says Add and stays open. | Edit-row follow-up. |
 
 Distance on the card uses the global display unit (`src/utils/displayUnit.js`). The file and the script stay millimetres. That field is PR 4.
 

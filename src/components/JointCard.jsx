@@ -1,4 +1,5 @@
 import React from 'react';
+import { Trash2 } from 'lucide-react';
 import StickyPickApply from './StickyPickApply';
 import { useDisplayUnit } from '../hooks/useDisplayUnit';
 import {
@@ -17,8 +18,9 @@ const PROPERTIES = TYPES.map((id) => ({ id, label: JOINT_TYPE_LABEL[id] }));
 
 /**
  * Create card, and the card a strip chip reopens. StickyPickApply owns
- * the chrome. The parent owns the fingerprints. Delete removes a joint
- * that is already stored. X writes nothing.
+ * the chrome. The parent owns the fingerprints. Create says Add and
+ * stays open. A chip reopens this card in edit mode: Confirm saves and
+ * closes, the red Delete removes the joint, and X writes nothing.
  */
 export default function JointCard({
   card,
@@ -63,20 +65,23 @@ export default function JointCard({
       }}
       onApply={onConfirm}
       onCancel={onCancel}
-      applyLabel="Add"
+      applyLabel={editing ? 'Confirm' : 'Add'}
       applyDisabled={jointConfirmDisabled({ card, locked })}
-      note={note}
+      note={editing ? (
+        <span className="flex min-w-0 items-center gap-2">
+          {note ? <span className="min-w-0">{note}</span> : null}
+          <button
+            type="button"
+            data-joint-delete=""
+            onClick={() => onDelete?.()}
+            className="inline-flex shrink-0 items-center gap-1 rounded-md border border-red-700/60 bg-red-950/50 px-2.5 py-1.5 text-[13px] font-medium text-red-200 hover:bg-red-900/70 hover:text-white"
+          >
+            <Trash2 size={14} aria-hidden="true" />
+            Delete
+          </button>
+        </span>
+      ) : note}
       compact={compact}
-      footer={editing ? (
-        <button
-          type="button"
-          data-joint-delete=""
-          onClick={() => onDelete?.()}
-          className="min-h-[36px] w-full rounded-md border border-cyan-700/70 bg-cyan-950/80 px-2 text-left text-[13px] text-cyan-100"
-        >
-          Delete
-        </button>
-      ) : null}
       cardAttrs={{
         'data-joint-card': '',
         'data-joint-id': card.id || '',

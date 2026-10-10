@@ -4,11 +4,13 @@
  *
  * Create an angle joint with Parallel, close the card, tap the chip.
  * The card comes back with type angle, value 0, the two faces
- * highlighted, Delete, and X. Delete removes the joint.
+ * highlighted, a red Delete, and Confirm. There is no Add button.
+ * X discards a changed angle. Confirm saves a new distance and closes.
+ * Delete removes the joint.
  *
  * 390 and 1280. Screenshots go to GOLDEN_SHOT_DIR or os.tmpdir().
  */
-/* global document, indexedDB, localStorage, sessionStorage */
+/* global document, indexedDB, localStorage, sessionStorage, Event, HTMLInputElement */
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -66,8 +68,10 @@ check('shot dir is not the artifacts folder', !String(SHOT_DIR).startsWith('/opt
   const card = read('src/components/JointCard.jsx');
   const app = read('src/App.jsx');
   check('edit mode is not thrown away',
-    !card.includes("card.mode === 'edit') return null") && card.includes('data-joint-delete'));
+    !card.includes("card.mode === 'edit') return null") && card.includes('data-joint-delete')
+    && card.includes('border-red-700/60') && card.includes("editing ? 'Confirm' : 'Add'"));
   check('a chip tap builds the edit card', app.includes('cardFromJoint(joint, doc)') && app.includes('handleSelectJoint'));
+  check('edit Confirm saves and create Add stays open', app.includes("resetPicks: card.mode !== 'edit'"));
 }
 
 const exe = CHROME_CANDIDATES.find((p) => existsSync(p));
@@ -209,7 +213,11 @@ async function cardState(page) {
       subtitle: (card?.querySelector('[data-feature-card-subtitle]')?.textContent || '').replace(/\s+/g, ' ').trim(),
       type: card?.getAttribute('data-joint-type') || '',
       angle: card?.querySelector('[data-joint-angle]')?.value || '',
+      value: card?.querySelector('[data-joint-value]')?.value || '',
+      name: card?.querySelector('[data-joint-name]')?.value || '',
+      apply: (card?.querySelector('[data-feature-card-confirm]')?.textContent || '').replace(/\s+/g, ' ').trim(),
       del: !!card?.querySelector('[data-joint-delete]'),
+      delClass: card?.querySelector('[data-joint-delete]')?.className || '',
       close: !!document.querySelector('[data-joint-card] [data-feature-card-cancel], [data-feature-card-cancel]'),
       highlights: globalThis.__VIEWPORT__?.jointHighlightCount?.() ?? -1,
     };
@@ -249,6 +257,22 @@ async function clickSel(page, selector) {
   }, selector);
 }
 
+async function setField(page, selector, value) {
+  return page.evaluate(({ sel, value: next }) => {
+    const nodes = [...document.querySelectorAll(sel)];
+    const input = nodes.find((el) => el instanceof HTMLInputElement);
+    if (!input) {
+      return { ok: false, tags: nodes.map((el) => el.tagName).slice(0, 6) };
+    }
+    const tracker = input._valueTracker;
+    const prev = input.value;
+    input.value = String(next);
+    if (tracker) tracker.setValue(String(prev));
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    return { ok: true, value: input.value };
+  }, { sel: selector, value });
+}
+
 async function chipRows(page) {
   return page.evaluate(() => {
     const seen = new Map();
@@ -260,6 +284,7 @@ async function chipRows(page) {
         type: el.getAttribute('data-joint-type') || '',
         status: el.getAttribute('data-joint-status') || '',
         value: el.getAttribute('data-joint-value'),
+        name: el.getAttribute('aria-label') || '',
       });
     }
     return [...seen.values()];
@@ -294,12 +319,57 @@ async function runView(browser, vp) {
   await clickSel(page, `[data-assembly-joints] [data-joint-id="${written?.id || ''}"]`);
   await page.waitForTimeout(400);
   const reopened = await cardState(page);
+  const red = reopened.delClass.includes('border-red-700/60')
+    && reopened.delClass.includes('bg-red-950/50')
+    && reopened.delClass.includes('text-red-200');
   console.log(`  ${vp.name} reopened ${JSON.stringify(reopened)}`);
   check(`${vp.name} the chip reopens that joint`,
     reopened.open && reopened.type === 'angle' && reopened.angle === '0'
-      && reopened.del && reopened.n === 2 && reopened.highlights === 2
+      && reopened.del && red && reopened.apply === 'Confirm'
+      && reopened.n === 2 && reopened.highlights === 2
       && reopened.subtitle.includes('Shaft') && reopened.subtitle.includes('Housing'),
     JSON.stringify(reopened));
+
+  const storedName = reopened.name;
+  await setField(page, '[data-joint-angle]', '15');
+  await setField(page, '[data-joint-name]', 'Tilted');
+  await page.waitForTimeout(100);
+  await clickSel(page, '[data-feature-card-cancel]');
+  await page.waitForTimeout(300);
+  const discarded = await chipRows(page);
+  const discardedChip = discarded.find((row) => row.id === written?.id);
+  const afterDiscard = await cardState(page);
+  check(`${vp.name} X discards a changed value`,
+    !afterDiscard.open && discardedChip?.value === '0' && discardedChip?.name === storedName,
+    JSON.stringify({ discardedChip, storedName, afterDiscard }));
+
+  await clickSel(page, `[data-assembly-joints] [data-joint-id="${written?.id || ''}"]`);
+  await page.waitForTimeout(400);
+  const still = await cardState(page);
+  check(`${vp.name} the discarded edit is not stored`,
+    still.open && still.angle === '0' && still.name === storedName && still.apply === 'Confirm',
+    JSON.stringify(still));
+
+  await clickSel(page, '[data-sticky-property="distance"]');
+  await page.waitForTimeout(200);
+  const typed = await setField(page, '[data-joint-value]', '40');
+  await page.waitForTimeout(100);
+  await clickSel(page, '[data-feature-card-confirm]');
+  await page.waitForTimeout(500);
+  const savedRows = await chipRows(page);
+  const savedChip = savedRows.find((row) => row.id === written?.id);
+  const afterSave = await cardState(page);
+  console.log(`  ${vp.name} saved ${JSON.stringify({ typed, savedChip, afterSave })}`);
+  check(`${vp.name} Confirm saves a changed value`,
+    typed?.ok && !afterSave.open && savedChip?.type === 'distance',
+    JSON.stringify({ typed, savedChip, afterSave }));
+
+  await clickSel(page, `[data-assembly-joints] [data-joint-id="${written?.id || ''}"]`);
+  await page.waitForTimeout(400);
+  const savedCard = await cardState(page);
+  check(`${vp.name} the reopened card shows the saved value`,
+    savedCard.open && savedCard.type === 'distance' && savedCard.value === '40' && savedCard.apply === 'Confirm',
+    JSON.stringify(savedCard));
 
   await clickSel(page, '[data-joint-delete]');
   await page.waitForTimeout(400);
