@@ -18,6 +18,7 @@
 //      so a computed accent class would be purged from the build. Add a
 //      colour by extending ACCENTS, never by interpolating.
 import React from 'react';
+import { numberFieldLabelParts } from '../../utils/featureFieldEdit';
 
 /* Shared accent/text tokens are imported by chips; keep them here. */
 /* eslint-disable react-refresh/only-export-components */
@@ -84,10 +85,13 @@ export const PopupSection = ({ label, accent = 'slate', children, className = ''
  */
 export const NumberField = ({
   label, value, onChange, min, max, step, accent = 'slate',
-  disabled = false, id, className = '',
+  disabled = false, id, className = '', unit,
 }) => {
   const a = accentOf(accent);
   const num = Number.isFinite(Number(value)) ? Number(value) : (Number(min) || 0);
+  // The caption stays the caller's string. The attributes are what the
+  // touch edit view reads, so a unit in the caption is not repeated.
+  const parts = numberFieldLabelParts(label, unit);
   return (
     <PopupSection label={label} accent={accent} className={className}>
       <div className="flex items-center gap-2">
@@ -115,6 +119,8 @@ export const NumberField = ({
             ${POPUP_TEXT.value} ${a.field} disabled:opacity-40`}
           aria-label={`${label} value`}
           data-popup-number={id || label}
+          data-field-label={parts.label}
+          {...(parts.unit ? { 'data-unit': parts.unit } : null)}
         />
       </div>
     </PopupSection>

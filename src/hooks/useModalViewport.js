@@ -17,12 +17,15 @@ function readViewport() {
 }
 
 function scrollFieldIntoView(el) {
+  // The touch edit view replaces the body. Scrolling that body would fight
+  // the saved position the view restores on Done.
+  const card = el.closest?.('[data-feature-card]');
+  if (card?.hasAttribute('data-feature-field-edit')) return;
   const scroller = el.closest('.overflow-y-auto');
   if (!scroller) return;
   const field = el.getBoundingClientRect();
   const box = scroller.getBoundingClientRect();
   // A sticky footer that overlaps the scroller (feature card) eats that strip.
-  const card = el.closest('[data-feature-card]');
   const footer = card?.querySelector('[data-feature-sheet-footer]');
   const footerTop = footer ? footer.getBoundingClientRect().top : box.bottom;
   const overlap = Math.max(0, box.bottom - footerTop);

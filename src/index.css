@@ -109,6 +109,11 @@ body {
     )
   );
 }
+/* Touch edit is one field tall and already parked on the visual viewport.
+   The full-card cap would subtract the keyboard again and collapse it. */
+.feature-sheet-card[data-feature-field-edit] {
+  max-height: none;
+}
 .feature-sheet-scroll {
   scrollbar-width: thin;
   scrollbar-color: rgba(107, 114, 128, 0.45) rgba(107, 114, 128, 0.25);
