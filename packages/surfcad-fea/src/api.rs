@@ -371,6 +371,217 @@ pub fn solve_shell(
     Ok(value)
 }
 
+/// Lowest natural frequencies of a TET10 mesh.
+///
+/// `material.density_kg_m3` is required. `options.modes` defaults to 6.
+/// Fixtures are homogeneous. Forces and pressures are ignored and reported
+/// in `warnings`. `modes` is the translational mode shape, mode-major,
+/// `ux, uy, uz` per node, scaled so the largest component is 1.
+#[wasm_bindgen(js_name = modal_tet10)]
+pub fn modal_tet10(
+    mesh: &JsValue,
+    material: &JsValue,
+    bcs: &JsValue,
+    options: &JsValue,
+) -> Result<JsValue, JsValue> {
+    let started = js_sys::Date::now();
+    let nodes = read_nodes(mesh).map_err(fem_failure)?;
+    let elements = read_elements(mesh, nodes.len()).map_err(fem_failure)?;
+    let parsed = parse_material(material).map_err(failure)?;
+    let density = read_density(material).map_err(fem_failure)?;
+    let (dirichlet, forces, pressures) = read_modal_solid_bcs(bcs, nodes.len()).map_err(fem_failure)?;
+    let modes = read_mode_count(options).map_err(fem_failure)?;
+    let fem_material = fem::Material {
+        young: parsed.e_mpa,
+        poisson: parsed.nu,
+        yield_mpa: parsed.yield_mpa,
+    };
+    let output = fem::modal_tet10(&nodes, &elements, fem_material, density, &dirichlet, modes)
+        .map_err(fem_failure)?;
+    let mut warnings = output.warnings.clone();
+    if !forces.is_empty() || !pressures.is_empty() {
+        warnings.push(fem::Warning {
+            code: "modal-loads",
+            msg: "Loads are ignored. A modal study uses fixtures only.".into(),
+        });
+    }
+    let elapsed = js_sys::Date::now() - started;
+    let translations = translational_modes(&output.modes, nodes.len(), 3, output.frequencies_hz.len());
+    finish_modal(&output, &warnings, &translations, nodes.len(), elements.len(), elapsed)
+}
+
+/// Lowest natural frequencies of a MITC6 shell mesh.
+///
+/// Same contract as `modal_tet10`. `modes` contains the translational
+/// components only (`ux, uy, uz` per node). Rotary inertia is in the solve.
+#[wasm_bindgen(js_name = modal_shell)]
+pub fn modal_shell(
+    mesh: &JsValue,
+    material: &JsValue,
+    bcs: &JsValue,
+    options: &JsValue,
+) -> Result<JsValue, JsValue> {
+    let started = js_sys::Date::now();
+    let nodes = read_nodes(mesh).map_err(fem_failure)?;
+    let elements = read_shell_elements(mesh, nodes.len()).map_err(fem_failure)?;
+    let thickness = read_thickness(mesh, elements.len()).map_err(fem_failure)?;
+    let parsed = parse_material(material).map_err(failure)?;
+    let density = read_density(material).map_err(fem_failure)?;
+    let (dirichlet, forces, pressures) =
+        read_modal_shell_bcs(bcs, nodes.len(), elements.len()).map_err(fem_failure)?;
+    let modes = read_mode_count(options).map_err(fem_failure)?;
+    let fem_material = fem::Material {
+        young: parsed.e_mpa,
+        poisson: parsed.nu,
+        yield_mpa: parsed.yield_mpa,
+    };
+    let output = fem::modal_shell(
+        &nodes,
+        &elements,
+        &thickness,
+        fem_material,
+        density,
+        &dirichlet,
+        modes,
+    )
+    .map_err(fem_failure)?;
+    let mut warnings = output.warnings.clone();
+    if !forces.is_empty() || !pressures.is_empty() {
+        warnings.push(fem::Warning {
+            code: "modal-loads",
+            msg: "Loads are ignored. A modal study uses fixtures only.".into(),
+        });
+    }
+    let elapsed = js_sys::Date::now() - started;
+    let translations =
+        translational_modes(&output.modes, nodes.len(), fem::SHELL_DOF_PER_NODE, output.frequencies_hz.len());
+    finish_modal(&output, &warnings, &translations, nodes.len(), elements.len(), elapsed)
+}
+
+fn finish_modal(
+    output: &fem::ModalOutput,
+    warnings: &[fem::Warning],
+    translations: &[f64],
+    n_nodes: usize,
+    n_elem: usize,
+    elapsed: f64,
+) -> Result<JsValue, JsValue> {
+    #[derive(serde::Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Wire<'a> {
+        source: &'static str,
+        field: &'static str,
+        units: &'static str,
+        warnings: &'a [fem::Warning],
+        solver: &'static str,
+        shift: f64,
+        stats: ModalStats,
+    }
+    #[derive(serde::Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct ModalStats {
+        dofs: u32,
+        free_dofs: u32,
+        nodes: u32,
+        elements: u32,
+        modes: u32,
+        iterations: u32,
+        residual: f64,
+        assembly_ms: f64,
+        solve_ms: f64,
+        factor_entries: u32,
+        ms: f64,
+    }
+    let wire = Wire {
+        source: "modal",
+        field: "mode",
+        units: "1",
+        warnings,
+        solver: "lobpcg",
+        shift: output.shift,
+        stats: ModalStats {
+            dofs: output.dofs as u32,
+            free_dofs: output.free_dofs as u32,
+            nodes: n_nodes as u32,
+            elements: n_elem as u32,
+            modes: output.frequencies_hz.len() as u32,
+            iterations: output.iterations as u32,
+            residual: output.residual,
+            assembly_ms: output.assembly_secs * 1.0e3,
+            solve_ms: output.solve_secs * 1.0e3,
+            factor_entries: output.factor_entries.min(u32::MAX as usize) as u32,
+            ms: elapsed,
+        },
+    };
+    let value = serde_wasm_bindgen::to_value(&wire).map_err(|err| js_err(&err.to_string()))?;
+    attach_f64(&value, "frequenciesHz", &output.frequencies_hz)?;
+    attach_f64(&value, "effectiveMass", &output.effective_mass)?;
+    attach_f64(&value, "modes", translations)?;
+    Ok(value)
+}
+
+fn translational_modes(modes: &[f64], n_nodes: usize, dof_per_node: usize, k: usize) -> Vec<f64> {
+    let mut out = vec![0.0; k * n_nodes * 3];
+    for mode in 0..k {
+        for node in 0..n_nodes {
+            for axis in 0..3 {
+                let src = mode * n_nodes * dof_per_node + node * dof_per_node + axis;
+                out[(mode * n_nodes + node) * 3 + axis] = modes[src];
+            }
+        }
+    }
+    out
+}
+
+fn read_density(material: &JsValue) -> Result<f64, fem::FemError> {
+    if material.is_null() || material.is_undefined() || !has_field(material, "density_kg_m3") {
+        return Err(fem::FemError::BadMaterial(
+            "material.density_kg_m3 must be a finite number greater than 0 (kg/m³)".into(),
+        ));
+    }
+    let density = object_number(material, "density_kg_m3")?;
+    if !(density.is_finite() && density > 0.0) {
+        return Err(fem::FemError::BadMaterial(
+            "material.density_kg_m3 must be a finite number greater than 0 (kg/m³)".into(),
+        ));
+    }
+    Ok(density)
+}
+
+fn read_mode_count(options: &JsValue) -> Result<usize, fem::FemError> {
+    if options.is_null() || options.is_undefined() || !has_field(options, "modes") {
+        return Ok(fem::DEFAULT_MODES);
+    }
+    let modes = object_number(options, "modes")?;
+    if !(modes.is_finite() && modes >= 1.0 && modes <= 64.0) {
+        return Err(fem::FemError::BadLoad(
+            "options.modes must be an integer from 1 to 64".into(),
+        ));
+    }
+    Ok(modes as usize)
+}
+
+fn read_modal_solid_bcs(
+    bcs: &JsValue,
+    n_nodes: usize,
+) -> Result<(Vec<Dirichlet>, Vec<NodalForce>, Vec<FacePressure>), fem::FemError> {
+    if bcs.is_null() || bcs.is_undefined() {
+        return Ok((Vec::new(), Vec::new(), Vec::new()));
+    }
+    read_bcs(bcs, n_nodes)
+}
+
+fn read_modal_shell_bcs(
+    bcs: &JsValue,
+    n_nodes: usize,
+    n_elem: usize,
+) -> Result<(Vec<Dirichlet>, Vec<NodalForce>, Vec<ShellPressure>), fem::FemError> {
+    if bcs.is_null() || bcs.is_undefined() {
+        return Ok((Vec::new(), Vec::new(), Vec::new()));
+    }
+    read_shell_bcs(bcs, n_nodes, n_elem)
+}
+
 fn fem_failure(err: fem::FemError) -> JsValue {
     js_err(&err.to_string())
 }

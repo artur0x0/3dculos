@@ -62,6 +62,51 @@ export function bindStressField(geometry, nodal, faceIDs) {
   return { geometry, byFace };
 }
 
+/**
+ * `vectors` is xyzxyz… per render vertex, the same indexing as a stress
+ * field. Each corner stores the three components.
+ */
+export function bindVectorField(geometry, vectors, faceIDs) {
+  if (!geometry || !(vectors instanceof Float32Array)) return null;
+  const index = indexArray(geometry);
+  const faces = faceArray(geometry, faceIDs);
+  if (!index?.length || !faces?.length) return null;
+  const byFace = new Map();
+  const triangles = Math.floor(Math.min(index.length, faces.length * 3) / 3);
+  for (let t = 0; t < triangles; t++) {
+    const face = faceKey(faces[t]);
+    if (face == null) continue;
+    let bucket = byFace.get(face);
+    if (!bucket) {
+      bucket = new Map();
+      byFace.set(face, bucket);
+    }
+    for (let k = 0; k < 3; k++) {
+      const vertex = index[t * 3 + k];
+      const base = vertex * 3;
+      const x = vectors[base];
+      const y = vectors[base + 1];
+      const z = vectors[base + 2];
+      bucket.set(vertex, [
+        Number.isFinite(x) ? x : 0,
+        Number.isFinite(y) ? y : 0,
+        Number.isFinite(z) ? z : 0,
+      ]);
+    }
+  }
+  if (!byFace.size) return null;
+  return { geometry, byFace };
+}
+
+export function vectorAt(field, faceID, vertexIndex) {
+  if (!field?.byFace) return null;
+  const face = faceKey(faceID);
+  if (face == null) return null;
+  const bucket = field.byFace.get(face);
+  if (!bucket || !bucket.has(vertexIndex)) return null;
+  return bucket.get(vertexIndex);
+}
+
 /** Von Mises in MPa for one corner, or NaN when that face does not own the vertex. */
 export function stressAt(field, faceID, vertexIndex) {
   if (!field?.byFace) return NaN;

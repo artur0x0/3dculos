@@ -8,11 +8,132 @@ use super::FemError;
 use faer::dyn_stack::{MemBuffer, MemStack};
 use faer::mat::AsMatMut;
 use faer::sparse::linalg::cholesky::{
-    factorize_symbolic_cholesky, CholeskySymbolicParams, SymbolicCholeskyRaw, SymmetricOrdering,
+    factorize_symbolic_cholesky, CholeskySymbolicParams, LltRef, SymbolicCholesky,
+    SymbolicCholeskyRaw, SymmetricOrdering,
 };
 use faer::sparse::linalg::SupernodalThreshold;
 use faer::sparse::{SparseColMat, SymbolicSparseColMat};
 use faer::{Conj, Mat, Par, Side};
+
+/// Supernodal Cholesky factor of one symmetric positive-definite matrix.
+///
+/// Built once and then applied to many right-hand sides. Modal analysis uses
+/// it as the shift-invert operator. The static solver uses one solve.
+pub struct SupernodalFactor {
+    symbolic: SymbolicCholesky<usize>,
+    values: Vec<f64>,
+    scratch: MemBuffer,
+}
+
+impl SupernodalFactor {
+    pub fn factorize(matrix: &LowerCsc) -> Result<Self, FemError> {
+        let n = matrix.n;
+        let symbolic = SymbolicSparseColMat::<usize>::new_checked(
+            n,
+            n,
+            matrix.col_ptr.clone(),
+            None,
+            matrix.row_idx.clone(),
+        );
+        let mat = SparseColMat::<usize, f64>::new(symbolic, matrix.values.clone());
+        let params = CholeskySymbolicParams {
+            supernodal_flop_ratio_threshold: SupernodalThreshold::FORCE_SUPERNODAL,
+            ..CholeskySymbolicParams::default()
+        };
+        let mut symbolic = factorize_symbolic_cholesky(
+            mat.symbolic(),
+            Side::Lower,
+            SymmetricOrdering::Amd,
+            params,
+        )
+        .map_err(|err| FemError::Solver(format!("symbolic Cholesky failed: {err}")))?;
+        // AMD's flop estimate is zero on a diagonal pattern, and faer then
+        // keeps a simplicial factor even when the threshold asks for a
+        // supernode. Identity ordering counts the same pattern and selects
+        // the supernodal factor. Meshes with fill stay on AMD.
+        if !matches!(symbolic.raw(), SymbolicCholeskyRaw::Supernodal(_)) {
+            symbolic = factorize_symbolic_cholesky(
+                mat.symbolic(),
+                Side::Lower,
+                SymmetricOrdering::Identity,
+                params,
+            )
+            .map_err(|err| FemError::Solver(format!("symbolic Cholesky failed: {err}")))?;
+        }
+        if !matches!(symbolic.raw(), SymbolicCholeskyRaw::Supernodal(_)) {
+            return Err(FemError::Solver(
+                "faer selected a simplicial factor; this solver requires the supernodal Cholesky"
+                    .into(),
+            ));
+        }
+        let mut values = vec![0.0; symbolic.len_val()];
+        let par = Par::Seq;
+        let scratch = symbolic.factorize_numeric_llt_scratch::<f64>(par, Default::default());
+        let mut buffer = MemBuffer::try_new(scratch)
+            .map_err(|_| FemError::Solver("not enough memory for the Cholesky factor".into()))?;
+        {
+            let mut stack = MemStack::new(&mut buffer);
+            symbolic
+                .factorize_numeric_llt(
+                    &mut values,
+                    mat.as_ref(),
+                    Side::Lower,
+                    Default::default(),
+                    par,
+                    &mut stack,
+                    Default::default(),
+                )
+                .map_err(|err| {
+                    FemError::NotSpd(format!(
+                        "supernodal Cholesky failed ({err}); the system is not positive definite, which usually means a rigid-body mode is still free"
+                    ))
+                })?;
+        }
+        let solve_scratch = symbolic.solve_in_place_scratch::<f64>(1, par);
+        let scratch = MemBuffer::try_new(solve_scratch)
+            .map_err(|_| FemError::Solver("not enough memory for the Cholesky solve".into()))?;
+        Ok(Self {
+            symbolic,
+            values,
+            scratch,
+        })
+    }
+
+    /// Number of stored factor entries. Eight bytes each, plus the index.
+    pub fn value_count(&self) -> usize {
+        self.values.len()
+    }
+
+    pub fn solve_into(&mut self, rhs: &[f64], out: &mut [f64]) -> Result<(), FemError> {
+        let n = rhs.len();
+        if out.len() != n || self.symbolic.nrows() != n {
+            return Err(FemError::Solver(
+                "Cholesky right-hand side does not match the factor".into(),
+            ));
+        }
+        let mut rhs_mat = Mat::<f64>::from_fn(n, 1, |i, _| rhs[i]);
+        let par = Par::Seq;
+        {
+            let SupernodalFactor {
+                symbolic,
+                values,
+                scratch,
+            } = self;
+            let llt = LltRef::new(symbolic, values);
+            let mut stack = MemStack::new(scratch);
+            llt.solve_in_place_with_conj(Conj::No, rhs_mat.as_mat_mut(), par, &mut stack);
+        }
+        for i in 0..n {
+            out[i] = rhs_mat[(i, 0)];
+            if !out[i].is_finite() {
+                return Err(FemError::Solver(
+                    "Cholesky produced a non-finite vector".into(),
+                ));
+            }
+        }
+        Ok(())
+    }
+}
 
 pub fn supernodal_cholesky(matrix: &LowerCsc, rhs: &[f64]) -> Result<Vec<f64>, FemError> {
     let n = matrix.n;
@@ -21,67 +142,9 @@ pub fn supernodal_cholesky(matrix: &LowerCsc, rhs: &[f64]) -> Result<Vec<f64>, F
             "Cholesky right-hand side does not match the matrix".into(),
         ));
     }
-    let symbolic = SymbolicSparseColMat::<usize>::new_checked(
-        n,
-        n,
-        matrix.col_ptr.clone(),
-        None,
-        matrix.row_idx.clone(),
-    );
-    let mat = SparseColMat::<usize, f64>::new(symbolic, matrix.values.clone());
-    let params = CholeskySymbolicParams {
-        supernodal_flop_ratio_threshold: SupernodalThreshold::FORCE_SUPERNODAL,
-        ..CholeskySymbolicParams::default()
-    };
-    let symbolic =
-        factorize_symbolic_cholesky(mat.symbolic(), Side::Lower, SymmetricOrdering::Amd, params)
-            .map_err(|err| FemError::Solver(format!("symbolic Cholesky failed: {err}")))?;
-    if !matches!(symbolic.raw(), SymbolicCholeskyRaw::Supernodal(_)) {
-        return Err(FemError::Solver(
-            "faer selected a simplicial factor; this solver requires the supernodal Cholesky"
-                .into(),
-        ));
-    }
-    let mut values = vec![0.0; symbolic.len_val()];
-    let par = Par::Seq;
-    let scratch = symbolic.factorize_numeric_llt_scratch::<f64>(par, Default::default());
-    let mut buffer = MemBuffer::try_new(scratch)
-        .map_err(|_| FemError::Solver("not enough memory for the Cholesky factor".into()))?;
-    let llt = {
-        let mut stack = MemStack::new(&mut buffer);
-        symbolic.factorize_numeric_llt(
-            &mut values,
-            mat.as_ref(),
-            Side::Lower,
-            Default::default(),
-            par,
-            &mut stack,
-            Default::default(),
-        )
-    }
-    .map_err(|err| {
-        FemError::NotSpd(format!(
-            "supernodal Cholesky failed ({err}); the system is not positive definite, which usually means a rigid-body mode is still free"
-        ))
-    })?;
-
-    let mut rhs_mat = Mat::<f64>::from_fn(n, 1, |i, _| rhs[i]);
-    let solve_scratch = symbolic.solve_in_place_scratch::<f64>(1, par);
-    let mut solve_buffer = MemBuffer::try_new(solve_scratch)
-        .map_err(|_| FemError::Solver("not enough memory for the Cholesky solve".into()))?;
-    {
-        let mut stack = MemStack::new(&mut solve_buffer);
-        llt.solve_in_place_with_conj(Conj::No, rhs_mat.as_mat_mut(), par, &mut stack);
-    }
+    let mut factor = SupernodalFactor::factorize(matrix)?;
     let mut out = vec![0.0; n];
-    for i in 0..n {
-        out[i] = rhs_mat[(i, 0)];
-        if !out[i].is_finite() {
-            return Err(FemError::Solver(
-                "Cholesky produced a non-finite displacement".into(),
-            ));
-        }
-    }
+    factor.solve_into(rhs, &mut out)?;
     Ok(out)
 }
 

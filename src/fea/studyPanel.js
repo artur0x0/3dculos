@@ -175,6 +175,13 @@ export function studyWithMaterialId(study, id) {
   return patched(study, { material: { id } });
 }
 
+export function studyWithType(study, type) {
+  if (type !== 'linear-static' && type !== 'modal') {
+    return { ok: false, errors: ['study.type must be "linear-static" or "modal"'], study: null };
+  }
+  return patched(study, { type });
+}
+
 export function studyWithCustomMaterial(study, custom) {
   const material = {
     E_MPa: Number(custom.E_MPa),
@@ -183,6 +190,8 @@ export function studyWithCustomMaterial(study, custom) {
   };
   const name = typeof custom.name === 'string' ? custom.name.trim() : '';
   if (name) material.name = name;
+  const density = Number(custom.density_kg_m3);
+  if (density > 0) material.density_kg_m3 = density;
   return patched(study, { material });
 }
 
@@ -273,6 +282,20 @@ export function highlightIndicesForStudy(fingerprints, study) {
   return indices;
 }
 
+function requireModalDensity(study, resolved) {
+  if (study?.type !== 'modal') return resolved;
+  if (!(resolved.material?.density_kg_m3 > 0)) {
+    return {
+      ok: false,
+      errors: ['A modal study needs a material density (kg/m³).'],
+      material: null,
+      assumptions: [],
+      warnings: [],
+    };
+  }
+  return resolved;
+}
+
 export function solverRequestMaterial(study) {
   const material = study?.material;
   if (!material) return { ok: false, errors: ['Pick a material'], material: null, assumptions: [], warnings: [] };
@@ -280,21 +303,26 @@ export function solverRequestMaterial(study) {
     try {
       const eff = effectiveMaterial(material.id);
       const entry = getMaterial(material.id);
-      return {
+      return requireModalDensity(study, {
         ok: true,
         errors: [],
-        material: { E_MPa: eff.E_MPa, nu: eff.nu, yield_MPa: eff.yield_MPa },
+        material: {
+          E_MPa: eff.E_MPa,
+          nu: eff.nu,
+          yield_MPa: eff.yield_MPa,
+          density_kg_m3: eff.density_kg_m3,
+        },
         assumptions: eff.assumptions || [],
         warnings: eff.warnings || [],
         anisotropic: entry?.anisotropic === true,
-      };
+      });
     } catch (err) {
       return { ok: false, errors: [err.message], material: null, assumptions: [], warnings: [] };
     }
   }
   const custom = studyWithCustomMaterial(defaultStudy(), material);
   if (!custom.ok) return { ok: false, errors: custom.errors, material: null, assumptions: [], warnings: [] };
-  return {
+  const resolved = {
     ok: true,
     errors: [],
     material: {
@@ -306,6 +334,10 @@ export function solverRequestMaterial(study) {
     warnings: [],
     anisotropic: false,
   };
+  if (custom.study.material.density_kg_m3 > 0) {
+    resolved.material.density_kg_m3 = custom.study.material.density_kg_m3;
+  }
+  return requireModalDensity(study, resolved);
 }
 
 function trimNum(value) {

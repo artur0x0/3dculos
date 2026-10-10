@@ -293,10 +293,14 @@ export function effectiveMaterial(id) {
       msg: `${entry.name}: yield strength is not on the cited datasheet, so the safety factor is null`,
     });
   }
+  if (!(typeof entry.density_kg_m3 === 'number' && entry.density_kg_m3 > 0)) {
+    throw new Error(`${entry.id}: density_kg_m3 is unset`);
+  }
   return {
     E_MPa: entry.E_MPa,
     nu,
     yield_MPa: entry.yield_MPa == null ? null : entry.yield_MPa,
+    density_kg_m3: entry.density_kg_m3,
     assumptions,
     warnings,
   };

@@ -7,6 +7,24 @@ export function capabilities(): any;
 
 export function dispose(): void;
 
+/**
+ * Lowest natural frequencies of a MITC6 shell mesh.
+ *
+ * Same contract as `modal_tet10`. `modes` contains the translational
+ * components only (`ux, uy, uz` per node). Rotary inertia is in the solve.
+ */
+export function modal_shell(mesh: any, material: any, bcs: any, options: any): any;
+
+/**
+ * Lowest natural frequencies of a TET10 mesh.
+ *
+ * `material.density_kg_m3` is required. `options.modes` defaults to 6.
+ * Fixtures are homogeneous. Forces and pressures are ignored and reported
+ * in `warnings`. `modes` is the translational mode shape, mode-major,
+ * `ux, uy, uz` per node, scaled so the largest component is 1.
+ */
+export function modal_tet10(mesh: any, material: any, bcs: any, options: any): any;
+
 export function solve(study: any, positions: Float32Array, indices: Uint32Array, face_ids: Uint32Array, material: any, profile: string): any;
 
 /**
@@ -62,6 +80,8 @@ export interface InitOutput {
     readonly cancel: () => void;
     readonly capabilities: (a: number) => void;
     readonly dispose: () => void;
+    readonly modal_shell: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly modal_tet10: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly solve: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number) => void;
     readonly solve_shell: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly solve_tet10: (a: number, b: number, c: number, d: number, e: number) => void;

@@ -124,6 +124,7 @@ test('effectiveMaterial fills an assumed Poisson ratio and leaves a missing yiel
     E_MPa: 68900,
     nu: 0.33,
     yield_MPa: 276,
+    density_kg_m3: 2700,
     assumptions: [],
     warnings: [],
   });

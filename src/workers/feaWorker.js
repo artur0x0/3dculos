@@ -138,6 +138,8 @@ self.onmessage = async (event) => {
           fallback: msg.fallback,
           solveTet10: fea.solve_tet10,
           solveShell: fea.solve_shell,
+          modalTet10: fea.modal_tet10,
+          modalShell: fea.modal_shell,
           solveStub: fea.solve,
           sheetSpec: msg.sheetSpec || null,
           cache: meshCache,
@@ -171,7 +173,7 @@ self.onmessage = async (event) => {
         noteMemory(null);
         if (result && result.stats) result.stats.peakMemoryBytes = peakBytes;
         const transfers = [];
-        for (const key of ['nodal', 'displacement']) {
+        for (const key of ['nodal', 'displacement', 'modeMagnitudes', 'modeVectors']) {
           const buffer = ownFloat32(result, key);
           if (buffer) transfers.push(buffer);
         }

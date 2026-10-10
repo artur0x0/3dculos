@@ -174,6 +174,24 @@ export function sampleSurfaceStress(positions, indices, faceIDs, mesh, vonMises)
  * vertex. The vector is interpolated, then its length is taken, on the
  * same closest face as stress. Vertices that no boundary face owns stay NaN.
  */
+/**
+ * Same closest-face interpolation as the displacement magnitude, stored as
+ * xyzxyz… at each render vertex. Unmatched vertices stay NaN.
+ */
+export function sampleSurfaceVector(positions, indices, faceIDs, mesh, displacement) {
+  const count = positions ? positions.length / 3 : 0;
+  const out = new Float32Array(count * 3);
+  out.fill(NaN);
+  if (!positions || !displacement || !count) return out;
+  for (let axis = 0; axis < 3; axis += 1) {
+    const component = sampleVertices(positions, indices, faceIDs, mesh, (ids) => (
+      [0, 1, 2, 3, 4, 5].map((k) => displacement[ids[k] * 3 + axis])
+    ), (sample, bary) => interpolate(bary, sample));
+    for (let vertex = 0; vertex < count; vertex += 1) out[vertex * 3 + axis] = component[vertex];
+  }
+  return out;
+}
+
 export function sampleSurfaceDisplacement(positions, indices, faceIDs, mesh, displacement) {
   if (!positions || !displacement) return new Float32Array();
   return sampleVertices(positions, indices, faceIDs, mesh, (ids) => {

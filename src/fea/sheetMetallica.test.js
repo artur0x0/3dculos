@@ -229,6 +229,31 @@ describe('sheet metallica bracket', { concurrency: 1 }, () => {
       if (profile === 'desktop') desktop = result;
       console.log(`${profile} shell dofs ${result.stats.dofs} mesh ${result.stats.meshMs} ms solve ${result.stageTimings.solving} ms max ${result.max.toFixed(2)} MPa p95 ${result.p95.toFixed(2)} u ${result.displacementMax.toFixed(3)} mm ${timing}`);
     }
+    const modal = await solveSolid({
+      study: { ...expanded, type: 'modal' },
+      positions: surface.positions,
+      indices: surface.indices,
+      faceIDs: surface.faceIDs,
+      material: { ...aluminum, density_kg_m3: 2700 },
+      profile: 'desktop',
+      sheetSpec: spec,
+      solveShell: fea.solve_shell,
+      modalShell: fea.modal_shell,
+      solveTet10: fea.solve_tet10,
+      solveStub: fea.solve,
+      cache,
+    });
+    assert.equal(modal.source, 'modal');
+    assert.equal(modal.field, 'mode');
+    assert.equal(modal.solver, 'lobpcg');
+    assert.equal(modal.rescaled, false);
+    assert.ok(modal.frequenciesHz[0] > 1, `sheet frequency ${modal.frequenciesHz[0]}`);
+    assert.equal(modal.displacement.length, surface.positions.length / 3);
+    assert.equal(modal.modeMagnitudes.length, modal.frequenciesHz.length * modal.displacement.length);
+    assert.ok(modal.warnings.some((warning) => warning.code === 'modal-loads'));
+    assert.equal(modal.meshReused, true);
+    console.log(`sheet modal f1 ${modal.frequenciesHz[0].toFixed(2)} Hz dofs ${modal.stats.dofs} solve ${modal.stats.solveMs} ms`);
+
     const softer = await solveSolid({
       study: expanded,
       positions: surface.positions,

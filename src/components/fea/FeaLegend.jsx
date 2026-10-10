@@ -31,6 +31,8 @@ function DisplacementLegend({ result }) {
   const ticks = scale ? displacementTicks(scale, 5) : [];
   const min = formatMm(result.displacementMin);
   const max = formatMm(result.displacementMax);
+  const mode = result.field === 'mode' || result.source === 'modal';
+  const unit = mode ? '' : ' mm';
   return (
     <div
       data-fea-summary=""
@@ -44,7 +46,7 @@ function DisplacementLegend({ result }) {
         data-fea-legend-bar=""
         className="h-2 w-full rounded"
         style={{ background: scale ? displacementGradientCss(scale) : 'rgb(128, 128, 128)' }}
-        title={scale ? `${min} to ${max} mm` : 'displacement'}
+        title={scale ? `${min} to ${max}${unit}` : 'displacement'}
       />
       {ticks.length > 0 && (
         <div
@@ -57,7 +59,7 @@ function DisplacementLegend({ result }) {
         </div>
       )}
       <div className="text-[12px] text-cyan-50" data-fea-displacement="">
-        min {min} mm · max {max} mm
+        min {min}{unit} · max {max}{unit}
       </div>
     </div>
   );

@@ -2,7 +2,7 @@
 //! failure log shows the percentage, not only the assertion.
 
 use super::{
-    clamp_node, consistent_traction, cross, element_matrices, pin_node, plane_stress,
+    clamp_node, consistent_traction, cross, element_matrices, modal_shell, pin_node, plane_stress,
     shell_solve_options, solve_shell, ShellOutput, ShellPressure, NDOF, NEN, SHELL_DOF_PER_NODE,
 };
 use crate::fem::{range_and_p95, Dirichlet, Material, NodalForce, SolverUsed};
@@ -575,6 +575,61 @@ fn shear_locking_stays_bounded_from_one_tenth_to_one_thousandth() {
         assert!(
             err < 0.05,
             "thickness ratio {ratio} locked or drifted, error {:.3}%",
+            err * 100.0
+        );
+    }
+}
+
+/// Simply supported square plate versus Leissa / Navier.
+///
+/// λ = ω a² √(ρ t / D) = π² (m² + n²). The first three are 19.7392 and a
+/// repeated 49.3480 (Leissa, NASA SP-160). Edges are pinned: translations
+/// fixed, rotations free, which is the Kirchhoff simple support.
+#[test]
+fn simply_supported_square_plate_matches_leissa() {
+    let cells = 16;
+    let side = 100.0;
+    let thickness = 1.0;
+    let mesh = plate_shell(cells, cells, side, side);
+    let nu = 0.3;
+    let young = 210_000.0;
+    let density = 7800.0;
+    let mut dirichlet = Vec::new();
+    for (i, p) in mesh.nodes.iter().enumerate() {
+        let on_edge = p[0].abs() <= 1e-8
+            || (p[0] - side).abs() <= 1e-8
+            || p[1].abs() <= 1e-8
+            || (p[1] - side).abs() <= 1e-8;
+        if on_edge {
+            pin_node(i as u32, &mut dirichlet);
+        }
+    }
+    let thick = vec![thickness; mesh.elements.len()];
+    let out = modal_shell(
+        &mesh.nodes,
+        &mesh.elements,
+        &thick,
+        steel(nu),
+        density,
+        &dirichlet,
+        3,
+    )
+    .unwrap();
+    let flexural = plate_flexural(young, nu, thickness);
+    let rho_t = density * 1.0e-12 * thickness;
+    let to_hz = |lambda: f64| {
+        let omega = lambda * (flexural / rho_t).sqrt() / (side * side);
+        omega / (2.0 * std::f64::consts::PI)
+    };
+    let pi2 = std::f64::consts::PI * std::f64::consts::PI;
+    let expected = [to_hz(2.0 * pi2), to_hz(5.0 * pi2), to_hz(5.0 * pi2)];
+    assert_eq!(out.frequencies_hz.len(), 3);
+    for (i, (got, exact)) in out.frequencies_hz.iter().zip(expected).enumerate() {
+        let err = report(&format!("simply supported plate mode {}", i + 1), *got, exact);
+        assert!(
+            err < 0.03,
+            "Leissa mode {} error {:.3}%",
+            i + 1,
             err * 100.0
         );
     }

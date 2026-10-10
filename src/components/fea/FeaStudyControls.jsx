@@ -41,10 +41,28 @@ export function FeaTabs({ options, value, onChange, groupAttr, itemAttr }) {
   );
 }
 
+const STUDY_TYPES = [
+  { value: 'linear-static', label: 'Static' },
+  { value: 'modal', label: 'Modal' },
+];
+
 export function FeaStudyControls({ panel }) {
   const draft = panel.draft || {};
+  const studyType = panel.study?.type === 'modal' ? 'modal' : 'linear-static';
   return (
     <>
+      <FeaTabs
+        options={STUDY_TYPES}
+        value={studyType}
+        onChange={panel.setStudyType}
+        groupAttr="data-fea-study-types"
+        itemAttr="data-fea-study-type"
+      />
+      {studyType === 'modal' && (
+        <p className="text-[11px] text-cyan-100/80" data-fea-modal-note="">
+          Loads are ignored. A modal study uses fixtures only.
+        </p>
+      )}
       <FeaMaterialPicker
         study={panel.study}
         draft={draft}
@@ -197,20 +215,70 @@ function showLegend(panel) {
 }
 
 /** Results readout. Scrolls in the card body so Stage times cannot cover Back to Setup. */
+function ModeList({ panel }) {
+  const frequencies = panel.result?.frequenciesHz || [];
+  const mass = panel.result?.effectiveMass || [];
+  const selected = panel.modeIndex || 0;
+  return (
+    <div className="flex flex-col gap-1" data-fea-modes="">
+      {frequencies.map((hz, index) => {
+        const fx = mass[index * 3];
+        const fy = mass[index * 3 + 1];
+        const fz = mass[index * 3 + 2];
+        const title = [fx, fy, fz].every((value) => Number.isFinite(value))
+          ? `effective mass ${fx.toFixed(2)} ${fy.toFixed(2)} ${fz.toFixed(2)}`
+          : undefined;
+        return (
+          <button
+            key={index}
+            type="button"
+            data-fea-mode={index}
+            data-fea-frequency={hz}
+            title={title}
+            aria-pressed={selected === index}
+            onClick={() => panel.setMode?.(index)}
+            className={`rounded px-2 py-1 text-left text-[13px] tabular-nums ${
+              selected === index
+                ? 'bg-cyan-600 text-white'
+                : 'border border-cyan-700/70 bg-cyan-950/80 text-cyan-100'
+            }`}
+          >
+            Mode {index + 1}: {Number(hz).toFixed(1)} Hz
+          </button>
+        );
+      })}
+      <label className="flex items-center gap-1.5 text-[12px] text-cyan-100">
+        <input
+          type="checkbox"
+          data-fea-animate=""
+          checked={panel.animate === true}
+          onChange={(event) => panel.setAnimate?.(event.target.checked)}
+        />
+        Animate
+      </label>
+    </div>
+  );
+}
+
 export function FeaResultsReadout({ panel }) {
   if (panel.results !== true) return null;
   const plot = activePlot(panel.plot);
+  const modal = panel.result?.source === 'modal';
   return (
     <div className="mt-1.5 flex flex-col gap-1 font-sans">
-      <FeaTabs
-        options={PLOT_TABS}
-        value={plot}
-        onChange={panel.setPlot}
-        groupAttr="data-fea-plots"
-        itemAttr="data-fea-plot"
-      />
+      {modal ? (
+        <ModeList panel={panel} />
+      ) : (
+        <FeaTabs
+          options={PLOT_TABS}
+          value={plot}
+          onChange={panel.setPlot}
+          groupAttr="data-fea-plots"
+          itemAttr="data-fea-plot"
+        />
+      )}
       {showLegend(panel) && (
-        <FeaLegend result={panel.result} preview={panel.preview} plot={plot} />
+        <FeaLegend result={panel.result} preview={panel.preview} plot={modal ? 'displacement' : plot} />
       )}
       {!panel.running && <FeaTiming report={panel.runReport} />}
     </div>
