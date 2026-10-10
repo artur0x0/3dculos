@@ -7,8 +7,11 @@
 // boundary mids back onto the input surface, and copies each boundary face's
 // face id from the nearest input triangle. A snap that folds a quadratic tet
 // (non-positive Jacobian at a Gauss point or a corner) is rolled back to the
-// straight-edge midpoint, shared by every element on that edge. Elements that
-// stay folded fail here, during meshing.
+// straight-edge midpoint, shared by every element on that edge. If a few
+// elements are still folded, their mid-edge nodes are reset to the chord
+// midpoint (linear geometry). If any remain folded, the surface is meshed
+// once more with a slightly longer edge. Elements that stay folded after
+// both attempts fail here, during meshing.
 //
 // The module does not use shared memory. solveSolid loads it on the first
 // Analyze run. A phone solve passes memoryCeilingBytes so the heap stops
@@ -422,6 +425,16 @@ const TET10_JACOBIAN_SAMPLES = [
 /** Solver treats |det| below this as a singular Jacobian. */
 const MIN_JACOBIAN = 1e-30;
 
+/**
+ * How many still-folded elements may drop back to linear edges. More than
+ * this means the tet mesh itself is wrong, so the caller remeshes instead of
+ * straightening a large part of the surface.
+ */
+export const INVERTED_TET_LINEAR_LIMIT = 4;
+
+/** Second mesh uses a 2% longer edge so a sliver tet is not repeated. */
+export const REMESH_EDGE_SCALE = 1.02;
+
 function nodeXYZ(nodes, index) {
   if (nodes instanceof Float64Array || nodes instanceof Float32Array) {
     return [nodes[index * 3], nodes[index * 3 + 1], nodes[index * 3 + 2]];
@@ -534,6 +547,95 @@ export function repairTet10Jacobians(nodes, elements, midMeta) {
     if (!jacobianAcceptable(tet10MinJacobian(nodes, elem))) invalid += 1;
   }
   return { invalid, rolled, passes: limit };
+}
+
+function invertedTetIndices(nodes, elements) {
+  const bad = [];
+  const nTets = elements.length / 10;
+  for (let t = 0; t < nTets; t += 1) {
+    const elem = elements.subarray(t * 10, t * 10 + 10);
+    if (!jacobianAcceptable(tet10MinJacobian(nodes, elem))) bad.push(t);
+  }
+  return bad;
+}
+
+/**
+ * Reset every mid-edge node of a still-folded element to the chord midpoint.
+ * Used after snapped mids have already been straightened, for the few
+ * elements whose remaining curve (or a mid that was never flagged) still
+ * folds the Jacobian. A tet that is flat at its corners stays invalid.
+ */
+export function linearizeInvertedTet10s(nodes, elements, midMeta) {
+  let linearized = 0;
+  const touched = new Set();
+  const limit = 4;
+  for (let pass = 0; pass < limit; pass += 1) {
+    const bad = invertedTetIndices(nodes, elements);
+    if (bad.length === 0) return { invalid: 0, linearized, passes: pass };
+    if (bad.length > INVERTED_TET_LINEAR_LIMIT) {
+      return { invalid: bad.length, linearized, passes: pass };
+    }
+    let moved = 0;
+    for (let i = 0; i < bad.length; i += 1) {
+      const base = bad[i] * 10;
+      for (let e = 0; e < TET_EDGES.length; e += 1) {
+        const [a, b, slot] = TET_EDGES[e];
+        const id = elements[base + slot];
+        const straight = scale(add(
+          nodeXYZ(nodes, elements[base + a]),
+          nodeXYZ(nodes, elements[base + b]),
+        ), 0.5);
+        const current = nodeXYZ(nodes, id);
+        if (length(sub(current, straight)) > 1e-12) {
+          writeNode(nodes, id, straight);
+          moved += 1;
+          if (!touched.has(id)) {
+            touched.add(id);
+            linearized += 1;
+          }
+        }
+        const meta = midMeta && midMeta.get(id);
+        if (meta) {
+          meta.straight = [straight[0], straight[1], straight[2]];
+          meta.snapped = false;
+        }
+      }
+    }
+    if (moved === 0) return { invalid: bad.length, linearized, passes: pass + 1 };
+  }
+  return { invalid: invertedTetIndices(nodes, elements).length, linearized, passes: limit };
+}
+
+function jacobianStopError(invalid) {
+  const noun = invalid === 1 ? 'element still has' : 'elements still have';
+  return new Error(
+    `Meshing stopped: ${invalid} TET10 ${noun} a non-positive Jacobian after straightening curved mid-edge nodes.`,
+  );
+}
+
+export function isJacobianStop(error) {
+  return error instanceof Error
+    && error.message.startsWith('Meshing stopped:')
+    && error.message.includes('non-positive Jacobian');
+}
+
+/**
+ * Options for the single remesh after linear mids still leave a folded tet.
+ * The target edge (and a sizing field, when present) grows by
+ * `REMESH_EDGE_SCALE`. The caller's options are not modified.
+ */
+export function perturbMeshOptions(surface, options = {}) {
+  const positions = asFloat64(surface && surface.positions);
+  const diag = bboxDiag(positions);
+  const requested = options.edgeLength ?? 0;
+  const base = requested > 0 ? requested : (diag > 0 ? diag / 20 : 0);
+  const edgeLength = base > 0 ? base * REMESH_EDGE_SCALE : requested;
+  let sizing = options.sizing;
+  if (sizing && sizing.values && typeof sizing.values.length === 'number' && sizing.values.length > 0) {
+    const values = Float64Array.from(sizing.values, (value) => value * REMESH_EDGE_SCALE);
+    sizing = { ...sizing, values };
+  }
+  return { ...options, edgeLength, sizing };
 }
 
 /**
@@ -720,11 +822,11 @@ function upgradeTet10(tet4Positions, tet4Tets, inputPositions, inputIndices, inp
   }
 
   const repair = repairTet10Jacobians(nodes, elements, midMeta);
+  let linearized = 0;
   if (repair.invalid > 0) {
-    const noun = repair.invalid === 1 ? 'element still has' : 'elements still have';
-    throw new Error(
-      `Meshing stopped: ${repair.invalid} TET10 ${noun} a non-positive Jacobian after straightening curved mid-edge nodes.`,
-    );
+    const linear = linearizeInvertedTet10s(nodes, elements, midMeta);
+    linearized = linear.linearized;
+    if (linear.invalid > 0) throw jacobianStopError(linear.invalid);
   }
 
   const flat = new Float64Array(nodes.length * 3);
@@ -740,6 +842,7 @@ function upgradeTet10(tet4Positions, tet4Tets, inputPositions, inputIndices, inp
     faceIds,
     flipped: oriented.flipped,
     rolled: repair.rolled,
+    linearized,
   };
 }
 
@@ -795,8 +898,12 @@ function qualityStats(nodes, elements) {
  * Boundary `faces` are 6-node triangles in the same order `solve_tet10` uses
  * for pressure: corners, then mid-edge nodes 01, 12, 20. The right-hand
  * normal of the corners points out of the solid.
+ *
+ * A folded tet that survives straightening and the linear-mid fallback is
+ * meshed once more with `perturbMeshOptions`. The error is raised only when
+ * that second mesh is folded too.
  */
-export async function meshVolume(surface, options = {}) {
+async function meshVolumeOnce(surface, options = {}) {
   const positions = asFloat64(surface.positions);
   const indices = asUint32(surface.indices);
   const faceIds = asUint32(surface.faceIds ?? surface.faceIDs ?? new Uint32Array(indices.length / 3));
@@ -866,11 +973,34 @@ export async function meshVolume(surface, options = {}) {
       positive: quality.positive,
       oriented: upgraded.flipped,
       straightenedMids: upgraded.rolled,
+      linearizedMids: upgraded.linearized,
       ms: Date.now() - started,
       wasmBytes,
       dofs: upgraded.nodes.length,
     },
   };
+}
+
+/** Run `attempt(false)`, and on a folded-tet stop run `attempt(true)` once. */
+export async function withJacobianRetry(attempt) {
+  try {
+    return await attempt(false);
+  } catch (error) {
+    if (!isJacobianStop(error)) throw error;
+    return attempt(true);
+  }
+}
+
+export async function meshVolume(surface, options = {}) {
+  const started = Date.now();
+  const mesh = await withJacobianRetry(async (remesh) => {
+    const opts = remesh ? perturbMeshOptions(surface, options) : options;
+    const built = await meshVolumeOnce(surface, opts);
+    if (remesh && built && built.stats) built.stats.remeshed = true;
+    return built;
+  });
+  if (mesh && mesh.stats) mesh.stats.ms = Date.now() - started;
+  return mesh;
 }
 
 /**

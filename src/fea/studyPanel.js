@@ -517,11 +517,11 @@ export function studyWithRefine(study, refine) {
   return patched(study, { mesh });
 }
 
-/** A new study. Phone defaults Refine to off; desktop defaults it to auto. */
+/** A new study. Hot-spot refine starts on for phone and desktop. */
 export function freshStudy(profile) {
   if (profile !== 'phone' && profile !== 'desktop') return defaultStudy();
   return defaultStudy({
-    mesh: { target: 'auto', refine: profile === 'phone' ? 'off' : 'auto' },
+    mesh: { target: 'auto', refine: 'auto' },
   });
 }
 

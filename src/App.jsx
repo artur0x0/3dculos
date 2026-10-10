@@ -111,6 +111,30 @@ import { catalogsFromRuns } from './utils/jointResolve';
 import { partPlacement } from './utils/jointSchema';
 import { refreshAssemblyJoints } from './joints/refreshJoints';
 import {
+  applyJointCard,
+  assemblyHistoryCanRedo,
+  assemblyHistoryCanUndo,
+  assemblyHistoryKey,
+  cadStripsShowJoints,
+  acceptJointPick,
+  cardFromJoint,
+  dismissJointEdit,
+  draftFromPicks,
+  emptyClickCadSelection,
+  jointChips,
+  jointsChromeMounted,
+  nextJointName,
+  pushAssemblyHistory,
+  redoJointStrip,
+  seedAssemblyHistory,
+  shouldArmJointPick,
+  stripRedoLabel,
+  stripUndoLabel,
+  undoJointStrip,
+} from './joints/jointUi';
+import JointCard from './components/JointModeChip';
+import { getDisplayUnit } from './utils/displayUnit';
+import {
   applyAssemblyOpenHold,
   createAssemblyOpenController,
   runTrackedAssemblyOpen,
@@ -466,6 +490,15 @@ const App = () => {
    * Game never opens it.
    */
   const [featureSheet, setFeatureSheet] = useState(null);
+  const [jointCard, setJointCard] = useState(null);
+  const jointCardRef = useRef(null);
+  const jointPicksRef = useRef([]);
+  const jointCatalogsRef = useRef({});
+  const jointLiveRef = useRef({ statuses: {}, messages: {} });
+  const [jointLive, setJointLive] = useState({ statuses: {}, messages: {} });
+  const assemblyHistoryRef = useRef(null);
+  const [assemblyHistTick, setAssemblyHistTick] = useState(0);
+  jointCardRef.current = jointCard;
   const closeFeatureSheet = () => {
     setFeatureSheet(null);
     setFeatureStripActiveId(null);
@@ -1766,10 +1799,18 @@ const App = () => {
     setPartRuns(partRunsRef.current);
   };
 
+  const syncAssemblyHistory = (doc) => {
+    const key = assemblyHistoryKey(doc);
+    if (assemblyHistoryRef.current?.key === key) return;
+    assemblyHistoryRef.current = { key, ...seedAssemblyHistory(doc) };
+    setAssemblyHistTick((tick) => tick + 1);
+  };
+
   const rememberAssembly = (doc, opts = {}) => {
     const clean = serializeAssembly(doc);
     assemblyRef.current = clean;
     setAssemblyDoc(clean);
+    syncAssemblyHistory(clean);
     // Reauth boot is read-only, but an explicit upload is a user write.
     if (!bootReadOnlyRef.current || opts.force) {
       assemblyDocPersistRef.current = saveAssemblyDocument(clean);
@@ -1935,7 +1976,10 @@ const App = () => {
         } catch (err) {
           console.warn('[App] joint re-resolve failed', err?.message || err);
         }
+        jointCatalogsRef.current = catalogs;
         const refreshed = refreshAssemblyJoints({ doc, catalogs });
+        jointLiveRef.current = { statuses: refreshed.statuses, messages: refreshed.messages };
+        setJointLive(jointLiveRef.current);
         if (refreshed.changed) placed = rememberAssembly(refreshed.doc);
       }
       const solids = composeViewportParts(placed, runs);
@@ -2043,6 +2087,8 @@ const App = () => {
   const handleSelectPart = (id, opts = {}) => {
     const doc = assemblyRef.current;
     if (!doc || id == null) return;
+    setJointCard(null);
+    jointPicksRef.current = [];
     rememberCadPart(id);
     const partNow = doc.parts.find((row) => row.id === id);
     if (id === doc.activeId) {
@@ -2124,6 +2170,25 @@ const App = () => {
 
   const handlePickRetarget = ({ partId, syncScript = false, kind = 'face' } = {}) => {
     if (!partId || !assemblyRef.current) return false;
+    if (shouldArmJointPick({
+      cadPartId: cadPartIdRef.current,
+      featureSession: featureSessionRef.current,
+      appMode: appModeRef.current,
+      kind,
+    })) {
+      const part = assemblyRef.current.parts.find((row) => row.id === partId);
+      const mesh = meshForPart(partId);
+      if (mesh?.vertProperties) {
+        viewportRef.current?.swapPickPart?.({
+          partId,
+          mesh,
+          position: partPosition(part) || [0, 0, 0],
+          placement: partPlacement(part),
+        });
+      }
+      rememberCadPart(null);
+      return true;
+    }
     rememberCadPart(partId);
     const part = assemblyRef.current.parts.find((row) => row.id === partId);
     if (part?.name) setCurrentFilename(part.name);
@@ -2160,7 +2225,11 @@ const App = () => {
     if (on && !featureSessionRef.current) focusWritePart(null);
     // One card. A tool (contour, fillet, …) cancels the edit card
     // without writing. The tool's own X / Confirm is the card that stays.
-    if (on) setFeatureSheet((cur) => (cur ? null : cur));
+    if (on) {
+      setFeatureSheet((cur) => (cur ? null : cur));
+      setJointCard(null);
+      jointPicksRef.current = [];
+    }
     featureSessionRef.current = on;
     setFeatureSession((prev) => (prev === on ? prev : on));
   };
@@ -5824,6 +5893,196 @@ const App = () => {
     return branch.head < branch.commits.length - 1;
   };
 
+  const paintAssemblyPoses = (doc) => {
+    const runs = partRunsRef.current || {};
+    const solids = composeViewportParts(doc, runs);
+    const leftovers = leftoverPickSolids(doc, runs, partLeftoversRef.current);
+    const viewId = doc?.activeId;
+    const activeVisible = doc?.parts?.find((row) => row.id === viewId)?.visible !== false;
+    const activeOk = !!(viewId && runs[viewId]?.ok === true && activeVisible);
+    viewportRef.current?.placeAssembly?.({
+      solids,
+      leftovers,
+      activeId: viewId,
+      blankActive: !activeOk,
+      failedIds: failedPartIdsFor(doc, runs),
+    });
+  };
+
+  const handleCadEmptyClick = () => {
+    if (featureSessionRef.current || appModeRef.current === 'game') return;
+    const next = emptyClickCadSelection({
+      cadPartId: cadPartIdRef.current,
+      activeId: assemblyRef.current?.activeId,
+      featureSession: false,
+    });
+    rememberCadPart(next.cadPartId);
+    jointPicksRef.current = [];
+    setJointCard((cur) => (cur?.mode === 'create' ? null : cur));
+  };
+
+  const handleJointPick = (raw) => {
+    const doc = assemblyRef.current;
+    if (!doc || !raw?.partId || jointCardRef.current?.mode === 'edit') return;
+    const part = doc.parts.find((row) => row.id === raw.partId);
+    if (!part?.surfId) {
+      viewportRef.current?.notify?.(raw && part ? 'This part has no surf id' : 'This part has no surf id');
+      rememberCadPart(null);
+      return;
+    }
+    if (!raw.key) return;
+    const pick = {
+      partId: part.id,
+      surfId: part.surfId,
+      partName: part.name || part.id,
+      kind: raw.kind,
+      planar: !!raw.planar,
+      axis: !!raw.axis,
+      key: raw.key,
+    };
+    const accepted = acceptJointPick(jointPicksRef.current, pick);
+    if (accepted.refuse && accepted.message) viewportRef.current?.notify?.(accepted.message);
+    jointPicksRef.current = accepted.picks;
+    rememberCadPart(null);
+    if (accepted.open) {
+      setJointCard((cur) => draftFromPicks(cur?.mode === 'create' ? cur : null, accepted.picks, {
+        joints: doc.joints || [],
+      }));
+    }
+  };
+
+  const handleJointCardChange = (next) => {
+    const doc = assemblyRef.current;
+    if (!next) return;
+    if (next.userPickedType && next.type && !next.userNamed) {
+      const named = nextJointName(next.type, doc?.joints || []);
+      setJointCard({ ...next, name: next.name && next.userNamed ? next.name : named });
+      return;
+    }
+    setJointCard(next);
+  };
+
+  const finishJointWrite = (result, scripts) => {
+    if (!result?.ok) {
+      if (result?.message) {
+        viewportRef.current?.notify?.(result.message);
+        setJointCard((cur) => (cur ? { ...cur, note: result.message } : cur));
+      }
+      return;
+    }
+    if (result.scripts !== scripts) return;
+    const before = assemblyRef.current;
+    const written = rememberAssembly(result.doc);
+    assemblyHistoryRef.current = {
+      key: assemblyHistoryRef.current?.key || assemblyHistoryKey(written),
+      ...pushAssemblyHistory(assemblyHistoryRef.current, before, written),
+    };
+    setAssemblyHistTick((tick) => tick + 1);
+    jointLiveRef.current = {
+      statuses: result.statuses || {},
+      messages: result.messages || {},
+    };
+    setJointLive(jointLiveRef.current);
+    paintAssemblyPoses(written);
+    jointPicksRef.current = [];
+    setJointCard(null);
+  };
+
+  const handleJointConfirm = () => {
+    const doc = assemblyRef.current;
+    const card = jointCardRef.current;
+    if (!doc || !card) return;
+    const scripts = partScriptsRef.current;
+    const locked = !!assemblyOpenLockRef.current;
+    const result = applyJointCard({
+      doc,
+      scripts,
+      card,
+      action: 'confirm',
+      locked,
+      preempt: null,
+      catalogs: jointCatalogsRef.current,
+    });
+    if (locked) {
+      viewportRef.current?.notify?.(result.message);
+      return;
+    }
+    finishJointWrite(result, scripts);
+  };
+
+  const handleJointDelete = () => {
+    const doc = assemblyRef.current;
+    const card = jointCardRef.current;
+    if (!doc || !card || card.mode !== 'edit') return;
+    const scripts = partScriptsRef.current;
+    const locked = !!assemblyOpenLockRef.current;
+    const result = applyJointCard({
+      doc,
+      scripts,
+      card,
+      action: 'delete',
+      locked,
+      preempt: null,
+      catalogs: jointCatalogsRef.current,
+    });
+    if (locked) {
+      viewportRef.current?.notify?.(result.message);
+      return;
+    }
+    finishJointWrite(result, scripts);
+  };
+
+  const handleJointCancel = () => {
+    dismissJointEdit(assemblyRef.current);
+    jointPicksRef.current = [];
+    setJointCard(null);
+  };
+
+  const handleJointUndo = () => {
+    const doc = assemblyRef.current;
+    const scripts = partScriptsRef.current;
+    const step = undoJointStrip({
+      history: assemblyHistoryRef.current,
+      doc,
+      scripts,
+    });
+    if (!step.changed || step.scripts !== scripts) return;
+    assemblyHistoryRef.current = {
+      key: assemblyHistoryRef.current?.key,
+      ...step.history,
+    };
+    const written = rememberAssembly(step.doc);
+    setAssemblyHistTick((tick) => tick + 1);
+    paintAssemblyPoses(written);
+  };
+
+  const handleJointRedo = () => {
+    const doc = assemblyRef.current;
+    const scripts = partScriptsRef.current;
+    const step = redoJointStrip({
+      history: assemblyHistoryRef.current,
+      doc,
+      scripts,
+    });
+    if (!step.changed || step.scripts !== scripts) return;
+    assemblyHistoryRef.current = {
+      key: assemblyHistoryRef.current?.key,
+      ...step.history,
+    };
+    const written = rememberAssembly(step.doc);
+    setAssemblyHistTick((tick) => tick + 1);
+    paintAssemblyPoses(written);
+  };
+
+  const handleSelectJoint = (chip) => {
+    const doc = assemblyRef.current;
+    const joint = (doc?.joints || []).find((row) => row.id === chip?.id);
+    if (!joint) return;
+    rememberCadPart(null);
+    const message = jointLiveRef.current.messages?.[joint.id] || '';
+    setJointCard(cardFromJoint(joint, doc, message));
+  };
+
   const handleFaceSelected = (faceData) => {
     setSelectedFace(faceData);
   };
@@ -6476,6 +6735,30 @@ const App = () => {
       : Math.round(Math.min(Math.max(vv.height * 0.32, 160), vv.height * 0.38)));
 
   const cadHighlightId = cadPartId || assemblyDoc?.activeId || null;
+  const showJoints = jointsChromeMounted({ appMode, featureSession }) && cadStripsShowJoints(cadPartId);
+  const jointUndoReady = showJoints && assemblyHistTick >= 0 && assemblyHistoryCanUndo(assemblyHistoryRef.current);
+  const jointRedoReady = showJoints && assemblyHistoryCanRedo(assemblyHistoryRef.current);
+  const stripUndo = showJoints ? handleJointUndo : handleUndo;
+  const stripRedo = showJoints ? handleJointRedo : handleRedo;
+  const stripCanUndo = showJoints ? jointUndoReady : canUndo();
+  const stripCanRedo = showJoints ? jointRedoReady : canRedo();
+  const undoLabel = stripUndoLabel(showJoints ? null : cadPartId);
+  const redoLabel = stripRedoLabel(showJoints ? null : cadPartId);
+  const liveJointChips = showJoints ? jointChips(assemblyDoc, jointLive) : null;
+  const jointCardNode = (showJoints || jointCard?.mode === 'edit') && jointCard && appMode !== 'game'
+    ? (
+      <JointCard
+        card={jointCard}
+        unit={getDisplayUnit()}
+        locked={!!assemblyOpenLockRef.current}
+        onChange={handleJointCardChange}
+        onConfirm={handleJointConfirm}
+        onCancel={handleJointCancel}
+        onDelete={handleJointDelete}
+        compact={isMobile}
+      />
+    )
+    : null;
   const liveDirtyScript = (
     assemblyDoc?.source === 'git'
     && cadHighlightId
@@ -6606,7 +6889,7 @@ const App = () => {
       onRenameAssembly={handleRenameAssembly}
       onRenamePart={handleRenamePart}
       rows={partRows}
-      activeId={cadHighlightId}
+      activeId={cadPartId}
       onSelect={handleSelectPart}
       onEditScript={openPartScript}
       onToggleVisible={handleTogglePartVisible}
@@ -6828,6 +7111,11 @@ const App = () => {
               featureSheetEnabled={useStages && isCadStage && !featureSheet}
               onFeatureLongPress={openFeatureSheetFromCad}
               onPickRetarget={handlePickRetarget}
+              onCadEmptyClick={handleCadEmptyClick}
+              jointPicking={showJoints}
+              onJointPick={handleJointPick}
+              jointCard={jointCardNode}
+              cadPartSelected={cadPartId != null}
               onRunOutcome={handleRunOutcome}
               getBooleanContext={assemblyPartContext}
               onFeatureSessionChange={handleFeatureSession}
@@ -6920,17 +7208,21 @@ const App = () => {
                   >
                     <FeatureStrip
                       orientation="horizontal"
-                      script={stripScript}
+                      script={showJoints ? '' : stripScript}
+                      joints={liveJointChips}
                       bodyCount={stripBodyCount}
                       failedIds={stripFailedIds}
                       hidden={featureSession}
                       activeId={featureSheet?.feature?.id || featureStripActiveId}
                       hideWhenEmpty
                       onJump={(f) => openFeatureSheetFor(f)}
-                      onUndo={handleUndo}
-                      onRedo={handleRedo}
-                      canUndo={canUndo()}
-                      canRedo={canRedo()}
+                      onSelectJoint={handleSelectJoint}
+                      onUndo={stripUndo}
+                      onRedo={stripRedo}
+                      canUndo={stripCanUndo}
+                      canRedo={stripCanRedo}
+                      undoLabel={undoLabel}
+                      redoLabel={redoLabel}
                     />
                   </div>
                 )}
@@ -6969,9 +7261,9 @@ const App = () => {
                       <div className="pointer-events-auto flex-1 min-h-0 flex flex-col">
                         <FeatureStrip
                           orientation="vertical"
-                          script={stripScript}
+                          script={currentScript}
                           bodyCount={stripBodyCount}
-                          failedIds={stripFailedIds}
+                          failedIds={failedFeatureIds(currentScript, runFailure)}
                           hidden={featureSession}
                           activeId={featureSheet?.feature?.id || featureStripActiveId}
                           onJump={handleFeatureStripJump}
@@ -7243,13 +7535,21 @@ const App = () => {
             >
               <FeatureStrip
                 orientation="horizontal"
-                script={stripScript}
+                script={showJoints ? '' : stripScript}
+                joints={liveJointChips}
                 bodyCount={stripBodyCount}
                 failedIds={stripFailedIds}
                 hidden={featureSession}
                 activeId={featureSheet?.feature?.id || featureStripActiveId}
                 hideWhenEmpty
                 onJump={handleDesktopFeatureStripJump}
+                onSelectJoint={handleSelectJoint}
+                onUndo={stripUndo}
+                onRedo={stripRedo}
+                canUndo={stripCanUndo}
+                canRedo={stripCanRedo}
+                undoLabel={undoLabel}
+                redoLabel={redoLabel}
               />
             </div>
           )}
@@ -7314,6 +7614,11 @@ const App = () => {
               return refreshAssemblyRef.current?.(code);
             }}
             onPickRetarget={handlePickRetarget}
+            onCadEmptyClick={handleCadEmptyClick}
+            jointPicking={showJoints}
+            onJointPick={handleJointPick}
+            jointCard={jointCardNode}
+            cadPartSelected={cadPartId != null}
             onRunOutcome={handleRunOutcome}
             getBooleanContext={assemblyPartContext}
             onFeatureSessionChange={handleFeatureSession}

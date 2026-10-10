@@ -7,9 +7,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { fingerprintsFromGeometry, paintPickFromClick } from '../utils/facePaint.js';
-import { boundingBox, detectFeaProfile } from './deviceProfile.js';
+import { boundingBox, detectFeaProfile, refineMode } from './deviceProfile.js';
 import { createFeaClient } from './feaClient.js';
-import { initialFeaProgress, logFeaTiming, reduceFeaProgress } from './feaProgress.js';
+import { feaDebugEnabled, initialFeaProgress, logFeaTiming, reduceFeaProgress } from './feaProgress.js';
 import { studyForAssemblySolve, studyForSolve } from './renderFaceIds.js';
 import { setProbeOverlay } from './probeOverlay.js';
 import { probeQuantityName, probeUnit, readTetProbe } from './probeSample.js';
@@ -863,6 +863,9 @@ export function useFeaStudy({
         source: solved?.source || '',
         refineCount: solved?.refineCount || 0,
         converged: solved?.converged === true,
+        refineNote: solved?.refineNote || '',
+        showPeakMemory: feaDebugEnabled(),
+        peakMemoryBytes: solved?.stats?.peakMemoryBytes,
       }));
       setView((prev) => reduceResultsView(prev, {
         type: 'finish',
@@ -1186,9 +1189,7 @@ export function useFeaStudy({
     setCustomMode,
     setCustomField,
     setTarget,
-    refine: study?.mesh?.refine === 'off' || study?.mesh?.refine === 'auto'
-      ? study.mesh.refine
-      : (detectFeaProfile() === 'phone' ? 'off' : 'auto'),
+    refine: refineMode(study, detectFeaProfile()),
     setRefine,
     setMagnitude,
     setDirection,

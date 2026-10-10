@@ -115,4 +115,5 @@ test('sizing shrinks a hot element, grows a cold one, and stops at the DOF cap',
   assert.ok(capped.edgeScale > 1, `edgeScale ${capped.edgeScale}`);
   assert.equal(capped.canRefine, false);
   assert.ok(capped.estimatedDofs <= 1.01);
+  assert.ok(capped.uncappedDofs > capped.estimatedDofs, `uncapped ${capped.uncappedDofs}`);
 });

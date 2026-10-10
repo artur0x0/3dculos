@@ -162,3 +162,48 @@ export function memoryIsShared(memory) {
   const buffer = memory && memory.buffer;
   return typeof SharedArrayBuffer === 'function' && buffer instanceof SharedArrayBuffer;
 }
+
+/** `memory.buffer.byteLength`, or a raw byte count. */
+export function wasmBufferBytes(memory) {
+  if (typeof memory === 'number' && Number.isFinite(memory) && memory > 0) return memory;
+  const buffer = memory && memory.buffer;
+  const bytes = buffer && buffer.byteLength;
+  return typeof bytes === 'number' && Number.isFinite(bytes) && bytes > 0 ? bytes : 0;
+}
+
+/**
+ * `performance.memory.usedJSHeapSize` when that object exists.
+ * Pass `null` to force zero. Omit the argument to read the global.
+ */
+export function performanceMemoryBytes(source) {
+  if (source === null) return 0;
+  const mem = source === undefined
+    ? (typeof performance !== 'undefined' ? performance.memory : null)
+    : source;
+  if (!mem || typeof mem !== 'object') return 0;
+  const used = Number(mem.usedJSHeapSize);
+  return Number.isFinite(used) && used > 0 ? used : 0;
+}
+
+/**
+ * One sample of worker memory: the largest wasm heap in `memories`, plus
+ * `performance.memory` when it exists.
+ */
+export function workerMemorySample(memories, performanceMemory) {
+  const list = Array.isArray(memories) ? memories : [memories];
+  let wasm = 0;
+  for (const memory of list) {
+    const bytes = wasmBufferBytes(memory);
+    if (bytes > wasm) wasm = bytes;
+  }
+  return wasm + performanceMemoryBytes(performanceMemory);
+}
+
+/** High-water mark. A missing sample does not lower the previous peak. */
+export function nextPeakBytes(previous, sample) {
+  const prior = Number(previous);
+  const next = Number(sample);
+  const kept = Number.isFinite(prior) && prior > 0 ? prior : 0;
+  const seen = Number.isFinite(next) && next > 0 ? next : 0;
+  return seen > kept ? seen : kept;
+}

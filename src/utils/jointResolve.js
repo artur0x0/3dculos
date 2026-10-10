@@ -223,6 +223,11 @@ function fitPatchAxis(positions, indices, tris) {
   return { at: origin, dir: axis, radius };
 }
 
+/** Axis of one picked patch. A flat face returns null. estimateCylinderAxis is not used. */
+export function fitJointAxis(positions, indices, tris) {
+  return fitPatchAxis(positions, indices, tris);
+}
+
 /** Face fingerprints, and cylinder axes when a patch fits. Null when the mesh has none. */
 export function catalogFromMeshData(mesh) {
   const src = mesh?.vertProperties;

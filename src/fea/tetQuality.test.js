@@ -1,12 +1,18 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  INVERTED_TET_LINEAR_LIMIT,
+  REMESH_EDGE_SCALE,
   countTetsAlong,
+  isJacobianStop,
   jacobianAcceptable,
+  linearizeInvertedTet10s,
   orientTet4s,
+  perturbMeshOptions,
   repairTet10Jacobians,
   tet10MinJacobian,
   tetVolume,
+  withJacobianRetry,
 } from './meshVolume.js';
 
 function straightTet() {
@@ -121,6 +127,46 @@ test('a shared snapped mid is straightened once for both elements', () => {
   assert.ok(jacobianAcceptable(tet10MinJacobian(nodes, elements.subarray(10, 20))));
 });
 
+test('an unflagged curved mid is reset to the chord after straightening gives up', () => {
+  const mesh = straightTet();
+  mesh.nodes[4] = [0.5, 0, 2];
+  assert.equal(mesh.midMeta.get(4).snapped, false);
+  assert.equal(jacobianAcceptable(tet10MinJacobian(mesh.nodes, mesh.elements)), false);
+
+  const repair = repairTet10Jacobians(mesh.nodes, mesh.elements, mesh.midMeta);
+  assert.equal(repair.invalid, 1);
+  assert.equal(repair.rolled, 0);
+
+  const linear = linearizeInvertedTet10s(mesh.nodes, mesh.elements, mesh.midMeta);
+  assert.equal(linear.invalid, 0);
+  assert.equal(linear.linearized, 1);
+  assert.deepEqual(mesh.nodes[4], [0.5, 0, 0]);
+  assert.equal(mesh.midMeta.get(4).snapped, false);
+  assert.ok(jacobianAcceptable(tet10MinJacobian(mesh.nodes, mesh.elements)));
+});
+
+test('more folded tets than the linear cap are left for a remesh', () => {
+  const nodes = [];
+  const elems = [];
+  const midMeta = new Map();
+  const count = INVERTED_TET_LINEAR_LIMIT + 1;
+  for (let n = 0; n < count; n += 1) {
+    const mesh = straightTet();
+    mesh.nodes[4] = [0.5, 0, 2];
+    const base = nodes.length;
+    for (const point of mesh.nodes) nodes.push(point.slice());
+    for (const id of mesh.elements) elems.push(id + base);
+    for (const [id, meta] of mesh.midMeta) {
+      midMeta.set(id + base, { straight: meta.straight.slice(), snapped: meta.snapped });
+    }
+  }
+  const before = nodes[4].slice();
+  const linear = linearizeInvertedTet10s(nodes, Uint32Array.from(elems), midMeta);
+  assert.equal(linear.invalid, count);
+  assert.equal(linear.linearized, 0);
+  assert.deepEqual(nodes[4], before);
+});
+
 test('a collapsed tet with straight mids stays invalid and is counted', () => {
   const mesh = straightTet();
   mesh.nodes[3] = [0.3, 0.3, 0];
@@ -142,6 +188,60 @@ test('a collapsed tet with straight mids stays invalid and is counted', () => {
   const repair = repairTet10Jacobians(mesh.nodes, mesh.elements, mesh.midMeta);
   assert.equal(repair.rolled, 0);
   assert.equal(repair.invalid, 1);
+  const linear = linearizeInvertedTet10s(mesh.nodes, mesh.elements, mesh.midMeta);
+  assert.equal(linear.linearized, 0);
+  assert.equal(linear.invalid, 1);
+});
+
+test('a Jacobian retry lengthens the edge once and still reports a second fold', async () => {
+  const surface = { positions: new Float64Array([0, 0, 0, 20, 0, 0, 0, 0, 0]) };
+  const values = [1, 2];
+  const again = perturbMeshOptions(surface, {
+    edgeLength: 5,
+    epsilon: 1e-3,
+    sizing: { positions: [0], tets: [0], values },
+  });
+  assert.equal(again.edgeLength, 5 * REMESH_EDGE_SCALE);
+  assert.equal(again.epsilon, 1e-3);
+  assert.deepEqual(Array.from(again.sizing.values), [1 * REMESH_EDGE_SCALE, 2 * REMESH_EDGE_SCALE]);
+  assert.deepEqual(values, [1, 2]);
+  const fallback = perturbMeshOptions(surface, { edgeLength: 0 });
+  assert.ok(Math.abs(fallback.edgeLength - REMESH_EDGE_SCALE) < 1e-12);
+
+  const folded = new Error(
+    'Meshing stopped: 1 TET10 element still has a non-positive Jacobian after straightening curved mid-edge nodes.',
+  );
+  assert.equal(isJacobianStop(folded), true);
+  assert.equal(isJacobianStop(new Error('mesh wasm is out of memory')), false);
+
+  let recovered = 0;
+  const mesh = await withJacobianRetry(async (remesh) => {
+    recovered += 1;
+    if (!remesh) throw folded;
+    return { ok: true, remesh };
+  });
+  assert.equal(recovered, 2);
+  assert.deepEqual(mesh, { ok: true, remesh: true });
+
+  let both = 0;
+  await assert.rejects(
+    () => withJacobianRetry(async () => {
+      both += 1;
+      throw folded;
+    }),
+    /non-positive Jacobian/,
+  );
+  assert.equal(both, 2);
+
+  let other = 0;
+  await assert.rejects(
+    () => withJacobianRetry(async () => {
+      other += 1;
+      throw new Error('mesh wasm is out of memory');
+    }),
+    /out of memory/,
+  );
+  assert.equal(other, 1);
 });
 
 test('countTetsAlong sees two stacked tets through a segment', () => {

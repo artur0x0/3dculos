@@ -8,7 +8,14 @@
 
 import init, * as fea from '../../packages/surfcad-fea/pkg/surfcad_fea.js';
 import { createMeshCache, releaseMeshCache, solveSolid } from '../fea/solveSolid.js';
-import { PHONE_WASM_BYTES, capWasmMemory, memoryIsShared, wasmMemoryLimits } from '../fea/wasmMemory.js';
+import {
+  PHONE_WASM_BYTES,
+  capWasmMemory,
+  memoryIsShared,
+  nextPeakBytes,
+  wasmMemoryLimits,
+  workerMemorySample,
+} from '../fea/wasmMemory.js';
 import { FeaMessage } from '../fea/protocol.js';
 
 let ready = null;
@@ -28,7 +35,16 @@ function stopHeartbeat() {
   heartbeatTimer = null;
 }
 
+function livePerformanceMemory() {
+  try {
+    return typeof performance !== 'undefined' ? performance.memory : null;
+  } catch {
+    return null;
+  }
+}
+
 function postHeartbeat() {
+  noteMemory(null);
   self.postMessage({
     type: FeaMessage.heartbeat,
     id: heartbeatId,
@@ -46,9 +62,9 @@ function startHeartbeat(id) {
 }
 
 function noteMemory(volume) {
-  const feaBytes = memory && memory.buffer ? memory.buffer.byteLength : 0;
   const meshBytes = volume && volume.stats ? volume.stats.wasmBytes || 0 : 0;
-  peakBytes = Math.max(peakBytes, feaBytes + meshBytes);
+  const sample = workerMemorySample([memory, meshBytes], livePerformanceMemory());
+  peakBytes = nextPeakBytes(peakBytes, sample);
 }
 
 async function boot(profile) {

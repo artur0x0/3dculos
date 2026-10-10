@@ -16,9 +16,12 @@ import {
   SHELLS_AVAILABLE,
   THIN_ELEMENTS_THROUGH,
   THIN_WALL_DOF_BUDGET,
+  PHONE_REFINE_DOF_CAP,
+  phoneRefineStopNote,
   refineDofCap,
   refineMode,
   refinePassLimit,
+  refineStepAllowed,
   wallThickness,
 } from './deviceProfile.js';
 import { box } from './meshShapes.js';
@@ -102,14 +105,30 @@ test('phone is touch plus a small screen or a small deviceMemory', () => {
 
 test('refine follows the device unless the study sets it', () => {
   assert.equal(refineMode({ mesh: { refine: 'off' } }, 'desktop'), 'off');
+  assert.equal(refineMode({ mesh: { refine: 'off' } }, 'phone'), 'off');
   assert.equal(refineMode({ mesh: { refine: 'auto' } }, 'phone'), 'auto');
   assert.equal(refineMode({ mesh: { target: 'auto' } }, 'desktop'), 'auto');
-  assert.equal(refineMode({}, 'phone'), 'off');
+  assert.equal(refineMode({}, 'phone'), 'auto');
+  assert.equal(refineMode({}, 'desktop'), 'auto');
   assert.equal(refinePassLimit('phone'), 2);
   assert.equal(refinePassLimit('desktop'), 3);
-  assert.equal(refineDofCap('phone', true, 'cholesky'), PHONE_DOF_CAPS.tet10Thin);
+  assert.equal(PHONE_REFINE_DOF_CAP, 40_000);
+  assert.equal(refineDofCap('phone', true, 'cholesky'), PHONE_REFINE_DOF_CAP);
+  assert.equal(refineDofCap('phone', false, 'pcg'), PHONE_REFINE_DOF_CAP);
+  assert.equal(refineDofCap('phone', false, 'cholesky'), PHONE_REFINE_DOF_CAP);
+  assert.equal(dofCap('phone', true, 'cholesky'), PHONE_DOF_CAPS.tet10Thin);
+  assert.equal(dofCap('phone', false, 'cholesky'), PHONE_DOF_CAPS.tet10CompactCholesky);
+  assert.equal(dofCap('phone', false, 'pcg'), PHONE_DOF_CAPS.tet10CompactPcg);
+  assert.equal(PHONE_DOF_CAPS.shell, 90_000);
+  assert.equal(frictionDofCap('phone', true), PHONE_FRICTION_DOF_CAPS.tet10Thin);
+  assert.equal(frictionDofCap('phone', false), PHONE_FRICTION_DOF_CAPS.tet10Compact);
   assert.equal(refineDofCap('desktop', true, 'cholesky'), THIN_WALL_DOF_BUDGET);
   assert.equal(refineDofCap('desktop', false, 'pcg'), DESKTOP_REFINE_DOF_CAP);
+  assert.equal(phoneRefineStopNote(), 'Refinement stopped at phone limit (40k DOF)');
+  assert.equal(refineStepAllowed('phone', 40_000), true);
+  assert.equal(refineStepAllowed('phone', 40_001), false);
+  assert.equal(refineStepAllowed('phone', 100_000), false);
+  assert.equal(refineStepAllowed('desktop', 1_000_000), true);
 });
 
 test('capabilities add TET10 and the shell solver', () => {
