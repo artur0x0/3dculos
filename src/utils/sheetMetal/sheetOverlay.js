@@ -47,6 +47,8 @@ export const SHEET_EDGE_LINE = Object.freeze({
   opacity: 0.65,
   hotOpacity: 0.82,
   haloOpacity: 0.16,
+  // Ineligible edges stay visible so the corner reads as a real edge, without a handle.
+  dimOpacity: 0.22,
 });
 
 function sheetEdgeLine(a, b, { color, linewidth, opacity, resolution }) {
@@ -199,8 +201,22 @@ export function buildSheetOverlay(mode) {
     // Same footprint as the old fat bar (≥ 5% of the base). Not drawn.
     const size = Math.max(4, spec.t * 3, Math.max(spec.width, spec.height) * 0.05);
     for (const e of sheetFreeEdges(spec, solved)) {
-      if (mode.tool === 'bend' ? !e.bendable : !e.tabbable) continue;
+      const forBend = mode.tool === 'bend';
+      if (forBend ? !e.bendable : !e.tabbable) continue;
       if (!(e.length > 1e-3)) continue;
+      if (forBend && !e.eligible) {
+        const dim = sheetEdgeLine(e.a, e.b, {
+          color: COLORS.edge,
+          linewidth: SHEET_EDGE_LINE.corePx,
+          opacity: SHEET_EDGE_LINE.dimOpacity,
+          resolution,
+        });
+        dim.name = 'sheetEdgeDim';
+        dim.renderOrder = 6;
+        dim.userData.sheetEdgeDim = { panel: e.panel, edge: e.edge };
+        group.add(dim);
+        continue;
+      }
       const key = `${e.panel}:${e.edge}`;
       const isHot = key === hot;
       const sm = { kind: 'edge', panel: e.panel, edge: e.edge };

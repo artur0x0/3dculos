@@ -10,15 +10,19 @@
 import {
   createSheetSpec,
   normalizeSheetSpec,
+  bendDefaults,
+  bendLimits,
   panelById,
   panelEdge,
   panelLocal,
   respecSheetSku,
   sheetFeatureId,
+  sheetFreeEdges,
   solveSheet,
   SHEET_PLANES,
   IN,
 } from './sheetModel.js';
+import { bendInterference } from './sheetInterference.js';
 import { FASTENER_METRIC, FASTENER_UNC } from '../../workers/fastenerSizes.js';
 
 export const BASE_DEFAULTS = Object.freeze({ width: 100, height: 60 });
@@ -217,33 +221,7 @@ export function acceptBaseFlange(mode) {
 
 const round2 = (n) => Math.round(n * 100) / 100;
 
-function panelOf(spec, id) {
-  if (id === 'base') return { perp: { 'u+': spec.width, 'u-': spec.width, 'v+': spec.height, 'v-': spec.height } };
-  const b = (spec.bends || []).find((x) => x.id === id);
-  return b ? { perp: { 'u+': b.length, 'u-': b.length, 'v+': b.length, 'v-': b.length } } : null;
-}
-
-/** Slider ranges for a bend from the SKU (limits embedded in the spec). */
-export function bendLimits(spec) {
-  const L = spec?.limits || {};
-  const minFlange = Number(L.minFlange) > 0 ? Number(L.minFlange) : Math.max(spec.t * 2, 1);
-  const baseMax = Math.max(Number(spec.width) || 0, Number(spec.height) || 0);
-  return {
-    angleMin: Math.max(1, Number(L.minAngle) || 1),
-    angleMax: Number(L.maxAngle) > 0 ? Number(L.maxAngle) : 180,
-    lengthMin: round2(minFlange),
-    // Length scales with the base flange (S3): up to its largest side.
-    lengthMax: round2(Math.max(minFlange * 2, baseMax)),
-  };
-}
-
-/** New bend on an edge: 90° (or the SKU max), length ¼ of the side it leaves. */
-export function bendDefaults(spec, panelId, edge) {
-  const lim = bendLimits(spec);
-  const perp = panelOf(spec, panelId)?.perp?.[edge] || spec.width;
-  const length = Math.min(lim.lengthMax, Math.max(lim.lengthMin * 1.5, round2(perp * 0.25)));
-  return { angle: Math.min(90, lim.angleMax), length: round2(length), flip: false };
-}
+export { bendDefaults, bendLimits };
 
 const clamp = (v, lo, hi, fallback) => {
   const n = Number(v);
@@ -256,6 +234,9 @@ export function startBendDraft(mode, { panel, edge }) {
   if (!mode.spec.limits?.bendable) {
     return { ...mode, toast: 'This SKU has no bending service — use Tab or pick a bendable gauge.' };
   }
+  const edgeRow = sheetFreeEdges(mode.spec).find((e) => e.panel === panel && e.edge === edge);
+  // Ineligible edges are dimmed and carry no pick handle. A stray tap does not open a draft.
+  if (!edgeRow?.eligible) return mode;
   const id = sheetFeatureId('b', mode.spec);
   return {
     ...mode,
@@ -263,6 +244,18 @@ export function startBendDraft(mode, { panel, edge }) {
     hotEdge: { panel, edge },
     draft: { kind: 'bend', id, isNew: true, panel, edge, ...bendDefaults(mode.spec, panel, edge) },
   };
+}
+
+/**
+ * Why the bend currently in the popup cannot be confirmed.
+ * Flat overlap and the swept fold (not only the finished pose) both block.
+ * Null when the draft is not a bend or the bend is clear.
+ */
+export function bendBlockReason(mode) {
+  if (mode?.draft?.kind !== 'bend' || !mode.spec) return null;
+  const spec = draftPreviewSpec(mode);
+  const hit = bendInterference(spec, mode.draft.id);
+  return hit.ok ? null : hit.reason;
 }
 
 export function editFeatureDraft(mode, kind, id) {
@@ -332,6 +325,7 @@ export function draftPreviewSpec(mode) {
 
 export function acceptDraft(mode) {
   if (!mode?.draft) return { mode, spec: null };
+  if (bendBlockReason(mode)) return { mode, spec: null };
   const spec = draftPreviewSpec(mode);
   return { mode: { ...mode, spec, draft: null, hotEdge: null, toast: null }, spec };
 }
