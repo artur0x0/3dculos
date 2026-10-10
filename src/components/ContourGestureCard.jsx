@@ -3,9 +3,11 @@ import StickyPickApply from './StickyPickApply';
 import { useDisplayUnit } from '../hooks/useDisplayUnit';
 import { displayToMm, lengthToDisplay } from '../utils/displayUnit';
 import {
+  CONSTRAINT_LABELS,
   DIMENSION_LABELS,
   prefillForKind,
   suggestContourArc,
+  suggestContourConstraint,
   suggestContourDimension,
   validateDimensionName,
 } from '../utils/contourGesture';
@@ -25,8 +27,9 @@ function seedText(isArc, arc, suggestion, unit) {
 }
 
 /**
- * Dimension and Arc cards. Both are StickyPickApply. Confirm saves the
- * contour and stays in the gesture. X drops the pick and writes nothing.
+ * Dimension, Arc, and Constraints cards. All are StickyPickApply.
+ * Confirm saves the contour and stays in the gesture. X drops the pick
+ * and writes nothing.
  */
 const ContourGestureCard = ({
   gesture = 'dimension',
@@ -40,25 +43,29 @@ const ContourGestureCard = ({
 }) => {
   const [unit] = useDisplayUnit();
   const isArc = gesture === 'arc';
-  const suggestion = isArc ? null : suggestContourDimension(model, picks);
+  const isConstraint = gesture === 'constraints';
+  const suggestion = isArc || isConstraint ? null : suggestContourDimension(model, picks);
   const arc = isArc ? suggestContourArc(model, picks) : null;
+  const constraint = isConstraint ? suggestContourConstraint(model, picks) : null;
   const pickKey = (picks || []).map((p) => `${p.kind}:${p.id}`).join(',');
-  const sessionKey = `${isArc ? 'arc' : 'dimension'}|${unit}|${pickKey}`;
-  const [property, setProperty] = useState(suggestion?.kind || '');
-  const [text, setText] = useState(() => seedText(isArc, arc, suggestion, unit));
+  const gestureKey = isConstraint ? 'constraints' : (isArc ? 'arc' : 'dimension');
+  const sessionKey = `${gestureKey}|${unit}|${pickKey}`;
+  const seededKind = isConstraint ? (constraint?.kind || '') : (suggestion?.kind || '');
+  const [property, setProperty] = useState(seededKind);
+  const [text, setText] = useState(() => (isConstraint ? '' : seedText(isArc, arc, suggestion, unit)));
   const [name, setName] = useState('');
   const [filledKey, setFilledKey] = useState(sessionKey);
   // A new pick or unit refills before paint. Typing keeps the same key.
   if (filledKey !== sessionKey) {
     setFilledKey(sessionKey);
-    setProperty(isArc ? '' : (suggestion?.kind || ''));
-    setText(seedText(isArc, arc, suggestion, unit));
+    setProperty(isArc ? '' : seededKind);
+    setText(isConstraint ? '' : seedText(isArc, arc, suggestion, unit));
   }
 
-  const kinds = suggestion?.kinds || [];
-  const active = property || suggestion?.kind;
-  const prefill = !isArc && active ? prefillForKind(model, picks, active) : null;
-  const nameCheck = isArc ? { ok: true, name: '' } : validateDimensionName(name, model);
+  const kinds = (isConstraint ? constraint?.kinds : suggestion?.kinds) || [];
+  const active = property || (isConstraint ? constraint?.kind : suggestion?.kind);
+  const prefill = !isArc && !isConstraint && active ? prefillForKind(model, picks, active) : null;
+  const nameCheck = isArc || isConstraint ? { ok: true, name: '' } : validateDimensionName(name, model);
   let valueMm = NaN;
   if (isArc || active !== 'angle') valueMm = displayToMm(text, unit);
   else valueMm = Number(text);
@@ -66,11 +73,14 @@ const ContourGestureCard = ({
   const lengthOk = isArc || active === 'length' || active === 'radius' ? valueMm > 0 : Number.isFinite(valueMm);
   const ready = isArc
     ? !!(arc?.ok && lengthOk)
-    : !!(suggestion?.ok && active && nameCheck.ok && lengthOk && valueOk);
+    : isConstraint
+      ? !!(constraint?.ok && active && kinds.includes(active))
+      : !!(suggestion?.ok && active && nameCheck.ok && lengthOk && valueOk);
 
   const apply = () => {
     if (!ready) return;
     if (isArc) onApply?.({ radiusMm: valueMm });
+    else if (isConstraint) onApply?.({ kind: active, side: constraint.side });
     else {
       onApply?.({
         kind: active,
@@ -82,18 +92,28 @@ const ContourGestureCard = ({
     }
   };
 
-  const shownNote = note || (!nameCheck.ok ? nameCheck.message : '') || (isArc ? arc?.note : suggestion?.note) || '';
+  const shownNote = note
+    || (!nameCheck.ok ? nameCheck.message : '')
+    || (isArc ? arc?.note : isConstraint ? constraint?.note : suggestion?.note)
+    || '';
+  const title = isArc ? 'Arc' : isConstraint ? 'Constrain' : 'Dimension';
+  const labels = isConstraint ? CONSTRAINT_LABELS : DIMENSION_LABELS;
 
   return (
     <StickyPickApply
-      title={isArc ? 'Arc' : 'Dimension'}
-      subtitle={isArc ? 'Round a corner' : 'Add a dimension'}
+      title={title}
+      subtitle={isArc ? 'Round a corner' : isConstraint ? 'Add a constraint' : 'Add a dimension'}
       picks={picks}
       max={isArc ? 3 : 2}
-      properties={(kinds || []).map((id) => ({ id, label: DIMENSION_LABELS[id] || id }))}
+      properties={(kinds || []).map((id) => ({
+        id,
+        label: labels[id] || id,
+        icon: isConstraint ? id : undefined,
+      }))}
       property={active || ''}
       onProperty={(id) => {
         setProperty(id);
+        if (isConstraint) return;
         const filled = prefillForKind(model, picks, id);
         setText(formatPrefill(id, filled.value, unit));
       }}
@@ -104,8 +124,9 @@ const ContourGestureCard = ({
       applyDisabled={!ready}
       note={shownNote}
       compact={compact}
-      cardAttrs={{ 'data-contour-card': isArc ? 'arc' : 'dimension' }}
+      cardAttrs={{ 'data-contour-card': isArc ? 'arc' : isConstraint ? 'constraint' : 'dimension' }}
     >
+      {!isConstraint && (
       <label className="flex flex-col gap-0.5">
         <span className="text-[11px] uppercase tracking-wide text-cyan-200/80">
           {isArc ? 'Radius' : (DIMENSION_LABELS[active] || 'Value')}
@@ -120,7 +141,8 @@ const ContourGestureCard = ({
           onChange={(event) => setText(event.target.value)}
         />
       </label>
-      {!isArc && (
+      )}
+      {!isArc && !isConstraint && (
         <label className="flex flex-col gap-0.5">
           <span className="text-[11px] uppercase tracking-wide text-cyan-200/80">Name</span>
           <input

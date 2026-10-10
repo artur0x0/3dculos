@@ -57,7 +57,9 @@ import {
 import { assembleSweepPath } from './edgeSweepPath.js';
 import {
   commitArc,
+  commitConstraint,
   commitDimension,
+  deleteContourConstraint,
   deleteContourDimension,
   promoteContourState,
   selectContourGesture,
@@ -331,7 +333,7 @@ export function selectLoftProfile(state, index) {
     tagId: null,
     loft: { ...state.loft, selected, picking: null },
   };
-  if (next.gesture === 'dimension' || next.gesture === 'arc') {
+  if (next.gesture === 'dimension' || next.gesture === 'arc' || next.gesture === 'constraints') {
     return syncContourSession(promoteContourState(next));
   }
   return next;
@@ -630,6 +632,16 @@ export function saveContourArc(state, radiusMm) {
 
 export function removeContourDimension(state, id) {
   const result = deleteContourDimension(state, id);
+  return { ...result, state: syncContourSession(result.state) };
+}
+
+export function saveContourConstraint(state, draft) {
+  const result = commitConstraint(state, draft);
+  return { ...result, state: syncContourSession(result.state) };
+}
+
+export function removeContourConstraint(state, id) {
+  const result = deleteContourConstraint(state, id);
   return { ...result, state: syncContourSession(result.state) };
 }
 

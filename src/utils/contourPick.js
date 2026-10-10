@@ -151,3 +151,40 @@ export function dimensionAnchor(model, dim) {
   if (a && b) return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
   return a || b;
 }
+
+/** UV anchor for a constraint icon. Coincident sits on the shared point. */
+export function constraintAnchor(model, con) {
+  if (!model || !con) return null;
+  const pointAt = (id) => (model.points || []).find((p) => p.id === id)?.at || null;
+  const midLine = (id) => {
+    const line = (model.lines || []).find((l) => l.id === id);
+    if (!line) return null;
+    const a = pointAt(line.a);
+    const b = pointAt(line.b);
+    if (!a || !b) return null;
+    return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+  };
+  const arcCrown = (id) => {
+    const arc = (model.arcs || []).find((a) => a.id === id);
+    const c = arc && pointAt(arc.center);
+    if (!c) return null;
+    return [c[0] + (Number(arc.radius) || 0), c[1]];
+  };
+  const anchorOf = (id) => pointAt(id) || midLine(id) || arcCrown(id);
+  const items = con.items || [];
+  if (con.kind === 'coincident') {
+    const pts = items.map(pointAt).filter(Boolean);
+    if (pts.length) {
+      return [
+        pts.reduce((sum, p) => sum + p[0], 0) / pts.length,
+        pts.reduce((sum, p) => sum + p[1], 0) / pts.length,
+      ];
+    }
+  }
+  const pts = items.map(anchorOf).filter(Boolean);
+  if (!pts.length) return null;
+  return [
+    pts.reduce((sum, p) => sum + p[0], 0) / pts.length,
+    pts.reduce((sum, p) => sum + p[1], 0) / pts.length,
+  ];
+}

@@ -124,9 +124,10 @@ const ContourModeChip = ({
   if (params.contour) {
     const n = params.contour.dimensions?.length || 0;
     const lines = params.contour.lines?.length || 0;
+    const constraints = params.contour.constraints?.length || 0;
     fields = (
       <span className="text-[13px] text-cyan-100">
-        Contour · {lines} line{lines === 1 ? '' : 's'} · {n} dimension{n === 1 ? '' : 's'}
+        Contour · {lines} line{lines === 1 ? '' : 's'} · {n} dimension{n === 1 ? '' : 's'} · {constraints} constraint{constraints === 1 ? '' : 's'}
       </span>
     );
   } else if (tool === 'circle') {

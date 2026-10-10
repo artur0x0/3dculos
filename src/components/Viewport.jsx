@@ -162,8 +162,10 @@ import {
   writeLoftSelected,
   applyContourPick,
   armContourGesture,
+  removeContourConstraint,
   removeContourDimension,
   saveContourArc,
+  saveContourConstraint,
   saveContourDimension,
 } from '../utils/contourMode';
 import { pickContourScreen, planeUvToWorld } from '../utils/contourPick';
@@ -9502,7 +9504,7 @@ const Viewport = forwardRef(({
           compact={isMobile}
           onSelectTool={(id) => setContourMode((prev) => {
             if (!prev) return prev;
-            if (id === 'arc' || id === 'dimension') return armContourGesture(prev, id);
+            if (id === 'arc' || id === 'dimension' || id === 'constraints') return armContourGesture(prev, id);
             return switchContourTool(prev, id);
           })}
           onBack={exitContourMode}
@@ -9596,7 +9598,11 @@ const Viewport = forwardRef(({
           onDelete={(id) => {
             const prev = contourModeRef.current;
             if (!prev) return;
-            const result = removeContourDimension(prev, id);
+            const contour = prev.params?.contour;
+            const isConstraint = (contour?.constraints || []).some((con) => con.id === id);
+            const result = isConstraint
+              ? removeContourConstraint(prev, id)
+              : removeContourDimension(prev, id);
             if (result.error) {
               showContourToast(result.error);
               return;
@@ -9621,7 +9627,9 @@ const Viewport = forwardRef(({
             if (!prev) return;
             const result = prev.gesture === 'arc'
               ? saveContourArc(prev, draft.radiusMm)
-              : saveContourDimension(prev, draft);
+              : prev.gesture === 'constraints'
+                ? saveContourConstraint(prev, draft)
+                : saveContourDimension(prev, draft);
             if (result.error) {
               showContourToast(result.error);
               setContourMode({ ...prev, gestureNote: result.error });

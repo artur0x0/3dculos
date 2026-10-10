@@ -245,7 +245,7 @@ export { default as ContourGestureCard } from './src/components/ContourGestureCa
   };
   const rail = markup(ui.ContourModeRail, { tool: 'polyline', entry: 'crossSection' });
   const ids = [...rail.matchAll(/data-contour-tool="([^"]+)"/g)].map((m) => m[1]);
-  check('rail order', ids.join(',') === 'circle,rectangle,polygon,polyline,arc,dimension', ids.join(','));
+  check('rail order', ids.join(',') === 'circle,rectangle,polygon,polyline,arc,dimension,constraints', ids.join(','));
   const armed = armContourGesture({
     ...enterContourState('crossSection', null),
     tool: 'polyline',

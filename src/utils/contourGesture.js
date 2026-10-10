@@ -29,10 +29,16 @@ export function specFromSolved(solved) {
       ...d,
       items: d.items ? [...d.items] : undefined,
     })),
-    constraints: (solved.constraints || []).map((c) => ({
-      ...c,
-      items: c.items ? [...c.items] : undefined,
-    })),
+    constraints: (solved.constraints || []).map((c) => {
+      const copy = { ...c, items: c.items ? [...c.items] : undefined };
+      if (c.at) {
+        copy.at = Object.fromEntries(Object.entries(c.at).map(([id, uv]) => [
+          id,
+          Array.isArray(uv) ? uv.slice() : uv,
+        ]));
+      }
+      return copy;
+    }),
   };
 }
 
@@ -63,7 +69,7 @@ export function promoteContourState(state) {
 
 export function selectContourGesture(state, gesture) {
   if (!state || state.entry === 'workplane') return state;
-  if (gesture !== 'arc' && gesture !== 'dimension') return state;
+  if (gesture !== 'arc' && gesture !== 'dimension' && gesture !== 'constraints') return state;
   if (state.gesture === gesture) {
     return { ...state, gesture: null, picks: [], tagId: null, gestureNote: null };
   }
@@ -362,3 +368,240 @@ export const DIMENSION_LABELS = {
   offset: 'Offset',
   radius: 'Radius',
 };
+
+const AXIS_BAND_DEG = 20;
+const PARALLEL_BAND_DEG = 15;
+const CLOSE_RATIO = 0.1;
+
+export const CONSTRAINT_LABELS = {
+  horizontal: 'Horizontal',
+  vertical: 'Vertical',
+  parallel: 'Parallel',
+  perpendicular: 'Perpendicular',
+  tangent: 'Tangent',
+  equal: 'Equal',
+  coincident: 'Coincident',
+  fix: 'Fix',
+};
+
+/** Undirected angle from +u, in degrees, from 0 (horizontal) to 90 (vertical). */
+export function lineAxisDeg(model, id) {
+  const ends = lineEnds(model, id);
+  if (!ends) return 0;
+  const len = Math.hypot(ends.d[0], ends.d[1]);
+  if (len < 1e-12) return 0;
+  return Math.atan2(Math.abs(ends.d[1]), Math.abs(ends.d[0])) * 180 / Math.PI;
+}
+
+function lineById(model, id) {
+  return (model.lines || []).find((line) => line.id === id) || null;
+}
+
+function arcById(model, id) {
+  return (model.arcs || []).find((arc) => arc.id === id) || null;
+}
+
+function arcRadius(arc) {
+  const r = Number(arc?.radius);
+  return Number.isFinite(r) ? r : 0;
+}
+
+function tangentSideLineArc(model, lineId, arcId) {
+  const ends = lineEnds(model, lineId);
+  const arc = arcById(model, arcId);
+  const center = arc && pointAt(model, arc.center);
+  if (!ends || !center) return 1;
+  return signedPointLine(center, ends.a, ends.d) >= 0 ? 1 : -1;
+}
+
+function arcSeparation(model, idA, idB) {
+  const a = arcById(model, idA);
+  const b = arcById(model, idB);
+  const ca = a && pointAt(model, a.center);
+  const cb = b && pointAt(model, b.center);
+  if (!ca || !cb) return null;
+  const ra = arcRadius(a);
+  const rb = arcRadius(b);
+  const dist = Math.hypot(ca[0] - cb[0], ca[1] - cb[1]);
+  return { dist, ra, rb };
+}
+
+function nearlyTangentArcs(sep) {
+  if (!sep) return false;
+  const external = sep.ra + sep.rb;
+  const internal = Math.abs(sep.ra - sep.rb);
+  const extScale = Math.max(external, 1e-9);
+  const intScale = Math.max(sep.ra, sep.rb, 1e-9);
+  return Math.abs(sep.dist - external) / extScale <= CLOSE_RATIO
+    || Math.abs(sep.dist - internal) / intScale <= CLOSE_RATIO;
+}
+
+function tangentSideArcs(sep) {
+  if (!sep) return 1;
+  const external = Math.abs(sep.dist - (sep.ra + sep.rb));
+  const internal = Math.abs(sep.dist - Math.abs(sep.ra - sep.rb));
+  return internal < external ? -1 : 1;
+}
+
+function radiiWithin(sep) {
+  if (!sep) return false;
+  const scale = Math.max(sep.ra, sep.rb, 1e-9);
+  return Math.abs(sep.ra - sep.rb) / scale <= CLOSE_RATIO;
+}
+
+function oneLineOffer(model, id) {
+  const ends = lineEnds(model, id);
+  const len = ends ? Math.hypot(ends.d[0], ends.d[1]) : 0;
+  if (!(len > 0)) {
+    return { ok: false, kind: null, kinds: [], side: 1, band: null, note: 'That line has no length.' };
+  }
+  const axis = lineAxisDeg(model, id);
+  const kinds = ['horizontal', 'vertical', 'fix'];
+  const slack = 1e-6;
+  if (axis <= AXIS_BAND_DEG + slack) {
+    return { ok: true, kind: 'horizontal', kinds, side: 1, band: 'x', note: '' };
+  }
+  if (axis >= 90 - AXIS_BAND_DEG - slack) {
+    return { ok: true, kind: 'vertical', kinds, side: 1, band: 'y', note: '' };
+  }
+  const du = Math.abs(ends.d[0]);
+  const dv = Math.abs(ends.d[1]);
+  const kind = du >= dv ? 'horizontal' : 'vertical';
+  return { ok: true, kind, kinds, side: 1, band: 'span', note: '' };
+}
+
+function twoLineOffer(model, idA, idB) {
+  const fromParallel = linesFromParallelDeg(model, idA, idB);
+  const kinds = ['parallel', 'perpendicular', 'equal'];
+  // Trig of an exact boundary can land a few ulps past the number.
+  const slack = 1e-6;
+  if (fromParallel >= 90 - PARALLEL_BAND_DEG - slack) {
+    return { ok: true, kind: 'perpendicular', kinds, side: 1, band: 'perpendicular', note: '' };
+  }
+  const band = fromParallel <= PARALLEL_BAND_DEG + slack ? 'parallel' : 'other';
+  return { ok: true, kind: 'parallel', kinds, side: 1, band, note: '' };
+}
+
+/**
+ * What a constraint pick offers. Boundaries are inclusive: 20° from an
+ * axis, 15° from parallel or perpendicular, and 10% on radii and on
+ * tangent distance.
+ */
+export function suggestContourConstraint(model, picks) {
+  const list = Array.isArray(picks) ? picks : [];
+  const empty = { ok: false, kind: null, kinds: [], side: 1, band: null, note: 'Tap a line, a point, or an arc.' };
+  if (!model) return { ...empty, note: 'Draw a contour first.' };
+  if (list.length === 1 && list[0].kind === 'line') return oneLineOffer(model, list[0].id);
+  if (list.length === 1 && (list[0].kind === 'point' || list[0].kind === 'arc')) {
+    return { ok: true, kind: 'fix', kinds: ['fix'], side: 1, band: 'fix', note: '' };
+  }
+  if (list.length === 2 && list.every((p) => p.kind === 'line')) {
+    return twoLineOffer(model, list[0].id, list[1].id);
+  }
+  if (list.length === 2 && list.every((p) => p.kind === 'point')) {
+    return { ok: true, kind: 'coincident', kinds: ['coincident'], side: 1, band: 'points', note: '' };
+  }
+  if (list.length === 2 && list.every((p) => p.kind === 'arc')) {
+    const sep = arcSeparation(model, list[0].id, list[1].id);
+    const side = tangentSideArcs(sep);
+    if (nearlyTangentArcs(sep)) {
+      return { ok: true, kind: 'tangent', kinds: ['tangent', 'equal'], side, band: 'tangent', note: '' };
+    }
+    if (radiiWithin(sep)) {
+      return { ok: true, kind: 'equal', kinds: ['equal', 'tangent'], side, band: 'equal', note: '' };
+    }
+    return { ok: true, kind: 'tangent', kinds: ['tangent', 'equal'], side, band: 'apart', note: '' };
+  }
+  if (list.length === 2) {
+    const point = list.find((p) => p.kind === 'point');
+    const line = list.find((p) => p.kind === 'line');
+    const arc = list.find((p) => p.kind === 'arc');
+    if (point && line) {
+      return { ok: true, kind: 'coincident', kinds: ['coincident'], side: 1, band: 'point-line', note: '' };
+    }
+    if (point && arc) {
+      return { ok: true, kind: 'coincident', kinds: ['coincident'], side: 1, band: 'point-arc', note: '' };
+    }
+    if (line && arc) {
+      const side = tangentSideLineArc(model, line.id, arc.id);
+      return { ok: true, kind: 'tangent', kinds: ['tangent'], side, band: 'line-arc', note: '' };
+    }
+  }
+  if (list.length === 0) return empty;
+  return { ...empty, note: 'That pair is not a constraint.' };
+}
+
+function fixAt(model, pick) {
+  if (pick.kind === 'point') {
+    const at = pointAt(model, pick.id);
+    return at ? { [pick.id]: at.slice() } : null;
+  }
+  if (pick.kind === 'line') {
+    const line = lineById(model, pick.id);
+    const ends = lineEnds(model, pick.id);
+    if (!line || !ends) return null;
+    return { [line.a]: ends.a.slice(), [line.b]: ends.b.slice() };
+  }
+  if (pick.kind === 'arc') {
+    const arc = arcById(model, pick.id);
+    const center = arc && pointAt(model, arc.center);
+    if (!arc || !center) return null;
+    return { [arc.center]: center.slice(), [arc.id]: [arcRadius(arc)] };
+  }
+  return null;
+}
+
+function nextConstraintId(model) {
+  let max = -1;
+  for (const con of model.constraints || []) {
+    const m = /^k(\d+)$/.exec(con.id);
+    if (m) max = Math.max(max, Number(m[1]));
+  }
+  return `k${max + 1}`;
+}
+
+export function buildConstraint(model, picks, draft) {
+  const offered = suggestContourConstraint(model, picks);
+  const kind = draft?.kind;
+  if (!offered.ok || !offered.kinds.includes(kind)) {
+    return { ok: false, message: offered.note || 'That constraint does not match the pick.' };
+  }
+  const list = picks || [];
+  const con = { id: nextConstraintId(model), kind, items: list.map((p) => p.id) };
+  if (kind === 'tangent') {
+    const side = Number.isFinite(Number(draft?.side)) ? Number(draft.side) : offered.side;
+    con.side = side < 0 ? -1 : 1;
+  }
+  if (kind === 'fix') {
+    const at = fixAt(model, list[0]);
+    if (!at) return { ok: false, message: 'That item cannot be fixed.' };
+    con.at = at;
+  }
+  return { ok: true, constraint: con };
+}
+
+export function commitConstraint(state, draft) {
+  const ready = state?.params?.contour ? state : promoteContourState(state);
+  if (!ready?.params?.contour) {
+    return { state: ready, error: ready?.gestureNote || 'Draw a contour first.' };
+  }
+  const built = buildConstraint(ready.params.contour, ready.picks, draft);
+  if (!built.ok) return { state: ready, error: built.message };
+  const model = {
+    ...ready.params.contour,
+    constraints: [...(ready.params.contour.constraints || []), built.constraint],
+  };
+  return storeSolved(ready, model);
+}
+
+export function deleteContourConstraint(state, id) {
+  const contour = state?.params?.contour;
+  if (!contour) return { state, error: 'No contour.' };
+  const constraints = (contour.constraints || []).filter((c) => c.id !== id);
+  if (constraints.length === (contour.constraints || []).length) {
+    return { state, error: 'That constraint is already gone.' };
+  }
+  const result = storeSolved(state, { ...contour, constraints });
+  if (result.state) result.state = { ...result.state, tagId: null };
+  return result;
+}

@@ -77,6 +77,7 @@ const StickyPickApply = ({
                   type="button"
                   aria-pressed={on}
                   data-sticky-property={item.id}
+                  data-contour-icon={item.icon || undefined}
                   onClick={() => onProperty?.(item.id)}
                   className={`rounded px-2 py-1 text-[13px] ${
                     on ? 'bg-cyan-600 text-white' : 'border border-cyan-700/70 bg-cyan-950/80 text-cyan-100'
