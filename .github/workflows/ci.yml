@@ -71,24 +71,17 @@ jobs:
         run: npm run build
 
       # Bare `node --test` also matches scripts/golden/*playtest*, which are
-      # browser goldens (the default pattern is *test*). Pass explicit
-      # patterns so those stay out. Node 22 exits 0 when a pattern matches
-      # nothing, so an empty tree is success and later files are picked up:
+      # browser goldens (the default pattern is *test*). The script keeps
+      # the same explicit trees and leaves those goldens out:
       #   src/**/*.test.{js,mjs,cjs}
       #   test/**/*.{js,mjs,cjs}
       #   tests/**/*.{js,mjs,cjs}
+      # FEA files run one at a time. Each has --test-timeout plus a
+      # wall-clock kill that names the suite. A hang during wasm or
+      # Manifold setup is outside any test, so the per-test timeout never
+      # arms; the kill is what stops it short of this job's 30 minute limit.
       - name: node --test
-        run: |
-          node --test --test-reporter spec \
-            'src/**/*.test.js' \
-            'src/**/*.test.mjs' \
-            'src/**/*.test.cjs' \
-            'test/**/*.js' \
-            'test/**/*.mjs' \
-            'test/**/*.cjs' \
-            'tests/**/*.js' \
-            'tests/**/*.mjs' \
-            'tests/**/*.cjs'
+        run: node scripts/ci/run-unit-tests.mjs
 
   # Cheapest existing golden that proves the bundle actually boots: a real
   # headless Chrome, vite preview, #root painted, canvas + toolbar + Run.

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
-import test, { describe } from 'node:test';
+import test, { before, describe } from 'node:test';
 import * as fea from '../../packages/surfcad-fea/pkg/surfcad_fea.js';
+import { FEA_SETUP_TIMEOUT_MS, initFeaWasm } from './initFeaWasm.js';
 import { detectContacts } from './contactDetect.js';
 import { meshVolume } from './meshVolume.js';
 import { box } from './meshShapes.js';
@@ -16,9 +16,7 @@ import {
 import { solveAssembly } from './solveAssembly.js';
 import { worldSurfaces } from './studyPanel.js';
 
-const wasmUrl = new URL('../../packages/surfcad-fea/pkg/surfcad_fea_bg.wasm', import.meta.url);
-const initFea = fea.default ?? fea.init;
-await initFea({ module_or_path: await readFile(wasmUrl) });
+before(() => initFeaWasm(), { timeout: FEA_SETUP_TIMEOUT_MS });
 
 const HALF = Math.PI / 4;
 const ROT_Z = [0, 0, Math.sin(HALF), Math.cos(HALF)];
@@ -193,8 +191,10 @@ describe('rotated bonded solve', { concurrency: 1 }, () => {
     // fTetWild shuffles face order with std::random_device and Geogram's BRIO
     // shuffle. Parameters has no seed, so the two cubes do not remesh alike.
     // Thirty runs of missed < 8, displacement within 1%, and p95 within 3%
-    // passed 27/30. Displacement error reached 1.79%. An earlier run missed
-    // 9 slave nodes. p95 error stayed under 2.2% here and has crossed 3% in CI.
+    // passed 27/30. Displacement error reached 1.79%. CI run 38025008657
+    // attempt 1 failed the old gates on missed=9 with dispErr 0.25% and
+    // p95Err 0.21%: the rotated bar matched the straight one, and the miss
+    // was unseeded slave nodes. p95 error has also crossed 3% in CI.
     // These bounds cover that scatter. A broken bond still fails them.
     assert.ok(straight.stats.missedSlaves < 24, `straight missed ${straight.stats.missedSlaves}`);
     assert.ok(turned.stats.missedSlaves < 24, `turned missed ${turned.stats.missedSlaves}`);

@@ -8,9 +8,9 @@
  * held to a looser 40% p95 gate at 96.
  */
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
-import test from 'node:test';
+import test, { before } from 'node:test';
 import * as fea from '../../../packages/surfcad-fea/pkg/surfcad_fea.js';
+import { FEA_SETUP_TIMEOUT_MS, initFeaWasm } from '../initFeaWasm.js';
 import { boundaryConditions } from '../boundaryConditions.js';
 import { meshVolume } from '../meshVolume.js';
 import { box, plateWithHole } from '../meshShapes.js';
@@ -19,8 +19,7 @@ import { materialC } from './hexElement.js';
 import { estimateGpuBytes } from './resolution.js';
 import { sampleVonMisesAt, solveVoxelPreview } from './solvePreview.js';
 
-const wasmUrl = new URL('../../../packages/surfcad-fea/pkg/surfcad_fea_bg.wasm', import.meta.url);
-await (fea.default ?? fea.init)({ module_or_path: await readFile(wasmUrl) });
+before(() => initFeaWasm(), { timeout: FEA_SETUP_TIMEOUT_MS });
 
 const pla = { E_MPa: 3250, nu: 0.36, yield_MPa: 52.5 };
 
@@ -52,7 +51,7 @@ async function tetField(surface, study, edgeLength) {
   return { volume, solved, range: fieldRange(solved.nodal) };
 }
 
-function previewAt(surface, study, resolution) {
+function previewAt(surface, study, resolution, maxIter = 24) {
   const started = Date.now();
   const result = solveVoxelPreview({
     positions: surface.positions,
@@ -62,7 +61,7 @@ function previewAt(surface, study, resolution) {
     material: pla,
     resolution,
     tol: 1e-4,
-    maxIter: 24,
+    maxIter,
   });
   return { result, ms: Date.now() - started };
 }
@@ -164,7 +163,18 @@ test('plate with a hole preview stays in range of TET10', { timeout: 300_000 }, 
   const tet = await tetField(surface, study, 1.5);
   const rows = {};
   for (const resolution of [64, 96, 128]) {
-    rows[resolution] = compare(`plate ${resolution}`, tet.range, previewAt(surface, study, resolution), tet.volume.nodes);
+    // 128 only has to stay finite. The plate residual does not reach 1e-4
+    // inside 24 V-cycles, and one cycle on a 128×128×26 grid is a few
+    // seconds of JS (about 82s for all 24 on the hung CI attempt, 98s on
+    // the rerun). Two cycles still produce a positive field. 64 and 96 keep
+    // the full budget because their p95 is gated.
+    const maxIter = resolution === 128 ? 2 : 24;
+    rows[resolution] = compare(
+      `plate ${resolution}`,
+      tet.range,
+      previewAt(surface, study, resolution, maxIter),
+      tet.volume.nodes,
+    );
   }
   assert.ok(rows[96].p95 <= 0.4, `plate 96 p95 error ${percent(rows[96].p95)}`);
   assert.ok(rows[64].p95 < 1, `plate 64 p95 error ${percent(rows[64].p95)}`);
