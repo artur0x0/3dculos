@@ -145,8 +145,9 @@ Desktop specifics:
   Game mode mounts no card. Characteristic length
   (`src/utils/characteristicLength.js`) is the longest side of the part box,
   100 mm when the part is empty, cached with the edge graph and on a viewport
-  map. It is not written into the assembly file. Feature-card length sliders
-  use that length, the curve, and the global unit. Fillet and chamfer use
+  map. It is not written into the assembly file. Feature-card and helper-sheet
+  length sliders use that length, the curve, and the global unit. A helper
+  sheet scales its L=100 seeds when it opens. Fillet and chamfer use
   the adjacent edge instead. The curve and the thumb snap live in
   `src/utils/sliderMap.js` (0.1 mm, or 1/16 in). The contract is
   `docs/plans/slider-plan.md`.
@@ -515,7 +516,7 @@ Order-flow sheets share `ModalFit` (`modal-fit`): max-height is `100dvh` or `vis
 | Checkout | cart Checkout | `checkout/CheckoutPage.jsx` | one page (`data-checkout-page`): qty, remove (same confirm as the cart sheet), stale / expired badges, address picker, one shipping quote (box count when more than one box), one pay. It charges the quote Add to cart stored. `priceUpdated` (`data-price-updated`) disables Pay until confirm. Paid lines are tombstoned. |
 | Quote | part-row Order (`data-quote-mode="add"`) | `QuoteModal.jsx` | process / material / infill. Add to cart qty is editable; the button is Add to cart (`data-quote-add`). That path POSTs `/api/quotes` and stores `quoteId`, `quotedAt`, and `quotedUnitPrice`. A 404 shows an error and does not write a line. The browser `calculateQuote` fills the modal; the line stores the server unit price. A part that is only sheet metal and passes the SCS checks (`data-scs-handoff`) shows Download DXF, Download STEP, and Order on SendCutSend instead of this form, and does not write a line. **Quote with SurfCAD instead** (`data-scs-surf-quote`) opens this form. Mixed parts and hard DFM fails stay on this form. An existing cart line is left in place. Cart Checkout opens the one page and does not open this modal. The in-flight stepper still uses checkout mode (`data-quote-qty`, button Order), and an eligible sheet script stays on this form there. An `importMesh` line reads the asset cache; a miss shows that line's error. |
 | Order | in-flight checkout, including an OAuth return | `OrderModal.jsx` + `components/order/*` | six steps, `STEPS` at `OrderModal.jsx`: Auth → Address → Shipping → Payment → Confirmation → Convert. Singular `modelData` create stays. Pay uses the server total; a mismatch shows “Price updated to $X” and disables Pay until confirmed. The account Orders tab lists each line (`model-data` when an old order has no `lines`). An unmeasurable export shows “We couldn't measure this part. Please re-export and try again.” A server that rejects `quantity` shows that instead of crashing. |
-| Helper params | any helper-rail button | `HelperParamModal.jsx` | CAD uses the feature card (`data-feature-card`): X and Esc write nothing, Confirm saves and closes, no click-outside. The pose preview stays. Game keeps the docked sheet (`absolute inset-0`, click-through, no scrim, no card, no slide). Also the refuse/explain dialog |
+| Helper params | any helper-rail button | `HelperParamModal.jsx` | CAD uses the feature card (`data-feature-card`): X and Esc write nothing, Confirm saves and closes, no click-outside. Length fields are shaped thumbs in the global unit, seeded from the static L=100 defaults times L/100. Counts and angles stay linear. Hole U/V, cylinder axial, array spacing, and move-face distance are signed. Cylinder angle is ±90° at 1°. The pose preview stays. Game keeps the docked sheet (`absolute inset-0`, click-through, no scrim, no card, no slide). Also the refuse/explain dialog |
 | Puzzle picker | Toolbar → List (game) | `PuzzlePickerModal.jsx` | |
 | Hints | Toolbar → BookOpen (game) | `GameHintsModal.jsx` | |
 | Terms | order flow | `TermsModal.jsx` | |
@@ -607,7 +608,7 @@ Check & Export shows DFM only. Part-row Order on a sheet-only part that passes t
 ### Viewport furniture
 Camera and snaps `src/utils/viewCamera.js`; cutting plane
 `src/utils/cuttingPlaneWidget.js`, `crossSection.js`,
-`crossSectionSubstrate.js`; measurement `src/utils/measurementTool.js`, `src/utils/measurePicks.js`, `src/utils/displayUnit.js`; characteristic length `src/utils/characteristicLength.js`; slider curve and snap `src/utils/sliderMap.js`; adjacent blend `src/utils/adjacentBlend.js`; feature-card ranges `src/utils/sliderRange.js`; saved
+`crossSectionSubstrate.js`; measurement `src/utils/measurementTool.js`, `src/utils/measurePicks.js`, `src/utils/displayUnit.js`; characteristic length `src/utils/characteristicLength.js`; slider curve and snap `src/utils/sliderMap.js`; adjacent blend `src/utils/adjacentBlend.js`; feature-card ranges `src/utils/sliderRange.js`; helper-sheet ranges `src/utils/helperSheetRange.js`; saved
 wires `src/utils/savedContours.js`.
 
 ### Files and commerce

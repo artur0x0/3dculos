@@ -10,13 +10,15 @@ import {
 } from '../utils/selectEdge';
 import { resolveFilletStrategy } from '../utils/filletAlongPath';
 import {
-  NumberField, SelectField, CheckField, PopupButton, POPUP_TEXT,
+  LengthNumberField, NumberField, SelectField, CheckField, PopupButton, POPUP_TEXT,
 } from './controls/popupUI';
+import { helperFieldSpec } from '../utils/helperSheetRange';
 import { FeatureDeleteButton } from './FeatureEditDelete';
 import FeatureSheet from './FeatureSheet';
 
 /** Helper sheets are neutral; the accent chips own cyan/amber. */
 const ACCENT = 'slate';
+const NO_PARAMS = [];
 
 /**
  * Param sheet for guided helper insert.
@@ -40,26 +42,38 @@ const HelperParamModal = ({
   /** CAD feature card. Game passes false and keeps the docked sheet. */
   useCard = false,
   compact = false,
+  lengthMm = 100,
+  bounds = null,
+  minExtent = null,
+  onMeasure = null,
 }) => {
-  const params = item?.params || [];
+  const params = useMemo(() => item?.params ?? NO_PARAMS, [item]);
   const bodies = useMemo(() => listBodyNames(buffer), [buffer]);
 
   const initial = useMemo(() => {
     const o = {};
+    const saved = !!item?._featureEdit;
     for (const p of params) {
       if (p.type === 'body') {
         o[p.name] = bodies.includes(p.default) ? p.default : (bodies[0] || 'part');
+      } else if (p.type === 'number') {
+        const spec = helperFieldSpec(item?.id, p, {
+          lengthMm, face: faceInfo, bounds, minExtent, edges: edgeInfo, saved, values: o,
+        });
+        o[p.name] = spec ? spec.seed : p.default;
       } else {
         o[p.name] = p.default;
       }
     }
     return o;
-  }, [item?.id, buffer, faceInfo?.type, edgeInfo, params]); // eslint-disable-line react-hooks/exhaustive-deps -- reset on item/buffer/face/edges
+  }, [item, params, faceInfo, edgeInfo, lengthMm, bounds, minExtent, bodies]);
 
   const [values, setValues] = useState(initial);
+  const [measured, setMeasured] = useState({});
 
   useEffect(() => {
     setValues(initial);
+    setMeasured({});
   }, [initial]);
 
   // Slice 21: live param preview (cross-section profile on plane).
@@ -194,13 +208,28 @@ const HelperParamModal = ({
     ? item._sweepBlendMax
     : sweepBlendHardMax(item?._pathLength ?? minEdgeLength);
 
+  const sheetCtx = {
+    lengthMm,
+    face: faceInfo,
+    bounds,
+    minExtent,
+    edges: edgeInfo,
+    saved: !!item?._featureEdit,
+    travelByName: measured,
+  };
   const handleConfirm = () => {
     // Resolve strategy BEFORE number coercion — open-time planar p.max must not
     // silently clamp a typed radius after the user switches Strategy→sweep.
     const confirmStrategy = hasStrategy
       ? resolveFilletStrategy(values.strategy, edgeInfo)
       : 'planar';
-    const out = coerceFilletConfirmNumbers(values, params, {
+    const specParams = params.map((p) => {
+      if (p.type !== 'number') return p;
+      const spec = helperFieldSpec(item.id, p, { ...sheetCtx, values });
+      if (!spec) return p;
+      return { ...p, default: spec.seed, min: spec.min, max: spec.max };
+    });
+    const out = coerceFilletConfirmNumbers(values, specParams, {
       strategy: confirmStrategy,
       sweepMax,
     });
@@ -342,9 +371,27 @@ const HelperParamModal = ({
             />
           );
         }
-        // Blend sizes re-scale under Strategy=sweep, which has its own max.
-        const isBlend = p.name === 'radius' || p.name === 'chamfer';
-        const sweepScaled = isBlend && resolvedStrategy === 'sweep';
+        const spec = helperFieldSpec(item.id, p, { ...sheetCtx, values });
+        if (spec?.shaped) {
+          return (
+            <LengthNumberField
+              key={p.name}
+              id={p.name}
+              label={p.label}
+              accent={ACCENT}
+              valueMm={values[p.name]}
+              onChangeMm={(v) => setField(p.name, v, 'number')}
+              minMm={spec.min}
+              maxMm={spec.max}
+              signed={spec.signed}
+              onPointerDown={spec.measure ? () => {
+                const d = onMeasure?.(spec.measure);
+                if (!Number.isFinite(Number(d))) return;
+                setMeasured((prev) => ({ ...prev, [p.name]: Number(d) }));
+              } : undefined}
+            />
+          );
+        }
         return (
           <NumberField
             key={p.name}
@@ -353,13 +400,9 @@ const HelperParamModal = ({
             accent={ACCENT}
             value={values[p.name]}
             onChange={(v) => setField(p.name, v, 'number')}
-            min={p.min ?? (typeof p.default === 'number' && p.default < 0 ? p.default * 2 : 0)}
-            max={sweepScaled
-              ? sweepMax
-              : (p.max ?? Math.max(100, Math.abs(Number(p.default) || 0) * 4, 40))}
-            step={sweepScaled
-              ? Math.max(0.5, Math.round((sweepMax / 40) * 100) / 100)
-              : (p.step ?? 0.5)}
+            min={spec?.min ?? (p.min ?? 0)}
+            max={spec?.max ?? (p.max ?? 100)}
+            step={spec?.step ?? (p.step ?? 1)}
           />
         );
       })}
@@ -378,6 +421,7 @@ const HelperParamModal = ({
         cardAttrs={{
           id: 'helper-param-title',
           'data-helper-param': item.id,
+          'data-helper-length': String(lengthMm),
         }}
         note={onDelete ? <FeatureDeleteButton onClick={onDelete} /> : null}
       >

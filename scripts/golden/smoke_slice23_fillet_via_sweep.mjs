@@ -18,6 +18,7 @@ import {
   resolveFaceModal,
   isFaceFeature,
 } from '../../src/utils/faceFeaturePlacement.js';
+import { adjacentBlendSize } from '../../src/utils/adjacentBlend.js';
 import {
   filletWedgeContour,
   chamferWedgeContour,
@@ -363,11 +364,11 @@ console.log('slice-23 fillet via sweep smoke');
   check('effective minL drops scrap', eff != null && eff >= 1.9, `eff=${eff}`);
   const resolvedMulti = resolveFaceModal(item, null, multi);
   const rParam = resolvedMulti.item?.params?.find((x) => x.name === 'radius');
-  // Pinned for fixture lengths 0.08/2.0/2.1/1.9 → eff=1.9 (not mirror of helpers)
-  // Fixed 2 mm Fillet default (was 0.1 × pathLen 6.08 → 1); max stays sweep hard max 6
-  check('multi-edge radius default is the fixed 2 mm', rParam?.default === 2,
-    `got ${rParam?.default}`);
-  check('multi-edge slider max from sweep hard max', rParam?.max === 6,
+  const multiSize = adjacentBlendSize(multi);
+  check('multi-edge radius follows the adjacent edge, not the scrap',
+    rParam?.default === multiSize.defaultMm && multiSize.defaultMm > 0.1,
+    `got ${rParam?.default} expected ${multiSize.defaultMm}`);
+  check('multi-edge slider max follows the adjacent edge', rParam?.max === multiSize.maxMm,
     `got ${rParam?.max}`);
   check('multi-edge slider step scaled', rParam?.step != null && rParam.step > 0,
     `got ${rParam?.step}`);
@@ -394,10 +395,11 @@ console.log('slice-23 fillet via sweep smoke');
   check('auto→sweep on rimish for size test', pickFilletStrategy(rimishSweep) === 'sweep');
   const resolvedRim = resolveFaceModal(item, null, rimishSweep);
   const rRim = resolvedRim.item?.params?.find((x) => x.name === 'radius');
-  check('sweep modal skips planar size clamp (max≥6)', rRim?.max != null && rRim.max >= 6,
-    `max=${rRim?.max}`);
-  check('sweep modal default usable (default≥1)', rRim?.default != null && rRim.default >= 1,
-    `default=${rRim?.default}`);
+  const rimSize = adjacentBlendSize(rimishSweep);
+  check('sweep modal radius is 0.10 × the rim chord', rRim?.default === rimSize.defaultMm,
+    `default=${rRim?.default} expected ${rimSize.defaultMm}`);
+  check('sweep modal max is 0.20 × the rim chord', rRim?.max === rimSize.maxMm,
+    `max=${rRim?.max} expected ${rimSize.maxMm}`);
   check('sweep modal _blendSizeGuard false', resolvedRim.item?._blendSizeGuard === false);
   check('sweep hard max scale-relative (not absolute 50)', rRim?.max != null && rRim.max < 50,
     `max=${rRim?.max}`);
@@ -432,8 +434,12 @@ console.log('slice-23 fillet via sweep smoke');
   check('typed-confirm fixture auto→sweep', pickFilletStrategy(planarTyped) === 'sweep');
   const resolvedTyped = resolveFaceModal(item, null, planarTyped);
   const rTyped = resolvedTyped.item?.params?.find((x) => x.name === 'radius');
-  check('open-time sweep max ≥ 6', rTyped?.max != null && rTyped.max >= 6,
-    `max=${rTyped?.max}`);
+  const typedSize = adjacentBlendSize(planarTyped);
+  check('open-time slider max is the adjacent-edge cap', rTyped?.max === typedSize.maxMm,
+    `max=${rTyped?.max} expected ${typedSize.maxMm}`);
+  check('open-time kernel ceiling stays on the sheet',
+    resolvedTyped.item?._sweepBlendMax != null && resolvedTyped.item._sweepBlendMax >= 6,
+    `ceiling=${resolvedTyped.item?._sweepBlendMax}`);
   check('open-time _blendSizeGuard false', resolvedTyped.item?._blendSizeGuard === false);
   const sweepMaxTyped = resolvedTyped.item?._sweepBlendMax
     ?? sweepBlendHardMax(resolvedTyped.item?._pathLength ?? resolvedTyped.minEdgeLength);
