@@ -1,5 +1,6 @@
 import React from 'react';
-import { NumberField } from './controls/popupUI';
+import { LengthNumberField } from './controls/popupUI';
+import { growToFit, shellWallRange } from '../utils/sliderRange';
 import { FeatureDeleteButton } from './FeatureEditDelete';
 import FeatureSheet from './FeatureSheet';
 
@@ -20,6 +21,8 @@ const ShellModeChip = ({
   onConfirm,
   onDismiss,
   onDelete = null,
+  lengthMm = 100,
+  minExtent = null,
 }) => {
   const openingMode = params.openingMode === 'none' ? 'none' : 'face';
   const closed = openingMode === 'none';
@@ -28,7 +31,8 @@ const ShellModeChip = ({
     : (face ? 1 : 0);
   const wall = params.wall;
   const wallNum = Number(wall);
-  const max = Math.max(20, Number.isFinite(wallNum) ? wallNum : 0);
+  const range = shellWallRange(lengthMm, minExtent);
+  const fit = growToFit(range.minMm, range.maxMm, Number.isFinite(wallNum) ? wallNum : range.minMm);
 
   const setWall = (raw) => {
     let v = raw;
@@ -131,15 +135,14 @@ const ShellModeChip = ({
           )}
         </div>
 
-        <NumberField
+        <LengthNumberField
           id="shell-wall"
           label="Wall"
           accent="cyan"
-          value={wall}
-          onChange={setWall}
-          min={0.1}
-          max={max}
-          step={0.25}
+          valueMm={wall}
+          onChangeMm={setWall}
+          minMm={fit.min}
+          maxMm={fit.max}
         />
       </div>
     </FeatureSheet>

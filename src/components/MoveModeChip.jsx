@@ -1,8 +1,9 @@
-import React from 'react';
-import { NumberField } from './controls/popupUI';
+import React, { useState } from 'react';
+import { LengthNumberField } from './controls/popupUI';
 import { FeatureDeleteButton } from './FeatureEditDelete';
 import FeatureSheet from './FeatureSheet';
 import { moveTargetLabel, validateMoveAccept } from '../utils/moveMode';
+import { travelRangeMm } from '../utils/sliderRange';
 
 const ACCENT = 'cyan';
 
@@ -29,12 +30,25 @@ const MoveModeChip = ({
   onConfirm,
   onDismiss,
   onDelete = null,
+  lengthMm = 100,
+  onMeasure = null,
 }) => {
   const gate = validateMoveAccept({
     target, dx, dy, dz, direction, distance, cutNormal, faceNormal,
   });
   const canConfirm = gate.ok;
   const along = direction === 'cut' || direction === 'face';
+  const [measured, setMeasured] = useState({});
+  const endFor = (axis) => travelRangeMm(
+    Number.isFinite(Number(measured[axis])) ? Number(measured[axis]) : null,
+    lengthMm,
+  );
+  const press = (axis, dir) => () => {
+    const d = onMeasure?.(dir);
+    if (!Number.isFinite(Number(d))) return;
+    setMeasured((prev) => ({ ...prev, [axis]: Number(d) }));
+  };
+  const alongDir = direction === 'cut' ? cutNormal : faceNormal;
 
   const setAxis = (axis) => (raw) => {
     onDelta?.(axis, raw);
@@ -109,47 +123,47 @@ const MoveModeChip = ({
           {modeBtn('face', 'Face', !!faceNormal)}
         </div>
         {along ? (
-          <NumberField
+          <LengthNumberField
             id="distance"
             label="Distance"
             accent={ACCENT}
-            value={distance}
-            onChange={setAxis('distance')}
-            min={-1000}
-            max={1000}
-            step={0.5}
+            valueMm={distance}
+            onChangeMm={setAxis('distance')}
+            maxMm={endFor('distance')}
+            signed
+            onPointerDown={press('distance', alongDir)}
           />
         ) : (
           <>
-            <NumberField
+            <LengthNumberField
               id="dx"
               label="X"
               accent={ACCENT}
-              value={dx}
-              onChange={setAxis('dx')}
-              min={-1000}
-              max={1000}
-              step={0.5}
+              valueMm={dx}
+              onChangeMm={setAxis('dx')}
+              maxMm={endFor('dx')}
+              signed
+              onPointerDown={press('dx', [1, 0, 0])}
             />
-            <NumberField
+            <LengthNumberField
               id="dy"
               label="Y"
               accent={ACCENT}
-              value={dy}
-              onChange={setAxis('dy')}
-              min={-1000}
-              max={1000}
-              step={0.5}
+              valueMm={dy}
+              onChangeMm={setAxis('dy')}
+              maxMm={endFor('dy')}
+              signed
+              onPointerDown={press('dy', [0, 1, 0])}
             />
-            <NumberField
+            <LengthNumberField
               id="dz"
               label="Z"
               accent={ACCENT}
-              value={dz}
-              onChange={setAxis('dz')}
-              min={-1000}
-              max={1000}
-              step={0.5}
+              valueMm={dz}
+              onChangeMm={setAxis('dz')}
+              maxMm={endFor('dz')}
+              signed
+              onPointerDown={press('dz', [0, 0, 1])}
             />
           </>
         )}

@@ -1,5 +1,6 @@
 import React from 'react';
-import { NumberField } from './controls/popupUI';
+import { LengthNumberField } from './controls/popupUI';
+import { growToFit } from '../utils/sliderRange';
 import { FeatureDeleteButton } from './FeatureEditDelete';
 import FeatureSheet from './FeatureSheet';
 
@@ -46,9 +47,13 @@ const FilletModeChip = ({
 
   const size = params[sizeKey];
   const sizeNum = Number(size);
-  const max = chamfer
-    ? Math.max(40, Number.isFinite(sizeNum) ? sizeNum : 0)
-    : (Number(params._sweepMax) > 0 ? Number(params._sweepMax) : 40);
+  const baseMax = Number(params._blendMax) > 0
+    ? Number(params._blendMax)
+    : (chamfer
+      ? 40
+      : (Number(params._sweepMax) > 0 ? Number(params._sweepMax) : 40));
+  const baseMin = Number(params._blendMin) > 0 ? Number(params._blendMin) : 0.1;
+  const fit = growToFit(Math.min(baseMin, baseMax), baseMax, Number.isFinite(sizeNum) ? sizeNum : baseMin);
   const title = chamfer ? 'Chamfer' : 'Fillet';
   const heading = `${title} · ${edgeCount} edge${edgeCount === 1 ? '' : 's'}`;
   const subtitle = pathOk
@@ -77,15 +82,14 @@ const FilletModeChip = ({
       note={onDelete ? <FeatureDeleteButton onClick={onDelete} /> : null}
     >
       <div className="mt-1.5 flex flex-col gap-1.5 font-sans">
-        <NumberField
+        <LengthNumberField
           id={chamfer ? 'size' : 'radius'}
           label={chamfer ? 'Size' : 'Radius'}
           accent="cyan"
-          value={size}
-          onChange={setSize}
-          min={0.1}
-          max={max}
-          step={Math.max(0.5, Math.round((max / 40) * 100) / 100)}
+          valueMm={size}
+          onChangeMm={setSize}
+          minMm={fit.min}
+          maxMm={fit.max}
         />
       </div>
       {partCount > 1 ? (

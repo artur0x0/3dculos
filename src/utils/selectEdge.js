@@ -378,8 +378,8 @@ export const SWEEP_BLEND_DEFAULT_MIN = 1;
 export const SWEEP_BLEND_DEFAULT_MAX = 6;
 
 /**
- * Untouched Fillet radius: a fixed 2 mm, however many edges are picked.
- * (Fillet mode thin-clamps it per part: see defaultFilletRadius in filletMode.js.)
+ * Untouched Fillet radius when nothing is picked: 2 mm.
+ * A pick uses the adjacent edge (defaultFilletRadius in filletMode.js).
  */
 export const FILLET_DEFAULT_RADIUS = 2;
 

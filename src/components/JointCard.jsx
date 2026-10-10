@@ -9,18 +9,11 @@ import {
   planarAnglePair,
   stickyJointPick,
 } from '../joints/jointUi';
-import { displayToMm, lengthCaption, lengthToDisplay } from '../utils/displayUnit';
+import { LengthNumberField, NumberField } from './controls/popupUI';
+import { fallbackOffscreenDistance, offscreenRange } from '../utils/sliderMap';
 
 const TYPES = ['coincident', 'concentric', 'distance', 'angle', 'symmetric', 'fixed'];
 const PROPERTIES = TYPES.map((id) => ({ id, label: JOINT_TYPE_LABEL[id] }));
-
-function valueText(mm, unit) {
-  if (!Number.isFinite(Number(mm))) return '';
-  const shown = lengthToDisplay(Number(mm), unit);
-  if (!Number.isFinite(shown)) return '';
-  const digits = unit === 'in' ? 4 : 2;
-  return String(Number(shown.toFixed(digits)));
-}
 
 /**
  * Create card, and the card a strip chip reopens. StickyPickApply owns
@@ -30,6 +23,7 @@ function valueText(mm, unit) {
 export default function JointCard({
   card,
   unit = null,
+  distanceRangeMm = null,
   onChange,
   onConfirm,
   onCancel,
@@ -41,6 +35,9 @@ export default function JointCard({
 }) {
   const [liveUnit] = useDisplayUnit();
   const shownUnit = unit || liveUnit;
+  const distanceEnd = Number(distanceRangeMm) > 0
+    ? Number(distanceRangeMm)
+    : offscreenRange(fallbackOffscreenDistance(100));
   if (!card) return null;
   const editing = card.mode === 'edit';
   const set = (patch) => onChange?.({ ...card, ...patch });
@@ -162,35 +159,47 @@ export default function JointCard({
           </button>
         )}
         {distance && (
-          <label className="flex flex-col gap-1">
-            <span className="text-[11px] uppercase tracking-wide text-cyan-200/80" data-joint-value-caption="">
-              {lengthCaption('Distance', shownUnit)}
-            </span>
-            <input
-              data-joint-value=""
-              inputMode="decimal"
-              value={valueText(card.valueMm, shownUnit)}
-              onChange={(event) => set({ valueMm: displayToMm(event.target.value, shownUnit) })}
-              className="min-h-[36px] rounded border border-cyan-700/70 bg-cyan-950/80 px-2 text-white"
-            />
-          </label>
+          <LengthNumberField
+            id="joint-distance"
+            label="Distance"
+            accent="cyan"
+            unit={shownUnit}
+            valueMm={Number.isFinite(Number(card.valueMm)) ? Number(card.valueMm) : ''}
+            onChangeMm={(raw) => {
+              if (raw === '' || raw === '-' || raw === '.') {
+                set({ valueMm: NaN });
+                return;
+              }
+              const n = Number(raw);
+              set({ valueMm: Number.isFinite(n) ? n : card.valueMm });
+            }}
+            maxMm={distanceEnd}
+            signed
+            numberAttrs={{ 'data-joint-value': '' }}
+            captionAttrs={{ 'data-joint-value-caption': '' }}
+          />
         )}
         {angle && (
-          <label className="flex flex-col gap-1">
-            <span className="text-[11px] uppercase tracking-wide text-cyan-200/80" data-joint-angle-caption="">
-              Angle °
-            </span>
-            <input
-              data-joint-angle=""
-              inputMode="decimal"
-              value={Number.isFinite(Number(card.valueMm)) ? String(card.valueMm) : ''}
-              onChange={(event) => {
-                const raw = event.target.value.trim();
+          <NumberField
+            id="joint-angle"
+            label="Angle °"
+            accent="cyan"
+            value={Number.isFinite(Number(card.valueMm)) ? card.valueMm : ''}
+            onChange={(raw) => {
+              if (raw === '' || raw === '-' || raw === '.') {
                 set({ valueMm: raw === '' ? NaN : Number(raw) });
-              }}
-              className="min-h-[36px] rounded border border-cyan-700/70 bg-cyan-950/80 px-2 text-white"
-            />
-          </label>
+                return;
+              }
+              const n = Number(raw);
+              set({ valueMm: Number.isFinite(n) ? n : card.valueMm });
+            }}
+            min={-90}
+            max={90}
+            step={1}
+            numberAttrs={{ 'data-joint-angle': '' }}
+            sliderAttrs={{ 'data-joint-angle-slider': '' }}
+            captionAttrs={{ 'data-joint-angle-caption': '' }}
+          />
         )}
         {(distance || angle) && (
           <button

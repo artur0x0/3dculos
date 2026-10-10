@@ -286,15 +286,24 @@ import {
   cachedSolidGeometry,
   contactSeamFor,
   createSolidCache,
+  featureEdgesOf,
   featureGraphFor,
   pruneSolidCacheIn,
   releaseGeometryIn,
   solidEntryForGeometry,
 } from '../utils/partSolidCache';
 import {
+  characteristicLengthMm,
   forgetCharacteristicLength,
   rememberCharacteristicLength,
 } from '../utils/characteristicLength';
+import { adjacentBlendSize } from '../utils/adjacentBlend';
+import {
+  directionOffscreenMm,
+  moveFaceRange,
+  scaleFreshContour,
+  shellWallRange,
+} from '../utils/sliderRange';
 import {
   FACE_HIGHLIGHT_RENDER_ORDER,
   detachFaceColorSkin,
@@ -3096,7 +3105,10 @@ const Viewport = forwardRef(({
         y: armedPlane.plane.y.slice(),
       },
     } : null);
-    let next = enterContourState(entry, faceArg);
+    let next = scaleFreshContour(
+      enterContourState(entry, faceArg),
+      characteristicLengthMm({ bounds: modelBoundsRef.current }),
+    );
     const armed = saved.find((c) => c.id === armedContourId);
     next = armed ? applySavedContour(next, armed) : withAutoPickedContour(next, saved);
     setContourMode(next);
@@ -3249,9 +3261,10 @@ const Viewport = forwardRef(({
     clearHighlight();
     setSelectedFace(null);
     onFaceSelected?.(null);
+    const neighbors = featureEdgesRef.current;
     const next = entry === 'chamferEdges'
-      ? enterChamferState(picked)
-      : enterFilletState(picked);
+      ? enterChamferState(picked, { neighbors })
+      : enterFilletState(picked, { neighbors });
     if (opts.params) {
       next.params = { ...next.params, ...opts.params };
       if (entry === 'chamferEdges') next.sizeTouched = true;
@@ -3328,18 +3341,21 @@ const Viewport = forwardRef(({
     const plan = planMultiPartEdgeAccept({
       edges,
       activeId,
-      // An untouched radius is the fixed 2 mm default. Each part reseeds it
-      // against its own solid, so only a part too thin for 2 mm clamps it
-      // down (what a solo Fillet of that part would commit). A typed radius
-      // applies to every part.
-      validate: (list) => (chamfer
-        ? validateChamferAccept(list, state.params)
-        : validateFilletAccept(list, partEdgeParams(state.params, list, {
+      // An untouched size is the adjacent-edge seed. Each part reseeds it
+      // against its own edges. A typed size applies to every part.
+      validate: (list) => {
+        const partEdges = featureEdgesOf(pickPartGeometry(list[0]?.partId ?? activeId));
+        if (chamfer) {
+          const params = state.sizeTouched
+            ? state.params
+            : { ...state.params, chamfer: adjacentBlendSize(list, partEdges).defaultMm };
+          return validateChamferAccept(list, params);
+        }
+        return validateFilletAccept(list, partEdgeParams(state.params, list, {
           touched: !!state.radiusTouched,
-          seed: (picks) => defaultFilletParams(picks, {
-            minExtent: solidMinExtent(pickPartGeometry(picks[0]?.partId ?? activeId)),
-          }).radius,
-        }))),
+          seed: (picks) => defaultFilletParams(picks, { neighbors: partEdges }).radius,
+        }));
+      },
       partName: (id) => partLabelsRef.current?.[id] || id,
     });
     if (!plan.ok) {
@@ -3454,6 +3470,13 @@ const Viewport = forwardRef(({
     clearEdgeHighlight();
     setSelectedEdges([]);
     const next = enterShellState(selectedFace);
+    next.params = {
+      ...next.params,
+      wall: shellWallRange(
+        characteristicLengthMm({ bounds: modelBoundsRef.current }),
+        solidMinExtent(resultRef.current?.geometry),
+      ).defaultMm,
+    };
     setShellMode(next);
     shellModeRef.current = next;
   }, [exitContourMode, selectedFace, clearFilletBlendPreview, clearEdgeHover, clearEdgeHighlight, clearHighlight]);
@@ -3682,15 +3705,24 @@ const Viewport = forwardRef(({
       clearFilletBlendPreview();
       return;
     }
+    const neighbors = featureEdgesRef.current;
     if (filletMode.entry === 'chamferEdges') {
+      if (!filletMode.sizeTouched) {
+        const seeded = adjacentBlendSize(filletActiveEdges, neighbors).defaultMm;
+        if (Number(filletMode.params?.chamfer) !== seeded) {
+          setFilletMode((prev) => (
+            prev && !prev.sizeTouched
+              ? { ...prev, params: { ...prev.params, chamfer: seeded } }
+              : prev
+          ));
+          return;
+        }
+      }
       paintFilletBlendPreview(filletBlendPayload);
       return;
     }
     if (!filletMode.radiusTouched) {
-      // Fixed 2 mm; only a part too thin for it clamps down. Picks no longer grow it.
-      const seeded = defaultFilletParams(filletActiveEdges, {
-        minExtent: solidMinExtent(resultRef.current?.geometry),
-      });
+      const seeded = defaultFilletParams(filletActiveEdges, { neighbors });
       if (Number(filletMode.params?.radius) !== seeded.radius) {
         setFilletMode((prev) => (
           prev && !prev.radiusTouched
@@ -5830,7 +5862,12 @@ const Viewport = forwardRef(({
     else if (selectedFace && Array.isArray(selectedFace.center) && Array.isArray(selectedFace.normal)) {
       seed = [selectedFace];
     }
-    commitMoveFaceState(emptyMoveFaceState(seed));
+    const nextFace = emptyMoveFaceState(seed);
+    nextFace.distance = moveFaceRange(
+      characteristicLengthMm({ bounds: modelBoundsRef.current }),
+      solidMinExtent(resultRef.current?.geometry),
+    ).defaultMm;
+    commitMoveFaceState(nextFace);
   }, [
     exitContourMode,
     selectedFace,
@@ -10122,6 +10159,7 @@ const Viewport = forwardRef(({
             : null}
           pickMode={pickMode}
           compact={isMobile}
+          lengthMm={characteristicLengthMm({ bounds: modelBounds })}
           planeLabel={
             contourMode.planeFace
               ? `planar n=[${contourMode.planeFace.normal.map((v) => Number(v).toFixed(2)).join(', ')}]`
@@ -10294,6 +10332,14 @@ const Viewport = forwardRef(({
             _sweepMax: (filletBlendPayload?.sweepMax > 0
               ? filletBlendPayload.sweepMax
               : sweepBlendHardMax(pathLengthFromEdges(filletActiveEdges.length ? filletActiveEdges : selectedEdges))),
+            _blendMax: adjacentBlendSize(
+              filletActiveEdges.length ? filletActiveEdges : selectedEdges,
+              featureEdgesRef.current,
+            ).maxMm,
+            _blendMin: adjacentBlendSize(
+              filletActiveEdges.length ? filletActiveEdges : selectedEdges,
+              featureEdgesRef.current,
+            ).minMm,
           }}
           pathOk={filletChipStatus.ok}
           componentCount={filletChipStatus.componentCount}
@@ -10342,6 +10388,8 @@ const Viewport = forwardRef(({
             : (shellMode.lastFace || null)}
           params={normalizeShellParams(shellMode.params || {})}
           compact={isMobile}
+          lengthMm={characteristicLengthMm({ bounds: modelBounds })}
+          minExtent={solidMinExtent(resultRef.current?.geometry)}
           onParamChange={(next) => setShellMode((prev) => {
             if (!prev) return prev;
             const updated = { ...prev, params: { ...prev.params, ...next } };
@@ -10436,6 +10484,8 @@ const Viewport = forwardRef(({
         <CutModeChip
           state={cutMode}
           compact={isMobile}
+          bounds={modelBounds}
+          lengthMm={characteristicLengthMm({ bounds: modelBounds })}
           onPlaneSource={(source) => commitCutState(setCutPlaneSource(cutModeRef.current, source))}
           onOffset={(originOffset) => commitCutState(setCutOriginOffset(cutModeRef.current, originOffset))}
           onPickTarget={(pick) => commitCutState(setCutPickTarget(cutModeRef.current, pick))}
@@ -10480,6 +10530,12 @@ const Viewport = forwardRef(({
           cutNormal={cutNormalFromScript((typeof getHelperBuffer === 'function' ? getHelperBuffer() : '') || '')}
           faceNormal={moveMode.faceNormal}
           compact={isMobile}
+          lengthMm={characteristicLengthMm({ bounds: modelBounds })}
+          onMeasure={(direction) => directionOffscreenMm(
+            cameraRef.current,
+            modelBoundsRef.current,
+            direction,
+          )}
           onDelta={(axis, value) => {
             const prev = moveModeRef.current;
             if (!prev) return;
@@ -10516,6 +10572,8 @@ const Viewport = forwardRef(({
           distance={moveFaceMode.distance}
           flip={moveFaceMode.flip}
           compact={isMobile}
+          lengthMm={characteristicLengthMm({ bounds: modelBounds })}
+          minExtent={solidMinExtent(resultRef.current?.geometry)}
           onDistance={(distance) => commitMoveFaceState(setMoveFaceDistance(moveFaceModeRef.current, distance))}
           onFlip={(flip) => commitMoveFaceState(setMoveFaceFlip(moveFaceModeRef.current, flip))}
           onUndo={() => commitMoveFaceState(popLastMoveFace(moveFaceModeRef.current))}
@@ -10585,6 +10643,7 @@ const Viewport = forwardRef(({
           script={featureEditScript || ''}
           failedIds={featureEditFailedIds}
           compact={isMobile}
+          lengthMm={characteristicLengthMm({ bounds: modelBounds })}
           onAccept={onFeatureEditAccept}
           onCancel={onFeatureEditCancel}
           onDelete={onFeatureEditDelete}

@@ -152,6 +152,18 @@ export function featureGraphFor(geom, faceIDs) {
 }
 
 /**
+ * Feature edges already cached for this geometry.
+ * A miss builds them without face ids. Calling `featureGraphFor(geom, null)`
+ * while a face-id entry is cached would miss and overwrite that entry.
+ */
+export function featureEdgesOf(geom) {
+  if (!geom) return [];
+  const hit = featureGraphCache.get(geom);
+  if (hit?.featureEdges) return hit.featureEdges;
+  return featureGraphFor(geom, null).featureEdges;
+}
+
+/**
  * Built solids by mesh data object. `cache.entries` maps meshData → entry;
  * `cache.geoms` is every cached geometry, so a swap does not dispose one that
  * another part (or the pick mesh, after a switch back) still shows.

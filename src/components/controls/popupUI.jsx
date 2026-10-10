@@ -18,7 +18,10 @@
 //      so a computed accent class would be purged from the build. Add a
 //      colour by extending ACCENTS, never by interpolating.
 import React from 'react';
+import { useDisplayUnit } from '../../hooks/useDisplayUnit';
 import { numberFieldLabelParts } from '../../utils/featureFieldEdit';
+import { displayToMm, lengthCaption, lengthToDisplay } from '../../utils/displayUnit';
+import { lengthFromThumb, lengthSnap, thumbFromLength, THUMB_COUNT } from '../../utils/sliderMap';
 
 /* Shared accent/text tokens are imported by chips; keep them here. */
 /* eslint-disable react-refresh/only-export-components */
@@ -68,11 +71,15 @@ export const POPUP_TEXT = {
 };
 
 /** Uppercase caption over a block of controls. */
-export const PopupSection = ({ label, accent = 'slate', children, className = '' }) => {
+export const PopupSection = ({
+  label, accent = 'slate', children, className = '', captionAttrs = null,
+}) => {
   const a = accentOf(accent);
   return (
     <div className={`flex flex-col gap-1 min-w-0 ${className}`}>
-      {label && <span className={`${POPUP_TEXT.caption} ${a.caption}`}>{label}</span>}
+      {label && (
+        <span className={`${POPUP_TEXT.caption} ${a.caption}`} {...captionAttrs}>{label}</span>
+      )}
       {children}
     </div>
   );
@@ -86,33 +93,60 @@ export const PopupSection = ({ label, accent = 'slate', children, className = ''
 export const NumberField = ({
   label, value, onChange, min, max, step, accent = 'slate',
   disabled = false, id, className = '', unit,
+  shaped = false, signed = false, onPointerDown,
+  numberAttrs = null, sliderAttrs = null, captionAttrs = null,
 }) => {
   const a = accentOf(accent);
-  const num = Number.isFinite(Number(value)) ? Number(value) : (Number(min) || 0);
-  // The caption stays the caller's string. The attributes are what the
-  // touch edit view reads, so a unit in the caption is not repeated.
   const parts = numberFieldLabelParts(label, unit);
+  const lo = Number.isFinite(Number(min)) ? Number(min) : 0;
+  const hi = Number.isFinite(Number(max)) ? Number(max) : (shaped ? lo : 100);
+  let rangeValue;
+  let rangeMin;
+  let rangeMax;
+  let rangeStep;
+  let onRange;
+  if (shaped) {
+    const snap = Number(step) > 0 ? Number(step) : 0;
+    const thumb = thumbFromLength(value, { min: lo, max: hi, signed });
+    rangeValue = Math.round(Number.isFinite(thumb) ? thumb : 0);
+    rangeMin = 0;
+    rangeMax = THUMB_COUNT;
+    rangeStep = 1;
+    onRange = (e) => {
+      const next = lengthFromThumb(e.target.value, { min: lo, max: hi, signed, snap });
+      onChange?.(String(next));
+    };
+  } else {
+    rangeValue = Number.isFinite(Number(value)) ? Number(value) : (Number(min) || 0);
+    rangeMin = min ?? 0;
+    rangeMax = max ?? 100;
+    rangeStep = step ?? 0.5;
+    onRange = (e) => onChange?.(e.target.value);
+  }
   return (
-    <PopupSection label={label} accent={accent} className={className}>
+    <PopupSection label={label} accent={accent} className={className} captionAttrs={captionAttrs}>
       <div className="flex items-center gap-2">
         <input
           type="range"
-          value={num}
-          min={min ?? 0}
-          max={max ?? 100}
-          step={step ?? 0.5}
+          value={rangeValue}
+          min={rangeMin}
+          max={rangeMax}
+          step={rangeStep}
           disabled={disabled}
-          onChange={(e) => onChange?.(e.target.value)}
+          onPointerDown={onPointerDown}
+          onChange={onRange}
           className={`flex-1 min-w-0 h-1.5 ${a.range} disabled:opacity-40`}
           aria-label={label}
           data-popup-slider={id || label}
+          {...(shaped ? { 'data-slider-curve': 'shaped' } : null)}
+          {...sliderAttrs}
         />
         <input
           type="number"
           value={value ?? ''}
-          min={min}
-          max={max}
-          step={step ?? 'any'}
+          min={shaped ? undefined : min}
+          max={shaped ? undefined : max}
+          step={shaped ? 'any' : (step ?? 'any')}
           disabled={disabled}
           onChange={(e) => onChange?.(e.target.value)}
           className={`w-20 shrink-0 rounded border px-2 py-1 tabular-nums text-white
@@ -121,9 +155,61 @@ export const NumberField = ({
           data-popup-number={id || label}
           data-field-label={parts.label}
           {...(parts.unit ? { 'data-unit': parts.unit } : null)}
+          {...numberAttrs}
         />
       </div>
     </PopupSection>
+  );
+};
+
+/**
+ * Length slider. The caller stores millimetres. The thumb and the box use
+ * the global display unit. Only the thumb snaps.
+ */
+export const LengthNumberField = ({
+  label, valueMm, onChangeMm, minMm = 0, maxMm = 100, signed = false,
+  accent = 'slate', disabled = false, id, className = '',
+  onPointerDown, numberAttrs = null, sliderAttrs = null, captionAttrs = null,
+  unit: unitProp = null,
+}) => {
+  const [liveUnit] = useDisplayUnit();
+  const unit = unitProp || liveUnit;
+  const end = signed
+    ? Math.max(Math.abs(Number(minMm) || 0), Math.abs(Number(maxMm) || 0))
+    : Number(maxMm);
+  const lo = signed ? -end : (Number.isFinite(Number(minMm)) ? Number(minMm) : 0);
+  const spanMm = Math.abs(end - (signed ? -end : lo));
+  const snap = lengthToDisplay(lengthSnap(unit, spanMm), unit);
+  const partial = valueMm === '' || valueMm === '-' || valueMm === '.';
+  const shown = partial
+    ? valueMm
+    : (Number.isFinite(Number(valueMm)) ? lengthToDisplay(Number(valueMm), unit) : '');
+  return (
+    <NumberField
+      shaped
+      signed={signed}
+      id={id}
+      label={lengthCaption(label, unit)}
+      accent={accent}
+      className={className}
+      disabled={disabled}
+      value={shown}
+      min={lengthToDisplay(lo, unit)}
+      max={lengthToDisplay(end, unit)}
+      step={Number.isFinite(snap) && snap > 0 ? snap : undefined}
+      onPointerDown={onPointerDown}
+      numberAttrs={numberAttrs}
+      sliderAttrs={sliderAttrs}
+      captionAttrs={captionAttrs}
+      onChange={(raw) => {
+        if (raw === '' || raw === '-' || raw === '.') {
+          onChangeMm?.(raw);
+          return;
+        }
+        const mm = displayToMm(raw, unit);
+        onChangeMm?.(Number.isFinite(mm) ? mm : valueMm);
+      }}
+    />
   );
 };
 
