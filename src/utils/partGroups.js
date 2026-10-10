@@ -1,7 +1,7 @@
 /**
  * Part groups: a Parts-list folder for parts inserted from another assembly.
  *
- * Not a multi-body solid and not a mate. Each member stays its own part.
+ * Not a multi-body solid and not a joint. Each member stays its own part.
  * `partIds` are surf ids. A part belongs to at most one group. Collapse is
  * not stored here.
  */

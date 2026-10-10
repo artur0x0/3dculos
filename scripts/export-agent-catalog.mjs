@@ -364,6 +364,76 @@ function parseDts(src) {
 
 function assemblySchema() {
   const id = SURF_ID_RE.source;
+  const vec3 = {
+    type: 'array',
+    items: { type: 'number' },
+    minItems: 3,
+    maxItems: 3,
+  };
+  const faceKey = {
+    type: 'object',
+    additionalProperties: false,
+    required: ['at', 'n', 'area'],
+    dependentRequired: { src: ['ord'], ord: ['src'] },
+    properties: {
+      at: { ...vec3, description: 'Area-weighted face centroid, mm, in the part frame.' },
+      n: { ...vec3, description: 'Area-weighted face normal, in the part frame.' },
+      area: { type: 'number', exclusiveMinimum: 0 },
+      src: {
+        type: 'integer',
+        exclusiveMaximum: 0,
+        description: 'Fillet or chamfer call index, stored as -(index+1). Omitted on a primitive face.',
+      },
+      ord: {
+        type: 'integer',
+        minimum: 0,
+        description: 'Patch index inside that fillet, sorted by center. Set only with src.',
+      },
+    },
+  };
+  const jointRef = {
+    type: 'object',
+    additionalProperties: false,
+    required: ['part'],
+    properties: {
+      part: {
+        type: 'string',
+        pattern: id,
+        description: 'Surf id of the part. A path is not stored.',
+      },
+      kind: {
+        enum: ['face', 'edge', 'axis'],
+        description: 'Omitted on fixed, which stores the part only. Coincident and distance are both faces. Concentric is an axis or an edge on each side. Angle is any of the three.',
+      },
+      key: {
+        description: 'Fingerprint in the part frame. Face: { at, n, area, src?, ord? }, the same key paint stores. Axis: { at, dir, radius }. Edge: { at, dir, length, faces }.',
+        oneOf: [
+          faceKey,
+          {
+            type: 'object',
+            additionalProperties: false,
+            required: ['at', 'dir', 'radius'],
+            properties: {
+              at: vec3,
+              dir: { ...vec3, description: 'Unit direction.' },
+              radius: { type: 'number', exclusiveMinimum: 0 },
+            },
+          },
+          {
+            type: 'object',
+            additionalProperties: false,
+            required: ['at', 'dir', 'length', 'faces'],
+            properties: {
+              at: vec3,
+              dir: { ...vec3, description: 'Unit direction.' },
+              length: { type: 'number', exclusiveMinimum: 0 },
+              faces: { type: 'array', minItems: 2, maxItems: 2, items: faceKey },
+            },
+          },
+        ],
+      },
+    },
+  };
   return {
     $schema: 'https://json-schema.org/draft/2020-12/schema',
     $id: 'https://github.com/artur0x0/3dculos/schema/surf-assembly.json',
@@ -408,7 +478,29 @@ function assemblySchema() {
               items: { type: 'number' },
               minItems: 3,
               maxItems: 3,
-              description: 'Assembly translation [x, y, z] in mm.',
+              description: 'Translation [x, y, z] in mm. Equals placement.t when both are present. Omitted when the translation is the origin, except a legacy row that already stored [0, 0, 0].',
+            },
+            placement: {
+              type: 'object',
+              additionalProperties: false,
+              required: ['t', 'q'],
+              description: 'Rigid pose. Written when the quaternion is not identity, or when a joint names this part. Omitted on a pre-joints row. t equals position when both are present.',
+              properties: {
+                t: {
+                  type: 'array',
+                  items: { type: 'number' },
+                  minItems: 3,
+                  maxItems: 3,
+                  description: 'Translation in mm.',
+                },
+                q: {
+                  type: 'array',
+                  items: { type: 'number' },
+                  minItems: 4,
+                  maxItems: 4,
+                  description: 'Unit quaternion [x, y, z, w].',
+                },
+              },
             },
             sheetMetal: {
               type: 'object',
@@ -527,6 +619,44 @@ function assemblySchema() {
           description: 'part, faces, or both. Unknown keys are rejected.',
         },
         description: 'Optional face colors for this assembly, keyed by surf id. Omitted when empty. A key whose surf id is not in parts is dropped on load and save. The same part in another assembly has its own map. Copy to this assembly mints a new id and does not copy these entries. Version stays 1.',
+      },
+      joints: {
+        type: 'array',
+        minItems: 1,
+        description: 'Optional assembly joints. Omitted when empty. A joint names parts by surf id and stores a face, edge, or axis fingerprint in the part frame. It does not store script text. Status is computed, not stored. A joint whose part surf id is not in parts is dropped on load and save. Copy to this assembly does not retarget a joint onto the new surf id. Version stays 1.',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['id', 'name', 'type', 'a'],
+          properties: {
+            id: {
+              type: 'string',
+              pattern: id,
+              description: 'Surf id of this joint. Unique in the file. Not a part id and not a group id.',
+            },
+            name: { type: 'string', minLength: 1 },
+            type: {
+              enum: ['coincident', 'concentric', 'distance', 'angle', 'fixed'],
+            },
+            value: {
+              type: 'number',
+              description: 'Distance in millimetres, or angle in degrees. Required on distance and angle. Omitted on the other types.',
+            },
+            sense: {
+              enum: [1, -1],
+              description: 'Which side of the reference the value sits on. Required on distance and angle. Omitted on the other types.',
+            },
+            opposed: {
+              type: 'boolean',
+              description: 'Coincident only. True means the face normals are opposed. Omitted means true. Always written for coincident. Rejected on other types.',
+            },
+            a: jointRef,
+            b: {
+              ...jointRef,
+              description: 'Second reference. Omitted on fixed. a.part and b.part are different surf ids.',
+            },
+          },
+        },
       },
     },
     defs: {

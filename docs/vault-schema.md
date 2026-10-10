@@ -41,7 +41,7 @@ The first line of a part script is the stable id:
 
 The body is UTC `yyyy-mm-dd-hh-mm-ss-SSSS-` plus 4 hex characters (`2026-10-07-20-56-31-0423-a3f9`). The id is minted once and never changes. A push does not rewrite it. Whether the part has been pushed is `isSynced` on the local IndexedDB part record. That flag is not part of the id and is never written to `.surf.json`. Add to Repo shows when `isSynced` is false. Blob SHA is not an identity.
 
-A legacy id may still carry a `local-` prefix. It is accepted on read. One migration strips that prefix and keeps the body: IndexedDB first (the open document, script headers, outbox payloads, and sync-store keys), then one outbox commit rewrites `@surf-id` headers and `.surf.json` `id`, `copiedFrom`, group `id`, group `partIds`, and `colors` keys. IndexedDB and the repo both strip a group id and a color key, so the two do not drift. A bare color key wins when the same body is stored both ways. The part path stays. Bytes after the header line stay, including a blank line or an indented first line, and a CRLF header line stays CRLF. The commit has no deletes. A second pass changes nothing. A row id that merely starts with `local-` and is not a surf id is left alone.
+A legacy id may still carry a `local-` prefix. It is accepted on read. One migration strips that prefix and keeps the body: IndexedDB first (the open document, script headers, outbox payloads, and sync-store keys), then one outbox commit rewrites `@surf-id` headers and `.surf.json` `id`, `copiedFrom`, group `id`, group `partIds`, `colors` keys, joint `id`, and the part surf ids a joint names. IndexedDB and the repo both strip a group id, a color key, and a joint ref, so the two do not drift. A bare color key wins when the same body is stored both ways. The part path stays. Bytes after the header line stay, including a blank line or an indented first line, and a CRLF header line stays CRLF. The commit has no deletes. A second pass changes nothing. A row id that merely starts with `local-` and is not a surf id is left alone.
 
 `.surf.json` stores `{ id, path }`. In the app the row id stays the repo path, and `surfId` carries `id`, so scripts stay keyed by file.
 
@@ -114,6 +114,33 @@ The second part is a legacy row: no `id`. The third part is a link to another as
 
 `part` is a whole-part color. A face entry wins on that face. `src` and `ord` are omitted on a primitive face. `src` is the fillet or chamfer call, stored as `-(index + 1)`. `ord` is that fillet's patch index. Hex is lowercase `#rrggbb`. Unknown keys are rejected.
 
+`joints` is optional. It is omitted when empty. A joint names parts by surf id. It stores a face, edge, or axis fingerprint in the part frame. It does not store script text, and it does not change a part's origin. Status (`ok`, `broken`, `conflict`) is computed on load and is not a field.
+
+```json
+"joints": [
+  {
+    "id": "2026-10-08-02-00-00-0002-ee11",
+    "name": "Coincident 1",
+    "type": "coincident",
+    "opposed": true,
+    "a": {
+      "part": "2026-10-07-20-56-31-0423-a3f9",
+      "kind": "face",
+      "key": { "at": [0, 0, 5], "n": [0, 0, 1], "area": 100 }
+    },
+    "b": {
+      "part": "2026-10-07-20-56-31-0424-b10c",
+      "kind": "face",
+      "key": { "at": [0, 0, 0], "n": [0, 0, -1], "area": 100 }
+    }
+  }
+]
+```
+
+`fixed` stores `a` as `{ part }` only: no `kind`, no `key`, no `b`, no `value`. Distance and angle store `value` and `sense` (`1` or `-1`). Distance is millimetres. Angle is degrees. Coincident stores `opposed`. Omitted `opposed` means the normals face each other, and save always writes it. A face key is the paint key. An axis key is `{ at, dir, radius }` with a unit `dir`. An edge key is `{ at, dir, length, faces }` with two face keys.
+
+`placement` on a part is `{ t, q }`. `q` is a unit quaternion `[x, y, z, w]`. It is written when that quaternion is not identity, or when a joint names the part. `position` stays the translation. When both are present, `position` equals `t`. A jointed part at the origin stores `placement` and omits `position`. A file with no joints and no rotation does not gain `placement`. A stored `[0, 0, 0]` position stays.
+
 ### Fields
 
 `validateSurfJson` reports every problem. `parseSurfJson` / `toSurfJson` throw when it fails.
@@ -130,7 +157,8 @@ The second part is a legacy row: no `id`. The third part is a link to another as
 | `parts[].visible` | yes | Boolean. |
 | `parts[].order` | yes | Non-negative integer. |
 | `parts[].id` | no | Surf id, unique in this file. Permanent. A legacy `local-` prefix is accepted on read. |
-| `parts[].position` | no | `[x, y, z]` finite numbers. Viewport translation, millimetres. No mates. |
+| `parts[].position` | no | `[x, y, z]` finite numbers. Translation, millimetres. Equals `placement.t` when both are present. |
+| `parts[].placement` | no | `{ t: [x,y,z], q: [x,y,z,w] }`. `q` is a unit quaternion within 1e-3. Written when the part is rotated or a joint names it. |
 | `parts[].sheetMetal` | no | `{ sku, name?, thicknessIn?, gauge? }`. `sku` is required when the object is present. |
 | `parts[].copiedFrom` | no | Surf id this row was copied from. |
 | `groups` | no | Omitted on old files. No key means no groups. |
@@ -143,12 +171,22 @@ The second part is a legacy row: no `id`. The third part is a link to another as
 | `colors.<id>.faces` | no | Non-empty when present. Each item is `{ color, key }`. |
 | `colors.<id>.faces[].color` | with a face | Lowercase `#rrggbb`. |
 | `colors.<id>.faces[].key` | with a face | `{ at: [x,y,z], n: [x,y,z], area, src?, ord? }`. `area` > 0. `src` and `ord` are set together. `src` is a negative integer. `ord` is a non-negative integer. |
+| `joints` | no | Omitted when empty. Each item is one joint. |
+| `joints[].id` | with a joint | Surf id, unique in the file. Not a part id and not a group id. |
+| `joints[].name` | with a joint | Non-empty after trim. |
+| `joints[].type` | with a joint | `coincident`, `concentric`, `distance`, `angle`, or `fixed`. |
+| `joints[].value` | distance, angle | Finite number. Millimetres for distance, degrees for angle. Omitted on the other types. |
+| `joints[].sense` | distance, angle | `1` or `-1`. Omitted on the other types. |
+| `joints[].opposed` | coincident | Boolean. Omitted means opposed normals. Always written on save. Rejected on other types. |
+| `joints[].a` | with a joint | `{ part }` for `fixed`. `{ part, kind, key }` otherwise. `part` is a surf id in this file. |
+| `joints[].b` | relational | Same shape as `a`. Omitted on `fixed`. `a.part` and `b.part` are different parts. |
+| `joints[].a.kind` | relational | `face`, `edge`, or `axis`. Coincident and distance are both faces. Concentric is an axis or an edge on each side. Angle is any of the three. |
 
-On load, `pruneDanglingGroupPartIds` drops part ids that are not in `parts`, and drops a group that has nothing left. The same pass runs on every save (`normalizeGroups` inside `serializeAssembly`). A surf id listed twice stays on the first group. Collapse is UI state and is not stored. `pruneDanglingColors` drops a color key whose surf id is not in `parts`, and drops `colors` when that leaves it empty. The same pass runs on every save. A key that is not a surf id is rejected, not dropped.
+On load, `pruneDanglingGroupPartIds` drops part ids that are not in `parts`, and drops a group that has nothing left. The same pass runs on every save (`normalizeGroups` inside `serializeAssembly`). A surf id listed twice stays on the first group. Collapse is UI state and is not stored. `pruneDanglingColors` drops a color key whose surf id is not in `parts`, and drops `colors` when that leaves it empty. The same pass runs on every save. A key that is not a surf id is rejected, not dropped. `pruneDanglingSurfJoints` drops a joint whose part surf id is not in `parts`, and drops `joints` when that leaves it empty. The same pass runs on every save (`normalizeAssemblyJoints`). A joint that is not an object stays so validation can reject it. A duplicate joint id is an error. Save keeps the first.
 
 ## Groups, links, and copy
 
-A group is a Parts-list folder for parts inserted from another assembly. It is not a multi-body solid and not a mate. Each member keeps its own script.
+A group is a Parts-list folder for parts inserted from another assembly. It is not a multi-body solid and not a joint. Each member keeps its own script. A joint is a constraint on the assembly document, not a folder of parts.
 
 **Insert parts into current** (`planInsertVaultAssemblyParts` + `withInsertedGroup`) adds the source assembly's parts as links: same repo path, same surf id. A path already in this document is skipped. New rows are filed under one group named for the source assembly, `source` set to `assemblies/<Name>/.surf.json`. Inserting the same source again appends to that group and keeps its name. Parts already in some group stay where they are. The outbox commit rewrites this assembly's `.surf.json` only.
 
@@ -156,7 +194,7 @@ A group is a Parts-list folder for parts inserted from another assembly. It is n
 
 A linked row is a path in another assembly's folder (`isExternalPartPath`). `parts/` is not external. The row shows **Caution: external part!** and **Copy to this assembly**.
 
-**Copy to this assembly** (`planCopyToAssembly`) writes a new script in this folder. The new surf id is minted once. `isSynced` stays false until that part is pushed. `copiedFrom` records the source surf id (the row's id, else the header). The source file stays. A name already in this folder becomes `Name (2)`. The group, if any, keeps the row and points `partIds` at the new id. Colors are not copied onto the new id. A color stored for the old id is dropped with that id. Colors for parts that stay are left alone.
+**Copy to this assembly** (`planCopyToAssembly`) writes a new script in this folder. The new surf id is minted once. `isSynced` stays false until that part is pushed. `copiedFrom` records the source surf id (the row's id, else the header). The source file stays. A name already in this folder becomes `Name (2)`. The group, if any, keeps the row and points `partIds` at the new id. Colors are not copied onto the new id. A color stored for the old id is dropped with that id. Colors for parts that stay are left alone. Joints are not copied onto the new id. A joint that named the old id is dropped with that id. Joints for parts that stay are left alone.
 
 **Copy all to this assembly** (`copyGroupToAssembly`) runs that copy on each linked member. The group stays. A member that already lives in this folder is left alone.
 

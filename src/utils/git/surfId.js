@@ -256,7 +256,35 @@ export function rewriteColorMap(colors, map) {
   return next;
 }
 
-/** Rewrite surf-id fields in a `.surf.json` text, including `colors` keys. Unknown JSON is returned as-is. */
+/**
+ * Rewrite joint ids and the part surf ids they name through a
+ * localId → bare id map. The same array comes back when nothing changes.
+ */
+export function rewriteJointSurfIds(joints, map) {
+  if (!Array.isArray(joints)) return joints;
+  const get = (id) => (map instanceof Map ? map.get(id) : map?.[id]);
+  let changed = false;
+  const next = joints.map((joint) => {
+    if (!joint || typeof joint !== 'object' || Array.isArray(joint)) return joint;
+    const id = get(joint.id);
+    const aPart = joint.a && typeof joint.a === 'object' ? get(joint.a.part) : null;
+    const bPart = joint.b && typeof joint.b === 'object' ? get(joint.b.part) : null;
+    const nextId = id && id !== joint.id ? id : null;
+    const nextA = aPart && aPart !== joint.a.part ? aPart : null;
+    const nextB = bPart && bPart !== joint.b.part ? bPart : null;
+    if (!nextId && !nextA && !nextB) return joint;
+    changed = true;
+    return {
+      ...joint,
+      ...(nextId ? { id: nextId } : {}),
+      ...(nextA ? { a: { ...joint.a, part: nextA } } : {}),
+      ...(nextB ? { b: { ...joint.b, part: nextB } } : {}),
+    };
+  });
+  return changed ? next : joints;
+}
+
+/** Rewrite surf-id fields in a `.surf.json` text, including `colors` keys and joint part refs. Unknown JSON is returned as-is. */
 export function rewriteSurfIdFields(text, map) {
   if (!map || (typeof map.size === 'number' ? map.size === 0 : !Object.keys(map).length)) {
     return text;
@@ -307,6 +335,13 @@ export function rewriteSurfIdFields(text, map) {
       changed = true;
     }
   }
+  if (Array.isArray(raw.joints)) {
+    const joints = rewriteJointSurfIds(raw.joints, map);
+    if (joints !== raw.joints) {
+      raw.joints = joints;
+      changed = true;
+    }
+  }
   if (!changed) return text;
   return `${JSON.stringify(raw, null, 2)}\n`;
 }
@@ -334,6 +369,7 @@ export function applyIdPromotion(doc, scripts, map) {
     }))
     : doc?.groups;
   const colors = rewriteColorMap(doc?.colors, table);
+  const joints = rewriteJointSurfIds(doc?.joints, table);
   const nextScripts = {};
   for (const [path, text] of Object.entries(scripts || {})) {
     const id = readSurfId(text);
@@ -341,6 +377,7 @@ export function applyIdPromotion(doc, scripts, map) {
   }
   const nextDoc = { ...doc, parts, ...(Array.isArray(groups) ? { groups } : {}) };
   if (colors !== doc?.colors) nextDoc.colors = colors;
+  if (joints !== doc?.joints) nextDoc.joints = joints;
   return {
     doc: nextDoc,
     scripts: nextScripts,
