@@ -4,7 +4,7 @@
  */
 import { Vector3 } from 'three';
 import { REFERENCE_LENGTH_MM } from './characteristicLength.js';
-import { fallbackOffscreenDistance, offscreenRange } from './sliderMap.js';
+import { fallbackOffscreenDistance, offscreenRange, shape } from './sliderMap.js';
 
 export function partLengthMm(lengthMm) {
   const n = Number(lengthMm);
@@ -165,4 +165,20 @@ export function scaleFreshContour(state, lengthMm) {
     }
     : state.loft;
   return { ...state, params, extrude, loft };
+}
+
+/**
+ * Cross-section thumb ends, in millimetres.
+ * The box edge sits at two-thirds of the thumb (`shape(2/3)`). The outer
+ * third continues past the box. `reach` is the signed end from `center`.
+ */
+export function sectionThumbRange(boxMin, boxMax) {
+  const a = Number(boxMin);
+  const b = Number(boxMax);
+  const lo = Number.isFinite(a) ? a : -100;
+  const hi = Number.isFinite(b) ? b : 100;
+  const center = (lo + hi) / 2;
+  const half = Math.abs(hi - lo) / 2;
+  const reach = half / shape(2 / 3);
+  return { min: center - reach, max: center + reach, center, reach };
 }

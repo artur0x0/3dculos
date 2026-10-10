@@ -224,6 +224,8 @@ if (exe && failed === 0) {
       };
 
       await openSheet();
+      await setNumber(page, 'sm-base-x', 100);
+      await setNumber(page, 'sm-base-y', 60);
       await page.locator('[data-sheet-metal-base] [data-sm-accept]').click();
       await page.waitForSelector('[data-sheet-metal-step="edit"]', { timeout: 15000 });
       await acceptBend({ kind: 'edge', panel: 'base', edge: 'u+' }, 40);
@@ -255,6 +257,7 @@ if (exe && failed === 0) {
       errors.length = 0;
       await openSheet();
       await setNumber(page, 'sm-base-x', 40);
+      await setNumber(page, 'sm-base-y', 60);
       await page.locator('[data-sheet-metal-base] [data-sm-accept]').click();
       await page.waitForSelector('[data-sheet-metal-step="edit"]', { timeout: 15000 });
       await acceptBend({ kind: 'edge', panel: 'base', edge: 'u+' }, 25);

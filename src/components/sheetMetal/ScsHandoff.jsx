@@ -3,7 +3,8 @@ import { SCS_ORDER_URL } from '../../utils/scs/scsCatalog';
 import { downloadBlob } from '../../utils/model-io';
 import { buildSheetExport } from '../../utils/sheetMetal/sheetExport';
 import { readSheetMetalSpec } from '../../utils/sheetMetal/sheetMetalScript';
-import { formatSheetLength, loadSheetDisplayUnit } from '../../utils/sheetMetal/sheetUnits';
+import { formatSheetLength } from '../../utils/sheetMetal/sheetUnits';
+import { useDisplayUnit } from '../../hooks/useDisplayUnit';
 import { SmButton } from './SmControls';
 
 const downloadText = (file) => {
@@ -16,7 +17,7 @@ const downloadText = (file) => {
  * quote. It does not price the part and does not write a cart line.
  */
 const ScsHandoff = ({ script, partName = 'sheet', onQuoteInstead }) => {
-  const unit = loadSheetDisplayUnit();
+  const [unit] = useDisplayUnit();
   const model = useMemo(() => {
     const spec = readSheetMetalSpec(script);
     if (!spec) return null;

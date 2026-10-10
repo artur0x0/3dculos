@@ -1,11 +1,15 @@
 // components/CrossSectionPanel.jsx
 /* eslint-disable react-hooks/exhaustive-deps -- see Viewport note; same ref-backed pattern */
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { FlipHorizontal, Check, Gauge, Maximize2, Ruler, Move3d, Spline, RectangleHorizontal, Layers3, NotebookPen, Palette, X } from 'lucide-react';
 import TrianglesCenterlineDashedVertical from './icons/TrianglesCenterlineDashedVertical';
 import ViewSnapControl from './ViewSnapControl';
 import { PLANE_PRESETS } from '../utils/crossSection';
 import { RAIL_NO_CLIP_CLASS, RAIL_PAIR_HEIGHT_ATTR } from '../utils/railPair';
+import { sectionThumbRange } from '../utils/sliderRange';
+import { lengthFromThumb, lengthSnap, thumbFromLength, THUMB_COUNT } from '../utils/sliderMap';
+import { formatDisplayLength } from '../utils/displayUnit';
+import { useDisplayUnit } from '../hooks/useDisplayUnit';
 
 const CrossSectionPanel = ({ 
   enabled,
@@ -44,8 +48,10 @@ const CrossSectionPanel = ({
   const [customNormal, setCustomNormal] = useState([0, 0, 1]);
   const [isCustom, setIsCustom] = useState(false);
 
-  // Calculate offset range based on bounds
-  const [offsetRange, setOffsetRange] = useState({ min: -100, max: 100, center: 0 });
+  // Thumb ends. Before bounds, the fallback box is ±100 and the outer third continues past it.
+  const [offsetRange, setOffsetRange] = useState(() => sectionThumbRange(-100, 100));
+  const placedBounds = useRef(false);
+  const [displayUnit] = useDisplayUnit();
 
   useEffect(() => {
     if (bounds) {
@@ -53,12 +59,12 @@ const CrossSectionPanel = ({
       const normal = isCustom ? customNormal : PLANE_PRESETS[planeType].normal;
       const range = calculateOffsetRange(bounds, normal);
       setOffsetRange(range);
-      
+
       // On first bounds calculation, set offset to center
-      // Check if we're still at the default range
-      if (offsetRange.min === -100 && offsetRange.max === 100) {
+      if (!placedBounds.current) {
+        placedBounds.current = true;
         setOffset(range.center);
-        
+
         // Also notify parent of the centered position
         onPlaneChange?.({
           normal,
@@ -68,7 +74,7 @@ const CrossSectionPanel = ({
       } else if (offset < range.min || offset > range.max) {
         // If offset is out of new range, re-center
         setOffset(range.center);
-        
+
         onPlaneChange?.({
           normal,
           originOffset: range.center,
@@ -99,9 +105,7 @@ const CrossSectionPanel = ({
 
     const min = Math.min(...projections);
     const max = Math.max(...projections);
-    const center = (min + max) / 2;
-
-    return { min, max, center };
+    return sectionThumbRange(min, max);
   };
 
   const handlePresetChange = (preset) => {
@@ -462,29 +466,39 @@ const handleButtonClick = () => {
           </div>
         </div>
 
-        {/* Position Slider */}
+        {/* Position Slider. The box edge is two-thirds of the thumb; the rest continues past it. */}
         <div>
           <label className="block text-xs font-medium text-gray-700 mb-2">
-            Position: {offset.toFixed(1)} mm
+            Position: {formatDisplayLength(offset, displayUnit)}
           </label>
           <input
             type="range"
-            min={offsetRange.min}
-            max={offsetRange.max}
-            step="0.5"
-            value={offset}
-            onChange={(e) => handleOffsetChange(e.target.value)}
+            min={0}
+            max={THUMB_COUNT}
+            step={1}
+            value={Math.round(thumbFromLength(offset - offsetRange.center, { max: offsetRange.reach, signed: true }))}
+            onChange={(e) => {
+              const delta = lengthFromThumb(e.target.value, {
+                max: offsetRange.reach,
+                signed: true,
+                snap: lengthSnap(displayUnit, Math.abs(offsetRange.reach) * 2),
+              });
+              handleOffsetChange(offsetRange.center + delta);
+            }}
             className="w-full h-2 bg-gray-300 rounded-lg appearance-none cursor-pointer accent-blue-500"
+            data-section-offset=""
+            data-slider-curve="shaped"
+            aria-label="Section position"
           />
           <div className="flex justify-between text-xs text-gray-500 mt-1">
-            <span>{offsetRange.min.toFixed(0)}</span>
+            <span>{formatDisplayLength(offsetRange.min, displayUnit)}</span>
             <button
               onClick={() => handleOffsetChange(offsetRange.center)}
               className="text-gray-600 hover:text-gray-900 font-medium"
             >
               Center
             </button>
-            <span>{offsetRange.max.toFixed(0)}</span>
+            <span>{formatDisplayLength(offsetRange.max, displayUnit)}</span>
           </div>
         </div>
 

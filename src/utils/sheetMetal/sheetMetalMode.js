@@ -23,11 +23,20 @@ import {
   IN,
 } from './sheetModel.js';
 import { bendInterference } from './sheetInterference.js';
+import { REFERENCE_LENGTH_MM } from '../characteristicLength.js';
 import { FASTENER_METRIC, FASTENER_UNC } from '../../workers/fastenerSizes.js';
 
 export const BASE_DEFAULTS = Object.freeze({ width: 100, height: 60 });
 export const BASE_MIN = 1;
 export const BASE_MAX = 1200;
+
+const round2 = (n) => Math.round(n * 100) / 100;
+
+/** Empty or degenerate parts use the 100 mm reference. */
+function sheetLength(lengthMm) {
+  const n = Number(lengthMm);
+  return Number.isFinite(n) && n > 0 ? n : REFERENCE_LENGTH_MM;
+}
 
 /** Inches pair → sorted [smaller, larger] mm, or null. */
 function sortedPairMm(pair) {
@@ -40,14 +49,13 @@ function sortedPairMm(pair) {
 }
 
 /**
- * Base-flange defaults: 100×60 mm, then each sorted side is raised to cover
- * the SKU minimum flat (`bend.minFlatIn` / bending min_flat_part_size) and
- * the cutting minimum part size (`minPartIn`). The longer minimum maps to
- * width. Already-larger defaults stay put. Result is millimetres.
+ * SKU floors for the two base axes, in millimetres. The longer minimum
+ * (flat part size, then cutting minimum) maps to width. Zero when the SKU
+ * has no floor.
  */
-export function defaultBaseDims(rec) {
-  let height = BASE_DEFAULTS.height;
-  let width = BASE_DEFAULTS.width;
+export function skuAxisFloors(rec) {
+  let height = 0;
+  let width = 0;
   const raise = (pair) => {
     const min = sortedPairMm(pair);
     if (!min) return;
@@ -56,9 +64,34 @@ export function defaultBaseDims(rec) {
   };
   raise(rec?.bend?.minFlatIn);
   raise(rec?.minPartIn);
+  return { width, height };
+}
+
+/**
+ * Slider ends for the base flange. The thumb runs from the SKU floor (else
+ * 1 mm) to 1200 mm. The hard cap is the thumb, not only a caption.
+ */
+export function baseSliderRange(rec) {
+  const floors = skuAxisFloors(rec);
   return {
-    width: Math.min(BASE_MAX, width),
-    height: Math.min(BASE_MAX, height),
+    widthMin: floors.width > 0 ? floors.width : BASE_MIN,
+    heightMin: floors.height > 0 ? floors.height : BASE_MIN,
+    max: BASE_MAX,
+  };
+}
+
+/**
+ * Base-flange seeds. Width is `max(L, the longer SKU minimum)`, height is
+ * `max(0.60 L, the shorter)`. At L=100 that is 100×60 unless the SKU is
+ * larger. The 1200 mm cap wins after the SKU floor. Result is millimetres.
+ * Omit `lengthMm` (the script starter) and L stays the 100 mm reference.
+ */
+export function defaultBaseDims(rec, lengthMm = REFERENCE_LENGTH_MM) {
+  const L = sheetLength(lengthMm);
+  const floors = skuAxisFloors(rec);
+  return {
+    width: round2(Math.min(BASE_MAX, Math.max(L, floors.width))),
+    height: round2(Math.min(BASE_MAX, Math.max(0.6 * L, floors.height))),
   };
 }
 
@@ -167,10 +200,10 @@ export function defaultTool(record) {
   return record?.bendable ? 'bend' : 'tab';
 }
 
-export function pickSheetPlane(mode, planeId) {
+export function pickSheetPlane(mode, planeId, lengthMm = REFERENCE_LENGTH_MM) {
   if (!mode || mode.stage !== 'plane' || !SHEET_PLANES[planeId]) return mode;
   const prev = mode.base || {};
-  const dims = defaultBaseDims(mode.sku);
+  const dims = defaultBaseDims(mode.sku, lengthMm);
   return {
     ...mode,
     stage: 'base',
@@ -182,17 +215,17 @@ export function pickSheetPlane(mode, planeId) {
   };
 }
 
-const clampDim = (n, fallback) => {
-  const v = Number(n);
-  if (!Number.isFinite(v)) return fallback;
-  return Math.min(BASE_MAX, Math.max(BASE_MIN, v));
-};
-
 export function setBaseDims(mode, patch) {
   if (!mode || mode.stage !== 'base' || !mode.base) return mode;
+  const ends = baseSliderRange(mode.sku);
+  const clampDim = (n, fallback, lo) => {
+    const v = Number(n);
+    if (!Number.isFinite(v)) return fallback;
+    return Math.min(BASE_MAX, Math.max(lo, v));
+  };
   const base = { ...mode.base };
-  if (patch?.width !== undefined && patch.width !== '') base.width = clampDim(patch.width, base.width);
-  if (patch?.height !== undefined && patch.height !== '') base.height = clampDim(patch.height, base.height);
+  if (patch?.width !== undefined && patch.width !== '') base.width = clampDim(patch.width, base.width, ends.widthMin);
+  if (patch?.height !== undefined && patch.height !== '') base.height = clampDim(patch.height, base.height, ends.heightMin);
   return { ...mode, base };
 }
 
@@ -218,8 +251,6 @@ export function acceptBaseFlange(mode) {
 // ---------------------------------------------------------------- S3 bends
 // Draft = the one feature the popup is editing ({ kind, id, isNew, … }).
 // The overlay previews `draftPreviewSpec(mode)`; Accept commits it.
-
-const round2 = (n) => Math.round(n * 100) / 100;
 
 export { bendDefaults, bendLimits };
 
@@ -404,17 +435,17 @@ export function deleteDraftFeature(mode) {
  * Viewport tap router (pick = sheetPickFromHits result, point in part frame).
  * plane → base popup; edge → new feature for the active tool; feature → edit.
  */
-export function sheetTap(mode, pick) {
+export function sheetTap(mode, pick, lengthMm = REFERENCE_LENGTH_MM) {
   if (!mode || !pick) return mode;
-  if (mode.stage === 'plane') return pick.kind === 'plane' ? pickSheetPlane(mode, pick.plane) : mode;
+  if (mode.stage === 'plane') return pick.kind === 'plane' ? pickSheetPlane(mode, pick.plane, lengthMm) : mode;
   if (mode.stage !== 'edit' || mode.draft || mode.exportOpen) return mode;
   if (pick.kind === 'edge') {
     if (mode.tool === 'bend') return startBendDraft(mode, pick);
-    if (mode.tool === 'tab') return startTabDraft(mode, pick);
+    if (mode.tool === 'tab') return startTabDraft(mode, pick, lengthMm);
     return mode;
   }
   if (pick.kind === 'bend' || pick.kind === 'tab' || pick.kind === 'hole') return editFeatureDraft(mode, pick.kind, pick.id);
-  if (pick.kind === 'panel' && HOLE_TOOLS.has(mode.tool)) return startHoleDraft(mode, pick);
+  if (pick.kind === 'panel' && HOLE_TOOLS.has(mode.tool)) return startHoleDraft(mode, pick, lengthMm);
   return mode;
 }
 
@@ -445,15 +476,35 @@ export function setSheetTool(mode, tool) {
   return { ...mode, tool, draft: null, hotEdge: null, toast: null };
 }
 
-/** Tab defaults: Centered on, width 40% of the edge (≤ 25 mm), depth 10 mm. */
-export function startTabDraft(mode, { panel, edge }) {
+/**
+ * Tab seeds. Width is the smaller of 0.25 L and 40% of the edge (at least
+ * 1 mm, and not past the edge). Depth is 0.10 L (at least 0.5 mm). At L=100
+ * that is the old 25 mm cap and 10 mm depth.
+ */
+export function tabDraftSize(span, lengthMm = REFERENCE_LENGTH_MM) {
+  const L = sheetLength(lengthMm);
+  const edge = Number(span) > 0 ? Number(span) : 0;
+  const width = round2(Math.max(1, Math.min(edge || 1, Math.min(0.25 * L, edge * 0.4))));
+  const depth = round2(Math.max(0.5, 0.1 * L));
+  return { width, depth };
+}
+
+/** Hole Ø seed: the larger of 0.05 L and 2× the SKU minimum. 5 mm at L=100. */
+export function holeDraftDiameter(minHole, lengthMm = REFERENCE_LENGTH_MM) {
+  const L = sheetLength(lengthMm);
+  const floor = Number(minHole) > 0 ? Number(minHole) : 1;
+  return round2(Math.max(0.05 * L, floor * 2));
+}
+
+/** Tab defaults: Centered on. Width and depth scale with L, then the edge caps width. */
+export function startTabDraft(mode, { panel, edge }, lengthMm = REFERENCE_LENGTH_MM) {
   if (!mode?.spec || mode.stage !== 'edit') return mode;
   const solved = solveSheet(mode.spec);
   const p = panelById(solved, panel);
   if (!p) return mode;
   const ef = panelEdge(p, edge);
   const span = ef.q1 - ef.q0;
-  const width = round2(Math.max(1, Math.min(25, span * 0.4)));
+  const { width, depth } = tabDraftSize(span, lengthMm);
   return {
     ...mode,
     toast: null,
@@ -465,7 +516,7 @@ export function startTabDraft(mode, { panel, edge }) {
       panel,
       edge,
       width,
-      depth: 10,
+      depth,
       centered: true,
       offset: round2((span - width) / 2),
       span: round2(span),
@@ -480,7 +531,7 @@ export const TAP_SIZES = Object.freeze([
 ]);
 
 /** Hole at the tapped point of a panel face. */
-export function startHoleDraft(mode, { panel, point }) {
+export function startHoleDraft(mode, { panel, point }, lengthMm = REFERENCE_LENGTH_MM) {
   if (!mode?.spec || mode.stage !== 'edit' || !Array.isArray(point)) return mode;
   const solved = solveSheet(mode.spec);
   const p = panelById(solved, panel);
@@ -491,7 +542,7 @@ export function startHoleDraft(mode, { panel, point }) {
   const thread = kind === 'tapped' ? 'M4' : null;
   const d = kind === 'tapped'
     ? TAP_SIZES.find((x) => x.id === thread).tap
-    : round2(Math.max(5, minHole * 2));
+    : holeDraftDiameter(minHole, lengthMm);
   return {
     ...mode,
     toast: null,
