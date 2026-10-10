@@ -197,6 +197,7 @@
     "golden:open-assembly-choice-row": "node scripts/golden/smoke_open_assembly_choice_row.mjs",
     "golden:git-g12-script-upload-download": "node scripts/golden/smoke_git_g12_script_upload_download.mjs",
     "golden:git-g13-vault-create-conflict": "node scripts/golden/smoke_git_g13_vault_create_conflict.mjs",
+    "golden:repo-moved": "node scripts/golden/smoke_repo_moved_branch.mjs",
         "golden:git-cache-sync": "node scripts/golden/smoke_git_cache_sync.mjs",
         "golden:permanent-ids": "node scripts/golden/smoke_permanent_ids.mjs",
         "golden:parts-layout": "node scripts/golden/smoke_parts_layout.mjs",

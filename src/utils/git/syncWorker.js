@@ -4,8 +4,9 @@
  * FIFO per repo and branch. Ops for another branch stay queued and are not
  * pushed onto this tip. Pushes immediately when online. On reconnect: look at
  * the remote commit SHA first. If it differs from lastSyncedSha for this
- * branch, do not push and do not overwrite — the caller routes that to the
- * G13 conflict popup.
+ * branch, do not push and do not overwrite. A user Save shows the yellow
+ * warning toast. An open, reload, or background flush shows the G13 popup.
+ * Those two UIs are not both shown for the same result.
  * Otherwise push the queue. Part ids are not rewritten on push.
  */
 import { normalizeOutboxFiles } from './binaryContent.js';
@@ -13,6 +14,7 @@ import { materializeRename, renameFailureToast } from './gitRename.js';
 import { deleteAssemblyFailureToast } from './gitDeleteAssembly.js';
 import { assertMigrationCommitSafe, readVaultIdEntries } from './surfIdMigration.js';
 import { planLayoutMigration } from './layoutMigration.js';
+import { GitAdapterError } from './githubAdapterInterface.js';
 import { isVaultWriteRefusal, repoHasVaultMarker, vaultWriteRefusalMessage } from './vault.js';
 
 /**
@@ -129,6 +131,21 @@ export async function flushSyncQueue({
       await store.setOpStatus(item.id, 'done');
       await store.setPartsState(repo, item.partIds, 'clean', item.branch || branch);
     } catch (err) {
+      if (err instanceof GitAdapterError && err.code === 'non_fast_forward') {
+        await store.setOpStatus(item.id, 'queued', '');
+        await store.setPartsState(repo, item.partIds, 'queued', item.branch || branch);
+        return {
+          status: 'conflict',
+          code: 'non_fast_forward',
+          remoteSha: head,
+          lastSyncedSha: synced,
+          branch,
+          baseSha: synced || head,
+          syncHold: true,
+          warning: 'The repo moved since the last sync. Nothing was overwritten.',
+          pending: store.pending(repo, branch).length,
+        };
+      }
       if (isVaultWriteRefusal(err)) {
         await store.setOpStatus(item.id, 'queued', '');
         await store.setPartsState(repo, item.partIds, 'queued', item.branch || branch);

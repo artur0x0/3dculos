@@ -1032,6 +1032,13 @@ export default function PartFeed({
     const draft = commitFlow?.draft || '';
     setCommitFlow({ stage: 'busy', draft, result: null, error: '' });
     const result = (await onGitCommit?.(draft)) || { status: 'error', error: 'Commit unavailable' };
+    if (result.status === 'repo-moved') {
+      setCommitFlow(null);
+      if (leaveGuard?.stage === 'commit') {
+        setLeaveGuard((prev) => (prev ? { ...prev, stage: 'ask' } : prev));
+      }
+      return;
+    }
     if (result.status === 'branched' || result.status === 'conflict' || result.syncHold) {
       setCommitFlow({
         stage: 'ask-force',
