@@ -114,38 +114,74 @@ async function lowestNdc(page) {
 }
 
 async function chooseTriangle(page) {
-  const sets = [
-    [[-8, -6, 10], [8, -6, 10], [0, 8, 10]],
-    [[-8, 6, 10], [8, 6, 10], [0, -8, 10]],
-    [[-10, 8, 10], [10, 8, 10], [0, -4, 10]],
-  ];
+  const sets = [];
+  for (const x of [-14, -6, 2, 10]) {
+    for (const y of [-11, -4, 3]) {
+      sets.push([[x, y, 10], [x + 7, y, 10], [x + 3.5, y + 6, 10]]);
+    }
+  }
   const view = await page.evaluate((candidates) => {
-    const canvas = document.querySelector('canvas').getBoundingClientRect();
+    const canvas = document.querySelector('canvas');
+    const box = canvas.getBoundingClientRect();
+    const project = (p) => {
+      const q = window.__VIEWPORT__.stageProject(p);
+      if (!q) return null;
+      const el = document.elementFromPoint(q.x, q.y);
+      const open = el && (el === canvas || el.closest?.('canvas'));
+      return open ? q : null;
+    };
     return {
-      top: canvas.top,
-      height: canvas.height,
+      top: box.top,
+      left: box.left,
+      width: box.width,
+      height: box.height,
       scored: candidates.map((pts) => ({
         pts,
-        projected: pts.map((p) => window.__VIEWPORT__.stageProject(p)),
+        projected: pts.map(project),
       })),
     };
   }, sets);
-  const usable = view.scored.filter((row) => row.projected.every(Boolean));
-  const upper = usable.filter((row) => {
-    const midY = row.projected.reduce((sum, p) => sum + p.y, 0) / row.projected.length;
-    return midY < view.top + view.height * 0.42;
-  });
-  const pool = upper.length ? upper : usable;
+  // A short wide viewport lifts the part by about a third of the height
+  // when the dimension card opens. Vertices that start in the upper half
+  // leave the canvas. A phone lifts less, and the card covers the bottom,
+  // so the triangle stays in the middle.
+  const wide = view.width >= 1000 && view.height <= 860;
+  const yMin = wide ? 0.50 : 0.34;
+  const yMax = wide ? 0.88 : 0.78;
+  const inBand = (p) => {
+    if (!p) return false;
+    const nx = (p.x - view.left) / view.width;
+    const ny = (p.y - view.top) / view.height;
+    return nx > 0.08 && nx < 0.92 && ny > yMin && ny < yMax;
+  };
+  const onScreen = (p) => {
+    if (!p) return false;
+    const nx = (p.x - view.left) / view.width;
+    const ny = (p.y - view.top) / view.height;
+    return nx > 0.06 && nx < 0.94 && ny > 0.08 && ny < 0.92;
+  };
+  const minEdge = (row) => {
+    const pts = row.projected;
+    let best = Infinity;
+    for (let i = 0; i < pts.length; i += 1) {
+      const j = (i + 1) % pts.length;
+      best = Math.min(best, Math.hypot(pts[j].x - pts[i].x, pts[j].y - pts[i].y));
+    }
+    return best;
+  };
+  const usable = view.scored.filter((row) => row.projected.every(Boolean) && minEdge(row) >= 36);
+  const band = usable.filter((row) => row.projected.every(inBand));
+  const pool = band.length ? band : usable.filter((row) => row.projected.every(onScreen));
   if (!pool.length) return null;
   pool.sort((a, b) => {
-    const span = (row) => {
-      const xs = row.projected.map((p) => p.x);
-      const ys = row.projected.map((p) => p.y);
-      return (Math.max(...xs) - Math.min(...xs)) * (Math.max(...ys) - Math.min(...ys));
-    };
-    return span(b) - span(a);
+    const low = (row) => Math.min(...row.projected.map((p) => p.y));
+    if (wide) return low(b) - low(a);
+    return minEdge(b) - minEdge(a);
   });
-  return pool[0].pts;
+  const chosen = pool[0];
+  const ys = chosen.projected.map((p) => ((p.y - view.top) / view.height).toFixed(2));
+  console.log(`  triangle screen-y ${ys.join(',')} wide ${wide}`);
+  return chosen.pts;
 }
 
 async function addPoint(page, world, n) {
@@ -212,13 +248,48 @@ async function anchorProbe(page) {
   return last;
 }
 
-async function clickDot(page, index) {
-  const at = await page.evaluate((i) => {
+async function waitSettled(page) {
+  // Adding a dimension rebuilds the solid. The sheet camera slides again
+  // with the new bounds, and a tap during that tween misses the dot.
+  await page.waitForFunction(() => {
     const dots = window.__VIEWPORT__.stageContourSketch().dots || [];
-    return dots[i] || null;
-  }, index);
-  if (!at) throw new Error(`no dot ${index}`);
-  await page.mouse.click(at.x, at.y);
+    const cam = window.__VIEWPORT__.stageCamera();
+    const stamp = [
+      ...dots.map((d) => `${d.x.toFixed(1)},${d.y.toFixed(1)}`),
+      ...(cam?.position || []).map((n) => Number(n).toFixed(2)),
+    ].join('|');
+    const now = Date.now();
+    const prev = window.__dimSettle;
+    if (!prev || prev.stamp !== stamp) {
+      window.__dimSettle = { stamp, at: now };
+      return false;
+    }
+    return now - prev.at >= 180;
+  }, null, { timeout: 5000 });
+}
+
+async function clickDot(page, index) {
+  let last = null;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    await waitSettled(page);
+    const at = await page.evaluate((i) => {
+      const dots = window.__VIEWPORT__.stageContourSketch().dots || [];
+      const open = dots.filter((d) => {
+        const el = document.elementFromPoint(d.x, d.y);
+        return el && (el.tagName === 'CANVAS' || el.closest?.('canvas'));
+      });
+      const dot = open[i] || null;
+      return dot ? { ...dot, open: open.length, all: dots.length } : { open: open.length, all: dots.length };
+    }, index);
+    last = at;
+    if (!at?.x) break;
+    await page.mouse.click(at.x, at.y);
+    const stuck = await page.waitForFunction((id) => (
+      window.__VIEWPORT__.stageContourSketch().picked || []
+    ).some((p) => p.id === id), at.id, { timeout: 800 }).then(() => true).catch(() => false);
+    if (stuck) return;
+  }
+  throw new Error(`no clickable dot ${index} ${JSON.stringify(last)}`);
 }
 
 async function runViewport(page, width) {
@@ -248,7 +319,7 @@ async function runViewport(page, width) {
   const beforeCam = await page.evaluate(() => window.__VIEWPORT__.stageCamera());
   await page.locator('[data-contour-tool="dimension"]').click();
   await page.locator('[data-contour-card="dimension"]').waitFor({ timeout: 4000 });
-  await page.waitForTimeout(500);
+  await waitSettled(page);
   const after = await lowestNdc(page);
   const afterCam = await page.evaluate(() => window.__VIEWPORT__.stageCamera());
   const lifted = after != null && before != null ? after - before : null;
@@ -291,9 +362,51 @@ async function runViewport(page, width) {
   }));
   check(`${width} highlights clear when the dimension is accepted`, (afterAdd.pickHighlights?.points || []).length === 0, JSON.stringify(afterAdd.pickHighlights));
 
-  await clickDot(page, 1);
-  await clickDot(page, 2);
-  await page.waitForFunction(() => window.__VIEWPORT__.stageContourSketch().picked.length === 2, null, { timeout: 4000 });
+  await waitSettled(page);
+  const openCount = await page.evaluate(() => {
+    const dots = window.__VIEWPORT__.stageContourSketch().dots || [];
+    return dots.filter((d) => {
+      const el = document.elementFromPoint(d.x, d.y);
+      return el && (el.tagName === 'CANVAS' || el.closest?.('canvas'));
+    }).length;
+  });
+  if (openCount >= 3) {
+    await clickDot(page, 1);
+    await clickDot(page, 2);
+  } else if (openCount >= 2) {
+    // The upward slide hid one vertex. A length on a visible edge is the
+    // second dimension.
+    const edge = await page.evaluate(() => {
+      const dots = window.__VIEWPORT__.stageContourSketch().dots || [];
+      const open = dots.filter((d) => {
+        const el = document.elementFromPoint(d.x, d.y);
+        return el && (el.tagName === 'CANVAS' || el.closest?.('canvas'));
+      });
+      let best = null;
+      for (let i = 0; i < open.length; i += 1) {
+        for (let j = i + 1; j < open.length; j += 1) {
+          const span = Math.hypot(open[j].x - open[i].x, open[j].y - open[i].y);
+          if (!best || span > best.span) best = { a: open[i], b: open[j], span };
+        }
+      }
+      if (!best) return null;
+      for (let s = 1; s < 12; s += 1) {
+        const t = s / 12;
+        const x = best.a.x + (best.b.x - best.a.x) * t;
+        const y = best.a.y + (best.b.y - best.a.y) * t;
+        const nearDot = dots.some((d) => Math.hypot(d.x - x, d.y - y) < 16);
+        const el = document.elementFromPoint(x, y);
+        const canvas = el && (el.tagName === 'CANVAS' || el.closest?.('canvas'));
+        if (!nearDot && canvas) return { x, y };
+      }
+      return null;
+    });
+    if (!edge) throw new Error(`second dimension has no visible edge (${openCount} dots)`);
+    await page.mouse.click(edge.x, edge.y);
+  } else {
+    throw new Error(`second dimension has ${openCount} open dots`);
+  }
+  await page.waitForFunction(() => window.__VIEWPORT__.stageContourSketch().picked.length >= 1, null, { timeout: 4000 });
   await page.waitForFunction(() => {
     const btn = document.querySelector('[data-feature-card-confirm]');
     return btn && !btn.disabled && /Add/.test(btn.textContent || '');
@@ -305,7 +418,17 @@ async function runViewport(page, width) {
   }, null, { timeout: 4000 });
   check(`${width} a second Add stays on the card`, (await page.evaluate(() => window.__VIEWPORT__.stageContourSketch().dimensions)) === 2);
 
-  await page.locator('[data-contour-tag]').first().click();
+  await waitSettled(page);
+  // Two chips can sit on the same spot. Dispatch on one the pointer can reach.
+  await page.evaluate(() => {
+    const tags = [...document.querySelectorAll('[data-contour-tag]')];
+    const open = tags.find((el) => {
+      const r = el.getBoundingClientRect();
+      const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      return hit === el || el.contains(hit);
+    });
+    (open || tags[0])?.click();
+  });
   await page.waitForFunction(() => (
     document.querySelector('[data-contour-card="dimension"]')?.getAttribute('data-contour-dimension-mode') === 'edit'
   ), null, { timeout: 4000 });
@@ -326,16 +449,49 @@ async function runViewport(page, width) {
 
   await page.locator('[data-contour-tool="constraints"]').click();
   await page.locator('[data-contour-card="constraint"]').waitFor({ timeout: 4000 });
+  await waitSettled(page);
   const edge = await page.evaluate(() => {
     const dots = window.__VIEWPORT__.stageContourSketch().dots || [];
-    if (dots.length < 2) return null;
-    return { x: (dots[0].x + dots[1].x) / 2, y: (dots[0].y + dots[1].y) / 2 };
+    let best = null;
+    for (let i = 0; i < dots.length; i += 1) {
+      for (let j = i + 1; j < dots.length; j += 1) {
+        const span = Math.hypot(dots[j].x - dots[i].x, dots[j].y - dots[i].y);
+        if (!best || span > best.span) best = { i, j, span, a: dots[i], b: dots[j] };
+      }
+    }
+    if (!best) return null;
+    for (let s = 1; s < 12; s += 1) {
+      const t = s / 12;
+      const x = best.a.x + (best.b.x - best.a.x) * t;
+      const y = best.a.y + (best.b.y - best.a.y) * t;
+      const nearDot = dots.some((d) => Math.hypot(d.x - x, d.y - y) < 16);
+      const el = document.elementFromPoint(x, y);
+      const canvas = el && (el.tagName === 'CANVAS' || el.closest?.('canvas'));
+      if (!nearDot && canvas) return { x, y, span: best.span };
+    }
+    return { x: (best.a.x + best.b.x) / 2, y: (best.a.y + best.b.y) / 2, span: best.span, fallback: true };
   });
   if (edge) await page.mouse.click(edge.x, edge.y);
-  await page.waitForFunction(() => (
-    window.__VIEWPORT__.stageContourSketch().picked.some((p) => p.kind === 'line')
-  ), null, { timeout: 4000 });
-  await clickDot(page, 2);
+  try {
+    await page.waitForFunction(() => (
+      window.__VIEWPORT__.stageContourSketch().picked.some((p) => p.kind === 'line')
+    ), null, { timeout: 4000 });
+  } catch (err) {
+    const diag = await page.evaluate(() => ({
+      sketch: window.__VIEWPORT__.stageContourSketch(),
+      card: document.querySelector('[data-contour-card]')?.getAttribute('data-contour-card') || '',
+    }));
+    throw new Error(`${err.message} edge ${JSON.stringify(edge)} diag ${JSON.stringify(diag)}`);
+  }
+  const pointIndex = await page.evaluate(() => {
+    const dots = window.__VIEWPORT__.stageContourSketch().dots || [];
+    const open = dots.filter((d) => {
+      const el = document.elementFromPoint(d.x, d.y);
+      return el && (el.tagName === 'CANVAS' || el.closest?.('canvas'));
+    });
+    return Math.max(0, open.length - 1);
+  });
+  await clickDot(page, pointIndex);
   await page.waitForFunction(() => {
     const picked = window.__VIEWPORT__.stageContourSketch().picked || [];
     return picked.some((p) => p.kind === 'line') && picked.some((p) => p.kind === 'point');
