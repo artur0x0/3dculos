@@ -392,6 +392,8 @@ import {
   featureSheetClearanceNdc,
   featureSheetCoveredFraction,
 } from '../utils/featureSheetCamera';
+import { createFaceSketchAim, faceSketchBox } from '../utils/faceSketchCamera';
+import { emptySketchHistory, observeSketchEdit, undoSketchEdit } from '../utils/contourSketchHistory';
 
 import { validateScript, formatValidationErrors } from '../utils/scriptValidator';
 import manifoldContext from '../utils/ManifoldWorker';
@@ -1082,6 +1084,18 @@ const Viewport = forwardRef(({
   const [edgeModeToast, setEdgeModeToast] = useState(null);
   /** Slice 24/25/26/28/30: contour-mode shell (Profile-in-mode; Extrude / Revolve / Loft / Sweep commit a solid). */
   const [contourMode, setContourMode] = useState(null);
+  const [contourFaceAim, setContourFaceAim] = useState('');
+  const [contourUndoDepth, setContourUndoDepth] = useState(0);
+  const [faceSketchNonce, setFaceSketchNonce] = useState(0);
+  const faceSketchNormalRef = useRef(null);
+  const sketchHistRef = useRef(emptySketchHistory());
+  const applyingSketchUndoRef = useRef(false);
+  const faceSketchFinishRef = useRef(() => {});
+  const requestFaceSketchAim = (normal) => {
+    if (!Array.isArray(normal) || normal.length < 3) return;
+    faceSketchNormalRef.current = [Number(normal[0]), Number(normal[1]), Number(normal[2])];
+    setFaceSketchNonce((n) => n + 1);
+  };
   const [selectedPlaneId, setSelectedPlaneId] = useState(null);
   const [armedContourId, setArmedContourId] = useState(null);
   const [sceneReady, setSceneReady] = useState(false);
@@ -1323,6 +1337,17 @@ const Viewport = forwardRef(({
           : pane.getBoundingClientRect();
         return { paneRect, cardRect: card.getBoundingClientRect() };
       },
+    });
+  }
+  const faceSketchRef = useRef(null);
+  if (!faceSketchRef.current) {
+    faceSketchRef.current = createFaceSketchAim({
+      getCamera: () => cameraRef.current,
+      getControls: () => controlsRef.current,
+      setControls: (next) => { controlsRef.current = next; },
+      reducedMotion: () => typeof window !== 'undefined'
+        && window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+      onDone: () => faceSketchFinishRef.current(),
     });
   }
   const sheetSlideDeltaRef = useRef(() => 0);
@@ -1853,6 +1878,13 @@ const Viewport = forwardRef(({
     // an additive click still sees the previous picks).
     facePickGroupRef.current = null;
   }, []);
+
+  faceSketchFinishRef.current = () => {
+    clearHighlight();
+    setSelectedFace(null);
+    onFaceSelected?.(null);
+    setContourFaceAim('done');
+  };
 
   const clearEdgeHighlight = useCallback(() => {
     disposeEdgeOverlayObject(sceneRef.current, edgeHighlightRef.current);
@@ -2962,6 +2994,8 @@ const Viewport = forwardRef(({
   }, [clearFilletBlendPreview, anchorToActivePart]);
 
   const exitContourMode = useCallback(() => {
+    faceSketchRef.current?.cancel();
+    setContourFaceAim('');
     releaseContourOverlays(overlayVis);
     cancelFeatureEditRef.current?.('contour');
     setContourMode(null);
@@ -3037,6 +3071,10 @@ const Viewport = forwardRef(({
     const armed = saved.find((c) => c.id === armedContourId);
     next = armed ? applySavedContour(next, armed) : withAutoPickedContour(next, saved);
     setContourMode(next);
+    if (next.planePreset === 'face') {
+      const normal = next.planeFace?.normal || next.planeBase?.normal;
+      requestFaceSketchAim(normal);
+    }
     // Soft-fail / refuse only — no informational toast on successful feature UI open.
     if (next.enterRefuse) showContourToast(next.enterRefuse);
     applyContourPartGhost(true);
@@ -3922,7 +3960,59 @@ const Viewport = forwardRef(({
         angles: { x: 0, y: 0, z: 0 },
       });
     });
+    holdSheetSlide();
+    requestFaceSketchAim(resolved.face?.normal || resolved.plane?.normal);
   }, [selectedFace, onFaceSelected, clearHighlight]);
+
+  // Face sketch: look along the outward normal and frame the face. The card
+  // slide stays disarmed so it does not pan this framing away. The highlight
+  // drops when the tween ends.
+  useEffect(() => {
+    if (!faceSketchNonce) return undefined;
+    const state = contourModeRef.current;
+    const normal = faceSketchNormalRef.current;
+    if (!state || !normal) return undefined;
+    const meshes = highlightMeshRef.current;
+    const list = Array.isArray(meshes) ? meshes.filter(Boolean) : (meshes ? [meshes] : []);
+    const faceMeshes = list.filter((mesh) => mesh.name === 'highlight');
+    const box = faceSketchBox(faceMeshes.length ? faceMeshes : list);
+    holdSheetSlide();
+    if (!box) {
+      clearHighlight();
+      setSelectedFace(null);
+      onFaceSelected?.(null);
+      setContourFaceAim('done');
+      return undefined;
+    }
+    const started = faceSketchRef.current?.aim({ box, normal });
+    if (!started) {
+      setContourFaceAim('done');
+      return undefined;
+    }
+    if (faceSketchRef.current?.isAnimating()) setContourFaceAim('run');
+    return undefined;
+  }, [faceSketchNonce, clearHighlight, onFaceSelected]);
+
+  // Face-sketch undo. The face pick is the baseline. Later tool, profile,
+  // plane, and loft-station edits push a step. An undo replace does not push.
+  useEffect(() => {
+    if (applyingSketchUndoRef.current) {
+      applyingSketchUndoRef.current = false;
+      return;
+    }
+    const next = observeSketchEdit(sketchHistRef.current, contourMode);
+    sketchHistRef.current = next;
+    setContourUndoDepth(next.depth);
+  }, [contourMode]);
+
+  const undoContourSketch = useCallback(() => {
+    const popped = undoSketchEdit(sketchHistRef.current);
+    if (!popped) return;
+    applyingSketchUndoRef.current = true;
+    sketchHistRef.current = popped.history;
+    setContourUndoDepth(popped.history.depth);
+    setContourMode(popped.state);
+  }, []);
 
   const clearPathPreview = useCallback(() => {
     if (!pathPreviewRef.current) return;
@@ -7775,6 +7865,20 @@ const Viewport = forwardRef(({
             return true;
           },
           setAxes: (on) => { setAxisHelperEnabled(!!on); return true; },
+          stageContourSketch: () => {
+            const meshes = highlightMeshRef.current;
+            return {
+              aim: containerRef.current?.getAttribute('data-contour-face-aim') || '',
+              highlights: Array.isArray(meshes) ? meshes.length : (meshes ? 1 : 0),
+              planePreset: contourModeRef.current?.planePreset || '',
+              tool: contourModeRef.current?.tool || '',
+              points: Array.isArray(contourModeRef.current?.params?.points)
+                ? contourModeRef.current.params.points.length
+                : 0,
+              undoDepth: sketchHistRef.current?.depth || 0,
+              open: !!contourModeRef.current,
+            };
+          },
         };
       }
 
@@ -7794,7 +7898,9 @@ const Viewport = forwardRef(({
         if (!loopAlive) return;
         rafId = requestAnimationFrame(animate);
 
-        if (!sheetCameraRef.current?.isRestoring()) controlsRef.current?.update();
+        if (!sheetCameraRef.current?.isRestoring() && !faceSketchRef.current?.isAnimating()) {
+          controlsRef.current?.update();
+        }
 
         animatePolylineHandles();
         updateEdgeChips();
@@ -9465,7 +9571,11 @@ const Viewport = forwardRef(({
   const titlePlace = 'left-1/2 -translate-x-1/2 max-w-[min(36rem,calc(100%-2rem))]';
 
   return (
-    <div ref={containerRef} className="viewport-shell relative w-full h-full bg-[#1e1e1e] overflow-hidden">
+    <div
+      ref={containerRef}
+      className="viewport-shell relative w-full h-full bg-[#1e1e1e] overflow-hidden"
+      data-contour-face-aim={contourFaceAim || undefined}
+    >
       {partChoice?.choices?.length > 1 && (
         <div
           data-which-part-chip=""
@@ -9691,18 +9801,21 @@ const Viewport = forwardRef(({
         />
       )}
 
-      {/* Slice 24: contour-mode rail (tools + Back). Same shell in CAD and game. */}
+      {/* Contour rail: tools, Back undoes one face-sketch edit, X exits. */}
       {contourMode && (
         <ContourModeRail
           tool={contourMode.tool}
           gesture={contourMode.gesture || null}
           entry={contourMode.entry}
           compact={isMobile}
+          showBack={contourMode.planePreset === 'face'}
+          canUndo={contourUndoDepth > 0}
           onSelectTool={(id) => setContourMode((prev) => {
             if (!prev) return prev;
             if (id === 'arc' || id === 'dimension' || id === 'constraints') return armContourGesture(prev, id);
             return switchContourTool(prev, id);
           })}
+          onUndo={undoContourSketch}
           onBack={exitContourMode}
         />
       )}
