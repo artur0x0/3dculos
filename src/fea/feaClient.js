@@ -24,6 +24,26 @@ import { createFeaWorkerHost } from './feaRunSession.js';
 import { packMesh } from './meshTransfer.js';
 import { FeaMessage } from './protocol.js';
 
+function packStudyParts(parts) {
+  if (!Array.isArray(parts) || parts.length < 1) return null;
+  const transfer = [];
+  const packed = [];
+  for (const part of parts) {
+    const mesh = packMesh(part);
+    transfer.push(mesh.positions.buffer, mesh.indices.buffer, mesh.faceIDs.buffer);
+    const translation = Array.isArray(part.translation) ? part.translation : [0, 0, 0];
+    packed.push({
+      id: part.id,
+      name: part.name || part.id,
+      translation: [Number(translation[0]) || 0, Number(translation[1]) || 0, Number(translation[2]) || 0],
+      positions: mesh.positions,
+      indices: mesh.indices,
+      faceIDs: mesh.faceIDs,
+    });
+  }
+  return { parts: packed, transfer };
+}
+
 export async function createFeaClient(options = {}) {
   const worker = options.worker || new FeaWorker();
   const profile = options.profile === 'phone' ? 'phone' : 'desktop';
@@ -37,6 +57,20 @@ export async function createFeaClient(options = {}) {
     },
 
     solve(request, hooks = {}) {
+      const packedParts = packStudyParts(request && request.parts);
+      if (packedParts) {
+        const first = packedParts.parts[0];
+        return host.request(FeaMessage.solve, {
+          study: request && request.study != null ? request.study : null,
+          material: request ? request.material : null,
+          profile: request && request.profile ? request.profile : profile,
+          fallback: request && request.fallback,
+          positions: first.positions,
+          indices: first.indices,
+          faceIDs: first.faceIDs,
+          parts: packedParts.parts,
+        }, packedParts.transfer, hooks);
+      }
       const mesh = packMesh(request && request.mesh);
       return host.request(FeaMessage.solve, {
         study: request && request.study != null ? request.study : null,

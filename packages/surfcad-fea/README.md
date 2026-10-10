@@ -8,6 +8,7 @@ Two entry points share the module:
 - `solve_tet10` is a clean-room linear-elastic static solver for 10-node tetrahedra. It sets `source` to `"fem"`.
 - `solve_shell` is a clean-room linear shell for 6-node triangles. It sets `source` to `"shell"`.
 - `modal_tet10` and `modal_shell` are the same elements' consistent-mass modal solves. They return the lowest frequencies in hertz and mass-normalized mode shapes scaled so the largest translation is 1. A free-free model shifts `K − σ M` so the rigid-body modes stay in the spectrum. Loads are ignored.
+- `solve_bonded` ties independently meshed TET10 bodies. Each slave node is a projection multipoint constraint on one master face, and those constraints are eliminated before the solve. The remaining matrix is symmetric positive definite, which is what faer's supernodal Cholesky and Jacobi PCG factor. A penalty cannot hit a 1e-8 patch test without wrecking the condition number, and an augmented-Lagrangian saddle point is indefinite, so Cholesky cannot take it. Shell-to-solid ties are not implemented: a shell node has rotations, and tying only translations would leave the joint's bending free.
 
 The linear algebra is [faer](https://crates.io/crates/faer) 0.24 (MIT / Apache-2.0), built **without** the `rayon` feature so the factorization stays single-threaded (`Par::Seq`). Tet meshing is not in this crate. The shell does not need a separate mesher: the caller passes the 6-node triangulation.
 
@@ -92,9 +93,10 @@ A native scale check is not part of `cargo test`. Run one size per process so th
 cargo bench --bench scale -- 40000
 cargo bench --bench scale -- 100000
 cargo bench --bench scale -- shell 120000
+cargo bench --bench scale -- bonded 40000
 ```
 
-It prints DOFs, assembly time, solve time and peak resident memory. Above the auto threshold the tet run uses Jacobi PCG. The shell run uses supernodal Cholesky.
+It prints DOFs, assembly time, solve time and peak resident memory. Above the auto threshold the tet run uses Jacobi PCG. The shell run uses supernodal Cholesky. `bonded` is two bricks tied at the mid-plane; the phone wasm ceiling is still 512 MiB, and the phone DOF cap is split across the parts when the app chooses an edge length.
 
 ## Units
 
@@ -209,6 +211,10 @@ const result = solve_tet10(
 ```
 
 `p95` uses the same nearest-rank rule as the stub. `iterations` and `residual` are 0 for Cholesky.
+
+### `solve_bonded`
+
+`mesh.bodies` is `{ nodes, elements, material }` per solid, in concatenated order. `mesh.ties` carries `slaveNodes`, `masterFaces` (six node ids per TET10 face), `faceOffsets`, `faceCounts`, and `gap` (default 0.05 mm). Boundary conditions use the concatenated node ids. The returned field is the combined von Mises array. `partP95`, `partMin`, `partMax`, and `partSafety` are one value per body. `governingPart` is the body whose yield / p95 is the smallest. That minimum is `safetyFactor`. A missed slave (farther than `gap` from every allowed master face) adds a `tie-gap` warning and is left free.
 
 ### `solve_shell`
 

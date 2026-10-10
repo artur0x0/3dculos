@@ -136,12 +136,14 @@ self.onmessage = async (event) => {
           material: msg.material,
           profile: msg.profile,
           fallback: msg.fallback,
+          parts: msg.parts,
           solveTet10: fea.solve_tet10,
           solveShell: fea.solve_shell,
           modalTet10: fea.modal_tet10,
           modalShell: fea.modal_shell,
           solveStub: fea.solve,
           sheetSpec: msg.sheetSpec || null,
+          solveBonded: fea.solve_bonded,
           cache: meshCache,
           isCancelled: () => cancelled,
           memory,
@@ -176,6 +178,14 @@ self.onmessage = async (event) => {
         for (const key of ['nodal', 'displacement', 'modeMagnitudes', 'modeVectors']) {
           const buffer = ownFloat32(result, key);
           if (buffer) transfers.push(buffer);
+        }
+        if (Array.isArray(result?.parts)) {
+          for (const part of result.parts) {
+            for (const key of ['nodal', 'displacement']) {
+              const buffer = ownFloat32(part, key);
+              if (buffer) transfers.push(buffer);
+            }
+          }
         }
         self.postMessage({ id: msg.id, ok: true, result }, transfers);
       } finally {

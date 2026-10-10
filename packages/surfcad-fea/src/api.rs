@@ -582,6 +582,295 @@ fn read_modal_shell_bcs(
     read_shell_bcs(bcs, n_nodes, n_elem)
 }
 
+/// Bonded multi-body solve. Each body is meshed on its own and tied by
+/// projection MPCs. Shell-to-solid ties are not accepted: every body is TET10.
+///
+/// `mesh.bodies` is an array of `{ nodes, elements, material }`. Node indices
+/// inside a body are local. Ties and boundary conditions use the concatenated
+/// order: body 0, then body 1, and so on.
+///
+/// `mesh.ties` is optional. `slaveNodes` are concatenated node ids.
+/// `masterFaces` is six node ids per TET10 face. `faceOffsets` and
+/// `faceCounts` say which faces each slave may land on (face index, not a
+/// node index). `gap` is the plane distance in millimetres that still counts
+/// as on the face; the default is 0.05.
+///
+/// The safety factor is the minimum of yield/p95 over the bodies that have
+/// both. `governingPart` is that body's index.
+#[wasm_bindgen(js_name = solve_bonded)]
+pub fn solve_bonded(mesh: &JsValue, bcs: &JsValue, options: &JsValue) -> Result<JsValue, JsValue> {
+    let started = js_sys::Date::now();
+    let (stored, tie_input) = read_bonded_mesh(mesh).map_err(fem_failure)?;
+    let bodies: Vec<fem::SolidBody<'_>> = stored
+        .iter()
+        .map(|body| fem::SolidBody {
+            nodes: &body.nodes,
+            elements: &body.elements,
+            material: body.material,
+        })
+        .collect();
+    let mut nodes = Vec::new();
+    for body in &stored {
+        nodes.extend_from_slice(&body.nodes);
+    }
+    let (dirichlet, forces, pressures) = read_bcs(bcs, nodes.len()).map_err(fem_failure)?;
+    let options = read_options(options, SolverChoice::Auto).map_err(fem_failure)?;
+    let (ties, missed) = build_ties(&nodes, &tie_input).map_err(fem_failure)?;
+    let output = fem::solve_bonded(&bodies, &ties, &dirichlet, &forces, &pressures, &options)
+        .map_err(fem_failure)?;
+    let elapsed = js_sys::Date::now() - started;
+    #[derive(serde::Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Wire<'a> {
+        source: &'static str,
+        field: &'static str,
+        units: &'static str,
+        min: f64,
+        max: f64,
+        p95: f64,
+        safety_factor: Option<f64>,
+        fos: Option<f64>,
+        warnings: &'a [fem::Warning],
+        solver: &'static str,
+        stats: FemStats,
+    }
+    #[derive(serde::Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct FemStats {
+        dofs: u32,
+        free_dofs: u32,
+        nodes: u32,
+        elements: u32,
+        iterations: u32,
+        residual: f64,
+        assembly_ms: f64,
+        solve_ms: f64,
+        ms: f64,
+        missed_slaves: u32,
+    }
+    let mut warnings = output.fem.warnings.clone();
+    if missed > 0 {
+        warnings.push(fem::Warning {
+            code: "tie-gap",
+            msg: format!(
+                "{missed} slave nodes were farther than the bond gap from every master face and were left untied"
+            ),
+        });
+    }
+    let wire = Wire {
+        source: "fem",
+        field: "von_mises",
+        units: "MPa",
+        min: output.fem.min,
+        max: output.fem.max,
+        p95: output.fem.p95,
+        safety_factor: output.fem.safety_factor,
+        fos: output.fem.safety_factor,
+        warnings: &warnings,
+        solver: output.fem.solver.as_str(),
+        stats: FemStats {
+            dofs: output.fem.dofs as u32,
+            free_dofs: output.fem.free_dofs as u32,
+            nodes: nodes.len() as u32,
+            elements: stored.iter().map(|body| body.elements.len()).sum::<usize>() as u32,
+            iterations: output.fem.iterations as u32,
+            residual: output.fem.residual,
+            assembly_ms: output.fem.assembly_secs * 1.0e3,
+            solve_ms: output.fem.solve_secs * 1.0e3,
+            ms: elapsed,
+            missed_slaves: missed as u32,
+        },
+    };
+    let value = serde_wasm_bindgen::to_value(&wire).map_err(|err| js_err(&err.to_string()))?;
+    attach_f64(&value, "nodal", &output.fem.von_mises)?;
+    attach_f64(&value, "displacement", &output.fem.displacement)?;
+    set_number_or_null(&value, "safetyFactor", output.fem.safety_factor)?;
+    set_number_or_null(&value, "fos", output.fem.safety_factor)?;
+    let mut part_p95 = Vec::with_capacity(output.parts.len());
+    let mut part_min = Vec::with_capacity(output.parts.len());
+    let mut part_max = Vec::with_capacity(output.parts.len());
+    let mut part_fos = Vec::with_capacity(output.parts.len());
+    let mut part_offset = Vec::with_capacity(output.parts.len());
+    let mut part_count = Vec::with_capacity(output.parts.len());
+    for part in &output.parts {
+        part_p95.push(part.p95);
+        part_min.push(part.min);
+        part_max.push(part.max);
+        part_fos.push(part.safety_factor.unwrap_or(f64::NAN));
+        part_offset.push(part.node_offset as u32);
+        part_count.push(part.node_count as u32);
+    }
+    attach_f64(&value, "partP95", &part_p95)?;
+    attach_f64(&value, "partMin", &part_min)?;
+    attach_f64(&value, "partMax", &part_max)?;
+    attach_f64(&value, "partSafety", &part_fos)?;
+    let offsets = js_sys::Uint32Array::from(part_offset.as_slice());
+    let counts = js_sys::Uint32Array::from(part_count.as_slice());
+    js_sys::Reflect::set(&value, &JsValue::from_str("partNodeOffset"), &offsets)
+        .map_err(|_| js_err("failed to attach part offsets"))?;
+    js_sys::Reflect::set(&value, &JsValue::from_str("partNodeCount"), &counts)
+        .map_err(|_| js_err("failed to attach part counts"))?;
+    let governing = match output.governing {
+        Some(index) => JsValue::from_f64(index as f64),
+        None => JsValue::NULL,
+    };
+    js_sys::Reflect::set(&value, &JsValue::from_str("governingPart"), &governing)
+        .map_err(|_| js_err("failed to attach the governing part"))?;
+    Ok(value)
+}
+
+struct StoredBody {
+    nodes: Vec<[f64; 3]>,
+    elements: Vec<[u32; 10]>,
+    material: fem::Material,
+}
+
+struct TieInput {
+    slaves: Vec<u32>,
+    faces: Vec<[u32; 6]>,
+    offsets: Vec<u32>,
+    counts: Vec<u32>,
+    gap: f64,
+}
+
+fn read_bonded_mesh(mesh: &JsValue) -> Result<(Vec<StoredBody>, TieInput), fem::FemError> {
+    let bodies_value = field(mesh, "bodies")?;
+    let bodies = js_sys::Array::from(&bodies_value);
+    if bodies.length() == 0 {
+        return Err(fem::FemError::BadMesh(
+            "mesh.bodies must list at least one solid".into(),
+        ));
+    }
+    let mut stored = Vec::with_capacity(bodies.length() as usize);
+    for i in 0..bodies.length() {
+        let body = bodies.get(i);
+        let nodes = read_nodes(&body)
+            .map_err(|err| fem::FemError::BadMesh(format!("bodies[{i}]: {err}")))?;
+        let elements = read_elements(&body, nodes.len())
+            .map_err(|err| fem::FemError::BadMesh(format!("bodies[{i}]: {err}")))?;
+        let material_js = field(&body, "material")?;
+        let material = parse_material(&material_js)
+            .map_err(|err| fem::FemError::BadMaterial(format!("bodies[{i}]: {err}")))?;
+        stored.push(StoredBody {
+            nodes,
+            elements,
+            material: fem::Material {
+                young: material.e_mpa,
+                poisson: material.nu,
+                yield_mpa: material.yield_mpa,
+            },
+        });
+    }
+    let ties = if has_field(mesh, "ties") {
+        let ties = field(mesh, "ties")?;
+        if ties.is_null() || ties.is_undefined() {
+            TieInput {
+                slaves: Vec::new(),
+                faces: Vec::new(),
+                offsets: Vec::new(),
+                counts: Vec::new(),
+                gap: 0.05,
+            }
+        } else {
+            let slaves = if has_field(&ties, "slaveNodes") {
+                object_u32(&ties, "slaveNodes")?
+            } else {
+                Vec::new()
+            };
+            let flat = if has_field(&ties, "masterFaces") {
+                object_u32(&ties, "masterFaces")?
+            } else {
+                Vec::new()
+            };
+            if flat.len() % 6 != 0 {
+                return Err(fem::FemError::BadMesh(
+                    "ties.masterFaces must contain six node indices per face".into(),
+                ));
+            }
+            let faces: Vec<[u32; 6]> = flat
+                .chunks_exact(6)
+                .map(|chunk| {
+                    let mut face = [0_u32; 6];
+                    face.copy_from_slice(chunk);
+                    face
+                })
+                .collect();
+            let offsets = if has_field(&ties, "faceOffsets") {
+                object_u32(&ties, "faceOffsets")?
+            } else if slaves.is_empty() {
+                Vec::new()
+            } else {
+                return Err(fem::FemError::BadMesh(
+                    "ties.faceOffsets is required when slave nodes are tied".into(),
+                ));
+            };
+            let counts = if has_field(&ties, "faceCounts") {
+                object_u32(&ties, "faceCounts")?
+            } else if slaves.is_empty() {
+                Vec::new()
+            } else {
+                return Err(fem::FemError::BadMesh(
+                    "ties.faceCounts is required when slave nodes are tied".into(),
+                ));
+            };
+            if offsets.len() != slaves.len() || counts.len() != slaves.len() {
+                return Err(fem::FemError::BadMesh(
+                    "ties.faceOffsets and ties.faceCounts must have one entry per slave node"
+                        .into(),
+                ));
+            }
+            let gap = if has_field(&ties, "gap") {
+                object_number(&ties, "gap")?
+            } else {
+                0.05
+            };
+            TieInput {
+                slaves,
+                faces,
+                offsets,
+                counts,
+                gap,
+            }
+        }
+    } else {
+        TieInput {
+            slaves: Vec::new(),
+            faces: Vec::new(),
+            offsets: Vec::new(),
+            counts: Vec::new(),
+            gap: 0.05,
+        }
+    };
+    Ok((stored, ties))
+}
+
+fn build_ties(
+    nodes: &[[f64; 3]],
+    input: &TieInput,
+) -> Result<(Vec<fem::SlaveTie>, usize), fem::FemError> {
+    let mut ties = Vec::new();
+    let mut missed = 0_usize;
+    for (index, &slave) in input.slaves.iter().enumerate() {
+        let start = input.offsets[index] as usize;
+        let count = input.counts[index] as usize;
+        if start + count > input.faces.len() {
+            return Err(fem::FemError::BadMesh(format!(
+                "slave {index} asks for master faces outside ties.masterFaces"
+            )));
+        }
+        let built = fem::tie_slaves(
+            nodes,
+            &[slave],
+            &input.faces[start..start + count],
+            input.gap,
+        )?;
+        missed += built.missed.len();
+        ties.extend(built.ties);
+    }
+    Ok((ties, missed))
+}
+
+
 fn fem_failure(err: fem::FemError) -> JsValue {
     js_err(&err.to_string())
 }

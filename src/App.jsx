@@ -5442,6 +5442,18 @@ const App = () => {
     return true;
   };
 
+  /** Active part reads the editor. Every other part reads the stored script. */
+  const scriptForFeaPart = (partId) => {
+    const id = partId == null ? '' : String(partId);
+    if (!id) return '';
+    const active = assemblyRef.current?.activeId;
+    if (active != null && String(active) === id) {
+      const live = codeEditorRef.current?.getContent?.();
+      if (typeof live === 'string') return live;
+    }
+    return partScriptsRef.current?.[id] ?? '';
+  };
+
   /** Shell face-pick Confirm — hollow() + SHELL markers; Auto-Run. */
   const handleCommitShell = (payload) => {
     if (!focusWritePart(payload?.partId)) {
@@ -6747,6 +6759,7 @@ const App = () => {
               onCommitShell={handleCommitShell}
               onCommitPaint={handleCommitPaint}
               onCommitFea={handleCommitFea}
+              getPartScript={scriptForFeaPart}
               onCommitDraft={handleCommitDraft}
               onCommitCut={handleCommitCut}
               onCommitBoolean={handleCommitBoolean}
@@ -7234,6 +7247,7 @@ const App = () => {
               onCommitShell={handleCommitShell}
               onCommitPaint={handleCommitPaint}
               onCommitFea={handleCommitFea}
+              getPartScript={scriptForFeaPart}
               onCommitDraft={handleCommitDraft}
               onCommitCut={handleCommitCut}
               onCommitBoolean={handleCommitBoolean}

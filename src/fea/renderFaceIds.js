@@ -50,3 +50,34 @@ export function studyForSolve(study, geometry, faceIDs) {
     loads: Array.isArray(study.loads) ? study.loads.map(mapEntry) : study.loads,
   };
 }
+
+/**
+ * Expand each stored face on the part it names. Faces without a part use
+ * `host`, which is the active part.
+ */
+export function studyForAssemblySolve(study, parts, host) {
+  if (!study) return study;
+  const byId = new Map();
+  for (const part of parts || []) {
+    if (part && part.id != null) byId.set(String(part.id), part);
+  }
+  const mapFace = (face) => {
+    if (!face) return face;
+    const owner = face.part ? byId.get(String(face.part)) : host;
+    if (!owner) return face;
+    const prints = fingerprintsFromGeometry(owner.geometry, owner.faceIDs);
+    return {
+      ...face,
+      triangleFaceIDs: idsForFace(face, prints, owner.faceIDs),
+    };
+  };
+  const mapEntry = (entry) => ({
+    ...entry,
+    faces: Array.isArray(entry && entry.faces) ? entry.faces.map(mapFace) : entry && entry.faces,
+  });
+  return {
+    ...study,
+    fixtures: Array.isArray(study.fixtures) ? study.fixtures.map(mapEntry) : study.fixtures,
+    loads: Array.isArray(study.loads) ? study.loads.map(mapEntry) : study.loads,
+  };
+}

@@ -17,7 +17,10 @@ export function FeaStudyHost({
   onCommit,
   assemblyLocked,
   getSolid,
+  getAssembly,
+  getPartScript,
   onHighlight,
+  onContactHighlight,
   onClaim,
   onActive,
   pickRef,
@@ -33,7 +36,10 @@ export function FeaStudyHost({
     onCommit,
     assemblyLocked,
     getSolid,
+    getAssembly,
+    getPartScript,
     onHighlight,
+    onContactHighlight,
     onClaim,
   });
   const open = panel.open;
