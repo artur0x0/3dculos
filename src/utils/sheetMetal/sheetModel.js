@@ -51,6 +51,7 @@ export function sheetLimitsFromRecord(rec) {
     bendable: !!rec?.bendable,
     services: Array.isArray(rec?.services) ? [...rec.services] : [],
     minFlange: mm(b.minFlangeIn),
+    minFlangeBefore: mm(b.minFlangeBeforeIn),
     maxAngle: typeof b.maxAngleDeg === 'number' ? b.maxAngleDeg : null,
     minAngle: typeof b.minAngleDeg === 'number' ? b.minAngleDeg : null,
     reliefDepth: mm(b.reliefDepthIn),
@@ -222,6 +223,30 @@ export function solveSheet(spec, { flat = false } = {}) {
         const [nb0, nb1] = EDGE_NEIGHBORS[b.edge];
         if (baseBent.has(nb0)) q0 += relief;
         if (baseBent.has(nb1)) q1 -= relief;
+      } else if ((b.edge === 'v+' || b.edge === 'v-') && q1 - q0 > relief) {
+        // A side bend's root is the parent tangent (u-). Shorten that end by
+        // the same square used at a base corner, and cut it from the parent
+        // flange. The tip corner stays square.
+        if (b.edge === 'v+') q1 -= relief;
+        else q0 += relief;
+        const g = relief;
+        notches.push(b.edge === 'v+'
+          ? {
+            panel: b.panel,
+            corner: ['u-', 'v+'],
+            u0: parent.u0,
+            u1: parent.u0 + g,
+            v0: parent.v1 - g,
+            v1: parent.v1,
+          }
+          : {
+            panel: b.panel,
+            corner: ['u-', 'v-'],
+            u0: parent.u0,
+            u1: parent.u0 + g,
+            v0: parent.v0,
+            v1: parent.v0 + g,
+          });
       }
       const angle = Math.max(0, Math.min(180, Number(b.angle) || 0));
       const theta = (angle * Math.PI) / 180;
@@ -336,6 +361,30 @@ export function panelPoint(panel, u, v, w = 0) {
 export function panelLocal(panel, p) {
   const rel = sub(p, panel.o);
   return [vDot(rel, panel.U), vDot(rel, panel.V)];
+}
+
+/**
+ * Notch square in the base plane's UV. A base notch is already stored that
+ * way. A flange notch is stored in the host panel's UV and mapped through
+ * that solve's frame (flat or folded — pass the panels you solved with).
+ */
+export function notchRect(base, panels, notch) {
+  const id = notch.panel || 'base';
+  if (id === 'base') {
+    return { x0: notch.u0, x1: notch.u1, y0: notch.v0, y1: notch.v1 };
+  }
+  const host = panels.find((p) => p.id === id);
+  if (!host || !base) return { x0: notch.u0, x1: notch.u1, y0: notch.v0, y1: notch.v1 };
+  const corners = [
+    panelLocal(base, panelPoint(host, notch.u0, notch.v0)),
+    panelLocal(base, panelPoint(host, notch.u1, notch.v1)),
+  ];
+  return {
+    x0: Math.min(corners[0][0], corners[1][0]),
+    x1: Math.max(corners[0][0], corners[1][0]),
+    y0: Math.min(corners[0][1], corners[1][1]),
+    y1: Math.max(corners[0][1], corners[1][1]),
+  };
 }
 
 const round2 = (n) => Math.round(n * 100) / 100;

@@ -89,10 +89,14 @@ export function buildSheetExport(spec, { mesh = null, script = null, partName = 
   const issues = [...dfm.issues];
   const flat = dfm.flat;
   const base = sheetFileBase(partName, spec?.sku);
+  // A covered blank unions into one outline. Omit both files so a caller
+  // cannot ignore `blocked` and ship that merge. Other hard fails still
+  // attach the files and only block the handoff.
+  const overlapFail = dfm.issues.some((x) => x.level === 'fail' && x.rule === 'overlap');
   let step = null;
   let stepSource = null;
   let brepError = null;
-  if (flat && exactStep) {
+  if (flat && exactStep && !overlapFail) {
     try {
       const brep = buildSheetBrep(spec);
       step = { name: `${base}.step`, mime: 'model/step', ...brepToStep(brep, { name: base, timestamp }), stats: brep.stats };
@@ -120,8 +124,8 @@ export function buildSheetExport(spec, { mesh = null, script = null, partName = 
     issues.push({ level: 'warn', rule: 'script-extras', message: 'The part script has edits outside the sheet-metal block. DXF and STEP are built from the sheet spec and do not include them.', featureId: null });
   }
   const files = {
-    dxf: flat ? { name: `${base}-flat.dxf`, mime: 'application/dxf', text: sheetFlatDxf(flat) } : null,
-    step,
+    dxf: flat && !overlapFail ? { name: `${base}-flat.dxf`, mime: 'application/dxf', text: sheetFlatDxf(flat) } : null,
+    step: overlapFail ? null : step,
   };
   const fails = issues.filter((x) => x.level === 'fail').length;
   return { dfm: { ...dfm, issues, warns: issues.length - fails }, flat, files, blocked: fails > 0, stepSource, brepError, meshStale };

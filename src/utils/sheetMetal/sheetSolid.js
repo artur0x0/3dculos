@@ -84,8 +84,9 @@ export function buildSheetMetalSolid(Manifold, CrossSection, rawSpec) {
   const cutters = [];
   const base = solved.panels[0];
   for (const n of solved.notches) {
-    const origin = vSub(panelPoint(base, n.u0, n.v0, 0), vMul(0.5, base.N));
-    const c = boxIn(Manifold, base.U, base.V, base.N, origin, n.u1 - n.u0, n.v1 - n.v0, t + 1);
+    const host = solved.panels.find((p) => p.id === (n.panel || 'base')) || base;
+    const origin = vSub(panelPoint(host, n.u0, n.v0, 0), vMul(0.5, host.N));
+    const c = boxIn(Manifold, host.U, host.V, host.N, origin, n.u1 - n.u0, n.v1 - n.v0, t + 1);
     if (c) cutters.push(c);
   }
   for (const h of solved.holes) {

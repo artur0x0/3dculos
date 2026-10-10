@@ -5,7 +5,7 @@
  * The outline is the boundary of that union (grid sweep), holes are circles.
  * Bend lines are reported but NOT written to the cut DXF (SCS cuts every line).
  */
-import { normalizeSheetSpec, panelLocal, panelPoint, solveSheet, vAdd, vMul } from './sheetModel.js';
+import { normalizeSheetSpec, notchRect, panelLocal, panelPoint, solveSheet, vAdd, vMul } from './sheetModel.js';
 
 const EPS = 1e-6;
 const r6 = (n) => Math.round(n * 1e6) / 1e6;
@@ -42,7 +42,7 @@ export function sheetFlatPattern(rawSpec) {
     const a1 = vAdd(vAdd(tb.E0, vMul(tb.q1, tb.e)), vMul(tb.depth, tb.d));
     if (tb.depth > EPS && tb.q1 - tb.q0 > EPS) rects.push(rect2(to2(a0), to2(a1)));
   }
-  const cuts = flat.notches.map((n) => ({ x0: n.u0, x1: n.u1, y0: n.v0, y1: n.v1 }));
+  const cuts = flat.notches.map((n) => notchRect(base, flat.panels, n));
   const holes = flat.holes
     .filter((h) => Number(h.d) > 0)
     .map((h) => {

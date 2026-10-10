@@ -114,6 +114,26 @@ function flatHit(spec, bendId) {
   return best;
 }
 
+/**
+ * Largest flat overlap between two pieces that are not the same panel.
+ * A clean blank is null: rectangles meet on edges, they do not cover
+ * each other. This is the export backstop for a merged DXF outline.
+ */
+export function blankOverlap(spec) {
+  const rects = sheetFlatRects(spec);
+  let best = null;
+  for (let i = 0; i < rects.length; i++) {
+    for (let j = i + 1; j < rects.length; j++) {
+      if (rects[i].owner === rects[j].owner) continue;
+      const area = rectOverlapArea(rects[i], rects[j]);
+      if (area > FLAT_AREA_EPS && (!best || area > best.area)) {
+        best = { a: rects[i].owner, b: rects[j].owner, area };
+      }
+    }
+  }
+  return best;
+}
+
 function boxOf(origin, X, Y, Z, sx, sy, sz, meta) {
   if (!(sx > 1e-4 && sy > 1e-4 && sz > 1e-4)) return null;
   const A = [norm(X), norm(Y), norm(Z)];
