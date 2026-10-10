@@ -137,8 +137,54 @@ function meshKind(source) {
 
 function refineSuffix(state) {
   const count = Number(state && state.refineCount);
-  if (!(count > 0)) return '';
-  return `, refined ${Math.round(count)}x, ${state.converged ? 'converged' : 'not converged'}`;
+  let text = '';
+  if (count > 0) {
+    text = `, refined ${Math.round(count)}x, ${state.converged ? 'converged' : 'not converged'}`;
+  }
+  if (state && state.refineNote) text += `. ${state.refineNote}`;
+  return text;
+}
+
+/** `5242880` → `peak 5.0 MiB`. Counts of 10 MiB and up round to a whole MiB. */
+export function formatPeakMiB(bytes) {
+  const n = Number(bytes);
+  if (!Number.isFinite(n) || n < 0) return '';
+  const mib = n / (1024 * 1024);
+  if (mib >= 10) return `peak ${Math.round(mib)} MiB`;
+  return `peak ${mib.toFixed(1)} MiB`;
+}
+
+function peakSuffix(state) {
+  if (!state || state.showPeakMemory !== true) return '';
+  const label = formatPeakMiB(state.peakMemoryBytes);
+  return label ? `, ${label}` : '';
+}
+
+/**
+ * Dev readout. True when the page URL has `?feadebug=1` or localStorage
+ * `feaDebug` is `1`. Pass `{ location, localStorage }` in tests.
+ */
+export function feaDebugEnabled(env) {
+  const loc = env && Object.prototype.hasOwnProperty.call(env, 'location')
+    ? env.location
+    : (typeof location !== 'undefined' ? location : null);
+  const store = env && Object.prototype.hasOwnProperty.call(env, 'localStorage')
+    ? env.localStorage
+    : (typeof localStorage !== 'undefined' ? localStorage : null);
+  let query = false;
+  try {
+    const search = loc && typeof loc.search === 'string' ? loc.search : '';
+    query = new URLSearchParams(search).get('feadebug') === '1';
+  } catch {
+    query = false;
+  }
+  let stored = false;
+  try {
+    stored = !!(store && typeof store.getItem === 'function' && store.getItem('feaDebug') === '1');
+  } catch {
+    stored = false;
+  }
+  return query || stored;
 }
 
 export function formatDoneText(state) {
@@ -147,7 +193,7 @@ export function formatDoneText(state) {
   const dofs = formatDofCount(state.dofs) || '0';
   const tail = `solved in ${formatSeconds(solvedMs)} (${dofs} DOF), total ${formatSeconds(elapsedMs(state))}`;
   const kind = meshKind(state.source);
-  const suffix = refineSuffix(state);
+  const suffix = `${refineSuffix(state)}${peakSuffix(state)}`;
   if (state.meshReused) return kind ? `${kind} mesh reused, ${tail}${suffix}` : `Mesh reused, ${tail}${suffix}`;
   const meshedMs = (timings['loading-mesher'] || 0) + (timings.meshing || 0);
   if (kind) return `${kind} mesh in ${formatSeconds(meshedMs)}, ${tail}${suffix}`;
@@ -281,6 +327,9 @@ export function reduceFeaProgress(state, event) {
       meshReused: event.meshReused === true,
       refineCount: Number(event.refineCount) || 0,
       converged: event.converged === true,
+      refineNote: event.refineNote ? String(event.refineNote) : '',
+      showPeakMemory: event.showPeakMemory === true,
+      peakMemoryBytes: Number.isFinite(Number(event.peakMemoryBytes)) ? Number(event.peakMemoryBytes) : null,
     };
     done.text = formatDoneText(done);
     done.elapsedText = formatSeconds(elapsedMs(done));

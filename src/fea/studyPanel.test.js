@@ -164,6 +164,12 @@ test('the panel study round-trips through the part script', () => {
   assert.match(next, /return part;/);
 });
 
+test('a new phone study refines by default', () => {
+  assert.equal(freshStudy('phone').mesh.refine, 'auto');
+  assert.equal(freshStudy('desktop').mesh.refine, 'auto');
+  assert.equal(freshStudy().mesh.refine, undefined);
+});
+
 test('modal switches the study type and still resolves density', () => {
   const modal = studyWithType(freshStudy(), 'modal');
   assert.equal(modal.ok, true);

@@ -321,7 +321,8 @@ function tetVolume(nodes, a, b, c, d) {
  * Background sizing mesh. `elementError` is the per-element relative
  * indicator from `recoveryEstimate`. Edges shrink where that indicator is
  * above `target` and grow where it is below. `cap` is a DOF ceiling: the
- * field is scaled up until the estimate fits.
+ * field is scaled up until the estimate fits. `uncappedDofs` is that
+ * estimate before the scale, so a caller can refuse the pass instead.
  */
 export function sizingFromError({
   nodes,
@@ -398,6 +399,7 @@ export function sizingFromError({
     if (h > 0 && vol > 0) cells += vol / (h * h * h);
   }
   let estimated = (dofsPerCell > 0 ? dofsPerCell : DOFS_PER_CELL) * cells;
+  const uncappedDofs = estimated;
   let edgeScale = 1;
   if (Number.isFinite(cap) && cap > 0 && estimated > cap) {
     edgeScale = Math.cbrt(estimated / cap);
@@ -431,6 +433,7 @@ export function sizingFromError({
     edgeLength,
     shortest: Number.isFinite(shortest) ? shortest : fallback,
     estimatedDofs: estimated,
+    uncappedDofs,
     edgeScale,
     canRefine: shrunk && tets.length >= 4,
     volume: estimatedVolume,

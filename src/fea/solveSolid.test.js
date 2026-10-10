@@ -167,6 +167,131 @@ test('a phone cap coarsens an edge that would exceed it', async () => {
   assert.ok(seen > 0.2, `edge ${seen}`);
 });
 
+function hotSpotMesh(dofs) {
+  const tets = [
+    [[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]],
+    [[1, 0, 0], [0, 1, 0], [0, 0, 1], [1, 1, 1]],
+  ];
+  const map = new Map();
+  const coords = [];
+  const elements = [];
+  const idOf = (point) => {
+    const key = point.map((value) => value.toFixed(9)).join(',');
+    if (map.has(key)) return map.get(key);
+    const id = coords.length / 3;
+    map.set(key, id);
+    coords.push(point[0], point[1], point[2]);
+    return id;
+  };
+  for (const corners of tets) {
+    const ids = corners.map(idOf);
+    const pairs = [[0, 1], [1, 2], [2, 0], [0, 3], [1, 3], [2, 3]];
+    const mids = pairs.map(([a, b]) => idOf([
+      (corners[a][0] + corners[b][0]) / 2,
+      (corners[a][1] + corners[b][1]) / 2,
+      (corners[a][2] + corners[b][2]) / 2,
+    ]));
+    elements.push(...ids, ...mids);
+  }
+  const displacement = new Float64Array(coords.length);
+  for (let i = 0; i < coords.length / 3; i += 1) {
+    const x = coords[i * 3];
+    displacement[i * 3] = 0.001 * x * x;
+  }
+  return {
+    nodes: Float64Array.from(coords),
+    elements: Uint32Array.from(elements),
+    faces: Uint32Array.from([0, 1, 2, 4, 5, 6]),
+    faceIds: Uint32Array.from([1]),
+    stats: { dofs, elements: 2, ms: 1, wasmBytes: 0 },
+    displacement,
+  };
+}
+
+function hotSpotSolve(mesh) {
+  return {
+    nodal: new Float64Array(mesh.nodes.length / 3),
+    displacement: mesh.displacement,
+    min: 0,
+    max: 1,
+    p95: 1,
+    safetyFactor: 1,
+    solver: 'cholesky',
+    warnings: [],
+    stats: { dofs: mesh.stats.dofs, freeDofs: mesh.stats.dofs, iterations: 0, residual: 0, solveMs: 1 },
+  };
+}
+
+test('a phone remesh over 40k DOF is dropped and the previous result is kept', async () => {
+  const seen = [];
+  const solves = [];
+  const result = await solveSolid({
+    study: { ...beamStudy(200), loads: [], mesh: { target: 4, refine: 'auto' } },
+    positions: box([40, 10, 10]).positions,
+    indices: box([40, 10, 10]).indices,
+    faceIDs: box([40, 10, 10]).faceIds,
+    material: pla,
+    profile: 'phone',
+    solveTet10: () => {
+      const dofs = seen[seen.length - 1];
+      solves.push(dofs);
+      return hotSpotSolve(hotSpotMesh(dofs));
+    },
+    solveStub: fea.solve,
+    meshVolume: async () => {
+      const dofs = seen.length === 0 ? 1_200 : 80_000;
+      seen.push(dofs);
+      return hotSpotMesh(dofs);
+    },
+  });
+  assert.deepEqual(seen, [1_200, 80_000]);
+  assert.deepEqual(solves, [1_200]);
+  assert.equal(result.stats.dofs, 1_200);
+  assert.equal(result.refineCount, 0);
+  assert.equal(result.convergence.length, 1);
+  assert.equal(result.refineNote, 'Refinement stopped at phone limit (40k DOF)');
+});
+
+test('a phone remesh under 40k DOF is kept, and desktop keeps a mesh over that cap', async () => {
+  async function run(profile, second) {
+    const seen = [];
+    const solves = [];
+    const result = await solveSolid({
+      study: { ...beamStudy(200), loads: [], mesh: { target: 4, refine: 'auto' } },
+      positions: box([40, 10, 10]).positions,
+      indices: box([40, 10, 10]).indices,
+      faceIDs: box([40, 10, 10]).faceIds,
+      material: pla,
+      profile,
+      solveTet10: () => {
+        const dofs = seen[seen.length - 1];
+        solves.push(dofs);
+        return hotSpotSolve(hotSpotMesh(dofs));
+      },
+      solveStub: fea.solve,
+      meshVolume: async () => {
+        const dofs = seen.length === 0 ? 1_200 : second;
+        seen.push(dofs);
+        return hotSpotMesh(dofs);
+      },
+    });
+    return { seen, solves, result };
+  }
+
+  const phone = await run('phone', 20_000);
+  assert.deepEqual(phone.seen, [1_200, 20_000]);
+  assert.deepEqual(phone.solves, [1_200, 20_000]);
+  assert.equal(phone.result.stats.dofs, 20_000);
+  assert.equal(phone.result.refineCount, 1);
+  assert.equal(phone.result.refineNote, '');
+
+  const desktop = await run('desktop', 80_000);
+  assert.deepEqual(desktop.seen, [1_200, 80_000]);
+  assert.deepEqual(desktop.solves, [1_200, 80_000]);
+  assert.equal(desktop.result.stats.dofs, 80_000);
+  assert.equal(desktop.result.refineNote, '');
+});
+
 test('progress walks load, mesh, assemble, solve, and post-processing', async () => {
   const surface = box([40, 10, 10]);
   const stages = [];
