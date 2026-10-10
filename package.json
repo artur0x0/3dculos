@@ -53,6 +53,7 @@
         "golden:workplane": "node scripts/golden/smoke_workplane_strip_ui.mjs",
         "golden:feature-sheet": "node scripts/golden/smoke_feature_sheet_card.mjs",
         "golden:feature-field-edit": "node scripts/golden/smoke_feature_field_edit.mjs",
+        "golden:measure-feature-sheet": "node scripts/golden/smoke_measure_feature_sheet_390.mjs",
         "golden:shell-face-pick": "node scripts/golden/smoke_shell_face_pick_ui.mjs",
         "golden:hotfix-frame-only": "node scripts/golden/smoke_hotfix_frame_only_plane_undo_autorun.mjs",
         "golden:hotfix-sweep-path": "node scripts/golden/smoke_hotfix_sweep_path_disconnect.mjs",

@@ -35,6 +35,8 @@ import {
  *   and Analyze pass this, on phone and desktop. The sheet metal picker,
  *   feature edit, and any card whose left rail is still there leave this
  *   false and stay centered between both rails.
+ * - headerExtra: a node in the header, between the title and X. Measure
+ *   puts the mm|in toggle there. Other cards leave it empty.
  * - bodyAttrs / cardAttrs: extra data attributes for the pilot that owns the card
  *
  * The card is pointer-events-auto and stops pointerdown. The pane around it
@@ -148,6 +150,7 @@ export default function FeatureSheet({
   note = null,
   compact = false,
   fullLeft = false,
+  headerExtra = null,
   bodyAttrs = null,
   cardAttrs = null,
 }) {
@@ -384,6 +387,11 @@ export default function FeatureSheet({
             </div>
           ) : null}
         </div>
+        {headerExtra ? (
+          <div className="shrink-0" data-feature-sheet-header-extra="">
+            {headerExtra}
+          </div>
+        ) : null}
         <button
           type="button"
           aria-label="Cancel"
