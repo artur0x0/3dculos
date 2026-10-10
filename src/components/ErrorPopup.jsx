@@ -16,6 +16,7 @@ const TONE_CLASS = {
   scrap: 'bg-red-950/80 border border-red-400/70 text-red-50',
   warn: 'bg-amber-950/80 border border-amber-400/70 text-amber-50',
   amber: 'bg-amber-950/80 border border-amber-400/70 text-amber-50',
+  success: 'bg-emerald-950/80 border border-emerald-400/70 text-emerald-50',
   cyan: 'bg-cyan-950/80 border border-cyan-400/70 text-cyan-50',
   banner: 'bg-red-950/80 border border-red-400/70 text-red-50',
 };
@@ -77,6 +78,7 @@ export default function ErrorPopup({
       <div
         role="alert"
         data-error-popup=""
+        data-error-tone={tone}
         data-error-layout="stacked"
         className={shell}
         {...rest}
@@ -94,6 +96,7 @@ export default function ErrorPopup({
     <div
       role="alert"
       data-error-popup=""
+      data-error-tone={tone}
       className={shell}
       {...rest}
     >

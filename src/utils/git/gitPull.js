@@ -13,21 +13,10 @@ import { putAsset } from './assetCache.js';
 import { isBinaryContent } from './binaryContent.js';
 import { GitAdapterError, assertGithubAdapter, fileWrite } from './githubAdapterInterface.js';
 import { readVaultAsset } from './githubAdapter.js';
-import { detectCommitBase, commitBranchName } from './gitCommit.js';
+import { detectCommitBase, commitBranchName, freeBranchName } from './gitCommit.js';
 import { captureBaseline } from './gitWorkspace.js';
 import { parseSurfJson, stringifySurfJson } from './surfJson.js';
 import { assetPathForScript, vaultSegment } from './vaultLayout.js';
-
-/** First free branch name: base, base-2, base-3 … */
-async function freeBranchName(adapter, repo, base) {
-  const taken = new Set((await adapter.listBranches(repo)).map((b) => b.name));
-  if (!taken.has(base)) return base;
-  for (let n = 2; n < 1000; n += 1) {
-    const name = `${base}-${n}`;
-    if (!taken.has(name)) return name;
-  }
-  throw new GitAdapterError('name_exists', `No free branch name for ${base}`);
-}
 
 /**
  * Paths in our document that main changed since the baseline head.

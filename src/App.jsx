@@ -229,6 +229,9 @@ import {
   assemblyFilePath,
   assembleCommitFiles,
   commitPartToRepo,
+  saveLocalOnNewBranch,
+  REPO_MOVED_WARNING,
+  repoSavedMessage,
   firstCommitBaseline,
   checkRemoteBehind,
   behindToastMessage,
@@ -328,6 +331,11 @@ const App = () => {
   const [partSync, setPartSync] = useState({});
   const [renameNotice, setRenameNotice] = useState(null);
   const [syncConflict, setSyncConflict] = useState(null);
+  /** Save hit a moved working ref. Yellow warning, not the G13 popup. */
+  const [repoMoved, setRepoMoved] = useState(null);
+  const [repoSaved, setRepoSaved] = useState(null);
+  const repoMovedBusyRef = useRef(false);
+  const [repoMovedBusy, setRepoMovedBusy] = useState(false);
   const gitSyncRef = useRef(null);
   const flushGitSyncRef = useRef(async () => ({ status: 'idle' }));
   const gitCheckGenRef = useRef(0);
@@ -2605,12 +2613,14 @@ const App = () => {
     }
   };
 
-  const adoptSyncResult = async (result) => {
+  const adoptSyncResult = async (result, { surfaceConflict = true } = {}) => {
     const store = gitSync();
     setPartSync({ ...store.partStates() });
     if (!result) return result;
     if (result.status === 'conflict') {
-      setSyncConflict(result);
+      // A user Save passes surfaceConflict false and shows the warning toast.
+      // Open, reload, and a background flush keep the G13 popup. Never both.
+      if (surfaceConflict) setSyncConflict(result);
       return result;
     }
     if (result.partIds?.length && assemblyRef.current && result.status !== 'conflict') {
@@ -2708,7 +2718,7 @@ const App = () => {
     return result;
   };
 
-  const flushGitOps = async () => {
+  const flushGitOps = async ({ surfaceConflict = true } = {}) => {
     const vault = gitVaultRef.current;
     const adapter = gitAdapterRef.current;
     if (!vault?.repo || !adapter) return { status: 'idle' };
@@ -2720,7 +2730,7 @@ const App = () => {
       branch: gitWorkingBranch(),
       online,
     });
-    return adoptSyncResult(result);
+    return adoptSyncResult(result, { surfaceConflict });
   };
   flushGitSyncRef.current = flushGitOps;
 
@@ -3238,6 +3248,24 @@ const App = () => {
         liveId,
         liveScript: liveId ? live : null,
       });
+      if (result.status === 'repo-moved') {
+        setUploadError(null);
+        setSyncConflict(null);
+        setRepoSaved(null);
+        setRepoMoved({
+          kind: 'part',
+          files: result.files,
+          message: result.message,
+          doc: result.doc,
+          scripts: result.scripts,
+          baseSha: result.baseSha,
+          fromBranch: result.branch,
+          partId: result.partId,
+          fromId: result.fromId,
+          partIds: result.partId ? [result.partId] : [],
+        });
+        return result;
+      }
       if (result.status === 'error') {
         setUploadError(result.error || 'Add to Repo failed');
         return result;
@@ -4236,15 +4264,25 @@ const App = () => {
         },
       });
       setPartSync({ ...store.partStates() });
-      const flushed = await flushGitOps();
+      const flushed = await flushGitOps({ surfaceConflict: false });
       if (flushed?.status === 'conflict') {
-        return {
-          status: 'conflict',
-          syncHold: true,
-          branch: flushed.branch || branch,
-          baseSha: flushed.lastSyncedSha || flushed.baseSha || '',
-          warning: flushed.warning,
-        };
+        setSyncConflict(null);
+        setUploadError(null);
+        setRepoSaved(null);
+        setRepoMoved({
+          kind: 'assembly',
+          files: result.files,
+          message: result.message,
+          doc: result.doc || assemblyRef.current,
+          scripts: result.scripts || { ...partScriptsRef.current },
+          baseSha: flushed.lastSyncedSha || flushed.baseSha || baseline.headSha,
+          fromBranch: flushed.branch || branch,
+          partIds: result.partIds?.length
+            ? result.partIds
+            : (placed.doc.parts || []).map((part) => part.id),
+          opIds: store.pending(vault.repo, branch).map((op) => op.id),
+        });
+        return { status: 'repo-moved', code: 'non_fast_forward' };
       }
       if (flushed?.status === 'failed') {
         return { status: 'error', error: flushed.error || 'Save failed' };
@@ -4270,6 +4308,74 @@ const App = () => {
         code: err.code || null,
         stray: Array.isArray(err.stray) ? err.stray : null,
       };
+    }
+  };
+
+  /**
+   * Make a new branch from the local baseline and commit the save that
+   * main refused. Switches the working ref so the next save goes there.
+   */
+  const handleSaveOnNewBranch = async () => {
+    const pending = repoMoved;
+    if (!pending || repoMovedBusyRef.current) return;
+    repoMovedBusyRef.current = true;
+    setRepoMovedBusy(true);
+    try {
+      const vault = await ensureGitVault();
+      const base = gitBaselineRef.current || {};
+      const saved = await saveLocalOnNewBranch(gitAdapterRef.current, vault.repo, {
+        doc: pending.doc,
+        scripts: pending.scripts,
+        baseline: { ...base, headSha: pending.baseSha || base.headSha },
+        files: pending.files,
+        message: pending.message,
+      });
+      if (saved.status !== 'committed') {
+        setUploadError(saved.error || 'Could not create the branch');
+        return;
+      }
+      const store = gitSync();
+      for (const id of pending.opIds || []) {
+        await store.setOpStatus(id, 'done');
+      }
+      const partIds = pending.partIds?.length
+        ? pending.partIds
+        : (pending.doc?.parts || []).map((part) => part.id);
+      await store.setPartsState(vault.repo, partIds, 'clean', pending.fromBranch || 'main');
+      await store.setLastSyncedSha(vault.repo, saved.sha, saved.branch);
+      if (pending.doc) rememberAssembly(pending.doc);
+      if (pending.scripts) {
+        rememberScripts(pending.scripts);
+        for (const file of pending.files || []) {
+          if (file?.delete || typeof file.content !== 'string') continue;
+          if (!String(file.path || '').endsWith('.js')) continue;
+          await savePartScript(file.path, file.content, { isSynced: true });
+        }
+      }
+      if (pending.fromId) {
+        try { await deletePartScript(pending.fromId); } catch { /* remapped id */ }
+        const active = pending.doc?.activeId;
+        if (active && (pending.fromId === active || pending.doc?.parts?.some((part) => part.id === active))) {
+          const text = pending.scripts?.[active] ?? '';
+          focusPartHistory(active, text);
+          suppressPartSaveRef.current = false;
+          setCurrentFilename(String(active).split('/').pop() || active);
+          codeEditorRef.current?.loadContent(text, active, false);
+        }
+      }
+      const marked = markPartsSynced(assemblyRef.current, partIds);
+      if (marked.changed) rememberAssembly(marked.doc);
+      rememberGitBaseline(saved.baseline);
+      gitVaultRef.current = { ...vault, headSha: saved.sha };
+      setPartSync({ ...store.partStates() });
+      setSyncConflict(null);
+      setRepoMoved(null);
+      setRepoSaved({ branch: saved.branch });
+    } catch (err) {
+      setUploadError(err?.message || 'Could not create the branch');
+    } finally {
+      repoMovedBusyRef.current = false;
+      setRepoMovedBusy(false);
     }
   };
 
@@ -4611,6 +4717,9 @@ const App = () => {
           rememberGitBaseline(baseline);
           gitVaultRef.current = { ...vault, headSha: baseline.headSha };
         } else {
+          if (!store.getLastSyncedSha(vault.repo, branch) && opened.baseline?.headSha) {
+            await store.setLastSyncedSha(vault.repo, opened.baseline.headSha, branch);
+          }
           rememberGitBaseline(opened.baseline);
           gitVaultRef.current = { ...vault, headSha: opened.baseline?.headSha };
         }
@@ -7008,6 +7117,43 @@ const App = () => {
       total={assemblyOpenUi.total}
     />
   ) : null;
+  const repoMovedToastEl = (repoMoved || repoSaved) ? (
+    <div className="absolute top-4 left-1/2 z-50 w-[calc(100%-1.5rem)] max-w-md -translate-x-1/2">
+      {repoMoved ? (
+        <div data-repo-moved-toast="" data-repo-moved-kind={repoMoved.kind}>
+          <ErrorPopup
+            tone="warn"
+            onDismiss={() => { if (!repoMovedBusy) setRepoMoved(null); }}
+            className="px-4 py-2"
+          >
+            <div className="flex flex-col items-start gap-2">
+              <span data-repo-moved-msg="">{REPO_MOVED_WARNING}</span>
+              <button
+                type="button"
+                data-repo-moved-branch=""
+                disabled={repoMovedBusy}
+                className="rounded-md bg-amber-500/30 px-2 py-1 text-[11px] font-semibold text-amber-50 hover:bg-amber-500/45 disabled:opacity-50"
+                onClick={() => { void handleSaveOnNewBranch(); }}
+              >
+                Make a new branch
+              </button>
+            </div>
+          </ErrorPopup>
+        </div>
+      ) : (
+        <div data-repo-saved-toast="" data-repo-saved-branch={repoSaved.branch}>
+          <ErrorPopup
+            tone="success"
+            onDismiss={() => setRepoSaved(null)}
+            className="px-4 py-2"
+          >
+            {repoSavedMessage(repoSaved.branch)}
+          </ErrorPopup>
+        </div>
+      )}
+    </div>
+  ) : null;
+
   const assemblyOpenToastEl = assemblyOpenToast ? (
     <AssemblyOpenFailureToast
       message={assemblyOpenToast.message}
@@ -7428,6 +7574,7 @@ const App = () => {
           {showConfetti && <GameConfetti durationMs={SUCCESS_CLEAR_MS} />}
           {assemblyOpenSpinner}
           {assemblyOpenToastEl}
+          {repoMovedToastEl}
           {gameError && (
             <div className="absolute top-4 left-1/2 transform -translate-x-1/2 z-50 max-w-md">
               <ErrorPopup
@@ -7795,6 +7942,7 @@ const App = () => {
           )}
           {showConfetti && <GameConfetti durationMs={SUCCESS_CLEAR_MS} />}
         {assemblyOpenToastEl}
+        {repoMovedToastEl}
         {gameError && (
             <div className="absolute top-4 left-1/2 transform -translate-x-1/2 z-50 max-w-md">
               <ErrorPopup

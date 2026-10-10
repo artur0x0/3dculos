@@ -258,7 +258,8 @@ export function firstCommitBaseline({ branch = 'main', headSha = null } = {}) {
  * Instantly commit one part (plus the assembly `.surf.json`) to the working
  * branch. Used by Parts "Add to Repo" for local content not yet in the vault.
  * Remaps `local:` / foreign ids to `parts/<Name>.js` (`Name (2)` on collision).
- * -> { status: 'committed'|'clean'|'error', ... } (branched on non_fast_forward)
+ * -> { status: 'committed'|'clean'|'repo-moved'|'error', ... }
+ * `repo-moved` is a stale base (`non_fast_forward`). Nothing was written.
  */
 export async function commitPartToRepo(adapter, repo, {
   doc,
@@ -382,9 +383,16 @@ export async function commitPartToRepo(adapter, repo, {
   } catch (err) {
     if (err instanceof GitAdapterError && err.code === 'non_fast_forward') {
       return {
-        status: 'error',
-        error: 'Repo moved — Save the assembly (or resolve the conflict), then try again.',
+        status: 'repo-moved',
         code: 'non_fast_forward',
+        branch,
+        baseSha: expectedBase,
+        files,
+        message: msg,
+        doc: workDoc,
+        scripts: workScripts,
+        partId: destId,
+        fromId: id !== destId ? id : null,
       };
     }
     return { status: 'error', error: err?.message || 'Add to Repo failed' };
@@ -474,9 +482,12 @@ export async function deletePartFromRepo(adapter, repo, {
   } catch (err) {
     if (err instanceof GitAdapterError && err.code === 'non_fast_forward') {
       return {
-        status: 'error',
-        error: 'Repo moved — Save the assembly (or resolve the conflict), then try again.',
+        status: 'repo-moved',
         code: 'non_fast_forward',
+        branch,
+        baseSha: expectedBase,
+        files,
+        message: msg,
       };
     }
     return { status: 'error', error: err?.message || 'Delete from repo failed' };
@@ -536,6 +547,77 @@ function attachPartAsset(writes, deletes, partPaths, assets, baseline, from, des
 
 function pad(n) {
   return String(n).padStart(2, '0');
+}
+
+/** Shown when a Save finds the working ref has moved. Not an Upload Error. */
+export const REPO_MOVED_WARNING = 'Repo moved. Nothing was overwritten.';
+
+/** Success toast after Make a new branch lands the local save. */
+export function repoSavedMessage(branch) {
+  return `Saved to ${branch}`;
+}
+
+/** First free branch name: base, base-2, base-3 … */
+export async function freeBranchName(adapter, repo, base) {
+  const taken = new Set((await adapter.listBranches(repo)).map((b) => b.name));
+  if (!taken.has(base)) return base;
+  for (let n = 2; n < 1000; n += 1) {
+    const name = `${base}-${n}`;
+    if (!taken.has(name)) return name;
+  }
+  throw new GitAdapterError('name_exists', `No free branch name for ${base}`);
+}
+
+/**
+ * Cut a branch from the local baseline and commit `files` there.
+ * The branch that moved (usually main) is not written.
+ * -> { status: 'committed', branch, sha, baseline, files, doc, scripts }
+ *  | { status: 'error', error }
+ */
+export async function saveLocalOnNewBranch(adapter, repo, {
+  doc,
+  scripts,
+  baseline,
+  files,
+  message = '',
+  now = new Date(),
+} = {}) {
+  assertGithubAdapter(adapter);
+  const baseSha = baseline?.headSha || null;
+  if (!baseSha) return { status: 'error', error: 'No local commit to branch from' };
+  const list = Array.isArray(files) ? files.filter((file) => file?.path) : [];
+  if (!list.length) return { status: 'error', error: 'Nothing to save' };
+  const preferred = commitBranchName(doc?.name || baseline?.assemblyName || 'assembly', now);
+  const branch = await freeBranchName(adapter, repo, preferred);
+  await adapter.createBranch(repo, branch, baseSha);
+  const msg = String(message || '').trim()
+    || `Update ${vaultSegment(doc?.name) || baseline?.assemblyName || 'assembly'}`;
+  const res = await adapter.commitFiles(repo, {
+    branch,
+    message: msg,
+    files: list,
+    baseSha,
+  });
+  const asmName = vaultSegment(doc?.name) || baseline?.assemblyName || 'Assembly';
+  const next = captureBaseline({
+    assemblyPath: assemblyFilePath(asmName),
+    assemblyName: asmName,
+    doc: doc || { name: asmName, source: 'git', parts: [] },
+    scripts: scripts || {},
+    assets: baseline?.assets,
+    branch,
+    headSha: res.sha,
+  });
+  return {
+    status: 'committed',
+    sha: res.sha,
+    branch,
+    baseSha,
+    files: list.map((file) => file.path),
+    baseline: next,
+    doc,
+    scripts,
+  };
 }
 
 /** `surfcad/<assembly-slug>-YYYY-MM-DD` (git-ref safe). */
