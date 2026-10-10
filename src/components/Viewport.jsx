@@ -70,6 +70,7 @@ import MeasureModeChip from './MeasureModeChip';
 import ShellModeChip from './ShellModeChip';
 import { PaintModeChip } from './PaintModeChip';
 import { FeaStudyHost } from './fea/FeaStudyHost';
+import { getProbeOverlay, subscribeProbeOverlay } from '../fea/probeOverlay.js';
 import SheetMetalPicker from './sheetMetal/SheetMetalPicker';
 import SheetMetalRail from './sheetMetal/SheetMetalRail';
 import SheetMetalFlow from './sheetMetal/SheetMetalFlow';
@@ -423,6 +424,55 @@ function makeFilletIdSprite(text, worldH) {
   sprite.frustumCulled = false;
   sprite.raycast = () => {};
   return sprite;
+}
+
+/** Small numbered disc for an Analyze probe. The sphere takes the tap. */
+function makeProbeNumberSprite(text, worldH) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 128;
+  canvas.height = 128;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+  ctx.clearRect(0, 0, 128, 128);
+  ctx.beginPath();
+  ctx.arc(64, 64, 52, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(8, 47, 73, 0.92)';
+  ctx.fill();
+  ctx.lineWidth = 8;
+  ctx.strokeStyle = '#67e8f9';
+  ctx.stroke();
+  ctx.fillStyle = '#ecfeff';
+  ctx.font = 'bold 64px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, 64, 68);
+  const tex = new CanvasTexture(canvas);
+  tex.needsUpdate = true;
+  const mat = new SpriteMaterial({
+    map: tex,
+    depthTest: false,
+    depthWrite: false,
+    transparent: true,
+  });
+  const sprite = new Sprite(mat);
+  sprite.scale.set(worldH, worldH, 1);
+  sprite.renderOrder = 29;
+  sprite.frustumCulled = false;
+  sprite.raycast = () => {};
+  return sprite;
+}
+
+function disposeProbeGroup(group) {
+  if (!group) return;
+  group.parent?.remove(group);
+  group.traverse((child) => {
+    if (child === group) return;
+    child.geometry?.dispose?.();
+    const mat = child.material;
+    if (mat?.map) mat.map.dispose();
+    if (Array.isArray(mat)) mat.forEach((item) => item?.dispose?.());
+    else mat?.dispose?.();
+  });
 }
 
 /** Dispose LineSegments2 Group (halo+core) or legacy LineSegments. */
@@ -856,6 +906,7 @@ const Viewport = forwardRef(({
   onFeatureLongPressRef.current = onFeatureLongPress;
   const measurementLinesRef = useRef(null);
   const measureMarkerRef = useRef(null);
+  const feaProbeGroupRef = useRef(null);
   const measureEdgeRef = useRef(null);
   const measurePicksRef = useRef([]);
   const measurementEnabledRef = useRef(false);
@@ -5707,6 +5758,52 @@ const Viewport = forwardRef(({
     return undefined;
   }, [measurementEnabled, measurePicks, paintMeasurePicks, clearMeasureDecor]);
 
+  const paintFeaProbes = useCallback((list) => {
+    const scene = sceneRef.current;
+    if (feaProbeGroupRef.current) {
+      disposeProbeGroup(feaProbeGroupRef.current);
+      feaProbeGroupRef.current = null;
+    }
+    if (!scene || !list?.length) return;
+    const cam = cameraRef.current;
+    const dist = cam ? cam.position.length() : 80;
+    const worldH = Math.max(1.2, dist * 0.035);
+    const group = new Group();
+    group.name = 'fea-probes';
+    for (const probe of list) {
+      const position = probe.position;
+      if (!position || position.length < 3) continue;
+      const marker = new ThreeMesh(
+        new SphereGeometry(worldH * 0.42, 14, 14),
+        new MeshBasicMaterial({ color: 0x67e8f9, depthTest: false, depthWrite: false }),
+      );
+      marker.name = 'fea-probe-marker';
+      marker.userData.probeId = probe.id;
+      marker.position.set(position[0], position[1], position[2]);
+      marker.renderOrder = 28;
+      marker.frustumCulled = false;
+      group.add(marker);
+      const sprite = makeProbeNumberSprite(String(probe.number), worldH * 1.15);
+      if (sprite) {
+        sprite.position.set(position[0], position[1] + worldH * 0.85, position[2]);
+        group.add(sprite);
+      }
+    }
+    if (!group.children.length) return;
+    scene.add(group);
+    feaProbeGroupRef.current = group;
+  }, []);
+
+  useEffect(() => {
+    const draw = () => paintFeaProbes(getProbeOverlay());
+    draw();
+    const unsubscribe = subscribeProbeOverlay(draw);
+    return () => {
+      unsubscribe();
+      paintFeaProbes([]);
+    };
+  }, [paintFeaProbes]);
+
 
   /** Shared screen-space edge pick. Occlusion raycast is opt-in (click path);
    *  hover skips it to avoid full mesh intersect on every mousemove (iPhone jank). */
@@ -6379,6 +6476,22 @@ const Viewport = forwardRef(({
         return;
       }
     }
+    // A probe marker sits on the surface. A tap on it removes that probe
+    // and must not fall through into a new sample or a setup face pick.
+    if (feaPickRef.current && feaProbeGroupRef.current) {
+      const markerHits = raycasterRef.current.intersectObject(feaProbeGroupRef.current, true);
+      const marker = markerHits.find((hit) => hit.object?.userData?.probeId != null);
+      if (marker && marker.distance <= solidD + 1e-4) {
+        if (clickTimerRef.current) {
+          clearTimeout(clickTimerRef.current);
+          clickTimerRef.current = null;
+        }
+        clickCountRef.current = 0;
+        pendingClickDataRef.current = null;
+        feaPickRef.current({ removeProbeId: marker.object.userData.probeId });
+        return;
+      }
+    }
     // Handle click on empty space (only if not dragging)
     if (!partChoiceHit.partId) {
       if (clickTimerRef.current) {
@@ -6423,6 +6536,9 @@ const Viewport = forwardRef(({
     const positions = geometry.attributes.position;
     const index = geometry.index.array;
     
+    const localHit = intersection.point.clone();
+    resultRef.current.worldToLocal(localHit);
+    const faceIds = faceIDsRef.current;
     const clickData = {
       clickedFace,
       seedFaceIndex,
@@ -6431,6 +6547,8 @@ const Viewport = forwardRef(({
       index,
       faceNormal: [clickedFace.normal.x, clickedFace.normal.y, clickedFace.normal.z],
       hitPoint: [intersection.point.x, intersection.point.y, intersection.point.z],
+      localPoint: [localHit.x, localHit.y, localHit.z],
+      faceId: faceIds && seedFaceIndex != null ? Number(faceIds[seedFaceIndex]) : null,
       // Shift (or ⌘/Ctrl) adds this face to the pick instead of replacing it.
       additive: !!(event.shiftKey || event.metaKey || event.ctrlKey),
       partId: activePartIdRef.current,
@@ -7093,6 +7211,18 @@ const Viewport = forwardRef(({
             const ok = handleViewSnap(known, margin);
             renderer.render(sceneRef.current, cameraRef.current);
             return ok;
+          },
+          project: (x, y, z) => {
+            const cam = cameraRef.current;
+            const glRenderer = rendererRef.current;
+            if (!cam || !glRenderer?.domElement) return null;
+            const rect = glRenderer.domElement.getBoundingClientRect();
+            const projected = new Vector3(x, y, z).project(cam);
+            return {
+              x: rect.left + (projected.x * 0.5 + 0.5) * rect.width,
+              y: rect.top + (-projected.y * 0.5 + 0.5) * rect.height,
+              behind: projected.z > 1,
+            };
           },
           // Center canvas pixel after a render. Used to check face color.
           stageSampleCenter: () => {

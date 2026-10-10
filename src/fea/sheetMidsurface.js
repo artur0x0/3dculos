@@ -1185,6 +1185,94 @@ function fibreValue(top, mid, bottom, zeta) {
   return mid + (bottom - mid) * (-z);
 }
 
+function shellNodeVector(disp, node, director, offset) {
+  const base = node * 6;
+  const u = [disp[base] || 0, disp[base + 1] || 0, disp[base + 2] || 0];
+  const th = [disp[base + 3] || 0, disp[base + 4] || 0, disp[base + 5] || 0];
+  const rot = cross(th, director);
+  return [
+    u[0] + offset * rot[0],
+    u[1] + offset * rot[1],
+    u[2] + offset * rot[2],
+  ];
+}
+
+/**
+ * One probe on a shell mid-surface. Same region projection and 6-node
+ * shape functions as the stress skin. `record` is a packShellProbe result.
+ */
+export function probeShellAt(record, point, normal, quantity, modeIndex = 0) {
+  if (!record || record.kind !== 'shell' || !point) return null;
+  const mesh = {
+    nodes: record.nodes,
+    elements: record.elements,
+    regions: record.regions,
+    thickness: record.thickness,
+  };
+  const found = classifyPoint(mesh, point, normal);
+  if (!found) return null;
+  const hit = locate(mesh, found.index, found.proj.mid);
+  if (!hit) return null;
+  const ids = [];
+  for (let k = 0; k < 6; k += 1) ids.push(mesh.elements[hit.element * 6 + k]);
+  const weights = Array.from(quadShape(hit.bary[0], hit.bary[1], hit.bary[2]));
+  const zeta = found.proj.zeta;
+  if (quantity === 'stress') {
+    if (!record.top || !record.mid || !record.bottom) return null;
+    const nodal = ids.map((id) => fibreValue(record.top[id], record.mid[id], record.bottom[id], zeta));
+    if (nodal.some((value) => !Number.isFinite(value))) return null;
+    let value = 0;
+    for (let k = 0; k < 6; k += 1) value += weights[k] * nodal[k];
+    return { value, weights, nodal, mix: 'scalar' };
+  }
+  if (quantity === 'mode') {
+    const count = mesh.nodes.length / 3;
+    const mode = Math.max(0, modeIndex | 0);
+    if (!record.modes || mode >= (record.modeCount || 0)) return null;
+    const base = mode * count * 3;
+    const nodal = [[], [], []];
+    for (let axis = 0; axis < 3; axis += 1) {
+      for (let k = 0; k < 6; k += 1) {
+        const value = record.modes[base + ids[k] * 3 + axis];
+        nodal[axis].push(Number.isFinite(value) ? value : 0);
+      }
+    }
+    const acc = [0, 0, 0];
+    for (let axis = 0; axis < 3; axis += 1) {
+      for (let k = 0; k < 6; k += 1) acc[axis] += weights[k] * nodal[axis][k];
+    }
+    return {
+      value: Math.hypot(acc[0], acc[1], acc[2]),
+      weights,
+      nodal: nodal[0].concat(nodal[1], nodal[2]),
+      mix: 'magnitude',
+    };
+  }
+  if (quantity === 'displacement') {
+    if (!record.displacement) return null;
+    const director = found.proj.director || [0, 0, 1];
+    const offset = zeta * ((mesh.thickness || 0) / 2);
+    const nodal = [[], [], []];
+    for (let k = 0; k < 6; k += 1) {
+      const vec = shellNodeVector(record.displacement, ids[k], director, offset);
+      nodal[0].push(vec[0]);
+      nodal[1].push(vec[1]);
+      nodal[2].push(vec[2]);
+    }
+    const acc = [0, 0, 0];
+    for (let axis = 0; axis < 3; axis += 1) {
+      for (let k = 0; k < 6; k += 1) acc[axis] += weights[k] * nodal[axis][k];
+    }
+    return {
+      value: Math.hypot(acc[0], acc[1], acc[2]),
+      weights,
+      nodal: nodal[0].concat(nodal[1], nodal[2]),
+      mix: 'magnitude',
+    };
+  }
+  return null;
+}
+
 /**
  * Top fibre on the +N side, bottom fibre on the w = 0 side, and a blend
  * through the thickness on edges. Displacement includes the rotation of the
