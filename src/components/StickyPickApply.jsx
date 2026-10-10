@@ -33,6 +33,7 @@ const StickyPickApply = ({
   footer = null,
   cardAttrs = {},
   children = null,
+  onKeyboardDone = null,
 }) => {
   const cap = Math.max(1, max);
   return (
@@ -47,6 +48,7 @@ const StickyPickApply = ({
       note={note}
       footer={footer}
       cardAttrs={{ 'data-sticky-pick-apply': '', ...cardAttrs }}
+      onKeyboardDone={onKeyboardDone}
     >
       <div className="flex flex-col gap-2 font-sans" data-sticky-picks={picks.length}>
         <div className="text-[11px] uppercase tracking-wide text-cyan-200/80">
