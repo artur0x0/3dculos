@@ -116,7 +116,8 @@ async function boot(browser, vp) {
 }
 
 async function openCard(page, label) {
-  await page.locator(`button[aria-label^="${label}"]`).click();
+  const prefix = label.endsWith(':') ? label : `${label}:`;
+  await page.locator(`button[aria-label^="${prefix}"]`).click();
 }
 
 if (!(await waitForServer())) {
