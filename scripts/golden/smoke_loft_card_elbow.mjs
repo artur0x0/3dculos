@@ -9,7 +9,7 @@
  *
  * Screenshots (390px) go to GOLDEN_SHOT_DIR or os.tmpdir() only.
  */
-/* global document, window, localStorage */
+/* global document, window, localStorage, Event */
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
