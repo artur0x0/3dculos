@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parseCargoTreeLine } from '../scripts/ci/generate-third-party-notices.mjs';
 
 const notices = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../public/THIRD_PARTY_NOTICES.txt'), 'utf8');
 
@@ -18,6 +19,13 @@ test('the shipped notice names MPL sources and does not defer to LICENSES.md', (
   assert.match(notices, /scripts\/fea\/build-mesh-wasm\.mjs/);
   assert.match(notices, /is not part of the production build/);
   assert.doesNotMatch(notices, /licences are listed in packages\/surfcad-mesh\/LICENSES\.md/);
+});
+
+test('cargo tree lines stay parseable when colour wraps the duplicate marker', () => {
+  const coloured = 'dyn-stack v0.13.2 \u001b[33m\u001b[2m(*)\u001b[39m\u001b[22m';
+  assert.deepEqual(parseCargoTreeLine(coloured), { name: 'dyn-stack', version: '0.13.2' });
+  assert.deepEqual(parseCargoTreeLine('faer v0.24.0 (*)'), { name: 'faer', version: '0.24.0' });
+  assert.equal(parseCargoTreeLine(' Downloading crates ...'), null);
 });
 
 test('jszip is elected under MIT', () => {

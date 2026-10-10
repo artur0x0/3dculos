@@ -19,7 +19,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { build, mergeConfig } from 'vite';
 import baseConfig from '../../vite.config.js';
 
@@ -63,12 +63,37 @@ function cargo(args) {
   const result = spawnSync('cargo', args, {
     cwd: ROOT,
     encoding: 'utf8',
-    env: { ...process.env, RUSTUP_TOOLCHAIN: rustChannel() },
+    env: {
+      ...process.env,
+      RUSTUP_TOOLCHAIN: rustChannel(),
+      // rust-cache sets CARGO_TERM_COLOR=always for later steps. Coloured
+      // tree lines are not stable text, so this process always asks for plain
+      // output. The parser still strips colour in case the variable is ignored.
+      CARGO_TERM_COLOR: 'never',
+    },
   });
   if (result.status !== 0) {
     throw new Error(`cargo ${args.join(' ')} failed:\n${result.stderr || result.stdout}`);
   }
   return result.stdout;
+}
+
+function stripAnsi(text) {
+  const esc = String.fromCharCode(0x1b);
+  return text.split(esc).map((part, index) => (
+    index === 0 ? part : part.replace(/^\[[0-9;]*m/, '')
+  )).join('');
+}
+
+/** One `cargo tree -f {p}` line, or null when the line is progress noise. */
+export function parseCargoTreeLine(raw) {
+  const line = stripAnsi(raw).trim().replace(/\s+\(\*\)$/, '');
+  if (!line || line.startsWith('Downloading') || line.startsWith('Downloaded') || line.startsWith('Updating')) {
+    return null;
+  }
+  const match = line.match(/^(\S+) v(\S+?)(?:\s+\(.*\))?$/);
+  if (!match) throw new Error(`unparsed cargo tree line: ${raw}`);
+  return { name: match[1], version: match[2] };
 }
 
 function shippedRustIds() {
@@ -83,11 +108,9 @@ function shippedRustIds() {
   ]);
   const ids = new Map();
   for (const raw of stdout.split('\n')) {
-    const line = raw.trim().replace(/\s+\(\*\)$/, '');
-    if (!line || line.startsWith('Downloading') || line.startsWith('Downloaded') || line.startsWith('Updating')) continue;
-    const match = line.match(/^(\S+) v(\S+?)(?:\s+\(.*\))?$/);
-    if (!match) throw new Error(`unparsed cargo tree line: ${raw}`);
-    ids.set(`${match[1]}@${match[2]}`, { name: match[1], version: match[2] });
+    const parsed = parseCargoTreeLine(raw);
+    if (!parsed) continue;
+    ids.set(`${parsed.name}@${parsed.version}`, parsed);
   }
   return [...ids.values()].sort((a, b) => a.name.localeCompare(b.name) || a.version.localeCompare(b.version, undefined, { numeric: true }));
 }
@@ -751,21 +774,29 @@ async function generate() {
   };
 }
 
-const check = process.argv.includes('--check');
-const { notices, counts } = await generate();
-console.log(`notices: mesh ${counts.mesh}, emscripten ${counts.emscripten}, rust ${counts.rust}, npm ${counts.npm}`);
-if (check) {
-  const current = readText(OUT);
-  const next = notices.replace(/\s+$/, '');
-  if (current !== next) {
-    const generated = join(tmpdir(), 'THIRD_PARTY_NOTICES.generated.txt');
-    writeFileSync(generated, notices);
-    spawnSync('diff', ['-u', OUT, generated], { stdio: 'inherit' });
-    console.error('public/THIRD_PARTY_NOTICES.txt is stale. Run: node scripts/ci/generate-third-party-notices.mjs');
-    process.exit(1);
+function isDirectRun() {
+  const arg = process.argv[1];
+  if (!arg) return false;
+  return import.meta.url === pathToFileURL(arg).href;
+}
+
+if (isDirectRun()) {
+  const check = process.argv.includes('--check');
+  const { notices, counts } = await generate();
+  console.log(`notices: mesh ${counts.mesh}, emscripten ${counts.emscripten}, rust ${counts.rust}, npm ${counts.npm}`);
+  if (check) {
+    const current = readText(OUT);
+    const next = notices.replace(/\s+$/, '');
+    if (current !== next) {
+      const generated = join(tmpdir(), 'THIRD_PARTY_NOTICES.generated.txt');
+      writeFileSync(generated, notices);
+      spawnSync('diff', ['-u', OUT, generated], { stdio: 'inherit' });
+      console.error('public/THIRD_PARTY_NOTICES.txt is stale. Run: node scripts/ci/generate-third-party-notices.mjs');
+      process.exit(1);
+    }
+    console.log('third-party notices are up to date');
+  } else {
+    writeFileSync(OUT, notices);
+    console.log(`wrote ${OUT}`);
   }
-  console.log('third-party notices are up to date');
-} else {
-  writeFileSync(OUT, notices);
-  console.log(`wrote ${OUT}`);
 }
