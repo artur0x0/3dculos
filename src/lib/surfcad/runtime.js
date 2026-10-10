@@ -39,6 +39,7 @@ import { blockSpec, buildBlockManifold } from '../../utils/blockSolid.js';
 import { buildSheetMetalSolid } from '../../utils/sheetMetal/sheetSolid.js';
 import { markSheetMesh } from '../../utils/sheetMetal/sheetMeshFlag.js';
 import { installSeparateBodies, overlappingBodies } from '../../workers/separateBodies.js';
+import { solveContour as solveContourModel } from '../../utils/contourSolve.js';
 
 /**
  * List of globals to block/remove in the worker context
@@ -4729,7 +4730,7 @@ function makeCrossSection(plane, profile) {
   } else {
     throw new Error(
       'makeCrossSection: profile must be profileCircle/profileRectangle/profilePolygon, '
-      + 'a { type } descriptor, or a contours / point list'
+      + 'solveContour, a { type } descriptor, or a contours / point list'
     );
   }
   return {
@@ -8150,6 +8151,20 @@ function _featureTessellation(runOriginalID) {
   return out;
 }
 
+/**
+ * solveContour(spec) → a contour profile in plane UV.
+ * spec is `{ points, lines, arcs, dimensions, constraints }`. Lengths are
+ * millimetres and angles are degrees. Dimension names are strings on the
+ * dimension; they are not script bindings. An under-defined contour solves
+ * and reports status `under`. A conflict does not throw: status is
+ * `conflict` and the shape is the least-squares result. A repeated
+ * constraint is listed on `repeated` with warning `repeated`. More than
+ * 128 points throws. Contours are tessellated point loops for makeExtrude.
+ */
+function solveContour(spec) {
+  return solveContourModel(spec);
+}
+
 const HELPER_FUNCTIONS = {
   shell,
   hollow,
@@ -8225,6 +8240,7 @@ const HELPER_FUNCTIONS = {
   profileRectangle,
   profilePolygon,
   makeCrossSection,
+  solveContour,
   // Slice 22 edge → sweep path / wire
   makeSweepPath,
   // Slice 23 fillet via swept cross-section

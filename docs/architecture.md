@@ -37,6 +37,14 @@ flowchart TD
 
 Injected names are the keys of `HELPER_FUNCTIONS` in `src/lib/surfcad/runtime.js`. Anything not in that object is not a script helper. `src/workers/sandboxWorker.js` only calls `bindWorker` on that module.
 
+### Constrained contour
+
+`solveContour` (`src/utils/contourSolve.js`) solves a contour in the workplane UV frame. The script stores the contour inside the call. A dimension name is a string on that dimension, scoped to the contour, not a `const` later features can read. Lengths in the call are millimetres. Angles are degrees. Display conversion uses `src/utils/displayUnit.js` at the field, when the dimension card lands. The solver does not import it.
+
+Horizontal is constant `v`. Vertical is constant `u`. An under-defined contour is a normal result (`status: 'under'`). A conflict returns the least-squares shape and names the item (`status: 'conflict'`); it does not throw. A constraint that does not change the rank is `repeated`, which is a warning, not a red state and not an error. The point cap is 128. An open chain closes once it has three points. Joints do not call this solver.
+
+`makeCrossSection` accepts the return value because it already accepts `{ type, contours }`. The tessellated loops are what extrude, revolve, loft, and sweep consume. Judgment calls for this work are `docs/contour-constraints-judgments.md`.
+
 ### Headless entry
 
 - **One module.** Script helpers and `executeScript` live in `src/lib/surfcad/runtime.js`. The worker message protocol is `bindWorker` in that same file. Node imports `src/lib/surfcad/index.js` (`runScript`, `helperScope`, STL / 3MF / STEP). There is no second copy of the helpers.
@@ -50,7 +58,7 @@ Injected names are the keys of `HELPER_FUNCTIONS` in `src/lib/surfcad/runtime.js
 | --- | --- | --- |
 | `makeExtrude`, `makeRevolve`, `makeLoft` | contours or sections → a new solid | No split. UI adds or subtracts onto `part` when `part` already exists. Default is add (`part.add`). Merge bodies off emits `part.add(x, { merge: false })` (separate body, below). Subtract emits `part.subtract`. An empty script is still `let part = …`. |
 | `loft`, `sweep`, `sweepPoints` | profiles / path → a new solid | Same. Sweep's one-shot fallback still replaces `part` when Mode is Add. Contour Confirm adds or subtracts. |
-| `makeCrossSection`, `profileCircle`, `profileRectangle`, `profilePolygon` | plane + 2D profile → a sketch contour, not a solid | — |
+| `makeCrossSection`, `profileCircle`, `profileRectangle`, `profilePolygon`, `solveContour` | plane + 2D profile → a contour, not a solid. `solveContour` is the constrained contour (points, lines, arcs, dimensions, constraints) in plane UV | — |
 | `makeSweepPath` | edge list → one ordered path | Orders the edges it is given. It does not walk bodies. |
 | `filletAlongPath` | solid, path, radius, opts → blend (subtract, or union for a concave run) | On a multi-body solid, fillets the body that owns the path, then `compose`s the untouched bodies. The scrap check still runs on that one result. See below. |
 | `filletEdges` | solid, edges, radius → planar blend | No `decompose` scrap check. |

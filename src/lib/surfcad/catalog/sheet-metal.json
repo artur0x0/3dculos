@@ -78,6 +78,12 @@
         "source": "src/utils/sheetMetal/sheetDfm.js"
       },
       {
+        "rule": "flange-before",
+        "level": "fail",
+        "check": "",
+        "source": "src/utils/sheetMetal/sheetDfm.js"
+      },
+      {
         "rule": "angle",
         "level": "fail",
         "check": "Bend angle is outside the SKU min … max bend angle.",
@@ -87,6 +93,18 @@
         "rule": "bend-length",
         "level": "fail",
         "check": "Bend line is longer than the SKU max bend length.",
+        "source": "src/utils/sheetMetal/sheetDfm.js"
+      },
+      {
+        "rule": "collide",
+        "level": "fail",
+        "check": "",
+        "source": "src/utils/sheetMetal/sheetDfm.js"
+      },
+      {
+        "rule": "overlap",
+        "level": "fail",
+        "check": "",
         "source": "src/utils/sheetMetal/sheetDfm.js"
       },
       {
