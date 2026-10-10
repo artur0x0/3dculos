@@ -625,7 +625,11 @@ fn simply_supported_square_plate_matches_leissa() {
     let expected = [to_hz(2.0 * pi2), to_hz(5.0 * pi2), to_hz(5.0 * pi2)];
     assert_eq!(out.frequencies_hz.len(), 3);
     for (i, (got, exact)) in out.frequencies_hz.iter().zip(expected).enumerate() {
-        let err = report(&format!("simply supported plate mode {}", i + 1), *got, exact);
+        let err = report(
+            &format!("simply supported plate mode {}", i + 1),
+            *got,
+            exact,
+        );
         assert!(
             err < 0.03,
             "Leissa mode {} error {:.3}%",
@@ -633,4 +637,81 @@ fn simply_supported_square_plate_matches_leissa() {
             err * 100.0
         );
     }
+}
+
+#[test]
+fn an_eighty_thousand_dof_shell_stays_on_cholesky() {
+    // (2*60+1)^2 nodes * 6 DOF, minus one clamped edge, is inside 80k..90k.
+    let mesh = plate_shell(60, 60, 200.0, 200.0);
+    let thickness = vec![1.0; mesh.elements.len()];
+    let material = steel(0.3);
+    let mut dirichlet = Vec::new();
+    let mut tip = 0usize;
+    let mut tip_x = f64::NEG_INFINITY;
+    for (i, p) in mesh.nodes.iter().enumerate() {
+        if p[0] <= 1e-9 {
+            clamp_node(i as u32, &mut dirichlet);
+        }
+        if p[0] >= tip_x {
+            tip_x = p[0];
+            tip = i;
+        }
+    }
+    let forces = [NodalForce {
+        node: tip as u32,
+        force: [0.0, 0.0, -1.0],
+    }];
+    let n_dof = mesh.nodes.len() * SHELL_DOF_PER_NODE;
+    let mut fixed = vec![false; n_dof];
+    for bc in &dirichlet {
+        fixed[bc.dof as usize] = true;
+    }
+    let prescribed = vec![0.0; n_dof];
+    let directors = super::nodal_directors(&mesh.nodes, &mesh.elements).unwrap();
+    let reduced = super::assemble_shell(
+        &mesh.nodes,
+        &mesh.elements,
+        &thickness,
+        &directors,
+        material,
+        &fixed,
+        &prescribed,
+        &forces,
+        &[],
+    )
+    .unwrap();
+    let wasm32_max = i32::MAX as u128;
+    let nnz = match crate::fem::fill::cholesky_fill(&reduced.matrix, wasm32_max) {
+        crate::fem::fill::CholeskyFill::Fits { nnz } => nnz,
+        crate::fem::fill::CholeskyFill::Overflow { count } => {
+            panic!("80k shell fill {count} does not fit in i32")
+        }
+    };
+    let out = solve_shell(
+        &mesh.nodes,
+        &mesh.elements,
+        &thickness,
+        material,
+        &dirichlet,
+        &forces,
+        &[],
+        &shell_solve_options(),
+    )
+    .unwrap();
+    eprintln!(
+        "shell dofs={} free={} nnz(L)={} solver={} assemble={:.3}s solve={:.3}s",
+        out.dofs,
+        out.free_dofs,
+        nnz,
+        out.solver.as_str(),
+        out.assembly_secs,
+        out.solve_secs
+    );
+    assert!(
+        (80_000..=90_000).contains(&out.free_dofs),
+        "free dofs {}",
+        out.free_dofs
+    );
+    assert_eq!(out.solver, SolverUsed::Cholesky);
+    assert!(out.warnings.iter().all(|w| w.code != "cholesky-index"));
 }

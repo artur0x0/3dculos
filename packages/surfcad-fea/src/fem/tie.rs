@@ -289,13 +289,14 @@ pub fn solve_bonded(
         )?;
         let assembly_secs = t_asm.elapsed_secs();
         let t_solve = Clock::start();
-        let (u_free, iterations, residual) = solve_reduced(&reduced, choice, options)?;
+        let (u_free, iterations, residual, solver) = solve_reduced(&reduced, choice, options)?;
         let solve_secs = t_solve.elapsed_secs();
         for (slot, &dof) in free_dof.iter().enumerate() {
             displacement[dof] = u_free[slot];
         }
-        (choice, iterations, residual, assembly_secs, solve_secs)
+        (solver, iterations, residual, assembly_secs, solve_secs)
     };
+    let index_fallback = solver != choice;
 
     for tie in &active {
         for axis in 0..3 {
@@ -312,6 +313,12 @@ pub fn solve_bonded(
     let mut stress = Vec::with_capacity(nodes.len());
     let mut parts = Vec::with_capacity(bodies.len());
     let mut warnings = Vec::new();
+    if index_fallback {
+        warnings.push(Warning {
+            code: "cholesky-index",
+            msg: super::CHOLESKY_INDEX_NOTE.into(),
+        });
+    }
     let mut governing = None;
     let mut governing_factor = f64::INFINITY;
     for (index, body) in bodies.iter().enumerate() {

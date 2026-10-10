@@ -122,6 +122,20 @@ test('the summary prints MPa and n/a when the safety factor is missing', () => {
   assert.equal(missing.fos, 'n/a');
   assert.match(missing.warning, /datasheet/);
   assert.equal(formatSolveSummary(null).fos, 'n/a');
+
+  const index = formatSolveSummary({
+    source: 'tet10',
+    min: 1,
+    p95: 4,
+    max: 8,
+    safetyFactor: 10,
+    warnings: [{
+      code: 'cholesky-index',
+      msg: 'Cholesky fill does not fit in a 32-bit index, so this solve used PCG.',
+    }],
+  });
+  assert.match(index.warning, /32-bit index/);
+  assert.match(index.warning, /PCG/);
 });
 
 test('highlight indices follow a paint match, and the mesh copy does not alias', () => {

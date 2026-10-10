@@ -597,3 +597,233 @@ fn plate_with_a_hole_has_kt_near_three() {
         100.0 * err
     );
 }
+
+fn fixed_from(dirichlet: &[Dirichlet], n_dof: usize) -> (Vec<bool>, Vec<f64>) {
+    let mut fixed = vec![false; n_dof];
+    for bc in dirichlet {
+        fixed[bc.dof as usize] = true;
+    }
+    (fixed, vec![0.0; n_dof])
+}
+
+#[test]
+fn a_hundred_thousand_dof_thin_tet_stays_on_cholesky() {
+    // One element through the thickness: a plate, not a compact brick.
+    // 76 x 36 x 1 hexes of TET10 leave about 100k free DOF after one face is fixed.
+    let mesh = brick_tet10([76, 36, 1], [0.0, 0.0, 0.0], [152.0, 72.0, 2.0]);
+    let total = mesh.nodes.len() * 3;
+    let mut dirichlet = Vec::new();
+    for (i, p) in mesh.nodes.iter().enumerate() {
+        if p[0] <= 1e-8 {
+            for axis in 0..3 {
+                dirichlet.push(Dirichlet {
+                    dof: (i * 3 + axis) as u32,
+                    value: 0.0,
+                });
+            }
+        }
+    }
+    let (fixed, prescribed) = fixed_from(&dirichlet, total);
+    let reduced = super::assemble::assemble(
+        &mesh.nodes,
+        &mesh.elements,
+        steel(),
+        &fixed,
+        &prescribed,
+        &[],
+        &[],
+    )
+    .unwrap();
+    let wasm32_max = i32::MAX as u128;
+    let fill = super::fill::cholesky_fill(&reduced.matrix, wasm32_max);
+    let nnz = match fill {
+        super::fill::CholeskyFill::Fits { nnz } => nnz,
+        super::fill::CholeskyFill::Overflow { count } => {
+            panic!("100k thin tet fill {count} does not fit in i32")
+        }
+    };
+    assert!(
+        super::fill::guard_cholesky_index_for(SolverUsed::Cholesky, &reduced.matrix, wasm32_max)
+            == SolverUsed::Cholesky
+    );
+    let out = solve_tet10(
+        &mesh.nodes,
+        &mesh.elements,
+        steel(),
+        &dirichlet,
+        &[NodalForce {
+            node: (mesh.nodes.len() - 1) as u32,
+            force: [0.0, 0.0, -1.0],
+        }],
+        &[],
+        &SolveOptions {
+            solver: SolverChoice::Cholesky,
+            ..SolveOptions::default()
+        },
+    )
+    .unwrap();
+    eprintln!(
+        "thin tet dofs={} free={} nnz(L)={} solver={} assemble={:.3}s solve={:.3}s",
+        out.dofs,
+        out.free_dofs,
+        nnz,
+        out.solver.as_str(),
+        out.assembly_secs,
+        out.solve_secs
+    );
+    assert!(
+        (90_000..=110_000).contains(&out.free_dofs),
+        "free dofs {}",
+        out.free_dofs
+    );
+    assert_eq!(out.solver, SolverUsed::Cholesky);
+    assert!(out.warnings.iter().all(|w| w.code != "cholesky-index"));
+}
+
+/// Scalar 7-point Laplacian on a `k`³ grid, lower triangle only.
+fn grid_laplacian(k: usize) -> super::assemble::LowerCsc {
+    let n = k * k * k;
+    let id = |x: usize, y: usize, z: usize| (z * k + y) * k + x;
+    let mut rows: Vec<Vec<usize>> = vec![Vec::new(); n];
+    for z in 0..k {
+        for y in 0..k {
+            for x in 0..k {
+                let col = id(x, y, z);
+                rows[col].push(col);
+                let mut link = |nx: usize, ny: usize, nz: usize| {
+                    let row = id(nx, ny, nz);
+                    if row > col {
+                        rows[col].push(row);
+                    }
+                };
+                if x + 1 < k {
+                    link(x + 1, y, z);
+                }
+                if y + 1 < k {
+                    link(x, y + 1, z);
+                }
+                if z + 1 < k {
+                    link(x, y, z + 1);
+                }
+            }
+        }
+    }
+    let mut col_ptr = Vec::with_capacity(n + 1);
+    let mut row_idx = Vec::new();
+    col_ptr.push(0);
+    let mut diag = Vec::with_capacity(n);
+    for list in &mut rows {
+        list.sort_unstable();
+        list.dedup();
+        diag.push(list.len() as f64);
+        row_idx.extend_from_slice(list);
+        col_ptr.push(row_idx.len());
+    }
+    let nnz = row_idx.len();
+    super::assemble::LowerCsc {
+        n,
+        col_ptr,
+        row_idx,
+        values: vec![1.0; nnz],
+        diag,
+    }
+}
+
+#[test]
+fn fill_past_a_32_bit_index_selects_pcg() {
+    // A cubic grid's nested-dissection factor grows as O(k^4). k = 120 is
+    // 1,728,000 unknowns. Its pattern is a 7-point stencil, and the factor
+    // has about 3.84e9 nonzeros, past i32::MAX. The guard sees that from the
+    // elimination tree and selects PCG without calling faer's 32-bit sum.
+    let matrix = grid_laplacian(120);
+    let wasm32_max = i32::MAX as u128;
+    let fill = super::fill::cholesky_fill(&matrix, wasm32_max);
+    match fill {
+        super::fill::CholeskyFill::Overflow { count } => {
+            assert!(count > wasm32_max, "count {count}");
+            eprintln!("grid k=120 n={} nnz(L)={count}", matrix.n);
+        }
+        super::fill::CholeskyFill::Fits { nnz } => {
+            panic!("k=120 factor nnz {nnz} unexpectedly fits in i32")
+        }
+    }
+    assert_eq!(
+        super::fill::guard_cholesky_index_for(SolverUsed::Cholesky, &matrix, wasm32_max),
+        SolverUsed::Pcg
+    );
+    assert_eq!(
+        super::fill::guard_cholesky_index_for(SolverUsed::Pcg, &matrix, wasm32_max),
+        SolverUsed::Pcg
+    );
+}
+
+#[test]
+fn overflowing_fill_solves_with_pcg_and_the_warning() {
+    let mesh = brick_tet10([2, 2, 2], [0.0, 0.0, 0.0], [2.0, 2.0, 2.0]);
+    let mut dirichlet = Vec::new();
+    for (i, p) in mesh.nodes.iter().enumerate() {
+        if p[0] <= 1e-8 {
+            for axis in 0..3 {
+                dirichlet.push(Dirichlet {
+                    dof: (i * 3 + axis) as u32,
+                    value: 0.0,
+                });
+            }
+        }
+    }
+    let (fixed, prescribed) = fixed_from(&dirichlet, mesh.nodes.len() * 3);
+    let reduced = super::assemble::assemble(
+        &mesh.nodes,
+        &mesh.elements,
+        steel(),
+        &fixed,
+        &prescribed,
+        &[],
+        &[],
+    )
+    .unwrap();
+    let real = super::fill::cholesky_fill(&reduced.matrix, u128::MAX);
+    let nnz = match real {
+        super::fill::CholeskyFill::Fits { nnz } => nnz,
+        super::fill::CholeskyFill::Overflow { count } => {
+            panic!("small mesh overflowed u128 {count}")
+        }
+    };
+    assert!(
+        nnz > 32,
+        "expected real fill above the test limit, got {nnz}"
+    );
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            super::fill::set_test_index_limit(None);
+        }
+    }
+    let _reset = Reset;
+    // The factor is real; the budget is smaller than that factor, which is the
+    // same comparison the wasm32 guard makes against i32::MAX.
+    super::fill::set_test_index_limit(Some(nnz - 1));
+    let out = solve_tet10(
+        &mesh.nodes,
+        &mesh.elements,
+        steel(),
+        &dirichlet,
+        &[NodalForce {
+            node: (mesh.nodes.len() - 1) as u32,
+            force: [0.0, 0.0, -1.0],
+        }],
+        &[],
+        &SolveOptions {
+            solver: SolverChoice::Cholesky,
+            ..SolveOptions::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(out.solver, SolverUsed::Pcg);
+    let warning = out
+        .warnings
+        .iter()
+        .find(|w| w.code == "cholesky-index")
+        .expect("cholesky-index warning");
+    assert_eq!(warning.msg, CHOLESKY_INDEX_NOTE);
+}

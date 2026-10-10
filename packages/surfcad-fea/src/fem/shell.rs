@@ -156,13 +156,14 @@ pub fn solve_shell(
         )?;
         let assembly_secs = t_asm.elapsed_secs();
         let t_solve = Clock::start();
-        let (u_free, iterations, residual) = solve_reduced(&reduced, choice, options)?;
+        let (u_free, iterations, residual, solver) = solve_reduced(&reduced, choice, options)?;
         let solve_secs = t_solve.elapsed_secs();
         for (slot, &dof) in free_dofs.iter().enumerate() {
             displacement[dof] = u_free[slot];
         }
-        (choice, iterations, residual, assembly_secs, solve_secs)
+        (solver, iterations, residual, assembly_secs, solve_secs)
     };
+    let index_fallback = solver != choice;
 
     let (top, mid, bottom) = nodal_von_mises(
         nodes,
@@ -178,6 +179,12 @@ pub fn solve_shell(
     let (min, max, p95) = range_and_p95(&envelope_samples);
     let von_mises_envelope: Vec<f64> = top.iter().zip(&bottom).map(|(a, b)| a.max(*b)).collect();
     let mut warnings = Vec::new();
+    if index_fallback {
+        warnings.push(super::Warning {
+            code: "cholesky-index",
+            msg: super::CHOLESKY_INDEX_NOTE.into(),
+        });
+    }
     let safety_factor = match material.yield_mpa {
         Some(yield_mpa) if p95.is_finite() && p95 > 0.0 => Some(yield_mpa / p95),
         Some(_) => {
