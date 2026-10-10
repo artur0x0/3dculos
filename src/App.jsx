@@ -2171,10 +2171,12 @@ const App = () => {
   const handlePickRetarget = ({ partId, syncScript = false, kind = 'face' } = {}) => {
     if (!partId || !assemblyRef.current) return false;
     if (shouldArmJointPick({
-      cadPartId: cadPartIdRef.current,
       featureSession: featureSessionRef.current,
       appMode: appModeRef.current,
       kind,
+      jointPicking: jointCardRef.current?.mode === 'create'
+        && appModeRef.current !== 'game'
+        && !featureSessionRef.current,
     })) {
       const part = assemblyRef.current.parts.find((row) => row.id === partId);
       const mesh = meshForPart(partId);
@@ -5909,6 +5911,13 @@ const App = () => {
     });
   };
 
+  const handleOpenJoints = () => {
+    if (appModeRef.current === 'game' || featureSessionRef.current) return;
+    jointPicksRef.current = [];
+    setJointTagId(null);
+    setJointCard(draftFromPicks(null, [], { joints: assemblyRef.current?.joints || [] }));
+  };
+
   const handleCadEmptyClick = () => {
     if (featureSessionRef.current || appModeRef.current === 'game') return;
     const next = emptyClickCadSelection({
@@ -6743,6 +6752,7 @@ const App = () => {
 
   const cadHighlightId = cadPartId || assemblyDoc?.activeId || null;
   const showJoints = jointsChromeMounted({ appMode, featureSession }) && cadStripsShowJoints(cadPartId);
+  const jointCreateOpen = jointsChromeMounted({ appMode, featureSession }) && jointCard?.mode === 'create';
   const jointUndoReady = showJoints && assemblyHistTick >= 0 && assemblyHistoryCanUndo(assemblyHistoryRef.current);
   const jointRedoReady = showJoints && assemblyHistoryCanRedo(assemblyHistoryRef.current);
   const stripUndo = showJoints ? handleJointUndo : handleUndo;
@@ -6765,7 +6775,7 @@ const App = () => {
         world: jointTagAnchor(assemblyDoc, joint),
       };
     });
-  const jointCardNode = showJoints && jointCard && jointCard.mode !== 'edit' && appMode !== 'game'
+  const jointCardNode = jointCreateOpen && appMode !== 'game'
     ? (
       <JointCard
         card={jointCard}
@@ -7116,6 +7126,7 @@ const App = () => {
               assemblyColors={assemblyDoc?.colors || null}
               getSheetMetalReady={getSheetMetalReady}
               onBindSheetMetal={handleBindSheetMetal}
+              onOpenJoints={handleOpenJoints}
               onCommitSheetMetal={handleCommitSheetMetal}
               onCommitDeleteFace={handleCommitDeleteFace}
               getHelperBuffer={() => codeEditorRef.current?.getContent?.() || ''}
@@ -7130,7 +7141,7 @@ const App = () => {
               onFeatureLongPress={openFeatureSheetFromCad}
               onPickRetarget={handlePickRetarget}
               onCadEmptyClick={handleCadEmptyClick}
-              jointPicking={showJoints}
+              jointPicking={jointCreateOpen}
               onJointPick={handleJointPick}
               jointCard={jointCardNode}
               jointTags={jointTagList}
@@ -7626,6 +7637,7 @@ const App = () => {
               assemblyColors={assemblyDoc?.colors || null}
               getSheetMetalReady={getSheetMetalReady}
               onBindSheetMetal={handleBindSheetMetal}
+              onOpenJoints={handleOpenJoints}
               onCommitSheetMetal={handleCommitSheetMetal}
               onCommitDeleteFace={handleCommitDeleteFace}
             getHelperBuffer={() => codeEditorRef.current?.getContent?.() || ''}
@@ -7638,7 +7650,7 @@ const App = () => {
             }}
             onPickRetarget={handlePickRetarget}
             onCadEmptyClick={handleCadEmptyClick}
-            jointPicking={showJoints}
+            jointPicking={jointCreateOpen}
             onJointPick={handleJointPick}
             jointCard={jointCardNode}
             jointTags={jointTagList}

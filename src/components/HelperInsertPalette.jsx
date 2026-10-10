@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
+  Blocks,
   Box,
   Cylinder,
   Circle,
@@ -130,6 +131,8 @@ const HelperInsertPalette = ({
   onEnterDeleteFaceMode = null,
   /** SCS sheet metal (CAD): opens the material / gauge picker. */
   onOpenSheetMetal = null,
+  /** CAD: last Move button. Opens the joint create card. */
+  onOpenJoints = null,
   compact = false,
   /** Both layouts share Block / Build / Shape / Polish / Move. */
   layout = 'game',
@@ -399,6 +402,19 @@ const HelperInsertPalette = ({
                     flex items-center justify-center transition-colors`}
               >
                 <SheetMetalPlate size={iconSize} strokeWidth={2} data-sheet-metal-icon="" />
+              </button>
+            )}
+            {section.section === 'transforms' && onOpenJoints && (
+              <button
+                type="button"
+                onClick={() => onOpenJoints()}
+                title="Joints"
+                aria-label="Joints"
+                data-joints-button="1"
+                className={`${pad} rounded text-blue-700 hover:bg-blue-100 active:bg-blue-200
+                    flex items-center justify-center transition-colors`}
+              >
+                <Blocks size={iconSize} strokeWidth={2} />
               </button>
             )}
           </div>

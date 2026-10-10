@@ -94,8 +94,10 @@ Desktop specifics:
   (`data-assembly-joints`), or **No assembly joints**
   (`data-feature-strip-empty`), and Undo is titled **Undo joint**.
   A chip tap selects the floating joint tag (Delete and X). It does not
-  reopen the create card. That card is `StickyPickApply` while a joint
-  is being picked.
+  reopen the create card. The create card is `StickyPickApply`. It opens
+  from Joints (Lucide `Blocks`, `data-joints-button`), the last button in
+  Move. A tap with nothing selected selects the part. Joint picking starts
+  only while that card is open.
   The old vertical seam strip
   between editor and viewer is gone. Hidden in game mode. SplitDivider sits
   directly between editor and viewer.
@@ -406,7 +408,7 @@ All of these are absolutely positioned inside the shell at
 | bottom of the pane, 10px from the left edge (`fullLeft`) and 10px clear of the right rail. On a phone the stage switcher hides and the card sits on that switcher's bottom edge (`data-feature-card`) | Paint: 8 swatches (grid padded so the selection ring is not clipped), custom `#rrggbb`, Part, Undo, Clear, Remove unmatched colors. The color preview sits in the note. Confirm saves the session. X and Esc revert it. No swipe. The left helper rail is hidden, so the card passes `fullLeft` | `PaintModeChip` `data-paint-mode` on `FeatureSheet` | Viewport |
 | bottom of the pane, 10px from the left edge (`fullLeft`) and 10px clear of the right rail. On a phone the stage switcher hides and the card sits on that switcher's bottom edge (`data-feature-card`, `data-fea-sheet`) | Analyze: material (library or custom E/ν/yield, assumed badge), Fix / Force / Pressure, fixture and load list, Run. When WebGPU is available, magnitude, direction, and material sliders drive a Preview stress skin (fuchsia badge) from the setup. The safety factor stays the last Run. After a successful solve, Results shows Stress / Displacement tabs and Back to Setup; the preview sliders hide. The legend, those tabs, and Stage times scroll in the body. Legend is a viridis bar with ticks, min/p95/max MPa, and safety factor or n/a. Displacement is min/max in mm. A real TET10 result has no STUB badge. Re-run when the result is stale. The footer is Run or Back to Setup, never Confirm. Opening Analyze closes the other cards | `FeaStudyChip` and `FeaStudySheet` on `FeatureSheet`, `FeaLegend` `data-fea-legend`, `FeaPreviewSliders` `data-fea-preview-sliders` | Viewport |
 | centered | "Match!" success banner | inline | `:3595` |
-| left-2/4 bottom-2.5 | helper insert rail (height paired to right). Block, Build, Shape, Polish, Move. Shape includes Sheet Metal (blue plate with a bent flange, `data-sheet-metal-button`) with the other shape tools | `HelperInsertPalette.jsx` | Viewport |
+| left-2/4 bottom-2.5 | helper insert rail (height paired to right). Block, Build, Shape, Polish, Move. Shape includes Sheet Metal (blue plate with a bent flange, `data-sheet-metal-button`) with the other shape tools. Move ends with Joints (Lucide `Blocks`, `data-joints-button`), which opens the joint create card | `HelperInsertPalette.jsx` | Viewport |
 | left-2/4 bottom-2.5 | contour tool rail (replaces the helper rail). Circle, Rectangle, Polygon, Polyline, Arc, Dimension, Constraints, then the divider. On a face sketch, Back (`data-contour-back`, Undo) steps back one contour edit and stays disabled until there is one. Grey X (`data-contour-exit`) exits. Arc, Dimension, and Constraints do not reset the contour. A promoted contour is grey, dark, or red by status. Right-drag or one-finger drag moves a free polyline point | `ContourModeRail.jsx` | Viewport |
 | left-2/4 bottom-2.5 | sheet-metal rail (replaces the helper rail while `sheetMetalMode`): **Shape** section, SCS tools for the SKU, Tab first, ✕ exit | `sheetMetal/SheetMetalRail.jsx` | Viewport |
 | bottom center feature card (`data-feature-card`). Material line truncates, hint wraps. Does not cover either toolbar. Hidden in game | sheet-metal chip: bound SKU + step hint, **Check & Export** (edit), X exits without writing | `sheetMetal/SheetMetalModeChip.jsx` | Viewport |
@@ -688,7 +690,9 @@ Import `src/utils/importModel.js` (+ `POST /api/convert/step`); export
   Intersect, then leftover pieces on Intersect. It is not a second glyph of Cut.
   Polish is fillet, chamfer, move face, delete face. Move is every
   remaining button. The first button in Move is Move (`Move` glyph, directly
-  above Center): it opens the delta X/Y/Z chip and translates one body. Move
+  above Center): it opens the delta X/Y/Z chip and translates one body. The
+  last button in Move is Joints (Lucide `Blocks`, `data-joints-button`). It
+  opens the joint create card and does not insert a helper. Move
   Face (`SquareArrowOutUpRight`) offsets the picked faces along their normals.
   Delete Face (`SquareX`) is the next Polish button: a tap only adds or removes
   a face. Confirm writes one `deleteFace()` for every picked face. A heal that

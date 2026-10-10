@@ -75,18 +75,19 @@ export function emptyClickCadSelection({
 }
 
 /**
- * The first face or edge tap, with no part selected, arms a joint.
- * It does not select the part. A body tap, a feature session, and game
- * mode stay on the normal selection path.
+ * A face, edge, or point tap arms a joint only while the create card is
+ * open. The Blocks button opens that card. With the card closed, the tap
+ * selects the part. A body tap, a feature session, and game mode stay on
+ * the normal selection path.
  */
 export function shouldArmJointPick({
-  cadPartId = null,
   featureSession = false,
   appMode = 'cad',
   kind = 'face',
+  jointPicking = false,
 } = {}) {
+  if (!jointPicking) return false;
   if (appMode === 'game' || featureSession) return false;
-  if (cadPartId != null) return false;
   if (kind === 'body') return false;
   return kind === 'face' || kind === 'edge' || kind === 'point';
 }

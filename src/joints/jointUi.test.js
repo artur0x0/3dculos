@@ -21,6 +21,8 @@ import {
   jointTagAnchor,
   stickyJointPick,
   jointsChromeMounted,
+  cadStripsShowJoints,
+  shouldArmJointPick,
   nextJointName,
   pushAssemblyHistory,
   seedAssemblyHistory,
@@ -332,6 +334,14 @@ test('Move Body by 10 mm is the only script change and breaks the joint', () => 
       [B]: { faces: [{ at: [0, 0, -0.5], n: [0, 0, -1], area: 1 }] },
     },
   });
+  assert.equal(shouldArmJointPick({ cadPartId: null, kind: 'face' }), false);
+  assert.equal(shouldArmJointPick({ jointPicking: true, kind: 'face' }), true);
+  assert.equal(shouldArmJointPick({ jointPicking: true, kind: 'point' }), true);
+  assert.equal(shouldArmJointPick({ jointPicking: true, kind: 'body' }), false);
+  assert.equal(shouldArmJointPick({ jointPicking: true, appMode: 'game', kind: 'edge' }), false);
+  assert.equal(shouldArmJointPick({ jointPicking: true, featureSession: true, kind: 'face' }), false);
+  assert.equal(cadStripsShowJoints(null), true);
+  assert.equal(cadStripsShowJoints('a.js'), false);
   assert.equal(refreshed.statuses[J], 'broken');
   assert.equal(refreshed.changed, false);
   assert.deepEqual(refreshed.doc.parts[1].placement.t, seed);

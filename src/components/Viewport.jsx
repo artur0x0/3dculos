@@ -843,6 +843,8 @@ const Viewport = forwardRef(({
   getSheetMetalReady = null,
   /** S1: (skuRecord) => { ok, partId } — bind SKU to the part (or a new one). */
   onBindSheetMetal = null,
+  /** CAD: Blocks, the last Move button, opens the joint create card. */
+  onOpenJoints = null,
   /** S2+: (spec, { partId, step }) => boolean — write the sheet-metal block. */
   onCommitSheetMetal = null,
   getHelperBuffer = null,
@@ -857,7 +859,7 @@ const Viewport = forwardRef(({
   onPickRetarget = null,
   /** Empty canvas click. App clears cadPartId and leaves activeId. */
   onCadEmptyClick = null,
-  /** No part selected: a face or edge tap arms a joint instead of selecting. */
+  /** Create card is open: a face or edge tap arms a joint instead of selecting. */
   jointPicking = false,
   onJointPick = null,
   /** Joint create card. Game does not mount it. fullLeft stays off. */
@@ -7072,13 +7074,13 @@ const Viewport = forwardRef(({
       || booleanModeRef.current || moveFaceModeRef.current || deleteFaceModeRef.current
     );
     const pickKind = (!legacyTapNow && clickCount >= 2) ? 'body' : 'face';
-    if (shouldSyncScript({ kind: pickKind, featureSession: featureSessionRef.current })) {
-      onPickRetargetRef.current?.({
-        partId: clickData.partId || activePartIdRef.current,
-        kind: pickKind,
-        syncScript: true,
-      });
-    }
+    // A face tap on the part already under the pick mesh still selects it.
+    // Joint picking (the create card) is the only path that does not.
+    onPickRetargetRef.current?.({
+      partId: clickData.partId || activePartIdRef.current,
+      kind: pickKind,
+      syncScript: shouldSyncScript({ kind: pickKind, featureSession: featureSessionRef.current }),
+    });
 
     if (booleanModeRef.current && booleanModeRef.current.pick !== 'pieces') {
       const sectioned = !!(crossSectionEnabled && cachedMeshDataRef.current?.vertProperties);
@@ -9719,6 +9721,7 @@ const Viewport = forwardRef(({
               setSheetMetalPicker({ willCreatePart: getSheetMetalReady ? !getSheetMetalReady() : false });
             }
             : null}
+          onOpenJoints={mode !== 'game' ? onOpenJoints : null}
           compact={isMobile}
           onHelperCard={setHelperCardOpen}
           editSession={helperEdit}

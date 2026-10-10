@@ -229,6 +229,8 @@ check('a broken tag has the red ring', tagHtml.includes('border-red-400') && tag
 
 const app = read('src/App.jsx');
 check('App keeps the joint card off in game', app.includes("appMode !== 'game'") && app.includes('jointCard={jointCardNode}') && app.includes('jointTags={jointTagList}'));
+check('joint picking follows the open create card', app.includes('jointPicking={jointCreateOpen}'));
+check('Blocks opens the joint card', read('src/components/HelperInsertPalette.jsx').includes('data-joints-button'));
 check('App empty click does not assign activeId', app.includes('handleCadEmptyClick') && app.includes('emptyClickCadSelection'));
 check('a strip chip selects the tag', app.includes('setJointTagId') && !app.includes('JointModeChip'));
 
