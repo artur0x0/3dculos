@@ -95,13 +95,17 @@ Desktop specifics:
   (`data-feature-strip-empty`), and Undo is titled **Undo joint**.
   The empty caption is the same height as a joint chip (`h-8`).
   A chip tap opens Delete and X on the chip (`data-joint-chip-popup`).
-  It does not close the create card. There is no floating joint tag.
+  An angle joint edits its degrees from that popup. It does not close the
+  create card. There is no floating joint tag.
   The create card is `StickyPickApply`. It opens
   from Joints (Lucide `Blocks`, `data-joints-button`), the last button in
   Move. While it is open the parts shift up like every other feature card.
   Add writes the joint, clears the picks, and leaves the card open. X exits.
+  Picks group by part in any order. Parallel and Perpendicular write an
+  angle joint at 0° or 90° in one tap. Two faces on each part suggest
+  symmetric. A third part asks **Change one of the parts?**
   A tap with nothing selected selects the part. Joint picking starts
-  only while that card is open. Both face picks stay highlighted until Add or X.
+  only while that card is open. Face picks stay highlighted until Add or X.
   Adding a joint does not make the page scroll: `html`, `body`, and `#root`
   stay `overflow: hidden`, and the left rail remains the scroller
   (`golden:joints-page-scroll`).
@@ -295,8 +299,8 @@ Mobile specifics:
   `hideWhenEmpty` skips the "No features" caption. It does not skip
   **No assembly joints**, which the CAD bar shows when no part is selected.
   The script-stage strip never shows joints. A joint chip tap opens Delete
-  and X on the chip and does not close the create card. There is no floating
-  joint tag. Contour tags stay. After a joint is added the page stays put
+  and X on the chip. An angle joint edits its degrees there. That tap does
+  not close the create card. There is no floating joint tag. Contour tags stay. After a joint is added the page stays put
   (`scrollHeight` ≤ `innerHeight`, `scrollY` 0) and the left rail still scrolls.
   the bar itself stays mounted so Undo and Redo remain. A chip whose block holds a
   frozen copy of another part's geometry (`externalBody`) has a 2px yellow border

@@ -94,10 +94,32 @@ test('validateSurfJson names the schema problems', () => {
   has(errorsOf({ joints: [coincident(), { ...coincident(), name: 'Coincident 2' }] }), `id duplicates ${J}`);
   has(errorsOf({ joints: [] }), 'joints must be omitted when empty');
   has(errorsOf({ joints: [{ ...coincident(), a: faceRef(A, FACE), b: faceRef(A, FACE_B) }] }), 'needs two parts');
+  has(errorsOf({ joints: [{ ...coincident(), a2: faceRef(A, FACE) }] }), 'a2 is omitted');
   has(validateSurfJson(surf([row(PATH_A, A, 0, {
     position: [1, 0, 0],
     placement: { t: [2, 0, 0], q: IDENTITY },
   })])).errors, 'position must equal placement.t');
+});
+
+test('a symmetric joint stores two faces on each part', () => {
+  const joint = {
+    id: J,
+    name: 'Symmetric 1',
+    type: 'symmetric',
+    a: faceRef(A, FACE),
+    a2: faceRef(A, { at: [0, 0, -5], n: [0, 0, -1], area: 40 }),
+    b: faceRef(B, FACE_B),
+    b2: faceRef(B, { at: [0, 0, 4], n: [0, 0, 1], area: 40 }),
+  };
+  const raw = surf(twoParts(), { joints: [joint] });
+  assert.equal(validateSurfJson(raw).errors.length, 0);
+  const doc = parseSurfJson(raw);
+  assert.equal(doc.joints[0].type, 'symmetric');
+  assert.equal(doc.joints[0].a2.part, A);
+  assert.equal(doc.joints[0].b2.part, B);
+  assert.equal(doc.joints[0].value, undefined);
+  const text = stringifySurfJson(doc);
+  assert.equal(stringifySurfJson(parseSurfJson(text)), text);
 });
 
 test('a joint naming a missing surf id is dropped on load', () => {

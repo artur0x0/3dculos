@@ -117,8 +117,12 @@ import {
   assemblyHistoryKey,
   cadStripsShowJoints,
   acceptJointPick,
+  cardFromJoint,
   dismissJointEdit,
   draftFromPicks,
+  jointHighlightSlot,
+  quickAngleCard,
+  resolvePartChange,
   emptyClickCadSelection,
   jointChips,
   jointsChromeMounted,
@@ -6060,27 +6064,75 @@ const App = () => {
       axis: !!raw.axis,
       key: raw.key,
     };
+    if (jointCardRef.current?.partChange) return;
     const accepted = acceptJointPick(jointPicksRef.current, pick);
     if (accepted.refuse && accepted.message) viewportRef.current?.notify?.(accepted.message);
     jointPicksRef.current = accepted.picks;
     rememberCadPart(null);
     if (accepted.open) {
       setJointTagId(null);
-      setJointCard((cur) => draftFromPicks(cur?.mode === 'create' ? cur : null, accepted.picks, {
-        joints: doc.joints || [],
+      setJointCard((cur) => ({
+        ...draftFromPicks(cur?.mode === 'create' ? cur : null, accepted.picks, {
+          joints: doc.joints || [],
+        }),
+        partChange: accepted.choice || null,
       }));
     }
+  };
+
+  const handleResolvePartChange = (action) => {
+    const cur = jointCardRef.current;
+    const doc = assemblyRef.current;
+    if (!cur?.partChange || !doc) return;
+    const pending = cur.partChange.pick;
+    const before = jointPicksRef.current || [];
+    const nextPicks = resolvePartChange(before, pending, action);
+    const kept = new Set(nextPicks.map((row) => jointHighlightSlot(row.partId, row.key?.at)));
+    if (action === 'discard') {
+      viewportRef.current?.clearJointHighlights?.(jointHighlightSlot(pending?.partId, pending?.key?.at));
+    }
+    for (const row of before) {
+      const slot = jointHighlightSlot(row.partId, row.key?.at);
+      if (!kept.has(slot)) viewportRef.current?.clearJointHighlights?.(slot);
+    }
+    jointPicksRef.current = nextPicks;
+    setJointCard(draftFromPicks(cur.mode === 'create' ? { ...cur, partChange: null } : null, nextPicks, {
+      joints: doc.joints || [],
+    }));
+  };
+
+  const handleQuickAngle = (degrees) => {
+    const doc = assemblyRef.current;
+    const card = jointCardRef.current;
+    if (!doc || !card) return;
+    const next = quickAngleCard(card, degrees, doc);
+    if (!next) return;
+    const scripts = partScriptsRef.current;
+    const locked = !!assemblyOpenLockRef.current;
+    const result = applyJointCard({
+      doc,
+      scripts,
+      card: next,
+      action: 'confirm',
+      locked,
+      preempt: null,
+      catalogs: jointCatalogsRef.current,
+    });
+    if (locked) {
+      viewportRef.current?.notify?.(result.message);
+      return;
+    }
+    finishJointWrite(result, scripts, { resetPicks: true });
   };
 
   const handleJointCardChange = (next) => {
     const doc = assemblyRef.current;
     if (!next) return;
     if (Array.isArray(next.picks)) {
-      const kept = new Set(next.picks.map((pick) => pick?.partId).filter(Boolean));
+      const kept = new Set(next.picks.map((pick) => jointHighlightSlot(pick?.partId, pick?.key?.at)));
       for (const pick of jointPicksRef.current || []) {
-        if (pick?.partId && !kept.has(pick.partId)) {
-          viewportRef.current?.clearJointHighlights?.(pick.partId);
-        }
+        const slot = jointHighlightSlot(pick?.partId, pick?.key?.at);
+        if (!kept.has(slot)) viewportRef.current?.clearJointHighlights?.(slot);
       }
       jointPicksRef.current = next.picks;
     }
@@ -6223,6 +6275,33 @@ const App = () => {
 
   const handleJointChipClose = () => {
     setJointTagId(null);
+  };
+
+  const handleJointChipAngle = (id, value) => {
+    const doc = assemblyRef.current;
+    const joint = (doc?.joints || []).find((row) => row.id === id);
+    if (!doc || !joint || joint.type !== 'angle') return;
+    if (!Number.isFinite(Number(value))) {
+      viewportRef.current?.notify?.('Enter a value');
+      return;
+    }
+    const scripts = partScriptsRef.current;
+    const locked = !!assemblyOpenLockRef.current;
+    const card = { ...cardFromJoint(joint, doc), valueMm: Number(value) };
+    const result = applyJointCard({
+      doc,
+      scripts,
+      card,
+      action: 'confirm',
+      locked,
+      preempt: null,
+      catalogs: jointCatalogsRef.current,
+    });
+    if (locked) {
+      viewportRef.current?.notify?.(result.message);
+      return;
+    }
+    finishJointWrite(result, scripts);
   };
 
   const handleFaceSelected = (faceData) => {
@@ -6896,6 +6975,8 @@ const App = () => {
         onChange={handleJointCardChange}
         onConfirm={handleJointConfirm}
         onCancel={handleJointCancel}
+        onQuickAngle={handleQuickAngle}
+        onResolvePartChange={handleResolvePartChange}
         compact={isMobile}
       />
     )
@@ -7399,6 +7480,7 @@ const App = () => {
                       selectedJointId={jointTagId}
                       onDeleteJoint={handleJointChipDelete}
                       onCloseJoint={handleJointChipClose}
+                      onEditJointAngle={handleJointChipAngle}
                       onUndo={stripUndo}
                       onRedo={stripRedo}
                       canUndo={stripCanUndo}
@@ -7730,6 +7812,7 @@ const App = () => {
                 selectedJointId={jointTagId}
                 onDeleteJoint={handleJointChipDelete}
                 onCloseJoint={handleJointChipClose}
+                onEditJointAngle={handleJointChipAngle}
                 onUndo={stripUndo}
                 onRedo={stripRedo}
                 canUndo={stripCanUndo}

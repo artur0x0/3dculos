@@ -330,6 +330,7 @@ import {
   shouldSyncScript,
 } from '../utils/pickRetarget';
 import { fitJointAxis } from '../utils/jointResolve';
+import { jointHighlightSlot } from '../joints/jointUi';
 import {
   activePartEdges,
   foreignPartEdgeGroups,
@@ -4493,7 +4494,10 @@ const Viewport = forwardRef(({
 
   const clearJointHighlights = useCallback((partId = null) => {
     const map = jointHighlightRef.current;
-    const ids = partId == null ? [...map.keys()] : [String(partId)];
+    const token = partId == null ? null : String(partId);
+    const ids = token == null
+      ? [...map.keys()]
+      : [...map.keys()].filter((key) => key === token || key.startsWith(`${token}@`));
     for (const id of ids) {
       disposeHighlightObject(map.get(id));
       map.delete(id);
@@ -4505,7 +4509,7 @@ const Viewport = forwardRef(({
    * Yellow face highlight that stays on the part it was picked on.
    * A later pick on another part must not move or drop it. Add and X clear it.
    */
-  const paintJointHighlight = useCallback((partId, faceIndices, positions, index) => {
+  const paintJointHighlight = useCallback((partId, faceIndices, positions, index, at = null) => {
     if (!partId || !sceneRef.current || !faceIndices?.length || !positions || !index) return;
     const highlightPositions = [];
     faceIndices.forEach((faceIdx) => {
@@ -4541,7 +4545,7 @@ const Viewport = forwardRef(({
       highlightMesh.add(edgesLine);
     }
     applyPartPose(highlightMesh, overlayAnchorForRef.current(partId));
-    const id = String(partId);
+    const id = jointHighlightSlot(partId, at);
     disposeHighlightObject(jointHighlightRef.current.get(id));
     sceneRef.current.add(highlightMesh);
     jointHighlightRef.current.set(id, highlightMesh);
@@ -7120,7 +7124,13 @@ const Viewport = forwardRef(({
       if (described) {
         onJointPickRef.current?.({ partId: activePartIdRef.current, ...described });
         if (positions && index && shown.length) {
-          paintJointHighlightRef.current(activePartIdRef.current, shown, positions, index);
+          paintJointHighlightRef.current(
+            activePartIdRef.current,
+            shown,
+            positions,
+            index,
+            classified.center,
+          );
         }
       }
     }
@@ -7670,6 +7680,22 @@ const Viewport = forwardRef(({
         window.__VIEWPORT__ = {
           ready: () => !!(sceneRef.current && rendererRef.current && resultRef.current),
           jointHighlightCount: () => jointHighlightRef.current.size,
+          assemblyPartPositions: () => {
+            const out = [];
+            const push = (mesh) => {
+              if (!mesh?.userData?.surfId || !mesh.position) return;
+              out.push({
+                surfId: String(mesh.userData.surfId),
+                t: [mesh.position.x, mesh.position.y, mesh.position.z],
+              });
+            };
+            const group = sceneRef.current?.getObjectByName('assembly-parts');
+            if (group) {
+              for (const child of group.children) push(child);
+            }
+            push(resultRef.current);
+            return out;
+          },
           // Set this from automation to be notified the instant a mesh lands in the scene.
           // Fires from renderMeshData with the exact meshData object that was painted.
           onRendered: null,
@@ -7700,13 +7726,23 @@ const Viewport = forwardRef(({
           // az/el in degrees, z-up world (the app models parts with +Z up). Delegates to
           // the same fitView the UI buttons use, so an automated capture frames the part
           // exactly as a manual snap would.
-          stageFit: ({ az = 35, el = 20, margin = 1.15 } = {}) => {
+          stageFit: ({ az = 35, el = 20, margin = 1.15, assembly = false } = {}) => {
             const cam = cameraRef.current, ctl = controlsRef.current, res = resultRef.current;
-            if (!cam || !res || !res.geometry) return false;
+            if (!cam || !res) return false;
             holdSheetSlide();
             const azr = (az * Math.PI) / 180, elr = (el * Math.PI) / 180;
+            let box = null;
+            if (assembly) {
+              const meshes = [];
+              if (res.geometry) meshes.push(res);
+              for (const mesh of assemblyExtrasRef.current.values()) meshes.push(mesh);
+              box = unionWorldBox(meshes);
+            }
+            if (!box && !res.geometry) return false;
             const ok = fitView({
-              camera: cam, controls: ctl, geometry: res.geometry,
+              camera: cam, controls: ctl,
+              geometry: box ? undefined : res.geometry,
+              box: box || undefined,
               dir: [Math.cos(elr) * Math.cos(azr), Math.cos(elr) * Math.sin(azr), Math.sin(elr)],
               up: [0, 0, 1], margin,
             });

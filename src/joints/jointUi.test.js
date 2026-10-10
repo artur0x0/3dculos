@@ -8,6 +8,10 @@ import {
   SAME_PART_MESSAGE,
   acceptJointPick,
   applyAssemblySnapshot,
+  groupPicksByPart,
+  planarAnglePair,
+  quickAngleCard,
+  resolvePartChange,
   applyJointCard,
   assemblyHistoryCanUndo,
   buildJointRecord,
@@ -129,12 +133,127 @@ test('parallel planar faces with an offset suggest distance, and the user can ov
   assert.equal(overridden.userPickedType, true);
 });
 
-test('a second tap on the same part is refused', () => {
+test('a second face on the same part stays grouped, and one part still cannot confirm', () => {
   const first = acceptJointPick([], face(A, 'Shaft', [0, 0, 1], [0, 0, 1]));
   const second = acceptJointPick(first.picks, face(A, 'Shaft', [0, 0, -1], [0, 0, -1]));
-  assert.equal(second.refuse, true);
-  assert.equal(second.message, SAME_PART_MESSAGE);
-  assert.equal(second.picks.length, 1);
+  assert.equal(second.refuse, false);
+  assert.equal(second.picks.length, 2);
+  assert.equal(groupPicksByPart(second.picks).length, 1);
+  const built = buildJointRecord({
+    ...draftFromPicks(null, second.picks, { joints: [] }),
+    type: 'coincident',
+    id: J,
+    name: 'Coincident 1',
+  });
+  assert.equal(built.ok, false);
+  assert.equal(built.message, SAME_PART_MESSAGE);
+});
+
+const C = '2026-10-10-03-00-00-0004-dddd';
+
+test('picks group by part in any order and two faces each suggest symmetric', () => {
+  const faces = {
+    a1: face(A, 'Shaft', [0, 0, 1], [0, 0, 1]),
+    a2: face(A, 'Shaft', [0, 0, -1], [0, 0, -1]),
+    b1: face(B, 'Housing', [0, 0, 1], [0, 0, 1]),
+    b2: face(B, 'Housing', [0, 0, -1], [0, 0, -1]),
+  };
+  for (const order of [
+    [faces.a1, faces.a2, faces.b1, faces.b2],
+    [faces.a1, faces.b1, faces.a2, faces.b2],
+    [faces.b1, faces.b2, faces.a1, faces.a2],
+  ]) {
+    let picks = [];
+    for (const pick of order) picks = acceptJointPick(picks, pick).picks;
+    assert.equal(suggestJointType(picks), 'symmetric');
+    assert.equal(groupPicksByPart(picks).length, 2);
+    assert.equal(groupPicksByPart(picks).every((group) => group.picks.length === 2), true);
+  }
+  const drafted = draftFromPicks(null, [
+    faces.b1, faces.a1, faces.b2, faces.a2,
+  ].reduce((list, pick) => acceptJointPick(list, pick).picks, []), { joints: [] });
+  assert.equal(drafted.type, 'symmetric');
+  assert.equal(drafted.suggested, 'symmetric');
+  const written = buildJointRecord({ ...drafted, id: J, name: drafted.name }, { id: J, name: drafted.name });
+  assert.equal(written.ok, true);
+  assert.equal(written.joint.a.part, B);
+  assert.equal(written.joint.a2.part, B);
+  assert.equal(written.joint.b.part, A);
+  assert.equal(written.joint.b2.part, A);
+});
+
+test('a third part asks which side to replace', () => {
+  let picks = [];
+  picks = acceptJointPick(picks, face(A, 'Shaft', [0, 0, 1], [0, 0, 1])).picks;
+  picks = acceptJointPick(picks, face(B, 'Housing', [0, 0, -1], [0, 0, -1])).picks;
+  const third = acceptJointPick(picks, face(C, 'Bracket', [1, 0, 0], [1, 0, 0]));
+  assert.equal(third.choice.part1, 'Shaft');
+  assert.equal(third.choice.part2, 'Housing');
+  assert.equal(third.picks.length, 2);
+  const discarded = resolvePartChange(third.picks, third.choice.pick, 'discard');
+  assert.equal(discarded.length, 2);
+  assert.equal(discarded.some((pick) => pick.surfId === C), false);
+  const replaced = resolvePartChange(third.picks, third.choice.pick, 'replace-2');
+  assert.deepEqual(replaced.map((pick) => pick.surfId), [A, C]);
+  const replacedFirst = resolvePartChange(third.picks, third.choice.pick, 'replace-1');
+  assert.deepEqual(replacedFirst.map((pick) => pick.surfId), [C, B]);
+});
+
+test('parallel and perpendicular write an angle joint without an extra value step', () => {
+  const card = draftFromPicks(null, [
+    face(A, 'Shaft', [0, 0, 1], [0, 0, 1]),
+    face(B, 'Housing', [0, 0, 1], [0, 0, -1]),
+  ], { joints: [] });
+  assert.ok(planarAnglePair(card.picks));
+  const parallel = quickAngleCard(card, 0, docWith(undefined));
+  assert.equal(parallel.type, 'angle');
+  assert.equal(parallel.valueMm, 0);
+  assert.equal(parallel.sense, -1);
+  const perpendicular = quickAngleCard(card, 90, docWith(undefined));
+  assert.equal(perpendicular.valueMm, 90);
+  assert.equal(perpendicular.sense, 1);
+  const scripts = { 'a.js': 'let part = 1;\n' };
+  const result = applyJointCard({
+    doc: docWith(undefined),
+    scripts,
+    card: parallel,
+    catalogs: {
+      [A]: { faces: [parallel.picks[0].key] },
+      [B]: { faces: [parallel.picks[1].key] },
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.scripts, scripts);
+  assert.equal(result.doc.joints[0].type, 'angle');
+  assert.equal(result.doc.joints[0].value, 0);
+  assert.equal(result.doc.joints[0].sense, -1);
+  const right = quickAngleCard(draftFromPicks(null, [
+    face(A, 'Shaft', [0, 0, 1], [0, 0, 1]),
+    face(B, 'Housing', [0, 0, 0], [1, 0, 0]),
+  ], { joints: [] }), 90, docWith(undefined));
+  const perp = applyJointCard({
+    doc: docWith(undefined),
+    scripts,
+    card: right,
+    catalogs: {
+      [A]: { faces: [right.picks[0].key] },
+      [B]: { faces: [right.picks[1].key] },
+    },
+  });
+  assert.equal(perp.ok, true);
+  assert.equal(perp.doc.joints[0].value, 90);
+  const edited = applyJointCard({
+    doc: perp.doc,
+    scripts,
+    card: { ...cardFromJoint(perp.doc.joints[0], perp.doc), valueMm: 60 },
+    catalogs: {
+      [A]: { faces: [right.picks[0].key] },
+      [B]: { faces: [right.picks[1].key] },
+    },
+  });
+  assert.equal(edited.ok, true, edited.message || '');
+  assert.equal(edited.doc.joints[0].value, 60);
+  assert.equal(edited.doc.joints.length, 1);
 });
 
 test('fixed is available after one tap and is not the two-face suggestion', () => {

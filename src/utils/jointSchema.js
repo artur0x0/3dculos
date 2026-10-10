@@ -11,12 +11,12 @@
 import { isSurfId } from './git/surfId.js';
 
 export const JOINT_TYPES = Object.freeze([
-  'coincident', 'concentric', 'distance', 'angle', 'fixed',
+  'coincident', 'concentric', 'distance', 'angle', 'symmetric', 'fixed',
 ]);
 
 export const IDENTITY_QUATERNION = Object.freeze([0, 0, 0, 1]);
 
-const JOINT_KEYS = new Set(['id', 'name', 'type', 'value', 'opposed', 'sense', 'a', 'b']);
+const JOINT_KEYS = new Set(['id', 'name', 'type', 'value', 'opposed', 'sense', 'a', 'a2', 'b', 'b2']);
 const REF_KEYS = new Set(['part', 'kind', 'key']);
 const FACE_FIELDS = new Set(['at', 'n', 'area', 'src', 'ord']);
 const AXIS_FIELDS = new Set(['at', 'dir', 'radius']);
@@ -181,12 +181,22 @@ function copyKey(kind, key) {
 }
 
 function kindsOk(type, aKind, bKind) {
-  if (type === 'coincident' || type === 'distance') return aKind === 'face' && bKind === 'face';
+  if (type === 'coincident' || type === 'distance' || type === 'symmetric') {
+    return aKind === 'face' && bKind === 'face';
+  }
   if (type === 'concentric') {
     return (aKind === 'axis' || aKind === 'edge') && (bKind === 'axis' || bKind === 'edge');
   }
   if (type === 'angle') return REF_KINDS.has(aKind) && REF_KINDS.has(bKind);
   return false;
+}
+
+/** Geometry references a joint names. `fixed` is the part only. */
+export function jointRefs(joint) {
+  if (!joint) return [];
+  if (joint.type === 'symmetric') return [joint.a, joint.a2, joint.b, joint.b2].filter(Boolean);
+  if (joint.type === 'fixed') return joint.a ? [joint.a] : [];
+  return [joint.a, joint.b].filter(Boolean);
 }
 
 function referenceErrors(ref, at, { geometry }) {
@@ -250,7 +260,7 @@ export function assemblyJointErrors(joints, liveIds) {
       errors.push(`${at}.name must be a non-empty string`);
     }
     if (!JOINT_TYPES.includes(joint.type)) {
-      errors.push(`${at}.type must be coincident, concentric, distance, angle, or fixed`);
+      errors.push(`${at}.type must be coincident, concentric, distance, angle, symmetric, or fixed`);
       return;
     }
     const relational = joint.type !== 'fixed';
@@ -281,25 +291,50 @@ export function assemblyJointErrors(joints, liveIds) {
       if (joint.a && joint.b && isSurfId(joint.a.part) && joint.a.part === joint.b.part) {
         errors.push(`${at} needs two parts`);
       }
-      if (joint.a && joint.b && REF_KINDS.has(joint.a.kind) && REF_KINDS.has(joint.b.kind)
+      if (joint.type !== 'symmetric'
+        && joint.a && joint.b && REF_KINDS.has(joint.a.kind) && REF_KINDS.has(joint.b.kind)
         && !kindsOk(joint.type, joint.a.kind, joint.b.kind)) {
         errors.push(`${at} ${joint.type} does not fit these references`);
       }
     } else if (joint.b !== undefined) {
       errors.push(`${at}.b is omitted on a fixed joint`);
     }
+    if (joint.type === 'symmetric') {
+      errors.push(...referenceErrors(joint.a2, `${at}.a2`, { geometry: true }));
+      errors.push(...referenceErrors(joint.b2, `${at}.b2`, { geometry: true }));
+      const faces = [joint.a, joint.a2, joint.b, joint.b2];
+      if (faces.some((ref) => ref && REF_KINDS.has(ref.kind) && ref.kind !== 'face')) {
+        errors.push(`${at} symmetric does not fit these references`);
+      }
+      if (isSurfId(joint.a?.part) && isSurfId(joint.a2?.part) && joint.a.part !== joint.a2.part) {
+        errors.push(`${at}.a2 must be the same part as a`);
+      }
+      if (isSurfId(joint.b?.part) && isSurfId(joint.b2?.part) && joint.b.part !== joint.b2.part) {
+        errors.push(`${at}.b2 must be the same part as b`);
+      }
+    } else {
+      if (joint.a2 !== undefined) errors.push(`${at}.a2 is omitted on ${joint.type}`);
+      if (joint.b2 !== undefined) errors.push(`${at}.b2 is omitted on ${joint.type}`);
+    }
     if (isSurfId(joint.a?.part) && !live.has(joint.a.part)) {
       errors.push(`${at}.a.part is not a part in this file`);
     }
+    if (isSurfId(joint.a2?.part) && !live.has(joint.a2.part)) {
+      errors.push(`${at}.a2.part is not a part in this file`);
+    }
     if (isSurfId(joint.b?.part) && !live.has(joint.b.part)) {
       errors.push(`${at}.b.part is not a part in this file`);
+    }
+    if (isSurfId(joint.b2?.part) && !live.has(joint.b2.part)) {
+      errors.push(`${at}.b2.part is not a part in this file`);
     }
   });
   return errors;
 }
 
 function cleanJoint(joint) {
-  if (assemblyJointErrors([joint], [joint?.a?.part, joint?.b?.part].filter(isSurfId)).length) {
+  const named = [joint?.a?.part, joint?.a2?.part, joint?.b?.part, joint?.b2?.part].filter(isSurfId);
+  if (assemblyJointErrors([joint], named).length) {
     return null;
   }
   const relational = joint.type !== 'fixed';
@@ -314,7 +349,9 @@ function cleanJoint(joint) {
   }
   if (joint.type === 'coincident') out.opposed = joint.opposed !== false;
   out.a = copyReference(joint.a, { geometry: relational });
+  if (joint.type === 'symmetric') out.a2 = copyReference(joint.a2, { geometry: true });
   if (relational) out.b = copyReference(joint.b, { geometry: true });
+  if (joint.type === 'symmetric') out.b2 = copyReference(joint.b2, { geometry: true });
   return out;
 }
 
@@ -332,7 +369,9 @@ export function normalizeAssemblyJoints(joints, parts) {
     const clean = cleanJoint(joint);
     if (!clean || seen.has(clean.id)) continue;
     if (!live.has(clean.a.part)) continue;
+    if (clean.a2 && !live.has(clean.a2.part)) continue;
     if (clean.b && !live.has(clean.b.part)) continue;
+    if (clean.b2 && !live.has(clean.b2.part)) continue;
     seen.add(clean.id);
     out.push(clean);
   }
@@ -344,7 +383,9 @@ export function jointedSurfIds(joints) {
   const ids = new Set();
   for (const joint of joints || []) {
     if (joint?.a?.part) ids.add(joint.a.part);
+    if (joint?.a2?.part) ids.add(joint.a2.part);
     if (joint?.b?.part) ids.add(joint.b.part);
+    if (joint?.b2?.part) ids.add(joint.b2.part);
   }
   return ids;
 }

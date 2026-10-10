@@ -241,6 +241,15 @@ test('the analytic Jacobian matches finite differences', () => {
       a: axis('A', [0, 0, 0], [0, 1, 0]),
       b: axis('B', [0, 0, 0], [0, 0, 1]),
     },
+    {
+      id: 'sym',
+      name: 'Symmetric 1',
+      type: 'symmetric',
+      a: face('A', [0, 0, 1], [0, 0.1, 1]),
+      a2: face('A', [0, 0, -1], [0.05, 0, -1]),
+      b: face('B', [0.2, 0, 1], [0, 0, 1]),
+      b2: face('B', [-0.2, 0.1, -1], [0.1, 0, -1]),
+    },
   ];
   const system = jointSystem(parts, joints);
   const x = [0.02, -0.03, 0.04, 0.1, -0.2, 0.05, -0.01, 0.02, 0.03, 0.2, 0.1, -0.4];
@@ -258,6 +267,66 @@ test('the analytic Jacobian matches finite differences', () => {
       assert.ok(Math.abs(J[row][col] - fd) < 1e-5, `J[${row}][${col}] ${J[row][col]} vs ${fd}`);
     }
   }
+});
+
+test('symmetric of two free parts slides the gap shut and does not tilt', () => {
+  const solved = solveJoints({
+    parts: [part('A', [0, 0, 0]), part('B', [80, 0, 20])],
+    joints: [{
+      id: 's',
+      name: 'Symmetric 1',
+      type: 'symmetric',
+      a: face('A', [0, 0, 15], [0, 0, 1]),
+      a2: face('A', [0, 0, -15], [0, 0, -1]),
+      b: face('B', [0, 0, 15], [0, 0, 1]),
+      b2: face('B', [0, 0, -15], [0, 0, -1]),
+    }],
+  });
+  assert.equal(solved.ok, true, solved.message || String(solved.residual));
+  const a = solved.placements.A;
+  const b = solved.placements.B;
+  const na = world(a, [0, 0, 1]).dir;
+  const planeGap = (b.t[0] - a.t[0]) * na[0] + (b.t[1] - a.t[1]) * na[1] + (b.t[2] - a.t[2]) * na[2];
+  assert.ok(Math.abs(planeGap) < 1e-3, String(planeGap));
+  assert.ok(Math.abs(b.t[2] - a.t[2]) < 0.1, String(b.t[2] - a.t[2]));
+  assert.ok(Math.abs(a.t[0]) < 1e-2, String(a.t[0]));
+  assert.ok(Math.abs(b.t[0] - 80) < 1e-2, String(b.t[0]));
+  assert.ok(Math.abs(a.t[1]) < 1e-2 && Math.abs(b.t[1]) < 1e-2);
+  for (const pose of [a, b]) {
+    assert.ok(Math.hypot(pose.q[0], pose.q[1], pose.q[2]) < 1e-2, pose.q.join(','));
+  }
+});
+
+test('symmetric aligns the center planes and leaves the in-plane slide', () => {
+  const tilt = quatFromOmega([25 * Math.PI / 180, 0, 0]);
+  const solved = solveJoints({
+    parts: [part('A', [1, 2, 3]), part('B', [6, -3, 12], tilt)],
+    joints: [
+      { id: 'g', name: 'Fixed 1', type: 'fixed', a: { part: 'A' } },
+      {
+        id: 's',
+        name: 'Symmetric 1',
+        type: 'symmetric',
+        a: face('A', [0, 0, 1], [0, 0, 1]),
+        a2: face('A', [0, 0, -1], [0, 0, -1]),
+        b: face('B', [0, 0, 1], [0, 0, 1]),
+        b2: face('B', [0, 0, -1], [0, 0, -1]),
+      },
+    ],
+  });
+  assert.equal(solved.ok, true, solved.message || '');
+  assert.equal(solved.statuses.s, 'ok');
+  assert.deepEqual(solved.placements.A.t, [1, 2, 3]);
+  const na = world(solved.placements.A, [0, 0, 1]).dir;
+  const nb = world(solved.placements.B, [0, 0, 1]).dir;
+  const align = Math.abs(na[0] * nb[0] + na[1] * nb[1] + na[2] * nb[2]);
+  assert.ok(align > 1 - 1e-3, String(align));
+  const midA = world(solved.placements.A, [0, 0, 0]).at;
+  const midB = world(solved.placements.B, [0, 0, 0]).at;
+  const gapZ = (midB[0] - midA[0]) * na[0] + (midB[1] - midA[1]) * na[1] + (midB[2] - midA[2]) * na[2];
+  assert.ok(Math.abs(gapZ) < 1e-3, String(gapZ));
+  assert.ok(Math.abs(solved.placements.B.t[0] - 6) < 1e-2);
+  assert.ok(Math.abs(solved.placements.B.t[1] - (-3)) < 1e-2);
 });
 
 test('a concentric edge uses the circle axis, not the tangent', () => {

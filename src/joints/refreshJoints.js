@@ -8,7 +8,7 @@
  * opening they write nothing and do not preempt the run.
  */
 import { serializeAssembly } from '../utils/assembly.js';
-import { partPlacement } from '../utils/jointSchema.js';
+import { jointRefs, partPlacement } from '../utils/jointSchema.js';
 import { referenceFailure, resolveReference } from '../utils/jointResolve.js';
 import { solveJoints } from './solveJoints.js';
 
@@ -41,7 +41,7 @@ function classifyJoint(doc, joint, catalogs) {
     }
     return { status: 'ok', message: null };
   }
-  const sides = [joint?.a, joint?.b].filter(Boolean);
+  const sides = jointRefs(joint);
   for (const side of sides) {
     const catalog = catalogs?.[side.part];
     if (catalog?.failed) {

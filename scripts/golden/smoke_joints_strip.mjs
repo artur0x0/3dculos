@@ -11,7 +11,6 @@ import { serializeAssembly } from '../../src/utils/assembly.js';
 import { composeMoveCommit } from '../../src/utils/moveMode.js';
 import { refreshAssemblyJoints } from '../../src/joints/refreshJoints.js';
 import {
-  SAME_PART_MESSAGE,
   acceptJointPick,
   applyJointCard,
   dismissJointEdit,
@@ -61,8 +60,8 @@ const faces = [planar(A, 'Shaft', [0, 0, 1], [0, 0, 1]), planar(B, 'Housing', [0
 check('two planar faces suggest coincident', suggestJointType(faces) === 'coincident');
 check('two axes suggest concentric', suggestJointType([axle(A, 'Shaft'), axle(B, 'Housing')]) === 'concentric');
 check('two-face flow does not suggest fixed', suggestJointType(faces) !== 'fixed');
-const same = acceptJointPick([faces[0]], faces[0]);
-check('same-part second tap is refused', same.refuse && same.message === SAME_PART_MESSAGE);
+const same = acceptJointPick([faces[0]], planar(A, 'Shaft', [0, 0, -1], [0, 0, -1]));
+check('a second face on the same part stays grouped', !same.refuse && same.picks.length === 2 && same.picks.every((pick) => pick.surfId === A));
 
 const parts = [
   { id: 'a.js', name: 'Shaft', visible: true, order: 0, surfId: A, position: [0, 0, 0] },
