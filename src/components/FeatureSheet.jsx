@@ -38,6 +38,8 @@ import {
  * - headerExtra: a node in the header, between the title and X. Measure
  *   puts the mm|in toggle there. Other cards leave it empty.
  * - bodyAttrs / cardAttrs: extra data attributes for the pilot that owns the card
+ * - onKeyboardDone: after Done or Enter commits a focused field, when
+ *   confirm is enabled. Blur does not call it.
  *
  * The card is pointer-events-auto and stops pointerdown. The pane around it
  * is not covered, so orbit and pinch hit the canvas. Game mode does not mount it.
@@ -47,6 +49,11 @@ import {
  * type text, number, search, email, url, tel, or password, or a textarea
  * or contenteditable. Selects, sliders, checkboxes, and buttons do not.
  * Desktop pointer input keeps the full card.
+ *
+ * Blur commits the field and restores the card. Done and Enter do that
+ * too, then call onKeyboardDone when the card's confirm is enabled.
+ * Dimension and Constrain pass that so create Adds and edit Confirms.
+ * Other cards omit it, and Done only commits.
  */
 const EDIT_INPUT_TYPES = new Set(['text', 'number', 'search', 'email', 'url', 'tel', 'password']);
 
@@ -70,7 +77,7 @@ function FieldEditRow({ edit, onChange, onCommit }) {
   const onKeyDown = (event) => {
     if (event.key !== 'Enter' || multiline) return;
     event.preventDefault();
-    onCommit();
+    onCommit('enter');
   };
   const shared = {
     ref: inputRef,
@@ -81,7 +88,7 @@ function FieldEditRow({ edit, onChange, onCommit }) {
     onBlur: (event) => {
       const next = event.relatedTarget;
       if (next?.closest?.('[data-feature-field-done]')) return;
-      onCommit();
+      onCommit('blur');
     },
     onKeyDown,
     className: 'min-h-[44px] min-w-0 flex-1 rounded border border-gray-600/80 bg-gray-950/70 px-2 py-2 text-white',
@@ -129,7 +136,7 @@ function FieldEditRow({ edit, onChange, onCommit }) {
         type="button"
         data-feature-field-done=""
         onPointerDown={(event) => event.preventDefault()}
-        onClick={onCommit}
+        onClick={() => onCommit('done')}
         className="inline-flex min-h-[44px] shrink-0 items-center rounded-md bg-cyan-600 px-3 text-[13px] font-medium text-white hover:bg-cyan-500"
       >
         Done
@@ -153,6 +160,7 @@ export default function FeatureSheet({
   headerExtra = null,
   bodyAttrs = null,
   cardAttrs = null,
+  onKeyboardDone = null,
 }) {
   useModalViewport();
   const cardRef = useRef(null);
@@ -332,13 +340,14 @@ export default function FeatureSheet({
     };
   }, [editing]);
 
-  const commitEdit = () => {
+  const commitEdit = (reason) => {
     const current = editRef.current;
     if (!current) return;
     editRef.current = null;
     commitFieldValue(current.el, current.value);
     restoreScrollRef.current = current.scrollTop;
     setEdit(null);
+    if ((reason === 'done' || reason === 'enter') && !confirmDisabled) onKeyboardDone?.();
   };
 
   const changeEdit = (value) => {

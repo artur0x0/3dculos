@@ -33,6 +33,8 @@ function seedText(isArc, arc, suggestion, unit) {
  * Dimension and Constrain create say Add: it writes, clears the picks,
  * and leaves the card open. X exits and writes nothing. A tag tap reopens
  * that item: Confirm saves and closes, red Delete removes it, no Add.
+ * On a phone, Done or Enter in the compact field does that Add or
+ * Confirm after the value commits. Blur only commits. Arc does not.
  */
 const ContourGestureCard = ({
   gesture = 'dimension',
@@ -185,6 +187,7 @@ const ContourGestureCard = ({
       }}
       onRemovePick={onRemovePick}
       onApply={apply}
+      onKeyboardDone={isArc ? undefined : apply}
       onCancel={onCancel}
       applyLabel={isArc ? 'Round' : (editing ? 'Confirm' : 'Add')}
       applyDisabled={!ready}

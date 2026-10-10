@@ -17,6 +17,7 @@ import { formatDisplayLength } from '../utils/displayUnit';
 import { CONSTRAINT_LABELS } from '../utils/contourGesture';
 import { constraintAnchor, dimensionAnchor, planeUvToWorld } from '../utils/contourPick';
 import { dimensionLayout, dimensionMarkup } from '../utils/contourDimensionDraw';
+import { plusTagsToHide } from '../utils/contourTagPlace';
 import { worldPoint } from '../utils/partPose';
 
 const CONSTRAINT_ICONS = {
@@ -38,7 +39,10 @@ const CONSTRAINT_ICONS = {
  * come from the canvas, so a tag stays on the geometry. The layer ignores
  * pointers. Each tag does not, so orbit still hits the canvas. Tap a
  * dimension or constraint tag to reopen it in the card. Positions follow the camera
- * in a frame loop and are not React state.
+ * in a frame loop and are not React state. A perpendicular tag is a plus.
+ * The same frame hides that plus when it would cover a dimension chip, and
+ * collapses pluses that cover each other so a repeated constraint does not
+ * stack on the value.
  */
 const ContourTags = ({
   model = null,
@@ -147,6 +151,29 @@ const ContourTags = ({
           }
         }
         for (const con of cons) place(con.id, constraintAnchor(model, con));
+      }
+      const measured = [];
+      for (const [id, el] of nodes.current) {
+        delete el.dataset.contourTagSuppressed;
+        if (el.dataset.contourTagVisible !== '1' || el.style.display === 'none') continue;
+        const btn = el.querySelector('[data-contour-tag]');
+        if (!btn) continue;
+        const rect = btn.getBoundingClientRect();
+        if (rect.width < 1 || rect.height < 1) continue;
+        const icon = btn.getAttribute('data-contour-icon');
+        measured.push({
+          id,
+          plus: icon === 'perpendicular',
+          chip: icon == null,
+          box: { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom },
+        });
+      }
+      for (const id of plusTagsToHide(measured)) {
+        const el = nodes.current.get(id);
+        if (!el) continue;
+        el.style.display = 'none';
+        el.dataset.contourTagVisible = '0';
+        el.dataset.contourTagSuppressed = 'plus';
       }
       const svg = svgRef.current;
       const nextMarkup = markup.join('');
