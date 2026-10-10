@@ -405,7 +405,11 @@ async function sampleSides(page) {
           // #ef4444 stays red-dominant under the viewport lights. Viridis purple
           // sits near that swatch in raw distance, so distance alone is not a paint test.
           if (p.r >= 140 && p.g < 160 && p.b < 160 && p.r > p.g + 40 && p.r > p.b + 40) red += 1;
-          const heat = p.r + p.g - p.b;
+          // Above yield the skin is pure magenta, which scores about 0 on
+          // r+g−b. Rank that overflow above yellow so a root past the PLA
+          // yield still reads hotter than the tip.
+          const overflow = p.r > 170 && p.b > 170 && p.g < 50;
+          const heat = overflow ? (600 + p.r) : (p.r + p.g - p.b);
           if (p.x <= leftCut) {
             leftN += 1;
             leftHeat += heat;
