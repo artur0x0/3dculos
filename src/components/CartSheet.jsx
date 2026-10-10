@@ -5,7 +5,7 @@
  * hash changed or the quote expired. Removing a line asks first.
  * A quantity change does not.
  */
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Minus, Plus, X } from 'lucide-react';
 import { useCartChrome } from '../hooks/useCart';
@@ -23,16 +23,22 @@ export default function CartSheet() {
   const cart = useCartChrome();
   const open = !!cart?.open;
   const [pendingRemove, setPendingRemove] = useState(null);
+  const cartRef = useRef(cart);
+  cartRef.current = cart;
 
   useEffect(() => {
     if (!open) return undefined;
-    cart.refill?.();
+    // Once per open. Depending on the cart object refills again after every
+    // qty or remove, and that reschedules sync so the edit never goes out.
+    cartRef.current.refill?.();
     const onKey = (event) => {
-      if (event.key === 'Escape') cart.closeCart?.();
+      if (event.key !== 'Escape') return;
+      if (document.querySelector('[data-cart-remove-dialog]')) return;
+      cartRef.current.closeCart?.();
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [open, cart]);
+  }, [open]);
 
   if (!open || typeof document === 'undefined') return null;
 

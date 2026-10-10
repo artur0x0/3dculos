@@ -35,10 +35,8 @@ console.log('cart remove confirm — both surfaces, Cancel default');
   const page = read('src/components/checkout/CheckoutPage.jsx');
   const quote = read('src/components/QuoteModal.jsx');
   const ui = read('docs/UI_MAP.md');
-  const sheetRemove = sheet.slice(sheet.indexOf('data-cart-remove'));
-  const pageRemove = page.slice(page.indexOf('data-checkout-remove'));
-  const sheetQty = sheet.slice(sheet.indexOf('data-cart-qty-inc'), sheet.indexOf('data-cart-remove'));
-  const pageQty = page.slice(page.indexOf('data-checkout-qty-inc'), page.indexOf('data-checkout-remove'));
+  const sheetRemove = sheet.slice(sheet.indexOf('data-cart-remove=""'));
+  const pageRemove = page.slice(page.indexOf('data-checkout-remove=""'));
 
   ok('dialog matches the part-delete card and portals off ModalFit',
     /createPortal\(/.test(dialog)
@@ -71,10 +69,10 @@ console.log('cart remove confirm — both surfaces, Cancel default');
     && /cart\?\.removeLine\?\.\(lineId\)/.test(page)
     && !/onClick=\{\(\) => cart\?\.removeLine/.test(pageRemove));
   ok('quantity still changes without a confirm',
-    /changeQty\?\.\(line\.lineId/.test(sheetQty)
-    && /changeQty\?\.\(row\.lineId/.test(pageQty)
-    && !/setPendingRemove/.test(sheetQty)
-    && !/setPendingRemove/.test(pageQty));
+    /onClick=\{\(\) => cart\.changeQty\?\.\(line\.lineId/.test(sheet)
+    && /onClick=\{\(\) => cart\?\.changeQty\?\.\(row\.lineId/.test(page)
+    && !/changeQty[\s\S]{0,80}setPendingRemove/.test(sheet)
+    && !/changeQty[\s\S]{0,80}setPendingRemove/.test(page));
   ok('quote and checkout ModalFit caps are unchanged',
     /className="surface-scrim flex items-center justify-center z-50 px-4"/.test(quote)
     && /cap="92vh"/.test(page)
