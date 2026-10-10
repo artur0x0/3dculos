@@ -20,6 +20,7 @@
  * V = e, u∈[0,length]. The flat pattern is the same tree with θ = 0 and the
  * child shifted by the bend allowance BA = θ·(r + k·t).
  */
+import { defaultBendBlocked } from './sheetInterference.js';
 
 export const IN = 25.4;
 
@@ -121,9 +122,15 @@ export const EDGE_NEIGHBORS = Object.freeze({
   'v-': ['u-', 'u+'],
 });
 
-/** Edges a panel can host a bend on: base → all four, flange → its tip. */
+/**
+ * Edges a panel can host a bend on. The base takes all four. A flange takes
+ * its tip (`u+`) and its straight sides (`v+`, `v-`). Never `u-`: that is
+ * the tangent where the flange meets its own bend, and unfolding it lays
+ * the new flange back onto the parent. No miter — adjacent walls stay
+ * separated by the corner notch.
+ */
 export function bendableEdges(panelId) {
-  return panelId === 'base' ? SHEET_EDGES : ['u+'];
+  return panelId === 'base' ? SHEET_EDGES : ['u+', 'v+', 'v-'];
 }
 /** Edges a tab can sit on: base → all four, flange → tip + sides. */
 export function tabEdges(panelId) {
@@ -331,9 +338,44 @@ export function panelLocal(panel, p) {
   return [vDot(rel, panel.U), vDot(rel, panel.V)];
 }
 
+const round2 = (n) => Math.round(n * 100) / 100;
+
+function bendPerp(spec, id, edge) {
+  if (id === 'base') {
+    return edge?.startsWith('u') ? spec.width : spec.height;
+  }
+  const b = (spec.bends || []).find((x) => x.id === id);
+  return b ? b.length : spec.width;
+}
+
+/** Slider ranges for a bend from the SKU (limits embedded in the spec). */
+export function bendLimits(spec) {
+  const L = spec?.limits || {};
+  const minFlange = Number(L.minFlange) > 0 ? Number(L.minFlange) : Math.max(spec.t * 2, 1);
+  const baseMax = Math.max(Number(spec.width) || 0, Number(spec.height) || 0);
+  return {
+    angleMin: Math.max(1, Number(L.minAngle) || 1),
+    angleMax: Number(L.maxAngle) > 0 ? Number(L.maxAngle) : 180,
+    lengthMin: round2(minFlange),
+    // Length scales with the base flange (S3): up to its largest side.
+    lengthMax: round2(Math.max(minFlange * 2, baseMax)),
+  };
+}
+
+/** New bend on an edge: 90° (or the SKU max), length ¼ of the side it leaves. */
+export function bendDefaults(spec, panelId, edge) {
+  const lim = bendLimits(spec);
+  const perp = bendPerp(spec, panelId, edge) || spec.width;
+  const length = Math.min(lim.lengthMax, Math.max(lim.lengthMin * 1.5, round2(perp * 0.25)));
+  return { angle: Math.min(90, lim.angleMax), length: round2(length), flip: false };
+}
+
 /**
  * Free edges a tap can target (S3 bends / S4 tabs):
- * [{ panel, edge, a, b (world endpoints at mid-thickness), bendable, tabbable }]
+ * [{ panel, edge, a, b (world endpoints at mid-thickness), bendable, eligible, tabbable }]
+ * `bendable` is the structural edge (tip and straight sides). `eligible` is
+ * that edge at the default bend with no flat overlap and no fold clash.
+ * An ineligible edge is drawn dim and is not a pick target.
  */
 export function sheetFreeEdges(spec, solved = solveSheet(spec)) {
   const usedBend = new Set((spec.bends || []).map((b) => `${b.panel}:${b.edge}`));
@@ -355,9 +397,16 @@ export function sheetFreeEdges(spec, solved = solveSheet(spec)) {
         b: add(add(ef.E0, mul(ef.q1, ef.e)), mid),
         length: ef.q1 - ef.q0,
         bendable: canBend,
+        eligible: false,
         tabbable: canTab,
       });
     }
+  }
+  for (const e of out) {
+    if (!e.bendable) continue;
+    const hit = defaultBendBlocked(spec, e.panel, e.edge);
+    e.eligible = !!hit.ok;
+    e.block = hit.ok ? null : hit.reason;
   }
   return out;
 }

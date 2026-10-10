@@ -18,6 +18,7 @@
         "golden:scs-s1": "node scripts/golden/smoke_scs_s1_catalog.mjs",
         "golden:scs-s2": "node scripts/golden/smoke_scs_s2_base_flange.mjs",
         "golden:scs-s3": "node scripts/golden/smoke_scs_s3_bends.mjs",
+        "golden:scs-side-bend": "node scripts/golden/smoke_scs_side_bend.mjs",
         "golden:scs-s4": "node scripts/golden/smoke_scs_s4_sidebar.mjs",
         "golden:scs-s5": "node scripts/golden/smoke_scs_s5_dfm_export.mjs",
         "golden:scs-handoff": "node scripts/golden/smoke_scs_handoff.mjs",

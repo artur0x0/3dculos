@@ -111,8 +111,11 @@ console.log('SCS S3 — automatic corner reliefs + flat');
   const flat = solveSheet(spec, { flat: true });
   const f1 = flat.panels.find((p) => p.id === 'b1');
   check('flat: flange starts one bend allowance past the edge', near(f1.o[0], 50 + bendAllowance(spec, 90)) && near(f1.N[2], 1));
-  check('free edges: 2 base + 2 flange tips (+ flange sides for tabs)',
-    sheetFreeEdges(spec, solved).filter((e) => e.bendable).length === 4);
+  const free = sheetFreeEdges(spec, solved);
+  check('flange sides are bendable; the two corner sides are not pickable',
+    free.filter((e) => e.bendable).length === 8
+    && free.filter((e) => e.eligible).length === 6
+    && free.some((e) => e.panel === 'b1' && e.edge === 'v+' && e.bendable && !e.eligible));
 }
 
 console.log('SCS S3 — solids (real sandbox)');

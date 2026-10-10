@@ -7,6 +7,7 @@ import {
   BASE_MAX,
   BASE_MIN,
   bendDeductionAt,
+  bendBlockReason,
   bendLimits,
   cancelDraft,
   closeSheetExport,
@@ -35,7 +36,7 @@ import { FeatureDeleteButton } from '../FeatureEditDelete';
 const EDGE_NAMES = { 'u+': '+X edge', 'u-': '−X edge', 'v+': '+Y edge', 'v-': '−Y edge' };
 
 /** Accept / Back / Delete footer shared by feature popups. */
-const DraftFooter = ({ mode, setMode, onCommit }) => (
+const DraftFooter = ({ mode, setMode, onCommit, confirmDisabled = false }) => (
   <div className="flex flex-wrap items-center gap-2">
     {!mode.draft.isNew && (
       <SmButton
@@ -62,7 +63,9 @@ const DraftFooter = ({ mode, setMode, onCommit }) => (
     <SmButton
       variant="primary"
       data-sm-accept="1"
+      disabled={confirmDisabled}
       onClick={() => {
+        if (confirmDisabled) return;
         const { mode: next, spec } = acceptDraft(mode);
         if (!spec) return;
         if (mode.reopen) {
@@ -82,7 +85,9 @@ const BendPopup = ({ mode, setMode, onCommit, onExit, unit, onUnit, compact = fa
   const spec = mode.spec;
   const lim = bendLimits(spec);
   const bd = bendDeductionAt(spec, d.angle);
-  const where = d.panel === 'base' ? `Base ${EDGE_NAMES[d.edge] || d.edge}` : `Flange ${d.panel} tip`;
+  const place = d.edge === 'u+' ? 'tip' : (d.edge === 'v+' || d.edge === 'v-') ? 'side' : (d.edge || '');
+  const where = d.panel === 'base' ? `Base ${EDGE_NAMES[d.edge] || d.edge}` : `Flange ${d.panel} ${place}`;
+  const block = bendBlockReason(mode);
   return (
     <SmPopup
       title={d.isNew ? 'Bend' : `Bend ${d.id}`}
@@ -93,8 +98,11 @@ const BendPopup = ({ mode, setMode, onCommit, onExit, unit, onUnit, compact = fa
       unit={unit}
       onUnit={onUnit}
       compact={compact}
-      footer={<DraftFooter mode={mode} setMode={setMode} onCommit={onCommit} />}
+      footer={<DraftFooter mode={mode} setMode={setMode} onCommit={onCommit} confirmDisabled={!!block} />}
     >
+      {block && (
+        <p className="text-sm text-red-200" data-sm-bend-block="1">{block}</p>
+      )}
       <SmSlider
         id="sm-bend-angle"
         label={`Angle (max ${lim.angleMax}°)`}
