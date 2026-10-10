@@ -26,7 +26,6 @@ import {
   Triangle,
   LineSegments,
   EdgesGeometry,
-  LineLoop,
   Line,
   LineBasicMaterial,
   ShaderMaterial,
@@ -408,6 +407,11 @@ import {
   featureSheetCoveredFraction,
 } from '../utils/featureSheetCamera';
 import { boundsSketchBox, createFaceSketchAim, faceSketchBox } from '../utils/faceSketchCamera';
+import {
+  makeSketchLine,
+  sketchPointScaleFromDistance,
+  SKETCH_POINT_RADIUS,
+} from '../utils/sketchLine';
 import { emptySketchHistory, observeSketchEdit, undoSketchEdit } from '../utils/contourSketchHistory';
 
 import { validateScript, formatValidationErrors } from '../utils/scriptValidator';
@@ -2174,26 +2178,22 @@ const Viewport = forwardRef(({
     const group = new Group();
     group.name = 'crossSectionPreview';
     if (!payload.hideRings) {
-      const mat = new LineBasicMaterial({
-        color: 0x22d3ee,
-        depthTest: false,
-        depthWrite: false,
-        transparent: true,
-        opacity: 0.95,
-      });
+      const resolution = edgeLineResolution();
       for (const ring of preview.rings) {
-        if (!ring?.length) continue;
-        const positions = new Float32Array(ring.length * 3);
-        for (let i = 0; i < ring.length; i++) {
-          positions[i * 3] = ring[i][0];
-          positions[i * 3 + 1] = ring[i][1];
-          positions[i * 3 + 2] = ring[i][2];
+        if (!ring || ring.length < 2) continue;
+        const flat = [];
+        for (const p of ring) flat.push(p[0], p[1], p[2]);
+        const first = ring[0];
+        const last = ring[ring.length - 1];
+        if (first[0] !== last[0] || first[1] !== last[1] || first[2] !== last[2]) {
+          flat.push(first[0], first[1], first[2]);
         }
-        const geom = new BufferGeometry();
-        geom.setAttribute('position', new BufferAttribute(positions, 3));
-        const loop = new LineLoop(geom, mat);
+        const loop = makeSketchLine(flat, {
+          color: 0x22d3ee,
+          opacity: 0.95,
+          resolution,
+        });
         loop.renderOrder = 12;
-        loop.frustumCulled = false;
         group.add(loop);
       }
     }
@@ -2230,7 +2230,7 @@ const Viewport = forwardRef(({
     anchorToActivePart(group);
     sceneRef.current.add(group);
     xsPreviewRef.current = group;
-  }, [clearXsPreview, anchorToActivePart]);
+  }, [clearXsPreview, anchorToActivePart, edgeLineResolution]);
 
   // Dispose cross-section preview on unmount (route change / modal still open).
   useEffect(() => () => clearXsPreview(), [clearXsPreview]);
@@ -2715,16 +2715,31 @@ const Viewport = forwardRef(({
   const animatePolylineHandles = useCallback(() => {
     const handles = polylineDraftRef.current?.userData?.handles;
     if (!handles?.length) return;
+    const camera = cameraRef.current;
+    const canvas = canvasRef.current;
     const dragIndex = polylinePointDragRef.current?.index ?? -1;
     const hoverIndex = polylinePointHoverRef.current;
     const pulse = 1 + Math.sin(performance.now() / 160) * 0.08;
     for (let i = 0; i < handles.length; i++) {
-      let target = POLYLINE_POINT_SCALE;
-      if (i === dragIndex) target = POLYLINE_POINT_DRAG_SCALE;
-      else if (i === hoverIndex) target = POLYLINE_POINT_HOVER_SCALE * pulse;
-      const cur = handles[i].scale.x;
-      const next = Math.abs(target - cur) < 0.002 ? target : cur + (target - cur) * 0.25;
-      handles[i].scale.setScalar(next);
+      let state = POLYLINE_POINT_SCALE;
+      if (i === dragIndex) state = POLYLINE_POINT_DRAG_SCALE;
+      else if (i === hoverIndex) state = POLYLINE_POINT_HOVER_SCALE * pulse;
+      let screen = 1;
+      if (camera && canvas) {
+        handles[i].getWorldPosition(polylineProjectScratch.current);
+        const dist = camera.position.distanceTo(polylineProjectScratch.current);
+        screen = sketchPointScaleFromDistance(
+          dist,
+          camera.fov,
+          canvas.clientHeight,
+          camera.zoom,
+        );
+      }
+      // Screen size tracks the camera immediately. Only the hover grow eases.
+      const grown = handles[i].userData.growScale ?? POLYLINE_POINT_SCALE;
+      const nextGrow = Math.abs(state - grown) < 0.002 ? state : grown + (state - grown) * 0.25;
+      handles[i].userData.growScale = nextGrow;
+      handles[i].scale.setScalar(screen * nextGrow);
     }
   }, []);
 
@@ -2779,7 +2794,7 @@ const Viewport = forwardRef(({
         transparent: true,
         opacity: 0.95,
       });
-      const s = new ThreeMesh(new SphereGeometry(0.45, 12, 12), mat);
+      const s = new ThreeMesh(new SphereGeometry(SKETCH_POINT_RADIUS, 12, 12), mat);
       s.position.set(p[0], p[1], p[2]);
       s.renderOrder = 16;
       s.frustumCulled = false;
@@ -2795,17 +2810,11 @@ const Viewport = forwardRef(({
         pos[i * 3 + 1] = world[i][1];
         pos[i * 3 + 2] = world[i][2];
       }
-      const g = new BufferGeometry();
-      g.setAttribute('position', new BufferAttribute(pos, 3));
-      line = new Line(g, new LineBasicMaterial({
+      line = makeSketchLine(pos, {
         color: POLYLINE_POINT_COLOR,
-        depthTest: false,
-        depthWrite: false,
-        transparent: true,
-        opacity: 0.85,
-      }));
-      line.renderOrder = 15;
-      line.frustumCulled = false;
+        opacity: 0.9,
+        resolution: edgeLineResolution(),
+      });
       group.add(line);
     }
     group.userData.handles = handles;
@@ -2817,7 +2826,7 @@ const Viewport = forwardRef(({
     polylineDraftRef.current = group;
     polylinePointHoverRef.current = keepHover < handles.length ? keepHover : -1;
     paintPolylineHandleStates();
-  }, [clearPolylineDraft, paintPolylineHandleStates, anchorToActivePart]);
+  }, [clearPolylineDraft, paintPolylineHandleStates, anchorToActivePart, edgeLineResolution]);
 
   const clearContourStatusWire = useCallback(() => {
     disposeEdgeOverlayObject(sceneRef.current, contourStatusRef.current);
@@ -2839,24 +2848,17 @@ const Viewport = forwardRef(({
         pos[i * 3 + 1] = world[1];
         pos[i * 3 + 2] = world[2];
       }
-      const geom = new BufferGeometry();
-      geom.setAttribute('position', new BufferAttribute(pos, 3));
-      const line = new Line(geom, new LineBasicMaterial({
+      group.add(makeSketchLine(pos, {
         color: seg.color,
-        depthTest: false,
-        depthWrite: false,
-        transparent: true,
-        opacity: 0.9,
+        opacity: 0.95,
+        resolution: edgeLineResolution(),
       }));
-      line.renderOrder = 15;
-      line.frustumCulled = false;
-      group.add(line);
     }
     if (!group.children.length) return;
     anchorToActivePart(group);
     sceneRef.current.add(group);
     contourStatusRef.current = group;
-  }, [clearContourStatusWire, anchorToActivePart]);
+  }, [clearContourStatusWire, anchorToActivePart, edgeLineResolution]);
 
   /** Move one handle (and its wire vertex) without rebuilding the draft. */
   const movePolylineHandle = useCallback((index, worldPoint) => {
@@ -2868,11 +2870,13 @@ const Viewport = forwardRef(({
     const oz = group.position?.z || 0;
     handle.position.set(worldPoint[0] - ox, worldPoint[1] - oy, worldPoint[2] - oz);
     const line = group.userData.line;
-    const attr = line?.geometry?.getAttribute('position');
-    if (attr) {
-      attr.setXYZ(index, worldPoint[0] - ox, worldPoint[1] - oy, worldPoint[2] - oz);
-      attr.needsUpdate = true;
-      line.geometry.computeBoundingSphere?.();
+    const handles = group.userData.handles;
+    if (line?.geometry?.setPositions && handles?.length >= 2) {
+      const flat = [];
+      for (const handle of handles) {
+        flat.push(handle.position.x, handle.position.y, handle.position.z);
+      }
+      line.geometry.setPositions(flat);
     }
   }, []);
 
@@ -8114,6 +8118,33 @@ const Viewport = forwardRef(({
               undoDepth: sketchHistRef.current?.depth || 0,
               open: !!contourModeRef.current,
               planeCard: contourPlaneOpenRef.current,
+              sketchLinePx: (() => {
+                let px = 0;
+                const visit = (root) => {
+                  root?.traverse?.((child) => {
+                    const width = child.material?.linewidth;
+                    if (child.material?.isLineMaterial && width) px = width;
+                  });
+                };
+                visit(contourStatusRef.current);
+                visit(polylineDraftRef.current);
+                visit(xsPreviewRef.current);
+                return px;
+              })(),
+              sketchPointPx: (() => {
+                const handle = polylineDraftRef.current?.userData?.handles?.[0];
+                const camera = cameraRef.current;
+                const canvas = canvasRef.current;
+                if (!handle || !camera || !canvas) return 0;
+                handle.getWorldPosition(polylineProjectScratch.current);
+                const dist = camera.position.distanceTo(polylineProjectScratch.current);
+                const height = canvas.clientHeight || 1;
+                const zoom = camera.zoom || 1;
+                const worldPerPx = (2 * Math.tan((camera.fov * Math.PI / 180) / 2) * dist)
+                  / (height * zoom);
+                if (!(worldPerPx > 0)) return 0;
+                return (SKETCH_POINT_RADIUS * handle.scale.x * 2) / worldPerPx;
+              })(),
             };
           },
         };
@@ -8180,7 +8211,14 @@ const Viewport = forwardRef(({
         rendererRef.current.setSize(width, height);
 
         // Keep LineMaterial screen-space widths correct after canvas resize.
-        for (const root of [edgeHighlightRef.current, edgeHoverRef.current, sheetMetalOverlayRef.current]) {
+        for (const root of [
+          edgeHighlightRef.current,
+          edgeHoverRef.current,
+          sheetMetalOverlayRef.current,
+          polylineDraftRef.current,
+          contourStatusRef.current,
+          xsPreviewRef.current,
+        ]) {
           if (!root || typeof root.traverse !== 'function') continue;
           root.traverse((child) => {
             if (child.material?.resolution) {

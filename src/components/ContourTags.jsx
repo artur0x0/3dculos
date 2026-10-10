@@ -16,6 +16,7 @@ import { useDisplayUnit } from '../hooks/useDisplayUnit';
 import { formatDisplayLength } from '../utils/displayUnit';
 import { CONSTRAINT_LABELS } from '../utils/contourGesture';
 import { constraintAnchor, dimensionAnchor, planeUvToWorld } from '../utils/contourPick';
+import { dimensionLayout, dimensionMarkup } from '../utils/contourDimensionDraw';
 
 const CONSTRAINT_ICONS = {
   horizontal: MoveHorizontal,
@@ -51,11 +52,25 @@ const ContourTags = ({
   const [unit] = useDisplayUnit();
   const nodes = useRef(new Map());
   const scratch = useRef(new Vector3());
+  const layerRef = useRef(null);
+  const svgRef = useRef(null);
+  const markupRef = useRef('');
   const dimensions = model?.dimensions || [];
   const constraints = model?.constraints || [];
 
   useEffect(() => {
     let frame = 0;
+    const host = layerRef.current;
+    let svg = null;
+    if (host) {
+      svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svg.setAttribute('data-contour-dim-layer', '');
+      svg.setAttribute('aria-hidden', 'true');
+      svg.style.cssText = 'position:fixed;inset:0;width:100%;height:100%;overflow:visible;pointer-events:none;z-index:30';
+      host.insertBefore(svg, host.firstChild);
+      svgRef.current = svg;
+      markupRef.current = '';
+    }
     const dims = model?.dimensions || [];
     const cons = model?.constraints || [];
     const tick = () => {
@@ -88,14 +103,60 @@ const ContourTags = ({
         el.style.left = `${x}px`;
         el.style.top = `${y}px`;
       };
+      const markup = [];
       if (camera && view && view.width > 0 && plane?.center) {
-        for (const dim of dims) place(dim.id, dimensionAnchor(model, dim));
+        const project = (uv) => {
+          if (!uv) return null;
+          const world = planeUvToWorld(uv, plane);
+          const p = scratch.current.set(world[0], world[1], world[2]).project(camera);
+          const depthOk = p.z >= -1.02 && p.z <= 1.02;
+          if (!depthOk) return null;
+          return {
+            x: (p.x * 0.5 + 0.5) * view.width + view.left,
+            y: (-p.y * 0.5 + 0.5) * view.height + view.top,
+          };
+        };
+        for (const dim of dims) {
+          const fig = dimensionLayout(model, dim, project);
+          const el = nodes.current.get(dim.id);
+          if (fig) {
+            markup.push(dimensionMarkup({ ...fig, id: dim.id }));
+            if (el) {
+              el.style.transform = 'translate(-50%, -50%)';
+              const px = fig.label;
+              const inside = px.x >= view.left && px.x <= view.right && px.y >= view.top && px.y <= view.bottom;
+              if (!inside) {
+                el.style.display = 'none';
+                el.dataset.contourTagVisible = '0';
+              } else {
+                el.style.display = '';
+                el.dataset.contourTagVisible = '1';
+                el.style.left = `${px.x}px`;
+                el.style.top = `${px.y}px`;
+              }
+            }
+          } else {
+            if (el) el.style.transform = 'translate(-50%, -120%)';
+            place(dim.id, dimensionAnchor(model, dim));
+          }
+        }
         for (const con of cons) place(con.id, constraintAnchor(model, con));
+      }
+      const svg = svgRef.current;
+      const nextMarkup = markup.join('');
+      if (svg && markupRef.current !== nextMarkup) {
+        svg.innerHTML = nextMarkup;
+        markupRef.current = nextMarkup;
       }
       frame = requestAnimationFrame(tick);
     };
     frame = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(frame);
+    return () => {
+      cancelAnimationFrame(frame);
+      svg?.remove();
+      if (svgRef.current === svg) svgRef.current = null;
+      markupRef.current = '';
+    };
   }, [cameraRef, canvasRef, plane, model]);
 
   if ((!dimensions.length && !constraints.length) || !plane) return null;
@@ -103,6 +164,7 @@ const ContourTags = ({
   const layer = (
     <div
       className="pointer-events-none fixed inset-0 z-30"
+      ref={layerRef}
       data-contour-tags=""
       style={{ position: 'fixed', inset: 0, zIndex: 30, pointerEvents: 'none' }}
     >
