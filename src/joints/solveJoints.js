@@ -7,6 +7,7 @@
  * placement stays at the seed. Nothing here deletes a joint or edits a script.
  */
 import { solveResiduals } from '../solver/residual.js';
+import { jointRefs } from '../utils/jointSchema.js';
 import { evaluateJoints, localFrame, seedDrops } from './equations.js';
 import {
   add3,
@@ -37,8 +38,10 @@ function isBroken(joint) {
 }
 
 function hasFrame(joint) {
-  if (joint.type === 'fixed') return !!joint.a?.part;
-  return !!(localFrame(joint.a, joint.type) && localFrame(joint.b, joint.type));
+  const refs = jointRefs(joint);
+  if (joint.type === 'fixed') return !!refs[0]?.part;
+  if (joint.type === 'symmetric') return refs.length === 4 && refs.every((ref) => localFrame(ref, joint.type));
+  return refs.length === 2 && refs.every((ref) => localFrame(ref, joint.type));
 }
 
 function posesAt(seeds, freeIds, x) {
@@ -72,8 +75,9 @@ function freeIdsOf(joints, seeds) {
   const fixed = new Set();
   const named = new Set();
   for (const joint of joints) {
-    if (joint.a?.part) named.add(joint.a.part);
-    if (joint.b?.part) named.add(joint.b.part);
+    for (const ref of jointRefs(joint)) {
+      if (ref?.part) named.add(ref.part);
+    }
     if (joint.type === 'fixed' && joint.a?.part) fixed.add(joint.a.part);
   }
   return [...named].filter((id) => seeds.has(id) && !fixed.has(id)).sort();
@@ -96,10 +100,11 @@ export function jointSystem(parts, joints) {
   return { n, residual, jacobian, freeIds, seeds };
 }
 
-// A radian is weighted like this many millimetres. Alignment that is already
-// satisfied then stays put, and the gap is closed by translation. An angle
-// joint still rotates: no translation can satisfy it.
-const ROTATION_WEIGHT_MM = 10;
+// A radian is weighted like this many millimetres. The lever arm of two
+// parts sitting tens or hundreds of millimetres apart would otherwise
+// tilt both midplanes onto a diagonal instead of sliding the gap closed.
+// An angle joint still rotates: no translation can satisfy it.
+const ROTATION_WEIGHT_MM = 1000;
 
 function solveOnce(parts, joints) {
   const system = jointSystem(parts, joints);

@@ -4,12 +4,14 @@ import { useDisplayUnit } from '../hooks/useDisplayUnit';
 import {
   JOINT_TYPE_LABEL,
   jointConfirmDisabled,
+  jointPickCap,
   jointSubtitle,
+  planarAnglePair,
   stickyJointPick,
 } from '../joints/jointUi';
 import { displayToMm, lengthCaption, lengthToDisplay } from '../utils/displayUnit';
 
-const TYPES = ['coincident', 'concentric', 'distance', 'angle', 'fixed'];
+const TYPES = ['coincident', 'concentric', 'distance', 'angle', 'symmetric', 'fixed'];
 const PROPERTIES = TYPES.map((id) => ({ id, label: JOINT_TYPE_LABEL[id] }));
 
 function valueText(mm, unit) {
@@ -30,6 +32,8 @@ export default function JointCard({
   onChange,
   onConfirm,
   onCancel,
+  onQuickAngle,
+  onResolvePartChange,
   compact = false,
   locked = false,
 }) {
@@ -40,6 +44,8 @@ export default function JointCard({
   const picks = (card.picks || []).map(stickyJointPick);
   const distance = card.type === 'distance';
   const angle = card.type === 'angle';
+  const anglePair = planarAnglePair(card.picks);
+  const asking = !!card.partChange;
   const suggestion = card.suggested ? JOINT_TYPE_LABEL[card.suggested] : '';
   const note = [suggestion ? `Suggested: ${suggestion}` : '', card.note || ''].filter(Boolean).join(' ');
   return (
@@ -47,7 +53,7 @@ export default function JointCard({
       title="Joint"
       subtitle={jointSubtitle(card.picks)}
       picks={picks}
-      max={2}
+      max={jointPickCap(card.picks)}
       properties={PROPERTIES}
       property={card.type || ''}
       onProperty={(id) => set({ type: id, userPickedType: true })}
@@ -69,6 +75,40 @@ export default function JointCard({
       }}
     >
       <div className="flex flex-col gap-2" data-joint-body="">
+        {asking && (
+          <div
+            className="flex flex-col gap-1 rounded-md border border-cyan-600/80 bg-cyan-950 p-2"
+            data-joint-part-change=""
+            role="dialog"
+            aria-label="Change one of the parts?"
+          >
+            <p className="text-[13px] text-cyan-50">Change one of the parts?</p>
+            <button
+              type="button"
+              data-joint-part-discard=""
+              onClick={() => onResolvePartChange?.('discard')}
+              className="min-h-[36px] rounded-md border border-cyan-700/70 bg-cyan-950/80 px-2 text-left text-[13px] text-cyan-100"
+            >
+              Discard last pick
+            </button>
+            <button
+              type="button"
+              data-joint-part-replace="1"
+              onClick={() => onResolvePartChange?.('replace-1')}
+              className="min-h-[36px] rounded-md border border-cyan-700/70 bg-cyan-950/80 px-2 text-left text-[13px] text-cyan-100"
+            >
+              Replace part 1
+            </button>
+            <button
+              type="button"
+              data-joint-part-replace="2"
+              onClick={() => onResolvePartChange?.('replace-2')}
+              className="min-h-[36px] rounded-md border border-cyan-700/70 bg-cyan-950/80 px-2 text-left text-[13px] text-cyan-100"
+            >
+              Replace part 2
+            </button>
+          </div>
+        )}
         <label className="flex flex-col gap-1">
           <span className="text-[11px] uppercase tracking-wide text-cyan-200/80">Name</span>
           <input
@@ -78,6 +118,26 @@ export default function JointCard({
             className="min-h-[36px] rounded border border-cyan-700/70 bg-cyan-950/80 px-2 text-white"
           />
         </label>
+        <div className="flex flex-wrap gap-1">
+          <button
+            type="button"
+            data-joint-parallel=""
+            disabled={!anglePair || asking}
+            onClick={() => onQuickAngle?.(0)}
+            className="rounded-md border border-cyan-700/70 bg-cyan-950/80 px-2 py-1 text-[12px] text-cyan-100 disabled:opacity-40"
+          >
+            Parallel
+          </button>
+          <button
+            type="button"
+            data-joint-perpendicular=""
+            disabled={!anglePair || asking}
+            onClick={() => onQuickAngle?.(90)}
+            className="rounded-md border border-cyan-700/70 bg-cyan-950/80 px-2 py-1 text-[12px] text-cyan-100 disabled:opacity-40"
+          >
+            Perpendicular
+          </button>
+        </div>
         {card.picks?.length === 1 && (
           <button
             type="button"

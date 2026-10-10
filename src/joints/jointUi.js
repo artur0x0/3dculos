@@ -18,6 +18,7 @@ import { mintSurfId } from '../utils/git/surfId.js';
 import { partPlacement } from '../utils/jointSchema.js';
 import { worldPoint } from '../utils/partPose.js';
 import { commitJointEdit } from './refreshJoints.js';
+import { rotateByQuat } from './rigid.js';
 
 export const SAME_PART_MESSAGE = 'A joint needs two parts';
 export const NO_SURF_ID_MESSAGE = 'This part has no surf id';
@@ -27,6 +28,7 @@ export const JOINT_TYPE_LABEL = Object.freeze({
   concentric: 'Concentric',
   distance: 'Distance',
   angle: 'Angle',
+  symmetric: 'Symmetric',
   fixed: 'Fixed',
 });
 
@@ -136,18 +138,67 @@ function planarFace(pick) {
   return !!(pick && pick.kind === 'face' && pick.planar !== false && !pick.axis);
 }
 
-export function typeFits(type, picks) {
-  const list = Array.isArray(picks) ? picks : [];
-  if (type === 'fixed') return list.length === 1 && !!list[0]?.surfId;
-  if (list.length !== 2) return false;
-  if (!list[0]?.surfId || !list[1]?.surfId) return false;
-  if (list[0].surfId === list[1].surfId) return false;
-  if (type === 'coincident' || type === 'distance') {
-    return planarFace(list[0]) && planarFace(list[1]);
+/** Picks in first-seen part order. Later taps on a part stay in that group. */
+export function groupPicksByPart(picks) {
+  const groups = [];
+  for (const pick of Array.isArray(picks) ? picks : []) {
+    if (!pick?.surfId) continue;
+    let group = groups.find((row) => row.surfId === pick.surfId);
+    if (!group) {
+      group = { surfId: pick.surfId, partName: pick.partName || 'Part', picks: [] };
+      groups.push(group);
+    }
+    group.picks.push(pick);
   }
-  if (type === 'concentric') return roundPick(list[0]) && roundPick(list[1]);
+  return groups;
+}
+
+function orderedPicks(picks) {
+  return groupPicksByPart(picks).flatMap((group) => group.picks);
+}
+
+function pairOf(picks) {
+  const groups = groupPicksByPart(picks);
+  if (groups.length !== 2 || groups.some((group) => group.picks.length !== 1)) return null;
+  return [groups[0].picks[0], groups[1].picks[0]];
+}
+
+/** One planar face on each of two parts. Parallel and Perpendicular use this. */
+export function planarAnglePair(picks) {
+  const pair = pairOf(picks);
+  if (!pair || !pair.every(planarFace)) return null;
+  return pair;
+}
+
+export function jointPickCap(picks) {
+  const groups = groupPicksByPart(picks);
+  if (groups.some((group) => group.picks.length > 1)) return 4;
+  return 2;
+}
+
+/** Highlight key. Two faces on one part stay distinct. */
+export function jointHighlightSlot(partId, at) {
+  const id = String(partId || '');
+  if (!Array.isArray(at) || at.length < 3) return id;
+  const q = (n) => (Math.round((Number(n) || 0) * 100) / 100).toFixed(2);
+  return `${id}@${q(at[0])},${q(at[1])},${q(at[2])}`;
+}
+
+export function typeFits(type, picks) {
+  const list = orderedPicks(picks);
+  const groups = groupPicksByPart(list);
+  if (type === 'fixed') return list.length === 1 && !!list[0]?.surfId;
+  if (type === 'symmetric') {
+    return groups.length === 2
+      && groups.every((group) => group.picks.length === 2 && group.picks.every(planarFace));
+  }
+  const pair = pairOf(list);
+  if (!pair) return false;
+  if (!pair[0]?.surfId || !pair[1]?.surfId || pair[0].surfId === pair[1].surfId) return false;
+  if (type === 'coincident' || type === 'distance') return planarFace(pair[0]) && planarFace(pair[1]);
+  if (type === 'concentric') return roundPick(pair[0]) && roundPick(pair[1]);
   if (type === 'angle') {
-    return list.every((pick) => (
+    return pair.every((pick) => (
       pick.kind === 'face' || pick.kind === 'edge' || pick.kind === 'axis'
     ));
   }
@@ -155,16 +206,19 @@ export function typeFits(type, picks) {
 }
 
 /**
- * Two cylindrical faces or circular edges suggest concentric. Two planar
- * faces suggest coincident. Parallel planar faces with a gap suggest
- * distance. Never fixed. The type buttons can still override this.
+ * Two faces on each part suggest symmetric. One reference on each part
+ * keeps the older rules: concentric, then distance, then coincident.
+ * Never fixed. The type buttons can still override this.
  */
 export function suggestJointType(picks) {
+  if (typeFits('symmetric', picks)) return 'symmetric';
   if (typeFits('concentric', picks)) return 'concentric';
+  const pair = pairOf(picks);
   if (
     typeFits('distance', picks)
-    && parallelPlanar(picks)
-    && planarGapMm(picks) > DISTANCE_SUGGEST_MM
+    && pair
+    && parallelPlanar(pair)
+    && planarGapMm(pair) > DISTANCE_SUGGEST_MM
   ) {
     return 'distance';
   }
@@ -172,18 +226,115 @@ export function suggestJointType(picks) {
   return null;
 }
 
+function samePick(a, b) {
+  if (!a || !b || a.surfId !== b.surfId) return false;
+  const aa = a.key?.at;
+  const bb = b.key?.at;
+  if (!Array.isArray(aa) || !Array.isArray(bb)) return false;
+  const dx = (Number(aa[0]) || 0) - (Number(bb[0]) || 0);
+  const dy = (Number(aa[1]) || 0) - (Number(bb[1]) || 0);
+  const dz = (Number(aa[2]) || 0) - (Number(bb[2]) || 0);
+  return Math.hypot(dx, dy, dz) < 0.05;
+}
+
+/**
+ * Picks stay grouped by part, in any tap order. A third part does not
+ * join the list: the card asks which part to replace.
+ */
 export function acceptJointPick(existing, pick) {
-  const prior = Array.isArray(existing) ? existing.filter(Boolean) : [];
+  const prior = orderedPicks(existing);
   if (!pick || !pick.surfId) {
-    return { picks: prior, open: prior.length > 0, refuse: true, message: NO_SURF_ID_MESSAGE };
+    return {
+      picks: prior,
+      open: prior.length > 0,
+      refuse: true,
+      message: NO_SURF_ID_MESSAGE,
+      choice: null,
+    };
   }
-  if (!prior.length) {
-    return { picks: [pick], open: true, refuse: false, message: null };
+  const replaced = prior.map((row) => (samePick(row, pick) ? pick : row));
+  if (replaced.some((row, index) => row !== prior[index])) {
+    return { picks: orderedPicks(replaced), open: true, refuse: false, message: null, choice: null };
   }
-  if (prior[0].surfId === pick.surfId) {
-    return { picks: prior, open: true, refuse: true, message: SAME_PART_MESSAGE };
+  const groups = groupPicksByPart(prior);
+  const known = groups.find((group) => group.surfId === pick.surfId);
+  if (!known && groups.length >= 2) {
+    return {
+      picks: prior,
+      open: true,
+      refuse: false,
+      message: null,
+      choice: { pick, part1: groups[0].partName, part2: groups[1].partName },
+    };
   }
-  return { picks: [prior[0], pick], open: true, refuse: false, message: null };
+  if (known && known.picks.length >= 2) {
+    const next = prior.slice();
+    let last = -1;
+    for (let i = 0; i < next.length; i += 1) {
+      if (next[i].surfId === pick.surfId) last = i;
+    }
+    if (last >= 0) next[last] = pick;
+    return { picks: orderedPicks(next), open: true, refuse: false, message: null, choice: null };
+  }
+  return {
+    picks: orderedPicks([...prior, pick]),
+    open: true,
+    refuse: false,
+    message: null,
+    choice: null,
+  };
+}
+
+/** Discard the third-part tap, or let it take the place of part 1 or part 2. */
+export function resolvePartChange(picks, pending, action) {
+  const prior = orderedPicks(picks);
+  const groups = groupPicksByPart(prior);
+  if (!pending || action === 'discard' || groups.length < 2) return prior;
+  if (action === 'replace-1') {
+    const kept = prior.filter((row) => row.surfId !== groups[0].surfId);
+    return orderedPicks([pending, ...kept]);
+  }
+  if (action === 'replace-2') {
+    const kept = prior.filter((row) => row.surfId !== groups[1].surfId);
+    return orderedPicks([...kept, pending]);
+  }
+  return prior;
+}
+
+function worldNormal(pick, doc) {
+  const n = unitNormal(pick);
+  if (!n) return null;
+  const part = (doc?.parts || []).find((row) => row?.surfId === pick.surfId);
+  return rotateByQuat(partPlacement(part).q, n);
+}
+
+/**
+ * Angle joint at 0° (parallel) or 90° (perpendicular), ready to write.
+ * Parallel sense follows the normals so the parts are not flipped over.
+ */
+export function quickAngleCard(card, degrees, doc) {
+  const pair = planarAnglePair(card?.picks);
+  if (!pair || (degrees !== 0 && degrees !== 90)) return null;
+  let sense = 1;
+  if (degrees === 0) {
+    const a = worldNormal(pair[0], doc);
+    const b = worldNormal(pair[1], doc);
+    if (a && b) {
+      const dot = a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+      sense = dot < 0 ? -1 : 1;
+    }
+  }
+  const joints = doc?.joints || [];
+  return {
+    ...card,
+    picks: pair,
+    type: 'angle',
+    userPickedType: true,
+    valueMm: degrees,
+    sense,
+    name: card?.userNamed ? card.name : nextJointName('angle', joints),
+    partChange: null,
+  };
 }
 
 function kindWord(pick) {
@@ -222,11 +373,16 @@ export function jointTagAnchor(doc, joint) {
 }
 
 export function jointSubtitle(picks) {
-  const list = Array.isArray(picks) ? picks : [];
-  if (!list.length) return '';
-  const side = (pick) => `${pick.partName || 'Part'} · ${kindWord(pick)}`;
-  if (list.length === 1) return side(list[0]);
-  return `${side(list[0])}  →  ${side(list[1])}`;
+  const groups = groupPicksByPart(picks);
+  if (!groups.length) return '';
+  const side = (group) => {
+    const words = group.picks.map(kindWord);
+    const word = words.every((item) => item === words[0]) ? words[0] : 'pick';
+    const count = group.picks.length > 1 ? ` ×${group.picks.length}` : '';
+    return `${group.partName || 'Part'} · ${word}${count}`;
+  };
+  if (groups.length === 1) return side(groups[0]);
+  return `${side(groups[0])}  →  ${side(groups[1])}`;
 }
 
 /**
@@ -255,8 +411,11 @@ function storedKind(pick, type) {
 }
 
 export function buildJointRecord(card, identity) {
-  const picks = card?.picks || [];
+  const picks = orderedPicks(card?.picks || []);
   const type = card?.type;
+  if (type !== 'fixed' && groupPicksByPart(picks).length < 2) {
+    return { ok: false, message: SAME_PART_MESSAGE };
+  }
   if (!typeFits(type, picks)) {
     return { ok: false, message: 'That joint does not fit these references' };
   }
@@ -278,18 +437,26 @@ export function buildJointRecord(card, identity) {
     joint.a = { part: picks[0].surfId };
     return { ok: true, joint };
   }
+  const groups = groupPicksByPart(picks);
   const refOf = (pick) => ({
     part: pick.surfId,
     kind: storedKind(pick, type),
     key: pick.key,
   });
-  joint.a = refOf(picks[0]);
-  joint.b = refOf(picks[1]);
+  if (type === 'symmetric') {
+    joint.a = refOf(groups[0].picks[0]);
+    joint.a2 = refOf(groups[0].picks[1]);
+    joint.b = refOf(groups[1].picks[0]);
+    joint.b2 = refOf(groups[1].picks[1]);
+    return { ok: true, joint };
+  }
+  joint.a = refOf(groups[0].picks[0]);
+  joint.b = refOf(groups[1].picks[0]);
   return { ok: true, joint };
 }
 
 export function jointConfirmDisabled({ card, locked = false } = {}) {
-  if (!card || locked) return true;
+  if (!card || locked || card.partChange) return true;
   if (!typeFits(card.type, card.picks)) return true;
   if (card.type === 'distance' || card.type === 'angle') {
     if (!Number.isFinite(Number(card.valueMm))) return true;
@@ -337,7 +504,10 @@ export function cardFromJoint(joint, doc, message = '') {
       key: ref.key,
     };
   };
-  const picks = [pickOf(joint.a), pickOf(joint.b)].filter(Boolean);
+  const refs = joint.type === 'symmetric'
+    ? [joint.a, joint.a2, joint.b, joint.b2]
+    : [joint.a, joint.b];
+  const picks = refs.map(pickOf).filter(Boolean);
   return {
     mode: 'edit',
     id: joint.id,
@@ -371,6 +541,8 @@ export function jointChips(doc, live = {}) {
       status,
       title: jointChipTitle(joint, status, message),
       invalid: status === 'broken' || status === 'conflict',
+      value: joint.value,
+      sense: joint.sense,
     };
   });
 }

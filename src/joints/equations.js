@@ -9,6 +9,7 @@
  *   concentric   dₐ × d_b twice, and (p_b − pₐ) × dₐ twice
  *   distance     nₐ × n_b twice, and (p_b − pₐ) · nₐ − sense · value
  *   angle        sense · (uₐ · u_b) − cos(value in radians)
+ *   symmetric    midplane(a, a2) coincident with midplane(b, b2)
  *   fixed        no row; the part is not a variable
  *
  * Concentric on an edge reads `key.circle` (center, axis). It does not
@@ -106,6 +107,35 @@ function planePartials(A, B, delta) {
   ];
 }
 
+/**
+ * Center plane of two faces on one part.
+ * The normal is the angle bisector (the second normal is flipped when the
+ * faces look opposite ways). The point is the midpoint of the two centers.
+ */
+function centerPlane(g1, g2) {
+  const s = dot3(g1.dir, g2.dir) >= 0 ? 1 : -1;
+  const raw = add3(g1.dir, scale3(g2.dir, s));
+  const len = Math.hypot(raw[0], raw[1], raw[2]);
+  const dir = len > 1e-12 ? scale3(raw, 1 / len) : g1.dir.slice();
+  const dRaw = addMat(g1.dDir, scaleMat(g2.dDir, s));
+  const along = vecTMat(dir, dRaw);
+  const outer = [
+    [dir[0] * along[0], dir[0] * along[1], dir[0] * along[2]],
+    [dir[1] * along[0], dir[1] * along[1], dir[1] * along[2]],
+    [dir[2] * along[0], dir[2] * along[1], dir[2] * along[2]],
+  ];
+  const dDir = len > 1e-12
+    ? scaleMat(addMat(dRaw, scaleMat(outer, -1)), 1 / len)
+    : g1.dDir;
+  return {
+    part: g1.part,
+    at: scale3(add3(g1.at, g2.at), 0.5),
+    dir,
+    dAt: scaleMat(addMat(g1.dAt, g2.dAt), 0.5),
+    dDir,
+  };
+}
+
 function directionCross(A, B, scale) {
   const vec = scale3(cross3(A.dir, B.dir), scale);
   const dA = scaleMat(mulMat(scaleMat(skew(B.dir), -1), A.dDir), scale);
@@ -128,10 +158,25 @@ export function evaluateJoints(joints, poses, freeIndex, drops) {
   const jac = [];
   joints.forEach((joint, i) => {
     if (joint.type === 'fixed') return;
+    const drop = drops[i];
+    if (joint.type === 'symmetric') {
+      const A1 = geom(poses, joint.a, joint.type);
+      const A2 = geom(poses, joint.a2, joint.type);
+      const B1 = geom(poses, joint.b, joint.type);
+      const B2 = geom(poses, joint.b2, joint.type);
+      if (!A1 || !A2 || !B1 || !B2) return;
+      const A = centerPlane(A1, A2);
+      const B = centerPlane(B1, B2);
+      const align = dot3(A.dir, B.dir) >= 0 ? 1 : -1;
+      const crossed = directionCross(A, B, align);
+      pushKept(rows, jac, freeIndex, crossed.vec, crossed.derivs, drop);
+      const delta = sub3(B.at, A.at);
+      pushScalar(rows, jac, freeIndex, dot3(delta, A.dir), planePartials(A, B, delta));
+      return;
+    }
     const A = geom(poses, joint.a, joint.type);
     const B = geom(poses, joint.b, joint.type);
     if (!A || !B) return;
-    const drop = drops[i];
     if (joint.type === 'coincident') {
       const plus = joint.opposed === false ? -1 : 1;
       const s = add3(A.dir, scale3(B.dir, plus));
@@ -181,6 +226,18 @@ export function evaluateJoints(joints, poses, freeIndex, drops) {
 export function seedDrops(joints, seedPoses) {
   return joints.map((joint) => {
     if (joint.type === 'fixed' || joint.type === 'angle') return null;
+    if (joint.type === 'symmetric') {
+      const pose = seedPoses.get(joint.a?.part);
+      const first = localFrame(joint.a, joint.type);
+      const second = localFrame(joint.a2, joint.type);
+      if (!pose || !first || !second) return 0;
+      const seed = { ...pose, omega: [0, 0, 0] };
+      const plane = centerPlane(
+        { part: joint.a.part, ...worldGeom(seed, first) },
+        { part: joint.a.part, ...worldGeom(seed, second) },
+      );
+      return dropIndex(plane.dir);
+    }
     const local = localFrame(joint.a, joint.type);
     const pose = seedPoses.get(joint.a?.part);
     if (!local || !pose) return 0;
