@@ -6,7 +6,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { fingerprintsFromGeometry, paintPickFromClick } from '../utils/facePaint.js';
+import { paintPickFromClick } from '../utils/facePaint.js';
 import { boundingBox, detectFeaProfile, refineMode } from './deviceProfile.js';
 import { createFeaClient } from './feaClient.js';
 import { feaDebugEnabled, initialFeaProgress, logFeaTiming, reduceFeaProgress } from './feaProgress.js';
@@ -22,7 +22,6 @@ import {
   customSeed,
   emptyDraft,
   freshStudy,
-  highlightIndicesForStudy,
   libraryOptions,
   majorityFaceId,
   meshArraysFromGeometry,
@@ -298,10 +297,11 @@ export function useFeaStudy({
     setResult((prev) => (prev && !prev.stale ? { ...prev, stale: true } : prev));
   }, []);
 
+  // The viewport reconciles overlay meshes to this study. Passing the
+  // selection (not a flat triangle list) is what lets a cleared face drop
+  // its own overlay instead of stacking another transparent copy.
   const paintHighlight = useCallback((next) => {
-    const solid = getSolidRef.current?.();
-    const faces = fingerprintsFromGeometry(solid?.geometry, solid?.faceIDs);
-    onHighlightRef.current?.(highlightIndicesForStudy(faces, next));
+    onHighlightRef.current?.(next ?? null);
   }, []);
 
   const commitStudy = useCallback((next) => {
@@ -970,7 +970,8 @@ export function useFeaStudy({
     setDismissed(true);
     setProbes([]);
     setView((prev) => reduceResultsView(prev, { type: 'back' }));
-  }, []);
+    paintHighlight(studyRef.current);
+  }, [paintHighlight]);
 
   const removeProbe = useCallback((id) => {
     setProbes((prev) => prev.filter((probe) => probe.id !== id));
@@ -1169,6 +1170,7 @@ export function useFeaStudy({
     setProbeOverlay([]);
     previewFieldRef.current = null;
     setStressSkinSource(null);
+    onHighlightRef.current?.(null);
   }, []);
 
   const progress = running ? (runReport.stage || 'running') : '';
