@@ -55,6 +55,7 @@ import {
   sampleShellSurface,
   shellBoundaryConditions,
 } from './sheetMidsurface.js';
+import { packProbeSurface, packShellProbe } from './probeSample.js';
 import {
   fieldRange,
   safetyFactor,
@@ -601,6 +602,10 @@ export async function solveSolid({
     },
     thin,
     shells: SHELLS_AVAILABLE,
+    probe: packProbeSurface(volume, {
+      stress: tetField,
+      displacement: nodalDisp,
+    }, 'local'),
     stats: {
       dofs: solved.stats ? solved.stats.dofs : volume.stats.dofs,
       freeDofs: solved.stats ? solved.stats.freeDofs : 0,
@@ -1022,6 +1027,12 @@ async function solveSheetMetal({
     },
     thin: true,
     shells: SHELLS_AVAILABLE,
+    probe: packShellProbe(shellMesh, {
+      top: solved.vonMisesTop,
+      mid: solved.vonMisesMid,
+      bottom: solved.vonMisesBottom,
+      displacement: solved.displacement,
+    }, 'local'),
     stats: {
       dofs: solvedDofs,
       freeDofs: solvedStats.freeDofs || 0,

@@ -11,6 +11,7 @@
  * The phone DOF cap is split across the parts when the edge length is chosen.
  */
 
+import { packProbeSurface } from './probeSample.js';
 import { boundaryConditions } from './boundaryConditions.js';
 import { buildTiePayload } from './bondedTies.js';
 import { buildContactPayload, contactFaceIds, frictionalStudy } from './contactPairs.js';
@@ -466,11 +467,20 @@ export async function solveAssembly({
       safetyFactor: safety,
       yield_MPa: body.material.yield_MPa ?? null,
     });
+    const contactIds = contactField ? contactFaceIds(study, body.id) : null;
     sampledParts.push({
       id: body.id,
       nodal: stress,
       displacement,
       contact,
+      probe: packProbeSurface(body.mesh, {
+        stress: localNodal,
+        displacement: dispAll && dispAll.length >= (offset + count) * 3
+          ? dispAll.subarray(offset * 3, (offset + count) * 3)
+          : null,
+        contact: contactField ? contactField.pressure.subarray(offset, offset + count) : null,
+        contactFaces: contactIds ? [...contactIds] : null,
+      }, 'world'),
     });
   }
   const govIndex = solved.governingPart == null ? -1 : Number(solved.governingPart);

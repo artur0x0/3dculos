@@ -5,13 +5,15 @@
  * and does not call preemptInflight.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { fingerprintsFromGeometry, paintPickFromClick } from '../utils/facePaint.js';
 import { boundingBox, detectFeaProfile } from './deviceProfile.js';
 import { createFeaClient } from './feaClient.js';
 import { initialFeaProgress, logFeaTiming, reduceFeaProgress } from './feaProgress.js';
 import { studyForAssemblySolve, studyForSolve } from './renderFaceIds.js';
-import { shellSheetFromScript } from './sheetMidsurface.js';
+import { setProbeOverlay } from './probeOverlay.js';
+import { probeQuantityName, probeUnit, readTetProbe } from './probeSample.js';
+import { probeShellAt, shellSheetFromScript } from './sheetMidsurface.js';
 import { activePlot, initialResultsView, reduceResultsView } from './resultsView.js';
 import { bindStressField, bindVectorField, setStressSkinSource } from './stressMap.js';
 import { composeFeaStudy, readFeaStudy, scriptOutsideFeaStudy } from './studyScript.js';
@@ -46,6 +48,15 @@ import { previewFits } from './preview/resolution.js';
 import { probePreviewGpu, runGpuPreview } from './preview/webgpuPreview.js';
 
 const FACE_ANGLE_DEG = 3;
+const PROBE_CAP = 24;
+
+function probeReading(probe, record, quantity, modeIndex) {
+  if (!probe || !record) return null;
+  const point = record.frame === 'world' ? probe.world : probe.local;
+  if (!point) return null;
+  if (record.kind === 'shell') return probeShellAt(record, point, probe.normal, quantity, modeIndex);
+  return readTetProbe(point, probe.faceId, record, quantity, modeIndex);
+}
 
 function commitRunReport(prev, event) {
   const next = reduceFeaProgress(prev, event);
@@ -104,6 +115,8 @@ export function useFeaStudy({
   const [dismissed, setDismissed] = useState(false);
   const [assemblyParts, setAssemblyParts] = useState([]);
   const [view, setView] = useState(initialResultsView);
+  const [probes, setProbes] = useState([]);
+  const [probeVersion, setProbeVersion] = useState(0);
   const writtenRef = useRef(null);
   const clientRef = useRef(null);
   const runAbortRef = useRef(null);
@@ -113,6 +126,11 @@ export function useFeaStudy({
   const modeMagnitudesRef = useRef(null);
   const modeVectorsRef = useRef(null);
   const modeGeometryRef = useRef(null);
+  const probeMapRef = useRef(new Map());
+  const probeSerialRef = useRef(0);
+  const viewRef = useRef(view);
+  const plotRef = useRef(plot);
+  const modeIndexRef = useRef(modeIndex);
   const solvedOutsideRef = useRef(null);
   const markStaleRef = useRef(() => {});
   const draftRef = useRef(draft);
@@ -130,6 +148,9 @@ export function useFeaStudy({
   draftRef.current = draft;
   openRef.current = open;
   previewRef.current = preview;
+  viewRef.current = view;
+  plotRef.current = plot;
+  modeIndexRef.current = modeIndex;
   const getScriptRef = useRef(getScript);
   const onCommitRef = useRef(onCommit);
   const lockedRef = useRef(assemblyLocked);
@@ -166,6 +187,7 @@ export function useFeaStudy({
     stressFieldRef.current = null;
     displacementFieldRef.current = null;
     contactFieldRef.current = null;
+    probeMapRef.current = new Map();
   };
 
   markStaleRef.current = () => {
@@ -511,8 +533,44 @@ export function useFeaStudy({
     else setNotice(next.errors[0] || 'Could not change that friction coefficient');
   }, [commitStudy]);
 
+  const probeAt = useCallback((clickData) => {
+    if (clickData?.removeProbeId != null) {
+      setProbes((prev) => prev.filter((probe) => probe.id !== clickData.removeProbeId));
+      return true;
+    }
+    const geometry = clickData?.geometry;
+    const record = probeMapRef.current.get(geometry);
+    const local = clickData?.localPoint;
+    if (!record || !local || local.length < 3) return false;
+    const world = clickData.hitPoint;
+    const draft = {
+      geometry,
+      faceId: Number(clickData.faceId),
+      local: [Number(local[0]), Number(local[1]), Number(local[2])],
+      world: world && world.length >= 3
+        ? [Number(world[0]), Number(world[1]), Number(world[2])]
+        : [Number(local[0]), Number(local[1]), Number(local[2])],
+      normal: clickData.faceNormal || null,
+    };
+    const quantity = probeQuantityName(viewRef.current?.kind, plotRef.current);
+    const reading = probeReading(draft, record, quantity, modeIndexRef.current);
+    if (!reading || !Number.isFinite(reading.value)) return false;
+    setProbes((prev) => {
+      if (prev.length >= PROBE_CAP) return prev;
+      const id = probeSerialRef.current + 1;
+      probeSerialRef.current = id;
+      return prev.concat({ ...draft, id });
+    });
+    return true;
+  }, []);
+
   const pick = useCallback((clickData) => {
     if (!studyRef.current) return false;
+    const screenNow = viewRef.current?.screen;
+    if (screenNow && screenNow !== 'setup') {
+      if (screenNow === 'results') return probeAt(clickData);
+      return false;
+    }
     const solid = getSolidRef.current?.();
     const geometry = clickData?.geometry || solid?.geometry;
     const faceIDs = solid?.faceIDs;
@@ -536,7 +594,7 @@ export function useFeaStudy({
     }
     commitStudy(next.study);
     return true;
-  }, [commitStudy]);
+  }, [commitStudy, probeAt]);
 
   const pickIfOpen = useCallback((clickData) => {
     if (!openRef.current) return false;
@@ -730,6 +788,17 @@ export function useFeaStudy({
         parts: contactParts,
         onStale,
       } : null;
+      const probeMap = new Map();
+      if (assemblyPartsForSolve.length) {
+        for (const part of solved.parts || []) {
+          const row = assemblyPartsForSolve.find((item) => item.id === part.id);
+          if (row?.geometry && part.probe) probeMap.set(row.geometry, part.probe);
+        }
+      } else if (geometry && solved.probe) {
+        probeMap.set(geometry, solved.probe);
+      }
+      probeMapRef.current = probeMap;
+      setProbeVersion((version) => version + 1);
       const liveScript = typeof getScriptRef.current === 'function' ? (getScriptRef.current() || '') : '';
       solvedOutsideRef.current = scriptOutsideFeaStudy(liveScript);
       stressFieldRef.current = bound ? {
@@ -896,7 +965,16 @@ export function useFeaStudy({
   const backToSetup = useCallback(() => {
     setPlotState('stress');
     setDismissed(true);
+    setProbes([]);
     setView((prev) => reduceResultsView(prev, { type: 'back' }));
+  }, []);
+
+  const removeProbe = useCallback((id) => {
+    setProbes((prev) => prev.filter((probe) => probe.id !== id));
+  }, []);
+
+  const clearProbes = useCallback(() => {
+    setProbes([]);
   }, []);
 
   useEffect(() => {
@@ -906,6 +984,44 @@ export function useFeaStudy({
 
   const screen = view.screen;
   const results = screen !== 'setup';
+
+  useEffect(() => {
+    if (screen === 'results') return;
+    setProbes([]);
+  }, [screen]);
+
+  useEffect(() => {
+    if (!open || screen !== 'results') {
+      setProbeOverlay([]);
+      return;
+    }
+    setProbeOverlay(probes.map((probe, index) => ({
+      id: probe.id,
+      number: index + 1,
+      position: probe.world,
+    })));
+  }, [open, screen, probes]);
+
+  const probeRows = useMemo(() => {
+    const quantity = probeQuantityName(view.kind, activePlot(plot));
+    const records = probeVersion >= 0 ? probeMapRef.current : null;
+    return probes.map((probe) => {
+      const record = records?.get(probe.geometry) || null;
+      const reading = probeReading(probe, record, quantity, modeIndex);
+      return {
+        id: probe.id,
+        quantity,
+        unit: probeUnit(quantity),
+        x: probe.local[0],
+        y: probe.local[1],
+        z: probe.local[2],
+        value: reading && Number.isFinite(reading.value) ? reading.value : NaN,
+        weights: reading?.weights || null,
+        nodal: reading?.nodal || null,
+        mix: reading?.mix || '',
+      };
+    });
+  }, [probes, plot, modeIndex, view.kind, probeVersion]);
 
   useEffect(() => {
     if (!open) {
@@ -1046,6 +1162,8 @@ export function useFeaStudy({
     stressFieldRef.current = null;
     displacementFieldRef.current = null;
     contactFieldRef.current = null;
+    probeMapRef.current = new Map();
+    setProbeOverlay([]);
     previewFieldRef.current = null;
     setStressSkinSource(null);
   }, []);
@@ -1098,6 +1216,9 @@ export function useFeaStudy({
     setPlot,
     modeIndex,
     setMode,
+    probeRows,
+    removeProbe,
+    clearProbes,
     animate,
     setAnimate,
     dismissed,
