@@ -2,6 +2,11 @@
 //!
 //! Both run single-threaded. faer is built without its rayon feature, and the
 //! factorization asks for [`faer::Par::Seq`].
+//!
+//! faer sums the symbolic factor in `I::Signed`. For a `usize` matrix that is
+//! `isize`, which is `i32` in the wasm32 build. A fill count past that limit
+//! is `FaerError::IndexOverflow`. The static solver refuses the factorization
+//! before that sum and uses PCG.
 
 use super::assemble::LowerCsc;
 use super::FemError;
@@ -13,7 +18,15 @@ use faer::sparse::linalg::cholesky::{
 };
 use faer::sparse::linalg::SupernodalThreshold;
 use faer::sparse::{SparseColMat, SymbolicSparseColMat};
+use faer::sparse::FaerError;
 use faer::{Conj, Mat, Par, Side};
+
+fn symbolic_cholesky_error(err: FaerError) -> FemError {
+    match err {
+        FaerError::IndexOverflow => FemError::CholeskyIndexLimit,
+        other => FemError::Solver(format!("symbolic Cholesky failed: {other}")),
+    }
+}
 
 /// Supernodal Cholesky factor of one symmetric positive-definite matrix.
 ///
@@ -46,7 +59,7 @@ impl SupernodalFactor {
             SymmetricOrdering::Amd,
             params,
         )
-        .map_err(|err| FemError::Solver(format!("symbolic Cholesky failed: {err}")))?;
+        .map_err(symbolic_cholesky_error)?;
         // AMD's flop estimate is zero on a diagonal pattern, and faer then
         // keeps a simplicial factor even when the threshold asks for a
         // supernode. Identity ordering counts the same pattern and selects
@@ -58,7 +71,7 @@ impl SupernodalFactor {
                 SymmetricOrdering::Identity,
                 params,
             )
-            .map_err(|err| FemError::Solver(format!("symbolic Cholesky failed: {err}")))?;
+            .map_err(symbolic_cholesky_error)?;
         }
         if !matches!(symbolic.raw(), SymbolicCholeskyRaw::Supernodal(_)) {
             return Err(FemError::Solver(

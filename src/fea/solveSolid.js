@@ -600,7 +600,9 @@ export async function solveSolid({
   const factor = solved.safetyFactor != null ? solved.safetyFactor : safetyFactor(yieldMPa, p95);
   const solverWarnings = plainWarnings(solved.warnings);
   for (const warning of solverWarnings) {
-    if (warning.code === 'missing-yield' || warning.code === 'zero-stress') warnings.push(warning);
+    if (warning.code === 'missing-yield' || warning.code === 'zero-stress' || warning.code === 'cholesky-index') {
+      warnings.push(warning);
+    }
   }
   timings['post-processing'] = Date.now() - postStarted;
   progressPass({ stage: 'post-processing', fraction: 1, dofs: solvedDofs }, rows.length || 1);
@@ -1040,7 +1042,9 @@ async function solveSheetMetal({
   const dispRange = fieldRange(sampled.displacement);
   const solverWarnings = plainWarnings(solved.warnings);
   for (const warning of solverWarnings) {
-    if (warning.code === 'missing-yield' || warning.code === 'zero-stress') warnings.push(warning);
+    if (warning.code === 'missing-yield' || warning.code === 'zero-stress' || warning.code === 'cholesky-index') {
+      warnings.push(warning);
+    }
   }
   const postMs = Date.now() - postStarted;
   progress({ stage: 'post-processing', fraction: 1, dofs: solvedDofs });

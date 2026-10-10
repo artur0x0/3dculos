@@ -190,6 +190,9 @@ pub enum FemError {
         residual: f64,
     },
     Solver(String),
+    /// Symbolic Cholesky fill does not fit in faer's signed index.
+    /// On wasm32 that index is `i32` (`usize`'s `Signed` type is `isize`).
+    CholeskyIndexLimit,
 }
 
 impl std::fmt::Display for FemError {
@@ -215,9 +218,17 @@ impl std::fmt::Display for FemError {
                 "contact did not converge during the {stage} stage after {iterations} iterations (residual {residual:.3e})"
             ),
             Self::Solver(msg) => write!(f, "{msg}"),
+            Self::CholeskyIndexLimit => write!(
+                f,
+                "symbolic Cholesky fill does not fit in faer's signed index"
+            ),
         }
     }
 }
+
+/// Shown when a requested Cholesky solve is handed to PCG.
+pub const CHOLESKY_INDEX_NOTE: &str =
+    "Cholesky fill does not fit in a 32-bit index, so this solve used PCG.";
 
 impl std::error::Error for FemError {}
 
@@ -261,18 +272,25 @@ pub fn solve_tet10(
         let assembly_secs = t_asm.elapsed_secs();
         debug_assert_eq!(reduced.rhs.len(), free_dofs.len());
         let t_solve = Clock::start();
-        let (u_free, iterations, residual) = solve_reduced(&reduced, choice, options)?;
+        let (u_free, iterations, residual, solver) = solve_reduced(&reduced, choice, options)?;
         let solve_secs = t_solve.elapsed_secs();
         for (slot, &dof) in free_dofs.iter().enumerate() {
             displacement[dof] = u_free[slot];
         }
-        (choice, iterations, residual, assembly_secs, solve_secs)
+        (solver, iterations, residual, assembly_secs, solve_secs)
     };
+    let index_fallback = solver != choice;
 
     let stress = stress::nodal_stress(nodes, elements, material, &displacement)?;
     let von_mises: Vec<f64> = stress.iter().map(|s| stress::von_mises(s)).collect();
     let (min, max, p95) = range_and_p95(&von_mises);
     let mut warnings = Vec::new();
+    if index_fallback {
+        warnings.push(Warning {
+            code: "cholesky-index",
+            msg: CHOLESKY_INDEX_NOTE.into(),
+        });
+    }
     let safety_factor = match material.yield_mpa {
         Some(yield_mpa) if p95.is_finite() && p95 > 0.0 => Some(yield_mpa / p95),
         Some(_) => {
@@ -357,36 +375,90 @@ pub(crate) fn select_solver(choice: SolverChoice, free_dofs: usize, limit: usize
     }
 }
 
+/// Largest `n` whose dense lower triangle `n(n+1)/2` fits in `signed_max`.
+///
+/// faer sums Cholesky column counts in `I::Signed`. For `usize` that is
+/// `isize`, which is `i32` on wasm32. A factor past that limit returns
+/// `FaerError::IndexOverflow` before any numeric values are stored.
+#[cfg(test)]
+pub(crate) fn max_cholesky_order(signed_max: u128) -> usize {
+    let mut lo = 0u128;
+    let mut hi = 1u128 << 33;
+    while lo + 1 < hi {
+        let mid = (lo + hi) / 2;
+        if mid.saturating_mul(mid.saturating_add(1)) / 2 <= signed_max {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    lo as usize
+}
+
+pub(crate) fn cholesky_triangle_fits(n: usize, signed_max: u128) -> bool {
+    let n = n as u128;
+    n.saturating_mul(n.saturating_add(1)) / 2 <= signed_max
+}
+
+/// Keep Cholesky only when even a dense factor fits in faer's signed index.
+pub(crate) fn guard_cholesky_index_for(
+    choice: SolverUsed,
+    n: usize,
+    signed_max: u128,
+) -> SolverUsed {
+    if choice == SolverUsed::Cholesky && !cholesky_triangle_fits(n, signed_max) {
+        SolverUsed::Pcg
+    } else {
+        choice
+    }
+}
+
+pub(crate) fn guard_cholesky_index(choice: SolverUsed, n: usize) -> SolverUsed {
+    guard_cholesky_index_for(choice, n, isize::MAX as u128)
+}
+
 pub(crate) fn solve_reduced(
     reduced: &Reduced,
     choice: SolverUsed,
     options: &SolveOptions,
-) -> Result<(Vec<f64>, usize, f64), FemError> {
+) -> Result<(Vec<f64>, usize, f64, SolverUsed), FemError> {
+    let choice = guard_cholesky_index(choice, reduced.matrix.n);
     match choice {
-        SolverUsed::Cholesky => {
-            let u = supernodal_cholesky(&reduced.matrix, &reduced.rhs)?;
-            Ok((u, 0, 0.0))
-        }
+        SolverUsed::Cholesky => match supernodal_cholesky(&reduced.matrix, &reduced.rhs) {
+            Ok(u) => Ok((u, 0, 0.0, SolverUsed::Cholesky)),
+            Err(FemError::CholeskyIndexLimit) => {
+                let (u, iterations, residual) = solve_pcg(reduced, options)?;
+                Ok((u, iterations, residual, SolverUsed::Pcg))
+            }
+            Err(err) => Err(err),
+        },
         SolverUsed::Pcg => {
-            if !(options.pcg_tol.is_finite() && options.pcg_tol > 0.0) {
-                return Err(FemError::BadLoad(
-                    "options.tol must be a finite number greater than 0".into(),
-                ));
-            }
-            if options.pcg_max_iter == 0 {
-                return Err(FemError::BadLoad(
-                    "options.maxIter must be at least 1".into(),
-                ));
-            }
-            let (u, iterations, residual) = pcg(
-                &reduced.matrix,
-                &reduced.rhs,
-                options.pcg_tol,
-                options.pcg_max_iter,
-            )?;
-            Ok((u, iterations, residual))
+            let (u, iterations, residual) = solve_pcg(reduced, options)?;
+            Ok((u, iterations, residual, SolverUsed::Pcg))
         }
     }
+}
+
+fn solve_pcg(
+    reduced: &Reduced,
+    options: &SolveOptions,
+) -> Result<(Vec<f64>, usize, f64), FemError> {
+    if !(options.pcg_tol.is_finite() && options.pcg_tol > 0.0) {
+        return Err(FemError::BadLoad(
+            "options.tol must be a finite number greater than 0".into(),
+        ));
+    }
+    if options.pcg_max_iter == 0 {
+        return Err(FemError::BadLoad(
+            "options.maxIter must be at least 1".into(),
+        ));
+    }
+    pcg(
+        &reduced.matrix,
+        &reduced.rhs,
+        options.pcg_tol,
+        options.pcg_max_iter,
+    )
 }
 
 pub(crate) fn validate_material(material: Material) -> Result<(), FemError> {

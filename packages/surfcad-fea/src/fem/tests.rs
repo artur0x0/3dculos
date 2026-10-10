@@ -597,3 +597,33 @@ fn plate_with_a_hole_has_kt_near_three() {
         100.0 * err
     );
 }
+
+#[test]
+fn cholesky_refuses_fill_that_overflows_a_wasm32_index() {
+    // faer sums the factor in I::Signed. usize on wasm32 signs to isize, i.e. i32.
+    // 65535*65536/2 = 2_147_450_880 <= i32::MAX. The next order does not.
+    let max = i32::MAX as u128;
+    assert_eq!(max_cholesky_order(max), 65_535);
+    assert!(cholesky_triangle_fits(65_535, max));
+    assert!(!cholesky_triangle_fits(65_536, max));
+    assert_eq!(
+        guard_cholesky_index_for(SolverUsed::Cholesky, 80_000, max),
+        SolverUsed::Pcg
+    );
+    assert_eq!(
+        guard_cholesky_index_for(SolverUsed::Cholesky, 40_000, max),
+        SolverUsed::Cholesky
+    );
+    assert_eq!(
+        guard_cholesky_index_for(SolverUsed::Pcg, 200_000, max),
+        SolverUsed::Pcg
+    );
+    let n = 80_000usize;
+    let fits = (n as u128) * (n as u128 + 1) / 2 <= isize::MAX as u128;
+    let got = guard_cholesky_index(SolverUsed::Cholesky, n);
+    if fits {
+        assert_eq!(got, SolverUsed::Cholesky);
+    } else {
+        assert_eq!(got, SolverUsed::Pcg);
+    }
+}
