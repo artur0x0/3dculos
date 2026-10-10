@@ -13,6 +13,7 @@
 mod assemble;
 mod contact;
 mod eigen;
+mod fill;
 mod linear;
 mod modal;
 mod pair;
@@ -375,54 +376,12 @@ pub(crate) fn select_solver(choice: SolverChoice, free_dofs: usize, limit: usize
     }
 }
 
-/// Largest `n` whose dense lower triangle `n(n+1)/2` fits in `signed_max`.
-///
-/// faer sums Cholesky column counts in `I::Signed`. For `usize` that is
-/// `isize`, which is `i32` on wasm32. A factor past that limit returns
-/// `FaerError::IndexOverflow` before any numeric values are stored.
-#[cfg(test)]
-pub(crate) fn max_cholesky_order(signed_max: u128) -> usize {
-    let mut lo = 0u128;
-    let mut hi = 1u128 << 33;
-    while lo + 1 < hi {
-        let mid = (lo + hi) / 2;
-        if mid.saturating_mul(mid.saturating_add(1)) / 2 <= signed_max {
-            lo = mid;
-        } else {
-            hi = mid;
-        }
-    }
-    lo as usize
-}
-
-pub(crate) fn cholesky_triangle_fits(n: usize, signed_max: u128) -> bool {
-    let n = n as u128;
-    n.saturating_mul(n.saturating_add(1)) / 2 <= signed_max
-}
-
-/// Keep Cholesky only when even a dense factor fits in faer's signed index.
-pub(crate) fn guard_cholesky_index_for(
-    choice: SolverUsed,
-    n: usize,
-    signed_max: u128,
-) -> SolverUsed {
-    if choice == SolverUsed::Cholesky && !cholesky_triangle_fits(n, signed_max) {
-        SolverUsed::Pcg
-    } else {
-        choice
-    }
-}
-
-pub(crate) fn guard_cholesky_index(choice: SolverUsed, n: usize) -> SolverUsed {
-    guard_cholesky_index_for(choice, n, isize::MAX as u128)
-}
-
 pub(crate) fn solve_reduced(
     reduced: &Reduced,
     choice: SolverUsed,
     options: &SolveOptions,
 ) -> Result<(Vec<f64>, usize, f64, SolverUsed), FemError> {
-    let choice = guard_cholesky_index(choice, reduced.matrix.n);
+    let choice = fill::guard_cholesky_index(choice, &reduced.matrix);
     match choice {
         SolverUsed::Cholesky => match supernodal_cholesky(&reduced.matrix, &reduced.rhs) {
             Ok(u) => Ok((u, 0, 0.0, SolverUsed::Cholesky)),
