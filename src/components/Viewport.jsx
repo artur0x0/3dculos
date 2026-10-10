@@ -7593,10 +7593,10 @@ const Viewport = forwardRef(({
           // Run a script exactly as the Run button does -- validate, execute in the worker,
           // render into the live scene, auto-fit. Resolves { error, mesh } so a headless
           // caller can tell a fresh build from a failure without reading React state.
-          executeScript: async (s) => {
+          executeScript: async (s, opts) => {
             stageExecErrorRef.current = null;
             try {
-              await executeScript(s);
+              await executeScript(s, opts);
             } catch (e) {
               stageExecErrorRef.current = String(e?.message || e);
             }

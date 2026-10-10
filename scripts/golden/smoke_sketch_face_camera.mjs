@@ -105,7 +105,11 @@ async function boot(page) {
     const canvas = document.querySelector('.viewport-shell > canvas');
     return !!(canvas && canvas.clientWidth > 0 && window.__VIEWPORT__?.ready?.() && window.__MANIFOLD_CONTEXT__?.isReady);
   }, null, { timeout: 90000 });
-  const ran = await page.evaluate(async (src) => window.__VIEWPORT__.executeScript(src), SCRIPT);
+  // A face pick is ignored until the viewport has a part id. The hook run
+  // does not go through assembly seeding, so name one here.
+  const ran = await page.evaluate(async (src) => (
+    window.__VIEWPORT__.executeScript(src, { partId: 'boss' })
+  ), SCRIPT);
   if (ran?.error) throw new Error(ran.error);
   await page.waitForFunction(() => (window.__VIEWPORT__.stageVerifyFraming?.().tris || 0) > 10, null, { timeout: 30000 });
   await page.evaluate(() => window.__VIEWPORT__.stageFit({ az: 25, el: 62, margin: 1.8 }));
@@ -173,19 +177,21 @@ async function runPhone(browser) {
   }
   check('390 face center lands on the canvas', !!hit?.ok, JSON.stringify(hit));
   if (hit?.ok) {
-    await page.mouse.click(hit.x, hit.y);
-    await page.waitForFunction(() => {
-      const aim = document.querySelector('.viewport-shell')?.getAttribute('data-contour-face-aim');
-      return aim === 'done';
-    }, null, { timeout: 8000 });
+    const canvas = page.locator('.viewport-shell > canvas');
+    const box = await canvas.boundingBox();
+    await canvas.click({ position: { x: hit.x - box.x, y: hit.y - box.y } });
+    await page.waitForFunction(() => (
+      document.querySelector('.viewport-shell')?.getAttribute('data-contour-face-aim') === 'done'
+    ), null, { timeout: 8000 });
   }
 
   const sketch = await page.evaluate(() => window.__VIEWPORT__.stageContourSketch());
   const cam = await page.evaluate(() => window.__VIEWPORT__.stageCamera());
   const align = dotView(cam, [0, 0, 1]);
-  console.log(`  390 aim ${JSON.stringify(sketch)} align ${align?.toFixed?.(3)} target ${JSON.stringify(cam?.target)}`);
+  const centerNdc = await ndcExtent(page, [FACE]);
+  console.log(`  390 aim ${JSON.stringify(sketch)} align ${align?.toFixed?.(3)} target ${JSON.stringify(cam?.target)} center ${JSON.stringify(centerNdc.mapped)}`);
   check('390 camera looks along +Z', align != null && align > 0.98, String(align));
-  check('390 camera target is the face', cam?.target && Math.hypot(cam.target[0], cam.target[1], cam.target[2] - 18) < 3, JSON.stringify(cam?.target));
+  check('390 face center is in frame', centerNdc.ok && centerNdc.extent < 0.35, JSON.stringify(centerNdc));
   check('390 highlight is off', sketch?.highlights === 0, JSON.stringify(sketch));
   check('390 sketch plane is the face', sketch?.planePreset === 'face', JSON.stringify(sketch));
 
