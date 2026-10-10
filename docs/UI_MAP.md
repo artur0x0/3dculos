@@ -281,6 +281,9 @@ Mobile specifics:
   Undo and Redo stay visible, call the same `handleUndo` / `handleRedo` as the
   editor toolbar, and do not change which chips appear. Strip taps / long-press
   reopen that feature's **creation dialog** (same path on mobile and desktop).
+  A contour chip comes back with the saved profile: a `solveContour` call restores
+  dimensions, names, and constraints, and a point-list polygon restores its points
+  without becoming a constrained contour.
   Sheet-metal chips use `SheetMetalPlate` (blue), same as desktop.
   `hideWhenEmpty` skips the "No features" caption. It does not skip
   **No assembly joints**, which the CAD bar shows when no part is selected.
