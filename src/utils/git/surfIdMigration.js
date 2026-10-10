@@ -3,7 +3,7 @@
  *
  * IndexedDB is rewritten first (callers). Then one outbox commit rewrites
  * `@surf-id` headers and `.surf.json` id / copiedFrom / group id / group
- * partIds / `colors` keys. Only a value that passes `isLocalSurfId` changes, and only by
+ * partIds / `colors` keys / joint ids and joint part refs. Only a value that passes `isLocalSurfId` changes, and only by
  * dropping the prefix. A second pass is a no-op. Part paths stay. Bytes
  * after the header line stay, and the header keeps its line ending.
  * The commit has no deletes.
@@ -15,6 +15,7 @@ import {
   promoteSurfId,
   readSurfId,
   rewriteColorMap,
+  rewriteJointSurfIds,
   rewriteSurfIdFields,
   bytesAfterHeaderLine,
   headerLineEnding,
@@ -57,6 +58,11 @@ function mapFromSurfJson(text) {
   }
   if (raw.colors && typeof raw.colors === 'object' && !Array.isArray(raw.colors)) {
     for (const id of Object.keys(raw.colors)) noteLocal(map, id);
+  }
+  for (const joint of raw.joints || []) {
+    noteLocal(map, joint?.id);
+    noteLocal(map, joint?.a?.part);
+    noteLocal(map, joint?.b?.part);
   }
   return map;
 }
@@ -179,6 +185,11 @@ export function migrateAssemblyRecords({ doc, scripts } = {}) {
   if (doc?.colors && typeof doc.colors === 'object' && !Array.isArray(doc.colors)) {
     for (const id of Object.keys(doc.colors)) noteLocal(map, id);
   }
+  for (const joint of doc?.joints || []) {
+    noteLocal(map, joint?.id);
+    noteLocal(map, joint?.a?.part);
+    noteLocal(map, joint?.b?.part);
+  }
   if (!map.size) return { doc, scripts: scripts || {}, map: {}, changed: false };
 
   let scriptsChanged = false;
@@ -211,8 +222,10 @@ export function migrateAssemblyRecords({ doc, scripts } = {}) {
     })
     : doc?.groups;
   const colors = rewriteColorMap(doc?.colors, map);
+  const joints = rewriteJointSurfIds(doc?.joints, map);
   const nextDoc = { ...doc, parts, ...(Array.isArray(groups) ? { groups } : {}) };
   if (colors !== doc?.colors) nextDoc.colors = colors;
+  if (joints !== doc?.joints) nextDoc.joints = joints;
   return {
     doc: nextDoc,
     scripts: scriptsChanged ? nextScripts : (scripts || {}),

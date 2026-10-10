@@ -32,8 +32,10 @@
  * A missing `groups` key loads as no groups. Dangling part ids are dropped
  * on read; a group left empty is dropped. `colors` is optional and omitted
  * when empty. It is keyed by surf id. A key for a surf id that is not in
- * `parts` is dropped on load and save. Unknown keys are rejected so a typo
- * cannot silently drop data. `version` stays 1.
+ * `parts` is dropped on load and save. `joints` is optional and omitted
+ * when empty. A joint names parts by surf id. One whose part is gone is
+ * dropped on load and save. `placement` on a part is `{ t, q }`. Unknown
+ * keys are rejected so a typo cannot silently drop data. `version` stays 1.
  */
 import {
   ASSEMBLY_VERSION,
@@ -47,11 +49,16 @@ import { normalizeSheetMetalBinding } from '../scs/scsCatalog.js';
 import { PART_EXT, isVaultPartPath, vaultSegment } from './vaultLayout.js';
 import { isSurfId } from './surfId.js';
 import { rewriteSurfJsonLocalIds } from './localPartIdMigration.js';
+import {
+  assemblyJointErrors,
+  placementErrors,
+  pruneDanglingSurfJoints,
+} from '../jointSchema.js';
 
 export const SURF_JSON_FORMAT = 'surfcad.assembly';
 export const SURF_JSON_VERSION = 1;
-const TOP_KEYS = new Set(['format', 'version', 'name', 'activeId', 'parts', 'groups', 'colors']);
-const PART_KEYS = new Set(['id', 'path', 'name', 'visible', 'order', 'position', 'sheetMetal', 'copiedFrom']);
+const TOP_KEYS = new Set(['format', 'version', 'name', 'activeId', 'parts', 'groups', 'colors', 'joints']);
+const PART_KEYS = new Set(['id', 'path', 'name', 'visible', 'order', 'position', 'placement', 'sheetMetal', 'copiedFrom']);
 const GROUP_KEYS = new Set(['id', 'name', 'source', 'partIds']);
 
 /**
@@ -153,6 +160,15 @@ export function validateSurfJson(input) {
       if (typeof part.visible !== 'boolean') errors.push(`${at}.visible must be a boolean`);
       if (!Number.isInteger(part.order) || part.order < 0) errors.push(`${at}.order must be a non-negative integer`);
       if (part.position !== undefined && !partPosition(part)) errors.push(`${at}.position must be [x, y, z] numbers`);
+      if (part.placement !== undefined) {
+        errors.push(...placementErrors(part.placement, `${at}.placement`));
+        const pos = part.position !== undefined ? partPosition(part) : null;
+        const t = part.placement && part.placement.t;
+        if (pos && Array.isArray(t) && t.length === 3
+          && (pos[0] !== t[0] || pos[1] !== t[1] || pos[2] !== t[2])) {
+          errors.push(`${at}.position must equal placement.t`);
+        }
+      }
       if (part.sheetMetal !== undefined && !normalizeSheetMetalBinding(part.sheetMetal)) {
         errors.push(`${at}.sheetMetal must be { sku: string, … }`);
       }
@@ -205,6 +221,12 @@ export function validateSurfJson(input) {
     );
     errors.push(...assemblyColorErrors(raw.colors, live));
   }
+  if (raw.joints !== undefined) {
+    const live = (Array.isArray(raw.parts) ? raw.parts : [])
+      .map((part) => part?.id)
+      .filter((id) => isSurfId(id));
+    errors.push(...assemblyJointErrors(raw.joints, live));
+  }
   return { ok: errors.length === 0, errors };
 }
 
@@ -228,6 +250,9 @@ export function toSurfJson(doc) {
       row.visible = p.visible;
       row.order = p.order;
       if (p.position) row.position = p.position;
+      if (p.placement) {
+        row.placement = { t: p.placement.t.slice(), q: p.placement.q.slice() };
+      }
       if (p.sheetMetal) row.sheetMetal = p.sheetMetal;
       if (p.copiedFrom) row.copiedFrom = p.copiedFrom;
       return row;
@@ -242,6 +267,7 @@ export function toSurfJson(doc) {
     }));
   }
   if (flat.colors) out.colors = flat.colors;
+  if (flat.joints) out.joints = flat.joints;
   const check = validateSurfJson(out);
   if (!check.ok) throw new Error(`Invalid .surf.json: ${check.errors.join('; ')}`);
   return out;
@@ -266,7 +292,7 @@ export function parseSurfJson(input) {
     prepared = rewritten === text ? input : JSON.parse(rewritten);
   }
   const parsed = typeof prepared === 'string' ? JSON.parse(prepared) : prepared;
-  const raw = pruneDanglingColors(pruneDanglingGroupPartIds(parsed));
+  const raw = pruneDanglingSurfJoints(pruneDanglingColors(pruneDanglingGroupPartIds(parsed)));
   const check = validateSurfJson(raw);
   if (!check.ok) throw new Error(`Invalid .surf.json: ${check.errors.join('; ')}`);
   return serializeAssembly({
@@ -282,9 +308,11 @@ export function parseSurfJson(input) {
       visible: p.visible,
       order: p.order,
       position: p.position,
+      placement: p.placement,
       sheetMetal: p.sheetMetal,
     })),
     groups: raw.groups,
     colors: raw.colors,
+    joints: raw.joints,
   });
 }

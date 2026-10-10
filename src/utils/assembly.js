@@ -3,11 +3,18 @@
  *
  * The saved JSON lists parts by id. It never contains script source.
  * Git ids are repo paths. Local ids are bare IndexedDB keys, with no sync prefix.
- * A position, when present, is a translation. There are no mates.
+ * A position, when present, is the translation. A placement, when present,
+ * is that translation plus a unit quaternion. Joints name parts by surf id
+ * and live on this document. Part scripts are not modified.
  */
 
 import { normalizeSheetMetalBinding } from './scs/scsCatalog.js';
 import { isSurfId } from './git/surfId.js';
+import {
+  jointedSurfIds,
+  normalizeAssemblyJoints,
+  poseFieldsForPart,
+} from './jointSchema.js';
 
 export const ASSEMBLY_VERSION = 1;
 
@@ -78,9 +85,10 @@ export function newLocalPartId() {
  *   source: 'git' | 'local',
  *   name: string,
  *   activeId: string | null,
- *   parts: [{ id, name, visible, order, position?, surfId?, isSynced? }]
+ *   parts: [{ id, name, visible, order, position?, placement?, surfId?, isSynced? }]
  *   groups?: [{ id, name, source, partIds }]
  *   colors?: { [surfId]: { part?: '#rrggbb', faces?: [...] } }
+ *   joints?: [{ id, name, type, value?, sense?, opposed?, a, b? }]
  * }
  * `name` is the assembly name. A blank name is saved as Assembly.
  * `script` and any other fields are dropped. `isSynced` is local only
@@ -91,6 +99,10 @@ export function newLocalPartId() {
  * ids. A part is in at most one group. Empty groups and dangling ids are
  * dropped. No `groups` key when there are none. `source` is the source
  * assembly path, or null after that assembly is deleted (the name stays).
+ * `joints` name parts by surf id. A joint whose part is gone is dropped.
+ * No `joints` key when there are none. `placement` is `{ t, q }`. It is
+ * written when the quaternion is not identity, or when a joint names the
+ * part. `position` stays the translation and equals `t` when both exist.
  */
 
 /** Shown and saved when a document has no name of its own. */
@@ -516,22 +528,28 @@ export function normalizeAssemblyColors(colors, parts) {
 
 export function serializeAssembly(doc) {
   const source = doc?.source === 'git' ? 'git' : 'local';
-  const parts = sortParts(doc?.parts).map((part, index) => {
+  const drafted = sortParts(doc?.parts).map((part, index) => {
     const row = {
       id: String(part?.id || ''),
       name: String(part?.name || 'Part'),
       visible: part?.visible !== false,
       order: index,
     };
-    const position = partPosition(part);
-    if (position) row.position = position;
     const sheetMetal = normalizeSheetMetalBinding(part?.sheetMetal);
     if (sheetMetal) row.sheetMetal = sheetMetal;
     if (typeof part?.surfId === 'string' && part.surfId) row.surfId = part.surfId;
     if (typeof part?.copiedFrom === 'string' && part.copiedFrom) row.copiedFrom = part.copiedFrom;
     if (typeof part?.isSynced === 'boolean') row.isSynced = part.isSynced;
+    return { row, part };
+  }).filter((item) => item.row.id);
+  const joints = normalizeAssemblyJoints(doc?.joints, drafted.map((item) => item.row));
+  const jointed = jointedSurfIds(joints);
+  const parts = drafted.map(({ row, part }) => {
+    const pose = poseFieldsForPart(part, jointed.has(row.surfId), partPosition(part));
+    if (pose.position) row.position = pose.position;
+    if (pose.placement) row.placement = pose.placement;
     return row;
-  }).filter((part) => part.id);
+  });
   const wanted = doc?.activeId != null ? String(doc.activeId) : '';
   const activeId = parts.some((part) => part.id === wanted)
     ? wanted
@@ -548,6 +566,7 @@ export function serializeAssembly(doc) {
   };
   if (groups.length) out.groups = groups;
   if (colors) out.colors = colors;
+  if (joints) out.joints = joints;
   return out;
 }
 
@@ -567,6 +586,7 @@ export function parseAssemblyDocument(input) {
       visible: part?.visible,
       order: part?.order ?? index,
       position: part?.position,
+      placement: part?.placement,
       sheetMetal: part?.sheetMetal,
       surfId: part?.surfId,
       copiedFrom: part?.copiedFrom,
@@ -574,6 +594,7 @@ export function parseAssemblyDocument(input) {
     })),
     groups: raw.groups,
     colors: raw.colors,
+    joints: raw.joints,
   });
 }
 
@@ -640,6 +661,7 @@ export function setPartSheetMetal(doc, id, binding) {
 
 /**
  * Drop one part. Other rows stay, including position.
+ * A joint that named the dropped part is dropped with it.
  * The active id stays on a remaining row, or is empty when none remain.
  */
 export function removePart(doc, id) {
