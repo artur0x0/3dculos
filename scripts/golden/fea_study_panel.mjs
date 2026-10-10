@@ -412,7 +412,12 @@ async function sampleSides(page) {
         let leftHeat = 0;
         let rightHeat = 0;
         for (const p of pts) {
-          const heat = p.r + p.g - p.b;
+          // Viridis: yellow is hot (r+g−b large) and purple is cold. Above
+          // yield the skin is pure magenta, which scores about 0 on that
+          // sum, so a root past the PLA yield would look colder than the
+          // tip. Rank that overflow above yellow.
+          const overflow = p.r > 170 && p.b > 170 && p.g < 50;
+          const heat = overflow ? (600 + p.r) : (p.r + p.g - p.b);
           if (p.x <= leftCut) {
             leftN += 1;
             leftHeat += heat;
