@@ -66,6 +66,7 @@ const FilletModeChip = ({
       title={heading}
       subtitle={subtitle}
       compact={compact}
+      fullLeft
       onCancel={onDismiss}
       onConfirm={onAccept}
       cardAttrs={{

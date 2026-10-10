@@ -29,9 +29,12 @@ import {
  * - note: node on the left of Confirm
  * - compact: phone. The card bottom docks to the hidden stage switcher.
  *   Desktop when false (10px, no switcher to hide).
- * - fullLeft: the left tool rail is not there. The left edge is the 10px
- *   pane inset. The right edge stays clear of the right rail. Other cards
- *   leave this false and stay between both rails.
+ * - fullLeft: the left helper rail is not in the pane. The left edge is the
+ *   10px pane inset. The right edge stays clear of the right rail. Fillet,
+ *   chamfer, shell, draft, move face, delete face, cut, move, boolean, paint,
+ *   and Analyze pass this, on phone and desktop. The sheet metal picker,
+ *   feature edit, and any card whose left rail is still there leave this
+ *   false and stay centered between both rails.
  * - bodyAttrs / cardAttrs: extra data attributes for the pilot that owns the card
  *
  * The card is pointer-events-auto and stops pointerdown. The pane around it

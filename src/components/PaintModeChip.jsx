@@ -34,6 +34,7 @@ export function PaintModeChip({
       title="Paint"
       subtitle="Tap a face. Double-tap paints the body."
       compact={compact}
+      fullLeft
       onCancel={onDismiss}
       onConfirm={onConfirm}
       confirmDisabled={!canConfirm}
