@@ -1,0 +1,318 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { serializeAssembly } from '../utils/assembly.js';
+import { composeMoveCommit } from '../utils/moveMode.js';
+import { displayToMm, lengthCaption, lengthToDisplay } from '../utils/displayUnit.js';
+import { refreshAssemblyJoints } from './refreshJoints.js';
+import {
+  SAME_PART_MESSAGE,
+  acceptJointPick,
+  applyAssemblySnapshot,
+  applyJointCard,
+  assemblyHistoryCanUndo,
+  buildJointRecord,
+  cardFromJoint,
+  dismissJointEdit,
+  draftFromPicks,
+  emptyClickCadSelection,
+  jointChipTitle,
+  jointChips,
+  jointConfirmDisabled,
+  jointsChromeMounted,
+  nextJointName,
+  pushAssemblyHistory,
+  seedAssemblyHistory,
+  stripUndoLabel,
+  stripUndoTarget,
+  suggestJointType,
+  typeFits,
+  undoJointStrip,
+} from './jointUi.js';
+
+const A = '2026-10-10-03-00-00-0001-aaaa';
+const B = '2026-10-10-03-00-00-0002-bbbb';
+const J = '2026-10-10-03-00-00-0003-cccc';
+
+const face = (surfId, name, at, n) => ({
+  partId: name,
+  surfId,
+  partName: name,
+  kind: 'face',
+  planar: true,
+  axis: false,
+  key: { at, n, area: 1 },
+});
+
+const axis = (surfId, name) => ({
+  partId: name,
+  surfId,
+  partName: name,
+  kind: 'axis',
+  planar: false,
+  axis: true,
+  key: { at: [0, 0, 0], dir: [0, 0, 1], radius: 2 },
+});
+
+const parts = [
+  { id: 'a.js', name: 'Shaft', visible: true, order: 0, surfId: A, position: [0, 0, 0] },
+  {
+    id: 'b.js',
+    name: 'Housing',
+    visible: true,
+    order: 1,
+    surfId: B,
+    position: [0, 0, 5],
+    placement: { t: [0, 0, 5], q: [0, 0, 0, 1] },
+  },
+];
+
+function docWith(joints) {
+  return {
+    version: 1,
+    source: 'local',
+    name: 'Assembly',
+    activeId: 'a.js',
+    parts,
+    joints,
+  };
+}
+
+test('two planar faces suggest coincident and two axes suggest concentric', () => {
+  const faces = [face(A, 'Shaft', [0, 0, 1], [0, 0, 1]), face(B, 'Housing', [0, 0, -1], [0, 0, -1])];
+  assert.equal(suggestJointType(faces), 'coincident');
+  assert.equal(suggestJointType([axis(A, 'Shaft'), axis(B, 'Housing')]), 'concentric');
+  assert.equal(suggestJointType([face(A, 'Shaft', [0, 0, 1], [0, 0, 1])]), null);
+  assert.equal(typeFits('fixed', faces), false);
+});
+
+test('a second tap on the same part is refused', () => {
+  const first = acceptJointPick([], face(A, 'Shaft', [0, 0, 1], [0, 0, 1]));
+  const second = acceptJointPick(first.picks, face(A, 'Shaft', [0, 0, -1], [0, 0, -1]));
+  assert.equal(second.refuse, true);
+  assert.equal(second.message, SAME_PART_MESSAGE);
+  assert.equal(second.picks.length, 1);
+});
+
+test('fixed is available after one tap and is not the two-face suggestion', () => {
+  const one = draftFromPicks(null, [face(A, 'Shaft', [0, 0, 1], [0, 0, 1])], { joints: [] });
+  assert.equal(one.suggested, null);
+  assert.equal(typeFits('fixed', one.picks), true);
+  const grounded = { ...one, type: 'fixed', userPickedType: true };
+  assert.equal(jointConfirmDisabled({ card: grounded }), false);
+  const two = draftFromPicks(null, [
+    face(A, 'Shaft', [0, 0, 1], [0, 0, 1]),
+    face(B, 'Housing', [0, 0, -1], [0, 0, -1]),
+  ], { joints: [] });
+  assert.equal(two.suggested, 'coincident');
+  assert.notEqual(two.suggested, 'fixed');
+});
+
+test('confirm writes a joint and leaves the scripts object untouched', () => {
+  const card = draftFromPicks(null, [
+    face(A, 'Shaft', [0, 0, 0.5], [0, 0, 1]),
+    face(B, 'Housing', [0, 0, -0.5], [0, 0, -1]),
+  ], { joints: [] });
+  const scripts = { 'a.js': 'let part = 1;\n' };
+  const doc = docWith(undefined);
+  const result = applyJointCard({
+    doc,
+    scripts,
+    card,
+    catalogs: {
+      [A]: { faces: [card.picks[0].key] },
+      [B]: { faces: [card.picks[1].key] },
+    },
+    preempt: () => { throw new Error('preempt'); },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.scripts, scripts);
+  assert.equal(result.doc.joints.length, 1);
+  assert.equal(result.doc.joints[0].type, 'coincident');
+  assert.equal(result.doc.joints[0].name, 'Coincident 1');
+  assert.equal(dismissJointEdit(doc), doc);
+});
+
+test('a confirm whose reference does not match is not written', () => {
+  const card = draftFromPicks(null, [
+    face(A, 'Shaft', [0, 0, 0.5], [0, 0, 1]),
+    face(B, 'Housing', [0, 0, -0.5], [0, 0, -1]),
+  ], { joints: [] });
+  const scripts = { 'a.js': 'x' };
+  const doc = docWith(undefined);
+  const result = applyJointCard({
+    doc,
+    scripts,
+    card,
+    catalogs: {
+      [A]: { faces: [{ at: [0, 0, 0.5], n: [0, 0, 1], area: 1 }] },
+      [B]: { faces: [{ at: [8, 0, -0.5], n: [0, 0, -1], area: 1 }] },
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.doc, doc);
+  assert.equal(result.scripts, scripts);
+  assert.match(result.message, /Housing/);
+});
+
+test('a locked confirm writes nothing and does not preempt', () => {
+  let calls = 0;
+  const scripts = { 'a.js': 'x' };
+  const doc = docWith([]);
+  const result = applyJointCard({
+    doc,
+    scripts,
+    card: { type: 'fixed', picks: [face(A, 'Shaft', [0, 0, 1], [0, 0, 1])] },
+    locked: true,
+    preempt: () => { calls += 1; },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.doc, doc);
+  assert.equal(result.scripts, scripts);
+  assert.equal(calls, 0);
+});
+
+test('delete removes the joint and does not change scripts', () => {
+  const joint = {
+    id: J,
+    name: 'Coincident 1',
+    type: 'coincident',
+    opposed: true,
+    a: { part: A, kind: 'face', key: { at: [0, 0, 0.5], n: [0, 0, 1], area: 1 } },
+    b: { part: B, kind: 'face', key: { at: [0, 0, -0.5], n: [0, 0, -1], area: 1 } },
+  };
+  const scripts = { 'a.js': 'script' };
+  const doc = docWith([joint]);
+  const result = applyJointCard({
+    doc,
+    scripts,
+    card: cardFromJoint(joint, doc),
+    action: 'delete',
+    catalogs: {},
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.scripts, scripts);
+  assert.equal(serializeAssembly(result.doc).joints, undefined);
+});
+
+test('strip undo restores joints and placements and leaves scripts', () => {
+  const before = docWith(undefined);
+  const after = docWith([{
+    id: J,
+    name: 'Fixed 1',
+    type: 'fixed',
+    a: { part: A },
+  }]);
+  after.parts = after.parts.map((part) => (
+    part.surfId === B
+      ? { ...part, placement: { t: [1, 2, 3], q: [0, 0, 0, 1] } }
+      : part
+  ));
+  const history = pushAssemblyHistory(seedAssemblyHistory(before), before, after);
+  const scripts = { 'a.js': 'stay' };
+  const step = undoJointStrip({ history, doc: after, scripts });
+  assert.equal(step.changed, true);
+  assert.equal(step.scripts, scripts);
+  assert.equal(step.doc.joints, undefined);
+  assert.deepEqual(step.doc.parts.find((part) => part.surfId === B).position, [0, 0, 5]);
+  assert.equal(stripUndoTarget(null), 'joint');
+  assert.equal(stripUndoTarget('a.js'), 'part');
+  assert.equal(stripUndoLabel(null), 'Undo joint');
+  assert.equal(stripUndoLabel('a.js'), 'Undo');
+  const reseed = seedAssemblyHistory(after);
+  assert.equal(assemblyHistoryCanUndo(reseed), false);
+});
+
+test('an empty click clears the CAD part and leaves the active part', () => {
+  const next = emptyClickCadSelection({ cadPartId: 'b.js', activeId: 'a.js' });
+  assert.equal(next.cadPartId, null);
+  assert.equal(next.activeId, 'a.js');
+  const held = emptyClickCadSelection({ cadPartId: 'b.js', activeId: 'a.js', featureSession: true });
+  assert.equal(held.cadPartId, 'b.js');
+  assert.equal(held.activeId, 'a.js');
+});
+
+test('broken and conflict chips carry the name and the sentence', () => {
+  const joint = { id: J, name: 'Coincident 1', type: 'coincident' };
+  assert.equal(
+    jointChipTitle(joint, 'broken', 'Face not found on Housing'),
+    'Coincident 1 — Face not found on Housing',
+  );
+  const chips = jointChips(docWith([joint]), {
+    statuses: { [J]: 'conflict' },
+    messages: { [J]: 'Joint "Coincident 1" conflicts' },
+  });
+  assert.equal(chips[0].invalid, true);
+  assert.match(chips[0].title, /Coincident 1/);
+  assert.match(chips[0].title, /conflicts/);
+});
+
+test('game mode mounts no joint card', () => {
+  assert.equal(jointsChromeMounted({ appMode: 'game' }), false);
+  assert.equal(jointsChromeMounted({ appMode: 'cad', featureSession: true }), false);
+  assert.equal(jointsChromeMounted({ appMode: 'cad' }), true);
+});
+
+test('distance display converts and the stored value stays millimetres', () => {
+  assert.equal(lengthCaption('Distance', 'in'), 'Distance in');
+  assert.equal(lengthToDisplay(25.4, 'in'), 1);
+  const mm = displayToMm('1', 'in');
+  assert.equal(mm, 25.4);
+  const card = {
+    type: 'distance',
+    name: 'Distance 1',
+    id: J,
+    valueMm: mm,
+    sense: 1,
+    picks: [
+      face(A, 'Shaft', [0, 0, 1], [0, 0, 1]),
+      face(B, 'Housing', [0, 0, -1], [0, 0, 1]),
+    ],
+  };
+  const built = buildJointRecord(card, { id: J, name: card.name });
+  assert.equal(built.ok, true);
+  assert.equal(built.joint.value, 25.4);
+  assert.equal(built.joint.sense, 1);
+});
+
+test('names come from the numbered allocator', () => {
+  assert.equal(nextJointName('coincident', []), 'Coincident 1');
+  assert.equal(nextJointName('coincident', [{ name: 'Coincident 1' }]), 'Coincident 2');
+});
+
+test('Move Body by 10 mm is the only script change and breaks the joint', () => {
+  const script = 'let part = cube([20, 20, 20]);\nreturn part;\n';
+  const moved = composeMoveCommit(script, {
+    direction: 'xyz',
+    dx: 10,
+    dy: 0,
+    dz: 0,
+    target: { at: [10, 10, 10] },
+    body: 'part',
+  });
+  assert.equal(moved.ok, true);
+  assert.match(moved.buffer, /move\(part, \[10, 0, 0\]/);
+  assert.equal((moved.buffer.match(/\bmove\s*\(/g) || []).length, 1);
+  assert.equal(script.includes('move('), false);
+  const joint = {
+    id: J,
+    name: 'Coincident 1',
+    type: 'coincident',
+    opposed: true,
+    a: { part: A, kind: 'face', key: { at: [0, 0, 0.5], n: [0, 0, 1], area: 1 } },
+    b: { part: B, kind: 'face', key: { at: [0, 0, -0.5], n: [0, 0, -1], area: 1 } },
+  };
+  const doc = docWith([joint]);
+  const seed = doc.parts[1].placement.t.slice();
+  const refreshed = refreshAssemblyJoints({
+    doc,
+    catalogs: {
+      [A]: { faces: [{ at: [10, 0, 0.5], n: [0, 0, 1], area: 1 }] },
+      [B]: { faces: [{ at: [0, 0, -0.5], n: [0, 0, -1], area: 1 }] },
+    },
+  });
+  assert.equal(refreshed.statuses[J], 'broken');
+  assert.equal(refreshed.changed, false);
+  assert.deepEqual(refreshed.doc.parts[1].placement.t, seed);
+  const restored = applyAssemblySnapshot(doc, seedAssemblyHistory(doc).commits[0]);
+  assert.equal(restored.joints[0].id, J);
+});

@@ -36,6 +36,7 @@ import SheetMetalPlate from './icons/SheetMetalPlate';
 import { parseFeatureMarkers, featureShowsSeparateBody } from '../utils/featureMarkers';
 import { featureBarWindowMode } from '../utils/featureBarLayout';
 import { chipTone } from '../utils/featureChipTone';
+import { JOINT_TYPE_LABEL } from '../joints/jointUi';
 
 /**
  * Slice Mobile B.1 → C.2 — feature strip (+ desktop seam).
@@ -89,6 +90,19 @@ const FEATURE_ICONS = Object.freeze({
   workplane: Layers3,
   sheetMetal: SheetMetalPlate,
 });
+
+const JOINT_ICONS = Object.freeze({
+  coincident: AlignVerticalJustifyCenter,
+  concentric: Circle,
+  distance: Move,
+  angle: Angle,
+  fixed: Focus,
+});
+
+function JointGlyph({ type, size }) {
+  const Icon = JOINT_ICONS[type] || AlignVerticalJustifyCenter;
+  return <Icon size={size} strokeWidth={2} aria-hidden="true" />;
+}
 
 function FeatureGlyph({ kind, size }) {
   const Icon = FEATURE_ICONS[kind] || NotebookPen;
@@ -171,15 +185,24 @@ export default function FeatureStrip({
    * is greater than 1 — so a later Boolean union clears it.
    */
   bodyCount = 0,
+  /** Joint chips. An array (including empty) switches this strip to joints. */
+  joints = null,
+  onSelectJoint,
+  undoLabel = 'Undo',
+  redoLabel = 'Redo',
 }) {
   const features = useMemo(() => parseFeatureMarkers(script), [script]);
+  const jointMode = Array.isArray(joints);
   const horizontal = orientation === 'horizontal';
   const stripSide = side || (horizontal ? 'top' : 'right');
   const between = stripSide === 'between';
   const scrollRef = useRef(null);
   const trackRef = useRef(null);
   const [featureWindow, setFeatureWindow] = useState('fit');
-  const lastFeatureId = features.length ? features[features.length - 1].id : null;
+  const lastFeatureId = jointMode
+    ? (joints.length ? joints[joints.length - 1].id : null)
+    : (features.length ? features[features.length - 1].id : null);
+  const listLength = jointMode ? joints.length : features.length;
 
   // Vertical rails: when the feature list grows, scroll so the last chip is
   // visible. Key off length + last id so unrelated re-renders don't yank
@@ -194,7 +217,7 @@ export default function FeatureStrip({
       return;
     }
     el.scrollTop = el.scrollHeight;
-  }, [features.length, lastFeatureId, horizontal]);
+  }, [listLength, lastFeatureId, horizontal]);
 
   // Mobile bar: center the chips while they fit. Once they overflow, the
   // visible window is the tail (latest features); earlier chips sit to the start.
@@ -226,7 +249,7 @@ export default function FeatureStrip({
     ro.observe(scroller);
     ro.observe(track);
     return () => ro.disconnect();
-  }, [horizontal, features.length, lastFeatureId, featureWindow]);
+  }, [horizontal, listLength, lastFeatureId, featureWindow]);
 
   if (hidden) {
     return (
@@ -239,8 +262,8 @@ export default function FeatureStrip({
     );
   }
 
-  if (!horizontal && features.length === 0) {
-    if (hideWhenEmpty) return null;
+  if (!horizontal && listLength === 0) {
+    if (hideWhenEmpty && !jointMode) return null;
     return (
       <div
         className={between
@@ -253,6 +276,7 @@ export default function FeatureStrip({
             pb-[max(0.5rem,env(safe-area-inset-bottom,0px))]`}
         data-feature-strip=""
         data-feature-strip-empty=""
+        data-assembly-joints={jointMode ? '' : undefined}
         data-feature-strip-orientation="vertical"
         data-feature-strip-side={stripSide}
         data-feature-strip-placement={between ? 'desktop-seam' : undefined}
@@ -262,7 +286,7 @@ export default function FeatureStrip({
           className="text-[9px] text-gray-400 font-sans leading-tight text-center writing-mode-vertical"
           style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}
         >
-          No features
+          {jointMode ? 'No assembly joints' : 'No features'}
         </div>
       </div>
     );
@@ -277,10 +301,11 @@ export default function FeatureStrip({
         data-feature-strip=""
         data-feature-strip-orientation="horizontal"
         data-feature-strip-side="top"
-        data-feature-strip-empty={features.length === 0 ? '' : undefined}
+        data-feature-strip-empty={listLength === 0 ? '' : undefined}
+        data-assembly-joints={jointMode ? '' : undefined}
         data-feature-bar-layout="undo-features-redo"
         role="navigation"
-        aria-label="Modeling features"
+        aria-label={jointMode ? 'Assembly joints' : 'Modeling features'}
       >
         <div
           className="shrink-0 pl-[max(0.5rem,env(safe-area-inset-left))]"
@@ -291,8 +316,8 @@ export default function FeatureStrip({
             onClick={onUndo}
             disabled={!canUndo}
             className={historyBtn}
-            title="Undo"
-            aria-label="Undo"
+            title={undoLabel}
+            aria-label={undoLabel}
             data-feature-bar-undo=""
           >
             <Undo size={16} strokeWidth={2} aria-hidden="true" />
@@ -316,12 +341,37 @@ export default function FeatureStrip({
               className="flex w-max flex-row items-center gap-1.5"
               data-feature-bar-track=""
             >
-            {features.length === 0 && !hideWhenEmpty && (
+            {jointMode && joints.length === 0 && (
+              <div className="text-[9px] text-gray-400 font-sans whitespace-nowrap px-1" data-assembly-joints-empty="">
+                No assembly joints
+              </div>
+            )}
+            {!jointMode && features.length === 0 && !hideWhenEmpty && (
               <div className="text-[9px] text-gray-400 font-sans whitespace-nowrap px-1">
                 No features
               </div>
             )}
-            {features.map((f) => {
+            {jointMode && joints.map((joint) => {
+              const invalid = !!joint.invalid;
+              return (
+                <button
+                  key={joint.id}
+                  type="button"
+                  data-joint-id={joint.id}
+                  data-joint-type={joint.type}
+                  data-joint-status={joint.status || 'ok'}
+                  aria-label={joint.name || JOINT_TYPE_LABEL[joint.type] || 'Joint'}
+                  aria-invalid={invalid || undefined}
+                  title={joint.title || joint.name}
+                  onClick={() => onSelectJoint?.(joint)}
+                  className={`relative shrink-0 rounded-lg p-1.5 flex items-center justify-center
+                    border transition-colors active:opacity-80 ${chipTone(false, false, invalid)}`}
+                >
+                  <JointGlyph type={joint.type} size={16} />
+                </button>
+              );
+            })}
+            {!jointMode && features.map((f) => {
               const active = activeId === f.id;
               const failed = !!failedIds?.has?.(f.id);
               const typeIndex = f.typeIndex || 1;
@@ -363,8 +413,8 @@ export default function FeatureStrip({
             onClick={onRedo}
             disabled={!canRedo}
             className={historyBtn}
-            title="Redo"
-            aria-label="Redo"
+            title={redoLabel}
+            aria-label={redoLabel}
             data-feature-bar-redo=""
           >
             <Redo size={16} strokeWidth={2} aria-hidden="true" />
@@ -390,9 +440,30 @@ export default function FeatureStrip({
       data-feature-strip-side={stripSide}
       data-feature-strip-placement={between ? 'desktop-seam' : undefined}
       role="navigation"
-      aria-label="Modeling features"
+      aria-label={jointMode ? 'Assembly joints' : 'Modeling features'}
+      data-assembly-joints={jointMode ? '' : undefined}
     >
-      {features.map((f) => {
+      {jointMode && joints.map((joint) => {
+        const invalid = !!joint.invalid;
+        return (
+          <button
+            key={joint.id}
+            type="button"
+            data-joint-id={joint.id}
+            data-joint-type={joint.type}
+            data-joint-status={joint.status || 'ok'}
+            aria-label={joint.name || JOINT_TYPE_LABEL[joint.type] || 'Joint'}
+            aria-invalid={invalid || undefined}
+            title={joint.title || joint.name}
+            onClick={() => onSelectJoint?.(joint)}
+            className={`relative shrink-0 rounded-lg p-1.5 flex items-center justify-center
+              border transition-colors active:opacity-80 ${chipTone(false, false, invalid)}`}
+          >
+            <JointGlyph type={joint.type} size={16} />
+          </button>
+        );
+      })}
+      {!jointMode && features.map((f) => {
         const active = activeId === f.id;
         const failed = !!failedIds?.has?.(f.id);
         const typeIndex = f.typeIndex || 1;
