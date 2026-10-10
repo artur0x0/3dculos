@@ -14,7 +14,7 @@
  * side wall is a planar annular sector bounded by two arcs. Holes are two
  * half cylinders; a countersink adds two half cones on the +N face.
  */
-import { normalizeSheetSpec, panelLocal, panelPoint, solveSheet, vAdd, vDot, vMul, vSub } from './sheetModel.js';
+import { normalizeSheetSpec, notchRect, panelLocal, panelPoint, solveSheet, vAdd, vDot, vMul, vSub } from './sheetModel.js';
 
 const EPS = 1e-6;
 const r6 = (n) => Math.round(n * 1e6) / 1e6;
@@ -76,7 +76,7 @@ export function buildSheetBrep(rawSpec) {
     const a1 = vAdd(vAdd(tb.E0, vMul(tb.q1, tb.e)), vMul(tb.depth, tb.d));
     if (tb.depth > EPS && tb.q1 - tb.q0 > EPS) rects.push(rect2(to2(a0), to2(a1), tb.panel));
   }
-  const cuts = flat.notches.map((n) => ({ x0: n.u0, x1: n.u1, y0: n.v0, y1: n.v1 }));
+  const cuts = flat.notches.map((n) => notchRect(base, flat.panels, n));
 
   // Allowed seams: a strip touches its parent panel and its child flange; a
   // 0° bend (no strip) joins parent and child directly.

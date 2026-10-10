@@ -8,15 +8,19 @@
  *  hard  hole-edge     hole edge to a free panel edge < SCS min_hole_to_edge
  *  hard  hole-bend     tapped hole centre → bend line < SCS min_hole_cl_to_bend_line
  *  soft  hole-bend     any hole edge within 2.5·t + r of a bend (may distort)
- *  hard  flange        flange length < SCS min_flange_length_after_bend
- *  hard  angle         bend angle outside SCS min … max_bend_angle
- *  hard  bend-length   bend line longer than SCS max_bend_length
- *  hard  no-bending    bends on a SKU without the bending service
- *  hard  flat-size     flat pattern outside SCS min / max flat (bent) or part size
- *  soft  tab-small     tab width or depth < max(t, min bridge)
+ *  hard  flange         flange length < SCS min_flange_length_after_bend
+ *  hard  flange-before  parent span across the bend < SCS min_flange_length_before_bend
+ *  hard  angle          bend angle outside SCS min … max_bend_angle
+ *  hard  bend-length    bend line longer than SCS max_bend_length
+ *  hard  no-bending     bends on a SKU without the bending service
+ *  hard  collide        a bend's blank or its swept fold hits another flange
+ *  hard  overlap        two flat pieces cover the same area (merged DXF)
+ *  hard  flat-size      flat pattern outside SCS min / max flat (bent) or part size
+ *  soft  tab-small      tab width or depth < max(t, min bridge)
  */
 import { normalizeSheetSpec, solveSheet } from './sheetModel.js';
 import { sheetFlatPattern } from './sheetFlat.js';
+import { bendInterference, blankOverlap, flangeLabel } from './sheetInterference.js';
 import { formatSheetLength, formatSheetPair } from './sheetUnits.js';
 
 function fitsSize(size, lim, { min = false } = {}) {
@@ -54,6 +58,13 @@ export function checkSheetDfm(rawSpec, { unit = 'mm' } = {}) {
     if (L.minFlange != null && b.length < L.minFlange - 1e-6) {
       push('fail', 'flange', `Bend ${b.id}: flange ${fmt(b.length)} is below SCS min ${fmt(L.minFlange)}.`, b.id);
     }
+    if (L.minFlangeBefore != null) {
+      const parent = solved.panels.find((p) => p.id === b.panel);
+      const span = parent ? (b.edge.startsWith('u') ? parent.u1 - parent.u0 : parent.v1 - parent.v0) : null;
+      if (span != null && span < L.minFlangeBefore - 1e-6) {
+        push('fail', 'flange-before', `Bend ${b.id}: ${fmt(span)} of material before the bend is below SCS min ${fmt(L.minFlangeBefore)}.`, b.id);
+      }
+    }
     if (L.maxAngle != null && b.angle > L.maxAngle + 1e-6) {
       push('fail', 'angle', `Bend ${b.id}: ${b.angle}° exceeds SCS max ${L.maxAngle}°.`, b.id);
     }
@@ -63,6 +74,14 @@ export function checkSheetDfm(rawSpec, { unit = 'mm' } = {}) {
     if (L.maxBendLength != null && b.q1 - b.q0 > L.maxBendLength + 1e-6) {
       push('fail', 'bend-length', `Bend ${b.id}: bend line ${fmt(b.q1 - b.q0)} exceeds SCS max ${fmt(L.maxBendLength)}.`, b.id);
     }
+  }
+  for (const b of spec.bends) {
+    const hit = bendInterference(spec, b.id);
+    if (!hit.ok) push('fail', 'collide', hit.reason, b.id);
+  }
+  const overlap = blankOverlap(spec);
+  if (overlap) {
+    push('fail', 'overlap', `Overlaps ${flangeLabel(spec, overlap.a)} and ${flangeLabel(spec, overlap.b)} in the flat pattern`);
   }
 
   // Holes
