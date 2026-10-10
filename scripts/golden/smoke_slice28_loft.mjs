@@ -267,7 +267,11 @@ function xyExtent(cs) {
     xs0,
     { plane: { center: [0, 0, 10], normal: [1, 0, 0], x: [0, 1, 0], y: [0, 0, 1] }, contours: [circlePts(8)] },
   ]);
-  check('non-parallel planes loud fail', !skew.ok && /parallel/i.test(skew.message || ''));
+  check(
+    'perpendicular planes on the same center loud-fail (zero-length loft)',
+    !skew.ok && /zero-length|on top of each other/i.test(skew.message || ''),
+    skew.ok ? 'ok=true' : (skew.message || ''),
+  );
 }
 
 // ── Live solid preview ─────────────────────────────────────────
