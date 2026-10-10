@@ -19,7 +19,8 @@ over inventing a new modal layout.
   Tap either for Delete and X. It does not reopen
   the card. A conflict note (`data-contour-conflict`) names the primary id on
   the open card and on the contour chip. Repeated shows the word Repeated. and
-  is not red. The card title is the
+  is not red. Reopening the feature shows that saved contour on the chip. A
+  named dimension's tag leads with the name. The card title is the
   feature Confirm writes (Extrude, Revolve, Loft, Sweep, Workplane); the profile
   shape sits in the subtitle. A profile-only contour keeps the title
   `Contour · <shape>`. Loft (#94) and Workplane use the compact mobile

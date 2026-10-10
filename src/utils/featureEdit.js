@@ -12,6 +12,7 @@ import { deleteFeatureBlock, featureBlockText, liveSheetFeature, inferExtrudeSen
 import { scriptWithFeatureCount } from './partHistory.js';
 import { shellFaceKey } from './shellMode.js';
 import { normalizeSheetSpec } from './sheetMetal/sheetModel.js';
+import { emitSolveContour, parseSolveContour } from './contourScript.js';
 
 const NUM = '[-+]?(?:\\d+\\.?\\d*|\\.\\d+)(?:[eE][-+]?\\d+)?';
 
@@ -111,29 +112,41 @@ function grab(text, re) {
   return m || null;
 }
 
+/** Every top-level `name(` call. Nested commas stay inside an arg. */
+function locateCalls(src, fnName) {
+  const text = String(src || '');
+  const re = new RegExp(`\\b${fnName}\\s*\\(`, 'g');
+  const out = [];
+  let m;
+  while ((m = re.exec(text))) {
+    const open = m.index + m[0].length - 1;
+    let depth = 0;
+    let quote = null;
+    let close = -1;
+    for (let i = open; i < text.length; i += 1) {
+      const c = text[i];
+      if (quote) {
+        if (c === '\\') { i += 1; continue; }
+        if (c === quote) quote = null;
+        continue;
+      }
+      if (c === '"' || c === "'" || c === '`') { quote = c; continue; }
+      if (c === '(' || c === '[' || c === '{') depth += 1;
+      else if (c === ')' || c === ']' || c === '}') {
+        depth -= 1;
+        if (depth === 0) { close = i; break; }
+      }
+    }
+    if (close < 0) break;
+    out.push({ open, close, inner: text.slice(open + 1, close) });
+    re.lastIndex = close + 1;
+  }
+  return out;
+}
+
 /** Top-level arguments of the first `name(` call. Nested commas stay inside an arg. */
 function locateCall(src, fnName) {
-  const m = String(src || '').match(new RegExp(`\\b${fnName}\\s*\\(`));
-  if (!m) return null;
-  const open = m.index + m[0].length - 1;
-  let depth = 0;
-  let quote = null;
-  const text = String(src);
-  for (let i = open; i < text.length; i += 1) {
-    const c = text[i];
-    if (quote) {
-      if (c === '\\') { i += 1; continue; }
-      if (c === quote) quote = null;
-      continue;
-    }
-    if (c === '"' || c === "'" || c === '`') { quote = c; continue; }
-    if (c === '(' || c === '[' || c === '{') depth += 1;
-    else if (c === ')' || c === ']' || c === '}') {
-      depth -= 1;
-      if (depth === 0) return { open, close: i, inner: text.slice(open + 1, i) };
-    }
-  }
-  return null;
+  return locateCalls(src, fnName)[0] || null;
 }
 
 function splitArgs(inner) {
@@ -182,11 +195,57 @@ function vec3(src) {
   return parts.slice(0, 3);
 }
 
-function parseProfile(block) {
-  const circle = grab(block, new RegExp(`profileCircle\\s*\\(\\s*(${NUM})\\s*,\\s*(${NUM})`));
-  if (circle) {
-    return { tool: 'circle', radius: num(circle[1]), segments: num(circle[2]) };
+/**
+ * One profile expression. A dimension name stays a string on the contour.
+ * A point list is not promoted: it comes back as points and no contour.
+ */
+function profileFromExpr(expr) {
+  const text = String(expr || '').trim();
+  if (/^solveContour\s*\(/.test(text)) {
+    try {
+      const contour = parseSolveContour(text);
+      const points = (contour.points || []).map((p) => [Number(p.at?.[0]), Number(p.at?.[1])]);
+      if (!points.length || points.some((p) => !Number.isFinite(p[0]) || !Number.isFinite(p[1]))) return null;
+      return { tool: 'polyline', points, contour };
+    } catch {
+      return null;
+    }
   }
+  const circle = text.match(new RegExp(`^profileCircle\\s*\\(\\s*(${NUM})\\s*,\\s*(${NUM})`));
+  if (circle) return { tool: 'circle', radius: num(circle[1]), segments: num(circle[2]) };
+  const rect = text.match(new RegExp(`^profileRectangle\\s*\\(\\s*(${NUM})\\s*,\\s*(${NUM})\\s*,\\s*(true|false)`));
+  if (rect) {
+    return {
+      tool: 'rectangle',
+      width: num(rect[1]),
+      height: num(rect[2]),
+      centered: rect[3] === 'true',
+    };
+  }
+  const preset = text.match(/^profilePolygon\s*\(\s*'([^']+)'\s*,\s*([^)]+)\)/);
+  if (preset) {
+    const radius = grab(preset[2], new RegExp(NUM));
+    return { tool: 'polygon', polygonPreset: preset[1], radius: radius ? num(radius[0]) : null };
+  }
+  const list = text.match(/^profilePolygon\s*\(\s*(\[[\s\S]*\])\s*\)$/);
+  if (list) {
+    try {
+      const pts = JSON.parse(list[1]);
+      if (!Array.isArray(pts) || pts.length < 3) return null;
+      const points = pts.map((p) => [Number(p?.[0]), Number(p?.[1])]);
+      if (points.some((p) => !Number.isFinite(p[0]) || !Number.isFinite(p[1]))) return null;
+      return { tool: 'polyline', points };
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+/** A snippet that is not itself the profile argument (a variable, or the whole block). */
+function profileFromLoose(block) {
+  const circle = grab(block, new RegExp(`profileCircle\\s*\\(\\s*(${NUM})\\s*,\\s*(${NUM})`));
+  if (circle) return { tool: 'circle', radius: num(circle[1]), segments: num(circle[2]) };
   const rect = grab(block, new RegExp(`profileRectangle\\s*\\(\\s*(${NUM})\\s*,\\s*(${NUM})\\s*,\\s*(true|false)`));
   if (rect) {
     return {
@@ -201,7 +260,27 @@ function parseProfile(block) {
     const radius = grab(poly[2], new RegExp(NUM));
     return { tool: 'polygon', polygonPreset: poly[1], radius: radius ? num(radius[0]) : null };
   }
-  return { tool: null };
+  const solved = grab(block, /solveContour\s*\(/);
+  if (solved) return profileFromExpr(block.slice(block.indexOf('solveContour')));
+  const list = grab(block, /profilePolygon\s*\(\s*(\[[\s\S]*\])\s*\)/);
+  if (list) return profileFromExpr(`profilePolygon(${list[1]})`);
+  return null;
+}
+
+function parseProfile(block) {
+  const calls = locateCalls(block, 'makeCrossSection');
+  const stations = [];
+  for (const call of calls) {
+    const args = splitArgs(call.inner);
+    const bag = profileFromExpr(args[1] || '');
+    if (bag?.tool) stations.push(bag);
+  }
+  if (stations.length) {
+    const primary = { ...stations[0] };
+    if (stations.length > 1) primary.stations = stations;
+    return primary;
+  }
+  return profileFromLoose(block) || { tool: null };
 }
 
 function parseFaces(block) {
@@ -655,17 +734,35 @@ export function parseFeatureEdit(kind, blockText) {
   return fail(`No parser for ${kind}`);
 }
 
-function profileFields(profile) {
+/** Dialog bag for one profile. Omits keys the expression did not carry. */
+function profileBag(src) {
   const out = {};
-  if (!profile) return out;
-  if (profile.tool) out.tool = profile.tool;
-  if (profile.radius != null) out.radius = profile.radius;
-  if (profile.segments != null) out.segments = profile.segments;
-  if (profile.width != null) out.width = profile.width;
-  if (profile.height != null) out.height = profile.height;
-  if (profile.centered != null) out.centered = profile.centered;
-  if (profile.polygonPreset) out.polygonPreset = profile.polygonPreset;
+  if (!src) return out;
+  if (src.tool) out.tool = src.tool;
+  if (src.radius != null && src.radius !== '' && Number.isFinite(Number(src.radius))) out.radius = Number(src.radius);
+  if (src.segments != null && src.segments !== '' && Number.isFinite(Number(src.segments))) out.segments = Number(src.segments);
+  if (src.width != null && src.width !== '' && Number.isFinite(Number(src.width))) out.width = Number(src.width);
+  if (src.height != null && src.height !== '' && Number.isFinite(Number(src.height))) out.height = Number(src.height);
+  if (typeof src.centered === 'boolean') out.centered = src.centered;
+  if (src.polygonPreset) out.polygonPreset = src.polygonPreset;
+  if (Array.isArray(src.points)) out.points = src.points;
+  if (src.contour) out.contour = src.contour;
   return out;
+}
+
+function profileFields(profile) {
+  if (!profile?.tool) return {};
+  const out = profileBag(profile);
+  if (Array.isArray(profile.stations) && profile.stations.length > 1) {
+    out.stations = profile.stations.map((station) => profileBag(station));
+  }
+  return out;
+}
+
+function paramsFromBag(bag) {
+  const full = profileBag(bag);
+  delete full.tool;
+  return Object.keys(full).length ? full : null;
 }
 
 function poseFields(block) {
@@ -691,6 +788,10 @@ function sameValue(a, b) {
   return a === b;
 }
 
+function isPlainObject(v) {
+  return v != null && typeof v === 'object' && !Array.isArray(v);
+}
+
 export function fieldsEqual(a, b) {
   const left = a || {};
   const right = b || {};
@@ -699,6 +800,10 @@ export function fieldsEqual(a, b) {
     const av = left[key];
     const bv = right[key];
     if (Array.isArray(av) || Array.isArray(bv)) {
+      if (JSON.stringify(av) !== JSON.stringify(bv)) return false;
+      continue;
+    }
+    if (isPlainObject(av) || isPlainObject(bv)) {
       if (JSON.stringify(av) !== JSON.stringify(bv)) return false;
       continue;
     }
@@ -829,6 +934,43 @@ function rewriteFaces(block, faces) {
   return block.replace(/(\[\s*)\{[\s\S]*?\}(\s*\])/, `$1${body}$2`);
 }
 
+function jsonSame(a, b) {
+  return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+}
+
+function profileShapeChanged(fields, prev) {
+  return !jsonSame(fields.contour, prev.contour)
+    || !jsonSame(fields.points, prev.points)
+    || !jsonSame(fields.stations, prev.stations);
+}
+
+function emitProfileArg(bag) {
+  if (bag?.contour) return emitSolveContour(bag.contour);
+  if (Array.isArray(bag?.points) && bag.points.length >= 3) {
+    const pts = bag.points.map((p) => `[${lit(p[0])}, ${lit(p[1])}]`);
+    return `profilePolygon([${pts.join(', ')}])`;
+  }
+  return null;
+}
+
+/** Replace makeCrossSection profile args from the end so earlier offsets stay valid. */
+function rewriteProfileArgs(block, bags) {
+  let next = block;
+  const count = locateCalls(next, 'makeCrossSection').length;
+  for (let i = count - 1; i >= 0; i -= 1) {
+    const expr = emitProfileArg(bags[i] || null);
+    if (!expr) continue;
+    const call = locateCalls(next, 'makeCrossSection')[i];
+    if (!call) continue;
+    const args = splitArgs(call.inner);
+    if (args.length < 2) continue;
+    if (args[1].trim() === expr) continue;
+    args[1] = expr;
+    next = `${next.slice(0, call.open + 1)}${args.join(', ')}${next.slice(call.close)}`;
+  }
+  return next;
+}
+
 function rewriteBlock(block, session, draft) {
   const kind = session.kind;
   const fields = draft.fields || {};
@@ -840,6 +982,14 @@ function rewriteBlock(block, session, draft) {
     if (!new RegExp(re.source).test(next)) return;
     next = replaceNum(next, re, fields[key]);
   };
+
+  if (
+    (kind === 'extrude' || kind === 'revolve' || kind === 'profile' || kind === 'loft' || kind === 'sweep')
+    && profileShapeChanged(fields, prev)
+  ) {
+    const bags = Array.isArray(fields.stations) && fields.stations.length > 1 ? fields.stations : [fields];
+    next = rewriteProfileArgs(next, bags);
+  }
 
   if (kind === 'extrude') {
     setNum(new RegExp(`(makeExtrude\\s*\\(\\s*[^,]+,\\s*)(${NUM})`), 'distance');
@@ -1159,19 +1309,45 @@ export function dependentToastLines(dependents) {
 /**
  * Seed passed to the contour chip so its fields match the saved block.
  */
+function stationSource(prof) {
+  const p = prof?.params || {};
+  const points = Array.isArray(p.points) && (p.contour || p.points.length) ? p.points : undefined;
+  return {
+    tool: prof?.tool,
+    radius: p.radius,
+    segments: p.segments,
+    width: p.width,
+    height: p.height,
+    centered: p.centered,
+    polygonPreset: p.polygonPreset,
+    points,
+    contour: p.contour,
+  };
+}
+
+function loftProfileFromStation(station, prior, index) {
+  const params = paramsFromBag(station) || {};
+  const profile = {
+    id: prior?.id || `p${index}`,
+    tool: station?.tool || prior?.tool || 'circle',
+    params,
+    offset: Number.isFinite(Number(prior?.offset)) ? Number(prior.offset) : index * 20,
+  };
+  if (prior?.planeKind) profile.planeKind = prior.planeKind;
+  if (prior?.plane) profile.plane = prior.plane;
+  if (prior?.planeRef) profile.planeRef = prior.planeRef;
+  if (prior?.planeLabel) profile.planeLabel = prior.planeLabel;
+  return profile;
+}
+
 export function contourSeedFromEdit(session) {
   if (!session?.ok) return null;
   const f = session.fields || {};
   const seed = {};
   if (f.tool) seed.tool = f.tool;
-  if (f.radius != null || f.segments != null || f.width != null) {
-    seed.params = {};
-    if (f.radius != null) seed.params.radius = f.radius;
-    if (f.segments != null) seed.params.segments = f.segments;
-    if (f.width != null) seed.params.width = f.width;
-    if (f.height != null) seed.params.height = f.height;
-    if (f.centered != null) seed.params.centered = f.centered;
-  }
+  const params = paramsFromBag(f);
+  if (params) seed.params = params;
+  if (Array.isArray(f.stations) && f.stations.length > 1) seed.stations = f.stations;
   if (session.kind === 'extrude') {
     seed.extrude = { distance: f.distance, sense: f.sense || 'positive', direction: 'normal' };
   }
@@ -1193,12 +1369,22 @@ export function applyContourEditSeed(state, session) {
   const seed = contourSeedFromEdit(session) || {};
   let next = { ...state };
   if (seed.tool) next.tool = seed.tool;
-  if (seed.params) next.params = { ...(next.params || {}), ...seed.params };
+  if (seed.params) next.params = { ...seed.params };
   if (seed.extrude) next.extrude = { ...(next.extrude || {}), ...seed.extrude };
   if (seed.revolve) next.revolve = { ...(next.revolve || {}), ...seed.revolve };
   if (seed.sweep) next.sweep = { ...(next.sweep || {}), ...seed.sweep };
   if (seed.planeOffset != null) next.planeOffset = seed.planeOffset;
-  if (session.kind === 'loft' && Array.isArray(session.fields?.radii) && next.loft?.profiles) {
+  if (session.kind === 'loft' && Array.isArray(seed.stations) && seed.stations.length > 1 && next.loft) {
+    const prevProfiles = next.loft.profiles || [];
+    const profiles = seed.stations.map((station, i) => loftProfileFromStation(station, prevProfiles[i], i));
+    const first = profiles[0];
+    next = {
+      ...next,
+      tool: first.tool,
+      params: { ...first.params },
+      loft: { ...next.loft, profiles, selected: 0 },
+    };
+  } else if (session.kind === 'loft' && Array.isArray(session.fields?.radii) && next.loft?.profiles) {
     const profiles = next.loft.profiles.map((prof, i) => {
       const radius = session.fields.radii[i];
       if (radius == null) return prof;
@@ -1216,14 +1402,10 @@ export function applyContourEditSeed(state, session) {
 /** Dialog fields read back from the open contour chip. */
 export function contourFieldsFromState(state) {
   if (!state) return {};
-  const f = {};
-  const p = state.params || {};
-  if (state.tool) f.tool = state.tool;
-  if (p.radius != null && p.radius !== '') f.radius = Number(p.radius);
-  if (p.segments != null && p.segments !== '') f.segments = Number(p.segments);
-  if (p.width != null && p.width !== '') f.width = Number(p.width);
-  if (p.height != null && p.height !== '') f.height = Number(p.height);
-  if (p.centered != null) f.centered = !!p.centered;
+  if (state.entry === 'workplane') {
+    return { cz: Number(state.planeOffset) || 0 };
+  }
+  const f = profileBag(stationSource({ tool: state.tool, params: state.params }));
   if (state.entry === 'makeExtrude') {
     f.distance = Number(state.extrude?.distance);
     f.sense = state.extrude?.sense || 'positive';
@@ -1231,6 +1413,9 @@ export function contourFieldsFromState(state) {
   if (state.entry === 'makeRevolve') f.angle = Number(state.revolve?.angle);
   if (state.entry === 'makeSweep') f.reverse = !!state.sweep?.reverse;
   if (state.entry === 'makeLoft' && Array.isArray(state.loft?.profiles)) {
+    if (state.loft.profiles.length > 1) {
+      f.stations = state.loft.profiles.map((prof) => profileBag(stationSource(prof)));
+    }
     const radii = state.loft.profiles
       .map((prof) => Number(prof?.params?.radius))
       .filter((n) => Number.isFinite(n));
