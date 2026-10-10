@@ -76,6 +76,7 @@ export function lengthToDisplay(mm, unit) {
  * Call this before a length is written. Do not parse a formatted caption.
  */
 export function displayToMm(value, unit) {
+  if (value == null || String(value).trim() === '') return NaN;
   const n = Number(value);
   if (!Number.isFinite(n)) return n;
   return normalizeDisplayUnit(unit) === 'in' ? n * MM_PER_IN : n;
