@@ -76,14 +76,13 @@ check('shot dir is not the artifacts folder', !String(SHOT_DIR).startsWith('/opt
 {
   const card = read('src/components/JointCard.jsx');
   const equations = read('src/joints/equations.js');
-  const strip = read('src/components/FeatureStrip.jsx');
   check('Parallel and Perpendicular are one-tap buttons',
     card.includes('data-joint-parallel') && card.includes('data-joint-perpendicular') && card.includes('onQuickAngle?.(0)') && card.includes('onQuickAngle?.(90)'));
   check('a third part asks which part to change',
     card.includes('Change one of the parts?') && card.includes('Discard last pick') && card.includes('Replace part 1') && card.includes('Replace part 2'));
   check('symmetric has a center-plane residual', equations.includes("joint.type === 'symmetric'") && equations.includes('centerPlane'));
-  check('an angle chip can edit its degrees',
-    strip.includes('data-joint-chip-angle') && strip.includes('data-joint-chip-angle-apply'));
+  check('an angle joint can be edited from the reopened card',
+    card.includes('data-joint-angle') && card.includes('data-joint-delete'));
 }
 
 const exe = CHROME_CANDIDATES.find((p) => existsSync(p));
@@ -392,7 +391,7 @@ async function runView(browser, vp) {
 
   await clickSel(page, `[data-assembly-joints] [data-joint-id="${symmetric?.id || ''}"]`);
   await page.waitForTimeout(200);
-  await clickSel(page, `[data-joint-chip-delete="${symmetric?.id || ''}"]`);
+  await clickSel(page, '[data-joint-delete]');
   await page.waitForTimeout(400);
   const posed = await origins(page);
   const shift = (points, from, surf) => {
@@ -420,9 +419,9 @@ async function runView(browser, vp) {
 
   await clickSel(page, `[data-assembly-joints] [data-joint-id="${parallel?.id || ''}"]`);
   await page.waitForTimeout(200);
-  const angleShown = await page.evaluate((id) => document.querySelector(`[data-joint-chip-angle="${id}"]`)?.value || '', parallel?.id || '');
-  check(`${vp.name} the strip chip shows that angle`, angleShown === '0', angleShown);
-  await clickSel(page, `[data-joint-chip-delete="${parallel?.id || ''}"]`);
+  const angleShown = await page.evaluate(() => document.querySelector('[data-joint-angle]')?.value || '');
+  check(`${vp.name} the reopened card shows that angle`, angleShown === '0', angleShown);
+  await clickSel(page, '[data-joint-delete]');
   await page.waitForTimeout(400);
 
   await openCard(page);
@@ -440,14 +439,14 @@ async function runView(browser, vp) {
     JSON.stringify(perp));
   await clickSel(page, `[data-assembly-joints] [data-joint-id="${perp?.id || ''}"]`);
   await page.waitForTimeout(200);
-  await page.evaluate((id) => {
-    const input = document.querySelector(`[data-joint-chip-angle="${id}"]`);
+  await page.evaluate(() => {
+    const input = document.querySelector('[data-joint-angle]');
     if (!input) return;
     const proto = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value');
     proto.set.call(input, '60');
     input.dispatchEvent(new Event('input', { bubbles: true }));
-  }, perp?.id || '');
-  await clickSel(page, `[data-joint-chip-angle-apply="${perp?.id || ''}"]`);
+  });
+  await clickSel(page, '[data-feature-card-confirm]');
   await page.waitForTimeout(500);
   const edited = (await chipRows(page)).find((row) => row.id === perp?.id);
   check(`${vp.name} the strip chip writes a new angle`, edited?.value === '60' && edited?.status === 'ok', JSON.stringify(edited));

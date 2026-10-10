@@ -13,6 +13,7 @@ import { refreshAssemblyJoints } from '../../src/joints/refreshJoints.js';
 import {
   acceptJointPick,
   applyJointCard,
+  cardFromJoint,
   dismissJointEdit,
   draftFromPicks,
   emptyClickCadSelection,
@@ -220,8 +221,40 @@ const oneHtml = h(ui.FeatureStrip, {
 });
 check('the empty joints caption uses the chip box', emptyHtml.includes('data-assembly-joints-empty') && emptyHtml.includes('h-8'));
 check('a joint chip uses that same box', oneHtml.includes('data-joint-id') && oneHtml.includes('h-8'));
-check('a strip chip opens Delete and X', oneHtml.includes(`data-joint-chip-popup="${J}"`) && oneHtml.includes(`data-joint-chip-delete="${J}"`) && oneHtml.includes('>Delete<') && oneHtml.includes('data-joint-chip-close') && oneHtml.includes('Close'));
-check('the chip popup does not reopen the joint card', !oneHtml.includes('data-joint-card'));
+check('a joint chip does not carry its own Delete popup', !oneHtml.includes('data-joint-chip-popup') && !oneHtml.includes('data-joint-chip-delete'));
+const edited = cardFromJoint({
+  id: J,
+  name: 'Angle 1',
+  type: 'angle',
+  value: 90,
+  sense: 1,
+  a: { part: A, kind: 'face', key: { at: [0, 0, 1], n: [0, 0, 1], area: 1 } },
+  b: { part: B, kind: 'face', key: { at: [0, 0, 1], n: [0, 0, 1], area: 1 } },
+}, doc);
+const editHtml = h(ui.JointCard, {
+  card: edited,
+  onChange: () => {},
+  onConfirm: () => {},
+  onCancel: () => {},
+  onDelete: () => {},
+});
+check('reopening a joint shows its type, value, Delete, and X',
+  editHtml.includes('data-joint-card') && editHtml.includes('data-joint-type="angle"')
+  && editHtml.includes('data-joint-angle') && editHtml.includes('value="90"')
+  && editHtml.includes('data-joint-delete') && editHtml.includes('>Delete<')
+  && editHtml.includes('data-feature-card-cancel'));
+const symmetric = cardFromJoint({
+  id: J,
+  name: 'Symmetric 1',
+  type: 'symmetric',
+  a: { part: A, kind: 'face', key: { at: [0, 0, 1], n: [0, 0, 1], area: 1 } },
+  a2: { part: A, kind: 'face', key: { at: [0, 0, -1], n: [0, 0, -1], area: 1 } },
+  b: { part: B, kind: 'face', key: { at: [0, 0, 1], n: [0, 0, 1], area: 1 } },
+  b2: { part: B, kind: 'face', key: { at: [0, 0, -1], n: [0, 0, -1], area: 1 } },
+}, doc);
+const symHtml = h(ui.JointCard, { card: symmetric, onChange: () => {}, onConfirm: () => {}, onCancel: () => {}, onDelete: () => {} });
+check('a symmetric joint reopens with both faces and Delete',
+  symHtml.includes('data-joint-type="symmetric"') && symHtml.includes('×2') && symHtml.includes('data-joint-delete'));
 check('a broken chip has the red ring and the joint name', /data-joint-id="/.test(oneHtml) && oneHtml.includes('border-red-400') && oneHtml.includes('feature-failed-ring') && oneHtml.includes('Coincident 1') && oneHtml.includes('aria-invalid'));
 
 const app = read('src/App.jsx');
@@ -230,7 +263,7 @@ check('App keeps the joint card off in game', app.includes("appMode !== 'game'")
 check('joint picking follows the open create card', app.includes('jointPicking={jointCreateOpen}'));
 check('Blocks opens the joint card', read('src/components/HelperInsertPalette.jsx').includes('data-joints-button'));
 check('App empty click does not assign activeId', app.includes('handleCadEmptyClick') && app.includes('emptyClickCadSelection'));
-check('a strip chip selects the joint', app.includes('setJointTagId') && app.includes('onDeleteJoint={handleJointChipDelete}') && !app.includes('JointModeChip'));
+check('a strip chip reopens the joint', app.includes('cardFromJoint') && app.includes('handleSelectJoint') && app.includes('onDelete={() => handleJointDelete') && !app.includes('JointModeChip'));
 check('Add keeps the card open', app.includes('resetPicks: true') && app.includes('draftFromPicks(null, []'));
 check('the joint card slides the camera and floating tags are gone', view.includes("? 'joint'") && !view.includes('JointTags') && view.includes('paintJointHighlight'));
 

@@ -119,6 +119,7 @@ import {
   acceptJointPick,
   cardFromJoint,
   dismissJointEdit,
+  jointHighlightEntries,
   draftFromPicks,
   jointHighlightSlot,
   quickAngleCard,
@@ -501,7 +502,6 @@ const App = () => {
    */
   const [featureSheet, setFeatureSheet] = useState(null);
   const [jointCard, setJointCard] = useState(null);
-  const [jointTagId, setJointTagId] = useState(null);
   const jointCardRef = useRef(null);
   const jointPicksRef = useRef([]);
   const jointCatalogsRef = useRef({});
@@ -859,6 +859,22 @@ const App = () => {
   }, [gitSession.phase]);
 
   const viewportRef = useRef(null);
+
+  const jointEditHighlightKey = jointCard?.mode === 'edit'
+    ? `${jointCard.id}|${(jointCard.picks || []).map((pick) => jointHighlightSlot(pick.partId || pick.surfId, pick.key?.at)).join(';')}`
+    : '';
+  useEffect(() => {
+    if (!jointEditHighlightKey) return undefined;
+    const doc = assemblyRef.current;
+    const catalogs = catalogsFromRuns({
+      parts: doc?.parts,
+      runs: partRunsRef.current,
+      leftovers: partLeftoversRef.current,
+    });
+    const entries = jointHighlightEntries(jointCardRef.current, doc, catalogs);
+    viewportRef.current?.showJointPickHighlights?.(entries);
+    return undefined;
+  }, [jointEditHighlightKey]);
 
   const codeEditorRef = useRef(null);
   const gameTimerStartRef = useRef(0);
@@ -2185,7 +2201,7 @@ const App = () => {
       featureSession: featureSessionRef.current,
       appMode: appModeRef.current,
       kind,
-      jointPicking: jointCardRef.current?.mode === 'create'
+      jointPicking: (jointCardRef.current?.mode === 'create' || jointCardRef.current?.mode === 'edit')
         && appModeRef.current !== 'game'
         && !featureSessionRef.current,
     })) {
@@ -6027,7 +6043,6 @@ const App = () => {
     if (appModeRef.current === 'game' || featureSessionRef.current) return;
     jointPicksRef.current = [];
     viewportRef.current?.clearJointHighlights?.();
-    setJointTagId(null);
     setJointCard(draftFromPicks(null, [], { joints: assemblyRef.current?.joints || [] }));
   };
 
@@ -6041,13 +6056,12 @@ const App = () => {
     rememberCadPart(next.cadPartId);
     jointPicksRef.current = [];
     viewportRef.current?.clearJointHighlights?.();
-    setJointTagId(null);
-    setJointCard((cur) => (cur?.mode === 'create' ? null : cur));
+    setJointCard((cur) => (cur ? null : cur));
   };
 
   const handleJointPick = (raw) => {
     const doc = assemblyRef.current;
-    if (!doc || !raw?.partId || jointCardRef.current?.mode === 'edit') return;
+    if (!doc || !raw?.partId) return;
     const part = doc.parts.find((row) => row.id === raw.partId);
     if (!part?.surfId) {
       viewportRef.current?.notify?.(raw && part ? 'This part has no surf id' : 'This part has no surf id');
@@ -6070,11 +6084,13 @@ const App = () => {
     jointPicksRef.current = accepted.picks;
     rememberCadPart(null);
     if (accepted.open) {
-      setJointTagId(null);
       setJointCard((cur) => ({
-        ...draftFromPicks(cur?.mode === 'create' ? cur : null, accepted.picks, {
-          joints: doc.joints || [],
-        }),
+        ...draftFromPicks(
+          cur?.mode === 'create' || cur?.mode === 'edit' ? cur : null,
+          accepted.picks,
+          { joints: doc.joints || [] },
+        ),
+        mode: cur?.mode === 'edit' ? 'edit' : 'create',
         partChange: accepted.choice || null,
       }));
     }
@@ -6096,9 +6112,14 @@ const App = () => {
       if (!kept.has(slot)) viewportRef.current?.clearJointHighlights?.(slot);
     }
     jointPicksRef.current = nextPicks;
-    setJointCard(draftFromPicks(cur.mode === 'create' ? { ...cur, partChange: null } : null, nextPicks, {
-      joints: doc.joints || [],
-    }));
+    setJointCard({
+      ...draftFromPicks(
+        cur.mode === 'create' || cur.mode === 'edit' ? { ...cur, partChange: null } : null,
+        nextPicks,
+        { joints: doc.joints || [] },
+      ),
+      mode: cur.mode === 'edit' ? 'edit' : 'create',
+    });
   };
 
   const handleQuickAngle = (degrees) => {
@@ -6248,10 +6269,13 @@ const App = () => {
     const doc = assemblyRef.current;
     const joint = (doc?.joints || []).find((row) => row.id === chip?.id);
     if (!joint) return;
-    setJointTagId((cur) => (cur === joint.id ? null : joint.id));
+    const card = cardFromJoint(joint, doc);
+    jointPicksRef.current = card.picks;
+    rememberCadPart(null);
+    setJointCard(card);
   };
 
-  const handleJointChipDelete = (id) => {
+  const handleJointDelete = (id) => {
     const doc = assemblyRef.current;
     if (!doc || !id) return;
     const scripts = partScriptsRef.current;
@@ -6261,38 +6285,6 @@ const App = () => {
       scripts,
       card: { mode: 'edit', id },
       action: 'delete',
-      locked,
-      preempt: null,
-      catalogs: jointCatalogsRef.current,
-    });
-    if (locked) {
-      viewportRef.current?.notify?.(result.message);
-      return;
-    }
-    finishJointWrite(result, scripts);
-    if (result.ok) setJointTagId(null);
-  };
-
-  const handleJointChipClose = () => {
-    setJointTagId(null);
-  };
-
-  const handleJointChipAngle = (id, value) => {
-    const doc = assemblyRef.current;
-    const joint = (doc?.joints || []).find((row) => row.id === id);
-    if (!doc || !joint || joint.type !== 'angle') return;
-    if (!Number.isFinite(Number(value))) {
-      viewportRef.current?.notify?.('Enter a value');
-      return;
-    }
-    const scripts = partScriptsRef.current;
-    const locked = !!assemblyOpenLockRef.current;
-    const card = { ...cardFromJoint(joint, doc), valueMm: Number(value) };
-    const result = applyJointCard({
-      doc,
-      scripts,
-      card,
-      action: 'confirm',
       locked,
       preempt: null,
       catalogs: jointCatalogsRef.current,
@@ -6957,7 +6949,8 @@ const App = () => {
 
   const cadHighlightId = cadPartId || assemblyDoc?.activeId || null;
   const showJoints = jointsChromeMounted({ appMode, featureSession }) && cadStripsShowJoints(cadPartId);
-  const jointCreateOpen = jointsChromeMounted({ appMode, featureSession }) && jointCard?.mode === 'create';
+  const jointCreateOpen = jointsChromeMounted({ appMode, featureSession })
+    && (jointCard?.mode === 'create' || jointCard?.mode === 'edit');
   const jointUndoReady = showJoints && assemblyHistTick >= 0 && assemblyHistoryCanUndo(assemblyHistoryRef.current);
   const jointRedoReady = showJoints && assemblyHistoryCanRedo(assemblyHistoryRef.current);
   const stripUndo = showJoints ? handleJointUndo : handleUndo;
@@ -6975,6 +6968,7 @@ const App = () => {
         onChange={handleJointCardChange}
         onConfirm={handleJointConfirm}
         onCancel={handleJointCancel}
+        onDelete={() => handleJointDelete(jointCard?.id)}
         onQuickAngle={handleQuickAngle}
         onResolvePartChange={handleResolvePartChange}
         compact={isMobile}
@@ -7477,10 +7471,6 @@ const App = () => {
                       hideWhenEmpty
                       onJump={(f) => openFeatureSheetFor(f)}
                       onSelectJoint={handleSelectJoint}
-                      selectedJointId={jointTagId}
-                      onDeleteJoint={handleJointChipDelete}
-                      onCloseJoint={handleJointChipClose}
-                      onEditJointAngle={handleJointChipAngle}
                       onUndo={stripUndo}
                       onRedo={stripRedo}
                       canUndo={stripCanUndo}
@@ -7809,10 +7799,6 @@ const App = () => {
                 hideWhenEmpty
                 onJump={handleDesktopFeatureStripJump}
                 onSelectJoint={handleSelectJoint}
-                selectedJointId={jointTagId}
-                onDeleteJoint={handleJointChipDelete}
-                onCloseJoint={handleJointChipClose}
-                onEditJointAngle={handleJointChipAngle}
                 onUndo={stripUndo}
                 onRedo={stripRedo}
                 canUndo={stripCanUndo}

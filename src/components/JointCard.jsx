@@ -23,8 +23,9 @@ function valueText(mm, unit) {
 }
 
 /**
- * Create card. StickyPickApply owns the chrome. The parent owns the
- * fingerprints. A placed joint is not edited here; its tag is Delete / X.
+ * Create card, and the card a strip chip reopens. StickyPickApply owns
+ * the chrome. The parent owns the fingerprints. Delete removes a joint
+ * that is already stored. X writes nothing.
  */
 export default function JointCard({
   card,
@@ -32,6 +33,7 @@ export default function JointCard({
   onChange,
   onConfirm,
   onCancel,
+  onDelete,
   onQuickAngle,
   onResolvePartChange,
   compact = false,
@@ -39,7 +41,8 @@ export default function JointCard({
 }) {
   const [liveUnit] = useDisplayUnit();
   const shownUnit = unit || liveUnit;
-  if (!card || card.mode === 'edit') return null;
+  if (!card) return null;
+  const editing = card.mode === 'edit';
   const set = (patch) => onChange?.({ ...card, ...patch });
   const picks = (card.picks || []).map(stickyJointPick);
   const distance = card.type === 'distance';
@@ -67,6 +70,16 @@ export default function JointCard({
       applyDisabled={jointConfirmDisabled({ card, locked })}
       note={note}
       compact={compact}
+      footer={editing ? (
+        <button
+          type="button"
+          data-joint-delete=""
+          onClick={() => onDelete?.()}
+          className="min-h-[36px] w-full rounded-md border border-cyan-700/70 bg-cyan-950/80 px-2 text-left text-[13px] text-cyan-100"
+        >
+          Delete
+        </button>
+      ) : null}
       cardAttrs={{
         'data-joint-card': '',
         'data-joint-id': card.id || '',
