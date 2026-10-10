@@ -1,17 +1,23 @@
 #!/usr/bin/env node
 /**
- * Fail the build when the shipped npm production tree is copyleft.
+ * Fail the build when the shipped npm production tree is copyleft or
+ * non-commercial.
  *
  * Scope is `npm ls --omit=dev`: the root package's production dependencies
  * (what `vite build` can ship). Dev dependencies are out of scope. GPL, AGPL,
  * and LGPL fail, including the -only / -or-later / deprecated `+` forms and
- * the long "GNU * General Public License" names.
+ * the long "GNU * General Public License" names. Non-commercial licences fail
+ * too: CC-BY-NC* (including -SA and -ND), PolyForm-Noncommercial, Commons
+ * Clause, and a licence name that says non-commercial.
  *
  * SPDX `OR` is a choice. `(MIT OR GPL-3.0-or-later)` is allowed because the
- * MIT term can be elected; jszip (via three-3mf-exporter) is that case.
- * `AND` is not a choice: `(MIT AND LGPL-2.1-only)` fails. An expression fails
- * when every alternative is copyleft. A missing license field fails closed.
- * This is not a general OSI allow-list.
+ * MIT term can be elected; jszip (via three-3mf-exporter) is that case, and
+ * the election is recorded in public/THIRD_PARTY_NOTICES.txt. `(MIT OR
+ * CC-BY-NC-4.0)` is allowed for the same reason. `AND` is not a choice:
+ * `(MIT AND LGPL-2.1-only)` and `(MIT AND CC-BY-NC-4.0)` fail. An expression
+ * fails when every alternative is copyleft or non-commercial. A missing
+ * license field fails closed. This is not a general OSI allow-list: share-alike
+ * and source-available licences that are not non-commercial are out of scope.
  *
  * The Rust half of the gate is `cargo deny check licenses` for
  * packages/surfcad-fea (see that crate's deny.toml). This script is npm.
@@ -26,6 +32,8 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../..');
 const COPYLEFT_ID = /^(?:AGPL|LGPL|GPL)(?:-[\d.]+)?(?:-only|-or-later|\+)?$/i;
 const COPYLEFT_WORD = /\b(?:AGPL|LGPL|GPL)v?\d*\b/i;
 const COPYLEFT_NAME = /gnu\s+(?:affero\s+|lesser\s+|library\s+)?general\s+public\s+license/i;
+const NONCOMMERCIAL_ID = /^(?:CC-BY-NC(?:-[A-Za-z0-9.]+)*|PolyForm-Noncommercial(?:-[0-9.]+)?|Commons-Clause)$/i;
+const NONCOMMERCIAL_NAME = /non[-\s]?commercial|commons[-\s]+clause|polyform[-\s]+noncommercial|\bcc[\s-]by[\s-]nc\b/i;
 
 export function shipmentAllowed(expression) {
   const expr = String(expression ?? '').trim();
@@ -34,20 +42,20 @@ export function shipmentAllowed(expression) {
     const ok = acceptable(expr);
     return ok
       ? { ok: true, reason: '' }
-      : { ok: false, reason: `copyleft license ${expr}` };
+      : { ok: false, reason: `copyleft or non-commercial license ${expr}` };
   } catch (err) {
     return { ok: false, reason: err.message };
   }
 }
 
-/** True when at least one SPDX alternative is free of GPL / AGPL / LGPL. */
+/** True when at least one SPDX alternative is free of copyleft and non-commercial terms. */
 function acceptable(expr) {
   const trimmed = unwrap(expr.trim());
   const orParts = splitTop(trimmed, 'OR');
   if (orParts.length > 1) return orParts.some((part) => acceptable(part));
   const andParts = splitTop(trimmed, 'AND');
   if (andParts.length > 1) return andParts.every((part) => acceptable(part));
-  return !isCopyleftAtom(unwrap(trimmed));
+  return !isBlockedAtom(unwrap(trimmed));
 }
 
 function unwrap(expr) {
@@ -88,14 +96,30 @@ function splitTop(expr, keyword) {
 }
 
 function isCopyleftAtom(atom) {
-  const base = atom.replace(/\s+WITH\s+[\w.-]+$/i, '').trim();
-  if (/\s(?:OR|AND)\s/i.test(base)) {
-    throw new Error(`license parser left a compound expression: ${base}`);
-  }
+  const base = licenseAtomBase(atom);
   if (COPYLEFT_ID.test(base)) return true;
   if (COPYLEFT_WORD.test(base)) return true;
   if (COPYLEFT_NAME.test(base)) return true;
   return false;
+}
+
+function isNonCommercialAtom(atom) {
+  const base = licenseAtomBase(atom);
+  if (NONCOMMERCIAL_ID.test(base)) return true;
+  if (NONCOMMERCIAL_NAME.test(base)) return true;
+  return false;
+}
+
+function isBlockedAtom(atom) {
+  return isCopyleftAtom(atom) || isNonCommercialAtom(atom);
+}
+
+function licenseAtomBase(atom) {
+  const base = atom.replace(/\s+WITH\s+[\w.-]+$/i, '').trim();
+  if (/\s(?:OR|AND)\s/i.test(base)) {
+    throw new Error(`license parser left a compound expression: ${base}`);
+  }
+  return base;
 }
 
 export function licenseExpression(pkg) {
@@ -143,23 +167,23 @@ function checkTree() {
       failures.push(`  ${label}  ${decision.reason}`);
       continue;
     }
-    if (/\b(?:AGPL|LGPL|GPL)\b/i.test(expression)) {
+    if (/\b(?:AGPL|LGPL|GPL)\b/i.test(expression) || NONCOMMERCIAL_NAME.test(expression) || NONCOMMERCIAL_ID.test(expression)) {
       dualNotes.push(`  ${label}  ${expression}`);
     }
   }
-  console.log(`npm production license gate: ${paths.length} packages, ${failures.length} copyleft`);
+  console.log(`npm production license gate: ${paths.length} packages, ${failures.length} rejected`);
   if (dualNotes.length) {
-    console.log('allowed because a non-copyleft alternative can be elected:');
+    console.log('allowed because a permissive alternative can be elected:');
     for (const note of dualNotes) console.log(note);
   }
   if (failures.length) {
-    console.error('copyleft in the shipped production dependency tree:');
+    console.error('copyleft or non-commercial licence in the shipped production dependency tree:');
     for (const line of failures) console.error(line);
-    console.error('GPL, AGPL, and LGPL are rejected. An OR-expression fails only when every alternative is copyleft.');
+    console.error('GPL, AGPL, LGPL, and non-commercial licences are rejected. An OR-expression fails only when every alternative is rejected.');
     process.exitCode = 1;
     return;
   }
-  console.log('no GPL, AGPL, or LGPL production dependency');
+  console.log('no GPL, AGPL, LGPL, or non-commercial production dependency');
 }
 
 function isDirectRun() {

@@ -340,6 +340,40 @@ function walk(dir, out = []) {
   return out;
 }
 
+// libigl 2.6 module switches. Copyleft is GPL-family; restricted pulls in
+// a non-commercial or proprietary dependency (Triangle, MATLAB, MOSEK).
+const LIBIGL_FORBIDDEN_OFF = [
+  'LIBIGL_COPYLEFT_CORE',
+  'LIBIGL_COPYLEFT_CGAL',
+  'LIBIGL_COPYLEFT_COMISO',
+  'LIBIGL_COPYLEFT_TETGEN',
+  'LIBIGL_RESTRICTED_MATLAB',
+  'LIBIGL_RESTRICTED_MOSEK',
+  'LIBIGL_RESTRICTED_TRIANGLE',
+];
+
+function forbiddenMeshHit(text) {
+  const norm = text.replace(/\\/g, '/');
+  if (/igl[_-](?:copyleft|restricted)/i.test(norm)) return 'libigl copyleft or restricted module';
+  // "triangulation" is not Triangle. Require a token boundary.
+  if (/(?:^|[^A-Za-z0-9_])tetgen(?:[^A-Za-z0-9_]|$)/i.test(norm)) return 'TetGen';
+  if (/(?:^|[^A-Za-z0-9_])triangle(?:[^A-Za-z0-9_]|$)/i.test(norm)) return 'Triangle';
+  return '';
+}
+
+function forbiddenBuildArtifact(path) {
+  const norm = path.replace(/\\/g, '/');
+  const base = norm.slice(norm.lastIndexOf('/') + 1);
+  if (/\/(?:igl[_-]copyleft|igl[_-]restricted)/i.test(norm)) return 'libigl copyleft or restricted module';
+  if (/\/(?:tetgen|triangle)\.dir\//i.test(norm)) return 'TetGen or Triangle object directory';
+  const sourceOrObject = /\.(?:c|cc|cpp|cxx|h|hh|hpp|hxx|o|obj|a|lib)$/i.test(base);
+  if (!sourceOrObject) return '';
+  if (/^(?:lib)?(?:tetgen|triangle)\./i.test(base)) return base;
+  if (/(?:^|\/)(?:tetgen|triangle)(?:\/|$)/i.test(norm)) return base;
+  if (/(?:^|\/)igl\/(?:copyleft|triangle)(?:\/|$)/i.test(norm)) return base;
+  return '';
+}
+
 function assertLicenseConfig(buildDir) {
   const cachePath = resolve(buildDir, 'CMakeCache.txt');
   const cache = readFileSync(cachePath, 'utf8');
@@ -350,21 +384,34 @@ function assertLicenseConfig(buildDir) {
     'GEOGRAM_WITH_FPG:BOOL=OFF',
     'FLOAT_TETWILD_ENABLE_TBB:BOOL=OFF',
     'FLOAT_TETWILD_WITH_EXACT_ENVELOPE:BOOL=OFF',
+    'LIBIGL_PREDICATES:BOOL=ON',
+    ...LIBIGL_FORBIDDEN_OFF.map((name) => `${name}:BOOL=OFF`),
   ];
   for (const line of required) {
     if (!cache.includes(line)) {
       throw new Error(`licence config missing ${line}`);
     }
   }
+  for (const name of LIBIGL_FORBIDDEN_OFF) {
+    if (new RegExp(`${name}:BOOL=ON`).test(cache)) {
+      throw new Error(`${name} is ON in ${cachePath}`);
+    }
+  }
   const linkFiles = walk(buildDir).filter((path) => path.endsWith('link.txt') || path.endsWith('linkLibs.rsp'));
-  const forbidden = [/tetgen/i, /libgmp/, /libmpfr/, /hlbfgs/i, /triangle\.c/];
+  const forbiddenLink = [/libgmp/, /libmpfr/, /hlbfgs/i];
   for (const path of linkFiles) {
     const text = readFileSync(path, 'utf8');
-    for (const pattern of forbidden) {
+    for (const pattern of forbiddenLink) {
       if (pattern.test(text)) {
         throw new Error(`${path} links a forbidden library (${pattern})`);
       }
     }
+    const hit = forbiddenMeshHit(text);
+    if (hit) throw new Error(`${path} links a forbidden library (${hit})`);
+  }
+  for (const path of walk(buildDir)) {
+    const hit = forbiddenBuildArtifact(path);
+    if (hit) throw new Error(`${path} is a TetGen or Triangle build artifact (${hit})`);
   }
   const commandsPath = resolve(buildDir, 'compile_commands.json');
   if (existsSync(commandsPath)) {
@@ -374,6 +421,19 @@ function assertLicenseConfig(buildDir) {
     }
     if (commands.includes('FLOAT_TETWILD_USE_TBB')) {
       throw new Error('TBB compile definition leaked into the mesh build');
+    }
+    let entries;
+    try {
+      entries = JSON.parse(commands);
+    } catch (err) {
+      throw new Error(`compile_commands.json is not JSON (${err.message})`);
+    }
+    for (const entry of entries) {
+      const file = String(entry.file || '');
+      const hit = forbiddenBuildArtifact(file) || forbiddenMeshHit(file);
+      if (hit) {
+        throw new Error(`compile_commands.json compiles a forbidden source: ${file} (${hit})`);
+      }
     }
   }
 }

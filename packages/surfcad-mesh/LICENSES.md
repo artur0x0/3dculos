@@ -1,5 +1,7 @@
 # Licences compiled into the volume mesher
 
+This developer note is not copied into the production build. The notice that ships is `public/THIRD_PARTY_NOTICES.txt` (the production build copies `public/` into the site output).
+
 The wasm module is a separate emscripten build. Nothing in it is GPL, AGPL, or LGPL. The build script checks the CMake cache and the link line and fails if TetGen, Triangle, HLBFGS, FPG, GMP, or MPFR is pulled back in.
 
 `EIGEN_MPL2_ONLY` is a compile definition, so Eigen's LGPL headers (`NonMPL2.h`, including IncompleteCholesky) error out if a translation unit includes them.
@@ -35,15 +37,15 @@ CC-BY-3.0 attribution for getRSS: David Robert Nadeau, NadeauSoftware.com, Creat
 | --- | --- |
 | GMP | `Rational.h` upstream calls `mpq_*`. GMP is LGPL-3.0-or-later OR GPL-2.0-or-later. Replaced with libtommath. `find_package(GMPfTetWild)` is patched out. |
 | MPFR | Not linked. The link line is rejected if `libmpfr` appears. |
-| TetGen | AGPL. `GEOGRAM_WITH_TETGEN=OFF`. The fTetWild executable (the only target that includes `igl/copyleft/tetgen`) is not built, because this project is not the top-level CMake project. `LIBIGL_WITH_TETGEN=OFF`. |
-| Triangle (Shewchuk) | Custom non-commercial licence. `GEOGRAM_WITH_TRIANGLE=OFF` and `LIBIGL_WITH_TRIANGLE=OFF`. |
+| TetGen | AGPL. `GEOGRAM_WITH_TETGEN=OFF`. The fTetWild executable (the only target that includes `igl/copyleft/tetgen`) is not built, because this project is not the top-level CMake project. `LIBIGL_COPYLEFT_TETGEN=OFF` and `LIBIGL_COPYLEFT_CORE=OFF`. |
+| Triangle (Shewchuk) | Custom non-commercial licence. `GEOGRAM_WITH_TRIANGLE=OFF` and `LIBIGL_RESTRICTED_TRIANGLE=OFF`. |
 | HLBFGS | The line search in Geogram's copy is GPL, and the README is non-commercial. `GEOGRAM_WITH_HLBFGS=OFF`. Upstream fTetWild does not force this off; the build script does. |
 | FPG / the CGAL subset under `geogram/src/bin/fpg` | LGPL. `GEOGRAM_WITH_FPG=OFF` (Geogram's own default is already off; the script forces it). |
 | oneTBB | Apache-2.0, but it needs threads. `FLOAT_TETWILD_ENABLE_TBB=OFF`, so it is not fetched. |
 | fast-envelope | `FLOAT_TETWILD_WITH_EXACT_ENVELOPE=OFF`. Not fetched. |
 | CLI11 | BSD-3-Clause. Fetched only for the top-level executable, which is not built. |
 | Eigen LGPL headers | Blocked by `EIGEN_MPL2_ONLY`. |
-| libigl copyleft modules | Not compiled. libigl also ships `LICENSE.GPL` for those modules. |
+| libigl copyleft and restricted modules | Not compiled. libigl 2.6's switches are `LIBIGL_COPYLEFT_CORE`, `LIBIGL_COPYLEFT_CGAL`, `LIBIGL_COPYLEFT_COMISO`, `LIBIGL_COPYLEFT_TETGEN`, `LIBIGL_RESTRICTED_MATLAB`, `LIBIGL_RESTRICTED_MOSEK`, and `LIBIGL_RESTRICTED_TRIANGLE`, all OFF. libigl also ships `LICENSE.GPL` for the copyleft modules. |
 | Geogram legacy numerics, exploragram, Lua, graphics | Forced off. ANN (LGPL) lives under Geogram's tests and is not built when `GEOGRAM_LIB_ONLY` is on. |
 | OpenMP | fTetWild's `cmake/geogram.cmake` forces `-fopenmp` on Linux. That block is removed. The wasm platform file does not add `-fopenmp`. The module is single-threaded and does not use shared memory. |
 

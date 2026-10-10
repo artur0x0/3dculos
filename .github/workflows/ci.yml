@@ -16,7 +16,9 @@
 # packages/surfcad-mesh/pkg is present. If those files are absent the jobs
 # skip and exit 0, because a skipped job would not satisfy a required check.
 # GPL, AGPL, and LGPL fail the Rust license check because they are not in
-# packages/surfcad-fea/deny.toml's allow list. CalculiX is GPL-2.0-only and
+# packages/surfcad-fea/deny.toml's allow list. The license job also rejects
+# non-commercial npm licences and fails when public/THIRD_PARTY_NOTICES.txt
+# does not match a fresh Rust and npm generation. CalculiX is GPL-2.0-only and
 # is not a dependency. The calculix reference job installs the ccx binary
 # with apt and runs it as an external process. It is never vendored, linked,
 # bundled, or committed. If that install fails, the job emits a warning
@@ -157,12 +159,16 @@ jobs:
             exit 1
           fi
 
-  # npm copyleft gate. Always runs. The cargo-deny step is a separate job so
-  # it can stay a no-op until the FEA crate exists.
+  # npm copyleft and non-commercial gate, plus a freshness check for
+  # public/THIRD_PARTY_NOTICES.txt. Always runs. The cargo-deny step is a
+  # separate job so it can stay a no-op until the FEA crate exists.
+  # Regenerating the notices needs the pinned Rust toolchain (cargo tree on
+  # wasm32) and a Vite production build (the npm section is the bundle's
+  # module graph, not the devDependency list).
   license:
     name: license
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -174,8 +180,30 @@ jobs:
       - name: npm ci
         run: npm ci
 
-      - name: Reject GPL, AGPL, and LGPL production dependencies
+      - name: Reject copyleft and non-commercial production dependencies
         run: node scripts/ci/check-npm-licenses.mjs
+
+      - name: Read the pinned Rust channel
+        id: rust
+        run: |
+          channel=$(sed -n 's/^channel = "\(.*\)"/\1/p' packages/surfcad-fea/rust-toolchain.toml)
+          test -n "$channel"
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+
+      - name: Install the pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.rust.outputs.channel }}
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packages/surfcad-fea
+          cache-on-failure: true
+
+      - name: Fail if third-party notices are stale
+        run: node scripts/ci/generate-third-party-notices.mjs --check
 
   # License gate for packages/surfcad-fea. cargo-deny is a pinned binary;
   # it reads the lockfile and does not need a Rust toolchain. The allow list
