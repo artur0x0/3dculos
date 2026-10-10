@@ -42,6 +42,26 @@ export function faceSketchBox(meshes) {
 }
 
 /**
+ * World box of a part bounds record (`min` / `max` arrays). Empty when
+ * the record is missing. Used when the sketch plane is not a highlighted face.
+ * @param {{ min?: number[], max?: number[] }|null} bounds
+ * @returns {import('three').Box3|null}
+ */
+export function boundsSketchBox(bounds) {
+  const min = bounds?.min;
+  const max = bounds?.max;
+  if (!min || !max || min.length < 3 || max.length < 3) return null;
+  const box = new Box3(
+    new Vector3(Number(min[0]), Number(min[1]), Number(min[2])),
+    new Vector3(Number(max[0]), Number(max[1]), Number(max[2])),
+  );
+  if (box.isEmpty() || !Number.isFinite(box.min.x) || !Number.isFinite(box.max.z)) return null;
+  box.getSize(_size);
+  if (!(_size.lengthSq() > 1e-12)) return null;
+  return box;
+}
+
+/**
  * Pose that looks along `normal` (target → camera) and frames `box`.
  * The clone drops any feature-card view offset so the face is centered.
  * @returns {object|null}

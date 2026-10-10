@@ -407,7 +407,7 @@ import {
   featureSheetClearanceNdc,
   featureSheetCoveredFraction,
 } from '../utils/featureSheetCamera';
-import { createFaceSketchAim, faceSketchBox } from '../utils/faceSketchCamera';
+import { boundsSketchBox, createFaceSketchAim, faceSketchBox } from '../utils/faceSketchCamera';
 import { emptySketchHistory, observeSketchEdit, undoSketchEdit } from '../utils/contourSketchHistory';
 
 import { validateScript, formatValidationErrors } from '../utils/scriptValidator';
@@ -1099,6 +1099,9 @@ const Viewport = forwardRef(({
   const [edgeModeToast, setEdgeModeToast] = useState(null);
   /** Slice 24/25/26/28/30: contour-mode shell (Profile-in-mode; Extrude / Revolve / Loft / Sweep commit a solid). */
   const [contourMode, setContourMode] = useState(null);
+  /** Plane card is the first step. Drawing keeps the rail and drops the card. */
+  const [contourPlaneOpen, setContourPlaneOpen] = useState(false);
+  const contourPlaneOpenRef = useRef(false);
   const [contourFaceAim, setContourFaceAim] = useState('');
   const [contourUndoDepth, setContourUndoDepth] = useState(0);
   const [faceSketchNonce, setFaceSketchNonce] = useState(0);
@@ -1480,7 +1483,8 @@ const Viewport = forwardRef(({
   const helperCardOpenRef = useRef(false);
   helperCardOpenRef.current = helperCardOpen;
   const helperSheetOpen = mode !== 'game' && helperCardOpen;
-  const contourSheetOpen = mode !== 'game' && !!contourMode;
+  const contourSession = mode !== 'game' && !!contourMode;
+  const contourSheetOpen = contourSession && contourPlaneOpen;
   const filletSheetOpen = mode !== 'game' && !!filletMode;
   const shellSheetOpen = mode !== 'game' && !!shellMode;
   const draftSheetOpen = mode !== 'game' && !!draftMode;
@@ -1507,7 +1511,7 @@ const Viewport = forwardRef(({
     && !!featureEdit
     && (featureEdit.mode === 'edit' || featureEdit.mode === 'picker');
   const editSheetOpen = featureEditRequested
-    && !contourSheetOpen
+    && !contourSession
     && !filletSheetOpen
     && !shellSheetOpen
     && !draftSheetOpen
@@ -1644,6 +1648,7 @@ const Viewport = forwardRef(({
   tangentPropRef.current = tangentProp;
   cachedMeshDataRef.current = cachedMeshData;
   contourModeRef.current = contourMode;
+  contourPlaneOpenRef.current = contourPlaneOpen;
   filletModeRef.current = filletMode;
   shellModeRef.current = shellMode;
   paintModeRef.current = paintMode;
@@ -1733,6 +1738,8 @@ const Viewport = forwardRef(({
       filletBlendPreviewRef.current = null;
       setContourMode(null);
       contourModeRef.current = null;
+      contourPlaneOpenRef.current = false;
+      setContourPlaneOpen(false);
       setFilletMode(null);
       filletModeRef.current = null;
       setShellMode(null);
@@ -3039,6 +3046,10 @@ const Viewport = forwardRef(({
     cancelFeatureEditRef.current?.('contour');
     setContourMode(null);
     contourModeRef.current = null;
+    contourPlaneOpenRef.current = false;
+    setContourPlaneOpen(false);
+    sketchHistRef.current = emptySketchHistory();
+    setContourUndoDepth(0);
     setPickMode('face');
     clearXsPreview();
     clearWorkplaneOverlay();
@@ -3112,11 +3123,12 @@ const Viewport = forwardRef(({
     );
     const armed = saved.find((c) => c.id === armedContourId);
     next = armed ? applySavedContour(next, armed) : withAutoPickedContour(next, saved);
+    contourPlaneOpenRef.current = true;
+    setContourPlaneOpen(true);
+    sketchHistRef.current = emptySketchHistory();
+    setContourUndoDepth(0);
+    setContourFaceAim('');
     setContourMode(next);
-    if (next.planePreset === 'face') {
-      const normal = next.planeFace?.normal || next.planeBase?.normal;
-      requestFaceSketchAim(normal);
-    }
     // Soft-fail / refuse only — no informational toast on successful feature UI open.
     if (next.enterRefuse) showContourToast(next.enterRefuse);
     applyContourPartGhost(true);
@@ -4022,23 +4034,24 @@ const Viewport = forwardRef(({
         angles: { x: 0, y: 0, z: 0 },
       });
     });
-    holdSheetSlide();
+    // The plane card keeps the feature-sheet slide. Aim waits for Start drawing.
+    if (contourPlaneOpenRef.current) return;
     requestFaceSketchAim(resolved.face?.normal || resolved.plane?.normal);
   }, [selectedFace, onFaceSelected, clearHighlight]);
 
-  // Face sketch: look along the outward normal and frame the face. The card
-  // slide stays disarmed so it does not pan this framing away. The highlight
-  // drops when the tween ends.
+  // Start drawing: look along the sketch-plane normal. A highlighted face
+  // is framed; any other plane frames the part. The highlight drops when
+  // the tween ends. The plane card has already dropped its slide snapshot.
   useEffect(() => {
     if (!faceSketchNonce) return undefined;
     const state = contourModeRef.current;
     const normal = faceSketchNormalRef.current;
-    if (!state || !normal) return undefined;
+    if (!state || !normal || contourPlaneOpenRef.current) return undefined;
     const meshes = highlightMeshRef.current;
     const list = Array.isArray(meshes) ? meshes.filter(Boolean) : (meshes ? [meshes] : []);
     const faceMeshes = list.filter((mesh) => mesh.name === 'highlight');
-    const box = faceSketchBox(faceMeshes.length ? faceMeshes : list);
-    holdSheetSlide();
+    const box = faceSketchBox(faceMeshes.length ? faceMeshes : list)
+      || boundsSketchBox(modelBoundsRef.current);
     if (!box) {
       clearHighlight();
       setSelectedFace(null);
@@ -4055,17 +4068,23 @@ const Viewport = forwardRef(({
     return undefined;
   }, [faceSketchNonce, clearHighlight, onFaceSelected]);
 
-  // Face-sketch undo. The face pick is the baseline. Later tool, profile,
-  // plane, and loft-station edits push a step. An undo replace does not push.
+  // Drawing undo. The plane card is not a step. Start drawing seeds the
+  // accepted plane as the baseline. Later tool, profile, plane, and
+  // loft-station edits push a step. An undo replace does not push.
   useEffect(() => {
     if (applyingSketchUndoRef.current) {
       applyingSketchUndoRef.current = false;
       return;
     }
+    if (contourPlaneOpen || !contourMode) {
+      sketchHistRef.current = emptySketchHistory();
+      setContourUndoDepth(0);
+      return;
+    }
     const next = observeSketchEdit(sketchHistRef.current, contourMode);
     sketchHistRef.current = next;
     setContourUndoDepth(next.depth);
-  }, [contourMode]);
+  }, [contourMode, contourPlaneOpen]);
 
   const undoContourSketch = useCallback(() => {
     const popped = undoSketchEdit(sketchHistRef.current);
@@ -4075,6 +4094,37 @@ const Viewport = forwardRef(({
     setContourUndoDepth(popped.history.depth);
     setContourMode(popped.state);
   }, []);
+
+  const reopenContourPlane = useCallback(() => {
+    faceSketchRef.current?.cancel();
+    setContourFaceAim('');
+    contourPlaneOpenRef.current = true;
+    setContourPlaneOpen(true);
+  }, []);
+
+  const startContourDrawing = useCallback(() => {
+    const state = contourModeRef.current;
+    if (!state) return;
+    // A pending slide tick must not snapshot again after the card unmounts.
+    holdSheetSlide();
+    sheetCameraRef.current?.abandon();
+    const seeded = observeSketchEdit(emptySketchHistory(), state);
+    sketchHistRef.current = seeded;
+    setContourUndoDepth(seeded.depth);
+    contourPlaneOpenRef.current = false;
+    setContourPlaneOpen(false);
+    const normal = contourWorkplaneFace(state, modelBoundsRef.current)?.normal;
+    setContourFaceAim('');
+    requestFaceSketchAim(normal);
+  }, []);
+
+  const onContourBack = useCallback(() => {
+    if ((sketchHistRef.current?.depth || 0) > 0) {
+      undoContourSketch();
+      return;
+    }
+    reopenContourPlane();
+  }, [undoContourSketch, reopenContourPlane]);
 
   const clearPathPreview = useCallback(() => {
     if (!pathPreviewRef.current) return;
@@ -8063,6 +8113,7 @@ const Viewport = forwardRef(({
                 : 0,
               undoDepth: sketchHistRef.current?.depth || 0,
               open: !!contourModeRef.current,
+              planeCard: contourPlaneOpenRef.current,
             };
           },
         };
@@ -10001,21 +10052,21 @@ const Viewport = forwardRef(({
         />
       )}
 
-      {/* Contour rail: tools, Back undoes one face-sketch edit, X exits. */}
+      {/* Contour rail: tools, Back undoes, Confirm finishes, X exits. */}
       {contourMode && (
         <ContourModeRail
           tool={contourMode.tool}
           gesture={contourMode.gesture || null}
           entry={contourMode.entry}
           compact={isMobile}
-          showBack={contourMode.planePreset === 'face'}
           canUndo={contourUndoDepth > 0}
           onSelectTool={(id) => setContourMode((prev) => {
             if (!prev) return prev;
             if (id === 'arc' || id === 'dimension' || id === 'constraints') return armContourGesture(prev, id);
             return switchContourTool(prev, id);
           })}
-          onUndo={undoContourSketch}
+          onUndo={onContourBack}
+          onConfirm={confirmContourProfile}
           onBack={exitContourMode}
         />
       )}
@@ -10157,8 +10208,8 @@ const Viewport = forwardRef(({
         />
       )}
 
-      {/* Slice 24: contour card. Game keeps the rail and skips the card and the slide. */}
-      {contourMode && !contourMode.gesture && mode !== 'game' && (
+      {/* Plane card. Start drawing accepts the plane and leaves the rail up. */}
+      {contourMode && contourPlaneOpen && !contourMode.gesture && mode !== 'game' && (
         <ContourModeChip
           tool={contourMode.tool}
           entry={contourMode.entry}
@@ -10292,7 +10343,7 @@ const Viewport = forwardRef(({
           onMergeChange={(merge) => setContourMode((prev) => (
             prev ? { ...prev, merge: merge !== false } : prev
           ))}
-          onConfirm={confirmContourProfile}
+          onConfirm={startContourDrawing}
           onCancel={exitContourMode}
           onDelete={featureEditRef.current?.dialog === 'contour' ? featureEditDelete : null}
           onUndoPoint={() => setContourMode((prev) => {

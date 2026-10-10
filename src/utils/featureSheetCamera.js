@@ -400,6 +400,8 @@ export function remountTrackball(camera, prev) {
 /**
  * One open sheet's camera. `slideBy` pans from the live pose (snapshot is
  * taken once). `restore` tweens back to that snapshot and remounts Trackball.
+ * `abandon` drops the snapshot and leaves the live pose, so a later aim is
+ * not pulled back when the card unmounts.
  */
 export function createSheetCameraSession({
   getCamera,
@@ -530,6 +532,13 @@ export function createSheetCameraSession({
         snapshot = null;
         restoring = false;
       });
+      return true;
+    },
+    /** Drop the snapshot. The live pose stays. A later restore is a no-op. */
+    abandon() {
+      cancelTween();
+      snapshot = null;
+      restoring = false;
       return true;
     },
   };
