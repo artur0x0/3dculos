@@ -288,7 +288,23 @@ Scripts and the kernel stay millimetres. This setting is not written into a scri
 
 `surfcad.displayUnit` (`src/utils/displayUnit.js`, hook `useDisplayUnit`) is the global mm|in choice. It persists in localStorage. It is a display conversion only. `lengthToDisplay`, `formatDisplayLength`, and `formatDisplayDelta` draw a stored length. `displayToMm` turns a typed length back into millimetres before a later field writes it. Do not parse a formatted caption back into a script. Length captions take the unit as a suffix (`lengthCaption`: `Distance mm`, `Radius in`). Angles stay degrees and do not take that suffix.
 
-This is the L2 seed. Measure is the only reader. Later length fields consume this setting instead of adding a key. Sheet metal keeps `surfcad.sheetMetal.displayUnit` until that pass.
+Measure, the joint distance field, and the contour loft offset read it. `lengthSnap` (`src/utils/sliderMap.js`) reads it for the length-slider detent. Sheet metal still keeps `surfcad.sheetMetal.displayUnit` until the sheet-metal slider pass, which follows this key. The slider contract is `docs/plans/slider-plan.md`.
+
+## Characteristic length
+
+One number per part, in millimetres. It is the longest side of that part's overall extents. A gap between bodies is inside the box, so it counts. An empty part, a cleared viewport, or a degenerate box uses 100 mm.
+
+`characteristicLengthMm` (`src/utils/characteristicLength.js`) is the function. `featureGraphFor` stores `characteristicLengthMm` on the geometry cache entry after the coherent edges are built, including a mesh that has no feature edges. The viewport writes the same number with `rememberCharacteristicLength` next to `setModelBounds`, keyed by the mesh object and by the part id. `shouldClearViewportScript` calls `forgetCharacteristicLength`, and readers then use 100 mm. The number is not a field of `.surf.json`.
+
+Length sliders do not read it yet. Fillet and chamfer do not use it: their default is a tenth of the adjacent edge perpendicular to the pick.
+
+## Slider curve and snap
+
+`shape` (`src/utils/sliderMap.js`) maps a thumb fraction to a value fraction. The first half of the travel covers the first third of the value, and the slope is continuous there. Past that the slope climbs to 2 at the end. `unshape` places the thumb from a typed value. The range input is a thumb index `0 … 1000`, not the millimetre ends. A signed length is `sign(u) · R · shape(|u|)`. A one-sided length is `min + (max − min) · shape(s)`.
+
+`offscreenRange` sets R so that two-thirds of the thumb equals a measured off-screen distance: `R = dOff · 27/13`. With no camera that distance is `1.5 L`.
+
+The thumb snap is `lengthSnap`: 0.1 mm, or 1/16 in when `surfcad.displayUnit` is inches. A span shorter than four snaps uses a tenth of that detent, once. The typed box does not snap. Angles, counts, and segments stay linear and do not use `shape`.
 
 ## Measure
 

@@ -7,9 +7,10 @@
  * field writes. Length captions carry the unit suffix (`Distance mm`).
  * Angles stay degrees.
  *
- * Persisted at `surfcad.displayUnit`. Measure and the joint distance
- * field read it. Sheet metal keeps `surfcad.sheetMetal.displayUnit`
- * (`sheetUnits.js`) until that pass.
+ * Persisted at `surfcad.displayUnit`. Measure, the joint distance field,
+ * and the contour loft offset read it. `lengthSnap` (`sliderMap.js`) reads
+ * it for the length-slider detent. Sheet metal keeps
+ * `surfcad.sheetMetal.displayUnit` (`sheetUnits.js`) until that pass.
  */
 export const DISPLAY_UNIT_KEY = 'surfcad.displayUnit';
 export const MM_PER_IN = 25.4;

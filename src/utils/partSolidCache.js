@@ -13,6 +13,11 @@ import { dropPlanarFins } from './planarSeam.js';
 import { contactSeamSegments } from './contactSeam.js';
 import { buildCoherentEdges, buildFeatureEdges } from './selectEdge.js';
 import { annotateFeatureEdges, indexBoundaryEdgesFromGeometry } from './boundaryEdgeIds.js';
+import {
+  REFERENCE_LENGTH_MM,
+  boundsFromGeometry,
+  characteristicLengthMm as lengthFromBounds,
+} from './characteristicLength.js';
 
 /**
  * Per-triangle feature key from Manifold runs: `runFeature` (fillet / chamfer
@@ -101,7 +106,15 @@ export function buildSolidGeometry(meshData) {
 const featureGraphCache = new WeakMap();
 
 export function featureGraphFor(geom, faceIDs) {
-  if (!geom) return { featureEdges: [], topo: null, timing: null, cached: false };
+  if (!geom) {
+    return {
+      featureEdges: [],
+      topo: null,
+      timing: null,
+      cached: false,
+      characteristicLengthMm: REFERENCE_LENGTH_MM,
+    };
+  }
   const hit = featureGraphCache.get(geom);
   if (hit && hit.faceIDs === faceIDs) return { ...hit, cached: true };
   const tFeat = performance.now();
@@ -132,6 +145,7 @@ export function featureGraphFor(geom, faceIDs) {
     featureEdges,
     topo,
     timing: { featureMs, topoMs, annotateMs, coherentMs },
+    characteristicLengthMm: lengthFromBounds({ bounds: boundsFromGeometry(geom) }),
   };
   featureGraphCache.set(geom, entry);
   return { ...entry, cached: false };
