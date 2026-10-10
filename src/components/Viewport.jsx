@@ -1353,6 +1353,9 @@ const Viewport = forwardRef(({
     let alive = true;
     const tick = () => {
       if (!alive || !sheetSlideArmedRef.current) return;
+      // Focused-field edit shrinks the card over the keyboard. Another slide
+      // would pan from the pose the full card already set. Close still restores.
+      if (pane?.querySelector('[data-feature-card][data-feature-field-edit]')) return;
       sheetCameraRef.current?.slideBy(sheetSlideDeltaRef.current());
     };
     const raf = requestAnimationFrame(tick);

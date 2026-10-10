@@ -69,6 +69,8 @@ export const SmSlider = ({ id, label, value, onChange, min, max, step = 0.5, uni
           style={PARTS_TEXT_INPUT_STYLE}
           aria-label={`${label} value`}
           data-sm-number={id}
+          data-field-label={label}
+          {...(unit ? { 'data-unit': unit } : null)}
         />
         {unit && <span className="text-xs text-gray-300 w-7 shrink-0">{unit}</span>}
       </div>
