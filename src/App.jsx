@@ -6221,7 +6221,7 @@ const App = () => {
       viewportRef.current?.notify?.(result.message);
       return;
     }
-    finishJointWrite(result, scripts, { resetPicks: true });
+    finishJointWrite(result, scripts, { resetPicks: card.mode !== 'edit' });
   };
 
   const handleJointCancel = () => {
