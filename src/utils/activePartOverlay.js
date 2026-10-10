@@ -8,6 +8,7 @@
  * solids have an edge "0-1".
  */
 import { pickNearestEdge } from './selectEdge.js';
+import { quaternionIsIdentity, worldPoint } from './partPose.js';
 
 /** [x, y, z] assembly translation. Missing or non-finite components are 0. */
 export function activePartTranslation(position) {
@@ -22,10 +23,11 @@ export function activePartTranslation(position) {
   ];
 }
 
-export function shiftLocalPoint(point, position) {
+export function shiftLocalPoint(point, position, quaternion = null) {
   if (!point) return point;
   const [x, y, z] = activePartTranslation(position);
-  return [point[0] + x, point[1] + y, point[2] + z];
+  if (!quaternion || quaternionIsIdentity(quaternion)) return [point[0] + x, point[1] + y, point[2] + z];
+  return worldPoint(point, { t: [x, y, z], q: quaternion });
 }
 
 function dist3(a, b) {
@@ -56,7 +58,7 @@ function overlaySamples(edge) {
  * land on that part. Points that do belong to the active part are shifted by
  * its assembly translation.
  *
- * @param {{ edges?: object[]|null, sourceId?: string|null, activeId?: string|null, position?: number[]|null }} args
+ * @param {{ edges?: object[]|null, sourceId?: string|null, activeId?: string|null, position?: number[]|null, quaternion?: number[]|null }} args
  * @returns {{ partId: string|null, points: number[][], foreign: boolean }}
  */
 export function resolveActivePartOverlay({
@@ -64,6 +66,7 @@ export function resolveActivePartOverlay({
   sourceId = null,
   activeId = null,
   position = null,
+  quaternion = null,
 } = {}) {
   const list = Array.isArray(edges) ? edges.filter(Boolean) : [];
   const ids = new Set();
@@ -78,7 +81,7 @@ export function resolveActivePartOverlay({
   for (const edge of list) {
     for (const p of overlaySamples(edge)) {
       if (!p || p.length < 3) continue;
-      points.push(shiftLocalPoint(p, position));
+      points.push(shiftLocalPoint(p, position, quaternion));
     }
   }
   const partId = active || (sourceId != null && sourceId !== '' ? String(sourceId) : null)
@@ -86,12 +89,12 @@ export function resolveActivePartOverlay({
   return { partId, points, foreign: false };
 }
 
-function shiftEdge(edge, position) {
+function shiftEdge(edge, position, quaternion) {
   return {
     ...edge,
-    va: shiftLocalPoint(edge.va, position),
-    vb: shiftLocalPoint(edge.vb, position),
-    mid: edge.mid ? shiftLocalPoint(edge.mid, position) : edge.mid,
+    va: shiftLocalPoint(edge.va, position, quaternion),
+    vb: shiftLocalPoint(edge.vb, position, quaternion),
+    mid: edge.mid ? shiftLocalPoint(edge.mid, position, quaternion) : edge.mid,
   };
 }
 
@@ -110,7 +113,7 @@ export function pickActivePartEdge(solids, activeId, worldPoint, maxDist = 1) {
   const active = (solids || []).find((solid) => solid && String(solid.id) === String(activeId));
   if (!active) return null;
   const local = Array.isArray(active.edges) ? active.edges : [];
-  const worldEdges = local.map((edge) => shiftEdge(edge, active.position));
+  const worldEdges = local.map((edge) => shiftEdge(edge, active.position, active.quaternion));
   const hit = pickNearestEdge(worldEdges, worldPoint, maxDist);
   if (!hit) return null;
   const edge = local.find((candidate) => candidate.key === hit.key);
@@ -120,6 +123,7 @@ export function pickActivePartEdge(solids, activeId, worldPoint, maxDist = 1) {
     sourceId: active.id,
     activeId: active.id,
     position: active.position,
+    quaternion: active.quaternion,
   });
   return { partId: String(active.id), edge, points: overlay.points };
 }
@@ -129,11 +133,17 @@ export function pickActivePartEdge(solids, activeId, worldPoint, maxDist = 1) {
  * translation. Local child coordinates stay in the part frame.
  * @param {object|null} obj three.js object (position + userData)
  * @param {number[]|null} position
+ * @param {number[]|null} [quaternion]
  */
-export function applyActivePartAnchor(obj, position) {
+export function applyActivePartAnchor(obj, position, quaternion = null) {
   if (!obj?.position?.set) return obj;
   const [x, y, z] = activePartTranslation(position);
   obj.position.set(x, y, z);
+  if (obj.quaternion?.set) {
+    const q = quaternion && !quaternionIsIdentity(quaternion) ? quaternion : [0, 0, 0, 1];
+    obj.quaternion.set(q[0] || 0, q[1] || 0, q[2] || 0, q[3] ?? 1);
+  }
+  if (typeof obj.updateMatrixWorld === 'function') obj.updateMatrixWorld(true);
   if (!obj.userData) obj.userData = {};
   obj.userData.anchorToActivePart = true;
   return obj;

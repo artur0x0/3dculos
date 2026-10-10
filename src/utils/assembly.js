@@ -13,6 +13,7 @@ import { isSurfId } from './git/surfId.js';
 import {
   jointedSurfIds,
   normalizeAssemblyJoints,
+  partPlacement,
   poseFieldsForPart,
 } from './jointSchema.js';
 
@@ -735,11 +736,13 @@ export function composeViewportParts(doc, runs) {
     if (part.visible === false) continue;
     const run = runs?.[part.id];
     if (!run || run.ok !== true || !run.mesh || !run.mesh.vertProperties) continue;
+    const pose = partPlacement(part);
     out.push({
       id: part.id,
       surfId: part.surfId || null,
       mesh: run.mesh,
-      position: partPosition(part) || [0, 0, 0],
+      position: pose.t,
+      placement: pose,
     });
   }
   return out;

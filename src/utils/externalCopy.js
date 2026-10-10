@@ -4,8 +4,8 @@
  * A tool body that lives in another part is frozen into the *target* part at
  * Accept. The source part's script text, as it was at Accept, is embedded in
  * the feature inside `externalBody(function () { … }, { bodies, offset })`.
- * `offset` is source position − target position (assembly placement is a
- * translation), so the copy is posed into the target frame.
+ * `offset` is source position − target position. A rotated pose is refused:
+ * externalBody stays a translation, and the confirm writes no script.
  *
  * Not associative: editing the source part later does not change the copy.
  * The copy lives inside the feature's marked block, so deleting or undoing
@@ -14,6 +14,23 @@
  */
 
 import { parseFeatureMarkers } from './featureMarkers.js';
+import { partPlacement } from './jointSchema.js';
+import { quaternionIsIdentity } from './partPose.js';
+
+export const EXTERNAL_BODY_ROTATION_MESSAGE = 'A rotated part cannot be copied across parts. No script is written.';
+
+/** True when either pose is rotated. externalBody then writes nothing. */
+export function externalBodyRotationBlock(source, targets) {
+  const rows = [source, ...(targets || [])];
+  for (const row of rows) {
+    if (!row) continue;
+    const q = row.placement?.q || row.quaternion || partPlacement(row).q;
+    if (!quaternionIsIdentity(q)) {
+      return { ok: false, message: EXTERNAL_BODY_ROTATION_MESSAGE };
+    }
+  }
+  return { ok: true };
+}
 
 /** First line of every external copy, right after the begin marker. */
 export const EXTERNAL_COPY_TAG = '// external copy';
@@ -358,6 +375,10 @@ export function planCrossPartSubtract({ before, after, source, parts, markers })
  */
 export function crossPartSubtractWrites(plan, { source, parts, overlapIds }) {
   if (!plan) return [];
+  const involved = (parts || []).filter((part) => (
+    (plan.candidates || []).some((cand) => String(cand.id) === String(part?.id))
+  ));
+  if (!externalBodyRotationBlock(source, involved).ok) return [];
   const hit = new Set((overlapIds || []).map(String));
   const writes = [];
   for (const cand of plan.candidates) {
