@@ -179,6 +179,7 @@ export function commitJointEdit({
       scripts,
       message: refreshed.message,
       statuses: refreshed.statuses,
+      messages: refreshed.messages,
       preempted: false,
     };
   }
@@ -189,6 +190,7 @@ export function commitJointEdit({
     scripts,
     message: null,
     statuses: refreshed.statuses,
+    messages: refreshed.messages,
     preempted: false,
   };
 }

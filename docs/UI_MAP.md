@@ -87,7 +87,11 @@ Desktop specifics:
   set as mobile CAD. A sheet-metal chip uses the blue bent-plate glyph
   (`SheetMetalPlate`, `text-blue-400`), the same plate as the Shape rail.
   Tap jumps the Monaco caret and reopens the creation dialog
-  for that feature (`handleDesktopFeatureStripJump` → `beginFeatureEdit`). The old vertical seam strip
+  for that feature (`handleDesktopFeatureStripJump` → `beginFeatureEdit`).
+  When no part is selected the same bar shows assembly joints
+  (`data-assembly-joints`), or **No assembly joints**
+  (`data-feature-strip-empty`), and Undo is titled **Undo joint**.
+  The old vertical seam strip
   between editor and viewer is gone. Hidden in game mode. SplitDivider sits
   directly between editor and viewer.
 - **Profile chip:** desktop (above the 768px mobile breakpoint) shows only
@@ -271,7 +275,9 @@ Mobile specifics:
   editor toolbar, and do not change which chips appear. Strip taps / long-press
   reopen that feature's **creation dialog** (same path on mobile and desktop).
   Sheet-metal chips use `SheetMetalPlate` (blue), same as desktop.
-  `hideWhenEmpty` skips the "No features" caption;
+  `hideWhenEmpty` skips the "No features" caption. It does not skip
+  **No assembly joints**, which the CAD bar shows when no part is selected.
+  The script-stage strip never shows joints.
   the bar itself stays mounted so Undo and Redo remain. A chip whose block holds a
   frozen copy of another part's geometry (`externalBody`) has a 2px yellow border
   (`data-feature-external="1"`), active or not; its feature sheet says External copy.

@@ -310,6 +310,7 @@ import {
   resolvePartPick,
   shouldSyncScript,
 } from '../utils/pickRetarget';
+import { fitJointAxis } from '../utils/jointResolve';
 import {
   activePartEdges,
   foreignPartEdgeGroups,
@@ -833,6 +834,15 @@ const Viewport = forwardRef(({
   onFeatureLongPress = null,
   /** Face / edge / body hit. App retargets the CAD part and may sync Monaco. */
   onPickRetarget = null,
+  /** Empty canvas click. App clears cadPartId and leaves activeId. */
+  onCadEmptyClick = null,
+  /** No part selected: a face or edge tap arms a joint instead of selecting. */
+  jointPicking = false,
+  onJointPick = null,
+  /** Joint card. Game does not mount it. fullLeft stays off. */
+  jointCard = null,
+  /** False: the title is the assembly name only, with no "in". */
+  cadPartSelected = true,
   /**
    * Every run of a script here reports its outcome:
    * `{ script, ok, scriptLine, featureId, featureBlock }`. App maps a failure
@@ -1570,6 +1580,12 @@ const Viewport = forwardRef(({
   moveFaceModeRef.current = moveFaceMode;
   deleteFaceModeRef.current = deleteFaceMode;
   onPickRetargetRef.current = onPickRetarget;
+  const onCadEmptyClickRef = useRef(null);
+  onCadEmptyClickRef.current = onCadEmptyClick;
+  const onJointPickRef = useRef(null);
+  onJointPickRef.current = onJointPick;
+  const jointPickingRef = useRef(false);
+  jointPickingRef.current = !!jointPicking;
   onFeatureSessionChangeRef.current = onFeatureSessionChange;
   partLabelsRef.current = partLabels || {};
   getBooleanContextRef.current = getBooleanContext;
@@ -6416,10 +6432,20 @@ const Viewport = forwardRef(({
         clearEdgeHover();
         if (!choice.partId && emptyClickClearsSelection({ featureSession: featureSessionRef.current })) {
           clearGeomSelection();
+          onCadEmptyClickRef.current?.();
         }
         return;
       }
       clearEdgeHover();
+      if (jointPickingRef.current && edge.radius > 0 && edge.dir && edge.mid) {
+        onJointPickRef.current?.({
+          partId: activePartIdRef.current,
+          kind: 'axis',
+          planar: false,
+          axis: true,
+          key: { at: edge.mid.slice(), dir: edge.dir.slice(), radius: edge.radius },
+        });
+      }
       setSelectedEdges((prev) => toggleEdgeSelectionPropagated(prev, edge, {
         propagate: tangentPropRef.current,
         featureEdges: featureEdgesRef.current,
@@ -6565,6 +6591,7 @@ const Viewport = forwardRef(({
         // A feature session keeps its picks. Hiding that part does too.
       } else {
         clearGeomSelection();
+        onCadEmptyClickRef.current?.();
       }
       return;
     }
@@ -6577,6 +6604,7 @@ const Viewport = forwardRef(({
     if (!again.length) {
       if (emptyClickClearsSelection({ featureSession: featureSessionRef.current }) && !measurementEnabled) {
         clearGeomSelection();
+        onCadEmptyClickRef.current?.();
       }
       return;
     }
@@ -6698,6 +6726,26 @@ const Viewport = forwardRef(({
     const classified = classifySelectedFace(payload) || payload;
     setSelectedFace(classified);
     onFaceSelected?.(classified);
+    if (jointPickingRef.current && list.length === 1) {
+      const pos = positions?.array || null;
+      const idx = index?.array || index;
+      const axis = (pos && idx && last.indices) ? fitJointAxis(pos, idx, last.indices) : null;
+      const area = Number(classified.area) || 0;
+      let described = null;
+      if (axis) {
+        described = { kind: 'axis', planar: false, axis: true, key: axis };
+      } else if (classified.type === 'planar' && area > 0) {
+        described = {
+          kind: 'face',
+          planar: true,
+          axis: false,
+          key: { at: classified.center.slice(), n: classified.normal.slice(), area },
+        };
+      }
+      if (described) {
+        onJointPickRef.current?.({ partId: activePartIdRef.current, ...described });
+      }
+    }
     setShellMode((prev) => {
       if (!prev) return prev;
       const updated = { ...prev, lastFace: classified };
@@ -9155,6 +9203,7 @@ const Viewport = forwardRef(({
   const titleParts = formatViewerTitle(
     currentFilename,
     typeof assemblyName === 'string' ? assemblyName : '',
+    { partSelected: cadPartSelected !== false },
   );
 
   const titlePlace = 'left-1/2 -translate-x-1/2 max-w-[min(36rem,calc(100%-2rem))]';
@@ -9833,6 +9882,9 @@ const Viewport = forwardRef(({
           onDismiss={exitBooleanMode}
         />
       )}
+
+      {/* Joint card. Game mounts neither the card nor the joints strip. */}
+      {mode !== 'game' && jointCard}
 
       {/* Move on the shared card. Game mounts no card. */}
       {moveMode && mode !== 'game' && (

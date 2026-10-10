@@ -31,7 +31,7 @@ The word is joints. Part scripts stay untouched. The file stays version 1.
 | 23 | Deleting a part drops every joint that names it. A broken joint is not left behind. | PR 1, in `serializeAssembly` |
 | 24 | Copy to this assembly does not copy joints onto the new surf id. Same as colors. The dangling prune drops a joint whose surf id left. | PR 1 |
 | 25 | Joint names are `Coincident 1` via `nextNumberedName`. The card can rename. The id stays the surf id from `mintSurfId`. | PR 4 mints and names. PR 1 stores the id and the name. |
-| 26 | The pick-and-apply flow is shared with contour: sticky-pick 1–2 faces, lines, or points, then a suggested property, then Confirm. The joints card adopts the contour component (for example `StickyPickApply` and its hook) if that has merged. If it has not, the card uses that same contract so the two can be unified later. Which of those two shipped is logged on the UI pull request. | PR 4 |
+| 26 | The pick-and-apply flow is shared with contour: sticky-pick 1–2 faces, lines, or points, then a suggested property, then Confirm. The joints card adopts the contour component (for example `StickyPickApply` and its hook) if that has merged. If it has not, the card uses that same contract so the two can be unified later. Which of those two shipped is logged on the UI pull request. `StickyPickApply` has not merged. This pull request ships a parallel card (`JointModeChip`) with that contract. | PR 4 |
 
 Distance on the card uses the global display unit (`src/utils/displayUnit.js`). The file and the script stay millimetres. That field is PR 4.
 

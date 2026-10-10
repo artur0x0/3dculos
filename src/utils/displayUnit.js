@@ -7,9 +7,9 @@
  * field writes. Length captions carry the unit suffix (`Distance mm`).
  * Angles stay degrees.
  *
- * Persisted at `surfcad.displayUnit`. Measure is the only reader. Later
- * length fields consume this setting instead of adding a key. Sheet metal
- * keeps `surfcad.sheetMetal.displayUnit` (`sheetUnits.js`) until that pass.
+ * Persisted at `surfcad.displayUnit`. Measure and the joint distance
+ * field read it. Sheet metal keeps `surfcad.sheetMetal.displayUnit`
+ * (`sheetUnits.js`) until that pass.
  */
 export const DISPLAY_UNIT_KEY = 'surfcad.displayUnit';
 export const MM_PER_IN = 25.4;

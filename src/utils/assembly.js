@@ -281,9 +281,13 @@ export function sanitizeAssemblyName(raw) {
  * With a blank string: the part alone. No empty "in", no dash.
  * Callers pass assemblyName(), which turns a blank document into Assembly.
  */
-export function formatViewerTitle(partName, assemblyNameValue) {
-  const part = String(partName ?? '').trim() || 'Untitled';
+export function formatViewerTitle(partName, assemblyNameValue, opts = {}) {
   const assembly = String(assemblyNameValue ?? '').trim();
+  if (opts.partSelected === false) {
+    const text = assembly || 'Untitled';
+    return { part: '', assembly, connector: '', text };
+  }
+  const part = String(partName ?? '').trim() || 'Untitled';
   if (!assembly) return { part, assembly: '', connector: '', text: part };
   return { part, assembly, connector: 'in', text: `${part} in ${assembly}` };
 }
