@@ -12,7 +12,11 @@ over inventing a new modal layout.
   (`data-contour-card`). Confirm writes the dimension, the corner, or the
   constraint and stays in contour mode. X drops the pick and writes nothing.
   A placed dimension is a floating tag. A placed constraint is a floating
-  icon (`data-contour-icon`). Tap either for Delete and X. It does not reopen
+  icon (`data-contour-icon`). The tag layer is portaled onto the document
+  (`data-contour-tags`) so it stays visible on desktop and iPhone Safari.
+  A point-to-point distance keeps the first point and moves the second.
+  The tag is on the geometry while that value is typed, and after Confirm.
+  Tap either for Delete and X. It does not reopen
   the card. A conflict note (`data-contour-conflict`) names the primary id on
   the open card and on the contour chip. Repeated shows the word Repeated. and
   is not red. The card title is the

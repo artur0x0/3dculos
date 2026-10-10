@@ -67,3 +67,4 @@ requires `test_real_worker.mjs` via `npm run verify` once the harness is present
 | `smoke_contour_status.mjs` | Status colours, conflict note, repeated word, nullspace drag, script write on pointer-up only, saved ghost colour |
 | `smoke_sketch_face_camera.mjs` | Sketch-on-face at 390px: after the face pick the camera looks along the face normal and frames the face, the highlight is off, and Back undoes one polyline point while X still exits |
 | `smoke_joints_blocks.mjs` | Joints button: Lucide Blocks is the last Move-rail button at 390px and 1280px, it opens the StickyPickApply joint card, a tap with nothing selected selects the part, and the strip stays on assembly joints while nothing is selected |
+| `smoke_contour_dimension_drive.mjs` | Dimension values drive the polyline: a point distance keeps the first point and moves the second, length angle offset and radius re-solve live, and a 390px page shows the portaled tag |

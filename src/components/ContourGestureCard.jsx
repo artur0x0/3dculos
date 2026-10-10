@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import StickyPickApply from './StickyPickApply';
 import { useDisplayUnit } from '../hooks/useDisplayUnit';
 import { displayToMm, lengthToDisplay } from '../utils/displayUnit';
@@ -41,6 +41,8 @@ const ContourGestureCard = ({
   onRemovePick,
   onApply,
   onCancel,
+  onLive,
+  ignoreNameId = null,
 }) => {
   const [unit] = useDisplayUnit();
   const isArc = gesture === 'arc';
@@ -67,12 +69,48 @@ const ContourGestureCard = ({
   const kinds = (isConstraint ? constraint?.kinds : suggestion?.kinds) || [];
   const active = property || (isConstraint ? constraint?.kind : suggestion?.kind);
   const prefill = !isArc && !isConstraint && active ? prefillForKind(model, picks, active) : null;
-  const nameCheck = isArc || isConstraint ? { ok: true, name: '' } : validateDimensionName(name, model);
+  const nameCheck = isArc || isConstraint ? { ok: true, name: '' } : validateDimensionName(name, model, ignoreNameId);
   let valueMm = NaN;
   if (isArc || active !== 'angle') valueMm = displayToMm(text, unit);
   else valueMm = Number(text);
-  const valueOk = Number.isFinite(valueMm) && (isArc || active !== 'length' && active !== 'radius' ? true : valueMm > 0);
-  const lengthOk = isArc || active === 'length' || active === 'radius' ? valueMm > 0 : Number.isFinite(valueMm);
+  const pointDistance = !isArc && !isConstraint && active === 'distance'
+    && (picks || []).length === 2
+    && (picks || []).every((p) => p.kind === 'point');
+  const valueOk = Number.isFinite(valueMm) && (
+    (isArc || active === 'length' || active === 'radius' || pointDistance) ? valueMm > 0 : true
+  );
+  const lengthOk = isArc || active === 'length' || active === 'radius' || pointDistance
+    ? valueMm > 0
+    : Number.isFinite(valueMm);
+  const liveRef = useRef(null);
+  liveRef.current = {
+    isArc,
+    isConstraint,
+    active,
+    valueMm,
+    nameOk: nameCheck.ok,
+    nameText: nameCheck.ok ? (nameCheck.name || '') : '',
+    side: prefill?.side ?? suggestion?.side ?? 1,
+    sense: prefill?.sense ?? suggestion?.sense ?? 1,
+    ok: !!(suggestion?.ok && active),
+    onLive,
+  };
+  useEffect(() => {
+    const snap = liveRef.current;
+    if (!snap || snap.isArc || snap.isConstraint || !snap.onLive) return;
+    if (!snap.ok) {
+      snap.onLive(null);
+      return;
+    }
+    if (!snap.nameOk) return;
+    snap.onLive({
+      kind: snap.active,
+      valueMm: snap.valueMm,
+      name: snap.nameText,
+      side: snap.side,
+      sense: snap.sense,
+    });
+  }, [isArc, isConstraint, active, text, name, pickKey, unit]);
   const ready = isArc
     ? !!(arc?.ok && lengthOk)
     : isConstraint

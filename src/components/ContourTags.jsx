@@ -1,4 +1,5 @@
 import React, { useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import {
   X,
   MoveHorizontal,
@@ -29,17 +30,19 @@ const CONSTRAINT_ICONS = {
 
 /**
  * Floating dimension tags and constraint icons. Only while this contour
- * is open. The overlay box ignores pointers. Each tag does not, so orbit
- * still hits the canvas. Tap one for Delete and X. That does not reopen
- * the card. Positions follow the camera in a frame loop and are not
- * React state.
+ * is open. The layer is portaled to the document body: the viewport shell
+ * is a size container with overflow hidden, and on Safari that clips
+ * descendants and lets the WebGL canvas paint over them. Fixed coordinates
+ * come from the canvas, so a tag stays on the geometry. The layer ignores
+ * pointers. Each tag does not, so orbit still hits the canvas. Tap one for
+ * Delete and X. That does not reopen the card. Positions follow the camera
+ * in a frame loop and are not React state.
  */
 const ContourTags = ({
   model = null,
   plane = null,
   cameraRef = null,
   canvasRef = null,
-  containerRef = null,
   selectedId = null,
   onSelect,
   onDelete,
@@ -58,22 +61,34 @@ const ContourTags = ({
     const tick = () => {
       const camera = cameraRef?.current;
       const canvas = canvasRef?.current;
-      const container = containerRef?.current;
-      const box = container?.getBoundingClientRect();
       const view = canvas?.getBoundingClientRect();
       const place = (id, uv) => {
         const el = nodes.current.get(id);
-        if (!el || !uv) return;
+        if (!el) return;
+        if (!uv || !camera || !view || view.width <= 0 || view.height <= 0 || !plane?.center) {
+          el.style.display = 'none';
+          el.dataset.contourTagVisible = '0';
+          return;
+        }
         const world = planeUvToWorld(uv, plane);
         const p = scratch.current.set(world[0], world[1], world[2]).project(camera);
-        const behind = p.z < -1 || p.z > 1;
-        el.style.display = behind ? 'none' : '';
-        const x = (p.x * 0.5 + 0.5) * view.width + view.left - box.left;
-        const y = (-p.y * 0.5 + 0.5) * view.height + view.top - box.top;
+        const x = (p.x * 0.5 + 0.5) * view.width + view.left;
+        const y = (-p.y * 0.5 + 0.5) * view.height + view.top;
+        const inside = x >= view.left && x <= view.right && y >= view.top && y <= view.bottom;
+        // A hair outside NDC still counts when the pixel is on the canvas.
+        // Safari's projection can sit just past ±1 for a point that is on screen.
+        const depthOk = p.z >= -1.02 && p.z <= 1.02;
+        if (!inside || !depthOk) {
+          el.style.display = 'none';
+          el.dataset.contourTagVisible = '0';
+          return;
+        }
+        el.style.display = '';
+        el.dataset.contourTagVisible = '1';
         el.style.left = `${x}px`;
         el.style.top = `${y}px`;
       };
-      if (camera && view && box && plane?.center) {
+      if (camera && view && view.width > 0 && plane?.center) {
         for (const dim of dims) place(dim.id, dimensionAnchor(model, dim));
         for (const con of cons) place(con.id, constraintAnchor(model, con));
       }
@@ -81,12 +96,16 @@ const ContourTags = ({
     };
     frame = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frame);
-  }, [cameraRef, canvasRef, containerRef, plane, model]);
+  }, [cameraRef, canvasRef, plane, model]);
 
   if ((!dimensions.length && !constraints.length) || !plane) return null;
 
-  return (
-    <div className="pointer-events-none absolute inset-0 z-20" data-contour-tags="">
+  const layer = (
+    <div
+      className="pointer-events-none fixed inset-0 z-30"
+      data-contour-tags=""
+      style={{ position: 'fixed', inset: 0, zIndex: 30, pointerEvents: 'none' }}
+    >
       {dimensions.map((dim) => {
         const value = dim.kind === 'angle'
           ? `${Number(dim.value).toFixed(1)}°`
@@ -100,8 +119,14 @@ const ContourTags = ({
               if (el) nodes.current.set(dim.id, el);
               else nodes.current.delete(dim.id);
             }}
-            className="pointer-events-auto absolute"
-            style={{ transform: 'translate(-50%, -120%)' }}
+            className="pointer-events-auto fixed"
+            style={{
+              position: 'fixed',
+              zIndex: 30,
+              pointerEvents: 'auto',
+              transform: 'translate(-50%, -120%)',
+              display: 'none',
+            }}
           >
             <button
               type="button"
@@ -160,8 +185,14 @@ const ContourTags = ({
               if (el) nodes.current.set(con.id, el);
               else nodes.current.delete(con.id);
             }}
-            className="pointer-events-auto absolute"
-            style={{ transform: 'translate(-50%, -120%)' }}
+            className="pointer-events-auto fixed"
+            style={{
+              position: 'fixed',
+              zIndex: 30,
+              pointerEvents: 'auto',
+              transform: 'translate(-50%, -120%)',
+              display: 'none',
+            }}
           >
             <button
               type="button"
@@ -213,6 +244,9 @@ const ContourTags = ({
       })}
     </div>
   );
+
+  if (typeof document === 'undefined' || !document.body) return layer;
+  return createPortal(layer, document.body);
 };
 
 export default ContourTags;
