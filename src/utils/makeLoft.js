@@ -1,12 +1,20 @@
 /**
- * Slice 28 — makeLoft (multi-profile, same workplane + offsets).
+ * makeLoft — multi-profile loft.
  *
- * v1 plane model: every profile is makeCrossSection on a copy of one workplane
- * whose center is translated by `offset * normal`. Planes must be parallel.
- * Independent (non-parallel) planes are a later slice.
+ * Parallel planes (normals within ~8°, including opposite normals) keep the
+ * Slice 28 polar warp: one shared workplane, stations sorted by offset, solid
+ * local to that plane with z = 0 at the lowest offset. Confirm places it with
+ * placeInFrame. That path is unchanged.
+ *
+ * Planes at an angle take the spine in makeLoftAngled.js: each contour is
+ * mapped through its own frame, resampled and shift-aligned, then carried on
+ * a Hermite path so a 90° elbow does not fold. The solid is local to the
+ * first profile's plane.
  *
  * Does not change the legacy loft({ topCS, bottomCS, height }) cup helper.
  */
+
+import { buildAngledLoftSolid, buildAngledLoftPreview } from './makeLoftAngled.js';
 
 export const MAKE_LOFT_MIN_PROFILES = 2;
 export const MAKE_LOFT_RESOLUTION = 64;
@@ -320,12 +328,26 @@ function _outerContour(section, what) {
   return _normalizeLoop(contours[0], what);
 }
 
+function _centroid3(station) {
+  const c = [0, 0, 0];
+  const p = station.plane;
+  const n = station.contour.length || 1;
+  for (const uv of station.contour) {
+    c[0] += p.center[0] + uv[0] * p.x[0] + uv[1] * p.y[0];
+    c[1] += p.center[1] + uv[0] * p.x[1] + uv[1] * p.y[1];
+    c[2] += p.center[2] + uv[0] * p.x[2] + uv[1] * p.y[2];
+  }
+  return [c[0] / n, c[1] / n, c[2] / n];
+}
+
 /**
  * Normalize makeCrossSection (or { plane, contours, offset }) values into
- * ordered loft stations. Loud-fail on <2, non-parallel planes, coincident
- * offsets, or degenerate contours.
+ * loft stations. Parallel planes are sorted by offset along the shared
+ * normal. Angled planes keep the order they were given — there is no single
+ * axis to sort on. Loud-fail on <2 profiles, coincident stations, or
+ * degenerate contours.
  *
- * @returns {{ ok: true, stations: object[] } | { ok: false, message: string }}
+ * @returns {{ ok: true, stations: object[], parallel: boolean } | { ok: false, message: string }}
  */
 export function assembleLoftStations(sections) {
   try {
@@ -335,6 +357,7 @@ export function assembleLoftStations(sections) {
     const raw = [];
     let baseNormal = null;
     let basePlane = null;
+    let parallel = true;
     for (let i = 0; i < sections.length; i++) {
       const s = sections[i];
       const what = `makeLoft: profile ${i + 1}`;
@@ -349,11 +372,7 @@ export function assembleLoftStations(sections) {
         baseNormal = n;
         basePlane = plane;
       } else if (Math.abs(_dot(n, baseNormal)) < 0.99) {
-        return {
-          ok: false,
-          message:
-            'makeLoft: v1 requires parallel profile planes (same workplane + offsets)',
-        };
+        parallel = false;
       }
       const contour = _outerContour(s, what);
       const offset = Number.isFinite(Number(s.offset))
@@ -370,6 +389,21 @@ export function assembleLoftStations(sections) {
         normal: n,
       });
     }
+    if (!parallel) {
+      for (let i = 1; i < raw.length; i++) {
+        const a = _centroid3(raw[i - 1]);
+        const b = _centroid3(raw[i]);
+        const d = Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+        if (!(d > MAKE_LOFT_COINCIDENT_EPS)) {
+          return {
+            ok: false,
+            message:
+              'makeLoft: profiles sit on top of each other — would be a zero-length loft',
+          };
+        }
+      }
+      return { ok: true, stations: raw, plane: raw[0].plane, parallel: false };
+    }
     const stations = raw.slice().sort((a, b) => a.offset - b.offset);
     for (let i = 1; i < stations.length; i++) {
       if (Math.abs(stations[i].offset - stations[i - 1].offset) < MAKE_LOFT_COINCIDENT_EPS) {
@@ -380,7 +414,7 @@ export function assembleLoftStations(sections) {
         };
       }
     }
-    return { ok: true, stations, plane: stations[0].plane };
+    return { ok: true, stations, plane: stations[0].plane, parallel: true };
   } catch (e) {
     return { ok: false, message: (e && e.message) || String(e) };
   }
@@ -439,6 +473,9 @@ function _spanIndex(stations, zWorld) {
 export function buildMakeLoftSolid(Manifold, CrossSection, sections, opts = {}) {
   const assembled = assembleLoftStations(sections);
   if (!assembled.ok) throw new Error(assembled.message);
+  if (!assembled.parallel) {
+    return buildAngledLoftSolid(Manifold, assembled.stations, opts);
+  }
   const stations = alignStationContours(assembled.stations, opts);
   const z0 = stations[0].offset;
   const zN = stations[stations.length - 1].offset;
@@ -545,6 +582,9 @@ function _previewRingAngles(stations, sampleN) {
 export function buildLoftPreviewStations(sections, sampleN = 32, opts = {}) {
   const assembled = assembleLoftStations(sections);
   if (!assembled.ok) return null;
+  if (!assembled.parallel) {
+    return buildAngledLoftPreview(assembled.stations, sampleN, opts);
+  }
   const aligned = alignStationContours(assembled.stations, opts);
   const n = Math.max(8, Math.round(Number(sampleN) || 32));
   const angles = _previewRingAngles(aligned, n);

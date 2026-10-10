@@ -115,12 +115,14 @@ exits with no additional solid commit. **Fillet** is its own edge-pick mode
 (Slice 27), not a contour entry.
 The one-shot Xform Extrude stub is gone — Extrude always enters contour mode.
 
-**Loft v1 plane model (Slice 28):** one shared workplane (selected planar face
-or default +Z). Each profile is `makeCrossSection` on `offsetPlaneFrame(plane,
-offset)` — a copy of that plane whose `center` is translated by
-`offset * normal`. Planes must stay parallel. Independent (skew / non-parallel)
-profile planes are a later slice. Loud-fail on fewer than 2 profiles or
-coincident station offsets. Confirm places the loft with `placeInFrame`.
+**Loft plane model:** the contour card still uses one shared workplane
+(selected planar face or default +Z). Each profile is `makeCrossSection` on
+`offsetPlaneFrame(plane, offset)` — a copy of that plane whose `center` is
+translated by `offset * normal`. `makeLoft` also accepts profiles on planes
+at an angle: each contour is mapped through that plane's own frame. A 90°
+turn is carried on a spine between the planes so the sides do not fold.
+Loud-fail on fewer than 2 profiles, coincident stations, or a turn tighter
+than the profiles. Confirm places a parallel loft with `placeInFrame`.
 When `part` already exists that placement is unioned (`part.add`); an empty
 script still assigns `let part = placeInFrame(...)` (no host box / no
 `placeOnFace`).
@@ -1245,8 +1247,7 @@ Sweep mode shows the Path order/direction preview (green→magenta). Auto-Run
 unchanged. Keep using **Path** alone when you only need the wire value.
 
 **Non-goals (wait for Product brief):** full industrial rolling-ball /
-variable-radius fillets; Profile/Path API redesign; Loft through independent
-(non-parallel) planes.
+variable-radius fillets; Profile/Path API redesign.
 
 ## Revolve & Extrude Helpers (C8)
 
@@ -1324,13 +1325,17 @@ radial profile.
 
 ### makeLoft(sections, opts?) / offsetPlaneFrame(plane, offset)
 
-Loft ≥2 `makeCrossSection` values into a solid. **v1 plane model:** all
-planes must be parallel (same workplane + per-profile offset along the
-normal). `offsetPlaneFrame(plane, offset)` copies a PlaneFrame and translates
-`center` by `offset * normal`. The solid is **local** (XY = station UV, Z
-along the shared normal, z=0 at the lowest station) — Confirm places it with
-`placeInFrame`. The legacy `loft({ topCS, bottomCS, height })` cup helper is
-unchanged.
+Loft ≥2 `makeCrossSection` values into a solid. **Parallel planes** (same
+workplane + per-profile offset along the normal, normals within about 8°)
+use the polar warp. `offsetPlaneFrame(plane, offset)` copies a PlaneFrame
+and translates `center` by `offset * normal`. That solid is **local** (XY =
+station UV, Z along the shared normal, z=0 at the lowest station) — Confirm
+places it with `placeInFrame`. **Angled planes** keep input order. Each
+contour is mapped through its own frame, arc-length resampled, and
+shift-aligned, then carried on a Hermite spine so a right-angle elbow does
+not fold. That solid is local to the **first** profile's plane
+(`placeInFrame` on that plane). The legacy `loft({ topCS, bottomCS, height })`
+cup helper is unchanged.
 
 ```javascript
 const fr = { center: [0, 0, 0], normal: [0, 0, 1], x: [1, 0, 0], y: [0, 1, 0] };
@@ -1348,9 +1353,9 @@ add / no starter cube). Second Confirm replaces the same marked block.
 **Back** exits with no commit. Live preview skins the stations as offsets /
 shapes change.
 
-**Loud failures:** < 2 profiles; coincident station offsets (zero-height);
-non-parallel planes; degenerate / empty contours; empty result volume.
-Never a silent wrong solid.
+**Loud failures:** < 2 profiles; coincident stations (zero-length loft);
+degenerate / empty contours; a turn tighter than the profiles
+(self-intersection); empty result volume. Never a silent wrong solid.
 
 `opts.align` (default true) matches cornered stations by their outermost
 vertex angle (a 45° copy of the same rectangle un-rotates back to a prism).
