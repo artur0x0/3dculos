@@ -6,7 +6,9 @@
  * not shift getBoundingClientRect is treated as layout coordinates.
  */
 
-const TEXT_TYPES = new Set(['text', 'number', 'search', 'tel', 'url', 'email', 'password']);
+const KEYBOARD_INPUT_TYPES = new Set([
+  'text', 'number', 'search', 'email', 'url', 'tel', 'password',
+]);
 const TRAILING_UNIT = /^(.*\S)\s+(N|kN|MPa|GPa|Pa|mm|cm|in|°|deg)$/;
 
 export function isTouchEditDevice(win) {
@@ -22,16 +24,59 @@ export function isTouchEditDevice(win) {
   return coarse || points > 0;
 }
 
-/** Number and text inputs only. A select or a range slider does not qualify. */
-export function isTextOrNumberField(el) {
-  if (!el || typeof el.tagName !== 'string') return false;
-  if (el.disabled) return false;
-  if (typeof el.closest === 'function' && el.closest('[data-feature-field-edit-view]')) return false;
+function contentEditableHost(el) {
+  if (!el) return null;
+  if (el.isContentEditable && typeof el.closest === 'function') {
+    return el.closest('[contenteditable]') || el;
+  }
+  const raw = el.getAttribute?.('contenteditable');
+  if (raw == null || String(raw).toLowerCase() === 'false') return null;
+  return el;
+}
+
+const NON_KEYBOARD_TAGS = new Set(['SELECT', 'BUTTON']);
+const NON_KEYBOARD_INPUTS = new Set([
+  'range', 'checkbox', 'radio', 'button', 'submit', 'reset', 'file', 'color', 'hidden', 'image',
+]);
+
+/**
+ * The element that should enter edit mode, or null.
+ * Keyboard fields: input types text, number, search, email, url, tel, and
+ * password, plus textarea and contenteditable. A select, range, checkbox,
+ * radio, or button does not qualify. A child of contenteditable resolves
+ * to that host.
+ */
+export function keyboardField(el) {
+  if (!el || typeof el.tagName !== 'string') return null;
+  if (typeof el.closest === 'function' && el.closest('[data-feature-field-edit-view]')) return null;
   const tag = el.tagName.toUpperCase();
-  if (tag === 'TEXTAREA') return true;
-  if (tag !== 'INPUT') return false;
-  const type = String(el.getAttribute?.('type') || 'text').toLowerCase();
-  return TEXT_TYPES.has(type);
+  if (NON_KEYBOARD_TAGS.has(tag)) return null;
+  if (tag === 'INPUT') {
+    const type = String(el.getAttribute?.('type') || 'text').toLowerCase();
+    if (el.disabled || NON_KEYBOARD_INPUTS.has(type)) return null;
+    return KEYBOARD_INPUT_TYPES.has(type) ? el : null;
+  }
+  if (tag === 'TEXTAREA') return el.disabled ? null : el;
+  const editable = contentEditableHost(el);
+  if (!editable) return null;
+  if (typeof editable.closest === 'function' && editable.closest('[data-feature-field-edit-view]')) return null;
+  return editable;
+}
+
+export function isKeyboardField(el) {
+  return keyboardField(el) != null;
+}
+
+export function fieldIsMultiline(el) {
+  if (!el || typeof el.tagName !== 'string') return false;
+  if (el.tagName.toUpperCase() === 'TEXTAREA') return true;
+  return contentEditableHost(el) === el || el.isContentEditable === true;
+}
+
+export function readFieldValue(el) {
+  if (!el) return '';
+  if (contentEditableHost(el) === el || el.isContentEditable === true) return el.textContent || '';
+  return el.value == null ? '' : String(el.value);
 }
 
 function escapeId(value) {
@@ -123,10 +168,21 @@ export function numberFieldLabelParts(label, unit) {
   return { label: text, unit: '' };
 }
 
-/** Write through the native setter so a controlled React input sees the change. */
+/** Write through the native setter so a controlled React field sees the change. */
 export function commitFieldValue(el, value) {
   if (!el) return;
   const next = value == null ? '' : String(value);
+  if (contentEditableHost(el) === el || el.isContentEditable === true) {
+    el.textContent = next;
+    let event;
+    try {
+      event = new InputEvent('input', { bubbles: true, data: next, inputType: 'insertText' });
+    } catch {
+      event = new Event('input', { bubbles: true });
+    }
+    el.dispatchEvent(event);
+    return;
+  }
   const tag = String(el.tagName || '').toUpperCase();
   const proto = tag === 'TEXTAREA'
     ? globalThis.HTMLTextAreaElement?.prototype

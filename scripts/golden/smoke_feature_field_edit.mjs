@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
  * Touch focused-field edit. 390px. A reduced visualViewport, with offsetTop
- * for Safari's toolbar, stands in for the keyboard. Analyze and Extrude.
+ * for Safari's toolbar, stands in for the keyboard. Analyze, Extrude, and
+ * Paint (the hex text field).
  *
  * Screenshots go to GOLDEN_SHOT_DIR or os.tmpdir(), never the artifacts dir.
  */
@@ -60,8 +61,11 @@ console.log('feature field edit — source');
     && /data-unit/.test(numberField)
     && /readFieldLabel/.test(shell)
     && /readFieldUnit/.test(shell));
-  check('selects and sliders stay out, and the camera does not reslide',
-    /isTextOrNumberField/.test(shell)
+  check('every keyboard field opens it; selects, sliders, checkboxes, and buttons do not',
+    /keyboardField/.test(shell)
+    && /contenteditable/.test(fields)
+    && /textarea/.test(fields)
+    && /checkbox/.test(fields)
     && /range/.test(fields)
     && /data-feature-card\]\[data-feature-field-edit/.test(view));
   check('the full-card height cap does not collapse the edit view',
@@ -70,7 +74,8 @@ console.log('feature field edit — source');
   check('the feature card docs describe the touch edit view',
     /data-feature-field-edit/.test(arch)
     && /visual viewport/.test(arch)
-    && /Selects and sliders do not open it/.test(arch));
+    && /Selects, sliders, checkboxes, and buttons do not open it/.test(arch)
+    && /contenteditable/.test(arch));
 }
 
 if (String(shotDir).startsWith('/opt/cursor/artifacts')) {
@@ -97,6 +102,7 @@ import React, { useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { FeaStudySheet } from './src/components/fea/FeaStudySheet.jsx';
 import ContourModeChip from './src/components/ContourModeChip.jsx';
+import { PaintModeChip } from './src/components/PaintModeChip.jsx';
 
 const FIXTURES = Array.from({ length: 8 }, (_, i) => ({
   faces: [{ at: [i * 4, 0, 10], n: [0, 0, 1], area: 24 }],
@@ -107,6 +113,7 @@ function Stage() {
   const [open, setOpen] = useState(true);
   const [magnitude, setMagnitude] = useState(200);
   const [distance, setDistance] = useState(10);
+  const [hex, setHex] = useState('');
   const [log, setLog] = useState('');
   const close = () => { setLog('cancel'); setOpen(false); };
   const panel = {
@@ -157,6 +164,17 @@ function Stage() {
             onParamChange={() => {}}
           />
         ) : null}
+        {open && card === 'paint' ? (
+          <PaintModeChip
+            compact
+            custom={hex}
+            canConfirm
+            onCustom={setHex}
+            onSwatch={() => {}}
+            onDismiss={close}
+            onConfirm={() => {}}
+          />
+        ) : null}
         <div data-mobile-stage-home-indicator="" style={{ position: 'absolute', left: '50%', bottom: 0, transform: 'translateX(-50%)' }}>
           <div data-home-indicator-pill="" style={{ width: 120, height: 30, borderRadius: 999, background: '#1f2937' }} />
         </div>
@@ -165,6 +183,7 @@ function Stage() {
       <div id="vv-bottom" data-vv-blocked="bottom" style={{ position: 'fixed', left: 0, right: 0, bottom: 0, height: 0, background: '#0b0d12', zIndex: 10, pointerEvents: 'none' }} />
       <button type="button" data-harness-card="analyze" onClick={() => { setCard('analyze'); setOpen(true); setLog(''); }}>analyze</button>
       <button type="button" data-harness-card="extrude" onClick={() => { setCard('extrude'); setOpen(true); setLog(''); }}>extrude</button>
+      <button type="button" data-harness-card="paint" onClick={() => { setCard('paint'); setOpen(true); setLog(''); }}>paint</button>
       <div data-edit-log="">{log}</div>
     </div>
   );
@@ -243,6 +262,7 @@ async function show(page, name) {
     if (which === 'analyze') {
       return !!document.querySelector('[data-popup-number="fea-force"]');
     }
+    if (which === 'paint') return !!document.querySelector('[data-paint-hex]');
     return !!document.querySelector('[data-popup-number="extrude-distance"]');
   }, name);
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
@@ -458,6 +478,56 @@ try {
   await page.waitForFunction(() => !document.querySelector('[data-feature-card]'));
   const cancelled = await page.evaluate(() => document.querySelector('[data-edit-log]')?.textContent || '');
   check('X during edit cancels the card', cancelled === 'cancel', cancelled);
+
+  await show(page, 'paint');
+  await setKeyboard(page, PHONE.height, 0);
+  await page.screenshot({ path: shot('feature-field-edit-paint-390-before.png') });
+  const paintPrior = await scrollBody(page);
+  await focusField(page, '[data-paint-hex]');
+  await setKeyboard(page, KEYBOARD.height, KEYBOARD.offsetTop);
+  const paintEdit = await readEdit(page);
+  check('paint hex compact view is inside the visual viewport',
+    paintEdit.editing
+    && paintEdit.cardInside
+    && paintEdit.viewVisible
+    && paintEdit.label === 'Hex'
+    && paintEdit.labelVisible
+    && paintEdit.inputVisible
+    && paintEdit.doneVisible
+    && paintEdit.bodyHidden
+    && paintEdit.footerHidden
+    && paintEdit.cardOnViewport <= 2,
+    JSON.stringify(paintEdit));
+  await page.screenshot({ path: shot('feature-field-edit-paint-390-after.png') });
+  await page.locator('[data-feature-field-edit-input]').fill('#FF00AA');
+  await page.locator('[data-feature-field-done]').click();
+  await setKeyboard(page, PHONE.height, 0);
+  await page.waitForFunction((prior) => {
+    const body = document.querySelector('[data-feature-sheet-body]');
+    const input = document.querySelector('[data-paint-hex]');
+    const card = document.querySelector('[data-feature-card]');
+    return body && input && card
+      && !card.hasAttribute('data-feature-field-edit')
+      && Math.abs(body.scrollTop - prior) <= 1
+      && input.value === '#ff00aa';
+  }, paintPrior);
+  const paintBack = await page.evaluate(() => ({
+    value: document.querySelector('[data-paint-hex]').value,
+    scroll: document.querySelector('[data-feature-sheet-body]').scrollTop,
+    body: getComputedStyle(document.querySelector('[data-feature-sheet-body]')).display !== 'none',
+    footer: getComputedStyle(document.querySelector('[data-feature-sheet-footer]')).display !== 'none',
+  }));
+  check('paint Done commits the hex text and restores the prior scroll',
+    paintBack.value === '#ff00aa'
+    && paintBack.body
+    && paintBack.footer
+    && Math.abs(paintBack.scroll - paintPrior) <= 1,
+    JSON.stringify({ ...paintBack, prior: paintPrior }));
+
+  await page.locator('[data-paint-swatch="#ef4444"]').focus();
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  const swatchEdit = await page.evaluate(() => !!document.querySelector('[data-feature-field-edit]'));
+  check('a paint swatch button does not open the edit view', swatchEdit === false);
 
   await show(page, 'analyze');
   await focusField(page, '[data-popup-number="fea-force"]');

@@ -5,10 +5,12 @@ import { featureSheetBottom, measureFeatureSheetWidth } from '../utils/featureSh
 import {
   commitFieldValue,
   featureSheetEditLift,
-  isTextOrNumberField,
+  fieldIsMultiline,
   isTouchEditDevice,
+  keyboardField,
   readFieldLabel,
   readFieldUnit,
+  readFieldValue,
 } from '../utils/featureFieldEdit';
 
 /**
@@ -35,12 +37,23 @@ import {
  * The card is pointer-events-auto and stops pointerdown. The pane around it
  * is not covered, so orbit and pinch hit the canvas. Game mode does not mount it.
  *
- * On a touch device, a focused number or text field switches the card to a
- * one-field edit view parked on the visual viewport. Selects and sliders do
- * not. Desktop pointer input keeps the full card.
+ * On a touch device, a focused keyboard field switches the card to a
+ * one-field edit view parked on the visual viewport. That is an input of
+ * type text, number, search, email, url, tel, or password, or a textarea
+ * or contenteditable. Selects, sliders, checkboxes, and buttons do not.
+ * Desktop pointer input keeps the full card.
  */
+const EDIT_INPUT_TYPES = new Set(['text', 'number', 'search', 'email', 'url', 'tel', 'password']);
+
+function eventKeyboardField(event) {
+  const target = event.target;
+  const el = target && target.nodeType === 3 ? target.parentElement : target;
+  return keyboardField(el);
+}
+
 function FieldEditRow({ edit, onChange, onCommit }) {
   const inputRef = useRef(null);
+  const multiline = !!edit.multiline;
   useLayoutEffect(() => {
     const input = inputRef.current;
     if (!input) return;
@@ -48,6 +61,26 @@ function FieldEditRow({ edit, onChange, onCommit }) {
     const len = input.value.length;
     try { input.setSelectionRange(len, len); } catch { /* number inputs can refuse */ }
   }, [edit.el]);
+
+  const onKeyDown = (event) => {
+    if (event.key !== 'Enter' || multiline) return;
+    event.preventDefault();
+    onCommit();
+  };
+  const shared = {
+    ref: inputRef,
+    'data-feature-field-edit-input': '',
+    value: edit.value,
+    'aria-label': edit.label || 'Value',
+    onChange: (event) => onChange(event.target.value),
+    onBlur: (event) => {
+      const next = event.relatedTarget;
+      if (next?.closest?.('[data-feature-field-done]')) return;
+      onCommit();
+    },
+    onKeyDown,
+    className: 'min-h-[44px] min-w-0 flex-1 rounded border border-gray-600/80 bg-gray-950/70 px-2 py-2 text-white',
+  };
 
   return (
     <div
@@ -68,29 +101,18 @@ function FieldEditRow({ edit, onChange, onCommit }) {
           {edit.label || 'Value'}
         </span>
         <span className="flex items-center gap-2">
-          <input
-            ref={inputRef}
-            data-feature-field-edit-input=""
-            type={edit.inputType === 'number' ? 'number' : 'text'}
-            inputMode={edit.inputMode || undefined}
-            min={edit.min || undefined}
-            max={edit.max || undefined}
-            step={edit.step || undefined}
-            value={edit.value}
-            aria-label={edit.label || 'Value'}
-            onChange={(event) => onChange(event.target.value)}
-            onBlur={(event) => {
-              const next = event.relatedTarget;
-              if (next?.closest?.('[data-feature-field-done]')) return;
-              onCommit();
-            }}
-            onKeyDown={(event) => {
-              if (event.key !== 'Enter') return;
-              event.preventDefault();
-              onCommit();
-            }}
-            className="min-h-[44px] min-w-0 flex-1 rounded border border-gray-600/80 bg-gray-950/70 px-2 py-2 text-white"
-          />
+          {multiline ? (
+            <textarea {...shared} rows={3} className={`${shared.className} resize-none`} />
+          ) : (
+            <input
+              {...shared}
+              type={EDIT_INPUT_TYPES.has(edit.inputType) ? edit.inputType : 'text'}
+              inputMode={edit.inputMode || undefined}
+              min={edit.min || undefined}
+              max={edit.max || undefined}
+              step={edit.step || undefined}
+            />
+          )}
           {edit.unit ? (
             <span data-feature-field-unit="" className="shrink-0 text-[13px] text-gray-300">
               {edit.unit}
@@ -204,31 +226,32 @@ export default function FeatureSheet({
     const card = cardRef.current;
     if (!card) return undefined;
     const rememberScroll = (event) => {
-      const el = event.target;
-      if (!isTextOrNumberField(el) || !isTouchEditDevice()) return;
+      const field = eventKeyboardField(event);
+      if (!field || !isTouchEditDevice()) return;
       scrollMemoryRef.current = {
-        el,
+        el: field,
         top: bodyRef.current ? bodyRef.current.scrollTop : 0,
       };
     };
     const onFocus = (event) => {
-      const el = event.target;
-      if (!card.contains(el) || !isTextOrNumberField(el) || !isTouchEditDevice()) return;
+      const field = eventKeyboardField(event);
+      if (!field || !card.contains(field) || !isTouchEditDevice()) return;
       const saved = scrollMemoryRef.current;
       scrollMemoryRef.current = null;
-      const scrollTop = saved && saved.el === el
+      const scrollTop = saved && saved.el === field
         ? saved.top
         : (bodyRef.current ? bodyRef.current.scrollTop : 0);
       const next = {
-        el,
-        label: readFieldLabel(el),
-        unit: readFieldUnit(el),
-        value: el.value,
-        inputType: String(el.getAttribute('type') || 'text').toLowerCase(),
-        inputMode: el.getAttribute('inputmode') || '',
-        min: el.getAttribute('min'),
-        max: el.getAttribute('max'),
-        step: el.getAttribute('step'),
+        el: field,
+        label: readFieldLabel(field),
+        unit: readFieldUnit(field),
+        value: readFieldValue(field),
+        multiline: fieldIsMultiline(field),
+        inputType: String(field.getAttribute('type') || 'text').toLowerCase(),
+        inputMode: field.getAttribute('inputmode') || '',
+        min: field.getAttribute('min'),
+        max: field.getAttribute('max'),
+        step: field.getAttribute('step'),
         scrollTop,
       };
       editRef.current = next;

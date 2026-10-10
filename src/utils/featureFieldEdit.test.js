@@ -1,12 +1,16 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  commitFieldValue,
   featureSheetEditLift,
-  isTextOrNumberField,
+  fieldIsMultiline,
+  isKeyboardField,
   isTouchEditDevice,
+  keyboardField,
   numberFieldLabelParts,
   readFieldLabel,
   readFieldUnit,
+  readFieldValue,
 } from './featureFieldEdit.js';
 
 function input(type, attrs = {}) {
@@ -18,15 +22,93 @@ function input(type, attrs = {}) {
   };
 }
 
-test('text and number inputs edit; selects and sliders do not', () => {
-  assert.equal(isTextOrNumberField(input('number')), true);
-  assert.equal(isTextOrNumberField(input('text')), true);
-  assert.equal(isTextOrNumberField(input('')), true);
-  assert.equal(isTextOrNumberField({ tagName: 'TEXTAREA', disabled: false, closest: () => null, getAttribute: () => null }), true);
-  assert.equal(isTextOrNumberField(input('range')), false);
-  assert.equal(isTextOrNumberField(input('checkbox')), false);
-  assert.equal(isTextOrNumberField({ tagName: 'SELECT', disabled: false, closest: () => null, getAttribute: () => null }), false);
-  assert.equal(isTextOrNumberField(input('number', {}) && { ...input('number'), closest: () => ({}) }), false);
+test('keyboard fields are typed inputs, textareas, and contenteditable', () => {
+  for (const type of ['text', 'number', 'search', 'email', 'url', 'tel', 'password', '']) {
+    assert.equal(isKeyboardField(input(type)), true, type || 'default text');
+    assert.equal(fieldIsMultiline(input(type)), false);
+  }
+  const area = {
+    tagName: 'TEXTAREA',
+    disabled: false,
+    closest: () => null,
+    getAttribute: () => null,
+    value: 'line',
+  };
+  assert.equal(isKeyboardField(area), true);
+  assert.equal(fieldIsMultiline(area), true);
+  assert.equal(readFieldValue(area), 'line');
+
+  const host = {
+    tagName: 'DIV',
+    isContentEditable: true,
+    textContent: 'note',
+    value: 'nope',
+    closest: (sel) => (sel === '[contenteditable]' ? host : null),
+    getAttribute: (name) => (name === 'contenteditable' ? 'true' : null),
+  };
+  const child = {
+    tagName: 'SPAN',
+    isContentEditable: true,
+    closest: (sel) => (sel === '[contenteditable]' ? host : null),
+    getAttribute: () => null,
+  };
+  assert.equal(keyboardField(host), host);
+  assert.equal(keyboardField(child), host);
+  assert.equal(fieldIsMultiline(host), true);
+  assert.equal(readFieldValue(host), 'note');
+
+  const emptyAttr = {
+    tagName: 'DIV',
+    isContentEditable: false,
+    closest: () => null,
+    getAttribute: (name) => (name === 'contenteditable' ? '' : null),
+  };
+  assert.equal(keyboardField(emptyAttr), emptyAttr);
+  const off = {
+    tagName: 'DIV',
+    isContentEditable: false,
+    closest: () => null,
+    getAttribute: (name) => (name === 'contenteditable' ? 'false' : null),
+  };
+  assert.equal(isKeyboardField(off), false);
+
+  const nestedInput = {
+    tagName: 'INPUT',
+    disabled: false,
+    closest: (sel) => (sel === '[contenteditable]' ? host : null),
+    getAttribute: (name) => (name === 'type' ? 'email' : null),
+  };
+  assert.equal(keyboardField(nestedInput), nestedInput);
+
+  for (const type of ['range', 'checkbox', 'radio', 'button', 'submit', 'file', 'color', 'hidden']) {
+    assert.equal(isKeyboardField(input(type)), false, type);
+  }
+  assert.equal(isKeyboardField({
+    tagName: 'SELECT', disabled: false, closest: () => null, getAttribute: () => null,
+  }), false);
+  assert.equal(isKeyboardField({
+    tagName: 'BUTTON',
+    closest: (sel) => (sel === '[contenteditable]' ? host : null),
+    getAttribute: () => null,
+  }), false);
+  assert.equal(isKeyboardField({ ...input('text'), closest: () => ({}) }), false);
+  assert.equal(isKeyboardField({ ...input('text'), disabled: true }), false);
+  assert.equal(readFieldValue(input('text')), '');
+});
+
+test('commit writes a contenteditable host through textContent', () => {
+  const events = [];
+  const host = {
+    tagName: 'DIV',
+    isContentEditable: true,
+    textContent: '',
+    closest: (sel) => (sel === '[contenteditable]' ? host : null),
+    getAttribute: () => 'true',
+    dispatchEvent(event) { events.push(event.type); },
+  };
+  commitFieldValue(host, 'hello');
+  assert.equal(host.textContent, 'hello');
+  assert.ok(events.includes('input'));
 });
 
 test('touch is coarse pointer or a touch point; a mouse is not', () => {
