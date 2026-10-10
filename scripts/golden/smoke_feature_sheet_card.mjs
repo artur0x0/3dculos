@@ -832,7 +832,7 @@ html, body, #root { margin: 0; height: 100%; background: #111; }
         return card
           && card.getAttribute('data-feature-card-compact') === (phone ? '1' : '0')
           && title
-          && (next === 'makeExtrude' ? title.textContent.trim() === 'Extrude' : title.textContent.trim() === 'Contour · circle');
+          && (next === 'makeExtrude' ? title.textContent.trim() === 'Extrude' : title.textContent.trim() === 'Contour');
       }, { entry, compact }, { timeout: 5000 });
       await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     };

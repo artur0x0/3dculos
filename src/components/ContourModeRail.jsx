@@ -8,6 +8,7 @@ import {
   Ruler,
   Link2,
   ArrowLeft,
+  Check,
   X,
 } from 'lucide-react';
 import { CONTOUR_TOOLS } from '../utils/contourMode';
@@ -39,18 +40,18 @@ const GESTURE_ICONS = {
 
 /**
  * Left rail while contour mode is active.
- * Replaces the FEAT palette: contour tools, Back (undo one face-sketch edit),
- * and grey X (exit, no solid commit).
+ * Replaces the FEAT palette: contour tools, Back (undo one edit, or the
+ * plane card when nothing is left), Confirm (finish), and grey X (exit).
  * Mobile-first: same chrome/width as HelperInsertPalette (compact on phone).
  */
 const ContourModeRail = ({
   tool = 'circle',
   gesture = null,
   entry = 'crossSection',
-  showBack = false,
   canUndo = false,
   onSelectTool,
   onUndo,
+  onConfirm,
   onBack,
   compact = false,
 }) => {
@@ -125,22 +126,28 @@ const ContourModeRail = ({
       {!workplaneOnly && (
         <div className="border-t border-gray-300/70 my-0.5 mx-0.5" aria-hidden />
       )}
-      {showBack && (
-        <button
-          type="button"
-          data-contour-back=""
-          onClick={() => onUndo?.()}
-          disabled={!canUndo}
-          title="Undo"
-          aria-label="Back"
-          className={`${pad} rounded flex items-center justify-center transition-colors
-            ${canUndo
-              ? 'text-cyan-800 hover:bg-cyan-100 active:bg-cyan-200'
-              : 'text-gray-400 opacity-40'}`}
-        >
-          <ArrowLeft size={iconSize} strokeWidth={2} />
-        </button>
-      )}
+      <button
+        type="button"
+        data-contour-back=""
+        onClick={() => onUndo?.()}
+        title={canUndo ? 'Undo' : 'Plane'}
+        aria-label="Back"
+        className={`${pad} rounded flex items-center justify-center transition-colors
+          text-cyan-800 hover:bg-cyan-100 active:bg-cyan-200`}
+      >
+        <ArrowLeft size={iconSize} strokeWidth={2} />
+      </button>
+      <button
+        type="button"
+        data-contour-confirm=""
+        onClick={() => onConfirm?.()}
+        title={workplaneOnly ? 'Finish workplane' : 'Finish contour'}
+        aria-label="Confirm"
+        className={`${pad} rounded flex items-center justify-center transition-colors
+          text-cyan-800 hover:bg-cyan-100 active:bg-cyan-200`}
+      >
+        <Check size={iconSize} strokeWidth={2} />
+      </button>
       <button
         type="button"
         data-contour-exit=""

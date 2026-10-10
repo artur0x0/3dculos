@@ -22,8 +22,8 @@ over inventing a new modal layout.
   is not red. Reopening the feature shows that saved contour on the chip. A
   named dimension's tag leads with the name. The card title is the
   feature Confirm writes (Extrude, Revolve, Loft, Sweep, Workplane); the profile
-  shape sits in the subtitle. A profile-only contour keeps the title
-  `Contour · <shape>`. Loft (#94) and Workplane use the compact mobile
+  shape sits in the subtitle. A profile-only contour titles the plane card
+  Contour. Loft (#94) and Workplane use the compact mobile
   max-height + internal scroll described below.
 - **`FilletModeChip.jsx`** — the shared feature card (`FeatureSheet`); edge-pick
   Tangent / Clear / Undo, cyan Confirm, grey X dismiss. No hard-edge warning.

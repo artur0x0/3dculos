@@ -2,9 +2,9 @@
 /**
  * Sketch-on-face at 390px.
  *
- * After a face pick the camera looks along that face's outward normal and
- * frames the face. The highlight is off when the aim ends. Back undoes one
- * polyline point. X exits contour mode.
+ * Start drawing aims along the picked face's outward normal and frames the
+ * face. The highlight is off when the aim ends. Back undoes one polyline
+ * point. X exits contour mode.
  *
  * Screenshots go to GOLDEN_SHOT_DIR or os.tmpdir(), never the artifacts dir.
  */
@@ -180,10 +180,15 @@ async function runPhone(browser) {
     const canvas = page.locator('.viewport-shell > canvas');
     const box = await canvas.boundingBox();
     await canvas.click({ position: { x: hit.x - box.x, y: hit.y - box.y } });
-    await page.waitForFunction(() => (
-      document.querySelector('.viewport-shell')?.getAttribute('data-contour-face-aim') === 'done'
-    ), null, { timeout: 8000 });
+    await page.waitForTimeout(250);
   }
+  const start = page.locator('[data-feature-card-confirm]');
+  await start.waitFor({ timeout: 4000 });
+  check('390 Start drawing is the plane card action', (await start.innerText()).includes('Start drawing'));
+  await start.click();
+  await page.waitForFunction(() => (
+    document.querySelector('.viewport-shell')?.getAttribute('data-contour-face-aim') === 'done'
+  ), null, { timeout: 8000 });
 
   const sketch = await page.evaluate(() => window.__VIEWPORT__.stageContourSketch());
   const cam = await page.evaluate(() => window.__VIEWPORT__.stageCamera());
@@ -203,7 +208,9 @@ async function runPhone(browser) {
 
   const back = page.locator('[data-contour-back]');
   await back.waitFor({ timeout: 4000 });
-  check('390 Back starts disabled', await back.isDisabled());
+  check('390 Back is on the rail', await back.count() === 1 && !(await back.isDisabled()));
+  check('390 plane card closed after Start drawing', await page.locator('[data-contour-chip]').count() === 0);
+  check('390 rail stayed in contour mode', await page.locator('[data-contour-tool="circle"]').count() === 1);
 
   await page.locator('[data-contour-tool="polyline"]').click();
   await page.waitForFunction(() => window.__VIEWPORT__.stageContourSketch().tool === 'polyline', null, { timeout: 4000 });

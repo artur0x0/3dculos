@@ -225,17 +225,17 @@ const ContourModeChip = ({
     polygon: 'Polygon',
     polyline: 'Polyline',
   })[tool] || tool;
-  // Feature entries title the card with the thing Confirm writes.
-  // Profile-only (just a contour) keeps the shape in the title.
-  const title = commitName || `Contour · ${tool}`;
+  // Feature entries title the card with the thing the rail Confirm writes.
+  // The plane card for a profile is just Contour. Start drawing accepts the plane.
+  const title = commitName || 'Contour';
   const subtitle = solidEntry && shapeLabel
     ? `${shapeLabel} · Plane · ${planeLabel}`
     : `Plane · ${planeLabel}`;
   const confirmNote = isWorkplane
-    ? 'Confirm writes a construction plane'
+    ? 'Start drawing accepts the plane'
     : commitName
-      ? `Confirm writes ${commitName} (${combineOp === 'subtract' ? 'cuts' : merge === false ? 'separate body' : 'adds'} if part exists)`
-      : 'Confirm writes Profile only';
+      ? `Start drawing accepts the plane. Confirm on the rail writes ${commitName}`
+      : 'Start drawing accepts the plane';
   const note = statusNote?.text
     ? (statusNote.conflict
       ? <span data-contour-conflict={statusNote.primaryId || ''}>{statusNote.text}</span>
@@ -249,6 +249,7 @@ const ContourModeChip = ({
       compact={compact}
       onCancel={onCancel}
       onConfirm={onConfirm}
+      confirmLabel="Start drawing"
       cardAttrs={{ 'data-contour-chip': '' }}
       bodyAttrs={{ 'data-contour-chip-scroll': '' }}
       note={note}

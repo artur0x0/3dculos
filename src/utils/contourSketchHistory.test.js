@@ -17,16 +17,19 @@ const FACE = {
   selectionMode: 'coplanar',
 };
 
-test('face pick is the baseline and one edit undoes', () => {
+test('the accepted sketch is the baseline and one edit undoes', () => {
   let hist = emptySketchHistory();
-  assert.equal(sketchEditKey(enterContourState('crossSection', null)), null);
-  hist = observeSketchEdit(hist, enterContourState('crossSection', null));
-  assert.equal(hist.depth, 0);
+  const fresh = enterContourState('crossSection', null);
+  assert.ok(sketchEditKey(fresh));
+  hist = observeSketchEdit(hist, fresh);
+  assert.equal(hist.depth, 0, 'the first sketch is not a step');
+  const tilted = observeSketchEdit(hist, { ...fresh, planeAngles: { x: 12, y: 0, z: 0 } });
+  assert.equal(tilted.depth, 1, 'a plane edit on the default plane is a step');
 
   const base = enterContourState('crossSection', FACE);
   assert.equal(base.planePreset, 'face');
-  hist = observeSketchEdit(hist, base);
-  assert.equal(hist.depth, 0, 'the face pick is not a step');
+  hist = observeSketchEdit(emptySketchHistory(), base);
+  assert.equal(hist.depth, 0, 'the accepted plane is not a step');
 
   const poly = switchContourTool(base, 'polyline');
   hist = observeSketchEdit(hist, poly);

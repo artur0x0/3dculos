@@ -203,6 +203,26 @@ test('close restores the pre-open pose after aiming and orbiting', () => {
   assert.equal(session.hasSnapshot(), false);
 });
 
+test('abandon drops the snapshot and leaves the live pose', () => {
+  const { camera, controls } = rig();
+  let current = controls;
+  const session = createSheetCameraSession({
+    getCamera: () => camera,
+    getControls: () => current,
+    setControls: (next) => { current = next; },
+    reducedMotion: () => true,
+    flattenLift: () => {},
+  });
+  session.slideBy(-0.2);
+  assert.equal(session.hasSnapshot(), true);
+  const parked = captureViewPose(camera, current);
+  session.abandon();
+  assert.equal(session.hasSnapshot(), false);
+  assert.equal(posesMatch(captureViewPose(camera, current), parked, 1e-4), true);
+  assert.equal(session.restore(), false);
+  assert.equal(posesMatch(captureViewPose(camera, current), parked, 1e-4), true);
+});
+
 test('a part buried past 0.6 NDC slides only as far as the clamp', () => {
   const { camera, controls } = rig();
   const points = boxCornerPoints({ min: [-8, -8, 0], max: [8, 8, 16] }, null);

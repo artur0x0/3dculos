@@ -1,6 +1,6 @@
-// Undo stack for a contour sketched on a face.
+// Undo stack for a contour sketch.
 //
-// The first face-sketch state is the baseline and is not a step. A later
+// The first observed state is the baseline and is not a step. A later
 // change of tool, profile parameters, plane, or loft station pushes that
 // baseline. Gesture, picks, and tags are not part of the key, so opening
 // Dimension, Arc, or Constraints is not a step. The stack is capped at 64.
@@ -16,12 +16,12 @@ function cloneState(state) {
 }
 
 /**
- * Stable key for one undo step. Null unless the sketch plane is a face.
+ * Stable key for one undo step. Null when there is no contour state.
  * @param {object|null} state
  * @returns {string|null}
  */
 export function sketchEditKey(state) {
-  if (!state || state.planePreset !== 'face') return null;
+  if (!state) return null;
   const loft = state.entry === 'makeLoft' && state.loft
     ? {
       selected: state.loft.selected || 0,
@@ -46,7 +46,7 @@ export function sketchEditKey(state) {
 }
 
 /**
- * Record `state`. The first face sketch is the baseline. A same key refreshes
+ * Record `state`. The first sketch is the baseline. A same key refreshes
  * the baseline without pushing (gesture-only edits). A new key pushes.
  */
 export function observeSketchEdit(history, state) {
