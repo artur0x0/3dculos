@@ -12,7 +12,7 @@ export function emptySketchHistory() {
 }
 
 function cloneState(state) {
-  return structuredClone(state);
+  return globalThis.structuredClone(state);
 }
 
 /**
