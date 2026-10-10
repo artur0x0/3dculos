@@ -8,7 +8,7 @@
  *
  * Screenshots go to GOLDEN_SHOT_DIR or os.tmpdir(), never the artifacts dir.
  */
-/* global document, window, navigator, getComputedStyle */
+/* global document, window, navigator, getComputedStyle, requestAnimationFrame */
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -233,7 +233,7 @@ async function openCompact(page) {
   await page.locator('[data-contour-card="dimension"] input[type="number"]').focus();
   await page.waitForSelector('[data-feature-field-edit]', { timeout: 4000 });
   await setKeyboard(page, KEYBOARD.height, KEYBOARD.offsetTop);
-  await page.waitForFunction(() => {
+  const ready = await page.waitForFunction(() => {
     const done = document.querySelector('[data-feature-field-done]');
     const body = document.querySelector('[data-feature-sheet-body]');
     const card = document.querySelector('[data-feature-card]');
@@ -242,7 +242,26 @@ async function openCompact(page) {
     const vv = window.visualViewport;
     const hidden = !body || !!body.closest('[hidden]') || getComputedStyle(body).display === 'none';
     return hidden && box.width > 2 && box.bottom <= vv.offsetTop + vv.height + 2 && box.top >= vv.offsetTop - 1;
-  }, null, { timeout: 4000 });
+  }, null, { timeout: 4000 }).then(() => true).catch(() => false);
+  if (ready) return;
+  const diag = await page.evaluate(() => {
+    const done = document.querySelector('[data-feature-field-done]');
+    const card = document.querySelector('[data-feature-card]');
+    const body = document.querySelector('[data-feature-sheet-body]');
+    const vv = window.visualViewport;
+    const box = done ? done.getBoundingClientRect() : null;
+    const cardBox = card ? card.getBoundingClientRect() : null;
+    return {
+      editing: !!card?.hasAttribute('data-feature-field-edit'),
+      vv: vv ? { h: vv.height, top: vv.offsetTop, w: vv.width } : null,
+      inner: { w: window.innerWidth, h: window.innerHeight },
+      done: box ? { top: box.top, bottom: box.bottom, width: box.width, height: box.height } : null,
+      card: cardBox ? { top: cardBox.top, bottom: cardBox.bottom, height: cardBox.height, bottomStyle: card.style.bottom } : null,
+      bodyHidden: body ? !!body.closest('[hidden]') : null,
+      bodyDisplay: body ? getComputedStyle(body).display : null,
+    };
+  });
+  throw new Error(`compact view missed the keyboard ${JSON.stringify(diag)}`);
 }
 
 async function sketchCard(page) {
@@ -327,8 +346,8 @@ async function clickEdge(page) {
   await page.waitForFunction(() => window.__VIEWPORT__.stageContourSketch().picked.length >= 1, null, { timeout: 4000 });
 }
 
-async function clickTwoLines(page) {
-  const spots = await page.evaluate(() => {
+async function lineSpots(page) {
+  return page.evaluate(() => {
     const dots = window.__VIEWPORT__.stageContourSketch().dots || [];
     const pairs = [];
     for (let i = 0; i < dots.length; i += 1) {
@@ -336,11 +355,12 @@ async function clickTwoLines(page) {
         const a = dots[i];
         const b = dots[j];
         const span = Math.hypot(b.x - a.x, b.y - a.y);
-        for (let s = 1; s < 12; s += 1) {
-          const t = s / 12;
+        if (span < 28) continue;
+        for (let s = 1; s < 16; s += 1) {
+          const t = s / 16;
           const x = a.x + (b.x - a.x) * t;
           const y = a.y + (b.y - a.y) * t;
-          const nearDot = dots.some((d) => Math.hypot(d.x - x, d.y - y) < 16);
+          const nearDot = dots.some((d) => Math.hypot(d.x - x, d.y - y) < 18);
           const el = document.elementFromPoint(x, y);
           const canvas = el && (el.tagName === 'CANVAS' || el.closest?.('canvas'));
           if (!nearDot && canvas) {
@@ -353,13 +373,31 @@ async function clickTwoLines(page) {
     pairs.sort((p, q) => q.span - p.span);
     return pairs;
   });
-  if (spots.length < 2) throw new Error(`need two lines, got ${JSON.stringify(spots)}`);
-  await page.mouse.click(spots[0].x, spots[0].y);
-  await page.waitForFunction(() => window.__VIEWPORT__.stageContourSketch().picked.some((p) => p.kind === 'line'), null, { timeout: 4000 });
-  await page.mouse.click(spots[1].x, spots[1].y);
-  await page.waitForFunction(() => (
-    window.__VIEWPORT__.stageContourSketch().picked.filter((p) => p.kind === 'line').length >= 2
-  ), null, { timeout: 4000 });
+}
+
+async function clickTwoLines(page) {
+  for (let n = 0; n < 2; n += 1) {
+    const before = await page.evaluate(() => (
+      window.__VIEWPORT__.stageContourSketch().picked.filter((p) => p.kind === 'line').map((p) => p.id)
+    ));
+    const spots = await lineSpots(page);
+    let hit = false;
+    for (const spot of spots) {
+      await page.mouse.click(spot.x, spot.y);
+      const after = await page.evaluate(() => (
+        window.__VIEWPORT__.stageContourSketch().picked.filter((p) => p.kind === 'line').map((p) => p.id)
+      ));
+      if (after.length === before.length + 1) {
+        hit = true;
+        break;
+      }
+      if (after.length < before.length) await page.mouse.click(spot.x, spot.y);
+    }
+    if (!hit) {
+      const picked = await page.evaluate(() => window.__VIEWPORT__.stageContourSketch().picked);
+      throw new Error(`line ${n + 1} not picked from ${spots.length} spots ${JSON.stringify(picked)}`);
+    }
+  }
 }
 
 const up = await waitForServer();

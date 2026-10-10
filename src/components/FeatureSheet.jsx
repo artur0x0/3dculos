@@ -299,10 +299,16 @@ export default function FeatureSheet({
     vv?.addEventListener('resize', apply);
     vv?.addEventListener('scroll', apply);
     window.addEventListener('resize', apply);
+    // The phone shell pins itself to the visual viewport after that event.
+    // Measuring only in the event sees the old pane and lifts the card off
+    // the top. The pane resize is the settled size.
+    const ro = new ResizeObserver(apply);
+    ro.observe(pane);
     return () => {
       vv?.removeEventListener('resize', apply);
       vv?.removeEventListener('scroll', apply);
       window.removeEventListener('resize', apply);
+      ro.disconnect();
     };
   }, [editing]);
 
