@@ -14,6 +14,11 @@ over inventing a new modal layout.
   max-height + internal scroll described below.
 - **`FilletModeChip.jsx`** — the shared feature card (`FeatureSheet`); edge-pick
   Tangent / Clear / Undo, cyan Confirm, grey X dismiss. No hard-edge warning.
+  Chamfer uses this chip. It passes `fullLeft` on phone and desktop, and so do
+  shell, draft, move face, delete face, cut, move, boolean, and paint: the left
+  helper rail is hidden, so the left edge is 10px from the pane and the right
+  edge stays clear of the right rail. The sheet metal picker and feature edit
+  stay centered between both rails.
 - **`sheetMetal/SmControls.jsx`** — `SmPopup` is the shared feature card
   (`FeatureSheet`) for Sheet Metal: picker, plane and edit chip, base, bend,
   tab, hole, countersink, tapped, and Check & Export. X and Esc write nothing.
@@ -81,7 +86,7 @@ over inventing a new modal layout.
   preview sliders stay in the body during setup. After a solve, the legend,
   the Stress / Displacement tabs, and Stage times scroll in the body. The footer is Run, or Back to Setup
   after a solve. It does not say Confirm. X and Esc close Analyze. Hidden in game.
-- **`PaintModeChip.jsx`** — the shared feature card (`FeatureSheet`). Eight swatches,
+- **`PaintModeChip.jsx`** — the shared feature card (`FeatureSheet`) with `fullLeft` on phone and desktop: the left helper rail is hidden, so the left edge is 10px from the pane and the right edge stays clear of the right rail. Eight swatches,
   a custom hex, Part, Undo, and Clear stay in the body. The color preview
   stays in the note. A tap paints the face immediately. Confirm writes the
   session and closes. X and Esc write nothing. There is no swipe. Hidden in game.

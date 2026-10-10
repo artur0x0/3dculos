@@ -107,6 +107,7 @@ const BooleanModeChip = ({
       title={`Boolean · ${opLabel}`}
       subtitle={status}
       compact={compact}
+      fullLeft
       onCancel={onDismiss}
       onConfirm={onConfirm}
       confirmDisabled={!canConfirm}

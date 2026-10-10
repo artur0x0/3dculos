@@ -73,6 +73,7 @@ const MoveModeChip = ({
       title="Move"
       subtitle={moveTargetLabel(target)}
       compact={compact}
+      fullLeft
       onCancel={onDismiss}
       onConfirm={onConfirm}
       confirmDisabled={!canConfirm}

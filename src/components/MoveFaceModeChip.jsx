@@ -53,6 +53,7 @@ const MoveFaceModeChip = ({
       title={title}
       subtitle={status}
       compact={compact}
+      fullLeft
       onCancel={onDismiss}
       onConfirm={onConfirm}
       confirmDisabled={!canConfirm}

@@ -206,6 +206,26 @@ console.log('feature sheet card — source');
     && /fullLeft = false/.test(shell)
     && /measureFeatureSheetWidth\(pane, rootPx = 16, \{ fullLeft = false \} = \{\}\)/.test(layout)
     && !/data-fea-/.test(shell));
+  const fullLeftChips = [
+    'src/components/FilletModeChip.jsx',
+    'src/components/ShellModeChip.jsx',
+    'src/components/DraftModeChip.jsx',
+    'src/components/MoveFaceModeChip.jsx',
+    'src/components/DeleteFaceModeChip.jsx',
+    'src/components/CutModeChip.jsx',
+    'src/components/MoveModeChip.jsx',
+    'src/components/BooleanModeChip.jsx',
+    'src/components/PaintModeChip.jsx',
+  ];
+  check('fillet, chamfer, shell, draft, move face, delete face, cut, move, boolean, and paint pass fullLeft',
+    fullLeftChips.every((rel) => /\bfullLeft\b/.test(read(rel)))
+    && /kind === 'chamfer'/.test(read('src/components/FilletModeChip.jsx')));
+  check('sheet metal picker, feature edit, contour, and the helper card do not pass fullLeft',
+    !/\bfullLeft\b/.test(read('src/components/FeatureEditSheet.jsx'))
+    && !/\bfullLeft\b/.test(read('src/components/sheetMetal/SmControls.jsx'))
+    && !/\bfullLeft\b/.test(read('src/components/sheetMetal/SheetMetalPicker.jsx'))
+    && !/\bfullLeft\b/.test(read('src/components/ContourModeChip.jsx'))
+    && !/\bfullLeft\b/.test(read('src/components/HelperParamModal.jsx')));
   check('helper sheets use the card in CAD; game keeps the old sheet and does not slide',
     /<FeatureSheet\b/.test(helper)
     && /useCard/.test(helper)
@@ -357,6 +377,8 @@ import MobileStageToggle from './src/components/MobileStageToggle.jsx';
 import CutModeChip from './src/components/CutModeChip.jsx';
 import BooleanModeChip from './src/components/BooleanModeChip.jsx';
 import MoveModeChip from './src/components/MoveModeChip.jsx';
+import { PaintModeChip } from './src/components/PaintModeChip.jsx';
+import SheetMetalPicker from './src/components/sheetMetal/SheetMetalPicker.jsx';
 import HelperParamModal from './src/components/HelperParamModal.jsx';
 import { HELPER_PALETTE_ITEMS } from './src/utils/helperPaletteSnippets.js';
 import {
@@ -617,6 +639,26 @@ function Stage() {
           onConfirm={() => {}}
           onDismiss={() => setCardOpen(false)}
         />
+      ) : cardOpen && panel === 'paint' ? (
+        <PaintModeChip
+          compact={compact}
+          color="#22d3ee"
+          canConfirm
+          onSwatch={() => {}}
+          onCustom={() => {}}
+          onPart={() => {}}
+          onUndo={() => {}}
+          onClear={() => {}}
+          onConfirm={() => {}}
+          onDismiss={() => setCardOpen(false)}
+        />
+      ) : cardOpen && panel === 'sheetPicker' ? (
+        <SheetMetalPicker
+          compact={compact}
+          loader={() => Promise.resolve({ records: [], stale: false, error: null, fetchedAt: null })}
+          onCancel={() => setCardOpen(false)}
+          onStart={() => {}}
+        />
       ) : cardOpen && panel === 'helper' ? (
         <HelperParamModal
           useCard={useCard}
@@ -659,6 +701,8 @@ function Stage() {
         <button type="button" data-harness-panel="cut" onClick={() => setPanel('cut')}>cut</button>
         <button type="button" data-harness-panel="boolean" onClick={() => setPanel('boolean')}>boolean</button>
         <button type="button" data-harness-panel="move" onClick={() => setPanel('move')}>move</button>
+        <button type="button" data-harness-panel="paint" onClick={() => setPanel('paint')}>paint</button>
+        <button type="button" data-harness-panel="sheetPicker" onClick={() => setPanel('sheetPicker')}>sheet</button>
         <button type="button" data-harness-helper="cube" onClick={() => { setPanel('helper'); setHelperId('cube'); setUseCard(true); }}>cube</button>
         <button type="button" data-harness-helper="roundedBox" onClick={() => { setPanel('helper'); setHelperId('roundedBox'); setUseCard(true); }}>round</button>
         <button type="button" data-harness-helper="cylinder" onClick={() => { setPanel('helper'); setHelperId('cylinder'); setUseCard(true); }}>cylinder</button>
@@ -764,6 +808,9 @@ html, body, #root { margin: 0; height: 100%; background: #111; }
         paneW: paneBox.width,
         gapLeft: box.left - left.right,
         gapRight: right.left - box.right,
+        overlapRight: box.right > right.left - 0.5,
+        fullLeft: card.getAttribute('data-feature-card-full-left') || '',
+        centerDelta: (box.left + box.width / 2) - ((left.right + right.left) / 2),
         pillGap: pillBox ? pillBox.top - box.bottom : null,
         maxHeight: cs.maxHeight,
         radius: cs.borderRadius,
@@ -795,6 +842,29 @@ html, body, #root { margin: 0; height: 100%; background: #111; }
       await page.screenshot({ path: join(shotDir, name) });
       return result;
     };
+
+    const waitCard = async (pred) => {
+      let place = null;
+      for (let i = 0; i < 20; i += 1) {
+        place = await readCard();
+        if (pred(place)) return place;
+        await page.waitForTimeout(50);
+      }
+      return place;
+    };
+    const fullLeftPhone = (place) => !!(place
+      && place.compact === '1'
+      && place.fullLeft === '1'
+      && Math.abs(place.left - 10) <= 2
+      && place.gapRight >= 8
+      && place.overlapRight === false);
+    const centeredPhone = (place) => !!(place
+      && place.compact === '1'
+      && place.fullLeft === ''
+      && Math.abs(place.centerDelta) <= 2
+      && place.gapLeft >= 8
+      && place.gapRight >= 8
+      && Math.abs(place.left - 10) > 2);
 
     await show('crossSection', true);
     let card = await readCard();
@@ -1053,7 +1123,7 @@ html, body, #root { margin: 0; height: 100%; background: #111; }
     };
 
     await showFillet(true);
-    const filletPhone = await readCard();
+    const filletPhone = await waitCard(fullLeftPhone);
     const filletSwitcher = await page.evaluate(() => {
       const el = document.querySelector('[data-mobile-stage-home-indicator]');
       return {
@@ -1061,14 +1131,15 @@ html, body, #root { margin: 0; height: 100%; background: #111; }
       };
     });
     check('fillet card on a phone docks and hides the stage switcher',
-      filletPhone.compact === '1'
+      fullLeftPhone(filletPhone)
       && filletPhone.width <= filletPhone.cap + 1.5
-      && filletPhone.gapLeft >= 8
-      && filletPhone.gapRight >= 8
       && filletSwitcher.hidden
       && Math.abs(filletPhone.bottomGap) <= 2
       && filletPhone.height < 360,
       JSON.stringify({ ...filletPhone, ...filletSwitcher }));
+    check('at 390px the fillet card left edge is 10px and it does not overlap the right rail',
+      fullLeftPhone(filletPhone),
+      JSON.stringify(filletPhone));
     const filletPick = await page.evaluate(() => {
       const pane = document.querySelector('[data-harness-pane]');
       const box = pane.getBoundingClientRect();
@@ -1088,14 +1159,21 @@ html, body, #root { margin: 0; height: 100%; background: #111; }
       JSON.stringify(filletAfter));
 
     await showFillet(false);
-    const filletDesk = await readCard();
-    check('fillet card on desktop stays a card clear of the rails',
+    const filletDesk = await waitCard((place) => place
+      && place.compact === '0'
+      && place.fullLeft === '1'
+      && Math.abs(place.left - 10) <= 2
+      && place.gapRight >= 8
+      && place.overlapRight === false);
+    check('fillet card on desktop pins the left edge and stays clear of the right rail',
       filletDesk.compact === '0'
+      && filletDesk.fullLeft === '1'
       && filletDesk.width <= filletDesk.cap + 1.5
       && filletDesk.bottomGap >= 8
       && filletDesk.bottomGap <= 16
-      && filletDesk.gapLeft >= 8
+      && Math.abs(filletDesk.left - 10) <= 2
       && filletDesk.gapRight >= 8
+      && filletDesk.overlapRight === false
       && filletDesk.pillGap == null,
       JSON.stringify(filletDesk));
     await parkAndShoot('feature-sheet-fillet-desktop-before.png', { slide: false });
@@ -1188,7 +1266,7 @@ html, body, #root { margin: 0; height: 100%; background: #111; }
     check('a point above the shell card is the canvas, so face picks still land',
       shellPick.tag === 'CANVAS' && shellPick.onCard === false,
       JSON.stringify(shellPick));
-    const shellPhone = await readCard();
+    const shellPhone = await waitCard(fullLeftPhone);
     const shellSwitcher = await page.evaluate(() => {
       const el = document.querySelector('[data-mobile-stage-home-indicator]');
       return {
@@ -1196,10 +1274,8 @@ html, body, #root { margin: 0; height: 100%; background: #111; }
       };
     });
     check('shell card on a phone docks and hides the stage switcher',
-      shellPhone.compact === '1'
+      fullLeftPhone(shellPhone)
       && shellPhone.width <= shellPhone.cap + 1.5
-      && shellPhone.gapLeft >= 8
-      && shellPhone.gapRight >= 8
       && shellSwitcher.hidden
       && Math.abs(shellPhone.bottomGap) <= 2
       && shellPhone.height < 360,
@@ -1269,6 +1345,10 @@ html, body, #root { margin: 0; height: 100%; background: #111; }
     check('phone cut: projected part box sits above the card',
       Number.isFinite(cutAfter.low) && cutAfter.low + 0.02 >= cutAfter.cardTop,
       JSON.stringify(cutAfter));
+    const cutPhone = await waitCard(fullLeftPhone);
+    check('at 390px the cut card left edge is 10px and it does not overlap the right rail',
+      fullLeftPhone(cutPhone),
+      JSON.stringify(cutPhone));
 
     await showFace('boolean', 'Boolean', 'data-boolean-mode');
     await phoneDocked('boolean card on a phone');
@@ -1295,6 +1375,10 @@ html, body, #root { margin: 0; height: 100%; background: #111; }
       JSON.stringify(booleanRail));
     await parkAndShoot('feature-sheet-boolean-390-before.png', { slide: false });
     await parkAndShoot('feature-sheet-boolean-390-after.png', { slide: true });
+    const booleanPhone = await waitCard(fullLeftPhone);
+    check('at 390px the boolean card left edge is 10px and it does not overlap the right rail',
+      fullLeftPhone(booleanPhone) && booleanPhone && booleanRail.z === '20',
+      JSON.stringify({ ...booleanPhone, z: booleanRail.z }));
 
     await showFace('move', 'Move', 'data-move-mode');
     await phoneDocked('move card on a phone');
@@ -1395,6 +1479,45 @@ html, body, #root { margin: 0; height: 100%; background: #111; }
     await parkAndShoot('feature-sheet-refuse-390-before.png', { slide: false });
     await parkAndShoot('feature-sheet-refuse-390-after.png', { slide: true });
 
+    await page.setViewportSize(PHONE);
+    await page.evaluate(() => {
+      document.querySelector('[data-harness-compact="1"]').click();
+      document.querySelector('[data-harness-card="1"]').click();
+      document.querySelector('[data-harness-panel="paint"]').click();
+    });
+    await page.waitForFunction(() => {
+      const card = document.querySelector('[data-feature-card]');
+      const title = document.querySelector('[data-feature-card-title]');
+      return card
+        && card.getAttribute('data-paint-mode') === '1'
+        && card.getAttribute('data-feature-card-compact') === '1'
+        && title
+        && title.textContent.includes('Paint');
+    }, null, { timeout: 5000 });
+    await page.evaluate(() => window.__sheet.fit());
+    const paintPhone = await waitCard(fullLeftPhone);
+    check('at 390px the paint card left edge is 10px and it does not overlap the right rail',
+      fullLeftPhone(paintPhone),
+      JSON.stringify(paintPhone));
+    await page.screenshot({ path: join(shotDir, 'feature-sheet-paint-390.png') });
+
+    await page.evaluate(() => {
+      document.querySelector('[data-harness-panel="sheetPicker"]').click();
+    });
+    await page.waitForFunction(() => {
+      const card = document.querySelector('[data-feature-card][data-sheet-metal-picker="1"]');
+      const title = document.querySelector('[data-feature-card-title]');
+      return card
+        && card.getAttribute('data-feature-card-compact') === '1'
+        && title
+        && title.textContent.includes('Sheet Metal');
+    }, null, { timeout: 5000 });
+    const sheetPickerPhone = await waitCard(centeredPhone);
+    check('at 390px the sheet metal picker stays centered',
+      centeredPhone(sheetPickerPhone),
+      JSON.stringify(sheetPickerPhone));
+    await page.screenshot({ path: join(shotDir, 'feature-sheet-sheet-picker-390.png') });
+
     await page.evaluate(() => {
       document.querySelector('[data-harness-helper="cube"]').click();
       document.querySelector('[data-harness-use-card="0"]').click();
@@ -1484,10 +1607,13 @@ button[data-edit-mode], button[data-edit-compact] { display: none; }
     await page.setContent(editHtml, { waitUntil: 'load' });
     await page.setViewportSize(PHONE);
     await page.waitForSelector('[data-feature-card][data-feature-sheet-kind="extrude"]');
-    const phoneEdit = await page.evaluate(() => {
+    const readEditPlace = () => page.evaluate(() => {
       const card = document.querySelector('[data-feature-card]');
-      const pane = document.querySelector('[data-harness-pane]').getBoundingClientRect();
+      const paneEl = document.querySelector('[data-harness-pane]');
+      const pane = paneEl.getBoundingClientRect();
       const box = card.getBoundingClientRect();
+      const left = paneEl.querySelector('[data-rail-pair="left"]').getBoundingClientRect();
+      const right = paneEl.querySelector('[data-rail-pair="right"]').getBoundingClientRect();
       const pill = document.querySelector('[data-mobile-stage-home-indicator]');
       return {
         cards: document.querySelectorAll('[data-feature-card]').length,
@@ -1498,8 +1624,19 @@ button[data-edit-mode], button[data-edit-compact] { display: none; }
         confirm: document.querySelector('[data-feature-card-confirm]')?.textContent || '',
         editScript: !!document.querySelector('[data-feature-sheet-edit-script]'),
         del: !!document.querySelector('[data-feature-sheet-delete]'),
+        fullLeft: card.getAttribute('data-feature-card-full-left') || '',
+        left: box.left - pane.left,
+        gapLeft: box.left - left.right,
+        gapRight: right.left - box.right,
+        centerDelta: (box.left + box.width / 2) - ((left.right + right.left) / 2),
       };
     });
+    let phoneEdit = null;
+    for (let i = 0; i < 20; i += 1) {
+      phoneEdit = await readEditPlace();
+      if (phoneEdit.fullLeft === '' && Math.abs(phoneEdit.centerDelta) <= 2 && phoneEdit.gapLeft >= 8) break;
+      await page.waitForTimeout(50);
+    }
     check('phone edit card docks on the pane and hides the switcher',
       phoneEdit.cards === 1
       && phoneEdit.compact === '1'
@@ -1509,6 +1646,13 @@ button[data-edit-mode], button[data-edit-compact] { display: none; }
       && /Confirm/.test(phoneEdit.confirm)
       && phoneEdit.editScript
       && phoneEdit.del,
+      JSON.stringify(phoneEdit));
+    check('at 390px the feature edit card stays centered',
+      phoneEdit.fullLeft === ''
+      && Math.abs(phoneEdit.centerDelta) <= 2
+      && phoneEdit.gapLeft >= 8
+      && phoneEdit.gapRight >= 8
+      && Math.abs(phoneEdit.left - 10) > 2,
       JSON.stringify(phoneEdit));
     await page.screenshot({ path: join(shotDir, 'feature-sheet-edit-390.png') });
     await page.click('[data-feature-card-cancel]');
@@ -1552,18 +1696,39 @@ button[data-edit-mode], button[data-edit-compact] { display: none; }
       document.querySelector('[data-edit-mode="picker"]').click();
     });
     await page.waitForSelector('[data-feature-sheet-picker]');
-    const picker = await page.evaluate(() => {
-      const card = document.querySelector('[data-feature-card]');
-      const picks = document.querySelectorAll('[data-feature-sheet-pick]').length;
-      return {
-        layout: card?.getAttribute('data-feature-sheet-layout') || '',
-        picks,
-        confirm: !!document.querySelector('[data-feature-card-confirm]'),
-        cards: document.querySelectorAll('[data-feature-card]').length,
-      };
-    });
+    let picker = null;
+    for (let i = 0; i < 20; i += 1) {
+      picker = await page.evaluate(() => {
+        const card = document.querySelector('[data-feature-card]');
+        const paneEl = document.querySelector('[data-harness-pane]');
+        const pane = paneEl.getBoundingClientRect();
+        const box = card.getBoundingClientRect();
+        const left = paneEl.querySelector('[data-rail-pair="left"]').getBoundingClientRect();
+        const right = paneEl.querySelector('[data-rail-pair="right"]').getBoundingClientRect();
+        return {
+          layout: card?.getAttribute('data-feature-sheet-layout') || '',
+          picks: document.querySelectorAll('[data-feature-sheet-pick]').length,
+          confirm: !!document.querySelector('[data-feature-card-confirm]'),
+          cards: document.querySelectorAll('[data-feature-card]').length,
+          fullLeft: card.getAttribute('data-feature-card-full-left') || '',
+          left: box.left - pane.left,
+          gapLeft: box.left - left.right,
+          gapRight: right.left - box.right,
+          centerDelta: (box.left + box.width / 2) - ((left.right + right.left) / 2),
+        };
+      });
+      if (picker.fullLeft === '' && Math.abs(picker.centerDelta) <= 2 && picker.gapLeft >= 8) break;
+      await page.waitForTimeout(50);
+    }
     check('picker is the same card, with no Confirm',
       picker.layout === 'feature-card' && picker.picks >= 2 && picker.confirm === false && picker.cards === 1,
+      JSON.stringify(picker));
+    check('at 390px the feature picker stays centered',
+      picker.fullLeft === ''
+      && Math.abs(picker.centerDelta) <= 2
+      && picker.gapLeft >= 8
+      && picker.gapRight >= 8
+      && Math.abs(picker.left - 10) > 2,
       JSON.stringify(picker));
     await page.screenshot({ path: join(shotDir, 'feature-sheet-picker-390.png') });
 

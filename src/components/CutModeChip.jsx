@@ -111,6 +111,7 @@ const CutModeChip = ({
       title={`Cut · ${planeLabel}`}
       subtitle={status}
       compact={compact}
+      fullLeft
       onCancel={onDismiss}
       onConfirm={onConfirm}
       confirmDisabled={!canConfirm}
