@@ -177,7 +177,7 @@ async function boot(browser, vp) {
       ? 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1'
       : undefined,
   });
-  await context.addInitScript(() => { window.open = () => null; });
+  await context.addInitScript(() => { globalThis.open = () => null; });
   const page = await context.newPage();
   const errors = [];
   page.on('pageerror', (err) => errors.push(String(err).slice(0, 240)));
@@ -233,7 +233,7 @@ async function selectPart(page, touch) {
 async function emptyClick(page) {
   await page.waitForFunction(() => {
     const canvas = document.querySelector('.viewport-shell > canvas');
-    return !!(canvas && canvas.clientWidth > 0 && window.__VIEWPORT__?.ready?.());
+    return !!(canvas && canvas.clientWidth > 0 && globalThis.__VIEWPORT__?.ready?.());
   }, null, { timeout: 90000 });
   const point = await page.evaluate(() => {
     const canvas = document.querySelector('.viewport-shell > canvas');
