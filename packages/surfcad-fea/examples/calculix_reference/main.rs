@@ -603,7 +603,7 @@ fn bonded_cantilever() -> Result<Row, String> {
     for elem in &right.elements {
         elements.push(elem.map(|id| id + shift));
     }
-    let master = interface_faces(&left.nodes, &left.elements, 0, length, tol, 0);
+    let master = interface_faces(&left.nodes, &left.elements, 0, length, tol, 0, 0);
     let slave = interface_faces(
         &right.nodes,
         &right.elements,
@@ -611,6 +611,7 @@ fn bonded_cantilever() -> Result<Row, String> {
         length,
         tol,
         left.elements.len() as u32,
+        shift,
     );
     if master.is_empty() || slave.is_empty() {
         return Err("bonded cantilever: the interface has no C3D10 faces".into());
@@ -712,6 +713,7 @@ fn interface_faces(
     value: f64,
     tol: f64,
     element_offset: u32,
+    node_offset: u32,
 ) -> Vec<InterfaceFace> {
     const LOCAL: [([usize; 6], u8); 4] = [
         ([0, 1, 2, 4, 5, 6], 1),
@@ -738,7 +740,7 @@ fn interface_faces(
             found.push(InterfaceFace {
                 element: index as u32 + element_offset,
                 ccx,
-                nodes: ids,
+                nodes: ids.map(|id| id + node_offset),
             });
         }
     }
