@@ -43,6 +43,30 @@ test('MIT OR GPL is allowed because MIT can be elected', () => {
   assert.equal(decision.ok, true);
 });
 
+test('non-commercial licences do not ship', () => {
+  for (const expression of [
+    'CC-BY-NC-4.0',
+    'CC-BY-NC',
+    'CC-BY-NC-SA-4.0',
+    'CC-BY-NC-ND-3.0',
+    'PolyForm-Noncommercial-1.0.0',
+    'Commons-Clause',
+    'Commons Clause',
+    'Creative Commons Attribution-NonCommercial 4.0',
+    '(MIT AND CC-BY-NC-4.0)',
+    '(CC-BY-NC-4.0 OR PolyForm-Noncommercial-1.0.0)',
+  ]) {
+    assert.equal(shipmentAllowed(expression).ok, false, expression);
+  }
+});
+
+test('a permissive alternative to a non-commercial licence can be elected', () => {
+  assert.equal(shipmentAllowed('(MIT OR CC-BY-NC-4.0)').ok, true);
+  assert.equal(shipmentAllowed('(MIT OR Commons-Clause)').ok, true);
+  assert.equal(shipmentAllowed('CC-BY-3.0').ok, true);
+  assert.equal(shipmentAllowed('CC-BY-SA-4.0').ok, true);
+});
+
 test('a missing license field fails closed', () => {
   assert.equal(shipmentAllowed('').ok, false);
   assert.equal(shipmentAllowed('   ').ok, false);
