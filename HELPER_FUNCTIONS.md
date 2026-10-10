@@ -1032,6 +1032,51 @@ const filletProf = profilePolygon([
 ]);
 ```
 
+### solveContour(spec)
+
+Solve a constrained contour in plane UV. Lengths are millimetres. Angles are
+degrees. A dimension name is a string on that dimension and is not a script
+binding. Horizontal is constant `v`. Vertical is constant `u`. Both are the
+workplane frame, not the screen.
+
+```javascript
+const contour = solveContour({
+  points: [
+    { id: 'p0', at: [0, 0] },
+    { id: 'p1', at: [40, 0] },
+    { id: 'p2', at: [40, 20] },
+    { id: 'p3', at: [0, 20] },
+  ],
+  lines: [
+    { id: 'e0', a: 'p0', b: 'p1' },
+    { id: 'e1', a: 'p1', b: 'p2' },
+    { id: 'e2', a: 'p2', b: 'p3' },
+    { id: 'e3', a: 'p3', b: 'p0' },
+  ],
+  arcs: [],
+  dimensions: [
+    { id: 'd0', kind: 'length', edge: 'e0', value: 40, name: 'width' },
+  ],
+  constraints: [
+    { id: 'k0', kind: 'horizontal', items: ['e0'] },
+    { id: 'k1', kind: 'fix', items: ['p0'], at: { p0: [0, 0] } },
+  ],
+});
+const xs = makeCrossSection(fr, contour);
+```
+
+**Returns:** `{ type:'contour', contours, points, lines, arcs, dimensions, constraints, dof, status, conflict, repeated, open }`.
+`status` is `under`, `full`, or `conflict`. `repeated` lists constraints
+whose removal does not change the rank, each with `warning: 'repeated'`.
+That warning is not a failure. More than 128 points throws. An open chain
+of three or more points is closed with one more line before the solve.
+A contour may hold more than one chain. A vertex with more than two
+edges throws.
+
+**Loud failures:** unknown id, unknown kind, equal of a line and an arc,
+a name that is not an identifier or is used twice on the contour, a bare
+identifier where a number belongs.
+
 ### makeCrossSection(plane, profile)
 
 ```javascript
@@ -1060,8 +1105,9 @@ Saved contours stay pickable for Extrude / Revolve / Sweep / Loft. Preview
 overlays the profile on the plane while editing.
 
 **Non-goals (wait for Product brief):** fillet-via-sweep;
-extrude/revolve/loft from this value; full sketch editor.
-(Edge→sweep path is Slice 22 — see below.)
+extrude/revolve/loft from this value.
+(Edge→sweep path is Slice 22 — see below.) A constrained contour
+uses `solveContour`.
 
 ---
 

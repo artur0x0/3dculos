@@ -1,6 +1,6 @@
 {
   "generatedFrom": "src/lib/surfcad/runtime.js HELPER_FUNCTIONS",
-  "count": 71,
+  "count": 72,
   "helpers": [
     {
       "name": "shell",
@@ -1482,10 +1482,25 @@
         }
       ],
       "description": "makeCrossSection(plane, profile) → reusable { kind, plane, profile, contours }. plane: workplaneFromFace frame. profile: profileCircle/Rectangle/Polygon result, or { type, ... }, or bare contours / point list (same rules as makeExtrude). ",
-      "doc": "**Parameters:**\n- `plane` — frame from `workplaneFromFace` (`center`, `normal`, `x`, `y`)\n- `profile` — `profileCircle` / `profileRectangle` / `profilePolygon` result,\n  a `{ type, ... }` descriptor, or a contours / point list (same rules as\n  `makeExtrude`)\n\n**Returns:** `{ kind:'crossSection', plane, profile, contours }`\n\n**Loud failures:** missing plane axes; non-positive sizes; < 3 polygon points;\ndegenerate (zero-area) profile.\n\n**UI:** Advanced rail → **Profile** (with **Workplane**) → contour mode\n(circle / rectangle / polygon / polyline). Face select feeds the plane.\nSaved contours stay pickable for Extrude / Revolve / Sweep / Loft. Preview\noverlays the profile on the plane while editing.\n\n**Non-goals (wait for Product brief):** fillet-via-sweep;\nextrude/revolve/loft from this value; full sketch editor.\n(Edge→sweep path is Slice 22 — see below.)\n\n---\n\n## Edge → sweep path (Slice 22)\n\nOrdered **sweep path / wire** from the current edge selection (including\ntangent-prop chains). Later slices consume this value to sweep a cross-section\ncutter along it. This slice ships the path value only — fillet-via-sweep is\n**not** started here (wait for Product brief).",
+      "doc": "**Parameters:**\n- `plane` — frame from `workplaneFromFace` (`center`, `normal`, `x`, `y`)\n- `profile` — `profileCircle` / `profileRectangle` / `profilePolygon` result,\n  a `{ type, ... }` descriptor, or a contours / point list (same rules as\n  `makeExtrude`)\n\n**Returns:** `{ kind:'crossSection', plane, profile, contours }`\n\n**Loud failures:** missing plane axes; non-positive sizes; < 3 polygon points;\ndegenerate (zero-area) profile.\n\n**UI:** Advanced rail → **Profile** (with **Workplane**) → contour mode\n(circle / rectangle / polygon / polyline). Face select feeds the plane.\nSaved contours stay pickable for Extrude / Revolve / Sweep / Loft. Preview\noverlays the profile on the plane while editing.\n\n**Non-goals (wait for Product brief):** fillet-via-sweep;\nextrude/revolve/loft from this value.\n(Edge→sweep path is Slice 22 — see below.) A constrained contour\nuses `solveContour`.\n\n---\n\n## Edge → sweep path (Slice 22)\n\nOrdered **sweep path / wire** from the current edge selection (including\ntangent-prop chains). Later slices consume this value to sweep a cross-section\ncutter along it. This slice ships the path value only — fillet-via-sweep is\n**not** started here (wait for Product brief).",
       "examples": [
         "let part = Manifold.cube([40, 30, 20], true);\nconst topFace = facesByNormal(part, [0, 0, 1])[0];\nconst fr = workplaneFromFace(part, topFace);\nconst xs = makeCrossSection(fr, profileCircle(5, 32));\n// xs.plane / xs.profile / xs.contours — consume in later slices\nreturn part;",
         "{\n  kind: 'sweepPath',\n  closed: false,                 // true for circular / loop selections\n  points: [ [x,y,z], ... ],      // ordered polyline (closed: first ≠ last)\n  length: 40,                    // total path length\n  edgeCount: 3,\n}"
+      ]
+    },
+    {
+      "name": "solveContour",
+      "signature": "solveContour(spec)",
+      "params": [
+        {
+          "name": "spec",
+          "text": "spec"
+        }
+      ],
+      "description": "solveContour(spec) → a contour profile in plane UV. spec is `{ points, lines, arcs, dimensions, constraints }`. ",
+      "doc": "Solve a constrained contour in plane UV. Lengths are millimetres. Angles are\ndegrees. A dimension name is a string on that dimension and is not a script\nbinding. Horizontal is constant `v`. Vertical is constant `u`. Both are the\nworkplane frame, not the screen.\n\n\n\n**Returns:** `{ type:'contour', contours, points, lines, arcs, dimensions, constraints, dof, status, conflict, repeated, open }`.\n`status` is `under`, `full`, or `conflict`. `repeated` lists constraints\nwhose removal does not change the rank, each with `warning: 'repeated'`.\nThat warning is not a failure. More than 128 points throws. An open chain\nof three or more points is closed with one more line before the solve.\nA contour may hold more than one chain. A vertex with more than two\nedges throws.\n\n**Loud failures:** unknown id, unknown kind, equal of a line and an arc,\na name that is not an identifier or is used twice on the contour, a bare\nidentifier where a number belongs.",
+      "examples": [
+        "const contour = solveContour({\n  points: [\n    { id: 'p0', at: [0, 0] },\n    { id: 'p1', at: [40, 0] },\n    { id: 'p2', at: [40, 20] },\n    { id: 'p3', at: [0, 20] },\n  ],\n  lines: [\n    { id: 'e0', a: 'p0', b: 'p1' },\n    { id: 'e1', a: 'p1', b: 'p2' },\n    { id: 'e2', a: 'p2', b: 'p3' },\n    { id: 'e3', a: 'p3', b: 'p0' },\n  ],\n  arcs: [],\n  dimensions: [\n    { id: 'd0', kind: 'length', edge: 'e0', value: 40, name: 'width' },\n  ],\n  constraints: [\n    { id: 'k0', kind: 'horizontal', items: ['e0'] },\n    { id: 'k1', kind: 'fix', items: ['p0'], at: { p0: [0, 0] } },\n  ],\n});\nconst xs = makeCrossSection(fr, contour);"
       ]
     },
     {

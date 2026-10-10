@@ -1,0 +1,31 @@
+# Contour constraints — judgment calls
+
+Artur said GO on the contour plan, with the amendments below. Every question he did not mention keeps the plan default. Each row is locked. The pull request column is where the behavior lands.
+
+The word in the UI and in docs is contour. Code identifiers in new files are `contour*` as well, because the files are new and renaming later would be the noisy path. Joints keep their own solver.
+
+| # | Call | Where |
+| --- | --- | --- |
+| 1 | The grey X stays under the divider. Tool order is Circle, Rectangle, Polygon, Polyline, Arc, Dimension, Constraints, divider, X. Dimension is the second-to-last tool. Constraints is the last tool. | PR B adds Arc and Dimension. PR C adds Constraints. |
+| 2 | An Arc tool rounds two or three adjacent lines of a polyline into an arc with tangent constraints. `roundContourCorner` is pure and lands with the solver. The rail button lands with Dimension, because Arc creates geometry. | PR A function. PR B button. |
+| 3 | A circle, rectangle, or regular polygon stays on `profileCircle` / `profileRectangle` / `profilePolygon` until the first dimension or constraint. That gesture promotes once. Reopening an old block does not promote it. | PR B |
+| 4 | A polyline of three or more points closes (the closing line is real). Fewer than three stays an open chain and still cannot confirm a profile. An under-defined contour is a normal solve, status `under`, not an error. | PR A |
+| 5 | Dimension Confirm writes the contour block and nothing else. It does not change mode and it does not leave contour mode. The rail X is still the way out. | PR B |
+| 6 | A conflict does not throw and does not by itself fail the feature. `solveContour` returns the least-squares contours and `{ primary, ids }`. The feature chip goes red only if the solid rebuild throws. | PR A returns it. PR D paints it. |
+| 7 | Desktop point drag stays on the right button, so a left click still adds a point. Touch uses one-finger drag on the handle. A fully constrained point does not move. Dimension and Constraints select; they do not drag. | PR D |
+| 8 | Length fields use `src/utils/displayUnit.js` (`getDisplayUnit`, `lengthToDisplay`, `displayToMm`). The solver does not import it. The script stays millimetres. Angles stay degrees. Sheet metal's unit key is not read. | PR B |
+| 9 | A dimension name is a string on the dimension, unique inside that contour. It is not a `const` and a later feature cannot read it. The parser refuses a bare identifier. Extrude and Revolve do not gain a name picker. Reopen still restores the contour, including names. | PR A stores the name. PR E reopens. |
+| 10 | Two lines more than 15° from parallel suggest an angle. Otherwise they suggest a distance. The card can switch. A distance also forces the lines parallel, and it is still one item. | PR B |
+| 11 | Fix on a point locks UV. Fix on a line locks both endpoints. Fix on an arc locks the center and the radius. A missing `at` locks the current seed. | PR A |
+| 12 | The contour solver is not shared with joints. LM and the SVD stay private in `src/utils/contourSolve.js`. There is no rigid-body packing and no `solveResiduals` adapter. Joints judgment 18 does not apply to contours. What is shared is the pick-then-apply UI: `StickyPickApply` plus a hook, documented for the joints card. | PR A solver. PR B component. |
+| 13 | Loft stations solve alone. A dimension on one station does not touch the others. Emit goes through `isolateLoftStationParams`. | PR B |
+| 14 | Labels and icons show only while that contour is open. Status colour also shows on the saved ghost. | PR B labels. PR D colour. |
+| 15 | The point cap is 128. `solveContour` throws above that. | PR A |
+| 16 | A constraint or dimension whose removal does not change the rank is a `repeated` warning. Walk from the last item so the earlier copy is the one that counts. The warning is not red and not an error. Status stays `under` or `full`. | PR A detects it. PR D shows the word. |
+| 17 | `value` on a distance or an offset is the signed millimetre target. `side` is stored for the tag and is not applied a second time. `sense` on an angle picks the branch. The residual is `atan2(sense * cross, dot) - radians`. | PR A |
+| 18 | Coincident of a point and a line is the infinite line, not the segment interior. Equal of a line and an arc throws. | PR A |
+| 19 | Full-circle tessellation uses the circle's `segments` (the circle tool's default is 64) and starts at angle 0, CCW, matching `profileCircle`. A corner arc tessellates to a 0.05 mm chord. | PR A |
+| 20 | Seeds written back to the script are rounded to 4 decimals, the same as `roundFaceNum`. A second solve of an unchanged contour emits the same call. | PR A |
+| 21 | The existing architecture sentence that distinguishes sketch contours from body contours stays. It names two systems that already shipped. New text says contour. | PR A |
+| 22 | `Viewport.jsx` and `App.jsx` stay thin. New math and the new card live outside them. No file under `src/fea`, `src/components/fea`, `packages/surfcad-fea`, or `.github/workflows` changes. | Every PR |
+| 23 | A contour may contain more than one chain, so two separate edges can take an angle or a distance. Auto-close applies per chain, and only when that chain has two degree-1 ends and at least three vertices. Degree greater than 2 throws `contour has a branch`. Tessellation walks each chain undirected, so two lines that both leave a shared vertex are still one path. | PR A |
