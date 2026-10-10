@@ -30,6 +30,7 @@ import {
   stripUndoTarget,
   suggestJointType,
   typeFits,
+  planarGapMm,
   undoJointStrip,
 } from './jointUi.js';
 
@@ -84,9 +85,48 @@ function docWith(joints) {
 test('two planar faces suggest coincident and two axes suggest concentric', () => {
   const faces = [face(A, 'Shaft', [0, 0, 1], [0, 0, 1]), face(B, 'Housing', [0, 0, -1], [0, 0, -1])];
   assert.equal(suggestJointType(faces), 'coincident');
+  assert.equal(planarGapMm(faces) < 5, true);
   assert.equal(suggestJointType([axis(A, 'Shaft'), axis(B, 'Housing')]), 'concentric');
   assert.equal(suggestJointType([face(A, 'Shaft', [0, 0, 1], [0, 0, 1])]), null);
   assert.equal(typeFits('fixed', faces), false);
+});
+
+test('round faces and circular edges suggest concentric', () => {
+  const cyl = (surfId, name) => ({
+    surfId,
+    partName: name,
+    kind: 'face',
+    planar: false,
+    axis: true,
+    key: { at: [0, 0, 0], dir: [0, 0, 1], radius: 5 },
+  });
+  const circle = (surfId, name) => ({
+    surfId,
+    partName: name,
+    kind: 'edge',
+    planar: false,
+    axis: false,
+    key: { at: [0, 0, 0], dir: [0, 0, 1], radius: 4 },
+  });
+  assert.equal(suggestJointType([cyl(A, 'Shaft'), cyl(B, 'Housing')]), 'concentric');
+  assert.equal(suggestJointType([circle(A, 'Shaft'), circle(B, 'Housing')]), 'concentric');
+  assert.equal(suggestJointType([circle(A, 'Shaft'), axis(B, 'Housing')]), 'concentric');
+});
+
+test('parallel planar faces with an offset suggest distance, and the user can override', () => {
+  const far = [face(A, 'Shaft', [0, 0, 0], [0, 0, 1]), face(B, 'Housing', [0, 0, 12], [0, 0, 1])];
+  assert.equal(suggestJointType(far), 'distance');
+  const drafted = draftFromPicks(null, far, { joints: [] });
+  assert.equal(drafted.type, 'distance');
+  assert.equal(drafted.suggested, 'distance');
+  assert.ok(Math.abs(drafted.valueMm - 12) < 1e-6);
+  const overridden = draftFromPicks(
+    { ...drafted, type: 'coincident', userPickedType: true },
+    far,
+    { joints: [] },
+  );
+  assert.equal(overridden.type, 'coincident');
+  assert.equal(overridden.userPickedType, true);
 });
 
 test('a second tap on the same part is refused', () => {

@@ -57,6 +57,7 @@ export default function JointCard({
       }}
       onApply={onConfirm}
       onCancel={onCancel}
+      applyLabel="Add"
       applyDisabled={jointConfirmDisabled({ card, locked })}
       note={note}
       compact={compact}

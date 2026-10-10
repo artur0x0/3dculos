@@ -93,13 +93,18 @@ Desktop specifics:
   When no part is selected the same bar shows assembly joints
   (`data-assembly-joints`), or **No assembly joints**
   (`data-feature-strip-empty`), and Undo is titled **Undo joint**.
-  A chip tap selects the floating joint tag (Delete and X). It does not
-  reopen the create card. The create card is `StickyPickApply`. It opens
+  The empty caption is the same height as a joint chip (`h-8`).
+  A chip tap opens Delete and X on the chip (`data-joint-chip-popup`).
+  It does not close the create card. There is no floating joint tag.
+  The create card is `StickyPickApply`. It opens
   from Joints (Lucide `Blocks`, `data-joints-button`), the last button in
-  Move. A tap with nothing selected selects the part. Joint picking starts
-  only while that card is open. Adding a joint does not make the page
-  scroll: `html`, `body`, and `#root` stay `overflow: hidden`, and the left
-  rail remains the scroller (`golden:joints-page-scroll`).
+  Move. While it is open the parts shift up like every other feature card.
+  Add writes the joint, clears the picks, and leaves the card open. X exits.
+  A tap with nothing selected selects the part. Joint picking starts
+  only while that card is open. Both face picks stay highlighted until Add or X.
+  Adding a joint does not make the page scroll: `html`, `body`, and `#root`
+  stay `overflow: hidden`, and the left rail remains the scroller
+  (`golden:joints-page-scroll`).
   The old vertical seam strip
   between editor and viewer is gone. Hidden in game mode. SplitDivider sits
   directly between editor and viewer.
@@ -289,10 +294,10 @@ Mobile specifics:
   Sheet-metal chips use `SheetMetalPlate` (blue), same as desktop.
   `hideWhenEmpty` skips the "No features" caption. It does not skip
   **No assembly joints**, which the CAD bar shows when no part is selected.
-  The script-stage strip never shows joints. A joint chip tap selects the
-  floating tag and does not reopen the create card. After a joint is added
-  the page stays put (`scrollHeight` ≤ `innerHeight`, `scrollY` 0) and the
-  left rail still scrolls.
+  The script-stage strip never shows joints. A joint chip tap opens Delete
+  and X on the chip and does not close the create card. There is no floating
+  joint tag. Contour tags stay. After a joint is added the page stays put
+  (`scrollHeight` ≤ `innerHeight`, `scrollY` 0) and the left rail still scrolls.
   the bar itself stays mounted so Undo and Redo remain. A chip whose block holds a
   frozen copy of another part's geometry (`externalBody`) has a 2px yellow border
   (`data-feature-external="1"`), active or not; its feature sheet says External copy.

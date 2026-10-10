@@ -179,7 +179,6 @@ import {
 } from '../utils/contourDrag';
 import ContourGestureCard from './ContourGestureCard';
 import ContourTags from './ContourTags';
-import JointTags from './JointTags';
 import {
   holdContourOverlays,
   releaseContourOverlays,
@@ -865,12 +864,6 @@ const Viewport = forwardRef(({
   onJointPick = null,
   /** Joint create card. Game does not mount it. fullLeft stays off. */
   jointCard = null,
-  /** Placed joints. Tap opens Delete and X and does not reopen the card. */
-  jointTags = null,
-  jointTagId = null,
-  onSelectJointTag = null,
-  onDeleteJointTag = null,
-  onCloseJointTag = null,
   /** False: the title is the assembly name only, with no "in". */
   cadPartSelected = true,
   /**
@@ -933,6 +926,10 @@ const Viewport = forwardRef(({
   const raycasterRef = useRef(new Raycaster());
   const mouseRef = useRef(new Vector2());
   const highlightMeshRef = useRef(null);
+  /** Face highlights for an open joint card. Keyed by part id so a second pick does not drop the first. */
+  const jointHighlightRef = useRef(new Map());
+  const clearJointHighlightsRef = useRef(() => {});
+  const paintJointHighlightRef = useRef(() => {});
   const cuttingPlaneWidgetRef = useRef(null);
   const axisHelperRef = useRef(null);
   const executionAbortRef = useRef(null);
@@ -1296,6 +1293,7 @@ const Viewport = forwardRef(({
     const highlights = highlightMeshRef.current;
     if (Array.isArray(highlights)) roots.push(...highlights);
     else if (highlights) roots.push(highlights);
+    for (const mesh of jointHighlightRef.current.values()) roots.push(mesh);
     for (const root of roots) visit(root);
   }, []);
   const [filletToast, setFilletToast] = useState(null);
@@ -1557,7 +1555,9 @@ const Viewport = forwardRef(({
                               ? 'edge'
                               : measureSheetOpen
                                 ? 'measure'
-                                : '';
+                                : (mode !== 'game' && jointCard)
+                                  ? 'joint'
+                                  : '';
   featureCardKindRef.current = featureCardKind;
   sheetCameraOwnedRef.current = featureCardKind !== '';
   // A view snap or zoom-to-fit wins over the card slide. Close still restores
@@ -1857,6 +1857,8 @@ const Viewport = forwardRef(({
     adoptActiveSolid: (payload) => adoptActiveSolidRef.current(payload),
     /** True while a bottom feature card owns the camera. Game is never. */
     featureSheetCameraOwned: () => sheetCameraOwnedRef.current,
+    /** Drop joint-pick face highlights. A part id drops one side; omit it to drop both. */
+    clearJointHighlights: (partId) => clearJointHighlightsRef.current(partId),
   }));
 
   // Clear face highlight
@@ -4475,6 +4477,83 @@ const Viewport = forwardRef(({
     highlightMeshRef.current.push(highlightMesh);
   }, []);
 
+  const disposeHighlightObject = useCallback((mesh) => {
+    if (!mesh) return;
+    sceneRef.current?.remove(mesh);
+    const drop = (obj) => {
+      obj.geometry?.dispose?.();
+      const material = obj.material;
+      if (Array.isArray(material)) material.forEach((item) => item?.dispose?.());
+      else material?.dispose?.();
+      const kids = obj.children ? [...obj.children] : [];
+      for (const kid of kids) drop(kid);
+    };
+    drop(mesh);
+  }, []);
+
+  const clearJointHighlights = useCallback((partId = null) => {
+    const map = jointHighlightRef.current;
+    const ids = partId == null ? [...map.keys()] : [String(partId)];
+    for (const id of ids) {
+      disposeHighlightObject(map.get(id));
+      map.delete(id);
+    }
+  }, [disposeHighlightObject]);
+  clearJointHighlightsRef.current = clearJointHighlights;
+
+  /**
+   * Yellow face highlight that stays on the part it was picked on.
+   * A later pick on another part must not move or drop it. Add and X clear it.
+   */
+  const paintJointHighlight = useCallback((partId, faceIndices, positions, index) => {
+    if (!partId || !sceneRef.current || !faceIndices?.length || !positions || !index) return;
+    const highlightPositions = [];
+    faceIndices.forEach((faceIdx) => {
+      const i0 = index[faceIdx * 3];
+      const i1 = index[faceIdx * 3 + 1];
+      const i2 = index[faceIdx * 3 + 2];
+      const v1 = new Vector3().fromBufferAttribute(positions, i0);
+      const v2 = new Vector3().fromBufferAttribute(positions, i1);
+      const v3 = new Vector3().fromBufferAttribute(positions, i2);
+      highlightPositions.push(v1.x, v1.y, v1.z, v2.x, v2.y, v2.z, v3.x, v3.y, v3.z);
+    });
+    const boundaryEdgePositions = highlightBoundaryPositions(positions, index, faceIndices);
+    const highlightGeometry = new BufferGeometry();
+    highlightGeometry.setAttribute('position', new BufferAttribute(new Float32Array(highlightPositions), 3));
+    const indices = [];
+    for (let i = 0; i < faceIndices.length * 3; i++) indices.push(i);
+    highlightGeometry.setIndex(indices);
+    const highlightMesh = new ThreeMesh(highlightGeometry, new MeshBasicMaterial({
+      color: 0xffff00, transparent: true, opacity: 0.3, depthTest: true, depthWrite: false, side: 2,
+      polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -4,
+    }));
+    highlightMesh.name = 'joint-pick';
+    highlightMesh.renderOrder = FACE_HIGHLIGHT_RENDER_ORDER;
+    highlightMesh.userData.overlayPartId = String(partId);
+    highlightMesh.userData.anchorToActivePart = false;
+    if (boundaryEdgePositions.length > 0) {
+      const edgeGeometry = new BufferGeometry();
+      edgeGeometry.setAttribute('position', new BufferAttribute(new Float32Array(boundaryEdgePositions), 3));
+      const edgesLine = new LineSegments(edgeGeometry, new LineBasicMaterial({
+        color: 0xffff00, linewidth: 3, depthTest: true,
+      }));
+      edgesLine.renderOrder = FACE_HIGHLIGHT_RENDER_ORDER + 1;
+      highlightMesh.add(edgesLine);
+    }
+    applyPartPose(highlightMesh, overlayAnchorForRef.current(partId));
+    const id = String(partId);
+    disposeHighlightObject(jointHighlightRef.current.get(id));
+    sceneRef.current.add(highlightMesh);
+    jointHighlightRef.current.set(id, highlightMesh);
+  }, [disposeHighlightObject]);
+  paintJointHighlightRef.current = paintJointHighlight;
+
+  useEffect(() => {
+    if (jointPicking) return undefined;
+    clearJointHighlights();
+    return undefined;
+  }, [jointPicking, clearJointHighlights]);
+
   const showCadBodyHighlight = useCallback(() => {
     const geom = resultRef.current?.geometry;
     const positions = geom?.attributes?.position;
@@ -7040,6 +7119,9 @@ const Viewport = forwardRef(({
       }
       if (described) {
         onJointPickRef.current?.({ partId: activePartIdRef.current, ...described });
+        if (positions && index && shown.length) {
+          paintJointHighlightRef.current(activePartIdRef.current, shown, positions, index);
+        }
       }
     }
     setShellMode((prev) => {
@@ -7587,6 +7669,7 @@ const Viewport = forwardRef(({
       if (import.meta.env?.DEV) {
         window.__VIEWPORT__ = {
           ready: () => !!(sceneRef.current && rendererRef.current && resultRef.current),
+          jointHighlightCount: () => jointHighlightRef.current.size,
           // Set this from automation to be notified the instant a mesh lands in the scene.
           // Fires from renderMeshData with the exact meshData object that was painted.
           onRendered: null,
@@ -10321,20 +10404,8 @@ const Viewport = forwardRef(({
         />
       )}
 
-      {/* Joint create card. A placed joint is a floating tag, not this card. */}
+      {/* Joint create card. Placed joints are edited from the feature strip. */}
       {mode !== 'game' && jointCard}
-      {mode !== 'game' && Array.isArray(jointTags) && jointTags.length > 0 && (
-        <JointTags
-          tags={jointTags}
-          selectedId={jointTagId}
-          onSelect={onSelectJointTag}
-          onDelete={onDeleteJointTag}
-          onClose={onCloseJointTag}
-          cameraRef={cameraRef}
-          canvasRef={canvasRef}
-          containerRef={containerRef}
-        />
-      )}
 
       {/* Move on the shared card. Game mounts no card. */}
       {moveMode && mode !== 'game' && (

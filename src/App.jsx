@@ -121,7 +121,6 @@ import {
   draftFromPicks,
   emptyClickCadSelection,
   jointChips,
-  jointTagAnchor,
   jointsChromeMounted,
   nextJointName,
   pushAssemblyHistory,
@@ -5914,6 +5913,7 @@ const App = () => {
   const handleOpenJoints = () => {
     if (appModeRef.current === 'game' || featureSessionRef.current) return;
     jointPicksRef.current = [];
+    viewportRef.current?.clearJointHighlights?.();
     setJointTagId(null);
     setJointCard(draftFromPicks(null, [], { joints: assemblyRef.current?.joints || [] }));
   };
@@ -5927,6 +5927,7 @@ const App = () => {
     });
     rememberCadPart(next.cadPartId);
     jointPicksRef.current = [];
+    viewportRef.current?.clearJointHighlights?.();
     setJointTagId(null);
     setJointCard((cur) => (cur?.mode === 'create' ? null : cur));
   };
@@ -5965,7 +5966,15 @@ const App = () => {
   const handleJointCardChange = (next) => {
     const doc = assemblyRef.current;
     if (!next) return;
-    if (Array.isArray(next.picks)) jointPicksRef.current = next.picks;
+    if (Array.isArray(next.picks)) {
+      const kept = new Set(next.picks.map((pick) => pick?.partId).filter(Boolean));
+      for (const pick of jointPicksRef.current || []) {
+        if (pick?.partId && !kept.has(pick.partId)) {
+          viewportRef.current?.clearJointHighlights?.(pick.partId);
+        }
+      }
+      jointPicksRef.current = next.picks;
+    }
     if (next.userPickedType && next.type && !next.userNamed) {
       const named = nextJointName(next.type, doc?.joints || []);
       setJointCard({ ...next, name: next.name && next.userNamed ? next.name : named });
@@ -5974,7 +5983,7 @@ const App = () => {
     setJointCard(next);
   };
 
-  const finishJointWrite = (result, scripts) => {
+  const finishJointWrite = (result, scripts, { resetPicks = false } = {}) => {
     if (!result?.ok) {
       if (result?.message) {
         viewportRef.current?.notify?.(result.message);
@@ -5996,7 +6005,16 @@ const App = () => {
     };
     setJointLive(jointLiveRef.current);
     paintAssemblyPoses(written);
-    jointPicksRef.current = [];
+    if (resetPicks) {
+      jointPicksRef.current = [];
+      viewportRef.current?.clearJointHighlights?.();
+      setJointCard(draftFromPicks(null, [], { joints: written.joints || [] }));
+      return;
+    }
+    if (jointCardRef.current?.mode === 'create') {
+      setJointCard((cur) => draftFromPicks(cur, jointPicksRef.current, { joints: written.joints || [] }));
+      return;
+    }
     setJointCard(null);
   };
 
@@ -6019,12 +6037,13 @@ const App = () => {
       viewportRef.current?.notify?.(result.message);
       return;
     }
-    finishJointWrite(result, scripts);
+    finishJointWrite(result, scripts, { resetPicks: true });
   };
 
   const handleJointCancel = () => {
     dismissJointEdit(assemblyRef.current);
     jointPicksRef.current = [];
+    viewportRef.current?.clearJointHighlights?.();
     setJointCard(null);
   };
 
@@ -6068,16 +6087,10 @@ const App = () => {
     const doc = assemblyRef.current;
     const joint = (doc?.joints || []).find((row) => row.id === chip?.id);
     if (!joint) return;
-    setJointCard(null);
     setJointTagId((cur) => (cur === joint.id ? null : joint.id));
   };
 
-  const handleJointTagSelect = (id) => {
-    setJointCard(null);
-    setJointTagId(id || null);
-  };
-
-  const handleJointTagDelete = (id) => {
+  const handleJointChipDelete = (id) => {
     const doc = assemblyRef.current;
     if (!doc || !id) return;
     const scripts = partScriptsRef.current;
@@ -6097,6 +6110,10 @@ const App = () => {
     }
     finishJointWrite(result, scripts);
     if (result.ok) setJointTagId(null);
+  };
+
+  const handleJointChipClose = () => {
+    setJointTagId(null);
   };
 
   const handleFaceSelected = (faceData) => {
@@ -6762,19 +6779,6 @@ const App = () => {
   const undoLabel = stripUndoLabel(showJoints ? null : cadPartId);
   const redoLabel = stripRedoLabel(showJoints ? null : cadPartId);
   const liveJointChips = showJoints ? jointChips(assemblyDoc, jointLive) : null;
-  const jointTagList = appMode === 'game' || featureSession
-    ? []
-    : (assemblyDoc?.joints || []).map((joint) => {
-      const chip = jointChips({ joints: [joint] }, jointLive)[0];
-      return {
-        id: joint.id,
-        type: joint.type,
-        label: joint.name,
-        title: chip?.title || joint.name,
-        invalid: !!chip?.invalid,
-        world: jointTagAnchor(assemblyDoc, joint),
-      };
-    });
   const jointCardNode = jointCreateOpen && appMode !== 'game'
     ? (
       <JointCard
@@ -7144,11 +7148,6 @@ const App = () => {
               jointPicking={jointCreateOpen}
               onJointPick={handleJointPick}
               jointCard={jointCardNode}
-              jointTags={jointTagList}
-              jointTagId={jointTagId}
-              onSelectJointTag={handleJointTagSelect}
-              onDeleteJointTag={handleJointTagDelete}
-              onCloseJointTag={() => setJointTagId(null)}
               cadPartSelected={cadPartId != null}
               onRunOutcome={handleRunOutcome}
               getBooleanContext={assemblyPartContext}
@@ -7251,6 +7250,9 @@ const App = () => {
                       hideWhenEmpty
                       onJump={(f) => openFeatureSheetFor(f)}
                       onSelectJoint={handleSelectJoint}
+                      selectedJointId={jointTagId}
+                      onDeleteJoint={handleJointChipDelete}
+                      onCloseJoint={handleJointChipClose}
                       onUndo={stripUndo}
                       onRedo={stripRedo}
                       canUndo={stripCanUndo}
@@ -7578,6 +7580,9 @@ const App = () => {
                 hideWhenEmpty
                 onJump={handleDesktopFeatureStripJump}
                 onSelectJoint={handleSelectJoint}
+                selectedJointId={jointTagId}
+                onDeleteJoint={handleJointChipDelete}
+                onCloseJoint={handleJointChipClose}
                 onUndo={stripUndo}
                 onRedo={stripRedo}
                 canUndo={stripCanUndo}
@@ -7653,11 +7658,6 @@ const App = () => {
             jointPicking={jointCreateOpen}
             onJointPick={handleJointPick}
             jointCard={jointCardNode}
-            jointTags={jointTagList}
-            jointTagId={jointTagId}
-            onSelectJointTag={handleJointTagSelect}
-            onDeleteJointTag={handleJointTagDelete}
-            onCloseJointTag={() => setJointTagId(null)}
             cadPartSelected={cadPartId != null}
             onRunOutcome={handleRunOutcome}
             getBooleanContext={assemblyPartContext}

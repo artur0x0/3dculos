@@ -149,8 +149,7 @@ const res = await build({
     contents: `export { renderToStaticMarkup } from 'react-dom/server';
 export { createElement } from 'react';
 export { default as FeatureStrip } from './src/components/FeatureStrip.jsx';
-export { default as JointCard } from './src/components/JointCard.jsx';
-export { default as JointTags } from './src/components/JointTags.jsx';`,
+export { default as JointCard } from './src/components/JointCard.jsx';`,
     resolveDir: ROOT,
     loader: 'jsx',
   },
@@ -207,32 +206,34 @@ const sheet = h(ui.JointCard, {
   onCancel: () => {},
 });
 check('the create card is StickyPickApply', sheet.includes('data-sticky-pick-apply') && sheet.includes('data-joint-card') && sheet.includes('data-feature-card-cancel') && sheet.includes('Suggested: Coincident'));
-check('the card is not fullLeft', !sheet.includes('data-feature-card-full-left'));
+check('Add is the apply label and the card is not fullLeft', sheet.includes('>Add<') && !sheet.includes('>Confirm<') && !sheet.includes('data-feature-card-full-left'));
 check('subtitle names both faces', sheet.includes('Shaft') && sheet.includes('Housing'));
 const game = jointsChromeMounted({ appMode: 'game' }) ? h(ui.JointCard, { card }) : '';
 check('game mode renders no joint card markup', game === '');
 
-const tagHtml = h(ui.JointTags, {
-  tags: [{
-    id: J,
-    type: 'coincident',
-    label: 'Coincident 1',
-    title: 'Coincident 1 — Face not found on Housing',
-    invalid: true,
-    world: [0, 0, 2.5],
-  }],
-  selectedId: J,
+const emptyHtml = h(ui.FeatureStrip, { orientation: 'horizontal', ...emptyProps });
+const oneHtml = h(ui.FeatureStrip, {
+  orientation: 'horizontal',
+  joints: chips,
+  hideWhenEmpty: true,
+  selectedJointId: J,
+  undoLabel: 'Undo joint',
 });
-check('a joint tag opens Delete and X', tagHtml.includes(`data-joint-tag="${J}"`) && tagHtml.includes('data-joint-tag-popup') && tagHtml.includes('data-joint-tag-delete') && tagHtml.includes('>Delete<') && tagHtml.includes('data-joint-tag-close') && tagHtml.includes('Close'));
-check('a tag tap does not reopen the joint card', !tagHtml.includes('data-joint-card'));
-check('a broken tag has the red ring', tagHtml.includes('border-red-400') && tagHtml.includes('feature-failed-ring') && tagHtml.includes('aria-invalid') && tagHtml.includes('Coincident 1'));
+check('the empty joints caption uses the chip box', emptyHtml.includes('data-assembly-joints-empty') && emptyHtml.includes('h-8'));
+check('a joint chip uses that same box', oneHtml.includes('data-joint-id') && oneHtml.includes('h-8'));
+check('a strip chip opens Delete and X', oneHtml.includes(`data-joint-chip-popup="${J}"`) && oneHtml.includes(`data-joint-chip-delete="${J}"`) && oneHtml.includes('>Delete<') && oneHtml.includes('data-joint-chip-close') && oneHtml.includes('Close'));
+check('the chip popup does not reopen the joint card', !oneHtml.includes('data-joint-card'));
+check('a broken chip has the red ring and the joint name', /data-joint-id="/.test(oneHtml) && oneHtml.includes('border-red-400') && oneHtml.includes('feature-failed-ring') && oneHtml.includes('Coincident 1') && oneHtml.includes('aria-invalid'));
 
 const app = read('src/App.jsx');
-check('App keeps the joint card off in game', app.includes("appMode !== 'game'") && app.includes('jointCard={jointCardNode}') && app.includes('jointTags={jointTagList}'));
+const view = read('src/components/Viewport.jsx');
+check('App keeps the joint card off in game', app.includes("appMode !== 'game'") && app.includes('jointCard={jointCardNode}') && !app.includes('jointTags='));
 check('joint picking follows the open create card', app.includes('jointPicking={jointCreateOpen}'));
 check('Blocks opens the joint card', read('src/components/HelperInsertPalette.jsx').includes('data-joints-button'));
 check('App empty click does not assign activeId', app.includes('handleCadEmptyClick') && app.includes('emptyClickCadSelection'));
-check('a strip chip selects the tag', app.includes('setJointTagId') && !app.includes('JointModeChip'));
+check('a strip chip selects the joint', app.includes('setJointTagId') && app.includes('onDeleteJoint={handleJointChipDelete}') && !app.includes('JointModeChip'));
+check('Add keeps the card open', app.includes('resetPicks: true') && app.includes('draftFromPicks(null, []'));
+check('the joint card slides the camera and floating tags are gone', view.includes("? 'joint'") && !view.includes('JointTags') && view.includes('paintJointHighlight'));
 
 if (failed) {
   console.error(`\n${failed} joints-strip check(s) failed`);
