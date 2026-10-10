@@ -9534,9 +9534,11 @@ const Viewport = forwardRef(({
           data-viewer-title=""
           data-viewer-title-text={titleParts.text}
         >
-          <ViewportTitleChip inline value={currentFilename} onRename={onRenameFile}>
-            {titleParts.part}
-          </ViewportTitleChip>
+          {titleParts.part ? (
+            <ViewportTitleChip inline value={currentFilename} onRename={onRenameFile}>
+              {titleParts.part}
+            </ViewportTitleChip>
+          ) : null}
           {titleParts.connector ? (
             <span
               className="shrink-0 text-xs font-medium text-gray-300"
