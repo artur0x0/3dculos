@@ -10,7 +10,8 @@
  * and does not rebuild graphs, but leftover triangles from its last success
  * stay pickable.
  */
-import { composeViewportParts, partPosition } from './assembly.js';
+import { composeViewportParts } from './assembly.js';
+import { partPlacement } from './jointSchema.js';
 
 /** Hits closer than this along the ray (model units) are the same seam. */
 export const AMBIGUOUS_HIT_GAP = 1;
@@ -139,11 +140,13 @@ export function leftoverPickSolids(doc, runs, stored) {
     if (!failed) continue;
     const mesh = stored?.[part.id];
     if (!mesh?.vertProperties) continue;
+    const pose = partPlacement(part);
     out.push({
       id: part.id,
       surfId: part.surfId || null,
       mesh,
-      position: partPosition(part) || [0, 0, 0],
+      position: pose.t,
+      placement: pose,
       leftover: true,
     });
   }

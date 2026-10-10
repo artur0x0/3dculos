@@ -10,6 +10,7 @@
  * overlays, each under a group that follows that part's translation.
  */
 import { activePartTranslation } from './activePartOverlay.js';
+import { IDENTITY_QUATERNION, localPoint, quaternionIsIdentity } from './partPose.js';
 
 /**
  * One overlay source per visible part with a script, in part order.
@@ -21,13 +22,19 @@ import { activePartTranslation } from './activePartOverlay.js';
  *   editorId?: string|null,
  *   editorScript?: string,
  * }} args
- * @returns {{ partId: string|null, script: string, editor: boolean, position: number[] }[]}
+ * @returns {{ partId: string|null, script: string, editor: boolean, position: number[], quaternion: number[] }[]}
  */
 export function partOverlaySources({ parts = null, editorId = null, editorScript = '' } = {}) {
   const editor = editorId == null || editorId === '' ? null : String(editorId);
   const rows = parts && typeof parts === 'object' ? Object.entries(parts) : [];
   if (!rows.length) {
-    return [{ partId: editor, script: String(editorScript || ''), editor: true, position: [0, 0, 0] }];
+    return [{
+      partId: editor,
+      script: String(editorScript || ''),
+      editor: true,
+      position: [0, 0, 0],
+      quaternion: IDENTITY_QUATERNION.slice(),
+    }];
   }
   const out = [];
   for (const [id, row] of rows) {
@@ -35,11 +42,13 @@ export function partOverlaySources({ parts = null, editorId = null, editorScript
     const isEditor = editor != null && String(id) === editor;
     const script = isEditor ? String(editorScript || row.script || '') : row.script;
     if (typeof script !== 'string' || !script.trim()) continue;
+    const q = row.placement?.q || row.quaternion;
     out.push({
       partId: String(id),
       script,
       editor: isEditor,
-      position: activePartTranslation(row.position),
+      position: activePartTranslation(row.position || row.placement?.t),
+      quaternion: Array.isArray(q) && q.length === 4 ? q.slice() : IDENTITY_QUATERNION.slice(),
     });
   }
   return out;
@@ -67,11 +76,58 @@ export function partOverlayAnchor(partId, {
   return activePartTranslation(live || rowPosition);
 }
 
-/** A world ray point moved into a part's local frame. */
-export function toPartLocal(point, position) {
+/**
+ * Where a part's overlay group sits, translation and quaternion.
+ * Missing rotation is identity.
+ */
+export function partOverlayPose(partId, {
+  activeId = null,
+  activePosition = null,
+  activeQuaternion = null,
+  solidPose = null,
+  rowPosition = null,
+  rowQuaternion = null,
+} = {}) {
+  const t = partOverlayAnchor(partId, {
+    activeId,
+    activePosition,
+    solidPosition: (id) => {
+      const live = typeof solidPose === 'function' ? solidPose(id) : null;
+      return live?.t || live || null;
+    },
+    rowPosition,
+  });
+  const id = partId == null || partId === '' ? null : String(partId);
+  const active = activeId == null || activeId === '' ? null : String(activeId);
+  let q = null;
+  if (id == null || id === active) q = activeQuaternion;
+  else if (typeof solidPose === 'function') q = solidPose(id)?.q || null;
+  if (!q) q = rowQuaternion;
+  return {
+    t,
+    q: Array.isArray(q) && q.length === 4 ? q.slice() : IDENTITY_QUATERNION.slice(),
+  };
+}
+
+/** A world ray point moved into a part's local frame. Accepts a pose `{ t, q }`. */
+export function toPartLocal(point, position, quaternion = null) {
   if (!point) return point;
+  if (position && !Array.isArray(position) && Array.isArray(position.t)) {
+    return toPartLocal(point, position.t, position.q);
+  }
   const [x, y, z] = activePartTranslation(position);
-  return [point[0] - x, point[1] - y, point[2] - z];
+  if (!quaternion || quaternionIsIdentity(quaternion)) {
+    return [point[0] - x, point[1] - y, point[2] - z];
+  }
+  return localPoint(point, { t: [x, y, z], q: quaternion });
+}
+
+/** A world direction into the part frame. Translation is ignored. */
+export function directionToPartLocal(direction, position, quaternion = null) {
+  if (!direction) return direction;
+  const q = position && !Array.isArray(position) ? position.q : quaternion;
+  if (!q || quaternionIsIdentity(q)) return direction.slice();
+  return localPoint(direction, { t: [0, 0, 0], q });
 }
 
 /** The overlay group a plane / contour hit belongs to (walks up to the part group). */

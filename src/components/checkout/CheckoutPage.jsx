@@ -1,6 +1,7 @@
 /**
  * One checkout for the cart: lines, one address, one shipping quote,
- * one server re-price, one Stripe payment.
+ * one server re-price, one Stripe payment. Removing a line asks first.
+ * A quantity change does not.
  */
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -27,6 +28,7 @@ import { blobToBase64 } from '../../utils/model-io.js';
 import { readJsonSafe } from '../../utils/quoteMath.js';
 import AddressPicker from './AddressPicker.jsx';
 import CheckoutPay from './CheckoutPay.jsx';
+import CartRemoveDialog from '../CartRemoveDialog.jsx';
 import ModalFit from '../ModalFit.jsx';
 
 const FALLBACK_METHODS = [
@@ -95,6 +97,7 @@ export default function CheckoutPage({
   const [serverSkipped, setServerSkipped] = useState([]);
   const [payment, setPayment] = useState(null);
   const [confirmation, setConfirmation] = useState(null);
+  const [pendingRemove, setPendingRemove] = useState(null);
   const idempotencyKey = useRef('');
   const shipSeq = useRef(0);
 
@@ -353,6 +356,7 @@ export default function CheckoutPage({
   const summary = payment?.order;
 
   return createPortal(
+    <>
     <ModalFit
       className="modal-fit-sheet z-[90] flex items-end justify-center sm:items-center"
       cap="92vh"
@@ -463,7 +467,10 @@ export default function CheckoutPage({
                       data-checkout-remove=""
                       disabled={locked}
                       className="shrink-0 rounded-md px-2 py-1 text-[11px] text-red-300 hover:bg-red-500/15 disabled:opacity-30"
-                      onClick={() => cart?.removeLine?.(row.lineId)}
+                      onClick={() => setPendingRemove({
+                        lineId: row.lineId,
+                        name: row.partName || 'this part',
+                      })}
                     >
                       Remove
                     </button>
@@ -570,7 +577,18 @@ export default function CheckoutPage({
           )}
         </div>
       </div>
-    </ModalFit>,
+    </ModalFit>
+    <CartRemoveDialog
+      open={!!pendingRemove}
+      name={pendingRemove?.name || ''}
+      onCancel={() => setPendingRemove(null)}
+      onConfirm={() => {
+        const lineId = pendingRemove?.lineId;
+        setPendingRemove(null);
+        if (lineId) cart?.removeLine?.(lineId);
+      }}
+    />
+    </>,
     document.body,
   );
 }

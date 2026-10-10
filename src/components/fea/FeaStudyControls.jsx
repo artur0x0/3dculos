@@ -4,6 +4,7 @@ import { ChoiceRow, NumberField } from '../controls/popupUI';
 import { MODAL_MODE_SLOTS, activePlot, plotTabs, resultsChrome } from '../../fea/resultsView.js';
 import { FORCE_DIRECTIONS } from '../../fea/studyPanel.js';
 import { FeaLegend } from './FeaLegend';
+import { FeaProbeList } from './FeaProbeList';
 import { FeaLoadList } from './FeaLoadList';
 import { FeaAssemblySetup } from './FeaAssemblySetup';
 import { FeaMaterialPicker } from './FeaMaterialPicker';
@@ -384,6 +385,13 @@ export function FeaResultsReadout({ panel }) {
           </div>
         )}
       </div>
+      {filled ? (
+        <FeaProbeList
+          rows={panel.probeRows}
+          onRemove={panel.removeProbe}
+          onClear={panel.clearProbes}
+        />
+      ) : null}
       {chrome.stopped ? <StageTimes report={panel.runReport} /> : (
         <FrameTiming report={panel.runReport} done={filled} />
       )}

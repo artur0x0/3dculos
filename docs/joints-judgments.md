@@ -23,7 +23,7 @@ The word is joints. Part scripts stay untouched. The file stays version 1.
 | 15 | References on the same part are refused, except `fixed`. The message is `A joint needs two parts`. | PR 1 rejects it in the file. PR 4 shows the message. |
 | 16 | A hidden part is still solved when its last success resolves. A failed run breaks the joint. The solver does not use a leftover mesh. | PR 3 |
 | 17 | The rigid body is the part, not a body inside the part. | PR 2 and PR 3 |
-| 18 | The shared sketcher solver is `solveResiduals`. SolveSpace is not used. The sketcher is a later adapter. The core does not import `src/joints/`. | PR 2 |
+| 18 | The joints solver is `solveResiduals`. It stays separate from the contour solver. SolveSpace is not used. The core does not import `src/joints/`. The contour solver is not an adapter of this core. | PR 2 owns the core. The contour solver stays its own. |
 | 19 | Joints owe FEA a current `matrixWorld` and nothing else. They do not write `contacts`. Bonded contact keeps discovering pairs. If a study needs the `.surf.json` `placement` field without a live mesh, that change belongs to the FEA owner. `feaPartFrame` already copies `matrixWorld`. | PR 3 writes the pose onto the meshes. No FEA files change. |
 | 20 | A cross-part Boolean whose either pose is rotated refuses the confirm and writes nothing. `externalBody` stays translational. | PR 3 |
 | 21 | A failed part run marks every joint that names that part `broken`. The solver does not run against the leftover mesh. | PR 3 |
@@ -31,6 +31,7 @@ The word is joints. Part scripts stay untouched. The file stays version 1.
 | 23 | Deleting a part drops every joint that names it. A broken joint is not left behind. | PR 1, in `serializeAssembly` |
 | 24 | Copy to this assembly does not copy joints onto the new surf id. Same as colors. The dangling prune drops a joint whose surf id left. | PR 1 |
 | 25 | Joint names are `Coincident 1` via `nextNumberedName`. The card can rename. The id stays the surf id from `mintSurfId`. | PR 4 mints and names. PR 1 stores the id and the name. |
+| 26 | The pick-and-apply flow is shared with contour: sticky-pick 1–2 faces, lines, or points, then a suggested property, then Confirm. The joints card adopts the contour component (for example `StickyPickApply` and its hook) if that has merged. If it has not, the card uses that same contract so the two can be unified later. Which of those two shipped is logged on the UI pull request. | PR 4 |
 
 Distance on the card uses the global display unit (`src/utils/displayUnit.js`). The file and the script stay millimetres. That field is PR 4.
 

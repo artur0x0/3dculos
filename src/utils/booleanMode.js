@@ -26,6 +26,7 @@ import {
   EXTERNAL_COPY_FAILED_SOURCE,
   externalCopyHeader,
   frozenScriptFunction,
+  externalBodyRotationBlock,
   partOffset,
 } from './externalCopy.js';
 
@@ -551,6 +552,8 @@ export function booleanExternalTools(gate, ctx = {}) {
     if (src.ok === false) {
       return { ok: false, message: EXTERNAL_COPY_FAILED_SOURCE(src.name) };
     }
+    const rotated = externalBodyRotationBlock(src, target ? [target] : []);
+    if (!rotated.ok) return rotated;
     tools.push({
       partId: group.partId,
       name: src.name || group.partId,

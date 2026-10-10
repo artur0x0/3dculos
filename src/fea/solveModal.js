@@ -7,6 +7,7 @@
 
 import { SHELLS_AVAILABLE } from './deviceProfile.js';
 import { sampleShellTranslation } from './sheetMidsurface.js';
+import { packProbeSurface, packShellProbe } from './probeSample.js';
 import {
   fieldRange,
   sampleSurfaceDisplacement,
@@ -149,6 +150,7 @@ export function solveModal({
     },
     thin,
     shells: SHELLS_AVAILABLE,
+    probe: packProbeSurface(volume, { modes: tetModes, modeCount: k }, 'local'),
     stats: {
       dofs: solvedDofs,
       freeDofs: solvedStats.freeDofs != null ? solvedStats.freeDofs : 0,
@@ -305,6 +307,7 @@ export function solveSheetModal({
     },
     thin: true,
     shells: SHELLS_AVAILABLE,
+    probe: packShellProbe(shellMesh, { modes: shellModes, modeCount: k }, 'local'),
     stats: {
       dofs: solvedDofs,
       freeDofs: solvedStats.freeDofs != null ? solvedStats.freeDofs : 0,
