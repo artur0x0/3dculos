@@ -5,17 +5,17 @@ import { FeaResultsReadout, FeaRunBar, FeaStudyControls } from './FeaStudyContro
 /**
  * Analyze on the shared feature card (desktop). The same panel feeds the
  * phone card. The left tool rail is hidden here too, so fullLeft brings
- * the left edge to the pane inset. Setup stays in the body. After a solve,
- * the legend, the plot tabs, and Stage times scroll in the body. The footer
- * is Run, or Back to Setup. X and Esc close Analyze through FeatureSheet
- * onCancel. There is no Confirm.
+ * the left edge to the pane inset. Setup stays in the body until Run.
+ * Run reserves the results frame (tabs or the mode list, plus the plot)
+ * and shows progress there. The footer is Run, Cancel, or Back to Setup.
+ * X and Esc close Analyze through FeatureSheet onCancel. There is no Confirm.
  */
 export function FeaStudyChip({ panel, compact = false }) {
-  const results = panel.results === true;
+  const frame = panel.screen ? panel.screen !== 'setup' : panel.results === true;
   return (
     <FeatureSheet
       title="Analyze"
-      subtitle={results ? '' : 'Fix a face, add a load, then Run.'}
+      subtitle={frame ? '' : 'Fix a face, add a load, then Run.'}
       compact={compact}
       fullLeft
       onCancel={() => panel.close?.()}
@@ -23,10 +23,11 @@ export function FeaStudyChip({ panel, compact = false }) {
       cardAttrs={{
         'data-fea-sheet': '1',
         'data-fea-mode': '1',
-        'data-fea-view': results ? 'results' : 'setup',
+        'data-fea-view': frame ? 'results' : 'setup',
+        'data-fea-screen': panel.screen || (frame ? 'results' : 'setup'),
       }}
     >
-      {results ? (
+      {frame ? (
         <FeaResultsReadout panel={panel} />
       ) : (
         <div className="mt-1.5 flex flex-col gap-1.5 font-sans">

@@ -581,6 +581,8 @@ async function assertResultsPlots(page, vp, shell) {
   const stressPressed = await page.locator(`${shell} [data-fea-plot="stress"]`).getAttribute('aria-pressed');
   check(`${vp.name} stress tab`, stressPressed === 'true', stressPressed || '');
   check(`${vp.name} displacement tab`, await page.locator(`${shell} [data-fea-plot="displacement"]`).count() === 1);
+  const backIcon = await page.locator(`${shell} [data-fea-back] svg`).getAttribute('class');
+  check(`${vp.name} Back to Setup uses ArrowLeft`, /lucide-arrow-left/.test(backIcon || ''), backIcon || '');
   check(
     `${vp.name} timing under the plot`,
     await page.locator(`${shell} [data-fea-timing]`).count() === 1
@@ -758,15 +760,23 @@ async function runCase(browser, vp) {
   check(`${vp.name} setup shot saved`, existsSync(setupShot), setupShot);
   console.log(`  shot ${setupShot}`);
 
+  const runIcon = await page.locator(`${shell} [data-fea-run] svg`).getAttribute('class');
+  check(`${vp.name} Run keeps its icon`, /lucide-check/.test(runIcon || ''), runIcon || '');
   await page.locator('[data-fea-run]').click();
-  const bar = page.locator(`${shell} [data-fea-progress-bar]`);
+  await page.locator(`${shell}[data-fea-view="results"]`).waitFor({ timeout: 8000 });
+  await page.locator(`${shell}[data-fea-screen="running"]`).waitFor({ timeout: 8000 });
+  const bar = page.locator(`${shell} [data-fea-results-frame] [data-fea-progress-bar]`);
   await bar.waitFor({ state: 'visible', timeout: 20000 });
+  check(`${vp.name} setup hidden on run`, await page.locator(`${shell} [data-fea-material]`).count() === 0);
+  check(`${vp.name} stress tab reserved`, await page.locator(`${shell} [data-fea-plot="stress"]`).count() === 1);
+  check(`${vp.name} cancel stays available`, await page.locator(`${shell} [data-fea-cancel]`).count() === 1);
   const progressLabel = (await bar.locator('[data-fea-progress-stage]').innerText()).trim();
   check(
     `${vp.name} progress bar`,
     /Loading mesher|Meshing|Assembling|Solving|Post-processing|Refining \d+\/\d+/.test(progressLabel),
     progressLabel,
   );
+  const runningHeight = await page.locator(shell).evaluate((el) => el.getBoundingClientRect().height);
   const progressShot = join(SHOT_DIR, vp.touch ? 'fea-study-390-progress.png' : 'fea-study-1280-progress.png');
   check(`${vp.name} progress shot dir`, !progressShot.startsWith('/opt/cursor/artifacts'), progressShot);
   await page.screenshot({ path: progressShot });
@@ -777,6 +787,14 @@ async function runCase(browser, vp) {
   await page.locator(`${shell} [data-fea-timing]`).waitFor({ timeout: 10000 });
   const timingText = ((await page.locator(`${shell} [data-fea-timing]`).innerText()) || '').replace(/\s+/g, ' ').trim();
   check(`${vp.name} timing text`, /Solid mesh in .* solved in .* DOF.*total/.test(timingText), timingText);
+  const resultsHeight = await page.locator(shell).evaluate((el) => el.getBoundingClientRect().height);
+  const heightDelta = Math.abs(resultsHeight - runningHeight);
+  console.log(`  card height ${vp.name} running ${runningHeight.toFixed(2)} results ${resultsHeight.toFixed(2)} delta ${heightDelta.toFixed(2)}`);
+  check(
+    `${vp.name} card height stable from running to results`,
+    heightDelta <= 2,
+    `running ${runningHeight} results ${resultsHeight} delta ${heightDelta}`,
+  );
   check(`${vp.name} convergence text`, /refined \d+x, (?:converged|not converged)/.test(timingText), timingText);
   check(
     `${vp.name} timing log`,
@@ -901,8 +919,29 @@ async function runCase(browser, vp) {
   check(`${vp.name} fixture persisted`, again.fixtures === '1', JSON.stringify(again));
   check(`${vp.name} load persisted`, again.loads === '1', JSON.stringify(again));
   check(`${vp.name} result not in the script`, again.result === 'absent');
+  await assertRunFailure(page, vp, shell);
   check(`${vp.name} no page errors`, errors.length === 0, errors.slice(0, 3).join(' | '));
   await context.close();
+}
+
+async function assertRunFailure(page, vp, shell) {
+  await page.locator(`${shell} [data-fea-run]`).click();
+  const bar = page.locator(`${shell} [data-fea-results-frame] [data-fea-progress-bar]`);
+  await bar.waitFor({ state: 'visible', timeout: 20000 });
+  check(`${vp.name} failure run uses the results frame`, await page.locator(`${shell}[data-fea-screen="running"]`).count() === 1);
+  await page.locator(`${shell} [data-fea-cancel]`).click();
+  await page.locator(`${shell} [data-fea-stopped]`).waitFor({ timeout: 20000 });
+  const stopped = ((await page.locator(`${shell} [data-fea-stopped]`).innerText()) || '').replace(/\s+/g, ' ').trim();
+  check(`${vp.name} stopped during`, /Stopped during /.test(stopped), stopped);
+  check(`${vp.name} failure keeps Back to Setup`, await page.locator(`${shell} [data-fea-back]`).count() === 1);
+  const backIcon = await page.locator(`${shell} [data-fea-back] svg`).getAttribute('class');
+  check(`${vp.name} failure Back to Setup uses ArrowLeft`, /lucide-arrow-left/.test(backIcon || ''), backIcon || '');
+  check(`${vp.name} failure stays on the results frame`, await page.locator(`${shell}[data-fea-view="results"]`).count() === 1);
+  const shot = join(SHOT_DIR, vp.touch ? 'fea-study-390-stopped.png' : 'fea-study-1280-stopped.png');
+  check(`${vp.name} stopped shot dir`, !shot.startsWith('/opt/cursor/artifacts'), shot);
+  await page.screenshot({ path: shot });
+  check(`${vp.name} stopped shot saved`, existsSync(shot), shot);
+  console.log(`  shot ${shot}`);
 }
 
 async function runSheetCase(browser, vp) {

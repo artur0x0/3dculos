@@ -1,7 +1,7 @@
 import React from 'react';
-import { Check } from 'lucide-react';
+import { ArrowLeft, Check } from 'lucide-react';
 import { ChoiceRow, NumberField } from '../controls/popupUI';
-import { PLOT_TABS, activePlot } from '../../fea/resultsView.js';
+import { MODAL_MODE_SLOTS, PLOT_TABS, activePlot, resultsChrome } from '../../fea/resultsView.js';
 import { FORCE_DIRECTIONS } from '../../fea/studyPanel.js';
 import { FeaLegend } from './FeaLegend';
 import { FeaLoadList } from './FeaLoadList';
@@ -155,6 +155,7 @@ function FeaProgressBar({ report }) {
   return (
     <div
       data-fea-progress-bar=""
+      data-fea-progress={report.stage || 'running'}
       data-fea-progress-indeterminate={indeterminate ? '1' : '0'}
       role="progressbar"
       aria-label={label || 'Analyze'}
@@ -180,6 +181,22 @@ function FeaProgressBar({ report }) {
   );
 }
 
+function StageTimes({ report }) {
+  if (!Array.isArray(report?.details) || report.details.length === 0) return null;
+  return (
+    <details data-fea-timing-details="" className="text-[11px] text-cyan-100/80">
+      <summary>Stage times</summary>
+      <ul className="mt-0.5 flex flex-col gap-0.5">
+        {report.details.map((row) => (
+          <li key={row.id} data-fea-stage={row.id}>
+            {row.label}: {row.seconds}
+          </li>
+        ))}
+      </ul>
+    </details>
+  );
+}
+
 function FeaTiming({ report }) {
   if (!report || (report.status !== 'done' && report.status !== 'stopped') || !report.text) return null;
   const stopped = report.status === 'stopped';
@@ -192,16 +209,29 @@ function FeaTiming({ report }) {
       >
         {report.text}
       </p>
-      {Array.isArray(report.details) && report.details.length > 0 && (
+      <StageTimes report={report} />
+    </div>
+  );
+}
+
+/**
+ * The done line is one grid cell with a reserve string of the same shape,
+ * so a finished solve does not change the card height when the real line wraps.
+ */
+const TIMING_RESERVE = 'Solid mesh in 00.0 s, solved in 00.0 s (000k DOF), total 00.0 s, refined 0x, converged';
+
+function FrameTiming({ report, done }) {
+  return (
+    <div className="flex flex-col gap-0.5">
+      <p className="grid text-[11px] leading-snug text-cyan-50">
+        <span className="invisible col-start-1 row-start-1" aria-hidden="true">{TIMING_RESERVE}</span>
+        {done && (
+          <span className="col-start-1 row-start-1" data-fea-timing="">{report?.text || ''}</span>
+        )}
+      </p>
+      {done ? <StageTimes report={report} /> : (
         <details data-fea-timing-details="" className="text-[11px] text-cyan-100/80">
           <summary>Stage times</summary>
-          <ul className="mt-0.5 flex flex-col gap-0.5">
-            {report.details.map((row) => (
-              <li key={row.id} data-fea-stage={row.id}>
-                {row.label}: {row.seconds}
-              </li>
-            ))}
-          </ul>
         </details>
       )}
     </div>
@@ -216,45 +246,74 @@ function showLegend(panel) {
   return true;
 }
 
+const STRESS_RESERVE = Object.freeze({
+  source: 'tet10',
+  min: 0,
+  p95: 1,
+  max: 1,
+  safetyFactor: 1,
+  yield_MPa: 1,
+  warnings: [],
+  stale: false,
+});
+
+const MODAL_RESERVE = Object.freeze({
+  source: 'modal',
+  field: 'mode',
+  displacementMin: 0,
+  displacementMax: 1,
+  stale: false,
+});
+
+function modeButtonClass(selected) {
+  return `whitespace-nowrap rounded px-2 py-1 text-left text-[13px] tabular-nums ${
+    selected
+      ? 'bg-cyan-600 text-white'
+      : 'border border-cyan-700/70 bg-cyan-950/80 text-cyan-100'
+  }`;
+}
+
 /** Results readout. Scrolls in the card body so Stage times cannot cover Back to Setup. */
-function ModeList({ panel }) {
-  const frequencies = panel.result?.frequenciesHz || [];
-  const mass = panel.result?.effectiveMass || [];
-  const selected = panel.modeIndex || 0;
+function ModeList({ panel, reserve }) {
+  const frequencies = reserve
+    ? Array.from({ length: MODAL_MODE_SLOTS }, () => null)
+    : (panel.result?.frequenciesHz || []);
+  const mass = reserve ? [] : (panel.result?.effectiveMass || []);
+  const selected = reserve ? 0 : (panel.modeIndex || 0);
   return (
     <div className="flex flex-col gap-1" data-fea-modes="">
       {frequencies.map((hz, index) => {
         const fx = mass[index * 3];
         const fy = mass[index * 3 + 1];
         const fz = mass[index * 3 + 2];
-        const title = [fx, fy, fz].every((value) => Number.isFinite(value))
+        const title = !reserve && [fx, fy, fz].every((value) => Number.isFinite(value))
           ? `effective mass ${fx.toFixed(2)} ${fy.toFixed(2)} ${fz.toFixed(2)}`
           : undefined;
+        const label = reserve || !Number.isFinite(Number(hz))
+          ? `Mode ${index + 1}`
+          : `Mode ${index + 1}: ${Number(hz).toFixed(1)} Hz`;
         return (
           <button
             key={index}
             type="button"
-            data-fea-mode={index}
-            data-fea-frequency={hz}
+            {...(reserve
+              ? { 'data-fea-mode-slot': index, disabled: true }
+              : { 'data-fea-mode': index, 'data-fea-frequency': hz })}
             title={title}
             aria-pressed={selected === index}
-            onClick={() => panel.setMode?.(index)}
-            className={`rounded px-2 py-1 text-left text-[13px] tabular-nums ${
-              selected === index
-                ? 'bg-cyan-600 text-white'
-                : 'border border-cyan-700/70 bg-cyan-950/80 text-cyan-100'
-            }`}
+            onClick={reserve ? undefined : () => panel.setMode?.(index)}
+            className={modeButtonClass(selected === index)}
           >
-            Mode {index + 1}: {Number(hz).toFixed(1)} Hz
+            {label}
           </button>
         );
       })}
       <label className="flex items-center gap-1.5 text-[12px] text-cyan-100">
         <input
           type="checkbox"
-          data-fea-animate=""
-          checked={panel.animate === true}
-          onChange={(event) => panel.setAnimate?.(event.target.checked)}
+          {...(reserve ? { disabled: true } : { 'data-fea-animate': '' })}
+          checked={!reserve && panel.animate === true}
+          onChange={reserve ? () => {} : (event) => panel.setAnimate?.(event.target.checked)}
         />
         Animate
       </label>
@@ -263,13 +322,18 @@ function ModeList({ panel }) {
 }
 
 export function FeaResultsReadout({ panel }) {
-  if (panel.results !== true) return null;
+  const chrome = resultsChrome({ screen: panel.screen, kind: panel.viewKind });
+  if (!chrome.frame) return null;
   const plot = activePlot(panel.plot);
-  const modal = panel.result?.source === 'modal';
+  const filled = chrome.screen === 'results';
+  const legendPlot = chrome.modes ? 'displacement' : (filled ? plot : 'stress');
+  const legendResult = filled
+    ? panel.result
+    : (chrome.modes ? MODAL_RESERVE : STRESS_RESERVE);
   return (
-    <div className="mt-1.5 flex flex-col gap-1 font-sans">
-      {modal ? (
-        <ModeList panel={panel} />
+    <div className="mt-1.5 flex flex-col gap-1 font-sans" data-fea-results-frame="">
+      {chrome.modes ? (
+        <ModeList panel={panel} reserve={!filled} />
       ) : (
         <FeaTabs
           options={PLOT_TABS}
@@ -279,27 +343,49 @@ export function FeaResultsReadout({ panel }) {
           itemAttr="data-fea-plot"
         />
       )}
-      {showLegend(panel) && (
-        <FeaLegend result={panel.result} preview={panel.preview} plot={modal ? 'displacement' : plot} />
+      <div className="relative" data-fea-plot-slot="">
+        <div className={filled ? undefined : 'invisible'} aria-hidden={filled ? undefined : true}>
+          <FeaLegend
+            quiet={!filled}
+            result={legendResult}
+            preview={filled ? panel.preview : null}
+            plot={legendPlot}
+          />
+        </div>
+        {chrome.progress && (
+          <div className="absolute inset-0 flex items-center">
+            <div className="w-full">
+              <FeaProgressBar report={panel.runReport || {}} />
+            </div>
+          </div>
+        )}
+        {chrome.stopped && (
+          <div className="absolute inset-0 flex items-center overflow-hidden">
+            <p data-fea-stopped="" className="w-full text-[11px] leading-snug text-amber-200">
+              {panel.runReport?.text || ''}
+            </p>
+          </div>
+        )}
+      </div>
+      {chrome.stopped ? <StageTimes report={panel.runReport} /> : (
+        <FrameTiming report={panel.runReport} done={filled} />
       )}
-      {!panel.running && <FeaTiming report={panel.runReport} />}
     </div>
   );
 }
 
 export function FeaRunBar({ panel }) {
+  const chrome = resultsChrome({ screen: panel.screen, kind: panel.viewKind });
   const report = panel.runReport;
-  const results = panel.results === true;
   const stage = panel.running ? (report?.stageLabel || STAGE_LABEL[panel.progress] || 'Running') : 'Run';
   return (
     <div className="mt-1 flex shrink-0 flex-col gap-1">
-      {!results && showLegend(panel) && (
+      {!chrome.frame && showLegend(panel) && (
         <FeaLegend result={panel.result} preview={panel.preview} plot="stress" />
       )}
-      {panel.running && report?.status === 'running' && <FeaProgressBar report={report} />}
-      {!results && !panel.running && <FeaTiming report={report} />}
+      {!chrome.frame && !panel.running && <FeaTiming report={report} />}
       <div className="flex items-center justify-end gap-2">
-      {panel.running && (
+      {chrome.cancel && (
         <button
           type="button"
           data-fea-cancel=""
@@ -309,21 +395,21 @@ export function FeaRunBar({ panel }) {
           Cancel
         </button>
       )}
-      {results ? (
+      {chrome.back && (
         <button
           type="button"
           data-fea-back=""
           onClick={() => panel.backToSetup?.()}
-          className="inline-flex items-center gap-1 rounded-md bg-cyan-600 px-2 py-1 text-[13px] font-medium text-white hover:bg-cyan-500"
+          className="inline-flex items-center gap-1 rounded-md border border-transparent bg-cyan-600 px-2 py-1 text-[13px] font-medium text-white hover:bg-cyan-500"
         >
-          <Check size={14} />
+          <ArrowLeft size={14} />
           Back to Setup
         </button>
-      ) : (
+      )}
+      {chrome.run && (
       <button
         type="button"
         data-fea-run={panel.running ? 'busy' : 'ready'}
-        data-fea-progress={panel.running ? (panel.progress || 'running') : ''}
         onClick={() => panel.run?.()}
         disabled={!!panel.running}
         className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[13px] font-medium ${
