@@ -1,14 +1,14 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
-import test, { describe } from 'node:test';
+import test, { before, describe } from 'node:test';
 import * as fea from '../../packages/surfcad-fea/pkg/surfcad_fea.js';
+import { FEA_SETUP_TIMEOUT_MS, initFeaWasm } from './initFeaWasm.js';
 import { effectiveMaterial } from './materials.js';
 import { packMesh } from './meshTransfer.js';
 
-const wasmUrl = new URL('../../packages/surfcad-fea/pkg/surfcad_fea_bg.wasm', import.meta.url);
-const wasmBytes = await readFile(wasmUrl);
-const init = fea.default ?? fea.init;
-await init({ module_or_path: wasmBytes });
+let wasmBytes;
+before(async () => {
+  wasmBytes = await initFeaWasm();
+}, { timeout: FEA_SETUP_TIMEOUT_MS });
 
 const aluminum = { E_MPa: 68900, nu: 0.33, yield_MPa: 276 };
 

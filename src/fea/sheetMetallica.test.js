@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
-import test, { describe } from 'node:test';
+import test, { before, describe } from 'node:test';
 import * as fea from '../../packages/surfcad-fea/pkg/surfcad_fea.js';
+import { FEA_SETUP_TIMEOUT_MS, initFeaWasm } from './initFeaWasm.js';
 import { chooseEdgeLength, isThinPart, partShape, PHONE_DOF_CAPS, shellDofCap, THIN_ELEMENTS_THROUGH } from './deviceProfile.js';
 import { SHEET_FLANGE_PROBE, SHEET_METALLICA_SCRIPT } from './fixtures/sheetMetallica.js';
 import { formatDoneText } from './feaProgress.js';
@@ -16,12 +16,22 @@ import {
   shellSheetFromScript,
 } from './sheetMidsurface.js';
 import { meshArraysFromGeometry } from './studyPanel.js';
-import { runScript } from '../lib/surfcad/index.js';
 import { buildSolidGeometry } from '../utils/partSolidCache.js';
 
-const wasmUrl = new URL('../../packages/surfcad-fea/pkg/surfcad_fea_bg.wasm', import.meta.url);
-const initFea = fea.default ?? fea.init;
-await initFea({ module_or_path: await readFile(wasmUrl) });
+// The Manifold runtime is imported here, not at load. Evaluating it (and
+// compiling the FEA wasm) used to be a top-level await, which runs before
+// any test is registered. The 180s test timeout never armed, and the file
+// held a runner slot until the 30 minute job limit. CI run 38025008657
+// attempt 1 stopped after the SendCutSend fixture test with neither
+// "Manifold initialized" nor "bracket mesh dofs" printed.
+let runScript;
+before(async () => {
+  console.log('sheet metallica setup: fea wasm');
+  await initFeaWasm();
+  console.log('sheet metallica setup: manifold runtime');
+  ({ runScript } = await import('../lib/surfcad/index.js'));
+  console.log('sheet metallica setup: ready');
+}, { timeout: FEA_SETUP_TIMEOUT_MS });
 
 const study = readFeaStudy(SHEET_METALLICA_SCRIPT);
 const aluminum = { E_MPa: 68900, nu: 0.33, yield_MPa: 276 };
