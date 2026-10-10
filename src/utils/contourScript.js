@@ -73,8 +73,23 @@ function emitLine(l) {
  * The source of the call, not the solved return value. Seeds are rounded
  * to 4 decimals, matching the other contour emitters.
  */
+function assertEqualPairs(spec) {
+  const lines = new Set((spec.lines || []).map((line) => line.id));
+  const arcs = new Set((spec.arcs || []).map((arc) => arc.id));
+  for (const con of spec.constraints || []) {
+    if (con.kind !== 'equal') continue;
+    const items = con.items || [];
+    const lineCount = items.filter((id) => lines.has(id)).length;
+    const arcCount = items.filter((id) => arcs.has(id)).length;
+    if (lineCount !== 2 && arcCount !== 2) {
+      throw new Error('equal needs two lines or two arcs');
+    }
+  }
+}
+
 export function emitSolveContour(model) {
   const spec = model || {};
+  assertEqualPairs(spec);
   const body = [
     `points: [${(spec.points || []).map(emitPoint).join(', ')}]`,
     `lines: [${(spec.lines || []).map(emitLine).join(', ')}]`,

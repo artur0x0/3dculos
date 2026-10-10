@@ -6,6 +6,7 @@ import {
   Spline,
   Radius,
   Ruler,
+  Link2,
   X,
 } from 'lucide-react';
 import { CONTOUR_TOOLS } from '../utils/contourMode';
@@ -26,11 +27,13 @@ const ICONS = {
 const GESTURES = [
   { id: 'arc', title: 'Round a corner of the contour' },
   { id: 'dimension', title: 'Dimension' },
+  { id: 'constraints', title: 'Constrain' },
 ];
 
 const GESTURE_ICONS = {
   arc: Radius,
   dimension: Ruler,
+  constraints: Link2,
 };
 
 /**

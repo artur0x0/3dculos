@@ -7,11 +7,12 @@ over inventing a new modal layout.
 ## References
 
 - **`ContourModeChip.jsx`** — cyan glass card; plane editor + profile / Extrude /
-  Revolve / **Loft** / Sweep / **Workplane** sections. Dimension and Arc use
-  `StickyPickApply` on the same feature card (`data-contour-card`). Confirm
-  writes the dimension or the corner and stays in contour mode. X drops the
-  pick and writes nothing. A placed dimension is a floating tag; tap it for
-  Delete and X. The card title is the
+  Revolve / **Loft** / Sweep / **Workplane** sections. Dimension, Arc, and
+  Constraints use `StickyPickApply` on the same feature card
+  (`data-contour-card`). Confirm writes the dimension, the corner, or the
+  constraint and stays in contour mode. X drops the pick and writes nothing.
+  A placed dimension is a floating tag. A placed constraint is a floating
+  icon (`data-contour-icon`). Tap either for Delete and X. The card title is the
   feature Confirm writes (Extrude, Revolve, Loft, Sweep, Workplane); the profile
   shape sits in the subtitle. A profile-only contour keeps the title
   `Contour · <shape>`. Loft (#94) and Workplane use the compact mobile
