@@ -20,7 +20,7 @@
 mod ccx_io;
 mod face_load;
 
-use ccx_io::{ccx_bin, run_case, run_frequency, Deck, ElementKind, SurfaceTie};
+use ccx_io::{ccx_bin, run_case, run_frequency, Deck, ElementKind, SurfaceContact, SurfaceTie};
 use face_load::{face_pressure_forces, face_traction_forces};
 use std::collections::HashSet;
 use std::env;
@@ -28,9 +28,10 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 use surfcad_fea::fem::{
-    consistent_traction, modal_tet10, percentile_95_f64, pin_node, shell_solve_options, solve_bonded,
-    solve_shell, solve_tet10, tie_slaves, Dirichlet, FacePressure, Material, NodalForce,
-    ShellPressure, SolidBody, SolveOptions, SolverChoice,
+    consistent_traction, modal_tet10, percentile_95_f64, pin_node, shell_solve_options,
+    solve_bonded, solve_contact, solve_shell, solve_tet10, tie_slaves, ContactLaw, ContactOptions,
+    ContactStatus, ContactSurface, Dirichlet, FacePressure, Material, NodalForce, ShellPressure,
+    SolidBody, SolveOptions, SolverChoice,
 };
 use surfcad_fea::meshgen::{
     brick_tet10, cylinder_panel, plate_shell, quarter_cylinder, quarter_plate_hole,
@@ -46,6 +47,7 @@ struct Row {
     peak_ours: f64,
     peak_ccx: f64,
     disp_err: f64,
+    disp_tol: f64,
     p95_ours: f64,
     p95_ccx: f64,
     vm_err: f64,
@@ -92,6 +94,7 @@ fn run() -> Result<(), String> {
     for (label, case) in [
         ("cantilever", cantilever as fn() -> Result<Row, String>),
         ("bonded cantilever", bonded_cantilever),
+        ("frictional contact", frictional_contact),
         ("plate with a hole", plate_with_hole),
         ("thick cylinder", thick_cylinder),
         ("simply supported plate", simply_supported_plate),
@@ -110,7 +113,7 @@ fn run() -> Result<(), String> {
                     "{}: disp {:.3}% (gate {:.1}%), von Mises {:.3}% (gate {:.1}%) {}",
                     row.name,
                     row.disp_err * 100.0,
-                    DISP_TOL * 100.0,
+                    row.disp_tol * 100.0,
                     row.vm_err * 100.0,
                     row.vm_tol * 100.0,
                     if row.pass { "pass" } else { "FAIL" }
@@ -151,7 +154,7 @@ fn print_table(banner: &str, rows: &[Row]) {
     println!();
     println!("`ccx` is GPL-2.0-only. This job runs it as an external binary (`apt install calculix-ccx`). It is not a Cargo dependency and it is not vendored, linked, bundled, or committed.");
     println!();
-    println!("Peak displacement is the maximum nodal translation magnitude. Von Mises p95 is the nearest-rank 95th percentile. Solids use one sample per node. Shells use the top and bottom fibres together, matched to the outer nodes of the expanded S6 wedge.");
+    println!("Peak displacement is the maximum nodal translation magnitude, except the frictional contact row, which compares the mean downward displacement of the loaded face. Von Mises p95 is the nearest-rank 95th percentile. Solids use one sample per node. Shells use the top and bottom fibres together, matched to the outer nodes of the expanded S6 wedge.");
     println!();
     println!("| Case | Element | Nodes | peak u ours (mm) | peak u ccx (mm) | disp err | p95 ours (MPa) | p95 ccx (MPa) | von Mises err | von Mises gate | Result |");
     println!("| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |");
@@ -173,7 +176,7 @@ fn print_table(banner: &str, rows: &[Row]) {
     }
     println!();
     println!(
-        "Gates: peak displacement within 1% of ccx, and p95 von Mises within 3%, for every case."
+        "Gates: peak displacement within 1% of ccx, and p95 von Mises within 3%, except the frictional contact row, which uses the gates in that row. Its pressure-overclosure slope is stiff, so the contact spring is not the compliance being compared."
     );
     println!("S6 in ccx is an expanded solid wedge, not the MITC6 triangle. On a coarse plate that recovery difference is several percent, which is why a 5% shell stress gate was the fallback. The plate mesh is 24 by 24 and the roof is 12 by 12, and on those meshes the p95 gap stays inside 3%, so the gate is not loosened.");
 }
@@ -255,15 +258,8 @@ fn frequency_cantilever() -> Result<(), String> {
         }
     }
     let density = 7800.0;
-    let out = modal_tet10(
-        &mesh.nodes,
-        &mesh.elements,
-        steel(),
-        density,
-        &dirichlet,
-        3,
-    )
-    .map_err(|err| format!("frequency modal_tet10: {err}"))?;
+    let out = modal_tet10(&mesh.nodes, &mesh.elements, steel(), density, &dirichlet, 3)
+        .map_err(|err| format!("frequency modal_tet10: {err}"))?;
     let deck = deck_solid(
         &mesh.nodes,
         &mesh.elements,
@@ -700,6 +696,246 @@ fn bonded_cantilever() -> Result<Row, String> {
     )
 }
 
+/// Two bricks in compression with Coulomb friction.
+///
+/// A frictionless pair leaves the upper brick free to slide, so the peak
+/// translation is a rigid mode and not a contact result. The mid-plane `uy`
+/// fixture removes that mode. The shear is `0.1 * pressure`, under `μ`, so
+/// both solvers should stick. The displacement column is the mean downward
+/// displacement of the loaded face. CalculiX's linear pressure-overclosure is
+/// not the same penalty, so the gate is wider than the tied-mesh cases.
+fn frictional_contact() -> Result<Row, String> {
+    let size = [8.0, 8.0, 4.0];
+    let lower = brick_tet10([2, 2, 1], [0.0, 0.0, 0.0], size);
+    let upper = brick_tet10([2, 2, 1], [0.0, 0.0, size[2]], size);
+    let material = Material {
+        young: 10_000.0,
+        poisson: 0.3,
+        yield_mpa: Some(250.0),
+    };
+    let mut nodes = lower.nodes.clone();
+    nodes.extend_from_slice(&upper.nodes);
+    let mut elements = lower.elements.clone();
+    let node_offset = lower.nodes.len() as u32;
+    for elem in &upper.elements {
+        elements.push(elem.map(|id| id + node_offset));
+    }
+    let master = interface_faces(&lower.nodes, &lower.elements, 2, size[2], 1e-6, 0, 0);
+    let slave = interface_faces(
+        &upper.nodes,
+        &upper.elements,
+        2,
+        size[2],
+        1e-6,
+        lower.elements.len() as u32,
+        node_offset,
+    );
+    let top = interface_faces(
+        &upper.nodes,
+        &upper.elements,
+        2,
+        size[2] * 2.0,
+        1e-6,
+        lower.elements.len() as u32,
+        node_offset,
+    );
+    if master.is_empty() || slave.is_empty() || top.is_empty() {
+        return Err("frictional contact: interface faces were not found".into());
+    }
+    let mut dirichlet = Vec::new();
+    for (i, node) in lower.nodes.iter().enumerate() {
+        if node[2].abs() <= 1e-6 {
+            for axis in 0..3 {
+                dirichlet.push(Dirichlet {
+                    dof: (i * 3 + axis) as u32,
+                    value: 0.0,
+                });
+            }
+        }
+    }
+    let mid_y = size[1] * 0.5;
+    for (i, node) in upper.nodes.iter().enumerate() {
+        if (node[1] - mid_y).abs() <= 1e-6 {
+            dirichlet.push(Dirichlet {
+                dof: ((node_offset as usize + i) * 3 + 1) as u32,
+                value: 0.0,
+            });
+        }
+    }
+    let applied = 5.0;
+    let shear = 0.5;
+    let mu = 0.3;
+    let pressures: Vec<FacePressure> = top
+        .iter()
+        .map(|face| FacePressure {
+            nodes: face.nodes,
+            pressure: applied,
+        })
+        .collect();
+    let mut shear_force = vec![[0.0; 3]; nodes.len()];
+    for face in &top {
+        let xyz = face.nodes.map(|id| nodes[id as usize]);
+        let load = face_traction_forces(&xyz, [shear, 0.0, 0.0]);
+        for (slot, node) in face.nodes.iter().enumerate() {
+            for axis in 0..3 {
+                shear_force[*node as usize][axis] += load[slot][axis];
+            }
+        }
+    }
+    let nodal: Vec<NodalForce> = shear_force
+        .iter()
+        .enumerate()
+        .filter(|(_, force)| force.iter().any(|component| component.abs() > 1e-12))
+        .map(|(node, force)| NodalForce {
+            node: node as u32,
+            force: *force,
+        })
+        .collect();
+    let mut slave_nodes = Vec::new();
+    let mut seen = HashSet::new();
+    for face in &slave {
+        for slot in 0..3 {
+            if seen.insert(face.nodes[slot]) {
+                slave_nodes.push(face.nodes[slot]);
+            }
+        }
+    }
+    let surface = ContactSurface {
+        slaves: slave
+            .iter()
+            .flat_map(|face| face.nodes)
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect(),
+        master_faces: master.iter().map(|face| face.nodes).collect(),
+        slave_faces: slave.iter().map(|face| face.nodes).collect(),
+        law: ContactLaw::Frictional,
+        mu,
+        gap: 0.05,
+    };
+    let bodies = [
+        SolidBody {
+            nodes: &lower.nodes,
+            elements: &lower.elements,
+            material,
+        },
+        SolidBody {
+            nodes: &upper.nodes,
+            elements: &upper.elements,
+            material,
+        },
+    ];
+    let options = ContactOptions {
+        solve: SolveOptions {
+            solver: SolverChoice::Cholesky,
+            ..SolveOptions::default()
+        },
+        ..ContactOptions::default()
+    };
+    let solved = solve_contact(
+        &bodies,
+        &[],
+        &[surface],
+        &dirichlet,
+        &nodal,
+        &pressures,
+        &options,
+    )
+    .map_err(|err| format!("frictional contact solve_contact: {err}"))?;
+    let closed: Vec<_> = solved
+        .nodes
+        .iter()
+        .filter(|node| node.status != ContactStatus::Open)
+        .collect();
+    let force: f64 = closed.iter().map(|node| node.normal_force).sum();
+    let tangent: f64 = closed.iter().map(|node| node.tangent_force).sum();
+    let area: f64 = closed.iter().map(|node| node.area).sum();
+    let mean = if area > 0.0 { force / area } else { 0.0 };
+    let mean_t = if area > 0.0 { tangent / area } else { 0.0 };
+    let sticks = closed
+        .iter()
+        .filter(|node| node.status == ContactStatus::Stick)
+        .count();
+    eprintln!(
+        "frictional contact: mean pressure {mean:.3} MPa (shear {mean_t:.3}) vs applied {applied:.3}, {sticks}/{} stick, {} iterations",
+        closed.len(),
+        solved.iterations
+    );
+    let mut forces = shear_force;
+    for face in &top {
+        let xyz = face.nodes.map(|id| nodes[id as usize]);
+        let load = face_pressure_forces(&xyz, applied);
+        for (slot, node) in face.nodes.iter().enumerate() {
+            for axis in 0..3 {
+                forces[*node as usize][axis] += load[slot][axis];
+            }
+        }
+    }
+    let mut deck = deck_solid(&nodes, &elements, material, &dirichlet, &forces);
+    deck.contacts.push(SurfaceContact {
+        name: "GAP".to_string(),
+        slave_nodes,
+        master: master.iter().map(|face| (face.element, face.ccx)).collect(),
+        mu: Some(mu),
+        penalty: 1.0e8,
+        tension: 1.0e-3,
+        stick_slope: 1.0e8,
+        adjust: 0.05,
+    });
+    let ccx = execute("frictional contact", &deck)?;
+    let ours = translations(&solved.bonded.fem.displacement, 3);
+    let vm_ccx = solid_von_mises(nodes.len(), &ccx.stress)?;
+    let p95_ccx = percentile_95_f64(&vm_ccx);
+    let top_z = size[2] * 2.0;
+    let mean_down = |field: &[[f64; 3]]| {
+        let mut sum = 0.0;
+        let mut count = 0.0;
+        for (node, disp) in nodes.iter().zip(field.iter()) {
+            if (node[2] - top_z).abs() <= 1e-6 {
+                sum += -disp[2];
+                count += 1.0;
+            }
+        }
+        if count > 0.0 {
+            sum / count
+        } else {
+            0.0
+        }
+    };
+    let peak_ours = mean_down(&ours);
+    let peak_ccx = mean_down(&ccx.displacement);
+    if peak_ccx < 1e-12 || p95_ccx.abs() < 1e-8 {
+        return Err(format!(
+            "frictional contact: ccx compression {peak_ccx:.3e} p95 {p95_ccx:.3e}"
+        ));
+    }
+    let disp_tol = 0.05;
+    let vm_tol = 0.05;
+    let disp_err = (peak_ours - peak_ccx).abs() / peak_ccx;
+    let vm_err = (solved.bonded.fem.p95 - p95_ccx).abs() / p95_ccx.abs();
+    let pressure_err = (mean - applied).abs() / applied;
+    eprintln!(
+        "frictional contact: pressure err {:.2}%, compression err {:.2}% ({peak_ours:.4e} vs {peak_ccx:.4e} mm), von Mises err {:.2}%",
+        pressure_err * 100.0,
+        disp_err * 100.0,
+        vm_err * 100.0
+    );
+    Ok(Row {
+        name: "frictional contact",
+        element: "C3D10 *CONTACT PAIR",
+        nodes: ours.len(),
+        peak_ours,
+        peak_ccx,
+        disp_err,
+        disp_tol,
+        p95_ours: solved.bonded.fem.p95,
+        p95_ccx,
+        vm_err,
+        vm_tol,
+        pass: pressure_err <= 0.05 && disp_err <= disp_tol && vm_err <= vm_tol && sticks > 0,
+    })
+}
+
 struct InterfaceFace {
     element: u32,
     ccx: u8,
@@ -825,6 +1061,7 @@ fn finish(
         peak_ours,
         peak_ccx,
         disp_err,
+        disp_tol: DISP_TOL,
         p95_ours,
         p95_ccx,
         vm_err,
@@ -866,6 +1103,7 @@ fn deck_solid(
         fixed: solid_fixed(dirichlet),
         forces: forces.to_vec(),
         ties: Vec::new(),
+        contacts: Vec::new(),
     }
 }
 
@@ -887,6 +1125,7 @@ fn deck_shell(
         fixed: shell_fixed(dirichlet),
         forces: forces.to_vec(),
         ties: Vec::new(),
+        contacts: Vec::new(),
     }
 }
 

@@ -11,6 +11,7 @@
 //! or Jacobi PCG.
 
 mod assemble;
+mod contact;
 mod eigen;
 mod linear;
 mod modal;
@@ -20,6 +21,10 @@ mod stress;
 pub(crate) mod tet10;
 mod tie;
 
+pub use contact::{
+    solve_contact, ContactLaw, ContactNode, ContactOptions, ContactSolve, ContactStatus,
+    ContactSurface, DEFAULT_CONTACT_ITERATIONS, DEFAULT_FRICTION, DEFAULT_PENALTY_SCALE,
+};
 pub use tie::{solve_bonded, tie_slaves, BondedOutput, PartStress, SlaveTie, SolidBody, TieBuild};
 
 #[cfg(test)]
@@ -173,7 +178,17 @@ pub enum FemError {
     BadMaterial(String),
     BadLoad(String),
     NotSpd(String),
-    NotConverged { iterations: usize, residual: f64 },
+    NotConverged {
+        iterations: usize,
+        residual: f64,
+    },
+    /// Frictional or frictionless contact stopped on its iteration cap.
+    /// `stage` is `active-set`, `friction`, `uzawa`, or `linear`.
+    ContactNotConverged {
+        stage: &'static str,
+        iterations: usize,
+        residual: f64,
+    },
     Solver(String),
 }
 
@@ -190,6 +205,14 @@ impl std::fmt::Display for FemError {
             } => write!(
                 f,
                 "PCG stopped after {iterations} iterations with relative residual {residual:.3e}"
+            ),
+            Self::ContactNotConverged {
+                stage,
+                iterations,
+                residual,
+            } => write!(
+                f,
+                "contact did not converge during the {stage} stage after {iterations} iterations (residual {residual:.3e})"
             ),
             Self::Solver(msg) => write!(f, "{msg}"),
         }

@@ -144,6 +144,7 @@ self.onmessage = async (event) => {
           solveStub: fea.solve,
           sheetSpec: msg.sheetSpec || null,
           solveBonded: fea.solve_bonded,
+          solveContact: fea.solve_contact,
           cache: meshCache,
           isCancelled: () => cancelled,
           memory,
@@ -181,7 +182,7 @@ self.onmessage = async (event) => {
         }
         if (Array.isArray(result?.parts)) {
           for (const part of result.parts) {
-            for (const key of ['nodal', 'displacement']) {
+            for (const key of ['nodal', 'displacement', 'contact']) {
               const buffer = ownFloat32(part, key);
               if (buffer) transfers.push(buffer);
             }

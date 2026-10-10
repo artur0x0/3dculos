@@ -58,16 +58,43 @@ export function FeaAssemblySetup({ panel }) {
           {part.name || part.id}
         </label>
       ))}
-      {assemblyOn && contacts.map((contact, index) => (
-        <label key={`${contact.a?.part}:${contact.a?.faceID}:${contact.b?.part}:${contact.b?.faceID}`} className="flex items-center gap-1.5 text-[12px] text-cyan-50" data-fea-contact="">
-          <input
-            type="checkbox"
-            checked={contact.enabled !== false}
-            onChange={() => panel.setContactEnabled?.(index, contact.enabled === false)}
-          />
-          {nameOf(contact.a?.part)} face {contact.a?.faceID} · {nameOf(contact.b?.part)} face {contact.b?.faceID}
-        </label>
-      ))}
+      {assemblyOn && contacts.map((contact, index) => {
+        const kind = contact.kind === 'frictionless' || contact.kind === 'frictional' ? contact.kind : 'bonded';
+        return (
+          <div key={`${contact.a?.part}:${contact.a?.faceID}:${contact.b?.part}:${contact.b?.faceID}`} className="flex flex-wrap items-center gap-1.5 text-[12px] text-cyan-50" data-fea-contact="">
+            <label className="flex items-center gap-1.5">
+              <input
+                type="checkbox"
+                checked={contact.enabled !== false}
+                onChange={() => panel.setContactEnabled?.(index, contact.enabled === false)}
+              />
+              {nameOf(contact.a?.part)} face {contact.a?.faceID} · {nameOf(contact.b?.part)} face {contact.b?.faceID}
+            </label>
+            <select
+              data-fea-contact-kind=""
+              value={kind}
+              onChange={(event) => panel.setContactKind?.(index, event.target.value)}
+              className="rounded border border-cyan-700/70 bg-cyan-950/80 px-1 py-0.5 text-[12px] text-cyan-100"
+            >
+              <option value="bonded">Bonded</option>
+              <option value="frictionless">Frictionless</option>
+              <option value="frictional">Frictional</option>
+            </select>
+            {kind === 'frictional' && (
+              <input
+                data-fea-contact-mu=""
+                type="number"
+                min="0"
+                step="0.05"
+                value={contact.mu ?? 0.2}
+                onChange={(event) => panel.setContactMu?.(index, event.target.value)}
+                className="w-14 rounded border border-cyan-700/70 bg-cyan-950/80 px-1 py-0.5 text-[12px] text-cyan-100"
+                aria-label="Friction coefficient"
+              />
+            )}
+          </div>
+        );
+      })}
       {assemblyOn && contacts.length === 0 && (
         <p className="text-[11px] text-cyan-100/80" data-fea-contact-empty="">No touching faces within the bond gap.</p>
       )}

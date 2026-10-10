@@ -75,6 +75,10 @@ test('a disabled pair stays off when the same faces are detected again', () => {
   }]);
   assert.equal(flipped[0].enabled, false);
   assert.equal(mergeContactPairs(detected, [])[0].enabled, undefined);
+  const keptLaw = mergeContactPairs(detected, [{ ...detected[0], kind: 'frictional', mu: 0.35 }]);
+  assert.equal(keptLaw[0].kind, 'frictional');
+  assert.equal(keptLaw[0].mu, 0.35);
+  assert.equal(keptLaw[0].enabled, undefined);
 });
 
 test('faces on different parts are not the same fixture', () => {

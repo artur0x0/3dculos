@@ -1,6 +1,7 @@
 /**
- * Bonded multi-part solve. Each part is meshed on its own. Slave nodes are
- * tied to master TET10 faces by the projection MPC in solve_bonded.
+ * Multi-part solve. Bonded pairs are projection MPCs in solve_bonded.
+ * Frictionless and frictional pairs are a node-to-surface penalty in
+ * solve_contact, and any bonded pairs in that study are still eliminated.
  * The part matrix (or position, quaternion, and scale) is baked into the
  * surface before the tet mesh, so a rotated or scaled part meets its
  * neighbour. The sampled field stays in render-vertex order.
@@ -12,11 +13,13 @@
 
 import { boundaryConditions } from './boundaryConditions.js';
 import { buildTiePayload } from './bondedTies.js';
+import { buildContactPayload, contactFaceIds, frictionalStudy } from './contactPairs.js';
 import { contactTolerance } from './contactDetect.js';
 import {
   chooseEdgeLength,
   chooseSolver,
   dofCap,
+  frictionDofCap,
   isThinPart,
   partShape,
   THIN_ELEMENTS_THROUGH,
@@ -25,6 +28,7 @@ import { placementMatrix, placeStudy, transformPositions } from './partTransform
 import { solverRequestMaterial } from './studyPanel.js';
 import {
   fieldRange,
+  sampleContactPressure,
   sampleSurfaceDisplacement,
   sampleSurfaceStress,
 } from './stressSample.js';
@@ -119,7 +123,48 @@ function assemblyCacheKey(parts, study, profile, tools) {
     );
     return meshKey;
   }).join('||');
-  return `${bodies}||bonded`;
+  const law = frictionalStudy(study) ? 'friction' : 'bonded';
+  return `${bodies}||${law}`;
+}
+
+function scatterContactPressure(solved, total) {
+  const pressure = new Float64Array(total);
+  pressure.fill(NaN);
+  const ids = solved?.contactNode;
+  const values = solved?.contactPressure;
+  const empty = { pressure, open: 0, stick: 0, slip: 0, min: 0, max: 0 };
+  if (!ids || !values) return empty;
+  const masters = solved.contactMasters;
+  const weights = solved.contactWeights;
+  const status = solved.contactStatus;
+  let open = 0;
+  let stick = 0;
+  let slip = 0;
+  let min = Infinity;
+  let max = -Infinity;
+  let closed = 0;
+  for (let i = 0; i < ids.length; i += 1) {
+    const id = ids[i];
+    const value = values[i];
+    const code = status ? Number(status[i]) : 0;
+    if (code === 1) stick += 1;
+    else if (code === 2) slip += 1;
+    else open += 1;
+    if (id < total && Number.isFinite(value)) pressure[id] = value;
+    if (code !== 0 && Number.isFinite(value)) {
+      closed += 1;
+      if (value < min) min = value;
+      if (value > max) max = value;
+    }
+    if (!masters || !weights) continue;
+    for (let k = 0; k < 6; k += 1) {
+      const weight = weights[i * 6 + k];
+      const master = masters[i * 6 + k];
+      if (!(Math.abs(weight) > 1e-8) || master >= total) continue;
+      if (!Number.isFinite(pressure[master]) && Number.isFinite(value)) pressure[master] = value;
+    }
+  }
+  return { pressure, open, stick, slip, min: closed ? min : 0, max: closed ? max : 0 };
 }
 
 function plainWarnings(list) {
@@ -141,6 +186,7 @@ export async function solveAssembly({
   parts,
   profile,
   solveBonded,
+  solveContact,
   meshVolume,
   cache,
   isCancelled,
@@ -190,7 +236,8 @@ export async function solveAssembly({
   const shapes = bodies.map((part) => partShape(part.positions, part.indices));
   const thin = shapes.some((shape) => isThinPart(shape));
   const solver = chooseSolver(shapes[0] || {});
-  const cap = dofCap(profile, thin, solver);
+  const frictional = frictionalStudy(study);
+  const cap = frictional ? frictionDofCap(profile, thin) : dofCap(profile, thin, solver);
   const share = Number.isFinite(cap) ? cap / bodies.length : cap;
   const target = study && study.mesh ? study.mesh.target : undefined;
 
@@ -215,7 +262,9 @@ export async function solveAssembly({
           ? ` That is coarser than ${THIN_ELEMENTS_THROUGH} elements through the ${edge.wallMm.toFixed(2)} mm wall.`
           : '';
         const why = Number.isFinite(cap)
-          ? `The phone DOF cap (${cap}) is split across ${bodies.length} parts, so the edge is ${edge.edgeLength.toFixed(2)} mm.`
+          ? (frictional
+            ? `The phone frictional contact cap (${cap} DOF) is split across ${bodies.length} parts, so the edge is ${edge.edgeLength.toFixed(2)} mm.`
+            : `The phone DOF cap (${cap}) is split across ${bodies.length} parts, so the edge is ${edge.edgeLength.toFixed(2)} mm.`)
           : `A ${edge.requested.toFixed(2)} mm edge does not fit, so the mesh keeps ${edge.edgeLength.toFixed(2)} mm edges.`;
         warnings.push({
           code: 'mesh-coarse',
@@ -304,6 +353,10 @@ export async function solveAssembly({
   }
   const gap = contactTolerance(Number.isFinite(shortest) ? shortest : 0);
   const ties = buildTiePayload(prepared, study?.contacts || [], gap);
+  const surfaces = buildContactPayload(prepared, study?.contacts || [], gap);
+  if (frictional && !surfaces.length) {
+    throw new Error('The frictional pair has no mesh faces to contact.');
+  }
   timings.assembling = Date.now() - assembleStarted;
 
   const bcPayload = { fixedNodes: Uint32Array.from(fixedNodes) };
@@ -325,22 +378,28 @@ export async function solveAssembly({
   await yieldTurn();
   if (cancelled()) throw abortError();
   const solveStarted = Date.now();
-  const solved = solveBonded(
-    {
-      bodies: prepared.map((body) => ({
-        nodes: body.worldNodes,
-        elements: body.mesh.elements,
-        material: {
-          E_MPa: body.material.E_MPa,
-          nu: body.material.nu,
-          yield_MPa: body.material.yield_MPa,
-        },
-      })),
-      ties,
-    },
-    bcPayload,
-    { solver },
-  );
+  const meshPayload = {
+    bodies: prepared.map((body) => ({
+      nodes: body.worldNodes,
+      elements: body.mesh.elements,
+      material: {
+        E_MPa: body.material.E_MPa,
+        nu: body.material.nu,
+        yield_MPa: body.material.yield_MPa,
+      },
+    })),
+    ties,
+  };
+  let solved;
+  if (surfaces.length) {
+    if (typeof solveContact !== 'function') {
+      throw new Error('Frictional contact is not in this FEA build.');
+    }
+    meshPayload.contacts = surfaces;
+    solved = solveContact(meshPayload, bcPayload, { solver });
+  } else {
+    solved = solveBonded(meshPayload, bcPayload, { solver });
+  }
   timings.solving = Date.now() - solveStarted;
   if (typeof noteMemory === 'function') noteMemory(volumes[volumes.length - 1]);
   if (cancelled()) throw abortError();
@@ -349,6 +408,7 @@ export async function solveAssembly({
   const postStarted = Date.now();
   const nodalAll = Float64Array.from(solved.nodal);
   const dispAll = solved.displacement;
+  const contactField = surfaces.length ? scatterContactPressure(solved, nodeOffset) : null;
   const partStats = [];
   const sampledParts = [];
   let displacementMin = null;
@@ -383,6 +443,18 @@ export async function solveAssembly({
       if (range.min != null) displacementMin = displacementMin == null ? range.min : Math.min(displacementMin, range.min);
       if (range.max != null) displacementMax = displacementMax == null ? range.max : Math.max(displacementMax, range.max);
     }
+    let contact = null;
+    if (contactField) {
+      const localContact = contactField.pressure.subarray(offset, offset + count);
+      contact = sampleContactPressure(
+        bodies[i].positions,
+        bodies[i].indices,
+        bodies[i].faceIDs,
+        body.mesh,
+        localContact,
+        contactFaceIds(study, body.id),
+      );
+    }
     const p95 = solved.partP95 && solved.partP95.length > i ? asNumber(solved.partP95[i]) : null;
     const safety = solved.partSafety && solved.partSafety.length > i ? asNumber(solved.partSafety[i]) : null;
     partStats.push({
@@ -398,6 +470,7 @@ export async function solveAssembly({
       id: body.id,
       nodal: stress,
       displacement,
+      contact,
     });
   }
   const govIndex = solved.governingPart == null ? -1 : Number(solved.governingPart);
@@ -428,6 +501,15 @@ export async function solveAssembly({
     meshReused,
     rescaled: false,
     bonded: true,
+    contactActive: !!contactField,
+    contactOpen: contactField ? contactField.open : 0,
+    contactStick: contactField ? contactField.stick : 0,
+    contactSlip: contactField ? contactField.slip : 0,
+    contactPressureMin: contactField ? contactField.min : null,
+    contactPressureMax: contactField ? contactField.max : null,
+    contactIterations: contactField && solvedStats.contactIterations != null
+      ? solvedStats.contactIterations
+      : null,
     governingPart: governing ? governing.id : null,
     governingName: governing ? governing.name : null,
     partStats,

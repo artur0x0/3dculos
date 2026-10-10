@@ -42,6 +42,17 @@ export const PHONE_DOF_CAPS = Object.freeze({
   shell: 90_000,
 });
 
+/**
+ * Phone caps for a frictionless or frictional pair. The active-set loop
+ * refactorizes when the contact set changes, so these sit about 4× under
+ * the bonded caps: thin 25k (bonded thin is 100k) and compact 10k (bonded
+ * compact Cholesky is 40k).
+ */
+export const PHONE_FRICTION_DOF_CAPS = Object.freeze({
+  tet10Thin: 25_000,
+  tet10Compact: 10_000,
+});
+
 const THIN_BBOX_RATIO = 0.25;
 const THIN_THICKNESS_RATIO = 0.08;
 const SMALL_SCREEN_PX = 768;
@@ -146,6 +157,12 @@ export function dofCap(profile, thin, solver) {
   if (thin) return PHONE_DOF_CAPS.tet10Thin;
   if (solver === 'cholesky') return PHONE_DOF_CAPS.tet10CompactCholesky;
   return PHONE_DOF_CAPS.tet10CompactPcg;
+}
+
+/** Phone DOF cap for frictionless or frictional contact. Desktop is memory only. */
+export function frictionDofCap(profile, thin) {
+  if (profile !== 'phone') return Infinity;
+  return thin ? PHONE_FRICTION_DOF_CAPS.tet10Thin : PHONE_FRICTION_DOF_CAPS.tet10Compact;
 }
 
 /** Phone DOF cap for a shell. Desktop is limited only by memory. */

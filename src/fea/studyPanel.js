@@ -256,6 +256,33 @@ export function studyWithResolvedParts(study, rows, scriptFor) {
   return patched(study, { parts });
 }
 
+export function studyWithContactKind(study, index, kind) {
+  const allowed = kind === 'frictionless' || kind === 'frictional' ? kind : 'bonded';
+  const contacts = (study?.contacts || []).map((contact, i) => {
+    if (i !== index) return contact;
+    const next = { ...contact, kind: allowed };
+    if (allowed === 'frictional') {
+      if (!(typeof next.mu === 'number' && Number.isFinite(next.mu) && next.mu >= 0)) next.mu = 0.2;
+    } else {
+      delete next.mu;
+    }
+    return next;
+  });
+  return patched(study, { contacts });
+}
+
+export function studyWithContactMu(study, index, mu) {
+  const value = Number(mu);
+  if (!Number.isFinite(value) || value < 0) {
+    return { ok: false, errors: ['Friction coefficient must be a finite number greater than or equal to 0'], study };
+  }
+  const contacts = (study?.contacts || []).map((contact, i) => {
+    if (i !== index) return contact;
+    return { ...contact, kind: 'frictional', mu: value };
+  });
+  return patched(study, { contacts });
+}
+
 export function studyWithContactEnabled(study, index, enabled) {
   const contacts = (study?.contacts || []).map((contact, i) => {
     if (i !== index) return contact;

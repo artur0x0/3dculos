@@ -161,6 +161,70 @@ function sampleVertices(positions, indices, faceIDs, mesh, valuesFor, mix) {
  * `vonMises[node]` is the solver field. The return value is one megapascal
  * per render vertex. Vertices that no boundary face owns stay NaN.
  */
+/**
+ * Contact pressure in MPa on the render vertices of the named faces.
+ * Other vertices stay NaN. Corners carry the value; a midside without a
+ * sample does not blank the face.
+ */
+export function sampleContactPressure(positions, indices, faceIDs, mesh, nodal, allowedFaces) {
+  const vertexCount = positions ? positions.length / 3 : 0;
+  const out = new Float32Array(vertexCount);
+  out.fill(NaN);
+  if (!positions || !nodal || !allowedFaces || !allowedFaces.size || !mesh?.faceIds || !mesh.faces) {
+    return out;
+  }
+  const byFace = new Map();
+  for (let f = 0; f < mesh.faceIds.length; f += 1) {
+    const id = Number(mesh.faceIds[f]);
+    if (!allowedFaces.has(id)) continue;
+    let list = byFace.get(id);
+    if (!list) {
+      list = [];
+      byFace.set(id, list);
+    }
+    const ids = mesh.faces.subarray(f * 6, f * 6 + 6);
+    const corners = [0, 1, 2].map((k) => {
+      const node = ids[k];
+      return [mesh.nodes[node * 3], mesh.nodes[node * 3 + 1], mesh.nodes[node * 3 + 2]];
+    });
+    const sample = [0, 1, 2, 3, 4, 5].map((k) => {
+      const value = nodal[ids[k]];
+      return Number.isFinite(value) ? value : NaN;
+    });
+    list.push({ corners, sample });
+  }
+  if (!byFace.size) return out;
+  for (const [vertex, faces] of incidentFaces(indices, faceIDs)) {
+    const p = [positions[vertex * 3], positions[vertex * 3 + 1], positions[vertex * 3 + 2]];
+    let best = Infinity;
+    let value = NaN;
+    for (const face of faces) {
+      const list = byFace.get(Number(face));
+      if (!list) continue;
+      for (const tri of list) {
+        const q = closestPointOnTriangle(p, tri.corners[0], tri.corners[1], tri.corners[2]);
+        const dist = length(sub(p, q));
+        if (dist < best) {
+          best = dist;
+          value = contactMix(tri.sample, barycentric(q, tri.corners[0], tri.corners[1], tri.corners[2]));
+        }
+      }
+    }
+    if (Number.isFinite(value)) out[vertex] = value;
+  }
+  return out;
+}
+
+function contactMix(sample, bary) {
+  const corners = [sample[0], sample[1], sample[2]];
+  if (corners.every((value) => Number.isFinite(value))) {
+    return bary[0] * corners[0] + bary[1] * corners[1] + bary[2] * corners[2];
+  }
+  const finite = sample.filter((value) => Number.isFinite(value));
+  if (!finite.length) return NaN;
+  return finite.reduce((sum, value) => sum + value, 0) / finite.length;
+}
+
 export function sampleSurfaceStress(positions, indices, faceIDs, mesh, vonMises) {
   if (!positions || !vonMises) return new Float32Array();
   return sampleVertices(positions, indices, faceIDs, mesh, (ids) => (

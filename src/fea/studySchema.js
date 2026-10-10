@@ -11,6 +11,7 @@
  * Units are the part-script units: length mm, force N, stress MPa.
  */
 
+import { DEFAULT_FRICTION } from './contactDetect.js';
 import { getMaterial, listMaterials } from './materials.js';
 
 export const STUDY_VERSION = 1;
@@ -27,7 +28,8 @@ const LOAD_KEYS = new Set(['kind', 'faces', 'vector', 'pressure_MPa']);
 const FACE_KEYS = new Set(['faceID', 'part', 'at', 'n', 'area', 'src', 'ord']);
 const SCOPE_KEYS = new Set(['kind', 'ids']);
 const PART_ENTRY_KEYS = new Set(['id', 'material']);
-const CONTACT_KEYS = new Set(['a', 'b', 'kind', 'enabled']);
+const CONTACT_KEYS = new Set(['a', 'b', 'kind', 'enabled', 'mu']);
+const CONTACT_KINDS = new Set(['bonded', 'frictionless', 'frictional']);
 const CONTACT_END_KEYS = new Set(['part', 'faceID']);
 
 const ID_RE = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
@@ -343,14 +345,25 @@ function readContacts(contacts, errors) {
       continue;
     }
     for (const key of unknownKeys(row, CONTACT_KEYS)) errors.push(`${path} unknown key "${key}"`);
-    if (row.kind !== 'bonded') errors.push(`${path}.kind must be "bonded"`);
+    if (!CONTACT_KINDS.has(row.kind)) {
+      errors.push(`${path}.kind must be "bonded", "frictionless", or "frictional"`);
+    }
+    let mu = null;
+    if (row.mu != null) {
+      if (!finiteNumber(row.mu) || row.mu < 0) {
+        errors.push(`${path}.mu must be a finite friction coefficient greater than or equal to 0`);
+      } else {
+        mu = row.mu;
+      }
+    }
     const a = readContactEnd(row.a, `${path}.a`, errors);
     const b = readContactEnd(row.b, `${path}.b`, errors);
     if (row.enabled != null && typeof row.enabled !== 'boolean') {
       errors.push(`${path}.enabled must be a boolean`);
     }
-    if (row.kind !== 'bonded' || !a || !b) continue;
-    const contact = { a, b, kind: 'bonded' };
+    if (!CONTACT_KINDS.has(row.kind) || !a || !b) continue;
+    const contact = { a, b, kind: row.kind };
+    if (row.kind === 'frictional') contact.mu = mu == null ? DEFAULT_FRICTION : mu;
     if (row.enabled === false) contact.enabled = false;
     out.push(contact);
   }

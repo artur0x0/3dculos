@@ -4,6 +4,7 @@ import {
   MODAL_MODE_SLOTS,
   activePlot,
   initialResultsView,
+  plotTabs,
   reduceResultsView,
   resultsChrome,
 } from './resultsView.js';
@@ -15,8 +16,16 @@ function apply(events) {
 test('the plot falls back to stress', () => {
   assert.equal(activePlot('displacement'), 'displacement');
   assert.equal(activePlot('stress'), 'stress');
+  assert.equal(activePlot('contact'), 'contact');
   assert.equal(activePlot('other'), 'stress');
   assert.equal(activePlot(undefined), 'stress');
+});
+
+test('Contact is a results tab only for a non-bonded pair', () => {
+  const values = (result) => plotTabs(result).map((tab) => tab.value);
+  assert.deepEqual(values(null), ['stress', 'displacement']);
+  assert.deepEqual(values({ contactActive: false }), ['stress', 'displacement']);
+  assert.deepEqual(values({ contactActive: true }), ['stress', 'displacement', 'contact']);
 });
 
 test('Run opens the results frame before the solve finishes', () => {
