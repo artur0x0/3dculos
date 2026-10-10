@@ -117,6 +117,7 @@ import {
 } from '../utils/blockSolid';
 import {
   addLoftProfile,
+  armLoftStationPlanePick,
   buildContourPreview,
   buildExtrudeSolidPreview,
   buildLoftSolidPreview,
@@ -138,6 +139,9 @@ import {
   planeFromContourFace,
   removeLoftProfile,
   resolveContourWorkplane,
+  clearLoftStationPlane,
+  selectedLoftDrawFrame,
+  setLoftStationPlane,
   resolveExtrudeAxis,
   resolveRevolveAxis,
   selectLoftProfile,
@@ -3583,11 +3587,12 @@ const Viewport = forwardRef(({
       return;
     }
     const pts = contourMode.params?.points;
+    const loftDraw = selectedLoftDrawFrame(contourMode) || plane;
     if (contourMode.tool === 'polyline' && (!Array.isArray(pts) || pts.length < 3)) {
       clearXsPreview();
       clearExtrudePreview();
       clearRevolvePreview();
-      paintPolylineDraft(plane, pts || []);
+      paintPolylineDraft(isLoftEntry(contourMode.entry) ? loftDraw : plane, pts || []);
       clearSweepPreview();
       if (isLoftEntry(contourMode.entry)) {
         const solid = buildLoftSolidPreview(planeFace, contourMode.loft?.profiles);
@@ -3602,7 +3607,7 @@ const Viewport = forwardRef(({
     // on the points — that is the whole window in which the user wants to nudge
     // them. Handles only, no duplicate wire.
     if (contourMode.tool === 'polyline' && Array.isArray(pts) && pts.length) {
-      paintPolylineDraft(plane, pts, { wire: false });
+      paintPolylineDraft(isLoftEntry(contourMode.entry) ? loftDraw : plane, pts, { wire: false });
     } else {
       clearPolylineDraft();
     }
@@ -3696,9 +3701,13 @@ const Viewport = forwardRef(({
     }
     setContourMode((prev) => {
       if (!prev) return prev;
+      const frame = planeFromContourFace(resolved.face);
+      if (isLoftEntry(prev.entry) && prev.loft?.picking === 'face') {
+        return setLoftStationPlane(prev, frame, { kind: 'face', label: 'Face' });
+      }
       return applyContourPlaneEdit(prev, {
         preset: 'face',
-        base: planeFromContourFace(resolved.face),
+        base: frame,
         angles: { x: 0, y: 0, z: 0 },
       });
     });
@@ -5920,7 +5929,8 @@ const Viewport = forwardRef(({
     event.preventDefault();
     polylinePointDragRef.current = {
       index,
-      plane: contourWorkplane(contourModeRef.current, modelBoundsRef.current),
+      plane: selectedLoftDrawFrame(contourModeRef.current)
+        || contourWorkplane(contourModeRef.current, modelBoundsRef.current),
       moved: false,
     };
     setPolylinePointHover(index);
@@ -6178,7 +6188,8 @@ const Viewport = forwardRef(({
         showContourToast('Right-drag this point to move it — tap elsewhere to add one.', { undo: false });
         return;
       }
-      const plane = contourWorkplane(contourModeRef.current, modelBoundsRef.current);
+      const plane = selectedLoftDrawFrame(contourModeRef.current)
+        || contourWorkplane(contourModeRef.current, modelBoundsRef.current);
       raycasterRef.current.setFromCamera(mouseRef.current, cameraRef.current);
       const origin = raycasterRef.current.ray.origin;
       const dir = raycasterRef.current.ray.direction;
@@ -6319,7 +6330,17 @@ const Viewport = forwardRef(({
       );
       if (hitC) {
         setArmedContourId(hitC.id);
-        setContourMode((prev) => (prev ? applySavedContour(prev, hitC) : prev));
+        setContourMode((prev) => {
+          if (!prev) return prev;
+          if (isLoftEntry(prev.entry) && prev.loft?.picking === 'face' && hitC.plane) {
+            return setLoftStationPlane(prev, hitC.plane, {
+              kind: 'contour',
+              ref: hitC.id,
+              label: hitC.label || hitC.name || 'Sketch',
+            });
+          }
+          return applySavedContour(prev, hitC);
+        });
         return;
       }
     }
@@ -6340,13 +6361,21 @@ const Viewport = forwardRef(({
         : planeHits[0].object.parent?.userData;
       if (ud?.plane) {
         setSelectedPlaneId(ud.planeId || null);
-        setContourMode((prev) => (prev
-          ? applyContourPlaneEdit(prev, {
+        setContourMode((prev) => {
+          if (!prev) return prev;
+          if (isLoftEntry(prev.entry) && prev.loft?.picking === 'face') {
+            return setLoftStationPlane(prev, ud.plane, {
+              kind: 'workplane',
+              ref: ud.planeId || null,
+              label: 'Workplane',
+            });
+          }
+          return applyContourPlaneEdit(prev, {
             preset: 'workplane',
             base: ud.plane,
             angles: { x: 0, y: 0, z: 0 },
-          })
-          : prev));
+          });
+        });
         return;
       }
     }
@@ -9347,6 +9376,20 @@ const Viewport = forwardRef(({
           onPickPlane={pickSweepPlane}
           onSelectLoftProfile={(i) => setContourMode((prev) => (prev ? selectLoftProfile(prev, i) : prev))}
           onAddLoftProfile={() => setContourMode((prev) => (prev ? addLoftProfile(prev) : prev))}
+          onLoftUseOffset={() => setContourMode((prev) => (prev ? clearLoftStationPlane(prev) : prev))}
+          onLoftPickFace={() => setContourMode((prev) => (prev ? armLoftStationPlanePick(prev) : prev))}
+          onLoftPickWorkplane={(frame, id, name) => setContourMode((prev) => (
+            prev ? setLoftStationPlane(prev, frame, { kind: 'workplane', ref: id, label: name || 'Workplane' }) : prev
+          ))}
+          onLoftPickSketch={(contour) => setContourMode((prev) => (
+            prev && contour?.plane
+              ? setLoftStationPlane(prev, contour.plane, {
+                kind: 'contour',
+                ref: contour.id,
+                label: contour.label || contour.name || 'Sketch',
+              })
+              : prev
+          ))}
           onRemoveLoftProfile={(i) => setContourMode((prev) => (prev ? removeLoftProfile(prev, i) : prev))}
           onLoftOffsetChange={(offset) => setContourMode((prev) => (prev ? setLoftProfileOffset(prev, offset) : prev))}
           savedContours={savedContours}
@@ -9354,7 +9397,17 @@ const Viewport = forwardRef(({
           onPickSaved={(id) => {
             const hit = savedContours.find((c) => c.id === id);
             if (!hit) return;
-            setContourMode((prev) => (prev ? applySavedContour(prev, hit) : prev));
+            setContourMode((prev) => {
+              if (!prev) return prev;
+              if (isLoftEntry(prev.entry) && prev.loft?.picking === 'face' && hit.plane) {
+                return setLoftStationPlane(prev, hit.plane, {
+                  kind: 'contour',
+                  ref: hit.id,
+                  label: hit.label || hit.name || 'Sketch',
+                });
+              }
+              return applySavedContour(prev, hit);
+            });
           }}
           combine={contourMode.combine === 'subtract' ? 'subtract' : 'add'}
           onCombineChange={(combine) => setContourMode((prev) => (

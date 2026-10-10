@@ -708,6 +708,50 @@ function emitProfileExprFromParams(p) {
   return `profileCircle(${r}, ${seg})`;
 }
 
+function _loftDot(a, b) {
+  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+}
+
+function _loftOwnsPlane(prof) {
+  return !!(
+    prof
+    && prof.plane
+    && prof.plane.center
+    && prof.plane.normal
+    && (prof.planeKind === 'face' || prof.planeKind === 'workplane' || prof.planeKind === 'contour')
+  );
+}
+
+/** World frame of one station. Offset stations are copies of the shared plane. */
+function loftStationWorldFrame(shared, prof) {
+  if (_loftOwnsPlane(prof)) return prof.plane;
+  const w = Number(prof?.offset) || 0;
+  const n = shared.normal;
+  return {
+    center: [
+      shared.center[0] + n[0] * w,
+      shared.center[1] + n[1] * w,
+      shared.center[2] + n[2] * w,
+    ],
+    normal: n,
+    x: shared.x,
+    y: shared.y,
+  };
+}
+
+function loftFramesParallel(frames) {
+  const n0 = frames[0].normal;
+  const l0 = Math.hypot(n0[0], n0[1], n0[2]);
+  if (!(l0 > 1e-12)) return false;
+  for (let i = 1; i < frames.length; i++) {
+    const n = frames[i].normal;
+    const l = Math.hypot(n[0], n[1], n[2]);
+    if (!(l > 1e-12)) return false;
+    if (Math.abs(_loftDot(n0, n) / (l0 * l)) < 0.99) return false;
+  }
+  return true;
+}
+
 /** Shared-workplane loft station: offsetPlaneFrame(plane, offset). */
 function emitOffsetPlaneExpr(frVar, offset) {
   const w = +Number(offset).toFixed(4);
@@ -1589,33 +1633,86 @@ export const HELPER_PALETTE_ITEMS = [
       const profileExpr = emitProfileExprFromParams(p);
       // Substrate only — named let for later edge→sweep / fillet / extrude slices.
       const profileLine = `const ${xs} = makeCrossSection(${fr}, ${profileExpr}); // plane+profile substrate`;
-      // Slice 28: Loft Confirm — ≥2 makeCrossSection (same workplane + offsets) + makeLoft.
+      // Loft Confirm. Offset-only stations keep offsetPlaneFrame on one plane.
+      // A station with its own frame emits that frame. placeInFrame uses the
+      // first station: angled solids are local to it; parallel solids add the
+      // shift down to the lowest station.
       if (p._contourLoft && Array.isArray(p._contourLoft.profiles)) {
+        const loftProfiles = p._contourLoft.profiles;
+        const anyOwn = loftProfiles.some(_loftOwnsPlane);
         const xsNames = [];
-        const offsets = p._contourLoft.profiles.map((prof) => Number(prof.offset) || 0);
-        const minOff = offsets.length ? Math.min(...offsets) : 0;
-        const w = +Number(minOff).toFixed(4);
         lines.push(CONTOUR_LOFT_BEGIN);
         lines.push(...wp.lines);
-        for (const prof of p._contourLoft.profiles) {
-          const xsN = allocateUniqueName(names, 'xs');
-          xsNames.push(xsN);
-          const planeExpr = emitOffsetPlaneExpr(fr, prof.offset);
-          // Isolate station fields so the parent helper params (defaults /
-          // selected chip / station-0 bleed) cannot rewrite every profile
-          // from one object. golden:slice28 pins composeHelperInsert with
-          // parent radius ≠ P2 — forcing these eight from station 0 / `p`
-          // turns that check RED.
-          const isolated = isolateLoftStationParams(prof);
-          lines.push(
-            `const ${xsN} = makeCrossSection(${planeExpr}, ${emitProfileExprFromParams(isolated)});`,
-          );
+        if (!anyOwn) {
+          const offsets = loftProfiles.map((prof) => Number(prof.offset) || 0);
+          const minOff = offsets.length ? Math.min(...offsets) : 0;
+          const w = +Number(minOff).toFixed(4);
+          for (const prof of loftProfiles) {
+            const xsN = allocateUniqueName(names, 'xs');
+            xsNames.push(xsN);
+            const planeExpr = emitOffsetPlaneExpr(fr, prof.offset);
+            // Isolate station fields so the parent helper params (defaults /
+            // selected chip / station-0 bleed) cannot rewrite every profile
+            // from one object. golden:slice28 pins composeHelperInsert with
+            // parent radius ≠ P2 — forcing these eight from station 0 / `p`
+            // turns that check RED.
+            const isolated = isolateLoftStationParams(prof);
+            lines.push(
+              `const ${xsN} = makeCrossSection(${planeExpr}, ${emitProfileExprFromParams(isolated)});`,
+            );
+          }
+          const solidExpr = `makeLoft([${xsNames.join(', ')}])`;
+          const placed = Math.abs(w) < 1e-12
+            ? `placeInFrame(${fr}, ${solidExpr})`
+            : `placeInFrame(${fr}, ${solidExpr}, [0, 0, ${w}])`;
+          lines.push(emitPartPlace(names, placed, partDeclared, partDeclared, solidCombineOp(p._contourLoft), solidMergeOn(p._contourLoft)));
+        } else {
+          const shared = p._contourLoft.plane;
+          const frames = loftProfiles.map((prof) => loftStationWorldFrame(shared, prof));
+          const frameExprs = [];
+          for (let i = 0; i < loftProfiles.length; i++) {
+            const prof = loftProfiles[i];
+            const isolated = isolateLoftStationParams(prof);
+            const xsN = allocateUniqueName(names, 'xs');
+            xsNames.push(xsN);
+            let planeExpr;
+            if (_loftOwnsPlane(prof)) {
+              const fv = allocateUniqueName(names, 'fr');
+              lines.push(`const ${fv} = ${emitPlaneFrameLiteral(frames[i])};`);
+              planeExpr = fv;
+            } else {
+              planeExpr = emitOffsetPlaneExpr(fr, prof.offset);
+            }
+            frameExprs.push(planeExpr);
+            lines.push(
+              `const ${xsN} = makeCrossSection(${planeExpr}, ${emitProfileExprFromParams(isolated)});`,
+            );
+          }
+          const solidExpr = `makeLoft([${xsNames.join(', ')}])`;
+          let placeExpr = frameExprs[0];
+          if (loftFramesParallel(frames)) {
+            const n0 = frames[0].normal;
+            const l0 = Math.hypot(n0[0], n0[1], n0[2]) || 1;
+            const axis = [n0[0] / l0, n0[1] / l0, n0[2] / l0];
+            const c0 = frames[0].center;
+            let zShift = 0;
+            for (let i = 1; i < frames.length; i++) {
+              const d = [
+                frames[i].center[0] - c0[0],
+                frames[i].center[1] - c0[1],
+                frames[i].center[2] - c0[2],
+              ];
+              zShift = Math.min(zShift, _loftDot(d, axis));
+            }
+            const w = +Number(zShift).toFixed(4);
+            placeExpr = Math.abs(w) < 1e-12
+              ? `placeInFrame(${frameExprs[0]}, ${solidExpr})`
+              : `placeInFrame(${frameExprs[0]}, ${solidExpr}, [0, 0, ${w}])`;
+          } else {
+            placeExpr = `placeInFrame(${frameExprs[0]}, ${solidExpr})`;
+          }
+          lines.push(emitPartPlace(names, placeExpr, partDeclared, partDeclared, solidCombineOp(p._contourLoft), solidMergeOn(p._contourLoft)));
         }
-        const solidExpr = `makeLoft([${xsNames.join(', ')}])`;
-        const placed = Math.abs(w) < 1e-12
-          ? `placeInFrame(${fr}, ${solidExpr})`
-          : `placeInFrame(${fr}, ${solidExpr}, [0, 0, ${w}])`;
-        lines.push(emitPartPlace(names, placed, partDeclared, partDeclared, solidCombineOp(p._contourLoft), solidMergeOn(p._contourLoft)));
         lines.push(CONTOUR_LOFT_END);
       } else if (p._contourRevolve) {
         const rev = p._contourRevolve;

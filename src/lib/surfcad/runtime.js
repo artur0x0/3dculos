@@ -4603,7 +4603,7 @@ function sheetMetalSolid(spec) {
 }
 
 /**
- * makeLoft(sections, opts?) — loft ≥2 makeCrossSection values.
+ * makeLoft(sections, opts?) — loft two or more profiles on parallel or angled planes.
  * Parallel planes (same workplane + offset along the normal): result is
  * local (z=0 at the lowest station). Confirm places it with placeInFrame.
  * Mapping is an angle-indexed polar warp (arc-length samples + exact

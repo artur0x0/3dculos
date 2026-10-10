@@ -2,6 +2,8 @@ import React from 'react';
 import { NumberField } from './controls/popupUI';
 import { FeatureDeleteButton } from './FeatureEditDelete';
 import FeatureSheet from './FeatureSheet';
+import { useDisplayUnit } from '../hooks/useDisplayUnit';
+import { displayToMm, lengthCaption, lengthToDisplay } from '../utils/displayUnit';
 
 const ACCENT = 'cyan';
 
@@ -32,6 +34,10 @@ const ContourModeChip = ({
   onAddLoftProfile,
   onRemoveLoftProfile,
   onLoftOffsetChange,
+  onLoftUseOffset,
+  onLoftPickFace,
+  onLoftPickWorkplane,
+  onLoftPickSketch,
   onConfirm,
   onUndoPoint,
   onClearPoints,
@@ -72,10 +78,19 @@ const ContourModeChip = ({
     : isSweep ? 'Sweep' : isLoft ? 'Loft' : isRevolve ? 'Revolve' : isExtrude ? 'Extrude' : null;
   const solidEntry = !!(commitName && !isWorkplane);
   const combineOp = combine === 'subtract' ? 'subtract' : 'add';
+  const [displayUnit] = useDisplayUnit();
   const loftProfiles = Array.isArray(loft.profiles) ? loft.profiles : [];
   const loftSelected = Number.isInteger(loft.selected) ? loft.selected : 0;
-  const loftOffset = Number(loftProfiles[loftSelected]?.offset);
+  const loftStation = loftProfiles[loftSelected] || null;
+  const loftOwnsPlane = !!(
+    loftStation
+    && loftStation.plane
+    && (loftStation.planeKind === 'face' || loftStation.planeKind === 'workplane' || loftStation.planeKind === 'contour')
+  );
+  const loftOffset = Number(loftStation?.offset);
   const loftOffsetVal = Number.isFinite(loftOffset) ? loftOffset : 0;
+  const loftOffsetShown = Number.isFinite(loftOffset) ? lengthToDisplay(loftOffset, displayUnit) : '';
+  const sketchPlanes = (savedContours || []).filter((c) => c?.plane?.center);
   const set = (name, raw, type) => {
     let v = raw;
     if (type === 'number') {
@@ -475,7 +490,7 @@ const ContourModeChip = ({
               type="button"
               onClick={() => onAddLoftProfile?.()}
               className="px-2.5 py-1 rounded text-[13px] bg-cyan-950/80 text-cyan-100 border border-cyan-700/70"
-              title="Add a profile (same workplane, next offset)"
+              title="Add a profile on the shared plane, at the next offset"
               disabled={loftProfiles.length >= 8}
             >
               +
@@ -491,25 +506,104 @@ const ContourModeChip = ({
               </button>
             )}
           </div>
-          <NumberField
-            id="loft-offset"
-            label="Offset"
-            accent={ACCENT}
-            value={Number.isFinite(loftOffset) ? loftOffset : ''}
-            onChange={(v) => {
-              if (v === '' || v === '-' || v === '.') {
-                onLoftOffsetChange?.(v);
-                return;
-              }
-              const n = Number(v);
-              onLoftOffsetChange?.(Number.isFinite(n) ? n : loftOffsetVal);
-            }}
-            min={-80}
-            max={80}
-            step={0.5}
-          />
+          <div className="text-[11px] uppercase tracking-wide text-cyan-200/80">Station plane</div>
+          <div className="flex items-center gap-1 flex-wrap" data-loft-station-plane={loftOwnsPlane ? (loftStation.planeKind || 'face') : 'offset'}>
+            <button
+              type="button"
+              onClick={() => onLoftUseOffset?.()}
+              aria-pressed={!loftOwnsPlane && loft.picking !== 'face'}
+              data-loft-plane="offset"
+              className={`px-2.5 py-1 rounded text-[13px] ${
+                !loftOwnsPlane && loft.picking !== 'face'
+                  ? 'bg-cyan-600 text-white'
+                  : 'bg-cyan-950/80 text-cyan-100 border border-cyan-700/70'
+              }`}
+              title="This station follows the card plane, offset along its normal"
+            >
+              Offset
+            </button>
+            <button
+              type="button"
+              onClick={() => onLoftPickFace?.()}
+              aria-pressed={loft.picking === 'face' || loftStation?.planeKind === 'face'}
+              data-loft-plane="face"
+              className={`px-2.5 py-1 rounded text-[13px] ${
+                loft.picking === 'face' || loftStation?.planeKind === 'face'
+                  ? 'bg-cyan-600 text-white'
+                  : 'bg-cyan-950/80 text-cyan-100 border border-cyan-700/70'
+              }`}
+              title="Tap a face, a construction plane, or a sketch for this station"
+            >
+              Face
+            </button>
+          </div>
+          {constructionPlanes.length > 0 && (
+            <label className="flex flex-col gap-0.5">
+              <span className="text-[11px] uppercase tracking-wide text-cyan-200/80">Station workplane</span>
+              <select
+                value={loftStation?.planeKind === 'workplane' ? (loftStation.planeRef || '') : ''}
+                onChange={(e) => {
+                  const id = e.target.value;
+                  const hit = constructionPlanes.find((p) => p.id === id);
+                  if (hit) onLoftPickWorkplane?.(hit.plane, hit.id, hit.name);
+                }}
+                className="rounded border border-cyan-700/70 bg-cyan-950/80 px-2.5 py-1 text-[13px] text-white"
+                aria-label="Station workplane"
+                data-loft-workplane=""
+              >
+                <option value="">Pick workplane…</option>
+                {constructionPlanes.map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            </label>
+          )}
+          {sketchPlanes.length > 0 && (
+            <label className="flex flex-col gap-0.5">
+              <span className="text-[11px] uppercase tracking-wide text-cyan-200/80">Station sketch</span>
+              <select
+                value={loftStation?.planeKind === 'contour' ? (loftStation.planeRef || '') : ''}
+                onChange={(e) => {
+                  const id = e.target.value;
+                  const hit = sketchPlanes.find((c) => c.id === id);
+                  if (hit) onLoftPickSketch?.(hit);
+                }}
+                className="rounded border border-cyan-700/70 bg-cyan-950/80 px-2.5 py-1 text-[13px] text-white"
+                aria-label="Station sketch plane"
+                data-loft-sketch=""
+              >
+                <option value="">Pick sketch plane…</option>
+                {sketchPlanes.map((c) => (
+                  <option key={c.id} value={c.id}>{c.label}</option>
+                ))}
+              </select>
+            </label>
+          )}
+          {!loftOwnsPlane && (
+            <NumberField
+              id="loft-offset"
+              label={lengthCaption('Offset', displayUnit)}
+              accent={ACCENT}
+              value={loftOffsetShown}
+              onChange={(v) => {
+                if (v === '' || v === '-' || v === '.') {
+                  onLoftOffsetChange?.(v);
+                  return;
+                }
+                const mm = displayToMm(v, displayUnit);
+                onLoftOffsetChange?.(Number.isFinite(mm) ? mm : loftOffsetVal);
+              }}
+              min={lengthToDisplay(-80, displayUnit)}
+              max={lengthToDisplay(80, displayUnit)}
+              step={displayUnit === 'in' ? 0.05 : 0.5}
+            />
+          )}
           <div className="text-[11px] text-cyan-200/70 leading-tight">
-            Same plane · offset along normal · min 2
+            {loftOwnsPlane
+              ? `${loftStation.planeLabel || loftStation.planeKind} · min 2`
+              : loft.picking === 'face'
+                ? 'Tap a face, plane, or sketch · min 2'
+                : 'Same plane · offset along normal · min 2'}
           </div>
         </div>
       )}

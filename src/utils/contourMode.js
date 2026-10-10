@@ -228,14 +228,45 @@ function _newLoftProfileId(profiles = []) {
 }
 
 /**
- * v1 Loft: two stations on the shared workplane (circle r=5 @ 0, circle r=8 @ 20).
- * Same-plane + offset-along-normal. Independent planes are a later slice.
+ * Default Loft: two stations on the shared workplane (circle r=5 @ 0, circle r=8 @ 20).
+ * Each station can later pick its own face, workplane, or saved sketch plane.
  */
 export function defaultLoftProfiles() {
   return [
     { id: 'p0', tool: 'circle', params: defaultContourParams('circle'), offset: 0 },
     { id: 'p1', tool: 'circle', params: { ...defaultContourParams('circle'), radius: 8 }, offset: 20 },
   ];
+}
+
+function _cloneFrame(frame) {
+  if (!frame?.center || !frame?.normal || !frame?.x || !frame?.y) return null;
+  const num = (v) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  };
+  const axis = (v) => {
+    if (!Array.isArray(v) || v.length < 3) return null;
+    const out = [num(v[0]), num(v[1]), num(v[2])];
+    return out.every((n) => n != null) ? out : null;
+  };
+  const center = axis(frame.center);
+  const normal = axis(frame.normal);
+  const x = axis(frame.x);
+  const y = axis(frame.y);
+  if (!center || !normal || !x || !y) return null;
+  return { center, normal, x, y };
+}
+
+/** A station that sits on its own frame, not the shared plane plus an offset. */
+export function loftStationOwnsPlane(profile) {
+  return !!(
+    profile
+    && (profile.planeKind === 'face' || profile.planeKind === 'workplane' || profile.planeKind === 'contour')
+    && profile.plane?.center
+    && profile.plane?.normal
+    && profile.plane?.x
+    && profile.plane?.y
+  );
 }
 
 export function defaultLoftState() {
@@ -246,11 +277,17 @@ export function normalizeLoftProfile(raw = {}, fallbackTool = 'circle') {
   const tool = isContourTool(raw.tool) ? raw.tool : fallbackTool;
   const params = { ...defaultContourParams(tool), ...(raw.params || {}) };
   const offset = Number(raw.offset);
+  const plane = _cloneFrame(raw.plane);
+  const owns = (raw.planeKind === 'face' || raw.planeKind === 'workplane' || raw.planeKind === 'contour') && plane;
   return {
     id: raw.id || _newLoftProfileId(),
     tool,
     params,
     offset: Number.isFinite(offset) ? offset : 0,
+    planeKind: owns ? raw.planeKind : 'offset',
+    plane: owns ? plane : null,
+    planeRef: owns ? (raw.planeRef || null) : null,
+    planeLabel: owns ? (raw.planeLabel || '') : '',
   };
 }
 
@@ -282,8 +319,50 @@ export function selectLoftProfile(state, index) {
     ...state,
     tool: cur.tool,
     params: { ...cur.params },
-    loft: { ...state.loft, selected },
+    loft: { ...state.loft, selected, picking: null },
   };
+}
+
+/**
+ * Put the selected station on a picked frame. `kind` is face, workplane, or
+ * contour. The shared card plane (offset stations) is left alone.
+ */
+export function setLoftStationPlane(state, frame, meta = {}) {
+  const plane = _cloneFrame(frame);
+  if (!plane || !state?.loft) return state;
+  const next = writeLoftSelected(state, {
+    planeKind: meta.kind || 'face',
+    plane,
+    planeRef: meta.ref || null,
+    planeLabel: meta.label || '',
+  });
+  return { ...next, loft: { ...next.loft, picking: null } };
+}
+
+/** Selected station goes back to the shared plane plus its offset. */
+export function clearLoftStationPlane(state) {
+  if (!state?.loft) return state;
+  const next = writeLoftSelected(state, {
+    planeKind: 'offset',
+    plane: null,
+    planeRef: null,
+    planeLabel: '',
+  });
+  return { ...next, loft: { ...next.loft, picking: null } };
+}
+
+/** Next face, construction plane, or sketch hit assigns the selected station. */
+export function armLoftStationPlanePick(state) {
+  if (!state?.loft) return state;
+  return { ...state, loft: { ...state.loft, picking: 'face' } };
+}
+
+/** Own-plane station frame, or null when the station follows the shared plane. */
+export function selectedLoftDrawFrame(state) {
+  if (!isLoftEntry(state?.entry) || !state?.loft?.profiles?.length) return null;
+  const selected = Math.max(0, Math.min(state.loft.selected || 0, state.loft.profiles.length - 1));
+  const profile = state.loft.profiles[selected];
+  return loftStationOwnsPlane(profile) ? profile.plane : null;
 }
 
 export function addLoftProfile(state) {
@@ -992,7 +1071,7 @@ export function validateLoftProfiles(profiles) {
     return { ok: false, message: `makeLoft: at most ${LOFT_MAX_PROFILES} profiles in v1` };
   }
   const normalized = [];
-  const offsets = [];
+  const sharedOffsets = [];
   for (let i = 0; i < profiles.length; i++) {
     const p = normalizeLoftProfile(profiles[i], profiles[i]?.tool || 'circle');
     const gate = validateContourProfile(p.tool, p.params);
@@ -1002,10 +1081,12 @@ export function validateLoftProfiles(profiles) {
     if (!Number.isFinite(Number(p.offset))) {
       return { ok: false, message: `makeLoft: profile ${i + 1}: offset must be finite` };
     }
+    if (!loftStationOwnsPlane(p)) sharedOffsets.push(Number(p.offset));
     normalized.push(p);
-    offsets.push(Number(p.offset));
   }
-  const sorted = offsets.slice().sort((a, b) => a - b);
+  // Own-plane stations are not on this offset axis. Stations that still
+  // share the card plane keep the coincident-offset refuse.
+  const sorted = sharedOffsets.slice().sort((a, b) => a - b);
   for (let i = 1; i < sorted.length; i++) {
     if (Math.abs(sorted[i] - sorted[i - 1]) < 1e-6) {
       return {
@@ -1015,6 +1096,21 @@ export function validateLoftProfiles(profiles) {
     }
   }
   return { ok: true, normalized };
+}
+
+function _loftSectionFromProfile(sharedPlane, profile) {
+  const built = buildProfileFromParams(toolToProfileParams(profile.tool, profile.params));
+  const owns = loftStationOwnsPlane(profile);
+  const plane = owns ? profile.plane : offsetPlaneFrame(sharedPlane, profile.offset);
+  const section = {
+    plane,
+    contours: built.contours,
+    tool: profile.tool,
+    params: profile.params,
+  };
+  // An explicit offset would hide the picked plane's center from makeLoft.
+  if (!owns) section.offset = profile.offset;
+  return section;
 }
 
 /**
@@ -1028,13 +1124,9 @@ export function buildLoftSolidPreview(face, profiles) {
   const sections = [];
   try {
     for (const p of gate.normalized) {
-      const built = buildProfileFromParams(toolToProfileParams(p.tool, p.params));
-      if (!built?.contours?.length) return null;
-      sections.push({
-        plane: offsetPlaneFrame(plane, p.offset),
-        contours: built.contours,
-        offset: p.offset,
-      });
+      const section = _loftSectionFromProfile(plane, p);
+      if (!section.contours?.length) return null;
+      sections.push(section);
     }
   } catch {
     return null;
@@ -1215,13 +1307,7 @@ export function loftSectionsForCompose(face, profiles) {
   const gate = validateLoftProfiles(profiles);
   if (!gate.ok) return gate;
   const plane = planeFromContourFace(face);
-  const sections = gate.normalized.map((p) => ({
-    plane: offsetPlaneFrame(plane, p.offset),
-    contours: buildProfileFromParams(toolToProfileParams(p.tool, p.params)).contours,
-    offset: p.offset,
-    tool: p.tool,
-    params: p.params,
-  }));
+  const sections = gate.normalized.map((p) => _loftSectionFromProfile(plane, p));
   const assembled = assembleLoftStations(sections);
   if (!assembled.ok) return assembled;
   return { ok: true, normalized: gate.normalized, sections, assembled };
@@ -1713,7 +1799,8 @@ function stripContourSiblingBlocks(buffer) {
  * Confirm → insert or replace in-mode Loft (≥2 profiles + makeLoft + placeInFrame).
  * Empty buffer: `let part = placeInFrame`. Existing part: union via `part.add`.
  * Second Confirm updates an additive block; founding `let part` solids stack.
- * v1: same workplane, each profile offset along the plane normal.
+ * Offset stations share the card plane. A station with its own frame emits
+ * that frame. Parallel offset-only confirms stay on offsetPlaneFrame.
  *
  * @returns {{ ok: true, buffer: string, run: true } | { ok: false, message: string }}
  */
@@ -1764,6 +1851,10 @@ export function composeContourLoft(buffer, {
   const stationParams = sections.normalized.map((p) => ({
     ...toolToProfileParams(p.tool, { ...(p.params || {}) }),
     offset: p.offset,
+    planeKind: p.planeKind,
+    plane: loftStationOwnsPlane(p) ? p.plane : null,
+    planeRef: p.planeRef || null,
+    planeLabel: p.planeLabel || '',
   }));
   // Do not spread station 0 onto the helper params object — that was rewriting
   // every makeCrossSection from one profile when emit fell back to parent fields.

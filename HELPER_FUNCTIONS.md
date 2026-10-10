@@ -115,14 +115,16 @@ exits with no additional solid commit. **Fillet** is its own edge-pick mode
 (Slice 27), not a contour entry.
 The one-shot Xform Extrude stub is gone — Extrude always enters contour mode.
 
-**Loft plane model:** the contour card still uses one shared workplane
-(selected planar face or default +Z). Each profile is `makeCrossSection` on
-`offsetPlaneFrame(plane, offset)` — a copy of that plane whose `center` is
-translated by `offset * normal`. `makeLoft` also accepts profiles on planes
-at an angle: each contour is mapped through that plane's own frame. A 90°
-turn is carried on a spine between the planes so the sides do not fold.
+**Loft plane model:** each Loft-card station follows the shared workplane
+(selected planar face or default +Z) plus an offset along its normal, or
+picks its own face, saved workplane, or sketch plane. Offset stations are
+`makeCrossSection` on `offsetPlaneFrame(plane, offset)`. A station with its
+own frame emits that frame. `makeLoft` maps each contour through its plane.
+A 90° turn is carried on a spine between the planes so the sides do not fold.
 Loud-fail on fewer than 2 profiles, coincident stations, or a turn tighter
-than the profiles. Confirm places a parallel loft with `placeInFrame`.
+than the profiles. Confirm places the solid with `placeInFrame` on the first
+station when the planes are not parallel, and on the shared plane when every
+station is an offset.
 When `part` already exists that placement is unioned (`part.add`); an empty
 script still assigns `let part = placeInFrame(...)` (no host box / no
 `placeOnFace`).
@@ -1344,14 +1346,16 @@ const xs1 = makeCrossSection(offsetPlaneFrame(fr, 20), profileCircle(8, 32));
 part = placeInFrame(fr, makeLoft([xs0, xs1]));
 ```
 
-**Contour-mode Loft (Slice 28):** game-mode **Loft** builds a multi-profile
-list on the shared workplane (min 2, default circle r=5 @ 0 and circle r=8
-@ 20). Circle / rect / polygon / polyline edit the selected profile. Confirm
-emits one `makeCrossSection` per station (`offsetPlaneFrame` + profile) plus
-`makeLoft`, then `part = placeInFrame(frame, makeLoft(…))` (replace, no host
-add / no starter cube). Second Confirm replaces the same marked block.
-**Back** exits with no commit. Live preview skins the stations as offsets /
-shapes change.
+**Contour-mode Loft:** game-mode **Loft** builds a multi-profile list (min 2,
+default circle r=5 @ 0 and circle r=8 @ 20 on the shared workplane). Circle /
+rect / polygon / polyline edit the selected profile. Each station can stay on
+that plane with an offset, or pick a face, a saved workplane, or a saved
+sketch's plane. Confirm emits one `makeCrossSection` per station plus
+`makeLoft`, then `placeInFrame`. Offset-only stations still use
+`offsetPlaneFrame`. A station with its own frame emits that frame, and the
+placement frame is the first station. Second Confirm replaces the same marked
+block. **Back** exits with no commit. Live preview skins the stations as
+offsets, planes, or shapes change.
 
 **Loud failures:** < 2 profiles; coincident stations (zero-length loft);
 degenerate / empty contours; a turn tighter than the profiles
