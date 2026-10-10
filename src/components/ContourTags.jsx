@@ -17,6 +17,7 @@ import { formatDisplayLength } from '../utils/displayUnit';
 import { CONSTRAINT_LABELS } from '../utils/contourGesture';
 import { constraintAnchor, dimensionAnchor, planeUvToWorld } from '../utils/contourPick';
 import { dimensionLayout, dimensionMarkup } from '../utils/contourDimensionDraw';
+import { worldPoint } from '../utils/partPose';
 
 const CONSTRAINT_ICONS = {
   horizontal: MoveHorizontal,
@@ -35,8 +36,8 @@ const CONSTRAINT_ICONS = {
  * is a size container with overflow hidden, and on Safari that clips
  * descendants and lets the WebGL canvas paint over them. Fixed coordinates
  * come from the canvas, so a tag stays on the geometry. The layer ignores
- * pointers. Each tag does not, so orbit still hits the canvas. Tap one for
- * Delete and X. That does not reopen the card. Positions follow the camera
+ * pointers. Each tag does not, so orbit still hits the canvas. Tap a
+ * dimension or constraint tag to reopen it in the card. Positions follow the camera
  * in a frame loop and are not React state.
  */
 const ContourTags = ({
@@ -48,6 +49,7 @@ const ContourTags = ({
   onSelect,
   onDelete,
   onClose,
+  getAnchor = null,
 }) => {
   const [unit] = useDisplayUnit();
   const nodes = useRef(new Map());
@@ -85,7 +87,9 @@ const ContourTags = ({
           el.dataset.contourTagVisible = '0';
           return;
         }
-        const world = planeUvToWorld(uv, plane);
+        const local = planeUvToWorld(uv, plane);
+        const pose = getAnchor?.();
+        const world = pose ? worldPoint(local, pose) : local;
         const p = scratch.current.set(world[0], world[1], world[2]).project(camera);
         const x = (p.x * 0.5 + 0.5) * view.width + view.left;
         const y = (-p.y * 0.5 + 0.5) * view.height + view.top;
@@ -107,7 +111,9 @@ const ContourTags = ({
       if (camera && view && view.width > 0 && plane?.center) {
         const project = (uv) => {
           if (!uv) return null;
-          const world = planeUvToWorld(uv, plane);
+          const local = planeUvToWorld(uv, plane);
+          const pose = getAnchor?.();
+          const world = pose ? worldPoint(local, pose) : local;
           const p = scratch.current.set(world[0], world[1], world[2]).project(camera);
           const depthOk = p.z >= -1.02 && p.z <= 1.02;
           if (!depthOk) return null;
@@ -157,7 +163,7 @@ const ContourTags = ({
       if (svgRef.current === svg) svgRef.current = null;
       markupRef.current = '';
     };
-  }, [cameraRef, canvasRef, plane, model]);
+  }, [cameraRef, canvasRef, plane, model, getAnchor]);
 
   if ((!dimensions.length && !constraints.length) || !plane) return null;
 

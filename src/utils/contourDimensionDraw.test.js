@@ -6,6 +6,10 @@ import {
   dimensionLayout,
   dimensionMarkup,
 } from './contourDimensionDraw.js';
+import { contourFromRectangle, solveContour } from './contourSolve.js';
+import { emitSolveContour, parseSolveContour } from './contourScript.js';
+import { buildDimension, specFromSolved } from './contourGesture.js';
+import { SKETCH_HIT_PX, pickContourScreen } from './contourPick.js';
 import { sketchPointScaleFromDistance, SKETCH_POINT_PX, SKETCH_POINT_RADIUS } from './sketchLine.js';
 
 const model = {
@@ -40,12 +44,29 @@ test('a length dimension offsets a double-headed arrow from the edge', () => {
   assert.equal(fig.arrows.length, 2);
   assert.ok(fig.shaft);
   const span = dist(fig.shaft[0], fig.shaft[1]);
-  assert.ok(Math.abs(span - 120) < 1, `shaft ${span}`);
+  assert.ok(Math.abs(span - 102) < 1, `shaft ${span}`);
   assert.ok(Math.abs(fig.label.x - (fig.shaft[0].x + fig.shaft[1].x) / 2) < 0.5);
   assert.ok(Math.abs(fig.label.y - (fig.shaft[0].y + fig.shaft[1].y) / 2) < 0.5);
   assert.ok(Math.abs(fig.label.y - project([0, 0]).y) > 16, 'the arrow leaves the edge');
   const tipOut = dist(fig.arrows[0].tip, fig.shaft[1]) > dist(fig.arrows[0].left, fig.shaft[1]);
   assert.equal(tipOut, true);
+  const onExt = (tip, ext) => {
+    const dx = ext.b.x - ext.a.x;
+    const dy = ext.b.y - ext.a.y;
+    const L2 = dx * dx + dy * dy;
+    const t = ((tip.x - ext.a.x) * dx + (tip.y - ext.a.y) * dy) / L2;
+    const px = ext.a.x + t * dx;
+    const py = ext.a.y + t * dy;
+    return { d: Math.hypot(tip.x - px, tip.y - py), t };
+  };
+  for (const arrow of fig.arrows) {
+    const hits = fig.extensions.map((ext) => onExt(arrow.tip, ext));
+    const best = hits.reduce((p, q) => (q.d < p.d ? q : p));
+    assert.ok(best.d < 0.2, `tip off the extension by ${best.d}`);
+    assert.ok(best.t > 0.05 && best.t < 0.98, `tip t ${best.t} does not sit on the extension with room past it`);
+  }
+  const baseGap = dist(fig.arrows[0].tip, fig.shaft[0]);
+  assert.ok(baseGap > 6 && baseGap < 12, `shaft reaches the tip (${baseGap})`);
   const html = dimensionMarkup({ ...fig, id: 'd0' });
   assert.match(html, /data-contour-dim-kind="length"/);
   assert.match(html, /data-contour-dim-ext/);
@@ -89,6 +110,18 @@ test('an angle dimension is an arc with two arrowheads', () => {
   assert.ok(fig.arc.length > 4);
   assert.equal(fig.arrows.length, 2);
   assert.equal(fig.extensions.length, 2);
+  const arcEnd = fig.arc[0];
+  const tipGap = Math.hypot(fig.arrows[0].tip.x - arcEnd.x, fig.arrows[0].tip.y - arcEnd.y);
+  assert.ok(tipGap > 6, `arc runs through the arrowhead (${tipGap})`);
+  const onExt = (tip, ext) => {
+    const dx = ext.b.x - ext.a.x;
+    const dy = ext.b.y - ext.a.y;
+    const L2 = dx * dx + dy * dy;
+    const t = ((tip.x - ext.a.x) * dx + (tip.y - ext.a.y) * dy) / L2;
+    return Math.hypot(tip.x - (ext.a.x + t * dx), tip.y - (ext.a.y + t * dy));
+  };
+  const tipOn = Math.min(...fig.extensions.map((ext) => onExt(fig.arrows[0].tip, ext)));
+  assert.ok(tipOn < 0.2, `angle tip off the extension by ${tipOn}`);
   const html = dimensionMarkup({ ...fig, id: 'd1' });
   assert.match(html, /data-contour-dim-arc/);
   assert.equal(html.match(/data-contour-dim-arrow/g).length, 2);
@@ -103,4 +136,48 @@ test('a sketch point keeps a constant screen diameter', () => {
     const diameterPx = (SKETCH_POINT_RADIUS * scale * 2) / worldPerPx;
     assert.ok(Math.abs(diameterPx - SKETCH_POINT_PX) < 0.05, `${distance} -> ${diameterPx}`);
   }
+});
+
+test('a line distance anchors on both taps, and the solve keeps them', () => {
+  const rect = contourFromRectangle(40, 20, true);
+  const picks = [
+    { kind: 'line', id: 'e0', at: [-8, -10] },
+    { kind: 'line', id: 'e2', at: [-8, 10] },
+  ];
+  const built = buildDimension(rect, picks, { kind: 'distance', valueMm: 20, side: 1 });
+  assert.equal(built.ok, true);
+  const solved = solveContour({
+    ...rect,
+    dimensions: [...rect.dimensions, built.dimension],
+  });
+  const dim = solved.dimensions.find((item) => item.kind === 'distance' && item.a === 'e0');
+  assert.ok(dim?.anchors);
+  assert.ok(Math.abs(dim.anchors[0][0] + 8) < 1e-6);
+  const ends = dimensionEndpoints(solved, dim);
+  assert.ok(Math.abs(ends.a[0] + 8) < 0.05, `first end ${ends.a} is the midpoint`);
+  assert.ok(Math.abs(ends.a[1] + 10) < 0.05, `first end ${ends.a}`);
+  assert.ok(Math.abs(ends.b[0] + 8) < 0.05, `second end ${ends.b}`);
+  const roundTrip = parseSolveContour(emitSolveContour(specFromSolved(solved)));
+  const again = roundTrip.dimensions.find((item) => item.id === dim.id);
+  assert.ok(Math.abs(again.anchors[0][0] + 8) < 1e-6);
+});
+
+test('sketch entities hit inside 12px and miss outside it', () => {
+  assert.equal(SKETCH_HIT_PX, 12);
+  const sketch = {
+    points: [
+      { id: 'p0', at: [0, 0] },
+      { id: 'p1', at: [80, 0] },
+    ],
+    lines: [{ id: 'e0', a: 'p0', b: 'p1' }],
+    arcs: [],
+  };
+  const project = (uv) => ({ x: uv[0], y: uv[1] });
+  const lineHit = pickContourScreen(sketch, project, 40, 11);
+  assert.equal(lineHit?.kind, 'line');
+  assert.equal(lineHit?.id, 'e0');
+  assert.equal(pickContourScreen(sketch, project, 40, 13), null);
+  const pointHit = pickContourScreen(sketch, project, 0, 11);
+  assert.equal(pointHit?.kind, 'point');
+  assert.equal(pointHit?.id, 'p0');
 });

@@ -86,6 +86,14 @@ function copyItem(item, label) {
   if (item.value != null) copy.value = num(item.value, `${label} ${item.id} value`);
   if (item.side != null) copy.side = item.side < 0 ? -1 : 1;
   if (item.sense != null) copy.sense = item.sense < 0 ? -1 : 1;
+  // Where the two taps sat on a line-line distance. The figure starts there.
+  // Dropping this is what put the first extension on the edge midpoint.
+  if (Array.isArray(item.anchors)) {
+    copy.anchors = item.anchors.map((uv, i) => {
+      if (!Array.isArray(uv) || uv.length < 2) fail(`dimension ${item.id} anchor ${i} must be [u, v]`);
+      return [num(uv[0], 'anchor u'), num(uv[1], 'anchor v')];
+    });
+  }
   if (item.at && typeof item.at === 'object') {
     copy.at = {};
     for (const [id, uv] of Object.entries(item.at)) {

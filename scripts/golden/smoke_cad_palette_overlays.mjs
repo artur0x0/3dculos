@@ -229,8 +229,9 @@ console.log('cad palette + plane/contour toggles');
     'contours hidden skip saved-contour paint',
     /if \(!showContours\) \{\s*clearSavedContourGhosts\(\)/.test(view),
   );
-  check('workplane overlay gated on Plane',
-    /if \(showPlanes \|\| isWorkplaneEntry\(contourMode\.entry\)\) paintWorkplaneOverlay/.test(view));
+  check('sketch plane square is not painted',
+    !/paintWorkplaneOverlay\(/.test(view)
+    && /The sketch plane square is not drawn/.test(view));
   check(
     'saved contour pick gated',
     /showContoursRef\.current && !moveModeRef\.current && contourModeRef\.current\?\.tool !== 'polyline'/.test(view)

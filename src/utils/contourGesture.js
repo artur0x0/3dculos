@@ -37,6 +37,9 @@ export function specFromSolved(solved) {
           Array.isArray(uv) ? uv.slice() : uv,
         ]));
       }
+      if (Array.isArray(d.anchors)) {
+        copy.anchors = d.anchors.map((uv) => (Array.isArray(uv) ? uv.slice() : uv));
+      }
       return copy;
     }),
     constraints: (solved.constraints || []).map((c) => {
@@ -82,7 +85,15 @@ export function selectContourGesture(state, gesture) {
   if (!base || base.entry === 'workplane') return base;
   if (gesture !== 'arc' && gesture !== 'dimension' && gesture !== 'constraints') return base;
   if (base.gesture === gesture) {
-    return { ...base, gesture: null, picks: [], tagId: null, gestureNote: null };
+    return {
+      ...base,
+      gesture: null,
+      picks: [],
+      tagId: null,
+      gestureNote: null,
+      dimensionEdit: null,
+      constraintEdit: null,
+    };
   }
   const armed = {
     ...base,
@@ -90,6 +101,8 @@ export function selectContourGesture(state, gesture) {
     picks: [],
     tagId: null,
     gestureNote: null,
+    dimensionEdit: null,
+    constraintEdit: null,
   };
   return promoteContourState(armed);
 }
@@ -283,6 +296,9 @@ export function buildDimension(model, picks, draft) {
   } else if ((kind === 'angle' || kind === 'distance') && list.length === 2 && list.every((p) => p.kind === 'line')) {
     dim.a = list[0].id;
     dim.b = list[1].id;
+    if (kind === 'distance' && list[0].at && list[1].at) {
+      dim.anchors = [[list[0].at[0], list[0].at[1]], [list[1].at[0], list[1].at[1]]];
+    }
     if (kind === 'angle') dim.sense = draft.sense < 0 ? -1 : 1;
     else dim.side = draft.side < 0 ? -1 : 1;
   } else if (kind === 'offset') {
@@ -353,7 +369,10 @@ export function liveDimension(state, draft) {
   }
   const live = ready.dimensionLive?.base
     ? { base: ready.dimensionLive.base, id: ready.dimensionLive.id }
-    : { base: copyContour(ready.params.contour), id: nextDimId(ready.params.contour) };
+    : {
+      base: copyContour(ready.params.contour),
+      id: ready.dimensionEdit || nextDimId(ready.params.contour),
+    };
   const kind = draft.kind;
   const value = Number(draft.valueMm);
   const picks = ready.picks || [];
@@ -370,10 +389,7 @@ export function liveDimension(state, draft) {
   }
   let solved;
   try {
-    solved = solveContour({
-      ...live.base,
-      dimensions: [...(live.base.dimensions || []), built.dimension],
-    });
+    solved = solveContour(replaceDimension(live.base, built.dimension));
   } catch (err) {
     const message = err.message || String(err);
     return { state: withLiveBase(ready, live, message), error: message };
@@ -413,19 +429,98 @@ export function commitDimension(state, draft) {
   }
   const built = buildDimension(ready.params.contour, ready.picks, draft);
   if (!built.ok) return { state: ready, error: built.message };
-  const model = {
-    ...ready.params.contour,
-    dimensions: [...(ready.params.contour.dimensions || []), built.dimension],
+  return storeSolved(ready, replaceDimension(ready.params.contour, built.dimension));
+}
+
+function replaceDimension(contour, dim) {
+  const kept = (contour?.dimensions || []).filter((item) => item.id !== dim.id);
+  return { ...contour, dimensions: [...kept, dim] };
+}
+
+/** Picks that reopen a saved dimension in the card. */
+export function picksForDimension(model, dim) {
+  if (!model || !dim) return [];
+  const hasPoint = (id) => (model.points || []).some((p) => p.id === id);
+  const hasLine = (id) => (model.lines || []).some((l) => l.id === id);
+  const chip = (kind, id, at) => {
+    const pick = { kind, id, label: id };
+    if (at) pick.at = [at[0], at[1]];
+    return pick;
   };
-  return storeSolved(ready, model);
+  const atOf = (id) => (model.points || []).find((p) => p.id === id)?.at || null;
+  if (dim.kind === 'length' && dim.edge) return [chip('line', dim.edge)];
+  if (dim.kind === 'radius' && dim.arc) return [chip('arc', dim.arc)];
+  if (dim.kind === 'offset' && dim.point && dim.edge) {
+    return [chip('point', dim.point, atOf(dim.point)), chip('line', dim.edge)];
+  }
+  if ((dim.kind === 'angle' || dim.kind === 'distance') && dim.a && dim.b) {
+    const kindOf = (id) => (hasPoint(id) && !hasLine(id) ? 'point' : 'line');
+    const a = chip(kindOf(dim.a), dim.a, kindOf(dim.a) === 'point' ? atOf(dim.a) : dim.anchors?.[0]);
+    const b = chip(kindOf(dim.b), dim.b, kindOf(dim.b) === 'point' ? atOf(dim.b) : dim.anchors?.[1]);
+    return [a, b];
+  }
+  return [];
+}
+
+/** Tap a dimension tag. The card opens on that dimension, picks highlighted. */
+export function beginDimensionEdit(state, id) {
+  const base = revertLiveDimension(state);
+  const contour = base?.params?.contour;
+  const dim = (contour?.dimensions || []).find((item) => item.id === id);
+  if (!dim) return base;
+  return {
+    ...base,
+    gesture: 'dimension',
+    picks: picksForDimension(contour, dim),
+    tagId: null,
+    dimensionEdit: id,
+    constraintEdit: null,
+    dimensionLive: { base: copyContour(contour), id },
+    gestureNote: null,
+  };
+}
+
+/** Picks that reopen a saved constraint. */
+export function picksForConstraint(model, con) {
+  if (!model || !con) return [];
+  const has = (list, id) => (list || []).some((item) => item.id === id);
+  return (con.items || []).map((id) => {
+    if (has(model.points, id)) {
+      const at = (model.points || []).find((p) => p.id === id)?.at;
+      const pick = { kind: 'point', id, label: id };
+      if (at) pick.at = [at[0], at[1]];
+      return pick;
+    }
+    if (has(model.lines, id)) return { kind: 'line', id, label: id };
+    if (has(model.arcs, id)) return { kind: 'arc', id, label: id };
+    return null;
+  }).filter(Boolean);
+}
+
+/** Tap a constraint tag. The card opens on that constraint, picks highlighted. */
+export function beginConstraintEdit(state, id) {
+  const base = revertLiveDimension(state);
+  const contour = base?.params?.contour;
+  const con = (contour?.constraints || []).find((item) => item.id === id);
+  if (!con) return base;
+  return {
+    ...base,
+    gesture: 'constraints',
+    picks: picksForConstraint(contour, con),
+    tagId: null,
+    dimensionEdit: null,
+    constraintEdit: id,
+    dimensionLive: null,
+    gestureNote: null,
+  };
 }
 
 export function deleteContourDimension(state, id) {
   const cleared = revertLiveDimension(state);
   const contour = cleared?.params?.contour;
   if (!contour) return { state: cleared, error: 'No contour.' };
-  if (state?.dimensionLive?.id === id) {
-    return { state: { ...cleared, tagId: null }, error: null };
+  if (state?.dimensionLive?.id === id && !(contour.dimensions || []).some((d) => d.id === id)) {
+    return { state: { ...cleared, tagId: null, dimensionEdit: null }, error: null };
   }
   const dimensions = (contour.dimensions || []).filter((d) => d.id !== id);
   if (dimensions.length === (contour.dimensions || []).length) {
@@ -716,9 +811,12 @@ export function commitConstraint(state, draft) {
   }
   const built = buildConstraint(ready.params.contour, ready.picks, draft);
   if (!built.ok) return { state: ready, error: built.message };
+  const id = ready.constraintEdit || built.constraint.id;
+  const con = { ...built.constraint, id };
+  const kept = (ready.params.contour.constraints || []).filter((item) => item.id !== id);
   const model = {
     ...ready.params.contour,
-    constraints: [...(ready.params.contour.constraints || []), built.constraint],
+    constraints: [...kept, con],
   };
   return storeSolved(ready, model);
 }

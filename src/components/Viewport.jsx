@@ -156,8 +156,6 @@ import {
   validateRevolveParams,
   validateSweepPath,
   worldToPlaneUV,
-  workplaneOverlaySize,
-  workplaneQuadCorners,
   writeLoftSelected,
   applyContourPick,
   armContourGesture,
@@ -168,8 +166,16 @@ import {
   saveContourConstraint,
   saveContourDimension,
 } from '../utils/contourMode';
-import { pickContourScreen, planeUvToWorld } from '../utils/contourPick';
-import { contourEntityColor, contourPaintModel, savedContourStatus } from '../utils/contourStatus';
+import { SKETCH_HIT_PX, anchorOnEntity, pickContourScreen, planeUvToWorld } from '../utils/contourPick';
+import { beginConstraintEdit, beginDimensionEdit } from '../utils/contourGesture';
+import { localPoint, worldPoint } from '../utils/partPose';
+import {
+  CONTOUR_PICK_COLOR,
+  contourEntityColor,
+  contourPaintModel,
+  highlightContourPaint,
+  savedContourStatus,
+} from '../utils/contourStatus';
 import {
   applyDraggedContour,
   contourPointDragAllowed,
@@ -1258,6 +1264,16 @@ const Viewport = forwardRef(({
       rowQuaternion,
     });
   };
+  const contourAnchor = useCallback(() => {
+    const mesh = resultRef.current;
+    if (!mesh?.position) return null;
+    return {
+      t: [mesh.position.x, mesh.position.y, mesh.position.z],
+      q: mesh.quaternion
+        ? [mesh.quaternion.x, mesh.quaternion.y, mesh.quaternion.z, mesh.quaternion.w]
+        : [0, 0, 0, 1],
+    };
+  }, []);
   const anchorToActivePart = useCallback((obj) => {
     const mesh = resultRef.current;
     const t = mesh?.position ? [mesh.position.x, mesh.position.y, mesh.position.z] : [0, 0, 0];
@@ -1488,7 +1504,9 @@ const Viewport = forwardRef(({
   helperCardOpenRef.current = helperCardOpen;
   const helperSheetOpen = mode !== 'game' && helperCardOpen;
   const contourSession = mode !== 'game' && !!contourMode;
-  const contourSheetOpen = contourSession && contourPlaneOpen;
+  const gestureSheetOpen = contourSession && !contourPlaneOpen
+    && (contourMode?.gesture === 'dimension' || contourMode?.gesture === 'constraints');
+  const contourSheetOpen = (contourSession && contourPlaneOpen) || gestureSheetOpen;
   const filletSheetOpen = mode !== 'game' && !!filletMode;
   const shellSheetOpen = mode !== 'game' && !!shellMode;
   const draftSheetOpen = mode !== 'game' && !!draftMode;
@@ -2604,55 +2622,6 @@ const Viewport = forwardRef(({
     }
   }, []);
 
-  const paintWorkplaneOverlay = useCallback((plane, face) => {
-    clearWorkplaneOverlay();
-    if (!plane || !sceneRef.current) return;
-    const size = workplaneOverlaySize(face);
-    const group = new Group();
-    group.name = 'contourWorkplane';
-    const geom = new PlaneGeometry(size, size);
-    const mat = makePreviewSkinMaterial({ opacity: PREVIEW_OPACITY.ghost });
-    const quad = new ThreeMesh(geom, mat);
-    quad.position.set(plane.center[0], plane.center[1], plane.center[2]);
-    const q = new Quaternion();
-    q.setFromRotationMatrix(new Matrix4().makeBasis(
-      new Vector3(plane.x[0], plane.x[1], plane.x[2]),
-      new Vector3(plane.y[0], plane.y[1], plane.y[2]),
-      new Vector3(plane.normal[0], plane.normal[1], plane.normal[2]),
-    ));
-    quad.quaternion.copy(q);
-    quad.renderOrder = 8;
-    quad.frustumCulled = false;
-    group.add(quad);
-    // Outline
-    try {
-      const corners = workplaneQuadCorners(plane, size);
-      const ring = [...corners, corners[0]];
-      const pos = new Float32Array(ring.length * 3);
-      for (let i = 0; i < ring.length; i++) {
-        pos[i * 3] = ring[i][0];
-        pos[i * 3 + 1] = ring[i][1];
-        pos[i * 3 + 2] = ring[i][2];
-      }
-      const lineGeom = new BufferGeometry();
-      lineGeom.setAttribute('position', new BufferAttribute(pos, 3));
-      const lineMat = new LineBasicMaterial({
-        color: 0x67e8f9,
-        transparent: true,
-        opacity: 0.7,
-        depthTest: false,
-        depthWrite: false,
-      });
-      const loop = new Line(lineGeom, lineMat);
-      loop.renderOrder = 9;
-      loop.frustumCulled = false;
-      group.add(loop);
-    } catch { /* overlay outline is best-effort */ }
-    anchorToActivePart(group);
-    sceneRef.current.add(group);
-    workplaneOverlayRef.current = group;
-  }, [clearWorkplaneOverlay, anchorToActivePart]);
-
   const clearConstructionPlanes = useCallback(() => {
     if (!constructionPlaneRef.current) return;
     disposeEdgeOverlayObject(sceneRef.current, constructionPlaneRef.current);
@@ -2769,7 +2738,7 @@ const Viewport = forwardRef(({
    * when the point list changes — a live drag mutates positions in place so
    * the wire follows the cursor at frame rate instead of through React.
    */
-  const paintPolylineDraft = useCallback((plane, points, { wire = true, pointColors = null } = {}) => {
+  const paintPolylineDraft = useCallback((plane, points, { wire = true, pointColors = null, pointIds = null } = {}) => {
     // A repaint (point added, undone, plane re-picked) rebuilds the handles;
     // carry the hover across it so the grab target does not flicker back to
     // idle under a stationary cursor.
@@ -2799,6 +2768,8 @@ const Viewport = forwardRef(({
       s.renderOrder = 16;
       s.frustumCulled = false;
       s.userData.pointIndex = i;
+      s.userData.pointId = pointIds?.[i] || '';
+      s.userData.picked = pointColors?.[i] === CONTOUR_PICK_COLOR;
       handles.push(s);
       group.add(s);
     }
@@ -2848,11 +2819,18 @@ const Viewport = forwardRef(({
         pos[i * 3 + 1] = world[1];
         pos[i * 3 + 2] = world[2];
       }
-      group.add(makeSketchLine(pos, {
+      const line = makeSketchLine(pos, {
         color: seg.color,
         opacity: 0.95,
         resolution: edgeLineResolution(),
-      }));
+      });
+      line.userData.entityId = seg.id || '';
+      line.userData.entityKind = seg.kind || 'line';
+      line.userData.localPts = Array.from({ length: seg.uvs.length }, (_, i) => [
+        pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2],
+      ]);
+      line.userData.picked = !!seg.picked;
+      group.add(line);
     }
     if (!group.children.length) return;
     anchorToActivePart(group);
@@ -3884,10 +3862,8 @@ const Viewport = forwardRef(({
     // Same resolver the polyline hit-test uses — see contourWorkplaneFace.
     const planeFace = contourWorkplaneFace(contourMode, modelBounds);
     const plane = planeFromContourFace(planeFace);
-    // Workplane mode always shows a live plane preview; other entries follow
-    // the Plane overlay toggle.
-    if (showPlanes || isWorkplaneEntry(contourMode.entry)) paintWorkplaneOverlay(plane, planeFace);
-    else clearWorkplaneOverlay();
+    // The sketch plane square is not drawn. Start drawing still aims the camera.
+    clearWorkplaneOverlay();
     applyContourPartGhost(true);
     if (isWorkplaneEntry(contourMode.entry)) {
       clearXsPreview();
@@ -3902,7 +3878,13 @@ const Viewport = forwardRef(({
     const pts = contourMode.params?.contour?.points?.map((p) => p.at) || contourMode.params?.points;
     const loftDraw = selectedLoftDrawFrame(contourMode) || plane;
     const drawPlane = isLoftEntry(contourMode.entry) ? loftDraw : plane;
-    const paint = contourMode.params?.contour ? contourPaintModel(contourMode.params.contour) : null;
+    const paint = highlightContourPaint(
+      contourMode.params?.contour ? contourPaintModel(contourMode.params.contour) : null,
+      contourMode.params?.contour,
+      (contourMode.gesture === 'dimension' || contourMode.gesture === 'constraints')
+        ? contourMode.picks
+        : null,
+    );
     if (contourMode.tool === 'polyline' && (!Array.isArray(pts) || pts.length < 3)) {
       clearXsPreview();
       clearExtrudePreview();
@@ -3910,6 +3892,7 @@ const Viewport = forwardRef(({
       paintPolylineDraft(drawPlane, pts || [], {
         wire: !paint,
         pointColors: paint?.pointColors || null,
+        pointIds: paint?.pointIds || null,
       });
       if (paint) paintContourStatusWire(drawPlane, paint.segments);
       else clearContourStatusWire();
@@ -3930,6 +3913,7 @@ const Viewport = forwardRef(({
       paintPolylineDraft(drawPlane, pts, {
         wire: false,
         pointColors: paint?.pointColors || null,
+        pointIds: paint?.pointIds || null,
       });
     } else {
       clearPolylineDraft();
@@ -4000,7 +3984,7 @@ const Viewport = forwardRef(({
       clearLoftPreview();
       clearSweepPreview();
     }
-  }, [contourMode, modelBounds, selectedEdges, showPlanes, paintWorkplaneOverlay, paintPolylineDraft, paintContourStatusWire, paintExtrudePreview, paintRevolvePreview, paintLoftPreview, paintSweepPreview, applyContourPartGhost, clearWorkplaneOverlay, clearPolylineDraft, clearContourStatusWire, clearExtrudePreview, clearRevolvePreview, clearLoftPreview, clearSweepPreview, clearXsPreview, setXsPreview]);
+  }, [contourMode, modelBounds, selectedEdges, paintPolylineDraft, paintContourStatusWire, paintExtrudePreview, paintRevolvePreview, paintLoftPreview, paintSweepPreview, applyContourPartGhost, clearWorkplaneOverlay, clearPolylineDraft, clearContourStatusWire, clearExtrudePreview, clearRevolvePreview, clearLoftPreview, clearSweepPreview, clearXsPreview, setXsPreview]);
 
   useEffect(() => () => {
     clearWorkplaneOverlay();
@@ -6542,16 +6526,106 @@ const Viewport = forwardRef(({
     const plane = selectedLoftDrawFrame(state) || contourWorkplane(state, modelBoundsRef.current);
     if (!plane?.center || !plane.x || !plane.y) return null;
     const rect = canvas.getBoundingClientRect();
-    const project = (uv) => {
-      const world = planeUvToWorld(uv, plane);
+    const mesh = resultRef.current;
+    const pose = mesh?.position ? {
+      t: [mesh.position.x, mesh.position.y, mesh.position.z],
+      q: mesh.quaternion
+        ? [mesh.quaternion.x, mesh.quaternion.y, mesh.quaternion.z, mesh.quaternion.w]
+        : [0, 0, 0, 1],
+    } : null;
+    const projectWorld = (world) => {
       const p = polylineProjectScratch.current.set(world[0], world[1], world[2]).project(camera);
-      if (p.z < -1 || p.z > 1) return null;
+      // Safari's project() can sit a hair past ±1 for a point that is on screen.
+      if (p.z < -1.02 || p.z > 1.02) return null;
       return {
         x: (p.x * 0.5 + 0.5) * rect.width + rect.left,
         y: (-p.y * 0.5 + 0.5) * rect.height + rect.top,
       };
     };
-    return pickContourScreen(model, project, clientX, clientY, 10);
+    const project = (uv) => {
+      const local = planeUvToWorld(uv, plane);
+      const world = pose ? worldPoint(local, pose) : local;
+      return projectWorld(world);
+    };
+    const scratch = polylineProjectScratch.current;
+    const screenOfLocal = (obj, local) => {
+      scratch.set(local[0], local[1], local[2]);
+      obj.localToWorld(scratch);
+      const world = [scratch.x, scratch.y, scratch.z];
+      return projectWorld(world);
+    };
+    // The stroke is drawn in the part pose. Hitting the drawn pixels, not the
+    // unposed plane, is what makes a tap on the visible line register.
+    let drawn = null;
+    let drawnD = SKETCH_HIT_PX;
+    const handles = polylineDraftRef.current?.userData?.handles || [];
+    for (const handle of handles) {
+      if (!handle.userData?.pointId) continue;
+      handle.getWorldPosition(scratch);
+      const q = projectWorld([scratch.x, scratch.y, scratch.z]);
+      if (!q) continue;
+      const d = Math.hypot(clientX - q.x, clientY - q.y);
+      if (d <= drawnD) {
+        drawnD = d;
+        drawn = { kind: 'point', id: handle.userData.pointId, label: handle.userData.pointId };
+      }
+    }
+    if (!drawn) {
+      const wire = contourStatusRef.current;
+      wire?.updateMatrixWorld?.(true);
+      let bestLine = null;
+      let bestLineD = SKETCH_HIT_PX;
+      let bestArc = null;
+      let bestArcD = SKETCH_HIT_PX;
+      for (const child of wire?.children || []) {
+        const pts = child.userData?.localPts;
+        const id = child.userData?.entityId;
+        if (!id || !pts || pts.length < 2) continue;
+        let d = Infinity;
+        for (let i = 1; i < pts.length; i += 1) {
+          const a = screenOfLocal(child, pts[i - 1]);
+          const b = screenOfLocal(child, pts[i]);
+          if (!a || !b) continue;
+          const dx = b.x - a.x;
+          const dy = b.y - a.y;
+          const L2 = dx * dx + dy * dy;
+          let t = L2 > 1e-12 ? ((clientX - a.x) * dx + (clientY - a.y) * dy) / L2 : 0;
+          t = Math.max(0, Math.min(1, t));
+          d = Math.min(d, Math.hypot(clientX - (a.x + t * dx), clientY - (a.y + t * dy)));
+        }
+        const kind = child.userData.entityKind === 'arc' ? 'arc' : 'line';
+        if (kind === 'arc' && d <= bestArcD) {
+          bestArcD = d;
+          bestArc = { kind: 'arc', id, label: id };
+        } else if (kind === 'line' && d <= bestLineD) {
+          bestLineD = d;
+          bestLine = { kind: 'line', id, label: id };
+        }
+      }
+      drawn = bestArc || bestLine;
+    }
+    const hit = drawn || pickContourScreen(model, project, clientX, clientY, SKETCH_HIT_PX);
+    if (!hit) return null;
+    const px = ((clientX - rect.left) / rect.width) * 2 - 1;
+    const py = -((clientY - rect.top) / rect.height) * 2 + 1;
+    raycasterRef.current.setFromCamera({ x: px, y: py }, camera);
+    const origin = raycasterRef.current.ray.origin;
+    const dir = raycasterRef.current.ray.direction;
+    let rayO = [origin.x, origin.y, origin.z];
+    let rayD = [dir.x, dir.y, dir.z];
+    if (pose) {
+      rayO = localPoint(rayO, pose);
+      const ahead = localPoint([origin.x + dir.x, origin.y + dir.y, origin.z + dir.z], pose);
+      rayD = [ahead[0] - rayO[0], ahead[1] - rayO[1], ahead[2] - rayO[2]];
+    }
+    let at = null;
+    const landed = intersectRayPlane(rayO, rayD, plane);
+    if (landed) {
+      try {
+        at = anchorOnEntity(model, hit, worldToPlaneUV(landed, plane));
+      } catch { /* a missed UV still selects the entity */ }
+    }
+    return at ? { ...hit, at } : hit;
   }, []);
 
   const saveContourBlock = useCallback((state) => {
@@ -6781,10 +6855,16 @@ const Viewport = forwardRef(({
       isDraggingRef.current = false;
       return;
     }
-    // If user was dragging, don't process as a click
+    // A finger tap wobbles a few pixels. That is still a sketch pick.
+    // A real orbit moves further and must not also select.
     if (isDraggingRef.current) {
+      const down = mouseDownPosRef.current;
+      const moved = down
+        ? Math.hypot(event.clientX - down.x, event.clientY - down.y)
+        : Infinity;
+      const sketchTap = !!contourModeRef.current?.gesture && moved <= SKETCH_HIT_PX;
       isDraggingRef.current = false;
-      return;
+      if (!sketchTap) return;
     }
     
     if (!canvasRef.current || !cameraRef.current) return;
@@ -6821,8 +6901,8 @@ const Viewport = forwardRef(({
       return;
     }
 
-    // Dimension and Arc select. They do not add a point.
-    if (contourModeRef.current?.gesture && pickModeRef.current !== 'edge') {
+    // Dimension, Arc, and Constrain select the sketch, not the solid under it.
+    if (contourModeRef.current?.gesture) {
       if (clickTimerRef.current) {
         clearTimeout(clickTimerRef.current);
         clickTimerRef.current = null;
@@ -8118,6 +8198,45 @@ const Viewport = forwardRef(({
               undoDepth: sketchHistRef.current?.depth || 0,
               open: !!contourModeRef.current,
               planeCard: contourPlaneOpenRef.current,
+              planeSquare: !!workplaneOverlayRef.current,
+              gesture: contourModeRef.current?.gesture || '',
+              dimensionEdit: contourModeRef.current?.dimensionEdit || null,
+              constraintEdit: contourModeRef.current?.constraintEdit || null,
+              dimensions: contourModeRef.current?.params?.contour?.dimensions?.length || 0,
+              constraints: contourModeRef.current?.params?.contour?.constraints?.length || 0,
+              picked: (contourModeRef.current?.picks || []).map((pick) => ({
+                kind: pick.kind,
+                id: pick.id,
+              })),
+              pickHighlights: {
+                points: (polylineDraftRef.current?.userData?.handles || [])
+                  .filter((handle) => handle.userData?.picked)
+                  .map((handle) => handle.userData.pointId),
+                lines: (() => {
+                  const ids = [];
+                  contourStatusRef.current?.traverse?.((child) => {
+                    if (child.userData?.picked && child.userData?.entityId) ids.push(child.userData.entityId);
+                  });
+                  return [...new Set(ids)];
+                })(),
+              },
+              dots: (() => {
+                const camera = cameraRef.current;
+                const canvas = canvasRef.current;
+                const handles = polylineDraftRef.current?.userData?.handles || [];
+                if (!camera || !canvas) return [];
+                const rect = canvas.getBoundingClientRect();
+                return handles.map((handle) => {
+                  handle.getWorldPosition(polylineProjectScratch.current);
+                  const v = polylineProjectScratch.current.project(camera);
+                  const dot = {
+                    id: handle.userData?.pointId || '',
+                    x: rect.left + (v.x * 0.5 + 0.5) * rect.width,
+                    y: rect.top + (-v.y * 0.5 + 0.5) * rect.height,
+                  };
+                  return dot;
+                });
+              })(),
               sketchLinePx: (() => {
                 let px = 0;
                 const visit = (root) => {
@@ -10190,7 +10309,23 @@ const Viewport = forwardRef(({
           cameraRef={cameraRef}
           canvasRef={canvasRef}
           selectedId={contourMode.tagId || null}
-          onSelect={(id) => setContourMode((prev) => (prev ? { ...prev, tagId: prev.tagId === id ? null : id } : prev))}
+          getAnchor={contourAnchor}
+          onSelect={(id) => {
+            const prev = contourModeRef.current;
+            if (!prev) return;
+            const contour = prev.params?.contour;
+            const dim = (contour?.dimensions || []).find((item) => item.id === id);
+            if (dim) {
+              setContourMode(beginDimensionEdit(prev, id));
+              return;
+            }
+            const con = (contour?.constraints || []).find((item) => item.id === id);
+            if (con) {
+              setContourMode(beginConstraintEdit(prev, id));
+              return;
+            }
+            setContourMode({ ...prev, tagId: prev.tagId === id ? null : id });
+          }}
           onClose={() => setContourMode((prev) => (prev ? { ...prev, tagId: null } : prev))}
           onDelete={(id) => {
             const prev = contourModeRef.current;
@@ -10217,9 +10352,42 @@ const Viewport = forwardRef(({
           picks={contourMode.picks || []}
           note={contourMode.gestureNote || ''}
           compact={isMobile}
-          ignoreNameId={contourMode.dimensionLive?.id || null}
+          ignoreNameId={contourMode.dimensionEdit || contourMode.dimensionLive?.id || null}
+          editDimension={contourMode.gesture === 'dimension' && contourMode.dimensionEdit
+            ? (contourMode.params?.contour?.dimensions || []).find((item) => item.id === contourMode.dimensionEdit) || null
+            : null}
+          editConstraint={contourMode.gesture === 'constraints' && contourMode.constraintEdit
+            ? (contourMode.params?.contour?.constraints || []).find((item) => item.id === contourMode.constraintEdit) || null
+            : null}
           onRemovePick={(pick) => setContourMode((prev) => (prev ? applyContourPick(prev, pick) : prev))}
-          onCancel={() => setContourMode((prev) => (prev?.gesture ? armContourGesture(prev, prev.gesture) : prev))}
+          onCancel={() => setContourMode((prev) => {
+            if (!prev?.gesture) return prev;
+            const next = armContourGesture(prev, prev.gesture);
+            return next ? { ...next, dimensionEdit: null, constraintEdit: null } : next;
+          })}
+          onDelete={() => {
+            const prev = contourModeRef.current;
+            const dimId = prev?.dimensionEdit;
+            const conId = prev?.constraintEdit;
+            if (!prev || (!dimId && !conId)) return;
+            const result = dimId
+              ? removeContourDimension(prev, dimId)
+              : removeContourConstraint(prev, conId);
+            if (result.error) {
+              showContourToast(result.error);
+              return;
+            }
+            const next = {
+              ...result.state,
+              gesture: null,
+              dimensionEdit: null,
+              constraintEdit: null,
+              picks: [],
+              dimensionLive: null,
+            };
+            saveContourBlock(next);
+            setContourMode(next);
+          }}
           onLive={(draft) => {
             const prev = contourModeRef.current;
             if (!prev || prev.gesture !== 'dimension') return;
@@ -10240,8 +10408,20 @@ const Viewport = forwardRef(({
               setContourMode({ ...prev, gestureNote: result.error });
               return;
             }
-            saveContourBlock(result.state);
-            setContourMode(result.state);
+            const editing = (prev.gesture === 'dimension' && !!prev.dimensionEdit)
+              || (prev.gesture === 'constraints' && !!prev.constraintEdit);
+            const next = editing
+              ? {
+                ...result.state,
+                gesture: null,
+                dimensionEdit: null,
+                constraintEdit: null,
+                picks: [],
+                dimensionLive: null,
+              }
+              : { ...result.state, dimensionEdit: null, constraintEdit: null };
+            saveContourBlock(next);
+            setContourMode(next);
           }}
         />
       )}
