@@ -65,6 +65,7 @@ import { resolveFilletStrategy } from './filletAlongPath.js';
 import { BLOCK_POSE_PARAMS, blockSpec, blockSolidExpression } from './blockSolid.js';
 import { splitEdgePathComponents } from './edgeSweepPath.js';
 import { planeFrameFromFaceData } from './crossSectionSubstrate.js';
+import { emitSolveContour } from './contourScript.js';
 
 /** Slice 24 — in-mode Profile region so Confirm can replace without appending. */
 export const CONTOUR_PROFILE_BEGIN = '// --- contour-mode profile begin ---';
@@ -659,11 +660,13 @@ export function isolateLoftStationParams(prof = {}) {
     centered: prof.centered,
     polygonPreset: prof.polygonPreset,
     points: prof.points,
+    contour: prof.contour,
   };
 }
 
 /** Emit profileCircle / profileRectangle / profilePolygon from Slice 21 params. */
 function emitProfileExprFromParams(p) {
+  if (p.contour) return emitSolveContour(p.contour);
   const type = str(p.profileType, 'circle');
   if (type === 'rectangle') {
     const w = num(p.width, 20);

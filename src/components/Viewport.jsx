@@ -160,7 +160,15 @@ import {
   workplaneOverlaySize,
   workplaneQuadCorners,
   writeLoftSelected,
+  applyContourPick,
+  armContourGesture,
+  removeContourDimension,
+  saveContourArc,
+  saveContourDimension,
 } from '../utils/contourMode';
+import { pickContourScreen, planeUvToWorld } from '../utils/contourPick';
+import ContourGestureCard from './ContourGestureCard';
+import ContourTags from './ContourTags';
 import {
   holdContourOverlays,
   releaseContourOverlays,
@@ -3690,7 +3698,7 @@ const Viewport = forwardRef(({
       clearSweepPreview();
       return;
     }
-    const pts = contourMode.params?.points;
+    const pts = contourMode.params?.contour?.points?.map((p) => p.at) || contourMode.params?.points;
     const loftDraw = selectedLoftDrawFrame(contourMode) || plane;
     if (contourMode.tool === 'polyline' && (!Array.isArray(pts) || pts.length < 3)) {
       clearXsPreview();
@@ -6115,6 +6123,43 @@ const Viewport = forwardRef(({
     return { uv, world };
   }, []);
 
+  const pickContourAtClient = useCallback((clientX, clientY) => {
+    const state = contourModeRef.current;
+    const model = state?.params?.contour;
+    const canvas = canvasRef.current;
+    const camera = cameraRef.current;
+    if (!state || !model || !canvas || !camera) return null;
+    const plane = selectedLoftDrawFrame(state) || contourWorkplane(state, modelBoundsRef.current);
+    if (!plane?.center || !plane.x || !plane.y) return null;
+    const rect = canvas.getBoundingClientRect();
+    const project = (uv) => {
+      const world = planeUvToWorld(uv, plane);
+      const p = polylineProjectScratch.current.set(world[0], world[1], world[2]).project(camera);
+      if (p.z < -1 || p.z > 1) return null;
+      return {
+        x: (p.x * 0.5 + 0.5) * rect.width + rect.left,
+        y: (-p.y * 0.5 + 0.5) * rect.height + rect.top,
+      };
+    };
+    return pickContourScreen(model, project, clientX, clientY, 10);
+  }, []);
+
+  const saveContourBlock = useCallback((state) => {
+    if (!state?.params?.contour) return false;
+    const commitFace = activeContourFace(state, modelBoundsRef.current);
+    const ok = onCommitContourProfile?.({
+      contourBlock: true,
+      partId: activePartIdRef.current,
+      face: state.planeFace || commitFace,
+      tool: state.tool,
+      params: state.params,
+      entry: state.entry,
+      loft: state.loft,
+    });
+    if (ok === false) return false;
+    return true;
+  }, [onCommitContourProfile]);
+
   /** Write the dragged point back into mode state (once, on release). */
   const commitPolylinePointDrag = useCallback((uv, index) => {
     setContourMode((prev) => {
@@ -6320,6 +6365,19 @@ const Viewport = forwardRef(({
         pick.point = [pick.point[0] - o.x, pick.point[1] - o.y, pick.point[2] - o.z];
       }
       sheetMetalTapRef.current?.(pick);
+      return;
+    }
+
+    // Dimension and Arc select. They do not add a point.
+    if (contourModeRef.current?.gesture && pickModeRef.current !== 'edge') {
+      if (clickTimerRef.current) {
+        clearTimeout(clickTimerRef.current);
+        clickTimerRef.current = null;
+      }
+      clickCountRef.current = 0;
+      pendingClickDataRef.current = null;
+      const hit = pickContourAtClient(event.clientX, event.clientY);
+      if (hit) setContourMode((prev) => (prev ? applyContourPick(prev, hit) : prev));
       return;
     }
 
@@ -6653,7 +6711,7 @@ const Viewport = forwardRef(({
     }, MULTI_CLICK_DELAY);
     
   }, [onFaceSelected, measurementEnabled, clearHighlight, clearEdgeHover, clearEdgeHighlight,
-    pickEdgeAtClient, endPolylinePointDrag, pickPolylinePointAtClient, commitBooleanState,
+    pickEdgeAtClient, endPolylinePointDrag, pickPolylinePointAtClient, pickContourAtClient, commitBooleanState,
     collectPartHits, retargetPickPart, showPartChoice, dismissPartChoice, clearGeomSelection,
     applyMeasurePointer]);
 
@@ -9390,9 +9448,14 @@ const Viewport = forwardRef(({
       {contourMode && (
         <ContourModeRail
           tool={contourMode.tool}
+          gesture={contourMode.gesture || null}
           entry={contourMode.entry}
           compact={isMobile}
-          onSelectTool={(id) => setContourMode((prev) => (prev ? switchContourTool(prev, id) : prev))}
+          onSelectTool={(id) => setContourMode((prev) => {
+            if (!prev) return prev;
+            if (id === 'arc' || id === 'dimension') return armContourGesture(prev, id);
+            return switchContourTool(prev, id);
+          })}
           onBack={exitContourMode}
         />
       )}
@@ -9471,8 +9534,58 @@ const Viewport = forwardRef(({
       {/* Slice Mobile C.1: face-selected info popup removed (was under-title B.1).
           Selection still drives the left palette / PromptInput; no empty reserved band. */}
 
+      {contourMode?.params?.contour && (
+        <ContourTags
+          model={contourMode.params.contour}
+          plane={selectedLoftDrawFrame(contourMode) || contourWorkplane(contourMode, modelBounds)}
+          cameraRef={cameraRef}
+          canvasRef={canvasRef}
+          containerRef={containerRef}
+          selectedId={contourMode.tagId || null}
+          onSelect={(id) => setContourMode((prev) => (prev ? { ...prev, tagId: prev.tagId === id ? null : id } : prev))}
+          onClose={() => setContourMode((prev) => (prev ? { ...prev, tagId: null } : prev))}
+          onDelete={(id) => {
+            const prev = contourModeRef.current;
+            if (!prev) return;
+            const result = removeContourDimension(prev, id);
+            if (result.error) {
+              showContourToast(result.error);
+              return;
+            }
+            saveContourBlock(result.state);
+            setContourMode(result.state);
+          }}
+        />
+      )}
+
+      {contourMode && contourMode.gesture && mode !== 'game' && (
+        <ContourGestureCard
+          gesture={contourMode.gesture}
+          model={contourMode.params?.contour || null}
+          picks={contourMode.picks || []}
+          note={contourMode.gestureNote || ''}
+          compact={isMobile}
+          onRemovePick={(pick) => setContourMode((prev) => (prev ? applyContourPick(prev, pick) : prev))}
+          onCancel={() => setContourMode((prev) => (prev?.gesture ? armContourGesture(prev, prev.gesture) : prev))}
+          onApply={(draft) => {
+            const prev = contourModeRef.current;
+            if (!prev) return;
+            const result = prev.gesture === 'arc'
+              ? saveContourArc(prev, draft.radiusMm)
+              : saveContourDimension(prev, draft);
+            if (result.error) {
+              showContourToast(result.error);
+              setContourMode({ ...prev, gestureNote: result.error });
+              return;
+            }
+            saveContourBlock(result.state);
+            setContourMode(result.state);
+          }}
+        />
+      )}
+
       {/* Slice 24: contour card. Game keeps the rail and skips the card and the slide. */}
-      {contourMode && mode !== 'game' && (
+      {contourMode && !contourMode.gesture && mode !== 'game' && (
         <ContourModeChip
           tool={contourMode.tool}
           entry={contourMode.entry}

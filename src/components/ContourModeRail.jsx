@@ -4,6 +4,8 @@ import {
   Square,
   Hexagon,
   Spline,
+  Radius,
+  Ruler,
   X,
 } from 'lucide-react';
 import { CONTOUR_TOOLS } from '../utils/contourMode';
@@ -21,6 +23,16 @@ const ICONS = {
   polyline: Spline,
 };
 
+const GESTURES = [
+  { id: 'arc', title: 'Round a corner of the contour' },
+  { id: 'dimension', title: 'Dimension' },
+];
+
+const GESTURE_ICONS = {
+  arc: Radius,
+  dimension: Ruler,
+};
+
 /**
  * Slice 24 — left rail while contour mode is active.
  * Replaces the FEAT palette: contour tools + grey X dismiss (cancel, no solid commit).
@@ -28,6 +40,7 @@ const ICONS = {
  */
 const ContourModeRail = ({
   tool = 'circle',
+  gesture = null,
   entry = 'crossSection',
   onSelectTool,
   onBack,
@@ -61,11 +74,33 @@ const ContourModeRail = ({
       </div>
       {!workplaneOnly && CONTOUR_TOOLS.map((item) => {
         const Icon = ICONS[item.id] || Circle;
-        const active = tool === item.id;
+        const active = !gesture && tool === item.id;
         return (
           <button
             key={item.id}
             type="button"
+            data-contour-tool={item.id}
+            onClick={() => onSelectTool?.(item.id)}
+            title={item.title}
+            aria-label={item.title}
+            aria-pressed={active}
+            className={`${pad} rounded flex items-center justify-center transition-colors
+              ${active
+                ? 'bg-cyan-200 text-cyan-900'
+                : 'text-cyan-800 hover:bg-cyan-100 active:bg-cyan-200'}`}
+          >
+            <Icon size={iconSize} strokeWidth={2} />
+          </button>
+        );
+      })}
+      {!workplaneOnly && GESTURES.map((item) => {
+        const Icon = GESTURE_ICONS[item.id] || Ruler;
+        const active = gesture === item.id;
+        return (
+          <button
+            key={item.id}
+            type="button"
+            data-contour-tool={item.id}
             onClick={() => onSelectTool?.(item.id)}
             title={item.title}
             aria-label={item.title}
