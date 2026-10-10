@@ -162,6 +162,7 @@ import {
   writeLoftSelected,
   applyContourPick,
   armContourGesture,
+  previewContourDimension,
   removeContourConstraint,
   removeContourDimension,
   saveContourArc,
@@ -9905,7 +9906,6 @@ const Viewport = forwardRef(({
           plane={selectedLoftDrawFrame(contourMode) || contourWorkplane(contourMode, modelBounds)}
           cameraRef={cameraRef}
           canvasRef={canvasRef}
-          containerRef={containerRef}
           selectedId={contourMode.tagId || null}
           onSelect={(id) => setContourMode((prev) => (prev ? { ...prev, tagId: prev.tagId === id ? null : id } : prev))}
           onClose={() => setContourMode((prev) => (prev ? { ...prev, tagId: null } : prev))}
@@ -9934,8 +9934,16 @@ const Viewport = forwardRef(({
           picks={contourMode.picks || []}
           note={contourMode.gestureNote || ''}
           compact={isMobile}
+          ignoreNameId={contourMode.dimensionLive?.id || null}
           onRemovePick={(pick) => setContourMode((prev) => (prev ? applyContourPick(prev, pick) : prev))}
           onCancel={() => setContourMode((prev) => (prev?.gesture ? armContourGesture(prev, prev.gesture) : prev))}
+          onLive={(draft) => {
+            const prev = contourModeRef.current;
+            if (!prev || prev.gesture !== 'dimension') return;
+            const result = previewContourDimension(prev, draft);
+            if (!result.state || result.state === prev) return;
+            setContourMode(result.state);
+          }}
           onApply={(draft) => {
             const prev = contourModeRef.current;
             if (!prev) return;

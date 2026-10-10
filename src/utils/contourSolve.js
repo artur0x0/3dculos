@@ -564,14 +564,27 @@ function compile(model) {
         return Math.atan2(sense * cross, dot) - dim.value * DEG;
       });
     } else if (dim.kind === 'distance') {
-      const a = lineOf(dim.a);
-      const b = lineOf(dim.b);
-      push(dim.id, DEG, (x) => unitCross(lineDir(x, a), lineDir(x, b)));
-      push(dim.id, 1, (x) => {
-        const db = lineDir(x, b);
-        const pa = xy(x, a.a);
-        return signedDistPointLine(pa, db[2], db) - dim.value;
-      });
+      // Two points: the first pick stays put and the second takes the distance.
+      // Two lines stay the parallel gap they already were.
+      if (points.has(dim.a) && points.has(dim.b) && !lines.has(dim.a) && !lines.has(dim.b)) {
+        const pin = dim.at?.[dim.a] || points.get(dim.a).at;
+        push(dim.id, 1, (x) => xy(x, dim.a)[0] - pin[0]);
+        push(dim.id, 1, (x) => xy(x, dim.a)[1] - pin[1]);
+        push(dim.id, 1, (x) => {
+          const pa = xy(x, dim.a);
+          const pb = xy(x, dim.b);
+          return Math.hypot(pb[0] - pa[0], pb[1] - pa[1]) - dim.value;
+        });
+      } else {
+        const a = lineOf(dim.a);
+        const b = lineOf(dim.b);
+        push(dim.id, DEG, (x) => unitCross(lineDir(x, a), lineDir(x, b)));
+        push(dim.id, 1, (x) => {
+          const db = lineDir(x, b);
+          const pa = xy(x, a.a);
+          return signedDistPointLine(pa, db[2], db) - dim.value;
+        });
+      }
     } else if (dim.kind === 'offset') {
       const line = lineOf(dim.edge);
       pointOf(dim.point);

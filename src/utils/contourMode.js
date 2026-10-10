@@ -61,7 +61,9 @@ import {
   commitDimension,
   deleteContourConstraint,
   deleteContourDimension,
+  liveDimension,
   promoteContourState,
+  revertLiveDimension,
   selectContourGesture,
   toggleContourPick,
 } from './contourGesture.js';
@@ -322,16 +324,18 @@ export function writeLoftSelected(state, patch = {}) {
 }
 
 export function selectLoftProfile(state, index) {
-  if (!state?.loft?.profiles?.length) return state;
-  const selected = Math.max(0, Math.min(Number(index) || 0, state.loft.profiles.length - 1));
-  const cur = state.loft.profiles[selected];
+  const base = state?.dimensionLive ? syncContourSession(revertLiveDimension(state)) : state;
+  if (!base?.loft?.profiles?.length) return base;
+  const selected = Math.max(0, Math.min(Number(index) || 0, base.loft.profiles.length - 1));
+  const cur = base.loft.profiles[selected];
   const next = {
-    ...state,
+    ...base,
+    dimensionLive: null,
     tool: cur.tool,
     params: { ...cur.params },
     picks: [],
     tagId: null,
-    loft: { ...state.loft, selected, picking: null },
+    loft: { ...base.loft, selected, picking: null },
   };
   if (next.gesture === 'dimension' || next.gesture === 'arc' || next.gesture === 'constraints') {
     return syncContourSession(promoteContourState(next));
@@ -625,6 +629,15 @@ export function saveContourDimension(state, draft) {
   return { ...result, state: syncContourSession(result.state) };
 }
 
+/** Typed dimension. Updates the session wire and does not write the script. */
+export function previewContourDimension(state, draft) {
+  const result = draft
+    ? liveDimension(state, draft)
+    : { state: revertLiveDimension(state), error: null };
+  if (!result.state || result.state === state) return { ...result, state };
+  return { ...result, state: syncContourSession(result.state) };
+}
+
 export function saveContourArc(state, radiusMm) {
   const result = commitArc(state, radiusMm);
   return { ...result, state: syncContourSession(result.state) };
@@ -646,16 +659,18 @@ export function removeContourConstraint(state, id) {
 }
 
 export function switchContourTool(state, tool) {
+  const reverted = state?.dimensionLive ? syncContourSession(revertLiveDimension(state)) : state;
   const nextTool = isContourTool(tool) ? tool : 'circle';
-  if (state?.tool === nextTool) {
-    return { ...state, gesture: null, picks: [], tagId: null, gestureNote: null };
+  if (reverted?.tool === nextTool) {
+    const next = { ...reverted, gesture: null, picks: [], tagId: null, gestureNote: null, dimensionLive: null };
+    return isLoftEntry(reverted?.entry) ? syncContourSession(next) : next;
   }
   const next = defaultContourParams(nextTool);
-  if (state?.params?.radius != null && next.radius != null) {
-    next.radius = state.params.radius;
+  if (reverted?.params?.radius != null && next.radius != null) {
+    next.radius = reverted.params.radius;
   }
   const nextState = {
-    ...state,
+    ...reverted,
     tool: nextTool,
     params: next,
     pickedContourId: null,
@@ -663,6 +678,7 @@ export function switchContourTool(state, tool) {
     picks: [],
     tagId: null,
     gestureNote: null,
+    dimensionLive: null,
   };
   if (isLoftEntry(state?.entry)) {
     const written = writeLoftSelected(nextState, { tool: nextTool, params: next });

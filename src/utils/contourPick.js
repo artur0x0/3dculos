@@ -146,6 +146,9 @@ export function dimensionAnchor(model, dim) {
     if (!c) return null;
     return [c[0] + (Number(arc.radius) || 0), c[1]];
   }
+  const pa = pointAt(dim.a);
+  const pb = pointAt(dim.b);
+  if (pa && pb) return [(pa[0] + pb[0]) / 2, (pa[1] + pb[1]) / 2];
   const a = midLine(dim.a);
   const b = midLine(dim.b);
   if (a && b) return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];

@@ -26,10 +26,19 @@ export function specFromSolved(solved) {
     points: (solved.points || []).map((p) => ({ id: p.id, at: p.at.slice() })),
     lines: (solved.lines || []).map((l) => ({ id: l.id, a: l.a, b: l.b })),
     arcs: (solved.arcs || []).map((a) => ({ ...a })),
-    dimensions: (solved.dimensions || []).map((d) => ({
-      ...d,
-      items: d.items ? [...d.items] : undefined,
-    })),
+    dimensions: (solved.dimensions || []).map((d) => {
+      const copy = {
+        ...d,
+        items: d.items ? [...d.items] : undefined,
+      };
+      if (d.at) {
+        copy.at = Object.fromEntries(Object.entries(d.at).map(([id, uv]) => [
+          id,
+          Array.isArray(uv) ? uv.slice() : uv,
+        ]));
+      }
+      return copy;
+    }),
     constraints: (solved.constraints || []).map((c) => {
       const copy = { ...c, items: c.items ? [...c.items] : undefined };
       if (c.at) {
@@ -69,13 +78,14 @@ export function promoteContourState(state) {
 }
 
 export function selectContourGesture(state, gesture) {
-  if (!state || state.entry === 'workplane') return state;
-  if (gesture !== 'arc' && gesture !== 'dimension' && gesture !== 'constraints') return state;
-  if (state.gesture === gesture) {
-    return { ...state, gesture: null, picks: [], tagId: null, gestureNote: null };
+  const base = revertLiveDimension(state);
+  if (!base || base.entry === 'workplane') return base;
+  if (gesture !== 'arc' && gesture !== 'dimension' && gesture !== 'constraints') return base;
+  if (base.gesture === gesture) {
+    return { ...base, gesture: null, picks: [], tagId: null, gestureNote: null };
   }
   const armed = {
-    ...state,
+    ...base,
     gesture,
     picks: [],
     tagId: null,
@@ -85,14 +95,15 @@ export function selectContourGesture(state, gesture) {
 }
 
 export function toggleContourPick(state, pick) {
-  if (!state?.gesture) return state;
-  const max = state.gesture === 'arc' ? 3 : 2;
+  const base = revertLiveDimension(state);
+  if (!base?.gesture) return base;
+  const max = base.gesture === 'arc' ? 3 : 2;
   let item = pick;
-  if (state.gesture === 'arc' && pick?.kind !== 'line') {
-    return { ...state, gestureNote: 'An arc rounds lines. Tap a segment.' };
+  if (base.gesture === 'arc' && pick?.kind !== 'line') {
+    return { ...base, gestureNote: 'An arc rounds lines. Tap a segment.' };
   }
-  const picks = stickyPickToggle(state.picks, item, max);
-  return { ...state, picks, tagId: null, gestureNote: null };
+  const picks = stickyPickToggle(base.picks, item, max);
+  return { ...base, picks, tagId: null, gestureNote: null };
 }
 
 function pointAt(model, id) {
@@ -162,7 +173,7 @@ function offsetOf(model, pointId, lineId) {
  */
 export function suggestContourDimension(model, picks) {
   const list = Array.isArray(picks) ? picks : [];
-  const empty = { ok: false, kind: null, kinds: [], value: 0, side: 1, sense: 1, note: 'Tap a line, an arc, or a point and a line.' };
+  const empty = { ok: false, kind: null, kinds: [], value: 0, side: 1, sense: 1, note: 'Tap a line, an arc, two points, or a point and a line.' };
   if (!model) return { ...empty, note: 'Draw a contour first.' };
   if (list.length === 1 && list[0].kind === 'line') {
     const ends = lineEnds(model, list[0].id);
@@ -185,6 +196,16 @@ export function suggestContourDimension(model, picks) {
       return { ok: true, kind: 'angle', kinds: ['angle', 'distance'], value: angle.value, side: gap.side, sense: angle.sense, note: '' };
     }
     return { ok: true, kind: 'distance', kinds: ['distance', 'angle'], value: gap.value, side: gap.side, sense: angle.sense, note: '' };
+  }
+  if (list.length === 2 && list.every((p) => p.kind === 'point')) {
+    const a = pointAt(model, list[0].id);
+    const b = pointAt(model, list[1].id);
+    if (!a || !b) return { ...empty, note: 'That pair is not a length, angle, distance, offset, or radius.' };
+    const value = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    if (!(value > 0)) {
+      return { ok: false, kind: 'distance', kinds: ['distance'], value: 0, side: 1, sense: 1, note: 'Those points are the same.' };
+    }
+    return { ok: true, kind: 'distance', kinds: ['distance'], value, side: 1, sense: 1, note: '' };
   }
   if (list.length === 2) {
     const point = list.find((p) => p.kind === 'point');
@@ -238,10 +259,10 @@ export function buildDimension(model, picks, draft) {
   const kind = draft?.kind;
   const value = Number(draft?.valueMm);
   if (!Number.isFinite(value)) return { ok: false, message: 'Enter a number.' };
-  const nameCheck = validateDimensionName(draft?.name, model);
+  const nameCheck = validateDimensionName(draft?.name, model, draft?.id);
   if (!nameCheck.ok) return nameCheck;
   const list = picks || [];
-  const dim = { id: nextDimId(model), kind, value };
+  const dim = { id: draft?.id || nextDimId(model), kind, value };
   if (nameCheck.name) dim.name = nameCheck.name;
   if (kind === 'length' && list.length === 1 && list[0].kind === 'line') {
     if (!(value > 0)) return { ok: false, message: 'Length must be greater than 0.' };
@@ -249,6 +270,16 @@ export function buildDimension(model, picks, draft) {
   } else if (kind === 'radius' && list.length === 1 && list[0].kind === 'arc') {
     if (!(value > 0)) return { ok: false, message: 'Radius must be greater than 0.' };
     dim.arc = list[0].id;
+  } else if (kind === 'distance' && list.length === 2 && list.every((p) => p.kind === 'point')) {
+    if (!(value > 0)) return { ok: false, message: 'Distance must be greater than 0.' };
+    const a = pointAt(model, list[0].id);
+    const b = pointAt(model, list[1].id);
+    if (!a || !b || !(Math.hypot(b[0] - a[0], b[1] - a[1]) > 0)) {
+      return { ok: false, message: 'That dimension does not match the pick.' };
+    }
+    dim.a = list[0].id;
+    dim.b = list[1].id;
+    dim.at = { [list[0].id]: [a[0], a[1]] };
   } else if ((kind === 'angle' || kind === 'distance') && list.length === 2 && list.every((p) => p.kind === 'line')) {
     dim.a = list[0].id;
     dim.b = list[1].id;
@@ -282,7 +313,100 @@ function storeSolved(state, model) {
   return { state: next, error: null, solved };
 }
 
+function copyContour(contour) {
+  return specFromSolved(contour);
+}
+
+/** Drop a typed preview and put the contour back to the shape before it. */
+export function revertLiveDimension(state) {
+  if (!state?.dimensionLive?.base) return state;
+  return {
+    ...state,
+    params: { ...(state.params || {}), contour: copyContour(state.dimensionLive.base) },
+    dimensionLive: null,
+  };
+}
+
+function withLiveBase(state, live, gestureNote) {
+  return {
+    ...state,
+    params: { ...(state.params || {}), contour: copyContour(live.base) },
+    picks: state.picks,
+    gesture: state.gesture,
+    tagId: state.tagId,
+    dimensionLive: live,
+    gestureNote: gestureNote || null,
+  };
+}
+
+/**
+ * Re-solve one dimension from the contour as it was when typing started.
+ * The preview keeps the picks, so the card does not reset. Confirm is what
+ * writes the block. An empty or non-positive length, radius, or point
+ * distance puts the contour back.
+ */
+export function liveDimension(state, draft) {
+  if (!draft) return { state: revertLiveDimension(state), error: null };
+  const ready = state?.params?.contour ? state : promoteContourState(state);
+  if (!ready?.params?.contour) {
+    return { state: ready, error: ready?.gestureNote || 'Draw a contour first.' };
+  }
+  const live = ready.dimensionLive?.base
+    ? { base: ready.dimensionLive.base, id: ready.dimensionLive.id }
+    : { base: copyContour(ready.params.contour), id: nextDimId(ready.params.contour) };
+  const kind = draft.kind;
+  const value = Number(draft.valueMm);
+  const picks = ready.picks || [];
+  const pointDistance = kind === 'distance'
+    && picks.length === 2
+    && picks.every((p) => p.kind === 'point');
+  const needsPositive = kind === 'length' || kind === 'radius' || pointDistance;
+  if (!Number.isFinite(value) || (needsPositive && !(value > 0))) {
+    return { state: withLiveBase(ready, live, null), error: null };
+  }
+  const built = buildDimension(live.base, picks, { ...draft, id: live.id });
+  if (!built.ok) {
+    return { state: withLiveBase(ready, live, built.message), error: built.message };
+  }
+  let solved;
+  try {
+    solved = solveContour({
+      ...live.base,
+      dimensions: [...(live.base.dimensions || []), built.dimension],
+    });
+  } catch (err) {
+    const message = err.message || String(err);
+    return { state: withLiveBase(ready, live, message), error: message };
+  }
+  const contour = specFromSolved(solved);
+  const statusNote = contourStatusNote(solved);
+  return {
+    state: {
+      ...ready,
+      params: { ...(ready.params || {}), contour },
+      picks: ready.picks,
+      gesture: ready.gesture,
+      tagId: ready.tagId,
+      dimensionLive: live,
+      gestureNote: statusNote.text || null,
+    },
+    error: null,
+    solved,
+  };
+}
+
+function finalizeLiveDimension(state, draft) {
+  const live = liveDimension(state, draft);
+  if (live.error || !live.state) return live;
+  return {
+    state: { ...live.state, dimensionLive: null, picks: [] },
+    error: null,
+    solved: live.solved,
+  };
+}
+
 export function commitDimension(state, draft) {
+  if (state?.dimensionLive?.base) return finalizeLiveDimension(state, draft);
   const ready = state?.params?.contour ? state : promoteContourState(state);
   if (!ready?.params?.contour) {
     return { state: ready, error: ready?.gestureNote || 'Draw a contour first.' };
@@ -297,14 +421,18 @@ export function commitDimension(state, draft) {
 }
 
 export function deleteContourDimension(state, id) {
-  const contour = state?.params?.contour;
-  if (!contour) return { state, error: 'No contour.' };
+  const cleared = revertLiveDimension(state);
+  const contour = cleared?.params?.contour;
+  if (!contour) return { state: cleared, error: 'No contour.' };
+  if (state?.dimensionLive?.id === id) {
+    return { state: { ...cleared, tagId: null }, error: null };
+  }
   const dimensions = (contour.dimensions || []).filter((d) => d.id !== id);
   if (dimensions.length === (contour.dimensions || []).length) {
-    return { state, error: 'That dimension is already gone.' };
+    return { state: cleared, error: 'That dimension is already gone.' };
   }
-  const result = storeSolved(state, { ...contour, dimensions });
-  if (result.state) result.state = { ...result.state, tagId: null };
+  const result = storeSolved(cleared, { ...contour, dimensions });
+  if (result.state) result.state = { ...result.state, tagId: null, dimensionLive: null };
   return result;
 }
 
