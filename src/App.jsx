@@ -107,6 +107,9 @@ import {
   undoPartHistory,
 } from './utils/partHistory';
 import { runAssemblyParts } from './utils/assemblyRun';
+import { catalogsFromRuns } from './utils/jointResolve';
+import { partPlacement } from './utils/jointSchema';
+import { refreshAssemblyJoints } from './joints/refreshJoints';
 import {
   applyAssemblyOpenHold,
   createAssemblyOpenController,
@@ -262,7 +265,7 @@ import { composeShellCommit } from './utils/shellMode';
 import { composeDraftCommit } from './utils/draftMode';
 import { composeCutCommit } from './utils/cutMode';
 import { composeBooleanCommit, validateBooleanAccept } from './utils/booleanMode';
-import { planCrossPartSubtract, crossPartSubtractWrites } from './utils/externalCopy';
+import { crossPartSubtractWrites, externalBodyRotationBlock, planCrossPartSubtract } from './utils/externalCopy';
 import { FEATURE_MARKER_KINDS } from './utils/featureMarkers';
 import { composeMoveCommit } from './utils/moveMode';
 import { composeMoveFaceCommit } from './utils/moveFaceMode';
@@ -1919,8 +1922,23 @@ const App = () => {
         if (run?.ok && run.mesh?.vertProperties) partLeftoversRef.current[id] = run.mesh;
       }
       commitPartRuns(runs);
-      const solids = composeViewportParts(doc, runs);
-      const leftovers = leftoverPickSolids(doc, runs, partLeftoversRef.current);
+      let placed = doc;
+      if (!assemblyOpenLockRef.current && Array.isArray(doc.joints) && doc.joints.length) {
+        let catalogs = {};
+        try {
+          catalogs = catalogsFromRuns({
+            parts: doc.parts,
+            runs,
+            leftovers: partLeftoversRef.current,
+          });
+        } catch (err) {
+          console.warn('[App] joint re-resolve failed', err?.message || err);
+        }
+        const refreshed = refreshAssemblyJoints({ doc, catalogs });
+        if (refreshed.changed) placed = rememberAssembly(refreshed.doc);
+      }
+      const solids = composeViewportParts(placed, runs);
+      const leftovers = leftoverPickSolids(placed, runs, partLeftoversRef.current);
       const activeOk = !!(viewId && runs[viewId]?.ok === true && activeVisible);
       viewportRef.current?.placeAssembly?.({
         solids,
@@ -2037,6 +2055,7 @@ const App = () => {
           partId: id,
           mesh,
           position: partPosition(partNow) || [0, 0, 0],
+          placement: partPlacement(partNow),
         });
       }
       if (!opts.keepPicks || opts.bodyHighlight) viewportRef.current?.showCadBodyHighlight?.();
@@ -2066,6 +2085,7 @@ const App = () => {
       viewportRef.current?.adoptActiveSolid?.({
         mesh: cachedMesh,
         position: partPosition(part) || [0, 0, 0],
+        placement: partPlacement(part),
         partId: id,
       });
     }
@@ -2119,6 +2139,7 @@ const App = () => {
         partId,
         mesh,
         position: partPosition(part) || [0, 0, 0],
+        placement: partPlacement(part),
       });
     }
     return true;
@@ -3803,6 +3824,7 @@ const App = () => {
       viewportRef.current?.adoptActiveSolid?.({
         mesh: nextRun.mesh,
         position: partPosition(nextPart) || [0, 0, 0],
+        placement: partPlacement(nextPart),
         partId: nextActive,
       });
     }
@@ -4785,6 +4807,7 @@ const App = () => {
       viewportRef.current?.adoptActiveSolid?.({
         mesh: nextRun.mesh,
         position: partPosition(nextPart) || [0, 0, 0],
+        placement: partPlacement(nextPart),
         partId: nextActive,
       });
     }
@@ -4948,6 +4971,7 @@ const App = () => {
         script: typeof script === 'string' ? script : null,
         name: row.name || row.id,
         position: partPosition(row) || [0, 0, 0],
+        placement: partPlacement(row),
         visible: row.visible !== false,
         ok: !(run && run.ok === false && run.error && !run.skipped),
       };
@@ -5004,9 +5028,16 @@ const App = () => {
       id: sourceRow.id,
       name: sourceRow.name || sourceRow.id,
       position: partPosition(sourceRow) || [0, 0, 0],
+      placement: partPlacement(sourceRow),
     };
     const plan = planCrossPartSubtract({ before, after, source, parts, markers: FEATURE_MARKER_KINDS });
     if (!plan || !plan.candidates.length) return;
+    const involved = parts.filter((part) => plan.candidates.some((cand) => String(cand.id) === String(part.id)));
+    const rotated = externalBodyRotationBlock(source, involved);
+    if (!rotated.ok) {
+      viewportRef.current?.notify?.(rotated.message);
+      return;
+    }
     const probeParts = plan.candidates
       .map((c) => ({ id: c.id, mesh: meshForPart(c.id), offset: c.offset }))
       .filter((p) => p.mesh?.vertProperties);
