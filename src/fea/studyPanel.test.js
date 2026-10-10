@@ -17,6 +17,7 @@ import {
   solverRequestMaterial,
   studyFaceFromPick,
   studyWithMaterialId,
+  studyWithType,
   studyWithoutFixture,
   studyWithoutLoad,
 } from './studyPanel.js';
@@ -84,6 +85,7 @@ test('a library id and a custom material both resolve for solve()', () => {
   const resolved = solverRequestMaterial(pla.study);
   assert.equal(resolved.ok, true);
   assert.equal(resolved.material.nu, 0.36);
+  assert.equal(resolved.material.density_kg_m3, 1240);
   assert.equal(resolved.material.yield_MPa, 52.5);
   assert.equal(resolved.assumptions[0].source, 'assumed');
   assert.equal(resolved.anisotropic, true);
@@ -160,4 +162,20 @@ test('the panel study round-trips through the part script', () => {
   assert.deepEqual(again.loads[0].vector, [200, 0, 0]);
   assert.equal(again.result, null);
   assert.match(next, /return part;/);
+});
+
+test('modal switches the study type and still resolves density', () => {
+  const modal = studyWithType(freshStudy(), 'modal');
+  assert.equal(modal.ok, true);
+  assert.equal(modal.study.type, 'modal');
+  const resolved = solverRequestMaterial(modal.study);
+  assert.equal(resolved.ok, true);
+  assert.equal(resolved.material.density_kg_m3, 2700);
+  const custom = studyWithType(freshStudy(), 'modal');
+  const bare = solverRequestMaterial({
+    ...custom.study,
+    material: { name: 'Custom', E_MPa: 1000, nu: 0.3, yield_MPa: 10 },
+  });
+  assert.equal(bare.ok, false);
+  assert.match(bare.errors.join(' '), /density/);
 });

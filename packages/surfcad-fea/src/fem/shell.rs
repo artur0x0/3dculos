@@ -702,6 +702,43 @@ fn element_matrices(
     Ok((ke, fe))
 }
 
+/// Consistent translational and rotary inertia, `36×36`, row-major.
+///
+/// Translations carry `ρ t`. Rotations carry `ρ t³/12` on all three
+/// components, which is the bending rotary inertia and the same inertia on
+/// the drilling axis so the mass matrix stays positive definite on the
+/// Hughes–Brezzi degree of freedom. `density` is tonne/mm³.
+fn element_mass(
+    nodes: &[[f64; 3]],
+    elem: &[u32; 6],
+    thickness: f64,
+    density: f64,
+) -> Result<[f64; NDOF * NDOF], ()> {
+    let xyz = elem_coords(nodes, elem);
+    let mut me = [0.0; NDOF * NDOF];
+    let rotary = thickness * thickness / 12.0;
+    for gp in TRI_RULE {
+        let mid = midsurface(gp.r, gp.s, &xyz).ok_or(())?;
+        let area = mid.area_jac * gp.w;
+        let trans = density * thickness * area;
+        let rot = density * thickness * rotary * area;
+        for i in 0..NEN {
+            for j in 0..=i {
+                let nij = mid.shape[i] * mid.shape[j];
+                for axis in 0..3 {
+                    let li = i * SHELL_DOF_PER_NODE + axis;
+                    let lj = j * SHELL_DOF_PER_NODE + axis;
+                    me[li * NDOF + lj] += trans * nij;
+                    let ri = i * SHELL_DOF_PER_NODE + 3 + axis;
+                    let rj = j * SHELL_DOF_PER_NODE + 3 + axis;
+                    me[ri * NDOF + rj] += rot * nij;
+                }
+            }
+        }
+    }
+    Ok(me)
+}
+
 /// Global stress at the 6 nodes, each as bottom / mid / top.
 fn element_nodal_stress(
     nodes: &[[f64; 3]],
@@ -1323,6 +1360,63 @@ fn invert3(m: [[f64; 3]; 3]) -> Option<([[f64; 3]; 3], f64)> {
         ],
     ];
     Some((inv, det))
+}
+
+/// Lowest modes of a MITC6 shell mesh.
+///
+/// `density_kg_m3` is kilograms per cubic metre. Rotary inertia is `ρ t³/12`
+/// on every rotation, including drilling, so the mass matrix stays positive
+/// definite. `modes == 0` means [`super::DEFAULT_MODES`].
+pub fn modal_shell(
+    nodes: &[[f64; 3]],
+    elements: &[[u32; 6]],
+    thickness: &[f64],
+    material: Material,
+    density_kg_m3: f64,
+    dirichlet: &[Dirichlet],
+    modes: usize,
+) -> Result<super::ModalOutput, FemError> {
+    super::validate_material(material)?;
+    validate_shell(nodes, elements, thickness)?;
+    let density = super::modal::density_tonne_per_mm3(density_kg_m3)?;
+    let directors = nodal_directors(nodes, elements)?;
+    let n_dof = nodes.len() * SHELL_DOF_PER_NODE;
+    let (fixed, _prescribed, mut warnings) =
+        super::modal::homogeneous_fixtures(n_dof, dirichlet)?;
+    let k = super::modal::requested_modes(modes, &fixed, &mut warnings)?;
+    let c = plane_stress(material);
+    let g_mod = material.young / (2.0 * (1.0 + material.poisson));
+    let t_asm = Clock::start();
+    let km = super::pair::assemble_pair(
+        nodes.len(),
+        SHELL_DOF_PER_NODE,
+        elements,
+        &fixed,
+        |element, elem| {
+            let t = thickness[element];
+            let (ke, _) = element_matrices(nodes, &directors, elem, t, &c, g_mod, 0.0).map_err(|_| {
+                FemError::BadMesh(format!("shell element {element} has a degenerate mid-surface"))
+            })?;
+            let me = element_mass(nodes, elem, t, density).map_err(|_| {
+                FemError::BadMesh(format!("shell element {element} has a degenerate mid-surface"))
+            })?;
+            Ok([ke.to_vec(), me.to_vec()])
+        },
+    )?;
+    let assembly_secs = t_asm.elapsed_secs();
+    let t_solve = Clock::start();
+    let spectrum = super::eigen::lowest_modes(&km.stiffness, &km.mass, k)?;
+    let solve_secs = t_solve.elapsed_secs();
+    Ok(super::modal::complete(
+        n_dof,
+        SHELL_DOF_PER_NODE,
+        &fixed,
+        spectrum,
+        &km.mass,
+        warnings,
+        assembly_secs,
+        solve_secs,
+    ))
 }
 
 #[cfg(test)]

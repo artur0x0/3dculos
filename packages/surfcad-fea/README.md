@@ -7,6 +7,7 @@ Two entry points share the module:
 - `solve` is still the phase-0 **stub**. It returns a deterministic fake von Mises field and always sets `source` to `"stub"`. The wasm `capabilities()` still reports `solvers: ["stub"]`. The app worker calls `solve_tet10` for a study and uses `solve` only when the request sets `fallback: "stub"`. The page reports `source: "tet10"` and `shells: false`.
 - `solve_tet10` is a clean-room linear-elastic static solver for 10-node tetrahedra. It sets `source` to `"fem"`.
 - `solve_shell` is a clean-room linear shell for 6-node triangles. It sets `source` to `"shell"`.
+- `modal_tet10` and `modal_shell` are the same elements' consistent-mass modal solves. They return the lowest frequencies in hertz and mass-normalized mode shapes scaled so the largest translation is 1. A free-free model shifts `K − σ M` so the rigid-body modes stay in the spectrum. Loads are ignored.
 
 The linear algebra is [faer](https://crates.io/crates/faer) 0.24 (MIT / Apache-2.0), built **without** the `rayon` feature so the factorization stays single-threaded (`Par::Seq`). Tet meshing is not in this crate. The shell does not need a separate mesher: the caller passes the 6-node triangulation.
 

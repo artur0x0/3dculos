@@ -20,7 +20,7 @@ export const UNITS_NOTE = 'Length is mm, force is N, and stress, pressure, modul
 const STUDY_KEYS = new Set(['v', 'id', 'name', 'type', 'units', 'material', 'model', 'fixtures', 'loads', 'mesh', 'result']);
 const UNIT_KEYS = new Set(['length', 'force', 'stress', 'note']);
 const MATERIAL_ID_KEYS = new Set(['id']);
-const MATERIAL_CUSTOM_KEYS = new Set(['name', 'E_MPa', 'nu', 'yield_MPa']);
+const MATERIAL_CUSTOM_KEYS = new Set(['name', 'E_MPa', 'nu', 'yield_MPa', 'density_kg_m3']);
 const MESH_KEYS = new Set(['target', 'refine']);
 const FIXTURE_KEYS = new Set(['kind', 'faces']);
 const LOAD_KEYS = new Set(['kind', 'faces', 'vector', 'pressure_MPa']);
@@ -170,11 +170,20 @@ function readMaterial(material, errors) {
     }
   }
   if (!finiteNumber(material.E_MPa) || !finiteNumber(material.nu) || !finiteNumber(material.yield_MPa)) return null;
+  let density = null;
+  if (material.density_kg_m3 != null) {
+    if (!finiteNumber(material.density_kg_m3) || !(material.density_kg_m3 > 0)) {
+      errors.push('study.material.density_kg_m3 must be a positive finite density in kg/m³');
+    } else {
+      density = material.density_kg_m3;
+    }
+  }
   const out = {};
   if (typeof material.name === 'string' && material.name.trim()) out.name = material.name;
   out.E_MPa = material.E_MPa;
   out.nu = material.nu;
   out.yield_MPa = material.yield_MPa;
+  if (density != null) out.density_kg_m3 = density;
   return out;
 }
 
@@ -251,6 +260,7 @@ function canonicalMaterial(material) {
   out.E_MPa = material.E_MPa;
   out.nu = material.nu;
   out.yield_MPa = material.yield_MPa;
+  if (material.density_kg_m3 > 0) out.density_kg_m3 = material.density_kg_m3;
   return out;
 }
 
@@ -310,7 +320,9 @@ export function validateStudy(input, { defaults = false } = {}) {
   }
   if (typeof src.name !== 'string' || !src.name.trim()) errors.push('study.name must be a non-empty string');
   else rejectMarkerText(src.name, 'study.name', errors);
-  if (src.type !== 'linear-static') errors.push('study.type must be "linear-static"');
+  if (src.type !== 'linear-static' && src.type !== 'modal') {
+    errors.push('study.type must be "linear-static" or "modal"');
+  }
 
   if (!isPlain(src.units)) {
     errors.push('study.units must be an object');

@@ -11,7 +11,10 @@
 //! or Jacobi PCG.
 
 mod assemble;
+mod eigen;
 mod linear;
+mod modal;
+mod pair;
 mod shell;
 mod stress;
 pub(crate) mod tet10;
@@ -22,9 +25,10 @@ mod tests;
 use assemble::Reduced;
 use linear::{pcg, supernodal_cholesky};
 
+pub use modal::{modal_tet10, ModalOutput, DEFAULT_MODES};
 pub use shell::{
-    clamp_node, consistent_traction, pin_node, shell_solve_options, solve_shell, ShellOutput,
-    ShellPressure, SHELL_DOF_PER_NODE,
+    clamp_node, consistent_traction, modal_shell, pin_node, shell_solve_options, solve_shell,
+    ShellOutput, ShellPressure, SHELL_DOF_PER_NODE,
 };
 
 /// Free-DOF count at or below which [`SolverChoice::Auto`] uses supernodal
@@ -380,7 +384,7 @@ pub(crate) fn validate_material(material: Material) -> Result<(), FemError> {
     Ok(())
 }
 
-fn validate_mesh(nodes: &[[f64; 3]], elements: &[[u32; 10]]) -> Result<(), FemError> {
+pub(crate) fn validate_mesh(nodes: &[[f64; 3]], elements: &[[u32; 10]]) -> Result<(), FemError> {
     if nodes.is_empty() || elements.is_empty() {
         return Err(FemError::BadMesh(
             "solve_tet10 needs at least one node and one TET10 element".into(),

@@ -1021,6 +1021,54 @@ async function runSheetCase(browser, vp) {
   await context.close();
 }
 
+async function runModalCase(browser, vp) {
+  const context = await browser.newContext({
+    viewport: { width: vp.width, height: vp.height },
+    hasTouch: vp.touch,
+    isMobile: vp.touch,
+    deviceScaleFactor: vp.touch ? 2 : 1,
+    colorScheme: 'dark',
+    userAgent: vp.touch
+      ? 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1'
+      : undefined,
+  });
+  const page = await context.newPage();
+  const errors = await boot(page);
+  await seed(page);
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('canvas', { timeout: 40000 });
+  await solidReady(page);
+  await page.locator('[data-analyze-chip]').click();
+  const shell = FEA_SHELL;
+  await page.locator(shell).waitFor({ timeout: 8000 });
+  await page.locator('[data-fea-material]').selectOption('pla-ultimaker');
+  await page.locator('[data-fea-study-type="modal"]').click();
+  await page.locator('[data-fea-modal-note]').waitFor({ timeout: 8000 });
+  const note = (await page.locator('[data-fea-modal-note]').innerText()).replace(/\s+/g, ' ');
+  check(`${vp.name} modal note`, /fixtures only/i.test(note), note);
+  check(`${vp.name} modal left snap`, await snap(page, 'left', END_SNAP_MARGIN));
+  const root = await endFacePoints(page);
+  await page.locator('[data-fea-target="fixture"]').click();
+  const fixed = await tapUntil(page, vp.touch, root, 'data-fea-fixture-count', '1');
+  check(`${vp.name} modal fixture`, fixed.ok, JSON.stringify(fixed));
+  await page.locator('[data-fea-run]').click();
+  await page.locator(`${shell} [data-fea-mode="0"]`).waitFor({ timeout: 120000 });
+  const label = ((await page.locator(`${shell} [data-fea-mode="0"]`).innerText()) || '').replace(/\s+/g, ' ').trim();
+  check(`${vp.name} modal mode list`, /^Mode 1: [0-9.]+ Hz$/.test(label), label);
+  check(`${vp.name} modal animate off`, await page.locator(`${shell} [data-fea-animate]`).isChecked() === false);
+  const source = await page.locator(`${shell} [data-fea-source]`).getAttribute('data-fea-source');
+  check(`${vp.name} modal source`, source === 'modal', source || '');
+  const legend = ((await page.locator(`${shell} [data-fea-displacement]`).innerText()) || '').replace(/\s+/g, ' ');
+  check(`${vp.name} modal legend has no millimetre unit`, !/mm/.test(legend), legend);
+  const shot = join(SHOT_DIR, vp.touch ? 'fea-modal-390.png' : 'fea-modal-1280.png');
+  check(`${vp.name} modal shot dir`, !shot.startsWith('/opt/cursor/artifacts'), shot);
+  await page.screenshot({ path: shot });
+  check(`${vp.name} modal shot saved`, existsSync(shot), shot);
+  console.log(`  shot ${shot}`);
+  check(`${vp.name} modal no page errors`, errors.length === 0, errors.slice(0, 3).join(' | '));
+  await context.close();
+}
+
 const viewArg = process.env.FEA_VIEW || '';
 const viewports = [
   { name: '390', width: 390, height: 844, touch: true },
@@ -1043,6 +1091,8 @@ try {
     await runCase(browser, vp);
     console.log(` ${vp.name} sheet`);
     await runSheetCase(browser, vp);
+    console.log(` ${vp.name} modal`);
+    await runModalCase(browser, vp);
   }
 } finally {
   if (browser) await browser.close();

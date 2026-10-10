@@ -28,6 +28,7 @@
  */
 
 import { boundaryConditions } from './boundaryConditions.js';
+import { solveModal, solveSheetModal } from './solveModal.js';
 import {
   chooseEdgeLength,
   chooseSolver,
@@ -121,6 +122,8 @@ export async function solveSolid({
   fallback,
   solveTet10,
   solveShell,
+  modalTet10,
+  modalShell,
   solveStub,
   sheetSpec,
   meshVolume,
@@ -157,7 +160,11 @@ export async function solveSolid({
   }
   const modelChoice = chooseAnalysisModel(study, sheetSpec);
   if (modelChoice.kind === 'shell') {
-    if (typeof solveShell !== 'function') {
+    const modalStudy = study && study.type === 'modal';
+    if (modalStudy && typeof modalShell !== 'function') {
+      throw new Error('Modal analysis is not in this FEA build.');
+    }
+    if (!modalStudy && typeof solveShell !== 'function') {
       throw new Error('The shell solver is not loaded.');
     }
     const tools = await import('./meshVolume.js');
@@ -170,6 +177,7 @@ export async function solveSolid({
       profile,
       sheetSpec,
       solveShell,
+      modalShell,
       cache,
       tools,
       isCancelled,
@@ -276,6 +284,40 @@ export async function solveSolid({
       tools?.releaseMesh?.(volume);
       throw abortError();
     }
+  }
+
+  if (study && study.type === 'modal') {
+    progress({ stage: 'assembling' });
+    await yieldTurn();
+    if (cancelled()) throw abortError();
+    const assembleStarted = Date.now();
+    const bcs = boundaryConditions(volume, study || {}, { diagonal: shape.diagonal });
+    timings.meshing = meshMs;
+    timings.assembling = Date.now() - assembleStarted;
+    warnings.push(...bcs.warnings);
+    if (cache && volume && !entry) entry = pushCacheEntry(cache, cacheKey, volume);
+    return solveModal({
+      study,
+      positions,
+      indices,
+      faceIDs,
+      material,
+      profile,
+      volume,
+      edge,
+      bcs,
+      warnings,
+      timings,
+      started,
+      meshReused,
+      thin,
+      modalTet10,
+      progress,
+      noteMemory,
+      memory,
+      peakMemory,
+      cancelled,
+    });
   }
 
   const yieldMPa = material && material.yield_MPa != null && Number.isFinite(Number(material.yield_MPa))
@@ -754,6 +796,7 @@ async function solveSheetMetal({
   profile,
   sheetSpec,
   solveShell,
+  modalShell,
   cache,
   tools,
   isCancelled,
@@ -817,6 +860,29 @@ async function solveSheetMetal({
   const bcs = shellBoundaryConditions(shellMesh, positions, indices, faceIDs, study || {}, { diagonal: shape.diagonal });
   const assembling = Date.now() - assembleStarted;
   warnings.push(...bcs.warnings);
+  if (study && study.type === 'modal') {
+    return solveSheetModal({
+      study,
+      positions,
+      indices,
+      faceIDs,
+      material,
+      profile,
+      shellMesh,
+      bcs,
+      warnings,
+      assembling,
+      meshMs,
+      meshReused,
+      started,
+      modalShell,
+      progress,
+      noteMemory,
+      memory,
+      peakMemory,
+      cancelled,
+    });
+  }
   if (!bcs.clampedNodes.length) throw new Error('Fix a face before running the study.');
   const bcPayload = { clampedNodes: bcs.clampedNodes };
   if (bcs.forceNodes.length) {

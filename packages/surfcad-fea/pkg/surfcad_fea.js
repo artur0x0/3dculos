@@ -28,6 +28,70 @@ export function dispose() {
 }
 
 /**
+ * Lowest natural frequencies of a MITC6 shell mesh.
+ *
+ * Same contract as `modal_tet10`. `modes` contains the translational
+ * components only (`ux, uy, uz` per node). Rotary inertia is in the solve.
+ * @param {any} mesh
+ * @param {any} material
+ * @param {any} bcs
+ * @param {any} options
+ * @returns {any}
+ */
+export function modal_shell(mesh, material, bcs, options) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        wasm.modal_shell(retptr, addBorrowedObject(mesh), addBorrowedObject(material), addBorrowedObject(bcs), addBorrowedObject(options));
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        if (r2) {
+            throw takeObject(r1);
+        }
+        return takeObject(r0);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        heap[stack_pointer++] = undefined;
+        heap[stack_pointer++] = undefined;
+        heap[stack_pointer++] = undefined;
+        heap[stack_pointer++] = undefined;
+    }
+}
+
+/**
+ * Lowest natural frequencies of a TET10 mesh.
+ *
+ * `material.density_kg_m3` is required. `options.modes` defaults to 6.
+ * Fixtures are homogeneous. Forces and pressures are ignored and reported
+ * in `warnings`. `modes` is the translational mode shape, mode-major,
+ * `ux, uy, uz` per node, scaled so the largest component is 1.
+ * @param {any} mesh
+ * @param {any} material
+ * @param {any} bcs
+ * @param {any} options
+ * @returns {any}
+ */
+export function modal_tet10(mesh, material, bcs, options) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        wasm.modal_tet10(retptr, addBorrowedObject(mesh), addBorrowedObject(material), addBorrowedObject(bcs), addBorrowedObject(options));
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        if (r2) {
+            throw takeObject(r1);
+        }
+        return takeObject(r0);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        heap[stack_pointer++] = undefined;
+        heap[stack_pointer++] = undefined;
+        heap[stack_pointer++] = undefined;
+        heap[stack_pointer++] = undefined;
+    }
+}
+
+/**
  * @param {any} study
  * @param {Float32Array} positions
  * @param {Uint32Array} indices

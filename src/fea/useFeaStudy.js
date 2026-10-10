@@ -13,7 +13,7 @@ import { initialFeaProgress, logFeaTiming, reduceFeaProgress } from './feaProgre
 import { studyForSolve } from './renderFaceIds.js';
 import { shellSheetFromScript } from './sheetMidsurface.js';
 import { activePlot, showResults } from './resultsView.js';
-import { bindStressField, setStressSkinSource } from './stressMap.js';
+import { bindStressField, bindVectorField, setStressSkinSource } from './stressMap.js';
 import { composeFeaStudy, readFeaStudy, scriptOutsideFeaStudy } from './studyScript.js';
 import {
   applyFacePick,
@@ -30,6 +30,7 @@ import {
   studyWithLoadVector,
   studyWithMaterialId,
   studyWithRefine,
+  studyWithType,
   studyWithoutFixture,
   studyWithoutLoad,
 } from './studyPanel.js';
@@ -89,12 +90,17 @@ export function useFeaStudy({
   const [notice, setNotice] = useState('');
   const [preview, setPreview] = useState(EMPTY_PREVIEW);
   const [plot, setPlotState] = useState('stress');
+  const [modeIndex, setModeIndex] = useState(0);
+  const [animate, setAnimateState] = useState(false);
   const [dismissed, setDismissed] = useState(false);
   const writtenRef = useRef(null);
   const clientRef = useRef(null);
   const runAbortRef = useRef(null);
   const stressFieldRef = useRef(null);
   const displacementFieldRef = useRef(null);
+  const modeMagnitudesRef = useRef(null);
+  const modeVectorsRef = useRef(null);
+  const modeGeometryRef = useRef(null);
   const solvedOutsideRef = useRef(null);
   const markStaleRef = useRef(() => {});
   const draftRef = useRef(draft);
@@ -502,6 +508,10 @@ export function useFeaStudy({
       });
       const nodal = solved?.nodal instanceof Float32Array ? solved.nodal : null;
       const magnitude = solved?.displacement instanceof Float32Array ? solved.displacement : null;
+      const modal = solved?.source === 'modal';
+      modeMagnitudesRef.current = modal && solved.modeMagnitudes instanceof Float32Array ? solved.modeMagnitudes : null;
+      modeVectorsRef.current = modal && solved.modeVectors instanceof Float32Array ? solved.modeVectors : null;
+      modeGeometryRef.current = modal ? { geometry, faceIDs: solid?.faceIDs, count: magnitude?.length || 0 } : null;
       const now = getSolidRef.current?.()?.geometry;
       const moved = !geometry || now !== geometry;
       const bound = !moved && nodal ? bindStressField(geometry, nodal, solid?.faceIDs) : null;
@@ -515,14 +525,22 @@ export function useFeaStudy({
         scale: { p95: solved.p95, yield_MPa: resolved.material.yield_MPa },
         onStale,
       } : null;
+      const vectorCount = (magnitude?.length || 0) * 3;
+      const vectorBound = modal && modeVectorsRef.current && vectorCount
+        ? bindVectorField(geometry, modeVectorsRef.current.subarray(0, vectorCount), solid?.faceIDs)
+        : null;
       displacementFieldRef.current = dispBound ? {
         geometry,
         field: dispBound,
         ramp: 'displacement',
         scale: { min: solved.displacementMin, max: solved.displacementMax },
+        vectors: vectorBound,
+        animate: false,
         onStale,
       } : null;
-      setPlotState('stress');
+      setAnimateState(false);
+      setModeIndex(0);
+      setPlotState(modal ? 'displacement' : 'stress');
       setDismissed(false);
       setResult({
         source: solved.source,
@@ -533,6 +551,9 @@ export function useFeaStudy({
         max: solved.max,
         displacementMin: solved.displacementMin ?? null,
         displacementMax: solved.displacementMax ?? null,
+        frequenciesHz: Array.isArray(solved.frequenciesHz) ? solved.frequenciesHz : null,
+        effectiveMass: Array.isArray(solved.effectiveMass) ? solved.effectiveMass : null,
+        modeIndex: 0,
         safetyFactor: solved.safetyFactor != null ? solved.safetyFactor : (solved.fos ?? null),
         warnings: Array.isArray(solved.warnings) ? solved.warnings : [],
         yield_MPa: resolved.material.yield_MPa ?? null,
@@ -589,6 +610,59 @@ export function useFeaStudy({
     setPlotState(activePlot(next));
   }, []);
 
+  const setStudyType = useCallback((type) => {
+    const next = studyWithType(studyRef.current, type);
+    if (!next.ok) {
+      setNotice(next.errors[0] || 'Unknown study type');
+      return;
+    }
+    commitStudy(next.study);
+  }, [commitStudy]);
+
+  const setAnimate = useCallback((on) => {
+    setAnimateState(on === true);
+  }, []);
+
+  const setMode = useCallback((index) => {
+    const packed = modeMagnitudesRef.current;
+    const vectors = modeVectorsRef.current;
+    const live = modeGeometryRef.current;
+    const count = live?.count || 0;
+    if (!packed || !vectors || !live?.geometry || !(count > 0)) return;
+    const last = Math.max(0, Math.floor(packed.length / count) - 1);
+    const mode = Math.max(0, Math.min(last, index | 0));
+    const mag = new Float32Array(packed.subarray(mode * count, (mode + 1) * count));
+    const vec = new Float32Array(vectors.subarray(mode * count * 3, (mode + 1) * count * 3));
+    const bound = bindStressField(live.geometry, mag, live.faceIDs);
+    if (!bound) return;
+    let min = Infinity;
+    let max = -Infinity;
+    for (let i = 0; i < mag.length; i += 1) {
+      const value = mag[i];
+      if (!Number.isFinite(value)) continue;
+      if (value < min) min = value;
+      if (value > max) max = value;
+    }
+    if (!Number.isFinite(min)) min = 0;
+    if (!Number.isFinite(max)) max = 0;
+    displacementFieldRef.current = {
+      geometry: live.geometry,
+      field: bound,
+      ramp: 'displacement',
+      scale: { min, max },
+      vectors: bindVectorField(live.geometry, vec, live.faceIDs),
+      animate: false,
+      onStale: () => markStaleRef.current(),
+    };
+    setModeIndex(mode);
+    setResult((prev) => (prev ? {
+      ...prev,
+      displacementMin: min,
+      displacementMax: max,
+      modeIndex: mode,
+    } : prev));
+  }, []);
+
   const backToSetup = useCallback(() => {
     setPlotState('stress');
     setDismissed(true);
@@ -614,11 +688,12 @@ export function useFeaStudy({
       setStressSkinSource(null);
       return;
     }
-    const src = activePlot(plot) === 'displacement'
+    const modalResult = result?.source === 'modal';
+    const src = modalResult || activePlot(plot) === 'displacement'
       ? displacementFieldRef.current
       : stressFieldRef.current;
-    setStressSkinSource(src || null);
-  }, [open, results, plot, result, preview.showing, preview.ms]);
+    setStressSkinSource(src ? { ...src, animate: modalResult && animate } : null);
+  }, [open, results, plot, result, preview.showing, preview.ms, animate, modeIndex]);
 
   useEffect(() => {
     controllerRef.current = createPreviewController({
@@ -743,6 +818,7 @@ export function useFeaStudy({
     toggle,
     close,
     setMaterialId,
+    setStudyType,
     setCustomMode,
     setCustomField,
     setTarget,
@@ -766,6 +842,10 @@ export function useFeaStudy({
     results,
     plot: activePlot(plot),
     setPlot,
+    modeIndex,
+    setMode,
+    animate,
+    setAnimate,
     dismissed,
     backToSetup,
   };

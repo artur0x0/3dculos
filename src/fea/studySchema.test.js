@@ -57,7 +57,7 @@ test('validation names the bad field', () => {
     ...defaultStudy(),
     v: 2,
     id: '1bad',
-    type: 'modal',
+    type: 'buckling',
     units: { length: 'in', force: 'lbf', stress: 'psi', note: 'inches' },
     material: { id: 'unobtanium' },
     model: 'beam',
@@ -136,4 +136,23 @@ test('a partial study does not validate as a stored study', () => {
   const partial = validateStudy({ id: 's1', name: 'Static 1' });
   assert.equal(partial.ok, false);
   assert.ok(partial.errors.some((error) => error.includes('result')));
+});
+
+test('a modal study is schema-compatible and keeps fixtures', () => {
+  const study = defaultStudy({
+    type: 'modal',
+    fixtures: [{ kind: 'fixed', faces: [face()] }],
+    loads: [{ kind: 'force', faces: [face({ faceID: 2 })], vector: [0, 0, -10] }],
+  });
+  assert.equal(study.type, 'modal');
+  assert.equal(study.fixtures.length, 1);
+  assert.equal(study.loads.length, 1);
+  const again = validateStudy(study);
+  assert.equal(again.ok, true, again.errors.join('; '));
+  const custom = validateStudy({
+    ...defaultStudy({ type: 'modal' }),
+    material: { name: 'Dense', E_MPa: 1000, nu: 0.3, yield_MPa: 10, density_kg_m3: 1200 },
+  });
+  assert.equal(custom.ok, true, custom.errors.join('; '));
+  assert.equal(custom.study.material.density_kg_m3, 1200);
 });

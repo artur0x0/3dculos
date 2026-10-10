@@ -20,7 +20,7 @@
 mod ccx_io;
 mod face_load;
 
-use ccx_io::{ccx_bin, run_case, Deck, ElementKind};
+use ccx_io::{ccx_bin, run_case, run_frequency, Deck, ElementKind};
 use face_load::{face_pressure_forces, face_traction_forces};
 use std::collections::HashSet;
 use std::env;
@@ -28,7 +28,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 use surfcad_fea::fem::{
-    consistent_traction, percentile_95_f64, pin_node, shell_solve_options, solve_shell,
+    consistent_traction, modal_tet10, percentile_95_f64, pin_node, shell_solve_options, solve_shell,
     solve_tet10, Dirichlet, FacePressure, Material, NodalForce, ShellPressure, SolveOptions,
     SolverChoice,
 };
@@ -127,6 +127,15 @@ fn run() -> Result<(), String> {
         }
     }
     print_table(&banner, &rows);
+    if only.is_empty() || only.to_ascii_lowercase().contains("freq") {
+        match frequency_cantilever() {
+            Ok(()) => {}
+            Err(err) => {
+                eprintln!("frequency case failed: {err}");
+                failures.push("frequency");
+            }
+        }
+    }
     if !failures.is_empty() {
         return Err(format!(
             "{} case(s) outside the CalculiX gate",
@@ -224,6 +233,77 @@ fn cantilever() -> Result<Row, String> {
         &out.displacement,
         out.p95,
     )
+}
+
+/// First three C3D10 frequencies of the same cantilever, against `modal_tet10`.
+fn frequency_cantilever() -> Result<(), String> {
+    let length = 100.0;
+    let height = 10.0;
+    let width = 10.0;
+    let mesh = brick_tet10([10, 2, 2], [0.0, 0.0, 0.0], [length, height, width]);
+    let tol = 1e-8 * length;
+    let mut dirichlet = Vec::new();
+    for (i, p) in mesh.nodes.iter().enumerate() {
+        if p[0].abs() <= tol {
+            for axis in 0..3 {
+                dirichlet.push(Dirichlet {
+                    dof: (i * 3 + axis) as u32,
+                    value: 0.0,
+                });
+            }
+        }
+    }
+    let density = 7800.0;
+    let out = modal_tet10(
+        &mesh.nodes,
+        &mesh.elements,
+        steel(),
+        density,
+        &dirichlet,
+        3,
+    )
+    .map_err(|err| format!("frequency modal_tet10: {err}"))?;
+    let deck = deck_solid(
+        &mesh.nodes,
+        &mesh.elements,
+        steel(),
+        &dirichlet,
+        &vec![[0.0; 3]; mesh.nodes.len()],
+    );
+    let dir = env::temp_dir().join(format!("surfcad-ccx-freq-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    let ccx = run_frequency(&dir, "case", &deck, density * 1.0e-12, 3)
+        .map_err(|err| format!("frequency ccx: {err}"))?;
+    if env::var("CALCULIX_KEEP").is_err() {
+        let _ = fs::remove_dir_all(&dir);
+    }
+    println!();
+    println!("CalculiX `*FREQUENCY` on the cantilever C3D10 mesh. Gate is 3% on each of the first three frequencies.");
+    println!();
+    println!("| Mode | ours (Hz) | ccx (Hz) | err | gate | Result |");
+    println!("| --- | ---: | ---: | ---: | ---: | --- |");
+    for i in 0..3 {
+        let err = (out.frequencies_hz[i] - ccx[i]).abs() / ccx[i].abs().max(1e-30);
+        let pass = err < 0.03;
+        println!(
+            "| {} | {:.6e} | {:.6e} | {:.3}% | 3.0% | {} |",
+            i + 1,
+            out.frequencies_hz[i],
+            ccx[i],
+            err * 100.0,
+            if pass { "pass" } else { "FAIL" }
+        );
+        if !pass {
+            return Err(format!(
+                "mode {} is {:.3}% from ccx ({} Hz vs {} Hz)",
+                i + 1,
+                err * 100.0,
+                out.frequencies_hz[i],
+                ccx[i]
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn plate_with_hole() -> Result<Row, String> {

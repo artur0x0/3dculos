@@ -1263,3 +1263,67 @@ export function sampleShellSurface(positions, indices, faceIDs, mesh, fields) {
   }
   return { stress, displacement };
 }
+
+/**
+ * Sample a translational shell mode (ux, uy, uz per mid-surface node) onto
+ * the render vertices. Unmatched vertices stay NaN.
+ */
+export function sampleShellTranslation(positions, indices, faceIDs, mesh, field) {
+  const vertexCount = positions.length / 3;
+  const magnitude = new Float32Array(vertexCount);
+  const vector = new Float32Array(vertexCount * 3);
+  magnitude.fill(NaN);
+  vector.fill(NaN);
+  if (!field) return { magnitude, vector };
+  const incident = new Map();
+  const triangles = Math.floor(Math.min(indices.length, (faceIDs ? faceIDs.length : 0) * 3) / 3);
+  for (let t = 0; t < triangles; t += 1) {
+    for (let k = 0; k < 3; k += 1) {
+      const vertex = indices[t * 3 + k];
+      let list = incident.get(vertex);
+      if (!list) {
+        list = [];
+        incident.set(vertex, list);
+      }
+      list.push(t);
+    }
+  }
+  for (let vertex = 0; vertex < vertexCount; vertex += 1) {
+    const point = [positions[vertex * 3], positions[vertex * 3 + 1], positions[vertex * 3 + 2]];
+    let normal = null;
+    const tris = incident.get(vertex);
+    if (tris && tris.length) {
+      const acc = [0, 0, 0];
+      for (const triangle of tris) {
+        const geom = triangleGeometry(positions, indices, triangle);
+        acc[0] += geom.normal[0];
+        acc[1] += geom.normal[1];
+        acc[2] += geom.normal[2];
+      }
+      const n = length(acc);
+      if (n > 0) normal = [acc[0] / n, acc[1] / n, acc[2] / n];
+    }
+    const found = classifyPoint(mesh, point, normal);
+    if (!found) continue;
+    const hit = locate(mesh, found.index, found.proj.mid);
+    if (!hit) continue;
+    const ids = mesh.elements.subarray(hit.element * 6, hit.element * 6 + 6);
+    const ux = [0, 0, 0, 0, 0, 0];
+    const uy = [0, 0, 0, 0, 0, 0];
+    const uz = [0, 0, 0, 0, 0, 0];
+    for (let k = 0; k < 6; k += 1) {
+      const base = ids[k] * 3;
+      ux[k] = field[base];
+      uy[k] = field[base + 1];
+      uz[k] = field[base + 2];
+    }
+    const x = interpolate(hit.bary, ux);
+    const y = interpolate(hit.bary, uy);
+    const z = interpolate(hit.bary, uz);
+    vector[vertex * 3] = x;
+    vector[vertex * 3 + 1] = y;
+    vector[vertex * 3 + 2] = z;
+    magnitude[vertex] = Math.hypot(x, y, z);
+  }
+  return { magnitude, vector };
+}

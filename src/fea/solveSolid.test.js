@@ -82,6 +82,33 @@ test('a 40x10x10 cantilever is within 10% of beam theory', { timeout: 180_000 },
   console.log(`cantilever max ${result.max} p95 ${result.p95} ms ${result.stats.ms} dofs ${result.stats.dofs}`);
 });
 
+test('a modal cantilever returns frequencies and ignores the load', { timeout: 180_000 }, async () => {
+  const surface = box([40, 10, 10]);
+  const result = await solveSolid({
+    study: { ...beamStudy(200), type: 'modal' },
+    positions: surface.positions,
+    indices: surface.indices,
+    faceIDs: surface.faceIds,
+    material: { ...pla, density_kg_m3: 1240 },
+    profile: 'desktop',
+    solveTet10: fea.solve_tet10,
+    modalTet10: fea.modal_tet10,
+    solveStub: fea.solve,
+    meshVolume,
+  });
+  assert.equal(result.source, 'modal');
+  assert.equal(result.field, 'mode');
+  assert.equal(result.solver, 'lobpcg');
+  assert.equal(result.rescaled, false);
+  assert.ok(result.frequenciesHz.length >= 1);
+  assert.ok(result.frequenciesHz[0] > 1, `first frequency ${result.frequenciesHz[0]}`);
+  assert.equal(result.displacement.length, surface.positions.length / 3);
+  assert.equal(result.modeMagnitudes.length, result.frequenciesHz.length * result.displacement.length);
+  assert.equal(result.modeVectors.length, result.modeMagnitudes.length * 3);
+  assert.ok(result.warnings.some((warning) => warning.code === 'modal-loads'));
+  assert.ok(result.effectiveMass.length >= 3);
+});
+
 test('a shell study on a non-sheet solid falls back to TET10', { timeout: 180_000 }, async () => {
   const surface = box([40, 10, 10]);
   const result = await solveSolid({

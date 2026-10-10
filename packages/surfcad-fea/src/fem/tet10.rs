@@ -50,7 +50,6 @@ pub fn elasticity(material: Material) -> [f64; 36] {
     c
 }
 
-#[cfg(test)]
 fn shape(l1: f64, l2: f64, l3: f64) -> [f64; 10] {
     let l0 = 1.0 - l1 - l2 - l3;
     [
@@ -225,6 +224,135 @@ pub fn tet_volume(xyz: &[[f64; 3]; 10]) -> Result<f64, ()> {
         volume += det * weight;
     }
     Ok(volume)
+}
+
+/// kg/m³ → tonne/mm³. With millimetres and newtons, mass is in tonnes
+/// because `1 N = 1 tonne·mm/s²`.
+pub const KG_M3_TO_TONNE_MM3: f64 = 1.0e-12;
+
+/// Gauss–Legendre nodes and weights on [-1, 1], from the Legendre polynomial.
+///
+/// The nodes are the roots of P_n. Weights are `2 / ((1-x²) P_n'(x)²)`.
+fn gauss_legendre(n: usize) -> Vec<(f64, f64)> {
+    let mut nodes = Vec::with_capacity(n);
+    for i in 0..n {
+        let mut x = ((std::f64::consts::PI * (4.0 * i as f64 + 3.0)) / (4.0 * n as f64 + 2.0)).cos();
+        for _ in 0..40 {
+            let (p, dp) = legendre(n, x);
+            if !dp.is_finite() || dp.abs() < 1e-30 {
+                break;
+            }
+            let step = p / dp;
+            x -= step;
+            if step.abs() < 1e-15 {
+                break;
+            }
+        }
+        let (p, dp) = legendre(n, x);
+        let _ = p;
+        let w = 2.0 / ((1.0 - x * x) * dp * dp);
+        nodes.push((x, w));
+    }
+    nodes.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+    nodes
+}
+
+fn legendre(n: usize, x: f64) -> (f64, f64) {
+    if n == 0 {
+        return (1.0, 0.0);
+    }
+    let mut p_nm1 = 1.0;
+    let mut p_n = x;
+    if n == 1 {
+        return (p_n, 1.0);
+    }
+    for k in 1..n {
+        let p_np1 = ((2 * k + 1) as f64 * x * p_n - k as f64 * p_nm1) / (k as f64 + 1.0);
+        p_nm1 = p_n;
+        p_n = p_np1;
+    }
+    let dp = n as f64 * (x * p_n - p_nm1) / (x * x - 1.0);
+    (p_n, dp)
+}
+
+fn unit_interval(rule: &[(f64, f64)]) -> Vec<(f64, f64)> {
+    rule.iter().map(|(x, w)| ((x + 1.0) * 0.5, w * 0.5)).collect()
+}
+
+/// Quadrature for ∫ N_a N_b dV on a quadratic tet.
+///
+/// N_a N_b is degree 4. A straight element has constant det(J), so a rule
+/// exact for degree 4 integrates the consistent mass. The points are a
+/// conical product of Gauss–Legendre rules (8 × 4 × 3) pulled back to
+/// barycentric coordinates. Each weight multiplies dL1 dL2 dL3 and the
+/// weights sum to 1/6.
+fn mass_rule() -> &'static [(f64, f64, f64, f64)] {
+    use std::sync::OnceLock;
+    static RULE: OnceLock<Vec<(f64, f64, f64, f64)>> = OnceLock::new();
+    RULE.get_or_init(|| {
+        let gx = unit_interval(&gauss_legendre(8));
+        let gy = unit_interval(&gauss_legendre(4));
+        let gz = unit_interval(&gauss_legendre(3));
+        let mut pts = Vec::with_capacity(gx.len() * gy.len() * gz.len());
+        for (x, wx) in &gx {
+            for (y, wy) in &gy {
+                for (z, wz) in &gz {
+                    let l1 = *x;
+                    let l2 = y * (1.0 - x);
+                    let l3 = z * (1.0 - x) * (1.0 - y);
+                    let jac = (1.0 - x) * (1.0 - x) * (1.0 - y);
+                    pts.push((l1, l2, l3, wx * wy * wz * jac));
+                }
+            }
+        }
+        pts
+    })
+    .as_slice()
+}
+
+/// 30×30 consistent mass, row-major.
+///
+/// `density` is tonnes per cubic millimetre (`kg/m³ × 1e-12`). The same
+/// scalar multiplies each of the three translations. Rotational inertia is
+/// not a solid degree of freedom.
+pub fn element_mass(
+    nodes: &[[f64; 3]],
+    elem: &[u32; 10],
+    element: usize,
+    density: f64,
+) -> Result<[f64; 900], FemError> {
+    if !(density.is_finite() && density > 0.0) {
+        return Err(FemError::BadMaterial(
+            "density must be a finite number greater than 0 (tonne/mm³)".into(),
+        ));
+    }
+    let xyz = elem_coords(nodes, elem);
+    let min_det = min_gauss_jacobian(&xyz);
+    if !min_det.is_finite() || min_det <= 0.0 || min_det.abs() < 1e-30 {
+        return Err(jacobian_mesh_error(element, min_det));
+    }
+    let mut me = [0.0; 900];
+    for (l1, l2, l3, weight) in mass_rule() {
+        let (n, det) = {
+            let n = shape(*l1, *l2, *l3);
+            let (_g, det) = gradients(&xyz, *l1, *l2, *l3)
+                .map_err(|_| jacobian_mesh_error(element, min_det))?;
+            (n, det)
+        };
+        if det <= 0.0 {
+            return Err(jacobian_mesh_error(element, min_det));
+        }
+        let scale = density * det * weight;
+        for a in 0..10 {
+            for b in 0..10 {
+                let m = scale * n[a] * n[b];
+                for axis in 0..3 {
+                    me[(a * 3 + axis) * 30 + (b * 3 + axis)] += m;
+                }
+            }
+        }
+    }
+    Ok(me)
 }
 
 /// 30×30 element stiffness, row-major. Returns the element volume too.

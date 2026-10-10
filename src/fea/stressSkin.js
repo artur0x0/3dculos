@@ -27,6 +27,7 @@ import {
   getStressSkinSource,
   stressAt,
   subscribeStressSkin,
+  vectorAt,
 } from './stressMap.js';
 
 export { subscribeStressSkin };
@@ -124,6 +125,7 @@ function buildGeometry(geometry, field, src) {
   const triangles = Math.floor(index.length / 3);
   const positions = new Float32Array(triangles * 9);
   const colors = new Float32Array(triangles * 9);
+  const offset = new Float32Array(triangles * 9);
   let w = 0;
   for (let t = 0; t < triangles; t++) {
     const face = faceIDs[t];
@@ -131,13 +133,17 @@ function buildGeometry(geometry, field, src) {
       const vertex = index[t * 3 + k];
       const vi = vertex * 3;
       const rgb = colorFor(stressAt(field, face, vertex), src);
+      const phi = src?.vectors ? vectorAt(src.vectors, face, vertex) : null;
       positions[w] = positionsSrc[vi] ?? 0;
+      offset[w] = phi ? phi[0] : 0;
       colors[w] = rgb[0];
       w += 1;
       positions[w] = positionsSrc[vi + 1] ?? 0;
+      offset[w] = phi ? phi[1] : 0;
       colors[w] = rgb[1];
       w += 1;
       positions[w] = positionsSrc[vi + 2] ?? 0;
+      offset[w] = phi ? phi[2] : 0;
       colors[w] = rgb[2];
       w += 1;
     }
@@ -146,7 +152,52 @@ function buildGeometry(geometry, field, src) {
   geom.setAttribute('position', new BufferAttribute(positions, 3));
   geom.setAttribute('color', new BufferAttribute(colors, 3));
   geom.computeVertexNormals();
+  geom.userData.modeRest = positions.slice();
+  geom.userData.modeOffset = offset;
   return geom;
+}
+
+function stopModeAnimation(skin) {
+  const frame = skin?.userData?.modeFrame;
+  if (frame != null) cancelAnimationFrame(frame);
+  if (skin?.userData) skin.userData.modeFrame = null;
+}
+
+function startModeAnimation(skin) {
+  stopModeAnimation(skin);
+  const geom = skin?.geometry;
+  const rest = geom?.userData?.modeRest;
+  const offset = geom?.userData?.modeOffset;
+  const attr = geom?.getAttribute?.('position');
+  if (!rest || !offset || !attr) return;
+  let minX = Infinity;
+  let minY = Infinity;
+  let minZ = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  let maxZ = -Infinity;
+  for (let i = 0; i < rest.length; i += 3) {
+    const x = rest[i];
+    const y = rest[i + 1];
+    const z = rest[i + 2];
+    if (x < minX) minX = x;
+    if (y < minY) minY = y;
+    if (z < minZ) minZ = z;
+    if (x > maxX) maxX = x;
+    if (y > maxY) maxY = y;
+    if (z > maxZ) maxZ = z;
+  }
+  const diagonal = Math.hypot(maxX - minX, maxY - minY, maxZ - minZ);
+  const amp = 0.05 * (Number.isFinite(diagonal) ? diagonal : 0);
+  const t0 = performance.now();
+  const tick = (now) => {
+    const scale = Math.sin(((now - t0) / 1000) * Math.PI * 2 * 0.8) * amp;
+    const arr = attr.array;
+    for (let i = 0; i < arr.length; i += 1) arr[i] = rest[i] + scale * offset[i];
+    attr.needsUpdate = true;
+    skin.userData.modeFrame = requestAnimationFrame(tick);
+  };
+  skin.userData.modeFrame = requestAnimationFrame(tick);
 }
 
 /** Drop the skin and give the paint skin its previous visibility back. */
@@ -154,12 +205,15 @@ export function detachStressSkin(host) {
   if (!host) return;
   const skin = host.userData?.stressSkin;
   if (skin) {
+    stopModeAnimation(skin);
     host.remove(skin);
     skin.geometry?.dispose?.();
     skin.material?.dispose?.();
   }
   host.userData.stressSkin = null;
   host.userData.stressField = null;
+  host.userData.stressAnimate = false;
+  host.userData.stressVectors = null;
   restorePaintSkin(host);
 }
 
@@ -179,7 +233,14 @@ export function syncStressSkin(host) {
     }
     return null;
   }
-  if (host.userData?.stressField === src.field && host.userData.stressSkin) {
+  const animate = !!src.animate;
+  const vectors = src.vectors || null;
+  if (
+    host.userData?.stressField === src.field
+    && host.userData.stressAnimate === animate
+    && host.userData.stressVectors === vectors
+    && host.userData.stressSkin
+  ) {
     hidePaintSkin(host);
     return host.userData.stressSkin;
   }
@@ -195,6 +256,9 @@ export function syncStressSkin(host) {
   host.add(skin);
   host.userData.stressSkin = skin;
   host.userData.stressField = src.field;
+  host.userData.stressAnimate = animate;
+  host.userData.stressVectors = vectors;
+  if (animate) startModeAnimation(skin);
   hidePaintSkin(host);
   return skin;
 }
