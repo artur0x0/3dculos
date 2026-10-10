@@ -177,7 +177,18 @@ const ContourModeChip = ({
     );
   }
 
-  const title = isWorkplane ? 'Workplane' : `Contour · ${tool}`;
+  const shapeLabel = ({
+    circle: 'Circle',
+    rectangle: 'Rectangle',
+    polygon: 'Polygon',
+    polyline: 'Polyline',
+  })[tool] || tool;
+  // Feature entries title the card with the thing Confirm writes.
+  // Profile-only (just a contour) keeps the shape in the title.
+  const title = commitName || `Contour · ${tool}`;
+  const subtitle = solidEntry && shapeLabel
+    ? `${shapeLabel} · Plane · ${planeLabel}`
+    : `Plane · ${planeLabel}`;
   const note = isWorkplane
     ? 'Confirm writes a construction plane'
     : commitName
@@ -187,7 +198,7 @@ const ContourModeChip = ({
   return (
     <FeatureSheet
       title={title}
-      subtitle={`Plane · ${planeLabel}`}
+      subtitle={subtitle}
       compact={compact}
       onCancel={onCancel}
       onConfirm={onConfirm}

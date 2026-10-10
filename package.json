@@ -63,6 +63,7 @@
         "golden:polyline-points": "node scripts/golden/smoke_polyline_point_drag.mjs",
         "golden:empty-run-clears": "node scripts/golden/smoke_empty_run_clears.mjs",
         "golden:cad-palette": "node scripts/golden/smoke_cad_palette_overlays.mjs",
+        "golden:overlay-visibility": "node scripts/golden/smoke_overlay_visibility.mjs",
         "golden:edges-pr2-patches": "node scripts/golden/smoke_edges_pr2_patches.mjs",
         "golden:cad-mobile-chrome": "node scripts/golden/smoke_cad_mobile_chrome.mjs",
         "golden:hidden-script-editor": "node scripts/golden/smoke_hidden_script_editor.mjs",
