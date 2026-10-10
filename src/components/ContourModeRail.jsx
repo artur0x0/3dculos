@@ -7,6 +7,7 @@ import {
   Radius,
   Ruler,
   Link2,
+  ArrowLeft,
   X,
 } from 'lucide-react';
 import { CONTOUR_TOOLS } from '../utils/contourMode';
@@ -37,15 +38,19 @@ const GESTURE_ICONS = {
 };
 
 /**
- * Slice 24 — left rail while contour mode is active.
- * Replaces the FEAT palette: contour tools + grey X dismiss (cancel, no solid commit).
+ * Left rail while contour mode is active.
+ * Replaces the FEAT palette: contour tools, Back (undo one face-sketch edit),
+ * and grey X (exit, no solid commit).
  * Mobile-first: same chrome/width as HelperInsertPalette (compact on phone).
  */
 const ContourModeRail = ({
   tool = 'circle',
   gesture = null,
   entry = 'crossSection',
+  showBack = false,
+  canUndo = false,
   onSelectTool,
+  onUndo,
   onBack,
   compact = false,
 }) => {
@@ -120,8 +125,25 @@ const ContourModeRail = ({
       {!workplaneOnly && (
         <div className="border-t border-gray-300/70 my-0.5 mx-0.5" aria-hidden />
       )}
+      {showBack && (
+        <button
+          type="button"
+          data-contour-back=""
+          onClick={() => onUndo?.()}
+          disabled={!canUndo}
+          title="Undo"
+          aria-label="Back"
+          className={`${pad} rounded flex items-center justify-center transition-colors
+            ${canUndo
+              ? 'text-cyan-800 hover:bg-cyan-100 active:bg-cyan-200'
+              : 'text-gray-400 opacity-40'}`}
+        >
+          <ArrowLeft size={iconSize} strokeWidth={2} />
+        </button>
+      )}
       <button
         type="button"
+        data-contour-exit=""
         onClick={() => onBack?.()}
         title={workplaneOnly
           ? 'Dismiss — exit workplane mode without writing'

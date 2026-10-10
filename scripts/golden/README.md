@@ -65,3 +65,4 @@ requires `test_real_worker.mjs` via `npm run verify` once the harness is present
 | `smoke_contour_dimension.mjs` | Dimension and Arc: suggestion table, inch at the field, name stays a string, Confirm writes the profile and keeps an extrude distance, arc corner, loft station isolation, sticky pick, rail order, number input with no slider |
 | `smoke_contour_constraints.mjs` | Constraints: suggestion bands at 15° and 20°, all eight kinds, equal of a line and an arc is refused, tangent stores side, icons, Confirm stays |
 | `smoke_contour_status.mjs` | Status colours, conflict note, repeated word, nullspace drag, script write on pointer-up only, saved ghost colour |
+| `smoke_sketch_face_camera.mjs` | Sketch-on-face at 390px: after the face pick the camera looks along the face normal and frames the face, the highlight is off, and Back undoes one polyline point while X still exits |

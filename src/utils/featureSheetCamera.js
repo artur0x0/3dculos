@@ -327,7 +327,7 @@ export function applyViewPose(camera, controls, pose) {
   camera.updateMatrixWorld();
 }
 
-function lerpPose(camera, controls, from, to, t) {
+export function lerpPose(camera, controls, from, to, t) {
   const u = Math.min(1, Math.max(0, t));
   camera.position.set(
     from.position[0] + (to.position[0] - from.position[0]) * u,
