@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
-import test, { describe } from 'node:test';
+import test, { before, describe } from 'node:test';
 import * as fea from '../../packages/surfcad-fea/pkg/surfcad_fea.js';
+import { FEA_SETUP_TIMEOUT_MS, initFeaWasm } from './initFeaWasm.js';
 import { boundaryConditions } from './boundaryConditions.js';
 import { ERROR_TARGET, p95Change, recoveryEstimate, sizingFromError } from './errorEstimate.js';
 import { box, plateWithHole } from './meshShapes.js';
@@ -9,9 +9,7 @@ import { meshVolume } from './meshVolume.js';
 import { solveSolid } from './solveSolid.js';
 import { formatSolveSummary } from './studyPanel.js';
 
-const wasmUrl = new URL('../../packages/surfcad-fea/pkg/surfcad_fea_bg.wasm', import.meta.url);
-const initFea = fea.default ?? fea.init;
-await initFea({ module_or_path: await readFile(wasmUrl) });
+before(() => initFeaWasm(), { timeout: FEA_SETUP_TIMEOUT_MS });
 
 const pla = { E_MPa: 3250, nu: 0.36, yield_MPa: 52.5 };
 

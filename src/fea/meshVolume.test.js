@@ -1,14 +1,12 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import test, { describe } from 'node:test';
+import test, { before, describe } from 'node:test';
 import * as fea from '../../packages/surfcad-fea/pkg/surfcad_fea.js';
+import { FEA_SETUP_TIMEOUT_MS, initFeaWasm } from './initFeaWasm.js';
 import { meshVolume, surfaceVolume } from './meshVolume.js';
 import { box, cylinder, lBracket, plateWithHole } from './meshShapes.js';
 
-const wasmUrl = new URL('../../packages/surfcad-fea/pkg/surfcad_fea_bg.wasm', import.meta.url);
-const feaWasm = await readFile(wasmUrl);
-const initFea = fea.default ?? fea.init;
-await initFea({ module_or_path: feaWasm });
+before(() => initFeaWasm(), { timeout: FEA_SETUP_TIMEOUT_MS });
 
 async function readMeshArtifact() {
   const meshWasmUrl = new URL('../../packages/surfcad-mesh/pkg/surfcad_mesh.wasm', import.meta.url);

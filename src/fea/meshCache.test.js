@@ -1,14 +1,12 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
-import test, { describe } from 'node:test';
+import test, { before, describe } from 'node:test';
 import * as fea from '../../packages/surfcad-fea/pkg/surfcad_fea.js';
+import { FEA_SETUP_TIMEOUT_MS, initFeaWasm } from './initFeaWasm.js';
 import { box } from './meshShapes.js';
 import { meshCacheKey, meshCacheLimit, meshVolume, releaseMesh } from './meshVolume.js';
 import { createMeshCache, dropCachedSolutions, releaseMeshCache, solveSolid } from './solveSolid.js';
 
-const wasmUrl = new URL('../../packages/surfcad-fea/pkg/surfcad_fea_bg.wasm', import.meta.url);
-const initFea = fea.default ?? fea.init;
-await initFea({ module_or_path: await readFile(wasmUrl) });
+before(() => initFeaWasm(), { timeout: FEA_SETUP_TIMEOUT_MS });
 
 const NODES = [
   0, 0, 0, 0, 10, 0, 0, 0, 10, 0, 5, 5, 0, 5, 0, 0, 0, 5,
