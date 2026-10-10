@@ -97,7 +97,9 @@ Desktop specifics:
   reopen the create card. The create card is `StickyPickApply`. It opens
   from Joints (Lucide `Blocks`, `data-joints-button`), the last button in
   Move. A tap with nothing selected selects the part. Joint picking starts
-  only while that card is open.
+  only while that card is open. Adding a joint does not make the page
+  scroll: `html`, `body`, and `#root` stay `overflow: hidden`, and the left
+  rail remains the scroller (`golden:joints-page-scroll`).
   The old vertical seam strip
   between editor and viewer is gone. Hidden in game mode. SplitDivider sits
   directly between editor and viewer.
@@ -243,7 +245,7 @@ draggable seam). Stages do not apply in puzzle mode.
 ```
 
 Mobile specifics:
-- **Page zoom lock:** a pinch in the CAD view zooms the camera, not the browser page (iOS Safari and the installed PWA). Viewport meta locks scale (`maximum-scale=1`, `user-scalable=no`; `viewport-fit=cover` stays). The canvas and the right rail are `touch-action: none`; the left rail is `pan-y` so the tool list still scrolls; buttons are `manipulation` so a double-tap does not zoom. Off-canvas two-finger moves and Safari `gesture*` events are cancelled. One-finger scroll in Parts, Script, and scrolling popups stays. Inputs stay ≥16px so focus does not zoom.
+- **Page zoom lock:** a pinch in the CAD view zooms the camera, not the browser page (iOS Safari and the installed PWA). Viewport meta locks scale (`maximum-scale=1`, `user-scalable=no`; `viewport-fit=cover` stays). The canvas and the right rail are `touch-action: none`; the left rail is `pan-y` so the tool list still scrolls, with `overscroll-behavior: contain` so a drag at the end of the list does not chain to the page. `html`, `body`, and `#root` are `overflow: hidden`, so the document itself does not scroll. Buttons are `manipulation` so a double-tap does not zoom. Off-canvas two-finger moves and Safari `gesture*` events are cancelled. One-finger scroll in Parts, Script, and scrolling popups stays. Inputs stay ≥16px so focus does not zoom.
 - **Stage toggle (Slice Mobile B):** `MobileStageToggle.jsx` is a bottom-centered
   iPhone Home Screen–style glass pill (`data-mobile-stage-home-indicator`,
   `data-home-indicator-pill`) with two Lucide icons: CAD (`Box`) and Parts
@@ -288,7 +290,9 @@ Mobile specifics:
   `hideWhenEmpty` skips the "No features" caption. It does not skip
   **No assembly joints**, which the CAD bar shows when no part is selected.
   The script-stage strip never shows joints. A joint chip tap selects the
-  floating tag and does not reopen the create card.
+  floating tag and does not reopen the create card. After a joint is added
+  the page stays put (`scrollHeight` ≤ `innerHeight`, `scrollY` 0) and the
+  left rail still scrolls.
   the bar itself stays mounted so Undo and Redo remain. A chip whose block holds a
   frozen copy of another part's geometry (`externalBody`) has a 2px yellow border
   (`data-feature-external="1"`), active or not; its feature sheet says External copy.

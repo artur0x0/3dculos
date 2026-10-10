@@ -2,7 +2,9 @@
  * Size an open order-flow sheet to the visible viewport.
  * `visualViewport` tracks the iOS Safari toolbar and the keyboard;
  * the CSS falls back to `100dvh` when this has not run yet.
- * Background scroll stays locked until the last sheet closes.
+ * The stylesheet keeps the document from scrolling. This hook still
+ * sets an inline lock while a sheet is open, and pins window scroll so
+ * a focused field cannot leave scrollY nonzero after the card closes.
  */
 import { useEffect } from 'react';
 
@@ -52,6 +54,14 @@ function focusedField() {
   return sheetField(document.activeElement);
 }
 
+function pinDocumentScroll() {
+  const scroller = document.scrollingElement || document.documentElement;
+  if (!window.scrollX && !window.scrollY && !scroller.scrollTop && !scroller.scrollLeft) return;
+  window.scrollTo(0, 0);
+  scroller.scrollTop = 0;
+  scroller.scrollLeft = 0;
+}
+
 function start() {
   const root = document.documentElement;
   const body = document.body;
@@ -59,6 +69,7 @@ function start() {
   const prevBody = body.style.overflow;
   root.style.overflow = 'hidden';
   body.style.overflow = 'hidden';
+  pinDocumentScroll();
 
   const apply = () => {
     const { height, top } = readViewport();
@@ -72,10 +83,17 @@ function start() {
   };
   apply();
 
+  const onVvScroll = () => {
+    apply();
+    pinDocumentScroll();
+  };
+  const onScroll = () => pinDocumentScroll();
   const vv = window.visualViewport;
   vv?.addEventListener('resize', onResize);
-  vv?.addEventListener('scroll', apply);
+  vv?.addEventListener('scroll', onVvScroll);
   window.addEventListener('resize', onResize);
+  window.addEventListener('scroll', onScroll, { passive: true });
+  document.addEventListener('scroll', onScroll, { passive: true, capture: true });
   const onFocus = (event) => {
     const el = sheetField(event.target);
     if (!el) return;
@@ -85,13 +103,16 @@ function start() {
 
   return () => {
     vv?.removeEventListener('resize', onResize);
-    vv?.removeEventListener('scroll', apply);
+    vv?.removeEventListener('scroll', onVvScroll);
     window.removeEventListener('resize', onResize);
+    window.removeEventListener('scroll', onScroll);
+    document.removeEventListener('scroll', onScroll, true);
     document.removeEventListener('focusin', onFocus);
     root.style.removeProperty('--modal-vvh');
     root.style.removeProperty('--modal-vv-top');
     root.style.overflow = prevHtml;
     body.style.overflow = prevBody;
+    pinDocumentScroll();
   };
 }
 
