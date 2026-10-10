@@ -1,9 +1,7 @@
 #!/usr/bin/env node
 /**
- * Joints on the CAD feature strips, and the joint card.
- *
- * StickyPickApply has not merged. The card is the same contract:
- * sticky-pick, a suggested property, Confirm. Screenshots are not written.
+ * Joints on the CAD feature strips, the shared sticky-pick card, and
+ * the floating tags. Screenshots are not written.
  */
 import { readFileSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -151,7 +149,8 @@ const res = await build({
     contents: `export { renderToStaticMarkup } from 'react-dom/server';
 export { createElement } from 'react';
 export { default as FeatureStrip } from './src/components/FeatureStrip.jsx';
-export { default as JointCard } from './src/components/JointModeChip.jsx';`,
+export { default as JointCard } from './src/components/JointCard.jsx';
+export { default as JointTags } from './src/components/JointTags.jsx';`,
     resolveDir: ROOT,
     loader: 'jsx',
   },
@@ -207,15 +206,31 @@ const sheet = h(ui.JointCard, {
   onConfirm: () => {},
   onCancel: () => {},
 });
-check('chip tap opens a joint card', sheet.includes('data-joint-card') && sheet.includes('data-feature-card-cancel') && sheet.includes('Suggested: Coincident'));
+check('the create card is StickyPickApply', sheet.includes('data-sticky-pick-apply') && sheet.includes('data-joint-card') && sheet.includes('data-feature-card-cancel') && sheet.includes('Suggested: Coincident'));
 check('the card is not fullLeft', !sheet.includes('data-feature-card-full-left'));
 check('subtitle names both faces', sheet.includes('Shaft') && sheet.includes('Housing'));
 const game = jointsChromeMounted({ appMode: 'game' }) ? h(ui.JointCard, { card }) : '';
 check('game mode renders no joint card markup', game === '');
 
+const tagHtml = h(ui.JointTags, {
+  tags: [{
+    id: J,
+    type: 'coincident',
+    label: 'Coincident 1',
+    title: 'Coincident 1 — Face not found on Housing',
+    invalid: true,
+    world: [0, 0, 2.5],
+  }],
+  selectedId: J,
+});
+check('a joint tag opens Delete and X', tagHtml.includes(`data-joint-tag="${J}"`) && tagHtml.includes('data-joint-tag-popup') && tagHtml.includes('data-joint-tag-delete') && tagHtml.includes('>Delete<') && tagHtml.includes('data-joint-tag-close') && tagHtml.includes('Close'));
+check('a tag tap does not reopen the joint card', !tagHtml.includes('data-joint-card'));
+check('a broken tag has the red ring', tagHtml.includes('border-red-400') && tagHtml.includes('feature-failed-ring') && tagHtml.includes('aria-invalid') && tagHtml.includes('Coincident 1'));
+
 const app = read('src/App.jsx');
-check('App keeps the joint card off in game', app.includes("appMode !== 'game'") && app.includes('jointCard={jointCardNode}'));
+check('App keeps the joint card off in game', app.includes("appMode !== 'game'") && app.includes('jointCard={jointCardNode}') && app.includes('jointTags={jointTagList}'));
 check('App empty click does not assign activeId', app.includes('handleCadEmptyClick') && app.includes('emptyClickCadSelection'));
+check('a strip chip selects the tag', app.includes('setJointTagId') && !app.includes('JointModeChip'));
 
 if (failed) {
   console.error(`\n${failed} joints-strip check(s) failed`);

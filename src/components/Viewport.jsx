@@ -171,6 +171,7 @@ import {
 import { pickContourScreen, planeUvToWorld } from '../utils/contourPick';
 import ContourGestureCard from './ContourGestureCard';
 import ContourTags from './ContourTags';
+import JointTags from './JointTags';
 import {
   holdContourOverlays,
   releaseContourOverlays,
@@ -849,8 +850,14 @@ const Viewport = forwardRef(({
   /** No part selected: a face or edge tap arms a joint instead of selecting. */
   jointPicking = false,
   onJointPick = null,
-  /** Joint card. Game does not mount it. fullLeft stays off. */
+  /** Joint create card. Game does not mount it. fullLeft stays off. */
   jointCard = null,
+  /** Placed joints. Tap opens Delete and X and does not reopen the card. */
+  jointTags = null,
+  jointTagId = null,
+  onSelectJointTag = null,
+  onDeleteJointTag = null,
+  onCloseJointTag = null,
   /** False: the title is the assembly name only, with no "in". */
   cadPartSelected = true,
   /**
@@ -10004,8 +10011,20 @@ const Viewport = forwardRef(({
         />
       )}
 
-      {/* Joint card. Game mounts neither the card nor the joints strip. */}
+      {/* Joint create card. A placed joint is a floating tag, not this card. */}
       {mode !== 'game' && jointCard}
+      {mode !== 'game' && Array.isArray(jointTags) && jointTags.length > 0 && (
+        <JointTags
+          tags={jointTags}
+          selectedId={jointTagId}
+          onSelect={onSelectJointTag}
+          onDelete={onDeleteJointTag}
+          onClose={onCloseJointTag}
+          cameraRef={cameraRef}
+          canvasRef={canvasRef}
+          containerRef={containerRef}
+        />
+      )}
 
       {/* Move on the shared card. Game mounts no card. */}
       {moveMode && mode !== 'game' && (

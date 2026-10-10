@@ -5,11 +5,12 @@ import FeatureSheet from './FeatureSheet';
 /**
  * Pick one or two objects, then apply a property.
  *
- * Contours use it for Dimension (a length, an angle, a distance) and Arc
- * (a corner radius). Joints should use the same card: sticky-pick faces,
- * points, or edges with `useStickyPick`, then apply a joint such as
- * concentric or perpendicular. This component does not know which objects
- * those are. The parent owns the list and the property.
+ * Contours use it for Dimension (a length, an angle, a distance), Arc
+ * (a corner radius), and Constraints. The joints create card uses it for
+ * a face, a point, or an edge, then a joint such as coincident or
+ * concentric. This component does not know which objects those are. The
+ * parent owns the list and the property. A joint fingerprint stays on
+ * that parent list; the chips here are only id, kind, and label.
  *
  * X drops the pending pick and writes nothing. Apply is the parent's
  * Confirm. It does not decide whether the parent leaves its mode.

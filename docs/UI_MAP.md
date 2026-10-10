@@ -91,6 +91,9 @@ Desktop specifics:
   When no part is selected the same bar shows assembly joints
   (`data-assembly-joints`), or **No assembly joints**
   (`data-feature-strip-empty`), and Undo is titled **Undo joint**.
+  A chip tap selects the floating joint tag (Delete and X). It does not
+  reopen the create card. That card is `StickyPickApply` while a joint
+  is being picked.
   The old vertical seam strip
   between editor and viewer is gone. Hidden in game mode. SplitDivider sits
   directly between editor and viewer.
@@ -277,7 +280,8 @@ Mobile specifics:
   Sheet-metal chips use `SheetMetalPlate` (blue), same as desktop.
   `hideWhenEmpty` skips the "No features" caption. It does not skip
   **No assembly joints**, which the CAD bar shows when no part is selected.
-  The script-stage strip never shows joints.
+  The script-stage strip never shows joints. A joint chip tap selects the
+  floating tag and does not reopen the create card.
   the bar itself stays mounted so Undo and Redo remain. A chip whose block holds a
   frozen copy of another part's geometry (`externalBody`) has a 2px yellow border
   (`data-feature-external="1"`), active or not; its feature sheet says External copy.
