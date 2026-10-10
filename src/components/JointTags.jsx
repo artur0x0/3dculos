@@ -38,8 +38,10 @@ export default function JointTags({
           el.style.display = behind ? 'none' : '';
           const x = (p.x * 0.5 + 0.5) * view.width + view.left - box.left;
           const y = (-p.y * 0.5 + 0.5) * view.height + view.top - box.top;
-          el.style.left = `${x}px`;
-          el.style.top = `${y}px`;
+          // A projected tag past the pane must not extend scrollable overflow
+          // if an ancestor fails to clip. The overlay clips the rest.
+          el.style.left = `${Math.min(box.width, Math.max(0, x))}px`;
+          el.style.top = `${Math.min(box.height, Math.max(0, y))}px`;
         }
       }
       frame = requestAnimationFrame(tick);
@@ -51,7 +53,7 @@ export default function JointTags({
   if (!tags.length) return null;
 
   return (
-    <div className="pointer-events-none absolute inset-0 z-20" data-joint-tags="">
+    <div className="pointer-events-none absolute inset-0 z-20 overflow-hidden" data-joint-tags="">
       {tags.map((tag) => {
         const open = selectedId === tag.id;
         const invalid = !!tag.invalid;

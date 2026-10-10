@@ -6,6 +6,22 @@ body {
   background: #1e1e1e;
 }
 
+/* The document is not a scroll container. useModalViewport hides overflow
+   only while a sheet is open and restores the previous inline value when
+   the last card closes. After a joint is added that restore leaves the
+   page scrollable, so the next drag at the end of the tool list moves the
+   page instead of the left rail. A descendant that sticks out of the
+   shells (a tag, a strip, a flex child past h-dvh) must not grow
+   scrollHeight either. The left rail is the scroller. */
+html,
+body,
+#root {
+  height: 100%;
+  max-height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
 /* Hide all Monaco UI overlays */
 .monaco-editor .overlayWidgets {
   display: none !important;
@@ -171,6 +187,9 @@ body {
 }
 [data-rail-pair="left"] {
   touch-action: pan-y;
+  /* A drag that starts on the tool list stays in the rail when the list
+     is already at its end. It does not chain to the page. */
+  overscroll-behavior: contain;
 }
 button,
 [role="button"],

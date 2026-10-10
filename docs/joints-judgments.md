@@ -32,6 +32,7 @@ The word is joints. Part scripts stay untouched. The file stays version 1.
 | 24 | Copy to this assembly does not copy joints onto the new surf id. Same as colors. The dangling prune drops a joint whose surf id left. | PR 1 |
 | 25 | Joint names are `Coincident 1` via `nextNumberedName`. The card can rename. The id stays the surf id from `mintSurfId`. | PR 4 mints and names. PR 1 stores the id and the name. |
 | 26 | The pick-and-apply flow is shared with contour: sticky-pick 1–2 faces, lines, or points, then a suggested property, then Confirm. `StickyPickApply` merged in #349. The joints create card is that component. The parallel card (`JointModeChip`) is removed. The viewport and the card share the rich pick list; `useStickyPick` is not the source of truth, because that hook keeps only id, kind, and label. A placed joint is a floating tag. Tap opens Delete and X and does not reopen the card. | PR 4 shipped the parallel card. The follow-up adopts `StickyPickApply` and the tags. |
+| 27 | The page does not scroll. `html`, `body`, and `#root` stay `overflow: hidden` after Confirm closes the card and the inline sheet lock drops. A descendant that sticks out of the shells does not grow `scrollHeight`. `window.scrollY` stays 0. The left rail scrolls its tool list and still receives taps. A drag at the end of that list does not chain to the page. | Page-scroll follow-up. |
 
 Distance on the card uses the global display unit (`src/utils/displayUnit.js`). The file and the script stay millimetres. That field is PR 4.
 
