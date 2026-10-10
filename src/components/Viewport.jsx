@@ -299,6 +299,7 @@ import {
   syncFaceColorSkin,
 } from '../utils/faceColorSkin';
 import { paintFeaContactHighlights } from '../fea/contactHighlight';
+import { syncFeaFaceHighlights } from '../fea/faceHighlight';
 import { detachStressSkin, subscribeStressSkin, syncFeaStressSkins, syncStressSkin } from '../fea/stressSkin';
 import { dropPlanarFins, highlightBoundaryPositions } from '../utils/planarSeam';
 import { classifySelectedFace } from '../utils/faceFeaturePlacement';
@@ -1123,6 +1124,9 @@ const Viewport = forwardRef(({
   const feaPickRef = useRef(null);
   const feaToggleRef = useRef(() => {});
   const feaCloseRef = useRef(() => {});
+  /** One Fix/Force/Pressure overlay per (entry, face). Reconciled, not stacked. */
+  const feaFaceOverlaysRef = useRef(new Map());
+  const feaHighlightStudyRef = useRef(null);
   const exitPaintModeRef = useRef(() => {});
   const applyLivePaintTapRef = useRef(() => {});
   /** SCS sheet metal: picker popup (S1) + mode state (stage, sku, partId). */
@@ -7892,6 +7896,9 @@ const Viewport = forwardRef(({
       }
       clearHighlight();
       clearCuttingPlane();
+      feaHighlightStudyRef.current = null;
+      const synced = syncFeaFaceHighlights(feaFaceOverlaysRef.current, null, []);
+      feaFaceOverlaysRef.current = synced.overlays;
     };
   }, []);
 
@@ -8207,12 +8214,13 @@ const Viewport = forwardRef(({
     return parts;
   }
 
-  function paintFeaContacts(pairs) {
+  function feaPartHosts() {
     const hosts = [];
     const activeId = activePartIdRef.current;
     if (activeId && resultRef.current) {
       hosts.push({
         id: String(activeId),
+        active: true,
         mesh: resultRef.current,
         faceIDs: faceIDsRef.current,
       });
@@ -8221,11 +8229,27 @@ const Viewport = forwardRef(({
       const cached = solidEntryForGeometry(solidCacheRef.current, mesh.geometry);
       hosts.push({
         id: String(id),
+        active: false,
         mesh,
         faceIDs: cached?.faceIDs || mesh.geometry?.attributes?.faceID?.array || null,
       });
     }
-    paintFeaContactHighlights(hosts, pairs);
+    return hosts;
+  }
+
+  function paintFeaContacts(pairs) {
+    paintFeaContactHighlights(feaPartHosts(), pairs);
+    const renderer = rendererRef.current;
+    const scene = sceneRef.current;
+    const camera = cameraRef.current;
+    if (renderer && scene && camera) renderer.render(scene, camera);
+  }
+
+  function paintFeaFaces(study) {
+    const next = study && typeof study === 'object' && !Array.isArray(study) ? study : null;
+    feaHighlightStudyRef.current = next;
+    const synced = syncFeaFaceHighlights(feaFaceOverlaysRef.current, next, feaPartHosts());
+    feaFaceOverlaysRef.current = synced.overlays;
     const renderer = rendererRef.current;
     const scene = sceneRef.current;
     const camera = cameraRef.current;
@@ -8245,6 +8269,13 @@ const Viewport = forwardRef(({
     sync();
     return unsubscribe;
   }, []);
+
+  // A rebuilt solid or a moved assembly part invalidates overlay triangles.
+  // The last study is re-applied so a disposed mesh cannot leave a stale fill.
+  useEffect(() => {
+    if (!feaHighlightStudyRef.current && feaFaceOverlaysRef.current.size === 0) return;
+    paintFeaFaces(feaHighlightStudyRef.current);
+  }, [meshEpoch, overlayEpoch]);
 
   // Colors can arrive without a new mesh (a document load). Empty skips the work.
   useEffect(() => {
@@ -10080,13 +10111,8 @@ const Viewport = forwardRef(({
         getAssembly={feaAssemblyParts}
         getPartScript={getPartScript}
         onContactHighlight={paintFeaContacts}
-        onHighlight={(indices) => {
-          const geom = resultRef.current?.geometry;
-          if (!indices?.length || !geom) {
-            clearHighlight();
-            return;
-          }
-          highlightFace(indices, geom, geom.attributes?.position, geom.index?.array, 0x22d3ee, 'fea-highlight');
+        onHighlight={(study) => {
+          paintFeaFaces(study);
         }}
         onClaim={releaseModesForFea}
         onActive={setFeaActive}
