@@ -219,6 +219,22 @@ async function runCase(browser, vp) {
   await page.screenshot({ path: shot });
   check(`${vp.name} shot saved`, existsSync(shot), shot);
   console.log(`  shot ${shot}`);
+  await page.locator('[data-fea-run]').click();
+  await page.locator('[data-fea-view="results"]').waitFor({ timeout: 8000 });
+  const running = await page.evaluate(() => ({
+    view: document.querySelector('[data-fea-view]')?.getAttribute('data-fea-view') || '',
+    screen: document.querySelector('[data-fea-screen]')?.getAttribute('data-fea-screen') || '',
+    scope: document.querySelectorAll('[data-fea-scope]').length,
+    contact: document.querySelectorAll('[data-fea-contact]').length,
+    progress: document.querySelector('[data-fea-results-frame] [data-fea-progress]') ? 1 : 0,
+    notice: (document.querySelector('[data-fea-notice]')?.textContent || '').trim(),
+  }));
+  check(
+    `${vp.name} assembly setup hides on run`,
+    running.view === 'results' && running.scope === 0 && running.contact === 0 && running.progress === 1,
+    JSON.stringify(running),
+  );
+  if (await page.locator('[data-fea-cancel]').count()) await page.locator('[data-fea-cancel]').click();
   check(`${vp.name} no page errors`, errors.length === 0, errors.slice(0, 3).join(' | '));
   await context.close();
 }

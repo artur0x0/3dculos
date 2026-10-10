@@ -23,7 +23,7 @@ function formatMm(value) {
   return String(rounded);
 }
 
-function DisplacementLegend({ result, quiet = false }) {
+function DisplacementLegend({ result, quiet = false, govern = false }) {
   const known = Number.isFinite(Number(result.displacementMin)) && Number.isFinite(Number(result.displacementMax));
   const scale = known
     ? { min: Number(result.displacementMin), max: Number(result.displacementMax) }
@@ -64,9 +64,9 @@ function DisplacementLegend({ result, quiet = false }) {
       <div className="truncate text-[12px] text-cyan-50" {...(quiet ? {} : { 'data-fea-displacement': '' })}>
         min {min}{unit} · max {max}{unit}
       </div>
-      {governing ? (
-        <div className="truncate text-[12px] text-cyan-50" {...(quiet ? {} : { 'data-fea-governing': governing })}>
-          governs {governing}
+      {(governing || govern) ? (
+        <div className="truncate text-[12px] text-cyan-50" {...(quiet || !governing ? {} : { 'data-fea-governing': governing })}>
+          governs {governing || '\u00a0'}
         </div>
       ) : null}
     </div>
@@ -136,11 +136,11 @@ function PreviewLegend({ result, preview }) {
   );
 }
 
-export function FeaLegend({ result, preview, plot = 'stress', quiet = false }) {
+export function FeaLegend({ result, preview, plot = 'stress', quiet = false, govern = false }) {
   if (preview?.showing) return <PreviewLegend result={result} preview={preview} />;
   if (!result) return null;
   if (activePlot(plot) === 'displacement' && result.stale !== true) {
-    return <DisplacementLegend result={result} quiet={quiet} />;
+    return <DisplacementLegend result={result} quiet={quiet} govern={govern} />;
   }
   const summary = formatSolveSummary(result);
   const stale = result.stale === true;
@@ -198,9 +198,9 @@ export function FeaLegend({ result, preview, plot = 'stress', quiet = false }) {
         <div className="truncate text-[12px] text-cyan-50" {...(quiet ? {} : { 'data-fea-fos': summary.fos })}>
           safety factor {summary.fos}
         </div>
-        {summary.governing ? (
-          <div className="truncate text-[12px] text-cyan-50" {...(quiet ? {} : { 'data-fea-governing': summary.governing })}>
-            governs {summary.governing}
+        {(summary.governing || govern) ? (
+          <div className="truncate text-[12px] text-cyan-50" {...(quiet || !summary.governing ? {} : { 'data-fea-governing': summary.governing })}>
+            governs {summary.governing || '\u00a0'}
           </div>
         ) : null}
       </div>

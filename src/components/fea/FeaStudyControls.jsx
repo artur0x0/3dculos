@@ -265,6 +265,22 @@ const MODAL_RESERVE = Object.freeze({
   stale: false,
 });
 
+function multiPartScope(panel) {
+  const kind = panel.study?.scope?.kind;
+  return kind === 'assembly' || kind === 'parts';
+}
+
+/**
+ * Invisible sizer for the plot slot. A multi-part study adds the governs
+ * line here so the finished legend, which names the governing part, does
+ * not change the card height.
+ */
+function reservedResult(panel, modes) {
+  const base = modes ? MODAL_RESERVE : STRESS_RESERVE;
+  if (!multiPartScope(panel)) return base;
+  return { ...base, governingName: 'part' };
+}
+
 function modeButtonClass(selected) {
   return `whitespace-nowrap rounded px-2 py-1 text-left text-[13px] tabular-nums ${
     selected
@@ -327,9 +343,8 @@ export function FeaResultsReadout({ panel }) {
   const plot = activePlot(panel.plot);
   const filled = chrome.screen === 'results';
   const legendPlot = chrome.modes ? 'displacement' : (filled ? plot : 'stress');
-  const legendResult = filled
-    ? panel.result
-    : (chrome.modes ? MODAL_RESERVE : STRESS_RESERVE);
+  const legendResult = filled ? panel.result : reservedResult(panel, chrome.modes);
+  const govern = multiPartScope(panel);
   return (
     <div className="mt-1.5 flex flex-col gap-1 font-sans" data-fea-results-frame="">
       {chrome.modes ? (
@@ -347,6 +362,7 @@ export function FeaResultsReadout({ panel }) {
         <div className={filled ? undefined : 'invisible'} aria-hidden={filled ? undefined : true}>
           <FeaLegend
             quiet={!filled}
+            govern={govern}
             result={legendResult}
             preview={filled ? panel.preview : null}
             plot={legendPlot}
