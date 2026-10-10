@@ -60,7 +60,9 @@ editor integration is designed. Remove the `hidden` class to bring it back.
 
 **The CAD title reads "part in assembly".** Part name, the word in, then the
 assembly name (`data-viewer-title`, `data-title-in`, `data-viewer-title-text`).
-Example: part1 in Assembly. The assembly name is the document `name`. A new
+Example: part1 in Assembly. With no part selected the part pill is not
+rendered (`data-title-role="part"` absent); only the assembly name shows.
+An empty name does not leave a blank rounded chip. The assembly name is the document `name`. A new
 assembly starts as Assembly, then Assembly (1), Assembly (2) when that name
 is taken. A copy, import, or colliding rename uses the part rule (`Name`, or
 `Name (2)` when `Name` is taken). The repo folder is `assemblies/<Name>/`;
@@ -398,7 +400,7 @@ All of these are absolutely positioned inside the shell at
 | Screen position | What | Component | Site in Viewport.jsx |
 | --- | --- | --- | --- |
 | *editor header* (portal) | Toolbar, all CAD | `Toolbar.jsx` `variant="strip"` | `:3530` |
-| top-center | CAD: part, the word in, assembly. Game: puzzle name | `data-viewer-title` / `ViewportTitleChip` | Viewport |
+| top-center | CAD: part, the word in, assembly. No part selected: assembly name only, no empty part pill. Game: puzzle name | `data-viewer-title` / `ViewportTitleChip` | Viewport |
 | top-left, 44×44, under the IO tray | puzzle easter egg, signed-in only (`useAuthState().signedIn`) | `data-puzzle-unlock` | `PuzzleUnlock` |
 | below the feature bar, centered | "Puzzle unlocked" toast after the fifth tap | `data-puzzle-unlock-toast` | `PuzzleUnlock` |
 | bottom of the pane, 10px from the left edge (`fullLeft`) and 10px clear of the right rail. On a phone the stage switcher hides and the card sits on that switcher's bottom edge (`data-feature-card`) | Paint: 8 swatches (grid padded so the selection ring is not clipped), custom `#rrggbb`, Part, Undo, Clear, Remove unmatched colors. The color preview sits in the note. Confirm saves the session. X and Esc revert it. No swipe. The left helper rail is hidden, so the card passes `fullLeft` | `PaintModeChip` `data-paint-mode` on `FeatureSheet` | Viewport |
