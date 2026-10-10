@@ -52,7 +52,9 @@ export function PaintModeChip({
     >
       <div className="mt-1.5 flex flex-col gap-1.5 font-sans">
         <div
-          className="flex flex-wrap gap-1.5 p-1"
+          className={compact
+            ? 'grid w-fit grid-cols-4 gap-1.5 p-1'
+            : 'flex flex-wrap gap-1.5 p-1'}
           role="group"
           aria-label="Swatches"
           data-paint-swatches=""
