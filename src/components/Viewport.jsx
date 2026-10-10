@@ -292,6 +292,10 @@ import {
   solidEntryForGeometry,
 } from '../utils/partSolidCache';
 import {
+  forgetCharacteristicLength,
+  rememberCharacteristicLength,
+} from '../utils/characteristicLength';
+import {
   FACE_HIGHLIGHT_RENDER_ORDER,
   detachFaceColorSkin,
   readFaceColorDebugFlag,
@@ -8559,6 +8563,7 @@ const Viewport = forwardRef(({
       setCachedMeshData(null);
       cachedMeshDataRef.current = null;
       setModelBounds(null);
+      forgetCharacteristicLength(activePartIdRef.current);
       clearHighlight();
       clearEdgeHighlight();
       clearEdgeHover();
@@ -8676,6 +8681,7 @@ const Viewport = forwardRef(({
       // Calculate bounds from mesh
       const bounds = calculateBoundsFromMesh(meshData);
       setModelBounds(bounds);
+      rememberCharacteristicLength({ partId: meshPartId, meshData, bounds });
 
       // Cache mesh data for cross-section operations
       setCachedMeshData(meshData);
