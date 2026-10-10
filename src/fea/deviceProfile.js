@@ -178,11 +178,12 @@ export function shellDofCap(profile) {
  */
 export const DESKTOP_REFINE_DOF_CAP = 200_000;
 
-/** Explicit `mesh.refine` wins. Omitted studies follow the device. */
+/** Explicit `mesh.refine` wins. An omitted study refines on phone and on desktop. */
 export function refineMode(study, profile) {
   const stored = study && study.mesh ? study.mesh.refine : undefined;
   if (stored === 'off' || stored === 'auto') return stored;
-  return profile === 'phone' ? 'off' : 'auto';
+  if (profile === 'phone') return 'auto';
+  return 'auto';
 }
 
 /** Phone does two passes, desktop three, until Artur benches the phone path. */
@@ -190,11 +191,37 @@ export function refinePassLimit(profile) {
   return profile === 'phone' ? 2 : 3;
 }
 
-/** DOF ceiling for the sizing field. Phone uses the solve cap. */
-export function refineDofCap(profile, thin, solver) {
-  if (profile === 'phone') return dofCap('phone', thin, solver);
+/**
+ * Hot-spot remesh ceiling on a phone. The solid solve caps, the 90k shell
+ * cap, and the friction caps are separate and are not this number.
+ */
+export const PHONE_REFINE_DOF_CAP = 40_000;
+
+/** DOF ceiling for a hot-spot remesh. Phone stops at 40k. Desktop is unchanged. */
+export function refineDofCap(profile, thin, _) {
+  if (profile === 'phone') return PHONE_REFINE_DOF_CAP;
   if (thin) return THIN_WALL_DOF_BUDGET;
   return DESKTOP_REFINE_DOF_CAP;
+}
+
+/** Timing-line note when a phone remesh would pass the hot-spot cap. */
+export function phoneRefineStopNote(cap = PHONE_REFINE_DOF_CAP) {
+  const n = Math.max(0, Math.round(Number(cap) || 0));
+  const label = n >= 1000 && n % 1000 === 0 ? `${n / 1000}k` : String(n);
+  return `Refinement stopped at phone limit (${label} DOF)`;
+}
+
+/**
+ * Phone refuses a hot-spot mesh above `cap`. A count equal to the cap still
+ * fits. Desktop always continues; its sizing field still scales to its own cap.
+ * `nextDofs` is the sizing estimate before that scale, or the meshed count.
+ */
+export function refineStepAllowed(profile, nextDofs, cap = PHONE_REFINE_DOF_CAP) {
+  if (profile !== 'phone') return true;
+  const limit = Number.isFinite(cap) && cap > 0 ? cap : PHONE_REFINE_DOF_CAP;
+  const dofs = Number(nextDofs);
+  if (!Number.isFinite(dofs)) return true;
+  return dofs <= limit;
 }
 
 /** Study mesh target, or fTetWild's default of 1/20 of the bbox diagonal. */

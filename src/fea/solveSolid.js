@@ -35,9 +35,11 @@ import {
   dofCap,
   isThinPart,
   partShape,
+  phoneRefineStopNote,
   refineDofCap,
   refineMode,
   refinePassLimit,
+  refineStepAllowed,
   SHELLS_AVAILABLE,
   shellDofCap,
   THIN_ELEMENTS_THROUGH,
@@ -62,7 +64,7 @@ import {
   sampleSurfaceDisplacement,
   sampleSurfaceStress,
 } from './stressSample.js';
-import { PHONE_WASM_BYTES } from './wasmMemory.js';
+import { PHONE_WASM_BYTES, workerMemorySample } from './wasmMemory.js';
 
 function abortError() {
   const error = new Error('FEA solve cancelled');
@@ -429,9 +431,11 @@ export async function solveSolid({
   let rescaled = false;
   let rows = [];
   let refineCount = 0;
+  let refineNote = '';
   let usedEdge = edge.edgeLength;
 
   if (meshReused) {
+    if (entry.report && entry.report.refineNote) refineNote = entry.report.refineNote;
     progressPass({ stage: 'assembling' }, 1);
     await yieldTurn();
     if (cancelled()) throw abortError();
@@ -475,8 +479,36 @@ export async function solveSolid({
     let sizing = null;
     for (let pass = 1; pass <= passLimit; pass += 1) {
       if (pass > 1) {
-        tools?.releaseMesh?.(volume);
-        volume = await meshOnce(sizing.edgeLength, sizing, pass);
+        if (device === 'phone') {
+          const previousVolume = volume;
+          const previousSolved = solved;
+          const previousEdge = usedEdge;
+          let nextVolume;
+          try {
+            nextVolume = await meshOnce(sizing.edgeLength, sizing, pass);
+          } catch (error) {
+            tools?.releaseMesh?.(previousVolume);
+            throw error;
+          }
+          const meshedDofs = nextVolume && nextVolume.stats ? nextVolume.stats.dofs : 0;
+          if (!refineStepAllowed('phone', meshedDofs, refineCap)) {
+            tools?.releaseMesh?.(nextVolume);
+            volume = previousVolume;
+            solved = previousSolved;
+            usedEdge = previousEdge;
+            refineNote = phoneRefineStopNote(refineCap);
+            if (cancelled()) {
+              tools?.releaseMesh?.(volume);
+              throw abortError();
+            }
+            break;
+          }
+          tools?.releaseMesh?.(previousVolume);
+          volume = nextVolume;
+        } else {
+          tools?.releaseMesh?.(volume);
+          volume = await meshOnce(sizing.edgeLength, sizing, pass);
+        }
         usedEdge = sizing.edgeLength;
         if (cancelled()) {
           tools?.releaseMesh?.(volume);
@@ -508,6 +540,11 @@ export async function solveSolid({
         baseEdge: usedEdge,
         cap: refineCap,
       });
+      const forecast = Number.isFinite(sizing.uncappedDofs) ? sizing.uncappedDofs : sizing.estimatedDofs;
+      if (device === 'phone' && !refineStepAllowed('phone', forecast, refineCap)) {
+        refineNote = phoneRefineStopNote(refineCap);
+        break;
+      }
       if (!sizing.canRefine) break;
     }
     refineCount = Math.max(0, rows.length - 1);
@@ -531,6 +568,7 @@ export async function solveSolid({
         convergence: rows.map((row) => ({ ...row })),
         converged,
         refineCount,
+        refineNote,
         errEst,
         edgeLength: usedEdge,
       };
@@ -589,6 +627,7 @@ export async function solveSolid({
     convergence: rows,
     converged,
     refineCount,
+    refineNote,
     // Loading the worker is timed on the main thread. These four are the
     // worker's own clocks. A reused mesh reports meshing as zero; the
     // timing line says "Mesh reused" from meshReused. Refine passes add
@@ -664,9 +703,14 @@ function convergenceRow(pass, solved, volume, umax, errEst) {
 }
 
 function peakBytes(memory, volume) {
-  const feaBytes = memory && memory.buffer ? memory.buffer.byteLength : 0;
   const meshBytes = (volume && volume.stats && volume.stats.wasmBytes) || 0;
-  return feaBytes + meshBytes;
+  let perf = null;
+  try {
+    perf = typeof performance !== 'undefined' ? performance.memory : null;
+  } catch {
+    perf = null;
+  }
+  return workerMemorySample([memory, meshBytes], perf);
 }
 
 function takeCacheEntry(cache, key) {

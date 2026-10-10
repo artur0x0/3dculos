@@ -2,8 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   FEA_STAGES,
+  feaDebugEnabled,
   formatDofCount,
   formatFeaTimingLog,
+  formatPeakMiB,
   formatSeconds,
   initialFeaProgress,
   measureFraction,
@@ -245,6 +247,85 @@ test('a refine pass renames the stage and the timing line records convergence', 
     },
   ]);
   assert.match(open.text, /^Mesh reused, solved in .+ DOF.*total .+, refined 1x, not converged$/);
+});
+
+test('a phone cap stop is a note on the timing line, and peak memory is dev-only', () => {
+  const note = 'Refinement stopped at phone limit (40k DOF)';
+  const stopped = run([
+    { type: 'start', now: 0 },
+    {
+      type: 'finish',
+      now: 2000,
+      dofs: 12000,
+      refineNote: note,
+      stageTimings: { meshing: 1000, solving: 500 },
+    },
+  ]);
+  assert.equal(
+    stopped.text,
+    `Meshed in 1.0 s, solved in 0.5 s (12k DOF), total 2.0 s. ${note}`,
+  );
+  assert.equal(stopped.text.includes('MiB'), false);
+
+  const hidden = run([
+    { type: 'start', now: 0 },
+    {
+      type: 'finish',
+      now: 2000,
+      dofs: 12000,
+      peakMemoryBytes: 12 * 1024 * 1024,
+      stageTimings: { meshing: 1000, solving: 500 },
+    },
+  ]);
+  assert.equal(hidden.text.includes('peak'), false);
+  assert.equal(hidden.text.includes('MiB'), false);
+
+  const shown = run([
+    { type: 'start', now: 0 },
+    {
+      type: 'finish',
+      now: 2000,
+      dofs: 12000,
+      showPeakMemory: true,
+      peakMemoryBytes: 12 * 1024 * 1024,
+      refineNote: note,
+      stageTimings: { meshing: 1000, solving: 500 },
+    },
+  ]);
+  assert.equal(
+    shown.text,
+    `Meshed in 1.0 s, solved in 0.5 s (12k DOF), total 2.0 s. ${note}, peak 12 MiB`,
+  );
+  assert.equal(formatPeakMiB(5 * 1024 * 1024), 'peak 5.0 MiB');
+  assert.equal(formatPeakMiB(0), 'peak 0.0 MiB');
+});
+
+test('fea debug is the query flag or the localStorage flag', () => {
+  const storage = (value) => ({
+    getItem(key) {
+      return key === 'feaDebug' ? value : null;
+    },
+  });
+  assert.equal(feaDebugEnabled({
+    location: { search: '?feadebug=1' },
+    localStorage: storage(null),
+  }), true);
+  assert.equal(feaDebugEnabled({
+    location: { search: '?other=1' },
+    localStorage: storage('1'),
+  }), true);
+  assert.equal(feaDebugEnabled({
+    location: { search: '?feadebug=0' },
+    localStorage: storage('0'),
+  }), false);
+  assert.equal(feaDebugEnabled({
+    location: { search: '' },
+    localStorage: storage(null),
+  }), false);
+  assert.equal(feaDebugEnabled({
+    location: { search: '?feadebug=1&x=2' },
+    localStorage: { getItem() { throw new Error('blocked'); } },
+  }), true);
 });
 
 test('DOF counts and seconds format for the chip', () => {
