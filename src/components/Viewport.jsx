@@ -169,6 +169,13 @@ import {
   saveContourDimension,
 } from '../utils/contourMode';
 import { pickContourScreen, planeUvToWorld } from '../utils/contourPick';
+import { contourEntityColor, contourPaintModel, savedContourStatus } from '../utils/contourStatus';
+import {
+  applyDraggedContour,
+  contourPointDragAllowed,
+  dragContourPoint,
+  planContourDragRelease,
+} from '../utils/contourDrag';
 import ContourGestureCard from './ContourGestureCard';
 import ContourTags from './ContourTags';
 import JointTags from './JointTags';
@@ -401,7 +408,7 @@ const EDGE_HOVER_HALO_PX = 6;
 /** Selection core opacity. Was 1 (fully opaque orange). */
 const EDGE_SELECT_OPACITY = 0.72;
 
-/** Polyline draft handles: idle cyan, amber under the cursor, orange in hand. */
+/** Unpromoted draft handles stay cyan. A promoted contour uses status colours. */
 const POLYLINE_POINT_COLOR = 0x22d3ee;
 const POLYLINE_POINT_HOVER_COLOR = 0xfbbf24;
 const POLYLINE_POINT_DRAG_COLOR = 0xf97316;
@@ -1086,6 +1093,9 @@ const Viewport = forwardRef(({
   const savedContourOffsetRef = useRef([0, 0, 0]);
   const editorOverlayPartIdRef = useRef(null);
   const polylineDraftRef = useRef(null);
+  const contourStatusRef = useRef(null);
+  /** Touch drag consumes the synthetic click that would otherwise add a point. */
+  const polylineSuppressClickRef = useRef(false);
   /** Scratch for projecting handles to screen space (no per-frame alloc). */
   const polylineProjectScratch = useRef(new Vector3());
   /** Index of the draft point under the cursor (-1 = none). */
@@ -2010,8 +2020,10 @@ const Viewport = forwardRef(({
   }, []);
 
   /**
-   * Wire ghosts for every saved contour. Selected pick is amber; the rest
-   * stay readable but dim so an empty menu is not the only signal.
+   * Wire ghosts for every saved contour. The picked ghost stays amber.
+   * Every other ghost uses the contour status colour (under / full / conflict).
+   * An old circle, rectangle, or point-list profile has no status and stays
+   * the idle zinc.
    */
   const paintSavedContourGhosts = useCallback((entries) => {
     clearSavedContourGhosts();
@@ -2020,15 +2032,22 @@ const Viewport = forwardRef(({
     root.name = 'savedContourGhosts';
     // One group per part, in that part's local frame, moved with that part.
     for (const entry of entries) {
-      const selected = [];
-      const rest = [];
+      const buckets = new Map();
+      const pushSeg = (key, color, opacity, name, seg) => {
+        if (!buckets.has(key)) buckets.set(key, { color, opacity, name, segs: [] });
+        buckets.get(key).segs.push(seg);
+      };
       for (const contour of entry.contours || []) {
         const rings = savedContourRings(contour, entry.hostPlane);
-        const bucket = entry.editor && contour.id === entry.pickedId ? selected : rest;
+        const picked = entry.editor && contour.id === entry.pickedId;
+        const status = picked ? null : savedContourStatus(contour);
+        const color = picked ? 0xff9900 : (status ? contourEntityColor(status) : 0x3f3f46);
+        const opacity = picked ? 0.75 : (status === 'conflict' ? 0.9 : 0.55);
+        const name = picked ? 'contourSelected' : `contour${status || 'Idle'}`;
         for (const ring of rings) {
           if (!ring || ring.length < 2) continue;
           for (let i = 0; i < ring.length; i++) {
-            bucket.push({ va: ring[i], vb: ring[(i + 1) % ring.length] });
+            pushSeg(name, color, opacity, name, { va: ring[i], vb: ring[(i + 1) % ring.length] });
           }
         }
       }
@@ -2039,27 +2058,18 @@ const Viewport = forwardRef(({
         rowPosition: entry.position,
         rowQuaternion: entry.quaternion,
       };
-      const sel = paintEdgeLines(selected, {
-        color: 0xff9900,
-        name: 'contourSelected',
-        // Local to the part group below, not anchored to the pick mesh.
-        position: [0, 0, 0],
-        opacity: 0.75,
-        corePx: EDGE_CORE_PX,
-        haloPx: EDGE_HALO_PX,
-      });
-      const idle = paintEdgeLines(rest, {
-        // Dark wire: slate-200 disappeared on DEFAULT_PART_COLOR.
-        color: 0x3f3f46,
-        name: 'contourIdle',
-        // Local to the part group below, not anchored to the pick mesh.
-        position: [0, 0, 0],
-        opacity: 0.55,
-        corePx: 1.5,
-        haloPx: 5,
-      });
-      if (sel) group.add(sel);
-      if (idle) group.add(idle);
+      for (const bucket of buckets.values()) {
+        const painted = paintEdgeLines(bucket.segs, {
+          color: bucket.color,
+          name: bucket.name,
+          // Local to the part group below, not anchored to the pick mesh.
+          position: [0, 0, 0],
+          opacity: bucket.opacity,
+          corePx: bucket.name === 'contourSelected' ? EDGE_CORE_PX : 1.5,
+          haloPx: bucket.name === 'contourSelected' ? EDGE_HALO_PX : 5,
+        });
+        if (painted) group.add(painted);
+      }
       if (!group.children.length) continue;
       const at = overlayAnchorForRef.current(entry.partId, entry.position, entry.quaternion);
       applyPartPose(group, at);
@@ -2081,27 +2091,29 @@ const Viewport = forwardRef(({
     if (!preview?.rings?.length) return;
     const group = new Group();
     group.name = 'crossSectionPreview';
-    const mat = new LineBasicMaterial({
-      color: 0x22d3ee,
-      depthTest: false,
-      depthWrite: false,
-      transparent: true,
-      opacity: 0.95,
-    });
-    for (const ring of preview.rings) {
-      if (!ring?.length) continue;
-      const positions = new Float32Array(ring.length * 3);
-      for (let i = 0; i < ring.length; i++) {
-        positions[i * 3] = ring[i][0];
-        positions[i * 3 + 1] = ring[i][1];
-        positions[i * 3 + 2] = ring[i][2];
+    if (!payload.hideRings) {
+      const mat = new LineBasicMaterial({
+        color: 0x22d3ee,
+        depthTest: false,
+        depthWrite: false,
+        transparent: true,
+        opacity: 0.95,
+      });
+      for (const ring of preview.rings) {
+        if (!ring?.length) continue;
+        const positions = new Float32Array(ring.length * 3);
+        for (let i = 0; i < ring.length; i++) {
+          positions[i * 3] = ring[i][0];
+          positions[i * 3 + 1] = ring[i][1];
+          positions[i * 3 + 2] = ring[i][2];
+        }
+        const geom = new BufferGeometry();
+        geom.setAttribute('position', new BufferAttribute(positions, 3));
+        const loop = new LineLoop(geom, mat);
+        loop.renderOrder = 12;
+        loop.frustumCulled = false;
+        group.add(loop);
       }
-      const geom = new BufferGeometry();
-      geom.setAttribute('position', new BufferAttribute(positions, 3));
-      const loop = new LineLoop(geom, mat);
-      loop.renderOrder = 12;
-      loop.frustumCulled = false;
-      group.add(loop);
     }
     // Plane axes hint (short u/v ticks at origin)
     const { plane } = preview;
@@ -2636,8 +2648,10 @@ const Viewport = forwardRef(({
 
   /** Recolor handles for the current hover / drag state (scale is animated). */
   const paintPolylineHandleStates = useCallback(() => {
-    const handles = polylineDraftRef.current?.userData?.handles;
+    const draft = polylineDraftRef.current;
+    const handles = draft?.userData?.handles;
     if (!handles) return;
+    const colors = draft.userData.pointColors;
     const dragIndex = polylinePointDragRef.current?.index ?? -1;
     const hoverIndex = polylinePointHoverRef.current;
     for (let i = 0; i < handles.length; i++) {
@@ -2645,7 +2659,7 @@ const Viewport = forwardRef(({
       if (!mat) continue;
       if (i === dragIndex) mat.color.setHex(POLYLINE_POINT_DRAG_COLOR);
       else if (i === hoverIndex) mat.color.setHex(POLYLINE_POINT_HOVER_COLOR);
-      else mat.color.setHex(POLYLINE_POINT_COLOR);
+      else mat.color.setHex(colors?.[i] ?? POLYLINE_POINT_COLOR);
     }
   }, []);
 
@@ -2658,7 +2672,7 @@ const Viewport = forwardRef(({
    * when the point list changes — a live drag mutates positions in place so
    * the wire follows the cursor at frame rate instead of through React.
    */
-  const paintPolylineDraft = useCallback((plane, points, { wire = true } = {}) => {
+  const paintPolylineDraft = useCallback((plane, points, { wire = true, pointColors = null } = {}) => {
     // A repaint (point added, undone, plane re-picked) rebuilds the handles;
     // carry the hover across it so the grab target does not flicker back to
     // idle under a stationary cursor.
@@ -2677,7 +2691,7 @@ const Viewport = forwardRef(({
       const p = world[i];
       // Per-point material: hover / drag tint one handle, not the whole draft.
       const mat = new MeshBasicMaterial({
-        color: POLYLINE_POINT_COLOR,
+        color: pointColors?.[i] ?? POLYLINE_POINT_COLOR,
         depthTest: false,
         depthWrite: false,
         transparent: true,
@@ -2715,12 +2729,52 @@ const Viewport = forwardRef(({
     group.userData.handles = handles;
     group.userData.line = line;
     group.userData.plane = plane;
+    group.userData.pointColors = pointColors;
     anchorToActivePart(group);
     sceneRef.current.add(group);
     polylineDraftRef.current = group;
     polylinePointHoverRef.current = keepHover < handles.length ? keepHover : -1;
     paintPolylineHandleStates();
   }, [clearPolylineDraft, paintPolylineHandleStates, anchorToActivePart]);
+
+  const clearContourStatusWire = useCallback(() => {
+    disposeEdgeOverlayObject(sceneRef.current, contourStatusRef.current);
+    contourStatusRef.current = null;
+  }, []);
+
+  /** Promoted contour wire, one colour per entity. Cyan stays on an unpromoted draft. */
+  const paintContourStatusWire = useCallback((plane, segments) => {
+    clearContourStatusWire();
+    if (!plane || !segments?.length || !sceneRef.current) return;
+    const group = new Group();
+    group.name = 'contourStatusWire';
+    for (const seg of segments) {
+      if (!seg?.uvs || seg.uvs.length < 2) continue;
+      const pos = new Float32Array(seg.uvs.length * 3);
+      for (let i = 0; i < seg.uvs.length; i++) {
+        const world = planeUvToWorld(seg.uvs[i], plane);
+        pos[i * 3] = world[0];
+        pos[i * 3 + 1] = world[1];
+        pos[i * 3 + 2] = world[2];
+      }
+      const geom = new BufferGeometry();
+      geom.setAttribute('position', new BufferAttribute(pos, 3));
+      const line = new Line(geom, new LineBasicMaterial({
+        color: seg.color,
+        depthTest: false,
+        depthWrite: false,
+        transparent: true,
+        opacity: 0.9,
+      }));
+      line.renderOrder = 15;
+      line.frustumCulled = false;
+      group.add(line);
+    }
+    if (!group.children.length) return;
+    anchorToActivePart(group);
+    sceneRef.current.add(group);
+    contourStatusRef.current = group;
+  }, [clearContourStatusWire, anchorToActivePart]);
 
   /** Move one handle (and its wire vertex) without rebuilding the draft. */
   const movePolylineHandle = useCallback((index, worldPoint) => {
@@ -3697,6 +3751,7 @@ const Viewport = forwardRef(({
     if (!contourMode) {
       clearWorkplaneOverlay();
       clearPolylineDraft();
+      clearContourStatusWire();
       clearExtrudePreview();
       clearRevolvePreview();
       clearLoftPreview();
@@ -3717,6 +3772,7 @@ const Viewport = forwardRef(({
     if (isWorkplaneEntry(contourMode.entry)) {
       clearXsPreview();
       clearPolylineDraft();
+      clearContourStatusWire();
       clearExtrudePreview();
       clearRevolvePreview();
       clearLoftPreview();
@@ -3725,11 +3781,18 @@ const Viewport = forwardRef(({
     }
     const pts = contourMode.params?.contour?.points?.map((p) => p.at) || contourMode.params?.points;
     const loftDraw = selectedLoftDrawFrame(contourMode) || plane;
+    const drawPlane = isLoftEntry(contourMode.entry) ? loftDraw : plane;
+    const paint = contourMode.params?.contour ? contourPaintModel(contourMode.params.contour) : null;
     if (contourMode.tool === 'polyline' && (!Array.isArray(pts) || pts.length < 3)) {
       clearXsPreview();
       clearExtrudePreview();
       clearRevolvePreview();
-      paintPolylineDraft(isLoftEntry(contourMode.entry) ? loftDraw : plane, pts || []);
+      paintPolylineDraft(drawPlane, pts || [], {
+        wire: !paint,
+        pointColors: paint?.pointColors || null,
+      });
+      if (paint) paintContourStatusWire(drawPlane, paint.segments);
+      else clearContourStatusWire();
       clearSweepPreview();
       if (isLoftEntry(contourMode.entry)) {
         const solid = buildLoftSolidPreview(planeFace, contourMode.loft?.profiles);
@@ -3744,10 +3807,15 @@ const Viewport = forwardRef(({
     // on the points — that is the whole window in which the user wants to nudge
     // them. Handles only, no duplicate wire.
     if (contourMode.tool === 'polyline' && Array.isArray(pts) && pts.length) {
-      paintPolylineDraft(isLoftEntry(contourMode.entry) ? loftDraw : plane, pts, { wire: false });
+      paintPolylineDraft(drawPlane, pts, {
+        wire: false,
+        pointColors: paint?.pointColors || null,
+      });
     } else {
       clearPolylineDraft();
     }
+    if (paint) paintContourStatusWire(drawPlane, paint.segments);
+    else clearContourStatusWire();
     if (isLoftEntry(contourMode.entry)) {
       clearXsPreview();
       clearExtrudePreview();
@@ -3760,6 +3828,7 @@ const Viewport = forwardRef(({
       setXsPreview({
         face: planeFace,
         params: toolToProfileParams(contourMode.tool, contourMode.params),
+        hideRings: !!paint,
       });
       if (isExtrudeEntry(contourMode.entry)) {
         clearRevolvePreview();
@@ -3811,11 +3880,12 @@ const Viewport = forwardRef(({
       clearLoftPreview();
       clearSweepPreview();
     }
-  }, [contourMode, modelBounds, selectedEdges, showPlanes, paintWorkplaneOverlay, paintPolylineDraft, paintExtrudePreview, paintRevolvePreview, paintLoftPreview, paintSweepPreview, applyContourPartGhost, clearWorkplaneOverlay, clearPolylineDraft, clearExtrudePreview, clearRevolvePreview, clearLoftPreview, clearSweepPreview, clearXsPreview, setXsPreview]);
+  }, [contourMode, modelBounds, selectedEdges, showPlanes, paintWorkplaneOverlay, paintPolylineDraft, paintContourStatusWire, paintExtrudePreview, paintRevolvePreview, paintLoftPreview, paintSweepPreview, applyContourPartGhost, clearWorkplaneOverlay, clearPolylineDraft, clearContourStatusWire, clearExtrudePreview, clearRevolvePreview, clearLoftPreview, clearSweepPreview, clearXsPreview, setXsPreview]);
 
   useEffect(() => () => {
     clearWorkplaneOverlay();
     clearPolylineDraft();
+    clearContourStatusWire();
     clearExtrudePreview();
     clearRevolvePreview();
     clearLoftPreview();
@@ -3823,7 +3893,7 @@ const Viewport = forwardRef(({
     applyContourPartGhost(false);
     clearSavedContourGhosts();
     if (contourToastTimerRef.current) clearTimeout(contourToastTimerRef.current);
-  }, [clearWorkplaneOverlay, clearPolylineDraft, clearExtrudePreview, clearRevolvePreview, clearLoftPreview, clearSweepPreview, applyContourPartGhost, clearSavedContourGhosts]);
+  }, [clearWorkplaneOverlay, clearPolylineDraft, clearContourStatusWire, clearExtrudePreview, clearRevolvePreview, clearLoftPreview, clearSweepPreview, applyContourPartGhost, clearSavedContourGhosts]);
 
   // Contour mode: planar face tap updates the workplane; non-planar is a loud refuse.
   useEffect(() => {
@@ -6099,6 +6169,37 @@ const Viewport = forwardRef(({
   }, [readMeasurePointer, commitMeasurePicks]);
 
   /**
+   * Right-button (desktop) or one-finger (touch) drag of a polyline handle.
+   * A gesture selects and does not drag. A fixed point and a contour already
+   * in conflict consume the event so the camera does not pan.
+   */
+  const beginPolylinePointDrag = useCallback((event, { touch = false } = {}) => {
+    const state = contourModeRef.current;
+    if (!state || state.tool !== 'polyline' || state.gesture) return false;
+    if (pickModeRef.current === 'edge') return false;
+    const index = pickPolylinePointAtClient(event.clientX, event.clientY);
+    if (index < 0) return false;
+    const spec = state.params?.contour || null;
+    const pointId = spec?.points?.[index]?.id || null;
+    const frozen = !!(spec && pointId && !contourPointDragAllowed(spec, pointId));
+    event.preventDefault();
+    polylinePointDragRef.current = {
+      index,
+      plane: selectedLoftDrawFrame(state) || contourWorkplane(state, modelBoundsRef.current),
+      moved: false,
+      touch,
+      frozen,
+      pointId,
+      lastSpec: spec,
+    };
+    if (touch) polylineSuppressClickRef.current = true;
+    setPolylinePointHover(index);
+    if (canvasRef.current) canvasRef.current.style.cursor = 'grabbing';
+    paintPolylineHandleStates();
+    return true;
+  }, [pickPolylinePointAtClient, setPolylinePointHover, paintPolylineHandleStates]);
+
+  /**
    * Handle mouse down - record position for drag detection
    */
   const handleMouseDown = useCallback((event) => {
@@ -6106,21 +6207,9 @@ const Viewport = forwardRef(({
     isDraggingRef.current = false;
 
     // Right button on a placed point picks it up (left button keeps adding).
-    if (event.button !== 2 || contourModeRef.current?.tool !== 'polyline') return;
-    if (pickModeRef.current === 'edge') return;
-    const index = pickPolylinePointAtClient(event.clientX, event.clientY);
-    if (index < 0) return;
-    event.preventDefault();
-    polylinePointDragRef.current = {
-      index,
-      plane: selectedLoftDrawFrame(contourModeRef.current)
-        || contourWorkplane(contourModeRef.current, modelBoundsRef.current),
-      moved: false,
-    };
-    setPolylinePointHover(index);
-    if (canvasRef.current) canvasRef.current.style.cursor = 'grabbing';
-    paintPolylineHandleStates();
-  }, [pickPolylinePointAtClient, setPolylinePointHover, paintPolylineHandleStates]);
+    if (event.button !== 2) return;
+    beginPolylinePointDrag(event, { touch: false });
+  }, [beginPolylinePointDrag]);
 
   /**
    * Project the cursor onto the draft's workplane.
@@ -6185,10 +6274,10 @@ const Viewport = forwardRef(({
     return true;
   }, [onCommitContourProfile]);
 
-  /** Write the dragged point back into mode state (once, on release). */
+  /** Unpromoted draft: write the dragged UV once, on release. No script write. */
   const commitPolylinePointDrag = useCallback((uv, index) => {
     setContourMode((prev) => {
-      if (!prev || prev.tool !== 'polyline') return prev;
+      if (!prev || prev.tool !== 'polyline' || prev.params?.contour) return prev;
       const points = (prev.params?.points || []).map(
         (pt, i) => (i === index ? [uv[0], uv[1]] : pt),
       );
@@ -6197,19 +6286,43 @@ const Viewport = forwardRef(({
     });
   }, []);
 
+  /** Promoted contour: seeds on release. The script changes only if a block exists. */
+  const commitPromotedPointDrag = useCallback((spec) => {
+    const prev = contourModeRef.current;
+    if (!prev || !spec) return;
+    const next = applyDraggedContour(prev, spec);
+    const buf = (typeof getHelperBuffer === 'function' ? getHelperBuffer() : '') || '';
+    if (planContourDragRelease({ buffer: buf, entry: next.entry, moved: true }).write) {
+      saveContourBlock(next);
+    }
+    setContourMode(next);
+  }, [getHelperBuffer, saveContourBlock]);
+
+  const showDraggedContour = useCallback((plane, spec) => {
+    (spec?.points || []).forEach((point, index) => {
+      if (!point?.at) return;
+      movePolylineHandle(index, planeUvToWorld(point.at, plane));
+    });
+    const paint = contourPaintModel(spec);
+    if (paint) paintContourStatusWire(plane, paint.segments);
+  }, [movePolylineHandle, paintContourStatusWire]);
+
   const endPolylinePointDrag = useCallback((event) => {
     const drag = polylinePointDragRef.current;
     if (!drag) return;
     polylinePointDragRef.current = null;
     if (canvasRef.current) canvasRef.current.style.cursor = '';
-    if (drag.moved && drag.lastUv) commitPolylinePointDrag(drag.lastUv, drag.index);
+    if (!drag.frozen && drag.moved) {
+      if (drag.pointId && drag.lastSpec) commitPromotedPointDrag(drag.lastSpec);
+      else if (drag.lastUv) commitPolylinePointDrag(drag.lastUv, drag.index);
+    }
     // A release outside the canvas has no meaningful hover.
     const stillOver = event
       && pickPolylinePointAtClient(event.clientX, event.clientY) === drag.index;
     setPolylinePointHover(stillOver ? drag.index : -1);
     paintPolylineHandleStates();
-  }, [commitPolylinePointDrag, pickPolylinePointAtClient, setPolylinePointHover,
-    paintPolylineHandleStates]);
+  }, [commitPolylinePointDrag, commitPromotedPointDrag, pickPolylinePointAtClient,
+    setPolylinePointHover, paintPolylineHandleStates]);
 
   /**
    * Handle mouse move - detect if dragging
@@ -6218,11 +6331,23 @@ const Viewport = forwardRef(({
     // Live point drag owns the pointer: move the handle, skip camera/pick work.
     const drag = polylinePointDragRef.current;
     if (drag) {
-      const hit = polylinePlanePointAtClient(event.clientX, event.clientY, drag.plane);
-      if (hit) {
-        drag.moved = true;
-        drag.lastUv = hit.uv;
-        movePolylineHandle(drag.index, hit.world);
+      // Touch is driven by pointermove. The synthetic mousemove must not solve twice.
+      if (drag.touch && event.type === 'mousemove') return;
+      if (!drag.frozen) {
+        const hit = polylinePlanePointAtClient(event.clientX, event.clientY, drag.plane);
+        if (hit && drag.pointId && drag.lastSpec) {
+          const result = dragContourPoint(drag.lastSpec, drag.pointId, hit.uv);
+          if (result.moved && result.spec) {
+            drag.moved = true;
+            drag.lastSpec = result.spec;
+            drag.lastUv = result.uv;
+            showDraggedContour(drag.plane, result.spec);
+          }
+        } else if (hit) {
+          drag.moved = true;
+          drag.lastUv = hit.uv;
+          movePolylineHandle(drag.index, hit.world);
+        }
       }
       return;
     }
@@ -6262,7 +6387,7 @@ const Viewport = forwardRef(({
     }
   }, [selectedEdges, highlightHoverEdge, clearEdgeHover, pickEdgeAtClient,
     polylinePlanePointAtClient, movePolylineHandle, pickPolylinePointAtClient,
-    setPolylinePointHover]);
+    setPolylinePointHover, showDraggedContour]);
 
   /**
    * Handle mouse up - process click only if not dragging
@@ -6342,6 +6467,13 @@ const Viewport = forwardRef(({
   const handleMouseUp = useCallback((event) => {
     if (polylinePointDragRef.current) {
       endPolylinePointDrag(event);
+      return;
+    }
+    // A touch drag already released on pointerup. Swallow the synthetic click.
+    if (polylineSuppressClickRef.current) {
+      polylineSuppressClickRef.current = false;
+      isDraggingRef.current = false;
+      mouseDownPosRef.current = null;
       return;
     }
     // Only the left button places points / picks faces; the right button is
@@ -7195,7 +7327,21 @@ const Viewport = forwardRef(({
       if (contourModeRef.current?.tool === 'polyline') event.preventDefault();
     };
     const onWindowMouseUp = (event) => {
-      if (polylinePointDragRef.current) endPolylinePointDrag(event);
+      if (polylinePointDragRef.current && !polylinePointDragRef.current.touch) {
+        endPolylinePointDrag(event);
+      }
+    };
+    const onTouchDown = (event) => {
+      if (event.pointerType !== 'touch') return;
+      beginPolylinePointDrag(event, { touch: true });
+    };
+    const onTouchMove = (event) => {
+      if (event.pointerType !== 'touch' || !polylinePointDragRef.current?.touch) return;
+      handleMouseMove(event);
+    };
+    const onTouchUp = (event) => {
+      if (!polylinePointDragRef.current?.touch) return;
+      endPolylinePointDrag(event);
     };
 
     const onDblClick = (event) => {
@@ -7206,7 +7352,13 @@ const Viewport = forwardRef(({
     canvas.addEventListener('mouseup', handleMouseUp);
     canvas.addEventListener('dblclick', onDblClick);
     canvas.addEventListener('contextmenu', onContextMenu);
+    canvas.addEventListener('pointerdown', onTouchDown, { passive: false });
+    canvas.addEventListener('pointermove', onTouchMove);
+    canvas.addEventListener('pointerup', onTouchUp);
+    canvas.addEventListener('pointercancel', onTouchUp);
     window.addEventListener('mouseup', onWindowMouseUp);
+    window.addEventListener('pointerup', onTouchUp);
+    window.addEventListener('pointercancel', onTouchUp);
 
     return () => {
       canvas.removeEventListener('mousedown', handleMouseDown);
@@ -7214,9 +7366,15 @@ const Viewport = forwardRef(({
       canvas.removeEventListener('mouseup', handleMouseUp);
       canvas.removeEventListener('dblclick', onDblClick);
       canvas.removeEventListener('contextmenu', onContextMenu);
+      canvas.removeEventListener('pointerdown', onTouchDown);
+      canvas.removeEventListener('pointermove', onTouchMove);
+      canvas.removeEventListener('pointerup', onTouchUp);
+      canvas.removeEventListener('pointercancel', onTouchUp);
       window.removeEventListener('mouseup', onWindowMouseUp);
+      window.removeEventListener('pointerup', onTouchUp);
+      window.removeEventListener('pointercancel', onTouchUp);
     };
-  }, [handleMouseDown, handleMouseMove, handleMouseUp, endPolylinePointDrag]);
+  }, [handleMouseDown, handleMouseMove, handleMouseUp, endPolylinePointDrag, beginPolylinePointDrag]);
 
   // Click / toast timer cleanup effect
   useEffect(() => {

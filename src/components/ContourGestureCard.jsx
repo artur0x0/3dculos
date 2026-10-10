@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import StickyPickApply from './StickyPickApply';
 import { useDisplayUnit } from '../hooks/useDisplayUnit';
 import { displayToMm, lengthToDisplay } from '../utils/displayUnit';
+import { contourStatusNote } from '../utils/contourStatus';
 import {
   CONSTRAINT_LABELS,
   DIMENSION_LABELS,
@@ -45,6 +46,7 @@ const ContourGestureCard = ({
   const isArc = gesture === 'arc';
   const isConstraint = gesture === 'constraints';
   const suggestion = isArc || isConstraint ? null : suggestContourDimension(model, picks);
+  const status = useMemo(() => contourStatusNote(model), [model]);
   const arc = isArc ? suggestContourArc(model, picks) : null;
   const constraint = isConstraint ? suggestContourConstraint(model, picks) : null;
   const pickKey = (picks || []).map((p) => `${p.kind}:${p.id}`).join(',');
@@ -92,10 +94,17 @@ const ContourGestureCard = ({
     }
   };
 
-  const shownNote = note
-    || (!nameCheck.ok ? nameCheck.message : '')
+  const pickNote = (!nameCheck.ok ? nameCheck.message : '')
     || (isArc ? arc?.note : isConstraint ? constraint?.note : suggestion?.note)
     || '';
+  const parts = [];
+  if (status.text) parts.push(status.text);
+  if (note && note !== status.text) parts.push(note);
+  if (pickNote && pickNote !== status.text && !parts.includes(pickNote)) parts.push(pickNote);
+  const shownNote = parts.join(' ');
+  const noteNode = status.conflict
+    ? <span data-contour-conflict={status.primaryId || ''}>{shownNote}</span>
+    : shownNote;
   const title = isArc ? 'Arc' : isConstraint ? 'Constrain' : 'Dimension';
   const labels = isConstraint ? CONSTRAINT_LABELS : DIMENSION_LABELS;
 
@@ -122,7 +131,7 @@ const ContourGestureCard = ({
       onCancel={onCancel}
       applyLabel={isArc ? 'Round' : 'Confirm'}
       applyDisabled={!ready}
-      note={shownNote}
+      note={noteNode}
       compact={compact}
       cardAttrs={{ 'data-contour-card': isArc ? 'arc' : isConstraint ? 'constraint' : 'dimension' }}
     >

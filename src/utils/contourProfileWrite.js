@@ -81,6 +81,11 @@ function replaceOwned(buffer, region, index, expr) {
   return text.slice(0, at) + next + text.slice(at + region.length);
 }
 
+/** True when a profile or solid block is already in the script for this entry. */
+export function contourBlockReady(buffer, entry, loftSelected = 0) {
+  return !!slotFor(buffer, entry, loftSelected)?.region;
+}
+
 function slotFor(buffer, entry, loftSelected) {
   if (entry === 'makeExtrude' && hasContourExtrudeBlock(buffer)) {
     return { region: contourExtrudeOwnedRegion(buffer), index: 0 };

@@ -15,6 +15,7 @@ import {
   roundContourCorner,
   solveContour,
 } from './contourSolve.js';
+import { contourStatusNote } from './contourStatus.js';
 import { stickyPickToggle } from './stickyPick.js';
 
 const NAME_RE = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
@@ -276,8 +277,8 @@ function storeSolved(state, model) {
   const contour = specFromSolved(solved);
   const params = { ...(state.params || {}), contour };
   const next = { ...state, params, picks: [], gestureNote: null };
-  if (solved.status === 'conflict') next.gestureNote = 'Conflict — the contour kept the closest shape.';
-  else if (solved.repeated?.length) next.gestureNote = 'Repeated.';
+  const statusNote = contourStatusNote(solved);
+  if (statusNote.text) next.gestureNote = statusNote.text;
   return { state: next, error: null, solved };
 }
 

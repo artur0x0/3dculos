@@ -69,6 +69,7 @@
         "golden:contour-solve": "node scripts/golden/smoke_contour_solve.mjs",
         "golden:contour-dimension": "node scripts/golden/smoke_contour_dimension.mjs",
         "golden:contour-constraints": "node scripts/golden/smoke_contour_constraints.mjs",
+        "golden:contour-status": "node scripts/golden/smoke_contour_status.mjs",
         "golden:empty-run-clears": "node scripts/golden/smoke_empty_run_clears.mjs",
         "golden:cad-palette": "node scripts/golden/smoke_cad_palette_overlays.mjs",
         "golden:overlay-visibility": "node scripts/golden/smoke_overlay_visibility.mjs",
