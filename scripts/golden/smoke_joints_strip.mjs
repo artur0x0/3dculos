@@ -238,10 +238,12 @@ const editHtml = h(ui.JointCard, {
   onCancel: () => {},
   onDelete: () => {},
 });
-check('reopening a joint shows its type, value, Delete, and X',
+check('reopening a joint shows its type, value, red Delete, Confirm, and X',
   editHtml.includes('data-joint-card') && editHtml.includes('data-joint-type="angle"')
   && editHtml.includes('data-joint-angle') && editHtml.includes('value="90"')
   && editHtml.includes('data-joint-delete') && editHtml.includes('>Delete<')
+  && editHtml.includes('border-red-700/60') && editHtml.includes('bg-red-950/50')
+  && editHtml.includes('>Confirm<') && !editHtml.includes('>Add<')
   && editHtml.includes('data-feature-card-cancel'));
 const symmetric = cardFromJoint({
   id: J,
@@ -264,7 +266,9 @@ check('joint picking follows the open create card', app.includes('jointPicking={
 check('Blocks opens the joint card', read('src/components/HelperInsertPalette.jsx').includes('data-joints-button'));
 check('App empty click does not assign activeId', app.includes('handleCadEmptyClick') && app.includes('emptyClickCadSelection'));
 check('a strip chip reopens the joint', app.includes('cardFromJoint') && app.includes('handleSelectJoint') && app.includes('onDelete={() => handleJointDelete') && !app.includes('JointModeChip'));
-check('Add keeps the card open', app.includes('resetPicks: true') && app.includes('draftFromPicks(null, []'));
+check('Add keeps the card open and edit Confirm closes it',
+  app.includes('resetPicks: true') && app.includes('draftFromPicks(null, []')
+  && app.includes("resetPicks: card.mode !== 'edit'"));
 check('the joint card slides the camera and floating tags are gone', view.includes("? 'joint'") && !view.includes('JointTags') && view.includes('paintJointHighlight'));
 
 if (failed) {
