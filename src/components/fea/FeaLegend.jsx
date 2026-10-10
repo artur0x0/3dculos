@@ -136,9 +136,59 @@ function PreviewLegend({ result, preview }) {
   );
 }
 
+function ContactLegend({ result }) {
+  const min = Number(result.contactPressureMin);
+  const max = Number(result.contactPressureMax);
+  const known = Number.isFinite(min) && Number.isFinite(max);
+  const scale = known ? { min: Math.min(0, min), max: Math.max(max, min) } : null;
+  const ticks = scale ? displacementTicks(scale, 5) : [];
+  const open = result.contactOpen ?? 0;
+  const stick = result.contactStick ?? 0;
+  const slip = result.contactSlip ?? 0;
+  return (
+    <div
+      data-fea-summary=""
+      data-fea-legend=""
+      data-fea-source={result.source || ''}
+      data-fea-plot-legend="contact"
+      data-fea-contact-open={String(open)}
+      data-fea-contact-stick={String(stick)}
+      data-fea-contact-slip={String(slip)}
+      data-fea-stale={result.stale === true ? '1' : '0'}
+      className="rounded border border-amber-300/50 bg-amber-400/10 px-2 py-1.5"
+    >
+      <div
+        data-fea-legend-bar=""
+        className="h-2 w-full rounded"
+        style={{ background: scale ? displacementGradientCss(scale) : 'rgb(128, 128, 128)' }}
+        title={known ? `${formatMPa(min)} to ${formatMPa(max)} MPa` : 'contact pressure'}
+      />
+      {ticks.length > 0 && (
+        <div
+          data-fea-legend-ticks=""
+          className="mt-0.5 flex justify-between gap-1 text-[10px] tabular-nums text-cyan-100/90"
+        >
+          {ticks.map((tick, index) => (
+            <span key={index}>{formatMPa(tick)}</span>
+          ))}
+        </div>
+      )}
+      <div className="text-[12px] text-cyan-50" data-fea-contact-pressure="">
+        pressure min {formatMPa(min)} MPa · max {formatMPa(max)} MPa
+      </div>
+      <div className="text-[12px] text-cyan-50" data-fea-contact-status="">
+        open {open} · stick {stick} · slip {slip}
+      </div>
+    </div>
+  );
+}
+
 export function FeaLegend({ result, preview, plot = 'stress', quiet = false, govern = false }) {
   if (preview?.showing) return <PreviewLegend result={result} preview={preview} />;
   if (!result) return null;
+  if (activePlot(plot) === 'contact' && result.contactActive === true && result.stale !== true) {
+    return <ContactLegend result={result} />;
+  }
   if (activePlot(plot) === 'displacement' && result.stale !== true) {
     return <DisplacementLegend result={result} quiet={quiet} govern={govern} />;
   }

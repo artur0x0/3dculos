@@ -389,7 +389,8 @@ pub fn modal_tet10(
     let elements = read_elements(mesh, nodes.len()).map_err(fem_failure)?;
     let parsed = parse_material(material).map_err(failure)?;
     let density = read_density(material).map_err(fem_failure)?;
-    let (dirichlet, forces, pressures) = read_modal_solid_bcs(bcs, nodes.len()).map_err(fem_failure)?;
+    let (dirichlet, forces, pressures) =
+        read_modal_solid_bcs(bcs, nodes.len()).map_err(fem_failure)?;
     let modes = read_mode_count(options).map_err(fem_failure)?;
     let fem_material = fem::Material {
         young: parsed.e_mpa,
@@ -406,8 +407,16 @@ pub fn modal_tet10(
         });
     }
     let elapsed = js_sys::Date::now() - started;
-    let translations = translational_modes(&output.modes, nodes.len(), 3, output.frequencies_hz.len());
-    finish_modal(&output, &warnings, &translations, nodes.len(), elements.len(), elapsed)
+    let translations =
+        translational_modes(&output.modes, nodes.len(), 3, output.frequencies_hz.len());
+    finish_modal(
+        &output,
+        &warnings,
+        &translations,
+        nodes.len(),
+        elements.len(),
+        elapsed,
+    )
 }
 
 /// Lowest natural frequencies of a MITC6 shell mesh.
@@ -453,9 +462,20 @@ pub fn modal_shell(
         });
     }
     let elapsed = js_sys::Date::now() - started;
-    let translations =
-        translational_modes(&output.modes, nodes.len(), fem::SHELL_DOF_PER_NODE, output.frequencies_hz.len());
-    finish_modal(&output, &warnings, &translations, nodes.len(), elements.len(), elapsed)
+    let translations = translational_modes(
+        &output.modes,
+        nodes.len(),
+        fem::SHELL_DOF_PER_NODE,
+        output.frequencies_hz.len(),
+    );
+    finish_modal(
+        &output,
+        &warnings,
+        &translations,
+        nodes.len(),
+        elements.len(),
+        elapsed,
+    )
 }
 
 fn finish_modal(
@@ -719,6 +739,267 @@ pub fn solve_bonded(mesh: &JsValue, bcs: &JsValue, options: &JsValue) -> Result<
     Ok(value)
 }
 
+/// Frictionless or frictional contact, with bonded ties still eliminated.
+///
+/// `mesh.contacts` is one entry per pair: `slaves`, `masterFaces`, and
+/// `slaveFaces` (six node ids per TET10 face), `law` (`frictionless` or
+/// `frictional`), optional `mu` (default 0.2), and optional `gap`. Node ids
+/// are concatenated in body order, the same numbering as [`solve_bonded`].
+/// The safety factor stays yield / p95. Contact samples are the slave nodes
+/// that carried a penalty, plus the master-face weights used to draw the
+/// other side.
+#[wasm_bindgen(js_name = solve_contact)]
+pub fn solve_contact(mesh: &JsValue, bcs: &JsValue, options: &JsValue) -> Result<JsValue, JsValue> {
+    let started = js_sys::Date::now();
+    let (stored, tie_input) = read_bonded_mesh(mesh).map_err(fem_failure)?;
+    let surfaces = read_contact_surfaces(mesh).map_err(fem_failure)?;
+    if surfaces.is_empty() {
+        return Err(js_err(
+            "solve_contact needs at least one frictionless or frictional pair",
+        ));
+    }
+    let bodies: Vec<fem::SolidBody<'_>> = stored
+        .iter()
+        .map(|body| fem::SolidBody {
+            nodes: &body.nodes,
+            elements: &body.elements,
+            material: body.material,
+        })
+        .collect();
+    let mut nodes = Vec::new();
+    for body in &stored {
+        nodes.extend_from_slice(&body.nodes);
+    }
+    let (dirichlet, forces, pressures) = read_bcs(bcs, nodes.len()).map_err(fem_failure)?;
+    let solve = read_options(options, SolverChoice::Auto).map_err(fem_failure)?;
+    let (ties, missed) = build_ties(&nodes, &tie_input).map_err(fem_failure)?;
+    let options = fem::ContactOptions {
+        solve,
+        ..fem::ContactOptions::default()
+    };
+    let output = fem::solve_contact(
+        &bodies, &ties, &surfaces, &dirichlet, &forces, &pressures, &options,
+    )
+    .map_err(fem_failure)?;
+    let elapsed = js_sys::Date::now() - started;
+    let mut warnings = output.bonded.fem.warnings.clone();
+    if missed > 0 {
+        warnings.push(fem::Warning {
+            code: "tie-gap",
+            msg: format!(
+                "{missed} slave nodes were farther than the bond gap from every master face and were left untied"
+            ),
+        });
+    }
+    let value = assembly_wire(
+        &output.bonded.fem,
+        &warnings,
+        nodes.len(),
+        stored.iter().map(|body| body.elements.len()).sum(),
+        missed,
+        elapsed,
+        output.iterations,
+    )?;
+    let mut ids = Vec::with_capacity(output.nodes.len());
+    let mut pressure = Vec::with_capacity(output.nodes.len());
+    let mut status = Vec::with_capacity(output.nodes.len());
+    let mut masters = Vec::with_capacity(output.nodes.len() * 6);
+    let mut weights = Vec::with_capacity(output.nodes.len() * 6);
+    for node in &output.nodes {
+        ids.push(node.node);
+        pressure.push(node.pressure);
+        status.push(node.status as u8);
+        masters.extend_from_slice(&node.masters);
+        weights.extend_from_slice(&node.weights);
+    }
+    let id_array = js_sys::Uint32Array::from(ids.as_slice());
+    js_sys::Reflect::set(&value, &JsValue::from_str("contactNode"), &id_array)
+        .map_err(|_| js_err("failed to attach contact nodes"))?;
+    attach_f64(&value, "contactPressure", &pressure)?;
+    let status_array = js_sys::Uint8Array::from(status.as_slice());
+    js_sys::Reflect::set(&value, &JsValue::from_str("contactStatus"), &status_array)
+        .map_err(|_| js_err("failed to attach contact status"))?;
+    let master_array = js_sys::Uint32Array::from(masters.as_slice());
+    js_sys::Reflect::set(&value, &JsValue::from_str("contactMasters"), &master_array)
+        .map_err(|_| js_err("failed to attach contact masters"))?;
+    attach_f64(&value, "contactWeights", &weights)?;
+    attach_part_fields(&value, &output.bonded)?;
+    Ok(value)
+}
+
+fn assembly_wire(
+    fem: &fem::FemOutput,
+    warnings: &[fem::Warning],
+    n_nodes: usize,
+    n_elements: usize,
+    missed: usize,
+    elapsed: f64,
+    contact_iterations: usize,
+) -> Result<JsValue, JsValue> {
+    #[derive(serde::Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Wire<'a> {
+        source: &'static str,
+        field: &'static str,
+        units: &'static str,
+        min: f64,
+        max: f64,
+        p95: f64,
+        safety_factor: Option<f64>,
+        fos: Option<f64>,
+        warnings: &'a [fem::Warning],
+        solver: &'static str,
+        stats: WireStats,
+    }
+    #[derive(serde::Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct WireStats {
+        dofs: u32,
+        free_dofs: u32,
+        nodes: u32,
+        elements: u32,
+        iterations: u32,
+        residual: f64,
+        assembly_ms: f64,
+        solve_ms: f64,
+        ms: f64,
+        missed_slaves: u32,
+        contact_iterations: u32,
+    }
+    let wire = Wire {
+        source: "fem",
+        field: "von_mises",
+        units: "MPa",
+        min: fem.min,
+        max: fem.max,
+        p95: fem.p95,
+        safety_factor: fem.safety_factor,
+        fos: fem.safety_factor,
+        warnings,
+        solver: fem.solver.as_str(),
+        stats: WireStats {
+            dofs: fem.dofs as u32,
+            free_dofs: fem.free_dofs as u32,
+            nodes: n_nodes as u32,
+            elements: n_elements as u32,
+            iterations: fem.iterations as u32,
+            residual: fem.residual,
+            assembly_ms: fem.assembly_secs * 1.0e3,
+            solve_ms: fem.solve_secs * 1.0e3,
+            ms: elapsed,
+            missed_slaves: missed as u32,
+            contact_iterations: contact_iterations as u32,
+        },
+    };
+    let value = serde_wasm_bindgen::to_value(&wire).map_err(|err| js_err(&err.to_string()))?;
+    attach_f64(&value, "nodal", &fem.von_mises)?;
+    attach_f64(&value, "displacement", &fem.displacement)?;
+    set_number_or_null(&value, "safetyFactor", fem.safety_factor)?;
+    set_number_or_null(&value, "fos", fem.safety_factor)?;
+    Ok(value)
+}
+
+fn attach_part_fields(value: &JsValue, output: &fem::BondedOutput) -> Result<(), JsValue> {
+    let mut part_p95 = Vec::with_capacity(output.parts.len());
+    let mut part_min = Vec::with_capacity(output.parts.len());
+    let mut part_max = Vec::with_capacity(output.parts.len());
+    let mut part_fos = Vec::with_capacity(output.parts.len());
+    let mut part_offset = Vec::with_capacity(output.parts.len());
+    let mut part_count = Vec::with_capacity(output.parts.len());
+    for part in &output.parts {
+        part_p95.push(part.p95);
+        part_min.push(part.min);
+        part_max.push(part.max);
+        part_fos.push(part.safety_factor.unwrap_or(f64::NAN));
+        part_offset.push(part.node_offset as u32);
+        part_count.push(part.node_count as u32);
+    }
+    attach_f64(value, "partP95", &part_p95)?;
+    attach_f64(value, "partMin", &part_min)?;
+    attach_f64(value, "partMax", &part_max)?;
+    attach_f64(value, "partSafety", &part_fos)?;
+    let offsets = js_sys::Uint32Array::from(part_offset.as_slice());
+    let counts = js_sys::Uint32Array::from(part_count.as_slice());
+    js_sys::Reflect::set(value, &JsValue::from_str("partNodeOffset"), &offsets)
+        .map_err(|_| js_err("failed to attach part offsets"))?;
+    js_sys::Reflect::set(value, &JsValue::from_str("partNodeCount"), &counts)
+        .map_err(|_| js_err("failed to attach part counts"))?;
+    let governing = match output.governing {
+        Some(index) => JsValue::from_f64(index as f64),
+        None => JsValue::NULL,
+    };
+    js_sys::Reflect::set(value, &JsValue::from_str("governingPart"), &governing)
+        .map_err(|_| js_err("failed to attach the governing part"))?;
+    Ok(())
+}
+
+fn read_contact_surfaces(mesh: &JsValue) -> Result<Vec<fem::ContactSurface>, fem::FemError> {
+    if !has_field(mesh, "contacts") {
+        return Ok(Vec::new());
+    }
+    let value = field(mesh, "contacts")?;
+    if value.is_null() || value.is_undefined() {
+        return Ok(Vec::new());
+    }
+    let list = js_sys::Array::from(&value);
+    let mut surfaces = Vec::with_capacity(list.length() as usize);
+    for i in 0..list.length() {
+        let row = list.get(i);
+        let law_name = object_string(&row, "law")
+            .map_err(|err| fem::FemError::BadLoad(format!("contacts[{i}].law: {err}")))?;
+        let law = match law_name.as_str() {
+            "frictionless" => fem::ContactLaw::Frictionless,
+            "frictional" => fem::ContactLaw::Frictional,
+            other => {
+                return Err(fem::FemError::BadLoad(format!(
+                    "contacts[{i}].law must be \"frictionless\" or \"frictional\" (got {other})"
+                )));
+            }
+        };
+        let mu = if has_field(&row, "mu") {
+            object_number(&row, "mu")?
+        } else {
+            fem::DEFAULT_FRICTION
+        };
+        let gap = if has_field(&row, "gap") {
+            object_number(&row, "gap")?
+        } else {
+            0.05
+        };
+        let slaves = object_u32(&row, "slaves")
+            .map_err(|err| fem::FemError::BadMesh(format!("contacts[{i}].slaves: {err}")))?;
+        let master_faces = read_face_list(&row, "masterFaces", i)?;
+        let slave_faces = read_face_list(&row, "slaveFaces", i)?;
+        surfaces.push(fem::ContactSurface {
+            slaves,
+            master_faces,
+            slave_faces,
+            law,
+            mu,
+            gap,
+        });
+    }
+    Ok(surfaces)
+}
+
+fn read_face_list(object: &JsValue, key: &str, index: u32) -> Result<Vec<[u32; 6]>, fem::FemError> {
+    let flat = object_u32(object, key)
+        .map_err(|err| fem::FemError::BadMesh(format!("contacts[{index}].{key}: {err}")))?;
+    if flat.len() % 6 != 0 {
+        return Err(fem::FemError::BadMesh(format!(
+            "contacts[{index}].{key} must contain six node indices per face"
+        )));
+    }
+    Ok(flat
+        .chunks_exact(6)
+        .map(|chunk| {
+            let mut face = [0_u32; 6];
+            face.copy_from_slice(chunk);
+            face
+        })
+        .collect())
+}
+
 struct StoredBody {
     nodes: Vec<[f64; 3]>,
     elements: Vec<[u32; 10]>,
@@ -869,7 +1150,6 @@ fn build_ties(
     }
     Ok((ties, missed))
 }
-
 
 fn fem_failure(err: fem::FemError) -> JsValue {
     js_err(&err.to_string())

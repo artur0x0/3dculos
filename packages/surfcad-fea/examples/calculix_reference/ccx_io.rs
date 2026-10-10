@@ -42,6 +42,31 @@ pub struct Deck {
     /// Face numbers are CalculiX C3D10 faces S1–S4. The first surface is
     /// the slave.
     pub ties: Vec<SurfaceTie>,
+    /// Node-to-surface contact. Empty leaves the deck without a contact pair.
+    /// The slave list is node ids. The master list is CalculiX element faces.
+    pub contacts: Vec<SurfaceContact>,
+}
+
+/// One `*CONTACT PAIR` / `*SURFACE INTERACTION`. `mu: None` is frictionless.
+#[derive(Clone, Debug)]
+pub struct SurfaceContact {
+    pub name: String,
+    /// Slave node ids, 0-based.
+    pub slave_nodes: Vec<u32>,
+    /// Master `(element, face)`, element 0-based, face in 1..=4.
+    pub master: Vec<(u32, u8)>,
+    /// Coulomb coefficient. `None` omits `*FRICTION`.
+    pub mu: Option<f64>,
+    /// Linear pressure-overclosure slope, MPa per mm. A soft slope is extra
+    /// compliance and will not match a penalty that is stiff next to the solid.
+    pub penalty: f64,
+    /// Tensile pressure at large clearance, MPa. CalculiX 2.21 requires it
+    /// to be strictly positive for node-to-surface contact.
+    pub tension: f64,
+    /// Stick slope, MPa per mm. Written as the second `*FRICTION` field.
+    pub stick_slope: f64,
+    /// `*CONTACT PAIR` adjust distance, millimetres.
+    pub adjust: f64,
 }
 
 /// One `*TIE` between two element surfaces on this deck's elements.
@@ -199,6 +224,35 @@ pub fn render_inp(deck: &Deck) -> String {
         ));
         out.push_str(&format!("{slave_name}, {master_name}\n"));
     }
+    for contact in &deck.contacts {
+        let slave_name = format!("{}S", contact.name);
+        let master_name = format!("{}M", contact.name);
+        let interaction = format!("{}I", contact.name);
+        out.push_str(&format!("*SURFACE, NAME={slave_name}, TYPE=NODE\n"));
+        for node in &contact.slave_nodes {
+            // CalculiX 2.21 reads a node surface as one node number per line.
+            out.push_str(&format!("{}\n", node + 1));
+        }
+        out.push_str(&format!("*SURFACE, NAME={master_name}, TYPE=ELEMENT\n"));
+        for (element, face) in &contact.master {
+            out.push_str(&format!("{}, S{face}\n", element + 1));
+        }
+        out.push_str(&format!("*SURFACE INTERACTION, NAME={interaction}\n"));
+        out.push_str("*SURFACE BEHAVIOR, PRESSURE-OVERCLOSURE=LINEAR\n");
+        out.push_str(&format!(
+            "{:.6e}, {:.6e}\n",
+            contact.penalty, contact.tension
+        ));
+        if let Some(mu) = contact.mu {
+            out.push_str("*FRICTION\n");
+            out.push_str(&format!("{:.6e}, {:.6e}\n", mu, contact.stick_slope));
+        }
+        out.push_str(&format!(
+            "*CONTACT PAIR, INTERACTION={interaction}, TYPE=NODE TO SURFACE, SMALL SLIDING, ADJUST={:.6e}\n",
+            contact.adjust
+        ));
+        out.push_str(&format!("{slave_name}, {master_name}\n"));
+    }
     out.push_str("*STEP\n");
     out.push_str("*STATIC\n");
     let scale = deck
@@ -250,8 +304,11 @@ pub fn run_frequency(
 ) -> Result<Vec<f64>, String> {
     fs::create_dir_all(dir).map_err(|err| format!("create {}: {err}", dir.display()))?;
     let inp = dir.join(format!("{name}.inp"));
-    fs::write(&inp, render_frequency_inp(deck, density_tonne_per_mm3, modes))
-        .map_err(|err| format!("write {}: {err}", inp.display()))?;
+    fs::write(
+        &inp,
+        render_frequency_inp(deck, density_tonne_per_mm3, modes),
+    )
+    .map_err(|err| format!("write {}: {err}", inp.display()))?;
     let bin = ccx_bin();
     let output = Command::new(&bin)
         .arg("-i")

@@ -165,6 +165,40 @@ export function solve_bonded(mesh, bcs, options) {
 }
 
 /**
+ * Frictionless or frictional contact, with bonded ties still eliminated.
+ *
+ * `mesh.contacts` is one entry per pair: `slaves`, `masterFaces`, and
+ * `slaveFaces` (six node ids per TET10 face), `law` (`frictionless` or
+ * `frictional`), optional `mu` (default 0.2), and optional `gap`. Node ids
+ * are concatenated in body order, the same numbering as [`solve_bonded`].
+ * The safety factor stays yield / p95. Contact samples are the slave nodes
+ * that carried a penalty, plus the master-face weights used to draw the
+ * other side.
+ * @param {any} mesh
+ * @param {any} bcs
+ * @param {any} options
+ * @returns {any}
+ */
+export function solve_contact(mesh, bcs, options) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        wasm.solve_contact(retptr, addBorrowedObject(mesh), addBorrowedObject(bcs), addBorrowedObject(options));
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        if (r2) {
+            throw takeObject(r1);
+        }
+        return takeObject(r0);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        heap[stack_pointer++] = undefined;
+        heap[stack_pointer++] = undefined;
+        heap[stack_pointer++] = undefined;
+    }
+}
+
+/**
  * Linear shell solve for 6-node triangles, 6 DOF per node.
  *
  * `mesh.nodes` is xyz in millimetres. `mesh.elements` is six indices per
@@ -455,6 +489,10 @@ function __wbg_get_imports() {
         },
         __wbg_new_from_slice_37a3c3a194266cb8: function(arg0, arg1) {
             const ret = new Uint32Array(getArrayU32FromWasm0(arg0, arg1));
+            return addHeapObject(ret);
+        },
+        __wbg_new_from_slice_9a868026ffa4208a: function(arg0, arg1) {
+            const ret = new Uint8Array(getArrayU8FromWasm0(arg0, arg1));
             return addHeapObject(ret);
         },
         __wbg_new_from_slice_ca6ad97db1f4779a: function(arg0, arg1) {

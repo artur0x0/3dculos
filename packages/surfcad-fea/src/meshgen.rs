@@ -552,6 +552,82 @@ pub fn cylinder_panel(
     mesh
 }
 
+/// Lower half of a solid cylinder for a Hertz check.
+///
+/// The axis is +y and the centreline sits at `(0, y, radius)`, so the bottom
+/// generator lies on `z = 0`. `cells` is `(circumferential, radial, axial)`.
+/// Circumferential and radial spacing is packed toward the contact generator.
+/// Midside nodes on the cylindrical surface sit on the arc.
+#[derive(Clone, Debug)]
+pub struct HalfCylinder {
+    pub mesh: Tet10Mesh,
+    pub radius: f64,
+    pub length: f64,
+}
+
+pub fn half_cylinder(radius: f64, length: f64, cells: [usize; 3]) -> HalfCylinder {
+    assert!(radius > 0.0 && length > 0.0);
+    assert!(cells.iter().all(|&n| n >= 1));
+    let (nt, nr, ny) = (cells[0], cells[1], cells[2]);
+    let (nodes, tets) = linear_hex_grid([nt, nr, ny], |it, ir, iy| {
+        let u = it as f64 / nt as f64;
+        // Mild grading: several nodes across a Hertz patch of width ~0.3 R,
+        // and still finer at the generator than at the equator.
+        let packed = pack_center(u, 1.45);
+        let theta = -std::f64::consts::FRAC_PI_2 + std::f64::consts::PI * packed;
+        // The axis is one point for every angle, so the bore starts at 0.3 R
+        // and the hex grid does not collapse.
+        let s = 0.30 + 0.70 * (1.0 - bias_toward_start(1.0 - ir as f64 / nr as f64, 2.2));
+        let r = radius * s;
+        let y = length * iy as f64 / ny as f64;
+        [r * theta.sin(), y, radius - r * theta.cos()]
+    });
+    let (mut mesh, mids) = upgrade_with_mids(&nodes, &tets, &HashMap::new());
+    let tol = 1e-8 * radius;
+    for ((a, b), id) in mids {
+        let pa = nodes[a as usize];
+        let pb = nodes[b as usize];
+        if on_cylinder(pa, radius, tol) && on_cylinder(pb, radius, tol) {
+            mesh.nodes[id as usize] = cylinder_mid(pa, pb, radius);
+        }
+    }
+    HalfCylinder {
+        mesh,
+        radius,
+        length,
+    }
+}
+
+/// `u` in `[0, 1]` maps to `[0, 1]` with smaller steps near `0.5`.
+fn pack_center(u: f64, power: f64) -> f64 {
+    let x = (2.0 * u - 1.0).clamp(-1.0, 1.0);
+    let y = x.abs().powf(power) * x.signum();
+    0.5 * (y + 1.0)
+}
+
+fn on_cylinder(p: [f64; 3], radius: f64, tol: f64) -> bool {
+    let radial = (p[0] * p[0] + (p[2] - radius) * (p[2] - radius)).sqrt();
+    (radial - radius).abs() <= tol
+}
+
+fn cylinder_mid(p: [f64; 3], q: [f64; 3], radius: f64) -> [f64; 3] {
+    let a0 = p[0].atan2(radius - p[2]);
+    let a1 = q[0].atan2(radius - q[2]);
+    let mut da = a1 - a0;
+    if da > std::f64::consts::PI {
+        da -= 2.0 * std::f64::consts::PI;
+    }
+    if da < -std::f64::consts::PI {
+        da += 2.0 * std::f64::consts::PI;
+    }
+    let ang = a0 + 0.5 * da;
+    [
+        radius * ang.sin(),
+        0.5 * (p[1] + q[1]),
+        radius - radius * ang.cos(),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

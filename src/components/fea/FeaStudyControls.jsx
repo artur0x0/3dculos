@@ -1,7 +1,7 @@
 import React from 'react';
 import { ArrowLeft, Check } from 'lucide-react';
 import { ChoiceRow, NumberField } from '../controls/popupUI';
-import { MODAL_MODE_SLOTS, PLOT_TABS, activePlot, resultsChrome } from '../../fea/resultsView.js';
+import { MODAL_MODE_SLOTS, activePlot, plotTabs, resultsChrome } from '../../fea/resultsView.js';
 import { FORCE_DIRECTIONS } from '../../fea/studyPanel.js';
 import { FeaLegend } from './FeaLegend';
 import { FeaLoadList } from './FeaLoadList';
@@ -340,8 +340,9 @@ function ModeList({ panel, reserve }) {
 export function FeaResultsReadout({ panel }) {
   const chrome = resultsChrome({ screen: panel.screen, kind: panel.viewKind });
   if (!chrome.frame) return null;
-  const plot = activePlot(panel.plot);
   const filled = chrome.screen === 'results';
+  const tabs = plotTabs(filled ? panel.result : null);
+  const plot = tabs.some((tab) => tab.value === panel.plot) ? activePlot(panel.plot) : 'stress';
   const legendPlot = chrome.modes ? 'displacement' : (filled ? plot : 'stress');
   const legendResult = filled ? panel.result : reservedResult(panel, chrome.modes);
   const govern = multiPartScope(panel);
@@ -351,7 +352,7 @@ export function FeaResultsReadout({ panel }) {
         <ModeList panel={panel} reserve={!filled} />
       ) : (
         <FeaTabs
-          options={PLOT_TABS}
+          options={tabs}
           value={plot}
           onChange={panel.setPlot}
           groupAttr="data-fea-plots"

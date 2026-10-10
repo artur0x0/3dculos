@@ -7,10 +7,12 @@ import {
   DESKTOP_REFINE_DOF_CAP,
   detectFeaProfile,
   dofCap,
+  frictionDofCap,
   edgeForCap,
   isThinPart,
   partShape,
   PHONE_DOF_CAPS,
+  PHONE_FRICTION_DOF_CAPS,
   SHELLS_AVAILABLE,
   THIN_ELEMENTS_THROUGH,
   THIN_WALL_DOF_BUDGET,
@@ -37,6 +39,11 @@ test('a cube is compact and uses PCG', () => {
   assert.equal(chooseSolver(shape), 'pcg');
   assert.equal(dofCap('phone', false, 'pcg'), PHONE_DOF_CAPS.tet10CompactPcg);
   assert.equal(dofCap('phone', false, 'cholesky'), PHONE_DOF_CAPS.tet10CompactCholesky);
+  assert.equal(frictionDofCap('phone', false), PHONE_FRICTION_DOF_CAPS.tet10Compact);
+  assert.equal(frictionDofCap('phone', true), PHONE_FRICTION_DOF_CAPS.tet10Thin);
+  assert.equal(frictionDofCap('desktop', true), Infinity);
+  assert.ok(PHONE_FRICTION_DOF_CAPS.tet10Compact * 4 <= PHONE_DOF_CAPS.tet10CompactCholesky);
+  assert.ok(PHONE_FRICTION_DOF_CAPS.tet10Thin * 4 <= PHONE_DOF_CAPS.tet10Thin);
 });
 
 test('a thin auto edge asks for two through the wall, then keeps a non-sliver edge when the cap cannot', () => {

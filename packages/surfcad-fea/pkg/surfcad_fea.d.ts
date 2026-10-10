@@ -47,6 +47,19 @@ export function solve(study: any, positions: Float32Array, indices: Uint32Array,
 export function solve_bonded(mesh: any, bcs: any, options: any): any;
 
 /**
+ * Frictionless or frictional contact, with bonded ties still eliminated.
+ *
+ * `mesh.contacts` is one entry per pair: `slaves`, `masterFaces`, and
+ * `slaveFaces` (six node ids per TET10 face), `law` (`frictionless` or
+ * `frictional`), optional `mu` (default 0.2), and optional `gap`. Node ids
+ * are concatenated in body order, the same numbering as [`solve_bonded`].
+ * The safety factor stays yield / p95. Contact samples are the slave nodes
+ * that carried a penalty, plus the master-face weights used to draw the
+ * other side.
+ */
+export function solve_contact(mesh: any, bcs: any, options: any): any;
+
+/**
  * Linear shell solve for 6-node triangles, 6 DOF per node.
  *
  * `mesh.nodes` is xyz in millimetres. `mesh.elements` is six indices per
@@ -103,6 +116,7 @@ export interface InitOutput {
     readonly modal_tet10: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly solve: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number) => void;
     readonly solve_bonded: (a: number, b: number, c: number, d: number) => void;
+    readonly solve_contact: (a: number, b: number, c: number, d: number) => void;
     readonly solve_shell: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly solve_tet10: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly __wbindgen_export: (a: number, b: number) => number;

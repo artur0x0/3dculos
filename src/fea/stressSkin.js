@@ -123,16 +123,19 @@ function buildGeometry(geometry, field, src) {
   const faceIDs = faceIdsOf(geometry);
   if (!index?.length || !positionsSrc?.length || !faceIDs?.length) return null;
   const triangles = Math.floor(index.length / 3);
+  const overlay = src?.contactOverlay === true;
   const positions = new Float32Array(triangles * 9);
   const colors = new Float32Array(triangles * 9);
   const offset = new Float32Array(triangles * 9);
   let w = 0;
   for (let t = 0; t < triangles; t++) {
     const face = faceIDs[t];
+    const samples = [0, 1, 2].map((k) => stressAt(field, face, index[t * 3 + k]));
+    if (overlay && samples.some((value) => !Number.isFinite(value))) continue;
     for (let k = 0; k < 3; k++) {
       const vertex = index[t * 3 + k];
       const vi = vertex * 3;
-      const rgb = colorFor(stressAt(field, face, vertex), src);
+      const rgb = colorFor(samples[k], src);
       const phi = src?.vectors ? vectorAt(src.vectors, face, vertex) : null;
       positions[w] = positionsSrc[vi] ?? 0;
       offset[w] = phi ? phi[0] : 0;
@@ -148,12 +151,16 @@ function buildGeometry(geometry, field, src) {
       w += 1;
     }
   }
+  if (overlay && w === 0) return null;
   const geom = new BufferGeometry();
-  geom.setAttribute('position', new BufferAttribute(positions, 3));
-  geom.setAttribute('color', new BufferAttribute(colors, 3));
+  const usedPositions = overlay ? positions.subarray(0, w) : positions;
+  const usedColors = overlay ? colors.subarray(0, w) : colors;
+  const usedOffset = overlay ? offset.subarray(0, w) : offset;
+  geom.setAttribute('position', new BufferAttribute(usedPositions, 3));
+  geom.setAttribute('color', new BufferAttribute(usedColors, 3));
   geom.computeVertexNormals();
-  geom.userData.modeRest = positions.slice();
-  geom.userData.modeOffset = offset;
+  geom.userData.modeRest = usedPositions.slice();
+  geom.userData.modeOffset = usedOffset;
   return geom;
 }
 
@@ -230,12 +237,16 @@ function paintStressSkin(host, field, src) {
     && host.userData.stressVectors === vectors
     && host.userData.stressSkin
   ) {
-    hidePaintSkin(host);
+    if (src?.contactOverlay) restorePaintSkin(host);
+    else hidePaintSkin(host);
     return host.userData.stressSkin;
   }
   const painted = buildGeometry(host.geometry, field, src);
   detachStressSkin(host);
-  if (!painted) return null;
+  if (!painted) {
+    if (src?.contactOverlay) restorePaintSkin(host);
+    return null;
+  }
   const skin = new Mesh(painted, makeStressMaterial(hostSide(host)));
   skin.name = SKIN_NAME;
   skin.renderOrder = STRESS_SKIN_RENDER_ORDER;
@@ -248,7 +259,8 @@ function paintStressSkin(host, field, src) {
   host.userData.stressAnimate = animate;
   host.userData.stressVectors = vectors;
   if (animate) startModeAnimation(skin);
-  hidePaintSkin(host);
+  if (src?.contactOverlay) restorePaintSkin(host);
+  else hidePaintSkin(host);
   return skin;
 }
 

@@ -16,8 +16,18 @@ export const PLOT_TABS = Object.freeze([
 /** Mode rows reserved while a modal solve is in flight. The solver asks for six. */
 export const MODAL_MODE_SLOTS = 6;
 
+export const CONTACT_TAB = Object.freeze({ value: 'contact', label: 'Contact' });
+
 export function activePlot(plot) {
-  return plot === 'displacement' ? 'displacement' : 'stress';
+  if (plot === 'displacement') return 'displacement';
+  if (plot === 'contact') return 'contact';
+  return 'stress';
+}
+
+/** Stress and displacement, plus Contact when this solve has a non-bonded pair. */
+export function plotTabs(result) {
+  if (result && result.contactActive === true) return PLOT_TABS.concat([CONTACT_TAB]);
+  return PLOT_TABS;
 }
 
 export function initialResultsView() {

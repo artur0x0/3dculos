@@ -7,9 +7,13 @@
  * cubes meet on the interface perimeter and fail that test.
  *
  * The default gap is 0.05 mm or 1% of the shortest triangle edge, whichever
- * is larger. `contacts` store `{ a, b, kind: 'bonded' }`. `enabled: false`
- * is the only off switch; an enabled pair omits the flag.
+ * is larger. A new pair is bonded. A pair the user set to frictionless or
+ * frictional keeps that kind, and frictional keeps its coefficient.
+ * `enabled: false` is the off switch; an enabled pair omits the flag.
  */
+
+/** Coulomb coefficient stored when a frictional pair does not set one. */
+export const DEFAULT_FRICTION = 0.2;
 
 function sub(a, b) {
   return [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
@@ -230,14 +234,22 @@ function samePair(left, right) {
     || (sameEnds(left.a, right.b) && sameEnds(left.b, right.a));
 }
 
-/** Keep a pair the user turned off. Drop pairs that are no longer touching. */
+/** Keep a disabled pair, and keep a friction law the user already chose. */
 export function mergeContactPairs(detected, previous) {
   const prior = Array.isArray(previous) ? previous : [];
   return (detected || []).map((pair) => {
     const old = prior.find((row) => samePair(row, pair));
-    if (old && old.enabled === false) {
-      return { a: pair.a, b: pair.b, kind: 'bonded', enabled: false };
+    const kind = old && (old.kind === 'frictionless' || old.kind === 'frictional')
+      ? old.kind
+      : 'bonded';
+    const next = { a: pair.a, b: pair.b, kind };
+    if (kind === 'frictional') {
+      const mu = old && typeof old.mu === 'number' && Number.isFinite(old.mu) && old.mu >= 0
+        ? old.mu
+        : DEFAULT_FRICTION;
+      next.mu = mu;
     }
-    return { a: pair.a, b: pair.b, kind: 'bonded' };
+    if (old && old.enabled === false) next.enabled = false;
+    return next;
   });
 }

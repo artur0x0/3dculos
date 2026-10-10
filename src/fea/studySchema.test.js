@@ -179,6 +179,24 @@ test('an assembly study round-trips scope, per-part materials, and a disabled bo
   });
   assert.equal(frictional.ok, false);
   assert.match(frictional.errors.join('\n'), /bonded/);
+
+  const sliding = validateStudy({
+    ...defaultStudy(),
+    contacts: [{ a: { part: 'part-a', faceID: 1 }, b: { part: 'part-b', faceID: 2 }, kind: 'frictional' }],
+  });
+  assert.equal(sliding.ok, true, sliding.errors.join('; '));
+  assert.equal(sliding.study.contacts[0].kind, 'frictional');
+  assert.equal(sliding.study.contacts[0].mu, 0.2);
+  const againMu = validateStudy(JSON.parse(studyJson(sliding.study)));
+  assert.equal(againMu.ok, true, againMu.errors.join('; '));
+  assert.equal(againMu.study.contacts[0].mu, 0.2);
+  const smooth = validateStudy({
+    ...defaultStudy(),
+    contacts: [{ a: { part: 'part-a', faceID: 1 }, b: { part: 'part-b', faceID: 2 }, kind: 'frictionless', mu: 0.4 }],
+  });
+  assert.equal(smooth.ok, true, smooth.errors.join('; '));
+  assert.equal(smooth.study.contacts[0].kind, 'frictionless');
+  assert.equal(smooth.study.contacts[0].mu, undefined);
 });
 
 test('a partial study does not validate as a stored study', () => {

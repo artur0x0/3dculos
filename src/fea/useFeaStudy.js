@@ -28,6 +28,8 @@ import {
   studyFaceFromPick,
   studyScopeKind,
   studyWithContactEnabled,
+  studyWithContactKind,
+  studyWithContactMu,
   studyWithCustomMaterial,
   studyWithLoadVector,
   studyWithMaterialId,
@@ -106,6 +108,7 @@ export function useFeaStudy({
   const clientRef = useRef(null);
   const runAbortRef = useRef(null);
   const stressFieldRef = useRef(null);
+  const contactFieldRef = useRef(null);
   const displacementFieldRef = useRef(null);
   const modeMagnitudesRef = useRef(null);
   const modeVectorsRef = useRef(null);
@@ -162,6 +165,7 @@ export function useFeaStudy({
   const clearFields = () => {
     stressFieldRef.current = null;
     displacementFieldRef.current = null;
+    contactFieldRef.current = null;
   };
 
   markStaleRef.current = () => {
@@ -495,6 +499,18 @@ export function useFeaStudy({
     else setNotice(next.errors[0] || 'Could not change that contact');
   }, [commitStudy]);
 
+  const setContactKind = useCallback((index, kind) => {
+    const next = studyWithContactKind(studyRef.current, index, kind);
+    if (next.ok) commitStudy(next.study);
+    else setNotice(next.errors[0] || 'Could not change that contact');
+  }, [commitStudy]);
+
+  const setContactMu = useCallback((index, mu) => {
+    const next = studyWithContactMu(studyRef.current, index, mu);
+    if (next.ok) commitStudy(next.study);
+    else setNotice(next.errors[0] || 'Could not change that friction coefficient');
+  }, [commitStudy]);
+
   const pick = useCallback((clickData) => {
     if (!studyRef.current) return false;
     const solid = getSolidRef.current?.();
@@ -683,6 +699,37 @@ export function useFeaStudy({
         stressParts = primary ? stressFields.filter((part) => part.geometry !== primary.geometry) : [];
         dispParts = primaryDisp ? dispFields.filter((part) => part.geometry !== primaryDisp.geometry) : [];
       }
+      let contactBound = null;
+      let contactParts = [];
+      let contactGeometry = stressGeometry;
+      if (assemblyPartsForSolve.length && !moved && solved.contactActive === true) {
+        const contactFields = [];
+        for (const part of solved.parts || []) {
+          const row = assemblyPartsForSolve.find((item) => item.id === part.id);
+          if (!row) continue;
+          const partContact = part.contact instanceof Float32Array ? part.contact : null;
+          const partBound = partContact ? bindStressField(row.geometry, partContact, row.faceIDs) : null;
+          if (partBound) contactFields.push({ geometry: row.geometry, field: partBound });
+        }
+        const primaryContact = contactFields.find((part) => part.geometry === now)
+          || contactFields.find((part) => part.geometry === geometry)
+          || contactFields[0];
+        contactBound = primaryContact ? primaryContact.field : null;
+        contactGeometry = primaryContact ? primaryContact.geometry : stressGeometry;
+        contactParts = primaryContact
+          ? contactFields.filter((part) => part.geometry !== primaryContact.geometry)
+          : [];
+      }
+      const pressureMax = Number(solved.contactPressureMax);
+      contactFieldRef.current = contactBound ? {
+        geometry: contactGeometry,
+        field: contactBound,
+        ramp: 'displacement',
+        scale: { min: 0, max: Number.isFinite(pressureMax) ? Math.max(pressureMax, 0) : 0 },
+        contactOverlay: true,
+        parts: contactParts,
+        onStale,
+      } : null;
       const liveScript = typeof getScriptRef.current === 'function' ? (getScriptRef.current() || '') : '';
       solvedOutsideRef.current = scriptOutsideFeaStudy(liveScript);
       stressFieldRef.current = bound ? {
@@ -727,6 +774,12 @@ export function useFeaStudy({
         yield_MPa: scaleYield,
         governingPart: solved.governingPart || null,
         governingName: solved.governingName || null,
+        contactActive: solved.contactActive === true,
+        contactOpen: solved.contactOpen ?? 0,
+        contactStick: solved.contactStick ?? 0,
+        contactSlip: solved.contactSlip ?? 0,
+        contactPressureMin: solved.contactPressureMin ?? null,
+        contactPressureMax: solved.contactPressureMax ?? null,
         partStats: solved.partStats || null,
         stale: moved || !bound,
         stats: solved.stats || null,
@@ -878,9 +931,12 @@ export function useFeaStudy({
       return;
     }
     const modalResult = result?.source === 'modal';
-    const src = modalResult || activePlot(plot) === 'displacement'
+    const shown = activePlot(plot);
+    const src = modalResult || shown === 'displacement'
       ? displacementFieldRef.current
-      : stressFieldRef.current;
+      : shown === 'contact'
+        ? contactFieldRef.current
+        : stressFieldRef.current;
     setStressSkinSource(src ? { ...src, animate: modalResult && animate } : null);
   }, [open, screen, plot, result, preview.showing, preview.ms, animate, modeIndex]);
 
@@ -989,6 +1045,7 @@ export function useFeaStudy({
     openRef.current = false;
     stressFieldRef.current = null;
     displacementFieldRef.current = null;
+    contactFieldRef.current = null;
     previewFieldRef.current = null;
     setStressSkinSource(null);
   }, []);
@@ -1024,6 +1081,8 @@ export function useFeaStudy({
     setStudyScope,
     toggleScopePart,
     setContactEnabled,
+    setContactKind,
+    setContactMu,
     pick: pickIfOpen,
     run,
     cancel,
