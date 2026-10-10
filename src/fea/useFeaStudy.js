@@ -12,7 +12,7 @@ import { createFeaClient } from './feaClient.js';
 import { initialFeaProgress, logFeaTiming, reduceFeaProgress } from './feaProgress.js';
 import { studyForAssemblySolve, studyForSolve } from './renderFaceIds.js';
 import { shellSheetFromScript } from './sheetMidsurface.js';
-import { activePlot, showResults } from './resultsView.js';
+import { activePlot, initialResultsView, reduceResultsView } from './resultsView.js';
 import { bindStressField, bindVectorField, setStressSkinSource } from './stressMap.js';
 import { composeFeaStudy, readFeaStudy, scriptOutsideFeaStudy } from './studyScript.js';
 import {
@@ -101,6 +101,7 @@ export function useFeaStudy({
   const [animate, setAnimateState] = useState(false);
   const [dismissed, setDismissed] = useState(false);
   const [assemblyParts, setAssemblyParts] = useState([]);
+  const [view, setView] = useState(initialResultsView);
   const writtenRef = useRef(null);
   const clientRef = useRef(null);
   const runAbortRef = useRef(null);
@@ -348,6 +349,7 @@ export function useFeaStudy({
     solvedOutsideRef.current = null;
     setPlotState('stress');
     setDismissed(false);
+    setView(initialResultsView());
     setResult(null);
     setRunReport(initialFeaProgress());
     setPreview((prev) => ({ ...EMPTY_PREVIEW, available: prev.available }));
@@ -593,6 +595,10 @@ export function useFeaStudy({
       { type: 'stage', stage: 'loading-mesher', now: startedAt },
     ));
     setRunning(true);
+    setView((prev) => reduceResultsView(prev, {
+      type: 'run',
+      kind: studyRef.current?.type === 'modal' ? 'modal' : 'static',
+    }));
     setNotice('');
     try {
       if (!clientRef.current) clientRef.current = await createFeaClient({ profile });
@@ -736,6 +742,11 @@ export function useFeaStudy({
         refineCount: solved?.refineCount || 0,
         converged: solved?.converged === true,
       }));
+      setView((prev) => reduceResultsView(prev, {
+        type: 'finish',
+        source: solved?.source || '',
+        stale: moved || !bound,
+      }));
     } catch (err) {
       if (err?.outcome === 'worker-died') {
         const dead = clientRef.current;
@@ -752,6 +763,7 @@ export function useFeaStudy({
         outcome,
         error,
       }));
+      setView((prev) => reduceResultsView(prev, { type: 'stop', outcome }));
     } finally {
       if (runAbortRef.current === controller) runAbortRef.current = null;
       setRunning(false);
@@ -831,14 +843,16 @@ export function useFeaStudy({
   const backToSetup = useCallback(() => {
     setPlotState('stress');
     setDismissed(true);
+    setView((prev) => reduceResultsView(prev, { type: 'back' }));
   }, []);
 
-  const results = showResults({
-    running,
-    status: runReport.status,
-    result,
-    dismissed,
-  });
+  useEffect(() => {
+    if (!result?.stale) return;
+    setView((prev) => reduceResultsView(prev, { type: 'stale' }));
+  }, [result]);
+
+  const screen = view.screen;
+  const results = screen !== 'setup';
 
   useEffect(() => {
     if (!open) {
@@ -859,7 +873,7 @@ export function useFeaStudy({
       setStressSkinSource(previewFieldRef.current);
       return;
     }
-    if (!results) {
+    if (screen !== 'results') {
       setStressSkinSource(null);
       return;
     }
@@ -868,7 +882,7 @@ export function useFeaStudy({
       ? displacementFieldRef.current
       : stressFieldRef.current;
     setStressSkinSource(src ? { ...src, animate: modalResult && animate } : null);
-  }, [open, results, plot, result, preview.showing, preview.ms, animate, modeIndex]);
+  }, [open, screen, plot, result, preview.showing, preview.ms, animate, modeIndex]);
 
   useEffect(() => {
     controllerRef.current = createPreviewController({
@@ -1019,6 +1033,8 @@ export function useFeaStudy({
     previewCommit,
     selectPreviewLoad,
     results,
+    screen,
+    viewKind: view.kind,
     plot: activePlot(plot),
     setPlot,
     modeIndex,

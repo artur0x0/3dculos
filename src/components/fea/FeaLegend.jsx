@@ -23,7 +23,7 @@ function formatMm(value) {
   return String(rounded);
 }
 
-function DisplacementLegend({ result }) {
+function DisplacementLegend({ result, quiet = false, govern = false }) {
   const known = Number.isFinite(Number(result.displacementMin)) && Number.isFinite(Number(result.displacementMax));
   const scale = known
     ? { min: Number(result.displacementMin), max: Number(result.displacementMax) }
@@ -36,35 +36,37 @@ function DisplacementLegend({ result }) {
   const governing = formatSolveSummary(result).governing;
   return (
     <div
-      data-fea-summary=""
-      data-fea-legend=""
-      data-fea-source={result.source || ''}
-      data-fea-plot-legend="displacement"
-      data-fea-stale="0"
+      {...(quiet ? {} : {
+        'data-fea-summary': '',
+        'data-fea-legend': '',
+        'data-fea-source': result.source || '',
+        'data-fea-plot-legend': 'displacement',
+        'data-fea-stale': '0',
+      })}
       className="rounded border border-amber-300/50 bg-amber-400/10 px-2 py-1.5"
     >
       <div
-        data-fea-legend-bar=""
+        {...(quiet ? {} : { 'data-fea-legend-bar': '' })}
         className="h-2 w-full rounded"
         style={{ background: scale ? displacementGradientCss(scale) : 'rgb(128, 128, 128)' }}
         title={scale ? `${min} to ${max}${unit}` : 'displacement'}
       />
       {ticks.length > 0 && (
         <div
-          data-fea-legend-ticks=""
-          className="mt-0.5 flex justify-between gap-1 text-[10px] tabular-nums text-cyan-100/90"
+          {...(quiet ? {} : { 'data-fea-legend-ticks': '' })}
+          className="mt-0.5 flex flex-nowrap justify-between gap-1 text-[10px] tabular-nums text-cyan-100/90"
         >
           {ticks.map((tick, index) => (
             <span key={index}>{formatMm(tick)}</span>
           ))}
         </div>
       )}
-      <div className="text-[12px] text-cyan-50" data-fea-displacement="">
+      <div className="truncate text-[12px] text-cyan-50" {...(quiet ? {} : { 'data-fea-displacement': '' })}>
         min {min}{unit} · max {max}{unit}
       </div>
-      {governing ? (
-        <div className="text-[12px] text-cyan-50" data-fea-governing={governing}>
-          governs {governing}
+      {(governing || govern) ? (
+        <div className="truncate text-[12px] text-cyan-50" {...(quiet || !governing ? {} : { 'data-fea-governing': governing })}>
+          governs {governing || '\u00a0'}
         </div>
       ) : null}
     </div>
@@ -134,11 +136,11 @@ function PreviewLegend({ result, preview }) {
   );
 }
 
-export function FeaLegend({ result, preview, plot = 'stress' }) {
+export function FeaLegend({ result, preview, plot = 'stress', quiet = false, govern = false }) {
   if (preview?.showing) return <PreviewLegend result={result} preview={preview} />;
   if (!result) return null;
   if (activePlot(plot) === 'displacement' && result.stale !== true) {
-    return <DisplacementLegend result={result} />;
+    return <DisplacementLegend result={result} quiet={quiet} govern={govern} />;
   }
   const summary = formatSolveSummary(result);
   const stale = result.stale === true;
@@ -147,12 +149,14 @@ export function FeaLegend({ result, preview, plot = 'stress' }) {
   const ticks = legendTicks(scale, 5);
   return (
     <div
-      data-fea-summary=""
-      data-fea-legend=""
-      data-fea-source={result.source || ''}
-      data-fea-solve-ms={result.stats && Number.isFinite(result.stats.ms) ? String(Math.round(result.stats.ms)) : ''}
-      data-fea-peak-bytes={result.stats && Number.isFinite(result.stats.peakMemoryBytes) ? String(result.stats.peakMemoryBytes) : ''}
-      data-fea-stale={stale ? '1' : '0'}
+      {...(quiet ? {} : {
+        'data-fea-summary': '',
+        'data-fea-legend': '',
+        'data-fea-source': result.source || '',
+        'data-fea-solve-ms': result.stats && Number.isFinite(result.stats.ms) ? String(Math.round(result.stats.ms)) : '',
+        'data-fea-peak-bytes': result.stats && Number.isFinite(result.stats.peakMemoryBytes) ? String(result.stats.peakMemoryBytes) : '',
+        'data-fea-stale': stale ? '1' : '0',
+      })}
       className="rounded border border-amber-300/50 bg-amber-400/10 px-2 py-1.5"
     >
       <div className="mb-1 flex items-center gap-1.5">
@@ -175,28 +179,28 @@ export function FeaLegend({ result, preview, plot = 'stress' }) {
       </div>
       <div className={stale ? 'opacity-40 grayscale' : ''}>
         <div
-          data-fea-legend-bar=""
+          {...(quiet ? {} : { 'data-fea-legend-bar': '' })}
           className="h-2 w-full rounded"
           style={{ background: legendGradientCss(scale) }}
           title={`0 to ${formatMPa(top)} MPa`}
         />
         <div
-          data-fea-legend-ticks=""
-          className="mt-0.5 flex justify-between gap-1 text-[10px] tabular-nums text-cyan-100/90"
+          {...(quiet ? {} : { 'data-fea-legend-ticks': '' })}
+          className="mt-0.5 flex flex-nowrap justify-between gap-1 text-[10px] tabular-nums text-cyan-100/90"
         >
           {ticks.map((tick, index) => (
             <span key={index}>{formatMPa(tick)}</span>
           ))}
         </div>
-        <div className="text-[12px] text-cyan-50" data-fea-stress="">
+        <div className="truncate text-[12px] text-cyan-50" {...(quiet ? {} : { 'data-fea-stress': '' })}>
           min {summary.min} MPa · p95 {summary.p95} MPa · max {summary.max} MPa
         </div>
-        <div className="text-[12px] text-cyan-50" data-fea-fos={summary.fos}>
+        <div className="truncate text-[12px] text-cyan-50" {...(quiet ? {} : { 'data-fea-fos': summary.fos })}>
           safety factor {summary.fos}
         </div>
-        {summary.governing ? (
-          <div className="text-[12px] text-cyan-50" data-fea-governing={summary.governing}>
-            governs {summary.governing}
+        {(summary.governing || govern) ? (
+          <div className="truncate text-[12px] text-cyan-50" {...(quiet || !summary.governing ? {} : { 'data-fea-governing': summary.governing })}>
+            governs {summary.governing || '\u00a0'}
           </div>
         ) : null}
       </div>
