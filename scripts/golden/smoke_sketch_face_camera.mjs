@@ -180,7 +180,8 @@ async function runPhone(browser) {
     const canvas = page.locator('.viewport-shell > canvas');
     const box = await canvas.boundingBox();
     await canvas.click({ position: { x: hit.x - box.x, y: hit.y - box.y } });
-    await page.waitForTimeout(250);
+    // Face clicks wait out the multi-click delay before the plane updates.
+    await page.waitForFunction(() => window.__VIEWPORT__.stageContourSketch().planePreset === 'face', null, { timeout: 4000 });
   }
   const start = page.locator('[data-feature-card-confirm]');
   await start.waitFor({ timeout: 4000 });
