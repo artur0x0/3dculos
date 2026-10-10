@@ -18,6 +18,8 @@
 /** @typedef {{ center: number[], normal: number[], x: number[], y: number[] }} PlaneFrame */
 /** @typedef {{ type: string, [k: string]: any }} ProfileDesc */
 
+import { solveContour } from './contourSolve.js';
+
 function _len(v) {
   return Math.hypot(v[0], v[1], v[2]) || 1;
 }
@@ -226,6 +228,21 @@ export function quarterCircleFilletContours(radius, arcSegments = 8) {
  */
 export function buildProfileFromParams(params = {}) {
   const type = String(params.profileType || params.type || 'circle');
+  if (type === 'contour' && params.contour) {
+    const solved = solveContour(params.contour);
+    if (!solved.contours?.length) throw new Error('solveContour: contour is open');
+    return {
+      profile: {
+        type: 'contour',
+        points: solved.points,
+        lines: solved.lines,
+        arcs: solved.arcs,
+        dimensions: solved.dimensions,
+        constraints: solved.constraints,
+      },
+      contours: solved.contours,
+    };
+  }
   if (type === 'circle') {
     const radius = Number(params.radius);
     const segments = Math.max(3, Math.round(Number(params.segments) || 32));

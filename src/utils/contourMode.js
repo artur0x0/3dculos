@@ -55,6 +55,14 @@ import {
   offsetPlaneFrame,
 } from './makeLoft.js';
 import { assembleSweepPath } from './edgeSweepPath.js';
+import {
+  commitArc,
+  commitDimension,
+  deleteContourDimension,
+  promoteContourState,
+  selectContourGesture,
+  toggleContourPick,
+} from './contourGesture.js';
 
 /** Palette ids that enter contour mode instead of one-shot insert. */
 export const CONTOUR_ENTRY_IDS = new Set([
@@ -315,12 +323,18 @@ export function selectLoftProfile(state, index) {
   if (!state?.loft?.profiles?.length) return state;
   const selected = Math.max(0, Math.min(Number(index) || 0, state.loft.profiles.length - 1));
   const cur = state.loft.profiles[selected];
-  return {
+  const next = {
     ...state,
     tool: cur.tool,
     params: { ...cur.params },
+    picks: [],
+    tagId: null,
     loft: { ...state.loft, selected, picking: null },
   };
+  if (next.gesture === 'dimension' || next.gesture === 'arc') {
+    return syncContourSession(promoteContourState(next));
+  }
+  return next;
 }
 
 /**
@@ -583,13 +597,61 @@ export function enterContourState(entry, faceData = null) {
   };
 }
 
+function syncContourSession(state) {
+  if (!state || !isLoftEntry(state.entry)) return state;
+  const written = writeLoftSelected(state, { params: state.params });
+  return {
+    ...written,
+    gesture: state.gesture ?? null,
+    picks: state.picks || [],
+    tagId: state.tagId ?? null,
+    gestureNote: state.gestureNote ?? null,
+  };
+}
+
+/** Arc and Dimension. Not profile tools: the contour stays put. */
+export function armContourGesture(state, gesture) {
+  return syncContourSession(selectContourGesture(state, gesture));
+}
+
+export function applyContourPick(state, pick) {
+  return syncContourSession(toggleContourPick(state, pick));
+}
+
+export function saveContourDimension(state, draft) {
+  const result = commitDimension(state, draft);
+  return { ...result, state: syncContourSession(result.state) };
+}
+
+export function saveContourArc(state, radiusMm) {
+  const result = commitArc(state, radiusMm);
+  return { ...result, state: syncContourSession(result.state) };
+}
+
+export function removeContourDimension(state, id) {
+  const result = deleteContourDimension(state, id);
+  return { ...result, state: syncContourSession(result.state) };
+}
+
 export function switchContourTool(state, tool) {
   const nextTool = isContourTool(tool) ? tool : 'circle';
+  if (state?.tool === nextTool) {
+    return { ...state, gesture: null, picks: [], tagId: null, gestureNote: null };
+  }
   const next = defaultContourParams(nextTool);
   if (state?.params?.radius != null && next.radius != null) {
     next.radius = state.params.radius;
   }
-  const nextState = { ...state, tool: nextTool, params: next, pickedContourId: null };
+  const nextState = {
+    ...state,
+    tool: nextTool,
+    params: next,
+    pickedContourId: null,
+    gesture: null,
+    picks: [],
+    tagId: null,
+    gestureNote: null,
+  };
   if (isLoftEntry(state?.entry)) {
     const written = writeLoftSelected(nextState, { tool: nextTool, params: next });
     return { ...written, pickedContourId: null };
@@ -602,6 +664,7 @@ export function switchContourTool(state, tool) {
  */
 export function toolToProfileParams(tool, params = {}) {
   const p = params || {};
+  if (p.contour) return { profileType: 'contour', contour: p.contour };
   if (tool === 'rectangle') {
     return {
       profileType: 'rectangle',

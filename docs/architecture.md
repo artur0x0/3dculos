@@ -39,7 +39,11 @@ Injected names are the keys of `HELPER_FUNCTIONS` in `src/lib/surfcad/runtime.js
 
 ### Constrained contour
 
-`solveContour` (`src/utils/contourSolve.js`) solves a contour in the workplane UV frame. The script stores the contour inside the call. A dimension name is a string on that dimension, scoped to the contour, not a `const` later features can read. Lengths in the call are millimetres. Angles are degrees. Display conversion uses `src/utils/displayUnit.js` at the field, when the dimension card lands. The solver does not import it.
+`solveContour` (`src/utils/contourSolve.js`) solves a contour in the workplane UV frame. The script stores the contour inside the call. A dimension name is a string on that dimension, scoped to the contour, not a `const` later features can read. Lengths in the call are millimetres. Angles are degrees. The dimension field converts with `src/utils/displayUnit.js`. The solver does not import it.
+
+Arc and Dimension sit on the contour rail after Polyline. They are not profile tools, so selecting one does not clear the contour. The first selection promotes a circle, rectangle, polygon, or polyline into a contour. Dimension Confirm writes that profile and stays in contour mode. It does not Auto-Run and it does not change the solid lines around the profile.
+
+`StickyPickApply` (`src/components/StickyPickApply.jsx`) plus `useStickyPick` (`src/hooks/useStickyPick.js`) is the shared pick-then-apply card. Tap one or two objects, then apply a property. Contour Dimension and Arc use it. A joints card should use the same hook and component for a face, a point, or an edge, then a joint such as concentric or perpendicular. The list rule is `stickyPickToggle` in `src/utils/stickyPick.js`. Contour mode keeps its picks on the mode state because the canvas and the card both write them.
 
 Horizontal is constant `v`. Vertical is constant `u`. An under-defined contour is a normal result (`status: 'under'`). A conflict returns the least-squares shape and names the item (`status: 'conflict'`); it does not throw. A constraint that does not change the rank is `repeated`, which is a warning, not a red state and not an error. The point cap is 128. An open chain closes once it has three points. Joints do not call this solver.
 

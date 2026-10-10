@@ -278,6 +278,7 @@ import GameHintsModal from './components/GameHintsModal';
 import PuzzlePickerModal from './components/PuzzlePickerModal';
 import GameConfetti from './components/GameConfetti';
 import { composeContourCommit } from './utils/contourMode';
+import { writeContourProfileBlock } from './utils/contourProfileWrite';
 import {
   composeFilletCommit,
   composeChamferCommit,
@@ -5181,6 +5182,20 @@ const App = () => {
       return false;
     }
     const buf = codeEditorRef.current?.getContent?.() || '';
+    if (payload?.contourBlock) {
+      const saved = writeContourProfileBlock(buf, payload || {});
+      if (!saved.ok) {
+        viewportRef.current?.softFailContour?.(saved.message);
+        return false;
+      }
+      if (!saved.written) return true;
+      const wrote = codeEditorRef.current?.applyBuffer?.(saved.buffer, 'Contour');
+      if (!wrote) {
+        viewportRef.current?.softFailContour?.('Could not write Contour into the editor — try again.');
+        return false;
+      }
+      return true;
+    }
     const result = composeContourCommit(buf, payload || {});
     if (!result.ok) {
       viewportRef.current?.softFailContour?.(result.message);

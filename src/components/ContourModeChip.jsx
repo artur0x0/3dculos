@@ -121,7 +121,15 @@ const ContourModeChip = ({
   );
 
   let fields = null;
-  if (tool === 'circle') {
+  if (params.contour) {
+    const n = params.contour.dimensions?.length || 0;
+    const lines = params.contour.lines?.length || 0;
+    fields = (
+      <span className="text-[13px] text-cyan-100">
+        Contour · {lines} line{lines === 1 ? '' : 's'} · {n} dimension{n === 1 ? '' : 's'}
+      </span>
+    );
+  } else if (tool === 'circle') {
     fields = (
       <>
         {numField('radius', 'Radius', { min: 0.1, step: 0.5, max: 80 })}
