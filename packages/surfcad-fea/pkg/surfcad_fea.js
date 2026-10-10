@@ -125,6 +125,46 @@ export function solve(study, positions, indices, face_ids, material, profile) {
 }
 
 /**
+ * Bonded multi-body solve. Each body is meshed on its own and tied by
+ * projection MPCs. Shell-to-solid ties are not accepted: every body is TET10.
+ *
+ * `mesh.bodies` is an array of `{ nodes, elements, material }`. Node indices
+ * inside a body are local. Ties and boundary conditions use the concatenated
+ * order: body 0, then body 1, and so on.
+ *
+ * `mesh.ties` is optional. `slaveNodes` are concatenated node ids.
+ * `masterFaces` is six node ids per TET10 face. `faceOffsets` and
+ * `faceCounts` say which faces each slave may land on (face index, not a
+ * node index). `gap` is the plane distance in millimetres that still counts
+ * as on the face; the default is 0.05.
+ *
+ * The safety factor is the minimum of yield/p95 over the bodies that have
+ * both. `governingPart` is that body's index.
+ * @param {any} mesh
+ * @param {any} bcs
+ * @param {any} options
+ * @returns {any}
+ */
+export function solve_bonded(mesh, bcs, options) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        wasm.solve_bonded(retptr, addBorrowedObject(mesh), addBorrowedObject(bcs), addBorrowedObject(options));
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        if (r2) {
+            throw takeObject(r1);
+        }
+        return takeObject(r0);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        heap[stack_pointer++] = undefined;
+        heap[stack_pointer++] = undefined;
+        heap[stack_pointer++] = undefined;
+    }
+}
+
+/**
  * Linear shell solve for 6-node triangles, 6 DOF per node.
  *
  * `mesh.nodes` is xyz in millimetres. `mesh.elements` is six indices per
@@ -291,6 +331,10 @@ function __wbg_get_imports() {
             const ret = getObject(arg0).done;
             return ret;
         },
+        __wbg_from_296ca31f8d0f1c52: function(arg0) {
+            const ret = Array.from(getObject(arg0));
+            return addHeapObject(ret);
+        },
         __wbg_get_31af05bd4842a84f: function() { return handleError(function (arg0, arg1) {
             const ret = Reflect.get(getObject(arg0), getObject(arg1));
             return addHeapObject(ret);
@@ -299,6 +343,10 @@ function __wbg_get_imports() {
             const ret = Reflect.get(getObject(arg0), getObject(arg1));
             return addHeapObject(ret);
         }, arguments); },
+        __wbg_get_6c896e0571ddae51: function(arg0, arg1) {
+            const ret = getObject(arg0)[arg1 >>> 0];
+            return addHeapObject(ret);
+        },
         __wbg_get_unchecked_288889d017702237: function(arg0, arg1) {
             const ret = getObject(arg0)[arg1 >>> 0];
             return addHeapObject(ret);
@@ -403,6 +451,10 @@ function __wbg_get_imports() {
         },
         __wbg_new_ee2291f50781bf1d: function() {
             const ret = new Array();
+            return addHeapObject(ret);
+        },
+        __wbg_new_from_slice_37a3c3a194266cb8: function(arg0, arg1) {
+            const ret = new Uint32Array(getArrayU32FromWasm0(arg0, arg1));
             return addHeapObject(ret);
         },
         __wbg_new_from_slice_ca6ad97db1f4779a: function(arg0, arg1) {

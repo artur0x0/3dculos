@@ -18,6 +18,9 @@ mod pair;
 mod shell;
 mod stress;
 pub(crate) mod tet10;
+mod tie;
+
+pub use tie::{solve_bonded, tie_slaves, BondedOutput, PartStress, SlaveTie, SolidBody, TieBuild};
 
 #[cfg(test)]
 mod tests;

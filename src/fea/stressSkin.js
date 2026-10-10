@@ -221,6 +221,37 @@ export function detachStressSkin(host) {
  * Draw the current solve on this mesh, or remove it. A geometry that is
  * not the one that was solved marks the result stale and draws nothing.
  */
+function paintStressSkin(host, field, src) {
+  const animate = !!src?.animate;
+  const vectors = src?.vectors || null;
+  if (
+    host.userData?.stressField === field
+    && host.userData.stressAnimate === animate
+    && host.userData.stressVectors === vectors
+    && host.userData.stressSkin
+  ) {
+    hidePaintSkin(host);
+    return host.userData.stressSkin;
+  }
+  const painted = buildGeometry(host.geometry, field, src);
+  detachStressSkin(host);
+  if (!painted) return null;
+  const skin = new Mesh(painted, makeStressMaterial(hostSide(host)));
+  skin.name = SKIN_NAME;
+  skin.renderOrder = STRESS_SKIN_RENDER_ORDER;
+  skin.frustumCulled = false;
+  skin.raycast = () => {};
+  skin.userData.stressSkin = true;
+  host.add(skin);
+  host.userData.stressSkin = skin;
+  host.userData.stressField = field;
+  host.userData.stressAnimate = animate;
+  host.userData.stressVectors = vectors;
+  if (animate) startModeAnimation(skin);
+  hidePaintSkin(host);
+  return skin;
+}
+
 export function syncStressSkin(host) {
   if (!host) return null;
   const src = getStressSkinSource();
@@ -233,32 +264,41 @@ export function syncStressSkin(host) {
     }
     return null;
   }
-  const animate = !!src.animate;
-  const vectors = src.vectors || null;
-  if (
-    host.userData?.stressField === src.field
-    && host.userData.stressAnimate === animate
-    && host.userData.stressVectors === vectors
-    && host.userData.stressSkin
-  ) {
-    hidePaintSkin(host);
-    return host.userData.stressSkin;
+  return paintStressSkin(host, src.field, src);
+}
+
+/**
+ * Paint every host that belongs to the solve. The first host is the active
+ * part. An assembly extra that is not in the field is left unpainted and
+ * does not mark the study stale.
+ */
+export function syncFeaStressSkins(hosts) {
+  const src = getStressSkinSource();
+  const list = Array.isArray(hosts) ? hosts.filter(Boolean) : [];
+  const extras = Array.isArray(src?.parts) ? src.parts : [];
+  if (!src?.field) {
+    for (const host of list) detachStressSkin(host);
+    return;
   }
-  const painted = buildGeometry(geometry, src.field, src);
-  detachStressSkin(host);
-  if (!painted) return null;
-  const skin = new Mesh(painted, makeStressMaterial(hostSide(host)));
-  skin.name = SKIN_NAME;
-  skin.renderOrder = STRESS_SKIN_RENDER_ORDER;
-  skin.frustumCulled = false;
-  skin.raycast = () => {};
-  skin.userData.stressSkin = true;
-  host.add(skin);
-  host.userData.stressSkin = skin;
-  host.userData.stressField = src.field;
-  host.userData.stressAnimate = animate;
-  host.userData.stressVectors = vectors;
-  if (animate) startModeAnimation(skin);
-  hidePaintSkin(host);
-  return skin;
+  const primary = list[0] || null;
+  for (const host of list) {
+    const geometry = host.geometry;
+    if (src.geometry === geometry) {
+      paintStressSkin(host, src.field, src);
+      continue;
+    }
+    const hit = extras.find((part) => part && part.geometry === geometry);
+    if (hit?.field) {
+      paintStressSkin(host, hit.field, src);
+      continue;
+    }
+    detachStressSkin(host);
+  }
+  const primaryCovered = !!(primary && (
+    primary.geometry === src.geometry
+    || extras.some((part) => part && part.geometry === primary.geometry)
+  ));
+  if (primary && src.geometry && primary.geometry && !primaryCovered) {
+    try { src.onStale?.(); } catch { /* the study marks itself; the mesh still clears */ }
+  }
 }

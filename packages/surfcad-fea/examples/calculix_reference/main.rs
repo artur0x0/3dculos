@@ -20,7 +20,7 @@
 mod ccx_io;
 mod face_load;
 
-use ccx_io::{ccx_bin, run_case, run_frequency, Deck, ElementKind};
+use ccx_io::{ccx_bin, run_case, run_frequency, Deck, ElementKind, SurfaceTie};
 use face_load::{face_pressure_forces, face_traction_forces};
 use std::collections::HashSet;
 use std::env;
@@ -28,9 +28,9 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 use surfcad_fea::fem::{
-    consistent_traction, modal_tet10, percentile_95_f64, pin_node, shell_solve_options, solve_shell,
-    solve_tet10, Dirichlet, FacePressure, Material, NodalForce, ShellPressure, SolveOptions,
-    SolverChoice,
+    consistent_traction, modal_tet10, percentile_95_f64, pin_node, shell_solve_options, solve_bonded,
+    solve_shell, solve_tet10, tie_slaves, Dirichlet, FacePressure, Material, NodalForce,
+    ShellPressure, SolidBody, SolveOptions, SolverChoice,
 };
 use surfcad_fea::meshgen::{
     brick_tet10, cylinder_panel, plate_shell, quarter_cylinder, quarter_plate_hole,
@@ -91,6 +91,7 @@ fn run() -> Result<(), String> {
     let only = env::var("CALCULIX_CASE").unwrap_or_default();
     for (label, case) in [
         ("cantilever", cantilever as fn() -> Result<Row, String>),
+        ("bonded cantilever", bonded_cantilever),
         ("plate with a hole", plate_with_hole),
         ("thick cylinder", thick_cylinder),
         ("simply supported plate", simply_supported_plate),
@@ -584,6 +585,168 @@ fn scordelis_lo() -> Result<Row, String> {
     )
 }
 
+/// Two non-matching TET10 bricks, bonded at the mid-plane. CalculiX sees the
+/// same nodes, the same elements, and a `*TIE` on the interface faces.
+/// Shell-to-solid is not in this comparison.
+fn bonded_cantilever() -> Result<Row, String> {
+    let length = 50.0;
+    let height = 10.0;
+    let width = 10.0;
+    let left = brick_tet10([4, 2, 2], [0.0, 0.0, 0.0], [length, height, width]);
+    let right = brick_tet10([3, 2, 2], [length, 0.0, 0.0], [length, height, width]);
+    let tol = 1e-6;
+    let material = steel();
+    let mut nodes = left.nodes.clone();
+    nodes.extend_from_slice(&right.nodes);
+    let mut elements = left.elements.clone();
+    let shift = left.nodes.len() as u32;
+    for elem in &right.elements {
+        elements.push(elem.map(|id| id + shift));
+    }
+    let master = interface_faces(&left.nodes, &left.elements, 0, length, tol, 0, 0);
+    let slave = interface_faces(
+        &right.nodes,
+        &right.elements,
+        0,
+        length,
+        tol,
+        left.elements.len() as u32,
+        shift,
+    );
+    if master.is_empty() || slave.is_empty() {
+        return Err("bonded cantilever: the interface has no C3D10 faces".into());
+    }
+    let slave_nodes: Vec<u32> = {
+        let mut ids = Vec::new();
+        for face in &slave {
+            ids.extend(face.nodes);
+        }
+        ids.sort_unstable();
+        ids.dedup();
+        ids
+    };
+    let master_faces: Vec<[u32; 6]> = master.iter().map(|face| face.nodes).collect();
+    let tied = tie_slaves(&nodes, &slave_nodes, &master_faces, 0.05)
+        .map_err(|err| format!("bonded cantilever tie: {err}"))?;
+    if !tied.missed.is_empty() {
+        return Err(format!(
+            "bonded cantilever: {} slave nodes missed the master faces",
+            tied.missed.len()
+        ));
+    }
+    let mut dirichlet = Vec::new();
+    for (i, node) in nodes.iter().enumerate() {
+        if node[0].abs() <= tol {
+            for axis in 0..3 {
+                dirichlet.push(Dirichlet {
+                    dof: (i * 3 + axis) as u32,
+                    value: 0.0,
+                });
+            }
+        }
+    }
+    let load = 100.0;
+    let tip = faces_on_plane(&right.nodes, &right.elements, 0, length * 2.0, tol);
+    let tau = load / (width * height);
+    let mut forces = vec![[0.0; 3]; nodes.len()];
+    for (local, force) in traction_forces(&right.nodes, &tip, [0.0, -tau, 0.0])
+        .into_iter()
+        .enumerate()
+    {
+        let index = local + left.nodes.len();
+        forces[index] = force;
+    }
+    let nodal: Vec<NodalForce> = forces
+        .iter()
+        .enumerate()
+        .filter(|(_, force)| force.iter().any(|component| component.abs() > 0.0))
+        .map(|(node, force)| NodalForce {
+            node: node as u32,
+            force: *force,
+        })
+        .collect();
+    let bodies = [
+        SolidBody {
+            nodes: &left.nodes,
+            elements: &left.elements,
+            material,
+        },
+        SolidBody {
+            nodes: &right.nodes,
+            elements: &right.elements,
+            material,
+        },
+    ];
+    let out = solve_bonded(&bodies, &tied.ties, &dirichlet, &nodal, &[], &cholesky())
+        .map_err(|err| format!("bonded cantilever solve_bonded: {err}"))?;
+    let mut deck = deck_solid(&nodes, &elements, material, &dirichlet, &forces);
+    deck.ties.push(SurfaceTie {
+        name: "BOND".to_string(),
+        slave: slave.iter().map(|face| (face.element, face.ccx)).collect(),
+        master: master.iter().map(|face| (face.element, face.ccx)).collect(),
+        tolerance: 0.05,
+    });
+    let ccx = execute("bonded cantilever", &deck)?;
+    let ours = translations(&out.fem.displacement, 3);
+    let vm_ccx = solid_von_mises(nodes.len(), &ccx.stress)?;
+    let p95_ccx = percentile_95_f64(&vm_ccx);
+    finish(
+        "bonded cantilever",
+        "C3D10 *TIE",
+        &ours,
+        &ccx.displacement,
+        out.fem.p95,
+        p95_ccx,
+    )
+}
+
+struct InterfaceFace {
+    element: u32,
+    ccx: u8,
+    nodes: [u32; 6],
+}
+
+fn interface_faces(
+    nodes: &[[f64; 3]],
+    elements: &[[u32; 10]],
+    axis: usize,
+    value: f64,
+    tol: f64,
+    element_offset: u32,
+    node_offset: u32,
+) -> Vec<InterfaceFace> {
+    const LOCAL: [([usize; 6], u8); 4] = [
+        ([0, 1, 2, 4, 5, 6], 1),
+        ([0, 1, 3, 4, 8, 7], 2),
+        ([1, 2, 3, 5, 9, 8], 3),
+        ([0, 2, 3, 6, 9, 7], 4),
+    ];
+    let mut found = Vec::new();
+    let mut seen = HashSet::new();
+    for (index, elem) in elements.iter().enumerate() {
+        for (local, ccx) in LOCAL {
+            let ids = local.map(|slot| elem[slot]);
+            if !ids
+                .iter()
+                .all(|&id| (nodes[id as usize][axis] - value).abs() <= tol)
+            {
+                continue;
+            }
+            let mut key = [ids[0], ids[1], ids[2]];
+            key.sort_unstable();
+            if !seen.insert(key) {
+                continue;
+            }
+            found.push(InterfaceFace {
+                element: index as u32 + element_offset,
+                ccx,
+                nodes: ids.map(|id| id + node_offset),
+            });
+        }
+    }
+    found
+}
+
 fn compare_solid(
     name: &'static str,
     nodes: &[[f64; 3]],
@@ -702,6 +865,7 @@ fn deck_solid(
         poisson: material.poisson,
         fixed: solid_fixed(dirichlet),
         forces: forces.to_vec(),
+        ties: Vec::new(),
     }
 }
 
@@ -722,6 +886,7 @@ fn deck_shell(
         poisson: material.poisson,
         fixed: shell_fixed(dirichlet),
         forces: forces.to_vec(),
+        ties: Vec::new(),
     }
 }
 

@@ -24,6 +24,55 @@ import { createFeaWorkerHost } from './feaRunSession.js';
 import { packMesh } from './meshTransfer.js';
 import { FeaMessage } from './protocol.js';
 
+function finiteTriple(value, fallback) {
+  if (!Array.isArray(value)) return fallback;
+  return [0, 1, 2].map((i) => {
+    const n = Number(value[i]);
+    return Number.isFinite(n) ? n : (fallback ? fallback[i] : 0);
+  });
+}
+
+/** Column-major matrix, or position / quaternion / scale. Not a transferred buffer. */
+function placementOf(part) {
+  if (Array.isArray(part?.matrix) && part.matrix.length >= 16) {
+    const matrix = [];
+    for (let i = 0; i < 16; i += 1) {
+      const n = Number(part.matrix[i]);
+      matrix.push(Number.isFinite(n) ? n : 0);
+    }
+    return { matrix };
+  }
+  const position = Array.isArray(part?.position) ? part.position : part?.translation;
+  const out = {};
+  if (Array.isArray(position)) out.position = finiteTriple(position, [0, 0, 0]);
+  if (Array.isArray(part?.quaternion) && part.quaternion.length >= 4) {
+    out.quaternion = finiteTriple(part.quaternion, [0, 0, 0, 1]).concat(
+      Number.isFinite(Number(part.quaternion[3])) ? Number(part.quaternion[3]) : 1,
+    );
+  }
+  if (Array.isArray(part?.scale) && part.scale.length >= 3) out.scale = finiteTriple(part.scale, [1, 1, 1]);
+  return out;
+}
+
+function packStudyParts(parts) {
+  if (!Array.isArray(parts) || parts.length < 1) return null;
+  const transfer = [];
+  const packed = [];
+  for (const part of parts) {
+    const mesh = packMesh(part);
+    transfer.push(mesh.positions.buffer, mesh.indices.buffer, mesh.faceIDs.buffer);
+    packed.push({
+      id: part.id,
+      name: part.name || part.id,
+      ...placementOf(part),
+      positions: mesh.positions,
+      indices: mesh.indices,
+      faceIDs: mesh.faceIDs,
+    });
+  }
+  return { parts: packed, transfer };
+}
+
 export async function createFeaClient(options = {}) {
   const worker = options.worker || new FeaWorker();
   const profile = options.profile === 'phone' ? 'phone' : 'desktop';
@@ -37,6 +86,20 @@ export async function createFeaClient(options = {}) {
     },
 
     solve(request, hooks = {}) {
+      const packedParts = packStudyParts(request && request.parts);
+      if (packedParts) {
+        const first = packedParts.parts[0];
+        return host.request(FeaMessage.solve, {
+          study: request && request.study != null ? request.study : null,
+          material: request ? request.material : null,
+          profile: request && request.profile ? request.profile : profile,
+          fallback: request && request.fallback,
+          positions: first.positions,
+          indices: first.indices,
+          faceIDs: first.faceIDs,
+          parts: packedParts.parts,
+        }, packedParts.transfer, hooks);
+      }
       const mesh = packMesh(request && request.mesh);
       return host.request(FeaMessage.solve, {
         study: request && request.study != null ? request.study : null,

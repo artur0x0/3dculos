@@ -7,6 +7,7 @@ export const dispose: () => void;
 export const modal_shell: (a: number, b: number, c: number, d: number, e: number) => void;
 export const modal_tet10: (a: number, b: number, c: number, d: number, e: number) => void;
 export const solve: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number) => void;
+export const solve_bonded: (a: number, b: number, c: number, d: number) => void;
 export const solve_shell: (a: number, b: number, c: number, d: number, e: number) => void;
 export const solve_tet10: (a: number, b: number, c: number, d: number, e: number) => void;
 export const __wbindgen_export: (a: number, b: number) => number;

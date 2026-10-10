@@ -267,7 +267,8 @@ import {
   setFaceColorSkinVisible,
   syncFaceColorSkin,
 } from '../utils/faceColorSkin';
-import { detachStressSkin, subscribeStressSkin, syncStressSkin } from '../fea/stressSkin';
+import { paintFeaContactHighlights } from '../fea/contactHighlight';
+import { detachStressSkin, subscribeStressSkin, syncFeaStressSkins, syncStressSkin } from '../fea/stressSkin';
 import { dropPlanarFins, highlightBoundaryPositions } from '../utils/planarSeam';
 import { classifySelectedFace } from '../utils/faceFeaturePlacement';
 import { classifyFilletEdges, countDegenerateTriangles } from '../utils/filletEdgeClass';
@@ -755,6 +756,8 @@ const Viewport = forwardRef(({
   onCommitPaint = null,
   /** Write the FEA study comment block. False leaves the in-memory study. */
   onCommitFea = null,
+  /** Part script for a study material lookup. The active part is the editor. */
+  getPartScript = null,
   /**
    * Fallback feature editor and the picker (`FeatureEditSheet`).
    * null | { mode: 'picker' } | { mode: 'edit', feature }.
@@ -7353,10 +7356,86 @@ const Viewport = forwardRef(({
     }
   }, []);
 
+  function feaStressHosts() {
+    const hosts = [];
+    if (resultRef.current) hosts.push(resultRef.current);
+    for (const mesh of assemblyExtrasRef.current.values()) hosts.push(mesh);
+    return hosts;
+  }
+
+  /** Column-major matrixWorld, else position, quaternion, and scale. */
+  function feaPartFrame(mesh) {
+    if (typeof mesh?.updateMatrixWorld === 'function') mesh.updateMatrixWorld(true);
+    const elements = mesh?.matrixWorld?.elements;
+    if (elements && elements.length >= 16) {
+      const matrix = new Array(16);
+      for (let i = 0; i < 16; i += 1) matrix[i] = Number(elements[i]) || 0;
+      return { matrix };
+    }
+    const p = mesh?.position;
+    const q = mesh?.quaternion;
+    const s = mesh?.scale;
+    return {
+      position: [p?.x || 0, p?.y || 0, p?.z || 0],
+      quaternion: [q?.x || 0, q?.y || 0, q?.z || 0, q?.w ?? 1],
+      scale: [s?.x ?? 1, s?.y ?? 1, s?.z ?? 1],
+    };
+  }
+
+  function feaAssemblyParts() {
+    const parts = [];
+    const activeId = activePartIdRef.current;
+    if (activeId && resultRef.current?.geometry?.attributes?.position?.count) {
+      parts.push({
+        id: String(activeId),
+        name: partLabelsRef.current?.[activeId] || String(activeId),
+        geometry: resultRef.current.geometry,
+        faceIDs: faceIDsRef.current,
+        ...feaPartFrame(resultRef.current),
+      });
+    }
+    for (const [id, mesh] of assemblyExtrasRef.current) {
+      const cached = solidEntryForGeometry(solidCacheRef.current, mesh.geometry);
+      parts.push({
+        id: String(id),
+        name: partLabelsRef.current?.[id] || String(id),
+        geometry: mesh.geometry,
+        faceIDs: cached?.faceIDs || mesh.geometry?.attributes?.faceID?.array || null,
+        ...feaPartFrame(mesh),
+      });
+    }
+    return parts;
+  }
+
+  function paintFeaContacts(pairs) {
+    const hosts = [];
+    const activeId = activePartIdRef.current;
+    if (activeId && resultRef.current) {
+      hosts.push({
+        id: String(activeId),
+        mesh: resultRef.current,
+        faceIDs: faceIDsRef.current,
+      });
+    }
+    for (const [id, mesh] of assemblyExtrasRef.current) {
+      const cached = solidEntryForGeometry(solidCacheRef.current, mesh.geometry);
+      hosts.push({
+        id: String(id),
+        mesh,
+        faceIDs: cached?.faceIDs || mesh.geometry?.attributes?.faceID?.array || null,
+      });
+    }
+    paintFeaContactHighlights(hosts, pairs);
+    const renderer = rendererRef.current;
+    const scene = sceneRef.current;
+    const camera = cameraRef.current;
+    if (renderer && scene && camera) renderer.render(scene, camera);
+  }
+
   // The study publishes a new field without a mesh rebuild (Run, close, stale).
   useEffect(() => {
     const sync = () => {
-      applyStressSkinRef.current(resultRef.current);
+      syncFeaStressSkins(feaStressHosts());
       const renderer = rendererRef.current;
       const scene = sceneRef.current;
       const camera = cameraRef.current;
@@ -9108,6 +9187,9 @@ const Viewport = forwardRef(({
           geometry: resultRef.current?.geometry,
           faceIDs: faceIDsRef.current,
         })}
+        getAssembly={feaAssemblyParts}
+        getPartScript={getPartScript}
+        onContactHighlight={paintFeaContacts}
         onHighlight={(indices) => {
           const geom = resultRef.current?.geometry;
           if (!indices?.length || !geom) {

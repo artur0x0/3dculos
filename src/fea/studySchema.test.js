@@ -132,6 +132,55 @@ test('mesh.refine is optional and only off or auto', () => {
   assert.match(bad.errors.join('\n'), /refine/);
 });
 
+test('a v1 study omits scope, parts, and contacts until an assembly is stored', () => {
+  const study = defaultStudy();
+  assert.equal(Object.hasOwn(study, 'scope'), false);
+  assert.equal(Object.hasOwn(study, 'parts'), false);
+  assert.equal(Object.hasOwn(study, 'contacts'), false);
+  const text = studyJson(study);
+  assert.equal(text.includes('"scope"'), false);
+  assert.equal(text.includes('"contacts"'), false);
+  const stored = validateStudy(JSON.parse(text));
+  assert.equal(stored.ok, true);
+  assert.equal(studyJson(stored.study), text);
+});
+
+test('an assembly study round-trips scope, per-part materials, and a disabled bond', () => {
+  const study = defaultStudy({
+    scope: { kind: 'assembly' },
+    parts: [
+      { id: 'part-a', material: { id: 'al-6061-t6' } },
+      { id: 'left/cube.scad', material: { name: 'Soft', E_MPa: 70000, nu: 0.3, yield_MPa: 95 } },
+    ],
+    contacts: [
+      {
+        a: { part: 'part-a', faceID: 3 },
+        b: { part: 'left/cube.scad', faceID: 1 },
+        kind: 'bonded',
+        enabled: false,
+      },
+    ],
+    fixtures: [{
+      kind: 'fixed',
+      faces: [{ ...face(), part: 'part-a' }],
+    }],
+  });
+  assert.deepEqual(study.scope, { kind: 'assembly' });
+  assert.equal(study.parts[1].material.E_MPa, 70000);
+  assert.equal(study.contacts[0].enabled, false);
+  assert.equal(study.fixtures[0].faces[0].part, 'part-a');
+  const again = validateStudy(JSON.parse(studyJson(study)));
+  assert.equal(again.ok, true);
+  assert.equal(studyJson(again.study), studyJson(study));
+
+  const frictional = validateStudy({
+    ...defaultStudy(),
+    contacts: [{ a: { part: 'part-a', faceID: 1 }, b: { part: 'part-b', faceID: 2 }, kind: 'friction' }],
+  });
+  assert.equal(frictional.ok, false);
+  assert.match(frictional.errors.join('\n'), /bonded/);
+});
+
 test('a partial study does not validate as a stored study', () => {
   const partial = validateStudy({ id: 's1', name: 'Static 1' });
   assert.equal(partial.ok, false);

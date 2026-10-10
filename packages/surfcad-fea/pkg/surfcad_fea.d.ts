@@ -28,6 +28,25 @@ export function modal_tet10(mesh: any, material: any, bcs: any, options: any): a
 export function solve(study: any, positions: Float32Array, indices: Uint32Array, face_ids: Uint32Array, material: any, profile: string): any;
 
 /**
+ * Bonded multi-body solve. Each body is meshed on its own and tied by
+ * projection MPCs. Shell-to-solid ties are not accepted: every body is TET10.
+ *
+ * `mesh.bodies` is an array of `{ nodes, elements, material }`. Node indices
+ * inside a body are local. Ties and boundary conditions use the concatenated
+ * order: body 0, then body 1, and so on.
+ *
+ * `mesh.ties` is optional. `slaveNodes` are concatenated node ids.
+ * `masterFaces` is six node ids per TET10 face. `faceOffsets` and
+ * `faceCounts` say which faces each slave may land on (face index, not a
+ * node index). `gap` is the plane distance in millimetres that still counts
+ * as on the face; the default is 0.05.
+ *
+ * The safety factor is the minimum of yield/p95 over the bodies that have
+ * both. `governingPart` is that body's index.
+ */
+export function solve_bonded(mesh: any, bcs: any, options: any): any;
+
+/**
  * Linear shell solve for 6-node triangles, 6 DOF per node.
  *
  * `mesh.nodes` is xyz in millimetres. `mesh.elements` is six indices per
@@ -83,6 +102,7 @@ export interface InitOutput {
     readonly modal_shell: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly modal_tet10: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly solve: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number) => void;
+    readonly solve_bonded: (a: number, b: number, c: number, d: number) => void;
     readonly solve_shell: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly solve_tet10: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly __wbindgen_export: (a: number, b: number) => number;

@@ -38,6 +38,21 @@ pub struct Deck {
     pub fixed: Vec<(u32, u32)>,
     /// Translational nodal forces in newtons, one vector per node.
     pub forces: Vec<[f64; 3]>,
+    /// Element-face ties. Empty leaves the deck identical to a single body.
+    /// Face numbers are CalculiX C3D10 faces S1–S4. The first surface is
+    /// the slave.
+    pub ties: Vec<SurfaceTie>,
+}
+
+/// One `*TIE` between two element surfaces on this deck's elements.
+#[derive(Clone, Debug)]
+pub struct SurfaceTie {
+    pub name: String,
+    /// `(element, face)` with `element` 0-based and `face` in 1..=4.
+    pub slave: Vec<(u32, u8)>,
+    pub master: Vec<(u32, u8)>,
+    /// `*TIE` position tolerance, millimetres.
+    pub tolerance: f64,
 }
 
 #[derive(Clone, Debug)]
@@ -166,6 +181,23 @@ pub fn render_inp(deck: &Deck) -> String {
     fixed.dedup();
     for (node, dof) in fixed {
         out.push_str(&format!("{}, {}, {}\n", node + 1, dof, dof));
+    }
+    for tie in &deck.ties {
+        let slave_name = format!("{}S", tie.name);
+        let master_name = format!("{}M", tie.name);
+        out.push_str(&format!("*SURFACE, NAME={slave_name}, TYPE=ELEMENT\n"));
+        for (element, face) in &tie.slave {
+            out.push_str(&format!("{}, S{face}\n", element + 1));
+        }
+        out.push_str(&format!("*SURFACE, NAME={master_name}, TYPE=ELEMENT\n"));
+        for (element, face) in &tie.master {
+            out.push_str(&format!("{}, S{face}\n", element + 1));
+        }
+        out.push_str(&format!(
+            "*TIE, NAME={}, POSITION TOLERANCE={:.6e}\n",
+            tie.name, tie.tolerance
+        ));
+        out.push_str(&format!("{slave_name}, {master_name}\n"));
     }
     out.push_str("*STEP\n");
     out.push_str("*STATIC\n");

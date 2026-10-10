@@ -8,7 +8,10 @@
  */
 
 import { matchFaceKeys } from '../utils/faceColorMatch.js';
+import { detectContacts, mergeContactPairs } from './contactDetect.js';
 import { effectiveMaterial, getMaterial, listMaterials } from './materials.js';
+import { partMaterialEntries } from './partMaterial.js';
+import { placementMatrix, transformPositions } from './partTransform.js';
 import { defaultStudy, validateStudy } from './studySchema.js';
 
 export const FORCE_DIRECTIONS = Object.freeze([
@@ -99,6 +102,7 @@ function asFingerprint(face) {
 /** True when paint's matcher would call these the same face. */
 export function sameStudyFace(a, b) {
   if (!a || !b || !a.at || !b.at) return false;
+  if ((a.part || b.part) && a.part !== b.part) return false;
   const key = faceKeyOf(a);
   if (!key) return false;
   return matchFaceKeys([asFingerprint(b)], [{ key }]).matched.length === 1;
@@ -180,6 +184,87 @@ export function studyWithType(study, type) {
     return { ok: false, errors: ['study.type must be "linear-static" or "modal"'], study: null };
   }
   return patched(study, { type });
+}
+
+export function studyScopeKind(study) {
+  const kind = study?.scope?.kind;
+  return kind === 'assembly' || kind === 'parts' ? kind : 'part';
+}
+
+function selectedIds(study, rows) {
+  if (studyScopeKind(study) === 'parts') return (study.scope.ids || []).map((id) => String(id));
+  if (studyScopeKind(study) === 'assembly') return (rows || []).map((row) => String(row.id));
+  return [];
+}
+
+/** World-frame copies so a moved, rotated, or scaled part meets its neighbour. */
+export function worldSurfaces(rows) {
+  const out = [];
+  for (const row of rows || []) {
+    const mesh = meshArraysFromGeometry(row.geometry, row.faceIDs);
+    if (!mesh) continue;
+    const matrix = placementMatrix(row);
+    const positions = matrix ? transformPositions(mesh.positions, matrix) : mesh.positions;
+    out.push({ id: String(row.id), positions, indices: mesh.indices, faceIDs: mesh.faceIDs });
+  }
+  return out;
+}
+
+function withPartRows(study, rows, scriptFor) {
+  const ids = selectedIds(study, rows);
+  const chosen = (rows || []).filter((row) => ids.includes(String(row.id)));
+  return partMaterialEntries(chosen, study.material, scriptFor);
+}
+
+/**
+ * `scope.kind` is `part`, `assembly`, or `parts`. Assembly fills every
+ * visible part. `parts` keeps `scope.ids`. Contacts are re-detected for
+ * either multi-part kind and a pair the user disabled stays off.
+ */
+export function studyWithScope(study, scope, rows, scriptFor) {
+  const kind = scope?.kind === 'assembly' || scope?.kind === 'parts' ? scope.kind : 'part';
+  if (kind === 'part') {
+    return patched(study, { scope: null, parts: [], contacts: [] });
+  }
+  let ids = (rows || []).map((row) => String(row.id));
+  if (kind === 'parts') {
+    const wanted = Array.isArray(scope.ids) ? scope.ids.map((id) => String(id)) : ids;
+    ids = wanted.filter((id) => ids.includes(id));
+    if (ids.length < 2) return patched(study, { scope: null, parts: [], contacts: [] });
+  }
+  const nextScope = kind === 'assembly' ? { kind: 'assembly' } : { kind: 'parts', ids };
+  const drafted = {
+    ...study,
+    scope: nextScope,
+    parts: withPartRows({ ...study, scope: nextScope }, rows, scriptFor),
+  };
+  const detected = detectContacts(worldSurfaces(
+    (rows || []).filter((row) => selectedIds(drafted, rows).includes(String(row.id))),
+  ));
+  drafted.contacts = mergeContactPairs(detected.pairs, study.contacts || []);
+  return patched(drafted, {
+    scope: drafted.scope,
+    parts: drafted.parts,
+    contacts: drafted.contacts,
+  });
+}
+
+/** After the study material changes, unassigned parts follow the picker. */
+export function studyWithResolvedParts(study, rows, scriptFor) {
+  if (studyScopeKind(study) === 'part') return { ok: true, errors: [], study };
+  const parts = withPartRows(study, rows, scriptFor);
+  return patched(study, { parts });
+}
+
+export function studyWithContactEnabled(study, index, enabled) {
+  const contacts = (study?.contacts || []).map((contact, i) => {
+    if (i !== index) return contact;
+    if (enabled === false) return { ...contact, enabled: false };
+    const next = { ...contact };
+    delete next.enabled;
+    return next;
+  });
+  return patched(study, { contacts });
 }
 
 export function studyWithCustomMaterial(study, custom) {
@@ -370,6 +455,9 @@ export function formatSolveSummary(result) {
     max: trimNum(result.max),
     fos: fosText,
     warning: texts.join(' '),
+    governing: typeof result.governingName === 'string' && result.governingName
+      ? result.governingName
+      : (typeof result.governingPart === 'string' ? result.governingPart : ''),
   };
 }
 

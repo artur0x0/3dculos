@@ -5,6 +5,7 @@ import { PLOT_TABS, activePlot } from '../../fea/resultsView.js';
 import { FORCE_DIRECTIONS } from '../../fea/studyPanel.js';
 import { FeaLegend } from './FeaLegend';
 import { FeaLoadList } from './FeaLoadList';
+import { FeaAssemblySetup } from './FeaAssemblySetup';
 import { FeaMaterialPicker } from './FeaMaterialPicker';
 import { FeaPreviewSliders } from './FeaPreviewSliders';
 
@@ -79,6 +80,7 @@ export function FeaStudyControls({ panel }) {
           onChange={panel.setRefine}
         />
       </div>
+      <FeaAssemblySetup panel={panel} />
       <div className="flex flex-col gap-1">
         <span className="text-[11px] font-semibold uppercase tracking-wide text-cyan-200/80">Tap adds</span>
       <FeaTabs

@@ -33,6 +33,7 @@ function DisplacementLegend({ result }) {
   const max = formatMm(result.displacementMax);
   const mode = result.field === 'mode' || result.source === 'modal';
   const unit = mode ? '' : ' mm';
+  const governing = formatSolveSummary(result).governing;
   return (
     <div
       data-fea-summary=""
@@ -61,6 +62,11 @@ function DisplacementLegend({ result }) {
       <div className="text-[12px] text-cyan-50" data-fea-displacement="">
         min {min}{unit} · max {max}{unit}
       </div>
+      {governing ? (
+        <div className="text-[12px] text-cyan-50" data-fea-governing={governing}>
+          governs {governing}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -188,6 +194,11 @@ export function FeaLegend({ result, preview, plot = 'stress' }) {
         <div className="text-[12px] text-cyan-50" data-fea-fos={summary.fos}>
           safety factor {summary.fos}
         </div>
+        {summary.governing ? (
+          <div className="text-[12px] text-cyan-50" data-fea-governing={summary.governing}>
+            governs {summary.governing}
+          </div>
+        ) : null}
       </div>
       {summary.warning && (
         <div className="text-[11px] text-amber-100" data-fea-warning="">{summary.warning}</div>

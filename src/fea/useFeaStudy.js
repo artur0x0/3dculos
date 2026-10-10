@@ -10,7 +10,7 @@ import { fingerprintsFromGeometry, paintPickFromClick } from '../utils/facePaint
 import { boundingBox, detectFeaProfile } from './deviceProfile.js';
 import { createFeaClient } from './feaClient.js';
 import { initialFeaProgress, logFeaTiming, reduceFeaProgress } from './feaProgress.js';
-import { studyForSolve } from './renderFaceIds.js';
+import { studyForAssemblySolve, studyForSolve } from './renderFaceIds.js';
 import { shellSheetFromScript } from './sheetMidsurface.js';
 import { activePlot, showResults } from './resultsView.js';
 import { bindStressField, bindVectorField, setStressSkinSource } from './stressMap.js';
@@ -26,10 +26,14 @@ import {
   meshArraysFromGeometry,
   solverRequestMaterial,
   studyFaceFromPick,
+  studyScopeKind,
+  studyWithContactEnabled,
   studyWithCustomMaterial,
   studyWithLoadVector,
   studyWithMaterialId,
   studyWithRefine,
+  studyWithResolvedParts,
+  studyWithScope,
   studyWithType,
   studyWithoutFixture,
   studyWithoutLoad,
@@ -77,7 +81,10 @@ export function useFeaStudy({
   onCommit,
   assemblyLocked,
   getSolid,
+  getAssembly,
+  getPartScript,
   onHighlight,
+  onContactHighlight,
   onClaim,
 }) {
   const [open, setOpen] = useState(false);
@@ -93,6 +100,7 @@ export function useFeaStudy({
   const [modeIndex, setModeIndex] = useState(0);
   const [animate, setAnimateState] = useState(false);
   const [dismissed, setDismissed] = useState(false);
+  const [assemblyParts, setAssemblyParts] = useState([]);
   const writtenRef = useRef(null);
   const clientRef = useRef(null);
   const runAbortRef = useRef(null);
@@ -122,14 +130,33 @@ export function useFeaStudy({
   const onCommitRef = useRef(onCommit);
   const lockedRef = useRef(assemblyLocked);
   const getSolidRef = useRef(getSolid);
+  const getAssemblyRef = useRef(getAssembly);
+  const getPartScriptRef = useRef(getPartScript);
   const onHighlightRef = useRef(onHighlight);
+  const onContactRef = useRef(onContactHighlight);
   const onClaimRef = useRef(onClaim);
   getScriptRef.current = getScript;
   onCommitRef.current = onCommit;
   lockedRef.current = assemblyLocked;
   getSolidRef.current = getSolid;
+  getAssemblyRef.current = getAssembly;
+  getPartScriptRef.current = getPartScript;
   onHighlightRef.current = onHighlight;
+  onContactRef.current = onContactHighlight;
   onClaimRef.current = onClaim;
+
+  const scriptOf = (partId) => (
+    typeof getPartScriptRef.current === 'function' ? (getPartScriptRef.current(partId) || '') : ''
+  );
+
+  const readRows = () => {
+    const rows = typeof getAssemblyRef.current === 'function' ? (getAssemblyRef.current() || []) : [];
+    setAssemblyParts(rows.map((row) => ({
+      id: String(row.id),
+      name: row.name || String(row.id),
+    })));
+    return rows;
+  };
 
   const clearFields = () => {
     stressFieldRef.current = null;
@@ -291,7 +318,17 @@ export function useFeaStudy({
     if (!enabled) return;
     onClaimRef.current?.();
     const text = typeof getScriptRef.current === 'function' ? (getScriptRef.current() || '') : '';
-    const read = readFeaStudy(text) || freshStudy(detectFeaProfile());
+    const stored = readFeaStudy(text);
+    let read = stored || freshStudy(detectFeaProfile());
+    let refreshedStudy = false;
+    const rows = readRows();
+    if (stored && studyScopeKind(read) !== 'part' && rows.length > 1) {
+      const refreshed = studyWithScope(read, read.scope, rows, scriptOf);
+      if (refreshed.ok && JSON.stringify(refreshed.study) !== JSON.stringify(stored)) {
+        read = refreshed.study;
+        refreshedStudy = true;
+      }
+    }
     writtenRef.current = text.includes('// @fea-study ') ? text : null;
     studyRef.current = read;
     setStudy(read);
@@ -317,7 +354,8 @@ export function useFeaStudy({
     setNotice('');
     setOpen(true);
     paintHighlight(read);
-  }, [enabled, paintHighlight]);
+    if (refreshedStudy) commitStudy(read);
+  }, [commitStudy, enabled, paintHighlight]);
 
   const toggle = useCallback(() => {
     if (open) close();
@@ -358,7 +396,11 @@ export function useFeaStudy({
       return;
     }
     setDraft((prev) => ({ ...prev, customMode: false }));
-    commitStudy(next.study);
+    const rows = readRows();
+    const resolved = studyScopeKind(next.study) === 'part'
+      ? next
+      : studyWithResolvedParts(next.study, rows, scriptOf);
+    commitStudy(resolved.ok ? resolved.study : next.study);
   }, [commitStudy]);
 
   const setCustomMode = useCallback((on) => {
@@ -376,7 +418,10 @@ export function useFeaStudy({
   const setCustomField = useCallback((field, value) => {
     const custom = { ...draftRef.current.custom, [field]: value };
     setDraft((prev) => ({ ...prev, customMode: true, custom }));
-    const next = studyWithCustomMaterial(studyRef.current, custom);
+    let next = studyWithCustomMaterial(studyRef.current, custom);
+    if (next.ok && studyScopeKind(next.study) !== 'part') {
+      next = studyWithResolvedParts(next.study, readRows(), scriptOf);
+    }
     if (next.ok) commitStudy(next.study);
     else setNotice(next.errors[0] || 'Enter E, ν, and yield');
   }, [commitStudy]);
@@ -413,6 +458,41 @@ export function useFeaStudy({
     if (next.ok) commitStudy(next.study);
   }, [commitStudy]);
 
+  const setStudyScope = useCallback((scope) => {
+    const next = studyWithScope(studyRef.current, scope, readRows(), scriptOf);
+    if (!next.ok) {
+      setNotice(next.errors[0] || 'Could not change the study scope');
+      return;
+    }
+    commitStudy(next.study);
+  }, [commitStudy]);
+
+  const toggleScopePart = useCallback((partId) => {
+    const rows = readRows();
+    const id = String(partId);
+    const ids = rows.map((row) => String(row.id));
+    const kind = studyScopeKind(studyRef.current);
+    const current = kind === 'parts'
+      ? (studyRef.current.scope?.ids || []).map(String)
+      : (kind === 'assembly' ? ids : []);
+    const nextIds = current.includes(id)
+      ? current.filter((row) => row !== id)
+      : current.concat(id).filter((row) => ids.includes(row));
+    const unique = ids.filter((row) => nextIds.includes(row));
+    const scope = unique.length >= 2 && unique.length === ids.length
+      ? { kind: 'assembly' }
+      : (unique.length >= 2 ? { kind: 'parts', ids: unique } : { kind: 'part' });
+    const next = studyWithScope(studyRef.current, scope, rows, scriptOf);
+    if (next.ok) commitStudy(next.study);
+    else setNotice(next.errors[0] || 'Could not change the parts in this study');
+  }, [commitStudy]);
+
+  const setContactEnabled = useCallback((index, enabled) => {
+    const next = studyWithContactEnabled(studyRef.current, index, enabled);
+    if (next.ok) commitStudy(next.study);
+    else setNotice(next.errors[0] || 'Could not change that contact');
+  }, [commitStudy]);
+
   const pick = useCallback((clickData) => {
     if (!studyRef.current) return false;
     const solid = getSolidRef.current?.();
@@ -428,6 +508,9 @@ export function useFeaStudy({
     if (!picked?.key) return false;
     const face = studyFaceFromPick(picked, majorityFaceId(picked.indices, faceIDs));
     if (!face) return false;
+    if (studyScopeKind(studyRef.current) !== 'part' && clickData?.partId) {
+      face.part = String(clickData.partId);
+    }
     const next = applyFacePick(studyRef.current, draftRef.current, face);
     if (!next.ok) {
       setNotice(next.errors[0] || 'Could not use that face');
@@ -460,8 +543,33 @@ export function useFeaStudy({
     const solid = getSolidRef.current?.();
     const geometry = solid?.geometry || null;
     const mesh = meshArraysFromGeometry(geometry, solid?.faceIDs);
+    const rows = readRows();
+    const kind = studyScopeKind(studyRef.current);
+    const selected = kind === 'parts'
+      ? rows.filter((row) => (studyRef.current.scope?.ids || []).map(String).includes(String(row.id)))
+      : (kind === 'assembly' ? rows : []);
+    const assemblyRun = kind !== 'part' && selected.length > 0;
+    const assemblyPartsForSolve = assemblyRun
+      ? selected.map((row) => {
+        const copied = meshArraysFromGeometry(row.geometry, row.faceIDs);
+        if (!copied) return null;
+        return {
+          id: String(row.id),
+          name: row.name || String(row.id),
+          matrix: row.matrix || null,
+          position: row.position || null,
+          quaternion: row.quaternion || null,
+          scale: row.scale || null,
+          translation: row.translation || null,
+          geometry: row.geometry,
+          faceIDs: copied.faceIDs,
+          positions: copied.positions,
+          indices: copied.indices,
+        };
+      }).filter(Boolean)
+      : [];
     setDismissed(false);
-    if (!mesh) {
+    if (!mesh && !assemblyPartsForSolve.length) {
       clearFields();
       setResult({
         source: 'tet10',
@@ -494,7 +602,23 @@ export function useFeaStudy({
         throw abort;
       }
       const liveForShell = typeof getScriptRef.current === 'function' ? (getScriptRef.current() || '') : '';
-      const solved = await clientRef.current.solve({
+      const solved = await clientRef.current.solve(assemblyPartsForSolve.length ? {
+        study: studyForAssemblySolve(studyRef.current, assemblyPartsForSolve, assemblyPartsForSolve[0]),
+        parts: assemblyPartsForSolve.map((part) => ({
+          id: part.id,
+          name: part.name,
+          matrix: part.matrix,
+          position: part.position,
+          quaternion: part.quaternion,
+          scale: part.scale,
+          translation: part.translation,
+          positions: part.positions,
+          indices: part.indices,
+          faceIDs: part.faceIDs,
+        })),
+        material: resolved.material,
+        profile,
+      } : {
         study: studyForSolve(studyRef.current, geometry, solid?.faceIDs),
         mesh,
         material: resolved.material,
@@ -512,17 +636,54 @@ export function useFeaStudy({
       modeMagnitudesRef.current = modal && solved.modeMagnitudes instanceof Float32Array ? solved.modeMagnitudes : null;
       modeVectorsRef.current = modal && solved.modeVectors instanceof Float32Array ? solved.modeVectors : null;
       modeGeometryRef.current = modal ? { geometry, faceIDs: solid?.faceIDs, count: magnitude?.length || 0 } : null;
+      const nowRows = typeof getAssemblyRef.current === 'function' ? (getAssemblyRef.current() || []) : [];
       const now = getSolidRef.current?.()?.geometry;
-      const moved = !geometry || now !== geometry;
-      const bound = !moved && nodal ? bindStressField(geometry, nodal, solid?.faceIDs) : null;
-      const dispBound = !moved && magnitude ? bindStressField(geometry, magnitude, solid?.faceIDs) : null;
+      const moved = assemblyPartsForSolve.length
+        ? assemblyPartsForSolve.some((part) => {
+          const live = nowRows.find((row) => String(row.id) === part.id);
+          return !live || live.geometry !== part.geometry;
+        })
+        : (!geometry || now !== geometry);
+      const onStale = () => markStaleRef.current();
+      const govStat = (solved.partStats || []).find((part) => part.id === solved.governingPart);
+      const scaleYield = govStat && govStat.yield_MPa != null ? govStat.yield_MPa : (resolved.material.yield_MPa ?? null);
+      let bound = !moved && nodal ? bindStressField(geometry, nodal, solid?.faceIDs) : null;
+      let dispBound = !moved && magnitude ? bindStressField(geometry, magnitude, solid?.faceIDs) : null;
+      let stressParts = [];
+      let dispParts = [];
+      let stressGeometry = geometry;
+      if (assemblyPartsForSolve.length && !moved) {
+        const stressFields = [];
+        const dispFields = [];
+        for (const part of solved.parts || []) {
+          const row = assemblyPartsForSolve.find((item) => item.id === part.id);
+          if (!row) continue;
+          const partNodal = part.nodal instanceof Float32Array ? part.nodal : null;
+          const partDisp = part.displacement instanceof Float32Array ? part.displacement : null;
+          const partBound = partNodal ? bindStressField(row.geometry, partNodal, row.faceIDs) : null;
+          const partDispBound = partDisp ? bindStressField(row.geometry, partDisp, row.faceIDs) : null;
+          if (partBound) stressFields.push({ geometry: row.geometry, field: partBound });
+          if (partDispBound) dispFields.push({ geometry: row.geometry, field: partDispBound });
+        }
+        const primary = stressFields.find((part) => part.geometry === now)
+          || stressFields.find((part) => part.geometry === geometry)
+          || stressFields[0];
+        const primaryDisp = dispFields.find((part) => part.geometry === now)
+          || dispFields.find((part) => part.geometry === geometry)
+          || dispFields[0];
+        bound = primary ? primary.field : null;
+        dispBound = primaryDisp ? primaryDisp.field : null;
+        stressGeometry = primary ? primary.geometry : geometry;
+        stressParts = primary ? stressFields.filter((part) => part.geometry !== primary.geometry) : [];
+        dispParts = primaryDisp ? dispFields.filter((part) => part.geometry !== primaryDisp.geometry) : [];
+      }
       const liveScript = typeof getScriptRef.current === 'function' ? (getScriptRef.current() || '') : '';
       solvedOutsideRef.current = scriptOutsideFeaStudy(liveScript);
-      const onStale = () => markStaleRef.current();
       stressFieldRef.current = bound ? {
-        geometry,
+        geometry: stressGeometry,
         field: bound,
-        scale: { p95: solved.p95, yield_MPa: resolved.material.yield_MPa },
+        scale: { p95: solved.p95, yield_MPa: scaleYield },
+        parts: stressParts,
         onStale,
       } : null;
       const vectorCount = (magnitude?.length || 0) * 3;
@@ -530,12 +691,13 @@ export function useFeaStudy({
         ? bindVectorField(geometry, modeVectorsRef.current.subarray(0, vectorCount), solid?.faceIDs)
         : null;
       displacementFieldRef.current = dispBound ? {
-        geometry,
+        geometry: stressGeometry,
         field: dispBound,
         ramp: 'displacement',
         scale: { min: solved.displacementMin, max: solved.displacementMax },
         vectors: vectorBound,
         animate: false,
+        parts: dispParts,
         onStale,
       } : null;
       setAnimateState(false);
@@ -556,7 +718,10 @@ export function useFeaStudy({
         modeIndex: 0,
         safetyFactor: solved.safetyFactor != null ? solved.safetyFactor : (solved.fos ?? null),
         warnings: Array.isArray(solved.warnings) ? solved.warnings : [],
-        yield_MPa: resolved.material.yield_MPa ?? null,
+        yield_MPa: scaleYield,
+        governingPart: solved.governingPart || null,
+        governingName: solved.governingName || null,
+        partStats: solved.partStats || null,
         stale: moved || !bound,
         stats: solved.stats || null,
         solver: solved.solver || null,
@@ -674,6 +839,16 @@ export function useFeaStudy({
     result,
     dismissed,
   });
+
+  useEffect(() => {
+    if (!open) {
+      onContactRef.current?.([]);
+      return;
+    }
+    const multi = studyScopeKind(study) !== 'part';
+    const pairs = multi ? (study?.contacts || []).filter((contact) => contact.enabled !== false) : [];
+    onContactRef.current?.(pairs);
+  }, [open, study]);
 
   useEffect(() => {
     if (!open) {
@@ -831,6 +1006,10 @@ export function useFeaStudy({
     setPressure,
     removeFixture,
     removeLoad,
+    assemblyParts,
+    setStudyScope,
+    toggleScopePart,
+    setContactEnabled,
     pick: pickIfOpen,
     run,
     cancel,

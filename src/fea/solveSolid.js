@@ -112,6 +112,16 @@ export function dropCachedSolutions(cache) {
   for (const entry of cache.entries) clearSolution(entry);
 }
 
+/** Drop one cache entry, including a bonded entry that holds several meshes. */
+export function releaseCachedMesh(entry, releaseMesh) {
+  freeCacheEntry(entry, releaseMesh);
+}
+
+function multiPartStudy(study) {
+  const kind = study && study.scope ? study.scope.kind : null;
+  return kind === 'assembly' || kind === 'parts';
+}
+
 export async function solveSolid({
   study,
   positions,
@@ -126,8 +136,10 @@ export async function solveSolid({
   modalShell,
   solveStub,
   sheetSpec,
+  solveBonded,
   meshVolume,
   cache,
+  parts,
   isCancelled,
   onProgress,
   memory,
@@ -140,6 +152,23 @@ export async function solveSolid({
   };
   const timings = {};
   if (cancelled()) throw abortError();
+
+  if (multiPartStudy(study) && Array.isArray(parts) && parts.length > 0) {
+    const { solveAssembly } = await import('./solveAssembly.js');
+    return solveAssembly({
+      study,
+      parts,
+      profile,
+      solveBonded,
+      meshVolume,
+      cache,
+      isCancelled,
+      onProgress,
+      memory,
+      noteMemory,
+      peakMemory,
+    });
+  }
 
   if (fallback === 'stub') {
     const stubStarted = Date.now();
@@ -659,12 +688,19 @@ function pushCacheEntry(cache, key, mesh) {
 
 function freeCacheEntry(entry, releaseMesh) {
   if (!entry) return;
-  const mesh = entry.mesh;
+  const meshes = [];
+  if (entry.mesh) meshes.push(entry.mesh);
+  if (Array.isArray(entry.meshes)) {
+    for (const mesh of entry.meshes) if (mesh) meshes.push(mesh);
+  }
   entry.mesh = null;
+  entry.meshes = null;
   entry.key = '';
   clearSolution(entry);
-  if (typeof releaseMesh === 'function') releaseMesh(mesh);
-  else blankMesh(mesh);
+  for (const mesh of meshes) {
+    if (typeof releaseMesh === 'function') releaseMesh(mesh);
+    else blankMesh(mesh);
+  }
 }
 
 function clearSolution(entry) {

@@ -17,14 +17,18 @@ export const STUDY_VERSION = 1;
 
 export const UNITS_NOTE = 'Length is mm, force is N, and stress, pressure, modulus, and yield are MPa. Face area is mm^2 and the face point at is mm.';
 
-const STUDY_KEYS = new Set(['v', 'id', 'name', 'type', 'units', 'material', 'model', 'fixtures', 'loads', 'mesh', 'result']);
+const STUDY_KEYS = new Set(['v', 'id', 'name', 'type', 'units', 'material', 'model', 'fixtures', 'loads', 'mesh', 'scope', 'parts', 'contacts', 'result']);
 const UNIT_KEYS = new Set(['length', 'force', 'stress', 'note']);
 const MATERIAL_ID_KEYS = new Set(['id']);
 const MATERIAL_CUSTOM_KEYS = new Set(['name', 'E_MPa', 'nu', 'yield_MPa', 'density_kg_m3']);
 const MESH_KEYS = new Set(['target', 'refine']);
 const FIXTURE_KEYS = new Set(['kind', 'faces']);
 const LOAD_KEYS = new Set(['kind', 'faces', 'vector', 'pressure_MPa']);
-const FACE_KEYS = new Set(['faceID', 'at', 'n', 'area', 'src', 'ord']);
+const FACE_KEYS = new Set(['faceID', 'part', 'at', 'n', 'area', 'src', 'ord']);
+const SCOPE_KEYS = new Set(['kind', 'ids']);
+const PART_ENTRY_KEYS = new Set(['id', 'material']);
+const CONTACT_KEYS = new Set(['a', 'b', 'kind', 'enabled']);
+const CONTACT_END_KEYS = new Set(['part', 'faceID']);
 
 const ID_RE = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 
@@ -69,6 +73,15 @@ function rejectMarkerText(value, path, errors) {
   }
 }
 
+function partIdOk(value) {
+  return typeof value === 'string'
+    && value.length > 0
+    && value.length <= 240
+    && !value.includes('\n')
+    && !value.includes('\r')
+    && !value.includes('// ---');
+}
+
 function canonicalFace(face) {
   const out = {
     faceID: face.faceID,
@@ -76,6 +89,7 @@ function canonicalFace(face) {
     n: [face.n[0], face.n[1], face.n[2]],
     area: face.area,
   };
+  if (face.part) out.part = face.part;
   if (face.src != null) out.src = face.src;
   if (face.ord != null) out.ord = face.ord;
   return out;
@@ -104,8 +118,12 @@ function readFace(face, path, errors) {
     errors.push(`${path}.ord must be a non-negative integer`);
   }
   if (hasOrd && !hasSrc) errors.push(`${path}.ord requires src`);
+  if (face.part != null && face.part !== '') {
+    if (!partIdOk(face.part)) errors.push(`${path}.part must be a part id`);
+  }
   if (!at || !n || !Number.isInteger(face.faceID) || !(face.area > 0)) return null;
   const out = { faceID: face.faceID, at, n, area: face.area };
+  if (partIdOk(face.part)) out.part = face.part;
   if (hasSrc && Number.isInteger(face.src) && face.src < 0) out.src = face.src;
   if (hasOrd && Number.isInteger(face.ord) && face.ord >= 0) out.ord = face.ord;
   return out;
@@ -230,6 +248,115 @@ function readLoad(load, index, errors) {
   return null;
 }
 
+function readScope(scope, errors) {
+  if (scope == null) return null;
+  if (!isPlain(scope)) {
+    errors.push('study.scope must be { kind }');
+    return null;
+  }
+  for (const key of unknownKeys(scope, SCOPE_KEYS)) errors.push(`study.scope unknown key "${key}"`);
+  if (scope.kind === 'part' || scope.kind == null) return null;
+  if (scope.kind === 'assembly') {
+    if (scope.ids != null) errors.push('study.scope.ids is only used when kind is "parts"');
+    return { kind: 'assembly' };
+  }
+  if (scope.kind === 'parts') {
+    if (!Array.isArray(scope.ids) || scope.ids.length === 0) {
+      errors.push('study.scope.ids must list the selected part ids');
+      return null;
+    }
+    const ids = [];
+    const seen = new Set();
+    for (let i = 0; i < scope.ids.length; i += 1) {
+      if (!partIdOk(scope.ids[i])) {
+        errors.push(`study.scope.ids[${i}] must be a part id`);
+        continue;
+      }
+      if (seen.has(scope.ids[i])) continue;
+      seen.add(scope.ids[i]);
+      ids.push(scope.ids[i]);
+    }
+    if (!ids.length) return null;
+    return { kind: 'parts', ids };
+  }
+  errors.push('study.scope.kind must be "part", "assembly", or "parts"');
+  return null;
+}
+
+function readPartEntries(parts, errors) {
+  if (parts == null) return [];
+  if (!Array.isArray(parts)) {
+    errors.push('study.parts must be an array of { id, material }');
+    return [];
+  }
+  const out = [];
+  const seen = new Set();
+  for (let i = 0; i < parts.length; i += 1) {
+    const entry = parts[i];
+    const path = `parts[${i}]`;
+    if (!isPlain(entry)) {
+      errors.push(`${path} must be an object`);
+      continue;
+    }
+    for (const key of unknownKeys(entry, PART_ENTRY_KEYS)) errors.push(`${path} unknown key "${key}"`);
+    if (!partIdOk(entry.id)) {
+      errors.push(`${path}.id must be a part id`);
+      continue;
+    }
+    if (seen.has(entry.id)) continue;
+    seen.add(entry.id);
+    const material = readMaterial(entry.material, errors);
+    if (!material) continue;
+    // readMaterial reports paths as study.material. Retitle the last errors
+    // is not worth a second parser; the material object is the same shape.
+    out.push({ id: entry.id, material: canonicalMaterial(material) });
+  }
+  return out;
+}
+
+function readContactEnd(end, path, errors) {
+  if (!isPlain(end)) {
+    errors.push(`${path} must be { part, faceID }`);
+    return null;
+  }
+  for (const key of unknownKeys(end, CONTACT_END_KEYS)) errors.push(`${path} unknown key "${key}"`);
+  if (!partIdOk(end.part)) errors.push(`${path}.part must be a part id`);
+  if (!Number.isInteger(end.faceID) || end.faceID < 0) {
+    errors.push(`${path}.faceID must be a non-negative integer`);
+  }
+  if (!partIdOk(end.part) || !Number.isInteger(end.faceID) || end.faceID < 0) return null;
+  return { part: end.part, faceID: end.faceID };
+}
+
+function readContacts(contacts, errors) {
+  if (contacts == null) return [];
+  if (!Array.isArray(contacts)) {
+    errors.push('study.contacts must be an array');
+    return [];
+  }
+  const out = [];
+  for (let i = 0; i < contacts.length; i += 1) {
+    const row = contacts[i];
+    const path = `contacts[${i}]`;
+    if (!isPlain(row)) {
+      errors.push(`${path} must be an object`);
+      continue;
+    }
+    for (const key of unknownKeys(row, CONTACT_KEYS)) errors.push(`${path} unknown key "${key}"`);
+    if (row.kind !== 'bonded') errors.push(`${path}.kind must be "bonded"`);
+    const a = readContactEnd(row.a, `${path}.a`, errors);
+    const b = readContactEnd(row.b, `${path}.b`, errors);
+    if (row.enabled != null && typeof row.enabled !== 'boolean') {
+      errors.push(`${path}.enabled must be a boolean`);
+    }
+    if (row.kind !== 'bonded' || !a || !b) continue;
+    const contact = { a, b, kind: 'bonded' };
+    if (row.enabled === false) contact.enabled = false;
+    out.push(contact);
+  }
+  return out;
+}
+
 function withDefaults(input) {
   const units = isPlain(input.units) ? input.units : {};
   const mesh = isPlain(input.mesh) ? input.mesh : {};
@@ -249,6 +376,9 @@ function withDefaults(input) {
     fixtures: input.fixtures ?? [],
     loads: input.loads ?? [],
     mesh: meshWithRefine({ target: mesh.target ?? 'auto', refine: mesh.refine }),
+    scope: input.scope,
+    parts: input.parts,
+    contacts: input.contacts,
     result: input.result === undefined ? null : input.result,
   };
 }
@@ -277,7 +407,7 @@ function canonicalMesh(mesh) {
 }
 
 function canonicalStudy(study) {
-  return {
+  const out = {
     v: study.v,
     id: study.id,
     name: study.name,
@@ -293,8 +423,12 @@ function canonicalStudy(study) {
     fixtures: study.fixtures,
     loads: study.loads,
     mesh: canonicalMesh(study.mesh),
-    result: null,
   };
+  if (study.scope) out.scope = study.scope;
+  if (study.parts && study.parts.length) out.parts = study.parts;
+  if (study.contacts && study.contacts.length) out.contacts = study.contacts;
+  out.result = null;
+  return out;
 }
 
 /**
@@ -356,6 +490,10 @@ export function validateStudy(input, { defaults = false } = {}) {
     }
   }
 
+  const scope = readScope(src.scope, errors);
+  const parts = readPartEntries(src.parts, errors);
+  const contacts = readContacts(src.contacts, errors);
+
   if (src.result !== null) {
     errors.push(src.result === undefined
       ? 'study.result is required and must be null; results are not stored in the part script'
@@ -377,6 +515,9 @@ export function validateStudy(input, { defaults = false } = {}) {
       fixtures,
       loads,
       mesh: canonicalMesh(src.mesh),
+      scope,
+      parts,
+      contacts,
       result: null,
     }),
   };
