@@ -6,14 +6,15 @@
  * points, then a suggested property, then Confirm. The viewport and the
  * card share the rich pick list, the same way a contour shares its list,
  * because a joint fingerprint does not fit in the id/kind/label chip.
- * A placed joint is a floating tag. Tap it for Delete and X. That popup
- * does not reopen the card.
+ * A strip chip reopens that joint in the same card. Delete removes it.
+ * X writes nothing.
  *
  * Status is not stored. Undo is an in-memory snapshot of joints and
  * placements. A reload seeds one commit, so Undo starts empty and Redo
  * does not survive it. Scripts are never written here.
  */
 import { nextNumberedName, serializeAssembly } from '../utils/assembly.js';
+import { matchFaceKeys } from '../utils/faceColorMatch.js';
 import { mintSurfId } from '../utils/git/surfId.js';
 import { partPlacement } from '../utils/jointSchema.js';
 import { worldPoint } from '../utils/partPose.js';
@@ -490,16 +491,16 @@ export function draftFromPicks(previous, picks, { joints = [] } = {}) {
 }
 
 export function cardFromJoint(joint, doc, message = '') {
-  const nameOf = (surfId) => (
-    (doc?.parts || []).find((part) => part.surfId === surfId)?.name || surfId
-  );
+  const partOf = (surfId) => (doc?.parts || []).find((part) => part.surfId === surfId);
   const pickOf = (ref) => {
     if (!ref) return null;
+    const part = partOf(ref.part);
     return {
       surfId: ref.part,
-      partName: nameOf(ref.part),
+      partId: part?.id || null,
+      partName: part?.name || ref.part,
       kind: ref.kind || 'face',
-      planar: ref.kind === 'face',
+      planar: ref.kind !== 'axis' && ref.kind !== 'edge',
       axis: ref.kind === 'axis',
       key: ref.key,
     };
@@ -522,6 +523,26 @@ export function cardFromJoint(joint, doc, message = '') {
     opposed: joint.opposed !== false,
     note: message || '',
   };
+}
+
+/**
+ * Face triangles to paint when a chip reopens a joint. Axes and edges
+ * have no face patch. A miss leaves that pick unhighlighted.
+ */
+export function jointHighlightEntries(card, doc, catalogs) {
+  const parts = doc?.parts || [];
+  const out = [];
+  for (const pick of card?.picks || []) {
+    if (!pick?.key || pick.kind === 'axis' || pick.kind === 'edge') continue;
+    const part = parts.find((row) => row?.surfId === pick.surfId);
+    const faces = catalogs?.[pick.surfId]?.faces;
+    if (!part || !Array.isArray(faces)) continue;
+    const hit = matchFaceKeys(faces, [{ key: pick.key }]);
+    const tris = hit.matched[0]?.face?.tris;
+    if (!tris?.length) continue;
+    out.push({ partId: part.id, tris, at: pick.key.at });
+  }
+  return out;
 }
 
 export function jointChipTitle(joint, status, message) {

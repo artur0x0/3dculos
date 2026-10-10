@@ -21,6 +21,7 @@ import {
   emptyClickCadSelection,
   jointChipTitle,
   jointChips,
+  jointHighlightEntries,
   jointConfirmDisabled,
   jointTagAnchor,
   stickyJointPick,
@@ -197,6 +198,42 @@ test('a third part asks which side to replace', () => {
   assert.deepEqual(replaced.map((pick) => pick.surfId), [A, C]);
   const replacedFirst = resolvePartChange(third.picks, third.choice.pick, 'replace-1');
   assert.deepEqual(replacedFirst.map((pick) => pick.surfId), [C, B]);
+});
+
+test('reopening a joint restores its type, value, and face highlights', () => {
+  const angle = cardFromJoint({
+    id: J,
+    name: 'Angle 1',
+    type: 'angle',
+    value: 0,
+    sense: 1,
+    a: { part: A, kind: 'face', key: { at: [0, 0, 1], n: [0, 0, 1], area: 1 } },
+    b: { part: B, kind: 'face', key: { at: [0, 0, 1], n: [0, 0, 1], area: 1 } },
+  }, docWith([]));
+  assert.equal(angle.mode, 'edit');
+  assert.equal(angle.type, 'angle');
+  assert.equal(angle.valueMm, 0);
+  assert.equal(angle.picks[0].partId, 'a.js');
+  assert.equal(angle.picks[1].partId, 'b.js');
+  const painted = jointHighlightEntries(angle, docWith([]), {
+    [A]: { faces: [{ at: [0, 0, 1], n: [0, 0, 1], area: 1, tris: [4, 5] }] },
+    [B]: { faces: [{ at: [0, 0, 1], n: [0, 0, 1], area: 1, tris: [1] }] },
+  });
+  assert.deepEqual(painted.map((row) => row.partId), ['a.js', 'b.js']);
+  assert.deepEqual(painted[0].tris, [4, 5]);
+  const symmetric = cardFromJoint({
+    id: J,
+    name: 'Symmetric 1',
+    type: 'symmetric',
+    a: { part: A, kind: 'face', key: { at: [0, 0, 1], n: [0, 0, 1], area: 1 } },
+    a2: { part: A, kind: 'face', key: { at: [0, 0, -1], n: [0, 0, -1], area: 1 } },
+    b: { part: B, kind: 'face', key: { at: [0, 0, 1], n: [0, 0, 1], area: 1 } },
+    b2: { part: B, kind: 'face', key: { at: [0, 0, -1], n: [0, 0, -1], area: 1 } },
+  }, docWith([]));
+  assert.equal(symmetric.mode, 'edit');
+  assert.equal(symmetric.type, 'symmetric');
+  assert.equal(symmetric.picks.length, 4);
+  assert.equal(symmetric.valueMm, undefined);
 });
 
 test('parallel and perpendicular write an angle joint without an extra value step', () => {

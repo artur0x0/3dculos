@@ -30,6 +30,7 @@ const StickyPickApply = ({
   applyDisabled = false,
   note = '',
   compact = false,
+  footer = null,
   cardAttrs = {},
   children = null,
 }) => {
@@ -44,6 +45,7 @@ const StickyPickApply = ({
       confirmLabel={applyLabel}
       confirmDisabled={applyDisabled}
       note={note}
+      footer={footer}
       cardAttrs={{ 'data-sticky-pick-apply': '', ...cardAttrs }}
     >
       <div className="flex flex-col gap-2 font-sans" data-sticky-picks={picks.length}>

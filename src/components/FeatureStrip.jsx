@@ -28,7 +28,6 @@ import {
   Move,
   SquareArrowOutUpRight,
   SquareX,
-  X,
 } from 'lucide-react';
 import SquareRoundCorner from './icons/SquareRoundCorner';
 import RectangleCircle from './icons/RectangleCircle';
@@ -103,71 +102,6 @@ const JOINT_ICONS = Object.freeze({
 
 /** Same box for an empty joints caption and a joint chip, so the bar does not jump. */
 const JOINT_CHIP_BOX = 'relative shrink-0 rounded-lg p-1.5 h-8 box-border flex items-center justify-center border';
-
-function JointChipPopup({ joint, onDelete, onClose, onEditAngle }) {
-  const [angle, setAngle] = useState(
-    Number.isFinite(Number(joint?.value)) ? String(joint.value) : '',
-  );
-  useEffect(() => {
-    setAngle(Number.isFinite(Number(joint?.value)) ? String(joint.value) : '');
-  }, [joint?.id, joint?.value]);
-  const angleJoint = joint?.type === 'angle';
-  return (
-    <div
-      data-joint-chip-popup={joint.id}
-      className="absolute left-1/2 top-full z-40 mt-1 flex w-max max-w-[16rem] -translate-x-1/2 flex-wrap items-center gap-1 rounded-md bg-white/95 p-1 shadow"
-      onPointerDown={(event) => event.stopPropagation()}
-    >
-      {angleJoint && (
-        <label className="flex items-center gap-1 px-1 text-[12px] text-gray-800">
-          <span>Angle °</span>
-          <input
-            data-joint-chip-angle={joint.id}
-            inputMode="decimal"
-            value={angle}
-            onChange={(event) => setAngle(event.target.value)}
-            className="w-14 min-h-11 rounded border border-gray-300 px-1 text-gray-900"
-          />
-          <button
-            type="button"
-            data-joint-chip-angle-apply={joint.id}
-            className="min-h-11 rounded bg-cyan-800 px-2 text-[13px] text-white"
-            onClick={(event) => {
-              event.stopPropagation();
-              const raw = String(angle).trim();
-              onEditAngle?.(joint.id, raw === '' ? NaN : Number(raw));
-            }}
-          >
-            Apply
-          </button>
-        </label>
-      )}
-      <button
-        type="button"
-        data-joint-chip-delete={joint.id}
-        className="min-h-11 rounded bg-cyan-800 px-3 text-[13px] text-white"
-        onClick={(event) => {
-          event.stopPropagation();
-          onDelete?.(joint.id);
-        }}
-      >
-        Delete
-      </button>
-      <button
-        type="button"
-        data-joint-chip-close=""
-        aria-label="Close"
-        className="flex min-h-11 min-w-11 items-center justify-center rounded text-gray-700"
-        onClick={(event) => {
-          event.stopPropagation();
-          onClose?.();
-        }}
-      >
-        <X size={16} strokeWidth={2} />
-      </button>
-    </div>
-  );
-}
 
 function JointGlyph({ type, size }) {
   const Icon = JOINT_ICONS[type] || AlignVerticalJustifyCenter;
@@ -258,10 +192,6 @@ export default function FeatureStrip({
   /** Joint chips. An array (including empty) switches this strip to joints. */
   joints = null,
   onSelectJoint,
-  selectedJointId = null,
-  onDeleteJoint,
-  onCloseJoint,
-  onEditJointAngle,
   undoLabel = 'Undo',
   redoLabel = 'Redo',
 }) {
@@ -430,28 +360,22 @@ export default function FeatureStrip({
             )}
             {jointMode && joints.map((joint) => {
               const invalid = !!joint.invalid;
-              const selected = selectedJointId === joint.id;
               return (
-                <span key={joint.id} className="relative shrink-0">
-                  <button
-                    type="button"
-                    data-joint-id={joint.id}
-                    data-joint-type={joint.type}
-                    data-joint-status={joint.status || 'ok'}
-                    data-joint-value={joint.type === 'angle' ? joint.value : undefined}
-                    aria-label={joint.name || JOINT_TYPE_LABEL[joint.type] || 'Joint'}
-                    aria-invalid={invalid || undefined}
-                    aria-expanded={selected}
-                    title={joint.title || joint.name}
-                    onClick={() => onSelectJoint?.(joint)}
-                    className={`${JOINT_CHIP_BOX} transition-colors active:opacity-80 ${chipTone(false, false, invalid)}`}
-                  >
-                    <JointGlyph type={joint.type} size={16} />
-                  </button>
-                  {selected && (
-                    <JointChipPopup joint={joint} onDelete={onDeleteJoint} onClose={onCloseJoint} onEditAngle={onEditJointAngle} />
-                  )}
-                </span>
+                <button
+                  key={joint.id}
+                  type="button"
+                  data-joint-id={joint.id}
+                  data-joint-type={joint.type}
+                  data-joint-status={joint.status || 'ok'}
+                  data-joint-value={joint.type === 'angle' ? joint.value : undefined}
+                  aria-label={joint.name || JOINT_TYPE_LABEL[joint.type] || 'Joint'}
+                  aria-invalid={invalid || undefined}
+                  title={joint.title || joint.name}
+                  onClick={() => onSelectJoint?.(joint)}
+                  className={`${JOINT_CHIP_BOX} transition-colors active:opacity-80 ${chipTone(false, false, invalid)}`}
+                >
+                  <JointGlyph type={joint.type} size={16} />
+                </button>
               );
             })}
             {!jointMode && features.map((f) => {
@@ -528,28 +452,22 @@ export default function FeatureStrip({
     >
       {jointMode && joints.map((joint) => {
         const invalid = !!joint.invalid;
-        const selected = selectedJointId === joint.id;
         return (
-          <span key={joint.id} className="relative shrink-0">
-            <button
-              type="button"
-              data-joint-id={joint.id}
-              data-joint-type={joint.type}
-              data-joint-status={joint.status || 'ok'}
-              data-joint-value={joint.type === 'angle' ? joint.value : undefined}
-              aria-label={joint.name || JOINT_TYPE_LABEL[joint.type] || 'Joint'}
-              aria-invalid={invalid || undefined}
-              aria-expanded={selected}
-              title={joint.title || joint.name}
-              onClick={() => onSelectJoint?.(joint)}
-              className={`${JOINT_CHIP_BOX} transition-colors active:opacity-80 ${chipTone(false, false, invalid)}`}
-            >
-              <JointGlyph type={joint.type} size={16} />
-            </button>
-            {selected && (
-              <JointChipPopup joint={joint} onDelete={onDeleteJoint} onClose={onCloseJoint} onEditAngle={onEditJointAngle} />
-            )}
-          </span>
+          <button
+            key={joint.id}
+            type="button"
+            data-joint-id={joint.id}
+            data-joint-type={joint.type}
+            data-joint-status={joint.status || 'ok'}
+            data-joint-value={joint.type === 'angle' ? joint.value : undefined}
+            aria-label={joint.name || JOINT_TYPE_LABEL[joint.type] || 'Joint'}
+            aria-invalid={invalid || undefined}
+            title={joint.title || joint.name}
+            onClick={() => onSelectJoint?.(joint)}
+            className={`${JOINT_CHIP_BOX} transition-colors active:opacity-80 ${chipTone(false, false, invalid)}`}
+          >
+            <JointGlyph type={joint.type} size={16} />
+          </button>
         );
       })}
       {!jointMode && features.map((f) => {

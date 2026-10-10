@@ -94,9 +94,9 @@ Desktop specifics:
   (`data-assembly-joints`), or **No assembly joints**
   (`data-feature-strip-empty`), and Undo is titled **Undo joint**.
   The empty caption is the same height as a joint chip (`h-8`).
-  A chip tap opens Delete and X on the chip (`data-joint-chip-popup`).
-  An angle joint edits its degrees from that popup. It does not close the
-  create card. There is no floating joint tag.
+  A chip tap reopens that joint in the card, with its picks highlighted,
+  its type, and its value. Delete and X are on that card. There is no
+  floating joint tag.
   The create card is `StickyPickApply`. It opens
   from Joints (Lucide `Blocks`, `data-joints-button`), the last button in
   Move. While it is open the parts shift up like every other feature card.
@@ -307,9 +307,9 @@ Mobile specifics:
   Sheet-metal chips use `SheetMetalPlate` (blue), same as desktop.
   `hideWhenEmpty` skips the "No features" caption. It does not skip
   **No assembly joints**, which the CAD bar shows when no part is selected.
-  The script-stage strip never shows joints. A joint chip tap opens Delete
-  and X on the chip. An angle joint edits its degrees there. That tap does
-  not close the create card. There is no floating joint tag. Contour tags stay. After a joint is added the page stays put
+  The script-stage strip never shows joints. A joint chip tap reopens that
+  joint in the card, with Delete and X. There is no floating joint tag.
+  Contour tags stay. After a joint is added the page stays put
   (`scrollHeight` ≤ `innerHeight`, `scrollY` 0) and the left rail still scrolls.
   the bar itself stays mounted so Undo and Redo remain. A chip whose block holds a
   frozen copy of another part's geometry (`externalBody`) has a 2px yellow border

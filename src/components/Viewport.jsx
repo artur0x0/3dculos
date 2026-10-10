@@ -1864,6 +1864,25 @@ const Viewport = forwardRef(({
     featureSheetCameraOwned: () => sheetCameraOwnedRef.current,
     /** Drop joint-pick face highlights. A part id drops one side; omit it to drop both. */
     clearJointHighlights: (partId) => clearJointHighlightsRef.current(partId),
+    /** Repaint the faces of a joint a strip chip just reopened. */
+    showJointPickHighlights: (entries) => {
+      clearJointHighlightsRef.current();
+      const meshFor = (partId) => {
+        if (String(activePartIdRef.current) === String(partId)) return resultRef.current;
+        return assemblyExtrasRef.current.get(String(partId)) || assemblyExtrasRef.current.get(partId) || null;
+      };
+      for (const entry of Array.isArray(entries) ? entries : []) {
+        const mesh = meshFor(entry?.partId);
+        const positions = mesh?.geometry?.attributes?.position;
+        const index = mesh?.geometry?.index?.array;
+        if (!positions || !index || !entry?.tris?.length) continue;
+        paintJointHighlightRef.current(entry.partId, entry.tris, positions, index, entry.at || null);
+      }
+      const cam = cameraRef.current;
+      if (rendererRef.current && sceneRef.current && cam) {
+        rendererRef.current.render(sceneRef.current, cam);
+      }
+    },
   }));
 
   // Clear face highlight
