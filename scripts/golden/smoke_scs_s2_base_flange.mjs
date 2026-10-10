@@ -15,9 +15,8 @@ import {
   baseDraftSpec,
   BASE_MAX,
 } from '../../src/utils/sheetMetal/sheetMetalMode.js';
-import {
-  loadSheetDisplayUnit, saveSheetDisplayUnit, displayToMm, displaySheetNumber, formatSheetLength,
-} from '../../src/utils/sheetMetal/sheetUnits.js';
+import { formatSheetLength } from '../../src/utils/sheetMetal/sheetUnits.js';
+import { displayToMm, lengthToDisplay, loadDisplayUnit, saveDisplayUnit } from '../../src/utils/displayUnit.js';
 import { createSheetSpec, SHEET_PLANES } from '../../src/utils/sheetMetal/sheetModel.js';
 import {
   composeSheetMetalCommit,
@@ -67,7 +66,8 @@ check('no bend spec: clamp up to min part size', near(flatBase.base.width, 5 * 2
   JSON.stringify(flatBase.base));
 mode = setBaseDims(mode, { width: 120, height: '' });
 check('x edits; blank y keeps value', mode.base.width === 120 && mode.base.height === 60);
-check('dims clamp', setBaseDims(mode, { width: 99999 }).base.width === BASE_MAX && setBaseDims(mode, { height: -4 }).base.height === 1);
+check('dims clamp', setBaseDims(mode, { width: 99999 }).base.width === BASE_MAX
+  && near(setBaseDims(mode, { height: -4 }).base.height, 0.375 * 25.4));
 const back = backToPlanePick(mode);
 check('Back → plane pick in one tap, dims kept', back.stage === 'plane' && back.base.width === 120);
 const again = pickSheetPlane(back, 'XY');
@@ -142,15 +142,21 @@ console.log('SCS S2 — chrome + wiring');
   const worker = read('src/workers/sandboxWorker.js') + '\n' + read('src/lib/surfcad/runtime.js');
   check('base popup: x/y sliders, Back, Accept, ✕ exits', /sm-base-x/.test(flow) && /sm-base-y/.test(flow)
     && /backToPlanePick/.test(flow) && /acceptBaseFlange/.test(flow) && /onClose=\{onExit\}/.test(flow));
+  const units = read('src/utils/sheetMetal/sheetUnits.js');
   check('mm/in toggle on sheet popups; values stay mm', /data-sm-unit-toggle/.test(read('src/components/sheetMetal/SmControls.jsx'))
-    && /loadSheetDisplayUnit/.test(flow) && /saveSheetDisplayUnit/.test(flow) && /SmMmSlider/.test(flow)
-    && /Stored in mm/.test(flow));
-  const mem = { store: {}, getItem(k) { return this.store[k] ?? null; }, setItem(k, v) { this.store[k] = String(v); } };
-  check('display unit defaults to mm and persists', loadSheetDisplayUnit(mem) === 'mm'
-    && saveSheetDisplayUnit('in', mem) === 'in' && loadSheetDisplayUnit(mem) === 'in'
-    && saveSheetDisplayUnit('nope', mem) === 'mm');
+    && /useDisplayUnit/.test(flow) && /setDisplayUnit/.test(flow) && /SmMmSlider/.test(flow)
+    && /Stored in mm/.test(flow)
+    && !/localStorage/.test(units) && !/SHEET_DISPLAY_UNIT_KEY/.test(units));
+  const mem = {
+    store: { 'surfcad.sheetMetal.displayUnit': 'in' },
+    getItem(k) { return this.store[k] ?? null; },
+    setItem(k, v) { this.store[k] = String(v); },
+  };
+  check('display unit defaults to mm and the leftover sheet key does not override', loadDisplayUnit(mem) === 'mm'
+    && saveDisplayUnit('in', mem) === 'in' && loadDisplayUnit(mem) === 'in'
+    && saveDisplayUnit('nope', mem) === 'mm' && mem.store['surfcad.sheetMetal.displayUnit'] === 'in');
   check('inch display round-trips to mm; mm text stays mm',
-    near(displayToMm(displaySheetNumber(100, 'in'), 'in'), 100, 0.02)
+    near(displayToMm(lengthToDisplay(100, 'in'), 'in'), 100, 0.02)
     && formatSheetLength(25.4, 'in') === '1.000 in' && formatSheetLength(100, 'mm') === '100.00 mm');
   check('plane buttons as big tap fallback', /data-sm-plane/.test(flow));
   check('taps route to the overlay first', /if \(sheetMetalModeRef\.current\) \{[\s\S]{0,600}sheetPickFromHits/.test(view));

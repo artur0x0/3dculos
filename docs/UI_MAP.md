@@ -147,7 +147,8 @@ Desktop specifics:
   100 mm when the part is empty, cached with the edge graph and on a viewport
   map. It is not written into the assembly file. Feature-card and helper-sheet
   length sliders use that length, the curve, and the global unit. A helper
-  sheet scales its L=100 seeds when it opens. Fillet and chamfer use
+  sheet scales its L=100 seeds when it opens. Sheet-metal length sliders
+  do too, and the cross-section thumb continues past the box. Fillet and chamfer use
   the adjacent edge instead. The curve and the thumb snap live in
   `src/utils/sliderMap.js` (0.1 mm, or 1/16 in). The contract is
   `docs/plans/slider-plan.md`.
@@ -595,7 +596,7 @@ after the existing blocks. `Sheet (n)` is created only when an assembly is open 
 The rail then lists
 Tab / Bend / Hole / Tap under **Shape**. The chip (material, hint, Check &
 Export) is the shared feature card, centered between the rails. An mm|in
-toggle in the card header is display only (stored mm, preference in localStorage).
+toggle in the card header writes the global `surfcad.displayUnit` (stored lengths stay mm). A leftover `surfcad.sheetMetal.displayUnit` does not override it. Gauge numbers stay on the picker.
 Out-of-stock gauges stay visible and disabled. Catalog/cache in `src/utils/scs/`.
 The committed script is the sheet block plus `return part;`. The worker and
 `runScript` unwrap a sheet wrapper (`solid` + spec or flat pattern) and still

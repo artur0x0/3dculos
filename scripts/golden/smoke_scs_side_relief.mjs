@@ -251,6 +251,11 @@ if (exe && failed === 0) {
       await page.waitForSelector('[data-sheet-metal-step="plane"]', { timeout: 15000 });
       await page.locator('[data-sm-plane="XY"]').click();
       await page.waitForSelector('[data-sheet-metal-base]', { timeout: 10000 });
+      for (const [id, value] of [['sm-base-x', 100], ['sm-base-y', 60]]) {
+        const input = page.locator(`[data-sm-number="${id}"]`);
+        await input.fill(String(value));
+        await input.blur();
+      }
       await page.locator('[data-sheet-metal-base] [data-sm-accept]').click();
       await page.waitForSelector('[data-sheet-metal-step="edit"]', { timeout: 15000 });
       const acceptBend = async (pick, length) => {

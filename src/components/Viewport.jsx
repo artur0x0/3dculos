@@ -5643,7 +5643,8 @@ const Viewport = forwardRef(({
    */
   const sheetMetalTapRef = useRef(null);
   sheetMetalTapRef.current = (pick) => {
-    setSheetMetalMode((prev) => (prev ? sheetTap(prev, pick) : prev));
+    const lengthMm = characteristicLengthMm({ bounds: modelBoundsRef.current });
+    setSheetMetalMode((prev) => (prev ? sheetTap(prev, pick, lengthMm) : prev));
   };
   if (import.meta.env?.DEV && typeof window !== 'undefined') {
     window.__SHEET__ = {
@@ -9970,6 +9971,7 @@ const Viewport = forwardRef(({
           mesh={cachedMeshData}
           script={sheetMetalMode.exportOpen && typeof getHelperBuffer === 'function' ? getHelperBuffer() : null}
           partName={partLabelsRef.current?.[sheetMetalMode.partId] || ''}
+          lengthMm={characteristicLengthMm({ bounds: modelBounds })}
         />
       )}
       {sheetMetalPicker && mode !== 'game' && (

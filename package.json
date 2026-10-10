@@ -172,6 +172,7 @@
         "golden:fillet-default-radius": "node scripts/golden/smoke_fillet_default_radius.mjs",
         "golden:feature-sliders": "node scripts/golden/smoke_feature_sliders.mjs",
         "golden:helper-sliders": "node scripts/golden/smoke_helper_sliders.mjs",
+        "golden:sheet-sliders": "node scripts/golden/smoke_sheet_sliders.mjs",
         "golden:part-rename-target": "node scripts/golden/smoke_part_rename_target.mjs",
         "golden:empty-part-pill": "node scripts/golden/smoke_empty_part_pill.mjs",
         "golden:multi-part-block-drop": "node scripts/golden/smoke_multi_part_block_drop.mjs",

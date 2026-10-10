@@ -8,9 +8,10 @@
  * Angles stay degrees.
  *
  * Persisted at `surfcad.displayUnit`. Measure, the joint distance field,
- * and the contour loft offset read it. `lengthSnap` (`sliderMap.js`) reads
- * it for the length-slider detent. Sheet metal keeps
- * `surfcad.sheetMetal.displayUnit` (`sheetUnits.js`) until that pass.
+ * the contour loft offset, and sheet metal read it. `lengthSnap`
+ * (`sliderMap.js`) reads it for the length-slider detent. A leftover
+ * `surfcad.sheetMetal.displayUnit` does not override this key. Gauge
+ * numbers stay on the sheet-metal picker.
  */
 export const DISPLAY_UNIT_KEY = 'surfcad.displayUnit';
 export const MM_PER_IN = 25.4;

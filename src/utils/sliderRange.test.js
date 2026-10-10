@@ -6,6 +6,7 @@ import {
   directionOffscreenMm,
   moveFaceRange,
   scaleFreshContour,
+  sectionThumbRange,
   shellWallRange,
   travelRangeMm,
 } from './sliderRange.js';
@@ -58,5 +59,15 @@ describe('feature-card ranges', () => {
     assert.equal(scaled.extrude.distance, 40);
     assert.equal(scaled.loft.profiles[0].offset, 80);
     assert.equal(scaled.loft.profiles[0].params.radius, 32);
+  });
+
+  it('keeps the section box at two-thirds of the thumb', () => {
+    const range = sectionThumbRange(-10, 30);
+    assert.equal(range.center, 10);
+    assert.equal(range.reach, (20 * 27) / 13);
+    assert.equal(range.min, 10 - range.reach);
+    assert.equal(range.max, 10 + range.reach);
+    const fallback = sectionThumbRange(-100, 100);
+    assert.ok(Math.abs(fallback.reach - (100 * 27) / 13) < 1e-9);
   });
 });

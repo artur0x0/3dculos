@@ -1,11 +1,11 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { SHEET_PLANES } from '../../utils/sheetMetal/sheetModel';
 import {
   acceptBaseFlange,
   acceptDraft,
   backToPlanePick,
   BASE_MAX,
-  BASE_MIN,
+  baseSliderRange,
   bendDeductionAt,
   bendBlockReason,
   bendLimits,
@@ -23,7 +23,8 @@ import {
   updateDraft,
 } from '../../utils/sheetMetal/sheetMetalMode';
 import { buildSheetExport } from '../../utils/sheetMetal/sheetExport';
-import { formatSheetLength, loadSheetDisplayUnit, saveSheetDisplayUnit } from '../../utils/sheetMetal/sheetUnits';
+import { formatSheetLength } from '../../utils/sheetMetal/sheetUnits';
+import { useDisplayUnit } from '../../hooks/useDisplayUnit';
 import SheetMetalModeChip from './SheetMetalModeChip';
 import { SmButton, SmMmSlider, SmPopup, SmSelect, SmSlider, SmToggle } from './SmControls';
 import { FeatureDeleteButton } from '../FeatureEditDelete';
@@ -119,7 +120,6 @@ const BendPopup = ({ mode, setMode, onCommit, onExit, unit, onUnit, compact = fa
         mm={d.length}
         minMm={lim.lengthMin}
         maxMm={lim.lengthMax}
-        stepMm={0.5}
         unit={unit}
         onMm={(v) => setMode((m) => updateDraft(m, { length: v }))}
       />
@@ -138,7 +138,7 @@ const BendPopup = ({ mode, setMode, onCommit, onExit, unit, onUnit, compact = fa
   );
 };
 
-const TabPopup = ({ mode, setMode, onCommit, onExit, unit, onUnit, compact = false }) => {
+const TabPopup = ({ mode, setMode, onCommit, onExit, unit, onUnit, compact = false, lengthMm = 100 }) => {
   const d = mode.draft;
   const span = Number(d.span) || Math.max(d.width, 1);
   const where = d.panel === 'base' ? `Base ${EDGE_NAMES[d.edge] || d.edge}` : `Flange ${d.panel} ${d.edge === 'u+' ? 'tip' : 'side'}`;
@@ -154,15 +154,15 @@ const TabPopup = ({ mode, setMode, onCommit, onExit, unit, onUnit, compact = fal
       compact={compact}
       footer={<DraftFooter mode={mode} setMode={setMode} onCommit={onCommit} />}
     >
-      <SmMmSlider id="sm-tab-width" label="Width" mm={d.width} minMm={1} maxMm={span} stepMm={0.5} unit={unit}
+      <SmMmSlider id="sm-tab-width" label="Width" mm={d.width} minMm={1} maxMm={span} unit={unit}
         onMm={(v) => setMode((m) => updateDraft(m, { width: v }))} />
-      <SmMmSlider id="sm-tab-depth" label="Depth" mm={d.depth} minMm={0.5} maxMm={Math.max(50, d.depth)} stepMm={0.5} unit={unit}
+      <SmMmSlider id="sm-tab-depth" label="Depth" mm={d.depth} minMm={0.5} maxMm={Math.max(0.5 * lengthMm, Number(d.depth) || 0)} unit={unit}
         onMm={(v) => setMode((m) => updateDraft(m, { depth: v }))} />
       <SmToggle id="sm-tab-centered" label="Centered" checked={d.centered !== false}
         onChange={(v) => setMode((m) => updateDraft(m, { centered: v }))} />
       {d.centered === false && (
         <SmMmSlider id="sm-tab-offset" label="Offset from edge start" mm={d.offset ?? 0} minMm={0}
-          maxMm={Math.max(0, span - d.width)} stepMm={0.5} unit={unit}
+          maxMm={Math.max(0, span - d.width)} unit={unit}
           onMm={(v) => setMode((m) => updateDraft(m, { offset: v }))} />
       )}
     </SmPopup>
@@ -171,7 +171,7 @@ const TabPopup = ({ mode, setMode, onCommit, onExit, unit, onUnit, compact = fal
 
 const HOLE_TITLES = { hole: 'Hole', countersink: 'Countersunk hole', tapped: 'Tapped hole' };
 
-const HolePopup = ({ mode, setMode, onCommit, onExit, unit, onUnit, compact = false }) => {
+const HolePopup = ({ mode, setMode, onCommit, onExit, unit, onUnit, compact = false, lengthMm = 100 }) => {
   const d = mode.draft;
   const range = holeRange(mode) || { u0: -50, u1: 50, v0: -50, v1: 50 };
   const minHole = Number(mode.spec.limits?.minHole) || 0;
@@ -193,16 +193,16 @@ const HolePopup = ({ mode, setMode, onCommit, onExit, unit, onUnit, compact = fa
           options={TAP_SIZES.map((x) => ({ value: x.id, label: `${x.id} (drill Ø ${formatSheetLength(x.tap, unit)})` }))}
           onChange={(v) => setMode((m) => updateDraft(m, { thread: v }))} />
       ) : (
-        <SmMmSlider id="sm-hole-d" label="Diameter" mm={d.d} minMm={Math.max(0.5, minHole)} maxMm={Math.max(40, d.d)} stepMm={0.1} unit={unit}
+        <SmMmSlider id="sm-hole-d" label="Diameter" mm={d.d} minMm={Math.max(0.5, minHole)} maxMm={Math.max(0.4 * lengthMm, Number(d.d) || 0, Math.max(0.5, minHole))} unit={unit}
           onMm={(v) => setMode((m) => updateDraft(m, { d: v }))} />
       )}
       {type === 'countersink' && (
-        <SmMmSlider id="sm-hole-csk" label="Countersink Ø (82°)" mm={d.cskDia} minMm={d.d} maxMm={Math.max(d.d * 3, d.cskDia)} stepMm={0.1} unit={unit}
+        <SmMmSlider id="sm-hole-csk" label="Countersink Ø (82°)" mm={d.cskDia} minMm={d.d} maxMm={Math.max(d.d * 3, d.cskDia)} unit={unit}
           onMm={(v) => setMode((m) => updateDraft(m, { cskDia: v }))} />
       )}
-      <SmMmSlider id="sm-hole-u" label="Position along U" mm={d.u} minMm={range.u0} maxMm={range.u1} stepMm={0.5} unit={unit}
+      <SmMmSlider id="sm-hole-u" label="Position along U" mm={d.u} minMm={range.u0} maxMm={range.u1} unit={unit}
         onMm={(v) => setMode((m) => updateDraft(m, { u: v }))} />
-      <SmMmSlider id="sm-hole-v" label="Position along V" mm={d.v} minMm={range.v0} maxMm={range.v1} stepMm={0.5} unit={unit}
+      <SmMmSlider id="sm-hole-v" label="Position along V" mm={d.v} minMm={range.v0} maxMm={range.v1} unit={unit}
         onMm={(v) => setMode((m) => updateDraft(m, { v: v }))} />
     </SmPopup>
   );
@@ -285,10 +285,10 @@ const TOOL_HINTS = {
 
 const SheetMetalFlow = ({
   mode, setMode, onCommit, onConfirm, onExit, compact = false, mesh = null, script = null, partName = '',
-  onDeleteFeature = null,
+  onDeleteFeature = null, lengthMm = 100,
 }) => {
-  const [unit, setUnit] = useState(() => loadSheetDisplayUnit());
-  const onUnit = (next) => setUnit(saveSheetDisplayUnit(next));
+  const [unit, setDisplayUnit] = useDisplayUnit();
+  const onUnit = (next) => setDisplayUnit(next);
   if (!mode) return null;
 
   if (mode.stage === 'edit' && mode.exportOpen) {
@@ -299,14 +299,15 @@ const SheetMetalFlow = ({
     return <BendPopup mode={mode} setMode={setMode} onCommit={onCommit} onExit={onExit} unit={unit} onUnit={onUnit} compact={compact} />;
   }
   if (mode.stage === 'edit' && mode.draft?.kind === 'tab') {
-    return <TabPopup mode={mode} setMode={setMode} onCommit={onCommit} onExit={onExit} unit={unit} onUnit={onUnit} compact={compact} />;
+    return <TabPopup mode={mode} setMode={setMode} onCommit={onCommit} onExit={onExit} unit={unit} onUnit={onUnit} compact={compact} lengthMm={lengthMm} />;
   }
   if (mode.stage === 'edit' && mode.draft?.kind === 'hole') {
-    return <HolePopup mode={mode} setMode={setMode} onCommit={onCommit} onExit={onExit} unit={unit} onUnit={onUnit} compact={compact} />;
+    return <HolePopup mode={mode} setMode={setMode} onCommit={onCommit} onExit={onExit} unit={unit} onUnit={onUnit} compact={compact} lengthMm={lengthMm} />;
   }
 
   if (mode.stage === 'base' && mode.base) {
     const plane = SHEET_PLANES[mode.base.plane];
+    const ends = baseSliderRange(mode.sku);
     return (
       <SmPopup
         title="Base flange"
@@ -317,6 +318,7 @@ const SheetMetalFlow = ({
         unit={unit}
         onUnit={onUnit}
         compact={compact}
+        cardAttrs={{ 'data-sheet-length': lengthMm }}
         footer={(
           <div className="flex flex-wrap items-center justify-end gap-2">
             <SmButton onClick={() => setMode((m) => backToPlanePick(m))} data-sm-back="1">Back</SmButton>
@@ -337,9 +339,8 @@ const SheetMetalFlow = ({
           id="sm-base-x"
           label="X (width)"
           mm={mode.base.width}
-          minMm={BASE_MIN}
-          maxMm={Math.max(300, Number(mode.base.width) || 0)}
-          stepMm={1}
+          minMm={ends.widthMin}
+          maxMm={ends.max}
           unit={unit}
           onMm={(v) => setMode((m) => setBaseDims(m, { width: v }))}
         />
@@ -347,9 +348,8 @@ const SheetMetalFlow = ({
           id="sm-base-y"
           label="Y (height)"
           mm={mode.base.height}
-          minMm={BASE_MIN}
-          maxMm={Math.max(300, Number(mode.base.height) || 0)}
-          stepMm={1}
+          minMm={ends.heightMin}
+          maxMm={ends.max}
           unit={unit}
           onMm={(v) => setMode((m) => setBaseDims(m, { height: v }))}
         />
@@ -368,7 +368,7 @@ const SheetMetalFlow = ({
               <SmButton
                 key={p.id}
                 className="!px-2"
-                onClick={() => setMode((m) => pickSheetPlane(m, p.id))}
+                onClick={() => setMode((m) => pickSheetPlane(m, p.id, lengthMm))}
                 data-sm-plane={p.id}
               >
                 {p.label}

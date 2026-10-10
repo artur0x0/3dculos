@@ -1,7 +1,8 @@
 import React from 'react';
 import FeatureSheet from '../FeatureSheet';
 import { PARTS_TEXT_INPUT_CLASS, PARTS_TEXT_INPUT_STYLE } from '../../utils/partsChrome';
-import { displaySheetNumber, displaySheetStep, displayToMm } from '../../utils/sheetMetal/sheetUnits';
+import { displayToMm, lengthToDisplay } from '../../utils/displayUnit';
+import { lengthFromThumb, lengthSnap, thumbFromLength, THUMB_COUNT } from '../../utils/sliderMap';
 
 /**
  * Sheet-metal popup controls. Mobile-first: ≥44px tap targets and the shared
@@ -36,35 +37,68 @@ export const SmSelect = ({ id, label, value, onChange, options = [], placeholder
   </div>
 );
 
-/** Range + number pair; the number box is the ≥16px token. */
-export const SmSlider = ({ id, label, value, onChange, min, max, step = 0.5, unit = 'mm', disabled = false }) => {
-  const num = Number.isFinite(Number(value)) ? Number(value) : Number(min) || 0;
+/** Range + number pair; the number box is the ≥16px token. A shaped thumb snaps; the box does not. */
+export const SmSlider = ({
+  id, label, value, onChange, min, max, step = 0.5, unit = 'mm', disabled = false,
+  shaped = false, signed = false,
+}) => {
+  const lo = Number.isFinite(Number(min)) ? Number(min) : 0;
+  const hi = Number.isFinite(Number(max)) ? Number(max) : lo;
+  let rangeValue;
+  let rangeMin;
+  let rangeMax;
+  let rangeStep;
+  let onRange;
+  if (shaped) {
+    const snap = Number(step) > 0 ? Number(step) : 0;
+    const thumb = thumbFromLength(value, { min: lo, max: hi, signed });
+    rangeValue = Math.round(Number.isFinite(thumb) ? thumb : 0);
+    rangeMin = 0;
+    rangeMax = THUMB_COUNT;
+    rangeStep = 1;
+    onRange = (e) => {
+      onChange?.(lengthFromThumb(e.target.value, { min: lo, max: hi, signed, snap }));
+    };
+  } else {
+    rangeValue = Number.isFinite(Number(value)) ? Number(value) : (Number(min) || 0);
+    rangeMin = min;
+    rangeMax = max;
+    rangeStep = step;
+    onRange = (e) => onChange?.(Number(e.target.value));
+  }
   return (
     <div>
       <SmLabel htmlFor={`${id}-n`}>{label}</SmLabel>
       <div className="flex items-center gap-2">
         <input
           type="range"
-          min={min}
-          max={max}
-          step={step}
-          value={num}
+          min={rangeMin}
+          max={rangeMax}
+          step={rangeStep}
+          value={rangeValue}
           disabled={disabled}
-          onChange={(e) => onChange?.(Number(e.target.value))}
+          onChange={onRange}
           className={`flex-1 min-w-0 accent-orange-400 h-8 ${disabled ? 'opacity-40' : ''}`}
           aria-label={label}
           data-sm-slider={id}
+          {...(shaped ? { 'data-slider-curve': 'shaped' } : null)}
         />
         <input
           id={`${id}-n`}
           type="number"
           inputMode="decimal"
-          min={min}
-          max={max}
-          step={step}
-          value={Number.isFinite(Number(value)) ? value : ''}
+          min={shaped ? undefined : min}
+          max={shaped ? undefined : max}
+          step={shaped ? 'any' : step}
+          value={value ?? ''}
           disabled={disabled}
-          onChange={(e) => onChange?.(e.target.value === '' ? '' : Number(e.target.value))}
+          onChange={(e) => {
+            if (shaped) {
+              onChange?.(e.target.value);
+              return;
+            }
+            onChange?.(e.target.value === '' ? '' : Number(e.target.value));
+          }}
           className={`${PARTS_TEXT_INPUT_CLASS} !w-24 shrink-0 tabular-nums ${SM_TAP}`}
           style={PARTS_TEXT_INPUT_STYLE}
           aria-label={`${label} value`}
@@ -98,23 +132,42 @@ export const SmButton = ({ variant = 'ghost', className = '', children, ...rest 
 
 /**
  * A length slider stored in millimetres, shown in `unit` ('mm' | 'in').
- * `onMm` receives millimetres, or '' while the number box is cleared.
+ * The thumb is the shared length curve and snaps in that unit. The typed
+ * box does not snap. `onMm` receives millimetres, or '' while the box is cleared.
  */
 export const SmMmSlider = ({
-  id, label, mm, onMm, minMm, maxMm, stepMm = 0.5, unit = 'mm',
+  id, label, mm, onMm, minMm, maxMm, unit = 'mm', signed = false,
 }) => {
-  const min = displaySheetNumber(minMm, unit);
-  const max = Math.max(min, displaySheetNumber(maxMm, unit));
+  const end = signed
+    ? Math.max(Math.abs(Number(minMm) || 0), Math.abs(Number(maxMm) || 0))
+    : Number(maxMm);
+  const lo = signed ? -end : (Number.isFinite(Number(minMm)) ? Number(minMm) : 0);
+  const hi = signed ? end : (Number.isFinite(end) ? end : lo);
+  const span = Math.abs(hi - lo);
+  const snap = lengthToDisplay(lengthSnap(unit, span), unit);
+  const partial = mm === '' || mm === '-' || mm === '.';
+  const shown = partial
+    ? mm
+    : (Number.isFinite(Number(mm)) ? lengthToDisplay(Number(mm), unit) : '');
   return (
     <SmSlider
+      shaped
+      signed={signed}
       id={id}
       label={label}
-      value={displaySheetNumber(mm, unit)}
-      min={min}
-      max={max}
-      step={displaySheetStep(stepMm, unit)}
+      value={shown}
+      min={lengthToDisplay(lo, unit)}
+      max={lengthToDisplay(hi, unit)}
+      step={Number.isFinite(snap) && snap > 0 ? snap : undefined}
       unit={unit}
-      onChange={(v) => onMm?.(v === '' ? '' : displayToMm(v, unit))}
+      onChange={(v) => {
+        if (v === '' || v === '-' || v === '.') {
+          onMm?.(v);
+          return;
+        }
+        const next = displayToMm(v, unit);
+        onMm?.(Number.isFinite(next) ? next : mm);
+      }}
     />
   );
 };
